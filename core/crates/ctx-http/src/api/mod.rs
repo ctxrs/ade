@@ -360,6 +360,14 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             get(list_gemini_accounts).post(upsert_gemini_account),
         )
         .route(
+            "/api/providers/gemini/accounts/login/start",
+            post(start_gemini_login),
+        )
+        .route(
+            "/api/providers/gemini/accounts/login/:id",
+            get(get_gemini_login),
+        )
+        .route(
             "/api/providers/gemini/active-account",
             put(set_gemini_active_account),
         )

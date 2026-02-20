@@ -11,6 +11,7 @@ import {
   deleteProviderHarnessEndpoint,
   getClaudeLogin,
   getCodexLogin,
+  getGeminiLogin,
   getInstall,
   listClaudeAccounts,
   listCopilotAccounts,
@@ -33,6 +34,7 @@ import {
   setKiroActiveAccount,
   startCodexLogin,
   startClaudeLogin,
+  startGeminiLogin,
   upsertClaudeAccount,
   upsertCopilotAccount,
   upsertCursorAccount,
@@ -141,7 +143,6 @@ const supportsHarnessEndpointConfigStatic = (providerId: string): boolean =>
 const HARNESSES_WITH_ENDPOINT_BASE_URL = new Set([
   "codex",
   "claude-crp",
-  "gemini",
   "kimi",
   "qwen",
   "opencode",
@@ -166,7 +167,7 @@ const messageFromError = (error: unknown): string => {
   return String(error);
 };
 
-export const takeNextClaudeAuthUrlToOpen = (
+export const takeNextAuthUrlToOpen = (
   authUrl: string | null | undefined,
   openedAuthUrls: Set<string>,
 ): string | null => {
@@ -175,6 +176,8 @@ export const takeNextClaudeAuthUrlToOpen = (
   openedAuthUrls.add(normalized);
   return normalized;
 };
+
+export const takeNextClaudeAuthUrlToOpen = takeNextAuthUrlToOpen;
 
 export function useHarnessAuthenticationController({
   workspaceId,
@@ -486,6 +489,7 @@ export function useHarnessAuthenticationController({
       provider_id: providerId,
       stage: "choose",
       endpoint_provider_id: defaultPresetId,
+      gemini_endpoint_auth_type: "gemini_api_key",
       endpoint_name: "",
       base_url: requiresBaseUrl
         ? (defaultPreset.base_url ?? defaultEndpointBaseUrlForProvider(providerId))
@@ -532,6 +536,7 @@ export function useHarnessAuthenticationController({
       || (requiresBaseUrl
         ? nextDefaultEndpointName(modal.endpoint_provider_id, existingNames)
         : nextTokenEndpointName(modal.provider_id, existingNames));
+    const geminiAuthType = modal.provider_id === "gemini" ? modal.gemini_endpoint_auth_type : null;
     const base = modal.base_url.trim();
     const normalizedBase = normalizeOptionalBaseUrl(base);
     const key = modal.api_key.trim();
@@ -562,12 +567,15 @@ export function useHarnessAuthenticationController({
         name,
         base_url: normalizedBase,
         api_shape: requiresApiShape ? defaultShapeForHarnessProvider(modal.provider_id) : null,
+        auth_type: geminiAuthType,
         api_key: key,
       });
       const reversedEndpoints = [...next.endpoints].reverse();
       const createdEndpoint =
         reversedEndpoints.find(
-          (endpoint) => endpoint.name === name && (endpoint.base_url ?? null) === normalizedBase,
+          (endpoint) => endpoint.name === name
+            && (endpoint.base_url ?? null) === normalizedBase
+            && (geminiAuthType === null || endpoint.auth_type === geminiAuthType),
         )
         ?? next.endpoints[next.endpoints.length - 1]
         ?? null;
@@ -611,11 +619,11 @@ export function useHarnessAuthenticationController({
   ): Promise<"success" | "failed" | "timeout"> => {
     const attempts = 90;
     const openedAuthUrls = new Set<string>();
-    takeNextClaudeAuthUrlToOpen(opts?.openedAuthUrl, openedAuthUrls);
+    takeNextAuthUrlToOpen(opts?.openedAuthUrl, openedAuthUrls);
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       try {
         const status = await getClaudeLogin(loginId);
-        const authUrl = takeNextClaudeAuthUrlToOpen(status.auth_url, openedAuthUrls);
+        const authUrl = takeNextAuthUrlToOpen(status.auth_url, openedAuthUrls);
         if (authUrl && onAuthUrl) {
           await onAuthUrl(authUrl);
         }
@@ -629,6 +637,34 @@ export function useHarnessAuthenticationController({
       });
     }
     return "timeout";
+  }, []);
+
+  const waitForGeminiLoginOutcome = useCallback(async (
+    loginId: string,
+    onAuthUrl?: (authUrl: string) => Promise<void>,
+    opts?: { openedAuthUrl?: string | null },
+  ): Promise<{ status: "success" | "failed" | "timeout"; error?: string | null }> => {
+    const attempts = 190;
+    const openedAuthUrls = new Set<string>();
+    takeNextAuthUrlToOpen(opts?.openedAuthUrl, openedAuthUrls);
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        const status = await getGeminiLogin(loginId);
+        const authUrl = takeNextAuthUrlToOpen(status.auth_url, openedAuthUrls);
+        if (authUrl && onAuthUrl) {
+          await onAuthUrl(authUrl);
+        }
+        if (status.status === "success") return { status: "success" };
+        if (status.status === "failed") return { status: "failed", error: status.error };
+        if (status.status === "timeout") return { status: "timeout", error: status.error };
+      } catch {
+        // continue polling
+      }
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, 1600);
+      });
+    }
+    return { status: "timeout" };
   }, []);
 
   const tryStartCodexDesktopRelay = useCallback(async (params: {
@@ -722,7 +758,7 @@ export function useHarnessAuthenticationController({
           return;
         }
         const login = await startClaudeLogin(label ? label : undefined);
-        const initialAuthUrl = takeNextClaudeAuthUrlToOpen(login.auth_url, new Set<string>());
+        const initialAuthUrl = takeNextAuthUrlToOpen(login.auth_url, new Set<string>());
         if (initialAuthUrl) {
           await openExternalLink(initialAuthUrl);
         }
@@ -768,21 +804,68 @@ export function useHarnessAuthenticationController({
       }
 
       if (modal.provider_id === "gemini") {
-        const oauthCredsJson = modal.subscription_oauth_creds_json.trim();
-        if (!oauthCredsJson) {
-          throw new Error("OAuth credentials JSON is required.");
-        }
-        const googleAccountsJson = modal.subscription_google_accounts_json.trim();
         const label = modal.subscription_label.trim();
         const email = modal.subscription_email.trim();
-        const next = await upsertGeminiAccount(oauthCredsJson, {
-          ...(label ? { label } : {}),
-          ...(googleAccountsJson ? { googleAccountsJson } : {}),
-          ...(email ? { email } : {}),
+        const oauthCredsJson = modal.subscription_oauth_creds_json.trim();
+        if (oauthCredsJson) {
+          const googleAccountsJson = modal.subscription_google_accounts_json.trim();
+          const next = await upsertGeminiAccount(oauthCredsJson, {
+            ...(label ? { label } : {}),
+            ...(googleAccountsJson ? { googleAccountsJson } : {}),
+            ...(email ? { email } : {}),
+          });
+          setGeminiAccounts(next);
+          await selectSubscriptionSourceIfSupported(modal.provider_id);
+          closeHarnessAuthModal();
+          return;
+        }
+
+        const login = await startGeminiLogin(label ? label : undefined);
+        const initialAuthUrl = takeNextAuthUrlToOpen(login.auth_url, new Set<string>());
+        if (initialAuthUrl) {
+          await openExternalLink(initialAuthUrl);
+        }
+        setHarnessAuthModal((prev) =>
+          prev
+            ? {
+                ...prev,
+                subscription_status:
+                  "Waiting for Google sign-in to complete in your browser...",
+              }
+            : prev);
+        const outcome = await waitForGeminiLoginOutcome(login.login_id, async (authUrl) => {
+          await openExternalLink(authUrl);
+        }, {
+          openedAuthUrl: initialAuthUrl,
         });
-        setGeminiAccounts(next);
-        await selectSubscriptionSourceIfSupported(modal.provider_id);
-        closeHarnessAuthModal();
+        await refreshGeminiAccounts();
+        if (outcome.status === "success") {
+          await onSelectProviderSource("gemini", "subscription", null);
+          closeHarnessAuthModal();
+          return;
+        }
+        if (outcome.error && outcome.error.trim()) {
+          setProviderError(outcome.error);
+        }
+        if (outcome.status === "failed") {
+          setHarnessAuthModal((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  subscription_status:
+                    "Sign-in failed. Retry or paste oauth_creds.json as fallback.",
+                }
+              : prev);
+          return;
+        }
+        setHarnessAuthModal((prev) =>
+          prev
+            ? {
+                ...prev,
+                subscription_status:
+                  "Still waiting for completion. Keep this dialog open or retry.",
+              }
+            : prev);
         return;
       }
 
@@ -862,9 +945,11 @@ export function useHarnessAuthenticationController({
     onSelectProviderSource,
     refreshClaudeAccounts,
     refreshCodexAccounts,
+    refreshGeminiAccounts,
     selectSubscriptionSourceIfSupported,
     waitForClaudeLoginOutcome,
     waitForCodexLoginOutcome,
+    waitForGeminiLoginOutcome,
     workspaceId,
   ]);
 

@@ -96,6 +96,7 @@ export type UpsertHarnessEndpointRequest = {
   name: string;
   base_url?: string | null;
   api_shape?: HarnessApiShape | null;
+  auth_type?: string | null;
   model_override?: string | null;
   api_key?: string | null;
 };
@@ -304,6 +305,19 @@ export type ClaudeLoginStartResponse = {
   auth_url?: string | null;
 };
 
+export type GeminiLoginStatus = {
+  login_id: string;
+  auth_url?: string | null;
+  status: string;
+  account_id?: string | null;
+  error?: string | null;
+};
+
+export type GeminiLoginStartResponse = {
+  login_id: string;
+  auth_url?: string | null;
+};
+
 export type CodexHostImportProbe = {
   available: boolean;
   path?: string | null;
@@ -409,6 +423,15 @@ export const startClaudeLogin = (label?: string) =>
 
 export const getClaudeLogin = (loginId: string) =>
   apiAny<ClaudeLoginStatus>(`/api/providers/claude-crp/accounts/login/${loginId}`);
+
+export const startGeminiLogin = (label?: string) =>
+  apiAny<GeminiLoginStartResponse>(`/api/providers/gemini/accounts/login/start`, {
+    method: "POST",
+    body: JSON.stringify(label ? { label } : {}),
+  });
+
+export const getGeminiLogin = (loginId: string) =>
+  apiAny<GeminiLoginStatus>(`/api/providers/gemini/accounts/login/${loginId}`);
 
 export const upsertClaudeAccount = (setupToken: string, label?: string) =>
   apiAny<ClaudeAccountsResponse>(`/api/providers/claude-crp/accounts`, {

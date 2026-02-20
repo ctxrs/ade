@@ -10,8 +10,6 @@ use sha2::{Digest, Sha256};
 use crate::harness_sources;
 use crate::provider_accounts;
 
-const DEFAULT_GEMINI_OPENAI_BASE_URL: &str =
-    "https://generativelanguage.googleapis.com/v1beta/openai";
 const DEFAULT_OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -308,16 +306,6 @@ fn build_catalog(roots: &HostRoots) -> Vec<PathSpec> {
             path: roots.home.join(".gemini").join("oauth_creds.json"),
         },
         PathSpec {
-            provider_id: "gemini",
-            provider_label: "Gemini",
-            kind: "auth_file",
-            signal_strength: "weak",
-            confidence: "medium",
-            importable: true,
-            unsupported_reason: None,
-            path: roots.home.join(".gemini").join("google_accounts.json"),
-        },
-        PathSpec {
             provider_id: "opencode",
             provider_label: "OpenCode",
             kind: "auth_file",
@@ -490,6 +478,104 @@ fn candidate_from_spec(spec: &PathSpec) -> Option<CandidateMaterial> {
 
     let fingerprint = sha256_hex(&bytes);
     candidate.fingerprint = Some(fingerprint);
+
+    if spec.provider_id == "gemini" && spec.kind == "auth_file" {
+        let file_name = spec
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        if !file_name.eq_ignore_ascii_case("oauth_creds.json") {
+            return None;
+        }
+
+        let oauth_raw = match String::from_utf8(bytes.clone()) {
+            Ok(raw) => raw,
+            Err(_) => {
+                candidate.parse_status = "parse_error".to_string();
+                candidate.unsupported_reason =
+                    Some("gemini oauth_creds.json must be UTF-8 JSON".to_string());
+                return Some(CandidateMaterial {
+                    candidate,
+                    importable: false,
+                    secret_bytes: None,
+                    label: None,
+                });
+            }
+        };
+
+        let oauth_value = match serde_json::from_str::<serde_json::Value>(&oauth_raw) {
+            Ok(value) => value,
+            Err(err) => {
+                candidate.parse_status = "parse_error".to_string();
+                candidate.unsupported_reason =
+                    Some(format!("gemini oauth_creds.json must be valid JSON: {err}"));
+                return Some(CandidateMaterial {
+                    candidate,
+                    importable: false,
+                    secret_bytes: None,
+                    label: None,
+                });
+            }
+        };
+        if !oauth_value.is_object() {
+            candidate.parse_status = "parse_error".to_string();
+            candidate.unsupported_reason =
+                Some("gemini oauth_creds.json must be a JSON object".to_string());
+            return Some(CandidateMaterial {
+                candidate,
+                importable: false,
+                secret_bytes: None,
+                label: None,
+            });
+        }
+
+        let google_accounts_path = spec
+            .path
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .join("google_accounts.json");
+        if google_accounts_path.exists() {
+            let google_raw = match std::fs::read_to_string(&google_accounts_path) {
+                Ok(contents) => contents,
+                Err(err) => {
+                    candidate.parse_status = "parse_error".to_string();
+                    candidate.unsupported_reason =
+                        Some(format!("failed to read google_accounts.json: {err}"));
+                    return Some(CandidateMaterial {
+                        candidate,
+                        importable: false,
+                        secret_bytes: None,
+                        label: None,
+                    });
+                }
+            };
+            if let Some(raw) = trim_to_option(&google_raw) {
+                if let Err(err) = serde_json::from_str::<serde_json::Value>(&raw) {
+                    candidate.parse_status = "parse_error".to_string();
+                    candidate.unsupported_reason = Some(format!(
+                        "gemini google_accounts.json must be valid JSON: {err}"
+                    ));
+                    return Some(CandidateMaterial {
+                        candidate,
+                        importable: false,
+                        secret_bytes: None,
+                        label: None,
+                    });
+                }
+            }
+        }
+
+        candidate.summary = summarize_json_candidate(spec.provider_id, &oauth_value);
+        candidate.auth_type = Some("subscription".to_string());
+        candidate.parse_status = "parsed".to_string();
+        return Some(CandidateMaterial {
+            candidate,
+            importable: true,
+            secret_bytes: Some(bytes),
+            label: Some(format!("Imported {} profile", spec.provider_label)),
+        });
+    }
 
     let label = match spec.kind {
         "env_file" => {
@@ -790,7 +876,6 @@ fn env_value_case_insensitive(env_map: &BTreeMap<String, String>, keys: &[&str])
 
 fn default_endpoint_base_url_for_provider(provider_id: &str) -> Option<String> {
     match provider_id {
-        "gemini" => Some(DEFAULT_GEMINI_OPENAI_BASE_URL.to_string()),
         "qwen" | "opencode" => Some(DEFAULT_OPENROUTER_BASE_URL.to_string()),
         _ => None,
     }
@@ -929,6 +1014,7 @@ async fn import_endpoint_candidate(
     provider_id: &str,
     api_key: String,
     base_url: Option<String>,
+    auth_type: Option<String>,
     model_override: Option<String>,
 ) -> Result<ProviderAuthImportResult> {
     let api_shape = harness_sources::default_shape_for_provider(provider_id)
@@ -938,6 +1024,7 @@ async fn import_endpoint_candidate(
         provider_id,
         base_url.clone(),
         api_shape,
+        auth_type.clone(),
         model_override.clone(),
         &api_key,
     )
@@ -971,6 +1058,7 @@ async fn import_endpoint_candidate(
             }),
             base_url,
             api_shape: Some(api_shape),
+            auth_type,
             model_override,
             api_key: Some(api_key),
         },
@@ -1083,9 +1171,32 @@ async fn import_gemini_env_candidate(
     data_root: &Path,
     material: &CandidateMaterial,
 ) -> Result<ProviderAuthImportResult> {
-    let (api_key, base_url) =
-        parse_endpoint_env_candidate("gemini", material, &["GEMINI_API_KEY", "OPENAI_API_KEY"])?;
-    import_endpoint_candidate(data_root, material, "gemini", api_key, base_url, None).await
+    let (api_key, base_url, auth_type) = {
+        let Some(bytes) = material.secret_bytes.as_ref() else {
+            anyhow::bail!("No importable auth material.");
+        };
+        let env_map = parse_env_file(&String::from_utf8_lossy(bytes));
+        if let Some(key) = env_value_case_insensitive(&env_map, &["GOOGLE_API_KEY"]) {
+            (key, None, Some("vertex_ai".to_string()))
+        } else {
+            let (key, url) = parse_endpoint_env_candidate(
+                "gemini",
+                material,
+                &["GEMINI_API_KEY", "OPENAI_API_KEY"],
+            )?;
+            let auth_type = if url.is_some() {
+                // Preserve legacy OpenAI-compatible Gemini endpoint imports when a base URL is present.
+                Some("bearer".to_string())
+            } else {
+                Some("gemini_api_key".to_string())
+            };
+            (key, url, auth_type)
+        }
+    };
+    import_endpoint_candidate(
+        data_root, material, "gemini", api_key, base_url, auth_type, None,
+    )
+    .await
 }
 
 async fn import_qwen_candidate(
@@ -1097,7 +1208,7 @@ async fn import_qwen_candidate(
         material,
         &["QWEN_API_KEY", "DASHSCOPE_API_KEY", "OPENAI_API_KEY"],
     )?;
-    import_endpoint_candidate(data_root, material, "qwen", api_key, base_url, None).await
+    import_endpoint_candidate(data_root, material, "qwen", api_key, base_url, None, None).await
 }
 
 async fn import_opencode_candidate(
@@ -1111,6 +1222,7 @@ async fn import_opencode_candidate(
         "opencode",
         api_key,
         base_url,
+        None,
         model_override,
     )
     .await
@@ -1127,6 +1239,7 @@ async fn import_amp_candidate(
         "amp",
         api_key,
         base_url,
+        None,
         model_override,
     )
     .await
@@ -1572,6 +1685,85 @@ mod tests {
         assert!(found.importable);
     }
 
+    #[test]
+    fn scan_detects_only_valid_gemini_oauth_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let roots = test_roots(dir.path());
+        let gemini_dir = roots.home.join(".gemini");
+        std::fs::create_dir_all(&gemini_dir).unwrap();
+        std::fs::write(
+            gemini_dir.join("oauth_creds.json"),
+            br#"{"access_token":"a","refresh_token":"b"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            gemini_dir.join("google_accounts.json"),
+            br#"[{"email":"dev@example.com"}]"#,
+        )
+        .unwrap();
+
+        let scanned = scan_with_roots(&roots);
+        let gemini_oauth = scanned
+            .iter()
+            .find(|c| c.candidate.path.ends_with("/.gemini/oauth_creds.json"))
+            .expect("gemini oauth candidate");
+        assert!(gemini_oauth.importable);
+        assert_eq!(gemini_oauth.candidate.parse_status, "parsed");
+        assert_eq!(
+            gemini_oauth.candidate.auth_type.as_deref(),
+            Some("subscription")
+        );
+        assert!(scanned
+            .iter()
+            .all(|c| !c.candidate.path.ends_with("/.gemini/google_accounts.json")));
+    }
+
+    #[test]
+    fn scan_rejects_gemini_oauth_when_google_accounts_sidecar_is_invalid() {
+        let dir = tempfile::tempdir().unwrap();
+        let roots = test_roots(dir.path());
+        let gemini_dir = roots.home.join(".gemini");
+        std::fs::create_dir_all(&gemini_dir).unwrap();
+        std::fs::write(
+            gemini_dir.join("oauth_creds.json"),
+            br#"{"access_token":"a","refresh_token":"b"}"#,
+        )
+        .unwrap();
+        std::fs::write(gemini_dir.join("google_accounts.json"), b"not-json").unwrap();
+
+        let scanned = scan_with_roots(&roots);
+        let gemini_oauth = scanned
+            .iter()
+            .find(|c| c.candidate.path.ends_with("/.gemini/oauth_creds.json"))
+            .expect("gemini oauth candidate");
+        assert!(!gemini_oauth.importable);
+        assert_eq!(gemini_oauth.candidate.parse_status, "parse_error");
+        assert!(gemini_oauth
+            .candidate
+            .unsupported_reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("google_accounts.json"));
+    }
+
+    #[test]
+    fn scan_ignores_standalone_gemini_google_accounts_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let roots = test_roots(dir.path());
+        let gemini_dir = roots.home.join(".gemini");
+        std::fs::create_dir_all(&gemini_dir).unwrap();
+        std::fs::write(
+            gemini_dir.join("google_accounts.json"),
+            br#"[{"email":"dev@example.com"}]"#,
+        )
+        .unwrap();
+
+        let scanned = scan_with_roots(&roots);
+        assert!(scanned
+            .iter()
+            .all(|c| !c.candidate.provider_id.eq("gemini")));
+    }
+
     #[tokio::test]
     async fn gemini_oauth_candidate_import_writes_canonical_account_registry() {
         let dir = tempfile::tempdir().unwrap();
@@ -1606,6 +1798,111 @@ mod tests {
         let registry = provider_accounts::load_gemini_registry(root).await;
         assert_eq!(registry.accounts.len(), 1);
         assert_eq!(registry.active_account_id, result.profile_id);
+    }
+
+    #[tokio::test]
+    async fn gemini_env_candidate_with_base_url_imports_legacy_bearer_endpoint() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let base_url = "https://generativelanguage.googleapis.com/v1beta/openai";
+        let material = CandidateMaterial {
+            candidate: ProviderAuthImportCandidate {
+                id: "gemini-env-legacy".to_string(),
+                provider_id: "gemini".to_string(),
+                provider_label: "Gemini".to_string(),
+                kind: "env_file".to_string(),
+                path: "/tmp/.gemini/.env".to_string(),
+                signal_strength: "strong".to_string(),
+                confidence: "high".to_string(),
+                parse_status: "parsed".to_string(),
+                unsupported_reason: None,
+                summary: None,
+                account_identity: None,
+                endpoint: Some(base_url.to_string()),
+                auth_type: Some("api_key".to_string()),
+                fingerprint: None,
+                last_modified: None,
+            },
+            importable: true,
+            secret_bytes: Some(
+                format!("OPENAI_API_KEY=key-legacy\nOPENAI_BASE_URL={base_url}\n").into_bytes(),
+            ),
+            label: Some("Gemini legacy endpoint".to_string()),
+        };
+
+        let result = import_candidate_to_canonical(root, &material)
+            .await
+            .unwrap();
+        assert_eq!(result.status, "imported");
+        let config = harness_sources::get_provider_source_config(root, "gemini")
+            .await
+            .unwrap();
+        assert_eq!(
+            config.selected_source_kind,
+            harness_sources::HarnessSourceKind::Endpoint
+        );
+        let selected_id = config
+            .selected_endpoint_id
+            .as_deref()
+            .expect("selected endpoint id");
+        let endpoint = config
+            .endpoints
+            .iter()
+            .find(|endpoint| endpoint.id == selected_id)
+            .expect("selected endpoint");
+        assert_eq!(endpoint.auth_type, "bearer");
+        assert_eq!(endpoint.base_url.as_deref(), Some(base_url));
+    }
+
+    #[tokio::test]
+    async fn gemini_env_candidate_without_base_url_imports_native_key_endpoint() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let material = CandidateMaterial {
+            candidate: ProviderAuthImportCandidate {
+                id: "gemini-env-native".to_string(),
+                provider_id: "gemini".to_string(),
+                provider_label: "Gemini".to_string(),
+                kind: "env_file".to_string(),
+                path: "/tmp/.gemini/.env".to_string(),
+                signal_strength: "strong".to_string(),
+                confidence: "high".to_string(),
+                parse_status: "parsed".to_string(),
+                unsupported_reason: None,
+                summary: None,
+                account_identity: None,
+                endpoint: None,
+                auth_type: Some("api_key".to_string()),
+                fingerprint: None,
+                last_modified: None,
+            },
+            importable: true,
+            secret_bytes: Some(b"GEMINI_API_KEY=key-native\n".to_vec()),
+            label: Some("Gemini native endpoint".to_string()),
+        };
+
+        let result = import_candidate_to_canonical(root, &material)
+            .await
+            .unwrap();
+        assert_eq!(result.status, "imported");
+        let config = harness_sources::get_provider_source_config(root, "gemini")
+            .await
+            .unwrap();
+        assert_eq!(
+            config.selected_source_kind,
+            harness_sources::HarnessSourceKind::Endpoint
+        );
+        let selected_id = config
+            .selected_endpoint_id
+            .as_deref()
+            .expect("selected endpoint id");
+        let endpoint = config
+            .endpoints
+            .iter()
+            .find(|endpoint| endpoint.id == selected_id)
+            .expect("selected endpoint");
+        assert_eq!(endpoint.auth_type, "gemini_api_key");
+        assert!(endpoint.base_url.is_none());
     }
 
     #[tokio::test]
@@ -1688,6 +1985,7 @@ mod tests {
                 name: "Existing Qwen endpoint".to_string(),
                 base_url: Some("https://api.example.com/v1".to_string()),
                 api_shape: harness_sources::default_shape_for_provider("qwen"),
+                auth_type: None,
                 model_override: None,
                 api_key: Some("key-1".to_string()),
             },

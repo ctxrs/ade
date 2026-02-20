@@ -34,6 +34,8 @@ const PROVIDER_CURSOR: &str = "cursor";
 
 const CODEX_AUTH_TYPE_BEARER: &str = "bearer";
 const CLAUDE_AUTH_TYPE_API_KEY: &str = "api_key";
+const GEMINI_AUTH_TYPE_GEMINI_API_KEY: &str = "gemini_api_key";
+const GEMINI_AUTH_TYPE_VERTEX_AI: &str = "vertex_ai";
 const KIRO_AUTH_TOKEN_RELATIVE_PATH: &str = ".aws/sso/cache/kiro-auth-token.json";
 
 static REGISTRY_WRITE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -117,6 +119,7 @@ pub struct HarnessEndpointUpsert {
     pub name: String,
     pub base_url: Option<String>,
     pub api_shape: Option<HarnessApiShape>,
+    pub auth_type: Option<String>,
     pub model_override: Option<String>,
     pub api_key: Option<String>,
 }
@@ -465,7 +468,6 @@ fn provider_requires_endpoint_base_url(provider_id: &str) -> bool {
         provider_id,
         PROVIDER_CODEX
             | PROVIDER_CLAUDE
-            | PROVIDER_GEMINI
             | PROVIDER_KIMI
             | PROVIDER_QWEN
             | PROVIDER_OPENCODE
@@ -497,6 +499,32 @@ fn normalize_base_url_for_provider(provider_id: &str, raw: Option<&str>) -> Resu
             }
             Ok(String::new())
         }
+    }
+}
+
+fn normalize_auth_type_for_provider(provider_id: &str, raw: Option<&str>) -> Result<String> {
+    match provider_id {
+        PROVIDER_CODEX => Ok(CODEX_AUTH_TYPE_BEARER.to_string()),
+        PROVIDER_CLAUDE => Ok(CLAUDE_AUTH_TYPE_API_KEY.to_string()),
+        PROVIDER_GEMINI => {
+            let normalized = raw
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(GEMINI_AUTH_TYPE_GEMINI_API_KEY)
+                .to_ascii_lowercase();
+            match normalized.as_str() {
+                GEMINI_AUTH_TYPE_GEMINI_API_KEY
+                | GEMINI_AUTH_TYPE_VERTEX_AI
+                | CODEX_AUTH_TYPE_BEARER => Ok(normalized),
+                _ => anyhow::bail!(
+                    "auth_type '{}' is not supported for gemini (expected '{}' or '{}')",
+                    normalized,
+                    GEMINI_AUTH_TYPE_GEMINI_API_KEY,
+                    GEMINI_AUTH_TYPE_VERTEX_AI
+                ),
+            }
+        }
+        _ => Ok(CODEX_AUTH_TYPE_BEARER.to_string()),
     }
 }
 
@@ -654,6 +682,7 @@ pub async fn find_provider_endpoint_import_match(
     provider_id: &str,
     base_url: Option<String>,
     api_shape: HarnessApiShape,
+    auth_type: Option<String>,
     model_override: Option<String>,
     api_key: &str,
 ) -> Result<Option<HarnessEndpointImportMatch>> {
@@ -662,6 +691,7 @@ pub async fn find_provider_endpoint_import_match(
     })?;
     ensure_shape_compatible(canonical, api_shape)?;
     let normalized_base_url = normalize_base_url_for_provider(canonical, base_url.as_deref())?;
+    let normalized_auth_type = normalize_auth_type_for_provider(canonical, auth_type.as_deref())?;
     let normalized_model_override = model_override
         .as_ref()
         .map(|value| value.trim().to_string())
@@ -674,7 +704,10 @@ pub async fn find_provider_endpoint_import_match(
 
     let mut config_match_endpoint_id: Option<String> = None;
     for endpoint in &provider.endpoints {
-        if endpoint.base_url != normalized_base_url || endpoint.api_shape != api_shape {
+        if endpoint.base_url != normalized_base_url
+            || endpoint.api_shape != api_shape
+            || endpoint.auth_type != normalized_auth_type
+        {
             continue;
         }
         let endpoint_model_override = endpoint
@@ -768,12 +801,7 @@ pub async fn upsert_provider_endpoint(
         write_endpoint_secret(data_root, &secret_ref, api_key).await?;
     }
 
-    let auth_type = match canonical {
-        PROVIDER_CODEX => CODEX_AUTH_TYPE_BEARER,
-        PROVIDER_CLAUDE => CLAUDE_AUTH_TYPE_API_KEY,
-        _ => CODEX_AUTH_TYPE_BEARER,
-    }
-    .to_string();
+    let auth_type = normalize_auth_type_for_provider(canonical, input.auth_type.as_deref())?;
 
     let mut next = HarnessEndpointRecordInternal {
         id: endpoint_id.clone(),
@@ -1069,10 +1097,22 @@ async fn resolve_internal(
             env.insert("ANTHROPIC_BASE_URL".to_string(), base_url);
         }
         PROVIDER_GEMINI => {
-            let base_url = endpoint_base_url_or_err(&endpoint)?;
             ensure_shape_compatible(canonical, endpoint.api_shape)?;
-            env.insert("OPENAI_API_KEY".to_string(), api_key);
-            env.insert("OPENAI_BASE_URL".to_string(), base_url);
+            match endpoint.auth_type.as_str() {
+                GEMINI_AUTH_TYPE_VERTEX_AI => {
+                    env.insert("GOOGLE_API_KEY".to_string(), api_key);
+                    env.insert("GOOGLE_GENAI_USE_VERTEXAI".to_string(), "true".to_string());
+                }
+                GEMINI_AUTH_TYPE_GEMINI_API_KEY => {
+                    env.insert("GEMINI_API_KEY".to_string(), api_key);
+                }
+                _ => {
+                    // Legacy compatibility for previously stored OpenAI-compatible Gemini endpoints.
+                    let base_url = endpoint_base_url_or_err(&endpoint)?;
+                    env.insert("OPENAI_API_KEY".to_string(), api_key);
+                    env.insert("OPENAI_BASE_URL".to_string(), base_url);
+                }
+            }
         }
         PROVIDER_KIMI => {
             let base_url = endpoint_base_url_or_err(&endpoint)?;
@@ -1350,6 +1390,7 @@ mod tests {
                 name: "OpenRouter".to_string(),
                 base_url: Some("https://openrouter.ai/api/v1".to_string()),
                 api_shape: Some(HarnessApiShape::OpenaiResponses),
+                auth_type: None,
                 model_override: None,
                 api_key: Some("sk-test".to_string()),
             },
@@ -1401,10 +1442,9 @@ mod tests {
             HarnessEndpointUpsert {
                 endpoint_id: None,
                 name: "Gemini Key".to_string(),
-                base_url: Some(
-                    "https://generativelanguage.googleapis.com/v1beta/openai".to_string(),
-                ),
+                base_url: None,
                 api_shape: Some(HarnessApiShape::OpenaiResponses),
+                auth_type: Some(GEMINI_AUTH_TYPE_GEMINI_API_KEY.to_string()),
                 model_override: None,
                 api_key: Some("gemini-key".to_string()),
             },
@@ -1425,14 +1465,80 @@ mod tests {
             .await
             .expect("resolve run");
         assert_eq!(resolved.source_kind, HarnessSourceKind::Endpoint);
+        assert_eq!(endpoint.base_url, None);
         assert_eq!(
-            resolved.env.get("OPENAI_API_KEY"),
+            resolved.env.get("GEMINI_API_KEY"),
             Some(&"gemini-key".to_string())
         );
+        assert!(!resolved.env.contains_key("OPENAI_API_KEY"));
+        assert!(!resolved.env.contains_key("OPENAI_BASE_URL"));
+    }
+
+    #[tokio::test]
+    async fn gemini_vertex_endpoint_projects_vertex_env_for_run_resolution() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let endpoint = upsert_provider_endpoint(
+            root.path(),
+            PROVIDER_GEMINI,
+            HarnessEndpointUpsert {
+                endpoint_id: None,
+                name: "Gemini Vertex".to_string(),
+                base_url: None,
+                api_shape: Some(HarnessApiShape::OpenaiResponses),
+                auth_type: Some(GEMINI_AUTH_TYPE_VERTEX_AI.to_string()),
+                model_override: None,
+                api_key: Some("vertex-key".to_string()),
+            },
+        )
+        .await
+        .expect("upsert");
+
+        set_provider_source_selection(
+            root.path(),
+            PROVIDER_GEMINI,
+            HarnessSourceKind::Endpoint,
+            Some(endpoint.id.clone()),
+        )
+        .await
+        .expect("select");
+
+        let resolved = resolve_provider_source_for_run(root.path(), PROVIDER_GEMINI)
+            .await
+            .expect("resolve run");
+        assert_eq!(resolved.source_kind, HarnessSourceKind::Endpoint);
         assert_eq!(
-            resolved.env.get("OPENAI_BASE_URL"),
-            Some(&"https://generativelanguage.googleapis.com/v1beta/openai".to_string())
+            resolved.env.get("GOOGLE_API_KEY"),
+            Some(&"vertex-key".to_string())
         );
+        assert_eq!(
+            resolved.env.get("GOOGLE_GENAI_USE_VERTEXAI"),
+            Some(&"true".to_string())
+        );
+        assert!(!resolved.env.contains_key("OPENAI_API_KEY"));
+        assert!(!resolved.env.contains_key("OPENAI_BASE_URL"));
+    }
+
+    #[tokio::test]
+    async fn gemini_endpoint_rejects_unknown_auth_type() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let err = upsert_provider_endpoint(
+            root.path(),
+            PROVIDER_GEMINI,
+            HarnessEndpointUpsert {
+                endpoint_id: None,
+                name: "Gemini Invalid".to_string(),
+                base_url: None,
+                api_shape: Some(HarnessApiShape::OpenaiResponses),
+                auth_type: Some("invalid".to_string()),
+                model_override: None,
+                api_key: Some("gemini-key".to_string()),
+            },
+        )
+        .await
+        .expect_err("upsert should fail");
+        assert!(err
+            .to_string()
+            .contains("auth_type 'invalid' is not supported"));
     }
 
     #[tokio::test]
@@ -1446,6 +1552,7 @@ mod tests {
                 name: "Kimi Key".to_string(),
                 base_url: Some("https://api.moonshot.ai/v1".to_string()),
                 api_shape: Some(HarnessApiShape::OpenaiResponses),
+                auth_type: None,
                 model_override: Some("kimi-k2".to_string()),
                 api_key: Some("kimi-key".to_string()),
             },
@@ -1563,6 +1670,7 @@ mod tests {
                     } else {
                         Some(HarnessApiShape::OpenaiResponses)
                     },
+                    auth_type: None,
                     model_override: Some("test-model".to_string()),
                     api_key: Some(if *provider_id == PROVIDER_KIRO {
                         r#"{"token":"test-token","exp":"2099-01-01T00:00:00Z"}"#.to_string()
@@ -1606,6 +1714,7 @@ mod tests {
                 name: "Copilot token".to_string(),
                 base_url: None,
                 api_shape: None,
+                auth_type: None,
                 model_override: None,
                 api_key: Some("ghp_test".to_string()),
             },
@@ -1639,6 +1748,7 @@ mod tests {
                 name: "Pi token".to_string(),
                 base_url: None,
                 api_shape: None,
+                auth_type: None,
                 model_override: Some("gpt-5".to_string()),
                 api_key: Some("pi-key".to_string()),
             },
@@ -1684,6 +1794,7 @@ mod tests {
                 name: "Cursor key".to_string(),
                 base_url: None,
                 api_shape: None,
+                auth_type: None,
                 model_override: None,
                 api_key: Some("cursor-key".to_string()),
             },
@@ -1726,6 +1837,7 @@ mod tests {
                 name: "Kiro token".to_string(),
                 base_url: None,
                 api_shape: None,
+                auth_type: None,
                 model_override: None,
                 api_key: Some(r#"{"token":"test-token","exp":"2099-01-01T00:00:00Z"}"#.to_string()),
             },
@@ -1773,6 +1885,7 @@ mod tests {
                 name: "OpenRouter".to_string(),
                 base_url: Some("https://openrouter.ai/api/v1".to_string()),
                 api_shape: Some(HarnessApiShape::OpenaiResponses),
+                auth_type: None,
                 model_override: None,
                 api_key: Some("sk-test".to_string()),
             },
@@ -1824,6 +1937,7 @@ mod tests {
                 name: "Kiro token".to_string(),
                 base_url: None,
                 api_shape: None,
+                auth_type: None,
                 model_override: None,
                 api_key: Some(r#"{"token":"test-token","exp":"2099-01-01T00:00:00Z"}"#.to_string()),
             },
@@ -1869,6 +1983,7 @@ mod tests {
                 name: "wrong".to_string(),
                 base_url: Some("https://example.com".to_string()),
                 api_shape: Some(HarnessApiShape::OpenaiResponses),
+                auth_type: None,
                 model_override: None,
                 api_key: Some("k".to_string()),
             },
@@ -1891,6 +2006,7 @@ mod tests {
                 name: "bad".to_string(),
                 base_url: Some("https://openrouter.ai/api/v1".to_string()),
                 api_shape: Some(HarnessApiShape::OpenaiResponses),
+                auth_type: None,
                 model_override: None,
                 api_key: Some("k".to_string()),
             },

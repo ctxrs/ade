@@ -60,6 +60,7 @@ export type HarnessAuthModalState = {
   provider_id: string;
   stage: "choose" | "subscription" | "api_key";
   endpoint_provider_id: string;
+  gemini_endpoint_auth_type: "gemini_api_key" | "vertex_ai";
   endpoint_name: string;
   base_url: string;
   api_key: string;

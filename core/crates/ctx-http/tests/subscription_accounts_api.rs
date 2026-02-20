@@ -1,12 +1,22 @@
 mod common;
 
+use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 use axum::http::StatusCode;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::mpsc;
 
+use ctx_core::models::SessionEventType;
 use ctx_http::installer::{save_agent_server_config, AgentServerCommand, AgentServerConfigFile};
+use ctx_providers::adapters::{
+    ProviderAdapter, ProviderHealth, ProviderStatus, RunHandle, TurnInput,
+};
+use ctx_providers::events::NormalizedEvent;
 
 #[derive(Debug, Deserialize)]
 struct SubscriptionAccountEntry {
@@ -36,6 +46,155 @@ struct ClaudeLoginStatusResponse {
     status: String,
     account_id: Option<String>,
     error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeminiLoginStartResponse {
+    login_id: String,
+    auth_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeminiLoginStatusResponse {
+    status: String,
+    account_id: Option<String>,
+    auth_url: Option<String>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+enum GeminiLoginFixture {
+    Success {
+        oauth_creds_json: String,
+        google_accounts_json: Option<String>,
+        auth_url: Option<String>,
+    },
+    Failure {
+        error: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct GeminiLoginTestAdapter {
+    fixture: GeminiLoginFixture,
+}
+
+impl GeminiLoginTestAdapter {
+    fn success(
+        oauth_creds_json: impl Into<String>,
+        google_accounts_json: Option<String>,
+        auth_url: Option<String>,
+    ) -> Self {
+        Self {
+            fixture: GeminiLoginFixture::Success {
+                oauth_creds_json: oauth_creds_json.into(),
+                google_accounts_json,
+                auth_url,
+            },
+        }
+    }
+
+    fn failure(error: impl Into<String>) -> Self {
+        Self {
+            fixture: GeminiLoginFixture::Failure {
+                error: error.into(),
+            },
+        }
+    }
+}
+
+#[async_trait]
+impl ProviderAdapter for GeminiLoginTestAdapter {
+    async fn inspect(&self) -> Result<ProviderStatus> {
+        Ok(ProviderStatus {
+            provider_id: "gemini".to_string(),
+            installed: true,
+            detected_path: None,
+            version: Some("test".to_string()),
+            capabilities: None,
+            health: ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+        })
+    }
+
+    async fn run(
+        &self,
+        _input: TurnInput,
+        _workdir: PathBuf,
+        _env: HashMap<String, String>,
+        _event_sink: mpsc::Sender<NormalizedEvent>,
+    ) -> Result<RunHandle> {
+        Err(anyhow!("run is not used in this test adapter"))
+    }
+
+    async fn cancel(&self, _handle: RunHandle) -> Result<()> {
+        Ok(())
+    }
+
+    async fn authenticate_session(
+        &self,
+        _session_key: String,
+        _workdir: PathBuf,
+        env: HashMap<String, String>,
+        method_id: Option<String>,
+        event_sink: mpsc::Sender<NormalizedEvent>,
+    ) -> Result<()> {
+        if method_id.as_deref() != Some("oauth-personal") {
+            return Err(anyhow!(
+                "unexpected method_id: {:?}",
+                method_id.unwrap_or_default()
+            ));
+        }
+        let Some(home) = env.get("GEMINI_CLI_HOME") else {
+            return Err(anyhow!("GEMINI_CLI_HOME missing"));
+        };
+        let gemini_dir = PathBuf::from(home).join(".gemini");
+        tokio::fs::create_dir_all(&gemini_dir).await?;
+
+        match &self.fixture {
+            GeminiLoginFixture::Success {
+                oauth_creds_json,
+                google_accounts_json,
+                auth_url,
+            } => {
+                if let Some(auth_url) = auth_url.as_ref() {
+                    let _ = event_sink
+                        .send(NormalizedEvent {
+                            event_type: SessionEventType::Notice,
+                            payload_json: json!({ "auth_url": auth_url }),
+                        })
+                        .await;
+                }
+                tokio::fs::write(gemini_dir.join("oauth_creds.json"), oauth_creds_json).await?;
+                if let Some(google_accounts_json) = google_accounts_json.as_ref() {
+                    tokio::fs::write(
+                        gemini_dir.join("google_accounts.json"),
+                        google_accounts_json,
+                    )
+                    .await?;
+                }
+                Ok(())
+            }
+            GeminiLoginFixture::Failure { error } => {
+                let _ = event_sink
+                    .send(NormalizedEvent {
+                        event_type: SessionEventType::Error,
+                        payload_json: json!({ "message": error }),
+                    })
+                    .await;
+                Err(anyhow!("{error}"))
+            }
+        }
+    }
+}
+
+fn providers_with_gemini_adapter(
+    adapter: Arc<dyn ProviderAdapter>,
+) -> HashMap<String, Arc<dyn ProviderAdapter>> {
+    let mut providers = common::fake_providers();
+    providers.insert("gemini".to_string(), adapter);
+    providers
 }
 
 async fn assert_managed_subscription_crud(provider_id: &str, upsert_body: serde_json::Value) {
@@ -164,6 +323,31 @@ async fn poll_claude_login_status(
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     panic!("claude login did not reach terminal status in time");
+}
+
+async fn poll_gemini_login_status(
+    server: &common::TestServer,
+    login_id: &str,
+) -> GeminiLoginStatusResponse {
+    let status_url = format!(
+        "{}/api/providers/gemini/accounts/login/{}",
+        server.base_url, login_id
+    );
+    for _ in 0..80 {
+        let resp = server
+            .client
+            .get(&status_url)
+            .send()
+            .await
+            .expect("gemini login status request");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: GeminiLoginStatusResponse = resp.json().await.expect("gemini login status body");
+        if body.status != "pending" {
+            return body;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("gemini login did not reach terminal status in time");
 }
 
 #[tokio::test]
@@ -434,6 +618,109 @@ async fn gemini_subscription_accounts_crud_round_trip() {
         }),
     )
     .await;
+}
+
+#[tokio::test]
+async fn gemini_login_start_and_status_success_persists_account() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let providers = providers_with_gemini_adapter(Arc::new(GeminiLoginTestAdapter::success(
+        r#"{"access_token":"access","refresh_token":"refresh"}"#,
+        Some(r#"[{"email":"gemini-dev@example.com"}]"#.to_string()),
+        Some("https://accounts.google.com/o/oauth2/auth?code=test".to_string()),
+    )));
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        providers,
+        "http://127.0.0.1:0",
+    );
+    let server = common::spawn_http_server(common::router(state)).await;
+
+    let start_url = format!(
+        "{}/api/providers/gemini/accounts/login/start",
+        server.base_url
+    );
+    let start_resp = server
+        .client
+        .post(start_url)
+        .json(&json!({ "label": "Gemini OAuth" }))
+        .send()
+        .await
+        .expect("start gemini login request");
+    assert_eq!(start_resp.status(), StatusCode::OK);
+    let start_body: GeminiLoginStartResponse = start_resp.json().await.expect("start body");
+    assert!(!start_body.login_id.is_empty());
+    assert!(start_body.auth_url.is_none());
+
+    let status = poll_gemini_login_status(&server, &start_body.login_id).await;
+    assert_eq!(status.status, "success");
+    assert!(status.account_id.is_some());
+    assert!(status.error.is_none());
+    assert!(status.auth_url.as_deref().is_some());
+
+    let accounts_url = format!("{}/api/providers/gemini/accounts", server.base_url);
+    let accounts_resp = server
+        .client
+        .get(accounts_url)
+        .send()
+        .await
+        .expect("gemini accounts request");
+    assert_eq!(accounts_resp.status(), StatusCode::OK);
+    let accounts: SubscriptionAccountsResponse = accounts_resp.json().await.expect("accounts body");
+    assert_eq!(accounts.accounts.len(), 1);
+    assert_eq!(accounts.active_account_id, status.account_id);
+    assert_eq!(accounts.accounts[0].label.as_deref(), Some("Gemini OAuth"));
+}
+
+#[tokio::test]
+async fn gemini_login_start_and_status_failure_reports_error() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let providers = providers_with_gemini_adapter(Arc::new(GeminiLoginTestAdapter::failure(
+        "gemini auth failed",
+    )));
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        providers,
+        "http://127.0.0.1:0",
+    );
+    let server = common::spawn_http_server(common::router(state)).await;
+
+    let start_url = format!(
+        "{}/api/providers/gemini/accounts/login/start",
+        server.base_url
+    );
+    let start_resp = server
+        .client
+        .post(start_url)
+        .json(&json!({}))
+        .send()
+        .await
+        .expect("start gemini login request");
+    assert_eq!(start_resp.status(), StatusCode::OK);
+    let start_body: GeminiLoginStartResponse = start_resp.json().await.expect("start body");
+
+    let status = poll_gemini_login_status(&server, &start_body.login_id).await;
+    assert_eq!(status.status, "failed");
+    assert!(status.account_id.is_none());
+    assert!(status
+        .error
+        .unwrap_or_default()
+        .contains("gemini auth failed"));
+
+    let accounts_url = format!("{}/api/providers/gemini/accounts", server.base_url);
+    let accounts_resp = server
+        .client
+        .get(accounts_url)
+        .send()
+        .await
+        .expect("gemini accounts request");
+    assert_eq!(accounts_resp.status(), StatusCode::OK);
+    let accounts: SubscriptionAccountsResponse = accounts_resp.json().await.expect("accounts body");
+    assert!(accounts.accounts.is_empty());
+    assert!(accounts.active_account_id.is_none());
 }
 
 #[tokio::test]

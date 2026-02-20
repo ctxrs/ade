@@ -124,9 +124,17 @@ export function HarnessAuthenticationSection({
       ? false
       : harnessAuthModal.provider_id === "cursor"
         || supportsHarnessEndpointConfig(harnessAuthModal.provider_id);
-  const modalApiKeyLabel = harnessAuthModal?.provider_id === "kiro" ? "Auth token JSON" : "API key";
+  const modalApiKeyLabel = harnessAuthModal?.provider_id === "kiro"
+    ? "Auth token JSON"
+    : harnessAuthModal?.provider_id === "gemini"
+      ? harnessAuthModal.gemini_endpoint_auth_type === "vertex_ai"
+        ? "Google API key"
+        : "Gemini API key"
+      : "API key";
   const modalApiKeyPlaceholder = harnessAuthModal?.provider_id === "kiro"
     ? '{"token":"..."}'
+    : harnessAuthModal?.provider_id === "gemini"
+      ? "AIza..."
     : harnessAuthModal?.provider_id === "rovo"
       ? "Atlassian API token"
       : harnessAuthModal?.provider_id === "auggie"
@@ -578,7 +586,7 @@ export function HarnessAuthenticationSection({
                     : harnessAuthModal.provider_id === "claude-crp"
                       ? "Start browser sign-in to generate and capture a managed Claude setup token automatically. Optional fallback: paste an existing token."
                       : harnessAuthModal.provider_id === "gemini"
-                        ? "Paste Gemini OAuth credentials JSON (from oauth_creds.json) for a managed subscription account."
+                        ? "Sign in with Google to capture managed Gemini OAuth credentials automatically. Optional fallback: paste oauth_creds.json."
                         : harnessAuthModal.provider_id === "kimi"
                           ? "Paste Kimi credentials JSON for a managed Kimi share directory."
                           : harnessAuthModal.provider_id === "copilot"
@@ -615,6 +623,9 @@ export function HarnessAuthenticationSection({
                 ) : null}
                 {harnessAuthModal.provider_id === "gemini" ? (
                   <>
+                    <div className="settings-row-desc">
+                      Leave JSON fields blank to run guided browser sign-in.
+                    </div>
                     <label className="settings-harness-modal-label">
                       Label (optional)
                       <input
@@ -635,7 +646,7 @@ export function HarnessAuthenticationSection({
                       />
                     </label>
                     <label className="settings-harness-modal-label">
-                      OAuth Credentials JSON
+                      OAuth Credentials JSON (fallback)
                       <textarea
                         className="settings-control settings-control-wide"
                         value={harnessAuthModal.subscription_oauth_creds_json}
@@ -812,9 +823,13 @@ export function HarnessAuthenticationSection({
                       ? "Starting..."
                       : harnessAuthModal.provider_id === "codex"
                         || harnessAuthModal.provider_id === "cursor"
+                        || (harnessAuthModal.provider_id === "gemini"
+                          && harnessAuthModal.subscription_oauth_creds_json.trim().length === 0)
                         || (harnessAuthModal.provider_id === "claude-crp"
                           && harnessAuthModal.subscription_token.trim().length === 0)
-                        ? "Start sign-in"
+                        ? harnessAuthModal.provider_id === "gemini"
+                          ? "Sign in with Google"
+                          : "Start sign-in"
                         : "Save subscription"}
                   </button>
                 </div>
@@ -843,6 +858,29 @@ export function HarnessAuthenticationSection({
                             {preset.label}
                           </SelectItem>
                         ))}
+                      </SelectContent>
+                    </Select>
+                  </label>
+                ) : null}
+                {harnessAuthModal.provider_id === "gemini" ? (
+                  <label className="settings-harness-modal-label">
+                    Gemini auth mode
+                    <Select
+                      value={harnessAuthModal.gemini_endpoint_auth_type}
+                      onValueChange={(nextAuthType) => {
+                        patchHarnessAuthModal({
+                          gemini_endpoint_auth_type: nextAuthType === "vertex_ai"
+                            ? "vertex_ai"
+                            : "gemini_api_key",
+                        });
+                      }}
+                    >
+                      <SelectTrigger className="tw-min-w-[10rem]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="tw-z-[1101]">
+                        <SelectItem value="gemini_api_key">Gemini API Key</SelectItem>
+                        <SelectItem value="vertex_ai">Vertex AI</SelectItem>
                       </SelectContent>
                     </Select>
                   </label>
