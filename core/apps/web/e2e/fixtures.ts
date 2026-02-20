@@ -11,6 +11,29 @@ type E2EWindow = Window & {
 
 const test = base.extend({
   context: async ({ context }, use) => {
+    await context.route("**/api/workspaces/*/providers/fake/options", async (route) => {
+      if (route.request().method() !== "GET") {
+        await route.continue();
+        return;
+      }
+      const url = new URL(route.request().url());
+      const match = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/providers\/fake\/options$/);
+      const workspaceId = match ? decodeURIComponent(match[1]) : "";
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          provider_id: "fake",
+          workspace_id: workspaceId,
+          supports_load: false,
+          auth_required: false,
+          has_active_auth: true,
+          auth_mode: "subscription",
+          probed_at: new Date().toISOString(),
+        }),
+      });
+    });
+
     await context.addInitScript((token: string) => {
       const wsUrls: string[] = [];
       const OriginalWebSocket = window.WebSocket;

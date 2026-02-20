@@ -2,6 +2,7 @@ import { test, expect } from "./fixtures";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 import { clearDiagnostics, expectNoUnexpectedDiagnostics, getDiagnostics } from "./utils/diagnostics";
 import { expectWsPathOnCanonicalOrigin } from "./utils/wsUrls";
+import { selectHarnessBySearch } from "./utils/harnessEndpointAuth";
 
 const readId = (value: unknown): string => (typeof value === "string" ? value : "");
 const asRecord = (value: unknown): Record<string, unknown> =>
@@ -89,16 +90,14 @@ test("workbench: snapshot+stream invariant keeps active sessions head-free", asy
     .toBe(true);
   await clearDiagnostics(page);
 
-  await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
-  await page.locator(".wb-harness-menu").getByLabel("Search agents").fill("fake");
-  await page.locator(".wb-harness-menu").getByRole("button", { name: /fake/i }).click();
+  await selectHarnessBySearch(page, "fake", /fake/i);
 
   const cutoff = Date.now();
   const newPrompt = `invariant-new-task-${Date.now()}`;
-  const newComposer = page.locator(".wb-new-composer-stack textarea.wb-composer-textarea");
+  const newComposer = page.locator("textarea.wb-composer-textarea").first();
   await expect(newComposer).toBeVisible({ timeout: 20000 });
   await newComposer.fill(newPrompt);
-  await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
+  await page.getByRole("button", { name: "Send" }).click();
   await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea")).toBeVisible({
     timeout: 20000,
   });

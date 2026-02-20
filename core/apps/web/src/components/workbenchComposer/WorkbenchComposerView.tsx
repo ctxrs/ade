@@ -780,8 +780,8 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                 }}
                 aria-haspopup={variant === "newSession" ? "menu" : undefined}
                 aria-expanded={openMenu === "harness"}
-                aria-label={harnessControl.label || "Agent"}
-                title="Agent"
+                aria-label={harnessControl.label}
+                title="Agents"
               >
                 {harnessControl.logoSrc ? (
                   <img
@@ -801,8 +801,8 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
               <div
                 className="wb-harness-display"
                 role="img"
-                aria-label={harnessControl.label || "Agent"}
-                title="Agent"
+                aria-label={harnessControl.label}
+                title="Agents"
               >
                 {harnessControl.logoSrc ? (
                   <img

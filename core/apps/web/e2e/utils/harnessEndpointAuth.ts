@@ -8,7 +8,7 @@ export type HarnessAuthConfigResult =
 const normalizeText = (value: string | null | undefined): string => (value ?? "").replace(/\s+/g, " ").trim();
 
 const harnessTriggerLabel = (page: Page) =>
-  page.locator(".wb-new-composer-stack button[title='Harness'] .wb-switcher-label").first();
+  page.locator('button[title="Agents"] .wb-switcher-label').first();
 
 const isHarnessLabelSelected = (labelText: string, entry: EndpointHarnessMatrixEntry): boolean => {
   const selected = labelText.toLowerCase();
@@ -16,7 +16,7 @@ const isHarnessLabelSelected = (labelText: string, entry: EndpointHarnessMatrixE
 };
 
 async function openHarnessMenu(page: Page) {
-  const harnessButton = page.locator(".wb-new-composer-stack").getByTitle("Harness");
+  const harnessButton = page.locator('button[title="Agents"]').first();
   await expect(harnessButton).toBeVisible({ timeout: 20_000 });
   const menu = page.locator(".wb-harness-menu");
   if (!(await menu.isVisible().catch(() => false))) {
@@ -40,6 +40,12 @@ async function resolveHarnessMenuButton(
     .filter({ hasText: entry.providerId })
     .first();
   return byProviderId;
+}
+
+async function waitForHarnessRowReady(rowButton: Locator, timeout: number) {
+  await expect(rowButton).toBeVisible({ timeout });
+  await expect(rowButton).toBeEnabled({ timeout });
+  await expect(rowButton.locator(".wb-harness-auth-dot-active")).toBeVisible({ timeout });
 }
 
 async function chooseOpenRouterPreset(page: Page, modal: Locator) {
@@ -152,6 +158,7 @@ export async function selectHarnessForComposer(
   if ((await rowButton.count()) === 0) {
     return { ok: false, detail: "harness menu row not found" };
   }
+  await waitForHarnessRowReady(rowButton, 20_000);
   await rowButton.click();
 
   await expect
@@ -166,4 +173,44 @@ export async function selectHarnessForComposer(
 
   const selected = ((await triggerLabel.textContent()) ?? "").trim();
   return { ok: true, detail: `selected harness '${selected}'` };
+}
+
+export async function selectHarnessBySearch(
+  page: Page,
+  searchTerm: string,
+  optionPattern: RegExp,
+): Promise<void> {
+  const triggerLabel = harnessTriggerLabel(page);
+  const isSelected = async () => optionPattern.test(((await triggerLabel.textContent()) ?? "").trim());
+  if (await isSelected()) return;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const menu = await openHarnessMenu(page);
+    await menu.getByLabel("Search agents").fill(searchTerm);
+
+    const rowButton = menu
+      .locator(".wb-harness-row .wb-harness-row-main")
+      .filter({ hasText: optionPattern })
+      .first();
+    await expect(rowButton).toBeVisible({ timeout: 20_000 });
+    await expect(rowButton).toBeEnabled({ timeout: 20_000 });
+    await rowButton.click();
+
+    const modal = page.locator(".settings-harness-modal");
+    const modalVisible = await modal.isVisible().catch(() => false);
+    if (modalVisible) {
+      const subscriptionButton = modal.getByRole("button", { name: "Subscription" }).first();
+      if ((await subscriptionButton.count()) > 0 && (await subscriptionButton.isEnabled().catch(() => false))) {
+        await subscriptionButton.click();
+        await expect(modal).toBeHidden({ timeout: 10_000 });
+      } else {
+        throw new Error(`harness auth modal blocked '${searchTerm}' selection`);
+      }
+    }
+
+    if (await isSelected()) return;
+    await page.waitForTimeout(300);
+  }
+
+  throw new Error(`failed to select harness matching ${optionPattern}`);
 }

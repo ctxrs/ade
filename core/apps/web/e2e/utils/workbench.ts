@@ -15,7 +15,6 @@ const readId = (v: unknown): string => (typeof v === "string" ? v : "");
 
 type WorkspaceSummary = {
   id?: unknown;
-  root_path?: unknown;
 };
 
 const normalizePath = (value: string): string => {
@@ -30,47 +29,24 @@ const normalizePath = (value: string): string => {
 export async function createWorkspaceAndOpenWorkbench(opts: CreateWorkspaceArgs): Promise<string> {
   const { page, request, repo, workspaceName, token } = opts;
   const repoPath = normalizePath(repo);
+  const headers = token ? { authorization: `Bearer ${token}` } : undefined;
+  const createResp = await request.post("/api/workspaces", {
+    headers,
+    data: {
+      root_path: repoPath,
+      name: workspaceName,
+    },
+  });
+  expect(createResp.ok(), `failed to create workspace for ${repoPath}: ${createResp.status()}`).toBeTruthy();
+  const created = (await createResp.json()) as WorkspaceSummary;
+  const workspaceId = readId(created.id);
+  expect(workspaceId).not.toBe("");
 
-  const url = token ? `/workspaces?token=${encodeURIComponent(token)}&desktop_ui=1` : "/workspaces";
-  await page.goto(url);
-  const rootPathField = page.getByLabel("Root path");
-  if (!(await rootPathField.isVisible().catch(() => false))) {
-    const newWorkspaceButton = page.getByRole("button", { name: "New Workspace" });
-    if (await newWorkspaceButton.isVisible().catch(() => false)) {
-      await newWorkspaceButton.click();
-    }
-  }
-  await expect(rootPathField).toBeVisible({ timeout: 20_000 });
-  await page.getByLabel("Root path").fill(repo);
-  await page.getByLabel("Name (optional)").fill(workspaceName);
-  await page.getByRole("button", { name: "Add workspace" }).click();
-
-  let workspaceId = "";
-  await expect
-    .poll(
-      async () => {
-        const workspacesResp = await request.get("/api/workspaces", {
-          headers: token ? { authorization: `Bearer ${token}` } : undefined,
-        });
-        if (!workspacesResp.ok()) return "";
-        const workspaces = (await workspacesResp.json()) as WorkspaceSummary[];
-        const ws = workspaces.find(
-          (w) => normalizePath(String(w?.root_path ?? "")) === repoPath,
-        );
-        workspaceId = readId(ws?.id);
-        return workspaceId;
-      },
-      { timeout: 20_000 },
-    )
-    .not.toBe("");
-
-  const workspaceLink = page
-    .getByRole("listitem")
-    .filter({ hasText: repo })
-    .getByRole("link", { name: workspaceName });
-  await expect(workspaceLink).toBeVisible({ timeout: 20_000 });
-  await workspaceLink.click();
-  await expect(page).toHaveURL(new RegExp(`/workspaces/${workspaceId}$`), { timeout: 20_000 });
+  const query = new URLSearchParams();
+  if (token) query.set("token", token);
+  const workspaceUrl = query.size > 0 ? `/workspaces/${workspaceId}?${query.toString()}` : `/workspaces/${workspaceId}`;
+  await page.goto(workspaceUrl, { waitUntil: "domcontentloaded" });
+  await expect(page).toHaveURL(new RegExp(`/workspaces/${workspaceId}(\\?.*)?$`), { timeout: 20_000 });
   await expect(page.locator(".wb-main")).toBeVisible({ timeout: 20_000 });
 
   return workspaceId;

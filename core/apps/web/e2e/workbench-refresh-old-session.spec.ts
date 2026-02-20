@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import path from "path";
 import { execFileSync, execSync } from "child_process";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
+import { selectHarnessBySearch } from "./utils/harnessEndpointAuth";
 
 const asRecord = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -33,16 +34,14 @@ test("workbench: refresh keeps selection, even for older sessions", async ({ pag
   });
 
   // Choose Fake harness so the test doesn't depend on external agents.
-  await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
-  await page.locator(".wb-harness-menu").getByLabel("Search agents").fill("fake");
-  await page.locator(".wb-harness-menu").getByRole("button", { name: /fake/i }).click();
+  await selectHarnessBySearch(page, "fake", /fake/i);
   await expect(
-    page.locator(".wb-new-composer-stack button[title=\"Harness\"] .wb-switcher-label"),
+    page.locator('button[title="Agents"] .wb-switcher-label').first(),
   ).toHaveText(/fake/i, { timeout: 20000 });
 
-  await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill("hello refresh");
-  await expect(page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]")).toBeEnabled({ timeout: 20000 });
-  await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
+  await page.locator("textarea.wb-composer-textarea").first().fill("hello refresh");
+  await expect(page.getByRole("button", { name: "Send" })).toBeEnabled({ timeout: 20000 });
+  await page.getByRole("button", { name: "Send" }).click();
 
   const sessionComposer = page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea");
   try {

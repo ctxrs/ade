@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
+import { selectHarnessBySearch } from "./utils/harnessEndpointAuth";
 
 type LayoutShiftSample = {
   startTime: number;
@@ -40,9 +41,7 @@ test("workbench: optimistic new task message skips queued UI", async ({ page }) 
   await createWorkspaceAndOpenWorkbench({ page, request: page.request, repo, workspaceName });
 
   // Choose Fake harness so the test doesn't depend on external agents.
-  await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
-  await page.locator(".wb-harness-menu").getByLabel("Search agents").fill("fake");
-  await page.locator(".wb-harness-menu").getByRole("button", { name: /fake/i }).click();
+  await selectHarnessBySearch(page, "fake", /fake/i);
 
   // Stall the first session create request so we can assert the optimistic turn renders
   // immediately (i.e. without waiting on the daemon response).
@@ -60,7 +59,7 @@ test("workbench: optimistic new task message skips queued UI", async ({ page }) 
   });
 
   const prompt = `optimistic-${Date.now()}`;
-  const composer = page.locator(".wb-new-composer-stack textarea.wb-composer-textarea");
+  const composer = page.locator("textarea.wb-composer-textarea").first();
   await expect(composer).toBeVisible({ timeout: 20000 });
   await composer.fill(prompt);
 
@@ -131,7 +130,7 @@ test("workbench: optimistic new task message skips queued UI", async ({ page }) 
 
     requestAnimationFrame(tick);
   }, prompt);
-  await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
+  await page.getByRole("button", { name: "Send" }).click();
 
   const header = page
     .locator('.wb-session-slot[aria-hidden="false"] .wb-turn-header-content')

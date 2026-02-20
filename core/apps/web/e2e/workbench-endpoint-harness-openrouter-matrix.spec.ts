@@ -288,7 +288,7 @@ async function waitForTerminalState(opts: {
 }
 
 async function ensureNewTaskComposerVisible(page: Page): Promise<void> {
-  const composer = page.locator(".wb-new-composer-stack");
+  const composer = page.locator("textarea.wb-composer-textarea").first();
   if (await composer.isVisible().catch(() => false)) return;
 
   const newTaskButton = page.getByRole("button", { name: "New task" }).first();
@@ -482,10 +482,10 @@ test("workbench: endpoint harness OpenRouter matrix first pass", async ({ page, 
       const prompt = `${promptMarker}: reply with exactly the word pong`;
       const beforeTaskIds = new Set((await readActiveTaskSummaries(request, workspaceId)).map((task) => task.taskId));
 
-      const newComposer = page.locator(".wb-new-composer-stack");
-      await expect(newComposer.locator("textarea.wb-composer-textarea")).toBeVisible({ timeout: 20_000 });
-      await newComposer.locator("textarea.wb-composer-textarea").fill(prompt);
-      const sendButton = newComposer.locator('button[aria-label="Send"]');
+      const newComposer = page.locator("textarea.wb-composer-textarea").first();
+      await expect(newComposer).toBeVisible({ timeout: 20_000 });
+      await newComposer.fill(prompt);
+      const sendButton = page.getByRole("button", { name: "Send" });
       await expect(sendButton).toBeEnabled({ timeout: 10_000 });
       await sendButton.click();
 

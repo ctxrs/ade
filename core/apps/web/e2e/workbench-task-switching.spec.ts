@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
+import { selectHarnessBySearch } from "./utils/harnessEndpointAuth";
 
 test("workbench: task switching never desyncs selection (no URL state)", async ({ page }) => {
   const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-"));
@@ -19,18 +20,16 @@ test("workbench: task switching never desyncs selection (no URL state)", async (
   const workspaceId = await createWorkspaceAndOpenWorkbench({ page, request: page.request, repo, workspaceName });
 
   // Choose Fake harness so the test doesn't depend on external agents.
-  await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
-  await page.locator(".wb-harness-menu").getByLabel("Search agents").fill("fake");
-  await page.locator(".wb-harness-menu").getByRole("button", { name: /fake/i }).click();
-  await expect(page.locator(".wb-new-composer-stack button[title=\"Harness\"] .wb-switcher-label")).toHaveText(/fake/i, {
+  await selectHarnessBySearch(page, "fake", /fake/i);
+  await expect(page.locator('button[title="Agents"] .wb-switcher-label').first()).toHaveText(/fake/i, {
     timeout: 20000,
   });
 
   const activeThread = page.locator('.wb-session-slot[aria-hidden="false"] .wb-thread-scroller');
 
   const msg1 = `task one marker ${Date.now()}`;
-  await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill(msg1);
-  await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
+  await page.locator("textarea.wb-composer-textarea").first().fill(msg1);
+  await page.getByRole("button", { name: "Send" }).click();
   await expect(activeThread).toContainText(msg1, { timeout: 20000 });
   const url1 = new URL(page.url());
   expect(url1.searchParams.get("task")).toBeNull();
@@ -39,7 +38,7 @@ test("workbench: task switching never desyncs selection (no URL state)", async (
 
   // New Task must clear selection and stay cleared (no snap-back).
   await page.getByRole("button", { name: "New Task" }).click();
-  await expect(page.locator(".wb-new-composer-stack textarea.wb-composer-textarea")).toBeVisible({ timeout: 20000 });
+  await expect(page.locator("textarea.wb-composer-textarea").first()).toBeVisible({ timeout: 20000 });
   await page.waitForTimeout(500);
   const urlAfterNew = new URL(page.url());
   expect(urlAfterNew.searchParams.get("task")).toBeNull();
@@ -47,8 +46,8 @@ test("workbench: task switching never desyncs selection (no URL state)", async (
   expect(urlAfterNew.searchParams.get("session")).toBeNull();
 
   const msg2 = `task two marker ${Date.now()}`;
-  await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill(msg2);
-  await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
+  await page.locator("textarea.wb-composer-textarea").first().fill(msg2);
+  await page.getByRole("button", { name: "Send" }).click();
   await expect(activeThread).toContainText(msg2, { timeout: 20000 });
   const url2 = new URL(page.url());
   expect(url2.searchParams.get("task")).toBeNull();
