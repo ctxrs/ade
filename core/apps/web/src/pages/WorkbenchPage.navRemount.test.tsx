@@ -111,6 +111,9 @@ const focusTaskSpy = vi.fn(
   },
 );
 const applyTaskUpdateSpy = vi.fn();
+const { trackWorkbenchPanelToggledMock } = vi.hoisted(() => ({
+  trackWorkbenchPanelToggledMock: vi.fn(),
+}));
 
 const createDeferred = <T,>() => {
   let resolve!: (value: T) => void;
@@ -178,11 +181,21 @@ vi.mock("../api/client", () => ({
   verifyProviderForWorkspace: vi.fn(async () => ({})),
 }));
 
+vi.mock("../utils/analytics", async () => {
+  const actual = await vi.importActual<typeof import("../utils/analytics")>("../utils/analytics");
+  return {
+    ...actual,
+    trackWorkbenchPanelToggled: trackWorkbenchPanelToggledMock,
+  };
+});
+
 vi.mock("../state/sessionSupervisor", () => ({
   useSessionSupervisor: () => ({
     bindWorkspaceActiveSnapshotStore: vi.fn(),
     setActiveTaskSessionIds: vi.fn(),
     setWarmSessionIds: vi.fn(),
+    setDiff: vi.fn(),
+    loadArtifacts: vi.fn(),
   }),
   useSessionCacheSnapshot: () => sessionSnap,
   useSessionEntry: () => null,
@@ -283,6 +296,7 @@ beforeEach(() => {
   activeSessionId = sessionId;
   sessionSnap = buildSessionSnap();
   workspaceSnapshotSnap = buildWorkspaceSnapshotSnap();
+  trackWorkbenchPanelToggledMock.mockReset();
 });
 
 afterEach(() => {
@@ -485,5 +499,29 @@ describe("WorkbenchPage title generation install banner", () => {
 
     expect(await screen.findByText("Session titling model download in progress.")).toBeInTheDocument();
     expect(await screen.findByText("Downloading… 50%")).toBeInTheDocument();
+  });
+});
+
+describe("WorkbenchPage panel analytics", () => {
+  it("tracks terminal panel toggles from header button", async () => {
+    const ui = (
+      <VirtuosoMockContext.Provider value={{ itemHeight: 40, viewportHeight: 400 }}>
+        <MemoryRouter initialEntries={[`/workspaces/${workspaceId}`]}>
+          <Routes>
+            <Route path="/workspaces/:id" element={<WorkbenchPage />} />
+          </Routes>
+        </MemoryRouter>
+      </VirtuosoMockContext.Provider>
+    );
+
+    render(ui);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Toggle terminal panel" }));
+
+    expect(trackWorkbenchPanelToggledMock).toHaveBeenCalledWith({
+      panelKey: "terminal",
+      open: true,
+      source: "header_button",
+    });
   });
 });

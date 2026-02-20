@@ -601,7 +601,7 @@ describe("WorkbenchComposer textarea sizing", () => {
     };
 
     render(<NewTaskHarness />);
-    expect(screen.getByRole("button", { name: "Select harness" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Select agent" })).toBeInTheDocument();
   });
 
   it("requests auth modal when selecting an unauthenticated harness", async () => {

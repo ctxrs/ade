@@ -28,6 +28,20 @@ import {
 import { desktopConnectLocal, desktopListSshHosts, desktopTestSsh, isDesktopApp } from "../utils/desktop";
 import { upsertLauncherRecent } from "../state/launcherRecentsStore";
 
+const {
+  trackWizardStartedMock,
+  trackWizardStepViewedMock,
+  trackWizardStepCompletedMock,
+  trackWizardCompletedMock,
+  trackWizardAbandonedMock,
+} = vi.hoisted(() => ({
+  trackWizardStartedMock: vi.fn(),
+  trackWizardStepViewedMock: vi.fn(),
+  trackWizardStepCompletedMock: vi.fn(),
+  trackWizardCompletedMock: vi.fn(),
+  trackWizardAbandonedMock: vi.fn(),
+}));
+
 vi.mock("../api/client", async () => {
   const actual = await vi.importActual<typeof import("../api/client")>("../api/client");
   return {
@@ -54,6 +68,18 @@ vi.mock("../api/client", async () => {
     updateWorkspaceExecutionConfig: vi.fn(),
     updateWorkspaceMergeQueueConfig: vi.fn(),
     updateWorkspaceWorktreeBootstrapConfig: vi.fn(),
+  };
+});
+
+vi.mock("../utils/analytics", async () => {
+  const actual = await vi.importActual<typeof import("../utils/analytics")>("../utils/analytics");
+  return {
+    ...actual,
+    trackWizardStarted: trackWizardStartedMock,
+    trackWizardStepViewed: trackWizardStepViewedMock,
+    trackWizardStepCompleted: trackWizardStepCompletedMock,
+    trackWizardCompleted: trackWizardCompletedMock,
+    trackWizardAbandoned: trackWizardAbandonedMock,
   };
 });
 
@@ -98,6 +124,11 @@ const selectLocalAndContinue = async () => {
 describe("WorkspaceSetupPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    trackWizardStartedMock.mockReset();
+    trackWizardStepViewedMock.mockReset();
+    trackWizardStepCompletedMock.mockReset();
+    trackWizardCompletedMock.mockReset();
+    trackWizardAbandonedMock.mockReset();
     vi.mocked(buildExecutionLaunchWsUrl).mockReturnValue("ws://127.0.0.1:1/launch");
     vi.mocked(isDesktopApp).mockReturnValue(false);
     vi.mocked(listProviderAuthImportCandidates).mockResolvedValue({ candidates: [] });
@@ -183,6 +214,27 @@ describe("WorkspaceSetupPage", () => {
     await waitFor(() => {
       expect(wizardStepKey()).toBe("container");
     });
+  });
+
+  it("tracks wizard start, step viewed, and abandonment on unmount", async () => {
+    const view = renderPage();
+    await screen.findByTestId("workspace-setup");
+
+    expect(trackWizardStartedMock).toHaveBeenCalledWith({ wizardKey: "workspace_setup" });
+    expect(trackWizardStepViewedMock).toHaveBeenCalledWith({
+      wizardKey: "workspace_setup",
+      stepKey: "location",
+      stepIndex: 0,
+    });
+
+    view.unmount();
+
+    expect(trackWizardAbandonedMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        wizardKey: "workspace_setup",
+        lastStepKey: "location",
+      }),
+    );
   });
 
   it("shows desktop-required error for remote verification when not in desktop app", async () => {
@@ -987,8 +1039,12 @@ describe("WorkspaceSetupPage", () => {
     fireEvent.click(screen.getByTestId("wizard-create"));
 
     await waitFor(() => {
-      expect(createWorkspace).toHaveBeenCalledWith("/tmp/new-repo-web", "new-repo-web", "local");
+      expect(createWorkspace).toHaveBeenCalledWith("/tmp/new-repo-web", "new-repo-web", "local", "wizard");
       expect(desktopConnectLocal).not.toHaveBeenCalled();
+      expect(trackWizardCompletedMock).toHaveBeenCalledWith({
+        wizardKey: "workspace_setup",
+        workspaceKind: "local",
+      });
       expect(upsertLauncherRecent).toHaveBeenCalledWith(expect.objectContaining({
         kind: "local",
         root_path: "/tmp/new-repo-web",

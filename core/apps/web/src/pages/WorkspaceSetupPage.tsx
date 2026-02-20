@@ -67,6 +67,13 @@ import {
   type SessionTitlingMode,
 } from "./WorkspaceSetupPage.logic";
 import {
+  trackWizardAbandoned,
+  trackWizardCompleted,
+  trackWizardStarted,
+  trackWizardStepCompleted,
+  trackWizardStepViewed,
+} from "../utils/analytics";
+import {
   formatLaunchElapsed,
   formatLaunchTime,
   launchErrorFromSnapshot,
@@ -208,6 +215,9 @@ export default function WorkspaceSetupPage() {
   const locationAdvanceRunRef = useRef<FlowRunToken | null>(null);
   const currentStepKeyRef = useRef<string>("location");
   const previousStepIndexRef = useRef(0);
+  const wizardStartedRef = useRef(false);
+  const wizardCompletedRef = useRef(false);
+  const wizardViewedStepKeyRef = useRef<string | null>(null);
   const titlingProbePromiseRef = useRef<Promise<boolean | null> | null>(null);
   const titlingProbePromiseTargetKeyRef = useRef<string | null>(null);
   const remoteStatusRef = useRef(remoteStatus);
@@ -383,6 +393,36 @@ export default function WorkspaceSetupPage() {
   useEffect(() => {
     previousStepIndexRef.current = stepIndex;
   }, [stepIndex]);
+  useEffect(() => {
+    wizardStartedRef.current = true;
+    trackWizardStarted({ wizardKey: "workspace_setup" });
+    return () => {
+      if (wizardCompletedRef.current) return;
+      trackWizardAbandoned({
+        wizardKey: "workspace_setup",
+        lastStepKey: currentStepKeyRef.current,
+        lastStepIndex: previousStepIndexRef.current,
+      });
+    };
+  }, []);
+  useEffect(() => {
+    if (!wizardStartedRef.current) return;
+    const viewedKey = `${step.key}:${stepIndex}`;
+    if (wizardViewedStepKeyRef.current === viewedKey) return;
+    wizardViewedStepKeyRef.current = viewedKey;
+    trackWizardStepViewed({
+      wizardKey: "workspace_setup",
+      stepKey: step.key,
+      stepIndex,
+    });
+  }, [step.key, stepIndex]);
+  const trackCurrentWizardStepCompleted = useCallback(() => {
+    trackWizardStepCompleted({
+      wizardKey: "workspace_setup",
+      stepKey: step.key,
+      stepIndex,
+    });
+  }, [step.key, stepIndex]);
   const requiresSelection = Boolean(step.options?.length);
   const hasSelection = Boolean(selections[step.key]);
   const mergeQueueSkipped = selections["merge-queue"] === "skip";
@@ -802,6 +842,7 @@ export default function WorkspaceSetupPage() {
     setTitlingLocalInstallBusy(true);
     setTitlingStatusError(null);
     setTitlingPersistError(null);
+    trackCurrentWizardStepCompleted();
     goRelativeStep(1);
     void (async () => {
       try {
@@ -969,6 +1010,7 @@ export default function WorkspaceSetupPage() {
       return;
     }
     if (shouldAutoAdvance(stepKey, optionId)) {
+      trackCurrentWizardStepCompleted();
       goRelativeStep(1);
     }
   };
@@ -1129,6 +1171,11 @@ export default function WorkspaceSetupPage() {
       if (!isCurrentFlowRunToken(locationAdvanceRunRef.current, run)) return;
       if (selectedDaemonTargetKeyRef.current !== "local") return;
       if (currentStepKeyRef.current !== "location") return;
+      trackWizardStepCompleted({
+        wizardKey: "workspace_setup",
+        stepKey: "location",
+        stepIndex: 0,
+      });
       goToStepKey(nextStepAfterLocation(candidates.length, titlingRequired));
     })();
   }, [
@@ -1507,6 +1554,7 @@ export default function WorkspaceSetupPage() {
     }
     await ensureTitlingProbeForCurrentTarget();
     if (currentStepKeyRef.current !== "auth-import") return;
+    trackCurrentWizardStepCompleted();
     goRelativeStep(1);
   };
 
@@ -1592,6 +1640,7 @@ export default function WorkspaceSetupPage() {
         titlingRequired = required;
       }
       if (currentStepKeyRef.current !== "location") return;
+      trackCurrentWizardStepCompleted();
       goToStepKey(nextStepAfterLocation(candidateCount, titlingRequired));
       return;
     }
@@ -1602,6 +1651,7 @@ export default function WorkspaceSetupPage() {
     if (step.key === "session-titling") {
       setTitlingPersistError(null);
       if (titlingMode === "skip") {
+        trackCurrentWizardStepCompleted();
         goRelativeStep(1);
         return;
       }
@@ -1615,6 +1665,7 @@ export default function WorkspaceSetupPage() {
       }
       const persisted = await ensureTitlingPersistedForCurrentTarget();
       if (!persisted) return;
+      trackCurrentWizardStepCompleted();
       goRelativeStep(1);
       return;
     }
@@ -1622,9 +1673,11 @@ export default function WorkspaceSetupPage() {
       setCreateError(null);
       const preflightOk = await preflightSourceStep();
       if (!preflightOk) return;
+      trackCurrentWizardStepCompleted();
       goRelativeStep(1);
       return;
     }
+    trackCurrentWizardStepCompleted();
     goRelativeStep(1);
   };
 
@@ -1921,7 +1974,7 @@ export default function WorkspaceSetupPage() {
       // 3. Register the workspace.
       if (!wsId) {
         const workspaceKind = selections.location === "remote" ? "remote" : "local";
-        const created = await createWorkspace(rootPath, name, workspaceKind);
+        const created = await createWorkspace(rootPath, name, workspaceKind, "wizard");
         wsId = idToString((created as any).id);
       }
 
@@ -1995,6 +2048,16 @@ export default function WorkspaceSetupPage() {
       } catch {
         // best-effort only; do not block workspace creation if recents persistence fails
       }
+      trackCurrentWizardStepCompleted();
+      wizardCompletedRef.current = true;
+      trackWizardCompleted({
+        wizardKey: "workspace_setup",
+        workspaceKind: selections.location === "remote"
+          ? "remote"
+          : selections.location === "local"
+            ? "local"
+            : "unknown",
+      });
       navigate(`/workspaces/${wsId}`, { replace: true });
     } catch (e: any) {
       const msg = e?.message ?? String(e);
@@ -2581,6 +2644,7 @@ export default function WorkspaceSetupPage() {
                       onClick={() => {
                         invalidateTitlingPersisted();
                         setTitlingMode("skip");
+                        trackCurrentWizardStepCompleted();
                         goRelativeStep(1);
                       }}
                       disabled={titlingPersistBusy || titlingLocalInstallBusy}
@@ -2822,10 +2886,11 @@ export default function WorkspaceSetupPage() {
 	                      type="button"
 	                      className="wizard-skip wizard-skip--left wizard-skip--below"
 	                      data-testid="wizard-merge-skip"
-	                      onClick={() => {
+                      onClick={() => {
                         onSelect("merge-queue", "skip");
                         setMergeAdvancedOpen(false);
                         setPushOnSuccess(false);
+                        trackCurrentWizardStepCompleted();
                         goRelativeStep(1);
                       }}
                     >

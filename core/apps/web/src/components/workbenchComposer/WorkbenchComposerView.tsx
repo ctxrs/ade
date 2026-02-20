@@ -483,7 +483,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     const primary = ns.draftHarness ?? null;
     if (!primary) {
       return {
-        label: "Select harness",
+        label: "Select agent",
         logoSrc: "",
         invertInDark: false,
         invertInLight: false,
@@ -531,7 +531,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     variant === "newSession" ? (
       <div className="wb-menu wb-harness-menu" role="menu" ref={menuRef} style={menuStyle ?? undefined}>
         <div className="wb-menu-top">
-          <MenuTitleRow title="Harness" description={MENU_DESCRIPTIONS.harness} tooltipId="wb-menu-tooltip-harness" />
+          <MenuTitleRow title="Agents" description={MENU_DESCRIPTIONS.harness} tooltipId="wb-menu-tooltip-harness" />
           <input
             className="wb-menu-search"
             value={harnessSearch}
@@ -635,9 +635,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                         src={h.logoSrc}
                         alt=""
                       />
-                    ) : (
-                      <span className="wb-harness-logo-fallback" aria-hidden="true" />
-                    )}
+                    ) : null}
                     <span className="wb-harness-name">{label}</span>
                     <span className="wb-harness-status-lights">
                       <span
@@ -782,8 +780,8 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                 }}
                 aria-haspopup={variant === "newSession" ? "menu" : undefined}
                 aria-expanded={openMenu === "harness"}
-                aria-label={harnessControl.label || "Harness"}
-                title="Harness"
+                aria-label={harnessControl.label || "Agent"}
+                title="Agent"
               >
                 {harnessControl.logoSrc ? (
                   <img
@@ -795,9 +793,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                     src={harnessControl.logoSrc}
                     alt=""
                   />
-                ) : (
-                  <span className="wb-switcher-logo-fallback" />
-                )}
+                ) : null}
                 {harnessControl.label && <span className="wb-switcher-label">{harnessControl.label}</span>}
                 <ChevronDown size={14} />
               </button>
@@ -805,8 +801,8 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
               <div
                 className="wb-harness-display"
                 role="img"
-                aria-label={harnessControl.label || "Harness"}
-                title="Harness"
+                aria-label={harnessControl.label || "Agent"}
+                title="Agent"
               >
                 {harnessControl.logoSrc ? (
                   <img
@@ -818,9 +814,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                     src={harnessControl.logoSrc}
                     alt=""
                   />
-                ) : (
-                  <span className="wb-switcher-logo-fallback" />
-                )}
+                ) : null}
               </div>
             )}
             {variant === "newSession" && openMenu === "harness" && harnessMenu}

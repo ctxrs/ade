@@ -74,6 +74,7 @@ import { parseModelId } from "../utils/modelEffort";
 import { getLoadTestTelemetry } from "../utils/loadTestTelemetry";
 import { useDictationController } from "../utils/useDictationController";
 import { randomUuid } from "../utils/randomUuid";
+import { trackWorkbenchPanelToggled } from "../utils/analytics";
 import {
   WEB_MENU_COMMAND_EVENT,
   WEB_MENU_STATE_EVENT,
@@ -377,18 +378,32 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const [terminalHeight, setTerminalHeight] = useState(260);
   const [terminalResizing, setTerminalResizing] = useState(false);
   const [terminalOpenHydrated, setTerminalOpenHydrated] = useState(false);
+  const rightPaneModeRef = useRef<"diff" | "artifacts" | "sessions" | null>(rightPaneMode);
+  const terminalOpenRef = useRef<boolean>(terminalOpen);
   const diffOpen = rightPaneMode === "diff";
   const artifactsOpen = rightPaneMode === "artifacts";
   const sessionsOpen = rightPaneMode === "sessions";
 
-  const toggleTerminalPanel = useCallback(() => {
-    setTerminalOpen((open) => {
-      const next = !open;
-      if (next) {
-        terminalPanelRef.current?.setScope("workspace");
-      }
-      return next;
+  useEffect(() => {
+    rightPaneModeRef.current = rightPaneMode;
+  }, [rightPaneMode]);
+
+  useEffect(() => {
+    terminalOpenRef.current = terminalOpen;
+  }, [terminalOpen]);
+
+  const toggleTerminalPanel = useCallback((source: "header_button" | "menu_command" | "unknown" = "unknown") => {
+    const nextOpen = !terminalOpenRef.current;
+    terminalOpenRef.current = nextOpen;
+    setTerminalOpen(nextOpen);
+    trackWorkbenchPanelToggled({
+      panelKey: "terminal",
+      open: nextOpen,
+      source,
     });
+    if (nextOpen) {
+      terminalPanelRef.current?.setScope("workspace");
+    }
   }, []);
 
   useEffect(() => {
@@ -1861,20 +1876,41 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     ],
   );
 
-  const toggleDiffPane = useCallback(() => {
-    setRightPaneMode((mode) => (mode === "diff" ? null : "diff"));
+  const toggleDiffPane = useCallback((source: "header_button" | "menu_command" | "unknown" = "unknown") => {
+    const nextMode = rightPaneModeRef.current === "diff" ? null : "diff";
+    rightPaneModeRef.current = nextMode;
+    setRightPaneMode(nextMode);
+    trackWorkbenchPanelToggled({
+      panelKey: "diff",
+      open: nextMode === "diff",
+      source,
+    });
   }, []);
 
-  const toggleArtifactsPane = useCallback(() => {
+  const toggleArtifactsPane = useCallback((source: "header_button" | "menu_command" | "unknown" = "unknown") => {
     setArtifactsOpenSeeded(true);
     setArtifactsAutoOpenPending(false);
-    setRightPaneMode((mode) => (mode === "artifacts" ? null : "artifacts"));
+    const nextMode = rightPaneModeRef.current === "artifacts" ? null : "artifacts";
+    rightPaneModeRef.current = nextMode;
+    setRightPaneMode(nextMode);
+    trackWorkbenchPanelToggled({
+      panelKey: "artifacts",
+      open: nextMode === "artifacts",
+      source,
+    });
   }, []);
 
-  const toggleSessionsPane = useCallback(() => {
+  const toggleSessionsPane = useCallback((source: "header_button" | "menu_command" | "unknown" = "unknown") => {
     setArtifactsOpenSeeded(true);
     setArtifactsAutoOpenPending(false);
-    setRightPaneMode((mode) => (mode === "sessions" ? null : "sessions"));
+    const nextMode = rightPaneModeRef.current === "sessions" ? null : "sessions";
+    rightPaneModeRef.current = nextMode;
+    setRightPaneMode(nextMode);
+    trackWorkbenchPanelToggled({
+      panelKey: "sessions",
+      open: nextMode === "sessions",
+      source,
+    });
   }, []);
 
   const diffPaneScope = useMemo(() => {
@@ -2787,7 +2823,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "task-missing" });
             return;
           }
-          toggleDiffPane();
+          toggleDiffPane("menu_command");
           emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "toggle-diff-pane" });
           return;
         case "view.toggle-artifacts":
@@ -2795,19 +2831,19 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "task-or-session-missing" });
             return;
           }
-          toggleArtifactsPane();
+          toggleArtifactsPane("menu_command");
           emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "toggle-artifacts-pane" });
           return;
         case "view.toggle-sessions":
           if (webSessionsEnabled && activeTaskId && activeSessionId) {
-            toggleSessionsPane();
+            toggleSessionsPane("menu_command");
             emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "toggle-sessions-pane" });
             return;
           }
           emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "sessions-unavailable" });
           return;
         case "view.toggle-terminal":
-          toggleTerminalPanel();
+          toggleTerminalPanel("menu_command");
           emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "toggle-terminal" });
           return;
         case "task.new":
@@ -3289,9 +3325,9 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                   diffBadgeCount={diffBadgeCount}
                   onCopyWorktreeLocation={() => void copyWorktreeLocation()}
                   onOpenWorktreeTerminal={() => void openWorktreeTerminal()}
-                  onToggleArtifactsPane={toggleArtifactsPane}
-                  onToggleDiffPane={toggleDiffPane}
-                  onToggleTerminalPanel={toggleTerminalPanel}
+                  onToggleArtifactsPane={() => toggleArtifactsPane("header_button")}
+                  onToggleDiffPane={() => toggleDiffPane("header_button")}
+                  onToggleTerminalPanel={() => toggleTerminalPanel("header_button")}
                   onOpenConvoMenu={openConvoMenu}
                 />
               ) : null}

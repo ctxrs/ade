@@ -16,7 +16,12 @@ import type {
 } from "@ctx/types";
 import { apiAny, daemonFetchRaw, idToString } from "./clientBase";
 import { getDaemonConnection, getDaemonWsUrl } from "./daemonConnection";
-import { trackWorkspaceCreated } from "../utils/analytics";
+import {
+  trackWorkspaceCreated,
+  trackWorkspaceCreateFailed,
+  trackWorkspaceCreateSubmitted,
+  trackWorkspaceCreateSucceeded,
+} from "../utils/analytics";
 
 export const listWorkspaces = () =>
   apiAny<Workspace[]>("/api/workspaces");
@@ -39,13 +44,33 @@ export const createWorkspace = async (
   root_path: string,
   name?: string,
   workspaceKind: "local" | "remote" = "local",
+  source: "wizard" | "launcher" | "api" | "unknown" = "unknown",
 ) => {
-  const workspace = await apiAny<Workspace>("/api/workspaces", {
-    method: "POST",
-    body: JSON.stringify({ root_path, name }),
-  });
-  trackWorkspaceCreated(workspaceKind);
-  return workspace;
+  trackWorkspaceCreateSubmitted({ workspaceKind, source });
+  try {
+    const workspace = await apiAny<Workspace>("/api/workspaces", {
+      method: "POST",
+      body: JSON.stringify({ root_path, name }),
+    });
+    trackWorkspaceCreated(workspaceKind);
+    trackWorkspaceCreateSucceeded({ workspaceKind, source });
+    return workspace;
+  } catch (error) {
+    trackWorkspaceCreateFailed({
+      workspaceKind,
+      source,
+      failureKind: classifyWorkspaceCreateFailure(error),
+    });
+    throw error;
+  }
+};
+
+const classifyWorkspaceCreateFailure = (
+  error: unknown,
+): "network_error" | "request_error" | "unknown" => {
+  if (error instanceof TypeError) return "network_error";
+  if (error instanceof Error) return "request_error";
+  return "unknown";
 };
 
 export const getWorkspace = (id: string) =>
