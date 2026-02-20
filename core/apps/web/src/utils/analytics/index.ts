@@ -23,6 +23,6 @@ export {
   trackEntitlementActivated,
   trackFeatureGateEvaluated,
   trackExperimentExposure,
-} from "./events";
+} from "./activity";
 
 export { sanitizeAnalyticsProperties } from "./schema";

@@ -8,7 +8,7 @@ vi.mock("./client", () => ({
   captureProductEvent: captureProductEventMock,
 }));
 
-import { trackFirstTurnCompleted, trackFirstTurnSubmitted } from "./events";
+import { trackFirstTurnCompleted, trackFirstTurnSubmitted } from "./activity";
 
 describe("analytics events", () => {
   beforeEach(() => {

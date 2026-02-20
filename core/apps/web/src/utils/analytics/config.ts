@@ -1,4 +1,4 @@
-const POSTHOG_US_HOST = import.meta.env.VITE_POSTHOG_US_HOST ?? "https://telemetry.example.invalid";
+const POSTHOG_INGEST_HOST = import.meta.env.VITE_POSTHOG_INGEST_HOST ?? "https://telemetry.example.invalid";
 const POSTHOG_UI_HOST = import.meta.env.VITE_POSTHOG_UI_HOST ?? "https://telemetry.example.invalid";
 
 const POSTHOG_STAGING_PROJECT_ID = import.meta.env.VITE_POSTHOG_STAGING_PROJECT_ID ?? "ade-staging";
@@ -36,7 +36,7 @@ export const getPostHogProjectId = (): string =>
     : POSTHOG_STAGING_PROJECT_ID;
 
 export const getPostHogHost = (): string =>
-  readTrimmed(import.meta.env.VITE_POSTHOG_HOST) ?? POSTHOG_US_HOST;
+  POSTHOG_INGEST_HOST;
 
 export const getPostHogUiHost = (): string =>
   readTrimmed(import.meta.env.VITE_POSTHOG_UI_HOST) ?? POSTHOG_UI_HOST;

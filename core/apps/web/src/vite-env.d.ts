@@ -6,7 +6,6 @@ interface ImportMetaEnv {
   readonly VITE_CTX_WAL_ENDPOINT?: string;
   readonly VITE_POSTHOG_KEY?: string;
   readonly VITE_POSTHOG_ENV?: "staging" | "production";
-  readonly VITE_POSTHOG_HOST?: string;
   readonly VITE_POSTHOG_UI_HOST?: string;
   readonly VITE_POSTHOG_CAPTURE_IN_DEV?: string;
 }

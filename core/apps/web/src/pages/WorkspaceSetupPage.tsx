@@ -1723,11 +1723,10 @@ export default function WorkspaceSetupPage() {
     setLaunchTick(0);
     setCreating(true);
     try {
-      if (!isDesktopApp()) {
-        throw new Error("Workspace creation from the wizard requires the desktop app.");
-      }
-
       const parsed = selections.location === "remote" ? parseUserHost(remoteHostInput) : null;
+      if (selections.location === "remote" && !isDesktopApp()) {
+        throw new Error("Remote connections require the desktop app.");
+      }
       if (selections.location === "remote" && !parsed?.host) {
         throw new Error("Remote host is required (user@host).");
       }
@@ -1739,17 +1738,20 @@ export default function WorkspaceSetupPage() {
       }
 
       // 1. Connect to the intended daemon (reuse existing if already running).
-      const info = selections.location === "remote"
-        ? await desktopConnectSsh({
+      if (selections.location === "remote") {
+        const info = await desktopConnectSsh({
           host: parsed!.host,
           user: parsed!.user ?? null,
           remote_port: parsedRemotePort,
           start_remote: true,
           remote_data_dir: remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null,
           remote_ctx_bin: remoteCtxBinValue,
-        })
-        : await desktopConnectLocal();
-      applyConnection(info);
+        });
+        applyConnection(info);
+      } else if (isDesktopApp()) {
+        const info = await desktopConnectLocal();
+        applyConnection(info);
+      }
 
       if (selections.location === "remote" && parsed?.host) {
         const normalizedDataDir = remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null;
