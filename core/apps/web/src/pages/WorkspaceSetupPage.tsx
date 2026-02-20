@@ -2448,7 +2448,7 @@ export default function WorkspaceSetupPage() {
                           Endpoint base URL
                           <input
                             data-testid="wizard-titling-remote-base-url"
-                            placeholder="https://openrouter.ai/api/v1"
+                            placeholder="https://api.your-llm-gateway.example/v1"
                             value={titlingRemoteBaseUrl}
                             onChange={(e) => {
                               invalidateTitlingPersisted();
@@ -2473,7 +2473,7 @@ export default function WorkspaceSetupPage() {
                           Model
                           <input
                             data-testid="wizard-titling-remote-model"
-                            placeholder="google/gemini-3-flash-preview"
+                            placeholder="model-slug"
                             value={titlingRemoteModel}
                             onChange={(e) => {
                               invalidateTitlingPersisted();
