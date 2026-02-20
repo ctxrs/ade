@@ -334,11 +334,7 @@ describe("DiagnosticsPage updates", () => {
     vi.mocked(desktopGetConnection)
       .mockResolvedValueOnce({ kind: "local", base_url: "http://127.0.0.1:4399", token: "tok-old" })
       .mockResolvedValueOnce({ kind: "local", base_url: "http://127.0.0.1:4401", token: "tok-new" });
-    vi.mocked(desktopRestartLocalDaemon).mockResolvedValue({
-      kind: "local",
-      base_url: "http://127.0.0.1:4401",
-      token: "tok-new",
-    } as never);
+    vi.mocked(desktopRestartLocalDaemon).mockResolvedValue({ kind: "local" });
     vi.mocked(checkUpdates).mockResolvedValue({
       channel: "stable",
       base_url: "https://api.example/functions/v1",

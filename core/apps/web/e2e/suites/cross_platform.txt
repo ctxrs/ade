@@ -14,6 +14,7 @@ e2e/workbench-diff-badge-merge-base.spec.ts
 e2e/workbench-diff-fetch-failure-state.spec.ts
 e2e/workbench-diff-pane-no-overflow.spec.ts
 e2e/workbench-dummy-workspace.spec.ts
+e2e/workbench-harness-auth-modal-flow.spec.ts
 e2e/workbench-harness-menu-prod-availability.spec.ts
 e2e/workbench-inline-command-wrap.spec.ts
 e2e/workbench-new-task-drag-drop-image.spec.ts

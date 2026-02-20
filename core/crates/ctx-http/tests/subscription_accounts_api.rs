@@ -8,7 +8,7 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 use ctx_core::models::SessionEventType;
@@ -303,12 +303,14 @@ async fn write_mock_claude_runtime(
 async fn poll_claude_login_status(
     server: &common::TestServer,
     login_id: &str,
+    timeout: Duration,
 ) -> ClaudeLoginStatusResponse {
     let status_url = format!(
         "{}/api/providers/claude-crp/accounts/login/{}",
         server.base_url, login_id
     );
-    for _ in 0..40 {
+    let deadline = Instant::now() + timeout;
+    loop {
         let resp = server
             .client
             .get(&status_url)
@@ -319,6 +321,9 @@ async fn poll_claude_login_status(
         let body: ClaudeLoginStatusResponse = resp.json().await.expect("claude login status body");
         if body.status != "pending" {
             return body;
+        }
+        if Instant::now() >= deadline {
+            break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
@@ -425,7 +430,8 @@ echo "ZXY987654321"
     assert!(!start_body.login_id.is_empty());
     assert!(start_body.auth_url.as_deref().is_some());
 
-    let status = poll_claude_login_status(&server, &start_body.login_id).await;
+    let status =
+        poll_claude_login_status(&server, &start_body.login_id, Duration::from_secs(8)).await;
     assert_eq!(status.status, "success");
     assert!(status.account_id.is_some());
     assert!(status.error.is_none());
@@ -496,10 +502,136 @@ exit 7
     assert_eq!(start_resp.status(), StatusCode::OK);
     let start_body: ClaudeLoginStartResponse = start_resp.json().await.expect("start body");
 
-    let status = poll_claude_login_status(&server, &start_body.login_id).await;
+    let status =
+        poll_claude_login_status(&server, &start_body.login_id, Duration::from_secs(8)).await;
     assert_eq!(status.status, "failed");
     assert!(status.account_id.is_none());
     assert!(status.error.unwrap_or_default().contains("exited"));
+}
+
+#[tokio::test]
+async fn claude_login_success_without_token_reports_actionable_error() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let server = common::spawn_http_server(common::router(state)).await;
+
+    let script_path = write_mock_claude_runtime(
+        data_dir.path(),
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+echo "Claude setup-token URL: https://claude.ai/oauth/authorize?code=test"
+echo "Long-lived authentication token created successfully!"
+echo "Token omitted intentionally for test."
+"#,
+    )
+    .await;
+    let mut cfg = AgentServerConfigFile {
+        providers: HashMap::new(),
+        managed_installs: HashMap::new(),
+    };
+    cfg.providers.insert(
+        "claude-cli".to_string(),
+        AgentServerCommand {
+            command: script_path.to_string_lossy().to_string(),
+            args: vec![],
+            dependencies: vec![],
+            managed: None,
+        },
+    );
+    save_agent_server_config(data_dir.path(), &cfg)
+        .await
+        .expect("save agent config");
+
+    let start_url = format!(
+        "{}/api/providers/claude-crp/accounts/login/start",
+        server.base_url
+    );
+    let start_resp = server
+        .client
+        .post(start_url)
+        .json(&json!({}))
+        .send()
+        .await
+        .expect("start claude login request");
+    assert_eq!(start_resp.status(), StatusCode::OK);
+    let start_body: ClaudeLoginStartResponse = start_resp.json().await.expect("start body");
+
+    let status =
+        poll_claude_login_status(&server, &start_body.login_id, Duration::from_secs(8)).await;
+    assert_eq!(status.status, "failed");
+    assert!(status.account_id.is_none());
+    assert!(status
+        .error
+        .unwrap_or_default()
+        .contains("no setup token was detected"));
+}
+
+#[tokio::test]
+async fn claude_login_hang_without_auth_url_times_out_and_fails() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let server = common::spawn_http_server(common::router(state)).await;
+
+    let script_path = write_mock_claude_runtime(
+        data_dir.path(),
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+sleep 30
+"#,
+    )
+    .await;
+    let mut cfg = AgentServerConfigFile {
+        providers: HashMap::new(),
+        managed_installs: HashMap::new(),
+    };
+    cfg.providers.insert(
+        "claude-cli".to_string(),
+        AgentServerCommand {
+            command: script_path.to_string_lossy().to_string(),
+            args: vec![],
+            dependencies: vec![],
+            managed: None,
+        },
+    );
+    save_agent_server_config(data_dir.path(), &cfg)
+        .await
+        .expect("save agent config");
+
+    let start_url = format!(
+        "{}/api/providers/claude-crp/accounts/login/start",
+        server.base_url
+    );
+    let start_resp = server
+        .client
+        .post(start_url)
+        .json(&json!({}))
+        .send()
+        .await
+        .expect("start claude login request");
+    assert_eq!(start_resp.status(), StatusCode::OK);
+    let start_body: ClaudeLoginStartResponse = start_resp.json().await.expect("start body");
+    assert!(start_body.auth_url.is_none());
+
+    let status =
+        poll_claude_login_status(&server, &start_body.login_id, Duration::from_secs(20)).await;
+    assert_eq!(status.status, "failed");
+    assert!(status.account_id.is_none());
+    assert!(status
+        .error
+        .unwrap_or_default()
+        .contains("did not emit an authentication URL"));
 }
 
 #[tokio::test]
@@ -585,7 +717,8 @@ echo "{}"
     assert_eq!(start_resp.status(), StatusCode::OK);
     let start_body: ClaudeLoginStartResponse = start_resp.json().await.expect("start body");
 
-    let status = poll_claude_login_status(&server, &start_body.login_id).await;
+    let status =
+        poll_claude_login_status(&server, &start_body.login_id, Duration::from_secs(8)).await;
     assert_eq!(status.status, "success");
     assert_eq!(status.account_id.as_deref(), Some(existing_id.as_str()));
 
