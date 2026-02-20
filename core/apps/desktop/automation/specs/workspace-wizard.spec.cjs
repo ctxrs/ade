@@ -43,7 +43,6 @@ const parsePort = (raw, fallback) => {
 };
 const REMOTE_PORT = parsePort(process.env.CTX_AUTOMATION_REMOTE_PORT || "44099", 44099);
 const REMOTE_DATA_DIR_RAW = process.env.CTX_AUTOMATION_REMOTE_DATA_DIR || "";
-const REMOTE_CTX_BIN = String(process.env.CTX_AUTOMATION_REMOTE_CTX_BIN || "").trim();
 const SSH_NO_START_REMOTE = !["0", "false", "no"].includes(
   String(process.env.CTX_AUTOMATION_SSH_NO_START_REMOTE || "1").trim().toLowerCase(),
 );
@@ -734,7 +733,6 @@ const runWizardScenario = async (scenario) => {
     if (
       typeof scenario.remotePort === "number"
       || typeof scenario.remoteDataDir === "string"
-      || typeof scenario.remoteCtxBin === "string"
     ) {
       const hasAdvanced = await browser.execute(
         () => Boolean(document.querySelector('[data-testid="wizard-remote-port"]')),
@@ -747,9 +745,6 @@ const runWizardScenario = async (scenario) => {
       }
       if (typeof scenario.remoteDataDir === "string" && scenario.remoteDataDir.trim()) {
         await setInput("wizard-remote-data-dir", scenario.remoteDataDir.trim());
-      }
-      if (typeof scenario.remoteCtxBin === "string" && scenario.remoteCtxBin.trim()) {
-        await setInput("wizard-remote-ctx-bin", scenario.remoteCtxBin.trim());
       }
     }
     await clickNext(); // verifies SSH and advances
@@ -878,9 +873,6 @@ describe("launcher workspace wizard (e2e)", () => {
     initGitRepo(localCloneSrc, "local-clone-src");
 
     if (remoteTarget) {
-      if (!REMOTE_CTX_BIN) {
-        console.warn("[wizard-e2e] CTX_AUTOMATION_REMOTE_CTX_BIN is not set; remote scenarios will be skipped.");
-      }
       const podmanProbe = ssh(
         remoteTarget,
         "if command -v podman >/dev/null 2>&1; then echo yes; else echo no; fi",
@@ -929,15 +921,6 @@ describe("launcher workspace wizard (e2e)", () => {
       await waitForStep("location");
       await clickOption("location", "remote");
       await setInput("wizard-remote-host", remoteHostForWizard);
-      if (REMOTE_CTX_BIN) {
-        const hasAdvanced = await browser.execute(
-          () => Boolean(document.querySelector('[data-testid="wizard-remote-port"]')),
-        );
-        if (!hasAdvanced) {
-          await clickTestId("wizard-remote-advanced-toggle");
-        }
-        await setInput("wizard-remote-ctx-bin", REMOTE_CTX_BIN);
-      }
       await clickNext();
       let step = await currentStepKey();
       if (step === "location") {
@@ -1162,7 +1145,6 @@ describe("launcher workspace wizard (e2e)", () => {
   it("remote import works end-to-end", async function () {
     if (!scenarioEnabled("remote-import-host", ["remote", "remote-host"])) this.skip();
     if (!remoteTarget) this.skip();
-    if (!REMOTE_CTX_BIN) this.skip();
     const importPath = `${remoteBase}/import-repo`;
 
     const id = await runWizardScenario({
@@ -1170,7 +1152,6 @@ describe("launcher workspace wizard (e2e)", () => {
       remoteHost: remoteHostForWizard,
       remotePort: REMOTE_PORT,
       remoteDataDir,
-      remoteCtxBin: REMOTE_CTX_BIN,
       container: "no-container",
       source: { kind: "import", path: importPath },
       setupHook: "pnpm install",
@@ -1188,7 +1169,6 @@ describe("launcher workspace wizard (e2e)", () => {
   it("remote clone works end-to-end", async function () {
     if (!scenarioEnabled("remote-clone-host-mounted", ["remote", "remote-container", "host-mounted"])) this.skip();
     if (!remoteTarget) this.skip();
-    if (!REMOTE_CTX_BIN) this.skip();
     if (!remoteHasPodman) this.skip();
     if (!remoteSupportsContainerStep) this.skip();
     const destParent = `${remoteBase}/clone-dest`;
@@ -1201,7 +1181,6 @@ describe("launcher workspace wizard (e2e)", () => {
       remoteHost: remoteHostForWizard,
       remotePort: REMOTE_PORT,
       remoteDataDir,
-      remoteCtxBin: REMOTE_CTX_BIN,
       container: "host-mounted",
       network: "allowlist",
       networkAllowlist: "github.com",
@@ -1221,7 +1200,6 @@ describe("launcher workspace wizard (e2e)", () => {
   it("remote new empty works end-to-end", async function () {
     if (!scenarioEnabled("remote-new-disk-isolated", ["remote", "remote-container", "disk-isolated"])) this.skip();
     if (!remoteTarget) this.skip();
-    if (!REMOTE_CTX_BIN) this.skip();
     if (!remoteHasPodman) this.skip();
     if (!remoteSupportsContainerStep) this.skip();
     const dest = `${remoteBase}/new-disk-isolated`;
@@ -1232,7 +1210,6 @@ describe("launcher workspace wizard (e2e)", () => {
       remoteHost: remoteHostForWizard,
       remotePort: REMOTE_PORT,
       remoteDataDir,
-      remoteCtxBin: REMOTE_CTX_BIN,
       container: "disk-isolated",
       network: "full",
       source: { kind: "new", destPath: dest, workspaceName: "disk-isolated-remote" },

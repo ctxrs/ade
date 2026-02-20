@@ -10,7 +10,7 @@ const usage = () => {
       "usage:",
       "  node core/scripts/desktop_merge_bundles.cjs \\",
       "    --input <bundle-dir> --input <bundle-dir> --output <bundle-dir> \\",
-      "    [--require-provider id:os:arch] [--require-runtime id:os:arch] [--require-image id:os:arch]",
+      "    [--require-provider id:os:arch] [--require-runtime id:os:arch] [--require-image id:os:arch] [--require-daemon id:os:arch]",
     ].join("\n"),
   );
 };
@@ -22,6 +22,7 @@ const parseArgs = (argv) => {
     requireProvider: [],
     requireRuntime: [],
     requireImage: [],
+    requireDaemon: [],
   };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
@@ -50,6 +51,11 @@ const parseArgs = (argv) => {
       case "--require-image":
         if (!value) throw new Error("missing value for --require-image");
         args.requireImage.push(value);
+        i += 1;
+        break;
+      case "--require-daemon":
+        if (!value) throw new Error("missing value for --require-daemon");
+        args.requireDaemon.push(value);
         i += 1;
         break;
       default:
@@ -197,10 +203,12 @@ const main = () => {
   const providers = mergeSection("providers", manifests);
   const runtimes = mergeSection("runtimes", manifests);
   const images = mergeSection("images", manifests);
+  const daemons = mergeSection("daemons", manifests);
 
   requireEntries(providers, options.requireProvider, "provider");
   requireEntries(runtimes, options.requireRuntime, "runtime");
   requireEntries(images, options.requireImage, "image");
+  requireEntries(daemons, options.requireDaemon, "daemon");
 
   const mergedManifest = {
     version: 1,
@@ -208,6 +216,7 @@ const main = () => {
     providers,
     runtimes,
     images,
+    daemons,
   };
   fs.writeFileSync(path.join(outputDir, "manifest.json"), `${JSON.stringify(mergedManifest, null, 2)}\n`, "utf8");
 };

@@ -256,7 +256,7 @@ describe("WorkspaceSetupPage", () => {
     expect(desktopTestSsh).not.toHaveBeenCalled();
   });
 
-  it("requires absolute remote ctx binary path for remote flow in desktop mode", async () => {
+  it("verifies remote SSH in desktop mode without prompting for ctx binary path", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     renderPage();
     await screen.findByTestId("workspace-setup");
@@ -267,18 +267,33 @@ describe("WorkspaceSetupPage", () => {
 
     const nextButton = screen.getByTestId("wizard-next");
     fireEvent.click(nextButton);
-    expect(await screen.findByText("Remote ctx binary path is required.")).toBeInTheDocument();
-    expect(wizardStepKey()).toBe("location");
+    await waitFor(() => {
+      expect(desktopTestSsh).toHaveBeenCalledWith({
+        host: "devbox.example",
+        user: null,
+      });
+    });
+  });
 
-    const ctxBinInput = await screen.findByTestId("wizard-remote-ctx-bin");
-    fireEvent.change(ctxBinInput, { target: { value: "ctx" } });
-    fireEvent.click(nextButton);
+  it("shows explicit unsupported message when remote probe rejects Windows hosts", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(desktopTestSsh).mockRejectedValueOnce(
+      new Error("Remote Windows hosts are not supported yet. Use a Linux host (x86_64 or arm64)."),
+    );
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+
+    fireEvent.click(screen.getByTestId("wizard-option-location-remote"));
+    fireEvent.change(await screen.findByTestId("wizard-remote-host"), {
+      target: { value: "win-host.example" },
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
     expect(
       await screen.findByText(
-        "Remote ctx binary path must be absolute (for example /opt/ctx/bin/ctx).",
+        "Remote Windows hosts are not supported yet. Use a Linux host (x86_64 or arm64).",
       ),
     ).toBeInTheDocument();
-    expect(desktopTestSsh).not.toHaveBeenCalled();
   });
 
   it("does not auto-advance stale local prefetch after switching to remote", async () => {
@@ -309,8 +324,12 @@ describe("WorkspaceSetupPage", () => {
       target: { value: "devbox.example" },
     });
     fireEvent.click(screen.getByTestId("wizard-next"));
-    expect(await screen.findByText("Remote ctx binary path is required.")).toBeInTheDocument();
-    expect(wizardStepKey()).toBe("location");
+    await waitFor(() => {
+      expect(desktopTestSsh).toHaveBeenCalledWith({
+        host: "devbox.example",
+        user: null,
+      });
+    });
   });
 
   it("shows destination validation errors on source next before create", async () => {

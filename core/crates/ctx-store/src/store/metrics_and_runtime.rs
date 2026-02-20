@@ -429,14 +429,6 @@ pub(super) fn env_usize(name: &str) -> Option<usize> {
         .and_then(|value| value.trim().parse::<usize>().ok())
 }
 
-pub(super) fn env_path(name: &str) -> Option<PathBuf> {
-    std::env::var(name)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-}
-
 pub(super) fn env_flag_enabled(name: &str) -> bool {
     match std::env::var(name) {
         Ok(value) => {
@@ -453,35 +445,4 @@ pub(super) fn disable_head_materialization_writes() -> bool {
 
 pub(super) fn disable_tool_summary_persistence() -> bool {
     env_flag_enabled("CTX_DISABLE_TOOL_SUMMARY_PERSISTENCE")
-}
-
-pub(super) fn store_migrations_dir() -> PathBuf {
-    if let Some(path) = env_path("CTX_STORE_MIGRATIONS_DIR") {
-        if path.exists() {
-            return path;
-        }
-    }
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let manifest_migrations = manifest_dir.join("migrations");
-    if manifest_migrations.exists() {
-        return manifest_migrations;
-    }
-    if let Ok(mut dir) = std::env::current_dir() {
-        for _ in 0..6 {
-            let candidates = [
-                dir.join("core/crates/ctx-store/migrations"),
-                dir.join("crates/ctx-store/migrations"),
-                dir.join("ctx-store/migrations"),
-            ];
-            for candidate in candidates {
-                if candidate.exists() {
-                    return candidate;
-                }
-            }
-            if !dir.pop() {
-                break;
-            }
-        }
-    }
-    manifest_migrations
 }

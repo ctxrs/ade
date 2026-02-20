@@ -125,7 +125,9 @@ pub(super) async fn desktop_save_text_file(
 }
 
 #[tauri::command]
-pub(super) fn desktop_get_editor_settings(app: tauri::AppHandle) -> Result<DesktopEditorSettings, String> {
+pub(super) fn desktop_get_editor_settings(
+    app: tauri::AppHandle,
+) -> Result<DesktopEditorSettings, String> {
     Ok(load_desktop_settings(&app).editor)
 }
 
@@ -165,7 +167,10 @@ pub(super) fn desktop_open_file(
 }
 
 #[tauri::command]
-pub(super) fn desktop_open_path(app: tauri::AppHandle, req: DesktopOpenPathReq) -> Result<(), String> {
+pub(super) fn desktop_open_path(
+    app: tauri::AppHandle,
+    req: DesktopOpenPathReq,
+) -> Result<(), String> {
     let raw = req.path.trim();
     if raw.is_empty() {
         return Err("path is required".to_string());
@@ -205,7 +210,10 @@ pub(super) fn desktop_read_file(req: DesktopOpenPathReq) -> Result<DesktopReadFi
 }
 
 #[tauri::command]
-pub(super) async fn desktop_git_clone(repo_url: String, dest_parent: String) -> Result<String, String> {
+pub(super) async fn desktop_git_clone(
+    repo_url: String,
+    dest_parent: String,
+) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let repo_url = repo_url.trim().to_string();
         if repo_url.is_empty() {
@@ -255,7 +263,6 @@ fn desktop_settings_path(app: &tauri::AppHandle) -> Result<PathBuf> {
         .context("resolving app_data_dir")?;
     Ok(root.join("desktop-settings.json"))
 }
-
 
 pub(super) fn load_desktop_settings(app: &tauri::AppHandle) -> DesktopSettings {
     let path = match desktop_settings_path(app) {

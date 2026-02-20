@@ -4,3 +4,5 @@
 /providers/
 /runtimes/
 /images/
+/daemons/*
+!/daemons/placeholder.txt

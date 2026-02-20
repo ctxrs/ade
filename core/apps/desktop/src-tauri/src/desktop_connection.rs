@@ -23,8 +23,6 @@ pub(super) struct DesktopConnectionInfo {
     pub(super) remote_port: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) remote_data_dir: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) remote_ctx_bin: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -98,7 +96,6 @@ impl ConnectionManager {
                 user: None,
                 remote_port: None,
                 remote_data_dir: None,
-                remote_ctx_bin: None,
             };
         };
         match &guard.active {
@@ -110,7 +107,6 @@ impl ConnectionManager {
                 user: None,
                 remote_port: None,
                 remote_data_dir: None,
-                remote_ctx_bin: None,
             },
             Some(ActiveConnection::Local(c)) => DesktopConnectionInfo {
                 kind: DesktopConnectionKind::Local,
@@ -120,7 +116,6 @@ impl ConnectionManager {
                 user: None,
                 remote_port: None,
                 remote_data_dir: None,
-                remote_ctx_bin: None,
             },
             Some(ActiveConnection::LocalExternal(c)) => DesktopConnectionInfo {
                 kind: DesktopConnectionKind::Local,
@@ -130,7 +125,6 @@ impl ConnectionManager {
                 user: None,
                 remote_port: None,
                 remote_data_dir: None,
-                remote_ctx_bin: None,
             },
             Some(ActiveConnection::Ssh(c)) => DesktopConnectionInfo {
                 kind: DesktopConnectionKind::Ssh,
@@ -140,7 +134,6 @@ impl ConnectionManager {
                 user: c.user.clone(),
                 remote_port: Some(c.remote_port),
                 remote_data_dir: c.remote_data_dir.clone(),
-                remote_ctx_bin: c.remote_ctx_bin.clone(),
             },
         }
     }

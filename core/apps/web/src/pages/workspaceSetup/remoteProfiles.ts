@@ -9,7 +9,6 @@ export type RemoteProfile = {
   user?: string | null;
   remote_port?: number | null;
   remote_data_dir?: string | null;
-  remote_ctx_bin?: string | null;
   updated_at_ms: number;
 };
 
@@ -71,7 +70,6 @@ export const upsertRemoteProfile = (
   fields: {
     remote_port?: number | null;
     remote_data_dir?: string | null;
-    remote_ctx_bin?: string | null;
   },
 ): RemoteProfile[] => {
   const profiles = loadRemoteProfiles();
@@ -81,7 +79,6 @@ export const upsertRemoteProfile = (
     user: user ?? null,
     remote_port: fields.remote_port ?? null,
     remote_data_dir: fields.remote_data_dir ?? null,
-    remote_ctx_bin: fields.remote_ctx_bin ?? null,
     updated_at_ms: Date.now(),
   };
   const next = [nextEntry, ...profiles.filter((entry) => remoteProfileKey(entry.host, entry.user) !== key)];

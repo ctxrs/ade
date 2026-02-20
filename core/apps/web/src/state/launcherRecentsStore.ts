@@ -15,7 +15,6 @@ export type LauncherRecentEntry =
       remote_port: number;
       start_remote?: boolean;
       remote_data_dir?: string | null;
-      remote_ctx_bin?: string | null;
       updated_at_ms: number;
     };
 
@@ -84,7 +83,6 @@ function parseEntry(raw: unknown): LauncherRecentEntry | null {
       remote_port: remotePort,
       start_remote: asBool(rec.start_remote),
       remote_data_dir: asNullableString(rec.remote_data_dir),
-      remote_ctx_bin: asNullableString(rec.remote_ctx_bin),
       updated_at_ms: updatedAt,
     };
   }

@@ -11,8 +11,6 @@ pub(super) struct SshConnectReq {
     start_remote: bool,
     #[serde(default)]
     remote_data_dir: Option<String>,
-    #[serde(default)]
-    remote_ctx_bin: Option<String>,
 }
 
 const fn default_true() -> bool {
@@ -82,6 +80,35 @@ pub(super) struct DesktopRemoteDaemonUpdateResp {
     message: String,
 }
 
+const MANAGED_REMOTE_CTX_BIN: &str = "~/.ctx/bin/ctx";
+const WINDOWS_REMOTE_UNSUPPORTED_MSG: &str =
+    "Remote Windows hosts are not supported yet. Use a Linux host (x86_64 or arm64).";
+const REMOTE_BOOTSTRAP_CAPABILITY_MSG: &str =
+    "Remote daemon bootstrap is unavailable: this desktop build does not include bundled daemon assets required to install the managed remote daemon at ~/.ctx/bin/ctx. Use a release-prepped desktop build.";
+const PLATFORM_PROBE_OS_MARKER: &str = "__CTX_PLATFORM_OS__";
+const PLATFORM_PROBE_ARCH_MARKER: &str = "__CTX_PLATFORM_ARCH__";
+const SSH_CONFIG_OVERRIDE_ENV: &str = "CTX_DESKTOP_SSH_CONFIG_PATH";
+const SSH_TUNNEL_BOOTSTRAP_HEALTH_RETRIES: usize = 12;
+const SSH_TUNNEL_BOOTSTRAP_HEALTH_BASE_DELAY_MS: u64 = 150;
+
+#[derive(Debug, Clone, Copy)]
+struct RemoteLinuxPlatform {
+    arch: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RemoteCtxBootstrapPlan {
+    UseManaged,
+    InstallManaged,
+}
+
+fn plan_remote_ctx_bootstrap(managed_exists: bool) -> RemoteCtxBootstrapPlan {
+    if managed_exists {
+        return RemoteCtxBootstrapPlan::UseManaged;
+    }
+    RemoteCtxBootstrapPlan::InstallManaged
+}
+
 #[tauri::command]
 pub(super) fn desktop_list_ssh_hosts() -> Result<Vec<DesktopSshHost>, String> {
     let mut out = Vec::new();
@@ -117,7 +144,7 @@ pub(super) async fn desktop_list_ssh_paths(
         let (parent, prefix) = split_remote_path(&raw);
         let cmd = format!("ls -a1 -p -- {}", remote_path_expr(&parent));
         let remote_cmd = format!("sh -lc {}", shell_escape(&cmd));
-        let output = Command::new("ssh")
+        let output = new_ssh_command()
             .arg("-o")
             .arg("BatchMode=yes")
             .arg("-o")
@@ -173,30 +200,10 @@ pub(super) async fn desktop_test_ssh(req: DesktopSshTestReq) -> Result<(), Strin
         if host.is_empty() {
             return Err("host is required".to_string());
         }
-        let target = match req.user.as_deref() {
-            Some(u) if !u.trim().is_empty() => format!("{}@{}", u.trim(), host),
-            _ => host,
-        };
-        let output = Command::new("ssh")
-            .arg("-o")
-            .arg("BatchMode=yes")
-            .arg("-o")
-            .arg("ConnectTimeout=8")
-            .arg(target)
-            .arg("true")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .output()
-            .map_err(|e| format!("failed to spawn ssh: {e}"))?;
-        if output.status.success() {
-            return Ok(());
-        }
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        if stderr.is_empty() {
-            return Err("ssh failed to connect".to_string());
-        }
-        Err(format!("ssh failed: {stderr}"))
+        let user = normalize_optional_text(req.user.as_deref());
+        probe_remote_linux_platform(&host, user.as_deref())
+            .map(|_| ())
+            .map_err(to_err)
     })
     .await
     .map_err(|e| format!("ssh check failed: {e}"))?
@@ -244,6 +251,7 @@ pub(super) async fn desktop_get_git_branch(
 
 #[tauri::command]
 pub(super) async fn desktop_connect_ssh(
+    app: tauri::AppHandle,
     state: tauri::State<'_, ConnectionManager>,
     req: SshConnectReq,
 ) -> Result<DesktopConnectionInfo, String> {
@@ -259,14 +267,16 @@ pub(super) async fn desktop_connect_ssh(
     let host_for_connect = host.clone();
     let user_for_connect = user.clone();
     let remote_data_dir_for_connect = req.remote_data_dir.clone();
-    let remote_ctx_bin = normalize_remote_ctx_bin(req.remote_ctx_bin.as_deref())
-        .map(|path| validate_remote_ctx_bin(&path))
-        .transpose()
-        .map_err(to_err)?;
+    let app_for_connect = app.clone();
+    let remote_ctx_bin = MANAGED_REMOTE_CTX_BIN.to_string();
     let remote_ctx_bin_for_connect = remote_ctx_bin.clone();
     let start_remote = req.start_remote;
-    let (base_url, token, tunnel) = tauri::async_runtime::spawn_blocking(move || {
+    let (base_url, token, tunnel, effective_remote_ctx_bin) =
+        tauri::async_runtime::spawn_blocking(move || {
+        let remote_platform =
+            probe_remote_linux_platform(&host_for_connect, user_for_connect.as_deref())?;
         let no_start_remote = env_bool("CTX_DESKTOP_SSH_NO_START_REMOTE", false);
+        let mut effective_remote_ctx_bin: Option<String> = None;
 
         // Prefer connecting to an already-running daemon. This avoids restarting/touching
         // the remote daemon when users (or tests) already have it running on the target port.
@@ -275,22 +285,43 @@ pub(super) async fn desktop_connect_ssh(
             start_ssh_tunnel(&host_for_connect, user_for_connect.as_deref(), local_port, remote_port)?;
         let mut base_url = format!("http://127.0.0.1:{local_port}");
 
-        let mut health =
-            probe_daemon_health_with_retry(&base_url, local_port, &mut tunnel, &tunnel_stderr);
+        let mut health = if start_remote && !no_start_remote {
+            probe_daemon_health_quick_for_bootstrap(&base_url, &mut tunnel, &tunnel_stderr)
+        } else {
+            probe_daemon_health_with_retry(&base_url, local_port, &mut tunnel, &tunnel_stderr)
+        };
         if health.is_err() && start_remote && !no_start_remote {
             let _ = try_kill_child(tunnel);
-            let ctx_bin = remote_ctx_bin_for_connect.as_deref().ok_or_else(|| {
-                anyhow!(
-                    "remote daemon start requires `remote_ctx_bin` (absolute path, e.g. /opt/ctx/bin/ctx)"
-                )
-            })?;
+            // Bootstrap contract:
+            // 1) use managed binary when present,
+            // 2) otherwise install managed binary from bundled daemon assets.
+            let managed_exists = remote_ctx_bin_exists_over_ssh(
+                &host_for_connect,
+                user_for_connect.as_deref(),
+                &remote_ctx_bin_for_connect,
+            )?;
+            let remote_start_ctx_bin = match plan_remote_ctx_bootstrap(managed_exists) {
+                RemoteCtxBootstrapPlan::UseManaged => remote_ctx_bin_for_connect.clone(),
+                RemoteCtxBootstrapPlan::InstallManaged => {
+                    install_remote_daemon_over_ssh(
+                        &app_for_connect,
+                        &host_for_connect,
+                        user_for_connect.as_deref(),
+                        remote_platform,
+                        &remote_ctx_bin_for_connect,
+                    )
+                    .map_err(|install_err| install_err.context(REMOTE_BOOTSTRAP_CAPABILITY_MSG))?;
+                    remote_ctx_bin_for_connect.clone()
+                }
+            };
             start_remote_daemon_over_ssh(
                 &host_for_connect,
                 user_for_connect.as_deref(),
                 remote_port,
                 remote_data_dir_for_connect.as_deref(),
-                ctx_bin,
+                &remote_start_ctx_bin,
             )?;
+            effective_remote_ctx_bin = Some(remote_start_ctx_bin);
 
             local_port = pick_unused_local_port()?;
             let (mut tunnel2, tunnel_stderr2) =
@@ -314,16 +345,28 @@ pub(super) async fn desktop_connect_ssh(
             ));
         }
 
+        if effective_remote_ctx_bin.is_none() {
+            if remote_ctx_bin_exists_over_ssh(
+                &host_for_connect,
+                user_for_connect.as_deref(),
+                &remote_ctx_bin_for_connect,
+            )
+            .unwrap_or(false)
+            {
+                effective_remote_ctx_bin = Some(remote_ctx_bin_for_connect);
+            }
+        }
+
         let auth = read_remote_daemon_auth_with_retry(
             &host_for_connect,
             user_for_connect.as_deref(),
             remote_data_dir_for_connect.as_deref(),
         )?;
-        Ok((base_url, auth.token, tunnel))
+        Ok((base_url, auth.token, tunnel, effective_remote_ctx_bin))
     })
-    .await
-    .map_err(|e| format!("failed to reach remote daemon: {e}"))?
-    .map_err(|e| format!("failed to reach remote daemon: {e:#}"))?;
+        .await
+        .map_err(|e| format!("failed to reach remote daemon: {e}"))?
+        .map_err(|e| format!("failed to reach remote daemon: {e:#}"))?;
 
     state.set_ssh(
         base_url,
@@ -333,13 +376,14 @@ pub(super) async fn desktop_connect_ssh(
         req.user.clone(),
         remote_port,
         req.remote_data_dir.clone(),
-        remote_ctx_bin,
+        effective_remote_ctx_bin,
     );
     Ok(state.info())
 }
 
 #[tauri::command]
 pub(super) async fn desktop_update_remote_daemon(
+    app: tauri::AppHandle,
     state: tauri::State<'_, ConnectionManager>,
     req: DesktopRemoteDaemonUpdateReq,
 ) -> Result<DesktopRemoteDaemonUpdateResp, String> {
@@ -348,18 +392,37 @@ pub(super) async fn desktop_update_remote_daemon(
     }
     let channel = normalize_update_channel(req.channel.as_deref())?;
     let target = state.ssh_target().map_err(to_err)?;
-    let remote_ctx_bin = target
+    let managed_remote_ctx_bin = MANAGED_REMOTE_CTX_BIN.to_string();
+    let mut remote_ctx_bin = target
         .remote_ctx_bin
-        .ok_or_else(|| {
-            "remote daemon update requires `remote_ctx_bin`; reconnect in launcher/workspace setup with an absolute path".to_string()
-        })?;
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| managed_remote_ctx_bin.clone());
     let host = target.host;
     let user = target.user;
     let remote_port = target.remote_port;
     let remote_data_dir = target.remote_data_dir;
     let channel_for_update = channel.clone();
+    let app_for_update = app.clone();
 
     let new_token = tauri::async_runtime::spawn_blocking(move || {
+        if !remote_ctx_bin_exists_over_ssh(&host, user.as_deref(), &remote_ctx_bin)? {
+            if remote_ctx_bin != managed_remote_ctx_bin
+                && remote_ctx_bin_exists_over_ssh(&host, user.as_deref(), &managed_remote_ctx_bin)?
+            {
+                remote_ctx_bin = managed_remote_ctx_bin.clone();
+            } else {
+                let remote_platform = probe_remote_linux_platform(&host, user.as_deref())?;
+                install_remote_daemon_over_ssh(
+                    &app_for_update,
+                    &host,
+                    user.as_deref(),
+                    remote_platform,
+                    &managed_remote_ctx_bin,
+                )
+                .map_err(|install_err| install_err.context(REMOTE_BOOTSTRAP_CAPABILITY_MSG))?;
+                remote_ctx_bin = managed_remote_ctx_bin.clone();
+            }
+        }
         run_remote_daemon_self_update(
             &host,
             user.as_deref(),
@@ -542,8 +605,79 @@ fn normalize_optional_text(value: Option<&str>) -> Option<String> {
         .map(|v| v.to_string())
 }
 
-fn normalize_remote_ctx_bin(value: Option<&str>) -> Option<String> {
+fn normalized_ssh_config_override(value: Option<&str>) -> Option<String> {
     normalize_optional_text(value)
+}
+
+fn ssh_config_override_path() -> Option<String> {
+    std::env::var(SSH_CONFIG_OVERRIDE_ENV)
+        .ok()
+        .as_deref()
+        .and_then(|raw| normalized_ssh_config_override(Some(raw)))
+}
+
+fn new_ssh_command() -> Command {
+    let mut cmd = Command::new("ssh");
+    if let Some(path) = ssh_config_override_path() {
+        cmd.arg("-F").arg(path);
+    }
+    cmd
+}
+
+fn ssh_stderr_snippet(stderr_log: &std::sync::Arc<std::sync::Mutex<String>>) -> String {
+    let guard = match stderr_log.lock() {
+        Ok(guard) => guard,
+        Err(_) => return String::new(),
+    };
+    let trimmed = guard.trim();
+    if trimmed.is_empty() {
+        String::new()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn probe_daemon_health_quick_for_bootstrap(
+    base_url: &str,
+    tunnel: &mut Child,
+    tunnel_stderr: &std::sync::Arc<std::sync::Mutex<String>>,
+) -> Result<()> {
+    let mut last_err: Option<anyhow::Error> = None;
+    // Fast-path when remote bootstrap is enabled: if daemon isn't already up,
+    // fail quickly and proceed to start_remote logic.
+    //
+    // Note: we still give tunnel bring-up a short retry budget. Some environments
+    // need >200ms before /api/health is reachable over a newly-started SSH tunnel.
+    for attempt in 0..SSH_TUNNEL_BOOTSTRAP_HEALTH_RETRIES {
+        match probe_daemon_health(base_url) {
+            Ok(()) => return Ok(()),
+            Err(err) => last_err = Some(err),
+        }
+        if let Ok(Some(status)) = tunnel.try_wait() {
+            let stderr = ssh_stderr_snippet(tunnel_stderr);
+            if stderr.is_empty() {
+                return Err(anyhow!("ssh tunnel exited ({status})"));
+            }
+            return Err(anyhow!("ssh tunnel exited ({status}): {stderr}"));
+        }
+        if attempt + 1 < SSH_TUNNEL_BOOTSTRAP_HEALTH_RETRIES {
+            let delay =
+                SSH_TUNNEL_BOOTSTRAP_HEALTH_BASE_DELAY_MS.saturating_mul((attempt + 1) as u64);
+            std::thread::sleep(Duration::from_millis(delay));
+        }
+    }
+    let err = last_err.unwrap_or_else(|| anyhow!("requesting /api/health failed"));
+    let stderr = ssh_stderr_snippet(tunnel_stderr);
+    let tunnel_state = match tunnel.try_wait() {
+        Ok(Some(status)) => format!("ssh tunnel exited ({status})"),
+        Ok(None) => "ssh tunnel still running".to_string(),
+        Err(e) => format!("ssh tunnel state unknown ({e})"),
+    };
+    let mut details = format!("{tunnel_state}; quick bootstrap health probe exhausted");
+    if !stderr.is_empty() {
+        details.push_str(&format!("; ssh stderr: {stderr}"));
+    }
+    Err(anyhow!("{err:#}; {details}"))
 }
 
 fn validate_remote_ctx_bin(value: &str) -> Result<String> {
@@ -551,10 +685,252 @@ fn validate_remote_ctx_bin(value: &str) -> Result<String> {
     if trimmed.is_empty() {
         anyhow::bail!("remote_ctx_bin is required");
     }
-    if !trimmed.starts_with('/') {
-        anyhow::bail!("remote_ctx_bin must be an absolute path (for example /opt/ctx/bin/ctx)");
+    let valid_absolute = trimmed.starts_with('/');
+    let valid_home_relative = trimmed == "~" || trimmed.starts_with("~/");
+    if !valid_absolute && !valid_home_relative {
+        anyhow::bail!(
+            "remote_ctx_bin must be an absolute path or ~/ path (for example ~/.ctx/bin/ctx)"
+        );
     }
     Ok(trimmed.to_string())
+}
+
+fn normalize_remote_arch_token(raw: &str) -> Option<&'static str> {
+    match raw.trim() {
+        "x86_64" | "amd64" => Some("x86_64"),
+        "aarch64" | "arm64" => Some("aarch64"),
+        _ => None,
+    }
+}
+
+fn is_windows_os_token(raw: &str) -> bool {
+    let lowered = raw.trim().to_ascii_lowercase();
+    lowered.contains("windows")
+        || lowered.contains("mingw")
+        || lowered.contains("msys")
+        || lowered.contains("cygwin")
+}
+
+fn looks_like_windows_shell_error(raw: &str) -> bool {
+    let lowered = raw.to_ascii_lowercase();
+    lowered.contains("is not recognized as an internal or external command")
+        || lowered.contains("'sh' is not recognized")
+        || lowered.contains("'uname' is not recognized")
+        || lowered.contains("cmd.exe")
+        || lowered.contains("powershell")
+}
+
+fn probe_remote_linux_platform(host: &str, user: Option<&str>) -> Result<RemoteLinuxPlatform> {
+    let target = match user {
+        Some(u) if !u.trim().is_empty() => format!("{}@{}", u.trim(), host),
+        _ => host.to_string(),
+    };
+
+    let probe_cmd = format!(
+        "printf '{}%s\\n' \"$(uname -s 2>/dev/null || true)\"; printf '{}%s\\n' \"$(uname -m 2>/dev/null || true)\"",
+        PLATFORM_PROBE_OS_MARKER, PLATFORM_PROBE_ARCH_MARKER,
+    );
+    let remote_probe_cmd = format!("sh -lc {}", shell_escape(&probe_cmd));
+    let output = new_ssh_command()
+        .arg("-o")
+        .arg("BatchMode=yes")
+        .arg("-o")
+        .arg("ConnectTimeout=8")
+        .arg("-o")
+        .arg("ConnectionAttempts=1")
+        .arg("-o")
+        .arg("ServerAliveInterval=5")
+        .arg("-o")
+        .arg("ServerAliveCountMax=1")
+        .arg(&target)
+        // NOTE: sshd does not preserve argv boundaries for the remote command; pass as one string.
+        .arg(remote_probe_cmd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .context("probing remote platform over ssh")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if looks_like_windows_shell_error(&stderr) || detect_windows_remote_with_cmd(&target) {
+            anyhow::bail!(WINDOWS_REMOTE_UNSUPPORTED_MSG);
+        }
+        if stderr.is_empty() {
+            anyhow::bail!("ssh failed to probe remote platform");
+        }
+        anyhow::bail!("ssh failed to probe remote platform: {stderr}");
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let Some((os, arch_raw)) = parse_remote_platform_probe_stdout(&stdout) else {
+        anyhow::bail!("ssh probe returned incomplete platform details");
+    };
+    if is_windows_os_token(&os) {
+        anyhow::bail!(WINDOWS_REMOTE_UNSUPPORTED_MSG);
+    }
+    if os != "Linux" {
+        anyhow::bail!("Unsupported remote OS `{os}`. Use a Linux host (x86_64 or arm64).");
+    }
+    let Some(arch) = normalize_remote_arch_token(&arch_raw) else {
+        anyhow::bail!("Unsupported remote architecture `{arch_raw}`. Use Linux x86_64 or arm64.");
+    };
+    Ok(RemoteLinuxPlatform { arch })
+}
+
+fn parse_remote_platform_probe_stdout(stdout: &str) -> Option<(String, String)> {
+    let mut os: Option<String> = None;
+    let mut arch: Option<String> = None;
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if let Some(value) = trimmed.strip_prefix(PLATFORM_PROBE_OS_MARKER) {
+            let value = value.trim();
+            if !value.is_empty() {
+                os = Some(value.to_string());
+            }
+            continue;
+        }
+        if let Some(value) = trimmed.strip_prefix(PLATFORM_PROBE_ARCH_MARKER) {
+            let value = value.trim();
+            if !value.is_empty() {
+                arch = Some(value.to_string());
+            }
+        }
+    }
+    match (os, arch) {
+        (Some(os), Some(arch)) => Some((os, arch)),
+        _ => None,
+    }
+}
+
+fn detect_windows_remote_with_cmd(target: &str) -> bool {
+    let output = new_ssh_command()
+        .arg("-o")
+        .arg("BatchMode=yes")
+        .arg("-o")
+        .arg("ConnectTimeout=8")
+        .arg("-o")
+        .arg("ConnectionAttempts=1")
+        .arg("-o")
+        .arg("ServerAliveInterval=5")
+        .arg("-o")
+        .arg("ServerAliveCountMax=1")
+        .arg(target)
+        .arg("cmd /c ver")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output();
+    let Ok(output) = output else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let combined = format!(
+        "{} {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    combined.to_ascii_lowercase().contains("windows")
+}
+
+fn remote_ctx_bin_parent_dir(remote_ctx_bin: &str) -> Result<String> {
+    let path = validate_remote_ctx_bin(remote_ctx_bin)?;
+    if path == "~" {
+        return Ok("~".to_string());
+    }
+    let Some((parent, _name)) = path.rsplit_once('/') else {
+        anyhow::bail!("remote_ctx_bin must include a file name");
+    };
+    if parent.is_empty() {
+        return Ok("/".to_string());
+    }
+    Ok(parent.to_string())
+}
+
+fn install_remote_daemon_over_ssh(
+    app: &tauri::AppHandle,
+    host: &str,
+    user: Option<&str>,
+    remote_platform: RemoteLinuxPlatform,
+    remote_ctx_bin: &str,
+) -> Result<()> {
+    let target = match user {
+        Some(u) if !u.trim().is_empty() => format!("{}@{}", u.trim(), host),
+        _ => host.to_string(),
+    };
+    let local_bin = read_bundled_remote_daemon_binary(app, remote_platform.arch)?;
+    let parent_dir = remote_ctx_bin_parent_dir(remote_ctx_bin)?;
+    let remote_ctx_bin = validate_remote_ctx_bin(remote_ctx_bin)?;
+    let temp_remote_path = format!("{remote_ctx_bin}.tmp-{}", std::process::id());
+    let install_cmd = format!(
+        "mkdir -p {parent} && cat > {tmp} && chmod 755 {tmp} && mv -f {tmp} {dest}",
+        parent = remote_path_expr(&parent_dir),
+        tmp = remote_path_expr(&temp_remote_path),
+        dest = remote_path_expr(&remote_ctx_bin),
+    );
+    let mut child = new_ssh_command()
+        .arg("-o")
+        .arg("BatchMode=yes")
+        .arg("-o")
+        .arg("ConnectTimeout=15")
+        .arg("-o")
+        .arg("ServerAliveInterval=15")
+        .arg("-o")
+        .arg("ServerAliveCountMax=2")
+        .arg(target)
+        .arg(format!("sh -lc {}", shell_escape(&install_cmd)))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("spawning ssh for remote daemon install")?;
+    {
+        let mut file = std::fs::File::open(&local_bin)
+            .with_context(|| format!("opening bundled daemon at {}", local_bin.display()))?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| anyhow!("ssh stdin unavailable for daemon install"))?;
+        std::io::copy(&mut file, &mut stdin).context("streaming daemon binary over ssh")?;
+    }
+    let output = child
+        .wait_with_output()
+        .context("waiting for remote daemon install ssh command")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stderr.is_empty() {
+            anyhow::bail!("remote daemon install failed");
+        }
+        anyhow::bail!("remote daemon install failed: {stderr}");
+    }
+
+    Ok(())
+}
+
+fn remote_ctx_bin_exists_over_ssh(
+    host: &str,
+    user: Option<&str>,
+    remote_ctx_bin: &str,
+) -> Result<bool> {
+    let ctx_bin = validate_remote_ctx_bin(remote_ctx_bin)?;
+    let check_cmd = format!(
+        "if [ -x {ctx_bin} ]; then exit 0; else exit 1; fi",
+        ctx_bin = remote_path_expr(&ctx_bin),
+    );
+    let output = run_remote_ssh_shell(host, user, &check_cmd)
+        .context("checking remote managed daemon binary")?;
+    if output.status.success() {
+        return Ok(true);
+    }
+    if output.status.code() == Some(1) {
+        return Ok(false);
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let detail = if !stderr.is_empty() { stderr } else { stdout };
+    anyhow::bail!("checking remote managed daemon binary failed: {detail}");
 }
 
 fn remote_prewarm_dedupe_key(
@@ -687,7 +1063,7 @@ fn run_remote_ssh_shell(host: &str, user: Option<&str>, cmd: &str) -> Result<std
         _ => host.to_string(),
     };
     let remote_cmd = format!("sh -lc {}", shell_escape(cmd));
-    Command::new("ssh")
+    new_ssh_command()
         .arg("-o")
         .arg("BatchMode=yes")
         .arg("-o")
@@ -716,7 +1092,7 @@ fn start_ssh_tunnel(
         _ => host.to_string(),
     };
 
-    let mut cmd = Command::new("ssh");
+    let mut cmd = new_ssh_command();
     cmd.arg("-N")
         .arg("-o")
         .arg("BatchMode=yes")
@@ -830,7 +1206,7 @@ fn start_remote_daemon_over_ssh(
         cmd = shell_escape(&log_cmd),
     );
 
-    let output = Command::new("ssh")
+    let output = new_ssh_command()
         .arg("-o")
         .arg("BatchMode=yes")
         .arg("-o")
@@ -917,16 +1293,11 @@ mod remote_path_validation_tests {
     use super::*;
 
     #[test]
-    fn normalize_and_validate_remote_ctx_bin_values() {
-        assert_eq!(normalize_remote_ctx_bin(None), None);
-        assert_eq!(normalize_remote_ctx_bin(Some("   ")), None);
-        assert_eq!(
-            normalize_remote_ctx_bin(Some(" /opt/ctx/bin/ctx ")),
-            Some("/opt/ctx/bin/ctx".to_string())
-        );
-
+    fn validate_remote_ctx_bin_values() {
         let valid = validate_remote_ctx_bin("/opt/ctx/bin/ctx").expect("absolute path is valid");
         assert_eq!(valid, "/opt/ctx/bin/ctx");
+        let valid_home = validate_remote_ctx_bin("~/.ctx/bin/ctx").expect("~/ path is valid");
+        assert_eq!(valid_home, "~/.ctx/bin/ctx");
 
         let err_empty = validate_remote_ctx_bin(" ").expect_err("empty path must fail");
         assert!(
@@ -935,9 +1306,90 @@ mod remote_path_validation_tests {
         );
         let err_rel = validate_remote_ctx_bin("ctx").expect_err("relative path must fail");
         assert!(
-            err_rel.to_string().contains("must be an absolute path"),
+            err_rel
+                .to_string()
+                .contains("must be an absolute path or ~/ path"),
             "unexpected error: {err_rel:#}"
         );
+    }
+
+    #[test]
+    fn remote_ctx_bin_parent_dir_handles_home_and_absolute_paths() {
+        let parent_home =
+            remote_ctx_bin_parent_dir("~/.ctx/bin/ctx").expect("home-based path parent");
+        assert_eq!(parent_home, "~/.ctx/bin");
+        let parent_abs =
+            remote_ctx_bin_parent_dir("/opt/ctx/bin/ctx").expect("absolute path parent");
+        assert_eq!(parent_abs, "/opt/ctx/bin");
+    }
+
+    #[test]
+    fn remote_arch_mapping_supports_expected_linux_arches() {
+        assert_eq!(normalize_remote_arch_token("x86_64"), Some("x86_64"));
+        assert_eq!(normalize_remote_arch_token("amd64"), Some("x86_64"));
+        assert_eq!(normalize_remote_arch_token("aarch64"), Some("aarch64"));
+        assert_eq!(normalize_remote_arch_token("arm64"), Some("aarch64"));
+        assert_eq!(normalize_remote_arch_token("i686"), None);
+    }
+
+    #[test]
+    fn remote_ctx_bootstrap_plan_is_managed_or_install() {
+        assert_eq!(
+            plan_remote_ctx_bootstrap(true),
+            RemoteCtxBootstrapPlan::UseManaged
+        );
+        assert_eq!(
+            plan_remote_ctx_bootstrap(false),
+            RemoteCtxBootstrapPlan::InstallManaged
+        );
+    }
+
+    #[test]
+    fn windows_detection_helpers_match_expected_tokens() {
+        assert!(is_windows_os_token("Windows_NT"));
+        assert!(is_windows_os_token("MINGW64_NT-10.0-22631"));
+        assert!(!is_windows_os_token("Linux"));
+        assert!(looks_like_windows_shell_error(
+            "'sh' is not recognized as an internal or external command"
+        ));
+        assert!(!looks_like_windows_shell_error(
+            "ssh: connect to host example port 22: timed out"
+        ));
+    }
+
+    #[test]
+    fn parse_remote_platform_probe_output_handles_noise() {
+        let noisy = "welcome banner\nmotd here\n__CTX_PLATFORM_OS__Linux\nother line\n__CTX_PLATFORM_ARCH__x86_64\n";
+        let parsed = parse_remote_platform_probe_stdout(noisy)
+            .expect("expected marker-based platform parse to succeed");
+        assert_eq!(parsed.0, "Linux");
+        assert_eq!(parsed.1, "x86_64");
+    }
+
+    #[test]
+    fn parse_remote_platform_probe_output_requires_markers() {
+        assert!(
+            parse_remote_platform_probe_stdout("Linux\nx86_64\n").is_none(),
+            "legacy non-marker output should not be parsed"
+        );
+    }
+
+    #[test]
+    fn ssh_config_override_normalization() {
+        assert_eq!(
+            normalized_ssh_config_override(Some(" /tmp/ctx-fixture-ssh-config ")),
+            Some("/tmp/ctx-fixture-ssh-config".to_string())
+        );
+        assert_eq!(normalized_ssh_config_override(Some("   ")), None);
+        assert_eq!(normalized_ssh_config_override(None), None);
+    }
+
+    #[test]
+    fn ssh_stderr_snippet_trims_content() {
+        let log = std::sync::Arc::new(std::sync::Mutex::new("  stderr line  ".to_string()));
+        assert_eq!(ssh_stderr_snippet(&log), "stderr line".to_string());
+        let empty = std::sync::Arc::new(std::sync::Mutex::new("  ".to_string()));
+        assert_eq!(ssh_stderr_snippet(&empty), String::new());
     }
 
     #[test]

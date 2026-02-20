@@ -1,7 +1,187 @@
 {
   "version": 1,
-  "generated_at": "2026-02-20T02:53:33Z",
+  "generated_at": "2026-02-20T10:16:09Z",
   "providers": [
+    {
+      "id": "acp-crp-bridge",
+      "protocol": "acp",
+      "version": "local",
+      "os": "linux",
+      "arch": "aarch64",
+      "sha256": "5216bd1f43e7a445287738e1f08205060b63d2d8b986e7b3a5e674df88af90c7",
+      "command": "providers/acp-crp-bridge/linux/aarch64/acp-crp-bridge",
+      "args": []
+    },
+    {
+      "id": "acp-crp-bridge",
+      "protocol": "acp",
+      "version": "local",
+      "os": "linux",
+      "arch": "x86_64",
+      "sha256": "b77bff65d4f2b2e3a09230a07b62014922cdf501670ca3596ae48c893f7fd021",
+      "command": "providers/acp-crp-bridge/linux/x86_64/acp-crp-bridge",
+      "args": []
+    },
+    {
+      "id": "acp-crp-bridge",
+      "protocol": "acp",
+      "version": "local",
+      "os": "macos",
+      "arch": "aarch64",
+      "sha256": "ed4210d6e7af9afb6dccccdb9715de93dac5aa29ea2668f28f9186ad66d256ec",
+      "command": "providers/acp-crp-bridge/macos/aarch64/acp-crp-bridge",
+      "args": []
+    },
+    {
+      "id": "amp",
+      "protocol": "acp",
+      "version": "local",
+      "os": "macos",
+      "arch": "aarch64",
+      "sha256": "90ee1d271eec831fd38d16c78c19cc36809548ac5cd034a6e0c10c4389c881ef",
+      "command": "runtimes/node/macos/aarch64/node-v24.12.0-darwin-arm64/bin/node",
+      "args": [
+        "providers/amp/macos/aarch64/dist/bin/amp-acp.js"
+      ]
+    },
+    {
+      "id": "auggie",
+      "protocol": "acp",
+      "version": "local",
+      "os": "macos",
+      "arch": "aarch64",
+      "sha256": "ba260f7f3eab124b931d057d4060aa1f69ddbabb83a1bfa0b5974f6d3591e9f0",
+      "command": "providers/auggie/macos/aarch64/auggie-acp.sh",
+      "args": []
+    },
+    {
+      "id": "cagent",
+      "protocol": "acp",
+      "version": "local",
+      "os": "macos",
+      "arch": "aarch64",
+      "sha256": "21b7636b469bc685176931649c9044d2f1db7f5453f5b57d83ebf7c7e05f2178",
+      "command": "providers/cagent/macos/aarch64/cagent-acp.sh",
+      "args": []
+    },
+    {
+      "id": "claude-cli",
+      "protocol": "acp",
+      "version": "2.1.47",
+      "os": "macos",
+      "arch": "aarch64",
+      "sha256": "90ee1d271eec831fd38d16c78c19cc36809548ac5cd034a6e0c10c4389c881ef",
+      "command": "runtimes/node/macos/aarch64/node-v24.12.0-darwin-arm64/bin/node",
+      "args": [
+        "providers/claude-cli/macos/aarch64/node_modules/@anthropic-ai/claude-code/cli.js"
+      ]
+    },
+    {
+      "id": "claude-crp",
+      "protocol": "crp",
+      "version": "0.0.0-ctx.1",
+      "os": "macos",
+      "arch": "aarch64",
+      "sha256": "90ee1d271eec831fd38d16c78c19cc36809548ac5cd034a6e0c10c4389c881ef",
+      "command": "runtimes/node/macos/aarch64/node-v24.12.0-darwin-arm64/bin/node",
+      "args": [
+        "providers/claude-crp/macos/aarch64/bin/claude-crp"
+      ]
+    },
+    {
+      "id": "cline",
+      "protocol": "acp",
+      "version": "local",
+      "os": "macos",
+      "arch": "aarch64",
+      "sha256": "7bbf7cb72330a1a4781c5530d42d733fedd8a08005c649e130e9e5f1fc3e9d23",
+      "command": "providers/cline/macos/aarch64/cline-acp.sh",
+      "args": []
+    },
+    {
+      "id": "codex",
+      "protocol": "acp",
+      "version": "0.0.0-ctx.3",
+      "os": "linux",
+      "arch": "aarch64",
+      "sha256": "40d6ac9e763adb7eacf877bd5307251e67610137b24843dc873a1fd5359d4caf",
+      "command": "providers/codex/linux/aarch64/codex-crp",
+      "args": []
+    },
+    {
+      "id": "codex",
+      "protocol": "acp",
+      "version": "0.0.0-ctx.3",
+      "os": "linux",
+      "arch": "x86_64",
+      "sha256": "8432c363cd6b876f0bef3984f104e98737a0e0e6c0ed64363148b9d70c0fed06",
+      "command": "providers/codex/linux/x86_64/codex-crp",
+      "args": []
+    },
+    {
+      "id": "codex",
+      "protocol": "acp",
+      "version": "0.0.0-ctx.3",
+      "os": "macos",
+      "arch": "aarch64",
+      "sha256": "244dbbe68297766f3f328f9b592033220a18bd931a26e27a1aea6b9eed52e3b0",
+      "command": "providers/codex/macos/aarch64/codex-crp",
+      "args": []
+    },
+    {
+      "id": "cody",
+      "protocol": "acp",
+      "version": "local",
+      "os": "macos",
+      "arch": "aarch64",
+      "sha256": "839dab8f2b2036bc9c629c31a0de6ed14dbe84c53baf3c81bd2cffc1a2eb5351",
+      "command": "providers/cody/macos/aarch64/cody-acp.sh",
+      "args": []
+    },
+    {
+      "id": "continue",
+      "protocol": "acp",
+      "version": "local",
+      "os": "macos",
+      "arch": "aarch64",
+      "sha256": "ae2b8aa58af5838eb15a9dd7b6648c14256547211115539833d3448325bd94e1",
+      "command": "providers/continue/macos/aarch64/continue-acp.sh",
+      "args": []
+    },
+    {
+      "id": "copilot",
+      "protocol": "acp",
+      "version": "local",
+      "os": "macos",
+      "arch": "aarch64",
+      "sha256": "345af3f207b986bf39032c9dfab9bfc78cfae04babb17398b5b0a9735551fdc7",
+      "command": "providers/copilot/macos/aarch64/copilot-acp.sh",
+      "args": []
+    },
+    {
+      "id": "cursor",
+      "protocol": "acp",
+      "version": "0.7.1",
+      "os": "linux",
+      "arch": "aarch64",
+      "sha256": "1d85dcfd413b46869a6b34072bdb91e429df128bf8c3381d2dbd57b0f29da225",
+      "command": "runtimes/node/linux/aarch64/node-v24.12.0-linux-arm64/bin/node",
+      "args": [
+        "providers/cursor/linux/aarch64/node_modules/@blowmage/cursor-agent-acp/dist/bin/cursor-agent-acp.js"
+      ]
+    },
+    {
+      "id": "cursor",
+      "protocol": "acp",
+      "version": "0.7.1",
+      "os": "linux",
+      "arch": "x86_64",
+      "sha256": "16143bdaa79716e871d3d9b2f50ce680bca293eba7f0c3fc1d004ed2258fc839",
+      "command": "runtimes/node/linux/x86_64/node-v24.12.0-linux-x64/bin/node",
+      "args": [
+        "providers/cursor/linux/x86_64/node_modules/@blowmage/cursor-agent-acp/dist/bin/cursor-agent-acp.js"
+      ]
+    },
     {
       "id": "cursor",
       "protocol": "acp",
@@ -15,72 +195,14 @@
       ]
     },
     {
-      "id": "claude-cli",
-      "protocol": "acp",
-      "version": "2.1.47",
-      "os": "macos",
-      "arch": "aarch64",
-      "sha256": "90ee1d271eec831fd38d16c78c19cc36809548ac5cd034a6e0c10c4389c881ef",
-      "command": "runtimes/node/macos/aarch64/node-v24.12.0-darwin-arm64/bin/node",
-      "args": [
-        "providers/claude-cli/macos/aarch64/node_modules/@anthropic-ai/claude-code/cli.js"
-      ]
-    },
-    {
-      "id": "acp-crp-bridge",
+      "id": "droid",
       "protocol": "acp",
       "version": "local",
       "os": "macos",
       "arch": "aarch64",
-      "sha256": "5bd0729da040f3341f37d463208d5f8697b8748b9d35cebeccdde97f8878c72d",
-      "command": "providers/acp-crp-bridge/macos/aarch64/acp-crp-bridge",
+      "sha256": "7a449a168b01ae06b740f29b222b3cce8f812b0c7cd773a32f169036cec58531",
+      "command": "providers/droid/macos/aarch64/droid-acp.sh",
       "args": []
-    },
-    {
-      "id": "claude-cli",
-      "protocol": "acp",
-      "version": "2.1.47",
-      "os": "macos",
-      "arch": "aarch64",
-      "sha256": "90ee1d271eec831fd38d16c78c19cc36809548ac5cd034a6e0c10c4389c881ef",
-      "command": "runtimes/node/macos/aarch64/node-v24.12.0-darwin-arm64/bin/node",
-      "args": [
-        "providers/claude-cli/macos/aarch64/node_modules/@anthropic-ai/claude-code/cli.js"
-      ]
-    },
-    {
-      "id": "claude-crp",
-      "protocol": "crp",
-      "version": "0.0.0-ctx.1",
-      "os": "macos",
-      "arch": "aarch64",
-      "sha256": "90ee1d271eec831fd38d16c78c19cc36809548ac5cd034a6e0c10c4389c881ef",
-      "command": "runtimes/node/macos/aarch64/node-v24.12.0-darwin-arm64/bin/node",
-      "args": [
-        "providers/claude-crp/macos/aarch64/bin/claude-crp"
-      ]
-    },
-    {
-      "id": "codex",
-      "protocol": "acp",
-      "version": "0.0.0-ctx.3",
-      "os": "macos",
-      "arch": "aarch64",
-      "sha256": "62f6213c1541ae2569565457e9cf3cf3c2a2fc7b986255c4be2d8665b4e059e1",
-      "command": "providers/codex/macos/aarch64/codex-crp",
-      "args": []
-    },
-    {
-      "id": "claude-crp",
-      "protocol": "crp",
-      "version": "0.0.0-ctx.1",
-      "os": "macos",
-      "arch": "aarch64",
-      "sha256": "90ee1d271eec831fd38d16c78c19cc36809548ac5cd034a6e0c10c4389c881ef",
-      "command": "runtimes/node/macos/aarch64/node-v24.12.0-darwin-arm64/bin/node",
-      "args": [
-        "providers/claude-crp/macos/aarch64/bin/claude-crp"
-      ]
     },
     {
       "id": "gemini",
@@ -90,36 +212,6 @@
       "arch": "aarch64",
       "sha256": "444c008b794f788aa31664342e6d82175a37a8d7afa05617951f4ec8fc6421c7",
       "command": "providers/gemini/macos/aarch64/gemini-acp.sh",
-      "args": []
-    },
-    {
-      "id": "qwen",
-      "protocol": "acp",
-      "version": "local",
-      "os": "macos",
-      "arch": "aarch64",
-      "sha256": "1ddbe946dcdc0950030d8dd0ca89c2db9be596de3941196c255da8fe3835ac61",
-      "command": "providers/qwen/macos/aarch64/qwen-acp.sh",
-      "args": []
-    },
-    {
-      "id": "opencode",
-      "protocol": "acp",
-      "version": "local",
-      "os": "macos",
-      "arch": "aarch64",
-      "sha256": "332715eaf6064ce320b057880a27fcf078a53c7d1a5c4d556eebcadc5676cbb3",
-      "command": "providers/opencode/macos/aarch64/opencode-acp.sh",
-      "args": []
-    },
-    {
-      "id": "mistral",
-      "protocol": "acp",
-      "version": "local",
-      "os": "macos",
-      "arch": "aarch64",
-      "sha256": "e817edff06dba08598ec92afbe36d63f62f11a386c36bf69642138c12502c903",
-      "command": "providers/mistral/macos/aarch64/mistral-acp.sh",
       "args": []
     },
     {
@@ -143,43 +235,33 @@
       "args": []
     },
     {
-      "id": "cagent",
+      "id": "kiro",
       "protocol": "acp",
       "version": "local",
       "os": "macos",
       "arch": "aarch64",
-      "sha256": "21b7636b469bc685176931649c9044d2f1db7f5453f5b57d83ebf7c7e05f2178",
-      "command": "providers/cagent/macos/aarch64/cagent-acp.sh",
+      "sha256": "542799b90516bacd086ae483846d62a240c2b6cc5dabd4b7ff837b8b94633633",
+      "command": "providers/kiro/macos/aarch64/kiro-acp.sh",
       "args": []
     },
     {
-      "id": "auggie",
+      "id": "mistral",
       "protocol": "acp",
       "version": "local",
       "os": "macos",
       "arch": "aarch64",
-      "sha256": "ba260f7f3eab124b931d057d4060aa1f69ddbabb83a1bfa0b5974f6d3591e9f0",
-      "command": "providers/auggie/macos/aarch64/auggie-acp.sh",
+      "sha256": "e817edff06dba08598ec92afbe36d63f62f11a386c36bf69642138c12502c903",
+      "command": "providers/mistral/macos/aarch64/mistral-acp.sh",
       "args": []
     },
     {
-      "id": "continue",
+      "id": "opencode",
       "protocol": "acp",
       "version": "local",
       "os": "macos",
       "arch": "aarch64",
-      "sha256": "ae2b8aa58af5838eb15a9dd7b6648c14256547211115539833d3448325bd94e1",
-      "command": "providers/continue/macos/aarch64/continue-acp.sh",
-      "args": []
-    },
-    {
-      "id": "cline",
-      "protocol": "acp",
-      "version": "local",
-      "os": "macos",
-      "arch": "aarch64",
-      "sha256": "7bbf7cb72330a1a4781c5530d42d733fedd8a08005c649e130e9e5f1fc3e9d23",
-      "command": "providers/cline/macos/aarch64/cline-acp.sh",
+      "sha256": "332715eaf6064ce320b057880a27fcf078a53c7d1a5c4d556eebcadc5676cbb3",
+      "command": "providers/opencode/macos/aarch64/opencode-acp.sh",
       "args": []
     },
     {
@@ -193,75 +275,27 @@
       "args": []
     },
     {
-      "id": "swe-agent",
+      "id": "pi",
       "protocol": "acp",
       "version": "local",
-      "os": "macos",
+      "os": "linux",
       "arch": "aarch64",
-      "sha256": "01cef2241e9894de6b4b31eb5ff7dfc69943cc2d6f3db45a48dcc7d22bce00d9",
-      "command": "providers/swe-agent/macos/aarch64/swe-agent-acp.sh",
-      "args": []
-    },
-    {
-      "id": "droid",
-      "protocol": "acp",
-      "version": "local",
-      "os": "macos",
-      "arch": "aarch64",
-      "sha256": "7a449a168b01ae06b740f29b222b3cce8f812b0c7cd773a32f169036cec58531",
-      "command": "providers/droid/macos/aarch64/droid-acp.sh",
-      "args": []
-    },
-    {
-      "id": "copilot",
-      "protocol": "acp",
-      "version": "local",
-      "os": "macos",
-      "arch": "aarch64",
-      "sha256": "345af3f207b986bf39032c9dfab9bfc78cfae04babb17398b5b0a9735551fdc7",
-      "command": "providers/copilot/macos/aarch64/copilot-acp.sh",
-      "args": []
-    },
-    {
-      "id": "kiro",
-      "protocol": "acp",
-      "version": "local",
-      "os": "macos",
-      "arch": "aarch64",
-      "sha256": "542799b90516bacd086ae483846d62a240c2b6cc5dabd4b7ff837b8b94633633",
-      "command": "providers/kiro/macos/aarch64/kiro-acp.sh",
-      "args": []
-    },
-    {
-      "id": "rovo",
-      "protocol": "acp",
-      "version": "local",
-      "os": "macos",
-      "arch": "aarch64",
-      "sha256": "e2e2c5eb7be8e360a2fd6518cf7ec1c82510293ca0ebd96cf1a7cdc552503756",
-      "command": "providers/rovo/macos/aarch64/rovo-acp.sh",
-      "args": []
-    },
-    {
-      "id": "cody",
-      "protocol": "acp",
-      "version": "local",
-      "os": "macos",
-      "arch": "aarch64",
-      "sha256": "839dab8f2b2036bc9c629c31a0de6ed14dbe84c53baf3c81bd2cffc1a2eb5351",
-      "command": "providers/cody/macos/aarch64/cody-acp.sh",
-      "args": []
-    },
-    {
-      "id": "amp",
-      "protocol": "acp",
-      "version": "local",
-      "os": "macos",
-      "arch": "aarch64",
-      "sha256": "90ee1d271eec831fd38d16c78c19cc36809548ac5cd034a6e0c10c4389c881ef",
-      "command": "runtimes/node/macos/aarch64/node-v24.12.0-darwin-arm64/bin/node",
+      "sha256": "1d85dcfd413b46869a6b34072bdb91e429df128bf8c3381d2dbd57b0f29da225",
+      "command": "runtimes/node/linux/aarch64/node-v24.12.0-linux-arm64/bin/node",
       "args": [
-        "providers/amp/macos/aarch64/dist/bin/amp-acp.js"
+        "providers/pi/linux/aarch64/dist/bin/pi-acp.js"
+      ]
+    },
+    {
+      "id": "pi",
+      "protocol": "acp",
+      "version": "local",
+      "os": "linux",
+      "arch": "x86_64",
+      "sha256": "16143bdaa79716e871d3d9b2f50ce680bca293eba7f0c3fc1d004ed2258fc839",
+      "command": "runtimes/node/linux/x86_64/node-v24.12.0-linux-x64/bin/node",
+      "args": [
+        "providers/pi/linux/x86_64/dist/bin/pi-acp.js"
       ]
     },
     {
@@ -275,9 +309,59 @@
       "args": [
         "providers/pi/macos/aarch64/dist/bin/pi-acp.js"
       ]
+    },
+    {
+      "id": "qwen",
+      "protocol": "acp",
+      "version": "local",
+      "os": "macos",
+      "arch": "aarch64",
+      "sha256": "1ddbe946dcdc0950030d8dd0ca89c2db9be596de3941196c255da8fe3835ac61",
+      "command": "providers/qwen/macos/aarch64/qwen-acp.sh",
+      "args": []
+    },
+    {
+      "id": "rovo",
+      "protocol": "acp",
+      "version": "local",
+      "os": "macos",
+      "arch": "aarch64",
+      "sha256": "e2e2c5eb7be8e360a2fd6518cf7ec1c82510293ca0ebd96cf1a7cdc552503756",
+      "command": "providers/rovo/macos/aarch64/rovo-acp.sh",
+      "args": []
+    },
+    {
+      "id": "swe-agent",
+      "protocol": "acp",
+      "version": "local",
+      "os": "macos",
+      "arch": "aarch64",
+      "sha256": "01cef2241e9894de6b4b31eb5ff7dfc69943cc2d6f3db45a48dcc7d22bce00d9",
+      "command": "providers/swe-agent/macos/aarch64/swe-agent-acp.sh",
+      "args": []
     }
   ],
   "runtimes": [
+    {
+      "id": "node",
+      "version": "24.12.0",
+      "os": "linux",
+      "arch": "aarch64",
+      "sha256": "1d85dcfd413b46869a6b34072bdb91e429df128bf8c3381d2dbd57b0f29da225",
+      "root": "runtimes/node/linux/aarch64/node-v24.12.0-linux-arm64",
+      "bin": "bin/node",
+      "npm_cli": "lib/node_modules/npm/bin/npm-cli.js"
+    },
+    {
+      "id": "node",
+      "version": "24.12.0",
+      "os": "linux",
+      "arch": "x86_64",
+      "sha256": "16143bdaa79716e871d3d9b2f50ce680bca293eba7f0c3fc1d004ed2258fc839",
+      "root": "runtimes/node/linux/x86_64/node-v24.12.0-linux-x64",
+      "bin": "bin/node",
+      "npm_cli": "lib/node_modules/npm/bin/npm-cli.js"
+    },
     {
       "id": "node",
       "version": "24.12.0",
@@ -298,5 +382,40 @@
       "bin": "usr/bin/podman"
     }
   ],
-  "images": []
+  "images": [
+    {
+      "id": "ctx-harness",
+      "version": "ghcr.io/ctxrs/ctx-harness:ubuntu-24.04",
+      "os": "linux",
+      "arch": "aarch64",
+      "sha256": "38c69fb5071beddc88b45f2c5c48cc2dd5c8683694497aa55f81bdd934fde4a7",
+      "tar": "images/ctx-harness-linux-aarch64.tar",
+      "image": "ghcr.io/ctxrs/ctx-harness:ubuntu-24.04"
+    },
+    {
+      "id": "ctx-harness",
+      "version": "ghcr.io/ctxrs/ctx-harness:ubuntu-24.04",
+      "os": "linux",
+      "arch": "x86_64",
+      "sha256": "f8a9740e76cc6b8c680e597463f64de43599d1dd7f5a1927cb8b52108b6c0e21",
+      "tar": "images/ctx-harness-linux-x86_64.tar",
+      "image": "ghcr.io/ctxrs/ctx-harness:ubuntu-24.04"
+    }
+  ],
+  "daemons": [
+    {
+      "id": "ctx-daemon",
+      "os": "linux",
+      "arch": "aarch64",
+      "sha256": "bbb2cc945924fab1ef85ed5eba76a33f6b06c592a4f0902b731d2bbfd68662bc",
+      "bin": "daemons/ctx-daemon-linux-aarch64"
+    },
+    {
+      "id": "ctx-daemon",
+      "os": "linux",
+      "arch": "x86_64",
+      "sha256": "4d5f4905ff97af630f5ad76044ac01d52c02f76c5aea79652642d09cfd02eed3",
+      "bin": "daemons/ctx-daemon-linux-x86_64"
+    }
+  ]
 }

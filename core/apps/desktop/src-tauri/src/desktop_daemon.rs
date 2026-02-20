@@ -1,5 +1,30 @@
 use super::*;
 
+const SSH_CONFIG_OVERRIDE_ENV: &str = "CTX_DESKTOP_SSH_CONFIG_PATH";
+
+fn normalized_ssh_config_override(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
+fn ssh_config_override_path() -> Option<String> {
+    std::env::var(SSH_CONFIG_OVERRIDE_ENV)
+        .ok()
+        .as_deref()
+        .and_then(normalized_ssh_config_override)
+}
+
+fn new_ssh_command() -> Command {
+    let mut cmd = Command::new("ssh");
+    if let Some(path) = ssh_config_override_path() {
+        cmd.arg("-F").arg(path);
+    }
+    cmd
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct DaemonAuthFile {
     pub(super) token: String,
@@ -509,7 +534,7 @@ fn read_remote_daemon_auth(
     let cmd = format!("cat -- {}", remote_path_expr(&auth_path));
     let remote_cmd = format!("sh -lc {}", shell_escape(&cmd));
 
-    let output = Command::new("ssh")
+    let output = new_ssh_command()
         .arg("-o")
         .arg("BatchMode=yes")
         .arg("-o")
@@ -560,7 +585,17 @@ struct DesktopBundledAssetsManifest {
     #[allow(dead_code)]
     pub version: u32,
     #[serde(default)]
+    pub daemons: Vec<DesktopBundledDaemon>,
+    #[serde(default)]
     pub images: Vec<DesktopBundledImage>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DesktopBundledDaemon {
+    pub id: String,
+    pub os: String,
+    pub arch: String,
+    pub bin: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -578,6 +613,28 @@ fn normalize_arch_token(raw: &str) -> Option<&'static str> {
         "aarch64" | "arm64" => Some("aarch64"),
         _ => None,
     }
+}
+
+pub(super) fn read_bundled_remote_daemon_binary(
+    app: &tauri::AppHandle,
+    arch: &str,
+) -> Result<PathBuf> {
+    let bundle_dir = desktop_bundle_dir(app).ok_or_else(|| anyhow!("bundle dir not found"))?;
+    let manifest_path = bundle_dir.join("manifest.json");
+    let raw = std::fs::read_to_string(&manifest_path)
+        .with_context(|| format!("reading {}", manifest_path.display()))?;
+    let manifest: DesktopBundledAssetsManifest = serde_json::from_str(&raw)
+        .with_context(|| format!("parsing {}", manifest_path.display()))?;
+    let entry = manifest
+        .daemons
+        .iter()
+        .find(|daemon| daemon.id == "ctx-daemon" && daemon.os == "linux" && daemon.arch == arch)
+        .ok_or_else(|| anyhow!("bundled remote daemon binary not found for linux/{arch}"))?;
+    let bin = bundle_dir.join(&entry.bin);
+    if !bin.exists() {
+        anyhow::bail!("bundled remote daemon binary missing at {}", bin.display());
+    }
+    Ok(bin)
 }
 
 fn read_bundled_ctx_harness_image(app: &tauri::AppHandle, arch: &str) -> Result<(PathBuf, String)> {
@@ -608,7 +665,7 @@ fn ssh_target(host: &str, user: Option<&str>) -> String {
 
 fn ssh_output(target: &str, cmd: &str) -> Result<std::process::Output> {
     let remote_cmd = format!("sh -lc {}", shell_escape(cmd));
-    let output = Command::new("ssh")
+    let output = new_ssh_command()
         .arg("-o")
         .arg("BatchMode=yes")
         .arg("-o")
@@ -722,7 +779,7 @@ pub(super) fn ensure_remote_ctx_harness_image(
             "{podman_prepare_cmd} && {podman_env_prefix} podman load"
         ))
     );
-    let mut child = Command::new("ssh")
+    let mut child = new_ssh_command()
         .arg("-o")
         .arg("BatchMode=yes")
         .arg("-o")
@@ -1351,4 +1408,18 @@ pub(super) fn try_kill_child(mut child: Child) -> Result<()> {
     let _ = child.kill();
     let _ = child.wait();
     Ok(())
+}
+
+#[cfg(test)]
+mod desktop_daemon_tests {
+    use super::*;
+
+    #[test]
+    fn ssh_config_override_normalization() {
+        assert_eq!(
+            normalized_ssh_config_override(" /tmp/ctx-fixture-ssh-config "),
+            Some("/tmp/ctx-fixture-ssh-config".to_string())
+        );
+        assert_eq!(normalized_ssh_config_override("   "), None);
+    }
 }

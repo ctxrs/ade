@@ -19,29 +19,6 @@ import {
 import { errorMessage } from "../utils/errorMessage";
 import LauncherBrand from "../components/LauncherBrand";
 import { loadLauncherRecents, upsertLauncherRecent, type LauncherRecentEntry } from "../state/launcherRecentsStore";
-const REMOTE_PROFILES_KEY = "contextDesktopRemoteProfilesV1";
-
-type RemoteProfile = {
-  host: string;
-  user?: string | null;
-  remote_ctx_bin?: string | null;
-};
-
-const remoteProfileKey = (host: string, user?: string | null) => `${user ?? ""}@${host}`;
-
-const getRemoteCtxBinForHost = (host: string, user?: string | null): string | null => {
-  try {
-    const raw = localStorage.getItem(REMOTE_PROFILES_KEY);
-    const parsed = raw ? JSON.parse(raw) : null;
-    if (!Array.isArray(parsed)) return null;
-    const key = remoteProfileKey(host, user ?? null);
-    const hit = (parsed as RemoteProfile[]).find((entry) => remoteProfileKey(entry.host, entry.user) === key);
-    const value = String(hit?.remote_ctx_bin ?? "").trim();
-    return value || null;
-  } catch {
-    return null;
-  }
-};
 
 function applyConnection(info: DesktopConnectionInfo) {
   applyDaemonDesktopConnection(info);
@@ -160,21 +137,19 @@ export default function LauncherPage() {
         await connectLocalAndOpen(r.root_path);
         return;
       }
-      const resolvedRemoteCtxBin = String(r.remote_ctx_bin ?? getRemoteCtxBinForHost(r.host, r.user ?? null) ?? "").trim() || null;
       const info = await desktopConnectSsh({
         host: r.host,
         user: r.user ?? null,
         remote_port: r.remote_port,
         start_remote: Boolean(r.start_remote),
         remote_data_dir: r.remote_data_dir ?? null,
-        remote_ctx_bin: resolvedRemoteCtxBin,
       });
       setConnection(info);
       applyConnection(info);
       // Avoid landing on workspaces while the daemon is still booting / tunnel is coming up.
       await waitForDaemonReady(15000);
       try {
-        await upsertLauncherRecent({ ...r, remote_ctx_bin: resolvedRemoteCtxBin, updated_at_ms: Date.now() });
+        await upsertLauncherRecent({ ...r, updated_at_ms: Date.now() });
       } catch {
         // best-effort only; do not block connection flow on recents persistence
       }

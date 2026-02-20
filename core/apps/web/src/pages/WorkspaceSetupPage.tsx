@@ -4,7 +4,6 @@ import { ChevronRight, Info, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import LauncherBrand from "../components/LauncherBrand";
-import { TitleGenerationInstallBanner } from "../components/TitleGenerationInstallBanner";
 import {
   applyDaemonDesktopConnection,
   buildExecutionLaunchWsUrl,
@@ -66,13 +65,6 @@ import {
   sessionTitlingPayloadHash,
   type SessionTitlingMode,
 } from "./WorkspaceSetupPage.logic";
-import {
-  trackWizardAbandoned,
-  trackWizardCompleted,
-  trackWizardStarted,
-  trackWizardStepCompleted,
-  trackWizardStepViewed,
-} from "../utils/analytics";
 import {
   formatLaunchElapsed,
   formatLaunchTime,
@@ -142,7 +134,6 @@ export default function WorkspaceSetupPage() {
   const [remoteAdvancedOpen, setRemoteAdvancedOpen] = useState(false);
   const [remotePortInput, setRemotePortInput] = useState("4399");
   const [remoteDataDirInput, setRemoteDataDirInput] = useState("");
-  const [remoteCtxBinInput, setRemoteCtxBinInput] = useState("");
   const [remoteProfiles, setRemoteProfiles] = useState<RemoteProfile[]>(() => loadRemoteProfiles());
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -215,9 +206,6 @@ export default function WorkspaceSetupPage() {
   const locationAdvanceRunRef = useRef<FlowRunToken | null>(null);
   const currentStepKeyRef = useRef<string>("location");
   const previousStepIndexRef = useRef(0);
-  const wizardStartedRef = useRef(false);
-  const wizardCompletedRef = useRef(false);
-  const wizardViewedStepKeyRef = useRef<string | null>(null);
   const titlingProbePromiseRef = useRef<Promise<boolean | null> | null>(null);
   const titlingProbePromiseTargetKeyRef = useRef<string | null>(null);
   const remoteStatusRef = useRef(remoteStatus);
@@ -258,8 +246,8 @@ export default function WorkspaceSetupPage() {
     if (titlingStepVisible) {
       out.push({
         key: "session-titling",
-        title: "Task Titling",
-        note: "Choose an LLM source for generating task titles.",
+        title: "Session Titling",
+        note: "Choose how ctx should generate session titles on this daemon.",
       });
     }
 
@@ -393,36 +381,6 @@ export default function WorkspaceSetupPage() {
   useEffect(() => {
     previousStepIndexRef.current = stepIndex;
   }, [stepIndex]);
-  useEffect(() => {
-    wizardStartedRef.current = true;
-    trackWizardStarted({ wizardKey: "workspace_setup" });
-    return () => {
-      if (wizardCompletedRef.current) return;
-      trackWizardAbandoned({
-        wizardKey: "workspace_setup",
-        lastStepKey: currentStepKeyRef.current,
-        lastStepIndex: previousStepIndexRef.current,
-      });
-    };
-  }, []);
-  useEffect(() => {
-    if (!wizardStartedRef.current) return;
-    const viewedKey = `${step.key}:${stepIndex}`;
-    if (wizardViewedStepKeyRef.current === viewedKey) return;
-    wizardViewedStepKeyRef.current = viewedKey;
-    trackWizardStepViewed({
-      wizardKey: "workspace_setup",
-      stepKey: step.key,
-      stepIndex,
-    });
-  }, [step.key, stepIndex]);
-  const trackCurrentWizardStepCompleted = useCallback(() => {
-    trackWizardStepCompleted({
-      wizardKey: "workspace_setup",
-      stepKey: step.key,
-      stepIndex,
-    });
-  }, [step.key, stepIndex]);
   const requiresSelection = Boolean(step.options?.length);
   const hasSelection = Boolean(selections[step.key]);
   const mergeQueueSkipped = selections["merge-queue"] === "skip";
@@ -446,8 +404,6 @@ export default function WorkspaceSetupPage() {
     || networkAllowlist.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length > 0;
   const parsedRemote = parseUserHost(remoteHostInput);
   const desktopApp = isDesktopApp();
-  const remoteCtxBinValue = remoteCtxBinInput.trim();
-  const remoteCtxBinIsAbsolute = remoteCtxBinValue.startsWith("/");
   const parsedRemotePort = (() => {
     const raw = remotePortInput.trim();
     if (!raw) return null;
@@ -459,7 +415,7 @@ export default function WorkspaceSetupPage() {
   })();
   const selectedDaemonTargetKey = selections.location === "remote"
     ? (parsedRemote?.host
-      ? `ssh:${parsedRemote.user ?? ""}@${parsedRemote.host}:${parsedRemotePort ?? 4399}:${remoteDataDirInput.trim()}:${remoteCtxBinValue}`
+      ? `ssh:${parsedRemote.user ?? ""}@${parsedRemote.host}:${parsedRemotePort ?? 4399}:${remoteDataDirInput.trim()}`
       : null)
     : selections.location === "local"
       ? "local"
@@ -470,8 +426,6 @@ export default function WorkspaceSetupPage() {
       selections.location === "remote"
       && Boolean(parsedRemote?.host)
       && remoteStatus === "connected"
-      && remoteCtxBinValue !== ""
-      && remoteCtxBinIsAbsolute
     )
   );
   const hasRemoteHost = Boolean(parsedRemote?.host);
@@ -568,20 +522,12 @@ export default function WorkspaceSetupPage() {
       if (remoteStatusRef.current !== "connected") {
         throw new Error("Verify remote host connection before scanning auth.");
       }
-      const remoteCtxBin = remoteCtxBinInput.trim();
-      if (!remoteCtxBin) {
-        throw new Error("Remote ctx binary path is required.");
-      }
-      if (!remoteCtxBin.startsWith("/")) {
-        throw new Error("Remote ctx binary path must be absolute (for example /opt/ctx/bin/ctx).");
-      }
       const info = await desktopConnectSsh({
         host: parsed.host,
         user: parsed.user ?? null,
         remote_port: parsedRemotePort,
         start_remote: true,
         remote_data_dir: remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null,
-        remote_ctx_bin: remoteCtxBin,
       });
       applyConnection(info);
       await waitForDaemonReady(15000);
@@ -744,7 +690,6 @@ export default function WorkspaceSetupPage() {
     if (!selectedDaemonTargetKey || !desktopApp) return null;
     if (selections.location === "remote") {
       if (!parsedRemote?.host) return null;
-      if (!remoteCtxBinValue || !remoteCtxBinIsAbsolute) return null;
       if (remoteStatusRef.current !== "connected") return null;
     }
     if (titlingProbeDone && titlingProbeTargetKey === selectedDaemonTargetKey) {
@@ -842,7 +787,6 @@ export default function WorkspaceSetupPage() {
     setTitlingLocalInstallBusy(true);
     setTitlingStatusError(null);
     setTitlingPersistError(null);
-    trackCurrentWizardStepCompleted();
     goRelativeStep(1);
     void (async () => {
       try {
@@ -1010,7 +954,6 @@ export default function WorkspaceSetupPage() {
       return;
     }
     if (shouldAutoAdvance(stepKey, optionId)) {
-      trackCurrentWizardStepCompleted();
       goRelativeStep(1);
     }
   };
@@ -1171,11 +1114,6 @@ export default function WorkspaceSetupPage() {
       if (!isCurrentFlowRunToken(locationAdvanceRunRef.current, run)) return;
       if (selectedDaemonTargetKeyRef.current !== "local") return;
       if (currentStepKeyRef.current !== "location") return;
-      trackWizardStepCompleted({
-        wizardKey: "workspace_setup",
-        stepKey: "location",
-        stepIndex: 0,
-      });
       goToStepKey(nextStepAfterLocation(candidates.length, titlingRequired));
     })();
   }, [
@@ -1294,7 +1232,6 @@ export default function WorkspaceSetupPage() {
       setRemotePortInput(String(profile.remote_port));
     }
     setRemoteDataDirInput(String(profile.remote_data_dir ?? ""));
-    setRemoteCtxBinInput(String(profile.remote_ctx_bin ?? ""));
     remoteProfileAutoAppliedKeyRef.current = key;
   }, [selections.location, remoteHostInput, remoteProfiles]);
 
@@ -1322,7 +1259,6 @@ export default function WorkspaceSetupPage() {
         remote_port: parsedRemotePort,
         start_remote: true,
         remote_data_dir: remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null,
-        remote_ctx_bin: remoteCtxBinValue,
       })
         .then((info) => {
           if (cancelled) return null;
@@ -1360,7 +1296,6 @@ export default function WorkspaceSetupPage() {
     sourcePath,
     parsedRemotePort,
     remoteDataDirInput,
-    remoteCtxBinValue,
   ]);
 
   const sshSuggestions = useMemo(() => {
@@ -1554,7 +1489,6 @@ export default function WorkspaceSetupPage() {
     }
     await ensureTitlingProbeForCurrentTarget();
     if (currentStepKeyRef.current !== "auth-import") return;
-    trackCurrentWizardStepCompleted();
     goRelativeStep(1);
   };
 
@@ -1574,18 +1508,6 @@ export default function WorkspaceSetupPage() {
           setRemoteError("Remote connections require the desktop app.");
           return;
         }
-        if (!remoteCtxBinValue) {
-          setRemoteAdvancedOpen(true);
-          setRemoteStatus("error");
-          setRemoteError("Remote ctx binary path is required.");
-          return;
-        }
-        if (!remoteCtxBinIsAbsolute) {
-          setRemoteAdvancedOpen(true);
-          setRemoteStatus("error");
-          setRemoteError("Remote ctx binary path must be absolute (for example /opt/ctx/bin/ctx).");
-          return;
-        }
         if (remoteStatus !== "connected") {
           setRemoteStatus("connecting");
           setRemoteError(null);
@@ -1600,7 +1522,6 @@ export default function WorkspaceSetupPage() {
             setRemoteProfiles(upsertRemoteProfile(parsedRemote.host, parsedRemote.user ?? null, {
               remote_port: parsedRemotePort ?? 4399,
               remote_data_dir: normalizedDataDir,
-              remote_ctx_bin: remoteCtxBinValue,
             }));
             remoteProfileAutoAppliedKeyRef.current = remoteProfileKey(parsedRemote.host, parsedRemote.user ?? null);
             void desktopKickoffRemotePrewarm({
@@ -1640,7 +1561,6 @@ export default function WorkspaceSetupPage() {
         titlingRequired = required;
       }
       if (currentStepKeyRef.current !== "location") return;
-      trackCurrentWizardStepCompleted();
       goToStepKey(nextStepAfterLocation(candidateCount, titlingRequired));
       return;
     }
@@ -1651,7 +1571,6 @@ export default function WorkspaceSetupPage() {
     if (step.key === "session-titling") {
       setTitlingPersistError(null);
       if (titlingMode === "skip") {
-        trackCurrentWizardStepCompleted();
         goRelativeStep(1);
         return;
       }
@@ -1665,7 +1584,6 @@ export default function WorkspaceSetupPage() {
       }
       const persisted = await ensureTitlingPersistedForCurrentTarget();
       if (!persisted) return;
-      trackCurrentWizardStepCompleted();
       goRelativeStep(1);
       return;
     }
@@ -1673,11 +1591,9 @@ export default function WorkspaceSetupPage() {
       setCreateError(null);
       const preflightOk = await preflightSourceStep();
       if (!preflightOk) return;
-      trackCurrentWizardStepCompleted();
       goRelativeStep(1);
       return;
     }
-    trackCurrentWizardStepCompleted();
     goRelativeStep(1);
   };
 
@@ -1791,42 +1707,32 @@ export default function WorkspaceSetupPage() {
     setLaunchTick(0);
     setCreating(true);
     try {
-      const parsed = selections.location === "remote" ? parseUserHost(remoteHostInput) : null;
-      if (selections.location === "remote" && !isDesktopApp()) {
-        throw new Error("Remote connections require the desktop app.");
+      if (!isDesktopApp()) {
+        throw new Error("Workspace creation from the wizard requires the desktop app.");
       }
+
+      const parsed = selections.location === "remote" ? parseUserHost(remoteHostInput) : null;
       if (selections.location === "remote" && !parsed?.host) {
         throw new Error("Remote host is required (user@host).");
       }
-      if (selections.location === "remote" && !remoteCtxBinValue) {
-        throw new Error("Remote ctx binary path is required.");
-      }
-      if (selections.location === "remote" && !remoteCtxBinIsAbsolute) {
-        throw new Error("Remote ctx binary path must be absolute (for example /opt/ctx/bin/ctx).");
-      }
 
       // 1. Connect to the intended daemon (reuse existing if already running).
-      if (selections.location === "remote") {
-        const info = await desktopConnectSsh({
+      const info = selections.location === "remote"
+        ? await desktopConnectSsh({
           host: parsed!.host,
           user: parsed!.user ?? null,
           remote_port: parsedRemotePort,
           start_remote: true,
           remote_data_dir: remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null,
-          remote_ctx_bin: remoteCtxBinValue,
-        });
-        applyConnection(info);
-      } else if (isDesktopApp()) {
-        const info = await desktopConnectLocal();
-        applyConnection(info);
-      }
+        })
+        : await desktopConnectLocal();
+      applyConnection(info);
 
       if (selections.location === "remote" && parsed?.host) {
         const normalizedDataDir = remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null;
         setRemoteProfiles(upsertRemoteProfile(parsed.host, parsed.user ?? null, {
           remote_port: parsedRemotePort ?? 4399,
           remote_data_dir: normalizedDataDir,
-          remote_ctx_bin: remoteCtxBinValue,
         }));
         remoteProfileAutoAppliedKeyRef.current = remoteProfileKey(parsed.host, parsed.user ?? null);
       }
@@ -1974,7 +1880,7 @@ export default function WorkspaceSetupPage() {
       // 3. Register the workspace.
       if (!wsId) {
         const workspaceKind = selections.location === "remote" ? "remote" : "local";
-        const created = await createWorkspace(rootPath, name, workspaceKind, "wizard");
+        const created = await createWorkspace(rootPath, name, workspaceKind);
         wsId = idToString((created as any).id);
       }
 
@@ -2034,7 +1940,6 @@ export default function WorkspaceSetupPage() {
             remote_port: parsedRemotePort ?? 4399,
             start_remote: true,
             remote_data_dir: normalizedDataDir,
-            remote_ctx_bin: remoteCtxBinValue,
             updated_at_ms: Date.now(),
           });
         } else {
@@ -2048,16 +1953,6 @@ export default function WorkspaceSetupPage() {
       } catch {
         // best-effort only; do not block workspace creation if recents persistence fails
       }
-      trackCurrentWizardStepCompleted();
-      wizardCompletedRef.current = true;
-      trackWizardCompleted({
-        wizardKey: "workspace_setup",
-        workspaceKind: selections.location === "remote"
-          ? "remote"
-          : selections.location === "local"
-            ? "local"
-            : "unknown",
-      });
       navigate(`/workspaces/${wsId}`, { replace: true });
     } catch (e: any) {
       const msg = e?.message ?? String(e);
@@ -2084,7 +1979,6 @@ export default function WorkspaceSetupPage() {
 	  return (
 	    <div className="launcher-shell launcher-shell--crt">
 	      <LauncherBrand fullScreen>
-          <TitleGenerationInstallBanner />
 		        <div
 		          className="wizard-panel"
 		          data-testid="workspace-setup"
@@ -2366,26 +2260,6 @@ export default function WorkspaceSetupPage() {
                         </div>
                         <div className="wizard-input">
                           <label>
-                            Remote ctx binary path
-                            <input
-                              data-testid="wizard-remote-ctx-bin"
-                              placeholder="/opt/ctx/bin/ctx"
-                              value={remoteCtxBinInput}
-                              onChange={(e) => {
-                                setRemoteCtxBinInput(e.target.value);
-                                if (remoteStatus !== "idle") {
-                                  setRemoteStatus("idle");
-                                  setRemoteError(null);
-                                }
-                              }}
-                            />
-                          </label>
-                          <div className="wizard-note">
-                            Required absolute path used when starting a remote daemon.
-                          </div>
-                        </div>
-                        <div className="wizard-input">
-                          <label>
                             Remote data dir (optional)
                             <input
                               data-testid="wizard-remote-data-dir"
@@ -2531,7 +2405,7 @@ export default function WorkspaceSetupPage() {
                         aria-pressed={titlingMode === "remote"}
                       >
                         <div className="wizard-option-title">
-                          <span className="wizard-option-title-text">Remote LLM via API Key</span>
+                          <span className="wizard-option-title-text">Remote model</span>
                         </div>
                         <div className="wizard-option-desc">
                           Use a cloud endpoint with API key + model for title generation.
@@ -2544,37 +2418,24 @@ export default function WorkspaceSetupPage() {
                         onClick={() => {
                           void onSelectTitlingLocal();
                         }}
-                        disabled
+                        disabled={titlingLocalInstallBusy || titlingPersistBusy}
                         aria-pressed={titlingMode === "local"}
                       >
                         <div className="wizard-option-title">
                           <span className="wizard-option-title-text">Local model</span>
                         </div>
                         <div className="wizard-option-desc">
-                          Coming soon: download a small LLM to run locally for generating task titles.
+                          Run titling on-daemon. Download can continue in background.
                         </div>
                       </button>
                     </div>
-                    {titlingMode === "local" ? (
-                      <div className="wizard-note" data-testid="wizard-titling-local-status">
-                        {titlingLocalStatus?.ready
-                          ? "Local model ready."
-                          : titlingLocalInstallBusy
-                            ? "Starting local model download…"
-                            : titlingLocalInstall?.state === "running"
-                              ? `Installing local model${typeof titlingLocalInstall.pct === "number" ? ` (${titlingLocalInstall.pct}%)` : ""}. This continues in background.`
-                              : titlingLocalInstall?.state === "failed"
-                                ? `Local model install failed${titlingLocalInstall.error ? `: ${titlingLocalInstall.error}` : "."}`
-                                : "Local model is not ready yet. Titles use fallback until install completes."}
-                      </div>
-                    ) : null}
                     {titlingMode === "remote" && (
                       <div className="wizard-input">
                         <label>
                           Endpoint base URL
                           <input
                             data-testid="wizard-titling-remote-base-url"
-                            placeholder="https://api.your-llm-gateway.example/v1"
+                            placeholder="https://openrouter.ai/api/v1"
                             value={titlingRemoteBaseUrl}
                             onChange={(e) => {
                               invalidateTitlingPersisted();
@@ -2599,7 +2460,7 @@ export default function WorkspaceSetupPage() {
                           Model
                           <input
                             data-testid="wizard-titling-remote-model"
-                            placeholder="model-slug"
+                            placeholder="google/gemini-3-flash-preview"
                             value={titlingRemoteModel}
                             onChange={(e) => {
                               invalidateTitlingPersisted();
@@ -2644,7 +2505,6 @@ export default function WorkspaceSetupPage() {
                       onClick={() => {
                         invalidateTitlingPersisted();
                         setTitlingMode("skip");
-                        trackCurrentWizardStepCompleted();
                         goRelativeStep(1);
                       }}
                       disabled={titlingPersistBusy || titlingLocalInstallBusy}
@@ -2886,11 +2746,10 @@ export default function WorkspaceSetupPage() {
 	                      type="button"
 	                      className="wizard-skip wizard-skip--left wizard-skip--below"
 	                      data-testid="wizard-merge-skip"
-                      onClick={() => {
+	                      onClick={() => {
                         onSelect("merge-queue", "skip");
                         setMergeAdvancedOpen(false);
                         setPushOnSuccess(false);
-                        trackCurrentWizardStepCompleted();
                         goRelativeStep(1);
                       }}
                     >
@@ -2977,7 +2836,7 @@ export default function WorkspaceSetupPage() {
                         </div>
                       )}
                       <div className="wizard-summary-row">
-                        <div className="wizard-summary-k">Task titling</div>
+                        <div className="wizard-summary-k">Session titling</div>
                         <div className="wizard-summary-v">{titlingSummaryValue}</div>
                       </div>
                       <div className="wizard-summary-row">

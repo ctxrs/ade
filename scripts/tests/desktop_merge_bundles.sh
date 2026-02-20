@@ -18,11 +18,14 @@ bundle_out="$tmp_root/out"
 mkdir -p "$bundle_x64/providers/codex/linux/x86_64"
 mkdir -p "$bundle_arm64/providers/codex/linux/aarch64"
 mkdir -p "$bundle_x64/images" "$bundle_arm64/images"
+mkdir -p "$bundle_x64/daemons" "$bundle_arm64/daemons"
 
 printf 'codex-x64' > "$bundle_x64/providers/codex/linux/x86_64/codex-crp"
 printf 'codex-arm64' > "$bundle_arm64/providers/codex/linux/aarch64/codex-crp"
 printf 'harness-x64' > "$bundle_x64/images/ctx-harness-linux-x86_64.tar"
 printf 'harness-arm64' > "$bundle_arm64/images/ctx-harness-linux-aarch64.tar"
+printf 'daemon-x64' > "$bundle_x64/daemons/ctx-daemon-linux-x86_64"
+printf 'daemon-arm64' > "$bundle_arm64/daemons/ctx-daemon-linux-aarch64"
 
 cat > "$bundle_x64/manifest.json" <<'JSON'
 {
@@ -37,6 +40,15 @@ cat > "$bundle_x64/manifest.json" <<'JSON'
       "sha256": "x64-sha",
       "command": "providers/codex/linux/x86_64/codex-crp",
       "args": []
+    }
+  ],
+  "daemons": [
+    {
+      "id": "ctx-daemon",
+      "os": "linux",
+      "arch": "x86_64",
+      "sha256": "x64-daemon-sha",
+      "bin": "daemons/ctx-daemon-linux-x86_64"
     }
   ],
   "runtimes": [],
@@ -69,6 +81,15 @@ cat > "$bundle_arm64/manifest.json" <<'JSON'
       "args": []
     }
   ],
+  "daemons": [
+    {
+      "id": "ctx-daemon",
+      "os": "linux",
+      "arch": "aarch64",
+      "sha256": "arm64-daemon-sha",
+      "bin": "daemons/ctx-daemon-linux-aarch64"
+    }
+  ],
   "runtimes": [],
   "images": [
     {
@@ -91,7 +112,9 @@ node "$MERGE_SCRIPT" \
   --require-provider codex:linux:x86_64 \
   --require-provider codex:linux:aarch64 \
   --require-image ctx-harness:linux:x86_64 \
-  --require-image ctx-harness:linux:aarch64
+  --require-image ctx-harness:linux:aarch64 \
+  --require-daemon ctx-daemon:linux:x86_64 \
+  --require-daemon ctx-daemon:linux:aarch64
 
 python3 - "$bundle_out/manifest.json" <<'PY'
 import json
@@ -102,10 +125,13 @@ path = Path(sys.argv[1])
 data = json.loads(path.read_text(encoding="utf-8"))
 providers = data.get("providers") or []
 images = data.get("images") or []
+daemons = data.get("daemons") or []
 if len(providers) != 2:
     raise SystemExit(f"expected 2 providers, got {len(providers)}")
 if len(images) != 2:
     raise SystemExit(f"expected 2 images, got {len(images)}")
+if len(daemons) != 2:
+    raise SystemExit(f"expected 2 daemons, got {len(daemons)}")
 PY
 
 conflict_dir="$tmp_root/conflict"
@@ -126,6 +152,7 @@ cat > "$conflict_dir/manifest.json" <<'JSON'
       "args": []
     }
   ],
+  "daemons": [],
   "runtimes": [],
   "images": []
 }

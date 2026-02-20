@@ -973,6 +973,17 @@
   white-space: pre-wrap;
 }
 
+.daemon-overlay-notice {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--success-border);
+  background: var(--success-soft);
+  color: var(--success-contrast);
+  margin-bottom: 16px;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
 .daemon-overlay-actions {
   display: flex;
   flex-wrap: wrap;

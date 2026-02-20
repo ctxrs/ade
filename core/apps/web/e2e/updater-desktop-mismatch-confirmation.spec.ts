@@ -73,7 +73,6 @@ const installDesktopHarness = async (page: Page, config: HarnessConfig) => {
             user: "devbox",
             remote_port: 4450,
             remote_data_dir: "/tmp/ctx-remote",
-            remote_ctx_bin: "/opt/ctx/bin/ctx",
           };
         }
         return {
