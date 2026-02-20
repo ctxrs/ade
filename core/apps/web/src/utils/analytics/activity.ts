@@ -29,8 +29,94 @@ export const trackWorkspaceCreated = (workspaceKind: "local" | "remote"): void =
   capture("workspace_created", { workspace_kind: workspaceKind });
 };
 
+export const trackWorkspaceCreateSubmitted = (props: {
+  workspaceKind: "local" | "remote";
+  source: "wizard" | "launcher" | "api" | "unknown";
+}): void => {
+  capture("workspace_create_submitted", {
+    workspace_kind: props.workspaceKind,
+    source: props.source,
+  });
+};
+
+export const trackWorkspaceCreateSucceeded = (props: {
+  workspaceKind: "local" | "remote";
+  source: "wizard" | "launcher" | "api" | "unknown";
+}): void => {
+  capture("workspace_create_succeeded", {
+    workspace_kind: props.workspaceKind,
+    source: props.source,
+  });
+};
+
+export const trackWorkspaceCreateFailed = (props: {
+  workspaceKind: "local" | "remote";
+  source: "wizard" | "launcher" | "api" | "unknown";
+  failureKind: "network_error" | "request_error" | "unknown";
+}): void => {
+  capture("workspace_create_failed", {
+    workspace_kind: props.workspaceKind,
+    source: props.source,
+    failure_kind: props.failureKind,
+  });
+};
+
 export const trackWorkspaceOpened = (workspaceKind: "local" | "remote"): void => {
   capture("workspace_opened", { workspace_kind: workspaceKind });
+};
+
+export const trackWizardStarted = (props: {
+  wizardKey: "workspace_setup";
+}): void => {
+  capture("wizard_started", {
+    wizard_key: props.wizardKey,
+  });
+};
+
+export const trackWizardStepViewed = (props: {
+  wizardKey: "workspace_setup";
+  stepKey: string;
+  stepIndex: number;
+}): void => {
+  capture("wizard_step_viewed", {
+    wizard_key: props.wizardKey,
+    step_key: props.stepKey,
+    step_index: props.stepIndex,
+  });
+};
+
+export const trackWizardStepCompleted = (props: {
+  wizardKey: "workspace_setup";
+  stepKey: string;
+  stepIndex: number;
+}): void => {
+  capture("wizard_step_completed", {
+    wizard_key: props.wizardKey,
+    step_key: props.stepKey,
+    step_index: props.stepIndex,
+  });
+};
+
+export const trackWizardCompleted = (props: {
+  wizardKey: "workspace_setup";
+  workspaceKind: "local" | "remote" | "unknown";
+}): void => {
+  capture("wizard_completed", {
+    wizard_key: props.wizardKey,
+    workspace_kind: props.workspaceKind,
+  });
+};
+
+export const trackWizardAbandoned = (props: {
+  wizardKey: "workspace_setup";
+  lastStepKey: string;
+  lastStepIndex: number;
+}): void => {
+  capture("wizard_abandoned", {
+    wizard_key: props.wizardKey,
+    last_step_key: props.lastStepKey,
+    last_step_index: props.lastStepIndex,
+  });
 };
 
 export const trackSessionCreated = (props: {
@@ -98,6 +184,18 @@ export const trackFeatureUsed = (
   extra: AnalyticsProperties = {},
 ): void => {
   capture("feature_used", { feature_key: featureKey, ...extra });
+};
+
+export const trackWorkbenchPanelToggled = (props: {
+  panelKey: "terminal" | "diff" | "artifacts" | "sessions";
+  open: boolean;
+  source: "header_button" | "menu_command" | "unknown";
+}): void => {
+  capture("workbench_panel_toggled", {
+    panel_key: props.panelKey,
+    open: props.open,
+    source: props.source,
+  });
 };
 
 export const trackPlanViewed = (entrySurface: string): void => {

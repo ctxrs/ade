@@ -68,7 +68,7 @@ async function createOrOpenWorkspaceByPath(rootPath: string): Promise<string> {
   const all = await listWorkspaces();
   const hit = all.find((w) => String(w.root_path) === rootPath);
   if (hit) return idToString(hit.id ?? "");
-  const created = await createWorkspace(rootPath);
+  const created = await createWorkspace(rootPath, undefined, "local", "launcher");
   return idToString(created.id ?? "");
 }
 
