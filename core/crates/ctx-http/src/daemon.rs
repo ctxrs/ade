@@ -340,6 +340,15 @@ coreEvents.on(CoreEvent.Output, (payload) => {{\n\
 coreEvents.on(CoreEvent.ConsoleLog, (payload) => {{\n\
   writeToStderr(String(payload?.content ?? '') + '\\n');\n\
 }});\n\
+const consentRaw = process.env.CTX_GEMINI_AUTO_OAUTH_CONSENT ?? '';\n\
+const consentDisabled = consentRaw === '0' || consentRaw.toLowerCase() === 'false';\n\
+if (!consentDisabled) {{\n\
+  coreEvents.on(CoreEvent.ConsentRequest, (payload) => {{\n\
+    if (typeof payload?.onConfirm === 'function') {{\n\
+      payload.onConfirm(true);\n\
+    }}\n\
+  }});\n\
+}}\n\
 process.env.GEMINI_CLI_NO_RELAUNCH ??= 'true';\n\
 await import('file://{}');\n",
         core_root.join("dist").join("index.js").to_string_lossy(),
@@ -1092,5 +1101,7 @@ mod tests {
         assert!(wrapper_path.exists());
         let wrapper_body = std::fs::read_to_string(wrapper_path).unwrap();
         assert!(wrapper_body.contains("GEMINI_CLI_NO_RELAUNCH"));
+        assert!(wrapper_body.contains("CoreEvent.ConsentRequest"));
+        assert!(wrapper_body.contains("payload.onConfirm(true)"));
     }
 }

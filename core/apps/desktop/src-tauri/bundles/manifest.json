@@ -207,12 +207,15 @@
     {
       "id": "gemini",
       "protocol": "acp",
-      "version": "local",
+      "version": "0.29.5",
       "os": "macos",
       "arch": "aarch64",
-      "sha256": "444c008b794f788aa31664342e6d82175a37a8d7afa05617951f4ec8fc6421c7",
-      "command": "providers/gemini/macos/aarch64/gemini-acp.sh",
-      "args": []
+      "sha256": "90ee1d271eec831fd38d16c78c19cc36809548ac5cd034a6e0c10c4389c881ef",
+      "command": "runtimes/node/macos/aarch64/node-v24.12.0-darwin-arm64/bin/node",
+      "args": [
+        "providers/gemini/macos/aarch64/node_modules/@google/gemini-cli/dist/index.js",
+        "--experimental-acp"
+      ]
     },
     {
       "id": "goose",

@@ -462,7 +462,6 @@ struct ClaudeLoginSpawn {
 const CODEX_LOGIN_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 const CLAUDE_LOGIN_URL_WAIT: Duration = Duration::from_secs(4);
 const GEMINI_LOGIN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(300);
-const GEMINI_LOGIN_NO_AUTH_URL_TIMEOUT_DEFAULT: Duration = Duration::from_secs(20);
 const GEMINI_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
 const CLAUDE_LOGIN_NO_AUTH_URL_TIMEOUT: Duration = Duration::from_secs(8);
 const CLAUDE_LOGIN_URL_SETTLE_WAIT: Duration = Duration::from_millis(500);
@@ -537,15 +536,6 @@ fn gemini_login_timeout() -> Duration {
         .and_then(|raw| raw.trim().parse::<u64>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(GEMINI_LOGIN_TIMEOUT_DEFAULT.as_secs());
-    Duration::from_secs(seconds)
-}
-
-fn gemini_login_no_auth_url_timeout() -> Duration {
-    let seconds = std::env::var("CTX_GEMINI_LOGIN_NO_AUTH_URL_TIMEOUT_SECS")
-        .ok()
-        .and_then(|raw| raw.trim().parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(GEMINI_LOGIN_NO_AUTH_URL_TIMEOUT_DEFAULT.as_secs());
     Duration::from_secs(seconds)
 }
 
@@ -1261,7 +1251,6 @@ async fn monitor_gemini_login(state: Arc<AppState>, login_id: String, label: Opt
         provider_accounts::GEMINI_FORCE_FILE_STORAGE_ENV.to_string(),
         "true".to_string(),
     );
-    provider_env.insert("NO_BROWSER".to_string(), "true".to_string());
     provider_env.insert(
         "CTX_DATA_ROOT".to_string(),
         state.core.data_root.to_string_lossy().to_string(),
@@ -1291,7 +1280,6 @@ async fn monitor_gemini_login(state: Arc<AppState>, login_id: String, label: Opt
     let google_accounts_path = login_home.join(".gemini").join("google_accounts.json");
     let started_at = Instant::now();
     let timeout = gemini_login_timeout();
-    let auth_url_deadline = started_at + gemini_login_no_auth_url_timeout();
     let mut observed_auth_url = false;
 
     loop {
@@ -1394,21 +1382,6 @@ async fn monitor_gemini_login(state: Arc<AppState>, login_id: String, label: Opt
         }
 
         if channel_disconnected && !observed_auth_url {
-            let mut map = state.providers.gemini_login_sessions.lock().await;
-            if let Some(entry) = map.get_mut(&login_id) {
-                entry.status = "failed".to_string();
-                if entry.error.is_none() {
-                    entry.error = Some(
-                        "Gemini sign-in did not emit an OAuth URL; the runtime may require API-key auth in this environment."
-                            .to_string(),
-                    );
-                }
-            }
-            let _ = tokio::fs::remove_dir_all(&login_home).await;
-            return;
-        }
-
-        if !observed_auth_url && Instant::now() >= auth_url_deadline {
             let mut map = state.providers.gemini_login_sessions.lock().await;
             if let Some(entry) = map.get_mut(&login_id) {
                 entry.status = "failed".to_string();
