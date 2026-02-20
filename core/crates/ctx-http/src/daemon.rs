@@ -668,11 +668,14 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
         .await
         .unwrap_or_default();
 
+    let mut bridge_runtime_error: Option<String> = None;
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     let bridge_cmd = match runtime_command_as_agent_command(&agent_cfg, "acp-crp-bridge") {
         Ok(cmd) => cmd,
         Err(err) => {
-            tracing::warn!("invalid runtime command for acp-crp-bridge: {err}");
+            let message = format!("invalid runtime command for acp-crp-bridge: {err}");
+            tracing::warn!("{message}");
+            bridge_runtime_error = Some(message);
             None
         }
     };
@@ -729,11 +732,11 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
         "openhands",
     ];
     for provider_id in acp_provider_ids {
+        let bridge_missing_message = bridge_runtime_error.clone().unwrap_or_else(|| {
+            "ACP bridge runtime is not configured or invalid".to_string()
+        });
         let adapter = match bridge_cmd.as_ref() {
-            None => acp_status_adapter_bridge_missing(
-                provider_id,
-                "ACP bridge runtime is not configured or invalid".to_string(),
-            ),
+            None => acp_status_adapter_bridge_missing(provider_id, bridge_missing_message),
             Some(bridge) => match runtime_command_as_agent_command(&agent_cfg, provider_id) {
                 Ok(Some(cmd)) => {
                     let cmd = if provider_id == "gemini" {

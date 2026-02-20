@@ -42,18 +42,38 @@ ensure_endpoint_ui_bundles() {
 
   local bundle_dir="${CTX_E2E_BUNDLE_DIR:-${repo_root}/apps/desktop/src-tauri/bundles}"
   local first_pass_providers="${CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-acp-crp-bridge,codex,qwen,opencode,mistral,goose,kimi,cagent,cline,swe-agent,openhands}"
+  local run_id="${CTX_E2E_RUN_ID:-$(date +%s)-$$}"
+  local bundle_build_dir="${CTX_E2E_BUNDLE_BUILD_DIR:-/tmp/ctx-e2e-bundle-build-${run_id}}"
+  local cargo_target_dir="${CTX_E2E_CARGO_TARGET_DIR:-/tmp/ctx-e2e-cargo-${run_id}}"
+  local cargo_home_dir="${CTX_E2E_CARGO_HOME:-/tmp/ctx-e2e-cargo-home-${run_id}}"
+
+  mkdir -p "${bundle_build_dir}" "${cargo_target_dir}" "${cargo_home_dir}"
 
   echo "preparing bundled provider runtimes for endpoint-ui suite (providers: ${first_pass_providers})"
   CTX_BUNDLE_DIR="${bundle_dir}" \
+  CTX_BUNDLE_BUILD_DIR="${bundle_build_dir}" \
   CTX_BUNDLE_ONLY_PROVIDERS="${first_pass_providers}" \
   CTX_BUNDLE_SKIP_IMAGES="${CTX_E2E_ENDPOINT_SKIP_BUNDLE_IMAGES:-1}" \
   CTX_BUNDLE_INCLUDE_BRIDGE="1" \
   CTX_BUNDLE_LOCAL_ADAPTERS="auto" \
   CTX_BUNDLE_BUILD_LOCAL_ADAPTERS="0" \
+  CTX_BUNDLE_USE_ACP_SHIMS="0" \
+  CARGO_TARGET_DIR="${cargo_target_dir}" \
+  CARGO_HOME="${cargo_home_dir}" \
   "${bundle_script}" >/dev/null
 
   export CTX_BUNDLE_DIR="${bundle_dir}"
+  export CTX_E2E_BUNDLED_ONLY="1"
+  export CTX_E2E_BUNDLED_ONLY_PROVIDERS="${first_pass_providers}"
+  export CTX_E2E_CARGO_TARGET_DIR="${cargo_target_dir}"
+  export CARGO_TARGET_DIR="${cargo_target_dir}"
+  export CTX_E2E_CARGO_HOME="${cargo_home_dir}"
+  export CTX_BUNDLE_BUILD_DIR="${bundle_build_dir}"
   echo "using CTX_BUNDLE_DIR=${CTX_BUNDLE_DIR}"
+  echo "using CTX_BUNDLE_BUILD_DIR=${CTX_BUNDLE_BUILD_DIR}"
+  echo "using CTX_E2E_CARGO_TARGET_DIR=${CTX_E2E_CARGO_TARGET_DIR}"
+  echo "using CTX_E2E_CARGO_HOME=${CTX_E2E_CARGO_HOME}"
+  echo "enforcing bundled-only runtime resolution for: ${CTX_E2E_BUNDLED_ONLY_PROVIDERS}"
 }
 
 tests=()

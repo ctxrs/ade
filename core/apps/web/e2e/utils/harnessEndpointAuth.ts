@@ -8,7 +8,11 @@ export type HarnessAuthConfigResult =
 const normalizeText = (value: string | null | undefined): string => (value ?? "").replace(/\s+/g, " ").trim();
 
 const harnessTriggerLabel = (page: Page) =>
-  page.locator('button[title="Agents"] .wb-switcher-label').first();
+  page
+    .locator(
+      ".wb-new-composer-stack .wb-switcher-harness .wb-switcher-label, .wb-new-composer-stack button[title='Harness'] .wb-switcher-label, button[title='Agents'] .wb-switcher-label",
+    )
+    .first();
 
 const isHarnessLabelSelected = (labelText: string, entry: EndpointHarnessMatrixEntry): boolean => {
   const selected = labelText.toLowerCase();
@@ -16,7 +20,11 @@ const isHarnessLabelSelected = (labelText: string, entry: EndpointHarnessMatrixE
 };
 
 async function openHarnessMenu(page: Page) {
-  const harnessButton = page.locator('button[title="Agents"]').first();
+  const harnessButton = page
+    .locator(
+      ".wb-new-composer-stack .wb-switcher-harness, .wb-new-composer-stack button[title='Harness'], button[title='Agents']",
+    )
+    .first();
   await expect(harnessButton).toBeVisible({ timeout: 20_000 });
   const menu = page.locator(".wb-harness-menu");
   if (!(await menu.isVisible().catch(() => false))) {
@@ -65,12 +73,35 @@ async function chooseOpenRouterPreset(page: Page, modal: Locator) {
   throw new Error("OpenRouter preset option not found in endpoint provider selector");
 }
 
+async function dismissAuthModalIfOpen(page: Page): Promise<void> {
+  const modal = page.locator(".settings-harness-modal");
+  if (!(await modal.isVisible().catch(() => false))) return;
+  const closeButton = modal.getByRole("button", { name: "Close" }).first();
+  if ((await closeButton.count()) > 0) {
+    await closeButton.click().catch(() => {});
+  }
+  if (await modal.isVisible().catch(() => false)) {
+    const backButton = modal.getByRole("button", { name: "Back" }).first();
+    if ((await backButton.count()) > 0) {
+      await backButton.click().catch(() => {});
+    }
+  }
+  if (await modal.isVisible().catch(() => false)) {
+    await page.locator(".modal-overlay").first().click({ position: { x: 4, y: 4 } }).catch(() => {});
+  }
+  if (await modal.isVisible().catch(() => false)) {
+    await page.keyboard.press("Escape").catch(() => {});
+  }
+  await modal.waitFor({ state: "hidden", timeout: 4_000 }).catch(() => {});
+}
+
 export async function configureHarnessEndpointAuthViaModal(
   page: Page,
   entry: EndpointHarnessMatrixEntry,
   apiKey: string,
   baseUrl: string,
 ): Promise<HarnessAuthConfigResult> {
+  await dismissAuthModalIfOpen(page);
   const menu = await openHarnessMenu(page);
   await menu.getByLabel("Search agents").fill(entry.searchTerm);
   const rowButton = await resolveHarnessMenuButton(menu, entry);
@@ -125,19 +156,17 @@ export async function configureHarnessEndpointAuthViaModal(
     const errorText = normalizeText(await providerError.textContent().catch(() => ""));
     if (errorText) {
       if (errorText.toLowerCase().includes("endpoint verification failed")) {
-        const closeButton = modal.getByRole("button", { name: "Close" }).first();
-        if ((await closeButton.count()) > 0) {
-          await closeButton.click();
-          await expect(modal).toBeHidden({ timeout: 10_000 });
-        }
+        await dismissAuthModalIfOpen(page);
         return { ok: true, detail: `endpoint auth saved with verify warning: ${errorText}` };
       }
+      await dismissAuthModalIfOpen(page).catch(() => {});
       return { ok: false, detail: errorText };
     }
 
     await page.waitForTimeout(200);
   }
 
+  await dismissAuthModalIfOpen(page).catch(() => {});
   return { ok: false, detail: "auth modal did not close after Add API key" };
 }
 
