@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import {
   getInstall,
-  getProviderOptions,
   installAllProviders,
   installProvider,
-  listProviders,
   type InstallInfo,
   type ProviderOptions,
   type ProviderStatus,
 } from "../../api/client";
+import {
+  loadProvidersBootstrap,
+  refreshProvidersBootstrap,
+} from "../../state/providersBootstrapStore";
 import type { DraftHarness } from "../../components/WorkbenchComposer";
 
 type ProviderInstallState = {
@@ -41,7 +43,12 @@ export function useWorkbenchProviders({
   const [installAllBusy, setInstallAllBusy] = useState(false);
   const postInstallHandledRef = useRef<Set<string>>(new Set());
   const postInstallInFlightRef = useRef<Set<string>>(new Set());
-  const providerOptionsInFlightRef = useRef<Record<string, Promise<ProviderOptions | undefined>>>({});
+  const providerAuthSummaryInFlightRef = useRef<Record<string, Promise<ProviderOptions | undefined>>>({});
+
+  const applyProvidersBootstrap = useCallback((bootstrap: Awaited<ReturnType<typeof loadProvidersBootstrap>>) => {
+    setProviders(bootstrap.providers);
+    setProviderOptions(bootstrap.provider_options);
+  }, []);
 
   const providersById = useMemo(
     () => Object.fromEntries(providers.map((provider) => [provider.provider_id, provider])),
@@ -67,19 +74,56 @@ export function useWorkbenchProviders({
   const refreshProviders = useCallback(async () => {
     if (!workspaceId) {
       setProviders([]);
+      setProviderOptions({});
       return;
     }
     try {
-      const next = await listProviders();
-      setProviders(next);
+      const next = await refreshProvidersBootstrap(workspaceId);
+      applyProvidersBootstrap(next);
     } catch {
       setProviders([]);
+      setProviderOptions({});
     }
-  }, [workspaceId]);
+  }, [applyProvidersBootstrap, workspaceId]);
 
   useEffect(() => {
-    void refreshProviders();
-  }, [refreshProviders]);
+    if (!workspaceId) {
+      setProviders([]);
+      setProviderOptions({});
+      return;
+    }
+    loadProvidersBootstrap(workspaceId)
+      .then((bootstrap) => {
+        applyProvidersBootstrap(bootstrap);
+      })
+      .catch(() => {
+        setProviders([]);
+        setProviderOptions({});
+      });
+  }, [applyProvidersBootstrap, workspaceId]);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    const refreshOnForeground = () => {
+      refreshProvidersBootstrap(workspaceId)
+        .then((bootstrap) => applyProvidersBootstrap(bootstrap))
+        .catch(() => {});
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        refreshOnForeground();
+      }
+    };
+
+    window.addEventListener("focus", refreshOnForeground);
+    window.addEventListener("online", refreshOnForeground);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("focus", refreshOnForeground);
+      window.removeEventListener("online", refreshOnForeground);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [applyProvidersBootstrap, workspaceId]);
 
   const attachProviderInstall = useCallback((providerId: string, installId: string) => {
     setProviderInstallsById((prev) => {
@@ -105,26 +149,14 @@ export function useWorkbenchProviders({
     }
   }, [attachProviderInstall, providerInstallsById, providers]);
 
-  const refreshProviderOptions = useCallback(
-    async (providerId: string): Promise<ProviderOptions | undefined> => {
-      if (!workspaceId) return;
-      try {
-        const options = await getProviderOptions(workspaceId, providerId);
-        setProviderOptions((prev) => ({ ...prev, [providerId]: options }));
-        return options;
-      } catch {
-        return;
-      }
-    },
-    [workspaceId],
-  );
-
   const runPostInstallAuthVerify = useCallback(
     async (providerId: string) => {
       if (!workspaceId) return;
-      await refreshProviderOptions(providerId);
+      const bootstrap = await refreshProvidersBootstrap(workspaceId);
+      applyProvidersBootstrap(bootstrap);
+      return bootstrap.provider_options[providerId];
     },
-    [refreshProviderOptions, workspaceId],
+    [applyProvidersBootstrap, workspaceId],
   );
 
   useEffect(() => {
@@ -205,9 +237,9 @@ export function useWorkbenchProviders({
 
       if (needsProviderRefresh) {
         try {
-          const next = await listProviders();
+          const next = await refreshProvidersBootstrap(workspaceId);
           if (!cancelled) {
-            setProviders(next);
+            applyProvidersBootstrap(next);
           }
 
           if (!cancelled && completedProviders.length > 0) {
@@ -231,7 +263,7 @@ export function useWorkbenchProviders({
       cancelled = true;
       window.clearInterval(timerId);
     };
-  }, [providerInstallsById, runPostInstallAuthVerify]);
+  }, [applyProvidersBootstrap, providerInstallsById, runPostInstallAuthVerify, workspaceId]);
 
   const installProviderFromMenu = useCallback(
     async (providerId: string) => {
@@ -293,32 +325,34 @@ export function useWorkbenchProviders({
     });
   }, [defaultProviderId, providers.length, providersById, setDraftHarness]);
 
-  const ensureProviderOptions = useCallback(
+  // This loads workspace-scoped auth/config summary from providers/bootstrap.
+  // It intentionally does not run runtime probes or fetch model catalogs.
+  const ensureProviderAuthSummary = useCallback(
     async (providerId: string, opts?: { force?: boolean }): Promise<ProviderOptions | undefined> => {
       if (!workspaceId) return;
       const ready = providersById[providerId]?.installed === true && providersById[providerId]?.health === "ok";
       if (!ready) return;
 
       const force = opts?.force ?? false;
-      const existing = providerOptionsInFlightRef.current[providerId];
+      const existing = providerAuthSummaryInFlightRef.current[providerId];
       if (existing && !force) return existing;
       if (!force && providerOptions[providerId]) return providerOptions[providerId];
 
-      const request = getProviderOptions(workspaceId, providerId)
-        .then((options) => {
-          setProviderOptions((prev) => ({ ...prev, [providerId]: options }));
-          return options;
+      const request = (force ? refreshProvidersBootstrap(workspaceId) : loadProvidersBootstrap(workspaceId))
+        .then((bootstrap) => {
+          applyProvidersBootstrap(bootstrap);
+          return bootstrap.provider_options[providerId];
         })
         .finally(() => {
-          if (providerOptionsInFlightRef.current[providerId] === request) {
-            delete providerOptionsInFlightRef.current[providerId];
+          if (providerAuthSummaryInFlightRef.current[providerId] === request) {
+            delete providerAuthSummaryInFlightRef.current[providerId];
           }
         });
 
-      providerOptionsInFlightRef.current[providerId] = request;
+      providerAuthSummaryInFlightRef.current[providerId] = request;
       return request;
     },
-    [providerOptions, providersById, workspaceId],
+    [applyProvidersBootstrap, providerOptions, providersById, workspaceId],
   );
 
   return {
@@ -329,6 +363,6 @@ export function useWorkbenchProviders({
     installAllBusy,
     installProviderFromMenu,
     installAllProvidersFromMenu,
-    ensureProviderOptions,
+    ensureProviderAuthSummary,
   };
 }

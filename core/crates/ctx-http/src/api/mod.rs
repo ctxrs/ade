@@ -634,6 +634,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             get(get_provider_options),
         )
         .route(
+            "/api/workspaces/:id/providers/bootstrap",
+            get(get_workspace_providers_bootstrap),
+        )
+        .route(
             "/api/workspaces/:id/providers/:provider_id/authenticate",
             post(authenticate_provider_for_workspace),
         )

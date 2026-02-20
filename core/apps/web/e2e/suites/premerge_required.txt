@@ -6,6 +6,7 @@ e2e/second-message.spec.ts
 e2e/terminal-reconnect.spec.ts
 e2e/workbench-first-message-header.spec.ts
 e2e/workbench-index.spec.ts
+e2e/workbench-providers-bootstrap.spec.ts
 e2e/workbench-snapshot-stream-invariant.spec.ts
 e2e/workbench-worktree-path.spec.ts
 e2e/ws-stream-recovery-nogap.spec.ts

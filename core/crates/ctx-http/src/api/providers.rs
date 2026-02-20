@@ -59,6 +59,10 @@ fn invalid_provider_id_error(
 pub(super) async fn list_providers(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<ProviderStatus>>, StatusCode> {
+    Ok(Json(providers_statuses_response(&state).await))
+}
+
+async fn providers_statuses_response(state: &Arc<AppState>) -> Vec<ProviderStatus> {
     let map = state.providers.statuses.lock().await;
     let mut out: Vec<ProviderStatus> = map.values().cloned().collect();
     drop(map);
@@ -98,7 +102,7 @@ pub(super) async fn list_providers(
                 .insert("install_id".into(), install_id.to_string());
         }
     }
-    Ok(Json(out))
+    out
 }
 
 pub(super) async fn get_provider(
@@ -238,6 +242,20 @@ pub(super) struct KiroAccountsResponse {
 pub(super) struct CursorAccountsResponse {
     active_account_id: Option<String>,
     accounts: Vec<provider_accounts::CursorAccountEntry>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct ProvidersBootstrapResponse {
+    providers: Vec<ProviderStatus>,
+    provider_options: HashMap<String, serde_json::Value>,
+    provider_harness_config: HashMap<String, harness_sources::HarnessProviderSourceConfig>,
+    codex_accounts: CodexAccountsResponse,
+    claude_accounts: ClaudeAccountsResponse,
+    gemini_accounts: GeminiAccountsResponse,
+    kimi_accounts: KimiAccountsResponse,
+    copilot_accounts: CopilotAccountsResponse,
+    kiro_accounts: KiroAccountsResponse,
+    cursor_accounts: CursorAccountsResponse,
 }
 
 #[derive(Debug, Serialize)]
@@ -3020,6 +3038,105 @@ fn parse_workspace_id(ws_id: &str) -> Result<WorkspaceId, (StatusCode, Json<serd
             })),
         )
     })?))
+}
+
+pub(super) async fn get_workspace_providers_bootstrap(
+    State(state): State<Arc<AppState>>,
+    Path(ws_id): Path<String>,
+) -> Result<Json<ProvidersBootstrapResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let ws_id = parse_workspace_id(&ws_id)?;
+
+    let workspace = state
+        .global_store()
+        .get_workspace(ws_id)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "failed to load workspace",
+                })),
+            )
+        })?;
+    if workspace.is_none() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": "workspace not found",
+            })),
+        ));
+    }
+
+    let providers = providers_statuses_response(&state).await;
+    let mut provider_options = HashMap::new();
+    let mut provider_harness_config = HashMap::new();
+    let ws_id_str = ws_id.0.to_string();
+    let visible_provider_ids = providers
+        .iter()
+        .filter(|provider| provider.details.get("ui_hidden").map(String::as_str) != Some("true"))
+        .map(|provider| provider.provider_id.clone())
+        .collect::<Vec<_>>();
+
+    let per_provider = futures::stream::iter(visible_provider_ids.into_iter().map(|provider_id| {
+        let state = Arc::clone(&state);
+        let ws_id = ws_id_str.clone();
+        async move {
+            let source_config =
+                harness_sources::get_provider_source_config(&state.core.data_root, &provider_id)
+                    .await
+                    .ok();
+            let has_active_auth = provider_has_active_auth_config(
+                &state.core.data_root,
+                &provider_id,
+                source_config.as_ref(),
+            )
+            .await;
+            let auth_mode = provider_auth_mode(has_active_auth, source_config.as_ref());
+
+            let mut options = serde_json::json!({
+                "provider_id": provider_id,
+                "workspace_id": ws_id,
+                "supports_load": false,
+                "auth_required": false,
+                "has_active_auth": has_active_auth,
+                "auth_mode": auth_mode,
+                "probe_ok": true,
+                "probed_at": chrono::Utc::now().to_rfc3339(),
+            });
+            if let Some(source) = source_config.as_ref() {
+                options["source"] = serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
+            }
+
+            (provider_id, options, source_config)
+        }
+    }))
+    .buffer_unordered(visible_provider_count_hint(providers.len()))
+    .collect::<Vec<_>>()
+    .await;
+
+    for (provider_id, options, source_config) in per_provider {
+        provider_options.insert(provider_id.clone(), options);
+        if let Some(config) = source_config {
+            provider_harness_config.insert(provider_id, config);
+        }
+    }
+
+    Ok(Json(ProvidersBootstrapResponse {
+        providers,
+        provider_options,
+        provider_harness_config,
+        codex_accounts: codex_accounts_response(&state).await,
+        claude_accounts: claude_accounts_response(&state).await,
+        gemini_accounts: gemini_accounts_response(&state).await,
+        kimi_accounts: kimi_accounts_response(&state).await,
+        copilot_accounts: copilot_accounts_response(&state).await,
+        kiro_accounts: kiro_accounts_response(&state).await,
+        cursor_accounts: cursor_accounts_response(&state).await,
+    }))
+}
+
+fn visible_provider_count_hint(total_provider_count: usize) -> usize {
+    total_provider_count.max(1)
 }
 
 fn classify_probe_error(

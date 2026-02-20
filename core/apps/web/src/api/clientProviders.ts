@@ -54,6 +54,22 @@ export type ProviderOptions = {
 export const getProviderOptions = (workspaceId: string, providerId: string) =>
   apiAny<ProviderOptions>(`/api/workspaces/${workspaceId}/providers/${providerId}/options`);
 
+export type ProvidersBootstrapResponse = {
+  providers: ProviderStatus[];
+  provider_options: Record<string, ProviderOptions>;
+  provider_harness_config: Record<string, HarnessProviderSourceConfig>;
+  codex_accounts: CodexAccountsResponse;
+  claude_accounts: ClaudeAccountsResponse;
+  gemini_accounts: GeminiAccountsResponse;
+  kimi_accounts: KimiAccountsResponse;
+  copilot_accounts: CopilotAccountsResponse;
+  kiro_accounts: KiroAccountsResponse;
+  cursor_accounts: CursorAccountsResponse;
+};
+
+export const getProvidersBootstrap = (workspaceId: string) =>
+  apiAny<ProvidersBootstrapResponse>(`/api/workspaces/${workspaceId}/providers/bootstrap`);
+
 export type ProviderAuthCheck = {
   provider_id: string;
   workspace_id: string;
