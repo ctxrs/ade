@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path as StdPath, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
@@ -460,6 +460,8 @@ struct ClaudeLoginSpawn {
 }
 
 const CODEX_LOGIN_RPC_TIMEOUT: Duration = Duration::from_secs(30);
+const GEMINI_LOGIN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(300);
+const GEMINI_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
 const CLAUDE_LOGIN_URL_WAIT: Duration = Duration::from_secs(4);
 const CLAUDE_LOGIN_URL_SETTLE_WAIT: Duration = Duration::from_millis(500);
 const CLAUDE_LOGIN_NO_AUTH_URL_TIMEOUT: Duration = Duration::from_secs(8);

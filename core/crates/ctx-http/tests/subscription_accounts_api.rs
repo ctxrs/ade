@@ -6,9 +6,17 @@ use axum::http::StatusCode;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::mpsc;
 
+use ctx_core::models::SessionEventType;
 use ctx_http::installer::{save_agent_server_config, AgentServerCommand, AgentServerConfigFile};
+use ctx_providers::adapters::{
+    ProviderAdapter, ProviderHealth, ProviderStatus, RunHandle, TurnInput,
+};
+use ctx_providers::events::NormalizedEvent;
 
 #[derive(Debug, Deserialize)]
 struct SubscriptionAccountEntry {
@@ -38,6 +46,155 @@ struct ClaudeLoginStatusResponse {
     status: String,
     account_id: Option<String>,
     error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeminiLoginStartResponse {
+    login_id: String,
+    auth_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeminiLoginStatusResponse {
+    status: String,
+    account_id: Option<String>,
+    auth_url: Option<String>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+enum GeminiLoginFixture {
+    Success {
+        oauth_creds_json: String,
+        google_accounts_json: Option<String>,
+        auth_url: Option<String>,
+    },
+    Failure {
+        error: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct GeminiLoginTestAdapter {
+    fixture: GeminiLoginFixture,
+}
+
+impl GeminiLoginTestAdapter {
+    fn success(
+        oauth_creds_json: impl Into<String>,
+        google_accounts_json: Option<String>,
+        auth_url: Option<String>,
+    ) -> Self {
+        Self {
+            fixture: GeminiLoginFixture::Success {
+                oauth_creds_json: oauth_creds_json.into(),
+                google_accounts_json,
+                auth_url,
+            },
+        }
+    }
+
+    fn failure(error: impl Into<String>) -> Self {
+        Self {
+            fixture: GeminiLoginFixture::Failure {
+                error: error.into(),
+            },
+        }
+    }
+}
+
+#[async_trait]
+impl ProviderAdapter for GeminiLoginTestAdapter {
+    async fn inspect(&self) -> Result<ProviderStatus> {
+        Ok(ProviderStatus {
+            provider_id: "gemini".to_string(),
+            installed: true,
+            detected_path: None,
+            version: Some("test".to_string()),
+            capabilities: None,
+            health: ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+        })
+    }
+
+    async fn run(
+        &self,
+        _input: TurnInput,
+        _workdir: PathBuf,
+        _env: HashMap<String, String>,
+        _event_sink: mpsc::Sender<NormalizedEvent>,
+    ) -> Result<RunHandle> {
+        Err(anyhow!("run is not used in this test adapter"))
+    }
+
+    async fn cancel(&self, _handle: RunHandle) -> Result<()> {
+        Ok(())
+    }
+
+    async fn authenticate_session(
+        &self,
+        _session_key: String,
+        _workdir: PathBuf,
+        env: HashMap<String, String>,
+        method_id: Option<String>,
+        event_sink: mpsc::Sender<NormalizedEvent>,
+    ) -> Result<()> {
+        if method_id.as_deref() != Some("oauth-personal") {
+            return Err(anyhow!(
+                "unexpected method_id: {:?}",
+                method_id.unwrap_or_default()
+            ));
+        }
+        let Some(home) = env.get("GEMINI_CLI_HOME") else {
+            return Err(anyhow!("GEMINI_CLI_HOME missing"));
+        };
+        let gemini_dir = PathBuf::from(home).join(".gemini");
+        tokio::fs::create_dir_all(&gemini_dir).await?;
+
+        match &self.fixture {
+            GeminiLoginFixture::Success {
+                oauth_creds_json,
+                google_accounts_json,
+                auth_url,
+            } => {
+                if let Some(auth_url) = auth_url.as_ref() {
+                    let _ = event_sink
+                        .send(NormalizedEvent {
+                            event_type: SessionEventType::Notice,
+                            payload_json: json!({ "auth_url": auth_url }),
+                        })
+                        .await;
+                }
+                tokio::fs::write(gemini_dir.join("oauth_creds.json"), oauth_creds_json).await?;
+                if let Some(google_accounts_json) = google_accounts_json.as_ref() {
+                    tokio::fs::write(
+                        gemini_dir.join("google_accounts.json"),
+                        google_accounts_json,
+                    )
+                    .await?;
+                }
+                Ok(())
+            }
+            GeminiLoginFixture::Failure { error } => {
+                let _ = event_sink
+                    .send(NormalizedEvent {
+                        event_type: SessionEventType::Error,
+                        payload_json: json!({ "message": error }),
+                    })
+                    .await;
+                Err(anyhow!("{error}"))
+            }
+        }
+    }
+}
+
+fn providers_with_gemini_adapter(
+    adapter: Arc<dyn ProviderAdapter>,
+) -> HashMap<String, Arc<dyn ProviderAdapter>> {
+    let mut providers = common::fake_providers();
+    providers.insert("gemini".to_string(), adapter);
+    providers
 }
 
 #[derive(Debug, Deserialize)]
@@ -176,6 +333,34 @@ async fn poll_claude_login_status(
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     panic!("claude login did not reach terminal status in time");
+}
+
+async fn poll_gemini_login_status(
+    server: &common::TestServer,
+    login_id: &str,
+) -> GeminiLoginStatusResponse {
+    let status_url = format!(
+        "{}/api/providers/gemini/accounts/login/{}",
+        server.base_url, login_id
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let resp = server
+            .client
+            .get(&status_url)
+            .send()
+            .await
+            .expect("gemini status request");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: GeminiLoginStatusResponse = resp.json().await.expect("gemini status body");
+        if body.status != "pending" {
+            return body;
+        }
+        if Instant::now() >= deadline {
+            panic!("gemini login did not complete in time");
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 }
 
 #[tokio::test]
