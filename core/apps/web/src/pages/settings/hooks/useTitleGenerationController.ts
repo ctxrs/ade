@@ -47,9 +47,9 @@ export function useTitleGenerationController(enabled: boolean): TitleGenerationC
   const hydrated = useRef(false);
 
   const [titleGenMode, setTitleGenMode] = useState<TitleGenerationSettings["mode"]>("remote");
-  const [titleGenBaseUrl, setTitleGenBaseUrl] = useState("https://openrouter.ai/api/v1");
+  const [titleGenBaseUrl, setTitleGenBaseUrl] = useState("");
   const [titleGenApiKey, setTitleGenApiKey] = useState("");
-  const [titleGenModel, setTitleGenModel] = useState("google/gemini-3-flash-preview");
+  const [titleGenModel, setTitleGenModel] = useState("");
   const [titleGenUseJson, setTitleGenUseJson] = useState(true);
   const [titleGenLocalModelId, setTitleGenLocalModelId] = useState("ggml-org/Qwen3-1.7B-GGUF");
   const [titleGenLocalUseJson, setTitleGenLocalUseJson] = useState(true);
@@ -177,9 +177,9 @@ export function useTitleGenerationController(enabled: boolean): TitleGenerationC
         const tg = settings.title_generation ?? null;
         if (tg) {
           setTitleGenMode(tg.mode ?? "remote");
-          setTitleGenBaseUrl(tg.remote?.base_url ?? "https://openrouter.ai/api/v1");
+          setTitleGenBaseUrl(tg.remote?.base_url ?? "");
           setTitleGenApiKey(tg.remote?.api_key ?? "");
-          setTitleGenModel(tg.remote?.model ?? "google/gemini-3-flash-preview");
+          setTitleGenModel(tg.remote?.model ?? "");
           setTitleGenUseJson(Boolean(tg.remote?.use_json));
           setTitleGenLocalModelId(tg.local?.model_id ?? "ggml-org/Qwen3-1.7B-GGUF");
           setTitleGenLocalUseJson(Boolean(tg.local?.use_json));

@@ -50,6 +50,7 @@ import { ArtifactsPane } from "../components/ArtifactsPane";
 import { DiffReviewPane } from "../components/DiffReviewPane";
 import { SessionsPane } from "../components/SessionsPane";
 import { TerminalPanel, type TerminalPanelHandle } from "../components/TerminalPanel";
+import { TitleGenerationInstallBanner } from "../components/TitleGenerationInstallBanner";
 import { WorktreeBootstrapSnackbar } from "../components/WorktreeBootstrapSnackbar";
 import UpdateNoticeBanner from "../components/UpdateNoticeBanner";
 import { DictationOnboardingModal } from "../components/dictation/DictationOnboardingModal";
@@ -3111,6 +3112,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       style={rootStyle}
     >
       <WorktreeBootstrapSnackbar />
+      <TitleGenerationInstallBanner />
       {archiveCleanupSnackbar}
       {transcriptNoticeSnackbar}
       {desktopStorageNoticeSnackbar}

@@ -140,6 +140,13 @@ vi.mock("../api/client", () => ({
       mobile_api_max: 1,
     },
   })),
+  getTitleGenerationLocalStatus: vi.fn(async () => ({
+    ready: true,
+    runtime: { version: "1.0.0", installed: true, path: "/tmp/runtime" },
+    model: { model_id: "model", file_name: "model.gguf", installed: true },
+    install_id: null,
+    install_running: false,
+  })),
   checkUpdates: vi.fn(async () => ({
     channel: "stable",
     base_url: "https://example.test",
@@ -415,5 +422,68 @@ describe("WorkbenchPage archive navigation", () => {
 
     await waitFor(() => expect(applyTaskUpdateSpy).toHaveBeenCalledTimes(1));
     expect(focusNewTaskSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("WorkbenchPage title generation install banner", () => {
+  it("shows progress while local title model install is running", async () => {
+    const { getSettings, getTitleGenerationLocalStatus, getInstall } = await import("../api/client");
+    vi.mocked(getSettings).mockResolvedValue({
+      title_generation: {
+        mode: "local",
+        remote: {
+          base_url: "https://openrouter.ai/api/v1",
+          api_key: "",
+          model: "google/gemini-3-flash-preview",
+          use_json: true,
+        },
+        local: {
+          model_id: "ggml-org/Qwen3-1.7B-GGUF",
+          use_json: true,
+        },
+      },
+    } as never);
+    vi.mocked(getTitleGenerationLocalStatus).mockResolvedValue({
+      ready: false,
+      runtime: { version: "0.0.0-test", installed: true, path: "/tmp/runtime" },
+      model: {
+        model_id: "ggml-org/Qwen3-1.7B-GGUF",
+        file_name: "Qwen3-1.7B-GGUF.gguf",
+        installed: false,
+      },
+      install_id: "install-1",
+      install_running: true,
+    } as never);
+    vi.mocked(getInstall).mockResolvedValue({
+      install_id: "install-1",
+      provider_id: "title_generation_local",
+      state: "running",
+      started_at: "2026-02-20T00:00:00Z",
+      last_event: {
+        install_id: "install-1",
+        provider_id: "title_generation_local",
+        at: "2026-02-20T00:00:01Z",
+        stage: "download_model",
+        message: "Downloading model file",
+        level: "info",
+        bytes: 5,
+        total_bytes: 10,
+      },
+    } as never);
+
+    const ui = (
+      <VirtuosoMockContext.Provider value={{ itemHeight: 40, viewportHeight: 400 }}>
+        <MemoryRouter initialEntries={[`/workspaces/${workspaceId}`]}>
+          <Routes>
+            <Route path="/workspaces/:id" element={<WorkbenchPage />} />
+          </Routes>
+        </MemoryRouter>
+      </VirtuosoMockContext.Provider>
+    );
+
+    render(ui);
+
+    expect(await screen.findByText("Session titling model download in progress.")).toBeInTheDocument();
+    expect(await screen.findByText("Downloading… 50%")).toBeInTheDocument();
   });
 });

@@ -16,8 +16,8 @@ export type SessionTitlingReadiness = {
   reason: SessionTitlingReadinessReason;
 };
 
-export const DEFAULT_TITLE_REMOTE_BASE_URL = "https://openrouter.ai/api/v1";
-export const DEFAULT_TITLE_REMOTE_MODEL = "google/gemini-3-flash-preview";
+export const DEFAULT_TITLE_REMOTE_BASE_URL = "";
+export const DEFAULT_TITLE_REMOTE_MODEL = "";
 export const DEFAULT_TITLE_LOCAL_MODEL_ID = "ggml-org/Qwen3-1.7B-GGUF";
 
 const trim = (value: string | null | undefined): string => String(value ?? "").trim();

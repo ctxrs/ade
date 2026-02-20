@@ -820,10 +820,37 @@
   background: rgba(255, 255, 255, 0.10);
 }
 
+.wizard-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+  border-color: rgba(231, 231, 231, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: none;
+}
+
+.wizard-option:disabled:hover {
+  border-color: rgba(231, 231, 231, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.wizard-option:disabled .wizard-option-title {
+  color: rgba(231, 231, 231, 0.72);
+}
+
+.wizard-option:disabled .wizard-option-desc {
+  color: rgba(231, 231, 231, 0.52);
+}
+
 .wizard-option.is-selected {
   border-color: rgba(51, 255, 51, 0.70);
   box-shadow: 0 0 0 1px rgba(51, 255, 51, 0.55);
   background: rgba(51, 255, 51, 0.08);
+}
+
+.wizard-option.is-selected:disabled {
+  border-color: rgba(231, 231, 231, 0.12);
+  box-shadow: none;
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .wizard-option-title {

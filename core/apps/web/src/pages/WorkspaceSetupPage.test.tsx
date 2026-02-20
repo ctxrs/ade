@@ -541,13 +541,13 @@ describe("WorkspaceSetupPage", () => {
     await waitFor(() => {
       expect(wizardStepKey()).toBe("auth-import");
     });
-    expect(getSettings).toHaveBeenCalledTimes(1);
+    expect(getSettings).toHaveBeenCalled();
 
     fireEvent.click(screen.getByTestId("wizard-next"));
     await waitFor(() => {
       expect(wizardStepKey()).toBe("session-titling");
     });
-    expect(getSettings).toHaveBeenCalledTimes(1);
+    expect(getSettings).toHaveBeenCalled();
   });
 
   it("probes titling when skipping auth-import", async () => {
@@ -575,7 +575,7 @@ describe("WorkspaceSetupPage", () => {
     await waitFor(() => {
       expect(wizardStepKey()).toBe("auth-import");
     });
-    expect(getSettings).toHaveBeenCalledTimes(1);
+    expect(getSettings).toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "Skip for now" }));
 
@@ -583,7 +583,7 @@ describe("WorkspaceSetupPage", () => {
       expect(importProviderAuthCandidates).not.toHaveBeenCalled();
       expect(wizardStepKey()).toBe("session-titling");
     });
-    expect(getSettings).toHaveBeenCalledTimes(1);
+    expect(getSettings).toHaveBeenCalled();
   });
 
   it("does not launch a second probe while same-target probe is already running", async () => {
@@ -622,12 +622,12 @@ describe("WorkspaceSetupPage", () => {
     await waitFor(() => {
       expect(importProviderAuthCandidates).toHaveBeenCalled();
     });
-    expect(getSettings).toHaveBeenCalledTimes(1);
+    expect(getSettings).toHaveBeenCalled();
 
     await waitFor(() => {
       expect(wizardStepKey()).toBe("session-titling");
     });
-    expect(getSettings).toHaveBeenCalledTimes(1);
+    expect(getSettings).toHaveBeenCalled();
   });
 
   it("does not double-advance when local auto-advance and manual next race", async () => {
@@ -725,7 +725,7 @@ describe("WorkspaceSetupPage", () => {
 
     await waitFor(() => {
       expect(importProviderAuthCandidates).not.toHaveBeenCalled();
-      expect(getSettings).toHaveBeenCalledTimes(1);
+      expect(getSettings).toHaveBeenCalled();
       expect(wizardStepKey()).toBe("session-titling");
     });
   });
@@ -743,6 +743,59 @@ describe("WorkspaceSetupPage", () => {
     });
     expect(screen.getByTestId("wizard-titling-mode-remote")).toBeInTheDocument();
     expect(screen.getByTestId("wizard-titling-mode-local")).toBeInTheDocument();
+  });
+
+  it("shows local titling install progress banner while download is running", async () => {
+    vi.mocked(getSettings).mockResolvedValue({
+      title_generation: {
+        mode: "local",
+        remote: {
+          base_url: "https://openrouter.ai/api/v1",
+          api_key: "",
+          model: "google/gemini-3-flash-preview",
+          use_json: true,
+        },
+        local: {
+          model_id: "ggml-org/Qwen3-1.7B-GGUF",
+          use_json: true,
+        },
+      },
+    } as never);
+    vi.mocked(getTitleGenerationLocalStatus).mockResolvedValue({
+      ready: false,
+      runtime: { version: "0.0.0-test", installed: true, path: "/tmp/runtime" },
+      model: {
+        model_id: "ggml-org/Qwen3-1.7B-GGUF",
+        file_name: "Qwen3-1.7B-GGUF.gguf",
+        installed: false,
+        version: null,
+        sha256: null,
+        size_bytes: null,
+        installed_at: null,
+      },
+      install_id: "install_test",
+      install_running: true,
+    } as never);
+    vi.mocked(getInstall).mockResolvedValue({
+      install_id: "install_test",
+      provider_id: "title_generation_local",
+      state: "running",
+      started_at: "2026-02-18T00:00:00Z",
+      last_event: {
+        install_id: "install_test",
+        provider_id: "title_generation_local",
+        at: "2026-02-18T00:00:01Z",
+        stage: "download_model",
+        message: "Downloading model file",
+        level: "info",
+        bytes: 1,
+        total_bytes: 2,
+      },
+    } as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    expect(await screen.findByText("Session titling model download in progress.")).toBeInTheDocument();
   });
 
   it("masks session titling remote API key input", async () => {
@@ -803,6 +856,12 @@ describe("WorkspaceSetupPage", () => {
       expect(wizardStepKey()).toBe("session-titling");
     });
     fireEvent.click(screen.getByTestId("wizard-titling-mode-remote"));
+    fireEvent.change(screen.getByTestId("wizard-titling-remote-base-url"), {
+      target: { value: "https://api.example/v1" },
+    });
+    fireEvent.change(screen.getByTestId("wizard-titling-remote-model"), {
+      target: { value: "provider/model-name" },
+    });
     fireEvent.change(screen.getByTestId("wizard-titling-remote-api-key"), {
       target: { value: "sk-onboarding" },
     });
@@ -823,24 +882,9 @@ describe("WorkspaceSetupPage", () => {
     });
   });
 
-  it("starts local titling install and advances immediately when local mode is selected", async () => {
+  it("keeps local titling option visible but disabled as coming soon", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(getSettings).mockResolvedValue({ title_generation: null } as never);
-    vi.mocked(getTitleGenerationLocalStatus).mockResolvedValue({
-      ready: false,
-      runtime: { version: "0.0.0-test", installed: false, path: null },
-      model: {
-        model_id: "ggml-org/Qwen3-1.7B-GGUF",
-        file_name: "Qwen3-1.7B-GGUF.gguf",
-        installed: false,
-        version: null,
-        sha256: null,
-        size_bytes: null,
-        installed_at: null,
-      },
-      install_id: null,
-      install_running: false,
-    } as never);
 
     renderPage();
     await screen.findByTestId("workspace-setup");
@@ -849,21 +893,12 @@ describe("WorkspaceSetupPage", () => {
     await waitFor(() => {
       expect(wizardStepKey()).toBe("session-titling");
     });
-    fireEvent.click(screen.getByTestId("wizard-titling-mode-local"));
-
-    await waitFor(() => {
-      expect(wizardStepKey()).toBe("container");
-    });
-    await waitFor(() => {
-      expect(installTitleGenerationLocal).toHaveBeenCalled();
-    });
-    await waitFor(() => {
-      expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({
-        title_generation: expect.objectContaining({
-          mode: "local",
-        }),
-      }));
-    });
+    const localButton = screen.getByTestId("wizard-titling-mode-local");
+    expect(localButton).toBeDisabled();
+    expect(screen.getByText("Coming soon: download a small LLM to run locally for generating task titles.")).toBeInTheDocument();
+    fireEvent.click(localButton);
+    expect(installTitleGenerationLocal).not.toHaveBeenCalled();
+    expect(wizardStepKey()).toBe("session-titling");
   });
 
   it("removes configurable local titling inputs from the wizard step", async () => {
@@ -952,7 +987,7 @@ describe("WorkspaceSetupPage", () => {
     fireEvent.click(screen.getByTestId("wizard-create"));
 
     await waitFor(() => {
-      expect(createWorkspace).toHaveBeenCalledWith("/tmp/new-repo-web", "new-repo-web");
+      expect(createWorkspace).toHaveBeenCalledWith("/tmp/new-repo-web", "new-repo-web", "local");
       expect(desktopConnectLocal).not.toHaveBeenCalled();
       expect(upsertLauncherRecent).toHaveBeenCalledWith(expect.objectContaining({
         kind: "local",

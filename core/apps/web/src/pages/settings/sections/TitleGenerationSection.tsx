@@ -99,7 +99,7 @@ export function TitleGenerationSection({ active }: TitleGenerationSectionProps) 
                       className="settings-control settings-control-wide"
                       value={titleGenBaseUrl}
                       onChange={(e) => setTitleGenBaseUrl(e.target.value)}
-                      placeholder="https://openrouter.ai/api/v1"
+                      placeholder="https://api.your-llm-gateway.example/v1"
                     />
                   }
                 />
@@ -124,7 +124,7 @@ export function TitleGenerationSection({ active }: TitleGenerationSectionProps) 
                       className="settings-control settings-control-wide"
                       value={titleGenModel}
                       onChange={(e) => setTitleGenModel(e.target.value)}
-                      placeholder="google/gemini-3-flash-preview"
+                      placeholder="model-slug"
                     />
                   }
                 />

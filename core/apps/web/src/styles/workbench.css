@@ -2004,6 +2004,50 @@
   color: var(--text-strong);
 }
 
+.wb-snackbar-titlegen {
+  max-width: min(520px, calc(100vw - 32px));
+}
+
+.wb-snackbar-progress-block {
+  display: grid;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.wb-snackbar-progress-label {
+  font-size: 11px;
+  color: var(--text-subtle);
+}
+
+.wb-snackbar-progress {
+  position: relative;
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-stronger) 70%, var(--surface-soft) 30%);
+  overflow: hidden;
+}
+
+.wb-snackbar-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent-strong, #2d78ff), color-mix(in srgb, var(--accent-strong, #2d78ff) 70%, white 30%));
+  transition: width 180ms ease-out;
+}
+
+.wb-snackbar-progress-fill.is-indeterminate {
+  width: 38%;
+  animation: wb-snackbar-progress-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes wb-snackbar-progress-indeterminate {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(260%);
+  }
+}
+
 .wb-composer-actions {
   display: flex;
   justify-content: flex-end;
