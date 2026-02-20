@@ -725,7 +725,7 @@ shutil.copytree(src, dst, ignore=ignore, symlinks=True)
 PY
 }
 
-claude_agent_sdk_ripgrep_target() {
+anthropic_ripgrep_target() {
   case "${os}/${arch}" in
     linux/x86_64) printf '%s' "x64-linux" ;;
     linux/aarch64) printf '%s' "arm64-linux" ;;
@@ -737,26 +737,21 @@ claude_agent_sdk_ripgrep_target() {
   esac
 }
 
-prune_claude_agent_sdk_ripgrep_vendor() {
-  local provider_id="$1"
-  local provider_root="$2"
-  if [[ "$provider_id" != "claude-crp" ]]; then
-    return 0
-  fi
-
-  local vendor_root="$provider_root/node_modules/@anthropic-ai/claude-agent-sdk/vendor/ripgrep"
+prune_anthropic_ripgrep_vendor_root() {
+  local vendor_root="$1"
+  local label="$2"
   if [[ ! -d "$vendor_root" ]]; then
     return 0
   fi
 
   local keep_target
-  keep_target="$(claude_agent_sdk_ripgrep_target)"
+  keep_target="$(anthropic_ripgrep_target)"
   if [[ -z "$keep_target" ]]; then
-    log "error: unsupported claude-crp ripgrep prune target for ${os}/${arch}"
+    log "error: unsupported ripgrep prune target for ${os}/${arch}"
     exit 5
   fi
   if [[ ! -d "$vendor_root/$keep_target" ]]; then
-    log "error: claude-crp ripgrep vendor missing expected target '$keep_target' at $vendor_root"
+    log "error: ${label} ripgrep vendor missing expected target '$keep_target' at $vendor_root"
     exit 5
   fi
 
@@ -770,6 +765,16 @@ prune_claude_agent_sdk_ripgrep_vendor() {
     fi
     rm -rf "$child"
   done
+}
+
+prune_anthropic_ripgrep_vendors() {
+  local provider_root="$1"
+  prune_anthropic_ripgrep_vendor_root \
+    "$provider_root/node_modules/@anthropic-ai/claude-agent-sdk/vendor/ripgrep" \
+    "claude-agent-sdk"
+  prune_anthropic_ripgrep_vendor_root \
+    "$provider_root/node_modules/@anthropic-ai/claude-code/vendor/ripgrep" \
+    "claude-code"
 }
 
 prune_napi_keyring_musl_packages() {
@@ -794,7 +799,9 @@ prune_napi_keyring_musl_packages() {
 prune_provider_node_payload() {
   local provider_id="$1"
   local provider_root="$2"
-  prune_claude_agent_sdk_ripgrep_vendor "$provider_id" "$provider_root"
+  if [[ "$provider_id" == "claude-crp" || "$provider_id" == "claude-cli" ]]; then
+    prune_anthropic_ripgrep_vendors "$provider_root"
+  fi
   prune_napi_keyring_musl_packages "$provider_root"
 }
 

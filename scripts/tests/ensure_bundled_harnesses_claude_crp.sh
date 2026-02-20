@@ -22,8 +22,10 @@ trap 'rm -rf "$tmp_root"' EXIT
 bundle_dir="$tmp_root/bundle"
 claude_ws="$tmp_root/claude-crp"
 sdk_pkg="$tmp_root/claude-agent-sdk"
+claude_code_pkg="$tmp_root/claude-code"
 mkdir -p "$claude_ws/bin" "$claude_ws/dist"
 mkdir -p "$sdk_pkg/vendor/ripgrep"
+mkdir -p "$claude_code_pkg/vendor/ripgrep"
 
 for target in x64-darwin arm64-darwin x64-linux arm64-linux x64-win32 arm64-win32; do
   mkdir -p "$sdk_pkg/vendor/ripgrep/$target"
@@ -40,6 +42,21 @@ cat > "$sdk_pkg/package.json" <<'JSON'
 }
 JSON
 
+for target in x64-darwin arm64-darwin x64-linux arm64-linux x64-win32 arm64-win32; do
+  mkdir -p "$claude_code_pkg/vendor/ripgrep/$target"
+  printf 'stub-%s\n' "$target" > "$claude_code_pkg/vendor/ripgrep/$target/rg"
+  printf 'stub-%s\n' "$target" > "$claude_code_pkg/vendor/ripgrep/$target/ripgrep.node"
+done
+
+cat > "$claude_code_pkg/package.json" <<'JSON'
+{
+  "name": "@anthropic-ai/claude-code",
+  "version": "2.1.47",
+  "private": true,
+  "type": "module"
+}
+JSON
+
 cat > "$claude_ws/package.json" <<'JSON'
 {
   "name": "claude-crp",
@@ -47,11 +64,14 @@ cat > "$claude_ws/package.json" <<'JSON'
   "private": true,
   "type": "module",
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "file:__SDK_PKG__"
+    "@anthropic-ai/claude-agent-sdk": "file:__SDK_PKG__",
+    "@anthropic-ai/claude-code": "file:__CLAUDE_CODE_PKG__"
   }
 }
 JSON
-sed -i.bak "s#__SDK_PKG__#${sdk_pkg}#g" "$claude_ws/package.json"
+sed -i.bak \
+  "s#__SDK_PKG__#${sdk_pkg}#g; s#__CLAUDE_CODE_PKG__#${claude_code_pkg}#g" \
+  "$claude_ws/package.json"
 rm -f "$claude_ws/package.json.bak"
 
 cat > "$claude_ws/bin/claude-crp" <<'JS'
@@ -187,7 +207,8 @@ bundle_root = manifest_path.parent
 command_path = bundle_root / command
 entrypoint_path = bundle_root / args[0]
 runtime_path = entrypoint_path.parent.parent / "dist" / "runtime.js"
-ripgrep_vendor = entrypoint_path.parent.parent / "node_modules" / "@anthropic-ai" / "claude-agent-sdk" / "vendor" / "ripgrep"
+ripgrep_vendor_sdk = entrypoint_path.parent.parent / "node_modules" / "@anthropic-ai" / "claude-agent-sdk" / "vendor" / "ripgrep"
+ripgrep_vendor_claude_code = entrypoint_path.parent.parent / "node_modules" / "@anthropic-ai" / "claude-code" / "vendor" / "ripgrep"
 
 if not command_path.is_file():
     print(f"missing bundled command binary: {command_path}", file=sys.stderr)
@@ -198,14 +219,25 @@ if not entrypoint_path.is_file():
 if not runtime_path.is_file():
     print(f"missing bundled claude runtime: {runtime_path}", file=sys.stderr)
     raise SystemExit(1)
-if not ripgrep_vendor.is_dir():
-    print(f"missing bundled claude ripgrep vendor dir: {ripgrep_vendor}", file=sys.stderr)
+if not ripgrep_vendor_sdk.is_dir():
+    print(f"missing bundled claude-agent-sdk ripgrep vendor dir: {ripgrep_vendor_sdk}", file=sys.stderr)
+    raise SystemExit(1)
+if not ripgrep_vendor_claude_code.is_dir():
+    print(f"missing bundled claude-code ripgrep vendor dir: {ripgrep_vendor_claude_code}", file=sys.stderr)
     raise SystemExit(1)
 
-actual_targets = sorted([p.name for p in ripgrep_vendor.iterdir() if p.is_dir()])
-if actual_targets != [expected_ripgrep_target]:
+actual_targets_sdk = sorted([p.name for p in ripgrep_vendor_sdk.iterdir() if p.is_dir()])
+if actual_targets_sdk != [expected_ripgrep_target]:
     print(
-        f"expected only ripgrep target {expected_ripgrep_target!r}, found {actual_targets!r}",
+        f"expected only claude-agent-sdk ripgrep target {expected_ripgrep_target!r}, found {actual_targets_sdk!r}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+actual_targets_claude_code = sorted([p.name for p in ripgrep_vendor_claude_code.iterdir() if p.is_dir()])
+if actual_targets_claude_code != [expected_ripgrep_target]:
+    print(
+        f"expected only claude-code ripgrep target {expected_ripgrep_target!r}, found {actual_targets_claude_code!r}",
         file=sys.stderr,
     )
     raise SystemExit(1)
