@@ -262,6 +262,26 @@ fn maybe_wrap_gemini_acp_command(
         None
     }
 
+    fn is_gemini_cli_entrypoint(path: &Path) -> bool {
+        if path.file_name().and_then(|s| s.to_str()) != Some("index.js") {
+            return false;
+        }
+        for ancestor in path.ancestors() {
+            if ancestor.file_name().and_then(|s| s.to_str()) != Some("gemini-cli") {
+                continue;
+            }
+            let is_google_scope = ancestor
+                .parent()
+                .and_then(|parent| parent.file_name())
+                .and_then(|s| s.to_str())
+                == Some("@google");
+            if is_google_scope {
+                return true;
+            }
+        }
+        false
+    }
+
     let mut candidate = None;
     let cmd_path = Path::new(&cmd.command);
     let cmd_is_gemini = file_stem_matches(cmd_path, "gemini");
@@ -273,14 +293,14 @@ fn maybe_wrap_gemini_acp_command(
         if candidate.is_none() {
             if let Some(arg0) = cmd.args.first() {
                 let arg0_path = Path::new(arg0);
-                if file_stem_matches(arg0_path, "gemini") {
+                if file_stem_matches(arg0_path, "gemini") || is_gemini_cli_entrypoint(arg0_path) {
                     candidate = resolve_path(arg0);
                 }
             }
         }
     } else if let Some(arg0) = cmd.args.first() {
         let arg0_path = Path::new(arg0);
-        if file_stem_matches(arg0_path, "gemini") {
+        if file_stem_matches(arg0_path, "gemini") || is_gemini_cli_entrypoint(arg0_path) {
             candidate = resolve_path(arg0);
         }
     }
@@ -890,5 +910,68 @@ mod tests {
             .await
             .get(&session.id)
             .is_some());
+    }
+
+    #[test]
+    fn wraps_bundled_node_gemini_cli_entrypoint_for_acp() {
+        let temp = tempdir().unwrap();
+        let data_root = temp.path().join("data");
+        let node_bin = temp
+            .path()
+            .join("bundle")
+            .join("runtimes")
+            .join("node")
+            .join("bin")
+            .join("node");
+        let cli_entry = temp
+            .path()
+            .join("bundle")
+            .join("providers")
+            .join("gemini")
+            .join("node_modules")
+            .join("@google")
+            .join("gemini-cli")
+            .join("dist")
+            .join("index.js");
+        let core_entry = temp
+            .path()
+            .join("bundle")
+            .join("providers")
+            .join("gemini")
+            .join("node_modules")
+            .join("@google")
+            .join("gemini-cli-core")
+            .join("dist")
+            .join("index.js");
+        std::fs::create_dir_all(node_bin.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(cli_entry.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(core_entry.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(data_root.join("providers").join("agent-servers")).unwrap();
+        std::fs::write(&node_bin, b"node").unwrap();
+        std::fs::write(&cli_entry, b"cli").unwrap();
+        std::fs::write(&core_entry, b"core").unwrap();
+
+        let input = installer::AgentServerCommand {
+            command: node_bin.to_string_lossy().to_string(),
+            args: vec![
+                cli_entry.to_string_lossy().to_string(),
+                "--experimental-acp".to_string(),
+            ],
+            dependencies: Vec::new(),
+            managed: None,
+        };
+        let wrapped = maybe_wrap_gemini_acp_command(&data_root, input);
+
+        assert_eq!(wrapped.command, node_bin.to_string_lossy().to_string());
+        assert_eq!(
+            wrapped.args.get(1).map(String::as_str),
+            Some("--experimental-acp")
+        );
+        let wrapper_arg = wrapped.args.first().expect("wrapper arg");
+        assert!(wrapper_arg.ends_with("gemini-acp-wrapper.mjs"));
+        let wrapper_path = PathBuf::from(wrapper_arg);
+        assert!(wrapper_path.exists());
+        let wrapper_body = std::fs::read_to_string(wrapper_path).unwrap();
+        assert!(wrapper_body.contains("GEMINI_CLI_NO_RELAUNCH"));
     }
 }

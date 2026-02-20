@@ -32,6 +32,9 @@ export {
   trackEntitlementActivated,
   trackFeatureGateEvaluated,
   trackExperimentExposure,
+  trackRuntimeErrorObserved,
+  trackSessionLoadFatalObserved,
+  trackApiErrorObserved,
 } from "./activity";
 
 export { sanitizeAnalyticsProperties } from "./schema";

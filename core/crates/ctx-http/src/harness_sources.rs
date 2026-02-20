@@ -219,14 +219,6 @@ fn kiro_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
         .join(endpoint_id)
 }
 
-fn cursor_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
-    data_root
-        .join("providers")
-        .join("cursor")
-        .join("endpoint-homes")
-        .join(endpoint_id)
-}
-
 fn container_workspaces_root(data_root: &Path) -> PathBuf {
     data_root.join("containers").join("workspaces")
 }
@@ -269,26 +261,6 @@ async fn remove_kiro_endpoint_homes_for_runtime_roots(
     Ok(())
 }
 
-async fn remove_cursor_endpoint_home_for_root(root: &Path, endpoint_id: &str) -> Result<()> {
-    let endpoint_home = cursor_endpoint_home(root, endpoint_id);
-    match tokio::fs::remove_dir_all(&endpoint_home).await {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(err)
-            .with_context(|| format!("removing cursor endpoint home for endpoint {}", endpoint_id)),
-    }
-}
-
-async fn remove_cursor_endpoint_homes_for_runtime_roots(
-    data_root: &Path,
-    endpoint_id: &str,
-) -> Result<()> {
-    for runtime_root in container_runtime_data_roots(data_root).await {
-        remove_cursor_endpoint_home_for_root(&runtime_root, endpoint_id).await?;
-    }
-    Ok(())
-}
-
 fn normalize_provider_id(provider_id: &str) -> Option<&'static str> {
     match provider_id {
         PROVIDER_CODEX => Some(PROVIDER_CODEX),
@@ -317,8 +289,35 @@ fn normalize_provider_id(provider_id: &str) -> Option<&'static str> {
     }
 }
 
+fn provider_supports_harness_endpoint(canonical_provider_id: &str) -> bool {
+    matches!(
+        canonical_provider_id,
+        PROVIDER_CODEX
+            | PROVIDER_CLAUDE
+            | PROVIDER_GEMINI
+            | PROVIDER_KIMI
+            | PROVIDER_QWEN
+            | PROVIDER_OPENCODE
+            | PROVIDER_MISTRAL
+            | PROVIDER_GOOSE
+            | PROVIDER_CAGENT
+            | PROVIDER_AMP
+            | PROVIDER_DROID
+            | PROVIDER_CODY
+            | PROVIDER_CONTINUE
+            | PROVIDER_CLINE
+            | PROVIDER_SWE_AGENT
+            | PROVIDER_OPENHANDS
+            | PROVIDER_COPILOT
+            | PROVIDER_KIRO
+            | PROVIDER_ROVO
+            | PROVIDER_AUGGIE
+            | PROVIDER_PI
+    )
+}
+
 pub fn supports_harness_endpoint(provider_id: &str) -> bool {
-    normalize_provider_id(provider_id).is_some()
+    normalize_provider_id(provider_id).is_some_and(provider_supports_harness_endpoint)
 }
 
 pub fn default_shape_for_provider(provider_id: &str) -> Option<HarnessApiShape> {
@@ -344,14 +343,19 @@ pub fn default_shape_for_provider(provider_id: &str) -> Option<HarnessApiShape> 
         Some(PROVIDER_ROVO) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_AUGGIE) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_PI) => Some(HarnessApiShape::OpenaiResponses),
-        Some(PROVIDER_CURSOR) => Some(HarnessApiShape::OpenaiResponses),
         _ => None,
     }
 }
 
 pub fn ensure_shape_compatible(provider_id: &str, shape: HarnessApiShape) -> Result<()> {
-    match normalize_provider_id(provider_id) {
-        Some(PROVIDER_CODEX) => {
+    let canonical = normalize_provider_id(provider_id).ok_or_else(|| {
+        anyhow::anyhow!("provider does not support harness endpoints: {provider_id}")
+    })?;
+    if !provider_supports_harness_endpoint(canonical) {
+        anyhow::bail!("provider does not support harness endpoints: {provider_id}");
+    }
+    match canonical {
+        PROVIDER_CODEX => {
             if shape != HarnessApiShape::OpenaiResponses {
                 anyhow::bail!(
                     "codex requires api_shape=openai_responses; found {}",
@@ -359,7 +363,7 @@ pub fn ensure_shape_compatible(provider_id: &str, shape: HarnessApiShape) -> Res
                 );
             }
         }
-        Some(PROVIDER_CLAUDE) => {
+        PROVIDER_CLAUDE => {
             if shape != HarnessApiShape::AnthropicMessages {
                 anyhow::bail!(
                     "claude-crp requires api_shape=anthropic_messages; found {}",
@@ -367,7 +371,7 @@ pub fn ensure_shape_compatible(provider_id: &str, shape: HarnessApiShape) -> Res
                 );
             }
         }
-        Some(PROVIDER_GEMINI) => {
+        PROVIDER_GEMINI => {
             if shape != HarnessApiShape::OpenaiResponses {
                 anyhow::bail!(
                     "gemini requires api_shape=openai_responses; found {}",
@@ -375,7 +379,7 @@ pub fn ensure_shape_compatible(provider_id: &str, shape: HarnessApiShape) -> Res
                 );
             }
         }
-        Some(PROVIDER_KIMI) => {
+        PROVIDER_KIMI => {
             if shape != HarnessApiShape::OpenaiResponses {
                 anyhow::bail!(
                     "kimi requires api_shape=openai_responses; found {}",
@@ -383,24 +387,10 @@ pub fn ensure_shape_compatible(provider_id: &str, shape: HarnessApiShape) -> Res
                 );
             }
         }
-        Some(PROVIDER_QWEN)
-        | Some(PROVIDER_OPENCODE)
-        | Some(PROVIDER_MISTRAL)
-        | Some(PROVIDER_GOOSE)
-        | Some(PROVIDER_CAGENT)
-        | Some(PROVIDER_AMP)
-        | Some(PROVIDER_DROID)
-        | Some(PROVIDER_CODY)
-        | Some(PROVIDER_CONTINUE)
-        | Some(PROVIDER_CLINE)
-        | Some(PROVIDER_SWE_AGENT)
-        | Some(PROVIDER_OPENHANDS)
-        | Some(PROVIDER_COPILOT)
-        | Some(PROVIDER_KIRO)
-        | Some(PROVIDER_ROVO)
-        | Some(PROVIDER_AUGGIE)
-        | Some(PROVIDER_PI)
-        | Some(PROVIDER_CURSOR) => {
+        PROVIDER_QWEN | PROVIDER_OPENCODE | PROVIDER_MISTRAL | PROVIDER_GOOSE | PROVIDER_CAGENT
+        | PROVIDER_AMP | PROVIDER_DROID | PROVIDER_CODY | PROVIDER_CONTINUE | PROVIDER_CLINE
+        | PROVIDER_SWE_AGENT | PROVIDER_OPENHANDS | PROVIDER_COPILOT | PROVIDER_KIRO
+        | PROVIDER_ROVO | PROVIDER_AUGGIE | PROVIDER_PI => {
             if shape != HarnessApiShape::OpenaiResponses {
                 anyhow::bail!(
                     "{} requires api_shape=openai_responses; found {}",
@@ -645,6 +635,7 @@ pub async fn get_provider_source_config(
     let canonical = normalize_provider_id(provider_id).ok_or_else(|| {
         anyhow::anyhow!("provider does not support harness endpoints: {provider_id}")
     })?;
+    let endpoint_supported = provider_supports_harness_endpoint(canonical);
     let registry = load_registry(data_root).await?;
     let provider = registry
         .providers
@@ -652,7 +643,9 @@ pub async fn get_provider_source_config(
         .cloned()
         .unwrap_or_default();
     let mut selected_endpoint_id = provider.selected_endpoint_id;
-    if provider.selected_source_kind == HarnessSourceKind::Endpoint {
+    if !endpoint_supported {
+        selected_endpoint_id = None;
+    } else if provider.selected_source_kind == HarnessSourceKind::Endpoint {
         let exists = selected_endpoint_id
             .as_ref()
             .and_then(|id| provider.endpoints.iter().find(|ep| ep.id == *id))
@@ -663,17 +656,21 @@ pub async fn get_provider_source_config(
     }
     Ok(HarnessProviderSourceConfig {
         provider_id: canonical.to_string(),
-        selected_source_kind: if selected_endpoint_id.is_some() {
+        selected_source_kind: if endpoint_supported && selected_endpoint_id.is_some() {
             provider.selected_source_kind
         } else {
             HarnessSourceKind::Subscription
         },
         selected_endpoint_id,
-        endpoints: provider
-            .endpoints
-            .iter()
-            .map(public_endpoint_from_internal)
-            .collect(),
+        endpoints: if endpoint_supported {
+            provider
+                .endpoints
+                .iter()
+                .map(public_endpoint_from_internal)
+                .collect()
+        } else {
+            Vec::new()
+        },
     })
 }
 
@@ -689,6 +686,9 @@ pub async fn find_provider_endpoint_import_match(
     let canonical = normalize_provider_id(provider_id).ok_or_else(|| {
         anyhow::anyhow!("provider does not support harness endpoints: {provider_id}")
     })?;
+    if !provider_supports_harness_endpoint(canonical) {
+        anyhow::bail!("provider does not support harness endpoints: {provider_id}");
+    }
     ensure_shape_compatible(canonical, api_shape)?;
     let normalized_base_url = normalize_base_url_for_provider(canonical, base_url.as_deref())?;
     let normalized_auth_type = normalize_auth_type_for_provider(canonical, auth_type.as_deref())?;
@@ -747,6 +747,9 @@ pub async fn upsert_provider_endpoint(
     let canonical = normalize_provider_id(provider_id).ok_or_else(|| {
         anyhow::anyhow!("provider does not support harness endpoints: {provider_id}")
     })?;
+    if !provider_supports_harness_endpoint(canonical) {
+        anyhow::bail!("provider does not support harness endpoints: {provider_id}");
+    }
     let api_shape = input
         .api_shape
         .or_else(|| default_shape_for_provider(canonical))
@@ -840,6 +843,9 @@ pub async fn delete_provider_endpoint(
     let canonical = normalize_provider_id(provider_id).ok_or_else(|| {
         anyhow::anyhow!("provider does not support harness endpoints: {provider_id}")
     })?;
+    if !provider_supports_harness_endpoint(canonical) {
+        anyhow::bail!("provider does not support harness endpoints: {provider_id}");
+    }
     let _registry_write_guard = REGISTRY_WRITE_LOCK.lock().await;
     let mut registry = load_registry(data_root).await?;
     let provider = registry
@@ -894,11 +900,6 @@ pub async fn delete_provider_endpoint(
                 remove_kiro_endpoint_home_for_root(data_root, &removed_endpoint_id).await?;
                 remove_kiro_endpoint_homes_for_runtime_roots(data_root, &removed_endpoint_id)
                     .await?;
-            } else if canonical == PROVIDER_CURSOR {
-                ensure_safe_endpoint_id(&removed_endpoint_id)?;
-                remove_cursor_endpoint_home_for_root(data_root, &removed_endpoint_id).await?;
-                remove_cursor_endpoint_homes_for_runtime_roots(data_root, &removed_endpoint_id)
-                    .await?;
             }
         }
         save_registry(data_root, &registry).await?;
@@ -930,6 +931,9 @@ pub async fn set_provider_source_selection(
             provider.selected_endpoint_id = None;
         }
         HarnessSourceKind::Endpoint => {
+            if !provider_supports_harness_endpoint(canonical) {
+                anyhow::bail!("provider does not support harness endpoints: {provider_id}");
+            }
             let endpoint_id = endpoint_id
                 .as_ref()
                 .map(|value| value.trim().to_string())
@@ -1045,6 +1049,14 @@ async fn resolve_internal(
         .unwrap_or_default();
 
     if provider.selected_source_kind != HarnessSourceKind::Endpoint {
+        return Ok(ResolvedHarnessSource {
+            source_kind: HarnessSourceKind::Subscription,
+            endpoint: None,
+            env: HashMap::new(),
+        });
+    }
+
+    if !provider_supports_harness_endpoint(canonical) {
         return Ok(ResolvedHarnessSource {
             source_kind: HarnessSourceKind::Subscription,
             endpoint: None,
@@ -1261,23 +1273,6 @@ async fn resolve_internal(
                 env.insert("PI_ACP_MODEL".to_string(), model);
             }
         }
-        PROVIDER_CURSOR => {
-            ensure_shape_compatible(canonical, endpoint.api_shape)?;
-            ensure_safe_endpoint_id(&endpoint.id)?;
-            let cursor_home_root = runtime_data_root.unwrap_or(data_root);
-            let cursor_home = cursor_endpoint_home(cursor_home_root, &endpoint.id);
-            tokio::fs::create_dir_all(&cursor_home).await?;
-            env.insert("CURSOR_API_KEY".to_string(), api_key);
-            env.insert(
-                "CURSOR_CONFIG_DIR".to_string(),
-                cursor_home.to_string_lossy().to_string(),
-            );
-            let base_url = endpoint.base_url.trim().to_string();
-            if !base_url.is_empty() {
-                env.insert("CURSOR_API_BASE_URL".to_string(), base_url.clone());
-                env.insert("CURSOR_API_ENDPOINT".to_string(), base_url);
-            }
-        }
         PROVIDER_KIRO => {
             ensure_shape_compatible(canonical, endpoint.api_shape)?;
             ensure_safe_endpoint_id(&endpoint.id)?;
@@ -1350,6 +1345,40 @@ pub async fn resolve_provider_source_for_run_with_runtime_root(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn claude_supports_endpoint_mode_but_cursor_does_not() {
+        assert!(supports_harness_endpoint(PROVIDER_CLAUDE));
+        assert!(!supports_harness_endpoint(PROVIDER_CURSOR));
+        assert!(supports_harness_endpoint(PROVIDER_CODEX));
+    }
+
+    #[tokio::test]
+    async fn cursor_source_config_defaults_to_subscription_without_endpoints() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let cfg = get_provider_source_config(root.path(), PROVIDER_CURSOR)
+            .await
+            .expect("config");
+        assert_eq!(cfg.selected_source_kind, HarnessSourceKind::Subscription);
+        assert!(cfg.selected_endpoint_id.is_none());
+        assert!(cfg.endpoints.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cursor_rejects_endpoint_source_selection() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let err = set_provider_source_selection(
+            root.path(),
+            PROVIDER_CURSOR,
+            HarnessSourceKind::Endpoint,
+            Some("ep-1".to_string()),
+        )
+        .await
+        .expect_err("cursor endpoint mode should be rejected");
+        assert!(err
+            .to_string()
+            .contains("provider does not support harness endpoints"));
+    }
 
     #[tokio::test]
     async fn defaults_to_subscription_without_registry() {
@@ -1430,6 +1459,70 @@ mod tests {
         assert_eq!(
             resolved.env.get("OPENAI_BASE_URL"),
             Some(&"https://openrouter.ai/api/v1".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn claude_endpoint_projects_anthropic_env_and_requires_verify_for_run() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let endpoint = upsert_provider_endpoint(
+            root.path(),
+            PROVIDER_CLAUDE,
+            HarnessEndpointUpsert {
+                endpoint_id: None,
+                name: "Anthropic".to_string(),
+                base_url: Some("https://api.anthropic.com/v1".to_string()),
+                api_shape: Some(HarnessApiShape::AnthropicMessages),
+                auth_type: None,
+                model_override: None,
+                api_key: Some("sk-ant-api".to_string()),
+            },
+        )
+        .await
+        .expect("upsert");
+
+        set_provider_source_selection(
+            root.path(),
+            PROVIDER_CLAUDE,
+            HarnessSourceKind::Endpoint,
+            Some(endpoint.id.clone()),
+        )
+        .await
+        .expect("select");
+
+        let probe = resolve_provider_source_for_probe(root.path(), PROVIDER_CLAUDE)
+            .await
+            .expect("resolve probe");
+        assert_eq!(
+            probe.env.get("ANTHROPIC_API_KEY"),
+            Some(&"sk-ant-api".to_string())
+        );
+        assert_eq!(
+            probe.env.get("ANTHROPIC_BASE_URL"),
+            Some(&"https://api.anthropic.com/v1".to_string())
+        );
+
+        let run_err = resolve_provider_source_for_run(root.path(), PROVIDER_CLAUDE)
+            .await
+            .expect_err("expected verify gate error");
+        assert!(run_err.to_string().contains("not verified"));
+
+        mark_endpoint_verification(
+            root.path(),
+            PROVIDER_CLAUDE,
+            &endpoint.id,
+            HarnessEndpointVerificationStatus::Valid,
+            None,
+        )
+        .await
+        .expect("mark verified");
+
+        let run = resolve_provider_source_for_run(root.path(), PROVIDER_CLAUDE)
+            .await
+            .expect("resolve run");
+        assert_eq!(
+            run.env.get("ANTHROPIC_BASE_URL"),
+            Some(&"https://api.anthropic.com/v1".to_string())
         );
     }
 
@@ -1632,7 +1725,6 @@ mod tests {
                 PROVIDER_PI,
                 &["OPENAI_API_KEY", "PI_ACP_PROVIDER", "PI_ACP_MODEL"],
             ),
-            (PROVIDER_CURSOR, &["CURSOR_API_KEY", "CURSOR_CONFIG_DIR"]),
             (PROVIDER_CLINE, &["OPENAI_API_KEY"]),
             (PROVIDER_SWE_AGENT, &["OPENAI_API_KEY"]),
             (
@@ -1653,7 +1745,6 @@ mod tests {
                         || *provider_id == PROVIDER_ROVO
                         || *provider_id == PROVIDER_AUGGIE
                         || *provider_id == PROVIDER_PI
-                        || *provider_id == PROVIDER_CURSOR
                     {
                         None
                     } else {
@@ -1664,7 +1755,6 @@ mod tests {
                         || *provider_id == PROVIDER_ROVO
                         || *provider_id == PROVIDER_AUGGIE
                         || *provider_id == PROVIDER_PI
-                        || *provider_id == PROVIDER_CURSOR
                     {
                         None
                     } else {
@@ -1781,48 +1871,6 @@ mod tests {
         );
         assert_eq!(resolved.env.get("PI_ACP_MODEL"), Some(&"gpt-5".to_string()));
         assert!(!resolved.env.contains_key("OPENAI_BASE_URL"));
-    }
-
-    #[tokio::test]
-    async fn cursor_endpoint_allows_token_only_upsert_and_sets_cursor_env() {
-        let root = tempfile::tempdir().expect("tempdir");
-        let endpoint = upsert_provider_endpoint(
-            root.path(),
-            PROVIDER_CURSOR,
-            HarnessEndpointUpsert {
-                endpoint_id: None,
-                name: "Cursor key".to_string(),
-                base_url: None,
-                api_shape: None,
-                auth_type: None,
-                model_override: None,
-                api_key: Some("cursor-key".to_string()),
-            },
-        )
-        .await
-        .expect("upsert endpoint");
-
-        set_provider_source_selection(
-            root.path(),
-            PROVIDER_CURSOR,
-            HarnessSourceKind::Endpoint,
-            Some(endpoint.id.clone()),
-        )
-        .await
-        .expect("select endpoint");
-
-        let resolved = resolve_provider_source_for_run(root.path(), PROVIDER_CURSOR)
-            .await
-            .expect("resolve run");
-        assert_eq!(
-            resolved.env.get("CURSOR_API_KEY"),
-            Some(&"cursor-key".to_string())
-        );
-        let cursor_config_dir = resolved
-            .env
-            .get("CURSOR_CONFIG_DIR")
-            .expect("CURSOR_CONFIG_DIR should be set");
-        assert!(Path::new(cursor_config_dir).exists());
     }
 
     #[tokio::test]
@@ -1977,12 +2025,12 @@ mod tests {
         let root = tempfile::tempdir().expect("tempdir");
         let err = upsert_provider_endpoint(
             root.path(),
-            PROVIDER_CLAUDE,
+            PROVIDER_CODEX,
             HarnessEndpointUpsert {
                 endpoint_id: None,
                 name: "wrong".to_string(),
                 base_url: Some("https://example.com".to_string()),
-                api_shape: Some(HarnessApiShape::OpenaiResponses),
+                api_shape: Some(HarnessApiShape::AnthropicMessages),
                 auth_type: None,
                 model_override: None,
                 api_key: Some("k".to_string()),
@@ -1992,7 +2040,7 @@ mod tests {
         .expect_err("expected shape mismatch");
         assert!(err
             .to_string()
-            .contains("claude-crp requires api_shape=anthropic_messages"));
+            .contains("codex requires api_shape=openai_responses"));
     }
 
     #[tokio::test]

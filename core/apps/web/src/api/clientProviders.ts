@@ -309,6 +309,19 @@ export type ClaudeLoginCompleteResponse = {
   accepted: boolean;
 };
 
+export type GeminiLoginStatus = {
+  login_id: string;
+  auth_url?: string | null;
+  status: string;
+  account_id?: string | null;
+  error?: string | null;
+};
+
+export type GeminiLoginStartResponse = {
+  login_id: string;
+  auth_url?: string | null;
+};
+
 export type CodexHostImportProbe = {
   available: boolean;
   path?: string | null;
@@ -440,6 +453,15 @@ export const deleteClaudeAccount = (accountId: string) =>
 
 export const listGeminiAccounts = () =>
   apiAny<GeminiAccountsResponse>(`/api/providers/gemini/accounts`);
+
+export const startGeminiLogin = (label?: string) =>
+  apiAny<GeminiLoginStartResponse>(`/api/providers/gemini/accounts/login/start`, {
+    method: "POST",
+    body: JSON.stringify(label ? { label } : {}),
+  });
+
+export const getGeminiLogin = (loginId: string) =>
+  apiAny<GeminiLoginStatus>(`/api/providers/gemini/accounts/login/${loginId}`);
 
 export const upsertGeminiAccount = (
   oauthCredsJson: string,

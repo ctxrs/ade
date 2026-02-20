@@ -460,11 +460,12 @@ struct ClaudeLoginSpawn {
 }
 
 const CODEX_LOGIN_RPC_TIMEOUT: Duration = Duration::from_secs(30);
-const GEMINI_LOGIN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(300);
-const GEMINI_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
 const CLAUDE_LOGIN_URL_WAIT: Duration = Duration::from_secs(4);
-const CLAUDE_LOGIN_URL_SETTLE_WAIT: Duration = Duration::from_millis(500);
+const GEMINI_LOGIN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(300);
+const GEMINI_LOGIN_NO_AUTH_URL_TIMEOUT_DEFAULT: Duration = Duration::from_secs(20);
+const GEMINI_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
 const CLAUDE_LOGIN_NO_AUTH_URL_TIMEOUT: Duration = Duration::from_secs(8);
+const CLAUDE_LOGIN_URL_SETTLE_WAIT: Duration = Duration::from_millis(500);
 const CLAUDE_LOGIN_COMPLETION_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const CLAUDE_LOGIN_EXIT_GRACE_WAIT: Duration = Duration::from_millis(400);
 
@@ -539,6 +540,15 @@ fn gemini_login_timeout() -> Duration {
     Duration::from_secs(seconds)
 }
 
+fn gemini_login_no_auth_url_timeout() -> Duration {
+    let seconds = std::env::var("CTX_GEMINI_LOGIN_NO_AUTH_URL_TIMEOUT_SECS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(GEMINI_LOGIN_NO_AUTH_URL_TIMEOUT_DEFAULT.as_secs());
+    Duration::from_secs(seconds)
+}
+
 fn first_email_from_google_accounts(value: &serde_json::Value) -> Option<String> {
     match value {
         serde_json::Value::Object(map) => {
@@ -566,7 +576,7 @@ fn extract_auth_url_from_value(value: &serde_json::Value) -> Option<String> {
             if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
                 return Some(trimmed.to_string());
             }
-            None
+            extract_auth_url(trimmed)
         }
         serde_json::Value::Object(map) => {
             let direct = [
@@ -1042,6 +1052,11 @@ pub(super) async fn start_claude_login(
             (status, Json(ApiErrorResp { error: msg }))
         })?;
     let (input_tx, input_rx) = mpsc::unbounded_channel::<String>();
+    {
+        let mut map = state.providers.claude_login_inputs.lock().await;
+        map.insert(login_id.clone(), input_tx);
+    }
+    login.input_rx = input_rx;
     let auth_url = login.auth_url.clone();
     let status = provider_accounts::ClaudeLoginStatus {
         login_id: login_id.clone(),
@@ -1054,11 +1069,6 @@ pub(super) async fn start_claude_login(
         let mut map = state.providers.claude_login_sessions.lock().await;
         map.insert(login_id.clone(), status);
     }
-    {
-        let mut map = state.providers.claude_login_inputs.lock().await;
-        map.insert(login_id.clone(), input_tx);
-    }
-    login.input_rx = input_rx;
     let state_clone = Arc::clone(&state);
     let login_id_for_task = login_id.clone();
     tokio::spawn(async move {
@@ -1251,6 +1261,10 @@ async fn monitor_gemini_login(state: Arc<AppState>, login_id: String, label: Opt
         provider_accounts::GEMINI_FORCE_FILE_STORAGE_ENV.to_string(),
         "true".to_string(),
     );
+    provider_env.insert(
+        "CTX_DATA_ROOT".to_string(),
+        state.core.data_root.to_string_lossy().to_string(),
+    );
 
     let (event_tx, mut event_rx) = mpsc::channel(64);
     let auth_result = adapter
@@ -1276,26 +1290,41 @@ async fn monitor_gemini_login(state: Arc<AppState>, login_id: String, label: Opt
     let google_accounts_path = login_home.join(".gemini").join("google_accounts.json");
     let started_at = Instant::now();
     let timeout = gemini_login_timeout();
+    let auth_url_deadline = started_at + gemini_login_no_auth_url_timeout();
+    let mut observed_auth_url = false;
 
     loop {
-        while let Ok(event) = event_rx.try_recv() {
-            if let Some(auth_url) = extract_auth_url_from_value(&event.payload_json) {
-                let mut map = state.providers.gemini_login_sessions.lock().await;
-                if let Some(entry) = map.get_mut(&login_id) {
-                    entry.auth_url = Some(auth_url);
-                }
-            }
-            if matches!(event.event_type, ctx_core::models::SessionEventType::Error) {
-                let message = event
-                    .payload_json
-                    .get("message")
-                    .and_then(serde_json::Value::as_str)
-                    .map(logs::redact_sensitive);
-                if let Some(message) = message {
-                    let mut map = state.providers.gemini_login_sessions.lock().await;
-                    if let Some(entry) = map.get_mut(&login_id) {
-                        entry.error = Some(message);
+        let mut channel_disconnected = false;
+        loop {
+            match event_rx.try_recv() {
+                Ok(event) => {
+                    if let Some(auth_url) = extract_auth_url_from_value(&event.payload_json) {
+                        observed_auth_url = true;
+                        let mut map = state.providers.gemini_login_sessions.lock().await;
+                        if let Some(entry) = map.get_mut(&login_id) {
+                            entry.auth_url = Some(auth_url);
+                        }
                     }
+                    if matches!(event.event_type, ctx_core::models::SessionEventType::Error) {
+                        let message = event
+                            .payload_json
+                            .get("message")
+                            .and_then(serde_json::Value::as_str)
+                            .map(logs::redact_sensitive)
+                            .unwrap_or_else(|| "gemini authenticate reported an error".to_string());
+                        let mut map = state.providers.gemini_login_sessions.lock().await;
+                        if let Some(entry) = map.get_mut(&login_id) {
+                            entry.status = "failed".to_string();
+                            entry.error = Some(message);
+                        }
+                        let _ = tokio::fs::remove_dir_all(&login_home).await;
+                        return;
+                    }
+                }
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                    channel_disconnected = true;
+                    break;
                 }
             }
         }
@@ -1357,6 +1386,36 @@ async fn monitor_gemini_login(state: Arc<AppState>, login_id: String, label: Opt
                         entry.status = "failed".to_string();
                         entry.error = Some(logs::redact_sensitive(&err.to_string()));
                     }
+                }
+            }
+            let _ = tokio::fs::remove_dir_all(&login_home).await;
+            return;
+        }
+
+        if channel_disconnected && !observed_auth_url {
+            let mut map = state.providers.gemini_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(&login_id) {
+                entry.status = "failed".to_string();
+                if entry.error.is_none() {
+                    entry.error = Some(
+                        "Gemini sign-in did not emit an OAuth URL; the runtime may require API-key auth in this environment."
+                            .to_string(),
+                    );
+                }
+            }
+            let _ = tokio::fs::remove_dir_all(&login_home).await;
+            return;
+        }
+
+        if !observed_auth_url && Instant::now() >= auth_url_deadline {
+            let mut map = state.providers.gemini_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(&login_id) {
+                entry.status = "failed".to_string();
+                if entry.error.is_none() {
+                    entry.error = Some(
+                        "Gemini sign-in did not emit an OAuth URL; the runtime may require API-key auth in this environment."
+                            .to_string(),
+                    );
                 }
             }
             let _ = tokio::fs::remove_dir_all(&login_home).await;
@@ -2155,8 +2214,6 @@ fn auth_url_looks_complete(auth_url: &str) -> bool {
         return false;
     };
     if !is_loopback_host(host) {
-        // Claude setup-token commonly uses hosted/manual callback redirects
-        // (for example https://platform.claude.com/...), which are complete.
         return true;
     }
     redirect.port().is_some()
@@ -2196,7 +2253,10 @@ fn trim_known_setup_token_prose_suffix(token: &str) -> String {
     const MIN_MATCH_LEN: usize = 5;
 
     let mut out = token.to_string();
-    for phrase in [PROSE_CANONICAL, "storethistokensecurelyyouwontbeabletoseeitagain"] {
+    for phrase in [
+        PROSE_CANONICAL,
+        "storethistokensecurelyyouwontbeabletoseeitagain",
+    ] {
         let max = std::cmp::min(out.len(), phrase.len());
         let mut truncate_at: Option<usize> = None;
         for len in (MIN_MATCH_LEN..=max).rev() {
@@ -4196,12 +4256,24 @@ mod tests {
 
     #[test]
     fn extract_auth_url_reconstructs_wrapped_url_lines() {
-        let wrapped = "Open this URL: https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A\n64111%2Fauth%2Fcallback&state=abc";
+        let wrapped =
+            "Open this URL: https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A\n64111%2Fauth%2Fcallback&state=abc";
         assert_eq!(
             extract_auth_url(wrapped).as_deref(),
             Some(
                 "https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A64111%2Fauth%2Fcallback&state=abc"
             )
+        );
+    }
+
+    #[test]
+    fn extract_auth_url_from_value_detects_embedded_url_in_message() {
+        let payload = serde_json::json!({
+            "message": "Visit this link to sign in: https://accounts.google.com/o/oauth2/auth?foo=bar"
+        });
+        assert_eq!(
+            extract_auth_url_from_value(&payload).as_deref(),
+            Some("https://accounts.google.com/o/oauth2/auth?foo=bar")
         );
     }
 
@@ -4234,9 +4306,11 @@ mod tests {
 
     #[test]
     fn auth_url_looks_complete_requires_port_for_loopback_callback() {
-        let url = "https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%2Fcallback";
+        let url =
+            "https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%2Fcallback";
         assert!(!auth_url_looks_complete(url));
-        let with_port = "https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A5999%2Fcallback";
+        let with_port =
+            "https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A5999%2Fcallback";
         assert!(auth_url_looks_complete(with_port));
     }
 

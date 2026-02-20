@@ -392,7 +392,6 @@ BUILD_LOCAL_ADAPTERS="${CTX_BUNDLE_BUILD_LOCAL_ADAPTERS:-0}"
 BUILD_LOCAL_BRIDGE="${CTX_BUNDLE_BUILD_LOCAL_BRIDGE:-1}"
 INCLUDE_BRIDGE="${CTX_BUNDLE_INCLUDE_BRIDGE:-1}"
 ACP_PROVIDER_IDS=(
-  gemini
   qwen
   opencode
   mistral
@@ -414,7 +413,6 @@ ACP_PROVIDER_IDS=(
 
 acp_provider_command_candidates() {
   case "${1:-}" in
-    gemini) printf '%s' "gemini" ;;
     qwen) printf '%s' "qwen qwen-code" ;;
     opencode) printf '%s' "opencode" ;;
     mistral) printf '%s' "vibe-acp mistral mistral-vibe" ;;
@@ -438,7 +436,7 @@ acp_provider_command_candidates() {
 
 acp_provider_default_args() {
   case "${1:-}" in
-    gemini|qwen) printf '%s' "--experimental-acp" ;;
+    qwen) printf '%s' "--experimental-acp" ;;
     opencode|goose|cagent|continue|swe-agent|openhands) printf '%s' "acp" ;;
     kimi|auggie) printf '%s' "--acp" ;;
     *) printf '%s' "" ;;
@@ -1279,12 +1277,6 @@ if ! is_falsy "$LOCAL_ADAPTER_MODE"; then
     runtime_need_node="1"
   fi
 fi
-if ! is_truthy "$skip_runtimes_raw"; then
-  if provider_selected_for_bundle "claude-crp" && should_bundle_claude_crp; then
-    runtime_need_node="1"
-  fi
-fi
-
 if provider_selected_for_bundle "claude-crp" || provider_selected_for_bundle "claude-cli"; then
   runtime_need_node="1"
 fi

@@ -28,6 +28,7 @@ use crate::events::NormalizedEvent;
 const CRP_VERSION: u32 = 1;
 const DEFAULT_CTX_MCP_TOOL_TIMEOUT_SECS: u64 = 2 * 60 * 60;
 const CRP_MODEL_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+const CRP_AUTH_EVENT_FORWARD_TIMEOUT: Duration = Duration::from_secs(60 * 10);
 const CODEX_CRP_DUMP_CODEX_EVENTS_ENV: &str = "CODEX_CRP_DUMP_CODEX_EVENTS_PATH";
 const CODEX_CRP_DUMP_CRP_EVENTS_ENV: &str = "CODEX_CRP_DUMP_CRP_EVENTS_PATH";
 
@@ -301,12 +302,31 @@ impl ProviderAdapter for Tier1CrpAdapter {
         workdir: PathBuf,
         env: HashMap<String, String>,
         method_id: Option<String>,
-        _event_sink: mpsc::Sender<NormalizedEvent>,
+        event_sink: mpsc::Sender<NormalizedEvent>,
     ) -> Result<()> {
         let session = self
             .pool
             .get_or_create_session(&session_key, &workdir, &env)
             .await?;
+        let mut rx = session.process.events.subscribe();
+        let mut shutdown_rx = session.process.shutdown.subscribe();
+        let auth_session_key = session_key.clone();
+        if !session.opened.load(Ordering::SeqCst) && !session.opening.load(Ordering::SeqCst) {
+            let config = build_crp_session_config(&env, &workdir);
+            let provider_session_id = env
+                .get("CTX_PROVIDER_SESSION_REF")
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
+            session.opening.store(true, Ordering::SeqCst);
+            session
+                .process
+                .send(CrpCommand::SessionOpen {
+                    session_id: Some(session_key.clone()),
+                    provider_session_id,
+                    config: Some(config),
+                })
+                .await?;
+        }
         session
             .process
             .send(CrpCommand::SessionAuthenticate {
@@ -314,6 +334,84 @@ impl ProviderAdapter for Tier1CrpAdapter {
                 method_id,
             })
             .await?;
+        let session_for_events = Arc::clone(&session);
+        tokio::spawn(async move {
+            let deadline = tokio::time::Instant::now() + CRP_AUTH_EVENT_FORWARD_TIMEOUT;
+            let mut last_seq = 0u64;
+            let mut tool_output_cache: HashMap<String, String> = HashMap::new();
+            let mut tool_input_cache: HashMap<String, CachedToolInput> = HashMap::new();
+            loop {
+                let now = tokio::time::Instant::now();
+                if now >= deadline {
+                    break;
+                }
+                let timeout_remaining = deadline.saturating_duration_since(now);
+                tokio::select! {
+                    _ = shutdown_rx.changed() => {
+                        break;
+                    }
+                    recv = timeout(timeout_remaining, rx.recv()) => {
+                        match recv {
+                            Ok(Ok(env)) => {
+                                if !event_matches_session(&env.event, &auth_session_key) {
+                                    continue;
+                                }
+                                if env.seq <= last_seq {
+                                    continue;
+                                }
+                                last_seq = env.seq;
+                                if matches!(&env.event, CrpEvent::SessionOpened { .. }) {
+                                    session_for_events.opened.store(true, Ordering::SeqCst);
+                                    session_for_events.opening.store(false, Ordering::SeqCst);
+                                }
+                                let auth_terminal_event = matches!(
+                                    &env.event,
+                                    CrpEvent::SessionNotice { code, .. }
+                                    if code == "auth_complete"
+                                        || code == "auth_completed"
+                                        || code == "auth_success"
+                                        || code == "authenticated"
+                                        || code == "auth_failed"
+                                        || code == "auth_error"
+                                );
+                                if auth_terminal_event {
+                                    session_for_events.opening.store(false, Ordering::SeqCst);
+                                }
+                                let mapped = map_crp_event(
+                                    env.event,
+                                    env.channel,
+                                    env.seq,
+                                    &mut tool_output_cache,
+                                    &mut tool_input_cache,
+                                );
+                                for event in mapped.events {
+                                    if event_sink.send(event).await.is_err() {
+                                        return;
+                                    }
+                                }
+                                if auth_terminal_event {
+                                    break;
+                                }
+                            }
+                            Ok(Err(broadcast::error::RecvError::Lagged(_))) => {
+                                let _ = event_sink
+                                    .send(NormalizedEvent {
+                                        event_type: SessionEventType::Notice,
+                                        payload_json: json!({
+                                            "kind": "session_gap",
+                                            "reason": "crp_receiver_lagged",
+                                        }),
+                                    })
+                                    .await;
+                            }
+                            Ok(Err(broadcast::error::RecvError::Closed)) | Err(_) => {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        });
         Ok(())
     }
 }

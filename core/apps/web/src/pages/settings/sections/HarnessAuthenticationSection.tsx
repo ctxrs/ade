@@ -58,9 +58,10 @@ export function subscriptionPrimaryActionLabel(modal: HarnessAuthModalState): st
   if (
     modal.provider_id === "codex"
     || modal.provider_id === "cursor"
+    || modal.provider_id === "gemini"
     || (modal.provider_id === "claude-crp" && !claudeSetupTokenProvided(modal))
   ) {
-    return "Start sign-in";
+    return modal.provider_id === "gemini" ? "Sign in with Google" : "Start sign-in";
   }
   return "Save subscription";
 }
@@ -72,7 +73,7 @@ export function shouldSubmitClaudeFallbackOnEnter(modal: HarnessAuthModalState, 
 }
 
 export function shouldAutoStartSubscriptionFlow(providerId: string): boolean {
-  return providerId === "codex" || providerId === "claude-crp";
+  return providerId === "codex" || providerId === "claude-crp" || providerId === "gemini";
 }
 
 export function HarnessAuthenticationSection({
@@ -628,7 +629,7 @@ export function HarnessAuthenticationSection({
                     : harnessAuthModal.provider_id === "claude-crp"
                       ? "Sign in with Claude in your browser. We capture the token automatically. If that fails, paste the token below."
                       : harnessAuthModal.provider_id === "gemini"
-                        ? "Sign in with Google to capture managed Gemini OAuth credentials automatically. Optional fallback: paste oauth_creds.json."
+                        ? "Sign in with Google to capture managed Gemini OAuth credentials automatically."
                         : harnessAuthModal.provider_id === "kimi"
                           ? "Paste Kimi credentials JSON for a managed Kimi share directory."
                           : harnessAuthModal.provider_id === "copilot"
@@ -664,52 +665,6 @@ export function HarnessAuthenticationSection({
                         }}
                         placeholder="sk-ant-oat..."
                         type="password"
-                      />
-                    </label>
-                  </>
-                ) : null}
-                {harnessAuthModal.provider_id === "gemini" ? (
-                  <>
-                    <div className="settings-row-desc">
-                      Leave JSON fields blank to run guided browser sign-in.
-                    </div>
-                    <label className="settings-harness-modal-label">
-                      Label (optional)
-                      <input
-                        className="settings-control"
-                        value={harnessAuthModal.subscription_label}
-                        onChange={(e) => patchHarnessAuthModal({ subscription_label: e.target.value })}
-                        placeholder="Gemini subscription"
-                        autoFocus
-                      />
-                    </label>
-                    <label className="settings-harness-modal-label">
-                      Email (optional)
-                      <input
-                        className="settings-control"
-                        value={harnessAuthModal.subscription_email}
-                        onChange={(e) => patchHarnessAuthModal({ subscription_email: e.target.value })}
-                        placeholder="you@example.com"
-                      />
-                    </label>
-                    <label className="settings-harness-modal-label">
-                      OAuth Credentials JSON (fallback)
-                      <textarea
-                        className="settings-control settings-control-wide"
-                        value={harnessAuthModal.subscription_oauth_creds_json}
-                        onChange={(e) => patchHarnessAuthModal({ subscription_oauth_creds_json: e.target.value })}
-                        placeholder='{"access_token":"...","refresh_token":"..."}'
-                        rows={6}
-                      />
-                    </label>
-                    <label className="settings-harness-modal-label">
-                      Google Accounts JSON (optional)
-                      <textarea
-                        className="settings-control settings-control-wide"
-                        value={harnessAuthModal.subscription_google_accounts_json}
-                        onChange={(e) => patchHarnessAuthModal({ subscription_google_accounts_json: e.target.value })}
-                        placeholder='[{"email":"you@example.com"}]'
-                        rows={4}
                       />
                     </label>
                   </>

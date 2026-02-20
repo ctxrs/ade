@@ -1,10 +1,12 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help dev verify-quick desktop-profile-build desktop-profile-launch
+.PHONY: help dev verify-quick desktop-profile-build desktop-profile-launch desktop-profile-dev
 
 PNPM ?= pnpm
 PROFILE ?= dev
 DESKTOP_SYNC_BUNDLES ?= 1
+DESKTOP_DEV_WEB_HOST ?= 127.0.0.1
+DESKTOP_DEV_WEB_PORT ?= 5173
 SAFE_PROFILE := $(shell printf '%s' "$(PROFILE)" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-*//;s/-*$$//')
 APP_LABEL := ctx [$(SAFE_PROFILE)]
 APP_ID := rs.ctx.desktop.dev.$(SAFE_PROFILE)
@@ -22,6 +24,7 @@ help:
 	@echo "  verify-quick            Run workspace quick verification (pnpm -C core verify:quick)"
 	@echo "  desktop-profile-build   Build named desktop profile (PROFILE=<name>)"
 	@echo "  desktop-profile-launch  Build + launch named desktop profile (PROFILE=<name>)"
+	@echo "  desktop-profile-dev     Run profile-scoped tauri+web hot-reload loop (PROFILE=<name>)"
 
 dev:
 	$(MAKE) -C core dev
@@ -86,3 +89,39 @@ desktop-profile-launch: desktop-profile-build
 			fi; \
 			;; \
 	esac
+
+desktop-profile-dev:
+	@set -euo pipefail; \
+	if [ -z "$(SAFE_PROFILE)" ]; then \
+		echo "PROFILE must contain at least one alphanumeric character."; \
+		exit 1; \
+	fi; \
+	mkdir -p "$(PROFILE_ROOT)" "$(DAEMON_DIR)"; \
+	if pgrep -f -- "--data-dir $(DAEMON_DIR)" >/dev/null 2>&1; then \
+		echo "A daemon is already running for profile '$(SAFE_PROFILE)' ($(DAEMON_DIR))."; \
+		echo "Close that app/process first, then rerun desktop-profile-dev."; \
+		exit 1; \
+	fi; \
+	CTX_DESKTOP_SYNC_BUNDLES="$(DESKTOP_SYNC_BUNDLES)" $(PNPM) -C core desktop:prep:dev; \
+	CONFIG_JSON="$$(jq -nc --arg pn "$(APP_LABEL)" --arg id "$(APP_ID)" '{productName:$$pn,identifier:$$id}')"; \
+	WEB_HOST="$(DESKTOP_DEV_WEB_HOST)"; \
+	WEB_PORT="$(DESKTOP_DEV_WEB_PORT)"; \
+	$(PNPM) -C core/apps/web dev --host "$$WEB_HOST" --port "$$WEB_PORT" >/tmp/ctx-web-$(SAFE_PROFILE).log 2>&1 & \
+	WEB_PID=$$!; \
+	cleanup() { \
+		kill "$$WEB_PID" >/dev/null 2>&1 || true; \
+		wait "$$WEB_PID" >/dev/null 2>&1 || true; \
+	}; \
+	trap cleanup EXIT INT TERM; \
+	if command -v curl >/dev/null 2>&1; then \
+		for _ in $$(seq 1 60); do \
+			if curl -kfsS "https://$$WEB_HOST:$$WEB_PORT" >/dev/null 2>&1 || curl -fsS "http://$$WEB_HOST:$$WEB_PORT" >/dev/null 2>&1; then \
+				break; \
+			fi; \
+			sleep 1; \
+		done; \
+	else \
+		sleep 2; \
+	fi; \
+	echo "Starting tauri dev for profile '$(SAFE_PROFILE)' (web: http://$$WEB_HOST:$$WEB_PORT, data dir: $(DAEMON_DIR))"; \
+	CTX_DESKTOP_DAEMON_DATA_DIR="$(DAEMON_DIR)" $(PNPM) -C core/apps/desktop exec tauri dev --config "$$CONFIG_JSON"

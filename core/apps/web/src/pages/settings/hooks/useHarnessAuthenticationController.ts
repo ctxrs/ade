@@ -35,10 +35,10 @@ import {
   setKiroActiveAccount,
   startCodexLogin,
   startClaudeLogin,
+  startGeminiLogin,
   upsertClaudeAccount,
   upsertCopilotAccount,
   upsertCursorAccount,
-  upsertGeminiAccount,
   upsertKimiAccount,
   upsertKiroAccount,
   upsertProviderHarnessEndpoint,
@@ -134,7 +134,6 @@ const HARNESSES_WITH_ENDPOINT_CONFIG = new Set([
   "rovo",
   "auggie",
   "pi",
-  "cursor",
 ]);
 
 const supportsHarnessEndpointConfigStatic = (providerId: string): boolean =>
@@ -169,6 +168,8 @@ const messageFromError = (error: unknown): string => {
 
 const looksLikeClaudeSetupToken = (value: string): boolean => value.trim().startsWith("sk-ant-oat");
 const CLAUDE_POLLED_AUTH_URL_OPEN_GRACE_MS = 5000;
+const GEMINI_LOGIN_POLL_ATTEMPTS = 90;
+const GEMINI_LOGIN_POLL_INTERVAL_MS = 1600;
 
 export const shouldCompleteClaudeLoginWithCallbackCode = (params: {
   providerId: string;
@@ -185,6 +186,16 @@ export const shouldCompleteClaudeLoginWithCallbackCode = (params: {
 };
 
 export const takeNextClaudeAuthUrlToOpen = (
+  authUrl: string | null | undefined,
+  openedAuthUrls: Set<string>,
+): string | null => {
+  const normalized = authUrl?.trim() ?? "";
+  if (!normalized || openedAuthUrls.has(normalized)) return null;
+  openedAuthUrls.add(normalized);
+  return normalized;
+};
+
+const takeNextAuthUrlToOpen = (
   authUrl: string | null | undefined,
   openedAuthUrls: Set<string>,
 ): string | null => {
@@ -671,6 +682,33 @@ export function useHarnessAuthenticationController({
     return "timeout";
   }, []);
 
+  const waitForGeminiLoginOutcome = useCallback(async (
+    loginId: string,
+    onAuthUrl?: (authUrl: string) => Promise<void>,
+    opts?: { openedAuthUrl?: string | null },
+  ): Promise<{ status: "success" | "failed" | "timeout"; error?: string | null }> => {
+    const openedAuthUrls = new Set<string>();
+    takeNextAuthUrlToOpen(opts?.openedAuthUrl, openedAuthUrls);
+    for (let attempt = 0; attempt < GEMINI_LOGIN_POLL_ATTEMPTS; attempt += 1) {
+      try {
+        const status = await getGeminiLogin(loginId);
+        const authUrl = takeNextAuthUrlToOpen(status.auth_url, openedAuthUrls);
+        if (authUrl && onAuthUrl) {
+          await onAuthUrl(authUrl);
+        }
+        if (status.status === "success") return { status: "success" };
+        if (status.status === "failed") return { status: "failed", error: status.error };
+        if (status.status === "timeout") return { status: "timeout", error: status.error };
+      } catch {
+        // continue polling
+      }
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, GEMINI_LOGIN_POLL_INTERVAL_MS);
+      });
+    }
+    return { status: "timeout" };
+  }, []);
+
   const tryStartCodexDesktopRelay = useCallback(async (params: {
     accountId: string;
     expectedCallbackUrl?: string | null;
@@ -842,36 +880,37 @@ export function useHarnessAuthenticationController({
 
       if (modal.provider_id === "gemini") {
         const label = modal.subscription_label.trim();
-        const email = modal.subscription_email.trim();
-        const oauthCredsJson = modal.subscription_oauth_creds_json.trim();
-        if (oauthCredsJson) {
-          const googleAccountsJson = modal.subscription_google_accounts_json.trim();
-          const next = await upsertGeminiAccount(oauthCredsJson, {
-            ...(label ? { label } : {}),
-            ...(googleAccountsJson ? { googleAccountsJson } : {}),
-            ...(email ? { email } : {}),
-          });
-          setGeminiAccounts(next);
-          await selectSubscriptionSourceIfSupported(modal.provider_id);
-          closeHarnessAuthModal();
-          return;
-        }
+        const openGeminiAuthUrl = async (authUrl: string): Promise<boolean> => {
+          const opened = await openExternalLink(authUrl);
+          if (opened) return true;
+          setHarnessAuthModal((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  subscription_status:
+                    `Couldn't open browser automatically. Open this URL manually: ${authUrl}`,
+                }
+              : prev);
+          return false;
+        };
 
         const login = await startGeminiLogin(label ? label : undefined);
         const initialAuthUrl = takeNextAuthUrlToOpen(login.auth_url, new Set<string>());
+        let initialAuthOpened = false;
         if (initialAuthUrl) {
-          await openExternalLink(initialAuthUrl);
+          initialAuthOpened = await openGeminiAuthUrl(initialAuthUrl);
         }
         setHarnessAuthModal((prev) =>
           prev
             ? {
                 ...prev,
-                subscription_status:
-                  "Waiting for Google sign-in to complete in your browser...",
+                subscription_status: initialAuthUrl && !initialAuthOpened
+                  ? `Couldn't open browser automatically. Open this URL manually: ${initialAuthUrl}`
+                  : "Waiting for Google sign-in to complete in your browser...",
               }
             : prev);
         const outcome = await waitForGeminiLoginOutcome(login.login_id, async (authUrl) => {
-          await openExternalLink(authUrl);
+          await openGeminiAuthUrl(authUrl);
         }, {
           openedAuthUrl: initialAuthUrl,
         });
@@ -885,12 +924,24 @@ export function useHarnessAuthenticationController({
           setProviderError(outcome.error);
         }
         if (outcome.status === "failed") {
+          const failureMessage = outcome.error?.trim() || "Sign-in failed. Retry.";
           setHarnessAuthModal((prev) =>
             prev
               ? {
                   ...prev,
-                  subscription_status:
-                    "Sign-in failed. Retry or paste oauth_creds.json as fallback.",
+                  subscription_status: failureMessage,
+                }
+              : prev);
+          return;
+        }
+        if (outcome.status === "timeout") {
+          const timeoutMessage =
+            outcome.error?.trim() || "Timed out waiting for Gemini sign-in completion. Retry.";
+          setHarnessAuthModal((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  subscription_status: timeoutMessage,
                 }
               : prev);
           return;

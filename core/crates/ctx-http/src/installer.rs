@@ -54,6 +54,7 @@ const INSTALL_EVENT_ERROR_MAX_LEN: usize = 6000;
 static NODE_RUNTIME_INSTALL_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static PYTHON_RUNTIME_INSTALL_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 const TITLE_GENERATION_LOCAL_INSTALL_KEY: &str = "title_generation_local";
+const BUNDLE_ONLY_PROVIDER_IDS: &[&str] = &["gemini"];
 
 fn node_runtime_install_lock() -> &'static Mutex<()> {
     NODE_RUNTIME_INSTALL_LOCK.get_or_init(|| Mutex::new(()))
@@ -71,6 +72,9 @@ pub fn is_supported_managed_provider(
     matrix: &provider_matrix::ProviderMatrix,
     provider_id: &str,
 ) -> bool {
+    if BUNDLE_ONLY_PROVIDER_IDS.contains(&provider_id) {
+        return false;
+    }
     provider_matrix::is_managed_supported(matrix, provider_id)
 }
 
@@ -1204,6 +1208,13 @@ async fn install_provider_impl(
     provider_id: &str,
     install_id: Option<InstallId>,
 ) -> Result<()> {
+    if BUNDLE_ONLY_PROVIDER_IDS.contains(&provider_id) {
+        anyhow::bail!(
+            "provider '{}' is bundle-only and must be shipped in bundled harness assets",
+            provider_id
+        );
+    }
+
     let provider_id = provider_id.to_string();
     let mut stage: &'static str = "start";
     let mut error_package: Option<String> = None;
@@ -3282,4 +3293,15 @@ async fn sha256_file(path: &Path) -> Result<String> {
         hasher.update(&buf[..n]);
     }
     Ok(format!("{:x}", hasher.finalize()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gemini_is_bundle_only_not_managed_install_supported() {
+        let matrix = provider_matrix::builtin_matrix();
+        assert!(!is_supported_managed_provider(&matrix, "gemini"));
+    }
 }

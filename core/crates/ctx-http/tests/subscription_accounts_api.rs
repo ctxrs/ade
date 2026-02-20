@@ -72,6 +72,7 @@ enum GeminiLoginFixture {
     Failure {
         error: String,
     },
+    NoAuthUrl,
 }
 
 #[derive(Debug, Clone)]
@@ -99,6 +100,12 @@ impl GeminiLoginTestAdapter {
             fixture: GeminiLoginFixture::Failure {
                 error: error.into(),
             },
+        }
+    }
+
+    fn no_auth_url() -> Self {
+        Self {
+            fixture: GeminiLoginFixture::NoAuthUrl,
         }
     }
 }
@@ -184,6 +191,11 @@ impl ProviderAdapter for GeminiLoginTestAdapter {
                     })
                     .await;
                 Err(anyhow!("{error}"))
+            }
+            GeminiLoginFixture::NoAuthUrl => {
+                // Keep channel alive briefly and emit no auth URL or oauth files.
+                tokio::time::sleep(Duration::from_millis(600)).await;
+                Ok(())
             }
         }
     }
@@ -1010,6 +1022,41 @@ async fn gemini_login_start_and_status_failure_reports_error() {
     let accounts: SubscriptionAccountsResponse = accounts_resp.json().await.expect("accounts body");
     assert!(accounts.accounts.is_empty());
     assert!(accounts.active_account_id.is_none());
+}
+
+#[tokio::test]
+async fn gemini_login_fails_fast_when_no_auth_url_is_emitted() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let providers = providers_with_gemini_adapter(Arc::new(GeminiLoginTestAdapter::no_auth_url()));
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        providers,
+        "http://127.0.0.1:0",
+    );
+    let server = common::spawn_http_server(common::router(state)).await;
+
+    let start_url = format!(
+        "{}/api/providers/gemini/accounts/login/start",
+        server.base_url
+    );
+    let start_resp = server
+        .client
+        .post(start_url)
+        .json(&json!({}))
+        .send()
+        .await
+        .expect("start gemini login request");
+    assert_eq!(start_resp.status(), StatusCode::OK);
+    let start_body: GeminiLoginStartResponse = start_resp.json().await.expect("start body");
+
+    let status = poll_gemini_login_status(&server, &start_body.login_id).await;
+    assert_eq!(status.status, "failed");
+    assert!(status
+        .error
+        .unwrap_or_default()
+        .contains("did not emit an OAuth URL"));
 }
 
 #[tokio::test]

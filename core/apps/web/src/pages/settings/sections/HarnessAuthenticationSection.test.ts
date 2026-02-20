@@ -12,6 +12,7 @@ function baseModal(overrides: Partial<HarnessAuthModalState> = {}): HarnessAuthM
     provider_id: "claude-crp",
     stage: "subscription",
     endpoint_provider_id: "openai",
+    gemini_endpoint_auth_type: "gemini_api_key",
     endpoint_name: "",
     base_url: "",
     api_key: "",
@@ -79,9 +80,9 @@ describe("HarnessAuthenticationSection Claude fallback submit", () => {
     expect(subscriptionPrimaryActionLabel(modal)).toBe("Start sign-in");
   });
 
-  it("auto-starts browser sign-in from stage 1 for codex and claude", () => {
+  it("auto-starts browser sign-in from stage 1 for codex, claude, and gemini", () => {
     expect(shouldAutoStartSubscriptionFlow("codex")).toBe(true);
     expect(shouldAutoStartSubscriptionFlow("claude-crp")).toBe(true);
-    expect(shouldAutoStartSubscriptionFlow("gemini")).toBe(false);
+    expect(shouldAutoStartSubscriptionFlow("gemini")).toBe(true);
   });
 });
