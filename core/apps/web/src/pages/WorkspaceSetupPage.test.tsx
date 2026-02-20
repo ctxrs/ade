@@ -902,6 +902,65 @@ describe("WorkspaceSetupPage", () => {
     expect(updateSettings).not.toHaveBeenCalled();
   });
 
+  it("creates a local workspace in browser mode without desktop bridge connect", async () => {
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+
+    fireEvent.click(screen.getByTestId("wizard-option-location-local"));
+    await waitFor(() => {
+      expect(wizardStepKey()).not.toBe("location");
+    });
+
+    if (wizardStepKey() === "auth-import") {
+      fireEvent.click(screen.getByRole("button", { name: "Skip for now" }));
+      await waitFor(() => {
+        expect(wizardStepKey()).toBe("session-titling");
+      });
+    }
+    if (wizardStepKey() === "session-titling") {
+      fireEvent.click(screen.getByTestId("wizard-titling-skip"));
+    }
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+    });
+    fireEvent.click(screen.getByTestId("wizard-option-container-no-container"));
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("source");
+    });
+    fireEvent.click(screen.getByTestId("wizard-option-source-new"));
+    fireEvent.change(screen.getByTestId("wizard-source-path"), {
+      target: { value: "/tmp/new-repo-web" },
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("setup");
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("merge-queue");
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("confirm");
+    });
+    fireEvent.click(screen.getByTestId("wizard-create"));
+
+    await waitFor(() => {
+      expect(createWorkspace).toHaveBeenCalledWith("/tmp/new-repo-web", "new-repo-web");
+      expect(desktopConnectLocal).not.toHaveBeenCalled();
+      expect(upsertLauncherRecent).toHaveBeenCalledWith(expect.objectContaining({
+        kind: "local",
+        root_path: "/tmp/new-repo-web",
+      }));
+    });
+  });
+
   it("writes launcher recents on successful local workspace creation", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(getSettings).mockResolvedValue({ title_generation: null } as never);

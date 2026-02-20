@@ -26,7 +26,7 @@ export {
   trackRuntimeErrorObserved,
   trackSessionLoadFatalObserved,
   trackApiErrorObserved,
-} from "./events";
+} from "./activity";
 
 export { sanitizeAnalyticsProperties } from "./schema";
 

@@ -21,7 +21,7 @@ vi.mock("./client", () => ({
   subscribeFeatureFlags: subscribeFeatureFlagsMock,
 }));
 
-vi.mock("./events", () => ({
+vi.mock("./activity", () => ({
   trackFeatureGateEvaluated: trackFeatureGateEvaluatedMock,
   trackExperimentExposure: trackExperimentExposureMock,
 }));

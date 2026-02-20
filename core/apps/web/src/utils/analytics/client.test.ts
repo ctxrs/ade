@@ -28,7 +28,7 @@ vi.mock("posthog-js", () => ({
 }));
 
 vi.mock("./config", () => ({
-  getPostHogHost: () => "https://us.i.posthog.com",
+  getPostHogHost: () => "https://t.ctx.rs",
   getPostHogKey: () => "phc_test_key",
   getPostHogProjectId: () => "example-project",
   getPostHogUiHost: () => "https://us.posthog.com",

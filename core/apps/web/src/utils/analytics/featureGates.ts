@@ -4,7 +4,7 @@ import {
   hasTrackedExperimentExposure,
   markExperimentExposureTracked,
 } from "./experimentExposureDedup";
-import { trackExperimentExposure, trackFeatureGateEvaluated } from "./events";
+import { trackExperimentExposure, trackFeatureGateEvaluated } from "./activity";
 
 const trackedGateEvaluations = new Set<string>();
 
