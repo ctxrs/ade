@@ -11,11 +11,13 @@ function baseModal(overrides: Partial<HarnessAuthModalState> = {}): HarnessAuthM
   return {
     provider_id: "claude-crp",
     stage: "subscription",
+    endpoint_id: null,
     endpoint_provider_id: "openai",
     gemini_endpoint_auth_type: "gemini_api_key",
     endpoint_name: "",
     base_url: "",
     api_key: "",
+    manual_model_ids: "",
     subscription_label: "",
     subscription_token: "",
     subscription_email: "",
