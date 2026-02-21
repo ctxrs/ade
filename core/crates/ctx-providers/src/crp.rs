@@ -2669,7 +2669,10 @@ mod tests {
         );
         let probe =
             synthetic_models_probe_for_provider("cline", &env).expect("cline synthetic probe");
-        assert_eq!(probe.current_model_id.as_deref(), Some("openai/gpt-5.2-codex"));
+        assert_eq!(
+            probe.current_model_id.as_deref(),
+            Some("openai/gpt-5.2-codex")
+        );
         assert_eq!(probe.models.len(), 1);
         assert_eq!(probe.models[0].id, "openai/gpt-5.2-codex");
     }

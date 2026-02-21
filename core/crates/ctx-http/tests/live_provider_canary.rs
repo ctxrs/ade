@@ -113,14 +113,9 @@ async fn seed_claude_runtime_config(data_root: &Path, command_abs_path: &str) {
         dependencies: Vec::new(),
         managed: None,
     };
-    cfg.providers.insert(
-        "claude-crp".to_string(),
-        command.clone(),
-    );
-    cfg.providers.insert(
-        "claude".to_string(),
-        command,
-    );
+    cfg.providers
+        .insert("claude-crp".to_string(), command.clone());
+    cfg.providers.insert("claude".to_string(), command);
     save_agent_server_config(data_root, &cfg)
         .await
         .expect("write agent server config");
@@ -332,7 +327,10 @@ async fn live_claude_endpoint_profile_api_key_round_trip() {
     let (options_status, options_body): (StatusCode, Value) = common::json_request(
         &app,
         Method::GET,
-        format!("/api/workspaces/{}/providers/{provider_id}/options", ws.id.0),
+        format!(
+            "/api/workspaces/{}/providers/{provider_id}/options",
+            ws.id.0
+        ),
         None,
     )
     .await;
