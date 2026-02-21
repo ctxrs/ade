@@ -89,16 +89,6 @@
       ]
     },
     {
-      "id": "cline",
-      "protocol": "acp",
-      "version": "local",
-      "os": "macos",
-      "arch": "aarch64",
-      "sha256": "7bbf7cb72330a1a4781c5530d42d733fedd8a08005c649e130e9e5f1fc3e9d23",
-      "command": "providers/cline/macos/aarch64/cline-acp.sh",
-      "args": []
-    },
-    {
       "id": "codex",
       "protocol": "acp",
       "version": "0.0.0-ctx.3",
@@ -126,16 +116,6 @@
       "arch": "aarch64",
       "sha256": "244dbbe68297766f3f328f9b592033220a18bd931a26e27a1aea6b9eed52e3b0",
       "command": "providers/codex/macos/aarch64/codex-crp",
-      "args": []
-    },
-    {
-      "id": "cody",
-      "protocol": "acp",
-      "version": "local",
-      "os": "macos",
-      "arch": "aarch64",
-      "sha256": "839dab8f2b2036bc9c629c31a0de6ed14dbe84c53baf3c81bd2cffc1a2eb5351",
-      "command": "providers/cody/macos/aarch64/cody-acp.sh",
       "args": []
     },
     {

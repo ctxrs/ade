@@ -92,21 +92,9 @@ const PROVIDERS: &[ProviderSpec] = &[
         opencode_config: false,
     },
     ProviderSpec {
-        id: "cody",
-        fallback_cmd: "cody-acp",
-        fallback_args: &[],
-        opencode_config: false,
-    },
-    ProviderSpec {
         id: "continue",
         fallback_cmd: "cn",
         fallback_args: &["acp"],
-        opencode_config: false,
-    },
-    ProviderSpec {
-        id: "cline",
-        fallback_cmd: "cline-acp",
-        fallback_args: &[],
         opencode_config: false,
     },
     ProviderSpec {
@@ -410,23 +398,6 @@ async fn probe_command(
     ))
 }
 
-fn create_cline_vscode_stub() -> std::io::Result<(tempfile::TempDir, PathBuf)> {
-    let dir = tempfile::tempdir()?;
-    let node_modules = dir.path().join("node_modules/vscode");
-    fs::create_dir_all(&node_modules)?;
-    let node_path = dir.path().join("node_modules");
-    let stub = r#"module.exports = {
-  workspace: {
-    getConfiguration: () => ({ get: () => undefined })
-  },
-  ExtensionMode: { Development: 0, Production: 1, Test: 2 },
-  ExtensionKind: { UI: 1, Workspace: 2 }
-};
-"#;
-    fs::write(node_modules.join("index.js"), stub)?;
-    Ok((dir, node_path))
-}
-
 fn create_qwen_settings_home() -> std::io::Result<tempfile::TempDir> {
     let dir = tempfile::tempdir()?;
     let qwen_dir = dir.path().join(".qwen");
@@ -518,27 +489,12 @@ fn provider_skip_reason(provider: ProviderSpec) -> Option<String> {
             return Some("requires Kiro CLI login; set KIRO_TOKEN_TESTS=1 to attempt".to_string());
         }
     }
-    if provider.id == "cody" {
-        let allow = env_truthy("CODY_TOKEN_TESTS");
-        let has_cody_auth = env_present("SRC_ACCESS_TOKEN");
-        if !allow && !has_cody_auth {
-            return Some("missing SRC_ACCESS_TOKEN; set CODY_TOKEN_TESTS=1 to attempt".to_string());
-        }
-    }
     if provider.id == "continue" {
         let has_continue_auth = std::env::var("CONTINUE_API_KEY")
             .map(|v| !v.trim().is_empty())
             .unwrap_or(false);
         if !has_continue_auth {
             return Some("missing CONTINUE_API_KEY; continue CLI uses Continue Cloud".to_string());
-        }
-    }
-    if provider.id == "cline" {
-        let allow = env_truthy("CLINE_TOKEN_TESTS");
-        if !allow {
-            return Some(
-                "cline-acp bundle missing deps (vscode/grpc-health-check/package.json); set CLINE_TOKEN_TESTS=1 to attempt".to_string(),
-            );
         }
     }
     if provider.id == "pi" {
@@ -678,7 +634,6 @@ async fn acp_crp_bridge_token_providers() {
         }
 
         eprintln!("running {}...", provider.id);
-        let mut _cline_stub = None;
         let mut _qwen_home = None;
         let mut acp_args = acp_cmd.args.clone();
         if provider.id == "qwen" {
@@ -690,27 +645,6 @@ async fn acp_crp_bridge_token_providers() {
             &model_id,
             *provider,
         );
-        if provider.id == "cline" {
-            match create_cline_vscode_stub() {
-                Ok((dir, node_path)) => {
-                    env.insert("NODE_PATH".to_string(), node_path.display().to_string());
-                    _cline_stub = Some(dir);
-                }
-                Err(err) => {
-                    eprintln!(
-                        "skipping {}: failed to create vscode stub: {}",
-                        provider.id, err
-                    );
-                    continue;
-                }
-            }
-            if let Err(reason) =
-                probe_command(&acp_cmd.command, &acp_cmd.args, &["--version"], Some(&env)).await
-            {
-                eprintln!("skipping {}: {}", provider.id, reason);
-                continue;
-            }
-        }
         if provider.id == "qwen" {
             match create_qwen_settings_home() {
                 Ok(dir) => {

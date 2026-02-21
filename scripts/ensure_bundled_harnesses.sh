@@ -409,13 +409,11 @@ ACP_PROVIDER_IDS=(
   cagent
   auggie
   continue
-  cline
   openhands
   amp
   droid
   copilot
   kiro
-  cody
 )
 
 acp_provider_command_candidates() {
@@ -428,13 +426,11 @@ acp_provider_command_candidates() {
     cagent) printf '%s' "cagent" ;;
     auggie) printf '%s' "auggie" ;;
     continue) printf '%s' "cn continue" ;;
-    cline) printf '%s' "cline-acp cline" ;;
     openhands) printf '%s' "openhands openhands-cli" ;;
     amp) printf '%s' "amp-acp amp" ;;
     droid) printf '%s' "droid-acp droid" ;;
     copilot) printf '%s' "copilot-cli-acp github-copilot-cli copilot" ;;
     kiro) printf '%s' "kiro-acp kiro" ;;
-    cody) printf '%s' "cody-acp cody" ;;
     *) printf '%s' "${1:-}" ;;
   esac
 }
@@ -509,7 +505,6 @@ local_adapter_dir() {
     droid) printf '%s' "droid-acp" ;;
     copilot) printf '%s' "copilot-cli-acp" ;;
     kiro) printf '%s' "kiro-acp" ;;
-    cody) printf '%s' "cody-acp" ;;
     *) printf '%s' "" ;;
   esac
 }
@@ -519,7 +514,6 @@ local_adapter_bin() {
     droid) printf '%s' "droid-acp" ;;
     copilot) printf '%s' "copilot-cli-acp" ;;
     kiro) printf '%s' "kiro-acp" ;;
-    cody) printf '%s' "cody-acp" ;;
     *) printf '%s' "" ;;
   esac
 }
@@ -784,454 +778,6 @@ prune_provider_node_payload() {
   prune_napi_keyring_musl_packages "$provider_root"
 }
 
-write_cline_bundle_stubs() {
-  local provider_root="$1"
-  local node_modules_root="$provider_root/node_modules"
-  mkdir -p "$node_modules_root/vscode" "$node_modules_root/grpc-health-check"
-  cat > "$node_modules_root/vscode/index.js" <<'JS'
-"use strict";
-
-const noop = () => {};
-const disposable = { dispose: noop };
-
-module.exports = {
-  workspace: {
-    getConfiguration: () => ({ get: () => undefined }),
-    workspaceFolders: [],
-  },
-  window: {
-    showInformationMessage: async () => undefined,
-    showWarningMessage: async () => undefined,
-    showErrorMessage: async () => undefined,
-    showInputBox: async () => undefined,
-    showOpenDialog: async () => undefined,
-    showSaveDialog: async () => undefined,
-    createOutputChannel: () => ({ appendLine: noop, append: noop, clear: noop, dispose: noop }),
-  },
-  commands: {
-    executeCommand: async () => undefined,
-    registerCommand: () => disposable,
-  },
-  env: {
-    clipboard: {
-      readText: async () => "",
-      writeText: async () => undefined,
-    },
-  },
-  EventEmitter: class EventEmitter {
-    constructor() {
-      this.listeners = [];
-      this.event = (listener) => {
-        this.listeners.push(listener);
-        return { dispose: () => { this.listeners = this.listeners.filter((entry) => entry !== listener); } };
-      };
-    }
-    fire(value) {
-      for (const listener of this.listeners) listener(value);
-    }
-    dispose() {
-      this.listeners = [];
-    }
-  },
-  ExtensionMode: { Development: 0, Production: 1, Test: 2 },
-  ExtensionKind: { UI: 1, Workspace: 2 },
-};
-JS
-
-  cat > "$node_modules_root/grpc-health-check/index.js" <<'JS'
-"use strict";
-
-const path = require("node:path");
-
-module.exports = {
-  protoPath: path.join(__dirname, "health.proto"),
-};
-JS
-
-  cat > "$node_modules_root/grpc-health-check/health.proto" <<'PROTO'
-syntax = "proto3";
-
-package grpc.health.v1;
-
-message HealthCheckRequest {
-  string service = 1;
-}
-
-message HealthCheckResponse {
-  enum ServingStatus {
-    UNKNOWN = 0;
-    SERVING = 1;
-    NOT_SERVING = 2;
-    SERVICE_UNKNOWN = 3;
-  }
-  ServingStatus status = 1;
-}
-
-service Health {
-  rpc Check(HealthCheckRequest) returns (HealthCheckResponse);
-}
-PROTO
-}
-
-patch_cline_standalone_runtime() {
-  local provider_root="$1"
-  local cline_js="$provider_root/dist-standalone/cline-acp.js"
-  if [[ ! -f "$cline_js" ]]; then
-    log "error: cline standalone runtime missing: $cline_js"
-    exit 5
-  fi
-
-  run_python - "$cline_js" <<'PY'
-from pathlib import Path
-import sys
-
-path = Path(sys.argv[1])
-text = path.read_text(encoding="utf-8")
-
-original_manager = """var ExternalHostBridgeClientManager = class {
-  workspaceClient;
-  envClient;
-  windowClient;
-  diffClient;
-  constructor() {
-    const address = process.env.HOST_BRIDGE_ADDRESS || `localhost:${HOSTBRIDGE_PORT}`;
-    this.workspaceClient = new WorkspaceServiceClientImpl(address);
-    this.envClient = new EnvServiceClientImpl(address);
-    this.windowClient = new WindowServiceClientImpl(address);
-    this.diffClient = new DiffServiceClientImpl(address);
-  }
-};"""
-
-patched_manager = """var ExternalHostBridgeClientManager = class {
-  workspaceClient;
-  envClient;
-  windowClient;
-  diffClient;
-  constructor() {
-    const useExternalHostBridge = process.env.CTX_CLINE_EXTERNAL_HOSTBRIDGE === \"1\" || !!process.env.HOST_BRIDGE_ADDRESS;
-    if (!useExternalHostBridge) {
-      let clipboardText = \"\";
-      let activeDiffId = \"\";
-      const fallbackWorkspace = process.env.CTX_CLINE_WORKSPACE_CWD || process.env.PWD || process.cwd();
-      this.workspaceClient = {
-        getWorkspacePaths: async () => ({ paths: [fallbackWorkspace] }),
-        saveOpenDocumentIfDirty: async () => ({ saved: false }),
-        getDiagnostics: async () => ({ fileDiagnostics: [] }),
-        openProblemsPanel: async () => ({}),
-        openInFileExplorerPanel: async () => ({}),
-        openClineSidebarPanel: async () => ({}),
-        openTerminalPanel: async () => ({}),
-        executeCommandInTerminal: async () => ({ success: true })
-      };
-      this.envClient = {
-        clipboardWriteText: async (request5) => {
-          clipboardText = request5?.value ?? \"\";
-          return {};
-        },
-        clipboardReadText: async () => ({ value: clipboardText }),
-        getHostVersion: async () => ({ platform: \"standalone\", version: \"0.0.0\", clineType: \"cli\" }),
-        getIdeRedirectUri: async () => ({ value: \"\" }),
-        getTelemetrySettings: async () => ({ isEnabled: 0 }),
-        subscribeToTelemetrySettings: (_request5, callbacks) => {
-          callbacks?.onResponse?.({ isEnabled: 0 });
-          return () => {
-          };
-        },
-        shutdown: async () => ({})
-      };
-      this.windowClient = {
-        showTextDocument: async () => ({}),
-        showOpenDialogue: async () => ({ paths: [] }),
-        showMessage: async () => ({ selectedOption: \"\" }),
-        showInputBox: async () => ({ value: \"\" }),
-        showSaveDialog: async () => ({ path: \"\" }),
-        openFile: async () => ({}),
-        openSettings: async () => ({}),
-        getOpenTabs: async () => ({ paths: [] }),
-        getVisibleTabs: async () => ({ paths: [] }),
-        getActiveEditor: async () => ({ path: \"\" })
-      };
-      this.diffClient = {
-        openDiff: async () => {
-          activeDiffId = activeDiffId || \"ctx-cline-diff\";
-          return { diffId: activeDiffId };
-        },
-        getDocumentText: async () => ({ content: \"\" }),
-        replaceText: async () => ({}),
-        scrollDiff: async () => ({}),
-        truncateDocument: async () => ({}),
-        saveDocument: async () => ({}),
-        closeAllDiffs: async () => ({}),
-        openMultiFileDiff: async () => ({})
-      };
-      return;
-    }
-    const address = process.env.HOST_BRIDGE_ADDRESS || `localhost:${HOSTBRIDGE_PORT}`;
-    this.workspaceClient = new WorkspaceServiceClientImpl(address);
-    this.envClient = new EnvServiceClientImpl(address);
-    this.windowClient = new WindowServiceClientImpl(address);
-    this.diffClient = new DiffServiceClientImpl(address);
-  }
-};"""
-
-if "const useExternalHostBridge = process.env.CTX_CLINE_EXTERNAL_HOSTBRIDGE" not in text:
-    if original_manager not in text:
-        raise SystemExit("failed to patch cline host bridge manager block")
-    text = text.replace(original_manager, patched_manager, 1)
-
-fallback_workspace_decl = "      const fallbackWorkspace = process.env.CTX_CLINE_WORKSPACE_CWD || process.env.PWD || process.cwd();"
-broken_fallback_workspace_decl = "      let activeDiffId = \"\";\\n      const fallbackWorkspace = process.env.CTX_CLINE_WORKSPACE_CWD || process.env.PWD || process.cwd();"
-if broken_fallback_workspace_decl in text:
-    text = text.replace(
-        broken_fallback_workspace_decl,
-        "      let activeDiffId = \"\";\\n" + fallback_workspace_decl,
-        1,
-    )
-if fallback_workspace_decl not in text:
-    marker = "      let activeDiffId = \"\";"
-    if marker not in text:
-        raise SystemExit("failed to patch cline fallback workspace declaration")
-    text = text.replace(marker, marker + "\n" + fallback_workspace_decl, 1)
-
-workspace_paths_line = "        getWorkspacePaths: async () => ({ paths: [process.cwd()] }),"
-workspace_paths_fallback = "        getWorkspacePaths: async () => ({ paths: [fallbackWorkspace] }),"
-if workspace_paths_fallback not in text:
-    if workspace_paths_line not in text:
-        raise SystemExit("failed to patch cline fallback workspace path")
-    text = text.replace(workspace_paths_line, workspace_paths_fallback, 1)
-
-original_wait = "    await waitForHostBridgeReady();"
-patched_wait = """    const useExternalHostBridge = process.env.CTX_CLINE_EXTERNAL_HOSTBRIDGE === \"1\" || !!process.env.HOST_BRIDGE_ADDRESS;
-    if (useExternalHostBridge) {
-      await waitForHostBridgeReady();
-    }"""
-if patched_wait not in text:
-    if original_wait not in text:
-        raise SystemExit("failed to patch cline host bridge wait block")
-    text = text.replace(original_wait, patched_wait, 1)
-
-stdout_log_line = "  console.log(`[${timestamp}]`, \"#bot.cline.server.ts\", ...args3);"
-stderr_log_line = "  console.error(`[${timestamp}]`, \"#bot.cline.server.ts\", ...args3);"
-if stderr_log_line not in text:
-    if stdout_log_line not in text:
-        raise SystemExit("failed to patch cline standalone log stream")
-    text = text.replace(stdout_log_line, stderr_log_line, 1)
-
-extension_dir_line = "  const EXTENSION_DIR = import_path91.default.join(INSTALL_DIR, \"extension\");"
-extension_dir_block = """  const extensionPackagePath = import_path91.default.join(INSTALL_DIR, \"extension\", \"package.json\");
-  const EXTENSION_DIR = fs49.existsSync(extensionPackagePath) ? import_path91.default.join(INSTALL_DIR, \"extension\") : INSTALL_DIR;"""
-if extension_dir_block not in text:
-    if extension_dir_line not in text:
-        raise SystemExit("failed to patch cline extension directory selection")
-    text = text.replace(extension_dir_line, extension_dir_block, 1)
-
-extension_package_read = "    packageJSON: readJson(import_path91.default.join(EXTENSION_DIR, \"package.json\")),"
-extension_package_fallback = "    packageJSON: fs49.existsSync(import_path91.default.join(EXTENSION_DIR, \"package.json\")) ? readJson(import_path91.default.join(EXTENSION_DIR, \"package.json\")) : package_default,"
-if extension_package_fallback not in text:
-    if extension_package_read not in text:
-        raise SystemExit("failed to patch cline extension package metadata fallback")
-    text = text.replace(extension_package_read, extension_package_fallback, 1)
-
-runtime_chdir_line = "    process.chdir(path71.dirname((0, import_node_url6.fileURLToPath)(_importMetaUrl)));"
-runtime_chdir_block = """    process.chdir(path71.dirname((0, import_node_url6.fileURLToPath)(_importMetaUrl)));
-    if (cwd && typeof cwd === \"string\" && cwd.length > 0) {
-      process.env.CTX_CLINE_WORKSPACE_CWD = cwd;
-    }"""
-if runtime_chdir_block not in text:
-    if runtime_chdir_line not in text:
-        raise SystemExit("failed to patch cline runtime workspace cwd propagation")
-    text = text.replace(runtime_chdir_line, runtime_chdir_block, 1)
-
-broken_secret_destructure_line = "    openAiApiKey: resolvedOpenAiApiKey,"
-if broken_secret_destructure_line in text:
-    text = text.replace(broken_secret_destructure_line, "    openAiApiKey,", 1)
-
-secrets_env_override_lines = """  const endpointOpenAiApiKey = (process.env.OPENAI_API_KEY || "").trim();
-  const resolvedOpenAiApiKey = endpointOpenAiApiKey.length > 0 ? endpointOpenAiApiKey : openAiApiKey;
-"""
-if secrets_env_override_lines in text:
-    text = text.replace(secrets_env_override_lines, "", 1)
-
-secret_store_get_line = """  get(key) {
-    return Promise.resolve(this.data.get(key));
-  }"""
-old_secret_store_get_override = """  get(key) {
-    if (key === "openAiApiKey") {
-      const endpointOpenAiApiKey = (process.env.OPENAI_API_KEY || "").trim();
-      if (endpointOpenAiApiKey.length > 0) {
-        return Promise.resolve(endpointOpenAiApiKey);
-      }
-    }
-    return Promise.resolve(this.data.get(key));
-  }"""
-secret_store_get_override = """  get(key) {
-    if (key === "openAiApiKey" || key === "openRouterApiKey") {
-      const endpointOpenAiApiKey = (process.env.OPENAI_API_KEY || "").trim();
-      if (endpointOpenAiApiKey.length > 0) {
-        return Promise.resolve(endpointOpenAiApiKey);
-      }
-    }
-    return Promise.resolve(this.data.get(key));
-  }"""
-if "if (key === \"openAiApiKey\" || key === \"openRouterApiKey\") {" not in text:
-    if old_secret_store_get_override in text:
-        text = text.replace(old_secret_store_get_override, secret_store_get_override, 1)
-    elif secret_store_get_line in text:
-        text = text.replace(secret_store_get_line, secret_store_get_override, 1)
-    else:
-        raise SystemExit("failed to patch cline secret store openai env projection")
-
-provider_default_block = """    let apiProvider;
-    if (planModeApiProvider) {
-      apiProvider = planModeApiProvider;
-    } else {
-      apiProvider = "openrouter";
-    }"""
-provider_default_override = """    const endpointOpenAiApiKey = (process.env.OPENAI_API_KEY || "").trim();
-    const endpointOpenAiBaseUrl = (process.env.OPENAI_BASE_URL || "").trim();
-    const endpointOpenAiModel = (process.env.OPENAI_MODEL || "").trim();
-    const endpointHasApiConfig = endpointOpenAiApiKey.length > 0 && endpointOpenAiBaseUrl.length > 0;
-    const endpointBaseHostname = (() => {
-      if (!endpointHasApiConfig) {
-        return "";
-      }
-      try {
-        return new URL(endpointOpenAiBaseUrl).hostname.toLowerCase();
-      } catch (_error) {
-        return "";
-      }
-    })();
-    const endpointUsesOpenRouter = endpointBaseHostname === "openrouter.ai" || endpointBaseHostname.endsWith(".openrouter.ai");
-    let apiProvider;
-    if (endpointHasApiConfig) {
-      apiProvider = endpointUsesOpenRouter ? "openrouter" : "openai";
-    } else if (planModeApiProvider) {
-      apiProvider = planModeApiProvider;
-    } else {
-      apiProvider = "openrouter";
-    }"""
-old_provider_default_override = """    const endpointOpenAiApiKey = (process.env.OPENAI_API_KEY || "").trim();
-    const endpointOpenAiBaseUrl = (process.env.OPENAI_BASE_URL || "").trim();
-    const endpointOpenAiModel = (process.env.OPENAI_MODEL || "").trim();
-    const endpointHasOpenAiConfig = endpointOpenAiApiKey.length > 0 && endpointOpenAiBaseUrl.length > 0;
-    let apiProvider;
-    if (endpointHasOpenAiConfig) {
-      apiProvider = "openai";
-    } else if (planModeApiProvider) {
-      apiProvider = planModeApiProvider;
-    } else {
-      apiProvider = "openrouter";
-    }"""
-if "const endpointHasApiConfig = endpointOpenAiApiKey.length > 0 && endpointOpenAiBaseUrl.length > 0;" not in text:
-    if old_provider_default_override in text:
-        text = text.replace(old_provider_default_override, provider_default_override, 1)
-    elif provider_default_block in text:
-        text = text.replace(provider_default_block, provider_default_override, 1)
-    else:
-        raise SystemExit("failed to patch cline provider default selection")
-
-if "openAiBaseUrl: endpointHasApiConfig && !endpointUsesOpenRouter ? endpointOpenAiBaseUrl : openAiBaseUrl," not in text:
-    if "      openAiBaseUrl: endpointHasOpenAiConfig ? endpointOpenAiBaseUrl : openAiBaseUrl,\n" in text:
-        text = text.replace(
-            "      openAiBaseUrl: endpointHasOpenAiConfig ? endpointOpenAiBaseUrl : openAiBaseUrl,\n",
-            "      openAiBaseUrl: endpointHasApiConfig && !endpointUsesOpenRouter ? endpointOpenAiBaseUrl : openAiBaseUrl,\n",
-            1,
-        )
-    elif "      openAiBaseUrl,\n" in text:
-        text = text.replace(
-            "      openAiBaseUrl,\n",
-            "      openAiBaseUrl: endpointHasApiConfig && !endpointUsesOpenRouter ? endpointOpenAiBaseUrl : openAiBaseUrl,\n",
-            1,
-        )
-    else:
-        raise SystemExit("failed to patch cline openai base url override")
-
-if "planModeApiProvider: endpointHasApiConfig ? (endpointUsesOpenRouter ? \"openrouter\" : \"openai\") : planModeApiProvider || apiProvider," not in text:
-    if "      planModeApiProvider: endpointHasOpenAiConfig ? \"openai\" : planModeApiProvider || apiProvider,\n" in text:
-        text = text.replace(
-            "      planModeApiProvider: endpointHasOpenAiConfig ? \"openai\" : planModeApiProvider || apiProvider,\n",
-            "      planModeApiProvider: endpointHasApiConfig ? (endpointUsesOpenRouter ? \"openrouter\" : \"openai\") : planModeApiProvider || apiProvider,\n",
-            1,
-        )
-    elif "      planModeApiProvider: planModeApiProvider || apiProvider,\n" in text:
-        text = text.replace(
-            "      planModeApiProvider: planModeApiProvider || apiProvider,\n",
-            "      planModeApiProvider: endpointHasApiConfig ? (endpointUsesOpenRouter ? \"openrouter\" : \"openai\") : planModeApiProvider || apiProvider,\n",
-            1,
-        )
-    else:
-        raise SystemExit("failed to patch cline plan provider override")
-
-if "planModeOpenAiModelId: endpointHasApiConfig && !endpointUsesOpenRouter && endpointOpenAiModel.length > 0 ? endpointOpenAiModel : planModeOpenAiModelId," not in text:
-    if "      planModeOpenAiModelId: endpointHasOpenAiConfig && endpointOpenAiModel.length > 0 ? endpointOpenAiModel : planModeOpenAiModelId,\n" in text:
-        text = text.replace(
-            "      planModeOpenAiModelId: endpointHasOpenAiConfig && endpointOpenAiModel.length > 0 ? endpointOpenAiModel : planModeOpenAiModelId,\n",
-            "      planModeOpenAiModelId: endpointHasApiConfig && !endpointUsesOpenRouter && endpointOpenAiModel.length > 0 ? endpointOpenAiModel : planModeOpenAiModelId,\n",
-            1,
-        )
-    elif "      planModeOpenAiModelId,\n" in text:
-        text = text.replace(
-            "      planModeOpenAiModelId,\n",
-            "      planModeOpenAiModelId: endpointHasApiConfig && !endpointUsesOpenRouter && endpointOpenAiModel.length > 0 ? endpointOpenAiModel : planModeOpenAiModelId,\n",
-            1,
-        )
-    else:
-        raise SystemExit("failed to patch cline plan model override")
-
-if "planModeOpenRouterModelId: endpointHasApiConfig && endpointUsesOpenRouter && endpointOpenAiModel.length > 0 ? endpointOpenAiModel : planModeOpenRouterModelId," not in text:
-    if "      planModeOpenRouterModelId,\n" not in text:
-        raise SystemExit("failed to patch cline plan openrouter model override")
-    text = text.replace(
-        "      planModeOpenRouterModelId,\n",
-        "      planModeOpenRouterModelId: endpointHasApiConfig && endpointUsesOpenRouter && endpointOpenAiModel.length > 0 ? endpointOpenAiModel : planModeOpenRouterModelId,\n",
-        1,
-    )
-
-if "actModeApiProvider: endpointHasApiConfig ? (endpointUsesOpenRouter ? \"openrouter\" : \"openai\") : actModeApiProvider || apiProvider," not in text:
-    if "      actModeApiProvider: endpointHasOpenAiConfig ? \"openai\" : actModeApiProvider || apiProvider,\n" in text:
-        text = text.replace(
-            "      actModeApiProvider: endpointHasOpenAiConfig ? \"openai\" : actModeApiProvider || apiProvider,\n",
-            "      actModeApiProvider: endpointHasApiConfig ? (endpointUsesOpenRouter ? \"openrouter\" : \"openai\") : actModeApiProvider || apiProvider,\n",
-            1,
-        )
-    elif "      actModeApiProvider: actModeApiProvider || apiProvider,\n" in text:
-        text = text.replace(
-            "      actModeApiProvider: actModeApiProvider || apiProvider,\n",
-            "      actModeApiProvider: endpointHasApiConfig ? (endpointUsesOpenRouter ? \"openrouter\" : \"openai\") : actModeApiProvider || apiProvider,\n",
-            1,
-        )
-    else:
-        raise SystemExit("failed to patch cline act provider override")
-
-if "actModeOpenAiModelId: endpointHasApiConfig && !endpointUsesOpenRouter && endpointOpenAiModel.length > 0 ? endpointOpenAiModel : actModeOpenAiModelId," not in text:
-    if "      actModeOpenAiModelId: endpointHasOpenAiConfig && endpointOpenAiModel.length > 0 ? endpointOpenAiModel : actModeOpenAiModelId,\n" in text:
-        text = text.replace(
-            "      actModeOpenAiModelId: endpointHasOpenAiConfig && endpointOpenAiModel.length > 0 ? endpointOpenAiModel : actModeOpenAiModelId,\n",
-            "      actModeOpenAiModelId: endpointHasApiConfig && !endpointUsesOpenRouter && endpointOpenAiModel.length > 0 ? endpointOpenAiModel : actModeOpenAiModelId,\n",
-            1,
-        )
-    elif "      actModeOpenAiModelId,\n" in text:
-        text = text.replace(
-            "      actModeOpenAiModelId,\n",
-            "      actModeOpenAiModelId: endpointHasApiConfig && !endpointUsesOpenRouter && endpointOpenAiModel.length > 0 ? endpointOpenAiModel : actModeOpenAiModelId,\n",
-            1,
-        )
-    else:
-        raise SystemExit("failed to patch cline act model override")
-
-if "actModeOpenRouterModelId: endpointHasApiConfig && endpointUsesOpenRouter && endpointOpenAiModel.length > 0 ? endpointOpenAiModel : actModeOpenRouterModelId," not in text:
-    if "      actModeOpenRouterModelId,\n" not in text:
-        raise SystemExit("failed to patch cline act openrouter model override")
-    text = text.replace(
-        "      actModeOpenRouterModelId,\n",
-        "      actModeOpenRouterModelId: endpointHasApiConfig && endpointUsesOpenRouter && endpointOpenAiModel.length > 0 ? endpointOpenAiModel : actModeOpenRouterModelId,\n",
-        1,
-    )
-
-path.write_text(text, encoding="utf-8")
-PY
-}
-
 build_local_adapters() {
   if [[ ! -d "$LOCAL_ADAPTERS_DIR" ]]; then
     log "error: local adapters dir missing: $LOCAL_ADAPTERS_DIR"
@@ -1258,7 +804,7 @@ build_local_adapters() {
   done
 
   local id
-  for id in droid copilot kiro cody; do
+  for id in droid copilot kiro; do
     local dir
     dir="$(local_adapter_dir "$id")"
     local bin
@@ -1731,10 +1277,6 @@ fi
 if provider_selected_for_bundle "claude-crp" || provider_selected_for_bundle "claude-cli"; then
   runtime_need_node="1"
 fi
-if provider_selected_for_bundle "cline"; then
-  runtime_need_node="1"
-fi
-
 if provider_selected_for_bundle "claude-crp"; then
   if [[ ! -d "$CLAUDE_CRP_WORKSPACE" ]]; then
     log "error: claude-crp local-only bundling requires workspace at $CLAUDE_CRP_WORKSPACE"
@@ -2262,7 +1804,7 @@ if ! is_falsy "$LOCAL_ADAPTER_MODE"; then
   fi
 
   adapter_version_override="${CTX_BUNDLE_ADAPTER_VERSION:-}"
-  for id in amp pi droid copilot kiro cody; do
+  for id in amp pi droid copilot kiro; do
     if ! provider_selected_for_bundle "$id"; then
       continue
     fi
@@ -2469,38 +2011,12 @@ PY
         esac
         echo "$version" > "$version_marker"
       fi
-
       command_path="$provider_root/$bin_path"
       if [[ ! -f "$command_path" ]]; then
         command_path="$(resolve_unique_path "$provider_root" "$bin_path")"
       fi
       if [[ "$os" != "windows" ]]; then
         chmod +x "$command_path" || true
-      fi
-      if [[ "$provider_id" == "cline" ]]; then
-        write_cline_bundle_stubs "$provider_root"
-        patch_cline_standalone_runtime "$provider_root"
-        if [[ -z "$node_bin" || ! -f "$node_bin" ]]; then
-          log "error: cline provider requires bundled node runtime"
-          exit 5
-        fi
-        entrypoint_path="$provider_root/dist-standalone/cline-acp.js"
-        if [[ ! -f "$entrypoint_path" ]]; then
-          log "error: cline standalone entrypoint missing: $entrypoint_path"
-          exit 5
-        fi
-        command_path="$node_bin"
-        entrypoint_rel="${entrypoint_path#"$bundle_dir/"}"
-        args_json="$(PROVIDER_ENTRYPOINT="$entrypoint_rel" PROVIDER_ARGS_JSON="$args_json" run_python - <<'PY'
-import json
-import os
-
-args = [os.environ["PROVIDER_ENTRYPOINT"]]
-extra = json.loads(os.environ["PROVIDER_ARGS_JSON"] or "[]")
-args.extend(extra)
-print(json.dumps(args, separators=(",", ":")))
-PY
-)"
       fi
       ;;
     npm)

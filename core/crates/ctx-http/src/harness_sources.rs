@@ -21,9 +21,7 @@ const PROVIDER_GOOSE: &str = "goose";
 const PROVIDER_CAGENT: &str = "cagent";
 const PROVIDER_AMP: &str = "amp";
 const PROVIDER_DROID: &str = "droid";
-const PROVIDER_CODY: &str = "cody";
 const PROVIDER_CONTINUE: &str = "continue";
-const PROVIDER_CLINE: &str = "cline";
 const PROVIDER_OPENHANDS: &str = "openhands";
 const PROVIDER_COPILOT: &str = "copilot";
 const PROVIDER_KIRO: &str = "kiro";
@@ -271,14 +269,6 @@ fn qwen_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
         .join(endpoint_id)
 }
 
-fn cline_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
-    data_root
-        .join("providers")
-        .join("cline")
-        .join("endpoint-homes")
-        .join(endpoint_id)
-}
-
 fn kiro_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
     data_root
         .join("providers")
@@ -358,26 +348,6 @@ async fn remove_kiro_endpoint_homes_for_runtime_roots(
     Ok(())
 }
 
-async fn remove_cline_endpoint_home_for_root(root: &Path, endpoint_id: &str) -> Result<()> {
-    let endpoint_home = cline_endpoint_home(root, endpoint_id);
-    match tokio::fs::remove_dir_all(&endpoint_home).await {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(err)
-            .with_context(|| format!("removing cline endpoint home for endpoint {}", endpoint_id)),
-    }
-}
-
-async fn remove_cline_endpoint_homes_for_runtime_roots(
-    data_root: &Path,
-    endpoint_id: &str,
-) -> Result<()> {
-    for runtime_root in container_runtime_data_roots(data_root).await {
-        remove_cline_endpoint_home_for_root(&runtime_root, endpoint_id).await?;
-    }
-    Ok(())
-}
-
 fn normalize_provider_id(provider_id: &str) -> Option<&'static str> {
     match provider_id {
         PROVIDER_CODEX => Some(PROVIDER_CODEX),
@@ -391,9 +361,7 @@ fn normalize_provider_id(provider_id: &str) -> Option<&'static str> {
         PROVIDER_CAGENT => Some(PROVIDER_CAGENT),
         PROVIDER_AMP => Some(PROVIDER_AMP),
         PROVIDER_DROID => Some(PROVIDER_DROID),
-        PROVIDER_CODY => Some(PROVIDER_CODY),
         PROVIDER_CONTINUE => Some(PROVIDER_CONTINUE),
-        PROVIDER_CLINE => Some(PROVIDER_CLINE),
         PROVIDER_OPENHANDS => Some(PROVIDER_OPENHANDS),
         PROVIDER_COPILOT => Some(PROVIDER_COPILOT),
         PROVIDER_KIRO => Some(PROVIDER_KIRO),
@@ -418,9 +386,7 @@ fn provider_supports_harness_endpoint(canonical_provider_id: &str) -> bool {
             | PROVIDER_CAGENT
             | PROVIDER_AMP
             | PROVIDER_DROID
-            | PROVIDER_CODY
             | PROVIDER_CONTINUE
-            | PROVIDER_CLINE
             | PROVIDER_OPENHANDS
             | PROVIDER_COPILOT
             | PROVIDER_KIRO
@@ -446,9 +412,7 @@ pub fn default_shape_for_provider(provider_id: &str) -> Option<HarnessApiShape> 
         Some(PROVIDER_CAGENT) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_AMP) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_DROID) => Some(HarnessApiShape::OpenaiResponses),
-        Some(PROVIDER_CODY) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_CONTINUE) => Some(HarnessApiShape::OpenaiResponses),
-        Some(PROVIDER_CLINE) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_OPENHANDS) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_COPILOT) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_KIRO) => Some(HarnessApiShape::OpenaiResponses),
@@ -499,8 +463,8 @@ pub fn ensure_shape_compatible(provider_id: &str, shape: HarnessApiShape) -> Res
             }
         }
         PROVIDER_QWEN | PROVIDER_OPENCODE | PROVIDER_MISTRAL | PROVIDER_GOOSE | PROVIDER_CAGENT
-        | PROVIDER_AMP | PROVIDER_DROID | PROVIDER_CODY | PROVIDER_CONTINUE | PROVIDER_CLINE
-        | PROVIDER_OPENHANDS | PROVIDER_COPILOT | PROVIDER_KIRO | PROVIDER_AUGGIE | PROVIDER_PI => {
+        | PROVIDER_AMP | PROVIDER_DROID | PROVIDER_CONTINUE | PROVIDER_OPENHANDS
+        | PROVIDER_COPILOT | PROVIDER_KIRO | PROVIDER_AUGGIE | PROVIDER_PI => {
             if shape != HarnessApiShape::OpenaiResponses {
                 anyhow::bail!(
                     "{} requires api_shape=openai_responses; found {}",
@@ -603,7 +567,6 @@ fn provider_requires_endpoint_base_url(provider_id: &str) -> bool {
             | PROVIDER_MISTRAL
             | PROVIDER_GOOSE
             | PROVIDER_CAGENT
-            | PROVIDER_CLINE
             | PROVIDER_OPENHANDS
     )
 }
@@ -1265,11 +1228,6 @@ pub async fn delete_provider_endpoint(
                 remove_kiro_endpoint_home_for_root(data_root, &removed_endpoint_id).await?;
                 remove_kiro_endpoint_homes_for_runtime_roots(data_root, &removed_endpoint_id)
                     .await?;
-            } else if canonical == PROVIDER_CLINE {
-                ensure_safe_endpoint_id(&removed_endpoint_id)?;
-                remove_cline_endpoint_home_for_root(data_root, &removed_endpoint_id).await?;
-                remove_cline_endpoint_homes_for_runtime_roots(data_root, &removed_endpoint_id)
-                    .await?;
             }
         }
         save_registry(data_root, &registry).await?;
@@ -1723,34 +1681,6 @@ async fn resolve_internal(
                 env.insert("OPENAI_MODEL".to_string(), model);
             }
         }
-        PROVIDER_CLINE => {
-            let base_url = endpoint_base_url_or_err(&endpoint)?;
-            ensure_shape_compatible(canonical, endpoint.api_shape)?;
-            ensure_safe_endpoint_id(&endpoint.id)?;
-            let cline_home_root = runtime_data_root.unwrap_or(data_root);
-            let cline_home = cline_endpoint_home(cline_home_root, &endpoint.id);
-            tokio::fs::create_dir_all(&cline_home)
-                .await
-                .with_context(|| {
-                    format!(
-                        "creating cline endpoint home {}",
-                        cline_home.to_string_lossy()
-                    )
-                })?;
-            let cline_home_str = cline_home.to_string_lossy().to_string();
-            env.insert("CLINE_DIR".to_string(), cline_home_str.clone());
-            env.insert("HOME".to_string(), cline_home_str);
-            env.insert("OPENAI_API_KEY".to_string(), api_key);
-            env.insert("OPENAI_BASE_URL".to_string(), base_url);
-            if let Some(model) = endpoint
-                .model_override
-                .as_ref()
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-            {
-                env.insert("OPENAI_MODEL".to_string(), model);
-            }
-        }
         PROVIDER_CAGENT => {
             let base_url = endpoint_base_url_or_err(&endpoint)?;
             ensure_shape_compatible(canonical, endpoint.api_shape)?;
@@ -1842,14 +1772,6 @@ async fn resolve_internal(
         PROVIDER_DROID => {
             ensure_shape_compatible(canonical, endpoint.api_shape)?;
             env.insert("FACTORY_API_KEY".to_string(), api_key);
-        }
-        PROVIDER_CODY => {
-            ensure_shape_compatible(canonical, endpoint.api_shape)?;
-            env.insert("SRC_ACCESS_TOKEN".to_string(), api_key);
-            let base_url = endpoint.base_url.trim().to_string();
-            if !base_url.is_empty() {
-                env.insert("SRC_ENDPOINT".to_string(), base_url);
-            }
         }
         PROVIDER_CONTINUE => {
             ensure_shape_compatible(canonical, endpoint.api_shape)?;
@@ -2630,7 +2552,6 @@ mod tests {
             (PROVIDER_MISTRAL, &["MISTRAL_API_KEY", "MISTRAL_BASE_URL"]),
             (PROVIDER_AMP, &["AMP_API_KEY"]),
             (PROVIDER_DROID, &["FACTORY_API_KEY"]),
-            (PROVIDER_CODY, &["SRC_ACCESS_TOKEN", "SRC_ENDPOINT"]),
             (PROVIDER_CONTINUE, &["CONTINUE_API_KEY"]),
             (PROVIDER_COPILOT, &["GH_TOKEN", "GITHUB_TOKEN"]),
             (
@@ -2645,7 +2566,6 @@ mod tests {
                 PROVIDER_PI,
                 &["OPENAI_API_KEY", "PI_ACP_PROVIDER", "PI_ACP_MODEL"],
             ),
-            (PROVIDER_CLINE, &["OPENAI_API_KEY", "CLINE_DIR", "HOME"]),
             (
                 PROVIDER_OPENHANDS,
                 &["LLM_API_KEY", "LLM_BASE_URL", "LLM_MODEL"],
@@ -2922,71 +2842,6 @@ mod tests {
 
         assert!(!endpoint_home.exists());
     }
-
-    #[tokio::test]
-    async fn deleting_cline_endpoint_removes_runtime_root_endpoint_home() {
-        let root = tempfile::tempdir().expect("tempdir");
-        let runtime_root = root
-            .path()
-            .join("containers")
-            .join("workspaces")
-            .join("workspace-cline")
-            .join("data");
-        tokio::fs::create_dir_all(&runtime_root)
-            .await
-            .expect("runtime root");
-
-        let endpoint = upsert_provider_endpoint(
-            root.path(),
-            PROVIDER_CLINE,
-            HarnessEndpointUpsert {
-                endpoint_id: None,
-                name: "Cline endpoint".to_string(),
-                base_url: Some("https://openrouter.ai/api/v1".to_string()),
-                api_shape: Some(HarnessApiShape::OpenaiResponses),
-                auth_type: None,
-                model_override: Some("openai/gpt-5.2-codex".to_string()),
-                api_key: Some("sk-test".to_string()),
-            },
-        )
-        .await
-        .expect("upsert endpoint");
-
-        set_provider_source_selection(
-            root.path(),
-            PROVIDER_CLINE,
-            HarnessSourceKind::Endpoint,
-            Some(endpoint.id.clone()),
-        )
-        .await
-        .expect("select endpoint");
-
-        let resolved = resolve_provider_source_for_run_with_runtime_root(
-            root.path(),
-            PROVIDER_CLINE,
-            Some(&runtime_root),
-        )
-        .await
-        .expect("resolve run with runtime root");
-
-        let endpoint_home = cline_endpoint_home(&runtime_root, &endpoint.id);
-        assert!(endpoint_home.exists());
-        assert_eq!(
-            resolved.env.get("CLINE_DIR"),
-            Some(&endpoint_home.to_string_lossy().to_string())
-        );
-        assert_eq!(
-            resolved.env.get("HOME"),
-            Some(&endpoint_home.to_string_lossy().to_string())
-        );
-
-        delete_provider_endpoint(root.path(), PROVIDER_CLINE, &endpoint.id)
-            .await
-            .expect("delete endpoint");
-
-        assert!(!endpoint_home.exists());
-    }
-
     #[tokio::test]
     async fn deleting_kiro_endpoint_removes_runtime_root_endpoint_home() {
         let root = tempfile::tempdir().expect("tempdir");

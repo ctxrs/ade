@@ -13,7 +13,6 @@ export const OPENROUTER_ENDPOINT_FIRST_PASS_HARNESSES: EndpointHarnessMatrixEntr
   { providerId: "goose", menuLabel: "Goose", searchTerm: "goose" },
   { providerId: "kimi", menuLabel: "Kimi", searchTerm: "kimi" },
   { providerId: "cagent", menuLabel: "cagent", searchTerm: "cagent" },
-  { providerId: "cline", menuLabel: "Cline", searchTerm: "cline" },
   { providerId: "openhands", menuLabel: "OpenHands", searchTerm: "openhands" },
 ];
 
@@ -27,7 +26,6 @@ export const OPENROUTER_ENDPOINT_FIRST_PASS_EXCLUDED_PROVIDER_TOKEN_ONLY = [
   "amp",
   "droid",
   "continue",
-  "cody",
   "pi",
 ] as const;
 

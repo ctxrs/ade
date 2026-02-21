@@ -754,9 +754,7 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
         "droid",
         "copilot",
         "kiro",
-        "cody",
         "continue",
-        "cline",
         "openhands",
     ];
     for provider_id in acp_provider_ids {
