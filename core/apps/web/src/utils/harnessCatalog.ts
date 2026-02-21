@@ -1,6 +1,7 @@
 import ampLogo from "../assets/emdash-logos/ampcode.png";
 import augmentLogo from "../assets/emdash-logos/augmentcode.png";
 import claudeLogo from "../assets/emdash-logos/claude.png";
+import clineLogo from "../assets/emdash-logos/cline.png";
 import cursorLogo from "../assets/emdash-logos/cursorlogo.png";
 import droidLogo from "../assets/emdash-logos/factorydroid.png";
 import geminiLogo from "../assets/emdash-logos/gemini.png";
@@ -36,6 +37,7 @@ export const HARNESS_CATALOG: HarnessCatalogEntry[] = [
   { id: "gemini", label: "Gemini", logoSrc: geminiLogo },
   { id: "copilot", label: "Copilot", logoSrc: copilotLogo, invertInDark: true },
   { id: "opencode", label: "OpenCode", logoSrc: opencodeLogo, invertInDark: true },
+  { id: "cline", label: "Cline", logoSrc: clineLogo },
   { id: "mistral", label: "Mistral Vibe", logoSrc: mistralLogo },
   { id: "auggie", label: "Auggie", logoSrc: augmentLogo, invertInDark: true },
   { id: "goose", label: "Goose", logoSrc: gooseLogo },

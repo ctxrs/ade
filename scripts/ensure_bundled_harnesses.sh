@@ -408,6 +408,8 @@ ACP_PROVIDER_IDS=(
   opencode
   mistral
   goose
+  kimi
+  cline
   cagent
   auggie
   continue
@@ -425,6 +427,7 @@ acp_provider_command_candidates() {
     mistral) printf '%s' "vibe-acp mistral mistral-vibe" ;;
     goose) printf '%s' "goose" ;;
     kimi) printf '%s' "kimi" ;;
+    cline) printf '%s' "cline-acp cline" ;;
     auggie) printf '%s' "auggie" ;;
     continue) printf '%s' "cn continue" ;;
     openhands) printf '%s' "openhands openhands-cli" ;;
@@ -1246,9 +1249,14 @@ build_local_adapters() {
     local adapter_dir
     adapter_dir="$(local_adapter_dir "$node_adapter_id")"
     if [[ -d "$LOCAL_ADAPTERS_DIR/$adapter_dir" ]]; then
-      require_cmd npm
-      (cd "$LOCAL_ADAPTERS_DIR/$adapter_dir" && npm install)
-      (cd "$LOCAL_ADAPTERS_DIR/$adapter_dir" && npm run build)
+      if command -v pnpm >/dev/null 2>&1; then
+        (cd "$LOCAL_ADAPTERS_DIR/$adapter_dir" && pnpm install --ignore-scripts)
+        (cd "$LOCAL_ADAPTERS_DIR/$adapter_dir" && pnpm run build)
+      else
+        require_cmd npm
+        (cd "$LOCAL_ADAPTERS_DIR/$adapter_dir" && npm install --ignore-scripts)
+        (cd "$LOCAL_ADAPTERS_DIR/$adapter_dir" && npm run build)
+      fi
     fi
   done
 
@@ -1557,10 +1565,7 @@ npm_install_bundle() {
   local npm_node_bin="$node_bin"
   local npm_cli_bin="$npm_cli"
   local use_system_npm="0"
-  local ignore_scripts="false"
-  if [[ "$install_mode" == "project" ]]; then
-    ignore_scripts="true"
-  fi
+  local ignore_scripts="true"
 
   if [[ "$os" != "$host_os" ]]; then
     ignore_scripts="true"
@@ -1600,23 +1605,33 @@ npm_install_bundle() {
   fi
 
   if [[ "$use_system_npm" == "1" ]]; then
-    require_cmd npm
-    if [[ "$install_mode" == "project" ]]; then
-      npm_config_update_notifier="false" \
-      npm_config_fund="false" \
-      npm_config_audit="false" \
-      npm_config_progress="false" \
-      npm_config_cache="$cache_dir" \
-      npm_config_ignore_scripts="$ignore_scripts" \
-      npm install --prefix "$install_dir" --omit=dev --no-audit --no-fund --silent
+    if command -v pnpm >/dev/null 2>&1; then
+      if [[ "$install_mode" == "project" ]]; then
+        npm_config_ignore_scripts="$ignore_scripts" \
+        pnpm --dir "$install_dir" install --prod --ignore-scripts --reporter=silent
+      else
+        npm_config_ignore_scripts="$ignore_scripts" \
+        pnpm --dir "$install_dir" add --ignore-scripts --lockfile=false --reporter=silent "$package_spec"
+      fi
     else
-      npm_config_update_notifier="false" \
-      npm_config_fund="false" \
-      npm_config_audit="false" \
-      npm_config_progress="false" \
-      npm_config_cache="$cache_dir" \
-      npm_config_ignore_scripts="$ignore_scripts" \
-      npm install --prefix "$install_dir" --no-audit --no-fund --silent "$package_spec"
+      require_cmd npm
+      if [[ "$install_mode" == "project" ]]; then
+        npm_config_update_notifier="false" \
+        npm_config_fund="false" \
+        npm_config_audit="false" \
+        npm_config_progress="false" \
+        npm_config_cache="$cache_dir" \
+        npm_config_ignore_scripts="$ignore_scripts" \
+        npm install --prefix "$install_dir" --omit=dev --no-audit --no-fund --silent --ignore-scripts
+      else
+        npm_config_update_notifier="false" \
+        npm_config_fund="false" \
+        npm_config_audit="false" \
+        npm_config_progress="false" \
+        npm_config_cache="$cache_dir" \
+        npm_config_ignore_scripts="$ignore_scripts" \
+        npm install --prefix "$install_dir" --no-audit --no-fund --silent --ignore-scripts "$package_spec"
+      fi
     fi
     rm -rf "$cache_dir" || true
     return
@@ -1634,6 +1649,7 @@ npm_install_bundle() {
     --no-audit
     --no-fund
     --silent
+    --ignore-scripts
   )
   if [[ "$install_mode" == "project" ]]; then
     install_args+=(--omit=dev)
@@ -2274,9 +2290,14 @@ if ! is_falsy "$LOCAL_ADAPTER_MODE"; then
       if [[ ! -f "$src" ]]; then
         dir="$(local_adapter_dir "$id")"
         if [[ -n "$dir" && -d "$LOCAL_ADAPTERS_DIR/$dir" ]]; then
-          require_cmd npm
-          (cd "$LOCAL_ADAPTERS_DIR/$dir" && npm install)
-          (cd "$LOCAL_ADAPTERS_DIR/$dir" && npm run build)
+          if command -v pnpm >/dev/null 2>&1; then
+            (cd "$LOCAL_ADAPTERS_DIR/$dir" && pnpm install --ignore-scripts)
+            (cd "$LOCAL_ADAPTERS_DIR/$dir" && pnpm run build)
+          else
+            require_cmd npm
+            (cd "$LOCAL_ADAPTERS_DIR/$dir" && npm install --ignore-scripts)
+            (cd "$LOCAL_ADAPTERS_DIR/$dir" && npm run build)
+          fi
           src="$(local_adapter_node_entrypoint "$id")"
         fi
       fi

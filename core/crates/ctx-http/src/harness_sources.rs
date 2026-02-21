@@ -21,6 +21,7 @@ const PROVIDER_GOOSE: &str = "goose";
 const PROVIDER_AMP: &str = "amp";
 const PROVIDER_DROID: &str = "droid";
 const PROVIDER_CONTINUE: &str = "continue";
+const PROVIDER_CLINE: &str = "cline";
 const PROVIDER_OPENHANDS: &str = "openhands";
 const PROVIDER_COPILOT: &str = "copilot";
 const PROVIDER_KIRO: &str = "kiro";
@@ -388,6 +389,7 @@ fn normalize_provider_id(provider_id: &str) -> Option<&'static str> {
         PROVIDER_AMP => Some(PROVIDER_AMP),
         PROVIDER_DROID => Some(PROVIDER_DROID),
         PROVIDER_CONTINUE => Some(PROVIDER_CONTINUE),
+        PROVIDER_CLINE => Some(PROVIDER_CLINE),
         PROVIDER_OPENHANDS => Some(PROVIDER_OPENHANDS),
         PROVIDER_COPILOT => Some(PROVIDER_COPILOT),
         PROVIDER_KIRO => Some(PROVIDER_KIRO),
@@ -412,6 +414,7 @@ fn provider_supports_harness_endpoint(canonical_provider_id: &str) -> bool {
             | PROVIDER_AMP
             | PROVIDER_DROID
             | PROVIDER_CONTINUE
+            | PROVIDER_CLINE
             | PROVIDER_OPENHANDS
             | PROVIDER_COPILOT
             | PROVIDER_KIRO
@@ -437,6 +440,7 @@ pub fn default_shape_for_provider(provider_id: &str) -> Option<HarnessApiShape> 
         Some(PROVIDER_AMP) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_DROID) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_CONTINUE) => Some(HarnessApiShape::OpenaiResponses),
+        Some(PROVIDER_CLINE) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_OPENHANDS) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_COPILOT) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_KIRO) => Some(HarnessApiShape::OpenaiResponses),
@@ -487,8 +491,8 @@ pub fn ensure_shape_compatible(provider_id: &str, shape: HarnessApiShape) -> Res
             }
         }
         PROVIDER_QWEN | PROVIDER_OPENCODE | PROVIDER_MISTRAL | PROVIDER_GOOSE | PROVIDER_AMP
-        | PROVIDER_DROID | PROVIDER_CONTINUE | PROVIDER_OPENHANDS | PROVIDER_COPILOT
-        | PROVIDER_KIRO | PROVIDER_AUGGIE | PROVIDER_PI => {
+        | PROVIDER_DROID | PROVIDER_CONTINUE | PROVIDER_CLINE | PROVIDER_OPENHANDS
+        | PROVIDER_COPILOT | PROVIDER_KIRO | PROVIDER_AUGGIE | PROVIDER_PI => {
             if shape != HarnessApiShape::OpenaiResponses {
                 anyhow::bail!(
                     "{} requires api_shape=openai_responses; found {}",
@@ -590,6 +594,7 @@ fn provider_requires_endpoint_base_url(provider_id: &str) -> bool {
             | PROVIDER_OPENCODE
             | PROVIDER_MISTRAL
             | PROVIDER_GOOSE
+            | PROVIDER_CLINE
             | PROVIDER_OPENHANDS
     )
 }
@@ -1715,12 +1720,14 @@ async fn resolve_internal(
             ensure_safe_endpoint_id(&endpoint.id)?;
             let cline_home_root = runtime_data_root.unwrap_or(data_root);
             let cline_home = cline_endpoint_home(cline_home_root, &endpoint.id);
-            tokio::fs::create_dir_all(&cline_home).await.with_context(|| {
-                format!(
-                    "creating cline endpoint home {}",
-                    cline_home.to_string_lossy()
-                )
-            })?;
+            tokio::fs::create_dir_all(&cline_home)
+                .await
+                .with_context(|| {
+                    format!(
+                        "creating cline endpoint home {}",
+                        cline_home.to_string_lossy()
+                    )
+                })?;
             let cline_home_str = cline_home.to_string_lossy().to_string();
             env.insert("CLINE_DIR".to_string(), cline_home_str.clone());
             env.insert("HOME".to_string(), cline_home_str);
@@ -2611,6 +2618,7 @@ mod tests {
             (PROVIDER_AMP, &["AMP_API_KEY"]),
             (PROVIDER_DROID, &["FACTORY_API_KEY"]),
             (PROVIDER_CONTINUE, &["CONTINUE_API_KEY"]),
+            (PROVIDER_CLINE, &["OPENAI_API_KEY", "CLINE_DIR", "HOME"]),
             (PROVIDER_COPILOT, &["GH_TOKEN", "GITHUB_TOKEN"]),
             (
                 PROVIDER_KIRO,

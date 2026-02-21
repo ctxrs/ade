@@ -763,7 +763,7 @@ async fn install_managed_npm_provider(
         &package_spec,
     )
     .await
-    .context("running npm install")?;
+    .context("running package install")?;
 
     *stage = "entrypoint";
     let script_path = install_dir.join(script_rel);
@@ -1060,7 +1060,7 @@ async fn install_managed_npm_dependency(
         &format!("{package}@{version}"),
     )
     .await
-    .context("running npm install for dependency")?;
+    .context("running package install for dependency")?;
 
     if !bin_dir.exists() {
         tokio::fs::remove_dir_all(&install_dir).await.ok();
@@ -2197,6 +2197,8 @@ async fn npm_install(
     if let Some(existing) = std::env::var_os("PATH") {
         combined_path.push(existing);
     }
+    let pnpm_bin = which::which("pnpm").ok();
+    let package_manager = if pnpm_bin.is_some() { "pnpm" } else { "npm" };
 
     for attempt in 1..=RETRY_COUNT {
         emit_install(
@@ -2205,29 +2207,44 @@ async fn npm_install(
             provider_id,
             InstallEventLevel::Info,
             "npm_install",
-            format!("npm install {package_spec} (attempt {attempt}/{RETRY_COUNT})"),
+            format!("{package_manager} install {package_spec} (attempt {attempt}/{RETRY_COUNT})"),
             None,
             None,
             Some(attempt),
         )
         .await;
 
-        let mut cmd = Command::new(&node.node_bin);
-        cmd.arg(&node.npm_cli_js)
-            .arg("install")
-            .arg("--prefix")
-            .arg(install_dir)
-            .arg("--no-audit")
-            .arg("--no-fund")
-            .arg("--silent")
-            .arg(package_spec)
-            .env("PATH", combined_path.clone())
-            .env("npm_config_update_notifier", "false")
-            .env("npm_config_fund", "false")
-            .env("npm_config_audit", "false")
-            .env("npm_config_progress", "false")
-            .env("npm_config_cache", cache_dir.clone())
-            .kill_on_drop(true);
+        let mut cmd = if let Some(pnpm) = pnpm_bin.as_ref() {
+            let mut cmd = Command::new(pnpm);
+            cmd.arg("add")
+                .arg("--dir")
+                .arg(install_dir)
+                .arg("--ignore-scripts")
+                .arg("--lockfile=false")
+                .arg("--reporter")
+                .arg("silent")
+                .arg(package_spec);
+            cmd
+        } else {
+            let mut cmd = Command::new(&node.node_bin);
+            cmd.arg(&node.npm_cli_js)
+                .arg("install")
+                .arg("--prefix")
+                .arg(install_dir)
+                .arg("--no-audit")
+                .arg("--no-fund")
+                .arg("--silent")
+                .arg("--ignore-scripts")
+                .arg(package_spec)
+                .env("npm_config_update_notifier", "false")
+                .env("npm_config_fund", "false")
+                .env("npm_config_audit", "false")
+                .env("npm_config_progress", "false")
+                .env("npm_config_cache", cache_dir.clone())
+                .env("npm_config_ignore_scripts", "true");
+            cmd
+        };
+        cmd.env("PATH", combined_path.clone()).kill_on_drop(true);
 
         let out = match run_command_with_timeout(cmd, NPM_INSTALL_TIMEOUT).await {
             Ok(out) => out,
@@ -2238,7 +2255,7 @@ async fn npm_install(
                     provider_id,
                     InstallEventLevel::Error,
                     "npm_install",
-                    format!("npm install failed: {e:#}"),
+                    format!("{package_manager} install failed: {e:#}"),
                     None,
                     None,
                     Some(attempt),
@@ -2251,7 +2268,7 @@ async fn npm_install(
                     .await;
                     continue;
                 }
-                return Err(e.context("running npm install"));
+                return Err(e.context("running package install"));
             }
         };
         if out.status.success() {
@@ -2261,7 +2278,7 @@ async fn npm_install(
                 provider_id,
                 InstallEventLevel::Success,
                 "npm_install",
-                "npm install succeeded".to_string(),
+                format!("{package_manager} install succeeded"),
                 None,
                 None,
                 Some(attempt),
@@ -2271,7 +2288,7 @@ async fn npm_install(
         }
 
         let err_txt = format!(
-            "npm install failed ({package_spec}) status={}\nstdout:\n{}\nstderr:\n{}",
+            "{package_manager} install failed ({package_spec}) status={}\nstdout:\n{}\nstderr:\n{}",
             out.status,
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
@@ -2297,7 +2314,7 @@ async fn npm_install(
     }
 
     anyhow::bail!(
-        "npm install failed after {RETRY_COUNT} attempts ({package_spec}). Try again, or check your network / npm registry access."
+        "{package_manager} install failed after {RETRY_COUNT} attempts ({package_spec}). Try again, or check your network / npm registry access."
     );
 }
 

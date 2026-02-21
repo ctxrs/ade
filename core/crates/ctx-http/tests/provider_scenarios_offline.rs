@@ -191,6 +191,7 @@ async fn provider_scenarios_offline_crp_fixtures() {
         "copilot",
         "kiro",
         "continue",
+        "cline",
         "openhands",
     ];
 

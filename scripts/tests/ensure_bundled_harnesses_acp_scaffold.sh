@@ -24,7 +24,7 @@ trap 'rm -rf "$tmp_root"' EXIT
 
 bundle_dir="$tmp_root/bundle"
 CTX_BUNDLE_DIR="$bundle_dir" \
-CTX_BUNDLE_ONLY_PROVIDERS="qwen,opencode,mistral,goose,kimi,auggie,continue,openhands,amp,droid,copilot,kiro" \
+CTX_BUNDLE_ONLY_PROVIDERS="qwen,opencode,mistral,goose,kimi,cline,auggie,continue,openhands,amp,droid,copilot,kiro" \
 CTX_BUNDLE_SKIP_RUNTIMES=1 \
 CTX_BUNDLE_SKIP_IMAGES=1 \
 CTX_BUNDLE_INCLUDE_BRIDGE=0 \
@@ -50,6 +50,7 @@ expected = {
     "mistral",
     "goose",
     "kimi",
+    "cline",
     "auggie",
     "continue",
     "openhands",
@@ -75,6 +76,9 @@ shim_expectations = {
     ],
     "copilot": [
         "for candidate in copilot-cli-acp github-copilot-cli copilot; do",
+    ],
+    "cline": [
+        "for candidate in cline-acp cline; do",
     ],
 }
 

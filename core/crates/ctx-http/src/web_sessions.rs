@@ -860,19 +860,33 @@ fn worker_version() -> Result<String> {
 }
 
 async fn install_worker_deps(node: &NodeRuntime, root: &Path) -> Result<()> {
-    let mut cmd = Command::new(&node.node_bin);
-    cmd.arg(&node.npm_cli_js)
-        .arg("install")
-        .arg("--omit=dev")
-        .arg("--no-audit")
-        .arg("--no-fund")
-        .current_dir(root)
-        .env("npm_config_update_notifier", "false");
+    let mut cmd = if let Ok(pnpm) = which::which("pnpm") {
+        let mut cmd = Command::new(pnpm);
+        cmd.arg("install")
+            .arg("--prod")
+            .arg("--ignore-scripts")
+            .arg("--reporter")
+            .arg("silent")
+            .current_dir(root);
+        cmd
+    } else {
+        let mut cmd = Command::new(&node.node_bin);
+        cmd.arg(&node.npm_cli_js)
+            .arg("install")
+            .arg("--omit=dev")
+            .arg("--no-audit")
+            .arg("--no-fund")
+            .arg("--ignore-scripts")
+            .current_dir(root)
+            .env("npm_config_update_notifier", "false")
+            .env("npm_config_ignore_scripts", "true");
+        cmd
+    };
 
-    let output = cmd.output().await.context("running npm install")?;
+    let output = cmd.output().await.context("running package install")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("npm install failed: {}", stderr.trim());
+        anyhow::bail!("package install failed: {}", stderr.trim());
     }
     Ok(())
 }
