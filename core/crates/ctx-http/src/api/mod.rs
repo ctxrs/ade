@@ -388,6 +388,14 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             get(list_kimi_accounts).post(upsert_kimi_account),
         )
         .route(
+            "/api/providers/kimi/accounts/login/start",
+            post(start_kimi_login),
+        )
+        .route(
+            "/api/providers/kimi/accounts/login/:id",
+            get(get_kimi_login),
+        )
+        .route(
             "/api/providers/kimi/active-account",
             put(set_kimi_active_account),
         )

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   resolveUpsertedEndpoint,
+  shouldAutoOpenKimiAuthUrl,
   shouldCompleteClaudeLoginWithCallbackCode,
   shouldOpenPolledClaudeAuthUrl,
   takeNextClaudeAuthUrlToOpen,
@@ -191,5 +192,11 @@ describe("shouldOpenPolledClaudeAuthUrl", () => {
       polledAuthUrl: "https://claude.ai/oauth/authorize?code=same",
       nowMs: 9_999,
     })).toBe(false);
+  });
+});
+
+describe("shouldAutoOpenKimiAuthUrl", () => {
+  it("keeps Kimi browser open behavior single-source to avoid duplicate tabs", () => {
+    expect(shouldAutoOpenKimiAuthUrl()).toBe(false);
   });
 });

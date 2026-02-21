@@ -331,6 +331,18 @@ pub(super) struct GeminiLoginStartResp {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct KimiLoginStartReq {
+    label: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct KimiLoginStartResp {
+    login_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auth_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct GeminiActiveAccountReq {
     account_id: Option<String>,
 }
@@ -464,10 +476,26 @@ const CLAUDE_LOGIN_URL_WAIT: Duration = Duration::from_secs(4);
 const GEMINI_LOGIN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(300);
 const GEMINI_LOGIN_NO_AUTH_URL_TIMEOUT_DEFAULT: Duration = Duration::from_secs(20);
 const GEMINI_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
+const KIMI_LOGIN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(300);
+const KIMI_LOGIN_NO_AUTH_URL_TIMEOUT_DEFAULT: Duration = Duration::from_secs(20);
+const KIMI_LOGIN_NO_SIGNAL_TIMEOUT_DEFAULT: Duration = Duration::from_secs(5);
+const KIMI_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
 const CLAUDE_LOGIN_NO_AUTH_URL_TIMEOUT: Duration = Duration::from_secs(8);
 const CLAUDE_LOGIN_URL_SETTLE_WAIT: Duration = Duration::from_millis(500);
 const CLAUDE_LOGIN_COMPLETION_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const CLAUDE_LOGIN_EXIT_GRACE_WAIT: Duration = Duration::from_millis(400);
+
+struct KimiCapturedCredentials {
+    provider: String,
+    credentials_json: String,
+    config_toml: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KimiDirectLoginOutcome {
+    Completed,
+    Unsupported,
+}
 
 fn is_loopback_host(value: &str) -> bool {
     let host = value.trim().to_ascii_lowercase();
@@ -549,6 +577,196 @@ fn gemini_login_no_auth_url_timeout() -> Duration {
     Duration::from_secs(seconds)
 }
 
+fn kimi_login_timeout() -> Duration {
+    let seconds = std::env::var("CTX_KIMI_LOGIN_TIMEOUT_SECS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(KIMI_LOGIN_TIMEOUT_DEFAULT.as_secs());
+    Duration::from_secs(seconds)
+}
+
+fn kimi_login_no_auth_url_timeout() -> Duration {
+    let seconds = std::env::var("CTX_KIMI_LOGIN_NO_AUTH_URL_TIMEOUT_SECS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(KIMI_LOGIN_NO_AUTH_URL_TIMEOUT_DEFAULT.as_secs());
+    Duration::from_secs(seconds)
+}
+
+fn kimi_login_no_signal_timeout() -> Duration {
+    let seconds = std::env::var("CTX_KIMI_LOGIN_NO_SIGNAL_TIMEOUT_SECS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(KIMI_LOGIN_NO_SIGNAL_TIMEOUT_DEFAULT.as_secs());
+    Duration::from_secs(seconds)
+}
+
+fn normalize_kimi_login_auth_error(raw: &str) -> String {
+    let lowered = raw.to_ascii_lowercase();
+    let auth_not_implemented = lowered.contains("authenticate")
+        && (lowered.contains("notimplementederror")
+            || lowered.contains("not implemented")
+            || lowered.contains("unimplemented"));
+    let auth_method_unsupported = lowered.contains("auth method")
+        && (lowered.contains("unsupported") || lowered.contains("not supported"));
+    if auth_not_implemented || auth_method_unsupported {
+        return "Kimi runtime does not support OAuth sign-in in ACP mode (no auth URL is emitted). Use endpoint/API-key auth for now.".to_string();
+    }
+    logs::redact_sensitive(raw)
+}
+
+fn kimi_current_provider_from_config_toml(config_toml: &str) -> Option<String> {
+    let parsed = toml::from_str::<toml::Value>(config_toml).ok()?;
+    let provider = parsed.get("current_provider")?.as_str()?.trim();
+    if provider.is_empty() {
+        return None;
+    }
+    Some(provider.to_string())
+}
+
+async fn read_optional_trimmed_file(path: &StdPath) -> anyhow::Result<Option<String>> {
+    let raw = match tokio::fs::read_to_string(path).await {
+        Ok(raw) => raw,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(anyhow::anyhow!(
+                "reading {} failed: {}",
+                path.display(),
+                err
+            ));
+        }
+    };
+    let trimmed = raw.trim().to_string();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(trimmed))
+}
+
+async fn load_kimi_captured_credentials(
+    share_dir: &StdPath,
+) -> anyhow::Result<Option<KimiCapturedCredentials>> {
+    let config_toml = read_optional_trimmed_file(&share_dir.join("config.toml")).await?;
+    let preferred_provider = config_toml
+        .as_deref()
+        .and_then(kimi_current_provider_from_config_toml);
+    let credentials_dir = share_dir.join("credentials");
+    let mut entries = match tokio::fs::read_dir(&credentials_dir).await {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(anyhow::anyhow!(
+                "reading {} failed: {}",
+                credentials_dir.display(),
+                err
+            ));
+        }
+    };
+
+    let mut captured = Vec::<(String, String)>::new();
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .with_context(|| format!("scanning {}", credentials_dir.display()))?
+    {
+        let file_type = entry
+            .file_type()
+            .await
+            .with_context(|| format!("reading file type for {}", entry.path().display()))?;
+        if !file_type.is_file() {
+            continue;
+        }
+
+        let path = entry.path();
+        let is_json = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("json"));
+        if !is_json {
+            continue;
+        }
+
+        let Some(provider) = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+        else {
+            continue;
+        };
+
+        let raw = tokio::fs::read_to_string(&path)
+            .await
+            .with_context(|| format!("reading {}", path.display()))?;
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let parsed = serde_json::from_str::<serde_json::Value>(trimmed).with_context(|| {
+            format!(
+                "captured kimi credentials at {} are not valid JSON",
+                path.display()
+            )
+        })?;
+        if !parsed.is_object() {
+            bail!(
+                "captured kimi credentials at {} are not a JSON object",
+                path.display()
+            );
+        }
+        captured.push((provider, trimmed.to_string()));
+    }
+
+    if captured.is_empty() {
+        return Ok(None);
+    }
+
+    if let Some(provider) = preferred_provider {
+        if let Some((matched_provider, credentials_json)) = captured
+            .iter()
+            .find(|(candidate, _)| candidate == &provider)
+        {
+            return Ok(Some(KimiCapturedCredentials {
+                provider: matched_provider.clone(),
+                credentials_json: credentials_json.clone(),
+                config_toml,
+            }));
+        }
+        bail!(
+            "Kimi login captured credentials for providers [{}], but config.toml current_provider={} was not found",
+            captured
+                .iter()
+                .map(|(provider_id, _)| provider_id.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+            provider
+        );
+    }
+
+    if captured.len() == 1 {
+        if let Some((provider, credentials_json)) = captured.pop() {
+            return Ok(Some(KimiCapturedCredentials {
+                provider,
+                credentials_json,
+                config_toml,
+            }));
+        }
+    }
+
+    bail!(
+        "Kimi login captured credentials for multiple providers [{}]; set current_provider in config.toml to select one",
+        captured
+            .iter()
+            .map(|(provider, _)| provider.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+}
+
 fn first_email_from_google_accounts(value: &serde_json::Value) -> Option<String> {
     match value {
         serde_json::Value::Object(map) => {
@@ -594,6 +812,297 @@ fn extract_auth_url_from_value(value: &serde_json::Value) -> Option<String> {
         }
         serde_json::Value::Array(values) => values.iter().find_map(extract_auth_url_from_value),
         _ => None,
+    }
+}
+
+fn kimi_login_command_args(runtime_args: &[String]) -> Vec<String> {
+    let mut args = runtime_args
+        .iter()
+        .filter(|arg| arg.as_str() != "--acp" && arg.as_str() != "acp")
+        .cloned()
+        .collect::<Vec<_>>();
+    args.push("login".to_string());
+    args.push("--json".to_string());
+    args
+}
+
+fn kimi_login_line_reports_unsupported_command(line: &str) -> bool {
+    let lowered = line.to_ascii_lowercase();
+    (lowered.contains("no such command")
+        || lowered.contains("unknown command")
+        || lowered.contains("unexpected extra argument"))
+        && lowered.contains("login")
+}
+
+fn kimi_login_auth_url_from_json_line(line: &str) -> Option<String> {
+    let parsed = serde_json::from_str::<serde_json::Value>(line.trim()).ok()?;
+    let explicit = parsed
+        .get("data")
+        .and_then(serde_json::Value::as_object)
+        .and_then(|data| data.get("verification_url"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .map(ToString::to_string);
+    explicit.or_else(|| extract_auth_url_from_value(&parsed))
+}
+
+fn kimi_login_error_from_json_line(line: &str) -> Option<String> {
+    let parsed = serde_json::from_str::<serde_json::Value>(line.trim()).ok()?;
+    let kind = parsed.get("type").and_then(serde_json::Value::as_str)?;
+    if !kind.eq_ignore_ascii_case("error") {
+        return None;
+    }
+    parsed
+        .get("message")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|message| !message.is_empty())
+        .map(ToString::to_string)
+}
+
+fn command_is_kimi_acp_shim(command: &str) -> bool {
+    StdPath::new(command)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("kimi-acp.sh"))
+}
+
+async fn resolve_kimi_runtime_command(data_root: &StdPath) -> anyhow::Result<installer::AgentServerCommand> {
+    let cfg = installer::load_agent_server_config(data_root)
+        .await
+        .unwrap_or_default();
+    let runtime = installer::resolve_runtime_provider_command(&cfg, "kimi")?
+        .ok_or_else(|| anyhow::anyhow!("ACP command is not configured for provider 'kimi'"))?;
+    let raw = installer::AgentServerCommand {
+        command: runtime.command_abs_path,
+        args: runtime.args,
+        dependencies: runtime.dependencies,
+        managed: None,
+    };
+    if command_is_kimi_acp_shim(&raw.command) {
+        if let Some(bundled) = crate::bundled_assets::bundled_provider_command("kimi") {
+            tracing::warn!(
+                "resolved kimi runtime to ACP shim {}; using bundled runtime {} for login flow",
+                raw.command,
+                bundled.command
+            );
+            let bundled_raw = installer::AgentServerCommand {
+                command: bundled.command,
+                args: bundled.args,
+                dependencies: Vec::new(),
+                managed: None,
+            };
+            return Ok(normalize_acp_provider_command(data_root, "kimi", bundled_raw));
+        }
+        bail!(
+            "Kimi runtime command {} is an ACP shim and cannot run `login --json`; reconfigure to the real Kimi binary",
+            raw.command
+        );
+    }
+    Ok(normalize_acp_provider_command(data_root, "kimi", raw))
+}
+
+async fn persist_kimi_captured_login(
+    state: &Arc<AppState>,
+    login_id: &str,
+    label: Option<String>,
+    share_dir: &StdPath,
+) -> anyhow::Result<bool> {
+    let captured = match load_kimi_captured_credentials(share_dir).await? {
+        Some(captured) => captured,
+        None => return Ok(false),
+    };
+    let added = provider_accounts::add_kimi_account(
+        &state.core.data_root,
+        label,
+        Some(captured.provider),
+        captured.credentials_json,
+        captured.config_toml,
+        None,
+    )
+    .await;
+    match added {
+        Ok(registry) => {
+            let mut map = state.providers.kimi_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(login_id) {
+                entry.status = "success".to_string();
+                entry.account_id = registry.active_account_id.clone();
+                entry.error = None;
+            }
+            restart_kimi_providers_for_auth_change(state, "kimi auth updated").await;
+        }
+        Err(err) => {
+            let mut map = state.providers.kimi_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(login_id) {
+                entry.status = "failed".to_string();
+                entry.error = Some(logs::redact_sensitive(&err.to_string()));
+            }
+        }
+    }
+    Ok(true)
+}
+
+async fn ingest_kimi_direct_login_line(
+    state: &Arc<AppState>,
+    login_id: &str,
+    line: &str,
+    from_stderr: bool,
+    saw_auth_url: &mut bool,
+    unsupported: &mut bool,
+    last_error: &mut Option<String>,
+) {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    if kimi_login_line_reports_unsupported_command(trimmed) {
+        *unsupported = true;
+    }
+    if let Some(auth_url) = kimi_login_auth_url_from_json_line(trimmed)
+        .or_else(|| extract_auth_url(trimmed))
+    {
+        *saw_auth_url = true;
+        let mut map = state.providers.kimi_login_sessions.lock().await;
+        if let Some(entry) = map.get_mut(login_id) {
+            entry.auth_url = Some(auth_url);
+        }
+    }
+    if let Some(error) = kimi_login_error_from_json_line(trimmed) {
+        *last_error = Some(logs::redact_sensitive(&error));
+    } else if from_stderr {
+        *last_error = Some(logs::redact_sensitive(trimmed));
+    }
+}
+
+async fn try_kimi_direct_login(
+    state: &Arc<AppState>,
+    login_id: &str,
+    label: Option<String>,
+    workdir: &StdPath,
+    share_dir: &StdPath,
+    provider_env: &HashMap<String, String>,
+) -> anyhow::Result<KimiDirectLoginOutcome> {
+    let runtime = match resolve_kimi_runtime_command(&state.core.data_root).await {
+        Ok(runtime) => runtime,
+        Err(_) => return Ok(KimiDirectLoginOutcome::Unsupported),
+    };
+    let mut command = Command::new(&runtime.command);
+    command
+        .args(kimi_login_command_args(&runtime.args))
+        .current_dir(workdir)
+        .envs(provider_env)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(KimiDirectLoginOutcome::Unsupported);
+        }
+        Err(err) => return Err(err).context("spawning kimi login command"),
+    };
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("failed to capture kimi login stdout"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("failed to capture kimi login stderr"))?;
+    let (line_tx, mut line_rx) = mpsc::channel::<(String, bool)>(128);
+    let stdout_tx = line_tx.clone();
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(stdout).lines();
+        loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => {
+                    if stdout_tx.send((line, false)).await.is_err() {
+                        break;
+                    }
+                }
+                Ok(None) | Err(_) => break,
+            }
+        }
+    });
+    let stderr_tx = line_tx.clone();
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(stderr).lines();
+        loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => {
+                    if stderr_tx.send((line, true)).await.is_err() {
+                        break;
+                    }
+                }
+                Ok(None) | Err(_) => break,
+            }
+        }
+    });
+
+    let started_at = Instant::now();
+    let timeout_deadline = started_at + kimi_login_timeout();
+    let mut saw_auth_url = false;
+    let mut unsupported = false;
+    let mut last_error: Option<String> = None;
+
+    loop {
+        match tokio::time::timeout(KIMI_LOGIN_POLL_INTERVAL, line_rx.recv()).await {
+            Ok(Some((line, from_stderr))) => {
+                ingest_kimi_direct_login_line(
+                    state,
+                    login_id,
+                    &line,
+                    from_stderr,
+                    &mut saw_auth_url,
+                    &mut unsupported,
+                    &mut last_error,
+                )
+                .await;
+            }
+            Ok(None) | Err(_) => {}
+        }
+
+        if persist_kimi_captured_login(state, login_id, label.clone(), share_dir).await? {
+            let _ = child.start_kill();
+            return Ok(KimiDirectLoginOutcome::Completed);
+        }
+
+        if Instant::now() >= timeout_deadline {
+            let _ = child.start_kill();
+            bail!("timed out waiting for Kimi OAuth completion");
+        }
+
+        if let Some(status) = child.try_wait().context("checking kimi login status")? {
+            while let Ok((line, from_stderr)) = line_rx.try_recv() {
+                ingest_kimi_direct_login_line(
+                    state,
+                    login_id,
+                    &line,
+                    from_stderr,
+                    &mut saw_auth_url,
+                    &mut unsupported,
+                    &mut last_error,
+                )
+                .await;
+            }
+            if persist_kimi_captured_login(state, login_id, label.clone(), share_dir).await? {
+                return Ok(KimiDirectLoginOutcome::Completed);
+            }
+            if unsupported {
+                return Ok(KimiDirectLoginOutcome::Unsupported);
+            }
+            if let Some(error) = last_error {
+                bail!("{error}");
+            }
+            if !saw_auth_url {
+                bail!(
+                    "Kimi sign-in did not emit an OAuth URL; runtime does not support `kimi login` in this build."
+                );
+            }
+            bail!("Kimi login exited before credentials were captured (status: {status})");
+        }
     }
 }
 
@@ -1223,6 +1732,14 @@ fn gemini_login_home(data_root: &StdPath, login_id: &str) -> PathBuf {
         .join(login_id)
 }
 
+fn kimi_login_home(data_root: &StdPath, login_id: &str) -> PathBuf {
+    data_root
+        .join("providers")
+        .join("kimi")
+        .join("login-sessions")
+        .join(login_id)
+}
+
 async fn monitor_gemini_login(state: Arc<AppState>, login_id: String, label: Option<String>) {
     let adapter = {
         let map = state.providers.adapters.lock().await;
@@ -1560,6 +2077,277 @@ pub(super) async fn delete_gemini_account(
         })?;
     restart_gemini_providers_for_auth_change(&state, "gemini auth updated").await;
     Ok(Json(gemini_accounts_response(&state).await))
+}
+
+async fn monitor_kimi_login(state: Arc<AppState>, login_id: String, label: Option<String>) {
+    let login_home = kimi_login_home(&state.core.data_root, &login_id);
+    let workdir = login_home.join("workspace");
+    let share_dir = login_home.join(".kimi");
+    if let Err(err) = tokio::fs::create_dir_all(&workdir).await {
+        let mut map = state.providers.kimi_login_sessions.lock().await;
+        if let Some(entry) = map.get_mut(&login_id) {
+            entry.status = "failed".to_string();
+            entry.error = Some(format!("failed to prepare login workspace: {err}"));
+        }
+        return;
+    }
+    if let Err(err) = tokio::fs::create_dir_all(&share_dir).await {
+        let mut map = state.providers.kimi_login_sessions.lock().await;
+        if let Some(entry) = map.get_mut(&login_id) {
+            entry.status = "failed".to_string();
+            entry.error = Some(format!("failed to prepare Kimi share directory: {err}"));
+        }
+        let _ = tokio::fs::remove_dir_all(&login_home).await;
+        return;
+    }
+
+    let mut provider_env = HashMap::new();
+    provider_env.insert("CTX_DAEMON_URL".to_string(), state.core.daemon_url.clone());
+    if let Some(token) = state.core.auth_token.clone() {
+        provider_env.insert("CTX_AUTH_TOKEN".to_string(), token);
+    }
+    provider_env.insert(
+        provider_accounts::KIMI_SHARE_DIR_ENV.to_string(),
+        share_dir.to_string_lossy().to_string(),
+    );
+    let login_home_value = login_home.to_string_lossy().to_string();
+    // Kimi CLI loads ~/.kimi via Path.home(), so set an isolated HOME for login flows.
+    provider_env.insert("HOME".to_string(), login_home_value.clone());
+    provider_env.insert("USERPROFILE".to_string(), login_home_value);
+    provider_env.insert(
+        "CTX_DATA_ROOT".to_string(),
+        state.core.data_root.to_string_lossy().to_string(),
+    );
+
+    match try_kimi_direct_login(
+        &state,
+        &login_id,
+        label.clone(),
+        &workdir,
+        &share_dir,
+        &provider_env,
+    )
+    .await
+    {
+        Ok(KimiDirectLoginOutcome::Completed) => {
+            let _ = tokio::fs::remove_dir_all(&login_home).await;
+            return;
+        }
+        Ok(KimiDirectLoginOutcome::Unsupported) => {}
+        Err(err) => {
+            let mut map = state.providers.kimi_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(&login_id) {
+                entry.status = "failed".to_string();
+                entry.error = Some(logs::redact_sensitive(&err.to_string()));
+            }
+            let _ = tokio::fs::remove_dir_all(&login_home).await;
+            return;
+        }
+    }
+
+    let adapter = {
+        let map = state.providers.adapters.lock().await;
+        map.get("kimi").cloned()
+    };
+    let Some(adapter) = adapter else {
+        let mut map = state.providers.kimi_login_sessions.lock().await;
+        if let Some(entry) = map.get_mut(&login_id) {
+            entry.status = "failed".to_string();
+            entry.error = Some("provider adapter not available".to_string());
+        }
+        let _ = tokio::fs::remove_dir_all(&login_home).await;
+        return;
+    };
+
+    let (event_tx, mut event_rx) = mpsc::channel(64);
+    let auth_result = adapter
+        .authenticate_session(
+            format!("kimi-login-{login_id}"),
+            workdir.clone(),
+            provider_env.clone(),
+            Some("oauth-personal".to_string()),
+            event_tx,
+        )
+        .await;
+    if let Err(err) = auth_result {
+        let mut map = state.providers.kimi_login_sessions.lock().await;
+        if let Some(entry) = map.get_mut(&login_id) {
+            entry.status = "failed".to_string();
+            entry.error = Some(normalize_kimi_login_auth_error(&err.to_string()));
+        }
+        let _ = tokio::fs::remove_dir_all(&login_home).await;
+        return;
+    }
+
+    let started_at = Instant::now();
+    let timeout = kimi_login_timeout();
+    let auth_url_deadline = started_at + kimi_login_no_auth_url_timeout();
+    let no_signal_deadline = started_at + kimi_login_no_signal_timeout();
+    let mut observed_auth_url = false;
+    let mut saw_non_init_event = false;
+
+    loop {
+        let mut channel_disconnected = false;
+        loop {
+            match event_rx.try_recv() {
+                Ok(event) => {
+                    if !matches!(event.event_type, ctx_core::models::SessionEventType::Init) {
+                        saw_non_init_event = true;
+                    }
+                    if let Some(auth_url) = extract_auth_url_from_value(&event.payload_json) {
+                        observed_auth_url = true;
+                        let mut map = state.providers.kimi_login_sessions.lock().await;
+                        if let Some(entry) = map.get_mut(&login_id) {
+                            entry.auth_url = Some(auth_url);
+                        }
+                    }
+                    if matches!(event.event_type, ctx_core::models::SessionEventType::Error) {
+                        let message = event
+                            .payload_json
+                            .get("message")
+                            .and_then(serde_json::Value::as_str)
+                            .map(logs::redact_sensitive)
+                            .unwrap_or_else(|| "kimi authenticate reported an error".to_string());
+                        let mut map = state.providers.kimi_login_sessions.lock().await;
+                        if let Some(entry) = map.get_mut(&login_id) {
+                            entry.status = "failed".to_string();
+                            entry.error = Some(message);
+                        }
+                        let _ = tokio::fs::remove_dir_all(&login_home).await;
+                        return;
+                    }
+                }
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                    channel_disconnected = true;
+                    break;
+                }
+            }
+        }
+
+        match persist_kimi_captured_login(&state, &login_id, label.clone(), &share_dir).await {
+            Ok(true) => {
+                let _ = tokio::fs::remove_dir_all(&login_home).await;
+                return;
+            }
+            Ok(false) => {}
+            Err(err) => {
+                let mut map = state.providers.kimi_login_sessions.lock().await;
+                if let Some(entry) = map.get_mut(&login_id) {
+                    entry.status = "failed".to_string();
+                    entry.error = Some(logs::redact_sensitive(&err.to_string()));
+                }
+                let _ = tokio::fs::remove_dir_all(&login_home).await;
+                return;
+            }
+        }
+
+        if channel_disconnected && !observed_auth_url {
+            let mut map = state.providers.kimi_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(&login_id) {
+                entry.status = "failed".to_string();
+                if entry.error.is_none() {
+                    entry.error = Some(
+                        "Kimi sign-in did not emit an OAuth URL; the runtime may require non-OAuth auth in this environment."
+                            .to_string(),
+                    );
+                }
+            }
+            let _ = tokio::fs::remove_dir_all(&login_home).await;
+            return;
+        }
+
+        if !observed_auth_url && Instant::now() >= auth_url_deadline {
+            let mut map = state.providers.kimi_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(&login_id) {
+                entry.status = "failed".to_string();
+                if entry.error.is_none() {
+                    entry.error = Some(
+                        "Kimi sign-in did not emit an OAuth URL; the runtime may require non-OAuth auth in this environment."
+                            .to_string(),
+                    );
+                }
+            }
+            let _ = tokio::fs::remove_dir_all(&login_home).await;
+            return;
+        }
+
+        if !observed_auth_url && !saw_non_init_event && Instant::now() >= no_signal_deadline {
+            let mut map = state.providers.kimi_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(&login_id) {
+                entry.status = "failed".to_string();
+                if entry.error.is_none() {
+                    entry.error = Some(
+                        "Kimi sign-in did not emit an OAuth URL; ACP runtime did not report any OAuth-capable auth events in this environment."
+                            .to_string(),
+                    );
+                }
+            }
+            let _ = tokio::fs::remove_dir_all(&login_home).await;
+            return;
+        }
+
+        if started_at.elapsed() >= timeout {
+            let mut map = state.providers.kimi_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(&login_id) {
+                entry.status = "timeout".to_string();
+                if entry.error.is_none() {
+                    entry.error = Some("timed out waiting for Kimi OAuth completion".to_string());
+                }
+            }
+            let _ = tokio::fs::remove_dir_all(&login_home).await;
+            return;
+        }
+
+        tokio::time::sleep(KIMI_LOGIN_POLL_INTERVAL).await;
+    }
+}
+
+pub(super) async fn start_kimi_login(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<KimiLoginStartReq>,
+) -> Result<Json<KimiLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let login_id = uuid::Uuid::new_v4().to_string();
+    {
+        let mut map = state.providers.kimi_login_sessions.lock().await;
+        map.insert(
+            login_id.clone(),
+            provider_accounts::KimiLoginStatus {
+                login_id: login_id.clone(),
+                auth_url: None,
+                status: "pending".to_string(),
+                account_id: None,
+                error: None,
+            },
+        );
+    }
+
+    let state_clone = Arc::clone(&state);
+    let login_id_for_task = login_id.clone();
+    tokio::spawn(async move {
+        monitor_kimi_login(state_clone, login_id_for_task, req.label).await;
+    });
+
+    Ok(Json(KimiLoginStartResp {
+        login_id,
+        auth_url: None,
+    }))
+}
+
+pub(super) async fn get_kimi_login(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<provider_accounts::KimiLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
+    let map = state.providers.kimi_login_sessions.lock().await;
+    let status = map.get(&id).cloned().ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "login not found".to_string(),
+            }),
+        )
+    })?;
+    Ok(Json(status))
 }
 
 pub(super) async fn list_kimi_accounts(
@@ -4552,6 +5340,67 @@ mod tests {
         let with_port =
             "https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A5999%2Fcallback";
         assert!(auth_url_looks_complete(with_port));
+    }
+
+    #[test]
+    fn normalize_kimi_login_auth_error_maps_unimplemented_authenticate() {
+        let raw = "acp request failed: authenticate is not implemented";
+        assert_eq!(
+            normalize_kimi_login_auth_error(raw),
+            "Kimi runtime does not support OAuth sign-in in ACP mode (no auth URL is emitted). Use endpoint/API-key auth for now."
+        );
+    }
+
+    #[test]
+    fn normalize_kimi_login_auth_error_preserves_other_errors() {
+        let raw = "failed to prepare login workspace: permission denied";
+        assert_eq!(normalize_kimi_login_auth_error(raw), raw);
+    }
+
+    #[test]
+    fn kimi_login_command_args_strips_acp_flags_and_appends_login_json() {
+        let args = vec![
+            "--acp".to_string(),
+            "acp".to_string(),
+            "--debug".to_string(),
+        ];
+        assert_eq!(
+            kimi_login_command_args(&args),
+            vec![
+                "--debug".to_string(),
+                "login".to_string(),
+                "--json".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn command_is_kimi_acp_shim_detects_shim_name() {
+        assert!(command_is_kimi_acp_shim(
+            "/tmp/acp-shims/macos/aarch64/kimi-acp.sh"
+        ));
+    }
+
+    #[test]
+    fn command_is_kimi_acp_shim_ignores_real_binary_path() {
+        assert!(!command_is_kimi_acp_shim(
+            "/tmp/providers/kimi/macos/aarch64/venv/bin/kimi"
+        ));
+    }
+
+    #[test]
+    fn kimi_login_auth_url_from_json_line_extracts_verification_url() {
+        let line = r#"{"type":"verification_url","message":"Verification URL: https://www.kimi.com/code/authorize_device?user_code=ABCD-EFGH","data":{"verification_url":"https://www.kimi.com/code/authorize_device?user_code=ABCD-EFGH","user_code":"ABCD-EFGH"}}"#;
+        assert_eq!(
+            kimi_login_auth_url_from_json_line(line).as_deref(),
+            Some("https://www.kimi.com/code/authorize_device?user_code=ABCD-EFGH")
+        );
+    }
+
+    #[test]
+    fn kimi_login_line_reports_unsupported_command_detects_old_cli_error() {
+        let line = "Error: No such command 'login'.";
+        assert!(kimi_login_line_reports_unsupported_command(line));
     }
 
     #[tokio::test]

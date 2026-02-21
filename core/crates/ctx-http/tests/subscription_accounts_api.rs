@@ -62,6 +62,20 @@ struct GeminiLoginStatusResponse {
     error: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct KimiLoginStartResponse {
+    login_id: String,
+    auth_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct KimiLoginStatusResponse {
+    status: String,
+    account_id: Option<String>,
+    auth_url: Option<String>,
+    error: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 enum GeminiLoginFixture {
     Success {
@@ -201,11 +215,174 @@ impl ProviderAdapter for GeminiLoginTestAdapter {
     }
 }
 
+#[derive(Debug, Clone)]
+enum KimiLoginFixture {
+    Success {
+        provider: String,
+        credentials_json: String,
+        config_toml: Option<String>,
+        auth_url: Option<String>,
+    },
+    Failure {
+        error: String,
+    },
+    NoAuthUrl,
+}
+
+#[derive(Debug, Clone)]
+struct KimiLoginTestAdapter {
+    fixture: KimiLoginFixture,
+}
+
+impl KimiLoginTestAdapter {
+    fn success(
+        provider: impl Into<String>,
+        credentials_json: impl Into<String>,
+        config_toml: Option<String>,
+        auth_url: Option<String>,
+    ) -> Self {
+        Self {
+            fixture: KimiLoginFixture::Success {
+                provider: provider.into(),
+                credentials_json: credentials_json.into(),
+                config_toml,
+                auth_url,
+            },
+        }
+    }
+
+    fn failure(error: impl Into<String>) -> Self {
+        Self {
+            fixture: KimiLoginFixture::Failure {
+                error: error.into(),
+            },
+        }
+    }
+
+    fn no_auth_url() -> Self {
+        Self {
+            fixture: KimiLoginFixture::NoAuthUrl,
+        }
+    }
+}
+
+#[async_trait]
+impl ProviderAdapter for KimiLoginTestAdapter {
+    async fn inspect(&self) -> Result<ProviderStatus> {
+        Ok(ProviderStatus {
+            provider_id: "kimi".to_string(),
+            installed: true,
+            detected_path: None,
+            version: Some("test".to_string()),
+            capabilities: None,
+            health: ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+        })
+    }
+
+    async fn run(
+        &self,
+        _input: TurnInput,
+        _workdir: PathBuf,
+        _env: HashMap<String, String>,
+        _event_sink: mpsc::Sender<NormalizedEvent>,
+    ) -> Result<RunHandle> {
+        Err(anyhow!("run is not used in this test adapter"))
+    }
+
+    async fn cancel(&self, _handle: RunHandle) -> Result<()> {
+        Ok(())
+    }
+
+    async fn authenticate_session(
+        &self,
+        _session_key: String,
+        _workdir: PathBuf,
+        env: HashMap<String, String>,
+        method_id: Option<String>,
+        event_sink: mpsc::Sender<NormalizedEvent>,
+    ) -> Result<()> {
+        if method_id.is_some() && method_id.as_deref() != Some("oauth-personal") {
+            return Err(anyhow!(
+                "unexpected method_id: {:?}",
+                method_id.unwrap_or_default()
+            ));
+        }
+        let Some(share_dir_raw) = env.get("KIMI_SHARE_DIR") else {
+            return Err(anyhow!("KIMI_SHARE_DIR missing"));
+        };
+        let Some(home_dir_raw) = env.get("HOME") else {
+            return Err(anyhow!("HOME missing"));
+        };
+        let share_dir = PathBuf::from(share_dir_raw);
+        let home_dir = PathBuf::from(home_dir_raw);
+        if home_dir.join(".kimi") != share_dir {
+            return Err(anyhow!(
+                "KIMI_SHARE_DIR should equal HOME/.kimi, got HOME={} KIMI_SHARE_DIR={}",
+                home_dir.display(),
+                share_dir.display()
+            ));
+        }
+        let credentials_dir = share_dir.join("credentials");
+        tokio::fs::create_dir_all(&credentials_dir).await?;
+
+        match &self.fixture {
+            KimiLoginFixture::Success {
+                provider,
+                credentials_json,
+                config_toml,
+                auth_url,
+            } => {
+                if let Some(auth_url) = auth_url.as_ref() {
+                    let _ = event_sink
+                        .send(NormalizedEvent {
+                            event_type: SessionEventType::Notice,
+                            payload_json: json!({ "auth_url": auth_url }),
+                        })
+                        .await;
+                }
+                tokio::fs::write(
+                    credentials_dir.join(format!("{provider}.json")),
+                    credentials_json,
+                )
+                .await?;
+                let config_contents = config_toml
+                    .clone()
+                    .unwrap_or_else(|| format!("current_provider = \"{provider}\"\n"));
+                tokio::fs::write(share_dir.join("config.toml"), config_contents).await?;
+                Ok(())
+            }
+            KimiLoginFixture::Failure { error } => {
+                let _ = event_sink
+                    .send(NormalizedEvent {
+                        event_type: SessionEventType::Error,
+                        payload_json: json!({ "message": error }),
+                    })
+                    .await;
+                Err(anyhow!("{error}"))
+            }
+            KimiLoginFixture::NoAuthUrl => {
+                tokio::time::sleep(Duration::from_millis(600)).await;
+                Ok(())
+            }
+        }
+    }
+}
+
 fn providers_with_gemini_adapter(
     adapter: Arc<dyn ProviderAdapter>,
 ) -> HashMap<String, Arc<dyn ProviderAdapter>> {
     let mut providers = common::fake_providers();
     providers.insert("gemini".to_string(), adapter);
+    providers
+}
+
+fn providers_with_kimi_adapter(
+    adapter: Arc<dyn ProviderAdapter>,
+) -> HashMap<String, Arc<dyn ProviderAdapter>> {
+    let mut providers = common::fake_providers();
+    providers.insert("kimi".to_string(), adapter);
     providers
 }
 
@@ -317,6 +494,26 @@ async fn write_mock_claude_runtime(
     script_path
 }
 
+async fn write_mock_kimi_runtime(
+    data_root: &std::path::Path,
+    script_contents: &str,
+) -> std::path::PathBuf {
+    let script_path = data_root.join("mock-kimi");
+    tokio::fs::write(&script_path, script_contents)
+        .await
+        .expect("write mock kimi script");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&script_path)
+            .expect("mock kimi metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script_path, perms).expect("set mock kimi permissions");
+    }
+    script_path
+}
+
 async fn poll_claude_login_status(
     server: &common::TestServer,
     login_id: &str,
@@ -370,6 +567,34 @@ async fn poll_gemini_login_status(
         }
         if Instant::now() >= deadline {
             panic!("gemini login did not complete in time");
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+async fn poll_kimi_login_status(
+    server: &common::TestServer,
+    login_id: &str,
+) -> KimiLoginStatusResponse {
+    let status_url = format!(
+        "{}/api/providers/kimi/accounts/login/{}",
+        server.base_url, login_id
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let resp = server
+            .client
+            .get(&status_url)
+            .send()
+            .await
+            .expect("kimi status request");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: KimiLoginStatusResponse = resp.json().await.expect("kimi status body");
+        if body.status != "pending" {
+            return body;
+        }
+        if Instant::now() >= deadline {
+            panic!("kimi login did not complete in time");
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
@@ -1052,6 +1277,221 @@ async fn gemini_login_fails_fast_when_no_auth_url_is_emitted() {
     let start_body: GeminiLoginStartResponse = start_resp.json().await.expect("start body");
 
     let status = poll_gemini_login_status(&server, &start_body.login_id).await;
+    assert_eq!(status.status, "failed");
+    assert!(status
+        .error
+        .unwrap_or_default()
+        .contains("did not emit an OAuth URL"));
+}
+
+#[tokio::test]
+async fn kimi_login_start_and_status_success_persists_account() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let providers = providers_with_kimi_adapter(Arc::new(KimiLoginTestAdapter::success(
+        "moonshot",
+        r#"{"access_token":"access","refresh_token":"refresh"}"#,
+        Some("current_provider = \"moonshot\"\n".to_string()),
+        Some("https://www.moonshot.ai/oauth/authorize?code=test".to_string()),
+    )));
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        providers,
+        "http://127.0.0.1:0",
+    );
+    let server = common::spawn_http_server(common::router(state)).await;
+
+    let start_url = format!(
+        "{}/api/providers/kimi/accounts/login/start",
+        server.base_url
+    );
+    let start_resp = server
+        .client
+        .post(start_url)
+        .json(&json!({ "label": "Kimi OAuth" }))
+        .send()
+        .await
+        .expect("start kimi login request");
+    assert_eq!(start_resp.status(), StatusCode::OK);
+    let start_body: KimiLoginStartResponse = start_resp.json().await.expect("start body");
+    assert!(!start_body.login_id.is_empty());
+    assert!(start_body.auth_url.is_none());
+
+    let status = poll_kimi_login_status(&server, &start_body.login_id).await;
+    assert_eq!(status.status, "success");
+    assert!(status.account_id.is_some());
+    assert!(status.error.is_none());
+    assert!(status.auth_url.as_deref().is_some());
+
+    let accounts_url = format!("{}/api/providers/kimi/accounts", server.base_url);
+    let accounts_resp = server
+        .client
+        .get(accounts_url)
+        .send()
+        .await
+        .expect("kimi accounts request");
+    assert_eq!(accounts_resp.status(), StatusCode::OK);
+    let accounts: SubscriptionAccountsResponse = accounts_resp.json().await.expect("accounts body");
+    assert_eq!(accounts.accounts.len(), 1);
+    assert_eq!(accounts.active_account_id, status.account_id);
+    assert_eq!(accounts.accounts[0].label.as_deref(), Some("Kimi OAuth"));
+}
+
+#[tokio::test]
+async fn kimi_login_start_and_status_success_via_direct_cli_login_command() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let server = common::spawn_http_server(common::router(state)).await;
+
+    let script_path = write_mock_kimi_runtime(
+        data_dir.path(),
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1-}" != "login" || "${2-}" != "--json" ]]; then
+  echo "unexpected args: $*" >&2
+  exit 2
+fi
+echo '{"type":"info","message":"Please visit the following URL to finish authorization."}'
+echo '{"type":"verification_url","message":"Verification URL: https://www.kimi.com/code/authorize_device?user_code=TEST-CODE","data":{"verification_url":"https://www.kimi.com/code/authorize_device?user_code=TEST-CODE","user_code":"TEST-CODE"}}'
+mkdir -p "$HOME/.kimi/credentials"
+cat > "$HOME/.kimi/config.toml" <<'EOF'
+current_provider = "moonshot"
+EOF
+cat > "$HOME/.kimi/credentials/moonshot.json" <<'EOF'
+{"access_token":"access","refresh_token":"refresh"}
+EOF
+echo '{"type":"success","message":"Logged in successfully."}'
+"#,
+    )
+    .await;
+
+    let mut cfg = AgentServerConfigFile {
+        providers: HashMap::new(),
+        managed_installs: HashMap::new(),
+    };
+    cfg.providers.insert(
+        "kimi".to_string(),
+        AgentServerCommand {
+            command: script_path.to_string_lossy().to_string(),
+            args: vec!["--acp".to_string()],
+            dependencies: vec![],
+            managed: None,
+        },
+    );
+    save_agent_server_config(data_dir.path(), &cfg)
+        .await
+        .expect("save agent config");
+
+    let start_url = format!(
+        "{}/api/providers/kimi/accounts/login/start",
+        server.base_url
+    );
+    let start_resp = server
+        .client
+        .post(start_url)
+        .json(&json!({ "label": "Kimi Direct OAuth" }))
+        .send()
+        .await
+        .expect("start kimi login request");
+    assert_eq!(start_resp.status(), StatusCode::OK);
+    let start_body: KimiLoginStartResponse = start_resp.json().await.expect("start body");
+    assert!(!start_body.login_id.is_empty());
+    assert!(start_body.auth_url.is_none());
+
+    let status = poll_kimi_login_status(&server, &start_body.login_id).await;
+    assert_eq!(status.status, "success");
+    assert!(status.account_id.is_some());
+    assert!(status.error.is_none());
+    assert_eq!(
+        status.auth_url.as_deref(),
+        Some("https://www.kimi.com/code/authorize_device?user_code=TEST-CODE")
+    );
+}
+
+#[tokio::test]
+async fn kimi_login_start_and_status_failure_reports_error() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let providers =
+        providers_with_kimi_adapter(Arc::new(KimiLoginTestAdapter::failure("kimi auth failed")));
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        providers,
+        "http://127.0.0.1:0",
+    );
+    let server = common::spawn_http_server(common::router(state)).await;
+
+    let start_url = format!(
+        "{}/api/providers/kimi/accounts/login/start",
+        server.base_url
+    );
+    let start_resp = server
+        .client
+        .post(start_url)
+        .json(&json!({}))
+        .send()
+        .await
+        .expect("start kimi login request");
+    assert_eq!(start_resp.status(), StatusCode::OK);
+    let start_body: KimiLoginStartResponse = start_resp.json().await.expect("start body");
+
+    let status = poll_kimi_login_status(&server, &start_body.login_id).await;
+    assert_eq!(status.status, "failed");
+    assert!(status.account_id.is_none());
+    assert!(status
+        .error
+        .unwrap_or_default()
+        .contains("kimi auth failed"));
+
+    let accounts_url = format!("{}/api/providers/kimi/accounts", server.base_url);
+    let accounts_resp = server
+        .client
+        .get(accounts_url)
+        .send()
+        .await
+        .expect("kimi accounts request");
+    assert_eq!(accounts_resp.status(), StatusCode::OK);
+    let accounts: SubscriptionAccountsResponse = accounts_resp.json().await.expect("accounts body");
+    assert!(accounts.accounts.is_empty());
+    assert!(accounts.active_account_id.is_none());
+}
+
+#[tokio::test]
+async fn kimi_login_fails_fast_when_no_auth_url_is_emitted() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let providers = providers_with_kimi_adapter(Arc::new(KimiLoginTestAdapter::no_auth_url()));
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        providers,
+        "http://127.0.0.1:0",
+    );
+    let server = common::spawn_http_server(common::router(state)).await;
+
+    let start_url = format!(
+        "{}/api/providers/kimi/accounts/login/start",
+        server.base_url
+    );
+    let start_resp = server
+        .client
+        .post(start_url)
+        .json(&json!({}))
+        .send()
+        .await
+        .expect("start kimi login request");
+    assert_eq!(start_resp.status(), StatusCode::OK);
+    let start_body: KimiLoginStartResponse = start_resp.json().await.expect("start body");
+
+    let status = poll_kimi_login_status(&server, &start_body.login_id).await;
     assert_eq!(status.status, "failed");
     assert!(status
         .error

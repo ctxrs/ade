@@ -97,6 +97,7 @@ pub struct ProviderRuntime {
     pub codex_login_sessions: Mutex<HashMap<String, provider_accounts::CodexLoginStatus>>,
     pub claude_login_sessions: Mutex<HashMap<String, provider_accounts::ClaudeLoginStatus>>,
     pub gemini_login_sessions: Mutex<HashMap<String, provider_accounts::GeminiLoginStatus>>,
+    pub kimi_login_sessions: Mutex<HashMap<String, provider_accounts::KimiLoginStatus>>,
     pub claude_login_inputs: Mutex<HashMap<String, mpsc::UnboundedSender<String>>>,
     pub installs: Mutex<HashMap<InstallId, InstallState>>,
 }
@@ -429,6 +430,7 @@ impl AppState {
                 codex_login_sessions: Mutex::new(HashMap::new()),
                 claude_login_sessions: Mutex::new(HashMap::new()),
                 gemini_login_sessions: Mutex::new(HashMap::new()),
+                kimi_login_sessions: Mutex::new(HashMap::new()),
                 claude_login_inputs: Mutex::new(HashMap::new()),
                 installs: Mutex::new(HashMap::new()),
             },

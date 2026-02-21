@@ -59,9 +59,12 @@ export function subscriptionPrimaryActionLabel(modal: HarnessAuthModalState): st
     modal.provider_id === "codex"
     || modal.provider_id === "cursor"
     || modal.provider_id === "gemini"
+    || modal.provider_id === "kimi"
     || (modal.provider_id === "claude-crp" && !claudeSetupTokenProvided(modal))
   ) {
-    return modal.provider_id === "gemini" ? "Sign in with Google" : "Start sign-in";
+    if (modal.provider_id === "gemini") return "Sign in with Google";
+    if (modal.provider_id === "kimi") return "Sign in with Kimi";
+    return "Start sign-in";
   }
   return "Save subscription";
 }
@@ -73,7 +76,7 @@ export function shouldSubmitClaudeFallbackOnEnter(modal: HarnessAuthModalState, 
 }
 
 export function shouldAutoStartSubscriptionFlow(providerId: string): boolean {
-  return providerId === "codex" || providerId === "claude-crp" || providerId === "gemini";
+  return providerId === "codex" || providerId === "claude-crp" || providerId === "gemini" || providerId === "kimi";
 }
 
 export function HarnessAuthenticationSection({
@@ -663,7 +666,7 @@ export function HarnessAuthenticationSection({
                       : harnessAuthModal.provider_id === "gemini"
                         ? "Sign in with Google to capture managed Gemini OAuth credentials automatically."
                         : harnessAuthModal.provider_id === "kimi"
-                          ? "Paste Kimi credentials JSON for a managed Kimi share directory."
+                          ? "Sign in with Kimi to capture managed credentials automatically."
                           : harnessAuthModal.provider_id === "copilot"
                             ? "Paste a GitHub token with Copilot entitlement for the managed Copilot account."
                             : harnessAuthModal.provider_id === "kiro"
@@ -711,44 +714,6 @@ export function HarnessAuthenticationSection({
                         onChange={(e) => patchHarnessAuthModal({ subscription_label: e.target.value })}
                         placeholder="Kimi subscription"
                         autoFocus
-                      />
-                    </label>
-                    <label className="settings-harness-modal-label">
-                      Email (optional)
-                      <input
-                        className="settings-control"
-                        value={harnessAuthModal.subscription_email}
-                        onChange={(e) => patchHarnessAuthModal({ subscription_email: e.target.value })}
-                        placeholder="you@example.com"
-                      />
-                    </label>
-                    <label className="settings-harness-modal-label">
-                      Provider (optional)
-                      <input
-                        className="settings-control"
-                        value={harnessAuthModal.subscription_provider}
-                        onChange={(e) => patchHarnessAuthModal({ subscription_provider: e.target.value })}
-                        placeholder="moonshot"
-                      />
-                    </label>
-                    <label className="settings-harness-modal-label">
-                      Credentials JSON
-                      <textarea
-                        className="settings-control settings-control-wide"
-                        value={harnessAuthModal.subscription_credentials_json}
-                        onChange={(e) => patchHarnessAuthModal({ subscription_credentials_json: e.target.value })}
-                        placeholder='{"access_token":"...","refresh_token":"..."}'
-                        rows={6}
-                      />
-                    </label>
-                    <label className="settings-harness-modal-label">
-                      Config TOML (optional)
-                      <textarea
-                        className="settings-control settings-control-wide"
-                        value={harnessAuthModal.subscription_config_toml}
-                        onChange={(e) => patchHarnessAuthModal({ subscription_config_toml: e.target.value })}
-                        placeholder='current_provider = "moonshot"'
-                        rows={4}
                       />
                     </label>
                   </>

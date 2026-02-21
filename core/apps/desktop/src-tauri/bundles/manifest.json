@@ -99,7 +99,7 @@
     {
       "id": "kimi",
       "protocol": "acp",
-      "version": "0.66",
+      "version": "1.12.0",
       "os": "macos",
       "arch": "aarch64",
       "sha256": "208d3f78826d7499ea12dca09b36343c80942cecd97b3b551cbcd43af4a8ae26",

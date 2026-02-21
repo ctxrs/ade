@@ -351,6 +351,19 @@ export type GeminiLoginStartResponse = {
   auth_url?: string | null;
 };
 
+export type KimiLoginStatus = {
+  login_id: string;
+  auth_url?: string | null;
+  status: string;
+  account_id?: string | null;
+  error?: string | null;
+};
+
+export type KimiLoginStartResponse = {
+  login_id: string;
+  auth_url?: string | null;
+};
+
 export type CodexHostImportProbe = {
   available: boolean;
   path?: string | null;
@@ -519,6 +532,15 @@ export const deleteGeminiAccount = (accountId: string) =>
 
 export const listKimiAccounts = () =>
   apiAny<KimiAccountsResponse>(`/api/providers/kimi/accounts`);
+
+export const startKimiLogin = (label?: string) =>
+  apiAny<KimiLoginStartResponse>(`/api/providers/kimi/accounts/login/start`, {
+    method: "POST",
+    body: JSON.stringify(label ? { label } : {}),
+  });
+
+export const getKimiLogin = (loginId: string) =>
+  apiAny<KimiLoginStatus>(`/api/providers/kimi/accounts/login/${loginId}`);
 
 export const upsertKimiAccount = (
   credentialsJson: string,

@@ -13,6 +13,7 @@ import {
   getClaudeLogin,
   getCodexLogin,
   getGeminiLogin,
+  getKimiLogin,
   getInstall,
   listClaudeAccounts,
   listCopilotAccounts,
@@ -37,10 +38,10 @@ import {
   startCodexLogin,
   startClaudeLogin,
   startGeminiLogin,
+  startKimiLogin,
   upsertClaudeAccount,
   upsertCopilotAccount,
   upsertCursorAccount,
-  upsertKimiAccount,
   upsertKiroAccount,
   upsertProviderHarnessEndpoint,
   verifyProviderForWorkspace,
@@ -223,6 +224,8 @@ export const shouldOpenPolledClaudeAuthUrl = (params: {
   }
   return polled !== initial;
 };
+
+export const shouldAutoOpenKimiAuthUrl = (): boolean => false;
 
 type ResolveUpsertedEndpointArgs = {
   requestedEndpointId: string | null;
@@ -787,6 +790,33 @@ export function useHarnessAuthenticationController({
     return { status: "timeout" };
   }, []);
 
+  const waitForKimiLoginOutcome = useCallback(async (
+    loginId: string,
+    onAuthUrl?: (authUrl: string) => Promise<void>,
+    opts?: { openedAuthUrl?: string | null },
+  ): Promise<{ status: "success" | "failed" | "timeout"; error?: string | null }> => {
+    const openedAuthUrls = new Set<string>();
+    takeNextAuthUrlToOpen(opts?.openedAuthUrl, openedAuthUrls);
+    for (let attempt = 0; attempt < GEMINI_LOGIN_POLL_ATTEMPTS; attempt += 1) {
+      try {
+        const status = await getKimiLogin(loginId);
+        const authUrl = takeNextAuthUrlToOpen(status.auth_url, openedAuthUrls);
+        if (authUrl && onAuthUrl) {
+          await onAuthUrl(authUrl);
+        }
+        if (status.status === "success") return { status: "success" };
+        if (status.status === "failed") return { status: "failed", error: status.error };
+        if (status.status === "timeout") return { status: "timeout", error: status.error };
+      } catch {
+        // continue polling
+      }
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, GEMINI_LOGIN_POLL_INTERVAL_MS);
+      });
+    }
+    return { status: "timeout" };
+  }, []);
+
   const tryStartCodexDesktopRelay = useCallback(async (params: {
     accountId: string;
     expectedCallbackUrl?: string | null;
@@ -1036,23 +1066,78 @@ export function useHarnessAuthenticationController({
       }
 
       if (modal.provider_id === "kimi") {
-        const credentialsJson = modal.subscription_credentials_json.trim();
-        if (!credentialsJson) {
-          throw new Error("Credentials JSON is required.");
-        }
-        const provider = modal.subscription_provider.trim();
-        const configToml = modal.subscription_config_toml.trim();
         const label = modal.subscription_label.trim();
-        const email = modal.subscription_email.trim();
-        const next = await upsertKimiAccount(credentialsJson, {
-          ...(label ? { label } : {}),
-          ...(provider ? { provider } : {}),
-          ...(configToml ? { configToml } : {}),
-          ...(email ? { email } : {}),
+        const updateKimiAuthUrlStatus = (authUrl: string): void => {
+          setHarnessAuthModal((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  subscription_status: shouldAutoOpenKimiAuthUrl()
+                    ? "Waiting for Kimi sign-in to complete in your browser..."
+                    : `Kimi sign-in is in progress. If a browser tab did not open automatically, open this URL manually: ${authUrl}`,
+                }
+              : prev);
+        };
+
+        const login = await startKimiLogin(label ? label : undefined);
+        const initialAuthUrl = takeNextAuthUrlToOpen(login.auth_url, new Set<string>());
+        if (initialAuthUrl) {
+          updateKimiAuthUrlStatus(initialAuthUrl);
+        }
+        setHarnessAuthModal((prev) =>
+          prev
+            ? {
+                ...prev,
+                subscription_status: initialAuthUrl
+                  ? prev.subscription_status
+                  : "Waiting for Kimi sign-in to complete in your browser...",
+              }
+            : prev);
+        const outcome = await waitForKimiLoginOutcome(login.login_id, async (authUrl) => {
+          updateKimiAuthUrlStatus(authUrl);
+        }, {
+          openedAuthUrl: initialAuthUrl,
         });
-        setKimiAccounts(next);
-        await selectSubscriptionSourceIfSupported(modal.provider_id);
-        closeHarnessAuthModal();
+        await refreshKimiAccounts();
+        if (outcome.status === "success") {
+          await onSelectProviderSource("kimi", "subscription", null);
+          closeHarnessAuthModal();
+          return;
+        }
+        if (outcome.error && outcome.error.trim()) {
+          setProviderError(outcome.error);
+        }
+        if (outcome.status === "failed") {
+          const failureMessage = outcome.error?.trim() || "Sign-in failed. Retry.";
+          setHarnessAuthModal((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  subscription_status: failureMessage,
+                }
+              : prev);
+          return;
+        }
+        if (outcome.status === "timeout") {
+          const timeoutMessage =
+            outcome.error?.trim() || "Timed out waiting for Kimi sign-in completion. Retry.";
+          setHarnessAuthModal((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  subscription_status: timeoutMessage,
+                }
+              : prev);
+          return;
+        }
+        setHarnessAuthModal((prev) =>
+          prev
+            ? {
+                ...prev,
+                subscription_status:
+                  "Still waiting for completion. Keep this dialog open or retry.",
+              }
+            : prev);
         return;
       }
 
@@ -1115,10 +1200,12 @@ export function useHarnessAuthenticationController({
     refreshClaudeAccounts,
     refreshCodexAccounts,
     refreshGeminiAccounts,
+    refreshKimiAccounts,
     selectSubscriptionSourceIfSupported,
     waitForClaudeLoginOutcome,
     waitForCodexLoginOutcome,
     waitForGeminiLoginOutcome,
+    waitForKimiLoginOutcome,
     workspaceId,
   ]);
 

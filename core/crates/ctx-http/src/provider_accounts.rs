@@ -347,6 +347,18 @@ pub struct GeminiLoginStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KimiLoginStatus {
+    pub login_id: String,
+    #[serde(default)]
+    pub auth_url: Option<String>,
+    pub status: String,
+    #[serde(default)]
+    pub account_id: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodexHostImportProbe {
     pub available: bool,
     #[serde(default)]
@@ -1600,14 +1612,17 @@ pub async fn remove_kimi_account(
 }
 
 pub fn kimi_env_for_account(data_root: &Path, account_id: &str) -> HashMap<String, String> {
+    let home = kimi_account_home(data_root, account_id);
+    let share_dir = home.join(".kimi");
+    let home_value = home.to_string_lossy().to_string();
     let mut env = HashMap::new();
     env.insert(
         KIMI_SHARE_DIR_ENV.to_string(),
-        kimi_account_home(data_root, account_id)
-            .join(".kimi")
-            .to_string_lossy()
-            .to_string(),
+        share_dir.to_string_lossy().to_string(),
     );
+    // Kimi CLI resolves config/credentials from Path.home()/.kimi. Keep it isolated.
+    env.insert("HOME".to_string(), home_value.clone());
+    env.insert("USERPROFILE".to_string(), home_value);
     env
 }
 
@@ -3824,6 +3839,8 @@ mod tests {
         let share_dir = env
             .get(KIMI_SHARE_DIR_ENV)
             .expect("KIMI_SHARE_DIR should be set");
+        let home_dir = env.get("HOME").expect("HOME should be set for Kimi");
+        assert_eq!(Path::new(home_dir).join(".kimi"), PathBuf::from(share_dir));
         assert!(share_dir.contains(&active_id));
         let credentials_path = Path::new(share_dir)
             .join("credentials")
@@ -4277,6 +4294,7 @@ mod tests {
             .await
             .unwrap();
         assert!(kimi_env.contains_key(KIMI_SHARE_DIR_ENV));
+        assert!(kimi_env.contains_key("HOME"));
         let copilot_env = subscription_env_for_active_account(root, "copilot")
             .await
             .unwrap();
@@ -4364,7 +4382,10 @@ mod tests {
                 .await
                 .unwrap();
         let kimi_share = PathBuf::from(kimi_env.get(KIMI_SHARE_DIR_ENV).unwrap());
+        let kimi_home = PathBuf::from(kimi_env.get("HOME").unwrap());
         assert!(kimi_share.starts_with(runtime_root));
+        assert!(kimi_home.starts_with(runtime_root));
+        assert_eq!(kimi_home.join(".kimi"), kimi_share);
 
         let kiro_env =
             subscription_env_for_active_account_with_runtime_root(root, runtime_root, "kiro")

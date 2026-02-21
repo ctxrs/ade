@@ -235,6 +235,7 @@ PYTHON_BUILD_TAG="$(read_const PYTHON_BUILD_TAG "$INSTALLER_RS")"
 CLAUDE_CLI_PACKAGE="${CTX_BUNDLE_CLAUDE_CLI_PACKAGE:-@anthropic-ai/claude-code}"
 CLAUDE_CLI_VERSION="${CTX_BUNDLE_CLAUDE_CLI_VERSION:-2.1.47}"
 CLAUDE_CLI_ENTRYPOINT="${CTX_BUNDLE_CLAUDE_CLI_ENTRYPOINT:-cli.js}"
+KIMI_CLI_VERSION="${CTX_BUNDLE_KIMI_CLI_VERSION:-1.12.0}"
 PODMAN_VERSION="${PODMAN_VERSION:-}"
 PODMAN_ARCHIVE_URL="${PODMAN_ARCHIVE_URL:-}"
 PODMAN_ARCHIVE_PATH="${PODMAN_ARCHIVE_PATH:-}"
@@ -400,12 +401,13 @@ USE_ACP_SHIMS="${CTX_BUNDLE_USE_ACP_SHIMS:-1}"
 # The bridge is required for bundles; build it when missing unless explicitly disabled.
 BUILD_LOCAL_BRIDGE="${CTX_BUNDLE_BUILD_LOCAL_BRIDGE:-1}"
 INCLUDE_BRIDGE="${CTX_BUNDLE_INCLUDE_BRIDGE:-1}"
+# Kimi must use the real CLI runtime so `kimi login --json` can emit OAuth URLs.
+# Do not route it through ACP shim wrappers.
 ACP_PROVIDER_IDS=(
   qwen
   opencode
   mistral
   goose
-  kimi
   cagent
   auggie
   continue
@@ -2569,6 +2571,9 @@ PY
       if is_truthy "$skip_runtimes_raw"; then
         log "error: cannot bundle python provider $provider_id when CTX_BUNDLE_SKIP_RUNTIMES=1"
         exit 5
+      fi
+      if [[ "$provider_id" == "kimi" && "$package" == "kimi-cli" ]]; then
+        version="$KIMI_CLI_VERSION"
       fi
       if [[ -z "$version" || -z "$package" || -z "$entrypoint" ]]; then
         log "error: missing python metadata for $provider_id"

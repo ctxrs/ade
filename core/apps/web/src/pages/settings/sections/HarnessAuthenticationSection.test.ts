@@ -82,9 +82,20 @@ describe("HarnessAuthenticationSection Claude fallback submit", () => {
     expect(subscriptionPrimaryActionLabel(modal)).toBe("Start sign-in");
   });
 
-  it("auto-starts browser sign-in from stage 1 for codex, claude, and gemini", () => {
+  it("shows Kimi subscription action as sign in with Kimi when idle", () => {
+    const modal = baseModal({
+      provider_id: "kimi",
+      subscription_busy: false,
+      subscription_token: "",
+    });
+
+    expect(subscriptionPrimaryActionLabel(modal)).toBe("Sign in with Kimi");
+  });
+
+  it("auto-starts browser sign-in from stage 1 for codex, claude, gemini, and kimi", () => {
     expect(shouldAutoStartSubscriptionFlow("codex")).toBe(true);
     expect(shouldAutoStartSubscriptionFlow("claude-crp")).toBe(true);
     expect(shouldAutoStartSubscriptionFlow("gemini")).toBe(true);
+    expect(shouldAutoStartSubscriptionFlow("kimi")).toBe(true);
   });
 });
