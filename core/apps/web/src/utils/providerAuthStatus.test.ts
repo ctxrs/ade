@@ -13,6 +13,11 @@ function baseOptions(): ProviderOptions {
 }
 
 describe("hasConfiguredHarnessAuth", () => {
+  it("treats fake provider as configured without auth state", () => {
+    expect(hasConfiguredHarnessAuth("fake", undefined)).toBe(true);
+    expect(hasConfiguredHarnessAuth("fake", baseOptions())).toBe(true);
+  });
+
   it("returns true when has_active_auth is true", () => {
     const options = { ...baseOptions(), has_active_auth: true };
     expect(hasConfiguredHarnessAuth("codex", options)).toBe(true);
