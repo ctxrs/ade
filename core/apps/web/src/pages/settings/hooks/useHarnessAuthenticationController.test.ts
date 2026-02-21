@@ -4,6 +4,7 @@ import {
   shouldCompleteClaudeLoginWithCallbackCode,
   shouldOpenPolledClaudeAuthUrl,
   takeNextClaudeAuthUrlToOpen,
+  toErrorObject,
 } from "./useHarnessAuthenticationController";
 
 describe("takeNextClaudeAuthUrlToOpen", () => {
@@ -191,5 +192,18 @@ describe("shouldOpenPolledClaudeAuthUrl", () => {
       polledAuthUrl: "https://claude.ai/oauth/authorize?code=same",
       nowMs: 9_999,
     })).toBe(false);
+  });
+});
+
+describe("toErrorObject", () => {
+  it("returns an existing Error instance unchanged", () => {
+    const err = new Error("selection failed");
+    expect(toErrorObject(err)).toBe(err);
+  });
+
+  it("wraps non-Error throwables into Error", () => {
+    const wrapped = toErrorObject("selection failed");
+    expect(wrapped).toBeInstanceOf(Error);
+    expect(wrapped.message).toBe("selection failed");
   });
 });

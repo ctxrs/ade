@@ -174,6 +174,11 @@ const messageFromError = (error: unknown): string => {
   return String(error);
 };
 
+export const toErrorObject = (error: unknown): Error => {
+  if (error instanceof Error) return error;
+  return new Error(String(error));
+};
+
 const looksLikeClaudeSetupToken = (value: string): boolean => value.trim().startsWith("sk-ant-oat");
 const CLAUDE_POLLED_AUTH_URL_OPEN_GRACE_MS = 5000;
 const GEMINI_LOGIN_POLL_ATTEMPTS = 90;
@@ -567,6 +572,7 @@ export function useHarnessAuthenticationController({
         await refreshBootstrapAfterMutation();
       } catch (error) {
         setProviderError(messageFromError(error));
+        throw toErrorObject(error);
       } finally {
         setProviderHarnessBusyForProvider(providerId, false);
       }
@@ -1349,28 +1355,32 @@ export function useHarnessAuthenticationController({
   }, [refreshBootstrapAfterMutation]);
 
   const onSelectHarnessAuthRow = useCallback(async (providerId: string, row: HarnessAuthRow) => {
-    if (!row.selectable) return;
-    if (row.kind === "api_key" && row.endpoint_id) {
-      await onSelectProviderSource(providerId, "endpoint", row.endpoint_id);
-      return;
-    }
-    if (providerId === "codex" && row.account_id) {
-      await onCodexSetActive(row.account_id);
-    } else if (providerId === "claude-crp" && row.account_id) {
-      await onClaudeSetActive(row.account_id);
-    } else if (providerId === "gemini" && row.account_id) {
-      await onGeminiSetActive(row.account_id);
-    } else if (providerId === "kimi" && row.account_id) {
-      await onKimiSetActive(row.account_id);
-    } else if (providerId === "copilot" && row.account_id) {
-      await onCopilotSetActive(row.account_id);
-    } else if (providerId === "kiro" && row.account_id) {
-      await onKiroSetActive(row.account_id);
-    } else if (providerId === "cursor" && row.account_id) {
-      await onCursorSetActive(row.account_id);
-    }
-    if (supportsHarnessEndpointConfig(providerId)) {
-      await onSelectProviderSource(providerId, "subscription", null);
+    try {
+      if (!row.selectable) return;
+      if (row.kind === "api_key" && row.endpoint_id) {
+        await onSelectProviderSource(providerId, "endpoint", row.endpoint_id);
+        return;
+      }
+      if (providerId === "codex" && row.account_id) {
+        await onCodexSetActive(row.account_id);
+      } else if (providerId === "claude-crp" && row.account_id) {
+        await onClaudeSetActive(row.account_id);
+      } else if (providerId === "gemini" && row.account_id) {
+        await onGeminiSetActive(row.account_id);
+      } else if (providerId === "kimi" && row.account_id) {
+        await onKimiSetActive(row.account_id);
+      } else if (providerId === "copilot" && row.account_id) {
+        await onCopilotSetActive(row.account_id);
+      } else if (providerId === "kiro" && row.account_id) {
+        await onKiroSetActive(row.account_id);
+      } else if (providerId === "cursor" && row.account_id) {
+        await onCursorSetActive(row.account_id);
+      }
+      if (supportsHarnessEndpointConfig(providerId)) {
+        await onSelectProviderSource(providerId, "subscription", null);
+      }
+    } catch (error) {
+      setProviderError(messageFromError(error));
     }
   }, [
     onClaudeSetActive,
