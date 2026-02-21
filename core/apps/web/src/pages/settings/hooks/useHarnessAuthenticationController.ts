@@ -148,7 +148,6 @@ const HARNESSES_WITH_ENDPOINT_CONFIG = new Set([
   "openhands",
   "copilot",
   "kiro",
-  "rovo",
   "auggie",
   "pi",
 ]);

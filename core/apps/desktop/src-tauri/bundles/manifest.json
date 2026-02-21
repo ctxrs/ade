@@ -324,16 +324,6 @@
       "args": []
     },
     {
-      "id": "rovo",
-      "protocol": "acp",
-      "version": "local",
-      "os": "macos",
-      "arch": "aarch64",
-      "sha256": "e2e2c5eb7be8e360a2fd6518cf7ec1c82510293ca0ebd96cf1a7cdc552503756",
-      "command": "providers/rovo/macos/aarch64/rovo-acp.sh",
-      "args": []
-    },
-    {
       "id": "swe-agent",
       "protocol": "acp",
       "version": "local",

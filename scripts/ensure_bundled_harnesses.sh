@@ -416,7 +416,6 @@ ACP_PROVIDER_IDS=(
   droid
   copilot
   kiro
-  rovo
   cody
 )
 
@@ -437,7 +436,6 @@ acp_provider_command_candidates() {
     droid) printf '%s' "droid-acp droid" ;;
     copilot) printf '%s' "copilot-cli-acp github-copilot-cli copilot" ;;
     kiro) printf '%s' "kiro-acp kiro" ;;
-    rovo) printf '%s' "rovo-dev-acp rovodev rovo" ;;
     cody) printf '%s' "cody-acp cody" ;;
     *) printf '%s' "${1:-}" ;;
   esac
@@ -513,7 +511,6 @@ local_adapter_dir() {
     droid) printf '%s' "droid-acp" ;;
     copilot) printf '%s' "copilot-cli-acp" ;;
     kiro) printf '%s' "kiro-acp" ;;
-    rovo) printf '%s' "rovo-dev-acp" ;;
     cody) printf '%s' "cody-acp" ;;
     *) printf '%s' "" ;;
   esac
@@ -524,7 +521,6 @@ local_adapter_bin() {
     droid) printf '%s' "droid-acp" ;;
     copilot) printf '%s' "copilot-cli-acp" ;;
     kiro) printf '%s' "kiro-acp" ;;
-    rovo) printf '%s' "rovo-dev-acp" ;;
     cody) printf '%s' "cody-acp" ;;
     *) printf '%s' "" ;;
   esac
@@ -1264,7 +1260,7 @@ build_local_adapters() {
   done
 
   local id
-  for id in droid copilot kiro rovo cody; do
+  for id in droid copilot kiro cody; do
     local dir
     dir="$(local_adapter_dir "$id")"
     local bin
@@ -2268,7 +2264,7 @@ if ! is_falsy "$LOCAL_ADAPTER_MODE"; then
   fi
 
   adapter_version_override="${CTX_BUNDLE_ADAPTER_VERSION:-}"
-  for id in amp pi droid copilot kiro rovo cody; do
+  for id in amp pi droid copilot kiro cody; do
     if ! provider_selected_for_bundle "$id"; then
       continue
     fi

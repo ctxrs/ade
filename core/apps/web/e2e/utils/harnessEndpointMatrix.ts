@@ -24,7 +24,6 @@ export const OPENROUTER_ENDPOINT_FIRST_PASS_EXCLUDED_PROVIDER_TOKEN_ONLY = [
   "copilot",
   "kiro",
   "cursor",
-  "rovo",
   "auggie",
   "amp",
   "droid",
@@ -41,4 +40,3 @@ export const OPENROUTER_ENDPOINT_FIRST_PASS_EXCLUDED_UNSUPPORTED = [
   "aider",
   "kilo",
 ] as const;
-

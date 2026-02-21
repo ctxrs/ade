@@ -183,9 +183,7 @@ export function HarnessAuthenticationSection({
     ? '{"token":"..."}'
     : harnessAuthModal?.provider_id === "gemini"
       ? "AIza..."
-    : harnessAuthModal?.provider_id === "rovo"
-      ? "Atlassian API token"
-      : harnessAuthModal?.provider_id === "auggie"
+    : harnessAuthModal?.provider_id === "auggie"
         ? "Auggie session token"
         : "sk-...";
   const lastModalProviderIdRef = useRef<string | null>(null);

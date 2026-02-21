@@ -754,7 +754,6 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
         "droid",
         "copilot",
         "kiro",
-        "rovo",
         "cody",
         "continue",
         "cline",

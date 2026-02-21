@@ -191,7 +191,6 @@ async fn provider_scenarios_offline_crp_fixtures() {
         "droid",
         "copilot",
         "kiro",
-        "rovo",
         "cody",
         "continue",
         "cline",

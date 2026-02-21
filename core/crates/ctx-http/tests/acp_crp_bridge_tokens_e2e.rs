@@ -92,12 +92,6 @@ const PROVIDERS: &[ProviderSpec] = &[
         opencode_config: false,
     },
     ProviderSpec {
-        id: "rovo",
-        fallback_cmd: "rovo-dev-acp",
-        fallback_args: &[],
-        opencode_config: false,
-    },
-    ProviderSpec {
         id: "cody",
         fallback_cmd: "cody-acp",
         fallback_args: &[],
@@ -571,9 +565,6 @@ fn provider_skip_reason(provider: ProviderSpec) -> Option<String> {
         if !allow {
             return Some("requires Kiro CLI login; set KIRO_TOKEN_TESTS=1 to attempt".to_string());
         }
-    }
-    if provider.id == "rovo" {
-        return Some("requires Atlassian auth; not OpenRouter-compatible".to_string());
     }
     if provider.id == "cody" {
         let allow = env_truthy("CODY_TOKEN_TESTS");

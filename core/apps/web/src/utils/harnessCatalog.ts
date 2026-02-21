@@ -1,5 +1,4 @@
 import ampLogo from "../assets/emdash-logos/ampcode.png";
-import atlassianLogo from "../assets/emdash-logos/atlassian.png";
 import augmentLogo from "../assets/emdash-logos/augmentcode.png";
 import claudeLogo from "../assets/emdash-logos/claude.png";
 import clineLogo from "../assets/emdash-logos/cline.png";
@@ -47,7 +46,6 @@ export const HARNESS_CATALOG: HarnessCatalogEntry[] = [
   { id: "goose", label: "Goose", logoSrc: gooseLogo },
   { id: "kimi", label: "Kimi", logoSrc: kimiLogo },
   { id: "kiro", label: "Kiro", logoSrc: kiroLogo },
-  { id: "rovo", label: "Rovo Dev", logoSrc: atlassianLogo },
 
   // Additional harnesses from specs/21_harness_providers.md
   { id: "continue", label: "Continue", logoSrc: continueLogo, invertInLight: true },

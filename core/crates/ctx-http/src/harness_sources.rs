@@ -28,7 +28,6 @@ const PROVIDER_SWE_AGENT: &str = "swe-agent";
 const PROVIDER_OPENHANDS: &str = "openhands";
 const PROVIDER_COPILOT: &str = "copilot";
 const PROVIDER_KIRO: &str = "kiro";
-const PROVIDER_ROVO: &str = "rovo";
 const PROVIDER_AUGGIE: &str = "auggie";
 const PROVIDER_PI: &str = "pi";
 const PROVIDER_CURSOR: &str = "cursor";
@@ -400,7 +399,6 @@ fn normalize_provider_id(provider_id: &str) -> Option<&'static str> {
         PROVIDER_OPENHANDS => Some(PROVIDER_OPENHANDS),
         PROVIDER_COPILOT => Some(PROVIDER_COPILOT),
         PROVIDER_KIRO => Some(PROVIDER_KIRO),
-        PROVIDER_ROVO => Some(PROVIDER_ROVO),
         PROVIDER_AUGGIE => Some(PROVIDER_AUGGIE),
         PROVIDER_PI => Some(PROVIDER_PI),
         PROVIDER_CURSOR => Some(PROVIDER_CURSOR),
@@ -429,7 +427,6 @@ fn provider_supports_harness_endpoint(canonical_provider_id: &str) -> bool {
             | PROVIDER_OPENHANDS
             | PROVIDER_COPILOT
             | PROVIDER_KIRO
-            | PROVIDER_ROVO
             | PROVIDER_AUGGIE
             | PROVIDER_PI
     )
@@ -459,7 +456,6 @@ pub fn default_shape_for_provider(provider_id: &str) -> Option<HarnessApiShape> 
         Some(PROVIDER_OPENHANDS) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_COPILOT) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_KIRO) => Some(HarnessApiShape::OpenaiResponses),
-        Some(PROVIDER_ROVO) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_AUGGIE) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_PI) => Some(HarnessApiShape::OpenaiResponses),
         _ => None,
@@ -509,7 +505,7 @@ pub fn ensure_shape_compatible(provider_id: &str, shape: HarnessApiShape) -> Res
         PROVIDER_QWEN | PROVIDER_OPENCODE | PROVIDER_MISTRAL | PROVIDER_GOOSE | PROVIDER_CAGENT
         | PROVIDER_AMP | PROVIDER_DROID | PROVIDER_CODY | PROVIDER_CONTINUE | PROVIDER_CLINE
         | PROVIDER_SWE_AGENT | PROVIDER_OPENHANDS | PROVIDER_COPILOT | PROVIDER_KIRO
-        | PROVIDER_ROVO | PROVIDER_AUGGIE | PROVIDER_PI => {
+        | PROVIDER_AUGGIE | PROVIDER_PI => {
             if shape != HarnessApiShape::OpenaiResponses {
                 anyhow::bail!(
                     "{} requires api_shape=openai_responses; found {}",
@@ -1739,12 +1735,14 @@ async fn resolve_internal(
             ensure_safe_endpoint_id(&endpoint.id)?;
             let cline_home_root = runtime_data_root.unwrap_or(data_root);
             let cline_home = cline_endpoint_home(cline_home_root, &endpoint.id);
-            tokio::fs::create_dir_all(&cline_home).await.with_context(|| {
-                format!(
-                    "creating cline endpoint home {}",
-                    cline_home.to_string_lossy()
-                )
-            })?;
+            tokio::fs::create_dir_all(&cline_home)
+                .await
+                .with_context(|| {
+                    format!(
+                        "creating cline endpoint home {}",
+                        cline_home.to_string_lossy()
+                    )
+                })?;
             let cline_home_str = cline_home.to_string_lossy().to_string();
             env.insert("CLINE_DIR".to_string(), cline_home_str.clone());
             env.insert("HOME".to_string(), cline_home_str);
@@ -1917,11 +1915,6 @@ async fn resolve_internal(
                 "XDG_CACHE_HOME".to_string(),
                 kiro_home.join(".cache").to_string_lossy().to_string(),
             );
-        }
-        PROVIDER_ROVO => {
-            ensure_shape_compatible(canonical, endpoint.api_shape)?;
-            env.insert("ATLASSIAN_API_TOKEN".to_string(), api_key.clone());
-            env.insert("ROVO_DEV_API_TOKEN".to_string(), api_key);
         }
         PROVIDER_AUGGIE => {
             ensure_shape_compatible(canonical, endpoint.api_shape)?;
@@ -2651,10 +2644,6 @@ mod tests {
                 &["HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"],
             ),
             (
-                PROVIDER_ROVO,
-                &["ATLASSIAN_API_TOKEN", "ROVO_DEV_API_TOKEN"],
-            ),
-            (
                 PROVIDER_AUGGIE,
                 &["AUGMENT_SESSION_AUTH", "AUGMENT_API_TOKEN"],
             ),
@@ -2679,7 +2668,6 @@ mod tests {
                     name: format!("{provider_id} endpoint"),
                     base_url: if *provider_id == PROVIDER_COPILOT
                         || *provider_id == PROVIDER_KIRO
-                        || *provider_id == PROVIDER_ROVO
                         || *provider_id == PROVIDER_AUGGIE
                         || *provider_id == PROVIDER_PI
                     {
@@ -2689,7 +2677,6 @@ mod tests {
                     },
                     api_shape: if *provider_id == PROVIDER_COPILOT
                         || *provider_id == PROVIDER_KIRO
-                        || *provider_id == PROVIDER_ROVO
                         || *provider_id == PROVIDER_AUGGIE
                         || *provider_id == PROVIDER_PI
                     {
