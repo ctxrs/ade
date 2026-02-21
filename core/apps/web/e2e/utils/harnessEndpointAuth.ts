@@ -196,15 +196,49 @@ export async function selectHarnessBySearch(
     await expect(rowButton).toBeEnabled({ timeout: 20_000 });
     await rowButton.click();
 
+    const selectedAfterClick = await expect
+      .poll(
+        async () => isSelected(),
+        { timeout: 1_500, intervals: [100, 200, 400] },
+      )
+      .toBe(true)
+      .then(() => true)
+      .catch(() => false);
+    if (selectedAfterClick) return;
+
     const modal = page.locator(".settings-harness-modal");
-    const modalVisible = await modal.isVisible().catch(() => false);
+    const modalVisible = await modal
+      .waitFor({ state: "visible", timeout: 1_500 })
+      .then(() => true)
+      .catch(() => false);
     if (modalVisible) {
       const subscriptionButton = modal.getByRole("button", { name: "Subscription" }).first();
-      if ((await subscriptionButton.count()) > 0 && (await subscriptionButton.isEnabled().catch(() => false))) {
+      const hasSubscriptionChoice =
+        (await subscriptionButton.count()) > 0 && (await subscriptionButton.isEnabled().catch(() => false));
+      if (hasSubscriptionChoice) {
         await subscriptionButton.click();
+        const closedAfterChoose = await modal
+          .waitFor({ state: "hidden", timeout: 1_500 })
+          .then(() => true)
+          .catch(() => false);
+        if (closedAfterChoose) {
+          if (await isSelected()) return;
+          await page.waitForTimeout(300);
+          continue;
+        }
+      }
+
+      const saveSubscriptionButton = modal.getByRole("button", { name: /Save subscription/i }).first();
+      if (
+        (await saveSubscriptionButton.count()) > 0
+        && (await saveSubscriptionButton.isEnabled().catch(() => false))
+      ) {
+        await saveSubscriptionButton.click();
         await expect(modal).toBeHidden({ timeout: 10_000 });
-      } else {
+      } else if (!hasSubscriptionChoice) {
         throw new Error(`harness auth modal blocked '${searchTerm}' selection`);
+      } else {
+        throw new Error(`harness auth modal requires extra input for '${searchTerm}'`);
       }
     }
 
