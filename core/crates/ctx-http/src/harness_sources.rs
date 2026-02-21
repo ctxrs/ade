@@ -1706,12 +1706,14 @@ async fn resolve_internal(
             ensure_safe_endpoint_id(&endpoint.id)?;
             let cline_home_root = runtime_data_root.unwrap_or(data_root);
             let cline_home = cline_endpoint_home(cline_home_root, &endpoint.id);
-            tokio::fs::create_dir_all(&cline_home).await.with_context(|| {
-                format!(
-                    "creating cline endpoint home {}",
-                    cline_home.to_string_lossy()
-                )
-            })?;
+            tokio::fs::create_dir_all(&cline_home)
+                .await
+                .with_context(|| {
+                    format!(
+                        "creating cline endpoint home {}",
+                        cline_home.to_string_lossy()
+                    )
+                })?;
             let cline_home_str = cline_home.to_string_lossy().to_string();
             env.insert("CLINE_DIR".to_string(), cline_home_str.clone());
             env.insert("HOME".to_string(), cline_home_str);
@@ -1849,6 +1851,7 @@ async fn resolve_internal(
         }
         PROVIDER_COPILOT => {
             ensure_shape_compatible(canonical, endpoint.api_shape)?;
+            env.insert("COPILOT_GITHUB_TOKEN".to_string(), api_key.clone());
             env.insert("GH_TOKEN".to_string(), api_key.clone());
             env.insert("GITHUB_TOKEN".to_string(), api_key);
         }
@@ -2560,7 +2563,10 @@ mod tests {
             (PROVIDER_DROID, &["FACTORY_API_KEY"]),
             (PROVIDER_CODY, &["SRC_ACCESS_TOKEN", "SRC_ENDPOINT"]),
             (PROVIDER_CONTINUE, &["CONTINUE_API_KEY"]),
-            (PROVIDER_COPILOT, &["GH_TOKEN", "GITHUB_TOKEN"]),
+            (
+                PROVIDER_COPILOT,
+                &["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"],
+            ),
             (
                 PROVIDER_KIRO,
                 &["HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"],

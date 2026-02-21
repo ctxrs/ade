@@ -323,6 +323,7 @@ export type KimiAccountsResponse = {
 export type CopilotAccountsResponse = {
   active_account_id: string | null;
   accounts: CopilotAccountEntry[];
+  logins: CopilotLoginStatus[];
 };
 
 export type KiroAccountsResponse = {
@@ -390,6 +391,19 @@ export type AmpLoginStatus = {
 };
 
 export type AmpLoginStartResponse = {
+  login_id: string;
+  auth_url?: string | null;
+};
+
+export type CopilotLoginStatus = {
+  login_id: string;
+  auth_url?: string | null;
+  status: string;
+  account_id?: string | null;
+  error?: string | null;
+};
+
+export type CopilotLoginStartResponse = {
   login_id: string;
   auth_url?: string | null;
 };
@@ -619,6 +633,15 @@ export const deleteKimiAccount = (accountId: string) =>
 
 export const listCopilotAccounts = () =>
   apiAny<CopilotAccountsResponse>(`/api/providers/copilot/accounts`);
+
+export const startCopilotLogin = (label?: string) =>
+  apiAny<CopilotLoginStartResponse>(`/api/providers/copilot/accounts/login/start`, {
+    method: "POST",
+    body: JSON.stringify(label ? { label } : {}),
+  });
+
+export const getCopilotLogin = (loginId: string) =>
+  apiAny<CopilotLoginStatus>(`/api/providers/copilot/accounts/login/${loginId}`);
 
 export const upsertCopilotAccount = (
   token: string,

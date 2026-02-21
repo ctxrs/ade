@@ -62,6 +62,20 @@ struct GeminiLoginStatusResponse {
     error: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct CopilotLoginStartResponse {
+    login_id: String,
+    auth_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CopilotLoginStatusResponse {
+    status: String,
+    account_id: Option<String>,
+    auth_url: Option<String>,
+    error: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 enum GeminiLoginFixture {
     Success {
@@ -323,6 +337,69 @@ async fn write_mock_claude_runtime(
     script_path
 }
 
+async fn write_mock_gh_runtime(
+    data_root: &std::path::Path,
+    script_contents: &str,
+) -> std::path::PathBuf {
+    let script_path = data_root.join("mock-gh");
+    tokio::fs::write(&script_path, script_contents)
+        .await
+        .expect("write mock gh script");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&script_path)
+            .expect("mock gh metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script_path, perms).expect("set mock gh permissions");
+    }
+    script_path
+}
+
+async fn write_mock_copilot_runtime(
+    data_root: &std::path::Path,
+    script_contents: &str,
+) -> std::path::PathBuf {
+    let script_path = data_root.join("mock-copilot");
+    tokio::fs::write(&script_path, script_contents)
+        .await
+        .expect("write mock copilot script");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&script_path)
+            .expect("mock copilot metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script_path, perms).expect("set mock copilot permissions");
+    }
+    script_path
+}
+
+struct ScopedEnvVar {
+    key: &'static str,
+    previous: Option<String>,
+}
+
+impl ScopedEnvVar {
+    fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        Self { key, previous }
+    }
+}
+
+impl Drop for ScopedEnvVar {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous.as_ref() {
+            std::env::set_var(self.key, previous);
+        } else {
+            std::env::remove_var(self.key);
+        }
+    }
+}
+
 async fn poll_claude_login_status(
     server: &common::TestServer,
     login_id: &str,
@@ -376,6 +453,34 @@ async fn poll_gemini_login_status(
         }
         if Instant::now() >= deadline {
             panic!("gemini login did not complete in time");
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+async fn poll_copilot_login_status(
+    server: &common::TestServer,
+    login_id: &str,
+) -> CopilotLoginStatusResponse {
+    let status_url = format!(
+        "{}/api/providers/copilot/accounts/login/{}",
+        server.base_url, login_id
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let resp = server
+            .client
+            .get(&status_url)
+            .send()
+            .await
+            .expect("copilot status request");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: CopilotLoginStatusResponse = resp.json().await.expect("copilot status body");
+        if body.status != "pending" {
+            return body;
+        }
+        if Instant::now() >= deadline {
+            panic!("copilot login did not complete in time");
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
@@ -1091,6 +1196,94 @@ async fn copilot_subscription_accounts_crud_round_trip() {
         }),
     )
     .await;
+}
+
+#[tokio::test]
+async fn copilot_login_start_and_status_success_via_mock_copilot() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let server = common::spawn_http_server(common::router(state)).await;
+
+    let copilot_script = write_mock_copilot_runtime(
+        data_dir.path(),
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "login" ]]; then
+  if [[ "${BROWSER:-}" != "none" ]]; then
+    echo "expected BROWSER=none, got '${BROWSER:-}'" >&2
+    exit 1
+  fi
+  echo "! First copy your one-time code: B6E7-D092"
+  echo "Open this URL to continue in your web browser: https://github.com/login/device"
+  exit 0
+fi
+echo "unexpected copilot args: $*" >&2
+exit 1
+"#,
+    )
+    .await;
+    let _copilot_path_guard = ScopedEnvVar::set("CTX_COPILOT_CLI_PATH", copilot_script.as_os_str());
+
+    let gh_script = write_mock_gh_runtime(
+        data_dir.path(),
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "auth" && "${2:-}" == "token" ]]; then
+  echo "gho_mock_copilot_token"
+  exit 0
+fi
+echo "unexpected gh args: $*" >&2
+exit 1
+"#,
+    )
+    .await;
+    let _gh_path_guard = ScopedEnvVar::set("CTX_COPILOT_GH_PATH", gh_script.as_os_str());
+
+    let start_url = format!(
+        "{}/api/providers/copilot/accounts/login/start",
+        server.base_url
+    );
+    let start_resp = server
+        .client
+        .post(start_url)
+        .json(&json!({
+            "label": "Copilot OAuth"
+        }))
+        .send()
+        .await
+        .expect("start copilot login request");
+    assert_eq!(start_resp.status(), StatusCode::OK);
+    let start_body: CopilotLoginStartResponse = start_resp.json().await.expect("start body");
+    assert!(!start_body.login_id.is_empty());
+    assert!(start_body.auth_url.is_none());
+
+    let status = poll_copilot_login_status(&server, &start_body.login_id).await;
+    assert_eq!(status.status, "success");
+    assert!(status.account_id.is_some());
+    assert!(status.error.is_none());
+    assert_eq!(
+        status.auth_url.as_deref(),
+        Some("https://github.com/login/device?user_code=B6E7-D092")
+    );
+
+    let accounts_url = format!("{}/api/providers/copilot/accounts", server.base_url);
+    let accounts_resp = server
+        .client
+        .get(accounts_url)
+        .send()
+        .await
+        .expect("copilot accounts request");
+    assert_eq!(accounts_resp.status(), StatusCode::OK);
+    let accounts: SubscriptionAccountsResponse = accounts_resp.json().await.expect("accounts body");
+    assert_eq!(accounts.accounts.len(), 1);
+    assert_eq!(accounts.active_account_id, status.account_id);
+    assert_eq!(accounts.accounts[0].label.as_deref(), Some("Copilot OAuth"));
 }
 
 #[tokio::test]

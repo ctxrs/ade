@@ -414,6 +414,14 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             get(list_copilot_accounts).post(upsert_copilot_account),
         )
         .route(
+            "/api/providers/copilot/accounts/login/start",
+            post(start_copilot_login),
+        )
+        .route(
+            "/api/providers/copilot/accounts/login/:id",
+            get(get_copilot_login),
+        )
+        .route(
             "/api/providers/copilot/active-account",
             put(set_copilot_active_account),
         )

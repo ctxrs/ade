@@ -383,6 +383,18 @@ pub struct AmpLoginStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CopilotLoginStatus {
+    pub login_id: String,
+    #[serde(default)]
+    pub auth_url: Option<String>,
+    pub status: String,
+    #[serde(default)]
+    pub account_id: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodexHostImportProbe {
     pub available: bool,
     #[serde(default)]
@@ -1872,6 +1884,7 @@ pub fn copilot_env_for_account(
     token: &str,
 ) -> HashMap<String, String> {
     let mut env = HashMap::new();
+    env.insert("COPILOT_GITHUB_TOKEN".to_string(), token.to_string());
     env.insert("GH_TOKEN".to_string(), token.to_string());
     env.insert("GITHUB_TOKEN".to_string(), token.to_string());
     env
@@ -4213,6 +4226,10 @@ mod tests {
         .unwrap();
         let active_id = registry.active_account_id.clone().expect("active account");
         let env = copilot_env_for_active_account(root).await.unwrap();
+        assert_eq!(
+            env.get("COPILOT_GITHUB_TOKEN"),
+            Some(&"ghp_abc".to_string())
+        );
         assert_eq!(env.get("GH_TOKEN"), Some(&"ghp_abc".to_string()));
         assert_eq!(env.get("GITHUB_TOKEN"), Some(&"ghp_abc".to_string()));
         assert!(copilot_account_dir(root, &active_id).exists());
@@ -4621,6 +4638,7 @@ mod tests {
         let copilot_env = subscription_env_for_active_account(root, "copilot")
             .await
             .unwrap();
+        assert!(copilot_env.contains_key("COPILOT_GITHUB_TOKEN"));
         assert!(copilot_env.contains_key("GH_TOKEN"));
         let kiro_env = subscription_env_for_active_account(root, "kiro")
             .await

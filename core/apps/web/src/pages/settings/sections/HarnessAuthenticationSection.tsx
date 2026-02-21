@@ -57,12 +57,15 @@ export function subscriptionPrimaryActionLabel(modal: HarnessAuthModalState): st
   }
   if (
     modal.provider_id === "codex"
+    || modal.provider_id === "copilot"
     || modal.provider_id === "cursor"
     || modal.provider_id === "amp"
     || modal.provider_id === "gemini"
     || (modal.provider_id === "claude-crp" && !claudeSetupTokenProvided(modal))
   ) {
-    return modal.provider_id === "gemini" ? "Sign in with Google" : "Start sign-in";
+    if (modal.provider_id === "gemini") return "Sign in with Google";
+    if (modal.provider_id === "copilot") return "Sign in with GitHub";
+    return "Start sign-in";
   }
   return "Save subscription";
 }
@@ -74,7 +77,11 @@ export function shouldSubmitClaudeFallbackOnEnter(modal: HarnessAuthModalState, 
 }
 
 export function shouldAutoStartSubscriptionFlow(providerId: string): boolean {
-  return providerId === "codex" || providerId === "claude-crp" || providerId === "gemini" || providerId === "amp";
+  return providerId === "codex"
+    || providerId === "claude-crp"
+    || providerId === "gemini"
+    || providerId === "amp"
+    || providerId === "copilot";
 }
 
 export function HarnessAuthenticationSection({
@@ -686,7 +693,7 @@ export function HarnessAuthenticationSection({
                         : harnessAuthModal.provider_id === "kimi"
                           ? "Paste Kimi credentials JSON for a managed Kimi share directory."
                           : harnessAuthModal.provider_id === "copilot"
-                            ? "Paste a GitHub token with Copilot entitlement for the managed Copilot account."
+                            ? "Sign in with GitHub to capture managed Copilot auth automatically."
                             : harnessAuthModal.provider_id === "kiro"
                               ? "Paste the Kiro auth token JSON for a managed token cache."
                               : harnessAuthModal.provider_id === "cursor"
@@ -775,37 +782,17 @@ export function HarnessAuthenticationSection({
                   </>
                 ) : null}
                 {harnessAuthModal.provider_id === "copilot" ? (
-                  <>
+                  harnessAuthModal.subscription_device_code ? (
                     <label className="settings-harness-modal-label">
-                      Label (optional)
+                      GitHub device code
                       <input
                         className="settings-control"
-                        value={harnessAuthModal.subscription_label}
-                        onChange={(e) => patchHarnessAuthModal({ subscription_label: e.target.value })}
-                        placeholder="Copilot subscription"
-                        autoFocus
+                        value={harnessAuthModal.subscription_device_code}
+                        readOnly
+                        onFocus={(event) => event.currentTarget.select()}
                       />
                     </label>
-                    <label className="settings-harness-modal-label">
-                      Email (optional)
-                      <input
-                        className="settings-control"
-                        value={harnessAuthModal.subscription_email}
-                        onChange={(e) => patchHarnessAuthModal({ subscription_email: e.target.value })}
-                        placeholder="you@example.com"
-                      />
-                    </label>
-                    <label className="settings-harness-modal-label">
-                      Token
-                      <input
-                        className="settings-control"
-                        value={harnessAuthModal.subscription_token}
-                        onChange={(e) => patchHarnessAuthModal({ subscription_token: e.target.value })}
-                        placeholder="ghp_..."
-                        type="password"
-                      />
-                    </label>
-                  </>
+                  ) : null
                 ) : null}
                 {harnessAuthModal.provider_id === "kiro" ? (
                   <>
@@ -861,6 +848,7 @@ export function HarnessAuthenticationSection({
                         subscription_auth_token_json: "",
                         subscription_oauth_creds_json: "",
                         subscription_google_accounts_json: "",
+                        subscription_device_code: null,
                       })}
                     disabled={harnessAuthModal.subscription_busy}
                   >
