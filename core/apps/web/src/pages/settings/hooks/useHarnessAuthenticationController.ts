@@ -138,7 +138,6 @@ const HARNESSES_WITH_ENDPOINT_CONFIG = new Set([
   "opencode",
   "mistral",
   "goose",
-  "cagent",
   "amp",
   "droid",
   "continue",
@@ -160,7 +159,6 @@ const HARNESSES_WITH_ENDPOINT_BASE_URL = new Set([
   "opencode",
   "mistral",
   "goose",
-  "cagent",
   "openhands",
 ]);
 

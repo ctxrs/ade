@@ -186,7 +186,6 @@ async fn provider_scenarios_offline_crp_fixtures() {
         "goose",
         "kimi",
         "auggie",
-        "cagent",
         "amp",
         "droid",
         "copilot",

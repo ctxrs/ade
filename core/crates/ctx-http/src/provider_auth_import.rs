@@ -967,7 +967,6 @@ async fn set_subscription_source_if_supported(data_root: &Path, provider_id: &st
             | "opencode"
             | "mistral"
             | "goose"
-            | "cagent"
             | "amp"
             | "droid"
             | "continue"

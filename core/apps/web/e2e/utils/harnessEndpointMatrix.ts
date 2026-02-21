@@ -12,7 +12,6 @@ export const OPENROUTER_ENDPOINT_FIRST_PASS_HARNESSES: EndpointHarnessMatrixEntr
   { providerId: "mistral", menuLabel: "Mistral Vibe", searchTerm: "mistral" },
   { providerId: "goose", menuLabel: "Goose", searchTerm: "goose" },
   { providerId: "kimi", menuLabel: "Kimi", searchTerm: "kimi" },
-  { providerId: "cagent", menuLabel: "cagent", searchTerm: "cagent" },
   { providerId: "openhands", menuLabel: "OpenHands", searchTerm: "openhands" },
 ];
 

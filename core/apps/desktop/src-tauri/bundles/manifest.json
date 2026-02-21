@@ -55,16 +55,6 @@
       "args": []
     },
     {
-      "id": "cagent",
-      "protocol": "acp",
-      "version": "local",
-      "os": "macos",
-      "arch": "aarch64",
-      "sha256": "21b7636b469bc685176931649c9044d2f1db7f5453f5b57d83ebf7c7e05f2178",
-      "command": "providers/cagent/macos/aarch64/cagent-acp.sh",
-      "args": []
-    },
-    {
       "id": "claude-cli",
       "protocol": "acp",
       "version": "2.1.47",

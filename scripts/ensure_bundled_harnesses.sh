@@ -406,7 +406,6 @@ ACP_PROVIDER_IDS=(
   mistral
   goose
   kimi
-  cagent
   auggie
   continue
   openhands
@@ -423,7 +422,6 @@ acp_provider_command_candidates() {
     mistral) printf '%s' "vibe-acp mistral mistral-vibe" ;;
     goose) printf '%s' "goose" ;;
     kimi) printf '%s' "kimi" ;;
-    cagent) printf '%s' "cagent" ;;
     auggie) printf '%s' "auggie" ;;
     continue) printf '%s' "cn continue" ;;
     openhands) printf '%s' "openhands openhands-cli" ;;
@@ -438,7 +436,7 @@ acp_provider_command_candidates() {
 acp_provider_default_args() {
   case "${1:-}" in
     qwen) printf '%s' "--experimental-acp" ;;
-    opencode|goose|cagent|continue|openhands) printf '%s' "acp" ;;
+    opencode|goose|continue|openhands) printf '%s' "acp" ;;
     kimi|auggie) printf '%s' "--acp" ;;
     *) printf '%s' "" ;;
   esac

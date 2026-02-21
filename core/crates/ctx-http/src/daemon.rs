@@ -117,21 +117,6 @@ fn runtime_command_as_agent_command(
     }))
 }
 
-fn with_cagent_config_path(
-    data_root: &Path,
-    mut cmd: installer::AgentServerCommand,
-) -> installer::AgentServerCommand {
-    let cfg_path = installer::cagent_config_path(data_root)
-        .to_string_lossy()
-        .to_string();
-    for arg in &mut cmd.args {
-        if arg == "{{cagent_config}}" {
-            *arg = cfg_path.clone();
-        }
-    }
-    cmd
-}
-
 fn acp_status_adapter_bridge_missing(provider_id: &str, msg: String) -> Arc<dyn ProviderAdapter> {
     static_status_adapter(
         provider_id,
@@ -395,8 +380,6 @@ pub(crate) fn normalize_acp_provider_command(
 ) -> installer::AgentServerCommand {
     let cmd = if provider_id == "gemini" {
         maybe_wrap_gemini_acp_command(data_root, cmd)
-    } else if provider_id == "cagent" {
-        with_cagent_config_path(data_root, cmd)
     } else {
         cmd
     };
@@ -724,21 +707,6 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
         providers.insert(provider_id.to_string(), adapter);
     }
 
-    let cagent_cfg_path = installer::cagent_config_path(&data_root);
-    if !cagent_cfg_path.exists() {
-        if let Some(parent) = cagent_cfg_path.parent() {
-            std::fs::create_dir_all(parent).ok();
-        }
-        let cfg = r#"agents:
-  root:
-    model: openai/gpt-5-mini
-    description: ctx default agent
-    instruction: |
-      You are a helpful coding assistant.
-"#;
-        std::fs::write(&cagent_cfg_path, cfg).ok();
-    }
-
     let acp_provider_ids = vec![
         "gemini",
         "qwen",
@@ -749,7 +717,6 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
         "goose",
         "kimi",
         "auggie",
-        "cagent",
         "amp",
         "droid",
         "copilot",

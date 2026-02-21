@@ -62,12 +62,6 @@ const PROVIDERS: &[ProviderSpec] = &[
         opencode_config: false,
     },
     ProviderSpec {
-        id: "cagent",
-        fallback_cmd: "cagent",
-        fallback_args: &["acp"],
-        opencode_config: false,
-    },
-    ProviderSpec {
         id: "amp",
         fallback_cmd: "amp-acp",
         fallback_args: &[],
@@ -241,29 +235,6 @@ fn resolve_data_root() -> PathBuf {
     PathBuf::from(home).join(".ctx")
 }
 
-fn ensure_cagent_config(data_root: &Path) -> Option<PathBuf> {
-    let cfg_path = data_root
-        .join("providers")
-        .join("agent-servers")
-        .join("cagent")
-        .join("config.yaml");
-    if cfg_path.exists() {
-        return Some(cfg_path);
-    }
-    if let Some(parent) = cfg_path.parent() {
-        fs::create_dir_all(parent).ok()?;
-    }
-    let cfg = r#"agents:
-  root:
-    model: openai/gpt-5-mini
-    description: ctx default agent
-    instruction: |
-      You are a helpful coding assistant.
-"#;
-    fs::write(&cfg_path, cfg).ok()?;
-    Some(cfg_path)
-}
-
 async fn load_openrouter_settings(data_root: &Path) -> Option<(String, String)> {
     let db_path = data_root.join("db").join("db.sqlite");
     let store = ctx_store::Store::open_sqlite(&db_path, None).await.ok()?;
@@ -320,30 +291,16 @@ fn format_shell_command(command: &str, args: &[String]) -> String {
 
 fn resolve_command(
     cfg: &ctx_http::installer::AgentServerConfigFile,
-    data_root: &Path,
     provider_id: &str,
     fallback_cmd: &str,
     fallback_args: &[&str],
 ) -> AgentServerCommand {
-    let mut cmd =
-        resolve_provider_command(cfg, provider_id).unwrap_or_else(|| AgentServerCommand {
-            command: fallback_cmd.to_string(),
-            args: fallback_args.iter().map(|s| s.to_string()).collect(),
-            dependencies: Vec::new(),
-            managed: None,
-        });
-    if provider_id == "cagent" {
-        let cfg_path = ensure_cagent_config(data_root);
-        if let Some(cfg_path) = cfg_path {
-            let cfg_str = cfg_path.to_string_lossy().to_string();
-            for arg in &mut cmd.args {
-                if arg == "{{cagent_config}}" {
-                    *arg = cfg_str.clone();
-                }
-            }
-        }
-    }
-    cmd
+    resolve_provider_command(cfg, provider_id).unwrap_or_else(|| AgentServerCommand {
+        command: fallback_cmd.to_string(),
+        args: fallback_args.iter().map(|s| s.to_string()).collect(),
+        dependencies: Vec::new(),
+        managed: None,
+    })
 }
 
 fn command_exists(command: &str) -> bool {
@@ -605,7 +562,7 @@ async fn acp_crp_bridge_token_providers() {
     let cfg = load_agent_server_config(&data_root)
         .await
         .unwrap_or_default();
-    let bridge_cmd = resolve_command(&cfg, &data_root, "acp-crp-bridge", "acp-crp-bridge", &[]);
+    let bridge_cmd = resolve_command(&cfg, "acp-crp-bridge", "acp-crp-bridge", &[]);
 
     if !command_exists(&bridge_cmd.command) {
         panic!("acp-crp-bridge not found: {}", bridge_cmd.command);
@@ -616,7 +573,6 @@ async fn acp_crp_bridge_token_providers() {
     for provider in PROVIDERS {
         let acp_cmd = resolve_command(
             &cfg,
-            &data_root,
             provider.id,
             provider.fallback_cmd,
             provider.fallback_args,

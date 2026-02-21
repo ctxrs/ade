@@ -18,7 +18,6 @@ const PROVIDER_QWEN: &str = "qwen";
 const PROVIDER_OPENCODE: &str = "opencode";
 const PROVIDER_MISTRAL: &str = "mistral";
 const PROVIDER_GOOSE: &str = "goose";
-const PROVIDER_CAGENT: &str = "cagent";
 const PROVIDER_AMP: &str = "amp";
 const PROVIDER_DROID: &str = "droid";
 const PROVIDER_CONTINUE: &str = "continue";
@@ -358,7 +357,6 @@ fn normalize_provider_id(provider_id: &str) -> Option<&'static str> {
         PROVIDER_OPENCODE => Some(PROVIDER_OPENCODE),
         PROVIDER_MISTRAL => Some(PROVIDER_MISTRAL),
         PROVIDER_GOOSE => Some(PROVIDER_GOOSE),
-        PROVIDER_CAGENT => Some(PROVIDER_CAGENT),
         PROVIDER_AMP => Some(PROVIDER_AMP),
         PROVIDER_DROID => Some(PROVIDER_DROID),
         PROVIDER_CONTINUE => Some(PROVIDER_CONTINUE),
@@ -383,7 +381,6 @@ fn provider_supports_harness_endpoint(canonical_provider_id: &str) -> bool {
             | PROVIDER_OPENCODE
             | PROVIDER_MISTRAL
             | PROVIDER_GOOSE
-            | PROVIDER_CAGENT
             | PROVIDER_AMP
             | PROVIDER_DROID
             | PROVIDER_CONTINUE
@@ -409,7 +406,6 @@ pub fn default_shape_for_provider(provider_id: &str) -> Option<HarnessApiShape> 
         Some(PROVIDER_OPENCODE) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_MISTRAL) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_GOOSE) => Some(HarnessApiShape::OpenaiResponses),
-        Some(PROVIDER_CAGENT) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_AMP) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_DROID) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_CONTINUE) => Some(HarnessApiShape::OpenaiResponses),
@@ -462,9 +458,9 @@ pub fn ensure_shape_compatible(provider_id: &str, shape: HarnessApiShape) -> Res
                 );
             }
         }
-        PROVIDER_QWEN | PROVIDER_OPENCODE | PROVIDER_MISTRAL | PROVIDER_GOOSE | PROVIDER_CAGENT
-        | PROVIDER_AMP | PROVIDER_DROID | PROVIDER_CONTINUE | PROVIDER_OPENHANDS
-        | PROVIDER_COPILOT | PROVIDER_KIRO | PROVIDER_AUGGIE | PROVIDER_PI => {
+        PROVIDER_QWEN | PROVIDER_OPENCODE | PROVIDER_MISTRAL | PROVIDER_GOOSE | PROVIDER_AMP
+        | PROVIDER_DROID | PROVIDER_CONTINUE | PROVIDER_OPENHANDS | PROVIDER_COPILOT
+        | PROVIDER_KIRO | PROVIDER_AUGGIE | PROVIDER_PI => {
             if shape != HarnessApiShape::OpenaiResponses {
                 anyhow::bail!(
                     "{} requires api_shape=openai_responses; found {}",
@@ -566,7 +562,6 @@ fn provider_requires_endpoint_base_url(provider_id: &str) -> bool {
             | PROVIDER_OPENCODE
             | PROVIDER_MISTRAL
             | PROVIDER_GOOSE
-            | PROVIDER_CAGENT
             | PROVIDER_OPENHANDS
     )
 }
@@ -1681,20 +1676,6 @@ async fn resolve_internal(
                 env.insert("OPENAI_MODEL".to_string(), model);
             }
         }
-        PROVIDER_CAGENT => {
-            let base_url = endpoint_base_url_or_err(&endpoint)?;
-            ensure_shape_compatible(canonical, endpoint.api_shape)?;
-            env.insert("OPENAI_API_KEY".to_string(), api_key);
-            env.insert("OPENAI_BASE_URL".to_string(), base_url);
-            if let Some(model) = endpoint
-                .model_override
-                .as_ref()
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-            {
-                env.insert("OPENAI_MODEL".to_string(), model);
-            }
-        }
         PROVIDER_OPENCODE => {
             let base_url = endpoint_base_url_or_err(&endpoint)?;
             ensure_shape_compatible(canonical, endpoint.api_shape)?;
@@ -2548,7 +2529,6 @@ mod tests {
                     "GOOSE_MODEL",
                 ],
             ),
-            (PROVIDER_CAGENT, &["OPENAI_API_KEY"]),
             (PROVIDER_MISTRAL, &["MISTRAL_API_KEY", "MISTRAL_BASE_URL"]),
             (PROVIDER_AMP, &["AMP_API_KEY"]),
             (PROVIDER_DROID, &["FACTORY_API_KEY"]),
