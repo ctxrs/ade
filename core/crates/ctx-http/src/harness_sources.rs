@@ -40,8 +40,16 @@ const GEMINI_AUTH_TYPE_VERTEX_AI: &str = "vertex_ai";
 const KIRO_AUTH_TOKEN_RELATIVE_PATH: &str = ".aws/sso/cache/kiro-auth-token.json";
 const ENDPOINT_MODEL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(20);
 const ENDPOINT_MODEL_CATALOG_TTL: Duration = Duration::from_secs(60 * 60 * 24);
-const GENERIC_ENDPOINT_NAMESPACE_LABELS: &[&str] =
-    &["api", "www", "app", "gateway", "proxy", "chat", "inference", "llm"];
+const GENERIC_ENDPOINT_NAMESPACE_LABELS: &[&str] = &[
+    "api",
+    "www",
+    "app",
+    "gateway",
+    "proxy",
+    "chat",
+    "inference",
+    "llm",
+];
 
 static REGISTRY_WRITE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -253,6 +261,14 @@ fn codex_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
     data_root
         .join("providers")
         .join("codex")
+        .join("endpoint-homes")
+        .join(endpoint_id)
+}
+
+fn qwen_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
+    data_root
+        .join("providers")
+        .join("qwen")
         .join("endpoint-homes")
         .join(endpoint_id)
 }
@@ -1149,6 +1165,21 @@ pub async fn delete_provider_endpoint(
                         });
                     }
                 }
+            } else if canonical == PROVIDER_QWEN {
+                ensure_safe_endpoint_id(&removed_endpoint_id)?;
+                let endpoint_home = qwen_endpoint_home(data_root, &removed_endpoint_id);
+                match tokio::fs::remove_dir_all(&endpoint_home).await {
+                    Ok(()) => {}
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(err) => {
+                        return Err(err).with_context(|| {
+                            format!(
+                                "removing qwen endpoint home for endpoint {}",
+                                removed_endpoint_id
+                            )
+                        });
+                    }
+                }
             } else if canonical == PROVIDER_KIRO {
                 ensure_safe_endpoint_id(&removed_endpoint_id)?;
                 remove_kiro_endpoint_home_for_root(data_root, &removed_endpoint_id).await?;
@@ -1429,6 +1460,21 @@ async fn prepare_codex_home_with_api_key(codex_home: &Path, api_key: &str) -> Re
     Ok(())
 }
 
+async fn prepare_qwen_home_with_openai_settings(qwen_home: &Path) -> Result<()> {
+    let qwen_config = qwen_home.join(".qwen");
+    tokio::fs::create_dir_all(&qwen_config).await?;
+    let payload = serde_json::to_vec_pretty(&serde_json::json!({
+        "$version": 2,
+        "security": {
+            "auth": {
+                "selectedType": "openai"
+            }
+        }
+    }))?;
+    tokio::fs::write(qwen_config.join("settings.json"), payload).await?;
+    Ok(())
+}
+
 async fn prepare_kiro_home_with_auth_token_json(
     kiro_home: &Path,
     auth_token_json: &str,
@@ -1576,6 +1622,11 @@ async fn resolve_internal(
         PROVIDER_QWEN => {
             let base_url = endpoint_base_url_or_err(&endpoint)?;
             ensure_shape_compatible(canonical, endpoint.api_shape)?;
+            ensure_safe_endpoint_id(&endpoint.id)?;
+            let qwen_home_root = runtime_data_root.unwrap_or(data_root);
+            let qwen_home = qwen_endpoint_home(qwen_home_root, &endpoint.id);
+            prepare_qwen_home_with_openai_settings(&qwen_home).await?;
+            env.insert("HOME".to_string(), qwen_home.to_string_lossy().to_string());
             env.insert("OPENAI_API_KEY".to_string(), api_key);
             env.insert("OPENAI_BASE_URL".to_string(), base_url);
             if let Some(model) = endpoint
@@ -1604,10 +1655,8 @@ async fn resolve_internal(
         PROVIDER_OPENCODE => {
             let base_url = endpoint_base_url_or_err(&endpoint)?;
             ensure_shape_compatible(canonical, endpoint.api_shape)?;
-            let provider_namespace =
-                infer_endpoint_model_provider_namespace(&base_url).unwrap_or_else(|| {
-                    "endpoint".to_string()
-                });
+            let provider_namespace = infer_endpoint_model_provider_namespace(&base_url)
+                .unwrap_or_else(|| "endpoint".to_string());
             env.insert("OPENAI_API_KEY".to_string(), api_key.clone());
             env.insert("OPENAI_BASE_URL".to_string(), base_url.clone());
             if provider_namespace == "openrouter" {
@@ -2310,6 +2359,17 @@ mod tests {
             qwen_resolved.env.get("OPENAI_MODEL"),
             Some(&"openai/gpt-5.2-codex".to_string())
         );
+        let qwen_home = PathBuf::from(
+            qwen_resolved
+                .env
+                .get("HOME")
+                .expect("HOME should be set for qwen endpoint"),
+        );
+        let qwen_settings =
+            tokio::fs::read_to_string(qwen_home.join(".qwen").join("settings.json"))
+                .await
+                .expect("read qwen settings");
+        assert!(qwen_settings.contains("\"selectedType\": \"openai\""));
 
         let opencode_endpoint = upsert_provider_endpoint(
             root.path(),
@@ -2363,7 +2423,10 @@ mod tests {
     async fn additional_provider_endpoint_env_projection_smoke() {
         let root = tempfile::tempdir().expect("tempdir");
         let cases: &[(&str, &[&str])] = &[
-            (PROVIDER_QWEN, &["OPENAI_API_KEY", "OPENAI_BASE_URL"]),
+            (
+                PROVIDER_QWEN,
+                &["OPENAI_API_KEY", "OPENAI_BASE_URL", "HOME"],
+            ),
             (
                 PROVIDER_OPENCODE,
                 &[
@@ -2637,6 +2700,48 @@ mod tests {
         assert!(endpoint_home.join("auth.json").exists());
 
         delete_provider_endpoint(root.path(), PROVIDER_CODEX, &endpoint.id)
+            .await
+            .expect("delete endpoint");
+
+        assert!(!endpoint_home.exists());
+    }
+
+    #[tokio::test]
+    async fn deleting_qwen_endpoint_removes_endpoint_home() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let endpoint = upsert_provider_endpoint(
+            root.path(),
+            PROVIDER_QWEN,
+            HarnessEndpointUpsert {
+                endpoint_id: None,
+                name: "Qwen endpoint".to_string(),
+                base_url: Some("https://openrouter.ai/api/v1".to_string()),
+                api_shape: Some(HarnessApiShape::OpenaiResponses),
+                auth_type: None,
+                model_override: Some("openai/gpt-5.2-codex".to_string()),
+                api_key: Some("sk-test".to_string()),
+            },
+        )
+        .await
+        .expect("upsert");
+
+        set_provider_source_selection(
+            root.path(),
+            PROVIDER_QWEN,
+            HarnessSourceKind::Endpoint,
+            Some(endpoint.id.clone()),
+        )
+        .await
+        .expect("select");
+
+        resolve_provider_source_for_probe(root.path(), PROVIDER_QWEN)
+            .await
+            .expect("resolve probe");
+
+        let endpoint_home = qwen_endpoint_home(root.path(), &endpoint.id);
+        assert!(endpoint_home.join(".qwen").join("settings.json").exists());
+
+        delete_provider_endpoint(root.path(), PROVIDER_QWEN, &endpoint.id)
             .await
             .expect("delete endpoint");
 
