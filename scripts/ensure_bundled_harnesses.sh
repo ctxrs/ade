@@ -411,7 +411,6 @@ ACP_PROVIDER_IDS=(
   continue
   cline
   openhands
-  swe-agent
   amp
   droid
   copilot
@@ -431,7 +430,6 @@ acp_provider_command_candidates() {
     continue) printf '%s' "cn continue" ;;
     cline) printf '%s' "cline-acp cline" ;;
     openhands) printf '%s' "openhands openhands-cli" ;;
-    swe-agent) printf '%s' "swe-agent sweagent" ;;
     amp) printf '%s' "amp-acp amp" ;;
     droid) printf '%s' "droid-acp droid" ;;
     copilot) printf '%s' "copilot-cli-acp github-copilot-cli copilot" ;;
@@ -444,7 +442,7 @@ acp_provider_command_candidates() {
 acp_provider_default_args() {
   case "${1:-}" in
     qwen) printf '%s' "--experimental-acp" ;;
-    opencode|goose|cagent|continue|swe-agent|openhands) printf '%s' "acp" ;;
+    opencode|goose|cagent|continue|openhands) printf '%s' "acp" ;;
     kimi|auggie) printf '%s' "--acp" ;;
     *) printf '%s' "" ;;
   esac

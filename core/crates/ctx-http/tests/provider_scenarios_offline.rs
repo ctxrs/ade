@@ -194,7 +194,6 @@ async fn provider_scenarios_offline_crp_fixtures() {
         "cody",
         "continue",
         "cline",
-        "swe-agent",
         "openhands",
     ];
 

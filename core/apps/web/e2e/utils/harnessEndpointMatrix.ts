@@ -14,7 +14,6 @@ export const OPENROUTER_ENDPOINT_FIRST_PASS_HARNESSES: EndpointHarnessMatrixEntr
   { providerId: "kimi", menuLabel: "Kimi", searchTerm: "kimi" },
   { providerId: "cagent", menuLabel: "cagent", searchTerm: "cagent" },
   { providerId: "cline", menuLabel: "Cline", searchTerm: "cline" },
-  { providerId: "swe-agent", menuLabel: "SWE-agent", searchTerm: "swe-agent" },
   { providerId: "openhands", menuLabel: "OpenHands", searchTerm: "openhands" },
 ];
 

@@ -322,16 +322,6 @@
       "sha256": "1ddbe946dcdc0950030d8dd0ca89c2db9be596de3941196c255da8fe3835ac61",
       "command": "providers/qwen/macos/aarch64/qwen-acp.sh",
       "args": []
-    },
-    {
-      "id": "swe-agent",
-      "protocol": "acp",
-      "version": "local",
-      "os": "macos",
-      "arch": "aarch64",
-      "sha256": "01cef2241e9894de6b4b31eb5ff7dfc69943cc2d6f3db45a48dcc7d22bce00d9",
-      "command": "providers/swe-agent/macos/aarch64/swe-agent-acp.sh",
-      "args": []
     }
   ],
   "runtimes": [

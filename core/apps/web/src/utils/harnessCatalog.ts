@@ -18,7 +18,6 @@ import codyLogo from "../assets/harness-logos/cody.png";
 import continueLogo from "../assets/harness-logos/continue.png";
 import openhandsLogo from "../assets/harness-logos/openhands.png";
 import piLogo from "../assets/harness-logos/pi.svg";
-import sweAgentLogo from "../assets/harness-logos/swe-agent.png";
 
 export type HarnessCatalogEntry = {
   id: string;
@@ -50,7 +49,6 @@ export const HARNESS_CATALOG: HarnessCatalogEntry[] = [
   // Additional harnesses from specs/21_harness_providers.md
   { id: "continue", label: "Continue", logoSrc: continueLogo, invertInLight: true },
   { id: "openhands", label: "OpenHands", logoSrc: openhandsLogo },
-  { id: "swe-agent", label: "SWE-agent", logoSrc: sweAgentLogo },
   { id: "cagent", label: "cagent", logoSrc: cagentLogo },
   { id: "cody", label: "Cody", logoSrc: codyLogo },
 ];

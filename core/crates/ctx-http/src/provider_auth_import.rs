@@ -973,7 +973,6 @@ async fn set_subscription_source_if_supported(data_root: &Path, provider_id: &st
             | "cody"
             | "continue"
             | "cline"
-            | "swe-agent"
             | "openhands"
             | "copilot"
             | "kiro"

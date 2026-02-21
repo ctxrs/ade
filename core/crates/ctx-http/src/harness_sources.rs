@@ -24,7 +24,6 @@ const PROVIDER_DROID: &str = "droid";
 const PROVIDER_CODY: &str = "cody";
 const PROVIDER_CONTINUE: &str = "continue";
 const PROVIDER_CLINE: &str = "cline";
-const PROVIDER_SWE_AGENT: &str = "swe-agent";
 const PROVIDER_OPENHANDS: &str = "openhands";
 const PROVIDER_COPILOT: &str = "copilot";
 const PROVIDER_KIRO: &str = "kiro";
@@ -395,7 +394,6 @@ fn normalize_provider_id(provider_id: &str) -> Option<&'static str> {
         PROVIDER_CODY => Some(PROVIDER_CODY),
         PROVIDER_CONTINUE => Some(PROVIDER_CONTINUE),
         PROVIDER_CLINE => Some(PROVIDER_CLINE),
-        PROVIDER_SWE_AGENT => Some(PROVIDER_SWE_AGENT),
         PROVIDER_OPENHANDS => Some(PROVIDER_OPENHANDS),
         PROVIDER_COPILOT => Some(PROVIDER_COPILOT),
         PROVIDER_KIRO => Some(PROVIDER_KIRO),
@@ -423,7 +421,6 @@ fn provider_supports_harness_endpoint(canonical_provider_id: &str) -> bool {
             | PROVIDER_CODY
             | PROVIDER_CONTINUE
             | PROVIDER_CLINE
-            | PROVIDER_SWE_AGENT
             | PROVIDER_OPENHANDS
             | PROVIDER_COPILOT
             | PROVIDER_KIRO
@@ -452,7 +449,6 @@ pub fn default_shape_for_provider(provider_id: &str) -> Option<HarnessApiShape> 
         Some(PROVIDER_CODY) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_CONTINUE) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_CLINE) => Some(HarnessApiShape::OpenaiResponses),
-        Some(PROVIDER_SWE_AGENT) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_OPENHANDS) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_COPILOT) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_KIRO) => Some(HarnessApiShape::OpenaiResponses),
@@ -504,8 +500,7 @@ pub fn ensure_shape_compatible(provider_id: &str, shape: HarnessApiShape) -> Res
         }
         PROVIDER_QWEN | PROVIDER_OPENCODE | PROVIDER_MISTRAL | PROVIDER_GOOSE | PROVIDER_CAGENT
         | PROVIDER_AMP | PROVIDER_DROID | PROVIDER_CODY | PROVIDER_CONTINUE | PROVIDER_CLINE
-        | PROVIDER_SWE_AGENT | PROVIDER_OPENHANDS | PROVIDER_COPILOT | PROVIDER_KIRO
-        | PROVIDER_AUGGIE | PROVIDER_PI => {
+        | PROVIDER_OPENHANDS | PROVIDER_COPILOT | PROVIDER_KIRO | PROVIDER_AUGGIE | PROVIDER_PI => {
             if shape != HarnessApiShape::OpenaiResponses {
                 anyhow::bail!(
                     "{} requires api_shape=openai_responses; found {}",
@@ -609,7 +604,6 @@ fn provider_requires_endpoint_base_url(provider_id: &str) -> bool {
             | PROVIDER_GOOSE
             | PROVIDER_CAGENT
             | PROVIDER_CLINE
-            | PROVIDER_SWE_AGENT
             | PROVIDER_OPENHANDS
     )
 }
@@ -1757,7 +1751,7 @@ async fn resolve_internal(
                 env.insert("OPENAI_MODEL".to_string(), model);
             }
         }
-        PROVIDER_CAGENT | PROVIDER_SWE_AGENT => {
+        PROVIDER_CAGENT => {
             let base_url = endpoint_base_url_or_err(&endpoint)?;
             ensure_shape_compatible(canonical, endpoint.api_shape)?;
             env.insert("OPENAI_API_KEY".to_string(), api_key);
@@ -2652,7 +2646,6 @@ mod tests {
                 &["OPENAI_API_KEY", "PI_ACP_PROVIDER", "PI_ACP_MODEL"],
             ),
             (PROVIDER_CLINE, &["OPENAI_API_KEY", "CLINE_DIR", "HOME"]),
-            (PROVIDER_SWE_AGENT, &["OPENAI_API_KEY"]),
             (
                 PROVIDER_OPENHANDS,
                 &["LLM_API_KEY", "LLM_BASE_URL", "LLM_MODEL"],
