@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import LauncherPage from "./LauncherPage";
 import { loadLauncherRecents, upsertLauncherRecent } from "../state/launcherRecentsStore";
 import {
-  createWorkspace,
   getHealth,
   idToString,
   listWorkspaces,
@@ -30,7 +29,6 @@ vi.mock("../api/client", async () => {
   return {
     ...actual,
     applyDaemonDesktopConnection: vi.fn(),
-    createWorkspace: vi.fn(),
     getHealth: vi.fn(),
     idToString: vi.fn((value: unknown) => String(value ?? "")),
     listWorkspaces: vi.fn(),
@@ -100,8 +98,7 @@ describe("LauncherPage recents", () => {
       base_url: "http://127.0.0.1:4399",
       token: "test-token",
     } as never);
-    vi.mocked(listWorkspaces).mockResolvedValue([]);
-    vi.mocked(createWorkspace).mockResolvedValue({ id: "ws-1" } as never);
+    vi.mocked(listWorkspaces).mockResolvedValue([{ id: "ws-1", root_path: "/tmp/repo-a" }] as never);
 
     render(<LauncherPage />);
 
@@ -116,5 +113,32 @@ describe("LauncherPage recents", () => {
       }));
       expect(navigateMock).toHaveBeenCalledWith("/workspaces/ws-1", { replace: true });
     });
+  });
+
+  it("routes to wizard when a local recent path is not registered as a workspace", async () => {
+    vi.mocked(loadLauncherRecents).mockResolvedValueOnce([
+      {
+        kind: "local",
+        label: "repo-b",
+        root_path: "/tmp/repo-b",
+        updated_at_ms: 10,
+      },
+    ]);
+    vi.mocked(desktopConnectLocal).mockResolvedValue({
+      kind: "local",
+      base_url: "http://127.0.0.1:4399",
+      token: "test-token",
+    } as never);
+    vi.mocked(listWorkspaces).mockResolvedValue([]);
+
+    render(<LauncherPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /repo-b/i }));
+
+    await waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith("/workspace-setup");
+      expect(upsertLauncherRecent).not.toHaveBeenCalled();
+    });
+    expect(await screen.findByText("Workspace not found for this path. Re-create it from New Workspace.")).toBeInTheDocument();
   });
 });

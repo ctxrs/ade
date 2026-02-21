@@ -137,6 +137,7 @@ fn main() {
         .setup(|app| {
             open_main_window(&app.handle())?;
             install_macos_dock_menu_bridge(app.handle().clone());
+            schedule_local_daemon_prewarm(app.handle().clone());
             schedule_force_launcher(app.handle().clone());
             schedule_startup_workspaces(app.handle().clone());
             setup_deep_link_listener(&app.handle());
@@ -309,6 +310,19 @@ fn schedule_startup_workspaces(app: tauri::AppHandle) {
                 serde_json::to_string(&url).unwrap_or_else(|_| "\"/\"".to_string())
             );
             let _ = window.eval(&js);
+        }
+    });
+}
+
+fn schedule_local_daemon_prewarm(app: tauri::AppHandle) {
+    if !env_bool("CTX_DESKTOP_PREWARM_LOCAL_DAEMON_ON_STARTUP", true) {
+        return;
+    }
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(150));
+        let state = app.state::<ConnectionManager>();
+        if let Err(err) = ensure_local_connection(&app, &state) {
+            eprintln!("startup local daemon prewarm failed: {err:#}");
         }
     });
 }

@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   applyDaemonDesktopConnection,
-  createWorkspace,
   getHealth,
   idToString,
   listWorkspaces,
@@ -41,12 +40,11 @@ const waitForDaemonReady = async (timeoutMs: number) => {
   throw lastErr ?? new Error("Timed out waiting for daemon health.");
 };
 
-async function createOrOpenWorkspaceByPath(rootPath: string): Promise<string> {
+async function existingWorkspaceIdByPath(rootPath: string): Promise<string | null> {
   const all = await listWorkspaces();
   const hit = all.find((w) => String(w.root_path) === rootPath);
-  if (hit) return idToString(hit.id ?? "");
-  const created = await createWorkspace(rootPath, undefined, "local", "launcher");
-  return idToString(created.id ?? "");
+  if (!hit) return null;
+  return idToString(hit.id ?? "");
 }
 
 export default function LauncherPage() {
@@ -107,7 +105,12 @@ export default function LauncherPage() {
       // Avoid landing on workspaces while the daemon is still booting.
       await waitForDaemonReady(15000);
       if (rootPath) {
-        const wsId = await createOrOpenWorkspaceByPath(rootPath);
+        const wsId = await existingWorkspaceIdByPath(rootPath);
+        if (!wsId) {
+          setError("Workspace not found for this path. Re-create it from New Workspace.");
+          navigate("/workspace-setup");
+          return;
+        }
         try {
           await upsertLauncherRecent({
             kind: "local",

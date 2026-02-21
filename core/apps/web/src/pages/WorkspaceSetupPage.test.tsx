@@ -216,6 +216,32 @@ describe("WorkspaceSetupPage", () => {
     });
   });
 
+  it("shows local progress while local preflight checks are running", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    let resolveScan: ((value: { candidates: never[] }) => void) | null = null;
+    const pendingScan = new Promise<{ candidates: never[] }>((resolve) => {
+      resolveScan = resolve;
+    });
+    vi.mocked(listProviderAuthImportCandidates).mockImplementation(() => pendingScan as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    fireEvent.click(screen.getByTestId("wizard-option-location-local"));
+
+    expect(await screen.findByTestId("wizard-location-local-progress")).toBeInTheDocument();
+    expect(screen.getByTestId("wizard-next")).toBeDisabled();
+    expect(screen.getByTestId("wizard-next")).toHaveTextContent("Working...");
+
+    await act(async () => {
+      resolveScan?.({ candidates: [] });
+      await pendingScan;
+    });
+
+    await waitFor(() => {
+      expect(wizardStepKey()).not.toBe("location");
+    });
+  });
+
   it("tracks wizard start, step viewed, and abandonment on unmount", async () => {
     const view = renderPage();
     await screen.findByTestId("workspace-setup");
@@ -816,7 +842,8 @@ describe("WorkspaceSetupPage", () => {
     expect(screen.getByTestId("wizard-titling-mode-local")).toBeInTheDocument();
   });
 
-  it("shows local titling install progress banner while download is running", async () => {
+  it("does not show local titling download banner when local mode is disabled", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(getSettings).mockResolvedValue({
       title_generation: {
         mode: "local",
@@ -866,7 +893,12 @@ describe("WorkspaceSetupPage", () => {
 
     renderPage();
     await screen.findByTestId("workspace-setup");
-    expect(await screen.findByText("Session titling model download in progress.")).toBeInTheDocument();
+    await selectLocalAndContinue();
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+    });
+    expect(screen.queryByText("Session titling model download in progress.")).not.toBeInTheDocument();
   });
 
   it("masks session titling remote API key input", async () => {
