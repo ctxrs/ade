@@ -51,3 +51,16 @@ test("waitForIdleState waits for busy to idle transition", async () => {
     { timeoutMs: 200, pollIntervalMs: 0 },
   );
 });
+
+test("buildPiLaunchArgs prefers bundled local pi when available", () => {
+  const args = buildPiLaunchArgs({
+    PATH: "",
+  });
+
+  assert.match(args.command, /node_modules[\/\\]\.bin[\/\\]pi(\.cmd)?$/i);
+  assert.deepEqual(args.args, [
+    "--mode",
+    "rpc",
+    "--no-session",
+  ]);
+});

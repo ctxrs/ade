@@ -12,6 +12,8 @@ export const OPENROUTER_ENDPOINT_FIRST_PASS_HARNESSES: EndpointHarnessMatrixEntr
   { providerId: "mistral", menuLabel: "Mistral Vibe", searchTerm: "mistral" },
   { providerId: "goose", menuLabel: "Goose", searchTerm: "goose" },
   { providerId: "kimi", menuLabel: "Kimi", searchTerm: "kimi" },
+  { providerId: "cagent", menuLabel: "cagent", searchTerm: "cagent" },
+  { providerId: "pi", menuLabel: "Pi", searchTerm: "pi" },
   { providerId: "cline", menuLabel: "Cline", searchTerm: "cline" },
   { providerId: "openhands", menuLabel: "OpenHands", searchTerm: "openhands" },
 ];
@@ -26,7 +28,6 @@ export const OPENROUTER_ENDPOINT_FIRST_PASS_EXCLUDED_PROVIDER_TOKEN_ONLY = [
   "amp",
   "droid",
   "continue",
-  "pi",
 ] as const;
 
 // Tracked but unsupported harnesses intentionally excluded from first-pass endpoint e2e.

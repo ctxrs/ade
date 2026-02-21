@@ -164,6 +164,7 @@ const HARNESSES_WITH_ENDPOINT_BASE_URL = new Set([
   "goose",
   "cline",
   "openhands",
+  "pi",
 ]);
 
 const harnessEndpointRequiresBaseUrl = (providerId: string): boolean =>

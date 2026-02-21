@@ -1,5 +1,8 @@
 import { spawn, ChildProcessWithoutNullStreams } from "node:child_process";
+import { accessSync, constants } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { createInterface } from "node:readline";
+import { fileURLToPath } from "node:url";
 
 export type PiRpcState = {
   isStreaming: boolean;
@@ -35,8 +38,24 @@ function parseExtraArgs(raw: string | undefined): string[] {
   return trimmed.split(/\s+/g);
 }
 
+function isExecutable(path: string): boolean {
+  try {
+    accessSync(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function localPiCliForAdapter(): string | null {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const binName = process.platform === "win32" ? "pi.cmd" : "pi";
+  const candidate = resolve(here, "../node_modules/.bin", binName);
+  return isExecutable(candidate) ? candidate : null;
+}
+
 export function buildPiLaunchArgs(env: NodeJS.ProcessEnv): { command: string; args: string[] } {
-  const command = env.PI_ACP_PI_COMMAND?.trim() || "pi";
+  const explicitCommand = env.PI_ACP_PI_COMMAND?.trim();
   const args = ["--mode", "rpc", "--no-session"];
 
   if (env.PI_ACP_PROVIDER?.trim()) {
@@ -45,9 +64,20 @@ export function buildPiLaunchArgs(env: NodeJS.ProcessEnv): { command: string; ar
   if (env.PI_ACP_MODEL?.trim()) {
     args.push("--model", env.PI_ACP_MODEL.trim());
   }
-  args.push(...parseExtraArgs(env.PI_ACP_PI_ARGS));
+  const extraArgs = parseExtraArgs(env.PI_ACP_PI_ARGS);
 
-  return { command, args };
+  if (explicitCommand) {
+    return { command: explicitCommand, args: [...args, ...extraArgs] };
+  }
+
+  const bundledLocalPi = localPiCliForAdapter();
+  if (bundledLocalPi) {
+    return { command: bundledLocalPi, args: [...args, ...extraArgs] };
+  }
+
+  throw new Error(
+    "pi ACP runtime missing bundled pi binary at node_modules/.bin/pi. Rebuild bundled harnesses for provider 'pi'.",
+  );
 }
 
 const DEFAULT_IDLE_POLL_MS = 150;
@@ -91,6 +121,7 @@ export class PiRpcClient {
   private nextId = 0;
   private pending = new Map<string, PendingRequest>();
   private closed = false;
+  private spawnError: Error | null = null;
 
   constructor(private cwd: string, env: NodeJS.ProcessEnv = process.env) {
     const launch = buildPiLaunchArgs(env);
@@ -103,10 +134,17 @@ export class PiRpcClient {
     const stdout = createInterface({ input: this.child.stdout, crlfDelay: Infinity });
     stdout.on("line", (line) => this.handleLine(line));
 
-    this.child.on("error", (err) => this.failAllPending(err));
+    this.child.on("error", (err) => {
+      const wrapped = err instanceof Error ? err : new Error(String(err));
+      this.spawnError = wrapped;
+      this.closed = true;
+      this.failAllPending(wrapped);
+    });
     this.child.on("exit", (code, signal) => {
       this.closed = true;
-      this.failAllPending(new Error(`pi RPC process exited (code=${code ?? "null"}, signal=${signal ?? "null"})`));
+      const base = this.spawnError
+        ?? new Error(`pi RPC process exited (code=${code ?? "null"}, signal=${signal ?? "null"})`);
+      this.failAllPending(base);
     });
   }
 
@@ -158,6 +196,9 @@ export class PiRpcClient {
   }
 
   private async send(command: string, payload: Record<string, unknown>): Promise<unknown> {
+    if (this.spawnError) {
+      throw new Error(`pi RPC process failed to start: ${this.spawnError.message}`);
+    }
     if (this.closed) {
       throw new Error(`pi RPC client closed before sending command '${command}'`);
     }
@@ -168,7 +209,20 @@ export class PiRpcClient {
       this.pending.set(id, { resolve, reject, command });
     });
 
-    this.child.stdin.write(`${line}\n`);
+    try {
+      this.child.stdin.write(`${line}\n`, (err) => {
+        if (!err) return;
+        const pending = this.pending.get(id);
+        if (!pending) return;
+        this.pending.delete(id);
+        pending.reject(
+          new Error(`failed to write pi RPC command '${command}': ${err.message}`),
+        );
+      });
+    } catch (err) {
+      this.pending.delete(id);
+      throw err;
+    }
     return response;
   }
 

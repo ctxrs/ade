@@ -326,7 +326,7 @@ export function useWorkbenchProviders({
   }, [defaultProviderId, providers.length, providersById, setDraftHarness]);
 
   // This loads workspace-scoped auth/config summary from providers/bootstrap.
-  // It intentionally does not run runtime probes or fetch model catalogs.
+  // It intentionally avoids runtime probes and uses endpoint model catalogs only from cached bootstrap payloads.
   const ensureProviderAuthSummary = useCallback(
     async (providerId: string, opts?: { force?: boolean }): Promise<ProviderOptions | undefined> => {
       if (!workspaceId) return;

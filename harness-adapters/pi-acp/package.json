@@ -20,7 +20,8 @@
     "test": "npm run build && node --test dist/__tests__/*.test.js"
   },
   "dependencies": {
-    "@agentclientprotocol/sdk": "0.12.0"
+    "@agentclientprotocol/sdk": "0.12.0",
+    "@mariozechner/pi-coding-agent": "0.54.0"
   },
   "devDependencies": {
     "@types/node": "25.0.1",

@@ -4744,6 +4744,7 @@ pub(super) async fn get_workspace_providers_bootstrap(
             )
             .await;
             let auth_mode = provider_auth_mode(has_active_auth, source_config.as_ref());
+            let now = chrono::Utc::now();
 
             let mut options = serde_json::json!({
                 "provider_id": provider_id,
@@ -4753,10 +4754,28 @@ pub(super) async fn get_workspace_providers_bootstrap(
                 "has_active_auth": has_active_auth,
                 "auth_mode": auth_mode,
                 "probe_ok": true,
-                "probed_at": chrono::Utc::now().to_rfc3339(),
+                "probed_at": now.to_rfc3339(),
             });
             if let Some(source) = source_config.as_ref() {
                 options["source"] = serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
+            }
+            if let Some(endpoint) =
+                selected_endpoint_record_from_harness_config(source_config.as_ref())
+            {
+                options["models"] = endpoint_models_payload(&endpoint, now);
+                if harness_sources::endpoint_model_catalog_is_stale(&endpoint, now) {
+                    let state = Arc::clone(&state);
+                    let provider_id_for_refresh = provider_id.clone();
+                    let endpoint_id_for_refresh = endpoint.id.clone();
+                    tokio::spawn(async move {
+                        let _ = harness_sources::refresh_provider_endpoint_model_catalog(
+                            &state.core.data_root,
+                            &provider_id_for_refresh,
+                            &endpoint_id_for_refresh,
+                        )
+                        .await;
+                    });
+                }
             }
 
             (provider_id, options, source_config)
@@ -4838,6 +4857,33 @@ fn classify_probe_error(
         Some(false),
         HarnessEndpointVerificationStatus::Error,
     )
+}
+
+fn classify_endpoint_verification(
+    endpoint: &harness_sources::HarnessEndpointRecord,
+) -> (&'static str, Option<bool>, Option<String>) {
+    let message = endpoint
+        .last_error
+        .clone()
+        .or_else(|| endpoint.model_catalog_error.clone());
+    match endpoint.last_verification_status {
+        HarnessEndpointVerificationStatus::Valid => ("ok", Some(false), None),
+        HarnessEndpointVerificationStatus::Invalid => (
+            "auth_required",
+            Some(true),
+            Some(message.unwrap_or_else(|| "endpoint credentials are invalid".to_string())),
+        ),
+        HarnessEndpointVerificationStatus::Error => (
+            "network_error",
+            Some(false),
+            Some(message.unwrap_or_else(|| "endpoint verification failed".to_string())),
+        ),
+        HarnessEndpointVerificationStatus::Unknown => (
+            "error",
+            Some(false),
+            Some(message.unwrap_or_else(|| "endpoint has not been verified yet".to_string())),
+        ),
+    }
 }
 
 async fn provider_probe_env(
@@ -5599,25 +5645,6 @@ pub(super) async fn verify_provider_for_workspace(
     }
     let ws_id = parse_workspace_id(&ws_id)?;
 
-    let workspace = state
-        .global_store()
-        .get_workspace(ws_id)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": "failed to load workspace",
-                })),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "error": "workspace not found",
-            })),
-        ))?;
-
     let provider_status = state
         .providers
         .statuses
@@ -5654,52 +5681,99 @@ pub(super) async fn verify_provider_for_workspace(
         message = Some("provider not installed or unhealthy".to_string());
         endpoint_status = HarnessEndpointVerificationStatus::Error;
     } else {
-        let cfg = installer::load_agent_server_config(&state.core.data_root)
-            .await
-            .unwrap_or_default();
-        let runtime_command = installer::resolve_runtime_provider_command(&cfg, &provider_id)
-            .map_err(|e| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({
-                        "error": format!(
-                            "runtime_command_invalid: provider={provider_id} error={e}"
-                        ),
-                    })),
-                )
-            })?
-            .ok_or((
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": format!(
-                        "runtime_command_missing: provider={provider_id} (configure an absolute runtime command)"
-                    ),
-                })),
-            ))?;
-        let normalized_runtime = normalize_acp_provider_command(
-            &state.core.data_root,
-            &provider_id,
-            installer::AgentServerCommand {
-                command: runtime_command.command_abs_path,
-                args: runtime_command.args,
-                dependencies: runtime_command.dependencies,
-                managed: None,
-            },
-        );
-        let command = normalized_runtime.command;
-        let args = normalized_runtime.args;
-
         match provider_probe_env(&state, &provider_id).await {
-            Ok((source, env)) => {
-                if source.source_kind == HarnessSourceKind::Endpoint {
-                    selected_endpoint_id = source
-                        .endpoint
-                        .as_ref()
-                        .map(|ep| ep.id.clone())
-                        .or(selected_endpoint_id);
+            Ok((source, _env)) if source.source_kind == HarnessSourceKind::Endpoint => {
+                selected_endpoint_id = source.endpoint.as_ref().map(|ep| ep.id.clone());
+                if let Some(endpoint_id) = selected_endpoint_id.clone() {
+                    match harness_sources::refresh_provider_endpoint_model_catalog(
+                        &state.core.data_root,
+                        &provider_id,
+                        &endpoint_id,
+                    )
+                    .await
+                    {
+                        Ok(endpoint) => {
+                            let (classified, auth, verify_message) =
+                                classify_endpoint_verification(&endpoint);
+                            status = classified.to_string();
+                            auth_required = auth;
+                            message = verify_message;
+                            endpoint_status = endpoint.last_verification_status;
+                        }
+                        Err(err) => {
+                            let msg = logs::redact_sensitive(&err.to_string());
+                            let (classified, auth, endpoint_verify) = classify_probe_error(&msg);
+                            status = classified.to_string();
+                            auth_required = auth;
+                            message = Some(msg);
+                            endpoint_status = endpoint_verify;
+                        }
+                    }
                 } else {
-                    selected_endpoint_id = None;
+                    status = "error".to_string();
+                    auth_required = Some(false);
+                    message = Some(
+                        "selected endpoint is missing; reselect an endpoint in settings"
+                            .to_string(),
+                    );
+                    endpoint_status = HarnessEndpointVerificationStatus::Error;
                 }
+            }
+            Ok((_source, env)) => {
+                let workspace = state
+                    .global_store()
+                    .get_workspace(ws_id)
+                    .await
+                    .map_err(|_| {
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(serde_json::json!({
+                                "error": "failed to load workspace",
+                            })),
+                        )
+                    })?
+                    .ok_or((
+                        StatusCode::NOT_FOUND,
+                        Json(serde_json::json!({
+                            "error": "workspace not found",
+                        })),
+                    ))?;
+                let cfg = installer::load_agent_server_config(&state.core.data_root)
+                    .await
+                    .unwrap_or_default();
+                let runtime_command =
+                    installer::resolve_runtime_provider_command(&cfg, &provider_id)
+                        .map_err(|e| {
+                            (
+                                StatusCode::BAD_REQUEST,
+                                Json(serde_json::json!({
+                                    "error": format!(
+                                        "runtime_command_invalid: provider={provider_id} error={e}"
+                                    ),
+                                })),
+                            )
+                        })?
+                        .ok_or((
+                            StatusCode::BAD_REQUEST,
+                            Json(serde_json::json!({
+                                "error": format!(
+                                    "runtime_command_missing: provider={provider_id} (configure an absolute runtime command)"
+                                ),
+                            })),
+                        ))?;
+                let normalized_runtime = normalize_acp_provider_command(
+                    &state.core.data_root,
+                    &provider_id,
+                    installer::AgentServerCommand {
+                        command: runtime_command.command_abs_path,
+                        args: runtime_command.args,
+                        dependencies: runtime_command.dependencies,
+                        managed: None,
+                    },
+                );
+                let command = normalized_runtime.command;
+                let args = normalized_runtime.args;
+                selected_endpoint_id = None;
                 let probe = probe_crp_models(
                     &provider_id,
                     command,
@@ -6600,6 +6674,31 @@ ZXY987654321
                 .and_then(serde_json::Value::as_bool),
             Some(false)
         );
+    }
+
+    #[test]
+    fn classify_endpoint_verification_maps_statuses() {
+        let mut endpoint = test_endpoint("ep-1");
+        endpoint.last_verification_status = HarnessEndpointVerificationStatus::Valid;
+        let (status, auth_required, message) = classify_endpoint_verification(&endpoint);
+        assert_eq!(status, "ok");
+        assert_eq!(auth_required, Some(false));
+        assert!(message.is_none());
+
+        endpoint.last_verification_status = HarnessEndpointVerificationStatus::Invalid;
+        endpoint.last_error = Some("401 unauthorized".to_string());
+        let (status, auth_required, message) = classify_endpoint_verification(&endpoint);
+        assert_eq!(status, "auth_required");
+        assert_eq!(auth_required, Some(true));
+        assert_eq!(message.as_deref(), Some("401 unauthorized"));
+
+        endpoint.last_verification_status = HarnessEndpointVerificationStatus::Error;
+        endpoint.last_error = None;
+        endpoint.model_catalog_error = None;
+        let (status, auth_required, message) = classify_endpoint_verification(&endpoint);
+        assert_eq!(status, "network_error");
+        assert_eq!(auth_required, Some(false));
+        assert_eq!(message.as_deref(), Some("endpoint verification failed"));
     }
 
     #[test]

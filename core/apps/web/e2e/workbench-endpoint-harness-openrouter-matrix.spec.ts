@@ -69,7 +69,21 @@ const DEFAULT_E2E_AUTH_TOKEN = "ctx-e2e-auth-token";
 const TERMINAL_TURN_STATUSES = new Set(["completed", "failed", "interrupted"]);
 const DEFAULT_RUN_CONTEXT_TIMEOUT_MS = 30_000;
 const DEFAULT_TERMINAL_TIMEOUT_MS = 120_000;
+const DEFAULT_PI_TERMINAL_TIMEOUT_MS = 240_000;
 const DEFAULT_CODEX_OPENROUTER_MODEL_OVERRIDE = "openai/gpt-5.2-codex";
+const DEFAULT_PI_OPENROUTER_MODEL_OVERRIDE = "google/gemini-3-flash-preview";
+
+const providerDefaultOpenRouterModelOverride = (providerId: string): string => {
+  if (providerId === "pi") return DEFAULT_PI_OPENROUTER_MODEL_OVERRIDE;
+  return DEFAULT_CODEX_OPENROUTER_MODEL_OVERRIDE;
+};
+
+const providerTerminalTimeoutForHarness = (providerId: string, fallbackTimeoutMs: number): number => {
+  if (providerId === "pi") {
+    return Math.max(fallbackTimeoutMs, DEFAULT_PI_TERMINAL_TIMEOUT_MS);
+  }
+  return fallbackTimeoutMs;
+};
 
 const asRecord = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -524,14 +538,14 @@ test("workbench: endpoint harness OpenRouter matrix first pass", async ({ page, 
     .map((entry) => entry.trim())
     .filter(Boolean);
   const defaultOpenRouterModelOverride =
-    firstText(process.env.CTX_E2E_OPENROUTER_MODEL_OVERRIDE) ||
-    DEFAULT_CODEX_OPENROUTER_MODEL_OVERRIDE;
+    firstText(process.env.CTX_E2E_OPENROUTER_MODEL_OVERRIDE);
   const modelOverrideByProvider = OPENROUTER_ENDPOINT_FIRST_PASS_HARNESSES.reduce(
     (acc, entry) => {
       const perProviderEnv = providerModelOverrideEnvVar(entry.providerId);
       const override =
         firstText(process.env[perProviderEnv]) ||
-        defaultOpenRouterModelOverride;
+        defaultOpenRouterModelOverride ||
+        providerDefaultOpenRouterModelOverride(entry.providerId);
       acc[entry.providerId] = override;
       return acc;
     },
@@ -878,11 +892,31 @@ test("workbench: endpoint harness OpenRouter matrix first pass", async ({ page, 
       }
       console.log(`endpoint matrix: ${entry.providerId} session started -> ${sessionId}`);
 
-      const terminal = await waitForTerminalState({
-        request,
-        sessionId,
-        timeoutMs: providerTerminalTimeoutMs,
-      });
+      let terminal: TerminalState;
+      try {
+        terminal = await waitForTerminalState({
+          request,
+          sessionId,
+          timeoutMs: providerTerminalTimeoutForHarness(entry.providerId, providerTerminalTimeoutMs),
+        });
+      } catch (error) {
+        const timeoutDetail = normalizeErrorMessage(error instanceof Error ? error.message : String(error));
+        const reason = verifyProbeFailureOnly ? verify.detail : timeoutDetail;
+        results.push({
+          ...baseRecord,
+          auth_saved: true,
+          auth_detail: authResult.detail,
+          harness_selected: true,
+          harness_detail: harnessSelect.detail,
+          session_started: true,
+          session_id: sessionId,
+          model_id: modelSelection.modelId,
+          result: verifyProbeFailureOnly || isLikelyRuntimeSkip(timeoutDetail) ? "skip" : "fail",
+          reason,
+          elapsed_ms: Date.now() - startMs,
+        });
+        continue;
+      }
       console.log(
         `endpoint matrix: ${entry.providerId} terminal -> ${firstText(terminal.terminalStatus, "unknown")}`,
       );

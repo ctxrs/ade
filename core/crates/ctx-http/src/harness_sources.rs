@@ -34,6 +34,9 @@ const CLAUDE_AUTH_TYPE_API_KEY: &str = "api_key";
 const GEMINI_AUTH_TYPE_GEMINI_API_KEY: &str = "gemini_api_key";
 const GEMINI_AUTH_TYPE_VERTEX_AI: &str = "vertex_ai";
 const KIRO_AUTH_TOKEN_RELATIVE_PATH: &str = ".aws/sso/cache/kiro-auth-token.json";
+const PI_ENDPOINT_PROVIDER_ID: &str = "ctx-endpoint";
+const PI_ENDPOINT_API_KEY_ENV: &str = "PI_ENDPOINT_API_KEY";
+const PI_OPENAI_COMPAT_API: &str = "openai-completions";
 const ENDPOINT_MODEL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(20);
 const ENDPOINT_MODEL_CATALOG_TTL: Duration = Duration::from_secs(60 * 60 * 24);
 const GENERIC_ENDPOINT_NAMESPACE_LABELS: &[&str] = &[
@@ -285,6 +288,14 @@ fn kiro_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
         .join(endpoint_id)
 }
 
+fn pi_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
+    data_root
+        .join("providers")
+        .join("pi")
+        .join("endpoint-homes")
+        .join(endpoint_id)
+}
+
 fn amp_subscription_home(data_root: &Path, runtime_data_root: Option<&Path>) -> PathBuf {
     runtime_data_root
         .unwrap_or(data_root)
@@ -372,6 +383,26 @@ async fn remove_cline_endpoint_homes_for_runtime_roots(
 ) -> Result<()> {
     for runtime_root in container_runtime_data_roots(data_root).await {
         remove_cline_endpoint_home_for_root(&runtime_root, endpoint_id).await?;
+    }
+    Ok(())
+}
+
+async fn remove_pi_endpoint_home_for_root(root: &Path, endpoint_id: &str) -> Result<()> {
+    let endpoint_home = pi_endpoint_home(root, endpoint_id);
+    match tokio::fs::remove_dir_all(&endpoint_home).await {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err)
+            .with_context(|| format!("removing pi endpoint home for endpoint {}", endpoint_id)),
+    }
+}
+
+async fn remove_pi_endpoint_homes_for_runtime_roots(
+    data_root: &Path,
+    endpoint_id: &str,
+) -> Result<()> {
+    for runtime_root in container_runtime_data_roots(data_root).await {
+        remove_pi_endpoint_home_for_root(&runtime_root, endpoint_id).await?;
     }
     Ok(())
 }
@@ -596,6 +627,7 @@ fn provider_requires_endpoint_base_url(provider_id: &str) -> bool {
             | PROVIDER_GOOSE
             | PROVIDER_CLINE
             | PROVIDER_OPENHANDS
+            | PROVIDER_PI
     )
 }
 
@@ -719,6 +751,37 @@ fn merge_endpoint_model_records(
     merged
 }
 
+fn resolve_pi_endpoint_model(endpoint: &HarnessEndpointRecordInternal) -> Result<String> {
+    if let Some(model) = endpoint
+        .model_override
+        .as_ref()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        return Ok(model);
+    }
+
+    for model in &endpoint.manual_model_ids {
+        let trimmed = model.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+
+    for model in &endpoint.model_catalog_models {
+        let trimmed = model.id.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+
+    anyhow::bail!(
+        "selected endpoint '{}' for {} is missing model configuration; set a model override or add manual model IDs in Settings",
+        endpoint.name,
+        PROVIDER_PI
+    );
+}
+
 fn endpoint_models_url(base_url: &str) -> Result<String> {
     let mut normalized = normalize_base_url(base_url)?;
     normalized.push_str("/models");
@@ -779,6 +842,23 @@ fn truncate_discovery_error(raw: &str) -> String {
         end -= 1;
     }
     format!("{}...", &collapsed[..end])
+}
+
+fn classify_discovery_error_for_verification(message: &str) -> HarnessEndpointVerificationStatus {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("401")
+        || lower.contains("403")
+        || lower.contains("unauthorized")
+        || lower.contains("auth")
+        || lower.contains("api key")
+        || lower.contains("token")
+    {
+        return HarnessEndpointVerificationStatus::Invalid;
+    }
+    if lower.contains("unsupported for provider") {
+        return HarnessEndpointVerificationStatus::Valid;
+    }
+    HarnessEndpointVerificationStatus::Error
 }
 
 fn parse_openai_models_payload(payload: &serde_json::Value) -> Result<Vec<EndpointModelRecord>> {
@@ -1261,6 +1341,10 @@ pub async fn delete_provider_endpoint(
                 remove_cline_endpoint_home_for_root(data_root, &removed_endpoint_id).await?;
                 remove_cline_endpoint_homes_for_runtime_roots(data_root, &removed_endpoint_id)
                     .await?;
+            } else if canonical == PROVIDER_PI {
+                ensure_safe_endpoint_id(&removed_endpoint_id)?;
+                remove_pi_endpoint_home_for_root(data_root, &removed_endpoint_id).await?;
+                remove_pi_endpoint_homes_for_runtime_roots(data_root, &removed_endpoint_id).await?;
             }
         }
         save_registry(data_root, &registry).await?;
@@ -1474,6 +1558,9 @@ pub async fn refresh_provider_endpoint_model_catalog(
             endpoint.model_catalog_models = discovered_models;
             endpoint.model_catalog_fetched_at = Some(Utc::now());
             endpoint.model_catalog_error = None;
+            endpoint.last_verification_status = HarnessEndpointVerificationStatus::Valid;
+            endpoint.last_verification_at = Some(Utc::now());
+            endpoint.last_error = None;
             endpoint.model_catalog_source = if endpoint.manual_model_ids.is_empty() {
                 Some("discovered".to_string())
             } else {
@@ -1490,7 +1577,17 @@ pub async fn refresh_provider_endpoint_model_catalog(
             };
         }
         Err(err) => {
-            endpoint.model_catalog_error = Some(truncate_discovery_error(&err.to_string()));
+            let discovery_error = truncate_discovery_error(&err.to_string());
+            endpoint.model_catalog_error = Some(discovery_error.clone());
+            endpoint.last_verification_at = Some(Utc::now());
+            endpoint.last_verification_status =
+                classify_discovery_error_for_verification(&discovery_error);
+            endpoint.last_error =
+                if endpoint.last_verification_status == HarnessEndpointVerificationStatus::Valid {
+                    None
+                } else {
+                    Some(discovery_error.clone())
+                };
             endpoint.model_catalog_source = if endpoint.manual_model_ids.is_empty() {
                 if endpoint.model_catalog_models.is_empty() {
                     None
@@ -1571,6 +1668,37 @@ async fn prepare_kiro_home_with_auth_token_json(
     }
     tokio::fs::create_dir_all(kiro_home.join(".config")).await?;
     tokio::fs::create_dir_all(kiro_home.join(".cache")).await?;
+    Ok(())
+}
+
+async fn prepare_pi_home_with_models_json(
+    pi_home: &Path,
+    base_url: &str,
+    model_id: &str,
+) -> Result<()> {
+    tokio::fs::create_dir_all(pi_home).await?;
+    let models_path = pi_home.join("models.json");
+    let payload = serde_json::to_vec_pretty(&serde_json::json!({
+        "providers": {
+            PI_ENDPOINT_PROVIDER_ID: {
+                "baseUrl": base_url,
+                "api": PI_OPENAI_COMPAT_API,
+                "apiKey": PI_ENDPOINT_API_KEY_ENV,
+                "models": [
+                    {
+                        "id": model_id
+                    }
+                ]
+            }
+        }
+    }))?;
+    tokio::fs::write(&models_path, payload).await?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ =
+            tokio::fs::set_permissions(models_path, std::fs::Permissions::from_mode(0o600)).await;
+    }
     Ok(())
 }
 
@@ -1848,21 +1976,23 @@ async fn resolve_internal(
             env.insert("GITHUB_TOKEN".to_string(), api_key);
         }
         PROVIDER_PI => {
+            let base_url = endpoint_base_url_or_err(&endpoint)?;
             ensure_shape_compatible(canonical, endpoint.api_shape)?;
-            env.insert("PI_ACP_PROVIDER".to_string(), "openai".to_string());
-            env.insert("OPENAI_API_KEY".to_string(), api_key);
-            let base_url = endpoint.base_url.trim().to_string();
-            if !base_url.is_empty() {
-                env.insert("OPENAI_BASE_URL".to_string(), base_url);
-            }
-            if let Some(model) = endpoint
-                .model_override
-                .as_ref()
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-            {
-                env.insert("PI_ACP_MODEL".to_string(), model);
-            }
+            ensure_safe_endpoint_id(&endpoint.id)?;
+            let pi_model = resolve_pi_endpoint_model(&endpoint)?;
+            let pi_home_root = runtime_data_root.unwrap_or(data_root);
+            let pi_home = pi_endpoint_home(pi_home_root, &endpoint.id);
+            prepare_pi_home_with_models_json(&pi_home, &base_url, &pi_model).await?;
+            env.insert(
+                "PI_CODING_AGENT_DIR".to_string(),
+                pi_home.to_string_lossy().to_string(),
+            );
+            env.insert(
+                "PI_ACP_PROVIDER".to_string(),
+                PI_ENDPOINT_PROVIDER_ID.to_string(),
+            );
+            env.insert("PI_ACP_MODEL".to_string(), pi_model);
+            env.insert(PI_ENDPOINT_API_KEY_ENV.to_string(), api_key);
         }
         PROVIDER_KIRO => {
             ensure_shape_compatible(canonical, endpoint.api_shape)?;
@@ -2062,6 +2192,24 @@ mod tests {
         assert!(truncated.ends_with("..."));
         assert!(truncated.len() <= 283);
         assert!(std::str::from_utf8(truncated.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn discovery_error_classification_marks_auth_failures_invalid() {
+        assert_eq!(
+            classify_discovery_error_for_verification("model discovery failed with status 401"),
+            HarnessEndpointVerificationStatus::Invalid
+        );
+    }
+
+    #[test]
+    fn discovery_error_classification_treats_unsupported_as_valid() {
+        assert_eq!(
+            classify_discovery_error_for_verification(
+                "model discovery is unsupported for provider 'cody'"
+            ),
+            HarnessEndpointVerificationStatus::Valid
+        );
     }
 
     #[test]
@@ -2615,7 +2763,12 @@ mod tests {
             ),
             (
                 PROVIDER_PI,
-                &["OPENAI_API_KEY", "PI_ACP_PROVIDER", "PI_ACP_MODEL"],
+                &[
+                    "PI_CODING_AGENT_DIR",
+                    "PI_ACP_PROVIDER",
+                    "PI_ACP_MODEL",
+                    PI_ENDPOINT_API_KEY_ENV,
+                ],
             ),
             (
                 PROVIDER_OPENHANDS,
@@ -2633,7 +2786,6 @@ mod tests {
                     base_url: if *provider_id == PROVIDER_COPILOT
                         || *provider_id == PROVIDER_KIRO
                         || *provider_id == PROVIDER_AUGGIE
-                        || *provider_id == PROVIDER_PI
                     {
                         None
                     } else {
@@ -2642,7 +2794,6 @@ mod tests {
                     api_shape: if *provider_id == PROVIDER_COPILOT
                         || *provider_id == PROVIDER_KIRO
                         || *provider_id == PROVIDER_AUGGIE
-                        || *provider_id == PROVIDER_PI
                     {
                         None
                     } else {
@@ -2716,7 +2867,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pi_endpoint_allows_token_only_upsert_and_optional_base_url() {
+    async fn pi_endpoint_requires_base_url_and_projects_models_config() {
         let root = tempfile::tempdir().expect("tempdir");
         let endpoint = upsert_provider_endpoint(
             root.path(),
@@ -2724,7 +2875,7 @@ mod tests {
             HarnessEndpointUpsert {
                 endpoint_id: None,
                 name: "Pi token".to_string(),
-                base_url: None,
+                base_url: Some("https://openrouter.ai/api/v1".to_string()),
                 api_shape: None,
                 auth_type: None,
                 model_override: Some("gpt-5".to_string()),
@@ -2734,7 +2885,10 @@ mod tests {
         .await
         .expect("upsert endpoint");
 
-        assert!(endpoint.base_url.is_none());
+        assert_eq!(
+            endpoint.base_url,
+            Some("https://openrouter.ai/api/v1".to_string())
+        );
         assert_eq!(endpoint.api_shape, HarnessApiShape::OpenaiResponses);
 
         set_provider_source_selection(
@@ -2749,16 +2903,66 @@ mod tests {
         let resolved = resolve_provider_source_for_run(root.path(), PROVIDER_PI)
             .await
             .expect("resolve run");
+        let pi_agent_dir = PathBuf::from(
+            resolved
+                .env
+                .get("PI_CODING_AGENT_DIR")
+                .expect("PI_CODING_AGENT_DIR should be set for pi endpoint"),
+        );
+        assert!(pi_agent_dir.join("models.json").exists());
         assert_eq!(
-            resolved.env.get("OPENAI_API_KEY"),
+            resolved.env.get(PI_ENDPOINT_API_KEY_ENV),
             Some(&"pi-key".to_string())
         );
         assert_eq!(
             resolved.env.get("PI_ACP_PROVIDER"),
-            Some(&"openai".to_string())
+            Some(&PI_ENDPOINT_PROVIDER_ID.to_string())
         );
         assert_eq!(resolved.env.get("PI_ACP_MODEL"), Some(&"gpt-5".to_string()));
+        assert!(!resolved.env.contains_key("OPENAI_API_KEY"));
         assert!(!resolved.env.contains_key("OPENAI_BASE_URL"));
+
+        let models_payload: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(pi_agent_dir.join("models.json")).expect("read models.json"),
+        )
+        .expect("parse models.json");
+        assert_eq!(
+            models_payload["providers"][PI_ENDPOINT_PROVIDER_ID]["baseUrl"],
+            "https://openrouter.ai/api/v1"
+        );
+        assert_eq!(
+            models_payload["providers"][PI_ENDPOINT_PROVIDER_ID]["api"],
+            PI_OPENAI_COMPAT_API
+        );
+        assert_eq!(
+            models_payload["providers"][PI_ENDPOINT_PROVIDER_ID]["apiKey"],
+            PI_ENDPOINT_API_KEY_ENV
+        );
+        assert_eq!(
+            models_payload["providers"][PI_ENDPOINT_PROVIDER_ID]["models"][0]["id"],
+            "gpt-5"
+        );
+    }
+
+    #[tokio::test]
+    async fn pi_endpoint_without_base_url_is_rejected() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let err = upsert_provider_endpoint(
+            root.path(),
+            PROVIDER_PI,
+            HarnessEndpointUpsert {
+                endpoint_id: None,
+                name: "Pi token".to_string(),
+                base_url: None,
+                api_shape: None,
+                auth_type: None,
+                model_override: Some("gpt-5".to_string()),
+                api_key: Some("pi-key".to_string()),
+            },
+        )
+        .await
+        .expect_err("pi endpoint without base url should fail");
+        assert!(err.to_string().contains("base_url is required"));
     }
 
     #[tokio::test]
@@ -3008,6 +3212,62 @@ mod tests {
         assert!(endpoint_home.join(KIRO_AUTH_TOKEN_RELATIVE_PATH).exists());
 
         delete_provider_endpoint(root.path(), PROVIDER_KIRO, &endpoint.id)
+            .await
+            .expect("delete endpoint");
+
+        assert!(!endpoint_home.exists());
+    }
+
+    #[tokio::test]
+    async fn deleting_pi_endpoint_removes_runtime_root_endpoint_home() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let runtime_root = root
+            .path()
+            .join("containers")
+            .join("workspaces")
+            .join("workspace-pi")
+            .join("data");
+        tokio::fs::create_dir_all(&runtime_root)
+            .await
+            .expect("runtime root");
+
+        let endpoint = upsert_provider_endpoint(
+            root.path(),
+            PROVIDER_PI,
+            HarnessEndpointUpsert {
+                endpoint_id: None,
+                name: "Pi endpoint".to_string(),
+                base_url: Some("https://openrouter.ai/api/v1".to_string()),
+                api_shape: Some(HarnessApiShape::OpenaiResponses),
+                auth_type: None,
+                model_override: Some("openai/gpt-5.2-codex".to_string()),
+                api_key: Some("sk-test".to_string()),
+            },
+        )
+        .await
+        .expect("upsert endpoint");
+
+        set_provider_source_selection(
+            root.path(),
+            PROVIDER_PI,
+            HarnessSourceKind::Endpoint,
+            Some(endpoint.id.clone()),
+        )
+        .await
+        .expect("select endpoint");
+
+        resolve_provider_source_for_run_with_runtime_root(
+            root.path(),
+            PROVIDER_PI,
+            Some(&runtime_root),
+        )
+        .await
+        .expect("resolve run with runtime root");
+
+        let endpoint_home = pi_endpoint_home(&runtime_root, &endpoint.id);
+        assert!(endpoint_home.join("models.json").exists());
+
+        delete_provider_endpoint(root.path(), PROVIDER_PI, &endpoint.id)
             .await
             .expect("delete endpoint");
 
