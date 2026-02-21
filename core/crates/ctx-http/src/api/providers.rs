@@ -21,7 +21,7 @@ use tokio::sync::{mpsc, oneshot};
 use url::Url;
 
 use super::errors::ApiErrorResp;
-use crate::daemon::AppState;
+use crate::daemon::{normalize_acp_provider_command, AppState};
 use crate::harness_sources;
 use crate::harness_sources::{
     HarnessApiShape, HarnessEndpointUpsert, HarnessEndpointVerificationStatus, HarnessSourceKind,
@@ -3494,8 +3494,18 @@ pub(super) async fn get_provider_options(
                     ),
                 })),
             ))?;
-        let command = runtime_command.command_abs_path;
-        let args = runtime_command.args;
+        let normalized_runtime = normalize_acp_provider_command(
+            &state.core.data_root,
+            &provider_id,
+            installer::AgentServerCommand {
+                command: runtime_command.command_abs_path,
+                args: runtime_command.args,
+                dependencies: runtime_command.dependencies,
+                managed: None,
+            },
+        );
+        let command = normalized_runtime.command;
+        let args = normalized_runtime.args;
 
         let probe = match provider_probe_env(&state, &provider_id).await {
             Ok((_source, env)) => {
@@ -3889,8 +3899,18 @@ pub(super) async fn verify_provider_for_workspace(
                     ),
                 })),
             ))?;
-        let command = runtime_command.command_abs_path;
-        let args = runtime_command.args;
+        let normalized_runtime = normalize_acp_provider_command(
+            &state.core.data_root,
+            &provider_id,
+            installer::AgentServerCommand {
+                command: runtime_command.command_abs_path,
+                args: runtime_command.args,
+                dependencies: runtime_command.dependencies,
+                managed: None,
+            },
+        );
+        let command = normalized_runtime.command;
+        let args = normalized_runtime.args;
 
         match provider_probe_env(&state, &provider_id).await {
             Ok((source, env)) => {

@@ -368,6 +368,36 @@ await import('file://{}');\n",
     cmd
 }
 
+fn maybe_set_qwen_openai_auth_type(
+    mut cmd: installer::AgentServerCommand,
+) -> installer::AgentServerCommand {
+    if cmd.args.iter().any(|arg| arg == "--auth-type") {
+        return cmd;
+    }
+    cmd.args.push("--auth-type".to_string());
+    cmd.args.push("openai".to_string());
+    cmd
+}
+
+pub(crate) fn normalize_acp_provider_command(
+    data_root: &Path,
+    provider_id: &str,
+    cmd: installer::AgentServerCommand,
+) -> installer::AgentServerCommand {
+    let cmd = if provider_id == "gemini" {
+        maybe_wrap_gemini_acp_command(data_root, cmd)
+    } else if provider_id == "cagent" {
+        with_cagent_config_path(data_root, cmd)
+    } else {
+        cmd
+    };
+    if provider_id == "qwen" {
+        maybe_set_qwen_openai_auth_type(cmd)
+    } else {
+        cmd
+    }
+}
+
 async fn reconcile_running_turns(state: &Arc<AppState>) -> Result<()> {
     let workspaces = state.global_store().list_workspaces().await?;
     let mut running_turns = Vec::new();
@@ -723,20 +753,14 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
         "openhands",
     ];
     for provider_id in acp_provider_ids {
-        let bridge_missing_message = bridge_runtime_error.clone().unwrap_or_else(|| {
-            "ACP bridge runtime is not configured or invalid".to_string()
-        });
+        let bridge_missing_message = bridge_runtime_error
+            .clone()
+            .unwrap_or_else(|| "ACP bridge runtime is not configured or invalid".to_string());
         let adapter = match bridge_cmd.as_ref() {
             None => acp_status_adapter_bridge_missing(provider_id, bridge_missing_message),
             Some(bridge) => match runtime_command_as_agent_command(&agent_cfg, provider_id) {
                 Ok(Some(cmd)) => {
-                    let cmd = if provider_id == "gemini" {
-                        maybe_wrap_gemini_acp_command(&data_root, cmd)
-                    } else if provider_id == "cagent" {
-                        with_cagent_config_path(&data_root, cmd)
-                    } else {
-                        cmd
-                    };
+                    let cmd = normalize_acp_provider_command(&data_root, provider_id, cmd);
                     acp_bridge_adapter(provider_id, bridge, cmd)
                 }
                 Ok(None) => acp_status_adapter_acp_command_invalid(
@@ -1095,5 +1119,25 @@ mod tests {
         assert!(wrapper_path.exists());
         let wrapper_body = std::fs::read_to_string(wrapper_path).unwrap();
         assert!(wrapper_body.contains("GEMINI_CLI_NO_RELAUNCH"));
+    }
+
+    #[test]
+    fn normalizes_qwen_command_with_openai_auth_type() {
+        let temp = tempdir().unwrap();
+        let input = installer::AgentServerCommand {
+            command: "/tmp/qwen".to_string(),
+            args: vec!["--experimental-acp".to_string()],
+            dependencies: Vec::new(),
+            managed: None,
+        };
+        let normalized = normalize_acp_provider_command(temp.path(), "qwen", input);
+        assert_eq!(
+            normalized.args,
+            vec![
+                "--experimental-acp".to_string(),
+                "--auth-type".to_string(),
+                "openai".to_string(),
+            ]
+        );
     }
 }
