@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use agent_client_protocol::{
     Agent, AuthMethod, AuthenticateRequest, CancelNotification, Client, ClientCapabilities,
@@ -29,6 +30,8 @@ struct SessionState {
     translator: Translator,
     cwd: PathBuf,
     active_turn_id: Option<String>,
+    last_turn_update_at: Option<Instant>,
+    turn_update_count: u64,
 }
 
 #[derive(Default)]
@@ -84,6 +87,10 @@ impl Client for BridgeClient {
         let session_id = args.session_id.to_string();
         if let Some(state) = sessions.by_acp.get_mut(&session_id) {
             let events = state.translator.apply_update(args.update);
+            if state.active_turn_id.is_some() && !events.is_empty() {
+                state.last_turn_update_at = Some(Instant::now());
+                state.turn_update_count = state.turn_update_count.saturating_add(events.len() as u64);
+            }
             for event in events {
                 let _ = self.events_tx.send(event).await;
             }
@@ -302,6 +309,83 @@ pub async fn run_bridge(config: Config) -> Result<()> {
         .await
 }
 
+const CLINE_PROMPT_TAIL_FIRST_UPDATE_WAIT: Duration = Duration::from_secs(4);
+const CLINE_PROMPT_TAIL_IDLE_SETTLE: Duration = Duration::from_millis(350);
+const CLINE_PROMPT_TAIL_MAX_WAIT: Duration = Duration::from_secs(10);
+const CLINE_PROMPT_TAIL_POLL: Duration = Duration::from_millis(50);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PromptTailDecision {
+    Wait,
+    Done,
+}
+
+fn should_wait_cline_prompt_tail(provider_id: Option<&str>) -> bool {
+    provider_id
+        .map(|value| value.eq_ignore_ascii_case("cline"))
+        .unwrap_or(false)
+}
+
+fn prompt_tail_decision(
+    started_at: Instant,
+    now: Instant,
+    initial_update_count: u64,
+    current_update_count: u64,
+    last_update_at: Option<Instant>,
+    has_buffered_message: bool,
+) -> PromptTailDecision {
+    let elapsed = now.saturating_duration_since(started_at);
+    if elapsed >= CLINE_PROMPT_TAIL_MAX_WAIT {
+        return PromptTailDecision::Done;
+    }
+    if current_update_count > initial_update_count && has_buffered_message {
+        if let Some(last_update_at) = last_update_at {
+            let idle = now.saturating_duration_since(last_update_at);
+            if idle >= CLINE_PROMPT_TAIL_IDLE_SETTLE {
+                return PromptTailDecision::Done;
+            }
+        }
+        return PromptTailDecision::Wait;
+    }
+    if elapsed >= CLINE_PROMPT_TAIL_FIRST_UPDATE_WAIT {
+        return PromptTailDecision::Done;
+    }
+    PromptTailDecision::Wait
+}
+
+async fn wait_for_prompt_tail(
+    sessions: &Arc<Mutex<Sessions>>,
+    acp_session_id: &str,
+    turn_id: &str,
+    initial_update_count: u64,
+) {
+    let started_at = Instant::now();
+    loop {
+        let now = Instant::now();
+        let decision = {
+            let sessions_guard = sessions.lock().await;
+            let Some(state) = sessions_guard.by_acp.get(acp_session_id) else {
+                break;
+            };
+            if state.active_turn_id.as_deref() != Some(turn_id) {
+                break;
+            }
+            prompt_tail_decision(
+                started_at,
+                now,
+                initial_update_count,
+                state.turn_update_count,
+                state.last_turn_update_at,
+                state.translator.has_buffered_message(),
+            )
+        };
+        if decision == PromptTailDecision::Done {
+            break;
+        }
+        tokio::time::sleep(CLINE_PROMPT_TAIL_POLL).await;
+    }
+}
+
 async fn handle_command(
     command: CrpCommand,
     acp: &ClientSideConnection,
@@ -368,6 +452,8 @@ async fn handle_command(
                     translator,
                     cwd,
                     active_turn_id: None,
+                    last_turn_update_at: None,
+                    turn_update_count: 0,
                 },
             );
 
@@ -391,6 +477,10 @@ async fn handle_command(
             let crp_session_id =
                 session_id.ok_or_else(|| anyhow!("session.prompt missing session_id"))?;
 
+            let wait_for_cline_tail = {
+                let state = bridge_state.lock().await;
+                should_wait_cline_prompt_tail(state.provider_id.as_deref())
+            };
             let mut sessions_guard = sessions.lock().await;
             let acp_session_id = sessions_guard
                 .by_crp
@@ -413,6 +503,9 @@ async fn handle_command(
             state
                 .translator
                 .start_turn(turn_id.clone(), message_id.clone());
+            state.last_turn_update_at = None;
+            state.turn_update_count = 0;
+            let initial_update_count = state.turn_update_count;
 
             let _ = events_tx
                 .send(CrpEnvelope {
@@ -431,6 +524,16 @@ async fn handle_command(
             let prompt_req = PromptRequest::new(acp_session_id.clone(), prompt_blocks);
             let response = acp.prompt(prompt_req).await.context("acp prompt")?;
 
+            if wait_for_cline_tail {
+                wait_for_prompt_tail(
+                    sessions,
+                    &acp_session_id,
+                    &turn_id,
+                    initial_update_count,
+                )
+                .await;
+            }
+
             let mut sessions_guard = sessions.lock().await;
             let state = sessions_guard
                 .by_acp
@@ -442,6 +545,8 @@ async fn handle_command(
             }
             state.translator.clear_turn();
             state.active_turn_id = None;
+            state.last_turn_update_at = None;
+            state.turn_update_count = 0;
 
             let status = if response.stop_reason == agent_client_protocol::StopReason::Cancelled {
                 CrpTurnStatus::Canceled
@@ -751,4 +856,63 @@ fn skill_block(obj: &serde_json::Map<String, Value>) -> Option<ContentBlock> {
         out.push_str(content);
     }
     Some(ContentBlock::Text(TextContent::new(out)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cline_tail_wait_is_provider_scoped() {
+        assert!(should_wait_cline_prompt_tail(Some("cline")));
+        assert!(should_wait_cline_prompt_tail(Some("CLINE")));
+        assert!(!should_wait_cline_prompt_tail(Some("qwen")));
+        assert!(!should_wait_cline_prompt_tail(None));
+    }
+
+    #[test]
+    fn prompt_tail_waits_for_first_update() {
+        let started_at = Instant::now();
+        let now = started_at + Duration::from_secs(1);
+        let decision = prompt_tail_decision(started_at, now, 0, 0, None, false);
+        assert_eq!(decision, PromptTailDecision::Wait);
+    }
+
+    #[test]
+    fn prompt_tail_done_when_first_update_window_elapsed() {
+        let started_at = Instant::now();
+        let now = started_at + CLINE_PROMPT_TAIL_FIRST_UPDATE_WAIT + Duration::from_millis(1);
+        let decision = prompt_tail_decision(started_at, now, 0, 0, None, false);
+        assert_eq!(decision, PromptTailDecision::Done);
+    }
+
+    #[test]
+    fn prompt_tail_waits_when_updates_exist_but_message_missing() {
+        let started_at = Instant::now();
+        let now = started_at + Duration::from_millis(200);
+        let decision = prompt_tail_decision(
+            started_at,
+            now,
+            0,
+            2,
+            Some(now - Duration::from_millis(100)),
+            false,
+        );
+        assert_eq!(decision, PromptTailDecision::Wait);
+    }
+
+    #[test]
+    fn prompt_tail_done_after_idle_settle_with_buffered_message() {
+        let started_at = Instant::now();
+        let now = started_at + Duration::from_secs(1);
+        let decision = prompt_tail_decision(
+            started_at,
+            now,
+            0,
+            2,
+            Some(now - CLINE_PROMPT_TAIL_IDLE_SETTLE - Duration::from_millis(1)),
+            true,
+        );
+        assert_eq!(decision, PromptTailDecision::Done);
+    }
 }

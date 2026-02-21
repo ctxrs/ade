@@ -642,14 +642,23 @@ test("workbench: endpoint harness OpenRouter matrix first pass", async ({ page, 
         continue;
       }
 
-      const authResult = await configureHarnessEndpointAuthViaModal(page, entry, apiKey, baseUrl);
+      const modelOverride = modelOverrideByProvider[entry.providerId] ?? "";
+      const authResult = await configureHarnessEndpointAuthViaModal(
+        page,
+        entry,
+        apiKey,
+        baseUrl,
+        modelOverride,
+      );
       console.log(`endpoint matrix: ${entry.providerId} auth result -> ${authResult.ok ? "ok" : "fail"}`);
       const authLikelyAlreadyConfigured =
         !authResult.ok && authResult.detail.toLowerCase().includes("already be configured");
       const authProbeFailureOnly =
         !authResult.ok &&
         (authResult.detail.toLowerCase().includes("models.list response")
-          || authResult.detail.toLowerCase().includes("models.list probe timed out"));
+          || authResult.detail.toLowerCase().includes("models.list probe timed out")
+          || authResult.detail.toLowerCase().includes("requires openai_model")
+          || authResult.detail.toLowerCase().includes("configure a model override"));
       const authSaved = authResult.ok || authLikelyAlreadyConfigured || authProbeFailureOnly;
       if (!authSaved) {
         results.push({
@@ -663,7 +672,6 @@ test("workbench: endpoint harness OpenRouter matrix first pass", async ({ page, 
         continue;
       }
 
-      const modelOverride = modelOverrideByProvider[entry.providerId] ?? "";
       if (modelOverride) {
         const modelOverrideResult = await ensureEndpointModelOverrideForProvider({
           request,

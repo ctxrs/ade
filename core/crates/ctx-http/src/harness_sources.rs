@@ -273,6 +273,14 @@ fn qwen_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
         .join(endpoint_id)
 }
 
+fn cline_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
+    data_root
+        .join("providers")
+        .join("cline")
+        .join("endpoint-homes")
+        .join(endpoint_id)
+}
+
 fn kiro_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
     data_root
         .join("providers")
@@ -319,6 +327,26 @@ async fn remove_kiro_endpoint_homes_for_runtime_roots(
 ) -> Result<()> {
     for runtime_root in container_runtime_data_roots(data_root).await {
         remove_kiro_endpoint_home_for_root(&runtime_root, endpoint_id).await?;
+    }
+    Ok(())
+}
+
+async fn remove_cline_endpoint_home_for_root(root: &Path, endpoint_id: &str) -> Result<()> {
+    let endpoint_home = cline_endpoint_home(root, endpoint_id);
+    match tokio::fs::remove_dir_all(&endpoint_home).await {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err)
+            .with_context(|| format!("removing cline endpoint home for endpoint {}", endpoint_id)),
+    }
+}
+
+async fn remove_cline_endpoint_homes_for_runtime_roots(
+    data_root: &Path,
+    endpoint_id: &str,
+) -> Result<()> {
+    for runtime_root in container_runtime_data_roots(data_root).await {
+        remove_cline_endpoint_home_for_root(&runtime_root, endpoint_id).await?;
     }
     Ok(())
 }
@@ -1185,6 +1213,11 @@ pub async fn delete_provider_endpoint(
                 remove_kiro_endpoint_home_for_root(data_root, &removed_endpoint_id).await?;
                 remove_kiro_endpoint_homes_for_runtime_roots(data_root, &removed_endpoint_id)
                     .await?;
+            } else if canonical == PROVIDER_CLINE {
+                ensure_safe_endpoint_id(&removed_endpoint_id)?;
+                remove_cline_endpoint_home_for_root(data_root, &removed_endpoint_id).await?;
+                remove_cline_endpoint_homes_for_runtime_roots(data_root, &removed_endpoint_id)
+                    .await?;
             }
         }
         save_registry(data_root, &registry).await?;
@@ -1638,7 +1671,33 @@ async fn resolve_internal(
                 env.insert("OPENAI_MODEL".to_string(), model);
             }
         }
-        PROVIDER_CAGENT | PROVIDER_CLINE | PROVIDER_SWE_AGENT => {
+        PROVIDER_CLINE => {
+            let base_url = endpoint_base_url_or_err(&endpoint)?;
+            ensure_shape_compatible(canonical, endpoint.api_shape)?;
+            ensure_safe_endpoint_id(&endpoint.id)?;
+            let cline_home_root = runtime_data_root.unwrap_or(data_root);
+            let cline_home = cline_endpoint_home(cline_home_root, &endpoint.id);
+            tokio::fs::create_dir_all(&cline_home).await.with_context(|| {
+                format!(
+                    "creating cline endpoint home {}",
+                    cline_home.to_string_lossy()
+                )
+            })?;
+            let cline_home_str = cline_home.to_string_lossy().to_string();
+            env.insert("CLINE_DIR".to_string(), cline_home_str.clone());
+            env.insert("HOME".to_string(), cline_home_str);
+            env.insert("OPENAI_API_KEY".to_string(), api_key);
+            env.insert("OPENAI_BASE_URL".to_string(), base_url);
+            if let Some(model) = endpoint
+                .model_override
+                .as_ref()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+            {
+                env.insert("OPENAI_MODEL".to_string(), model);
+            }
+        }
+        PROVIDER_CAGENT | PROVIDER_SWE_AGENT => {
             let base_url = endpoint_base_url_or_err(&endpoint)?;
             ensure_shape_compatible(canonical, endpoint.api_shape)?;
             env.insert("OPENAI_API_KEY".to_string(), api_key);
@@ -2467,7 +2526,7 @@ mod tests {
                 PROVIDER_PI,
                 &["OPENAI_API_KEY", "PI_ACP_PROVIDER", "PI_ACP_MODEL"],
             ),
-            (PROVIDER_CLINE, &["OPENAI_API_KEY"]),
+            (PROVIDER_CLINE, &["OPENAI_API_KEY", "CLINE_DIR", "HOME"]),
             (PROVIDER_SWE_AGENT, &["OPENAI_API_KEY"]),
             (
                 PROVIDER_OPENHANDS,
@@ -2742,6 +2801,70 @@ mod tests {
         assert!(endpoint_home.join(".qwen").join("settings.json").exists());
 
         delete_provider_endpoint(root.path(), PROVIDER_QWEN, &endpoint.id)
+            .await
+            .expect("delete endpoint");
+
+        assert!(!endpoint_home.exists());
+    }
+
+    #[tokio::test]
+    async fn deleting_cline_endpoint_removes_runtime_root_endpoint_home() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let runtime_root = root
+            .path()
+            .join("containers")
+            .join("workspaces")
+            .join("workspace-cline")
+            .join("data");
+        tokio::fs::create_dir_all(&runtime_root)
+            .await
+            .expect("runtime root");
+
+        let endpoint = upsert_provider_endpoint(
+            root.path(),
+            PROVIDER_CLINE,
+            HarnessEndpointUpsert {
+                endpoint_id: None,
+                name: "Cline endpoint".to_string(),
+                base_url: Some("https://openrouter.ai/api/v1".to_string()),
+                api_shape: Some(HarnessApiShape::OpenaiResponses),
+                auth_type: None,
+                model_override: Some("openai/gpt-5.2-codex".to_string()),
+                api_key: Some("sk-test".to_string()),
+            },
+        )
+        .await
+        .expect("upsert endpoint");
+
+        set_provider_source_selection(
+            root.path(),
+            PROVIDER_CLINE,
+            HarnessSourceKind::Endpoint,
+            Some(endpoint.id.clone()),
+        )
+        .await
+        .expect("select endpoint");
+
+        let resolved = resolve_provider_source_for_run_with_runtime_root(
+            root.path(),
+            PROVIDER_CLINE,
+            Some(&runtime_root),
+        )
+        .await
+        .expect("resolve run with runtime root");
+
+        let endpoint_home = cline_endpoint_home(&runtime_root, &endpoint.id);
+        assert!(endpoint_home.exists());
+        assert_eq!(
+            resolved.env.get("CLINE_DIR"),
+            Some(&endpoint_home.to_string_lossy().to_string())
+        );
+        assert_eq!(
+            resolved.env.get("HOME"),
+            Some(&endpoint_home.to_string_lossy().to_string())
+        );
+
+        delete_provider_endpoint(root.path(), PROVIDER_CLINE, &endpoint.id)
             .await
             .expect("delete endpoint");
 

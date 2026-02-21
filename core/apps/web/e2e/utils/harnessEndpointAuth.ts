@@ -100,6 +100,7 @@ export async function configureHarnessEndpointAuthViaModal(
   entry: EndpointHarnessMatrixEntry,
   apiKey: string,
   baseUrl: string,
+  modelOverride = "",
 ): Promise<HarnessAuthConfigResult> {
   await dismissAuthModalIfOpen(page);
   const menu = await openHarnessMenu(page);
@@ -141,6 +142,27 @@ export async function configureHarnessEndpointAuthViaModal(
     .first();
   if ((await baseUrlInput.count()) > 0) {
     await baseUrlInput.fill(baseUrl);
+  }
+
+  const targetModel = modelOverride.trim();
+  if (targetModel) {
+    const modelOverrideInput = modal
+      .locator("label.settings-harness-modal-label")
+      .filter({ hasText: "Model override" })
+      .locator("input")
+      .first();
+    if ((await modelOverrideInput.count()) > 0) {
+      await modelOverrideInput.fill(targetModel);
+    } else {
+      const modelInput = modal
+        .locator("label.settings-harness-modal-label")
+        .filter({ hasText: "Model" })
+        .locator("input")
+        .first();
+      if ((await modelInput.count()) > 0) {
+        await modelInput.fill(targetModel);
+      }
+    }
   }
 
   await modal.getByRole("button", { name: "Add API key" }).click();
