@@ -814,6 +814,7 @@ const MOBILE_API_MAX_VERSION: i64 = 1;
 struct HealthCompatibility {
     desktop_exact_version: String,
     desktop_build_id: String,
+    desktop_dev_instance_id: String,
     mobile_api_min: i64,
     mobile_api_max: i64,
 }
@@ -887,6 +888,9 @@ async fn health(State(state): State<Arc<AppState>>) -> Result<Json<HealthResp>, 
     let build_id = option_env!("CTX_BUILD_ID")
         .unwrap_or(env!("CARGO_PKG_VERSION"))
         .to_string();
+    let dev_instance_id = option_env!("CTX_DEV_INSTANCE_ID")
+        .unwrap_or("unknown")
+        .to_string();
     Ok(Json(HealthResp {
         version: version.clone(),
         daemon_version: version.clone(),
@@ -897,6 +901,7 @@ async fn health(State(state): State<Arc<AppState>>) -> Result<Json<HealthResp>, 
         compatibility: HealthCompatibility {
             desktop_exact_version: version,
             desktop_build_id: build_id,
+            desktop_dev_instance_id: dev_instance_id,
             mobile_api_min: MOBILE_API_MIN_VERSION,
             mobile_api_max: MOBILE_API_MAX_VERSION,
         },
@@ -1005,6 +1010,9 @@ async fn diagnostics(
     let build_id = option_env!("CTX_BUILD_ID")
         .unwrap_or(env!("CARGO_PKG_VERSION"))
         .to_string();
+    let dev_instance_id = option_env!("CTX_DEV_INSTANCE_ID")
+        .unwrap_or("unknown")
+        .to_string();
     Ok(Json(DiagnosticsResp {
         daemon: HealthResp {
             version: version.clone(),
@@ -1016,6 +1024,7 @@ async fn diagnostics(
             compatibility: HealthCompatibility {
                 desktop_exact_version: version,
                 desktop_build_id: build_id,
+                desktop_dev_instance_id: dev_instance_id,
                 mobile_api_min: MOBILE_API_MIN_VERSION,
                 mobile_api_max: MOBILE_API_MAX_VERSION,
             },

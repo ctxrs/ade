@@ -2,15 +2,27 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod dev_instance_identity {
+    include!("../../build-support/dev_instance_identity.rs");
+}
+
 fn main() {
     emit_build_identity();
 }
 
 fn emit_build_identity() {
     println!("cargo:rerun-if-env-changed=CTX_BUILD_ID");
+    println!("cargo:rerun-if-env-changed=CTX_DEV_INSTANCE_ID");
+    println!("cargo:rerun-if-env-changed=CTX_DEV_INSTANCE_ROOT");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=Cargo.toml");
     println!("cargo:rerun-if-changed=src");
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    emit_git_rerun_hints(&manifest_dir);
+
+    let dev_instance_id = dev_instance_identity::resolve_dev_instance_id(&manifest_dir);
+    println!("cargo:rustc-env=CTX_DEV_INSTANCE_ID={dev_instance_id}");
+
     if let Ok(explicit) = env::var("CTX_BUILD_ID") {
         let trimmed = explicit.trim();
         if !trimmed.is_empty() {
@@ -18,8 +30,6 @@ fn emit_build_identity() {
             return;
         }
     }
-    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    emit_git_rerun_hints(&manifest_dir);
     let build_id = git_head_build_id(&manifest_dir)
         .unwrap_or_else(|| env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "unknown".to_string()));
     println!("cargo:rustc-env=CTX_BUILD_ID={build_id}");

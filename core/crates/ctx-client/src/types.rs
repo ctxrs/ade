@@ -25,6 +25,8 @@ pub struct HealthCompatibility {
     pub desktop_exact_version: String,
     #[serde(default)]
     pub desktop_build_id: String,
+    #[serde(default)]
+    pub desktop_dev_instance_id: String,
     pub mobile_api_min: i64,
     pub mobile_api_max: i64,
 }

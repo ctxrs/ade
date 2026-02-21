@@ -37,7 +37,7 @@ struct DaemonHealthCompatibility {
     #[serde(default)]
     desktop_exact_version: String,
     #[serde(default)]
-    desktop_build_id: String,
+    desktop_dev_instance_id: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -87,7 +87,7 @@ pub(super) async fn desktop_connect_local(
         let state = app.state::<ConnectionManager>();
         let data_dir = daemon_data_dir(&app).map_err(to_err)?;
         let desktop_version = app.package_info().version.to_string();
-        let desktop_build_id = desktop_build_id();
+        let desktop_dev_instance_id = desktop_dev_instance_id();
         // Idempotent: if we're already connected to a healthy local daemon, keep the connection.
         // The workspace wizard calls connect_local as part of its flow; disconnecting here can
         // kill a just-started daemon and introduce flakiness on cold start.
@@ -98,7 +98,7 @@ pub(super) async fn desktop_connect_local(
                     url,
                     &data_dir,
                     &desktop_version,
-                    desktop_build_id,
+                    desktop_dev_instance_id,
                 ) {
                     return Ok(info);
                 }
@@ -123,7 +123,7 @@ pub(super) async fn desktop_connect_local(
             &app,
             &data_dir,
             &desktop_version,
-            desktop_build_id,
+            desktop_dev_instance_id,
         ) {
             Ok(value) => value,
             Err(err) => {
@@ -160,10 +160,14 @@ pub(super) async fn desktop_restart_local_daemon(
         manager.disconnect();
         let data_dir = daemon_data_dir(&app).map_err(to_err)?;
         let desktop_version = app.package_info().version.to_string();
-        let desktop_build_id = desktop_build_id();
-        let spawned =
-            spawn_and_validate_local_daemon(&app, &data_dir, &desktop_version, desktop_build_id)
-                .map_err(to_err)?;
+        let desktop_dev_instance_id = desktop_dev_instance_id();
+        let spawned = spawn_and_validate_local_daemon(
+            &app,
+            &data_dir,
+            &desktop_version,
+            desktop_dev_instance_id,
+        )
+        .map_err(to_err)?;
         manager.set_local(
             spawned.url,
             spawned.token,
@@ -197,7 +201,7 @@ pub(super) fn ensure_local_connection(
     }
     let data_dir = daemon_data_dir(app)?;
     let desktop_version = app.package_info().version.to_string();
-    let desktop_build_id = desktop_build_id();
+    let desktop_dev_instance_id = desktop_dev_instance_id();
     if let Some((url, token)) = resolve_env_local_daemon(app)? {
         probe_daemon_health(&url)?;
         state.set_local_external(url, token);
@@ -211,7 +215,7 @@ pub(super) fn ensure_local_connection(
         app,
         &data_dir,
         &desktop_version,
-        desktop_build_id,
+        desktop_dev_instance_id,
     ) {
         Ok(value) => value,
         Err(err) => {
@@ -229,7 +233,7 @@ pub(super) fn ensure_local_connection(
                 url,
                 &data_dir,
                 &desktop_version,
-                desktop_build_id,
+                desktop_dev_instance_id,
             )
                 .with_context(|| {
                     format!(
@@ -581,8 +585,13 @@ fn resolve_existing_local_daemon(
         return Ok(None);
     };
     let desktop_version = app.package_info().version.to_string();
-    let desktop_build_id = desktop_build_id();
-    if existing_local_daemon_matches_or_absent(url, data_dir, &desktop_version, desktop_build_id) {
+    let desktop_dev_instance_id = desktop_dev_instance_id();
+    if existing_local_daemon_matches_or_absent(
+        url,
+        data_dir,
+        &desktop_version,
+        desktop_dev_instance_id,
+    ) {
         return Ok(Some((url.to_string(), auth.token)));
     }
     Ok(None)
@@ -924,15 +933,15 @@ fn normalize_path_for_compare(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| normalize_path(path))
 }
 
-fn desktop_build_id() -> &'static str {
-    option_env!("CTX_BUILD_ID").unwrap_or(env!("CARGO_PKG_VERSION"))
+fn desktop_dev_instance_id() -> &'static str {
+    option_env!("CTX_DEV_INSTANCE_ID").unwrap_or("unknown")
 }
 
 fn local_daemon_health_matches_expected(
     health: &DaemonHealthSummary,
     expected_data_dir: &Path,
     expected_desktop_version: &str,
-    expected_desktop_build_id: &str,
+    expected_desktop_dev_instance_id: &str,
 ) -> bool {
     let daemon_data_root = health.data_root.trim();
     if daemon_data_root.is_empty() {
@@ -951,11 +960,11 @@ fn local_daemon_health_matches_expected(
         return false;
     }
     if cfg!(debug_assertions) {
-        let expected_build_id = expected_desktop_build_id.trim();
-        if expected_build_id.is_empty() {
+        let expected_dev_instance_id = expected_desktop_dev_instance_id.trim();
+        if expected_dev_instance_id.is_empty() {
             return false;
         }
-        if health.compatibility.desktop_build_id.trim() != expected_build_id {
+        if health.compatibility.desktop_dev_instance_id.trim() != expected_dev_instance_id {
             return false;
         }
     }
@@ -966,14 +975,14 @@ fn existing_local_daemon_matches(
     base_url: &str,
     expected_data_dir: &Path,
     expected_desktop_version: &str,
-    expected_desktop_build_id: &str,
+    expected_desktop_dev_instance_id: &str,
 ) -> Result<bool> {
     let health = daemon_health(base_url)?;
     Ok(local_daemon_health_matches_expected(
         &health,
         expected_data_dir,
         expected_desktop_version,
-        expected_desktop_build_id,
+        expected_desktop_dev_instance_id,
     ))
 }
 
@@ -981,13 +990,13 @@ fn existing_local_daemon_matches_or_absent(
     base_url: &str,
     expected_data_dir: &Path,
     expected_desktop_version: &str,
-    expected_desktop_build_id: &str,
+    expected_desktop_dev_instance_id: &str,
 ) -> bool {
     existing_local_daemon_matches(
         base_url,
         expected_data_dir,
         expected_desktop_version,
-        expected_desktop_build_id,
+        expected_desktop_dev_instance_id,
     )
     .unwrap_or(false)
 }
@@ -1602,16 +1611,20 @@ fn spawn_and_validate_local_daemon(
     app: &tauri::AppHandle,
     data_dir: &Path,
     desktop_version: &str,
-    desktop_build_id: &str,
+    desktop_dev_instance_id: &str,
 ) -> Result<SpawnedLocalDaemonReady> {
     let (url, child, systemd_scope) = spawn_daemon(app, data_dir, true)?;
     let pending = PendingSpawnedLocalDaemon::new(url, child, systemd_scope);
-    let compatible =
-        existing_local_daemon_matches(pending.url(), data_dir, desktop_version, desktop_build_id)
-            .context("validating spawned local daemon compatibility")?;
+    let compatible = existing_local_daemon_matches(
+        pending.url(),
+        data_dir,
+        desktop_version,
+        desktop_dev_instance_id,
+    )
+    .context("validating spawned local daemon compatibility")?;
     if !compatible {
         anyhow::bail!(
-            "spawned local daemon is incompatible (version={desktop_version}, build_id={desktop_build_id}, url={})",
+            "spawned local daemon is incompatible (version={desktop_version}, dev_instance_id={desktop_dev_instance_id}, url={})",
             pending.url()
         );
     }
@@ -1648,7 +1661,7 @@ mod desktop_daemon_tests {
     }
 
     #[test]
-    fn local_daemon_health_match_requires_expected_data_root_version_and_build_id() {
+    fn local_daemon_health_match_requires_expected_data_root_and_mode_specific_identity() {
         let expected_dir =
             std::env::temp_dir().join(format!("ctx-daemon-health-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&expected_dir).expect("create expected dir");
@@ -1659,27 +1672,27 @@ mod desktop_daemon_tests {
             data_root: expected_dir.to_string_lossy().to_string(),
             compatibility: DaemonHealthCompatibility {
                 desktop_exact_version: "1.2.3".to_string(),
-                desktop_build_id: "build-abc".to_string(),
+                desktop_dev_instance_id: "dev-wt-a".to_string(),
             },
         };
         assert!(local_daemon_health_matches_expected(
             &matching,
             &expected_dir,
             "1.2.3",
-            "build-abc",
-        ));
-        assert!(!local_daemon_health_matches_expected(
-            &matching,
-            &expected_dir,
-            "9.9.9",
-            "build-abc",
+            "dev-wt-a",
         ));
         if cfg!(debug_assertions) {
             assert!(!local_daemon_health_matches_expected(
                 &matching,
                 &expected_dir,
+                "9.9.9",
+                "dev-wt-a",
+            ));
+            assert!(!local_daemon_health_matches_expected(
+                &matching,
+                &expected_dir,
                 "1.2.3",
-                "build-other",
+                "dev-wt-b",
             ));
         }
 
@@ -1687,14 +1700,14 @@ mod desktop_daemon_tests {
             data_root: other_dir.to_string_lossy().to_string(),
             compatibility: DaemonHealthCompatibility {
                 desktop_exact_version: "1.2.3".to_string(),
-                desktop_build_id: "build-abc".to_string(),
+                desktop_dev_instance_id: "dev-wt-a".to_string(),
             },
         };
         assert!(!local_daemon_health_matches_expected(
             &wrong_root,
             &expected_dir,
             "1.2.3",
-            "build-abc",
+            "dev-wt-a",
         ));
 
         std::fs::remove_dir_all(&expected_dir).ok();
@@ -1712,7 +1725,7 @@ mod desktop_daemon_tests {
             "not-a-url",
             &expected_dir,
             "1.2.3",
-            "build-abc",
+            "dev-wt-a",
         ));
 
         std::fs::remove_dir_all(&expected_dir).ok();
