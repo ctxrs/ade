@@ -80,6 +80,10 @@ impl Translator {
         self.message_buffer.clear();
     }
 
+    pub fn has_buffered_message(&self) -> bool {
+        !self.message_buffer.is_empty()
+    }
+
     pub fn apply_update(&mut self, update: SessionUpdate) -> Vec<CrpEnvelope> {
         match update {
             SessionUpdate::AgentMessageChunk(chunk) => self.handle_message_chunk(chunk.content),

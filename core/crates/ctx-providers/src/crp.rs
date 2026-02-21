@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use base64::Engine;
 use chrono::Utc;
@@ -2159,6 +2159,26 @@ fn normalize_effort_id(raw: &str) -> Option<String> {
     }
 }
 
+fn synthetic_models_probe_for_provider(
+    provider_id: &str,
+    env: &HashMap<String, String>,
+) -> Option<CrpModelsProbe> {
+    if provider_id != "cline" {
+        return None;
+    }
+    let model_id = env
+        .get("OPENAI_MODEL")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())?;
+    Some(CrpModelsProbe {
+        models: vec![CrpModelInfo {
+            id: model_id.clone(),
+            name: Some(model_id.clone()),
+        }],
+        current_model_id: Some(model_id),
+    })
+}
+
 pub async fn probe_crp_models(
     provider_id: &str,
     command: String,
@@ -2166,6 +2186,16 @@ pub async fn probe_crp_models(
     workdir: PathBuf,
     env: HashMap<String, String>,
 ) -> Result<CrpModelsProbe> {
+    if provider_id == "cline" {
+        return synthetic_models_probe_for_provider(provider_id, &env).ok_or_else(|| {
+            anyhow!(
+                "Cline model discovery requires OPENAI_MODEL; configure a model override for the endpoint"
+            )
+        });
+    }
+    if let Some(probe) = synthetic_models_probe_for_provider(provider_id, &env) {
+        return Ok(probe);
+    }
     let command_label = command.clone();
     let mut cmd = if let Some(spec) = container_exec_spec(&env) {
         let container_command = rewrite_bundled_path_for_linux(&command)?;
@@ -2522,6 +2552,32 @@ mod tests {
 
         let cfg = build_crp_session_config(&env, &workdir);
         assert_eq!(cfg.personality, None);
+    }
+
+    #[test]
+    fn synthetic_cline_models_probe_uses_openai_model() {
+        let mut env = HashMap::new();
+        env.insert(
+            "OPENAI_MODEL".to_string(),
+            "openai/gpt-5.2-codex".to_string(),
+        );
+        let probe =
+            synthetic_models_probe_for_provider("cline", &env).expect("cline synthetic probe");
+        assert_eq!(probe.current_model_id.as_deref(), Some("openai/gpt-5.2-codex"));
+        assert_eq!(probe.models.len(), 1);
+        assert_eq!(probe.models[0].id, "openai/gpt-5.2-codex");
+    }
+
+    #[test]
+    fn synthetic_models_probe_is_provider_scoped() {
+        let env = HashMap::new();
+        assert!(synthetic_models_probe_for_provider("qwen", &env).is_none());
+    }
+
+    #[test]
+    fn synthetic_cline_models_probe_requires_openai_model() {
+        let env = HashMap::new();
+        assert!(synthetic_models_probe_for_provider("cline", &env).is_none());
     }
 
     #[cfg(feature = "fuzz_tests")]
