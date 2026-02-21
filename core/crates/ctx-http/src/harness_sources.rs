@@ -1742,25 +1742,6 @@ async fn resolve_internal(
                 env.insert("OPENAI_MODEL".to_string(), model);
             }
         }
-        PROVIDER_CAGENT | PROVIDER_SWE_AGENT => {
-            let base_url = endpoint_base_url_or_err(&endpoint)?;
-            ensure_shape_compatible(canonical, endpoint.api_shape)?;
-            ensure_safe_endpoint_id(&endpoint.id)?;
-            let qwen_home_root = runtime_data_root.unwrap_or(data_root);
-            let qwen_home = qwen_endpoint_home(qwen_home_root, &endpoint.id);
-            prepare_qwen_home_with_openai_settings(&qwen_home).await?;
-            env.insert("HOME".to_string(), qwen_home.to_string_lossy().to_string());
-            env.insert("OPENAI_API_KEY".to_string(), api_key);
-            env.insert("OPENAI_BASE_URL".to_string(), base_url);
-            if let Some(model) = endpoint
-                .model_override
-                .as_ref()
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-            {
-                env.insert("OPENAI_MODEL".to_string(), model);
-            }
-        }
         PROVIDER_OPENCODE => {
             let base_url = endpoint_base_url_or_err(&endpoint)?;
             ensure_shape_compatible(canonical, endpoint.api_shape)?;
@@ -2632,8 +2613,6 @@ mod tests {
                 PROVIDER_PI,
                 &["OPENAI_API_KEY", "PI_ACP_PROVIDER", "PI_ACP_MODEL"],
             ),
-            (PROVIDER_CLINE, &["OPENAI_API_KEY", "CLINE_DIR", "HOME"]),
-            (PROVIDER_SWE_AGENT, &["OPENAI_API_KEY"]),
             (
                 PROVIDER_OPENHANDS,
                 &["LLM_API_KEY", "LLM_BASE_URL", "LLM_MODEL"],

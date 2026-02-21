@@ -1117,24 +1117,4 @@ mod tests {
             ]
         );
     }
-
-    #[test]
-    fn normalizes_qwen_command_with_openai_auth_type() {
-        let temp = tempdir().unwrap();
-        let input = installer::AgentServerCommand {
-            command: "/tmp/qwen".to_string(),
-            args: vec!["--experimental-acp".to_string()],
-            dependencies: Vec::new(),
-            managed: None,
-        };
-        let normalized = normalize_acp_provider_command(temp.path(), "qwen", input);
-        assert_eq!(
-            normalized.args,
-            vec![
-                "--experimental-acp".to_string(),
-                "--auth-type".to_string(),
-                "openai".to_string(),
-            ]
-        );
-    }
 }
