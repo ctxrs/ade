@@ -380,8 +380,6 @@ pub(crate) fn normalize_acp_provider_command(
 ) -> installer::AgentServerCommand {
     let cmd = if provider_id == "gemini" {
         maybe_wrap_gemini_acp_command(data_root, cmd)
-    } else if provider_id == "cagent" {
-        with_cagent_config_path(data_root, cmd)
     } else {
         cmd
     };

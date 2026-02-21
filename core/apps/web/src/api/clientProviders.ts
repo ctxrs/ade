@@ -383,6 +383,18 @@ export type GeminiLoginStartResponse = {
   auth_url?: string | null;
 };
 
+export type AmpLoginStatus = {
+  login_id: string;
+  auth_url?: string | null;
+  status: string;
+  error?: string | null;
+};
+
+export type AmpLoginStartResponse = {
+  login_id: string;
+  auth_url?: string | null;
+};
+
 export type KimiLoginStatus = {
   login_id: string;
   auth_url?: string | null;

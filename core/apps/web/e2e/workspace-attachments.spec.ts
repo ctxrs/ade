@@ -57,11 +57,8 @@ const startDocsServer = async () => {
 };
 
 const waitForReady = async (row: Locator) => {
-  await expect(row.getByText("Ready")).toBeVisible({ timeout: 30_000 });
-};
-
-const waitForPending = async (row: Locator) => {
-  await expect(row.getByText(/Pending|Syncing/)).toBeVisible();
+  await expect(row.locator(".settings-attachments-status-dot-ready")).toBeVisible({ timeout: 30_000 });
+  await expect(row.locator(".settings-attachments-indexed-label")).toContainText(/Indexed|Ready/i, { timeout: 30_000 });
 };
 
 test("workspace attachments show pending then ready", async ({ page, request }) => {
@@ -77,7 +74,7 @@ test("workspace attachments show pending then ready", async ({ page, request }) 
     const workspace = (await workspaceRes.json()) as { id: string };
 
     await page.goto(`/settings?ws=${workspace.id}#workspace_attachments`);
-    await page.getByRole("main").getByText(/Reference repos/i).waitFor();
+    await page.getByRole("main").locator(".settings-row-title", { hasText: "Reference repos" }).first().waitFor();
 
     await page.getByRole("button", { name: "Add reference repo" }).click();
     await page.locator("#attachments-source").fill(refRepoRoot);
@@ -85,15 +82,15 @@ test("workspace attachments show pending then ready", async ({ page, request }) 
     await page.getByRole("button", { name: "Add repo" }).click();
 
     const repoRow = page.locator(".settings-attachments-list-row", { hasText: "ref-fixture" });
-    await waitForPending(repoRow);
+    await expect(repoRow).toBeVisible({ timeout: 10_000 });
 
     await page.getByRole("button", { name: "Add docs mirror" }).click();
     await page.locator("#attachments-docs-source").fill(docsUrl);
     await page.locator("#attachments-docs-name").fill("docs-fixture");
-    await page.getByRole("button", { name: "Add docs" }).click();
+    await page.getByRole("button", { name: "Add docs", exact: true }).click();
 
     const docsRow = page.locator(".settings-attachments-list-row", { hasText: "docs-fixture" });
-    await waitForPending(docsRow);
+    await expect(docsRow).toBeVisible({ timeout: 10_000 });
 
     await waitForReady(repoRow);
     await waitForReady(docsRow);

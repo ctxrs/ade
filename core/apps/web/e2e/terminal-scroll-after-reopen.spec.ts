@@ -5,7 +5,7 @@ import path from "path";
 import { execSync } from "child_process";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 import { selectHarnessBySearch } from "./utils/harnessEndpointAuth";
-import type { Page } from "playwright/test";
+import type { Locator, Page } from "playwright/test";
 
 const AUTH_TOKEN = process.env.CTX_E2E_AUTH_TOKEN ?? "ctx-e2e-auth-token";
 
@@ -18,8 +18,7 @@ type TerminalBufferSnapshot = {
 
 type TerminalEntry = {
   element?: HTMLElement;
-  textarea?: HTMLTextAreaElement;
-  focus?: () => void;
+  rows?: number;
   scrollToBottom?: () => void;
   buffer?: { active?: TerminalBufferSnapshot };
 };
@@ -30,9 +29,7 @@ type TerminalRegistryWindow = Window & {
 
 type TerminalSession = {
   id: unknown;
-  created_at: string;
   status: string;
-  task_id?: unknown;
 };
 
 const readTerminalId = (value: unknown): string | undefined => {
@@ -47,6 +44,26 @@ test("terminal scroll stays consistent after closing and reopening panel while o
   execSync("git config user.email test@example.com", { cwd: repo });
   execSync("git config user.name Test", { cwd: repo });
   writeFileSync(path.join(repo, "file.txt"), "hello\n");
+
+  const streamScriptPath = path.join(repo, "ctx-e2e-stream.sh");
+  writeFileSync(
+    streamScriptPath,
+    [
+      "#!/bin/sh",
+      "i=1",
+      "while [ \"$i\" -le 3000 ]; do",
+      "  printf 'line %s\\n' \"$i\"",
+      "  if [ $((i % 10)) -eq 0 ]; then",
+      "    sleep 0.25",
+      "  fi",
+      "  i=$((i + 1))",
+      "done",
+      "sleep 5",
+      "",
+    ].join("\n"),
+  );
+  execSync("chmod +x ctx-e2e-stream.sh", { cwd: repo });
+
   execSync("git add .", { cwd: repo });
   execSync("git commit -m init", { cwd: repo });
 
@@ -69,21 +86,23 @@ test("terminal scroll stays consistent after closing and reopening panel while o
   await rows.first().click();
   await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea")).toBeVisible({ timeout: 20_000 });
 
+  const terminalId = await createStreamingWorkspaceTerminal(page, workspaceId, streamScriptPath);
+
+  // TerminalPanel only refreshes terminal list on mount; reload to pick up API-created terminal.
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.locator(".wb-main")).toBeVisible({ timeout: 20_000 });
+  await expect(rows).toHaveCount(1, { timeout: 20_000 });
+  await rows.first().click();
+  await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea")).toBeVisible({ timeout: 20_000 });
+
   await openTerminalPanel(page);
 
   const panel = page.locator(".wb-terminal-panel-inner");
-  // Use Task scope to avoid the workspace auto-terminal creation effect racing this test.
-  await panel.getByRole("button", { name: "Task" }).click();
-
-  // Always create a fresh terminal so we don't accidentally target an exited one.
-  const createStartedAt = Date.now();
-  const beforeTabs = await panel.locator(".wb-terminal-tab").count();
-  await panel.getByTitle("New terminal").click();
-  await expect.poll(() => panel.locator(".wb-terminal-tab").count()).toBeGreaterThan(beforeTabs);
-  await panel.locator(".wb-terminal-tab").last().click();
+  await ensureWorkspaceScope(panel);
+  await selectRunningTerminalTabById(page, panel, terminalId);
   await expect(panel.locator(".wb-terminal-tab-active.wb-terminal-tab-exited")).toHaveCount(0);
+  await expect.poll(() => waitForVisibleTerminalId(page), { timeout: 20_000 }).toBe(terminalId);
 
-  const terminalId = await waitForNewestWorkspaceTerminalId(page, workspaceId, createStartedAt, { requireTaskId: true });
   await expect
     .poll(() => getScrollState(page, terminalId).then((s) => s.present), { timeout: 20_000 })
     .toBe(true);
@@ -92,15 +111,12 @@ test("terminal scroll stays consistent after closing and reopening panel while o
     .toBe(true);
 
   try {
-    // Type into the terminal itself. Using a second WS client to inject input can race
-    // with (or replace) the browser's own terminal stream connection, making the test flaky.
-    const startBaseY = (await getScrollState(page, terminalId)).baseY;
-    await typeCommandInTerminal(page, terminalId, makeStreamingCommand());
+    const startLength = (await getScrollState(page, terminalId)).length;
 
     await expect
-      .poll(() => getScrollState(page, terminalId).then((s) => s.baseY), { timeout: 20_000 })
-      .toBeGreaterThanOrEqual(startBaseY + 20);
-    const beforeClose = (await getScrollState(page, terminalId)).baseY;
+      .poll(() => getScrollState(page, terminalId).then((s) => s.length), { timeout: 20_000 })
+      .toBeGreaterThanOrEqual(startLength + 80);
+    const beforeCloseLength = (await getScrollState(page, terminalId)).length;
 
     await closeTerminalPanel(page);
 
@@ -108,19 +124,20 @@ test("terminal scroll stays consistent after closing and reopening panel while o
     await page.waitForTimeout(2500);
 
     await openTerminalPanel(page);
-    await panel.getByRole("button", { name: "Task" }).click();
-    // Re-assert the intended tab after reopening; the panel may restore a different active tab.
-    await panel.locator(".wb-terminal-tab").last().click();
+    await ensureWorkspaceScope(panel);
+    await selectRunningTerminalTabById(page, panel, terminalId);
+    await expect(panel.locator(".wb-terminal-tab-active.wb-terminal-tab-exited")).toHaveCount(0);
     await expect
       .poll(() => isTerminalVisibleById(page, terminalId), { timeout: 30_000 })
       .toBe(true);
 
     // Ensure new output arrived while the panel was closed.
     await expect
-      .poll(() => getScrollState(page, terminalId).then((s) => s.baseY), { timeout: 20_000 })
-      .toBeGreaterThanOrEqual(beforeClose + 50);
+      .poll(() => getScrollState(page, terminalId).then((s) => s.length), { timeout: 20_000 })
+      .toBeGreaterThanOrEqual(beforeCloseLength + 80);
 
-    const baseYTarget = (await getScrollState(page, terminalId)).baseY;
+    const state = await getScrollState(page, terminalId);
+    const bottomTarget = Math.max(0, state.length - state.rows);
     await scrollTerminalViewportToBottom(page, terminalId);
     await page.waitForTimeout(200);
     await scrollTerminalViewportToBottom(page, terminalId);
@@ -128,11 +145,10 @@ test("terminal scroll stays consistent after closing and reopening panel while o
     await expect
       .poll(
         async () => {
-          const state = await getScrollState(page, terminalId);
-          const viewportY = state.ydisp ?? state.viewportY;
+          const current = await getScrollState(page, terminalId);
+          const viewportY = current.ydisp ?? current.viewportY;
           if (viewportY === null) return false;
-          // Use a fixed target so the assertion doesn't become a moving goalpost while output continues.
-          return viewportY >= baseYTarget;
+          return viewportY >= bottomTarget;
         },
         { timeout: 20_000 },
       )
@@ -145,11 +161,35 @@ test("terminal scroll stays consistent after closing and reopening panel while o
   }
 });
 
-function makeStreamingCommand() {
-  // Emit enough output to build scrollback while we briefly hide the panel.
-  // Keep it finite to avoid leaving runaway processes behind.
-  // Avoid fractional sleeps (some shells/environments treat them as errors).
-  return `i=0; while [ $i -lt 2500 ]; do i=$((i+1)); echo line $i; if [ $((i % 200)) -eq 0 ]; then sleep 1; fi; done`;
+async function createStreamingWorkspaceTerminal(
+  page: Page,
+  workspaceId: string,
+  streamScriptPath: string,
+): Promise<string> {
+  const resp = await page.request.post(`/api/workspaces/${workspaceId}/terminals`, {
+    headers: { authorization: `Bearer ${AUTH_TOKEN}` },
+    data: { shell: streamScriptPath },
+  });
+  expect(resp.ok()).toBeTruthy();
+  const terminal = (await resp.json()) as { id: unknown };
+  const terminalId = readTerminalId(terminal.id);
+  if (!terminalId) throw new Error("failed to parse streaming terminal id");
+
+  await expect
+    .poll(
+      async () => {
+        const listResp = await page.request.get(`/api/workspaces/${workspaceId}/terminals`, {
+          headers: { authorization: `Bearer ${AUTH_TOKEN}` },
+        });
+        if (!listResp.ok()) return "missing";
+        const terminals = (await listResp.json()) as TerminalSession[];
+        return terminals.find((t) => readTerminalId(t.id) === terminalId)?.status ?? "missing";
+      },
+      { timeout: 20_000 },
+    )
+    .toBe("running");
+
+  return terminalId;
 }
 
 async function openTerminalPanel(page: Page) {
@@ -180,6 +220,7 @@ async function getScrollState(
   viewportY: number | null;
   ydisp: number | null;
   length: number;
+  rows: number;
 }> {
   return await page.evaluate((id: string) => {
     const reg = (window as TerminalRegistryWindow).__ctxE2ETerminals;
@@ -191,6 +232,7 @@ async function getScrollState(
       viewportY: typeof buf?.viewportY === "number" ? buf.viewportY : null,
       ydisp: typeof buf?.ydisp === "number" ? buf.ydisp : null,
       length: typeof buf?.length === "number" ? buf.length : 0,
+      rows: typeof term?.rows === "number" ? term.rows : 0,
     };
   }, terminalId);
 }
@@ -204,43 +246,26 @@ async function isTerminalVisibleById(page: Page, terminalId: string): Promise<bo
     if (el.closest(".wb-terminal-group-hidden")) return false;
     const rect = el.getBoundingClientRect();
     if (rect.width <= 5 || rect.height <= 5) return false;
-    // Avoid false positives for visibility:hidden.
     const style = window.getComputedStyle(el);
     if (style.visibility === "hidden" || style.display === "none") return false;
     return true;
   }, terminalId);
 }
 
-async function waitForNewestWorkspaceTerminalId(
-  page: Page,
-  workspaceId: string,
-  createdAfterMs: number,
-  opts?: { requireTaskId?: boolean },
-): Promise<string> {
+async function ensureWorkspaceScope(panel: Locator) {
+  const workspaceButton = panel.getByRole("button", { name: "Workspace" });
+  if (!(await workspaceButton.evaluate((node) => node.classList.contains("wb-terminal-scope-active")))) {
+    await workspaceButton.click();
+  }
+  await expect(workspaceButton).toHaveClass(/wb-terminal-scope-active/);
+}
+
+async function waitForVisibleTerminalId(page: Page): Promise<string> {
   let terminalId = "";
   await expect
     .poll(
       async () => {
-        const resp = await page.request.get(`/api/workspaces/${workspaceId}/terminals`, {
-          headers: { authorization: `Bearer ${AUTH_TOKEN}` },
-        });
-        if (!resp.ok()) return "";
-        const terminals = (await resp.json()) as TerminalSession[];
-        const newest = terminals
-          .map((t) => ({
-            id: readTerminalId(t.id),
-            createdAtMs: Date.parse(t.created_at),
-            status: t.status,
-            taskId: t.task_id,
-          }))
-          .filter((t) => Boolean(t.id) && Number.isFinite(t.createdAtMs))
-          .filter((t) => (opts?.requireTaskId ? Boolean(t.taskId) : true))
-          .sort((a, b) => b.createdAtMs - a.createdAtMs)[0];
-        if (!newest?.id) return "";
-        // Prefer a running terminal created after we clicked "New terminal".
-        if (newest.createdAtMs < createdAfterMs - 1000) return "";
-        if (newest.status !== "running") return "";
-        terminalId = newest.id;
+        terminalId = await visibleTerminalIdNow(page);
         return terminalId;
       },
       { timeout: 20_000 },
@@ -249,37 +274,42 @@ async function waitForNewestWorkspaceTerminalId(
   return terminalId;
 }
 
-async function typeCommandInTerminal(page: Page, terminalId: string, command: string) {
-  await focusTerminalById(page, terminalId);
-  await page.keyboard.type(command);
-  await page.keyboard.press("Enter");
+async function visibleTerminalIdNow(page: Page): Promise<string> {
+  return await page.evaluate(() => {
+    const reg = (window as TerminalRegistryWindow).__ctxE2ETerminals;
+    if (!reg) return "";
+    for (const [id, term] of reg.entries()) {
+      const el = term?.element as HTMLElement | undefined;
+      if (!el || !el.isConnected) continue;
+      if (el.closest(".wb-terminal-group-hidden")) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 5 || rect.height <= 5) continue;
+      const style = window.getComputedStyle(el);
+      if (style.visibility === "hidden" || style.display === "none") continue;
+      return typeof id === "string" ? id : "";
+    }
+    return "";
+  });
 }
 
-async function focusTerminalById(page: Page, terminalId: string) {
-  await page.evaluate((id: string) => {
-    const reg = (window as TerminalRegistryWindow).__ctxE2ETerminals;
-    const term = reg?.get(id);
-    if (!term) return;
-    // xterm Terminal has a public focus() method; also try focusing the internal textarea.
-    term.focus?.();
-    try {
-      (term.textarea as HTMLTextAreaElement | undefined)?.focus?.();
-    } catch {
-      // ignore
-    }
-  }, terminalId);
+async function selectRunningTerminalTabById(page: Page, panel: Locator, terminalId: string) {
+  await expect
+    .poll(async () => panel.locator(".wb-terminal-tab:not(.wb-terminal-tab-exited)").count(), { timeout: 20_000 })
+    .toBeGreaterThan(0);
 
   await expect
     .poll(
-      async () =>
-        page.evaluate((id: string) => {
-          const reg = (window as TerminalRegistryWindow).__ctxE2ETerminals;
-          const term = reg?.get(id);
-          const root = term?.element as HTMLElement | undefined;
-          const active = document.activeElement as HTMLElement | null;
-          if (!root || !active) return false;
-          return root.contains(active);
-        }, terminalId),
+      async () => {
+        const tabs = panel.locator(".wb-terminal-tab:not(.wb-terminal-tab-exited)");
+        const count = await tabs.count();
+        for (let i = 0; i < count; i += 1) {
+          const tab = tabs.nth(i);
+          await tab.click();
+          await page.waitForTimeout(50);
+          if ((await visibleTerminalIdNow(page)) === terminalId) return true;
+        }
+        return false;
+      },
       { timeout: 20_000 },
     )
     .toBe(true);

@@ -357,6 +357,18 @@ pub(super) struct GeminiLoginStartResp {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct AmpLoginStartReq {
+    label: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct AmpLoginStartResp {
+    login_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auth_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct KimiLoginStartReq {
     label: Option<String>,
 }
@@ -1120,28 +1132,18 @@ async fn try_kimi_direct_login(
     let stdout_tx = line_tx.clone();
     tokio::spawn(async move {
         let mut lines = BufReader::new(stdout).lines();
-        loop {
-            match lines.next_line().await {
-                Ok(Some(line)) => {
-                    if stdout_tx.send((line, false)).await.is_err() {
-                        break;
-                    }
-                }
-                Ok(None) | Err(_) => break,
+        while let Ok(Some(line)) = lines.next_line().await {
+            if stdout_tx.send((line, false)).await.is_err() {
+                break;
             }
         }
     });
     let stderr_tx = line_tx.clone();
     tokio::spawn(async move {
         let mut lines = BufReader::new(stderr).lines();
-        loop {
-            match lines.next_line().await {
-                Ok(Some(line)) => {
-                    if stderr_tx.send((line, true)).await.is_err() {
-                        break;
-                    }
-                }
-                Ok(None) | Err(_) => break,
+        while let Ok(Some(line)) = lines.next_line().await {
+            if stderr_tx.send((line, true)).await.is_err() {
+                break;
             }
         }
     });
@@ -1153,20 +1155,19 @@ async fn try_kimi_direct_login(
     let mut last_error: Option<String> = None;
 
     loop {
-        match tokio::time::timeout(KIMI_LOGIN_POLL_INTERVAL, line_rx.recv()).await {
-            Ok(Some((line, from_stderr))) => {
-                ingest_kimi_direct_login_line(
-                    state,
-                    login_id,
-                    &line,
-                    from_stderr,
-                    &mut saw_auth_url,
-                    &mut unsupported,
-                    &mut last_error,
-                )
-                .await;
-            }
-            Ok(None) | Err(_) => {}
+        if let Ok(Some((line, from_stderr))) =
+            tokio::time::timeout(KIMI_LOGIN_POLL_INTERVAL, line_rx.recv()).await
+        {
+            ingest_kimi_direct_login_line(
+                state,
+                login_id,
+                &line,
+                from_stderr,
+                &mut saw_auth_url,
+                &mut unsupported,
+                &mut last_error,
+            )
+            .await;
         }
 
         if persist_kimi_captured_login(state, login_id, label.clone(), share_dir).await? {

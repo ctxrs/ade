@@ -883,6 +883,35 @@ export function useHarnessAuthenticationController({
     return { status: "timeout" };
   }, []);
 
+  const waitForAmpLoginOutcome = useCallback(async (
+    loginId: string,
+    onAuthUrl?: (authUrl: string) => Promise<void>,
+    opts?: { openedAuthUrl?: string | null },
+  ): Promise<{ status: "success" | "failed" | "timeout"; error?: string | null }> => {
+    const openedAuthUrls = new Set<string>();
+    takeNextAuthUrlToOpen(opts?.openedAuthUrl, openedAuthUrls);
+    for (let attempt = 0; attempt < AMP_LOGIN_POLL_ATTEMPTS; attempt += 1) {
+      try {
+        const status = await getAmpLogin(loginId);
+        if (status.status === "success") return { status: "success" };
+        if (status.status === "failed") return { status: "failed", error: status.error };
+        if (status.status === "timeout") return { status: "timeout", error: status.error };
+        if (shouldOpenPolledAuthUrlForStatus(status.status)) {
+          const authUrl = takeNextAuthUrlToOpen(status.auth_url, openedAuthUrls);
+          if (authUrl && onAuthUrl) {
+            await onAuthUrl(authUrl);
+          }
+        }
+      } catch {
+        // continue polling
+      }
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, AMP_LOGIN_POLL_INTERVAL_MS);
+      });
+    }
+    return { status: "timeout" };
+  }, []);
+
   const waitForKimiLoginOutcome = useCallback(async (
     loginId: string,
     onAuthUrl?: (authUrl: string) => Promise<void>,

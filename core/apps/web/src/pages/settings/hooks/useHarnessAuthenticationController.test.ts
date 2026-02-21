@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   extractGithubDeviceCodeFromAuthUrl,
   resolveUpsertedEndpoint,
+  shouldSkipDuplicateAmpLoginStart,
   shouldAutoOpenKimiAuthUrl,
   shouldCompleteClaudeLoginWithCallbackCode,
   shouldOpenPolledAuthUrlForStatus,

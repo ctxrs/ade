@@ -1325,7 +1325,7 @@ fn extract_auth_url_from_stderr_line(line: &str) -> Option<String> {
                 }
             })
             .unwrap_or(line.len());
-        let candidate = line[start..end].trim_end_matches(|ch| matches!(ch, '.' | ',' | ';' | ':'));
+        let candidate = line[start..end].trim_end_matches(['.', ',', ';', ':']);
         if candidate.starts_with("http://") || candidate.starts_with("https://") {
             return Some(candidate.to_string());
         }

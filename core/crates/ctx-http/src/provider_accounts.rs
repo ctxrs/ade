@@ -373,6 +373,16 @@ pub struct GeminiLoginStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AmpLoginStatus {
+    pub login_id: String,
+    #[serde(default)]
+    pub auth_url: Option<String>,
+    pub status: String,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KimiLoginStatus {
     pub login_id: String,
     #[serde(default)]

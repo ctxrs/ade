@@ -1,5 +1,6 @@
 import { defineConfig, type PlaywrightTestConfig } from "playwright/test";
 import crypto from "crypto";
+import fs from "fs";
 import net from "net";
 import os from "os";
 import path from "path";
@@ -78,6 +79,15 @@ export async function createCtxPlaywrightConfig(
   const AUTH_TOKEN = process.env.CTX_E2E_AUTH_TOKEN ?? "ctx-e2e-auth-token";
   process.env.CTX_E2E_DATA_DIR ??= dataDir;
   process.env.CTX_E2E_AUTH_TOKEN ??= AUTH_TOKEN;
+  const defaultBundleDir = path.resolve(__dirname, "../desktop/src-tauri/bundles");
+  const bundleManifestPath = path.join(defaultBundleDir, "manifest.json");
+  const resolvedBundleDir =
+    (process.env.CTX_BUNDLE_DIR ?? "").trim()
+    || (fs.existsSync(bundleManifestPath) ? defaultBundleDir : "");
+  if (resolvedBundleDir) {
+    process.env.CTX_BUNDLE_DIR = resolvedBundleDir;
+    process.env.CTX_E2E_BUNDLED_ONLY ??= "1";
+  }
 
   const docsMirrorBin = path.resolve(__dirname, "e2e/fixtures/ctx-docs-mirror-fixture.sh");
   const cargoTargetDir =
@@ -103,6 +113,7 @@ export async function createCtxPlaywrightConfig(
     CTX_EXECUTION_MODE: "host",
     CTX_SHOW_FAKE_PROVIDER: "1",
     CTX_STORAGE_BACKEND: "sqlite",
+    ...(process.platform === "win32" ? {} : { SHELL: "/bin/sh" }),
   };
 
   return defineConfig({
