@@ -289,6 +289,35 @@ fn kiro_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
         .join(endpoint_id)
 }
 
+fn amp_subscription_home(data_root: &Path, runtime_data_root: Option<&Path>) -> PathBuf {
+    runtime_data_root
+        .unwrap_or(data_root)
+        .join("providers")
+        .join("amp")
+        .join("home")
+}
+
+fn subscription_env_for_provider(
+    canonical: &str,
+    data_root: &Path,
+    runtime_data_root: Option<&Path>,
+) -> HashMap<String, String> {
+    let mut env = HashMap::new();
+    if canonical == PROVIDER_AMP {
+        let home = amp_subscription_home(data_root, runtime_data_root);
+        env.insert("HOME".to_string(), home.to_string_lossy().to_string());
+        env.insert(
+            "XDG_CONFIG_HOME".to_string(),
+            home.join(".config").to_string_lossy().to_string(),
+        );
+        env.insert(
+            "XDG_CACHE_HOME".to_string(),
+            home.join(".cache").to_string_lossy().to_string(),
+        );
+    }
+    env
+}
+
 fn container_workspaces_root(data_root: &Path) -> PathBuf {
     data_root.join("containers").join("workspaces")
 }
@@ -1564,7 +1593,7 @@ async fn resolve_internal(
         return Ok(ResolvedHarnessSource {
             source_kind: HarnessSourceKind::Subscription,
             endpoint: None,
-            env: HashMap::new(),
+            env: subscription_env_for_provider(canonical, data_root, runtime_data_root),
         });
     }
 
@@ -1572,7 +1601,7 @@ async fn resolve_internal(
         return Ok(ResolvedHarnessSource {
             source_kind: HarnessSourceKind::Subscription,
             endpoint: None,
-            env: HashMap::new(),
+            env: subscription_env_for_provider(canonical, data_root, runtime_data_root),
         });
     }
 
@@ -2091,6 +2120,28 @@ mod tests {
         assert_eq!(cfg.selected_source_kind, HarnessSourceKind::Subscription);
         assert!(cfg.selected_endpoint_id.is_none());
         assert!(cfg.endpoints.is_empty());
+    }
+
+    #[tokio::test]
+    async fn amp_subscription_sets_persistent_home_env() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let resolved = resolve_provider_source_for_run(root.path(), PROVIDER_AMP)
+            .await
+            .expect("resolved");
+        assert_eq!(resolved.source_kind, HarnessSourceKind::Subscription);
+        let expected_home = root.path().join("providers").join("amp").join("home");
+        assert_eq!(
+            resolved.env.get("HOME"),
+            Some(&expected_home.to_string_lossy().to_string())
+        );
+        assert_eq!(
+            resolved.env.get("XDG_CONFIG_HOME"),
+            Some(&expected_home.join(".config").to_string_lossy().to_string())
+        );
+        assert_eq!(
+            resolved.env.get("XDG_CACHE_HOME"),
+            Some(&expected_home.join(".cache").to_string_lossy().to_string())
+        );
     }
 
     #[tokio::test]

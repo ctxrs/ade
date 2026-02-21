@@ -384,6 +384,20 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             delete(delete_gemini_account),
         )
         .route(
+            "/api/providers/amp/accounts/login/start",
+            post(start_amp_login),
+        )
+        .route("/api/providers/amp/accounts/login/:id", get(get_amp_login))
+        .route("/api/providers/amp/accounts", get(list_amp_accounts))
+        .route(
+            "/api/providers/amp/active-account",
+            put(set_amp_active_account),
+        )
+        .route(
+            "/api/providers/amp/accounts/:id",
+            delete(delete_amp_account),
+        )
+        .route(
             "/api/providers/kimi/accounts",
             get(list_kimi_accounts).post(upsert_kimi_account),
         )
