@@ -309,6 +309,7 @@ impl ProviderAdapter for Tier1CrpAdapter {
             .get_or_create_session(&session_key, &workdir, &env)
             .await?;
         let mut rx = session.process.events.subscribe();
+        let mut stderr_rx = session.process.stderr_lines.subscribe();
         let mut shutdown_rx = session.process.shutdown.subscribe();
         let auth_session_key = session_key.clone();
         if !session.opened.load(Ordering::SeqCst) && !session.opening.load(Ordering::SeqCst) {
@@ -350,9 +351,12 @@ impl ProviderAdapter for Tier1CrpAdapter {
                     _ = shutdown_rx.changed() => {
                         break;
                     }
-                    recv = timeout(timeout_remaining, rx.recv()) => {
+                    _ = tokio::time::sleep(timeout_remaining) => {
+                        break;
+                    }
+                    recv = rx.recv() => {
                         match recv {
-                            Ok(Ok(env)) => {
+                            Ok(env) => {
                                 if !event_matches_session(&env.event, &auth_session_key) {
                                     continue;
                                 }
@@ -393,7 +397,7 @@ impl ProviderAdapter for Tier1CrpAdapter {
                                     break;
                                 }
                             }
-                            Ok(Err(broadcast::error::RecvError::Lagged(_))) => {
+                            Err(broadcast::error::RecvError::Lagged(_)) => {
                                 let _ = event_sink
                                     .send(NormalizedEvent {
                                         event_type: SessionEventType::Notice,
@@ -404,7 +408,45 @@ impl ProviderAdapter for Tier1CrpAdapter {
                                     })
                                     .await;
                             }
-                            Ok(Err(broadcast::error::RecvError::Closed)) | Err(_) => {
+                            Err(broadcast::error::RecvError::Closed) => {
+                                break;
+                            }
+                        }
+                    }
+                    stderr = stderr_rx.recv() => {
+                        match stderr {
+                            Ok(line) => {
+                                if let Some(auth_url) = extract_auth_url_from_stderr_line(&line) {
+                                    if event_sink
+                                        .send(NormalizedEvent {
+                                            event_type: SessionEventType::Notice,
+                                            payload_json: json!({
+                                                "kind": "auth_url_stderr",
+                                                "auth_url": auth_url,
+                                                "source": "crp_stderr",
+                                            }),
+                                        })
+                                        .await
+                                        .is_err()
+                                    {
+                                        return;
+                                    }
+                                }
+                                if let Some(message) = extract_auth_error_from_stderr_line(&line) {
+                                    let _ = event_sink
+                                        .send(NormalizedEvent {
+                                            event_type: SessionEventType::Error,
+                                            payload_json: json!({
+                                                "message": message,
+                                                "source": "crp_stderr",
+                                            }),
+                                        })
+                                        .await;
+                                    break;
+                                }
+                            }
+                            Err(broadcast::error::RecvError::Lagged(_)) => {}
+                            Err(broadcast::error::RecvError::Closed) => {
                                 break;
                             }
                         }
@@ -922,6 +964,7 @@ struct CrpProcess {
     pid: AtomicU32,
     write_tx: mpsc::UnboundedSender<String>,
     events: broadcast::Sender<CrpEventEnvelope>,
+    stderr_lines: broadcast::Sender<String>,
     shutdown: watch::Sender<Option<String>>,
 }
 
@@ -990,6 +1033,7 @@ impl CrpProcess {
         });
 
         let (events, _) = broadcast::channel(512);
+        let (stderr_lines, _) = broadcast::channel(256);
         let (shutdown, _) = watch::channel::<Option<String>>(None);
         let process = Arc::new(Self {
             agent: agent.clone(),
@@ -997,6 +1041,7 @@ impl CrpProcess {
             pid: AtomicU32::new(pid),
             write_tx,
             events,
+            stderr_lines,
             shutdown,
         });
 
@@ -1209,6 +1254,7 @@ async fn stderr_pump(
                 let _ = file.flush().await;
             }
         }
+        let _ = process.stderr_lines.send(redact_sensitive(trimmed));
         tracing::debug!(
             provider_id = %process.agent.provider_id,
             "crp stderr: {}",
@@ -1257,6 +1303,48 @@ fn redact_sensitive(input: &str) -> String {
     out = redact_after_marker(out, "ctxAuthToken\":\"");
     out = redact_after_marker(out, "ctx_auth_token\":\"");
     out
+}
+
+fn extract_auth_url_from_stderr_line(line: &str) -> Option<String> {
+    let mut search_from = 0usize;
+    while search_from < line.len() {
+        let haystack = &line[search_from..];
+        let start_rel = haystack
+            .find("https://")
+            .or_else(|| haystack.find("http://"))?;
+        let start = search_from + start_rel;
+        let end = line[start..]
+            .char_indices()
+            .find_map(|(idx, ch)| {
+                if ch.is_whitespace()
+                    || matches!(ch, '"' | '\'' | '<' | '>' | '(' | ')' | '[' | ']')
+                {
+                    Some(start + idx)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(line.len());
+        let candidate = line[start..end].trim_end_matches(|ch| matches!(ch, '.' | ',' | ';' | ':'));
+        if candidate.starts_with("http://") || candidate.starts_with("https://") {
+            return Some(candidate.to_string());
+        }
+        search_from = end.saturating_add(1);
+    }
+    None
+}
+
+fn extract_auth_error_from_stderr_line(line: &str) -> Option<String> {
+    let lowered = line.to_ascii_lowercase();
+    if lowered.contains("interactive consent could not be obtained")
+        || lowered.contains("please run gemini cli in an interactive terminal to authenticate")
+    {
+        return Some(
+            "Gemini CLI could not obtain interactive OAuth consent in this environment."
+                .to_string(),
+        );
+    }
+    None
 }
 
 #[derive(Debug, Serialize)]
@@ -2341,6 +2429,24 @@ async fn build_prompt_items(
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn extract_auth_url_from_stderr_line_parses_google_url() {
+        let line = "ERROR ... Raw: https://accounts.google.com/o/oauth2/v2/auth?client_id=abc";
+        assert_eq!(
+            extract_auth_url_from_stderr_line(line).as_deref(),
+            Some("https://accounts.google.com/o/oauth2/v2/auth?client_id=abc")
+        );
+    }
+
+    #[test]
+    fn extract_auth_error_from_stderr_line_detects_interactive_consent_failure() {
+        let line = "message: 'Interactive consent could not be obtained.'";
+        assert_eq!(
+            extract_auth_error_from_stderr_line(line).as_deref(),
+            Some("Gemini CLI could not obtain interactive OAuth consent in this environment.")
+        );
+    }
 
     #[test]
     fn tool_completed_retains_started_preview_when_completed_omits_it() {

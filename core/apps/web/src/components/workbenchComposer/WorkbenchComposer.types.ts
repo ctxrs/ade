@@ -66,7 +66,7 @@ export type NewSessionProps = SharedProps & {
   onInstallAllProviders: () => void;
   installAllBusy?: boolean;
   providerOptions: Record<string, ProviderOptions | undefined>;
-  ensureProviderOptions: (providerId: string, opts?: { force?: boolean }) => Promise<ProviderOptions | undefined>;
+  ensureProviderAuthSummary: (providerId: string, opts?: { force?: boolean }) => Promise<ProviderOptions | undefined>;
   onRequestHarnessAuth?: (providerId: string) => void;
 
   draftHarness: DraftHarness | null;

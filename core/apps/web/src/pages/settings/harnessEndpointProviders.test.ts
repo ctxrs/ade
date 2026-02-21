@@ -36,6 +36,11 @@ describe("harnessEndpointProviders", () => {
     expect(other.base_url).toBeNull();
   });
 
+  it("uses anthropic root base URL for claude-compatible endpoints", () => {
+    const anthropic = getHarnessEndpointProviderPreset("anthropic");
+    expect(anthropic.base_url).toBe("https://api.anthropic.com");
+  });
+
   it("builds incremental default endpoint names by provider", () => {
     expect(nextDefaultEndpointName("openai", [])).toBe("OpenAI 1");
     expect(nextDefaultEndpointName("openai", ["OpenAI 1", "OpenAI 3"])).toBe("OpenAI 2");
@@ -53,7 +58,6 @@ describe("harnessEndpointProviders", () => {
   });
 
   it("flags providers that support optional base URL", () => {
-    expect(supportsOptionalBaseUrlForHarness("cody")).toBe(true);
     expect(supportsOptionalBaseUrlForHarness("pi")).toBe(true);
     expect(supportsOptionalBaseUrlForHarness("cursor")).toBe(false);
     expect(supportsOptionalBaseUrlForHarness("copilot")).toBe(false);

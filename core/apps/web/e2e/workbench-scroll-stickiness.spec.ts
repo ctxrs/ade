@@ -1,6 +1,7 @@
 import { test, expect } from "./fixtures";
 import type { APIRequestContext } from "playwright/test";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
+import { selectHarnessBySearch } from "./utils/harnessEndpointAuth";
 
 const scrollSelector = ".wb-session-slot[aria-hidden=\"false\"] .wb-thread-scroller";
 
@@ -40,17 +41,15 @@ test("workbench: sticks to bottom unless the user scrolls away", async ({ page, 
 
   await page.goto(`/workspaces/${seed.workspaceId}`, { waitUntil: "domcontentloaded" });
 
-  await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
-  await page.locator(".wb-harness-menu").getByLabel("Search agents").fill("fake");
-  await page.locator(".wb-harness-menu").getByRole("button", { name: /fake/i }).click();
+  await selectHarnessBySearch(page, "fake", /fake/i);
   await expect(
-    page.locator(".wb-new-composer-stack button[title=\"Harness\"] .wb-switcher-label"),
+    page.locator('button[title="Agents"] .wb-switcher-label').first(),
   ).toHaveText(/fake/i, { timeout: 20000 });
 
   const initPrompt = `stick-bottom-init-${Date.now()}`;
-  await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill(initPrompt);
-  await expect(page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]")).toBeEnabled({ timeout: 20000 });
-  await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
+  await page.locator("textarea.wb-composer-textarea").first().fill(initPrompt);
+  await expect(page.getByRole("button", { name: "Send" })).toBeEnabled({ timeout: 20000 });
+  await page.getByRole("button", { name: "Send" }).click();
 
   let sessionId = "";
   await expect

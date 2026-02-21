@@ -19,6 +19,7 @@ e2e/workbench-harness-auth-modal-flow.spec.ts
 e2e/workbench-harness-menu-prod-availability.spec.ts
 e2e/workbench-inline-command-wrap.spec.ts
 e2e/workbench-new-task-drag-drop-image.spec.ts
+e2e/workbench-endpoint-harness-openrouter-matrix.spec.ts
 e2e/workbench-optimistic-active-message.spec.ts
 e2e/workbench-optimistic-new-task.spec.ts
 e2e/workbench-queued-message-ux.spec.ts

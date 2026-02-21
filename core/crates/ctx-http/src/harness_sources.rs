@@ -18,17 +18,12 @@ const PROVIDER_QWEN: &str = "qwen";
 const PROVIDER_OPENCODE: &str = "opencode";
 const PROVIDER_MISTRAL: &str = "mistral";
 const PROVIDER_GOOSE: &str = "goose";
-const PROVIDER_CAGENT: &str = "cagent";
 const PROVIDER_AMP: &str = "amp";
 const PROVIDER_DROID: &str = "droid";
-const PROVIDER_CODY: &str = "cody";
 const PROVIDER_CONTINUE: &str = "continue";
-const PROVIDER_CLINE: &str = "cline";
-const PROVIDER_SWE_AGENT: &str = "swe-agent";
 const PROVIDER_OPENHANDS: &str = "openhands";
 const PROVIDER_COPILOT: &str = "copilot";
 const PROVIDER_KIRO: &str = "kiro";
-const PROVIDER_ROVO: &str = "rovo";
 const PROVIDER_AUGGIE: &str = "auggie";
 const PROVIDER_PI: &str = "pi";
 const PROVIDER_CURSOR: &str = "cursor";
@@ -289,6 +284,35 @@ fn kiro_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
         .join(endpoint_id)
 }
 
+fn amp_subscription_home(data_root: &Path, runtime_data_root: Option<&Path>) -> PathBuf {
+    runtime_data_root
+        .unwrap_or(data_root)
+        .join("providers")
+        .join("amp")
+        .join("home")
+}
+
+fn subscription_env_for_provider(
+    canonical: &str,
+    data_root: &Path,
+    runtime_data_root: Option<&Path>,
+) -> HashMap<String, String> {
+    let mut env = HashMap::new();
+    if canonical == PROVIDER_AMP {
+        let home = amp_subscription_home(data_root, runtime_data_root);
+        env.insert("HOME".to_string(), home.to_string_lossy().to_string());
+        env.insert(
+            "XDG_CONFIG_HOME".to_string(),
+            home.join(".config").to_string_lossy().to_string(),
+        );
+        env.insert(
+            "XDG_CACHE_HOME".to_string(),
+            home.join(".cache").to_string_lossy().to_string(),
+        );
+    }
+    env
+}
+
 fn container_workspaces_root(data_root: &Path) -> PathBuf {
     data_root.join("containers").join("workspaces")
 }
@@ -361,17 +385,12 @@ fn normalize_provider_id(provider_id: &str) -> Option<&'static str> {
         PROVIDER_OPENCODE => Some(PROVIDER_OPENCODE),
         PROVIDER_MISTRAL => Some(PROVIDER_MISTRAL),
         PROVIDER_GOOSE => Some(PROVIDER_GOOSE),
-        PROVIDER_CAGENT => Some(PROVIDER_CAGENT),
         PROVIDER_AMP => Some(PROVIDER_AMP),
         PROVIDER_DROID => Some(PROVIDER_DROID),
-        PROVIDER_CODY => Some(PROVIDER_CODY),
         PROVIDER_CONTINUE => Some(PROVIDER_CONTINUE),
-        PROVIDER_CLINE => Some(PROVIDER_CLINE),
-        PROVIDER_SWE_AGENT => Some(PROVIDER_SWE_AGENT),
         PROVIDER_OPENHANDS => Some(PROVIDER_OPENHANDS),
         PROVIDER_COPILOT => Some(PROVIDER_COPILOT),
         PROVIDER_KIRO => Some(PROVIDER_KIRO),
-        PROVIDER_ROVO => Some(PROVIDER_ROVO),
         PROVIDER_AUGGIE => Some(PROVIDER_AUGGIE),
         PROVIDER_PI => Some(PROVIDER_PI),
         PROVIDER_CURSOR => Some(PROVIDER_CURSOR),
@@ -390,17 +409,12 @@ fn provider_supports_harness_endpoint(canonical_provider_id: &str) -> bool {
             | PROVIDER_OPENCODE
             | PROVIDER_MISTRAL
             | PROVIDER_GOOSE
-            | PROVIDER_CAGENT
             | PROVIDER_AMP
             | PROVIDER_DROID
-            | PROVIDER_CODY
             | PROVIDER_CONTINUE
-            | PROVIDER_CLINE
-            | PROVIDER_SWE_AGENT
             | PROVIDER_OPENHANDS
             | PROVIDER_COPILOT
             | PROVIDER_KIRO
-            | PROVIDER_ROVO
             | PROVIDER_AUGGIE
             | PROVIDER_PI
     )
@@ -420,17 +434,12 @@ pub fn default_shape_for_provider(provider_id: &str) -> Option<HarnessApiShape> 
         Some(PROVIDER_OPENCODE) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_MISTRAL) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_GOOSE) => Some(HarnessApiShape::OpenaiResponses),
-        Some(PROVIDER_CAGENT) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_AMP) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_DROID) => Some(HarnessApiShape::OpenaiResponses),
-        Some(PROVIDER_CODY) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_CONTINUE) => Some(HarnessApiShape::OpenaiResponses),
-        Some(PROVIDER_CLINE) => Some(HarnessApiShape::OpenaiResponses),
-        Some(PROVIDER_SWE_AGENT) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_OPENHANDS) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_COPILOT) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_KIRO) => Some(HarnessApiShape::OpenaiResponses),
-        Some(PROVIDER_ROVO) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_AUGGIE) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_PI) => Some(HarnessApiShape::OpenaiResponses),
         _ => None,
@@ -477,10 +486,9 @@ pub fn ensure_shape_compatible(provider_id: &str, shape: HarnessApiShape) -> Res
                 );
             }
         }
-        PROVIDER_QWEN | PROVIDER_OPENCODE | PROVIDER_MISTRAL | PROVIDER_GOOSE | PROVIDER_CAGENT
-        | PROVIDER_AMP | PROVIDER_DROID | PROVIDER_CODY | PROVIDER_CONTINUE | PROVIDER_CLINE
-        | PROVIDER_SWE_AGENT | PROVIDER_OPENHANDS | PROVIDER_COPILOT | PROVIDER_KIRO
-        | PROVIDER_ROVO | PROVIDER_AUGGIE | PROVIDER_PI => {
+        PROVIDER_QWEN | PROVIDER_OPENCODE | PROVIDER_MISTRAL | PROVIDER_GOOSE | PROVIDER_AMP
+        | PROVIDER_DROID | PROVIDER_CONTINUE | PROVIDER_OPENHANDS | PROVIDER_COPILOT
+        | PROVIDER_KIRO | PROVIDER_AUGGIE | PROVIDER_PI => {
             if shape != HarnessApiShape::OpenaiResponses {
                 anyhow::bail!(
                     "{} requires api_shape=openai_responses; found {}",
@@ -543,6 +551,35 @@ fn normalize_base_url(raw: &str) -> Result<String> {
     Ok(trimmed.trim_end_matches('/').to_string())
 }
 
+fn normalize_claude_anthropic_base_url(raw: &str) -> Result<String> {
+    let normalized = normalize_base_url(raw)?;
+    let mut parsed = Url::parse(&normalized).context("base_url must be a valid URL")?;
+    let current_path = parsed.path().to_string();
+    let lowered = current_path.to_ascii_lowercase();
+
+    let suffixes = ["/v1/messages/count_tokens", "/v1/messages", "/v1"];
+    let mut stripped_path: Option<String> = None;
+    for suffix in suffixes {
+        if lowered.ends_with(suffix) {
+            let keep_len = current_path.len().saturating_sub(suffix.len());
+            let prefix = current_path.get(..keep_len).unwrap_or_default();
+            let trimmed = prefix.trim_end_matches('/');
+            stripped_path = Some(if trimmed.is_empty() {
+                "/".to_string()
+            } else {
+                trimmed.to_string()
+            });
+            break;
+        }
+    }
+
+    if let Some(path) = stripped_path {
+        parsed.set_path(&path);
+    }
+
+    Ok(parsed.to_string().trim_end_matches('/').to_string())
+}
+
 fn provider_requires_endpoint_base_url(provider_id: &str) -> bool {
     matches!(
         provider_id,
@@ -553,9 +590,6 @@ fn provider_requires_endpoint_base_url(provider_id: &str) -> bool {
             | PROVIDER_OPENCODE
             | PROVIDER_MISTRAL
             | PROVIDER_GOOSE
-            | PROVIDER_CAGENT
-            | PROVIDER_CLINE
-            | PROVIDER_SWE_AGENT
             | PROVIDER_OPENHANDS
     )
 }
@@ -570,7 +604,11 @@ fn normalize_base_url_for_provider(provider_id: &str, raw: Option<&str>) -> Resu
                 }
                 Ok(String::new())
             } else {
-                normalize_base_url(trimmed)
+                if provider_id == PROVIDER_CLAUDE {
+                    normalize_claude_anthropic_base_url(trimmed)
+                } else {
+                    normalize_base_url(trimmed)
+                }
             }
         }
         None => {
@@ -1564,7 +1602,7 @@ async fn resolve_internal(
         return Ok(ResolvedHarnessSource {
             source_kind: HarnessSourceKind::Subscription,
             endpoint: None,
-            env: HashMap::new(),
+            env: subscription_env_for_provider(canonical, data_root, runtime_data_root),
         });
     }
 
@@ -1572,7 +1610,7 @@ async fn resolve_internal(
         return Ok(ResolvedHarnessSource {
             source_kind: HarnessSourceKind::Subscription,
             endpoint: None,
-            env: HashMap::new(),
+            env: subscription_env_for_provider(canonical, data_root, runtime_data_root),
         });
     }
 
@@ -1700,6 +1738,11 @@ async fn resolve_internal(
         PROVIDER_CAGENT | PROVIDER_SWE_AGENT => {
             let base_url = endpoint_base_url_or_err(&endpoint)?;
             ensure_shape_compatible(canonical, endpoint.api_shape)?;
+            ensure_safe_endpoint_id(&endpoint.id)?;
+            let qwen_home_root = runtime_data_root.unwrap_or(data_root);
+            let qwen_home = qwen_endpoint_home(qwen_home_root, &endpoint.id);
+            prepare_qwen_home_with_openai_settings(&qwen_home).await?;
+            env.insert("HOME".to_string(), qwen_home.to_string_lossy().to_string());
             env.insert("OPENAI_API_KEY".to_string(), api_key);
             env.insert("OPENAI_BASE_URL".to_string(), base_url);
             if let Some(model) = endpoint
@@ -1789,14 +1832,6 @@ async fn resolve_internal(
             ensure_shape_compatible(canonical, endpoint.api_shape)?;
             env.insert("FACTORY_API_KEY".to_string(), api_key);
         }
-        PROVIDER_CODY => {
-            ensure_shape_compatible(canonical, endpoint.api_shape)?;
-            env.insert("SRC_ACCESS_TOKEN".to_string(), api_key);
-            let base_url = endpoint.base_url.trim().to_string();
-            if !base_url.is_empty() {
-                env.insert("SRC_ENDPOINT".to_string(), base_url);
-            }
-        }
         PROVIDER_CONTINUE => {
             ensure_shape_compatible(canonical, endpoint.api_shape)?;
             env.insert("CONTINUE_API_KEY".to_string(), api_key);
@@ -1855,11 +1890,6 @@ async fn resolve_internal(
                 "XDG_CACHE_HOME".to_string(),
                 kiro_home.join(".cache").to_string_lossy().to_string(),
             );
-        }
-        PROVIDER_ROVO => {
-            ensure_shape_compatible(canonical, endpoint.api_shape)?;
-            env.insert("ATLASSIAN_API_TOKEN".to_string(), api_key.clone());
-            env.insert("ROVO_DEV_API_TOKEN".to_string(), api_key);
         }
         PROVIDER_AUGGIE => {
             ensure_shape_compatible(canonical, endpoint.api_shape)?;
@@ -2094,6 +2124,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn amp_subscription_sets_persistent_home_env() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let resolved = resolve_provider_source_for_run(root.path(), PROVIDER_AMP)
+            .await
+            .expect("resolved");
+        assert_eq!(resolved.source_kind, HarnessSourceKind::Subscription);
+        let expected_home = root.path().join("providers").join("amp").join("home");
+        assert_eq!(
+            resolved.env.get("HOME"),
+            Some(&expected_home.to_string_lossy().to_string())
+        );
+        assert_eq!(
+            resolved.env.get("XDG_CONFIG_HOME"),
+            Some(&expected_home.join(".config").to_string_lossy().to_string())
+        );
+        assert_eq!(
+            resolved.env.get("XDG_CACHE_HOME"),
+            Some(&expected_home.join(".cache").to_string_lossy().to_string())
+        );
+    }
+
+    #[tokio::test]
     async fn invalid_registry_json_returns_error() {
         let root = tempfile::tempdir().expect("tempdir");
         let path = registry_path(root.path());
@@ -2201,7 +2253,7 @@ mod tests {
         );
         assert_eq!(
             probe.env.get("ANTHROPIC_BASE_URL"),
-            Some(&"https://api.anthropic.com/v1".to_string())
+            Some(&"https://api.anthropic.com".to_string())
         );
 
         let run_err = resolve_provider_source_for_run(root.path(), PROVIDER_CLAUDE)
@@ -2224,7 +2276,59 @@ mod tests {
             .expect("resolve run");
         assert_eq!(
             run.env.get("ANTHROPIC_BASE_URL"),
-            Some(&"https://api.anthropic.com/v1".to_string())
+            Some(&"https://api.anthropic.com".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn claude_endpoint_openrouter_v1_base_url_is_normalized_for_anthropic_shape() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let endpoint = upsert_provider_endpoint(
+            root.path(),
+            PROVIDER_CLAUDE,
+            HarnessEndpointUpsert {
+                endpoint_id: None,
+                name: "OpenRouter".to_string(),
+                base_url: Some("https://openrouter.ai/api/v1".to_string()),
+                api_shape: Some(HarnessApiShape::AnthropicMessages),
+                auth_type: None,
+                model_override: Some("anthropic/claude-opus-4.6".to_string()),
+                api_key: Some("sk-or-v1".to_string()),
+            },
+        )
+        .await
+        .expect("upsert");
+
+        assert_eq!(
+            endpoint.base_url,
+            Some("https://openrouter.ai/api".to_string())
+        );
+
+        set_provider_source_selection(
+            root.path(),
+            PROVIDER_CLAUDE,
+            HarnessSourceKind::Endpoint,
+            Some(endpoint.id.clone()),
+        )
+        .await
+        .expect("select");
+
+        mark_endpoint_verification(
+            root.path(),
+            PROVIDER_CLAUDE,
+            &endpoint.id,
+            HarnessEndpointVerificationStatus::Valid,
+            None,
+        )
+        .await
+        .expect("mark verified");
+
+        let resolved = resolve_provider_source_for_run(root.path(), PROVIDER_CLAUDE)
+            .await
+            .expect("resolve run");
+        assert_eq!(
+            resolved.env.get("ANTHROPIC_BASE_URL"),
+            Some(&"https://openrouter.ai/api".to_string())
         );
     }
 
@@ -2503,20 +2607,14 @@ mod tests {
                     "GOOSE_MODEL",
                 ],
             ),
-            (PROVIDER_CAGENT, &["OPENAI_API_KEY"]),
             (PROVIDER_MISTRAL, &["MISTRAL_API_KEY", "MISTRAL_BASE_URL"]),
             (PROVIDER_AMP, &["AMP_API_KEY"]),
             (PROVIDER_DROID, &["FACTORY_API_KEY"]),
-            (PROVIDER_CODY, &["SRC_ACCESS_TOKEN", "SRC_ENDPOINT"]),
             (PROVIDER_CONTINUE, &["CONTINUE_API_KEY"]),
             (PROVIDER_COPILOT, &["GH_TOKEN", "GITHUB_TOKEN"]),
             (
                 PROVIDER_KIRO,
                 &["HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"],
-            ),
-            (
-                PROVIDER_ROVO,
-                &["ATLASSIAN_API_TOKEN", "ROVO_DEV_API_TOKEN"],
             ),
             (
                 PROVIDER_AUGGIE,
@@ -2543,7 +2641,6 @@ mod tests {
                     name: format!("{provider_id} endpoint"),
                     base_url: if *provider_id == PROVIDER_COPILOT
                         || *provider_id == PROVIDER_KIRO
-                        || *provider_id == PROVIDER_ROVO
                         || *provider_id == PROVIDER_AUGGIE
                         || *provider_id == PROVIDER_PI
                     {
@@ -2553,7 +2650,6 @@ mod tests {
                     },
                     api_shape: if *provider_id == PROVIDER_COPILOT
                         || *provider_id == PROVIDER_KIRO
-                        || *provider_id == PROVIDER_ROVO
                         || *provider_id == PROVIDER_AUGGIE
                         || *provider_id == PROVIDER_PI
                     {

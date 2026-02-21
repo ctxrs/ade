@@ -48,6 +48,12 @@ async function resolveHarnessMenuButton(
   return byProviderId;
 }
 
+async function waitForHarnessRowReady(rowButton: Locator, timeout: number) {
+  await expect(rowButton).toBeVisible({ timeout });
+  await expect(rowButton).toBeEnabled({ timeout });
+  await expect(rowButton.locator(".wb-harness-auth-dot-active")).toBeVisible({ timeout });
+}
+
 async function chooseOpenRouterPreset(page: Page, modal: Locator) {
   const providerSelect = modal.locator('[role="combobox"]').first();
   if ((await providerSelect.count()) === 0) return;
@@ -201,6 +207,7 @@ export async function selectHarnessForComposer(
   if ((await rowButton.count()) === 0) {
     return { ok: false, detail: "harness menu row not found" };
   }
+  await waitForHarnessRowReady(rowButton, 20_000);
   await rowButton.click();
 
   await expect
@@ -215,4 +222,78 @@ export async function selectHarnessForComposer(
 
   const selected = ((await triggerLabel.textContent()) ?? "").trim();
   return { ok: true, detail: `selected harness '${selected}'` };
+}
+
+export async function selectHarnessBySearch(
+  page: Page,
+  searchTerm: string,
+  optionPattern: RegExp,
+): Promise<void> {
+  const triggerLabel = harnessTriggerLabel(page);
+  const isSelected = async () => optionPattern.test(((await triggerLabel.textContent()) ?? "").trim());
+  if (await isSelected()) return;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const menu = await openHarnessMenu(page);
+    await menu.getByLabel("Search agents").fill(searchTerm);
+
+    const rowButton = menu
+      .locator(".wb-harness-row .wb-harness-row-main")
+      .filter({ hasText: optionPattern })
+      .first();
+    await expect(rowButton).toBeVisible({ timeout: 20_000 });
+    await expect(rowButton).toBeEnabled({ timeout: 20_000 });
+    await rowButton.click();
+
+    const selectedAfterClick = await expect
+      .poll(
+        async () => isSelected(),
+        { timeout: 1_500, intervals: [100, 200, 400] },
+      )
+      .toBe(true)
+      .then(() => true)
+      .catch(() => false);
+    if (selectedAfterClick) return;
+
+    const modal = page.locator(".settings-harness-modal");
+    const modalVisible = await modal
+      .waitFor({ state: "visible", timeout: 1_500 })
+      .then(() => true)
+      .catch(() => false);
+    if (modalVisible) {
+      const subscriptionButton = modal.getByRole("button", { name: "Subscription" }).first();
+      const hasSubscriptionChoice =
+        (await subscriptionButton.count()) > 0 && (await subscriptionButton.isEnabled().catch(() => false));
+      if (hasSubscriptionChoice) {
+        await subscriptionButton.click();
+        const closedAfterChoose = await modal
+          .waitFor({ state: "hidden", timeout: 1_500 })
+          .then(() => true)
+          .catch(() => false);
+        if (closedAfterChoose) {
+          if (await isSelected()) return;
+          await page.waitForTimeout(300);
+          continue;
+        }
+      }
+
+      const saveSubscriptionButton = modal.getByRole("button", { name: /Save subscription/i }).first();
+      if (
+        (await saveSubscriptionButton.count()) > 0
+        && (await saveSubscriptionButton.isEnabled().catch(() => false))
+      ) {
+        await saveSubscriptionButton.click();
+        await expect(modal).toBeHidden({ timeout: 10_000 });
+      } else if (!hasSubscriptionChoice) {
+        throw new Error(`harness auth modal blocked '${searchTerm}' selection`);
+      } else {
+        throw new Error(`harness auth modal requires extra input for '${searchTerm}'`);
+      }
+    }
+
+    if (await isSelected()) return;
+    await page.waitForTimeout(300);
+  }
+
+  throw new Error(`failed to select harness matching ${optionPattern}`);
 }

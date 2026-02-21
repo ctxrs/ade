@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
+import { selectHarnessBySearch } from "./utils/harnessEndpointAuth";
 import type { APIRequestContext, Page } from "playwright/test";
 
 async function createWorkspaceAndStartRun(opts: {
@@ -21,12 +22,10 @@ async function createWorkspaceAndStartRun(opts: {
     workspaceName,
   });
 
-  await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
-  await page.locator(".wb-harness-menu").getByLabel("Search agents").fill("fake");
-  await page.locator(".wb-harness-menu").getByRole("button", { name: "Fake" }).click();
+  await selectHarnessBySearch(page, "fake", /fake/i);
 
-  await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill(prompt);
-  await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
+  await page.locator("textarea.wb-composer-textarea").first().fill(prompt);
+  await page.getByRole("button", { name: "Send" }).click();
 
   const sessionComposer = page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea");
   await expect(sessionComposer).toBeVisible({ timeout: 20_000 });

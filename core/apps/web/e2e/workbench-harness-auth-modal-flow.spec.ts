@@ -27,30 +27,58 @@ test("workbench: unauthed harness opens auth modal and API key flow readies harn
     }>,
   };
 
-  await page.route("**/api/providers", async (route) => {
+  await page.route("**/api/workspaces/*/providers/bootstrap", async (route) => {
     if (route.request().method() !== "GET") {
       await route.continue();
       return;
     }
+    const url = new URL(route.request().url());
+    const match = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/providers\/bootstrap$/);
+    const workspaceId = match ? decodeURIComponent(match[1]) : "";
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify([
-        { provider_id: "codex", installed: true, health: "ok", diagnostics: [], details: {} },
-        { provider_id: "cursor", installed: true, health: "ok", diagnostics: [], details: {} },
-      ]),
-    });
-  });
-
-  await page.route("**/api/providers/codex/accounts", async (route) => {
-    if (route.request().method() !== "GET") {
-      await route.continue();
-      return;
-    }
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ active_account_id: "codex-1", accounts: [], logins: [] }),
+      body: JSON.stringify({
+        providers: [
+          { provider_id: "codex", installed: true, health: "ok", diagnostics: [], details: {} },
+          { provider_id: "cursor", installed: true, health: "ok", diagnostics: [], details: {} },
+        ],
+        provider_options: {
+          codex: {
+            provider_id: "codex",
+            workspace_id: workspaceId,
+            supports_load: false,
+            auth_required: false,
+            has_active_auth: true,
+            auth_mode: "subscription",
+            probed_at: new Date().toISOString(),
+          },
+          cursor: {
+            provider_id: "cursor",
+            workspace_id: workspaceId,
+            supports_load: false,
+            auth_required: false,
+            has_active_auth: cursorAuthed,
+            auth_mode: cursorAuthed ? "subscription" : "none",
+            probed_at: new Date().toISOString(),
+          },
+        },
+        provider_harness_config: {
+          codex: {
+            provider_id: "codex",
+            selected_source_kind: "subscription",
+            selected_endpoint_id: null,
+            endpoints: [],
+          },
+        },
+        codex_accounts: { active_account_id: "codex-1", accounts: [], logins: [] },
+        claude_accounts: { active_account_id: null, accounts: [] },
+        gemini_accounts: { active_account_id: null, accounts: [] },
+        kimi_accounts: { active_account_id: null, accounts: [] },
+        copilot_accounts: { active_account_id: null, accounts: [] },
+        kiro_accounts: { active_account_id: null, accounts: [] },
+        cursor_accounts: cursorAccounts,
+      }),
     });
   });
 
@@ -87,43 +115,6 @@ test("workbench: unauthed harness opens auth modal and API key flow readies harn
       return;
     }
     await route.continue();
-  });
-
-  await page.route("**/api/providers/codex/harness_config", async (route) => {
-    if (route.request().method() !== "GET") {
-      await route.continue();
-      return;
-    }
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        provider_id: "codex",
-        selected_source_kind: "subscription",
-        selected_endpoint_id: null,
-        endpoints: [],
-      }),
-    });
-  });
-
-  await page.route("**/api/providers/cursor/harness_config", async (route) => {
-    if (route.request().method() !== "GET") {
-      await route.continue();
-      return;
-    }
-    await route.fulfill({
-      status: 400,
-      contentType: "application/json",
-      body: JSON.stringify({ error: "provider does not support harness endpoints: cursor" }),
-    });
-  });
-
-  await page.route("**/api/providers/cursor/harness_config/select", async (route) => {
-    await route.fulfill({
-      status: 400,
-      contentType: "application/json",
-      body: JSON.stringify({ error: "provider does not support harness endpoints: cursor" }),
-    });
   });
 
   await page.route("**/api/workspaces/*/providers/*/options", async (route) => {
@@ -177,7 +168,7 @@ test("workbench: unauthed harness opens auth modal and API key flow readies harn
     workspaceName: `ws-${Date.now()}`,
   });
 
-  const harnessButton = page.locator(".wb-switcher-harness");
+  const harnessButton = page.locator('button[title="Agents"]');
   await expect(harnessButton).toBeVisible({ timeout: 15_000 });
 
   await harnessButton.click();

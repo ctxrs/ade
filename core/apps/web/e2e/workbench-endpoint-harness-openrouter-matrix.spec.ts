@@ -433,7 +433,7 @@ async function waitForTerminalState(opts: {
 }
 
 async function ensureNewTaskComposerVisible(page: Page): Promise<void> {
-  const composer = page.locator(".wb-new-composer-stack");
+  const composer = page.locator("textarea.wb-composer-textarea").first();
   if (await composer.isVisible().catch(() => false)) return;
 
   const newTaskButton = page.getByRole("button", { name: "New task" }).first();

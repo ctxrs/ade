@@ -12,9 +12,6 @@ export const OPENROUTER_ENDPOINT_FIRST_PASS_HARNESSES: EndpointHarnessMatrixEntr
   { providerId: "mistral", menuLabel: "Mistral Vibe", searchTerm: "mistral" },
   { providerId: "goose", menuLabel: "Goose", searchTerm: "goose" },
   { providerId: "kimi", menuLabel: "Kimi", searchTerm: "kimi" },
-  { providerId: "cagent", menuLabel: "cagent", searchTerm: "cagent" },
-  { providerId: "cline", menuLabel: "Cline", searchTerm: "cline" },
-  { providerId: "swe-agent", menuLabel: "SWE-agent", searchTerm: "swe-agent" },
   { providerId: "openhands", menuLabel: "OpenHands", searchTerm: "openhands" },
 ];
 
@@ -24,12 +21,10 @@ export const OPENROUTER_ENDPOINT_FIRST_PASS_EXCLUDED_PROVIDER_TOKEN_ONLY = [
   "copilot",
   "kiro",
   "cursor",
-  "rovo",
   "auggie",
   "amp",
   "droid",
   "continue",
-  "cody",
   "pi",
 ] as const;
 
@@ -41,4 +36,3 @@ export const OPENROUTER_ENDPOINT_FIRST_PASS_EXCLUDED_UNSUPPORTED = [
   "aider",
   "kilo",
 ] as const;
-

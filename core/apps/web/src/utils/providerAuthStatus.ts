@@ -4,6 +4,7 @@ export function hasConfiguredHarnessAuth(
   providerId: string,
   providerOptions: ProviderOptions | undefined,
 ): boolean {
+  if (providerId === "fake") return true;
   if (!providerOptions) return false;
   if (providerOptions.has_active_auth === true) return true;
 

@@ -384,6 +384,20 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             delete(delete_gemini_account),
         )
         .route(
+            "/api/providers/amp/accounts/login/start",
+            post(start_amp_login),
+        )
+        .route("/api/providers/amp/accounts/login/:id", get(get_amp_login))
+        .route("/api/providers/amp/accounts", get(list_amp_accounts))
+        .route(
+            "/api/providers/amp/active-account",
+            put(set_amp_active_account),
+        )
+        .route(
+            "/api/providers/amp/accounts/:id",
+            delete(delete_amp_account),
+        )
+        .route(
             "/api/providers/kimi/accounts",
             get(list_kimi_accounts).post(upsert_kimi_account),
         )
@@ -642,6 +656,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             get(get_provider_options),
         )
         .route(
+            "/api/workspaces/:id/providers/bootstrap",
+            get(get_workspace_providers_bootstrap),
+        )
+        .route(
             "/api/workspaces/:id/providers/:provider_id/authenticate",
             post(authenticate_provider_for_workspace),
         )
@@ -803,6 +821,8 @@ const MOBILE_API_MAX_VERSION: i64 = 1;
 #[derive(Debug, Serialize)]
 struct HealthCompatibility {
     desktop_exact_version: String,
+    desktop_build_id: String,
+    desktop_dev_instance_id: String,
     mobile_api_min: i64,
     mobile_api_max: i64,
 }
@@ -873,6 +893,12 @@ struct RegisterMobileDeviceReq {
 
 async fn health(State(state): State<Arc<AppState>>) -> Result<Json<HealthResp>, StatusCode> {
     let version = env!("CARGO_PKG_VERSION").to_string();
+    let build_id = option_env!("CTX_BUILD_ID")
+        .unwrap_or(env!("CARGO_PKG_VERSION"))
+        .to_string();
+    let dev_instance_id = option_env!("CTX_DEV_INSTANCE_ID")
+        .unwrap_or("unknown")
+        .to_string();
     Ok(Json(HealthResp {
         version: version.clone(),
         daemon_version: version.clone(),
@@ -882,6 +908,8 @@ async fn health(State(state): State<Arc<AppState>>) -> Result<Json<HealthResp>, 
         auth_required: state.core.auth_token.is_some(),
         compatibility: HealthCompatibility {
             desktop_exact_version: version,
+            desktop_build_id: build_id,
+            desktop_dev_instance_id: dev_instance_id,
             mobile_api_min: MOBILE_API_MIN_VERSION,
             mobile_api_max: MOBILE_API_MAX_VERSION,
         },
@@ -987,6 +1015,12 @@ async fn diagnostics(
     let managed_installs = redact_json_value(managed_installs);
 
     let version = env!("CARGO_PKG_VERSION").to_string();
+    let build_id = option_env!("CTX_BUILD_ID")
+        .unwrap_or(env!("CARGO_PKG_VERSION"))
+        .to_string();
+    let dev_instance_id = option_env!("CTX_DEV_INSTANCE_ID")
+        .unwrap_or("unknown")
+        .to_string();
     Ok(Json(DiagnosticsResp {
         daemon: HealthResp {
             version: version.clone(),
@@ -997,6 +1031,8 @@ async fn diagnostics(
             auth_required: state.core.auth_token.is_some(),
             compatibility: HealthCompatibility {
                 desktop_exact_version: version,
+                desktop_build_id: build_id,
+                desktop_dev_instance_id: dev_instance_id,
                 mobile_api_min: MOBILE_API_MIN_VERSION,
                 mobile_api_max: MOBILE_API_MAX_VERSION,
             },

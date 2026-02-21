@@ -55,11 +55,8 @@ pub(super) async fn check_updates(
     let latest_version = manifest.latest_version.clone();
     let min_supported_version = manifest.min_supported_version.clone();
     let platform_supported = platform_supported(&manifest, platform.as_deref());
-    let (in_place_update_supported, in_place_update_reason) = in_place_update_capability(
-        &manifest,
-        platform.as_deref(),
-        platform_supported,
-    );
+    let (in_place_update_supported, in_place_update_reason) =
+        in_place_update_capability(&manifest, platform.as_deref(), platform_supported);
     let update_available =
         is_update_available(&current_version, &latest_version, platform_supported);
 
@@ -435,8 +432,12 @@ mod tests {
         platforms.insert("macos-arm64".to_string(), release_platform_with_dmg());
         let manifest = manifest_with_platforms(platforms);
 
-        let (supported, reason) =
-            in_place_update_capability_with_appimage_path(&manifest, Some("macos-arm64"), true, true);
+        let (supported, reason) = in_place_update_capability_with_appimage_path(
+            &manifest,
+            Some("macos-arm64"),
+            true,
+            true,
+        );
         assert!(!supported);
         assert_eq!(
             reason.as_deref(),

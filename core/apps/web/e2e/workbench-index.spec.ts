@@ -35,17 +35,50 @@ test("workbench active snapshot stream keeps network lean", async ({ page }) => 
   await expect.poll(() => requests.length).toBeGreaterThan(0);
   expect(workspaceId).not.toEqual("");
 
-  const apiRequests = requests.filter((r) => r.url.includes("/api/"));
-  expect(apiRequests.length).toBeLessThanOrEqual(30);
+  const apiRequests = () => requests.filter((r) => r.url.includes("/api/"));
+  expect(apiRequests().length).toBeLessThanOrEqual(18);
 
-  const snapshotRequests = apiRequests.filter((r) => {
+  const providerBootstrapPath = `/api/workspaces/${workspaceId}/providers/bootstrap`;
+  const providerBootstrapRequests = apiRequests().filter((r) => {
+    if (r.method !== "GET") return false;
+    const pathname = new URL(r.url).pathname;
+    return pathname === providerBootstrapPath;
+  });
+  expect(providerBootstrapRequests.length).toBe(1);
+
+  const startupProviderAccounts = apiRequests().filter((r) => {
+    if (r.method !== "GET") return false;
+    const pathname = new URL(r.url).pathname;
+    return /^\/api\/providers\/[^/]+\/accounts(?:\/[^/]+)?$/.test(pathname);
+  });
+  expect(startupProviderAccounts.length).toBe(0);
+
+  const startupHarnessConfig = apiRequests().filter((r) => {
+    if (r.method !== "GET") return false;
+    const pathname = new URL(r.url).pathname;
+    return /^\/api\/providers\/[^/]+\/harness_config(?:\/.*)?$/.test(pathname);
+  });
+  expect(startupHarnessConfig.length).toBe(0);
+
+  const updatesRequests = () =>
+    apiRequests().filter((r) => {
+      if (r.method !== "GET") return false;
+      const pathname = new URL(r.url).pathname;
+      return pathname.startsWith("/api/updates/");
+    });
+  await expect.poll(() => updatesRequests().length).toBe(1);
+  const updates = updatesRequests();
+  expect(updates.every((r) => new URL(r.url).pathname === "/api/updates/check")).toBe(true);
+  expect(updates.length).toBe(1);
+
+  const snapshotRequests = apiRequests().filter((r) => {
     if (r.method !== "GET") return false;
     const pathname = new URL(r.url).pathname;
     return pathname === `/api/workspaces/${workspaceId}/active_snapshot`;
   });
   expect(snapshotRequests.length).toBe(0);
   expect(snapshotStream.url()).toContain(`/api/workspaces/${workspaceId}/active_snapshot/stream`);
-  const trackRequests = apiRequests.filter(
+  const trackRequests = apiRequests().filter(
     (r) => /\/api\/tasks\/[^/]+\/tracks/.test(r.url) || /\/api\/tracks\/[^/]+/.test(r.url),
   );
   expect(trackRequests.length).toBe(0);

@@ -103,10 +103,11 @@ desktop-profile-dev:
 		exit 1; \
 	fi; \
 	CTX_DESKTOP_SYNC_BUNDLES="$(DESKTOP_SYNC_BUNDLES)" $(PNPM) -C core desktop:prep:dev; \
-	CONFIG_JSON="$$(jq -nc --arg pn "$(APP_LABEL)" --arg id "$(APP_ID)" '{productName:$$pn,identifier:$$id}')"; \
 	WEB_HOST="$(DESKTOP_DEV_WEB_HOST)"; \
 	WEB_PORT="$(DESKTOP_DEV_WEB_PORT)"; \
-	$(PNPM) -C core/apps/web dev --host "$$WEB_HOST" --port "$$WEB_PORT" >/tmp/ctx-web-$(SAFE_PROFILE).log 2>&1 & \
+	DEV_URL="http://$$WEB_HOST:$$WEB_PORT"; \
+	CONFIG_JSON="$$(jq -nc --arg pn "$(APP_LABEL)" --arg id "$(APP_ID)" --arg dev "$$DEV_URL" '{productName:$$pn,identifier:$$id,build:{devUrl:$$dev}}')"; \
+	CTX_DEV_HTTP=1 $(PNPM) -C core/apps/web dev --host "$$WEB_HOST" --port "$$WEB_PORT" >/tmp/ctx-web-$(SAFE_PROFILE).log 2>&1 & \
 	WEB_PID=$$!; \
 	cleanup() { \
 		kill "$$WEB_PID" >/dev/null 2>&1 || true; \
@@ -115,7 +116,7 @@ desktop-profile-dev:
 	trap cleanup EXIT INT TERM; \
 	if command -v curl >/dev/null 2>&1; then \
 		for _ in $$(seq 1 60); do \
-			if curl -kfsS "https://$$WEB_HOST:$$WEB_PORT" >/dev/null 2>&1 || curl -fsS "http://$$WEB_HOST:$$WEB_PORT" >/dev/null 2>&1; then \
+			if curl -fsS "$$DEV_URL" >/dev/null 2>&1; then \
 				break; \
 			fi; \
 			sleep 1; \
@@ -123,5 +124,5 @@ desktop-profile-dev:
 	else \
 		sleep 2; \
 	fi; \
-	echo "Starting tauri dev for profile '$(SAFE_PROFILE)' (web: http://$$WEB_HOST:$$WEB_PORT, data dir: $(DAEMON_DIR))"; \
+	echo "Starting tauri dev for profile '$(SAFE_PROFILE)' (web: $$DEV_URL, data dir: $(DAEMON_DIR))"; \
 	CTX_DESKTOP_DAEMON_DATA_DIR="$(DAEMON_DIR)" $(PNPM) -C core/apps/desktop exec tauri dev --config "$$CONFIG_JSON"

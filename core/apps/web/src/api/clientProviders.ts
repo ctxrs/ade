@@ -54,6 +54,23 @@ export type ProviderOptions = {
 export const getProviderOptions = (workspaceId: string, providerId: string) =>
   apiAny<ProviderOptions>(`/api/workspaces/${workspaceId}/providers/${providerId}/options`);
 
+export type ProvidersBootstrapResponse = {
+  providers: ProviderStatus[];
+  provider_options: Record<string, ProviderOptions>;
+  provider_harness_config: Record<string, HarnessProviderSourceConfig>;
+  codex_accounts: CodexAccountsResponse;
+  claude_accounts: ClaudeAccountsResponse;
+  gemini_accounts: GeminiAccountsResponse;
+  kimi_accounts: KimiAccountsResponse;
+  copilot_accounts: CopilotAccountsResponse;
+  kiro_accounts: KiroAccountsResponse;
+  cursor_accounts: CursorAccountsResponse;
+  amp_accounts: AmpAccountsResponse;
+};
+
+export const getProvidersBootstrap = (workspaceId: string) =>
+  apiAny<ProvidersBootstrapResponse>(`/api/workspaces/${workspaceId}/providers/bootstrap`);
+
 export type ProviderAuthCheck = {
   provider_id: string;
   workspace_id: string;
@@ -251,6 +268,15 @@ export type CursorAccountEntry = {
   last_used_at?: string | null;
 };
 
+export type AmpAccountEntry = {
+  id: string;
+  label: string;
+  kind?: string;
+  email?: string | null;
+  created_at: string;
+  last_used_at?: string | null;
+};
+
 export type CodexAccountUsageEntry = {
   account_id: string | null;
   label: string;
@@ -307,6 +333,11 @@ export type KiroAccountsResponse = {
 export type CursorAccountsResponse = {
   active_account_id: string | null;
   accounts: CursorAccountEntry[];
+};
+
+export type AmpAccountsResponse = {
+  active_account_id: string | null;
+  accounts: AmpAccountEntry[];
 };
 
 export type CodexLoginStartResponse = {
@@ -504,6 +535,29 @@ export const startGeminiLogin = (label?: string) =>
 
 export const getGeminiLogin = (loginId: string) =>
   apiAny<GeminiLoginStatus>(`/api/providers/gemini/accounts/login/${loginId}`);
+
+export const startAmpLogin = (label?: string) =>
+  apiAny<AmpLoginStartResponse>(`/api/providers/amp/accounts/login/start`, {
+    method: "POST",
+    body: JSON.stringify(label ? { label } : {}),
+  });
+
+export const getAmpLogin = (loginId: string) =>
+  apiAny<AmpLoginStatus>(`/api/providers/amp/accounts/login/${loginId}`);
+
+export const listAmpAccounts = () =>
+  apiAny<AmpAccountsResponse>(`/api/providers/amp/accounts`);
+
+export const setAmpActiveAccount = (accountId: string | null) =>
+  apiAny<AmpAccountsResponse>(`/api/providers/amp/active-account`, {
+    method: "PUT",
+    body: JSON.stringify({ account_id: accountId }),
+  });
+
+export const deleteAmpAccount = (accountId: string) =>
+  apiAny<AmpAccountsResponse>(`/api/providers/amp/accounts/${accountId}`, {
+    method: "DELETE",
+  });
 
 export const upsertGeminiAccount = (
   oauthCredsJson: string,

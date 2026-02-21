@@ -21,7 +21,7 @@ test("workbench: harness menu only shows actionable providers in prod mode", asy
     workspaceName: `ws-${Date.now()}`,
   });
 
-  await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
+  await page.locator('button[title="Agents"]').first().click();
   const menu = page.locator(".wb-harness-menu");
   await expect(menu).toBeVisible({ timeout: 10_000 });
   await expect(menu.locator(".wb-harness-row").first()).toBeVisible();

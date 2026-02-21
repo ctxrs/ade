@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
+import { selectHarnessBySearch } from "./utils/harnessEndpointAuth";
 
 test("golden path: workspace → task → session → message", async ({ page }) => {
   const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-"));
@@ -19,12 +20,10 @@ test("golden path: workspace → task → session → message", async ({ page })
   await createWorkspaceAndOpenWorkbench({ page, request: page.request, repo, workspaceName });
 
   // Workbench UI: choose Fake harness so the test doesn't depend on external agents.
-  await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
-  await page.locator(".wb-harness-menu").getByLabel("Search agents").fill("fake");
-  await page.locator(".wb-harness-menu").getByRole("button", { name: /fake/i }).click();
+  await selectHarnessBySearch(page, "fake", /fake/i);
 
-  await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill("hello");
-  await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
+  await page.locator("textarea.wb-composer-textarea").first().fill("hello");
+  await page.getByRole("button", { name: "Send" }).click();
 
   const rows = page.locator(".wb-task-row");
   await expect(rows).toHaveCount(1, { timeout: 20000 });

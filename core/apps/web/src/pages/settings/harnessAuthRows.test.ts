@@ -4,7 +4,7 @@ import { buildHarnessAuthRows, defaultEndpointBaseUrlForProvider } from "./harne
 describe("defaultEndpointBaseUrlForProvider", () => {
   it("returns provider-specific defaults", () => {
     expect(defaultEndpointBaseUrlForProvider("codex")).toBe("https://api.openai.com/v1");
-    expect(defaultEndpointBaseUrlForProvider("claude-crp")).toBe("https://api.anthropic.com/v1");
+    expect(defaultEndpointBaseUrlForProvider("claude-crp")).toBe("https://api.anthropic.com");
     expect(defaultEndpointBaseUrlForProvider("gemini")).toBe("");
   });
 });
@@ -362,5 +362,65 @@ describe("buildHarnessAuthRows", () => {
     });
 
     expect(subscriptionSelected[0]?.active).toBe(true);
+  });
+
+  it("builds amp managed subscription rows and marks active", () => {
+    const endpointSelected = buildHarnessAuthRows({
+      provider_id: "amp",
+      selected_source_kind: "endpoint",
+      selected_endpoint_id: null,
+      endpoints: [],
+      codex_accounts: [],
+      codex_active_account_id: null,
+      claude_accounts: [],
+      claude_active_account_id: null,
+      gemini_accounts: [],
+      gemini_active_account_id: null,
+      kimi_accounts: [],
+      kimi_active_account_id: null,
+      copilot_accounts: [],
+      copilot_active_account_id: null,
+      kiro_accounts: [],
+      kiro_active_account_id: null,
+      cursor_active_account_id: null,
+      cursor_accounts: [],
+      amp_active_account_id: "amp-2",
+      amp_accounts: [
+        { id: "amp-1", label: "Amp A", email: "amp-a@example.com", created_at: "2026-01-01T00:00:00Z" },
+        { id: "amp-2", label: "Amp B", email: "amp-b@example.com", created_at: "2026-01-01T00:00:00Z" },
+      ],
+    });
+
+    expect(endpointSelected).toHaveLength(2);
+    expect(endpointSelected.find((row) => row.account_id === "amp-2")?.active).toBe(false);
+    expect(endpointSelected.every((row) => row.can_delete === true)).toBe(true);
+
+    const subscriptionSelected = buildHarnessAuthRows({
+      provider_id: "amp",
+      selected_source_kind: "subscription",
+      selected_endpoint_id: null,
+      endpoints: [],
+      codex_accounts: [],
+      codex_active_account_id: null,
+      claude_accounts: [],
+      claude_active_account_id: null,
+      gemini_accounts: [],
+      gemini_active_account_id: null,
+      kimi_accounts: [],
+      kimi_active_account_id: null,
+      copilot_accounts: [],
+      copilot_active_account_id: null,
+      kiro_accounts: [],
+      kiro_active_account_id: null,
+      cursor_active_account_id: null,
+      cursor_accounts: [],
+      amp_active_account_id: "amp-2",
+      amp_accounts: [
+        { id: "amp-1", label: "Amp A", email: "amp-a@example.com", created_at: "2026-01-01T00:00:00Z" },
+        { id: "amp-2", label: "Amp B", email: "amp-b@example.com", created_at: "2026-01-01T00:00:00Z" },
+      ],
+    });
+
+    expect(subscriptionSelected.find((row) => row.account_id === "amp-2")?.active).toBe(true);
   });
 });

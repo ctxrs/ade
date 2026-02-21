@@ -92,6 +92,12 @@ import {
   type FlowRunToken,
 } from "./workspaceSetup/flowController";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
+import {
+  trackWizardAbandoned,
+  trackWizardCompleted,
+  trackWizardStarted,
+  trackWizardStepViewed,
+} from "../utils/analytics";
 import { upsertLauncherRecent } from "../state/launcherRecentsStore";
 
 type WizardOption = {
@@ -131,6 +137,7 @@ export default function WorkspaceSetupPage() {
   const [remoteHostInput, setRemoteHostInput] = useState("");
   const [remoteStatus, setRemoteStatus] = useState<"idle" | "connecting" | "connected" | "error">("idle");
   const [remoteError, setRemoteError] = useState<string | null>(null);
+  const [localLocationBusy, setLocalLocationBusy] = useState(false);
   const [remoteAdvancedOpen, setRemoteAdvancedOpen] = useState(false);
   const [remotePortInput, setRemotePortInput] = useState("4399");
   const [remoteDataDirInput, setRemoteDataDirInput] = useState("");
@@ -206,9 +213,13 @@ export default function WorkspaceSetupPage() {
   const locationAdvanceRunRef = useRef<FlowRunToken | null>(null);
   const currentStepKeyRef = useRef<string>("location");
   const previousStepIndexRef = useRef(0);
+  const wizardStartedRef = useRef(false);
+  const wizardCompletedRef = useRef(false);
+  const lastWizardStepViewedRef = useRef<{ key: string; index: number } | null>(null);
   const titlingProbePromiseRef = useRef<Promise<boolean | null> | null>(null);
   const titlingProbePromiseTargetKeyRef = useRef<string | null>(null);
   const remoteStatusRef = useRef(remoteStatus);
+  const wizardKey = "workspace_setup" as const;
   const harnessByProviderId = useMemo(() => {
     return new Map(HARNESS_CATALOG.map((entry) => [entry.id, entry]));
   }, []);
@@ -239,15 +250,15 @@ export default function WorkspaceSetupPage() {
       out.push({
         key: "auth-import",
         title: "Import Existing Auth",
-        note: "Optional: import provider credentials found on this host. Claude subscription auth is configured later in Harness Authentication or Composer.",
+        note: "Import existing provider credentials or add them later.",
       });
     }
 
     if (titlingStepVisible) {
       out.push({
         key: "session-titling",
-        title: "Session Titling",
-        note: "Choose how ctx should generate session titles on this daemon.",
+        title: "Task Titling",
+        note: "Choose an LLM source for generating task titles.",
       });
     }
 
@@ -457,6 +468,7 @@ export default function WorkspaceSetupPage() {
       && remoteStatus !== "connecting"
       && parsedRemotePort !== null
     ))
+    && !(step.key === "location" && selections.location === "local" && localLocationBusy)
     && hasSourceStepInputs
     && hasTargetBranch
     && hasAllowlist
@@ -487,6 +499,9 @@ export default function WorkspaceSetupPage() {
     : creating
       ? "Creating…"
       : "Create workspace";
+  const nextButtonLabel = step.key === "location" && selections.location === "local" && localLocationBusy
+    ? "Working..."
+    : "Next";
 
   function applyConnection(info: DesktopConnectionInfo) {
     applyDaemonDesktopConnection(info);
@@ -909,6 +924,7 @@ export default function WorkspaceSetupPage() {
     if (stepKey === "location") {
       // Keep local prefetch snapshot so local click can advance without step-topology churn.
       if (optionId === "remote") {
+        setLocalLocationBusy(false);
         pendingLocalLocationAdvanceRef.current = false;
         const nextRun = nextFlowRunToken(locationAdvanceRunRef.current?.runId ?? 0, "local");
         locationAdvanceRunRef.current = nextRun;
@@ -979,6 +995,34 @@ export default function WorkspaceSetupPage() {
   useEffect(() => {
     currentStepKeyRef.current = step.key;
   }, [step.key]);
+
+  useEffect(() => {
+    if (wizardStartedRef.current) return;
+    wizardStartedRef.current = true;
+    trackWizardStarted({ wizardKey });
+    return () => {
+      if (wizardCompletedRef.current) return;
+      const last = lastWizardStepViewedRef.current ?? {
+        key: currentStepKeyRef.current,
+        index: previousStepIndexRef.current,
+      };
+      trackWizardAbandoned({
+        wizardKey,
+        lastStepKey: last.key,
+        lastStepIndex: last.index,
+      });
+    };
+  }, [wizardKey]);
+
+  useEffect(() => {
+    if (!wizardStartedRef.current) return;
+    lastWizardStepViewedRef.current = { key: step.key, index: stepIndex };
+    trackWizardStepViewed({
+      wizardKey,
+      stepKey: step.key,
+      stepIndex,
+    });
+  }, [step.key, stepIndex, wizardKey]);
 
   useEffect(() => {
     if (!selectedDaemonTargetKey || !canProbeTitling) {
@@ -1105,16 +1149,23 @@ export default function WorkspaceSetupPage() {
     const run = nextFlowRunToken(locationAdvanceRunRef.current?.runId ?? 0, "local");
     locationAdvanceRunRef.current = run;
     pendingLocalLocationAdvanceRef.current = false;
+    setLocalLocationBusy(true);
     void (async () => {
       // Resolve both auth + titling before leaving Location so step topology stays stable.
-      const [candidates, titlingRequired] = await Promise.all([
-        scanAuthImportCandidatesForTarget("local"),
-        ensureTitlingProbeForCurrentTarget(),
-      ]);
-      if (!isCurrentFlowRunToken(locationAdvanceRunRef.current, run)) return;
-      if (selectedDaemonTargetKeyRef.current !== "local") return;
-      if (currentStepKeyRef.current !== "location") return;
-      goToStepKey(nextStepAfterLocation(candidates.length, titlingRequired));
+      try {
+        const [candidates, titlingRequired] = await Promise.all([
+          scanAuthImportCandidatesForTarget("local"),
+          ensureTitlingProbeForCurrentTarget(),
+        ]);
+        if (!isCurrentFlowRunToken(locationAdvanceRunRef.current, run)) return;
+        if (selectedDaemonTargetKeyRef.current !== "local") return;
+        if (currentStepKeyRef.current !== "location") return;
+        goToStepKey(nextStepAfterLocation(candidates.length, titlingRequired));
+      } finally {
+        if (isCurrentFlowRunToken(locationAdvanceRunRef.current, run)) {
+          setLocalLocationBusy(false);
+        }
+      }
     })();
   }, [
     ensureTitlingProbeForCurrentTarget,
@@ -1545,13 +1596,18 @@ export default function WorkspaceSetupPage() {
       let candidateCount = 0;
       let titlingRequired: boolean | null = null;
       if (selections.location === "local") {
-        // Keep next-step choice deterministic from resolved scan/probe outcomes.
-        const [candidates, required] = await Promise.all([
-          scanAuthImportCandidatesForTarget("local"),
-          ensureTitlingProbeForCurrentTarget(),
-        ]);
-        candidateCount = candidates.length;
-        titlingRequired = required;
+        setLocalLocationBusy(true);
+        try {
+          // Keep next-step choice deterministic from resolved scan/probe outcomes.
+          const [candidates, required] = await Promise.all([
+            scanAuthImportCandidatesForTarget("local"),
+            ensureTitlingProbeForCurrentTarget(),
+          ]);
+          candidateCount = candidates.length;
+          titlingRequired = required;
+        } finally {
+          setLocalLocationBusy(false);
+        }
       } else if (selections.location === "remote") {
         const [candidates, required] = await Promise.all([
           scanAuthImportCandidatesForTarget("remote"),
@@ -1707,7 +1763,7 @@ export default function WorkspaceSetupPage() {
     setLaunchTick(0);
     setCreating(true);
     try {
-      if (!isDesktopApp()) {
+      if (selections.location === "remote" && !isDesktopApp()) {
         throw new Error("Workspace creation from the wizard requires the desktop app.");
       }
 
@@ -1717,16 +1773,18 @@ export default function WorkspaceSetupPage() {
       }
 
       // 1. Connect to the intended daemon (reuse existing if already running).
-      const info = selections.location === "remote"
-        ? await desktopConnectSsh({
-          host: parsed!.host,
-          user: parsed!.user ?? null,
-          remote_port: parsedRemotePort,
-          start_remote: true,
-          remote_data_dir: remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null,
-        })
-        : await desktopConnectLocal();
-      applyConnection(info);
+      if (isDesktopApp()) {
+        const info = selections.location === "remote"
+          ? await desktopConnectSsh({
+            host: parsed!.host,
+            user: parsed!.user ?? null,
+            remote_port: parsedRemotePort,
+            start_remote: true,
+            remote_data_dir: remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null,
+          })
+          : await desktopConnectLocal();
+        applyConnection(info);
+      }
 
       if (selections.location === "remote" && parsed?.host) {
         const normalizedDataDir = remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null;
@@ -1878,9 +1936,9 @@ export default function WorkspaceSetupPage() {
       }
 
       // 3. Register the workspace.
+      const workspaceKind = selections.location === "remote" ? "remote" : "local";
       if (!wsId) {
-        const workspaceKind = selections.location === "remote" ? "remote" : "local";
-        const created = await createWorkspace(rootPath, name, workspaceKind);
+        const created = await createWorkspace(rootPath, name, workspaceKind, "wizard");
         wsId = idToString((created as any).id);
       }
 
@@ -1953,6 +2011,11 @@ export default function WorkspaceSetupPage() {
       } catch {
         // best-effort only; do not block workspace creation if recents persistence fails
       }
+      wizardCompletedRef.current = true;
+      trackWizardCompleted({
+        wizardKey,
+        workspaceKind,
+      });
       navigate(`/workspaces/${wsId}`, { replace: true });
     } catch (e: any) {
       const msg = e?.message ?? String(e);
@@ -2308,6 +2371,11 @@ export default function WorkspaceSetupPage() {
                     )}
                   </div>
                 )}
+                {step.key === "location" && selections.location === "local" && localLocationBusy && (
+                  <div className="wizard-note" data-testid="wizard-location-local-progress">
+                    Preparing local daemon and checking setup...
+                  </div>
+                )}
                 {step.key === "auth-import" && (
                   <div className="wizard-input">
                     {authImportBusy ? <div className="wizard-note">Scanning/importing credentials…</div> : null}
@@ -2405,7 +2473,7 @@ export default function WorkspaceSetupPage() {
                         aria-pressed={titlingMode === "remote"}
                       >
                         <div className="wizard-option-title">
-                          <span className="wizard-option-title-text">Remote model</span>
+                          <span className="wizard-option-title-text">Remote LLM via API Key</span>
                         </div>
                         <div className="wizard-option-desc">
                           Use a cloud endpoint with API key + model for title generation.
@@ -2418,24 +2486,37 @@ export default function WorkspaceSetupPage() {
                         onClick={() => {
                           void onSelectTitlingLocal();
                         }}
-                        disabled={titlingLocalInstallBusy || titlingPersistBusy}
+                        disabled
                         aria-pressed={titlingMode === "local"}
                       >
                         <div className="wizard-option-title">
                           <span className="wizard-option-title-text">Local model</span>
                         </div>
                         <div className="wizard-option-desc">
-                          Run titling on-daemon. Download can continue in background.
+                          Coming soon: download a small LLM to run locally for generating task titles.
                         </div>
                       </button>
                     </div>
+                    {titlingMode === "local" ? (
+                      <div className="wizard-note" data-testid="wizard-titling-local-status">
+                        {titlingLocalStatus?.ready
+                          ? "Local model ready."
+                          : titlingLocalInstallBusy
+                            ? "Starting local model download…"
+                            : titlingLocalInstall?.state === "running"
+                              ? `Installing local model${typeof titlingLocalInstall.pct === "number" ? ` (${titlingLocalInstall.pct}%)` : ""}. This continues in background.`
+                              : titlingLocalInstall?.state === "failed"
+                                ? `Local model install failed${titlingLocalInstall.error ? `: ${titlingLocalInstall.error}` : "."}`
+                                : "Local model is not ready yet. Titles use fallback until install completes."}
+                      </div>
+                    ) : null}
                     {titlingMode === "remote" && (
                       <div className="wizard-input">
                         <label>
                           Endpoint base URL
                           <input
                             data-testid="wizard-titling-remote-base-url"
-                            placeholder="https://openrouter.ai/api/v1"
+                            placeholder="https://api.your-llm-gateway.example/v1"
                             value={titlingRemoteBaseUrl}
                             onChange={(e) => {
                               invalidateTitlingPersisted();
@@ -2460,7 +2541,7 @@ export default function WorkspaceSetupPage() {
                           Model
                           <input
                             data-testid="wizard-titling-remote-model"
-                            placeholder="google/gemini-3-flash-preview"
+                            placeholder="model-slug"
                             value={titlingRemoteModel}
                             onChange={(e) => {
                               invalidateTitlingPersisted();
@@ -2836,7 +2917,7 @@ export default function WorkspaceSetupPage() {
                         </div>
                       )}
                       <div className="wizard-summary-row">
-                        <div className="wizard-summary-k">Session titling</div>
+                        <div className="wizard-summary-k">Task titling</div>
                         <div className="wizard-summary-v">{titlingSummaryValue}</div>
                       </div>
                       <div className="wizard-summary-row">
@@ -2960,7 +3041,7 @@ export default function WorkspaceSetupPage() {
 	                disabled={!canAdvance || creating}
 	                onClick={onNext}
 	              >
-	                Next
+	                {nextButtonLabel}
               </button>
             )}
           </div>

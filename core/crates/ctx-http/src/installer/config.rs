@@ -384,14 +384,6 @@ pub fn agent_server_config_path(data_root: &Path) -> PathBuf {
         .join("agent_servers.json")
 }
 
-pub fn cagent_config_path(data_root: &Path) -> PathBuf {
-    data_root
-        .join("providers")
-        .join("agent-servers")
-        .join("cagent")
-        .join("config.yaml")
-}
-
 pub async fn load_agent_server_config(data_root: &Path) -> Result<AgentServerConfigFile> {
     let path = agent_server_config_path(data_root);
     if !path.exists() {

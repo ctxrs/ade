@@ -32,6 +32,22 @@ pub(super) struct DaemonAuthFile {
     pub(super) daemon_url: Option<String>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct DaemonHealthCompatibility {
+    #[serde(default)]
+    desktop_exact_version: String,
+    #[serde(default)]
+    desktop_dev_instance_id: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct DaemonHealthSummary {
+    #[serde(default)]
+    data_root: String,
+    #[serde(default)]
+    compatibility: DaemonHealthCompatibility,
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct DesktopRestartLocalDaemonReq {
     #[serde(default)]
@@ -69,13 +85,21 @@ pub(super) async fn desktop_connect_local(
 ) -> Result<DesktopConnectionInfo, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<ConnectionManager>();
+        let data_dir = daemon_data_dir(&app).map_err(to_err)?;
+        let desktop_version = app.package_info().version.to_string();
+        let desktop_dev_instance_id = desktop_dev_instance_id();
         // Idempotent: if we're already connected to a healthy local daemon, keep the connection.
         // The workspace wizard calls connect_local as part of its flow; disconnecting here can
         // kill a just-started daemon and introduce flakiness on cold start.
         let info = state.info();
         if matches!(info.kind, DesktopConnectionKind::Local) {
             if let Some(url) = info.base_url.as_deref() {
-                if probe_daemon_health(url).is_ok() {
+                if existing_local_daemon_matches_or_absent(
+                    url,
+                    &data_dir,
+                    &desktop_version,
+                    desktop_dev_instance_id,
+                ) {
                     return Ok(info);
                 }
             }
@@ -86,26 +110,36 @@ pub(super) async fn desktop_connect_local(
             state.set_local_external(url, token);
             return Ok(state.info());
         }
-        let data_dir = daemon_data_dir(&app).map_err(to_err)?;
-        if let Some((url, token)) = resolve_existing_local_daemon(&data_dir).map_err(to_err)? {
+        if let Some((url, token)) =
+            resolve_existing_local_daemon(&app, &data_dir).map_err(to_err)?
+        {
             state.set_local_external(url, token);
             return Ok(state.info());
         }
         // Block until the daemon is actually reachable before returning. The workspace wizard
         // applies the connection and navigates immediately after `desktop_connect_local` resolves;
         // returning early causes the workbench to briefly render a "daemon unavailable" overlay.
-        let (url, child, systemd_scope) = match spawn_daemon(&app, &data_dir, true) {
+        let spawned = match spawn_and_validate_local_daemon(
+            &app,
+            &data_dir,
+            &desktop_version,
+            desktop_dev_instance_id,
+        ) {
             Ok(value) => value,
             Err(err) => {
-                if let Ok(Some((url, token))) = resolve_existing_local_daemon(&data_dir) {
+                if let Ok(Some((url, token))) = resolve_existing_local_daemon(&app, &data_dir) {
                     state.set_local_external(url, token);
                     return Ok(state.info());
                 }
                 return Err(to_err(err));
             }
         };
-        let auth = read_daemon_auth_with_retry(&data_dir).map_err(to_err)?;
-        state.set_local(url.clone(), auth.token.clone(), child, systemd_scope);
+        state.set_local(
+            spawned.url,
+            spawned.token,
+            spawned.child,
+            spawned.systemd_scope,
+        );
         Ok(state.info())
     })
     .await
@@ -125,9 +159,21 @@ pub(super) async fn desktop_restart_local_daemon(
         let manager: &ConnectionManager = state.inner();
         manager.disconnect();
         let data_dir = daemon_data_dir(&app).map_err(to_err)?;
-        let (url, child, systemd_scope) = spawn_daemon(&app, &data_dir, true).map_err(to_err)?;
-        let auth = read_daemon_auth_with_retry(&data_dir).map_err(to_err)?;
-        manager.set_local(url, auth.token, child, systemd_scope);
+        let desktop_version = app.package_info().version.to_string();
+        let desktop_dev_instance_id = desktop_dev_instance_id();
+        let spawned = spawn_and_validate_local_daemon(
+            &app,
+            &data_dir,
+            &desktop_version,
+            desktop_dev_instance_id,
+        )
+        .map_err(to_err)?;
+        manager.set_local(
+            spawned.url,
+            spawned.token,
+            spawned.child,
+            spawned.systemd_scope,
+        );
         Ok(manager.info())
     })
     .await
@@ -154,16 +200,23 @@ pub(super) fn ensure_local_connection(
         return Ok(());
     }
     let data_dir = daemon_data_dir(app)?;
+    let desktop_version = app.package_info().version.to_string();
+    let desktop_dev_instance_id = desktop_dev_instance_id();
     if let Some((url, token)) = resolve_env_local_daemon(app)? {
         probe_daemon_health(&url)?;
         state.set_local_external(url, token);
         return Ok(());
     }
-    if let Some((url, token)) = resolve_existing_local_daemon(&data_dir)? {
+    if let Some((url, token)) = resolve_existing_local_daemon(app, &data_dir)? {
         state.set_local_external(url, token);
         return Ok(());
     }
-    let (url, child, systemd_scope) = match spawn_daemon(app, &data_dir, true) {
+    let spawned = match spawn_and_validate_local_daemon(
+        app,
+        &data_dir,
+        &desktop_version,
+        desktop_dev_instance_id,
+    ) {
         Ok(value) => value,
         Err(err) => {
             // This can happen if another thread already started the daemon but we raced before
@@ -176,12 +229,32 @@ pub(super) fn ensure_local_connection(
                     .context("spawning local daemon failed (auth file missing daemon_url)");
             };
             probe_local_daemon_health_with_retry(url)?;
+            let compatible = existing_local_daemon_matches(
+                url,
+                &data_dir,
+                &desktop_version,
+                desktop_dev_instance_id,
+            )
+                .with_context(|| {
+                    format!(
+                        "spawning local daemon failed: {err:#}; validating existing local daemon compatibility"
+                    )
+                })?;
+            if !compatible {
+                return Err(err).context(format!(
+                    "spawning local daemon failed and existing daemon is incompatible (url={url})"
+                ));
+            }
             state.set_local_external(url.to_string(), auth.token);
             return Ok(());
         }
     };
-    let auth = read_daemon_auth_with_retry(&data_dir)?;
-    state.set_local(url, auth.token, child, systemd_scope);
+    state.set_local(
+        spawned.url,
+        spawned.token,
+        spawned.child,
+        spawned.systemd_scope,
+    );
     Ok(())
 }
 
@@ -501,17 +574,27 @@ fn resolve_env_local_daemon(app: &tauri::AppHandle) -> Result<Option<(String, St
     Ok(Some((url, token)))
 }
 
-fn resolve_existing_local_daemon(data_dir: &Path) -> Result<Option<(String, String)>> {
+fn resolve_existing_local_daemon(
+    app: &tauri::AppHandle,
+    data_dir: &Path,
+) -> Result<Option<(String, String)>> {
     let Some(auth) = read_daemon_auth_if_present(data_dir)? else {
         return Ok(None);
     };
     let Some(url) = auth.daemon_url.as_deref() else {
         return Ok(None);
     };
-    match probe_daemon_health(url) {
-        Ok(()) => Ok(Some((url.to_string(), auth.token))),
-        Err(_) => Ok(None),
+    let desktop_version = app.package_info().version.to_string();
+    let desktop_dev_instance_id = desktop_dev_instance_id();
+    if existing_local_daemon_matches_or_absent(
+        url,
+        data_dir,
+        &desktop_version,
+        desktop_dev_instance_id,
+    ) {
+        return Ok(Some((url.to_string(), auth.token)));
     }
+    Ok(None)
 }
 
 fn read_remote_daemon_auth(
@@ -834,14 +917,92 @@ pub(super) fn ensure_remote_ctx_harness_image(
     Ok(())
 }
 
-pub(super) fn probe_daemon_health(base_url: &str) -> Result<()> {
+fn daemon_health(base_url: &str) -> Result<DaemonHealthSummary> {
     let url = format!("{}/api/health", base_url.trim_end_matches('/'));
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()
         .context("building http client")?;
     let res = client.get(url).send().context("requesting /api/health")?;
-    res.error_for_status().context("health status")?;
+    let res = res.error_for_status().context("health status")?;
+    res.json::<DaemonHealthSummary>()
+        .context("parsing /api/health response")
+}
+
+fn normalize_path_for_compare(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| normalize_path(path))
+}
+
+fn desktop_dev_instance_id() -> &'static str {
+    option_env!("CTX_DEV_INSTANCE_ID").unwrap_or("unknown")
+}
+
+fn local_daemon_health_matches_expected(
+    health: &DaemonHealthSummary,
+    expected_data_dir: &Path,
+    expected_desktop_version: &str,
+    expected_desktop_dev_instance_id: &str,
+) -> bool {
+    let daemon_data_root = health.data_root.trim();
+    if daemon_data_root.is_empty() {
+        return false;
+    }
+    let daemon_root = normalize_path_for_compare(Path::new(daemon_data_root));
+    let expected_root = normalize_path_for_compare(expected_data_dir);
+    if daemon_root != expected_root {
+        return false;
+    }
+    let expected_version = expected_desktop_version.trim();
+    if expected_version.is_empty() {
+        return false;
+    }
+    if health.compatibility.desktop_exact_version.trim() != expected_version {
+        return false;
+    }
+    if cfg!(debug_assertions) {
+        let expected_dev_instance_id = expected_desktop_dev_instance_id.trim();
+        if expected_dev_instance_id.is_empty() {
+            return false;
+        }
+        if health.compatibility.desktop_dev_instance_id.trim() != expected_dev_instance_id {
+            return false;
+        }
+    }
+    true
+}
+
+fn existing_local_daemon_matches(
+    base_url: &str,
+    expected_data_dir: &Path,
+    expected_desktop_version: &str,
+    expected_desktop_dev_instance_id: &str,
+) -> Result<bool> {
+    let health = daemon_health(base_url)?;
+    Ok(local_daemon_health_matches_expected(
+        &health,
+        expected_data_dir,
+        expected_desktop_version,
+        expected_desktop_dev_instance_id,
+    ))
+}
+
+fn existing_local_daemon_matches_or_absent(
+    base_url: &str,
+    expected_data_dir: &Path,
+    expected_desktop_version: &str,
+    expected_desktop_dev_instance_id: &str,
+) -> bool {
+    existing_local_daemon_matches(
+        base_url,
+        expected_data_dir,
+        expected_desktop_version,
+        expected_desktop_dev_instance_id,
+    )
+    .unwrap_or(false)
+}
+
+pub(super) fn probe_daemon_health(base_url: &str) -> Result<()> {
+    let _ = daemon_health(base_url)?;
     Ok(())
 }
 
@@ -1048,25 +1209,23 @@ fn dev_bin(name: &str) -> Option<PathBuf> {
     None
 }
 
-fn manifest_bin(name: &str) -> Option<PathBuf> {
-    let bin_ext = if cfg!(target_os = "windows") {
-        ".exe"
-    } else {
-        ""
-    };
-    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bin");
-    for candidate in [
-        base.join(format!(
-            "{name}-{arch}{bin_ext}",
-            arch = current_arch_token()
-        )),
-        base.join(format!("{name}{bin_ext}")),
-    ] {
-        if candidate.exists() && path_matches_current_platform_binary(&candidate) {
-            return Some(candidate);
-        }
+fn resolve_primary_bin(app: &tauri::AppHandle, name: &str) -> Result<PathBuf> {
+    if cfg!(debug_assertions) {
+        return dev_bin(name).with_context(|| {
+            format!(
+                "missing development binary for `{name}` at expected path (build it first, e.g. `cargo build -p ctx-http --bin ctx`)"
+            )
+        });
     }
-    None
+    resource_bin(app, name)
+        .with_context(|| format!("missing bundled binary for `{name}` in application resources"))
+}
+
+fn resolve_optional_bin(app: &tauri::AppHandle, name: &str) -> Option<PathBuf> {
+    if cfg!(debug_assertions) {
+        return dev_bin(name);
+    }
+    resource_bin(app, name)
 }
 
 fn path_matches_current_platform_binary(path: &Path) -> bool {
@@ -1224,14 +1383,8 @@ fn spawn_daemon_with_mode(
     use_systemd_scope: bool,
     wait_for_health: bool,
 ) -> Result<(String, Child, bool)> {
-    let ctx_bin = resource_bin(app, "ctx")
-        .or_else(|| manifest_bin("ctx"))
-        .or_else(|| dev_bin("ctx"))
-        .unwrap_or_else(|| PathBuf::from("ctx"));
-
-    let mcp_bin = resource_bin(app, "ctx-mcp")
-        .or_else(|| manifest_bin("ctx-mcp"))
-        .or_else(|| dev_bin("ctx-mcp"));
+    let ctx_bin = resolve_primary_bin(app, "ctx")?;
+    let mcp_bin = resolve_optional_bin(app, "ctx-mcp");
 
     let web_dist = app
         .path()
@@ -1410,6 +1563,90 @@ pub(super) fn try_kill_child(mut child: Child) -> Result<()> {
     Ok(())
 }
 
+struct SpawnedLocalDaemonReady {
+    url: String,
+    token: String,
+    child: Child,
+    systemd_scope: bool,
+}
+
+struct PendingSpawnedLocalDaemon {
+    url: String,
+    child: Option<Child>,
+    systemd_scope: bool,
+}
+
+impl PendingSpawnedLocalDaemon {
+    fn new(url: String, child: Child, systemd_scope: bool) -> Self {
+        Self {
+            url,
+            child: Some(child),
+            systemd_scope,
+        }
+    }
+
+    fn url(&self) -> &str {
+        &self.url
+    }
+
+    fn disarm(mut self) -> Result<(String, Child, bool)> {
+        let child = self
+            .child
+            .take()
+            .ok_or_else(|| anyhow!("spawned daemon child missing"))?;
+        let url = std::mem::take(&mut self.url);
+        Ok((url, child, self.systemd_scope))
+    }
+}
+
+impl Drop for PendingSpawnedLocalDaemon {
+    fn drop(&mut self) {
+        if let Some(child) = self.child.take() {
+            cleanup_rejected_spawned_local_daemon(child, self.systemd_scope, &self.url);
+        }
+    }
+}
+
+fn spawn_and_validate_local_daemon(
+    app: &tauri::AppHandle,
+    data_dir: &Path,
+    desktop_version: &str,
+    desktop_dev_instance_id: &str,
+) -> Result<SpawnedLocalDaemonReady> {
+    let (url, child, systemd_scope) = spawn_daemon(app, data_dir, true)?;
+    let pending = PendingSpawnedLocalDaemon::new(url, child, systemd_scope);
+    let compatible = existing_local_daemon_matches(
+        pending.url(),
+        data_dir,
+        desktop_version,
+        desktop_dev_instance_id,
+    )
+    .context("validating spawned local daemon compatibility")?;
+    if !compatible {
+        anyhow::bail!(
+            "spawned local daemon is incompatible (version={desktop_version}, dev_instance_id={desktop_dev_instance_id}, url={})",
+            pending.url()
+        );
+    }
+    let auth = read_daemon_auth_with_retry(data_dir)?;
+    let (url, child, systemd_scope) = pending.disarm()?;
+    Ok(SpawnedLocalDaemonReady {
+        url,
+        token: auth.token,
+        child,
+        systemd_scope,
+    })
+}
+
+fn cleanup_rejected_spawned_local_daemon(child: Child, systemd_scope: bool, base_url: &str) {
+    let _ = try_kill_child(child);
+    if systemd_scope {
+        if let Some(unit) = systemd_scope_for_local_daemon_url(base_url) {
+            stop_systemd_scope(&unit);
+        }
+    }
+}
+
 #[cfg(test)]
 mod desktop_daemon_tests {
     use super::*;
@@ -1421,5 +1658,76 @@ mod desktop_daemon_tests {
             Some("/tmp/ctx-fixture-ssh-config".to_string())
         );
         assert_eq!(normalized_ssh_config_override("   "), None);
+    }
+
+    #[test]
+    fn local_daemon_health_match_requires_expected_data_root_and_mode_specific_identity() {
+        let expected_dir =
+            std::env::temp_dir().join(format!("ctx-daemon-health-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&expected_dir).expect("create expected dir");
+        let other_dir = expected_dir.join("other");
+        std::fs::create_dir_all(&other_dir).expect("create other dir");
+
+        let matching = DaemonHealthSummary {
+            data_root: expected_dir.to_string_lossy().to_string(),
+            compatibility: DaemonHealthCompatibility {
+                desktop_exact_version: "1.2.3".to_string(),
+                desktop_dev_instance_id: "dev-wt-a".to_string(),
+            },
+        };
+        assert!(local_daemon_health_matches_expected(
+            &matching,
+            &expected_dir,
+            "1.2.3",
+            "dev-wt-a",
+        ));
+        if cfg!(debug_assertions) {
+            assert!(!local_daemon_health_matches_expected(
+                &matching,
+                &expected_dir,
+                "9.9.9",
+                "dev-wt-a",
+            ));
+            assert!(!local_daemon_health_matches_expected(
+                &matching,
+                &expected_dir,
+                "1.2.3",
+                "dev-wt-b",
+            ));
+        }
+
+        let wrong_root = DaemonHealthSummary {
+            data_root: other_dir.to_string_lossy().to_string(),
+            compatibility: DaemonHealthCompatibility {
+                desktop_exact_version: "1.2.3".to_string(),
+                desktop_dev_instance_id: "dev-wt-a".to_string(),
+            },
+        };
+        assert!(!local_daemon_health_matches_expected(
+            &wrong_root,
+            &expected_dir,
+            "1.2.3",
+            "dev-wt-a",
+        ));
+
+        std::fs::remove_dir_all(&expected_dir).ok();
+    }
+
+    #[test]
+    fn existing_local_daemon_match_errors_are_treated_as_absent() {
+        let expected_dir = std::env::temp_dir().join(format!(
+            "ctx-daemon-existing-match-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&expected_dir).expect("create expected dir");
+
+        assert!(!existing_local_daemon_matches_or_absent(
+            "not-a-url",
+            &expected_dir,
+            "1.2.3",
+            "dev-wt-a",
+        ));
+
+        std::fs::remove_dir_all(&expected_dir).ok();
     }
 }

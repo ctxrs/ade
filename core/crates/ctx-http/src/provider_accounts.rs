@@ -23,6 +23,7 @@ pub const KIMI_CREDENTIAL_KIND_CREDENTIALS_JSON: &str = "credentials-json";
 pub const COPILOT_CREDENTIAL_KIND_GH_TOKEN: &str = "gh-token";
 pub const KIRO_CREDENTIAL_KIND_AUTH_TOKEN_JSON: &str = "auth-token-json";
 pub const CURSOR_CREDENTIAL_KIND_API_KEY: &str = "api-key";
+pub const AMP_CREDENTIAL_KIND_BROWSER_OAUTH: &str = "browser-oauth";
 pub const GEMINI_AUTH_SELECTED_TYPE_OAUTH_PERSONAL: &str = "oauth-personal";
 pub const GEMINI_FORCE_FILE_STORAGE_ENV: &str = "GEMINI_FORCE_FILE_STORAGE";
 pub const KIMI_SHARE_DIR_ENV: &str = "KIMI_SHARE_DIR";
@@ -105,6 +106,10 @@ fn default_kiro_credential_kind() -> String {
 
 fn default_cursor_credential_kind() -> String {
     CURSOR_CREDENTIAL_KIND_API_KEY.to_string()
+}
+
+fn default_amp_credential_kind() -> String {
+    AMP_CREDENTIAL_KIND_BROWSER_OAUTH.to_string()
 }
 
 fn default_codex_api_shape() -> String {
@@ -310,6 +315,27 @@ pub struct CursorAccountRegistry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AmpAccountEntry {
+    pub id: String,
+    pub label: String,
+    #[serde(default = "default_amp_credential_kind")]
+    pub kind: String,
+    #[serde(default)]
+    pub email: Option<String>,
+    pub created_at: DateTime<Utc>,
+    #[serde(default)]
+    pub last_used_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AmpAccountRegistry {
+    #[serde(default)]
+    pub active_account_id: Option<String>,
+    #[serde(default)]
+    pub accounts: Vec<AmpAccountEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodexLoginStatus {
     pub account_id: String,
     pub auth_url: String,
@@ -398,6 +424,10 @@ pub fn kiro_accounts_root(data_root: &Path) -> PathBuf {
 
 pub fn cursor_accounts_root(data_root: &Path) -> PathBuf {
     data_root.join("providers").join("cursor").join("accounts")
+}
+
+pub fn amp_accounts_root(data_root: &Path) -> PathBuf {
+    data_root.join("providers").join("amp").join("accounts")
 }
 
 pub fn codex_secrets_root(data_root: &Path) -> PathBuf {
@@ -490,6 +520,14 @@ pub fn kiro_registry_path(data_root: &Path) -> PathBuf {
 
 pub fn cursor_registry_path(data_root: &Path) -> PathBuf {
     cursor_accounts_root(data_root).join("index.json")
+}
+
+pub fn amp_registry_path(data_root: &Path) -> PathBuf {
+    amp_accounts_root(data_root).join("index.json")
+}
+
+pub fn amp_runtime_home(data_root: &Path) -> PathBuf {
+    data_root.join("providers").join("amp").join("home")
 }
 
 pub fn codex_account_dir(data_root: &Path, account_id: &str) -> PathBuf {
@@ -709,6 +747,24 @@ pub async fn save_cursor_registry(
     registry: &CursorAccountRegistry,
 ) -> Result<()> {
     let path = cursor_registry_path(data_root);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let payload = serde_json::to_vec_pretty(registry)?;
+    tokio::fs::write(path, payload).await?;
+    Ok(())
+}
+
+pub async fn load_amp_registry(data_root: &Path) -> AmpAccountRegistry {
+    let path = amp_registry_path(data_root);
+    match tokio::fs::read_to_string(&path).await {
+        Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+        Err(_) => AmpAccountRegistry::default(),
+    }
+}
+
+pub async fn save_amp_registry(data_root: &Path, registry: &AmpAccountRegistry) -> Result<()> {
+    let path = amp_registry_path(data_root);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
@@ -2288,6 +2344,191 @@ pub fn normalize_cursor_label(label: Option<String>, account_id: &str) -> String
         .unwrap_or_else(|| format!("Cursor Account {account_id}"))
 }
 
+fn amp_env_for_home(home: &Path) -> HashMap<String, String> {
+    let mut env = HashMap::new();
+    env.insert("HOME".to_string(), home.to_string_lossy().to_string());
+    env.insert(
+        "XDG_CONFIG_HOME".to_string(),
+        home.join(".config").to_string_lossy().to_string(),
+    );
+    env.insert(
+        "XDG_CACHE_HOME".to_string(),
+        home.join(".cache").to_string_lossy().to_string(),
+    );
+    env
+}
+
+pub async fn ensure_amp_runtime_home(data_root: &Path) -> Result<PathBuf> {
+    let home = amp_runtime_home(data_root);
+    tokio::fs::create_dir_all(home.join(".config")).await?;
+    tokio::fs::create_dir_all(home.join(".cache")).await?;
+    Ok(home)
+}
+
+pub async fn clear_amp_runtime_home(data_root: &Path) -> Result<()> {
+    match tokio::fs::remove_dir_all(amp_runtime_home(data_root)).await {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err).context("removing amp runtime home"),
+    }
+}
+
+pub async fn upsert_amp_account(
+    data_root: &Path,
+    label: Option<String>,
+    email: Option<String>,
+) -> Result<AmpAccountRegistry> {
+    let mut registry = load_amp_registry(data_root).await;
+    let normalized_email = normalize_optional_email(email);
+    let existing_id = normalized_email
+        .as_deref()
+        .and_then(|target| {
+            registry
+                .accounts
+                .iter()
+                .find(|entry| entry.email.as_deref() == Some(target))
+                .map(|entry| entry.id.clone())
+        })
+        .or_else(|| {
+            registry
+                .active_account_id
+                .clone()
+                .filter(|id| registry.accounts.iter().any(|entry| entry.id == *id))
+        });
+
+    if let Some(existing_id) = existing_id {
+        if let Some(entry) = registry
+            .accounts
+            .iter_mut()
+            .find(|entry| entry.id == existing_id)
+        {
+            apply_label_update(label, &mut entry.label);
+            if normalized_email.is_some() {
+                entry.email = normalized_email.clone();
+            }
+            entry.last_used_at = Some(Utc::now());
+        }
+        registry.active_account_id = Some(existing_id);
+        save_amp_registry(data_root, &registry).await?;
+        let _ = ensure_amp_runtime_home(data_root).await?;
+        return Ok(registry);
+    }
+
+    let account_id = uuid::Uuid::new_v4().to_string();
+    registry.accounts.push(AmpAccountEntry {
+        id: account_id.clone(),
+        label: normalize_amp_label(label, &account_id),
+        kind: AMP_CREDENTIAL_KIND_BROWSER_OAUTH.to_string(),
+        email: normalized_email,
+        created_at: Utc::now(),
+        last_used_at: Some(Utc::now()),
+    });
+    registry.active_account_id = Some(account_id);
+    save_amp_registry(data_root, &registry).await?;
+    let _ = ensure_amp_runtime_home(data_root).await?;
+    Ok(registry)
+}
+
+pub async fn set_active_amp_account(
+    data_root: &Path,
+    account_id: Option<String>,
+) -> Result<AmpAccountRegistry> {
+    let mut registry = load_amp_registry(data_root).await;
+    if let Some(active_id) = account_id.as_deref() {
+        if !registry.accounts.iter().any(|entry| entry.id == active_id) {
+            bail!("unknown account");
+        }
+    }
+    registry.active_account_id = account_id.clone();
+    if let Some(active_id) = account_id {
+        if let Some(entry) = registry
+            .accounts
+            .iter_mut()
+            .find(|entry| entry.id == active_id)
+        {
+            entry.last_used_at = Some(Utc::now());
+        }
+        let _ = ensure_amp_runtime_home(data_root).await?;
+    } else {
+        clear_amp_runtime_home(data_root).await?;
+    }
+    save_amp_registry(data_root, &registry).await?;
+    Ok(registry)
+}
+
+pub async fn remove_amp_account(data_root: &Path, account_id: &str) -> Result<AmpAccountRegistry> {
+    ensure_safe_account_id(account_id)?;
+    let mut registry = load_amp_registry(data_root).await;
+    let was_active = registry.active_account_id.as_deref() == Some(account_id);
+    registry.accounts.retain(|entry| entry.id != account_id);
+    if was_active {
+        registry.active_account_id = None;
+    }
+    save_amp_registry(data_root, &registry).await?;
+    if was_active {
+        clear_amp_runtime_home(data_root).await?;
+    }
+    Ok(registry)
+}
+
+pub async fn amp_env_for_active_account(data_root: &Path) -> Result<HashMap<String, String>> {
+    let registry = ensure_amp_registry_from_runtime_auth(data_root).await?;
+    let Some(active) = registry
+        .active_account_id
+        .as_deref()
+        .map(|raw| raw.trim())
+        .filter(|raw| !raw.is_empty())
+    else {
+        return Ok(HashMap::new());
+    };
+    if !registry.accounts.iter().any(|entry| entry.id == active) {
+        return Ok(HashMap::new());
+    }
+    let home = ensure_amp_runtime_home(data_root).await?;
+    Ok(amp_env_for_home(&home))
+}
+
+pub fn normalize_amp_label(label: Option<String>, account_id: &str) -> String {
+    label
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("Amp Account {account_id}"))
+}
+
+fn amp_secrets_path(data_root: &Path) -> PathBuf {
+    amp_runtime_home(data_root)
+        .join(".local")
+        .join("share")
+        .join("amp")
+        .join("secrets.json")
+}
+
+async fn amp_home_has_persisted_auth(data_root: &Path) -> bool {
+    let path = amp_secrets_path(data_root);
+    let Ok(raw) = tokio::fs::read_to_string(path).await else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return false;
+    };
+    let Some(map) = value.as_object() else {
+        return false;
+    };
+    map.iter()
+        .any(|(key, token)| key.starts_with("apiKey@") && !token.is_null())
+}
+
+pub async fn ensure_amp_registry_from_runtime_auth(data_root: &Path) -> Result<AmpAccountRegistry> {
+    let registry = load_amp_registry(data_root).await;
+    if !registry.accounts.is_empty() && registry.active_account_id.is_some() {
+        return Ok(registry);
+    }
+    if !amp_home_has_persisted_auth(data_root).await {
+        return Ok(registry);
+    }
+    upsert_amp_account(data_root, Some("Amp Imported Session".to_string()), None).await
+}
+
 pub async fn codex_env_for_runtime_home(state_root: &Path) -> Result<HashMap<String, String>> {
     let runtime_home = codex_runtime_home(state_root);
     tokio::fs::create_dir_all(&runtime_home).await?;
@@ -2863,6 +3104,7 @@ pub async fn subscription_env_for_active_account(
         "copilot" => copilot_env_for_active_account(data_root).await,
         "kiro" => kiro_env_for_active_account(data_root).await,
         "cursor" => cursor_env_for_active_account(data_root).await,
+        "amp" => amp_env_for_active_account(data_root).await,
         _ => Ok(HashMap::new()),
     }
 }
@@ -2978,6 +3220,22 @@ pub async fn subscription_env_for_active_account_with_runtime_root(
             let token = read_cursor_secret_for_ref(data_root, secret_ref).await?;
             let _ = ensure_cursor_account_home(runtime_root, active).await?;
             Ok(cursor_env_for_account(runtime_root, active, &token))
+        }
+        "amp" => {
+            let registry = load_amp_registry(data_root).await;
+            let Some(active) = registry
+                .active_account_id
+                .as_deref()
+                .map(|raw| raw.trim())
+                .filter(|raw| !raw.is_empty())
+            else {
+                return Ok(HashMap::new());
+            };
+            if !registry.accounts.iter().any(|entry| entry.id == active) {
+                return Ok(HashMap::new());
+            }
+            let home = ensure_amp_runtime_home(runtime_root).await?;
+            Ok(amp_env_for_home(&home))
         }
         _ => Ok(HashMap::new()),
     }
@@ -4228,6 +4486,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn amp_active_account_projects_home_env() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let registry = upsert_amp_account(
+            root,
+            Some("Amp Test".to_string()),
+            Some("amp@example.com".to_string()),
+        )
+        .await
+        .unwrap();
+        let active_id = registry.active_account_id.clone().expect("active account");
+        assert_eq!(registry.accounts.len(), 1);
+        assert_eq!(registry.accounts[0].id, active_id);
+
+        let env = amp_env_for_active_account(root).await.unwrap();
+        let home = PathBuf::from(env.get("HOME").expect("HOME should be set"));
+        assert!(home.starts_with(root));
+        assert!(home.join(".config").exists());
+        assert!(home.join(".cache").exists());
+    }
+
+    #[tokio::test]
+    async fn deleting_active_amp_account_clears_projection() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let registry = upsert_amp_account(
+            root,
+            Some("Amp Test".to_string()),
+            Some("amp@example.com".to_string()),
+        )
+        .await
+        .unwrap();
+        let active_id = registry.active_account_id.clone().expect("active account");
+        let _ = remove_amp_account(root, &active_id).await.unwrap();
+
+        let env = amp_env_for_active_account(root).await.unwrap();
+        assert!(env.is_empty());
+        assert!(!amp_runtime_home(root).exists());
+    }
+
+    #[tokio::test]
+    async fn amp_registry_bootstraps_from_persisted_runtime_auth() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let secrets_path = amp_runtime_home(root)
+            .join(".local")
+            .join("share")
+            .join("amp")
+            .join("secrets.json");
+        tokio::fs::create_dir_all(secrets_path.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(
+            &secrets_path,
+            br#"{"apiKey@https://ampcode.com/":"token-value"}"#,
+        )
+        .await
+        .unwrap();
+
+        let registry = ensure_amp_registry_from_runtime_auth(root).await.unwrap();
+        assert_eq!(registry.accounts.len(), 1);
+        assert!(registry.active_account_id.is_some());
+        assert_eq!(registry.accounts[0].label, "Amp Imported Session");
+    }
+
+    #[tokio::test]
     async fn subscription_env_dispatches_to_supported_providers() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
@@ -4281,6 +4605,13 @@ mod tests {
         )
         .await
         .unwrap();
+        let _ = upsert_amp_account(
+            root,
+            Some("Amp".to_string()),
+            Some("amp@example.com".to_string()),
+        )
+        .await
+        .unwrap();
 
         let claude_env = subscription_env_for_active_account(root, "claude-crp")
             .await
@@ -4307,6 +4638,10 @@ mod tests {
             .await
             .unwrap();
         assert!(cursor_env.contains_key("CURSOR_CONFIG_DIR"));
+        let amp_env = subscription_env_for_active_account(root, "amp")
+            .await
+            .unwrap();
+        assert!(amp_env.contains_key("HOME"));
         let unknown_env = subscription_env_for_active_account(root, "unknown")
             .await
             .unwrap();
@@ -4362,6 +4697,13 @@ mod tests {
         )
         .await
         .unwrap();
+        let _ = upsert_amp_account(
+            root,
+            Some("Amp".to_string()),
+            Some("amp@example.com".to_string()),
+        )
+        .await
+        .unwrap();
 
         let claude_env =
             subscription_env_for_active_account_with_runtime_root(root, runtime_root, "claude-crp")
@@ -4404,5 +4746,16 @@ mod tests {
                 .unwrap();
         let cursor_config = PathBuf::from(cursor_env.get("CURSOR_CONFIG_DIR").unwrap());
         assert!(cursor_config.starts_with(runtime_root));
+
+        let amp_env =
+            subscription_env_for_active_account_with_runtime_root(root, runtime_root, "amp")
+                .await
+                .unwrap();
+        let amp_home = PathBuf::from(amp_env.get("HOME").unwrap());
+        assert!(amp_home.starts_with(runtime_root));
+        let amp_config = PathBuf::from(amp_env.get("XDG_CONFIG_HOME").unwrap());
+        assert!(amp_config.starts_with(runtime_root));
+        let amp_cache = PathBuf::from(amp_env.get("XDG_CACHE_HOME").unwrap());
+        assert!(amp_cache.starts_with(runtime_root));
     }
 }

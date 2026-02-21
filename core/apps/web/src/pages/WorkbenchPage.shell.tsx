@@ -302,7 +302,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     installAllBusy,
     installProviderFromMenu,
     installAllProvidersFromMenu,
-    ensureProviderOptions,
+    ensureProviderAuthSummary,
   } = useWorkbenchProviders({
     workspaceId,
     setDraftHarness,
@@ -332,7 +332,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       if (!providerId) return;
       if (pendingHarnessSelectionProviderId !== providerId) return;
       setPendingHarnessSelectionProviderId(null);
-      void ensureProviderOptions(providerId, { force: true })
+      void ensureProviderAuthSummary(providerId, { force: true })
         .then((opts) => {
           const resolved = opts ?? providerOptions[providerId];
           if (!hasConfiguredHarnessAuth(providerId, resolved)) return;
@@ -340,7 +340,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         })
         .catch(() => {});
     },
-    [ensureProviderOptions, pendingHarnessSelectionProviderId, providerOptions, setSingleDraftHarness],
+    [ensureProviderAuthSummary, pendingHarnessSelectionProviderId, providerOptions, setSingleDraftHarness],
   );
 
   const { dropActive } = useWorkbenchDragDropAttachments({
@@ -579,9 +579,9 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       if (providerOptions[providerId]) continue;
       if (prefetchedProviderOptionsRef.current.has(providerId)) continue;
       prefetchedProviderOptionsRef.current.add(providerId);
-      ensureProviderOptions(providerId).catch(() => {});
+      ensureProviderAuthSummary(providerId).catch(() => {});
     }
-  }, [activeTaskId, ensureProviderOptions, providerOptions, selectableHarnessProviderIds]);
+  }, [activeTaskId, ensureProviderAuthSummary, providerOptions, selectableHarnessProviderIds]);
 
   useEffect(() => {
     prefetchedProviderOptionsRef.current.clear();
@@ -2237,7 +2237,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         );
       }
       const env_target = "worktree";
-      const opts = await ensureProviderOptions(dt.providerId).catch(() => undefined);
+      const opts = await ensureProviderAuthSummary(dt.providerId).catch(() => undefined);
       const modelIds = modelIdsFromOptions(opts ?? providerOptions[dt.providerId]);
       const modelId = dt.modelId || modelIds[0] || (dt.providerId === "fake" ? "fake-model" : "default");
       const clientSessionId = optimisticSessionId;
@@ -3281,7 +3281,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                 onInstallAllProviders={installAllProvidersFromMenu}
                 installAllBusy={installAllBusy}
                 providerOptions={providerOptions}
-                ensureProviderOptions={ensureProviderOptions}
+                ensureProviderAuthSummary={ensureProviderAuthSummary}
                 onRequestHarnessAuth={requestHarnessAuthFromComposer}
                 draftHarness={draftHarness}
                 setDraftHarness={setDraftHarness}

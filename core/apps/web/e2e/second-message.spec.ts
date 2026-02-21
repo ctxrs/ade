@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
+import { selectHarnessBySearch } from "./utils/harnessEndpointAuth";
 
 test("workbench: second message gets a response", async ({ page }) => {
   test.setTimeout(120000);
@@ -20,12 +21,10 @@ test("workbench: second message gets a response", async ({ page }) => {
   await createWorkspaceAndOpenWorkbench({ page, request: page.request, repo, workspaceName });
 
   // Choose Fake harness so the test doesn't depend on external agents.
-  await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
-  await page.locator(".wb-harness-menu").getByLabel("Search agents").fill("fake");
-  await page.locator(".wb-harness-menu").getByRole("button", { name: /fake/i }).click();
+  await selectHarnessBySearch(page, "fake", /fake/i);
 
-  await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill("hello 1");
-  await page.locator(".wb-new-composer-stack button[aria-label=\"Send\"]").click();
+  await page.locator("textarea.wb-composer-textarea").first().fill("hello 1");
+  await page.getByRole("button", { name: "Send" }).click();
   const assistantEntries = page.locator('.wb-session-slot[aria-hidden="false"] .wb-assistant-entry');
   await expect(assistantEntries.filter({ hasText: "done: hello 1" })).toBeVisible({ timeout: 60000 });
 

@@ -24,7 +24,7 @@ trap 'rm -rf "$tmp_root"' EXIT
 
 bundle_dir="$tmp_root/bundle"
 CTX_BUNDLE_DIR="$bundle_dir" \
-CTX_BUNDLE_ONLY_PROVIDERS="qwen,opencode,mistral,goose,kimi,cagent,auggie,continue,cline,openhands,swe-agent,amp,droid,copilot,kiro,rovo,cody" \
+CTX_BUNDLE_ONLY_PROVIDERS="qwen,opencode,mistral,goose,kimi,auggie,continue,openhands,amp,droid,copilot,kiro" \
 CTX_BUNDLE_SKIP_RUNTIMES=1 \
 CTX_BUNDLE_SKIP_IMAGES=1 \
 CTX_BUNDLE_INCLUDE_BRIDGE=0 \
@@ -50,18 +50,13 @@ expected = {
     "mistral",
     "goose",
     "kimi",
-    "cagent",
     "auggie",
     "continue",
-    "cline",
     "openhands",
-    "swe-agent",
     "amp",
     "droid",
     "copilot",
     "kiro",
-    "rovo",
-    "cody",
 }
 
 missing = sorted(expected - ids)

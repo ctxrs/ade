@@ -117,21 +117,6 @@ fn runtime_command_as_agent_command(
     }))
 }
 
-fn with_cagent_config_path(
-    data_root: &Path,
-    mut cmd: installer::AgentServerCommand,
-) -> installer::AgentServerCommand {
-    let cfg_path = installer::cagent_config_path(data_root)
-        .to_string_lossy()
-        .to_string();
-    for arg in &mut cmd.args {
-        if arg == "{{cagent_config}}" {
-            *arg = cfg_path.clone();
-        }
-    }
-    cmd
-}
-
 fn acp_status_adapter_bridge_missing(provider_id: &str, msg: String) -> Arc<dyn ProviderAdapter> {
     static_status_adapter(
         provider_id,
@@ -340,6 +325,15 @@ coreEvents.on(CoreEvent.Output, (payload) => {{\n\
 coreEvents.on(CoreEvent.ConsoleLog, (payload) => {{\n\
   writeToStderr(String(payload?.content ?? '') + '\\n');\n\
 }});\n\
+const consentRaw = process.env.CTX_GEMINI_AUTO_OAUTH_CONSENT ?? '';\n\
+const consentDisabled = consentRaw === '0' || consentRaw.toLowerCase() === 'false';\n\
+if (!consentDisabled) {{\n\
+  coreEvents.on(CoreEvent.ConsentRequest, (payload) => {{\n\
+    if (typeof payload?.onConfirm === 'function') {{\n\
+      payload.onConfirm(true);\n\
+    }}\n\
+  }});\n\
+}}\n\
 process.env.GEMINI_CLI_NO_RELAUNCH ??= 'true';\n\
 await import('file://{}');\n",
         core_root.join("dist").join("index.js").to_string_lossy(),
@@ -715,21 +709,6 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
         providers.insert(provider_id.to_string(), adapter);
     }
 
-    let cagent_cfg_path = installer::cagent_config_path(&data_root);
-    if !cagent_cfg_path.exists() {
-        if let Some(parent) = cagent_cfg_path.parent() {
-            std::fs::create_dir_all(parent).ok();
-        }
-        let cfg = r#"agents:
-  root:
-    model: openai/gpt-5-mini
-    description: ctx default agent
-    instruction: |
-      You are a helpful coding assistant.
-"#;
-        std::fs::write(&cagent_cfg_path, cfg).ok();
-    }
-
     let acp_provider_ids = vec![
         "gemini",
         "qwen",
@@ -740,16 +719,11 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
         "goose",
         "kimi",
         "auggie",
-        "cagent",
         "amp",
         "droid",
         "copilot",
         "kiro",
-        "rovo",
-        "cody",
         "continue",
-        "cline",
-        "swe-agent",
         "openhands",
     ];
     for provider_id in acp_provider_ids {
@@ -1119,6 +1093,28 @@ mod tests {
         assert!(wrapper_path.exists());
         let wrapper_body = std::fs::read_to_string(wrapper_path).unwrap();
         assert!(wrapper_body.contains("GEMINI_CLI_NO_RELAUNCH"));
+        assert!(wrapper_body.contains("CoreEvent.ConsentRequest"));
+        assert!(wrapper_body.contains("payload.onConfirm(true)"));
+    }
+
+    #[test]
+    fn normalizes_qwen_command_with_openai_auth_type() {
+        let temp = tempdir().unwrap();
+        let input = installer::AgentServerCommand {
+            command: "/tmp/qwen".to_string(),
+            args: vec!["--experimental-acp".to_string()],
+            dependencies: Vec::new(),
+            managed: None,
+        };
+        let normalized = normalize_acp_provider_command(temp.path(), "qwen", input);
+        assert_eq!(
+            normalized.args,
+            vec![
+                "--experimental-acp".to_string(),
+                "--auth-type".to_string(),
+                "openai".to_string(),
+            ]
+        );
     }
 
     #[test]

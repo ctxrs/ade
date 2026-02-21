@@ -3,8 +3,10 @@ import {
   resolveUpsertedEndpoint,
   shouldAutoOpenKimiAuthUrl,
   shouldCompleteClaudeLoginWithCallbackCode,
+  shouldOpenPolledAuthUrlForStatus,
   shouldOpenPolledClaudeAuthUrl,
   takeNextClaudeAuthUrlToOpen,
+  toErrorObject,
 } from "./useHarnessAuthenticationController";
 
 describe("takeNextClaudeAuthUrlToOpen", () => {
@@ -69,6 +71,32 @@ describe("shouldCompleteClaudeLoginWithCallbackCode", () => {
       pendingLoginId: "login-123",
       token: "ePBMdWetJlSbZ0aR#state",
     })).toBe(false);
+  });
+});
+
+describe("shouldSkipDuplicateAmpLoginStart", () => {
+  it("skips duplicate Amp starts while one is in flight", () => {
+    expect(shouldSkipDuplicateAmpLoginStart({
+      providerId: "amp",
+      ampLoginInFlight: true,
+    })).toBe(true);
+    expect(shouldSkipDuplicateAmpLoginStart({
+      providerId: "amp",
+      ampLoginInFlight: false,
+    })).toBe(false);
+    expect(shouldSkipDuplicateAmpLoginStart({
+      providerId: "gemini",
+      ampLoginInFlight: true,
+    })).toBe(false);
+  });
+});
+
+describe("shouldOpenPolledAuthUrlForStatus", () => {
+  it("opens auth url only while status is pending", () => {
+    expect(shouldOpenPolledAuthUrlForStatus("pending")).toBe(true);
+    expect(shouldOpenPolledAuthUrlForStatus("success")).toBe(false);
+    expect(shouldOpenPolledAuthUrlForStatus("failed")).toBe(false);
+    expect(shouldOpenPolledAuthUrlForStatus("timeout")).toBe(false);
   });
 });
 

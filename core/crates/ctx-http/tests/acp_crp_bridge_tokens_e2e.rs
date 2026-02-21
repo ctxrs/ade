@@ -62,12 +62,6 @@ const PROVIDERS: &[ProviderSpec] = &[
         opencode_config: false,
     },
     ProviderSpec {
-        id: "cagent",
-        fallback_cmd: "cagent",
-        fallback_args: &["acp"],
-        opencode_config: false,
-    },
-    ProviderSpec {
         id: "amp",
         fallback_cmd: "amp-acp",
         fallback_args: &[],
@@ -92,32 +86,8 @@ const PROVIDERS: &[ProviderSpec] = &[
         opencode_config: false,
     },
     ProviderSpec {
-        id: "rovo",
-        fallback_cmd: "rovo-dev-acp",
-        fallback_args: &[],
-        opencode_config: false,
-    },
-    ProviderSpec {
-        id: "cody",
-        fallback_cmd: "cody-acp",
-        fallback_args: &[],
-        opencode_config: false,
-    },
-    ProviderSpec {
         id: "continue",
         fallback_cmd: "cn",
-        fallback_args: &["acp"],
-        opencode_config: false,
-    },
-    ProviderSpec {
-        id: "cline",
-        fallback_cmd: "cline-acp",
-        fallback_args: &[],
-        opencode_config: false,
-    },
-    ProviderSpec {
-        id: "swe-agent",
-        fallback_cmd: "sweagent",
         fallback_args: &["acp"],
         opencode_config: false,
     },
@@ -265,29 +235,6 @@ fn resolve_data_root() -> PathBuf {
     PathBuf::from(home).join(".ctx")
 }
 
-fn ensure_cagent_config(data_root: &Path) -> Option<PathBuf> {
-    let cfg_path = data_root
-        .join("providers")
-        .join("agent-servers")
-        .join("cagent")
-        .join("config.yaml");
-    if cfg_path.exists() {
-        return Some(cfg_path);
-    }
-    if let Some(parent) = cfg_path.parent() {
-        fs::create_dir_all(parent).ok()?;
-    }
-    let cfg = r#"agents:
-  root:
-    model: openai/gpt-5-mini
-    description: ctx default agent
-    instruction: |
-      You are a helpful coding assistant.
-"#;
-    fs::write(&cfg_path, cfg).ok()?;
-    Some(cfg_path)
-}
-
 async fn load_openrouter_settings(data_root: &Path) -> Option<(String, String)> {
     let db_path = data_root.join("db").join("db.sqlite");
     let store = ctx_store::Store::open_sqlite(&db_path, None).await.ok()?;
@@ -344,30 +291,16 @@ fn format_shell_command(command: &str, args: &[String]) -> String {
 
 fn resolve_command(
     cfg: &ctx_http::installer::AgentServerConfigFile,
-    data_root: &Path,
     provider_id: &str,
     fallback_cmd: &str,
     fallback_args: &[&str],
 ) -> AgentServerCommand {
-    let mut cmd =
-        resolve_provider_command(cfg, provider_id).unwrap_or_else(|| AgentServerCommand {
-            command: fallback_cmd.to_string(),
-            args: fallback_args.iter().map(|s| s.to_string()).collect(),
-            dependencies: Vec::new(),
-            managed: None,
-        });
-    if provider_id == "cagent" {
-        let cfg_path = ensure_cagent_config(data_root);
-        if let Some(cfg_path) = cfg_path {
-            let cfg_str = cfg_path.to_string_lossy().to_string();
-            for arg in &mut cmd.args {
-                if arg == "{{cagent_config}}" {
-                    *arg = cfg_str.clone();
-                }
-            }
-        }
-    }
-    cmd
+    resolve_provider_command(cfg, provider_id).unwrap_or_else(|| AgentServerCommand {
+        command: fallback_cmd.to_string(),
+        args: fallback_args.iter().map(|s| s.to_string()).collect(),
+        dependencies: Vec::new(),
+        managed: None,
+    })
 }
 
 fn command_exists(command: &str) -> bool {
@@ -420,65 +353,6 @@ async fn probe_command(
         "{} {:?} exited {}: {}",
         command, extra_args, output.status, detail
     ))
-}
-
-fn resolve_repo_root() -> Option<PathBuf> {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let mut current = manifest_dir.as_path();
-    for _ in 0..4 {
-        if current.join(".ctx").is_dir() {
-            return Some(current.to_path_buf());
-        }
-        current = current.parent()?;
-    }
-    None
-}
-
-fn resolve_swe_agent_config_dir() -> Option<PathBuf> {
-    let repo_root = resolve_repo_root()?;
-    let candidate = repo_root.join(".ctx/attachments/refs/swe-agent/config");
-    if candidate.is_dir() {
-        Some(candidate)
-    } else {
-        None
-    }
-}
-
-fn resolve_swe_agent_tools_dir() -> Option<PathBuf> {
-    let repo_root = resolve_repo_root()?;
-    let candidate = repo_root.join(".ctx/attachments/refs/swe-agent/tools");
-    if candidate.is_dir() {
-        Some(candidate)
-    } else {
-        None
-    }
-}
-
-fn resolve_swe_agent_trajectories_dir() -> Option<PathBuf> {
-    let repo_root = resolve_repo_root()?;
-    let candidate = repo_root.join(".ctx/attachments/refs/swe-agent/trajectories");
-    if candidate.is_dir() {
-        Some(candidate)
-    } else {
-        None
-    }
-}
-
-fn create_cline_vscode_stub() -> std::io::Result<(tempfile::TempDir, PathBuf)> {
-    let dir = tempfile::tempdir()?;
-    let node_modules = dir.path().join("node_modules/vscode");
-    fs::create_dir_all(&node_modules)?;
-    let node_path = dir.path().join("node_modules");
-    let stub = r#"module.exports = {
-  workspace: {
-    getConfiguration: () => ({ get: () => undefined })
-  },
-  ExtensionMode: { Development: 0, Production: 1, Test: 2 },
-  ExtensionKind: { UI: 1, Workspace: 2 }
-};
-"#;
-    fs::write(node_modules.join("index.js"), stub)?;
-    Ok((dir, node_path))
 }
 
 fn create_qwen_settings_home() -> std::io::Result<tempfile::TempDir> {
@@ -572,16 +446,6 @@ fn provider_skip_reason(provider: ProviderSpec) -> Option<String> {
             return Some("requires Kiro CLI login; set KIRO_TOKEN_TESTS=1 to attempt".to_string());
         }
     }
-    if provider.id == "rovo" {
-        return Some("requires Atlassian auth; not OpenRouter-compatible".to_string());
-    }
-    if provider.id == "cody" {
-        let allow = env_truthy("CODY_TOKEN_TESTS");
-        let has_cody_auth = env_present("SRC_ACCESS_TOKEN");
-        if !allow && !has_cody_auth {
-            return Some("missing SRC_ACCESS_TOKEN; set CODY_TOKEN_TESTS=1 to attempt".to_string());
-        }
-    }
     if provider.id == "continue" {
         let has_continue_auth = std::env::var("CONTINUE_API_KEY")
             .map(|v| !v.trim().is_empty())
@@ -590,28 +454,11 @@ fn provider_skip_reason(provider: ProviderSpec) -> Option<String> {
             return Some("missing CONTINUE_API_KEY; continue CLI uses Continue Cloud".to_string());
         }
     }
-    if provider.id == "cline" {
-        let allow = env_truthy("CLINE_TOKEN_TESTS");
-        if !allow {
-            return Some(
-                "cline-acp bundle missing deps (vscode/grpc-health-check/package.json); set CLINE_TOKEN_TESTS=1 to attempt".to_string(),
-            );
-        }
-    }
     if provider.id == "pi" {
         let allow = env_truthy("PI_TOKEN_TESTS");
         if !allow {
             return Some(
                 "pi ACP adapter requires explicit PI_TOKEN_TESTS=1 to attempt".to_string(),
-            );
-        }
-    }
-    if provider.id == "swe-agent" {
-        let allow = env_truthy("SWE_AGENT_TOKEN_TESTS");
-        if !allow {
-            return Some(
-                "swe-agent ACP spins up SWEEnv and can hang; set SWE_AGENT_TOKEN_TESTS=1 to run"
-                    .to_string(),
             );
         }
     }
@@ -631,9 +478,6 @@ fn build_env(
     openrouter_base_url: &str,
     model_id: &str,
     provider: ProviderSpec,
-    swe_agent_config_dir: Option<&Path>,
-    swe_agent_tools_dir: Option<&Path>,
-    swe_agent_trajectories_dir: Option<&Path>,
 ) -> HashMap<String, String> {
     let mut env = HashMap::new();
     env.insert(
@@ -685,24 +529,6 @@ fn build_env(
         env.insert("KIMI_MODEL_NAME".to_string(), model_id.to_string());
     }
 
-    if provider.id == "swe-agent" {
-        if let Some(dir) = swe_agent_config_dir {
-            env.insert(
-                "SWE_AGENT_CONFIG_DIR".to_string(),
-                dir.display().to_string(),
-            );
-        }
-        if let Some(dir) = swe_agent_tools_dir {
-            env.insert("SWE_AGENT_TOOLS_DIR".to_string(), dir.display().to_string());
-        }
-        if let Some(dir) = swe_agent_trajectories_dir {
-            env.insert(
-                "SWE_AGENT_TRAJECTORY_DIR".to_string(),
-                dir.display().to_string(),
-            );
-        }
-    }
-
     env
 }
 
@@ -736,7 +562,7 @@ async fn acp_crp_bridge_token_providers() {
     let cfg = load_agent_server_config(&data_root)
         .await
         .unwrap_or_default();
-    let bridge_cmd = resolve_command(&cfg, &data_root, "acp-crp-bridge", "acp-crp-bridge", &[]);
+    let bridge_cmd = resolve_command(&cfg, "acp-crp-bridge", "acp-crp-bridge", &[]);
 
     if !command_exists(&bridge_cmd.command) {
         panic!("acp-crp-bridge not found: {}", bridge_cmd.command);
@@ -744,14 +570,9 @@ async fn acp_crp_bridge_token_providers() {
 
     let repo = setup_git_repo().await;
     let prompt = "Reply with the single word: pong";
-    let swe_agent_config_dir = resolve_swe_agent_config_dir();
-    let swe_agent_tools_dir = resolve_swe_agent_tools_dir();
-    let swe_agent_trajectories_dir = resolve_swe_agent_trajectories_dir();
-
     for provider in PROVIDERS {
         let acp_cmd = resolve_command(
             &cfg,
-            &data_root,
             provider.id,
             provider.fallback_cmd,
             provider.fallback_args,
@@ -769,63 +590,17 @@ async fn acp_crp_bridge_token_providers() {
         }
 
         eprintln!("running {}...", provider.id);
-        let mut _cline_stub = None;
         let mut _qwen_home = None;
         let mut acp_args = acp_cmd.args.clone();
         if provider.id == "qwen" {
             maybe_add_qwen_auth(&mut acp_args);
         }
-        if provider.id == "swe-agent" {
-            if let Some(config_dir) = swe_agent_config_dir.as_ref() {
-                let model = if model_id.starts_with("openrouter/") {
-                    model_id.to_string()
-                } else {
-                    format!("openrouter/{model_id}")
-                };
-                acp_args.push("--agent.model.name".to_string());
-                acp_args.push(model);
-                acp_args.push("--agent.model.api_key".to_string());
-                acp_args.push("$OPENROUTER_API_KEY".to_string());
-                acp_args.push("--agent.model.api_base".to_string());
-                acp_args.push(openrouter_base_url.to_string());
-                acp_args.push("--config".to_string());
-                acp_args.push(config_dir.join("default.yaml").display().to_string());
-            } else {
-                eprintln!("skipping {}: swe-agent config dir not found", provider.id);
-                continue;
-            }
-        }
-
         let mut env = build_env(
             &openrouter_api_key,
             &openrouter_base_url,
             &model_id,
             *provider,
-            swe_agent_config_dir.as_deref(),
-            swe_agent_tools_dir.as_deref(),
-            swe_agent_trajectories_dir.as_deref(),
         );
-        if provider.id == "cline" {
-            match create_cline_vscode_stub() {
-                Ok((dir, node_path)) => {
-                    env.insert("NODE_PATH".to_string(), node_path.display().to_string());
-                    _cline_stub = Some(dir);
-                }
-                Err(err) => {
-                    eprintln!(
-                        "skipping {}: failed to create vscode stub: {}",
-                        provider.id, err
-                    );
-                    continue;
-                }
-            }
-            if let Err(reason) =
-                probe_command(&acp_cmd.command, &acp_cmd.args, &["--version"], Some(&env)).await
-            {
-                eprintln!("skipping {}: {}", provider.id, reason);
-                continue;
-            }
-        }
         if provider.id == "qwen" {
             match create_qwen_settings_home() {
                 Ok(dir) => {
@@ -849,15 +624,6 @@ async fn acp_crp_bridge_token_providers() {
                 continue;
             }
         }
-        if provider.id == "swe-agent" {
-            if let Err(reason) =
-                probe_command(&acp_cmd.command, &acp_cmd.args, &["--version"], Some(&env)).await
-            {
-                eprintln!("skipping {}: {}", provider.id, reason);
-                continue;
-            }
-        }
-
         let acp_command = format_shell_command(&acp_cmd.command, &acp_args);
         let mut bridge_args = bridge_cmd.args.clone();
         bridge_args.push("--acp-command".to_string());

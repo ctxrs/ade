@@ -23,12 +23,11 @@ mod config;
 
 pub use config::{
     agent_server_config_path, apply_managed_install_details, apply_managed_lsp_server_config,
-    apply_user_lsp_server_config, cagent_config_path, load_agent_server_config,
-    load_lsp_server_config, load_user_lsp_config, resolve_provider_command,
-    resolve_runtime_provider_command, save_agent_server_config, save_lsp_server_config,
-    AgentServerCommand, AgentServerConfigFile, LspServerConfigFile, ManagedInstallError,
-    ManagedInstallMetadata, ProviderRuntimeCommand, ProviderRuntimeCommandSource,
-    UserLspConfigFile, UserLspServerSpec,
+    apply_user_lsp_server_config, load_agent_server_config, load_lsp_server_config,
+    load_user_lsp_config, resolve_provider_command, resolve_runtime_provider_command,
+    save_agent_server_config, save_lsp_server_config, AgentServerCommand, AgentServerConfigFile,
+    LspServerConfigFile, ManagedInstallError, ManagedInstallMetadata, ProviderRuntimeCommand,
+    ProviderRuntimeCommandSource, UserLspConfigFile, UserLspServerSpec,
 };
 
 const NODE_VERSION: &str = "24.12.0";
@@ -1145,16 +1144,8 @@ async fn install_managed_archive_dependency(
     Ok(ManagedDependencyInstall { meta })
 }
 
-fn resolve_install_args(args: &[String], data_root: &Path) -> Vec<String> {
-    args.iter()
-        .map(|arg| {
-            if arg == "{{cagent_config}}" {
-                cagent_config_path(data_root).to_string_lossy().to_string()
-            } else {
-                arg.clone()
-            }
-        })
-        .collect()
+fn resolve_install_args(args: &[String]) -> Vec<String> {
+    args.to_vec()
 }
 
 fn map_archive_kind(kind: provider_matrix::ProviderArchiveKind) -> AgentServerArchive {
@@ -1164,43 +1155,6 @@ fn map_archive_kind(kind: provider_matrix::ProviderArchiveKind) -> AgentServerAr
         provider_matrix::ProviderArchiveKind::TarBz2 => AgentServerArchive::TarBz2,
         provider_matrix::ProviderArchiveKind::Zip => AgentServerArchive::Zip,
     }
-}
-
-async fn ensure_cagent_config(
-    state: &AppState,
-    install_id: Option<InstallId>,
-    provider_id: &str,
-    stage: &mut &'static str,
-) -> Result<PathBuf> {
-    let cfg_path = cagent_config_path(&state.core.data_root);
-    if cfg_path.exists() {
-        return Ok(cfg_path);
-    }
-    *stage = "prepare";
-    emit_install(
-        state,
-        install_id,
-        provider_id,
-        InstallEventLevel::Info,
-        "prepare",
-        "Writing default cagent config".to_string(),
-        None,
-        None,
-        None,
-    )
-    .await;
-    if let Some(parent) = cfg_path.parent() {
-        tokio::fs::create_dir_all(parent).await.ok();
-    }
-    let cfg = r#"agents:
-  root:
-    model: openai/gpt-5-mini
-    description: ctx default agent
-    instruction: |
-      You are a helpful coding assistant.
-"#;
-    tokio::fs::write(&cfg_path, cfg).await.ok();
-    Ok(cfg_path)
 }
 
 async fn install_provider_impl(
@@ -1248,10 +1202,6 @@ async fn install_provider_impl(
         let context_version = updates::normalize_version_str(env!("CARGO_PKG_VERSION"));
         let release = provider_matrix::recommended_release(entry, context_version.as_ref())
             .ok_or_else(|| anyhow::anyhow!("no compatible release for provider: {provider_id}"))?;
-
-        if provider_id == "cagent" {
-            let _ = ensure_cagent_config(state, install_id, &provider_id, &mut stage).await?;
-        }
 
         let mut dependency_ids: Vec<String> = Vec::new();
         if !entry.dependencies.is_empty() {
@@ -1343,7 +1293,7 @@ async fn install_provider_impl(
                     package,
                     &version,
                     entrypoint,
-                    resolve_install_args(args, &state.core.data_root),
+                    resolve_install_args(args),
                     &mut stage,
                 )
                 .await?
@@ -1376,7 +1326,7 @@ async fn install_provider_impl(
                     package,
                     version,
                     entrypoint,
-                    resolve_install_args(args, &state.core.data_root),
+                    resolve_install_args(args),
                     &mut stage,
                 )
                 .await?
@@ -1413,7 +1363,7 @@ async fn install_provider_impl(
                     &target_entry.url,
                     map_archive_kind(target_entry.archive),
                     &target_entry.bin_path,
-                    resolve_install_args(args, &state.core.data_root),
+                    resolve_install_args(args),
                     &mut stage,
                 )
                 .await?

@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
+import { selectHarnessBySearch } from "./utils/harnessEndpointAuth";
 
 const readId = (value: unknown): string => (typeof value === "string" ? value : "");
 
@@ -36,16 +37,14 @@ test("workbench: stale cached events do not re-show running", async ({ page }) =
   });
 
   // Choose Fake harness so the test doesn't depend on external agents.
-  await page.locator(".wb-new-composer-stack").getByTitle("Harness").click();
-  await page.locator(".wb-harness-menu").getByLabel("Search agents").fill("fake");
-  await page.locator(".wb-harness-menu").getByRole("button", { name: /fake/i }).click();
+  await selectHarnessBySearch(page, "fake", /fake/i);
   await expect(
-    page.locator('.wb-new-composer-stack button[title="Harness"] .wb-switcher-label'),
+    page.locator('button[title="Agents"] .wb-switcher-label').first(),
   ).toHaveText(/fake/i, { timeout: 20000 });
 
   const prompt = "stale-cache-spinner";
-  await page.locator(".wb-new-composer-stack textarea.wb-composer-textarea").fill(prompt);
-  await page.locator('.wb-new-composer-stack button[aria-label="Send"]').click();
+  await page.locator("textarea.wb-composer-textarea").first().fill(prompt);
+  await page.getByRole("button", { name: "Send" }).click();
 
   expect(workspaceId).not.toBe("");
 
