@@ -572,6 +572,35 @@ fn normalize_base_url(raw: &str) -> Result<String> {
     Ok(trimmed.trim_end_matches('/').to_string())
 }
 
+fn normalize_claude_anthropic_base_url(raw: &str) -> Result<String> {
+    let normalized = normalize_base_url(raw)?;
+    let mut parsed = Url::parse(&normalized).context("base_url must be a valid URL")?;
+    let current_path = parsed.path().to_string();
+    let lowered = current_path.to_ascii_lowercase();
+
+    let suffixes = ["/v1/messages/count_tokens", "/v1/messages", "/v1"];
+    let mut stripped_path: Option<String> = None;
+    for suffix in suffixes {
+        if lowered.ends_with(suffix) {
+            let keep_len = current_path.len().saturating_sub(suffix.len());
+            let prefix = current_path.get(..keep_len).unwrap_or_default();
+            let trimmed = prefix.trim_end_matches('/');
+            stripped_path = Some(if trimmed.is_empty() {
+                "/".to_string()
+            } else {
+                trimmed.to_string()
+            });
+            break;
+        }
+    }
+
+    if let Some(path) = stripped_path {
+        parsed.set_path(&path);
+    }
+
+    Ok(parsed.to_string().trim_end_matches('/').to_string())
+}
+
 fn provider_requires_endpoint_base_url(provider_id: &str) -> bool {
     matches!(
         provider_id,
@@ -599,7 +628,11 @@ fn normalize_base_url_for_provider(provider_id: &str, raw: Option<&str>) -> Resu
                 }
                 Ok(String::new())
             } else {
-                normalize_base_url(trimmed)
+                if provider_id == PROVIDER_CLAUDE {
+                    normalize_claude_anthropic_base_url(trimmed)
+                } else {
+                    normalize_base_url(trimmed)
+                }
             }
         }
         None => {
@@ -2252,7 +2285,7 @@ mod tests {
         );
         assert_eq!(
             probe.env.get("ANTHROPIC_BASE_URL"),
-            Some(&"https://api.anthropic.com/v1".to_string())
+            Some(&"https://api.anthropic.com".to_string())
         );
 
         let run_err = resolve_provider_source_for_run(root.path(), PROVIDER_CLAUDE)
@@ -2275,7 +2308,59 @@ mod tests {
             .expect("resolve run");
         assert_eq!(
             run.env.get("ANTHROPIC_BASE_URL"),
-            Some(&"https://api.anthropic.com/v1".to_string())
+            Some(&"https://api.anthropic.com".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn claude_endpoint_openrouter_v1_base_url_is_normalized_for_anthropic_shape() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let endpoint = upsert_provider_endpoint(
+            root.path(),
+            PROVIDER_CLAUDE,
+            HarnessEndpointUpsert {
+                endpoint_id: None,
+                name: "OpenRouter".to_string(),
+                base_url: Some("https://openrouter.ai/api/v1".to_string()),
+                api_shape: Some(HarnessApiShape::AnthropicMessages),
+                auth_type: None,
+                model_override: Some("anthropic/claude-opus-4.6".to_string()),
+                api_key: Some("sk-or-v1".to_string()),
+            },
+        )
+        .await
+        .expect("upsert");
+
+        assert_eq!(
+            endpoint.base_url,
+            Some("https://openrouter.ai/api".to_string())
+        );
+
+        set_provider_source_selection(
+            root.path(),
+            PROVIDER_CLAUDE,
+            HarnessSourceKind::Endpoint,
+            Some(endpoint.id.clone()),
+        )
+        .await
+        .expect("select");
+
+        mark_endpoint_verification(
+            root.path(),
+            PROVIDER_CLAUDE,
+            &endpoint.id,
+            HarnessEndpointVerificationStatus::Valid,
+            None,
+        )
+        .await
+        .expect("mark verified");
+
+        let resolved = resolve_provider_source_for_run(root.path(), PROVIDER_CLAUDE)
+            .await
+            .expect("resolve run");
+        assert_eq!(
+            resolved.env.get("ANTHROPIC_BASE_URL"),
+            Some(&"https://openrouter.ai/api".to_string())
         );
     }
 

@@ -96,7 +96,7 @@ const ampAccountLabel = (account: AmpAccountEntry): string => {
 
 export const defaultEndpointBaseUrlForProvider = (providerId: string): string => {
   if (providerId === "codex") return "https://api.openai.com/v1";
-  if (providerId === "claude-crp") return "https://api.anthropic.com/v1";
+  if (providerId === "claude-crp") return "https://api.anthropic.com";
   return "";
 };
 

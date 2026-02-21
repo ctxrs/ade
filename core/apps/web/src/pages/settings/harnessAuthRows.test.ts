@@ -4,7 +4,7 @@ import { buildHarnessAuthRows, defaultEndpointBaseUrlForProvider } from "./harne
 describe("defaultEndpointBaseUrlForProvider", () => {
   it("returns provider-specific defaults", () => {
     expect(defaultEndpointBaseUrlForProvider("codex")).toBe("https://api.openai.com/v1");
-    expect(defaultEndpointBaseUrlForProvider("claude-crp")).toBe("https://api.anthropic.com/v1");
+    expect(defaultEndpointBaseUrlForProvider("claude-crp")).toBe("https://api.anthropic.com");
     expect(defaultEndpointBaseUrlForProvider("gemini")).toBe("");
   });
 });

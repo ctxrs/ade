@@ -28,7 +28,7 @@ export const HARNESS_ENDPOINT_PROVIDER_PRESETS: HarnessEndpointProviderPreset[] 
     base_url: OPENROUTER_BASE_URL,
     recommended_api_shape: "openai_responses",
   },
-  { id: "anthropic", label: "Anthropic", base_url: "https://api.anthropic.com/v1", recommended_api_shape: "anthropic_messages" },
+  { id: "anthropic", label: "Anthropic", base_url: "https://api.anthropic.com", recommended_api_shape: "anthropic_messages" },
   { id: "arcee_ai", label: "Arcee AI", base_url: OPENROUTER_BASE_URL, recommended_api_shape: "openai_responses" },
   { id: "atlascloud", label: "AtlasCloud", base_url: OPENROUTER_BASE_URL, recommended_api_shape: "openai_responses" },
   {
