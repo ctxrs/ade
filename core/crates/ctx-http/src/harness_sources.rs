@@ -1843,6 +1843,7 @@ async fn resolve_internal(
         }
         PROVIDER_COPILOT => {
             ensure_shape_compatible(canonical, endpoint.api_shape)?;
+            env.insert("COPILOT_GITHUB_TOKEN".to_string(), api_key.clone());
             env.insert("GH_TOKEN".to_string(), api_key.clone());
             env.insert("GITHUB_TOKEN".to_string(), api_key);
         }
@@ -2600,7 +2601,10 @@ mod tests {
             (PROVIDER_DROID, &["FACTORY_API_KEY"]),
             (PROVIDER_CONTINUE, &["CONTINUE_API_KEY"]),
             (PROVIDER_CLINE, &["OPENAI_API_KEY", "CLINE_DIR", "HOME"]),
-            (PROVIDER_COPILOT, &["GH_TOKEN", "GITHUB_TOKEN"]),
+            (
+                PROVIDER_COPILOT,
+                &["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"],
+            ),
             (
                 PROVIDER_KIRO,
                 &["HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"],

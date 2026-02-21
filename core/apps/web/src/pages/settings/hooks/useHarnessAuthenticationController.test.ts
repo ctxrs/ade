@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  extractGithubDeviceCodeFromAuthUrl,
   resolveUpsertedEndpoint,
   shouldAutoOpenKimiAuthUrl,
   shouldCompleteClaudeLoginWithCallbackCode,
   shouldOpenPolledAuthUrlForStatus,
   shouldOpenPolledClaudeAuthUrl,
+  shouldAutoOpenCopilotAuthUrl,
   takeNextClaudeAuthUrlToOpen,
   toErrorObject,
 } from "./useHarnessAuthenticationController";
@@ -97,6 +99,33 @@ describe("shouldOpenPolledAuthUrlForStatus", () => {
     expect(shouldOpenPolledAuthUrlForStatus("success")).toBe(false);
     expect(shouldOpenPolledAuthUrlForStatus("failed")).toBe(false);
     expect(shouldOpenPolledAuthUrlForStatus("timeout")).toBe(false);
+  });
+});
+
+describe("shouldAutoOpenCopilotAuthUrl", () => {
+  it("does not auto-open copilot auth urls from the web app", () => {
+    expect(shouldAutoOpenCopilotAuthUrl("https://github.com/login/device")).toBe(false);
+    expect(
+      shouldAutoOpenCopilotAuthUrl("https://github.com/login/device?user_code=ABCD-1234"),
+    ).toBe(false);
+    expect(shouldAutoOpenCopilotAuthUrl("https://github.com/login/oauth/authorize?client_id=abc")).toBe(
+      false,
+    );
+    expect(shouldAutoOpenCopilotAuthUrl("https://example.com/auth")).toBe(false);
+  });
+});
+
+describe("extractGithubDeviceCodeFromAuthUrl", () => {
+  it("extracts user_code from github device url", () => {
+    expect(
+      extractGithubDeviceCodeFromAuthUrl("https://github.com/login/device?user_code=ABCD-1234"),
+    ).toBe("ABCD-1234");
+  });
+
+  it("returns null for non-device urls", () => {
+    expect(extractGithubDeviceCodeFromAuthUrl("https://github.com/login/device")).toBeNull();
+    expect(extractGithubDeviceCodeFromAuthUrl("https://example.com/login/device?user_code=ABCD-1234")).toBeNull();
+    expect(extractGithubDeviceCodeFromAuthUrl("")).toBeNull();
   });
 });
 

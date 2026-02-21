@@ -353,10 +353,9 @@ mod tests {
         );
 
         let err = resolve_runtime_provider_command(&cfg, "qwen").expect_err("should fail");
-        assert!(
-            err.to_string()
-                .contains("runtime_command_missing_bundled: provider=qwen")
-        );
+        assert!(err
+            .to_string()
+            .contains("runtime_command_missing_bundled: provider=qwen"));
     }
 
     #[test]

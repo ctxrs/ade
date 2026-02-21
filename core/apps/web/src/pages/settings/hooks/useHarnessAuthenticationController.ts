@@ -14,6 +14,7 @@ import {
   listAmpAccounts,
   getAmpLogin,
   getClaudeLogin,
+  getCopilotLogin,
   getCodexLogin,
   getGeminiLogin,
   getKimiLogin,
@@ -41,10 +42,10 @@ import {
   startCodexLogin,
   startAmpLogin,
   startClaudeLogin,
+  startCopilotLogin,
   startGeminiLogin,
   startKimiLogin,
   upsertClaudeAccount,
-  upsertCopilotAccount,
   upsertCursorAccount,
   upsertKiroAccount,
   upsertProviderHarnessEndpoint,
@@ -189,6 +190,8 @@ const GEMINI_LOGIN_POLL_ATTEMPTS = 90;
 const GEMINI_LOGIN_POLL_INTERVAL_MS = 1600;
 const AMP_LOGIN_POLL_ATTEMPTS = 90;
 const AMP_LOGIN_POLL_INTERVAL_MS = 1600;
+const COPILOT_LOGIN_POLL_ATTEMPTS = 90;
+const COPILOT_LOGIN_POLL_INTERVAL_MS = 1600;
 
 export const shouldSkipDuplicateAmpLoginStart = (params: {
   providerId: string;
@@ -230,6 +233,28 @@ const takeNextAuthUrlToOpen = (
   if (!normalized || openedAuthUrls.has(normalized)) return null;
   openedAuthUrls.add(normalized);
   return normalized;
+};
+
+export const extractGithubDeviceCodeFromAuthUrl = (
+  authUrl: string | null | undefined,
+): string | null => {
+  const trimmed = authUrl?.trim() ?? "";
+  if (!trimmed) return null;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.hostname.toLowerCase() !== "github.com") return null;
+    const path = parsed.pathname.replace(/\/+$/, "");
+    if (path !== "/login/device") return null;
+    const code = parsed.searchParams.get("user_code")?.trim() ?? "";
+    return code || null;
+  } catch {
+    return null;
+  }
+};
+
+export const shouldAutoOpenCopilotAuthUrl = (authUrl: string): boolean => {
+  void authUrl;
+  return false;
 };
 
 export const shouldOpenPolledClaudeAuthUrl = (params: {
@@ -666,6 +691,7 @@ export function useHarnessAuthenticationController({
       subscription_auth_token_json: "",
       subscription_oauth_creds_json: "",
       subscription_google_accounts_json: "",
+      subscription_device_code: null,
       subscription_status: null,
       subscription_busy: false,
       api_key_busy: false,
@@ -878,6 +904,35 @@ export function useHarnessAuthenticationController({
       }
       await new Promise((resolve) => {
         window.setTimeout(resolve, GEMINI_LOGIN_POLL_INTERVAL_MS);
+      });
+    }
+    return { status: "timeout" };
+  }, []);
+
+  const waitForCopilotLoginOutcome = useCallback(async (
+    loginId: string,
+    onAuthUrl?: (authUrl: string) => Promise<void>,
+    opts?: { openedAuthUrl?: string | null },
+  ): Promise<{ status: "success" | "failed" | "timeout"; error?: string | null }> => {
+    const openedAuthUrls = new Set<string>();
+    takeNextAuthUrlToOpen(opts?.openedAuthUrl, openedAuthUrls);
+    for (let attempt = 0; attempt < COPILOT_LOGIN_POLL_ATTEMPTS; attempt += 1) {
+      try {
+        const status = await getCopilotLogin(loginId);
+        if (status.status === "success") return { status: "success" };
+        if (status.status === "failed") return { status: "failed", error: status.error };
+        if (status.status === "timeout") return { status: "timeout", error: status.error };
+        if (shouldOpenPolledAuthUrlForStatus(status.status)) {
+          const authUrl = takeNextAuthUrlToOpen(status.auth_url, openedAuthUrls);
+          if (authUrl && onAuthUrl) {
+            await onAuthUrl(authUrl);
+          }
+        }
+      } catch {
+        // continue polling
+      }
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, COPILOT_LOGIN_POLL_INTERVAL_MS);
       });
     }
     return { status: "timeout" };
@@ -1299,20 +1354,75 @@ export function useHarnessAuthenticationController({
       }
 
       if (modal.provider_id === "copilot") {
-        const token = modal.subscription_token.trim();
-        if (!token) {
-          throw new Error("Token is required.");
-        }
         const label = modal.subscription_label.trim();
-        const email = modal.subscription_email.trim();
-        const next = await upsertCopilotAccount(token, {
-          ...(label ? { label } : {}),
-          ...(email ? { email } : {}),
+        const login = await startCopilotLogin(label ? label : undefined);
+        const initialAuthUrl = takeNextAuthUrlToOpen(login.auth_url, new Set<string>());
+        const initialDeviceCode = extractGithubDeviceCodeFromAuthUrl(initialAuthUrl);
+        const pendingStatus = initialAuthUrl
+          ? `Waiting for GitHub sign-in to complete in your browser. If no browser opened, open this URL manually: ${initialAuthUrl}`
+          : "Waiting for GitHub sign-in to complete in your browser...";
+        setHarnessAuthModal((prev) =>
+          prev
+            ? {
+                ...prev,
+                subscription_device_code: initialDeviceCode,
+                subscription_status: pendingStatus,
+              }
+            : prev);
+        const outcome = await waitForCopilotLoginOutcome(login.login_id, async (authUrl) => {
+          const deviceCode = extractGithubDeviceCodeFromAuthUrl(authUrl);
+          setHarnessAuthModal((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  subscription_device_code: deviceCode ?? prev.subscription_device_code ?? null,
+                  subscription_status:
+                    `Waiting for GitHub sign-in to complete in your browser. If no browser opened, open this URL manually: ${authUrl}`,
+                }
+              : prev);
+        }, {
+          openedAuthUrl: initialAuthUrl,
         });
-        setCopilotAccounts(next);
-        await refreshBootstrapAfterMutation();
-        await selectSubscriptionSourceIfSupported(modal.provider_id);
-        closeHarnessAuthModal();
+        await refreshCopilotAccounts();
+        if (outcome.status === "success") {
+          await onSelectProviderSource("copilot", "subscription", null);
+          closeHarnessAuthModal();
+          return;
+        }
+        if (outcome.error && outcome.error.trim()) {
+          setProviderError(outcome.error);
+        }
+        if (outcome.status === "failed") {
+          const failureMessage = outcome.error?.trim() || "Sign-in failed. Retry.";
+          setHarnessAuthModal((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  subscription_status: failureMessage,
+                }
+              : prev);
+          return;
+        }
+        if (outcome.status === "timeout") {
+          const timeoutMessage =
+            outcome.error?.trim() || "Timed out waiting for GitHub sign-in completion. Retry.";
+          setHarnessAuthModal((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  subscription_status: timeoutMessage,
+                }
+              : prev);
+          return;
+        }
+        setHarnessAuthModal((prev) =>
+          prev
+            ? {
+                ...prev,
+                subscription_status:
+                  "Still waiting for completion. Keep this dialog open or retry.",
+              }
+            : prev);
         return;
       }
 
@@ -1362,12 +1472,14 @@ export function useHarnessAuthenticationController({
     refreshAmpAccounts,
     onSelectProviderSource,
     refreshClaudeAccounts,
+    refreshCopilotAccounts,
     refreshCodexAccounts,
     refreshGeminiAccounts,
     refreshKimiAccounts,
     selectSubscriptionSourceIfSupported,
     waitForAmpLoginOutcome,
     waitForClaudeLoginOutcome,
+    waitForCopilotLoginOutcome,
     waitForCodexLoginOutcome,
     waitForGeminiLoginOutcome,
     waitForKimiLoginOutcome,

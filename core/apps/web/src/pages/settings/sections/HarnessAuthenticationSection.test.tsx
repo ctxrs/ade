@@ -36,6 +36,31 @@ function makeGeminiSubscriptionModal(): HarnessAuthModalState {
   };
 }
 
+function makeCopilotSubscriptionModal(): HarnessAuthModalState {
+  return {
+    provider_id: "copilot",
+    stage: "subscription",
+    endpoint_provider_id: "openai",
+    gemini_endpoint_auth_type: "gemini_api_key",
+    endpoint_name: "",
+    base_url: "",
+    api_key: "",
+    subscription_label: "",
+    subscription_token: "",
+    subscription_email: "",
+    subscription_provider: "",
+    subscription_credentials_json: "",
+    subscription_config_toml: "",
+    subscription_auth_token_json: "",
+    subscription_oauth_creds_json: "",
+    subscription_google_accounts_json: "",
+    subscription_device_code: null,
+    subscription_status: null,
+    subscription_busy: false,
+    api_key_busy: false,
+  };
+}
+
 function makeController(
   overrides: Partial<HarnessAuthController> = {},
 ): HarnessAuthController {
@@ -124,5 +149,52 @@ describe("HarnessAuthenticationSection Gemini subscription modal", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Sign in with Google" }));
     expect(submitHarnessSubscriptionModal).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("HarnessAuthenticationSection Copilot subscription modal", () => {
+  it("shows guided GitHub sign-in without token fallback field", () => {
+    mockUseHarnessAuthenticationController.mockReturnValue(
+      makeController({ harnessAuthModal: makeCopilotSubscriptionModal() }),
+    );
+
+    render(
+      <HarnessAuthenticationSection
+        workspaceId="ws-1"
+        active
+        modalOnly
+      />,
+    );
+
+    expect(
+      screen.getByText("Sign in with GitHub to capture managed Copilot auth automatically."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign in with GitHub" })).toBeInTheDocument();
+    expect(screen.queryByText("Token (optional fallback)")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Copilot subscription")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("you@example.com")).not.toBeInTheDocument();
+  });
+
+  it("shows device code field when copilot login status includes one", () => {
+    mockUseHarnessAuthenticationController.mockReturnValue(
+      makeController({
+        harnessAuthModal: {
+          ...makeCopilotSubscriptionModal(),
+          subscription_device_code: "ABCD-1234",
+          subscription_status: "Waiting for GitHub sign-in to complete in your browser...",
+        },
+      }),
+    );
+
+    render(
+      <HarnessAuthenticationSection
+        workspaceId="ws-1"
+        active
+        modalOnly
+      />,
+    );
+
+    expect(screen.getByText("GitHub device code")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("ABCD-1234")).toBeInTheDocument();
   });
 });

@@ -15,7 +15,7 @@ use chrono::{DateTime, Utc};
 use futures::{Stream, StreamExt};
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::{mpsc, oneshot};
 use url::Url;
@@ -230,6 +230,7 @@ pub(super) struct KimiAccountsResponse {
 pub(super) struct CopilotAccountsResponse {
     active_account_id: Option<String>,
     accounts: Vec<provider_accounts::CopilotAccountEntry>,
+    logins: Vec<provider_accounts::CopilotLoginStatus>,
 }
 
 #[derive(Debug, Serialize)]
@@ -398,6 +399,18 @@ pub(super) struct CopilotAccountUpsertReq {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct CopilotLoginStartReq {
+    label: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct CopilotLoginStartResp {
+    login_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auth_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct CopilotActiveAccountReq {
     account_id: Option<String>,
 }
@@ -509,6 +522,11 @@ const KIMI_LOGIN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(300);
 const KIMI_LOGIN_NO_AUTH_URL_TIMEOUT_DEFAULT: Duration = Duration::from_secs(20);
 const KIMI_LOGIN_NO_SIGNAL_TIMEOUT_DEFAULT: Duration = Duration::from_secs(5);
 const KIMI_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
+const AMP_LOGIN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(300);
+const AMP_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
+const COPILOT_LOGIN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(600);
+const COPILOT_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
+const AMP_BROWSER_AUTH_METHOD_ID: &str = "amp_browser_login";
 const CLAUDE_LOGIN_NO_AUTH_URL_TIMEOUT: Duration = Duration::from_secs(8);
 const CLAUDE_LOGIN_URL_SETTLE_WAIT: Duration = Duration::from_millis(500);
 const CLAUDE_LOGIN_COMPLETION_TIMEOUT: Duration = Duration::from_secs(15 * 60);
@@ -796,6 +814,39 @@ async fn load_kimi_captured_credentials(
     );
 }
 
+fn copilot_login_timeout() -> Duration {
+    let seconds = std::env::var("CTX_COPILOT_LOGIN_TIMEOUT_SECS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(COPILOT_LOGIN_TIMEOUT_DEFAULT.as_secs());
+    Duration::from_secs(seconds)
+}
+
+fn copilot_gh_path() -> String {
+    std::env::var("CTX_COPILOT_GH_PATH")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "gh".to_string())
+}
+
+fn copilot_cli_path() -> String {
+    std::env::var("CTX_COPILOT_CLI_PATH")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "copilot".to_string())
+}
+
+fn copilot_login_browser() -> String {
+    std::env::var("CTX_COPILOT_LOGIN_BROWSER")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "none".to_string())
+}
+
 fn first_email_from_google_accounts(value: &serde_json::Value) -> Option<String> {
     match value {
         serde_json::Value::Object(map) => {
@@ -916,7 +967,9 @@ fn command_is_kimi_acp_shim(command: &str) -> bool {
         .is_some_and(|name| name.eq_ignore_ascii_case("kimi-acp.sh"))
 }
 
-async fn resolve_kimi_runtime_command(data_root: &StdPath) -> anyhow::Result<installer::AgentServerCommand> {
+async fn resolve_kimi_runtime_command(
+    data_root: &StdPath,
+) -> anyhow::Result<installer::AgentServerCommand> {
     let cfg = installer::load_agent_server_config(data_root)
         .await
         .unwrap_or_default();
@@ -941,7 +994,11 @@ async fn resolve_kimi_runtime_command(data_root: &StdPath) -> anyhow::Result<ins
                 dependencies: Vec::new(),
                 managed: None,
             };
-            return Ok(normalize_acp_provider_command(data_root, "kimi", bundled_raw));
+            return Ok(normalize_acp_provider_command(
+                data_root,
+                "kimi",
+                bundled_raw,
+            ));
         }
         bail!(
             "Kimi runtime command {} is an ACP shim and cannot run `login --json`; reconfigure to the real Kimi binary",
@@ -1007,8 +1064,8 @@ async fn ingest_kimi_direct_login_line(
     if kimi_login_line_reports_unsupported_command(trimmed) {
         *unsupported = true;
     }
-    if let Some(auth_url) = kimi_login_auth_url_from_json_line(trimmed)
-        .or_else(|| extract_auth_url(trimmed))
+    if let Some(auth_url) =
+        kimi_login_auth_url_from_json_line(trimmed).or_else(|| extract_auth_url(trimmed))
     {
         *saw_auth_url = true;
         let mut map = state.providers.kimi_login_sessions.lock().await;
@@ -1193,9 +1250,14 @@ async fn kimi_accounts_response(state: &Arc<AppState>) -> KimiAccountsResponse {
 
 async fn copilot_accounts_response(state: &Arc<AppState>) -> CopilotAccountsResponse {
     let registry = provider_accounts::load_copilot_registry(&state.core.data_root).await;
+    let logins = {
+        let map = state.providers.copilot_login_sessions.lock().await;
+        map.values().cloned().collect::<Vec<_>>()
+    };
     CopilotAccountsResponse {
         active_account_id: registry.active_account_id,
         accounts: registry.accounts,
+        logins,
     }
 }
 
@@ -2055,6 +2117,360 @@ fn amp_login_home(data_root: &StdPath, login_id: &str) -> PathBuf {
         .join(login_id)
 }
 
+fn copilot_login_home(data_root: &StdPath, login_id: &str) -> PathBuf {
+    data_root
+        .join("providers")
+        .join("copilot")
+        .join("login-sessions")
+        .join(login_id)
+}
+
+fn apply_copilot_login_env(command: &mut Command, gh_config_dir: &StdPath) {
+    command.env("GH_CONFIG_DIR", gh_config_dir);
+    command.env("GH_PROMPT_DISABLED", "1");
+    command.env("GH_SPINNER_DISABLED", "1");
+    command.env("GH_NO_UPDATE_NOTIFIER", "1");
+    command.env("GH_NO_EXTENSION_UPDATE_NOTIFIER", "1");
+    command.env("NO_COLOR", "1");
+    command.env_remove("GH_TOKEN");
+    command.env_remove("GITHUB_TOKEN");
+    command.env_remove("COPILOT_GITHUB_TOKEN");
+}
+
+async fn pump_copilot_login_output<R>(reader: R, tx: mpsc::UnboundedSender<String>)
+where
+    R: AsyncRead + Unpin + Send + 'static,
+{
+    let mut lines = BufReader::new(reader).lines();
+    loop {
+        match lines.next_line().await {
+            Ok(Some(line)) => {
+                if tx.send(line).is_err() {
+                    return;
+                }
+            }
+            Ok(None) => return,
+            Err(_) => return,
+        }
+    }
+}
+
+fn copilot_login_error(status: std::process::ExitStatus, recent_lines: &[String]) -> String {
+    let detail = recent_lines
+        .iter()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .cloned();
+    if let Some(line) = detail {
+        format!("copilot login exited with status {status}: {line}")
+    } else {
+        format!("copilot login exited with status {status}")
+    }
+}
+
+async fn fetch_copilot_token_from_gh(
+    gh_path: &str,
+    gh_config_dir: &StdPath,
+) -> anyhow::Result<String> {
+    let mut token_cmd = Command::new(gh_path);
+    token_cmd
+        .arg("auth")
+        .arg("token")
+        .arg("--hostname")
+        .arg("github.com")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    apply_copilot_login_env(&mut token_cmd, gh_config_dir);
+    let output = token_cmd
+        .output()
+        .await
+        .context("running gh auth token failed")?;
+    if !output.status.success() {
+        let stderr = logs::redact_sensitive(&String::from_utf8_lossy(&output.stderr));
+        let stdout = logs::redact_sensitive(&String::from_utf8_lossy(&output.stdout));
+        let reason = stderr
+            .trim()
+            .strip_prefix("error: ")
+            .unwrap_or(stderr.trim())
+            .to_string();
+        if !reason.is_empty() {
+            bail!("gh auth token failed: {reason}");
+        }
+        if !stdout.trim().is_empty() {
+            bail!("gh auth token failed: {}", stdout.trim());
+        }
+        bail!("gh auth token failed with status {}", output.status);
+    }
+    let token_raw =
+        String::from_utf8(output.stdout).context("gh auth token output is not valid UTF-8")?;
+    let token = token_raw.trim();
+    if token.is_empty() {
+        bail!("gh auth token returned an empty token");
+    }
+    Ok(token.to_string())
+}
+
+async fn fetch_copilot_token_from_gh_default(gh_path: &str) -> anyhow::Result<String> {
+    let mut token_cmd = Command::new(gh_path);
+    token_cmd
+        .arg("auth")
+        .arg("token")
+        .arg("--hostname")
+        .arg("github.com")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    token_cmd.env("GH_PROMPT_DISABLED", "1");
+    token_cmd.env("GH_SPINNER_DISABLED", "1");
+    token_cmd.env("GH_NO_UPDATE_NOTIFIER", "1");
+    token_cmd.env("GH_NO_EXTENSION_UPDATE_NOTIFIER", "1");
+    token_cmd.env("NO_COLOR", "1");
+    token_cmd.env_remove("GH_TOKEN");
+    token_cmd.env_remove("GITHUB_TOKEN");
+    token_cmd.env_remove("COPILOT_GITHUB_TOKEN");
+    let output = token_cmd
+        .output()
+        .await
+        .context("running gh auth token fallback failed")?;
+    if !output.status.success() {
+        let stderr = logs::redact_sensitive(&String::from_utf8_lossy(&output.stderr));
+        let stdout = logs::redact_sensitive(&String::from_utf8_lossy(&output.stdout));
+        let reason = stderr
+            .trim()
+            .strip_prefix("error: ")
+            .unwrap_or(stderr.trim())
+            .to_string();
+        if !reason.is_empty() {
+            bail!("gh auth token fallback failed: {reason}");
+        }
+        if !stdout.trim().is_empty() {
+            bail!("gh auth token fallback failed: {}", stdout.trim());
+        }
+        bail!(
+            "gh auth token fallback failed with status {}",
+            output.status
+        );
+    }
+    let token_raw = String::from_utf8(output.stdout)
+        .context("gh auth token fallback output is not valid UTF-8")?;
+    let token = token_raw.trim();
+    if token.is_empty() {
+        bail!("gh auth token fallback returned an empty token");
+    }
+    Ok(token.to_string())
+}
+
+async fn monitor_copilot_login(state: Arc<AppState>, login_id: String, label: Option<String>) {
+    let login_home = copilot_login_home(&state.core.data_root, &login_id);
+    let gh_config_dir = login_home.join("gh");
+    let copilot_config_dir = login_home.join("copilot");
+    if let Err(err) = tokio::fs::create_dir_all(&gh_config_dir).await {
+        let mut map = state.providers.copilot_login_sessions.lock().await;
+        if let Some(entry) = map.get_mut(&login_id) {
+            entry.status = "failed".to_string();
+            entry.error = Some(format!("failed to prepare login state directory: {err}"));
+        }
+        return;
+    }
+    if let Err(err) = tokio::fs::create_dir_all(&copilot_config_dir).await {
+        let mut map = state.providers.copilot_login_sessions.lock().await;
+        if let Some(entry) = map.get_mut(&login_id) {
+            entry.status = "failed".to_string();
+            entry.error = Some(format!("failed to prepare login state directory: {err}"));
+        }
+        return;
+    }
+
+    let gh_path = copilot_gh_path();
+    let copilot_path = copilot_cli_path();
+    let mut login_cmd = Command::new(&copilot_path);
+    login_cmd
+        .arg("login")
+        .arg("--host")
+        .arg("https://github.com")
+        .arg("--config-dir")
+        .arg(&copilot_config_dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    apply_copilot_login_env(&mut login_cmd, &gh_config_dir);
+    login_cmd.env("BROWSER", copilot_login_browser());
+
+    let mut child = match login_cmd.spawn() {
+        Ok(child) => child,
+        Err(err) => {
+            let mut map = state.providers.copilot_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(&login_id) {
+                entry.status = "failed".to_string();
+                entry.error = Some(format!("failed to start copilot login: {err}"));
+            }
+            let _ = tokio::fs::remove_dir_all(&login_home).await;
+            return;
+        }
+    };
+
+    let mut observed_auth_url = None::<String>;
+    let mut observed_device_code = None::<String>;
+    let mut recent_lines: Vec<String> = Vec::new();
+    let (line_tx, mut line_rx) = mpsc::unbounded_channel::<String>();
+    if let Some(stdout) = child.stdout.take() {
+        let tx = line_tx.clone();
+        tokio::spawn(async move {
+            pump_copilot_login_output(stdout, tx).await;
+        });
+    }
+    if let Some(stderr) = child.stderr.take() {
+        tokio::spawn(async move {
+            pump_copilot_login_output(stderr, line_tx).await;
+        });
+    }
+
+    let timeout = copilot_login_timeout();
+    let login_completion = tokio::time::timeout(timeout, async {
+        loop {
+            tokio::select! {
+                status = child.wait() => {
+                    let status = status.context("waiting for copilot login failed")?;
+                    return Ok::<_, anyhow::Error>(status);
+                }
+                maybe_line = line_rx.recv() => {
+                    let Some(raw_line) = maybe_line else {
+                        tokio::time::sleep(COPILOT_LOGIN_POLL_INTERVAL).await;
+                        continue;
+                    };
+                    let line = logs::redact_sensitive(raw_line.trim());
+                    if !line.is_empty() {
+                        recent_lines.push(line.clone());
+                        if recent_lines.len() > 20 {
+                            let _ = recent_lines.remove(0);
+                        }
+                    }
+                    if let Some(code) = extract_github_device_code(&raw_line) {
+                        observed_device_code = Some(code.clone());
+                        if observed_auth_url.is_none() {
+                            let auth_url = github_device_url_with_code(&code);
+                            observed_auth_url = Some(auth_url.clone());
+                            let mut map = state.providers.copilot_login_sessions.lock().await;
+                            if let Some(entry) = map.get_mut(&login_id) {
+                                entry.auth_url = Some(auth_url);
+                            }
+                        } else if let Some(current_auth_url) = observed_auth_url.clone() {
+                            if let Some(enriched) =
+                                enrich_github_device_auth_url(&current_auth_url, &code)
+                            {
+                                observed_auth_url = Some(enriched.clone());
+                                let mut map = state.providers.copilot_login_sessions.lock().await;
+                                if let Some(entry) = map.get_mut(&login_id) {
+                                    entry.auth_url = Some(enriched);
+                                }
+                            }
+                        }
+                    }
+
+                    if let Some(auth_url) = extract_auth_url(&raw_line) {
+                        let auth_url = observed_device_code
+                            .as_deref()
+                            .and_then(|code| enrich_github_device_auth_url(&auth_url, code))
+                            .unwrap_or(auth_url);
+                        let should_replace = match observed_auth_url.as_ref() {
+                            None => true,
+                            Some(current) => {
+                                auth_url != *current
+                                    && (current.starts_with("https://github.com/login/device")
+                                        || auth_url.len() >= current.len())
+                            }
+                        };
+                        if should_replace {
+                            observed_auth_url = Some(auth_url.clone());
+                            let mut map = state.providers.copilot_login_sessions.lock().await;
+                            if let Some(entry) = map.get_mut(&login_id) {
+                                entry.auth_url = Some(auth_url);
+                            }
+                        }
+                    }
+                }
+                _ = tokio::time::sleep(COPILOT_LOGIN_POLL_INTERVAL) => {}
+            }
+        }
+    })
+    .await;
+
+    let login_status = match login_completion {
+        Ok(Ok(status)) => status,
+        Ok(Err(err)) => {
+            let mut map = state.providers.copilot_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(&login_id) {
+                entry.status = "failed".to_string();
+                entry.error = Some(logs::redact_sensitive(&err.to_string()));
+            }
+            let _ = tokio::fs::remove_dir_all(&login_home).await;
+            return;
+        }
+        Err(_) => {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            let mut map = state.providers.copilot_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(&login_id) {
+                entry.status = "timeout".to_string();
+                entry.error = Some("timed out waiting for GitHub sign-in completion".to_string());
+            }
+            let _ = tokio::fs::remove_dir_all(&login_home).await;
+            return;
+        }
+    };
+
+    if !login_status.success() {
+        let message = copilot_login_error(login_status, &recent_lines);
+        let mut map = state.providers.copilot_login_sessions.lock().await;
+        if let Some(entry) = map.get_mut(&login_id) {
+            entry.status = "failed".to_string();
+            entry.error = Some(message);
+        }
+        let _ = tokio::fs::remove_dir_all(&login_home).await;
+        return;
+    }
+
+    let token = match fetch_copilot_token_from_gh(&gh_path, &gh_config_dir).await {
+        Ok(token) => token,
+        Err(primary_err) => match fetch_copilot_token_from_gh_default(&gh_path).await {
+            Ok(token) => token,
+            Err(fallback_err) => {
+                let mut map = state.providers.copilot_login_sessions.lock().await;
+                if let Some(entry) = map.get_mut(&login_id) {
+                    entry.status = "failed".to_string();
+                    entry.error = Some(logs::redact_sensitive(&format!(
+                        "{}; fallback failed: {}",
+                        primary_err, fallback_err
+                    )));
+                }
+                let _ = tokio::fs::remove_dir_all(&login_home).await;
+                return;
+            }
+        },
+    };
+
+    let added =
+        provider_accounts::add_copilot_account(&state.core.data_root, label, token, None).await;
+    match added {
+        Ok(registry) => {
+            let mut map = state.providers.copilot_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(&login_id) {
+                entry.status = "success".to_string();
+                entry.error = None;
+                entry.account_id = registry.active_account_id;
+            }
+            restart_copilot_providers_for_auth_change(&state, "copilot auth updated").await;
+        }
+        Err(err) => {
+            let mut map = state.providers.copilot_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(&login_id) {
+                entry.status = "failed".to_string();
+                entry.error = Some(logs::redact_sensitive(&err.to_string()));
+            }
+        }
+    }
+
+    let _ = tokio::fs::remove_dir_all(&login_home).await;
+}
+
 async fn monitor_amp_login(state: Arc<AppState>, login_id: String, label: Option<String>) {
     let adapter = {
         let map = state.providers.adapters.lock().await;
@@ -2801,6 +3217,53 @@ pub(super) async fn delete_kimi_account(
     Ok(Json(kimi_accounts_response(&state).await))
 }
 
+pub(super) async fn start_copilot_login(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CopilotLoginStartReq>,
+) -> Result<Json<CopilotLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let login_id = uuid::Uuid::new_v4().to_string();
+    {
+        let mut map = state.providers.copilot_login_sessions.lock().await;
+        map.insert(
+            login_id.clone(),
+            provider_accounts::CopilotLoginStatus {
+                login_id: login_id.clone(),
+                auth_url: None,
+                status: "pending".to_string(),
+                account_id: None,
+                error: None,
+            },
+        );
+    }
+
+    let state_clone = Arc::clone(&state);
+    let login_id_for_task = login_id.clone();
+    tokio::spawn(async move {
+        monitor_copilot_login(state_clone, login_id_for_task, req.label).await;
+    });
+
+    Ok(Json(CopilotLoginStartResp {
+        login_id,
+        auth_url: None,
+    }))
+}
+
+pub(super) async fn get_copilot_login(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<provider_accounts::CopilotLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
+    let map = state.providers.copilot_login_sessions.lock().await;
+    let status = map.get(&id).cloned().ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "login not found".to_string(),
+            }),
+        )
+    })?;
+    Ok(Json(status))
+}
+
 pub(super) async fn list_copilot_accounts(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<CopilotAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
@@ -3354,6 +3817,52 @@ fn extract_auth_url(text: &str) -> Option<String> {
         idx = end.saturating_add(1);
     }
     None
+}
+
+fn is_github_device_code(value: &str) -> bool {
+    let mut parts = value.split('-');
+    let (Some(first), Some(second), None) = (parts.next(), parts.next(), parts.next()) else {
+        return false;
+    };
+    first.len() == 4
+        && second.len() == 4
+        && first.chars().all(|ch| ch.is_ascii_alphanumeric())
+        && second.chars().all(|ch| ch.is_ascii_alphanumeric())
+}
+
+fn extract_github_device_code(text: &str) -> Option<String> {
+    let normalized = strip_ansi_sequences(text);
+    normalized
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '-'))
+        .map(str::trim)
+        .find(|token| is_github_device_code(token))
+        .map(|token| token.to_ascii_uppercase())
+}
+
+fn github_device_url_with_code(device_code: &str) -> String {
+    format!("https://github.com/login/device?user_code={device_code}")
+}
+
+fn enrich_github_device_auth_url(auth_url: &str, device_code: &str) -> Option<String> {
+    let mut parsed = Url::parse(auth_url).ok()?;
+    let host = parsed.host_str()?.to_ascii_lowercase();
+    if host != "github.com" {
+        return None;
+    }
+    let normalized_path = parsed.path().trim_end_matches('/');
+    if normalized_path != "/login/device" {
+        return None;
+    }
+    if parsed
+        .query_pairs()
+        .any(|(key, value)| key == "user_code" && !value.trim().is_empty())
+    {
+        return Some(parsed.to_string());
+    }
+    parsed
+        .query_pairs_mut()
+        .append_pair("user_code", device_code);
+    Some(parsed.to_string())
 }
 
 fn auth_url_looks_complete(auth_url: &str) -> bool {
@@ -5771,6 +6280,24 @@ mod tests {
             Some(
                 "https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A64111%2Fauth%2Fcallback&state=abc"
             )
+        );
+    }
+
+    #[test]
+    fn extract_github_device_code_detects_code_in_gh_output() {
+        let line = "! First copy your one-time code: B6E7-D092";
+        assert_eq!(
+            extract_github_device_code(line).as_deref(),
+            Some("B6E7-D092")
+        );
+    }
+
+    #[test]
+    fn enrich_github_device_auth_url_adds_user_code_query() {
+        let url = "https://github.com/login/device";
+        assert_eq!(
+            enrich_github_device_auth_url(url, "B6E7-D092").as_deref(),
+            Some("https://github.com/login/device?user_code=B6E7-D092")
         );
     }
 

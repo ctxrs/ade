@@ -92,10 +92,43 @@ describe("HarnessAuthenticationSection Claude fallback submit", () => {
     expect(subscriptionPrimaryActionLabel(modal)).toBe("Sign in with Kimi");
   });
 
-  it("auto-starts browser sign-in from stage 1 for codex, claude, gemini, and kimi", () => {
+  it("uses GitHub sign-in action for Copilot when no fallback token is entered", () => {
+    const modal = baseModal({
+      provider_id: "copilot",
+      subscription_busy: false,
+      subscription_token: "",
+    });
+
+    expect(subscriptionPrimaryActionLabel(modal)).toBe("Sign in with GitHub");
+  });
+
+  it("keeps Copilot action as GitHub sign-in when token text is present", () => {
+    const modal = baseModal({
+      provider_id: "copilot",
+      subscription_busy: false,
+      subscription_token: "gho_abc123",
+    });
+
+    expect(subscriptionPrimaryActionLabel(modal)).toBe("Sign in with GitHub");
+  });
+
+  it("keeps submit disabled for Copilot while sign-in is busy", () => {
+    const modal = baseModal({
+      provider_id: "copilot",
+      subscription_busy: true,
+      subscription_token: "gho_abc123",
+    });
+
+    expect(canSubmitSubscriptionModal(modal)).toBe(false);
+    expect(subscriptionPrimaryActionLabel(modal)).toBe("Waiting...");
+  });
+
+  it("auto-starts browser sign-in from stage 1 for codex, claude, gemini, amp, and copilot", () => {
     expect(shouldAutoStartSubscriptionFlow("codex")).toBe(true);
     expect(shouldAutoStartSubscriptionFlow("claude-crp")).toBe(true);
     expect(shouldAutoStartSubscriptionFlow("gemini")).toBe(true);
     expect(shouldAutoStartSubscriptionFlow("kimi")).toBe(true);
+    expect(shouldAutoStartSubscriptionFlow("amp")).toBe(true);
+    expect(shouldAutoStartSubscriptionFlow("copilot")).toBe(true);
   });
 });
