@@ -40,8 +40,16 @@ const GEMINI_AUTH_TYPE_VERTEX_AI: &str = "vertex_ai";
 const KIRO_AUTH_TOKEN_RELATIVE_PATH: &str = ".aws/sso/cache/kiro-auth-token.json";
 const ENDPOINT_MODEL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(20);
 const ENDPOINT_MODEL_CATALOG_TTL: Duration = Duration::from_secs(60 * 60 * 24);
-const GENERIC_ENDPOINT_NAMESPACE_LABELS: &[&str] =
-    &["api", "www", "app", "gateway", "proxy", "chat", "inference", "llm"];
+const GENERIC_ENDPOINT_NAMESPACE_LABELS: &[&str] = &[
+    "api",
+    "www",
+    "app",
+    "gateway",
+    "proxy",
+    "chat",
+    "inference",
+    "llm",
+];
 
 static REGISTRY_WRITE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -263,6 +271,35 @@ fn kiro_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
         .join("kiro")
         .join("endpoint-homes")
         .join(endpoint_id)
+}
+
+fn amp_subscription_home(data_root: &Path, runtime_data_root: Option<&Path>) -> PathBuf {
+    runtime_data_root
+        .unwrap_or(data_root)
+        .join("providers")
+        .join("amp")
+        .join("home")
+}
+
+fn subscription_env_for_provider(
+    canonical: &str,
+    data_root: &Path,
+    runtime_data_root: Option<&Path>,
+) -> HashMap<String, String> {
+    let mut env = HashMap::new();
+    if canonical == PROVIDER_AMP {
+        let home = amp_subscription_home(data_root, runtime_data_root);
+        env.insert("HOME".to_string(), home.to_string_lossy().to_string());
+        env.insert(
+            "XDG_CONFIG_HOME".to_string(),
+            home.join(".config").to_string_lossy().to_string(),
+        );
+        env.insert(
+            "XDG_CACHE_HOME".to_string(),
+            home.join(".cache").to_string_lossy().to_string(),
+        );
+    }
+    env
 }
 
 fn container_workspaces_root(data_root: &Path) -> PathBuf {
@@ -1485,7 +1522,7 @@ async fn resolve_internal(
         return Ok(ResolvedHarnessSource {
             source_kind: HarnessSourceKind::Subscription,
             endpoint: None,
-            env: HashMap::new(),
+            env: subscription_env_for_provider(canonical, data_root, runtime_data_root),
         });
     }
 
@@ -1493,7 +1530,7 @@ async fn resolve_internal(
         return Ok(ResolvedHarnessSource {
             source_kind: HarnessSourceKind::Subscription,
             endpoint: None,
-            env: HashMap::new(),
+            env: subscription_env_for_provider(canonical, data_root, runtime_data_root),
         });
     }
 
@@ -1604,10 +1641,8 @@ async fn resolve_internal(
         PROVIDER_OPENCODE => {
             let base_url = endpoint_base_url_or_err(&endpoint)?;
             ensure_shape_compatible(canonical, endpoint.api_shape)?;
-            let provider_namespace =
-                infer_endpoint_model_provider_namespace(&base_url).unwrap_or_else(|| {
-                    "endpoint".to_string()
-                });
+            let provider_namespace = infer_endpoint_model_provider_namespace(&base_url)
+                .unwrap_or_else(|| "endpoint".to_string());
             env.insert("OPENAI_API_KEY".to_string(), api_key.clone());
             env.insert("OPENAI_BASE_URL".to_string(), base_url.clone());
             if provider_namespace == "openrouter" {
@@ -1983,6 +2018,28 @@ mod tests {
         assert_eq!(cfg.selected_source_kind, HarnessSourceKind::Subscription);
         assert!(cfg.selected_endpoint_id.is_none());
         assert!(cfg.endpoints.is_empty());
+    }
+
+    #[tokio::test]
+    async fn amp_subscription_sets_persistent_home_env() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let resolved = resolve_provider_source_for_run(root.path(), PROVIDER_AMP)
+            .await
+            .expect("resolved");
+        assert_eq!(resolved.source_kind, HarnessSourceKind::Subscription);
+        let expected_home = root.path().join("providers").join("amp").join("home");
+        assert_eq!(
+            resolved.env.get("HOME"),
+            Some(&expected_home.to_string_lossy().to_string())
+        );
+        assert_eq!(
+            resolved.env.get("XDG_CONFIG_HOME"),
+            Some(&expected_home.join(".config").to_string_lossy().to_string())
+        );
+        assert_eq!(
+            resolved.env.get("XDG_CACHE_HOME"),
+            Some(&expected_home.join(".cache").to_string_lossy().to_string())
+        );
     }
 
     #[tokio::test]

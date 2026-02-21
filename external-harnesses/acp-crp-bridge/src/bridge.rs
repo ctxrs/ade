@@ -479,7 +479,7 @@ async fn handle_command(
             session_id,
             method_id,
         } => {
-            let _crp_session_id =
+            let crp_session_id =
                 session_id.ok_or_else(|| anyhow!("session.authenticate missing session_id"))?;
 
             let method_id = if let Some(method_id) = method_id {
@@ -494,9 +494,20 @@ async fn handle_command(
             };
 
             let request = AuthenticateRequest::new(method_id);
-            acp.authenticate(request)
-                .await
-                .context("acp authenticate")?;
+            match acp.authenticate(request).await {
+                Ok(_) => {
+                    emit_auth_notice(events_tx, &crp_session_id, "authenticated", None).await;
+                }
+                Err(err) => {
+                    if err.code == ErrorCode::AuthRequired {
+                        emit_auth_required_notice(events_tx, bridge_state, &crp_session_id, err)
+                            .await;
+                    } else {
+                        emit_auth_error_notice(events_tx, bridge_state, &crp_session_id, err)
+                            .await;
+                    }
+                }
+            }
         }
         CrpCommand::ModelsList { .. } => {
             let _ = events_tx
@@ -548,13 +559,85 @@ async fn emit_auth_required_notice(
         let state = bridge_state.lock().await;
         (state.auth_methods.clone(), state.provider_id.clone())
     };
-    let message = err
-        .data
-        .as_ref()
-        .and_then(|value| value.as_str())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| err.message.clone());
+    let details = auth_notice_details(&auth_methods, provider_id.as_deref(), err.data.as_ref());
+    let message = auth_notice_message(&err.message, err.data.as_ref());
+    emit_auth_notice(
+        events_tx,
+        session_id,
+        "auth_required",
+        Some((message, details)),
+    )
+    .await;
+}
 
+async fn emit_auth_error_notice(
+    events_tx: &mpsc::Sender<CrpEnvelope>,
+    bridge_state: &Arc<Mutex<BridgeState>>,
+    session_id: &str,
+    err: agent_client_protocol::Error,
+) {
+    let (auth_methods, provider_id) = {
+        let state = bridge_state.lock().await;
+        (state.auth_methods.clone(), state.provider_id.clone())
+    };
+    let details = auth_notice_details(&auth_methods, provider_id.as_deref(), err.data.as_ref());
+    let message = auth_notice_message(&err.message, err.data.as_ref());
+    emit_auth_notice(
+        events_tx,
+        session_id,
+        "auth_error",
+        Some((message, details)),
+    )
+    .await;
+}
+
+async fn emit_auth_notice(
+    events_tx: &mpsc::Sender<CrpEnvelope>,
+    session_id: &str,
+    code: &str,
+    payload: Option<(String, Option<Value>)>,
+) {
+    let (message, details) = match payload {
+        Some((message, details)) => (Some(message), details),
+        None => (None, None),
+    };
+
+    let notice = CrpEnvelope {
+        channel: CrpChannel::Control,
+        event: CrpEvent::SessionNotice {
+            session_id: session_id.to_string(),
+            turn_id: None,
+            code: code.to_string(),
+            severity: None,
+            message,
+            details,
+            transient: None,
+        },
+    };
+    let _ = events_tx.send(notice).await;
+}
+
+fn auth_notice_message(default_message: &str, error_data: Option<&Value>) -> String {
+    if let Some(message) = error_data
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+        .or_else(|| {
+            error_data
+                .and_then(|value| value.get("message"))
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+        })
+    {
+        return message;
+    }
+    default_message.to_string()
+}
+
+fn auth_notice_details(
+    auth_methods: &[AuthMethod],
+    provider_id: Option<&str>,
+    error_data: Option<&Value>,
+) -> Option<Value> {
     let mut details = serde_json::Map::new();
     if !auth_methods.is_empty() {
         if let Ok(value) = serde_json::to_value(auth_methods) {
@@ -565,23 +648,24 @@ async fn emit_auth_required_notice(
         details.insert("provider".to_string(), json!(provider_id));
     }
 
-    let notice = CrpEnvelope {
-        channel: CrpChannel::Control,
-        event: CrpEvent::SessionNotice {
-            session_id: session_id.to_string(),
-            turn_id: None,
-            code: "auth_required".to_string(),
-            severity: None,
-            message: Some(message),
-            details: if details.is_empty() {
-                None
-            } else {
-                Some(Value::Object(details))
-            },
-            transient: None,
-        },
-    };
-    let _ = events_tx.send(notice).await;
+    if let Some(data) = error_data {
+        match data {
+            Value::Object(map) => {
+                for (key, value) in map {
+                    details.insert(key.clone(), value.clone());
+                }
+            }
+            other => {
+                details.insert("error_data".to_string(), other.clone());
+            }
+        }
+    }
+
+    if details.is_empty() {
+        None
+    } else {
+        Some(Value::Object(details))
+    }
 }
 
 fn build_prompt_blocks(
@@ -751,4 +835,33 @@ fn skill_block(obj: &serde_json::Map<String, Value>) -> Option<ContentBlock> {
         out.push_str(content);
     }
     Some(ContentBlock::Text(TextContent::new(out)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auth_notice_message_prefers_error_data_message() {
+        let data = json!({ "message": "auth needed" });
+        assert_eq!(
+            auth_notice_message("fallback message", Some(&data)),
+            "auth needed"
+        );
+    }
+
+    #[test]
+    fn auth_notice_details_merges_error_data_object() {
+        let details = auth_notice_details(
+            &[],
+            Some("amp"),
+            Some(&json!({ "auth_url": "https://example.test/login" })),
+        );
+        let details = details.expect("details");
+        assert_eq!(details.get("provider").and_then(Value::as_str), Some("amp"));
+        assert_eq!(
+            details.get("auth_url").and_then(Value::as_str),
+            Some("https://example.test/login")
+        );
+    }
 }

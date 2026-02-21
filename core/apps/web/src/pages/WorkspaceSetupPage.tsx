@@ -1707,28 +1707,33 @@ export default function WorkspaceSetupPage() {
     setLaunchTick(0);
     setCreating(true);
     try {
-      if (!isDesktopApp()) {
-        throw new Error("Workspace creation from the wizard requires the desktop app.");
+      const remoteWorkspace = selections.location === "remote";
+      if (remoteWorkspace && !desktopApp) {
+        throw new Error("Remote workspace creation from the wizard requires the desktop app.");
       }
 
-      const parsed = selections.location === "remote" ? parseUserHost(remoteHostInput) : null;
-      if (selections.location === "remote" && !parsed?.host) {
+      const parsed = remoteWorkspace ? parseUserHost(remoteHostInput) : null;
+      if (remoteWorkspace && !parsed?.host) {
         throw new Error("Remote host is required (user@host).");
       }
 
       // 1. Connect to the intended daemon (reuse existing if already running).
-      const info = selections.location === "remote"
-        ? await desktopConnectSsh({
+      // Browser-only local mode uses the currently configured daemon connection.
+      if (remoteWorkspace) {
+        const info = await desktopConnectSsh({
           host: parsed!.host,
           user: parsed!.user ?? null,
           remote_port: parsedRemotePort,
           start_remote: true,
           remote_data_dir: remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null,
-        })
-        : await desktopConnectLocal();
-      applyConnection(info);
+        });
+        applyConnection(info);
+      } else if (desktopApp) {
+        const info = await desktopConnectLocal();
+        applyConnection(info);
+      }
 
-      if (selections.location === "remote" && parsed?.host) {
+      if (remoteWorkspace && parsed?.host) {
         const normalizedDataDir = remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null;
         setRemoteProfiles(upsertRemoteProfile(parsed.host, parsed.user ?? null, {
           remote_port: parsedRemotePort ?? 4399,
@@ -1880,7 +1885,7 @@ export default function WorkspaceSetupPage() {
       // 3. Register the workspace.
       if (!wsId) {
         const workspaceKind = selections.location === "remote" ? "remote" : "local";
-        const created = await createWorkspace(rootPath, name, workspaceKind);
+        const created = await createWorkspace(rootPath, name, workspaceKind, "wizard");
         wsId = idToString((created as any).id);
       }
 

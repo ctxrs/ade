@@ -1060,10 +1060,6 @@ describe("WorkspaceSetupPage", () => {
     await waitFor(() => {
       expect(createWorkspace).toHaveBeenCalledWith("/tmp/new-repo-web", "new-repo-web", "local", "wizard");
       expect(desktopConnectLocal).not.toHaveBeenCalled();
-      expect(trackWizardCompletedMock).toHaveBeenCalledWith({
-        wizardKey: "workspace_setup",
-        workspaceKind: "local",
-      });
       expect(upsertLauncherRecent).toHaveBeenCalledWith(expect.objectContaining({
         kind: "local",
         root_path: "/tmp/new-repo-web",

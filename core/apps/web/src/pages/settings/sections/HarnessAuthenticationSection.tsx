@@ -58,6 +58,7 @@ export function subscriptionPrimaryActionLabel(modal: HarnessAuthModalState): st
   if (
     modal.provider_id === "codex"
     || modal.provider_id === "cursor"
+    || modal.provider_id === "amp"
     || modal.provider_id === "gemini"
     || (modal.provider_id === "claude-crp" && !claudeSetupTokenProvided(modal))
   ) {
@@ -73,7 +74,7 @@ export function shouldSubmitClaudeFallbackOnEnter(modal: HarnessAuthModalState, 
 }
 
 export function shouldAutoStartSubscriptionFlow(providerId: string): boolean {
-  return providerId === "codex" || providerId === "claude-crp" || providerId === "gemini";
+  return providerId === "codex" || providerId === "claude-crp" || providerId === "gemini" || providerId === "amp";
 }
 
 export function HarnessAuthenticationSection({
@@ -105,6 +106,8 @@ export function HarnessAuthenticationSection({
     kiroAccountsBusy,
     cursorAccounts,
     cursorAccountsBusy,
+    ampAccounts,
+    ampAccountsBusy,
     harnessAuthModal,
     openHarnessAuthModal,
     closeHarnessAuthModal,
@@ -121,6 +124,7 @@ export function HarnessAuthenticationSection({
     onCopilotDelete,
     onKiroDelete,
     onCursorDelete,
+    onAmpDelete,
     providerError,
     supportsHarnessEndpointConfig,
     harnessEndpointRequiresBaseUrl,
@@ -284,6 +288,8 @@ export function HarnessAuthenticationSection({
               kiro_active_account_id: id === "kiro" ? (kiroAccounts?.active_account_id ?? null) : null,
               cursor_accounts: id === "cursor" ? (cursorAccounts?.accounts ?? []) : [],
               cursor_active_account_id: id === "cursor" ? (cursorAccounts?.active_account_id ?? null) : null,
+              amp_accounts: id === "amp" ? (ampAccounts?.accounts ?? []) : [],
+              amp_active_account_id: id === "amp" ? (ampAccounts?.active_account_id ?? null) : null,
             });
             const addBusy = harnessAuthModal?.provider_id === id
               ? harnessAuthModal.api_key_busy || harnessAuthModal.subscription_busy
@@ -296,7 +302,8 @@ export function HarnessAuthenticationSection({
               || (id === "kimi" && kimiAccountsBusy)
               || (id === "copilot" && copilotAccountsBusy)
               || (id === "kiro" && kiroAccountsBusy)
-              || (id === "cursor" && cursorAccountsBusy);
+              || (id === "cursor" && cursorAccountsBusy)
+              || (id === "amp" && ampAccountsBusy);
 
             const installStyle: CSSProperties | undefined =
               installBusyLocal && installUi?.pct !== null
@@ -523,6 +530,18 @@ export function HarnessAuthenticationSection({
                                       Delete
                                     </DropdownMenuItem>
                                   ) : null}
+                                  {row.kind === "subscription" && id === "amp" && row.account_id && row.can_delete ? (
+                                    <DropdownMenuItem
+                                      className="tw-text-[var(--error-contrast)] focus:tw-bg-[var(--error-soft)]"
+                                      onSelect={() => {
+                                        const accountId = row.account_id;
+                                        if (!accountId) return;
+                                        void onAmpDelete(accountId);
+                                      }}
+                                    >
+                                      Delete
+                                    </DropdownMenuItem>
+                                  ) : null}
                                 </DropdownMenuContent>
                               </DropdownMenu>
                             </div>
@@ -662,6 +681,8 @@ export function HarnessAuthenticationSection({
                       ? "Sign in with Claude in your browser. We capture the token automatically. If that fails, paste the token below."
                       : harnessAuthModal.provider_id === "gemini"
                         ? "Sign in with Google to capture managed Gemini OAuth credentials automatically."
+                        : harnessAuthModal.provider_id === "amp"
+                          ? "Sign in with Amp in your browser to complete OAuth on this host."
                         : harnessAuthModal.provider_id === "kimi"
                           ? "Paste Kimi credentials JSON for a managed Kimi share directory."
                           : harnessAuthModal.provider_id === "copilot"

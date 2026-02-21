@@ -82,9 +82,20 @@ describe("HarnessAuthenticationSection Claude fallback submit", () => {
     expect(subscriptionPrimaryActionLabel(modal)).toBe("Start sign-in");
   });
 
-  it("auto-starts browser sign-in from stage 1 for codex, claude, and gemini", () => {
+  it("keeps amp subscription action as start sign-in when idle", () => {
+    const modal = baseModal({
+      provider_id: "amp",
+      subscription_busy: false,
+      subscription_token: "",
+    });
+
+    expect(subscriptionPrimaryActionLabel(modal)).toBe("Start sign-in");
+  });
+
+  it("auto-starts browser sign-in from stage 1 for codex, claude, gemini, and amp", () => {
     expect(shouldAutoStartSubscriptionFlow("codex")).toBe(true);
     expect(shouldAutoStartSubscriptionFlow("claude-crp")).toBe(true);
     expect(shouldAutoStartSubscriptionFlow("gemini")).toBe(true);
+    expect(shouldAutoStartSubscriptionFlow("amp")).toBe(true);
   });
 });

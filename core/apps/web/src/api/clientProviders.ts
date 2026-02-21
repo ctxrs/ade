@@ -251,6 +251,15 @@ export type CursorAccountEntry = {
   last_used_at?: string | null;
 };
 
+export type AmpAccountEntry = {
+  id: string;
+  label: string;
+  kind?: string;
+  email?: string | null;
+  created_at: string;
+  last_used_at?: string | null;
+};
+
 export type CodexAccountUsageEntry = {
   account_id: string | null;
   label: string;
@@ -309,6 +318,11 @@ export type CursorAccountsResponse = {
   accounts: CursorAccountEntry[];
 };
 
+export type AmpAccountsResponse = {
+  active_account_id: string | null;
+  accounts: AmpAccountEntry[];
+};
+
 export type CodexLoginStartResponse = {
   account_id: string;
   auth_url: string;
@@ -347,6 +361,18 @@ export type GeminiLoginStatus = {
 };
 
 export type GeminiLoginStartResponse = {
+  login_id: string;
+  auth_url?: string | null;
+};
+
+export type AmpLoginStatus = {
+  login_id: string;
+  auth_url?: string | null;
+  status: string;
+  error?: string | null;
+};
+
+export type AmpLoginStartResponse = {
   login_id: string;
   auth_url?: string | null;
 };
@@ -491,6 +517,29 @@ export const startGeminiLogin = (label?: string) =>
 
 export const getGeminiLogin = (loginId: string) =>
   apiAny<GeminiLoginStatus>(`/api/providers/gemini/accounts/login/${loginId}`);
+
+export const startAmpLogin = (label?: string) =>
+  apiAny<AmpLoginStartResponse>(`/api/providers/amp/accounts/login/start`, {
+    method: "POST",
+    body: JSON.stringify(label ? { label } : {}),
+  });
+
+export const getAmpLogin = (loginId: string) =>
+  apiAny<AmpLoginStatus>(`/api/providers/amp/accounts/login/${loginId}`);
+
+export const listAmpAccounts = () =>
+  apiAny<AmpAccountsResponse>(`/api/providers/amp/accounts`);
+
+export const setAmpActiveAccount = (accountId: string | null) =>
+  apiAny<AmpAccountsResponse>(`/api/providers/amp/active-account`, {
+    method: "PUT",
+    body: JSON.stringify({ account_id: accountId }),
+  });
+
+export const deleteAmpAccount = (accountId: string) =>
+  apiAny<AmpAccountsResponse>(`/api/providers/amp/accounts/${accountId}`, {
+    method: "DELETE",
+  });
 
 export const upsertGeminiAccount = (
   oauthCredsJson: string,

@@ -241,6 +241,12 @@ pub(super) struct CursorAccountsResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub(super) struct AmpAccountsResponse {
+    active_account_id: Option<String>,
+    accounts: Vec<provider_accounts::AmpAccountEntry>,
+}
+
+#[derive(Debug, Serialize)]
 pub(super) struct CodexAccountUsageEntry {
     account_id: Option<String>,
     label: String,
@@ -331,6 +337,18 @@ pub(super) struct GeminiLoginStartResp {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct AmpLoginStartReq {
+    label: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct AmpLoginStartResp {
+    login_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auth_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct GeminiActiveAccountReq {
     account_id: Option<String>,
 }
@@ -388,6 +406,11 @@ pub(super) struct CursorAccountUpsertReq {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct CursorActiveAccountReq {
+    account_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct AmpActiveAccountReq {
     account_id: Option<String>,
 }
 
@@ -463,6 +486,9 @@ const CODEX_LOGIN_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 const CLAUDE_LOGIN_URL_WAIT: Duration = Duration::from_secs(4);
 const GEMINI_LOGIN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(300);
 const GEMINI_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
+const AMP_LOGIN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(300);
+const AMP_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
+const AMP_BROWSER_AUTH_METHOD_ID: &str = "amp_browser_login";
 const CLAUDE_LOGIN_NO_AUTH_URL_TIMEOUT: Duration = Duration::from_secs(8);
 const CLAUDE_LOGIN_URL_SETTLE_WAIT: Duration = Duration::from_millis(500);
 const CLAUDE_LOGIN_COMPLETION_TIMEOUT: Duration = Duration::from_secs(15 * 60);
@@ -539,6 +565,15 @@ fn gemini_login_timeout() -> Duration {
     Duration::from_secs(seconds)
 }
 
+fn amp_login_timeout() -> Duration {
+    let seconds = std::env::var("CTX_AMP_LOGIN_TIMEOUT_SECS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(AMP_LOGIN_TIMEOUT_DEFAULT.as_secs());
+    Duration::from_secs(seconds)
+}
+
 fn first_email_from_google_accounts(value: &serde_json::Value) -> Option<String> {
     match value {
         serde_json::Value::Object(map) => {
@@ -555,6 +590,25 @@ fn first_email_from_google_accounts(value: &serde_json::Value) -> Option<String>
         serde_json::Value::Array(values) => {
             values.iter().find_map(first_email_from_google_accounts)
         }
+        _ => None,
+    }
+}
+
+fn first_email_from_value(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::Object(map) => {
+            let direct = map
+                .get("email")
+                .or_else(|| map.get("accountEmail"))
+                .or_else(|| map.get("account_email"))
+                .or_else(|| map.get("user_email"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|candidate| !candidate.is_empty())
+                .map(ToString::to_string);
+            direct.or_else(|| map.values().find_map(first_email_from_value))
+        }
+        serde_json::Value::Array(values) => values.iter().find_map(first_email_from_value),
         _ => None,
     }
 }
@@ -648,6 +702,15 @@ async fn cursor_accounts_response(state: &Arc<AppState>) -> CursorAccountsRespon
     }
 }
 
+async fn amp_accounts_response(state: &Arc<AppState>) -> anyhow::Result<AmpAccountsResponse> {
+    let registry =
+        provider_accounts::ensure_amp_registry_from_runtime_auth(&state.core.data_root).await?;
+    Ok(AmpAccountsResponse {
+        active_account_id: registry.active_account_id,
+        accounts: registry.accounts,
+    })
+}
+
 async fn restart_provider_for_auth_change(state: &Arc<AppState>, provider_id: &str, reason: &str) {
     let adapters = {
         let map = state.providers.adapters.lock().await;
@@ -676,6 +739,10 @@ async fn restart_claude_providers_for_auth_change(state: &Arc<AppState>, reason:
 
 async fn restart_gemini_providers_for_auth_change(state: &Arc<AppState>, reason: &str) {
     restart_provider_for_auth_change(state, "gemini", reason).await;
+}
+
+async fn restart_amp_providers_for_auth_change(state: &Arc<AppState>, reason: &str) {
+    restart_provider_for_auth_change(state, "amp", reason).await;
 }
 
 async fn restart_kimi_providers_for_auth_change(state: &Arc<AppState>, reason: &str) {
@@ -1457,6 +1524,334 @@ pub(super) async fn get_gemini_login(
         )
     })?;
     Ok(Json(status))
+}
+
+fn amp_login_home(data_root: &StdPath, login_id: &str) -> PathBuf {
+    data_root
+        .join("providers")
+        .join("amp")
+        .join("login-sessions")
+        .join(login_id)
+}
+
+async fn monitor_amp_login(state: Arc<AppState>, login_id: String, label: Option<String>) {
+    let adapter = {
+        let map = state.providers.adapters.lock().await;
+        map.get("amp").cloned()
+    };
+    let Some(adapter) = adapter else {
+        let mut map = state.providers.amp_login_sessions.lock().await;
+        if let Some(entry) = map.get_mut(&login_id) {
+            entry.status = "failed".to_string();
+            entry.error = Some("provider adapter not available".to_string());
+        }
+        return;
+    };
+
+    let login_home = amp_login_home(&state.core.data_root, &login_id);
+    let workdir = login_home.join("workspace");
+    if let Err(err) = tokio::fs::create_dir_all(&workdir).await {
+        let mut map = state.providers.amp_login_sessions.lock().await;
+        if let Some(entry) = map.get_mut(&login_id) {
+            entry.status = "failed".to_string();
+            entry.error = Some(format!("failed to prepare login workspace: {err}"));
+        }
+        return;
+    }
+    let amp_home = match provider_accounts::ensure_amp_runtime_home(&state.core.data_root).await {
+        Ok(home) => home,
+        Err(err) => {
+            let mut map = state.providers.amp_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(&login_id) {
+                entry.status = "failed".to_string();
+                entry.error = Some(format!("failed to prepare amp runtime home: {err}"));
+            }
+            let _ = tokio::fs::remove_dir_all(&login_home).await;
+            return;
+        }
+    };
+
+    let mut provider_env = HashMap::new();
+    provider_env.insert("CTX_DAEMON_URL".to_string(), state.core.daemon_url.clone());
+    if let Some(token) = state.core.auth_token.clone() {
+        provider_env.insert("CTX_AUTH_TOKEN".to_string(), token);
+    }
+    provider_env.insert(
+        "CTX_DATA_ROOT".to_string(),
+        state.core.data_root.to_string_lossy().to_string(),
+    );
+    provider_env.insert("HOME".to_string(), amp_home.to_string_lossy().to_string());
+    provider_env.insert(
+        "XDG_CONFIG_HOME".to_string(),
+        amp_home.join(".config").to_string_lossy().to_string(),
+    );
+    provider_env.insert(
+        "XDG_CACHE_HOME".to_string(),
+        amp_home.join(".cache").to_string_lossy().to_string(),
+    );
+
+    let (event_tx, mut event_rx) = mpsc::channel(64);
+    let auth_result = adapter
+        .authenticate_session(
+            format!("amp-login-{login_id}"),
+            workdir,
+            provider_env,
+            Some(AMP_BROWSER_AUTH_METHOD_ID.to_string()),
+            event_tx,
+        )
+        .await;
+    if let Err(err) = auth_result {
+        let mut map = state.providers.amp_login_sessions.lock().await;
+        if let Some(entry) = map.get_mut(&login_id) {
+            entry.status = "failed".to_string();
+            entry.error = Some(logs::redact_sensitive(&err.to_string()));
+        }
+        let _ = tokio::fs::remove_dir_all(&login_home).await;
+        return;
+    }
+
+    let started_at = Instant::now();
+    let timeout = amp_login_timeout();
+    let mut observed_auth_url = false;
+    let mut observed_email = None::<String>;
+
+    loop {
+        if started_at.elapsed() >= timeout {
+            let mut map = state.providers.amp_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(&login_id) {
+                entry.status = "timeout".to_string();
+                if entry.error.is_none() {
+                    entry.error = Some("timed out waiting for Amp OAuth completion".to_string());
+                }
+            }
+            let _ = tokio::fs::remove_dir_all(&login_home).await;
+            return;
+        }
+
+        let event = match tokio::time::timeout(AMP_LOGIN_POLL_INTERVAL, event_rx.recv()).await {
+            Ok(Some(event)) => event,
+            Ok(None) => {
+                let mut map = state.providers.amp_login_sessions.lock().await;
+                if let Some(entry) = map.get_mut(&login_id) {
+                    entry.status = "failed".to_string();
+                    if entry.error.is_none() {
+                        entry.error = Some(if observed_auth_url {
+                            "Amp sign-in session ended before completion.".to_string()
+                        } else {
+                            "Amp sign-in did not emit an OAuth URL in this environment.".to_string()
+                        });
+                    }
+                }
+                let _ = tokio::fs::remove_dir_all(&login_home).await;
+                return;
+            }
+            Err(_) => continue,
+        };
+
+        if let Some(auth_url) = extract_auth_url_from_value(&event.payload_json) {
+            observed_auth_url = true;
+            let mut map = state.providers.amp_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(&login_id) {
+                entry.auth_url = Some(auth_url);
+            }
+        }
+        if observed_email.is_none() {
+            observed_email = first_email_from_value(&event.payload_json);
+        }
+
+        if matches!(event.event_type, ctx_core::models::SessionEventType::Error) {
+            let message = event
+                .payload_json
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .map(logs::redact_sensitive)
+                .unwrap_or_else(|| "amp authenticate reported an error".to_string());
+            let mut map = state.providers.amp_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(&login_id) {
+                entry.status = "failed".to_string();
+                entry.error = Some(message);
+            }
+            let _ = tokio::fs::remove_dir_all(&login_home).await;
+            return;
+        }
+
+        if matches!(event.event_type, ctx_core::models::SessionEventType::Notice) {
+            let code = event
+                .payload_json
+                .get("code")
+                .or_else(|| event.payload_json.get("kind"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            if matches!(
+                code,
+                "auth_complete" | "auth_completed" | "auth_success" | "authenticated"
+            ) {
+                if let Err(err) = provider_accounts::upsert_amp_account(
+                    &state.core.data_root,
+                    label.clone(),
+                    observed_email.clone(),
+                )
+                .await
+                {
+                    let mut map = state.providers.amp_login_sessions.lock().await;
+                    if let Some(entry) = map.get_mut(&login_id) {
+                        entry.status = "failed".to_string();
+                        entry.error = Some(logs::redact_sensitive(&err.to_string()));
+                    }
+                    let _ = tokio::fs::remove_dir_all(&login_home).await;
+                    return;
+                }
+                let mut map = state.providers.amp_login_sessions.lock().await;
+                if let Some(entry) = map.get_mut(&login_id) {
+                    entry.status = "success".to_string();
+                    entry.auth_url = None;
+                    entry.error = None;
+                }
+                restart_amp_providers_for_auth_change(&state, "amp auth updated").await;
+                let _ = tokio::fs::remove_dir_all(&login_home).await;
+                return;
+            }
+            if matches!(code, "auth_failed" | "auth_error") {
+                let message = event
+                    .payload_json
+                    .get("message")
+                    .and_then(serde_json::Value::as_str)
+                    .map(logs::redact_sensitive)
+                    .unwrap_or_else(|| "Amp sign-in failed. Retry.".to_string());
+                let mut map = state.providers.amp_login_sessions.lock().await;
+                if let Some(entry) = map.get_mut(&login_id) {
+                    entry.status = "failed".to_string();
+                    entry.error = Some(message);
+                }
+                let _ = tokio::fs::remove_dir_all(&login_home).await;
+                return;
+            }
+        }
+    }
+}
+
+pub(super) async fn start_amp_login(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<AmpLoginStartReq>,
+) -> Result<Json<AmpLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let label = req.label;
+    let login_id = uuid::Uuid::new_v4().to_string();
+    {
+        let mut map = state.providers.amp_login_sessions.lock().await;
+        map.insert(
+            login_id.clone(),
+            provider_accounts::AmpLoginStatus {
+                login_id: login_id.clone(),
+                auth_url: None,
+                status: "pending".to_string(),
+                error: None,
+            },
+        );
+    }
+
+    let state_clone = Arc::clone(&state);
+    let login_id_for_task = login_id.clone();
+    tokio::spawn(async move {
+        monitor_amp_login(state_clone, login_id_for_task, label).await;
+    });
+
+    Ok(Json(AmpLoginStartResp {
+        login_id,
+        auth_url: None,
+    }))
+}
+
+pub(super) async fn get_amp_login(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<provider_accounts::AmpLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
+    let map = state.providers.amp_login_sessions.lock().await;
+    let status = map.get(&id).cloned().ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "login not found".to_string(),
+            }),
+        )
+    })?;
+    Ok(Json(status))
+}
+
+pub(super) async fn list_amp_accounts(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<AmpAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    let response = amp_accounts_response(&state).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+    Ok(Json(response))
+}
+
+pub(super) async fn set_amp_active_account(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<AmpActiveAccountReq>,
+) -> Result<Json<AmpAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    if let Some(ref account_id) = req.account_id {
+        let registry = provider_accounts::load_amp_registry(&state.core.data_root).await;
+        if !registry.accounts.iter().any(|a| a.id == *account_id) {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "unknown account".to_string(),
+                }),
+            ));
+        }
+    }
+    provider_accounts::set_active_amp_account(&state.core.data_root, req.account_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    restart_amp_providers_for_auth_change(&state, "amp auth updated").await;
+    let response = amp_accounts_response(&state).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+    Ok(Json(response))
+}
+
+pub(super) async fn delete_amp_account(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<AmpAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    provider_accounts::remove_amp_account(&state.core.data_root, &id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    restart_amp_providers_for_auth_change(&state, "amp auth updated").await;
+    let response = amp_accounts_response(&state).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+    Ok(Json(response))
 }
 
 pub(super) async fn list_gemini_accounts(
@@ -4765,6 +5160,39 @@ ZXY987654321
             endpoints: vec![],
         };
         let active = provider_has_active_auth_config(root.path(), "codex", Some(&source)).await;
+        assert!(active);
+    }
+
+    #[tokio::test]
+    async fn amp_subscription_selection_requires_managed_account() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let source = harness_sources::HarnessProviderSourceConfig {
+            provider_id: "amp".to_string(),
+            selected_source_kind: HarnessSourceKind::Subscription,
+            selected_endpoint_id: None,
+            endpoints: vec![],
+        };
+        let active = provider_has_active_auth_config(root.path(), "amp", Some(&source)).await;
+        assert!(!active);
+    }
+
+    #[tokio::test]
+    async fn amp_active_account_counts_as_active_auth_config() {
+        let root = tempfile::tempdir().expect("tempdir");
+        provider_accounts::upsert_amp_account(
+            root.path(),
+            Some("Amp Test".to_string()),
+            Some("amp@example.com".to_string()),
+        )
+        .await
+        .expect("upsert amp account");
+        let source = harness_sources::HarnessProviderSourceConfig {
+            provider_id: "amp".to_string(),
+            selected_source_kind: HarnessSourceKind::Subscription,
+            selected_endpoint_id: None,
+            endpoints: vec![],
+        };
+        let active = provider_has_active_auth_config(root.path(), "amp", Some(&source)).await;
         assert!(active);
     }
 

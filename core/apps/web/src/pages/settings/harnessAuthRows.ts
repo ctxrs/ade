@@ -1,4 +1,5 @@
 import type {
+  AmpAccountEntry,
   ClaudeAccountEntry,
   CopilotAccountEntry,
   CodexAccountEntry,
@@ -47,6 +48,8 @@ type BuildHarnessAuthRowsArgs = {
   kiro_active_account_id?: string | null;
   cursor_accounts: CursorAccountEntry[];
   cursor_active_account_id?: string | null;
+  amp_accounts?: AmpAccountEntry[];
+  amp_active_account_id?: string | null;
 };
 
 const codexAccountLabel = (account: CodexAccountEntry): string => {
@@ -85,6 +88,12 @@ const kiroAccountLabel = (account: KiroAccountEntry): string => {
   return account.id;
 };
 
+const ampAccountLabel = (account: AmpAccountEntry): string => {
+  if (account.email && account.email.trim()) return account.email.trim();
+  if (account.label.trim()) return account.label.trim();
+  return account.id;
+};
+
 export const defaultEndpointBaseUrlForProvider = (providerId: string): string => {
   if (providerId === "codex") return "https://api.openai.com/v1";
   if (providerId === "claude-crp") return "https://api.anthropic.com/v1";
@@ -110,6 +119,8 @@ export const buildHarnessAuthRows = ({
   kiro_active_account_id,
   cursor_accounts,
   cursor_active_account_id,
+  amp_accounts = [],
+  amp_active_account_id,
 }: BuildHarnessAuthRowsArgs): HarnessAuthRow[] => {
   const rows: HarnessAuthRow[] = [];
 
@@ -203,6 +214,20 @@ export const buildHarnessAuthRows = ({
     // Keep any legacy managed account records out of the primary row model.
     void cursor_accounts;
     void cursor_active_account_id;
+  }
+
+  if (provider_id === "amp" && amp_accounts.length > 0) {
+    for (const account of amp_accounts) {
+      rows.push({
+        key: `subscription:${account.id}`,
+        kind: "subscription",
+        label: ampAccountLabel(account),
+        active: selected_source_kind === "subscription" && amp_active_account_id === account.id,
+        selectable: true,
+        account_id: account.id,
+        can_delete: true,
+      });
+    }
   }
 
   if (provider_id === "cursor") {
