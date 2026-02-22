@@ -27,6 +27,7 @@ function baseModal(overrides: Partial<HarnessAuthModalState> = {}): HarnessAuthM
     subscription_auth_token_json: "",
     subscription_oauth_creds_json: "",
     subscription_google_accounts_json: "",
+    subscription_auth_url: null,
     subscription_status: null,
     subscription_busy: false,
     api_key_busy: false,
@@ -123,12 +124,23 @@ describe("HarnessAuthenticationSection Claude fallback submit", () => {
     expect(subscriptionPrimaryActionLabel(modal)).toBe("Waiting...");
   });
 
-  it("auto-starts browser sign-in from stage 1 for codex, claude, gemini, amp, and copilot", () => {
+  it("keeps auggie subscription action as start sign-in when idle", () => {
+    const modal = baseModal({
+      provider_id: "auggie",
+      subscription_busy: false,
+      subscription_token: "",
+    });
+
+    expect(subscriptionPrimaryActionLabel(modal)).toBe("Start sign-in");
+  });
+
+  it("auto-starts browser sign-in from stage 1 for codex, claude, gemini, kimi, amp, copilot, and auggie", () => {
     expect(shouldAutoStartSubscriptionFlow("codex")).toBe(true);
     expect(shouldAutoStartSubscriptionFlow("claude-crp")).toBe(true);
     expect(shouldAutoStartSubscriptionFlow("gemini")).toBe(true);
     expect(shouldAutoStartSubscriptionFlow("kimi")).toBe(true);
     expect(shouldAutoStartSubscriptionFlow("amp")).toBe(true);
     expect(shouldAutoStartSubscriptionFlow("copilot")).toBe(true);
+    expect(shouldAutoStartSubscriptionFlow("auggie")).toBe(true);
   });
 });

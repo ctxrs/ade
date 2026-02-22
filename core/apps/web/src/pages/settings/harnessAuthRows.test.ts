@@ -423,4 +423,64 @@ describe("buildHarnessAuthRows", () => {
 
     expect(subscriptionSelected.find((row) => row.account_id === "amp-2")?.active).toBe(true);
   });
+
+  it("builds auggie managed subscription rows and marks active", () => {
+    const endpointSelected = buildHarnessAuthRows({
+      provider_id: "auggie",
+      selected_source_kind: "endpoint",
+      selected_endpoint_id: null,
+      endpoints: [],
+      codex_accounts: [],
+      codex_active_account_id: null,
+      claude_accounts: [],
+      claude_active_account_id: null,
+      gemini_accounts: [],
+      gemini_active_account_id: null,
+      kimi_accounts: [],
+      kimi_active_account_id: null,
+      copilot_accounts: [],
+      copilot_active_account_id: null,
+      kiro_accounts: [],
+      kiro_active_account_id: null,
+      cursor_active_account_id: null,
+      cursor_accounts: [],
+      auggie_active_account_id: "auggie-2",
+      auggie_accounts: [
+        { id: "auggie-1", label: "Auggie A", email: "auggie-a@example.com", created_at: "2026-01-01T00:00:00Z" },
+        { id: "auggie-2", label: "Auggie B", email: "auggie-b@example.com", created_at: "2026-01-01T00:00:00Z" },
+      ],
+    });
+
+    expect(endpointSelected).toHaveLength(2);
+    expect(endpointSelected.find((row) => row.account_id === "auggie-2")?.active).toBe(false);
+    expect(endpointSelected.every((row) => row.can_delete === true)).toBe(true);
+
+    const subscriptionSelected = buildHarnessAuthRows({
+      provider_id: "auggie",
+      selected_source_kind: "subscription",
+      selected_endpoint_id: null,
+      endpoints: [],
+      codex_accounts: [],
+      codex_active_account_id: null,
+      claude_accounts: [],
+      claude_active_account_id: null,
+      gemini_accounts: [],
+      gemini_active_account_id: null,
+      kimi_accounts: [],
+      kimi_active_account_id: null,
+      copilot_accounts: [],
+      copilot_active_account_id: null,
+      kiro_accounts: [],
+      kiro_active_account_id: null,
+      cursor_active_account_id: null,
+      cursor_accounts: [],
+      auggie_active_account_id: "auggie-2",
+      auggie_accounts: [
+        { id: "auggie-1", label: "Auggie A", email: "auggie-a@example.com", created_at: "2026-01-01T00:00:00Z" },
+        { id: "auggie-2", label: "Auggie B", email: "auggie-b@example.com", created_at: "2026-01-01T00:00:00Z" },
+      ],
+    });
+
+    expect(subscriptionSelected.find((row) => row.account_id === "auggie-2")?.active).toBe(true);
+  });
 });

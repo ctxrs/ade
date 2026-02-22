@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   authenticateProviderForWorkspace,
+  deleteAuggieAccount,
   completeClaudeLogin,
   deleteAmpAccount,
   deleteClaudeAccount,
@@ -11,7 +12,9 @@ import {
   deleteKimiAccount,
   deleteKiroAccount,
   deleteProviderHarnessEndpoint,
+  getAuggieLogin,
   listAmpAccounts,
+  listAuggieAccounts,
   getAmpLogin,
   getClaudeLogin,
   getCopilotLogin,
@@ -36,10 +39,12 @@ import {
   setCodexActiveAccount,
   setCursorActiveAccount,
   setAmpActiveAccount,
+  setAuggieActiveAccount,
   setGeminiActiveAccount,
   setKimiActiveAccount,
   setKiroActiveAccount,
   startCodexLogin,
+  startAuggieLogin,
   startAmpLogin,
   startClaudeLogin,
   startCopilotLogin,
@@ -55,6 +60,7 @@ import {
   type CodexAccountsResponse,
   type CursorAccountsResponse,
   type AmpAccountsResponse,
+  type AuggieAccountsResponse,
   type GeminiAccountsResponse,
   type HarnessEndpointRecord,
   type HarnessProviderSourceConfig,
@@ -109,6 +115,8 @@ type HarnessAuthenticationController = {
   cursorAccountsBusy: boolean;
   ampAccounts: AmpAccountsResponse | null;
   ampAccountsBusy: boolean;
+  auggieAccounts: AuggieAccountsResponse | null;
+  auggieAccountsBusy: boolean;
   harnessAuthModal: HarnessAuthModalState | null;
   openHarnessAuthModal: (providerId: string) => void;
   closeHarnessAuthModal: () => void;
@@ -126,6 +134,7 @@ type HarnessAuthenticationController = {
   onKiroDelete: (accountId: string) => Promise<void>;
   onCursorDelete: (accountId: string) => Promise<void>;
   onAmpDelete: (accountId: string) => Promise<void>;
+  onAuggieDelete: (accountId: string) => Promise<void>;
   providerError: string | null;
   supportsHarnessEndpointConfig: (providerId: string) => boolean;
   harnessEndpointRequiresBaseUrl: (providerId: string) => boolean;
@@ -193,6 +202,8 @@ const AMP_LOGIN_POLL_ATTEMPTS = 90;
 const AMP_LOGIN_POLL_INTERVAL_MS = 1600;
 const COPILOT_LOGIN_POLL_ATTEMPTS = 90;
 const COPILOT_LOGIN_POLL_INTERVAL_MS = 1600;
+const AUGGIE_LOGIN_POLL_ATTEMPTS = 90;
+const AUGGIE_LOGIN_POLL_INTERVAL_MS = 1600;
 
 export const shouldSkipDuplicateAmpLoginStart = (params: {
   providerId: string;
@@ -341,6 +352,8 @@ export function useHarnessAuthenticationController({
   const [cursorAccountsBusy, setCursorAccountsBusy] = useState(false);
   const [ampAccounts, setAmpAccounts] = useState<AmpAccountsResponse | null>(null);
   const [ampAccountsBusy, setAmpAccountsBusy] = useState(false);
+  const [auggieAccounts, setAuggieAccounts] = useState<AuggieAccountsResponse | null>(null);
+  const [auggieAccountsBusy, setAuggieAccountsBusy] = useState(false);
 
   const installPollTimeoutsRef = useRef<Record<string, number>>({});
   const providerHarnessConfigRef = useRef<Record<string, HarnessProviderSourceConfig | undefined>>({});
@@ -415,6 +428,7 @@ export function useHarnessAuthenticationController({
     setKiroAccounts(bootstrap.kiro_accounts);
     setCursorAccounts(bootstrap.cursor_accounts);
     setAmpAccounts(bootstrap.amp_accounts);
+    setAuggieAccounts(bootstrap.auggie_accounts);
   }, []);
 
   const refreshProvidersBootstrapState = useCallback(async (opts?: { force?: boolean; silent?: boolean }) => {
@@ -597,6 +611,24 @@ export function useHarnessAuthenticationController({
       }
     }
   }, []);
+
+  const refreshAuggieAccounts = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) {
+      setAuggieAccountsBusy(true);
+    }
+    try {
+      const next = await listAuggieAccounts();
+      setAuggieAccounts(next);
+      return next;
+    } catch (error) {
+      setProviderError(messageFromError(error));
+      return null;
+    } finally {
+      if (!opts?.silent) {
+        setAuggieAccountsBusy(false);
+      }
+    }
+  }, []);
   const onDeleteProviderEndpoint = useCallback(async (providerId: string, endpointId: string) => {
     setProviderHarnessBusyForProvider(providerId, true);
     setProviderError(null);
@@ -693,6 +725,7 @@ export function useHarnessAuthenticationController({
       subscription_oauth_creds_json: "",
       subscription_google_accounts_json: "",
       subscription_device_code: null,
+      subscription_auth_url: null,
       subscription_status: null,
       subscription_busy: false,
       api_key_busy: false,
@@ -912,6 +945,33 @@ export function useHarnessAuthenticationController({
     return { status: "timeout" };
   }, []);
 
+  const waitForAuggieLoginOutcome = useCallback(async (
+    loginId: string,
+    onAuthUrl?: (authUrl: string) => Promise<void>,
+    opts?: { openedAuthUrl?: string | null },
+  ): Promise<{ status: "success" | "failed" | "timeout"; error?: string | null }> => {
+    const openedAuthUrls = new Set<string>();
+    takeNextAuthUrlToOpen(opts?.openedAuthUrl, openedAuthUrls);
+    for (let attempt = 0; attempt < AUGGIE_LOGIN_POLL_ATTEMPTS; attempt += 1) {
+      try {
+        const status = await getAuggieLogin(loginId);
+        const authUrl = takeNextAuthUrlToOpen(status.auth_url, openedAuthUrls);
+        if (authUrl && onAuthUrl) {
+          await onAuthUrl(authUrl);
+        }
+        if (status.status === "success") return { status: "success" };
+        if (status.status === "failed") return { status: "failed", error: status.error };
+        if (status.status === "timeout") return { status: "timeout", error: status.error };
+      } catch {
+        // continue polling
+      }
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, AUGGIE_LOGIN_POLL_INTERVAL_MS);
+      });
+    }
+    return { status: "timeout" };
+  }, []);
+
   const waitForKimiLoginOutcome = useCallback(async (
     loginId: string,
     onAuthUrl?: (authUrl: string) => Promise<void>,
@@ -1021,7 +1081,14 @@ export function useHarnessAuthenticationController({
     }
     let preserveClaudeBusyState = false;
     setHarnessAuthModal((prev) =>
-      prev ? { ...prev, subscription_busy: true, subscription_status: "Starting subscription flow..." } : prev);
+      prev
+        ? {
+            ...prev,
+            subscription_busy: true,
+            subscription_auth_url: null,
+            subscription_status: "Starting subscription flow...",
+          }
+        : prev);
     setProviderError(null);
     try {
       if (modal.provider_id === "codex") {
@@ -1153,13 +1220,20 @@ export function useHarnessAuthenticationController({
         const label = modal.subscription_label.trim();
         const openGeminiAuthUrl = async (authUrl: string): Promise<boolean> => {
           const opened = await openExternalLink(authUrl);
+          setHarnessAuthModal((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  subscription_auth_url: authUrl,
+                }
+              : prev);
           if (opened) return true;
           setHarnessAuthModal((prev) =>
             prev
               ? {
                   ...prev,
                   subscription_status:
-                    `Couldn't open browser automatically. Open this URL manually: ${authUrl}`,
+                    "Couldn't open browser automatically. Use the sign-in link below.",
                 }
               : prev);
           return false;
@@ -1175,8 +1249,9 @@ export function useHarnessAuthenticationController({
           prev
             ? {
                 ...prev,
+                subscription_auth_url: initialAuthUrl ?? prev.subscription_auth_url,
                 subscription_status: initialAuthUrl && !initialAuthOpened
-                  ? `Couldn't open browser automatically. Open this URL manually: ${initialAuthUrl}`
+                  ? "Couldn't open browser automatically. Use the sign-in link below."
                   : "Waiting for Google sign-in to complete in your browser...",
               }
             : prev);
@@ -1232,13 +1307,20 @@ export function useHarnessAuthenticationController({
         const label = modal.subscription_label.trim();
         const openAmpAuthUrl = async (authUrl: string): Promise<boolean> => {
           const opened = await openExternalLink(authUrl);
+          setHarnessAuthModal((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  subscription_auth_url: authUrl,
+                }
+              : prev);
           if (opened) return true;
           setHarnessAuthModal((prev) =>
             prev
               ? {
                   ...prev,
                   subscription_status:
-                    `Couldn't open browser automatically. Open this URL manually: ${authUrl}`,
+                    "Couldn't open browser automatically. Use the sign-in link below.",
                 }
               : prev);
           return false;
@@ -1254,8 +1336,9 @@ export function useHarnessAuthenticationController({
           prev
             ? {
                 ...prev,
+                subscription_auth_url: initialAuthUrl ?? prev.subscription_auth_url,
                 subscription_status: initialAuthUrl && !initialAuthOpened
-                  ? `Couldn't open browser automatically. Open this URL manually: ${initialAuthUrl}`
+                  ? "Couldn't open browser automatically. Use the sign-in link below."
                   : "Waiting for Amp sign-in to complete in your browser...",
               }
             : prev);
@@ -1287,6 +1370,93 @@ export function useHarnessAuthenticationController({
         if (outcome.status === "timeout") {
           const timeoutMessage =
             outcome.error?.trim() || "Timed out waiting for Amp sign-in completion. Retry.";
+          setHarnessAuthModal((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  subscription_status: timeoutMessage,
+                }
+              : prev);
+          return;
+        }
+        setHarnessAuthModal((prev) =>
+          prev
+            ? {
+                ...prev,
+                subscription_status:
+                  "Still waiting for completion. Keep this dialog open or retry.",
+              }
+            : prev);
+        return;
+      }
+
+      if (modal.provider_id === "auggie") {
+        const label = modal.subscription_label.trim();
+        const openAuggieAuthUrl = async (authUrl: string): Promise<boolean> => {
+          const opened = await openExternalLink(authUrl);
+          setHarnessAuthModal((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  subscription_auth_url: authUrl,
+                }
+              : prev);
+          if (opened) return true;
+          setHarnessAuthModal((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  subscription_status:
+                    "Couldn't open browser automatically. Use the sign-in link below.",
+                }
+              : prev);
+          return false;
+        };
+
+        const login = await startAuggieLogin(label ? label : undefined);
+        const initialAuthUrl = takeNextAuthUrlToOpen(login.auth_url, new Set<string>());
+        let initialAuthOpened = false;
+        if (initialAuthUrl) {
+          initialAuthOpened = await openAuggieAuthUrl(initialAuthUrl);
+        }
+        setHarnessAuthModal((prev) =>
+          prev
+            ? {
+                ...prev,
+                subscription_auth_url: initialAuthUrl ?? prev.subscription_auth_url,
+                subscription_status: initialAuthUrl && !initialAuthOpened
+                  ? "Couldn't open browser automatically. Use the sign-in link below."
+                  : "Waiting for Auggie sign-in to complete in your browser...",
+              }
+            : prev);
+        const outcome = await waitForAuggieLoginOutcome(login.login_id, async (authUrl) => {
+          await openAuggieAuthUrl(authUrl);
+        }, {
+          openedAuthUrl: initialAuthUrl,
+        });
+        if (outcome.status === "success") {
+          await refreshAuggieAccounts();
+          await onSelectProviderSource("auggie", "subscription", null);
+          closeHarnessAuthModal();
+          return;
+        }
+        if (outcome.error && outcome.error.trim()) {
+          setProviderError(outcome.error);
+        }
+        if (outcome.status === "failed") {
+          const failureMessage = outcome.error?.trim() || "Sign-in failed. Retry.";
+          setHarnessAuthModal((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  subscription_status: failureMessage,
+                }
+              : prev);
+          return;
+        }
+        if (outcome.status === "timeout") {
+          const timeoutMessage =
+            outcome.error?.trim() || "Timed out waiting for Auggie sign-in completion. Retry.";
           setHarnessAuthModal((prev) =>
             prev
               ? {
@@ -1499,6 +1669,7 @@ export function useHarnessAuthenticationController({
     closeHarnessAuthModal,
     harnessAuthModal,
     openCodexAuthUrl,
+    refreshAuggieAccounts,
     refreshAmpAccounts,
     onSelectProviderSource,
     refreshClaudeAccounts,
@@ -1508,6 +1679,7 @@ export function useHarnessAuthenticationController({
     refreshKimiAccounts,
     selectSubscriptionSourceIfSupported,
     waitForAmpLoginOutcome,
+    waitForAuggieLoginOutcome,
     waitForClaudeLoginOutcome,
     waitForCopilotLoginOutcome,
     waitForCodexLoginOutcome,
@@ -1738,6 +1910,34 @@ export function useHarnessAuthenticationController({
     }
   }, []);
 
+  const onAuggieDelete = useCallback(async (accountId: string) => {
+    setAuggieAccountsBusy(true);
+    setProviderError(null);
+    try {
+      const next = await deleteAuggieAccount(accountId);
+      setAuggieAccounts(next);
+      await refreshBootstrapAfterMutation();
+    } catch (error) {
+      setProviderError(messageFromError(error));
+    } finally {
+      setAuggieAccountsBusy(false);
+    }
+  }, [refreshBootstrapAfterMutation]);
+
+  const onAuggieSetActive = useCallback(async (accountId: string | null) => {
+    setAuggieAccountsBusy(true);
+    setProviderError(null);
+    try {
+      const next = await setAuggieActiveAccount(accountId);
+      setAuggieAccounts(next);
+      await refreshBootstrapAfterMutation();
+    } catch (error) {
+      setProviderError(messageFromError(error));
+    } finally {
+      setAuggieAccountsBusy(false);
+    }
+  }, [refreshBootstrapAfterMutation]);
+
   const onSelectHarnessAuthRow = useCallback(async (providerId: string, row: HarnessAuthRow) => {
     try {
       if (!row.selectable) return;
@@ -1761,6 +1961,8 @@ export function useHarnessAuthenticationController({
         await onCursorSetActive(row.account_id);
       } else if (providerId === "amp" && row.account_id) {
         await onAmpSetActive(row.account_id);
+      } else if (providerId === "auggie" && row.account_id) {
+        await onAuggieSetActive(row.account_id);
       }
       if (supportsHarnessEndpointConfig(providerId)) {
         await onSelectProviderSource(providerId, "subscription", null);
@@ -1777,6 +1979,7 @@ export function useHarnessAuthenticationController({
     onKiroSetActive,
     onCursorSetActive,
     onAmpSetActive,
+    onAuggieSetActive,
     onSelectProviderSource,
     supportsHarnessEndpointConfig,
   ]);
@@ -1953,6 +2156,8 @@ export function useHarnessAuthenticationController({
     cursorAccountsBusy,
     ampAccounts,
     ampAccountsBusy,
+    auggieAccounts,
+    auggieAccountsBusy,
     harnessAuthModal,
     openHarnessAuthModal,
     closeHarnessAuthModal,
@@ -1970,6 +2175,7 @@ export function useHarnessAuthenticationController({
     onKiroDelete,
     onCursorDelete,
     onAmpDelete,
+    onAuggieDelete,
     providerError,
     supportsHarnessEndpointConfig,
     harnessEndpointRequiresBaseUrl,

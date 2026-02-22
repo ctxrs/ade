@@ -1336,6 +1336,14 @@ fn extract_auth_url_from_stderr_line(line: &str) -> Option<String> {
 
 fn extract_auth_error_from_stderr_line(line: &str) -> Option<String> {
     let lowered = line.to_ascii_lowercase();
+    if lowered.contains("auggie does not currently support authenticating over acp")
+        || lowered.contains("please run `auggie login` from your terminal then try again")
+    {
+        return Some(
+            "Auggie does not currently support ACP authentication in this environment. Run `auggie login` via the fallback flow."
+                .to_string(),
+        );
+    }
     if lowered.contains("interactive consent could not be obtained")
         || lowered.contains("please run gemini cli in an interactive terminal to authenticate")
     {
@@ -2445,6 +2453,17 @@ mod tests {
         assert_eq!(
             extract_auth_error_from_stderr_line(line).as_deref(),
             Some("Gemini CLI could not obtain interactive OAuth consent in this environment.")
+        );
+    }
+
+    #[test]
+    fn extract_auth_error_from_stderr_line_detects_auggie_acp_auth_unsupported() {
+        let line = "message: 'Authentication required: Auggie does not currently support authenticating over ACP. Please run `auggie login` from your terminal then try again.'";
+        assert_eq!(
+            extract_auth_error_from_stderr_line(line).as_deref(),
+            Some(
+                "Auggie does not currently support ACP authentication in this environment. Run `auggie login` via the fallback flow."
+            )
         );
     }
 

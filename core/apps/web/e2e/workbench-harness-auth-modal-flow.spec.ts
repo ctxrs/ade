@@ -78,6 +78,8 @@ test("workbench: unauthed harness opens auth modal and API key flow readies harn
         copilot_accounts: { active_account_id: null, accounts: [], logins: [] },
         kiro_accounts: { active_account_id: null, accounts: [] },
         cursor_accounts: cursorAccounts,
+        amp_accounts: { active_account_id: null, accounts: [] },
+        auggie_accounts: { active_account_id: null, accounts: [] },
       }),
     });
   });

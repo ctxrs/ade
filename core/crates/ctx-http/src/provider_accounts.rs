@@ -14,6 +14,7 @@ const KIMI_SECRET_VERSION: u32 = 1;
 const COPILOT_SECRET_VERSION: u32 = 1;
 const KIRO_SECRET_VERSION: u32 = 1;
 const CURSOR_SECRET_VERSION: u32 = 1;
+const AUGGIE_SECRET_VERSION: u32 = 1;
 const CODEX_RUNTIME_OWNER_FILE: &str = ".ctx-active-account-id";
 pub const CODEX_CREDENTIAL_KIND_OAUTH: &str = "oauth";
 pub const CODEX_CREDENTIAL_KIND_API_KEY: &str = "api_key";
@@ -24,6 +25,7 @@ pub const COPILOT_CREDENTIAL_KIND_GH_TOKEN: &str = "gh-token";
 pub const KIRO_CREDENTIAL_KIND_AUTH_TOKEN_JSON: &str = "auth-token-json";
 pub const CURSOR_CREDENTIAL_KIND_API_KEY: &str = "api-key";
 pub const AMP_CREDENTIAL_KIND_BROWSER_OAUTH: &str = "browser-oauth";
+pub const AUGGIE_CREDENTIAL_KIND_BROWSER_OAUTH: &str = "browser-oauth";
 pub const GEMINI_AUTH_SELECTED_TYPE_OAUTH_PERSONAL: &str = "oauth-personal";
 pub const GEMINI_FORCE_FILE_STORAGE_ENV: &str = "GEMINI_FORCE_FILE_STORAGE";
 pub const KIMI_SHARE_DIR_ENV: &str = "KIMI_SHARE_DIR";
@@ -31,6 +33,10 @@ pub const CODEX_API_SHAPE_OPENAI_RESPONSES: &str = "openai_responses";
 pub const CODEX_AUTH_TYPE_BEARER: &str = "bearer";
 pub const CODEX_DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 pub const KIRO_AUTH_TOKEN_RELATIVE_PATH: &str = ".aws/sso/cache/kiro-auth-token.json";
+pub const AUGGIE_SESSION_AUTH_ENV: &str = "AUGMENT_SESSION_AUTH";
+pub const AUGGIE_API_TOKEN_ENV: &str = "AUGMENT_API_TOKEN";
+pub const AUGGIE_API_URL_ENV: &str = "AUGMENT_API_URL";
+pub const AUGGIE_SESSION_RELATIVE_PATH: &str = ".augment/session.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CodexSecretEnvelope {
@@ -80,6 +86,12 @@ struct CursorSecretEnvelope {
     api_key: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AuggieSecretEnvelope {
+    version: u32,
+    session_auth: serde_json::Value,
+}
+
 fn default_codex_credential_kind() -> String {
     CODEX_CREDENTIAL_KIND_OAUTH.to_string()
 }
@@ -110,6 +122,10 @@ fn default_cursor_credential_kind() -> String {
 
 fn default_amp_credential_kind() -> String {
     AMP_CREDENTIAL_KIND_BROWSER_OAUTH.to_string()
+}
+
+fn default_auggie_credential_kind() -> String {
+    AUGGIE_CREDENTIAL_KIND_BROWSER_OAUTH.to_string()
 }
 
 fn default_codex_api_shape() -> String {
@@ -336,6 +352,29 @@ pub struct AmpAccountRegistry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuggieAccountEntry {
+    pub id: String,
+    pub label: String,
+    #[serde(default = "default_auggie_credential_kind")]
+    pub kind: String,
+    #[serde(default)]
+    pub email: Option<String>,
+    pub created_at: DateTime<Utc>,
+    #[serde(default)]
+    pub last_used_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub secret_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AuggieAccountRegistry {
+    #[serde(default)]
+    pub active_account_id: Option<String>,
+    #[serde(default)]
+    pub accounts: Vec<AuggieAccountEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodexLoginStatus {
     pub account_id: String,
     pub auth_url: String,
@@ -407,6 +446,18 @@ pub struct CopilotLoginStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuggieLoginStatus {
+    pub login_id: String,
+    #[serde(default)]
+    pub auth_url: Option<String>,
+    pub status: String,
+    #[serde(default)]
+    pub account_id: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodexHostImportProbe {
     pub available: bool,
     #[serde(default)]
@@ -452,6 +503,10 @@ pub fn amp_accounts_root(data_root: &Path) -> PathBuf {
     data_root.join("providers").join("amp").join("accounts")
 }
 
+pub fn auggie_accounts_root(data_root: &Path) -> PathBuf {
+    data_root.join("providers").join("auggie").join("accounts")
+}
+
 pub fn codex_secrets_root(data_root: &Path) -> PathBuf {
     data_root.join("secrets").join("codex")
 }
@@ -480,6 +535,10 @@ pub fn cursor_secrets_root(data_root: &Path) -> PathBuf {
     data_root.join("secrets").join("cursor")
 }
 
+pub fn auggie_secrets_root(data_root: &Path) -> PathBuf {
+    data_root.join("secrets").join("auggie")
+}
+
 fn codex_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf {
     codex_secrets_root(data_root).join(secret_ref)
 }
@@ -506,6 +565,10 @@ fn kiro_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf {
 
 fn cursor_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf {
     cursor_secrets_root(data_root).join(secret_ref)
+}
+
+fn auggie_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf {
+    auggie_secrets_root(data_root).join(secret_ref)
 }
 
 pub fn codex_runtime_home(data_root: &Path) -> PathBuf {
@@ -548,6 +611,10 @@ pub fn amp_registry_path(data_root: &Path) -> PathBuf {
     amp_accounts_root(data_root).join("index.json")
 }
 
+pub fn auggie_registry_path(data_root: &Path) -> PathBuf {
+    auggie_accounts_root(data_root).join("index.json")
+}
+
 pub fn amp_runtime_home(data_root: &Path) -> PathBuf {
     data_root.join("providers").join("amp").join("home")
 }
@@ -578,6 +645,10 @@ pub fn kiro_account_home(data_root: &Path, account_id: &str) -> PathBuf {
 
 pub fn cursor_account_home(data_root: &Path, account_id: &str) -> PathBuf {
     cursor_accounts_root(data_root).join(account_id)
+}
+
+pub fn auggie_account_home(data_root: &Path, account_id: &str) -> PathBuf {
+    auggie_accounts_root(data_root).join(account_id)
 }
 
 fn ensure_safe_account_id(account_id: &str) -> Result<()> {
@@ -787,6 +858,27 @@ pub async fn load_amp_registry(data_root: &Path) -> AmpAccountRegistry {
 
 pub async fn save_amp_registry(data_root: &Path, registry: &AmpAccountRegistry) -> Result<()> {
     let path = amp_registry_path(data_root);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let payload = serde_json::to_vec_pretty(registry)?;
+    tokio::fs::write(path, payload).await?;
+    Ok(())
+}
+
+pub async fn load_auggie_registry(data_root: &Path) -> AuggieAccountRegistry {
+    let path = auggie_registry_path(data_root);
+    match tokio::fs::read_to_string(&path).await {
+        Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+        Err(_) => AuggieAccountRegistry::default(),
+    }
+}
+
+pub async fn save_auggie_registry(
+    data_root: &Path,
+    registry: &AuggieAccountRegistry,
+) -> Result<()> {
+    let path = auggie_registry_path(data_root);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
@@ -2552,6 +2644,267 @@ pub async fn ensure_amp_registry_from_runtime_auth(data_root: &Path) -> Result<A
     upsert_amp_account(data_root, Some("Amp Imported Session".to_string()), None).await
 }
 
+fn extract_auggie_field(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| {
+        value
+            .get(*key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(ToString::to_string)
+    })
+}
+
+fn auggie_env_for_account(
+    data_root: &Path,
+    account_id: &str,
+    secret: &AuggieSecretEnvelope,
+) -> HashMap<String, String> {
+    let mut env = HashMap::new();
+    let home = auggie_account_home(data_root, account_id);
+    env.insert("HOME".to_string(), home.to_string_lossy().to_string());
+    env.insert(
+        "XDG_CONFIG_HOME".to_string(),
+        home.join(".config").to_string_lossy().to_string(),
+    );
+    env.insert(
+        "XDG_CACHE_HOME".to_string(),
+        home.join(".cache").to_string_lossy().to_string(),
+    );
+    if let Ok(session_json) = serde_json::to_string(&secret.session_auth) {
+        env.insert(AUGGIE_SESSION_AUTH_ENV.to_string(), session_json);
+    }
+    if let Some(api_token) = extract_auggie_field(
+        &secret.session_auth,
+        &[
+            "accessToken",
+            "access_token",
+            "apiToken",
+            "api_token",
+            "token",
+        ],
+    ) {
+        env.insert(AUGGIE_API_TOKEN_ENV.to_string(), api_token);
+    }
+    if let Some(api_url) = extract_auggie_field(
+        &secret.session_auth,
+        &["tenantURL", "tenant_url", "api_url"],
+    ) {
+        env.insert(AUGGIE_API_URL_ENV.to_string(), api_url);
+    }
+    env
+}
+
+async fn write_auggie_secret_for_account(
+    data_root: &Path,
+    account_id: &str,
+    session_auth_json: &str,
+) -> Result<String> {
+    let session_auth = parse_required_json_object(session_auth_json, "session_auth_json")?;
+    let secret_ref = format!("{account_id}.json");
+    let path = auggie_secret_path(data_root, &secret_ref);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let envelope = AuggieSecretEnvelope {
+        version: AUGGIE_SECRET_VERSION,
+        session_auth,
+    };
+    write_secure_file_atomic(&path, &serde_json::to_vec_pretty(&envelope)?).await?;
+    Ok(secret_ref)
+}
+
+async fn read_auggie_secret_for_ref(
+    data_root: &Path,
+    secret_ref: &str,
+) -> Result<AuggieSecretEnvelope> {
+    let path = auggie_secret_path(data_root, secret_ref);
+    let payload = tokio::fs::read_to_string(&path)
+        .await
+        .with_context(|| format!("reading auggie secret {}", path.display()))?;
+    let parsed: AuggieSecretEnvelope = serde_json::from_str(&payload)
+        .with_context(|| format!("invalid auggie secret {}", path.display()))?;
+    if parsed.version != AUGGIE_SECRET_VERSION {
+        bail!(
+            "unsupported auggie secret version {} at {}",
+            parsed.version,
+            path.display()
+        );
+    }
+    if !parsed.session_auth.is_object() {
+        bail!("auggie session_auth must be a JSON object");
+    }
+    Ok(parsed)
+}
+
+async fn ensure_auggie_account_home(
+    data_root: &Path,
+    account_id: &str,
+    secret: &AuggieSecretEnvelope,
+) -> Result<PathBuf> {
+    let home = auggie_account_home(data_root, account_id);
+    let augment_dir = home.join(".augment");
+    tokio::fs::create_dir_all(&augment_dir).await?;
+    tokio::fs::create_dir_all(home.join(".config")).await?;
+    tokio::fs::create_dir_all(home.join(".cache")).await?;
+    let session_path = home.join(AUGGIE_SESSION_RELATIVE_PATH);
+    write_secure_file_atomic(
+        &session_path,
+        &serde_json::to_vec_pretty(&secret.session_auth)?,
+    )
+    .await?;
+    Ok(home)
+}
+
+pub async fn add_auggie_account(
+    data_root: &Path,
+    label: Option<String>,
+    session_auth_json: String,
+    email: Option<String>,
+) -> Result<AuggieAccountRegistry> {
+    let session_auth = parse_required_json_object(&session_auth_json, "session_auth_json")?;
+    let mut registry = load_auggie_registry(data_root).await;
+    let mut existing_account_id: Option<String> = None;
+
+    for existing in &registry.accounts {
+        let Some(secret_ref) = existing.secret_ref.as_deref() else {
+            continue;
+        };
+        if let Ok(existing_secret) = read_auggie_secret_for_ref(data_root, secret_ref).await {
+            if existing_secret.session_auth == session_auth {
+                existing_account_id = Some(existing.id.clone());
+                break;
+            }
+        }
+    }
+
+    if let Some(account_id) = existing_account_id {
+        if let Some(entry) = registry
+            .accounts
+            .iter_mut()
+            .find(|entry| entry.id == account_id)
+        {
+            apply_label_update(label.clone(), &mut entry.label);
+            apply_email_update(email.clone(), &mut entry.email);
+            entry.last_used_at = Some(Utc::now());
+        }
+        registry.active_account_id = Some(account_id);
+        save_auggie_registry(data_root, &registry).await?;
+        return Ok(registry);
+    }
+
+    let account_id = uuid::Uuid::new_v4().to_string();
+    let secret_ref =
+        write_auggie_secret_for_account(data_root, &account_id, &session_auth_json).await?;
+    let entry = AuggieAccountEntry {
+        id: account_id.clone(),
+        label: normalize_auggie_label(label, &account_id),
+        kind: AUGGIE_CREDENTIAL_KIND_BROWSER_OAUTH.to_string(),
+        email: normalize_optional_email(email),
+        created_at: Utc::now(),
+        last_used_at: Some(Utc::now()),
+        secret_ref: Some(secret_ref),
+    };
+    registry.accounts.push(entry);
+    registry.active_account_id = Some(account_id);
+    save_auggie_registry(data_root, &registry).await?;
+    Ok(registry)
+}
+
+pub async fn set_active_auggie_account(
+    data_root: &Path,
+    account_id: Option<String>,
+) -> Result<AuggieAccountRegistry> {
+    let mut registry = load_auggie_registry(data_root).await;
+    if let Some(active_id) = account_id.as_deref() {
+        let Some(entry) = registry.accounts.iter().find(|a| a.id == active_id) else {
+            bail!("unknown account");
+        };
+        if entry.secret_ref.as_deref().is_none() {
+            bail!("active account has no secret");
+        }
+    }
+    registry.active_account_id = account_id.clone();
+    if let Some(active_id) = account_id {
+        let now = Utc::now();
+        if let Some(entry) = registry.accounts.iter_mut().find(|a| a.id == active_id) {
+            entry.last_used_at = Some(now);
+        }
+    }
+    save_auggie_registry(data_root, &registry).await?;
+    Ok(registry)
+}
+
+pub async fn remove_auggie_account(
+    data_root: &Path,
+    account_id: &str,
+) -> Result<AuggieAccountRegistry> {
+    ensure_safe_account_id(account_id)?;
+    let mut registry = load_auggie_registry(data_root).await;
+    let was_active = registry.active_account_id.as_deref() == Some(account_id);
+    let removed: Vec<AuggieAccountEntry> = registry
+        .accounts
+        .iter()
+        .filter(|a| a.id == account_id)
+        .cloned()
+        .collect();
+    registry.accounts.retain(|a| a.id != account_id);
+    if was_active {
+        registry.active_account_id = None;
+    }
+    save_auggie_registry(data_root, &registry).await?;
+
+    for entry in removed {
+        if let Some(secret_ref) = entry.secret_ref {
+            let secret_path = auggie_secret_path(data_root, &secret_ref);
+            if secret_path.exists() {
+                let _ = tokio::fs::remove_file(secret_path).await;
+            }
+        }
+    }
+
+    let account_home = auggie_account_home(data_root, account_id);
+    if account_home.exists() {
+        tokio::fs::remove_dir_all(account_home).await?;
+    }
+    remove_projected_account_home_for_runtime_roots(
+        data_root,
+        account_id,
+        auggie_account_home,
+        "auggie",
+    )
+    .await?;
+    Ok(registry)
+}
+
+pub async fn auggie_env_for_active_account(data_root: &Path) -> Result<HashMap<String, String>> {
+    let registry = load_auggie_registry(data_root).await;
+    let Some(active) = registry
+        .active_account_id
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    else {
+        return Ok(HashMap::new());
+    };
+    let Some(entry) = registry.accounts.iter().find(|a| a.id == active) else {
+        return Ok(HashMap::new());
+    };
+    let Some(secret_ref) = entry.secret_ref.as_deref() else {
+        bail!("active auggie account has no secret reference");
+    };
+    let secret = read_auggie_secret_for_ref(data_root, secret_ref).await?;
+    let _ = ensure_auggie_account_home(data_root, active, &secret).await?;
+    Ok(auggie_env_for_account(data_root, active, &secret))
+}
+
+pub fn normalize_auggie_label(label: Option<String>, account_id: &str) -> String {
+    label
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("Auggie Account {account_id}"))
+}
+
 pub async fn codex_env_for_runtime_home(state_root: &Path) -> Result<HashMap<String, String>> {
     let runtime_home = codex_runtime_home(state_root);
     tokio::fs::create_dir_all(&runtime_home).await?;
@@ -3128,6 +3481,7 @@ pub async fn subscription_env_for_active_account(
         "kiro" => kiro_env_for_active_account(data_root).await,
         "cursor" => cursor_env_for_active_account(data_root).await,
         "amp" => amp_env_for_active_account(data_root).await,
+        "auggie" => auggie_env_for_active_account(data_root).await,
         _ => Ok(HashMap::new()),
     }
 }
@@ -3259,6 +3613,26 @@ pub async fn subscription_env_for_active_account_with_runtime_root(
             }
             let home = ensure_amp_runtime_home(runtime_root).await?;
             Ok(amp_env_for_home(&home))
+        }
+        "auggie" => {
+            let registry = load_auggie_registry(data_root).await;
+            let Some(active) = registry
+                .active_account_id
+                .as_deref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+            else {
+                return Ok(HashMap::new());
+            };
+            let Some(entry) = registry.accounts.iter().find(|a| a.id == active) else {
+                return Ok(HashMap::new());
+            };
+            let Some(secret_ref) = entry.secret_ref.as_deref() else {
+                bail!("active auggie account has no secret reference");
+            };
+            let secret = read_auggie_secret_for_ref(data_root, secret_ref).await?;
+            let _ = ensure_auggie_account_home(runtime_root, active, &secret).await?;
+            Ok(auggie_env_for_account(runtime_root, active, &secret))
         }
         _ => Ok(HashMap::new()),
     }
@@ -4579,6 +4953,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn auggie_active_account_projects_session_auth_env() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let registry = add_auggie_account(
+            root,
+            Some("Auggie Test".to_string()),
+            r#"{"accessToken":"aug-token","tenantURL":"https://tenant.augmentcode.com"}"#
+                .to_string(),
+            Some("auggie@example.com".to_string()),
+        )
+        .await
+        .unwrap();
+        let active_id = registry.active_account_id.clone().expect("active account");
+
+        let env = auggie_env_for_active_account(root).await.unwrap();
+        let home = PathBuf::from(env.get("HOME").expect("HOME should be set"));
+        assert!(home.starts_with(root));
+        assert_eq!(
+            env.get(AUGGIE_API_TOKEN_ENV),
+            Some(&"aug-token".to_string())
+        );
+        assert_eq!(
+            env.get(AUGGIE_API_URL_ENV),
+            Some(&"https://tenant.augmentcode.com".to_string())
+        );
+        assert!(env.contains_key(AUGGIE_SESSION_AUTH_ENV));
+        assert!(home.join(AUGGIE_SESSION_RELATIVE_PATH).exists());
+        assert!(registry.accounts.iter().any(|entry| entry.id == active_id));
+    }
+
+    #[tokio::test]
+    async fn deleting_active_auggie_account_clears_projection() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let registry = add_auggie_account(
+            root,
+            Some("Auggie Test".to_string()),
+            r#"{"accessToken":"aug-token"}"#.to_string(),
+            None,
+        )
+        .await
+        .unwrap();
+        let active_id = registry.active_account_id.clone().expect("active account");
+        let _ = remove_auggie_account(root, &active_id).await.unwrap();
+        let env = auggie_env_for_active_account(root).await.unwrap();
+        assert!(env.is_empty());
+        assert!(!auggie_account_home(root, &active_id).exists());
+    }
+
+    #[tokio::test]
     async fn subscription_env_dispatches_to_supported_providers() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
@@ -4639,6 +5063,14 @@ mod tests {
         )
         .await
         .unwrap();
+        let _ = add_auggie_account(
+            root,
+            Some("Auggie".to_string()),
+            r#"{"accessToken":"aug-token"}"#.to_string(),
+            None,
+        )
+        .await
+        .unwrap();
 
         let claude_env = subscription_env_for_active_account(root, "claude-crp")
             .await
@@ -4670,6 +5102,10 @@ mod tests {
             .await
             .unwrap();
         assert!(amp_env.contains_key("HOME"));
+        let auggie_env = subscription_env_for_active_account(root, "auggie")
+            .await
+            .unwrap();
+        assert!(auggie_env.contains_key(AUGGIE_SESSION_AUTH_ENV));
         let unknown_env = subscription_env_for_active_account(root, "unknown")
             .await
             .unwrap();
@@ -4732,6 +5168,14 @@ mod tests {
         )
         .await
         .unwrap();
+        let _ = add_auggie_account(
+            root,
+            Some("Auggie".to_string()),
+            r#"{"accessToken":"aug-token"}"#.to_string(),
+            None,
+        )
+        .await
+        .unwrap();
 
         let claude_env =
             subscription_env_for_active_account_with_runtime_root(root, runtime_root, "claude-crp")
@@ -4785,5 +5229,13 @@ mod tests {
         assert!(amp_config.starts_with(runtime_root));
         let amp_cache = PathBuf::from(amp_env.get("XDG_CACHE_HOME").unwrap());
         assert!(amp_cache.starts_with(runtime_root));
+
+        let auggie_env =
+            subscription_env_for_active_account_with_runtime_root(root, runtime_root, "auggie")
+                .await
+                .unwrap();
+        let auggie_home = PathBuf::from(auggie_env.get("HOME").unwrap());
+        assert!(auggie_home.starts_with(runtime_root));
+        assert!(auggie_env.contains_key(AUGGIE_SESSION_AUTH_ENV));
     }
 }

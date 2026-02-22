@@ -803,6 +803,14 @@
   background: var(--surface-subtle);
 }
 
+.settings-harness-modal-auth-link {
+  display: inline-block;
+  margin-top: 6px;
+  color: var(--link);
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}
+
 .settings-harness-modal-fields {
   display: grid;
   gap: 10px;

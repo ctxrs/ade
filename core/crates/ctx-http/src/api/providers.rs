@@ -19,6 +19,7 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::{mpsc, oneshot};
 use url::Url;
+use which::which;
 
 use super::errors::ApiErrorResp;
 use crate::daemon::{normalize_acp_provider_command, AppState};
@@ -258,12 +259,19 @@ pub(super) struct ProvidersBootstrapResponse {
     kiro_accounts: KiroAccountsResponse,
     cursor_accounts: CursorAccountsResponse,
     amp_accounts: AmpAccountsResponse,
+    auggie_accounts: AuggieAccountsResponse,
 }
 
 #[derive(Debug, Serialize)]
 pub(super) struct AmpAccountsResponse {
     active_account_id: Option<String>,
     accounts: Vec<provider_accounts::AmpAccountEntry>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct AuggieAccountsResponse {
+    active_account_id: Option<String>,
+    accounts: Vec<provider_accounts::AuggieAccountEntry>,
 }
 
 #[derive(Debug, Serialize)]
@@ -381,6 +389,18 @@ pub(super) struct KimiLoginStartResp {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct AuggieLoginStartReq {
+    label: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct AuggieLoginStartResp {
+    login_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auth_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct GeminiActiveAccountReq {
     account_id: Option<String>,
 }
@@ -455,6 +475,11 @@ pub(super) struct CursorActiveAccountReq {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct AmpActiveAccountReq {
+    account_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct AuggieActiveAccountReq {
     account_id: Option<String>,
 }
 
@@ -538,6 +563,8 @@ const AMP_LOGIN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(300);
 const AMP_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
 const COPILOT_LOGIN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(600);
 const COPILOT_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
+const AUGGIE_LOGIN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(300);
+const AUGGIE_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
 const AMP_BROWSER_AUTH_METHOD_ID: &str = "amp_browser_login";
 const CLAUDE_LOGIN_NO_AUTH_URL_TIMEOUT: Duration = Duration::from_secs(8);
 const CLAUDE_LOGIN_URL_SETTLE_WAIT: Duration = Duration::from_millis(500);
@@ -857,6 +884,22 @@ fn copilot_login_browser() -> String {
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "none".to_string())
+}
+
+fn auggie_login_timeout() -> Duration {
+    let seconds = std::env::var("CTX_AUGGIE_LOGIN_TIMEOUT_SECS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(AUGGIE_LOGIN_TIMEOUT_DEFAULT.as_secs());
+    Duration::from_secs(seconds)
+}
+
+fn should_try_auggie_cli_fallback_for_error(message: &str) -> bool {
+    let lowered = message.to_ascii_lowercase();
+    lowered.contains("auggie does not currently support acp authentication")
+        || lowered.contains("auggie does not currently support authenticating over acp")
+        || lowered.contains("please run `auggie login`")
 }
 
 fn first_email_from_google_accounts(value: &serde_json::Value) -> Option<String> {
@@ -1287,6 +1330,14 @@ async fn amp_accounts_response(state: &Arc<AppState>) -> anyhow::Result<AmpAccou
     })
 }
 
+async fn auggie_accounts_response(state: &Arc<AppState>) -> AuggieAccountsResponse {
+    let registry = provider_accounts::load_auggie_registry(&state.core.data_root).await;
+    AuggieAccountsResponse {
+        active_account_id: registry.active_account_id,
+        accounts: registry.accounts,
+    }
+}
+
 async fn restart_provider_for_auth_change(state: &Arc<AppState>, provider_id: &str, reason: &str) {
     let adapters = {
         let map = state.providers.adapters.lock().await;
@@ -1319,6 +1370,10 @@ async fn restart_gemini_providers_for_auth_change(state: &Arc<AppState>, reason:
 
 async fn restart_amp_providers_for_auth_change(state: &Arc<AppState>, reason: &str) {
     restart_provider_for_auth_change(state, "amp", reason).await;
+}
+
+async fn restart_auggie_providers_for_auth_change(state: &Arc<AppState>, reason: &str) {
+    restart_provider_for_auth_change(state, "auggie", reason).await;
 }
 
 async fn restart_kimi_providers_for_auth_change(state: &Arc<AppState>, reason: &str) {
@@ -2715,6 +2770,606 @@ pub(super) async fn get_amp_login(
     Ok(Json(status))
 }
 
+fn auggie_login_home(data_root: &StdPath, login_id: &str) -> PathBuf {
+    data_root
+        .join("providers")
+        .join("auggie")
+        .join("login-sessions")
+        .join(login_id)
+}
+
+enum AuggieCliLoginFallbackResult {
+    Completed,
+    Failed(String),
+    NotAvailable,
+}
+
+async fn try_auggie_cli_login_fallback(
+    state: &Arc<AppState>,
+    login_id: &str,
+    label: Option<String>,
+    observed_email: Option<String>,
+    login_home: &StdPath,
+    auggie_home: &StdPath,
+) -> AuggieCliLoginFallbackResult {
+    let cfg = match installer::load_agent_server_config(&state.core.data_root).await {
+        Ok(value) => value,
+        Err(_) => return AuggieCliLoginFallbackResult::NotAvailable,
+    };
+    let runtime = match installer::resolve_runtime_provider_command(&cfg, "auggie") {
+        Ok(Some(value)) => value,
+        Ok(None) => return AuggieCliLoginFallbackResult::NotAvailable,
+        Err(_) => return AuggieCliLoginFallbackResult::NotAvailable,
+    };
+
+    let command_file_name = StdPath::new(&runtime.command_abs_path)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    let using_bundle_wrapper = command_file_name.eq_ignore_ascii_case("auggie-acp.sh");
+    let resolved_login_command = if using_bundle_wrapper {
+        if let Ok(raw) = std::env::var("CTX_ACP_AUGGIE_COMMAND") {
+            let trimmed = raw.trim();
+            if !trimmed.is_empty() {
+                trimmed.to_string()
+            } else {
+                match which("auggie") {
+                    Ok(path) => path.to_string_lossy().to_string(),
+                    Err(_) => {
+                        return AuggieCliLoginFallbackResult::Failed(
+                            "Auggie CLI fallback requires an `auggie` binary on PATH (or CTX_ACP_AUGGIE_COMMAND).".to_string(),
+                        );
+                    }
+                }
+            }
+        } else {
+            match which("auggie") {
+                Ok(path) => path.to_string_lossy().to_string(),
+                Err(_) => {
+                    return AuggieCliLoginFallbackResult::Failed(
+                        "Auggie CLI fallback requires an `auggie` binary on PATH (or CTX_ACP_AUGGIE_COMMAND).".to_string(),
+                    );
+                }
+            }
+        }
+    } else {
+        runtime.command_abs_path.clone()
+    };
+
+    let args = if using_bundle_wrapper {
+        vec!["login".to_string()]
+    } else {
+        let mut next_args = runtime.args;
+        if next_args.iter().any(|arg| arg == "--acp") {
+            next_args.retain(|arg| arg != "--acp");
+        }
+        next_args.push("login".to_string());
+        next_args
+    };
+
+    let mut cmd = Command::new(&resolved_login_command);
+    cmd.args(&args);
+    cmd.current_dir(login_home.join("workspace"));
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    cmd.env("HOME", auggie_home);
+    cmd.env("XDG_CONFIG_HOME", auggie_home.join(".config"));
+    cmd.env("XDG_CACHE_HOME", auggie_home.join(".cache"));
+    cmd.env("AUGMENT_DISABLE_AUTO_UPDATE", "1");
+    cmd.env("NO_COLOR", "1");
+
+    let mut child = match cmd.spawn() {
+        Ok(value) => value,
+        Err(err) => {
+            return AuggieCliLoginFallbackResult::Failed(format!(
+                "failed to launch Auggie login command: {err}"
+            ));
+        }
+    };
+
+    let (line_tx, mut line_rx) = mpsc::unbounded_channel::<String>();
+    if let Some(stdout) = child.stdout.take() {
+        let tx = line_tx.clone();
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(stdout).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let _ = tx.send(line);
+            }
+        });
+    }
+    if let Some(stderr) = child.stderr.take() {
+        let tx = line_tx.clone();
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let _ = tx.send(line);
+            }
+        });
+    }
+    drop(line_tx);
+
+    let started_at = Instant::now();
+    let timeout = auggie_login_timeout();
+    let mut last_line = None::<String>;
+
+    let exit_status = loop {
+        while let Ok(line) = line_rx.try_recv() {
+            let trimmed = line.trim();
+            if !trimmed.is_empty() {
+                last_line = Some(trimmed.to_string());
+            }
+            if let Some(auth_url) = extract_auth_url(trimmed) {
+                let mut map = state.providers.auggie_login_sessions.lock().await;
+                if let Some(entry) = map.get_mut(login_id) {
+                    entry.auth_url = Some(auth_url);
+                }
+            }
+        }
+
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {}
+            Err(err) => {
+                return AuggieCliLoginFallbackResult::Failed(format!(
+                    "failed waiting on Auggie login command: {err}"
+                ));
+            }
+        }
+
+        if started_at.elapsed() >= timeout {
+            let _ = child.kill().await;
+            return AuggieCliLoginFallbackResult::Failed(
+                "timed out waiting for Auggie OAuth completion".to_string(),
+            );
+        }
+
+        tokio::time::sleep(AUGGIE_LOGIN_POLL_INTERVAL).await;
+    };
+
+    while let Ok(line) = line_rx.try_recv() {
+        let trimmed = line.trim();
+        if !trimmed.is_empty() {
+            last_line = Some(trimmed.to_string());
+        }
+        if let Some(auth_url) = extract_auth_url(trimmed) {
+            let mut map = state.providers.auggie_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(login_id) {
+                entry.auth_url = Some(auth_url);
+            }
+        }
+    }
+
+    let session_path = auggie_home.join(provider_accounts::AUGGIE_SESSION_RELATIVE_PATH);
+    let session_auth = match tokio::fs::read_to_string(&session_path).await {
+        Ok(raw) if !raw.trim().is_empty() => raw,
+        Ok(_) => {
+            return AuggieCliLoginFallbackResult::Failed(
+                "Auggie sign-in completed but captured session auth is empty.".to_string(),
+            );
+        }
+        Err(err) => {
+            let mut message =
+                format!("Auggie sign-in completed, but session auth could not be read: {err}");
+            if !exit_status.success() {
+                message = if let Some(line) = last_line {
+                    format!(
+                        "Auggie sign-in command exited with {:?}: {}",
+                        exit_status.code(),
+                        logs::redact_sensitive(&line)
+                    )
+                } else {
+                    format!(
+                        "Auggie sign-in command exited with {:?} before writing session auth.",
+                        exit_status.code()
+                    )
+                };
+            }
+            return AuggieCliLoginFallbackResult::Failed(message);
+        }
+    };
+
+    match provider_accounts::add_auggie_account(
+        &state.core.data_root,
+        label,
+        session_auth,
+        observed_email,
+    )
+    .await
+    {
+        Ok(registry) => {
+            let mut map = state.providers.auggie_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(login_id) {
+                entry.status = "success".to_string();
+                entry.auth_url = None;
+                entry.account_id = registry.active_account_id.clone();
+                entry.error = None;
+            }
+            restart_auggie_providers_for_auth_change(state, "auggie auth updated").await;
+            AuggieCliLoginFallbackResult::Completed
+        }
+        Err(err) => AuggieCliLoginFallbackResult::Failed(logs::redact_sensitive(&err.to_string())),
+    }
+}
+
+async fn monitor_auggie_login(state: Arc<AppState>, login_id: String, label: Option<String>) {
+    let adapter = {
+        let map = state.providers.adapters.lock().await;
+        map.get("auggie").cloned()
+    };
+    let Some(adapter) = adapter else {
+        let mut map = state.providers.auggie_login_sessions.lock().await;
+        if let Some(entry) = map.get_mut(&login_id) {
+            entry.status = "failed".to_string();
+            entry.error = Some("provider adapter not available".to_string());
+        }
+        return;
+    };
+
+    let login_home = auggie_login_home(&state.core.data_root, &login_id);
+    let workdir = login_home.join("workspace");
+    if let Err(err) = tokio::fs::create_dir_all(&workdir).await {
+        let mut map = state.providers.auggie_login_sessions.lock().await;
+        if let Some(entry) = map.get_mut(&login_id) {
+            entry.status = "failed".to_string();
+            entry.error = Some(format!("failed to prepare login workspace: {err}"));
+        }
+        return;
+    }
+
+    let auggie_home = login_home.join("home");
+    if let Err(err) = tokio::fs::create_dir_all(auggie_home.join(".config")).await {
+        let mut map = state.providers.auggie_login_sessions.lock().await;
+        if let Some(entry) = map.get_mut(&login_id) {
+            entry.status = "failed".to_string();
+            entry.error = Some(format!("failed to prepare auggie runtime home: {err}"));
+        }
+        let _ = tokio::fs::remove_dir_all(&login_home).await;
+        return;
+    }
+    if let Err(err) = tokio::fs::create_dir_all(auggie_home.join(".cache")).await {
+        let mut map = state.providers.auggie_login_sessions.lock().await;
+        if let Some(entry) = map.get_mut(&login_id) {
+            entry.status = "failed".to_string();
+            entry.error = Some(format!("failed to prepare auggie runtime home: {err}"));
+        }
+        let _ = tokio::fs::remove_dir_all(&login_home).await;
+        return;
+    }
+
+    let mut provider_env = HashMap::new();
+    provider_env.insert("CTX_DAEMON_URL".to_string(), state.core.daemon_url.clone());
+    if let Some(token) = state.core.auth_token.clone() {
+        provider_env.insert("CTX_AUTH_TOKEN".to_string(), token);
+    }
+    provider_env.insert(
+        "CTX_DATA_ROOT".to_string(),
+        state.core.data_root.to_string_lossy().to_string(),
+    );
+    provider_env.insert(
+        "HOME".to_string(),
+        auggie_home.to_string_lossy().to_string(),
+    );
+    provider_env.insert(
+        "XDG_CONFIG_HOME".to_string(),
+        auggie_home.join(".config").to_string_lossy().to_string(),
+    );
+    provider_env.insert(
+        "XDG_CACHE_HOME".to_string(),
+        auggie_home.join(".cache").to_string_lossy().to_string(),
+    );
+
+    let (event_tx, mut event_rx) = mpsc::channel(64);
+    if let Err(err) = adapter
+        .authenticate_session(
+            format!("auggie-login-{login_id}"),
+            workdir,
+            provider_env,
+            None,
+            event_tx.clone(),
+        )
+        .await
+    {
+        let err_text = logs::redact_sensitive(&err.to_string());
+        let fallback_eligible = err_text.contains("does not support authenticate")
+            || err_text.contains("method not found")
+            || err_text.contains("authRequired");
+        if fallback_eligible {
+            match try_auggie_cli_login_fallback(
+                &state,
+                &login_id,
+                label.clone(),
+                None,
+                &login_home,
+                &auggie_home,
+            )
+            .await
+            {
+                AuggieCliLoginFallbackResult::Completed => {
+                    let _ = tokio::fs::remove_dir_all(&login_home).await;
+                    return;
+                }
+                AuggieCliLoginFallbackResult::Failed(message) => {
+                    let mut map = state.providers.auggie_login_sessions.lock().await;
+                    if let Some(entry) = map.get_mut(&login_id) {
+                        entry.status = "failed".to_string();
+                        entry.error = Some(logs::redact_sensitive(&message));
+                    }
+                    let _ = tokio::fs::remove_dir_all(&login_home).await;
+                    return;
+                }
+                AuggieCliLoginFallbackResult::NotAvailable => {}
+            }
+        }
+        let mut map = state.providers.auggie_login_sessions.lock().await;
+        if let Some(entry) = map.get_mut(&login_id) {
+            entry.status = "failed".to_string();
+            entry.error = Some(err_text);
+        }
+        let _ = tokio::fs::remove_dir_all(&login_home).await;
+        return;
+    }
+    // Drop the local sender so the receiver can observe stream closure when the adapter
+    // auth forwarding task exits without emitting events.
+    drop(event_tx);
+
+    let started_at = Instant::now();
+    let timeout = auggie_login_timeout();
+    let mut observed_auth_url = false;
+    let mut observed_email = None::<String>;
+
+    loop {
+        if started_at.elapsed() >= timeout {
+            let mut map = state.providers.auggie_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(&login_id) {
+                entry.status = "timeout".to_string();
+                if entry.error.is_none() {
+                    entry.error = Some("timed out waiting for Auggie OAuth completion".to_string());
+                }
+            }
+            let _ = tokio::fs::remove_dir_all(&login_home).await;
+            return;
+        }
+
+        let event = match tokio::time::timeout(AUGGIE_LOGIN_POLL_INTERVAL, event_rx.recv()).await {
+            Ok(Some(event)) => event,
+            Ok(None) => {
+                if !observed_auth_url {
+                    match try_auggie_cli_login_fallback(
+                        &state,
+                        &login_id,
+                        label.clone(),
+                        observed_email.clone(),
+                        &login_home,
+                        &auggie_home,
+                    )
+                    .await
+                    {
+                        AuggieCliLoginFallbackResult::Completed => {
+                            let _ = tokio::fs::remove_dir_all(&login_home).await;
+                            return;
+                        }
+                        AuggieCliLoginFallbackResult::Failed(message) => {
+                            let mut map = state.providers.auggie_login_sessions.lock().await;
+                            if let Some(entry) = map.get_mut(&login_id) {
+                                entry.status = "failed".to_string();
+                                entry.error = Some(logs::redact_sensitive(&message));
+                            }
+                            let _ = tokio::fs::remove_dir_all(&login_home).await;
+                            return;
+                        }
+                        AuggieCliLoginFallbackResult::NotAvailable => {}
+                    }
+                }
+                let mut map = state.providers.auggie_login_sessions.lock().await;
+                if let Some(entry) = map.get_mut(&login_id) {
+                    entry.status = "failed".to_string();
+                    if entry.error.is_none() {
+                        entry.error = Some(if observed_auth_url {
+                            "Auggie sign-in session ended before completion.".to_string()
+                        } else {
+                            "Auggie sign-in did not emit an OAuth URL in this environment."
+                                .to_string()
+                        });
+                    }
+                }
+                let _ = tokio::fs::remove_dir_all(&login_home).await;
+                return;
+            }
+            Err(_) => continue,
+        };
+
+        if let Some(auth_url) = extract_auth_url_from_value(&event.payload_json) {
+            observed_auth_url = true;
+            let mut map = state.providers.auggie_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(&login_id) {
+                entry.auth_url = Some(auth_url);
+            }
+        }
+        if observed_email.is_none() {
+            observed_email = first_email_from_value(&event.payload_json);
+        }
+
+        if matches!(event.event_type, ctx_core::models::SessionEventType::Error) {
+            let message = event
+                .payload_json
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .map(logs::redact_sensitive)
+                .unwrap_or_else(|| "auggie authenticate reported an error".to_string());
+            if !observed_auth_url && should_try_auggie_cli_fallback_for_error(&message) {
+                match try_auggie_cli_login_fallback(
+                    &state,
+                    &login_id,
+                    label.clone(),
+                    observed_email.clone(),
+                    &login_home,
+                    &auggie_home,
+                )
+                .await
+                {
+                    AuggieCliLoginFallbackResult::Completed => {
+                        let _ = tokio::fs::remove_dir_all(&login_home).await;
+                        return;
+                    }
+                    AuggieCliLoginFallbackResult::Failed(fallback_error) => {
+                        let mut map = state.providers.auggie_login_sessions.lock().await;
+                        if let Some(entry) = map.get_mut(&login_id) {
+                            entry.status = "failed".to_string();
+                            entry.error = Some(logs::redact_sensitive(&fallback_error));
+                        }
+                        let _ = tokio::fs::remove_dir_all(&login_home).await;
+                        return;
+                    }
+                    AuggieCliLoginFallbackResult::NotAvailable => {}
+                }
+            }
+            let mut map = state.providers.auggie_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(&login_id) {
+                entry.status = "failed".to_string();
+                entry.error = Some(message);
+            }
+            let _ = tokio::fs::remove_dir_all(&login_home).await;
+            return;
+        }
+
+        if matches!(event.event_type, ctx_core::models::SessionEventType::Notice) {
+            let code = event
+                .payload_json
+                .get("code")
+                .or_else(|| event.payload_json.get("kind"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            if matches!(
+                code,
+                "auth_complete" | "auth_completed" | "auth_success" | "authenticated"
+            ) {
+                let session_path =
+                    auggie_home.join(provider_accounts::AUGGIE_SESSION_RELATIVE_PATH);
+                let session_auth = match tokio::fs::read_to_string(&session_path).await {
+                    Ok(raw) if !raw.trim().is_empty() => raw,
+                    Ok(_) => {
+                        let mut map = state.providers.auggie_login_sessions.lock().await;
+                        if let Some(entry) = map.get_mut(&login_id) {
+                            entry.status = "failed".to_string();
+                            entry.error = Some(
+                                "Auggie sign-in completed but captured session auth is empty."
+                                    .to_string(),
+                            );
+                        }
+                        let _ = tokio::fs::remove_dir_all(&login_home).await;
+                        return;
+                    }
+                    Err(err) => {
+                        let mut map = state.providers.auggie_login_sessions.lock().await;
+                        if let Some(entry) = map.get_mut(&login_id) {
+                            entry.status = "failed".to_string();
+                            entry.error = Some(format!(
+                                "Auggie sign-in completed, but session auth could not be read: {err}"
+                            ));
+                        }
+                        let _ = tokio::fs::remove_dir_all(&login_home).await;
+                        return;
+                    }
+                };
+
+                match provider_accounts::add_auggie_account(
+                    &state.core.data_root,
+                    label.clone(),
+                    session_auth,
+                    observed_email.clone(),
+                )
+                .await
+                {
+                    Ok(registry) => {
+                        let mut map = state.providers.auggie_login_sessions.lock().await;
+                        if let Some(entry) = map.get_mut(&login_id) {
+                            entry.status = "success".to_string();
+                            entry.auth_url = None;
+                            entry.account_id = registry.active_account_id.clone();
+                            entry.error = None;
+                        }
+                        restart_auggie_providers_for_auth_change(&state, "auggie auth updated")
+                            .await;
+                    }
+                    Err(err) => {
+                        let mut map = state.providers.auggie_login_sessions.lock().await;
+                        if let Some(entry) = map.get_mut(&login_id) {
+                            entry.status = "failed".to_string();
+                            entry.error = Some(logs::redact_sensitive(&err.to_string()));
+                        }
+                    }
+                }
+                let _ = tokio::fs::remove_dir_all(&login_home).await;
+                return;
+            }
+
+            if matches!(code, "auth_failed" | "auth_error") {
+                let message = event
+                    .payload_json
+                    .get("message")
+                    .and_then(serde_json::Value::as_str)
+                    .map(logs::redact_sensitive)
+                    .unwrap_or_else(|| "Auggie sign-in failed. Retry.".to_string());
+                let mut map = state.providers.auggie_login_sessions.lock().await;
+                if let Some(entry) = map.get_mut(&login_id) {
+                    entry.status = "failed".to_string();
+                    entry.error = Some(message);
+                }
+                let _ = tokio::fs::remove_dir_all(&login_home).await;
+                return;
+            }
+        }
+    }
+}
+
+pub(super) async fn start_auggie_login(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<AuggieLoginStartReq>,
+) -> Result<Json<AuggieLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let login_id = uuid::Uuid::new_v4().to_string();
+    {
+        let mut map = state.providers.auggie_login_sessions.lock().await;
+        map.insert(
+            login_id.clone(),
+            provider_accounts::AuggieLoginStatus {
+                login_id: login_id.clone(),
+                auth_url: None,
+                status: "pending".to_string(),
+                account_id: None,
+                error: None,
+            },
+        );
+    }
+
+    let state_clone = Arc::clone(&state);
+    let login_id_for_task = login_id.clone();
+    tokio::spawn(async move {
+        monitor_auggie_login(state_clone, login_id_for_task, req.label).await;
+    });
+
+    Ok(Json(AuggieLoginStartResp {
+        login_id,
+        auth_url: None,
+    }))
+}
+
+pub(super) async fn get_auggie_login(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<provider_accounts::AuggieLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
+    let map = state.providers.auggie_login_sessions.lock().await;
+    let status = map.get(&id).cloned().ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "login not found".to_string(),
+            }),
+        )
+    })?;
+    Ok(Json(status))
+}
+
 pub(super) async fn list_amp_accounts(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<AmpAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
@@ -2790,6 +3445,59 @@ pub(super) async fn delete_amp_account(
         )
     })?;
     Ok(Json(response))
+}
+
+pub(super) async fn list_auggie_accounts(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<AuggieAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    Ok(Json(auggie_accounts_response(&state).await))
+}
+
+pub(super) async fn set_auggie_active_account(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<AuggieActiveAccountReq>,
+) -> Result<Json<AuggieAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    if let Some(ref account_id) = req.account_id {
+        let registry = provider_accounts::load_auggie_registry(&state.core.data_root).await;
+        if !registry.accounts.iter().any(|a| a.id == *account_id) {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "unknown account".to_string(),
+                }),
+            ));
+        }
+    }
+    provider_accounts::set_active_auggie_account(&state.core.data_root, req.account_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    restart_auggie_providers_for_auth_change(&state, "auggie auth updated").await;
+    Ok(Json(auggie_accounts_response(&state).await))
+}
+
+pub(super) async fn delete_auggie_account(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<AuggieAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    provider_accounts::remove_auggie_account(&state.core.data_root, &id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    restart_auggie_providers_for_auth_change(&state, "auggie auth updated").await;
+    Ok(Json(auggie_accounts_response(&state).await))
 }
 
 pub(super) async fn list_gemini_accounts(
@@ -4812,6 +5520,7 @@ pub(super) async fn get_workspace_providers_bootstrap(
                 })),
             )
         })?,
+        auggie_accounts: auggie_accounts_response(&state).await,
     }))
 }
 
@@ -6485,6 +7194,12 @@ mod tests {
         assert!(kimi_login_line_reports_unsupported_command(line));
     }
 
+    #[test]
+    fn should_try_auggie_cli_fallback_for_unsupported_acp_auth_error() {
+        let message = "Authentication required: Auggie does not currently support authenticating over ACP. Please run `auggie login` from your terminal then try again.";
+        assert!(should_try_auggie_cli_fallback_for_error(message));
+    }
+
     #[tokio::test]
     async fn read_trailing_claude_login_lines_waits_for_late_arrival() {
         let (tx, mut rx) = mpsc::unbounded_channel();
@@ -6800,6 +7515,40 @@ ZXY987654321
             endpoints: vec![],
         };
         let active = provider_has_active_auth_config(root.path(), "amp", Some(&source)).await;
+        assert!(active);
+    }
+
+    #[tokio::test]
+    async fn auggie_subscription_selection_requires_managed_account() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let source = harness_sources::HarnessProviderSourceConfig {
+            provider_id: "auggie".to_string(),
+            selected_source_kind: HarnessSourceKind::Subscription,
+            selected_endpoint_id: None,
+            endpoints: vec![],
+        };
+        let active = provider_has_active_auth_config(root.path(), "auggie", Some(&source)).await;
+        assert!(!active);
+    }
+
+    #[tokio::test]
+    async fn auggie_active_account_counts_as_active_auth_config() {
+        let root = tempfile::tempdir().expect("tempdir");
+        provider_accounts::add_auggie_account(
+            root.path(),
+            Some("Auggie Test".to_string()),
+            r#"{"accessToken":"aug-token"}"#.to_string(),
+            None,
+        )
+        .await
+        .expect("upsert auggie account");
+        let source = harness_sources::HarnessProviderSourceConfig {
+            provider_id: "auggie".to_string(),
+            selected_source_kind: HarnessSourceKind::Subscription,
+            selected_endpoint_id: None,
+            endpoints: vec![],
+        };
+        let active = provider_has_active_auth_config(root.path(), "auggie", Some(&source)).await;
         assert!(active);
     }
 

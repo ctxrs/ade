@@ -66,6 +66,7 @@ export type ProvidersBootstrapResponse = {
   kiro_accounts: KiroAccountsResponse;
   cursor_accounts: CursorAccountsResponse;
   amp_accounts: AmpAccountsResponse;
+  auggie_accounts: AuggieAccountsResponse;
 };
 
 export const getProvidersBootstrap = (workspaceId: string) =>
@@ -341,6 +342,20 @@ export type AmpAccountsResponse = {
   accounts: AmpAccountEntry[];
 };
 
+export type AuggieAccountEntry = {
+  id: string;
+  label: string;
+  kind?: string;
+  email?: string | null;
+  created_at: string;
+  last_used_at?: string | null;
+};
+
+export type AuggieAccountsResponse = {
+  active_account_id: string | null;
+  accounts: AuggieAccountEntry[];
+};
+
 export type CodexLoginStartResponse = {
   account_id: string;
   auth_url: string;
@@ -417,6 +432,19 @@ export type CopilotLoginStatus = {
 };
 
 export type CopilotLoginStartResponse = {
+  login_id: string;
+  auth_url?: string | null;
+};
+
+export type AuggieLoginStatus = {
+  login_id: string;
+  auth_url?: string | null;
+  status: string;
+  account_id?: string | null;
+  error?: string | null;
+};
+
+export type AuggieLoginStartResponse = {
   login_id: string;
   auth_url?: string | null;
 };
@@ -582,6 +610,29 @@ export const setAmpActiveAccount = (accountId: string | null) =>
 
 export const deleteAmpAccount = (accountId: string) =>
   apiAny<AmpAccountsResponse>(`/api/providers/amp/accounts/${accountId}`, {
+    method: "DELETE",
+  });
+
+export const startAuggieLogin = (label?: string) =>
+  apiAny<AuggieLoginStartResponse>(`/api/providers/auggie/accounts/login/start`, {
+    method: "POST",
+    body: JSON.stringify(label ? { label } : {}),
+  });
+
+export const getAuggieLogin = (loginId: string) =>
+  apiAny<AuggieLoginStatus>(`/api/providers/auggie/accounts/login/${loginId}`);
+
+export const listAuggieAccounts = () =>
+  apiAny<AuggieAccountsResponse>(`/api/providers/auggie/accounts`);
+
+export const setAuggieActiveAccount = (accountId: string | null) =>
+  apiAny<AuggieAccountsResponse>(`/api/providers/auggie/active-account`, {
+    method: "PUT",
+    body: JSON.stringify({ account_id: accountId }),
+  });
+
+export const deleteAuggieAccount = (accountId: string) =>
+  apiAny<AuggieAccountsResponse>(`/api/providers/auggie/accounts/${accountId}`, {
     method: "DELETE",
   });
 
