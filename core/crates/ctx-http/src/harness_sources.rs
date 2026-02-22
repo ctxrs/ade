@@ -276,6 +276,14 @@ fn kiro_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
         .join(endpoint_id)
 }
 
+fn droid_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
+    data_root
+        .join("providers")
+        .join("droid")
+        .join("endpoint-homes")
+        .join(endpoint_id)
+}
+
 fn amp_subscription_home(data_root: &Path, runtime_data_root: Option<&Path>) -> PathBuf {
     runtime_data_root
         .unwrap_or(data_root)
@@ -559,6 +567,7 @@ fn provider_requires_endpoint_base_url(provider_id: &str) -> bool {
             | PROVIDER_OPENCODE
             | PROVIDER_MISTRAL
             | PROVIDER_GOOSE
+            | PROVIDER_DROID
             | PROVIDER_OPENHANDS
     )
 }
@@ -1218,6 +1227,21 @@ pub async fn delete_provider_endpoint(
                 remove_kiro_endpoint_home_for_root(data_root, &removed_endpoint_id).await?;
                 remove_kiro_endpoint_homes_for_runtime_roots(data_root, &removed_endpoint_id)
                     .await?;
+            } else if canonical == PROVIDER_DROID {
+                ensure_safe_endpoint_id(&removed_endpoint_id)?;
+                let endpoint_home = droid_endpoint_home(data_root, &removed_endpoint_id);
+                match tokio::fs::remove_dir_all(&endpoint_home).await {
+                    Ok(()) => {}
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(err) => {
+                        return Err(err).with_context(|| {
+                            format!(
+                                "removing droid endpoint home for endpoint {}",
+                                removed_endpoint_id
+                            )
+                        });
+                    }
+                }
             }
         }
         save_registry(data_root, &registry).await?;
@@ -1508,6 +1532,95 @@ async fn prepare_qwen_home_with_openai_settings(qwen_home: &Path) -> Result<()> 
     Ok(())
 }
 
+fn endpoint_preferred_model_id(endpoint: &HarnessEndpointRecordInternal) -> Option<String> {
+    endpoint
+        .model_override
+        .as_ref()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            endpoint.manual_model_ids.iter().find_map(|value| {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            })
+        })
+        .or_else(|| {
+            endpoint.model_catalog_models.iter().find_map(|record| {
+                let trimmed = record.id.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            })
+        })
+}
+
+fn droid_custom_model_name(model_id: &str) -> Option<String> {
+    let trimmed = model_id.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let without_prefix = trimmed
+        .strip_prefix("custom:")
+        .map(str::trim)
+        .unwrap_or(trimmed);
+    if without_prefix.is_empty() {
+        None
+    } else {
+        Some(without_prefix.to_string())
+    }
+}
+
+fn droid_backend_model_id(model_id: &str) -> Option<String> {
+    droid_custom_model_name(model_id)
+}
+
+fn droid_cli_model_id_from_model(model_id: &str) -> Option<String> {
+    droid_custom_model_name(model_id).map(|name| format!("custom:{name}"))
+}
+
+async fn prepare_droid_home_with_endpoint_settings(
+    droid_home: &Path,
+    base_url: &str,
+    api_key: &str,
+    model_id: &str,
+) -> Result<Option<String>> {
+    let Some(custom_model_name) = droid_custom_model_name(model_id) else {
+        return Ok(None);
+    };
+    let Some(backend_model_id) = droid_backend_model_id(model_id) else {
+        return Ok(None);
+    };
+    let droid_config = droid_home.join(".factory");
+    tokio::fs::create_dir_all(&droid_config).await?;
+    let payload = serde_json::to_vec_pretty(&serde_json::json!({
+        "customModels": [
+            {
+                "name": custom_model_name,
+                "provider": "generic-chat-completion-api",
+                "model_name": backend_model_id,
+                "base_url": base_url,
+                "api_key": api_key,
+            }
+        ],
+        "model": "custom-model",
+    }))?;
+    let settings_path = droid_config.join("settings.json");
+    tokio::fs::write(&settings_path, payload).await?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = tokio::fs::set_permissions(&settings_path, std::fs::Permissions::from_mode(0o600))
+            .await;
+    }
+    Ok(droid_cli_model_id_from_model(model_id))
+}
+
 async fn prepare_kiro_home_with_auth_token_json(
     kiro_home: &Path,
     auth_token_json: &str,
@@ -1720,9 +1833,12 @@ async fn resolve_internal(
         PROVIDER_GOOSE => {
             let base_url = endpoint_base_url_or_err(&endpoint)?;
             ensure_shape_compatible(canonical, endpoint.api_shape)?;
-            env.insert("OPENAI_API_KEY".to_string(), api_key);
-            env.insert("OPENAI_BASE_URL".to_string(), base_url);
-            env.insert("GOOSE_PROVIDER".to_string(), "openai".to_string());
+            env.insert("OPENAI_API_KEY".to_string(), api_key.clone());
+            env.insert("OPENAI_BASE_URL".to_string(), base_url.clone());
+            env.insert("OPENAI_HOST".to_string(), base_url.clone());
+            env.insert("OPENROUTER_API_KEY".to_string(), api_key.clone());
+            env.insert("OPENROUTER_BASE_URL".to_string(), base_url);
+            env.insert("GOOSE_PROVIDER".to_string(), "openrouter".to_string());
             env.insert("GOOSE_DISABLE_KEYRING".to_string(), "1".to_string());
             if let Some(model) = endpoint
                 .model_override
@@ -1730,7 +1846,9 @@ async fn resolve_internal(
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty())
             {
-                env.insert("GOOSE_MODEL".to_string(), model);
+                env.insert("GOOSE_MODEL".to_string(), model.clone());
+                env.insert("OPENAI_MODEL".to_string(), model.clone());
+                env.insert("OPENROUTER_MODEL".to_string(), model);
             }
         }
         PROVIDER_MISTRAL => {
@@ -1746,8 +1864,27 @@ async fn resolve_internal(
             env.insert("AMP_API_KEY".to_string(), api_key);
         }
         PROVIDER_DROID => {
+            let base_url = endpoint_base_url_or_err(&endpoint)?;
             ensure_shape_compatible(canonical, endpoint.api_shape)?;
-            env.insert("FACTORY_API_KEY".to_string(), api_key);
+            ensure_safe_endpoint_id(&endpoint.id)?;
+            let droid_home_root = runtime_data_root.unwrap_or(data_root);
+            let droid_home = droid_endpoint_home(droid_home_root, &endpoint.id);
+            let model_id = endpoint_preferred_model_id(&endpoint)
+                .unwrap_or_else(|| "openai/gpt-5.2-codex".to_string());
+            let droid_default_model = prepare_droid_home_with_endpoint_settings(
+                &droid_home,
+                &base_url,
+                &api_key,
+                &model_id,
+            )
+            .await?;
+            env.insert("HOME".to_string(), droid_home.to_string_lossy().to_string());
+            env.insert("FACTORY_API_KEY".to_string(), api_key.clone());
+            env.insert("OPENAI_API_KEY".to_string(), api_key);
+            env.insert("OPENAI_BASE_URL".to_string(), base_url);
+            if let Some(model) = droid_default_model {
+                env.insert("DROID_DEFAULT_MODEL".to_string(), model);
+            }
         }
         PROVIDER_CONTINUE => {
             ensure_shape_compatible(canonical, endpoint.api_shape)?;
@@ -2519,14 +2656,28 @@ mod tests {
                 PROVIDER_GOOSE,
                 &[
                     "OPENAI_API_KEY",
+                    "OPENAI_HOST",
+                    "OPENROUTER_API_KEY",
+                    "OPENROUTER_BASE_URL",
                     "GOOSE_PROVIDER",
                     "GOOSE_DISABLE_KEYRING",
                     "GOOSE_MODEL",
+                    "OPENAI_MODEL",
+                    "OPENROUTER_MODEL",
                 ],
             ),
             (PROVIDER_MISTRAL, &["MISTRAL_API_KEY", "MISTRAL_BASE_URL"]),
             (PROVIDER_AMP, &["AMP_API_KEY"]),
-            (PROVIDER_DROID, &["FACTORY_API_KEY"]),
+            (
+                PROVIDER_DROID,
+                &[
+                    "FACTORY_API_KEY",
+                    "HOME",
+                    "OPENAI_API_KEY",
+                    "OPENAI_BASE_URL",
+                    "DROID_DEFAULT_MODEL",
+                ],
+            ),
             (PROVIDER_COPILOT, &["GH_TOKEN", "GITHUB_TOKEN"]),
             (
                 PROVIDER_KIRO,
@@ -2602,6 +2753,78 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[tokio::test]
+    async fn droid_endpoint_writes_factory_settings_for_generic_endpoint() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let endpoint = upsert_provider_endpoint(
+            root.path(),
+            PROVIDER_DROID,
+            HarnessEndpointUpsert {
+                endpoint_id: None,
+                name: "Droid endpoint".to_string(),
+                base_url: Some("https://openrouter.ai/api/v1".to_string()),
+                api_shape: Some(HarnessApiShape::OpenaiResponses),
+                auth_type: None,
+                model_override: Some("openai/gpt-5.2-codex".to_string()),
+                api_key: Some("sk-or-test".to_string()),
+            },
+        )
+        .await
+        .expect("upsert endpoint");
+        set_provider_source_selection(
+            root.path(),
+            PROVIDER_DROID,
+            HarnessSourceKind::Endpoint,
+            Some(endpoint.id.clone()),
+        )
+        .await
+        .expect("select endpoint");
+
+        let resolved = resolve_provider_source_for_run(root.path(), PROVIDER_DROID)
+            .await
+            .expect("resolve run");
+        let home = PathBuf::from(
+            resolved
+                .env
+                .get("HOME")
+                .expect("HOME should be set for droid endpoint"),
+        );
+        let settings = tokio::fs::read_to_string(home.join(".factory").join("settings.json"))
+            .await
+            .expect("read droid settings");
+        assert!(settings.contains("\"provider\": \"generic-chat-completion-api\""));
+        assert!(settings.contains("\"base_url\": \"https://openrouter.ai/api/v1\""));
+        assert!(settings.contains("\"model_name\": \"openai/gpt-5.2-codex\""));
+        assert_eq!(
+            resolved.env.get("DROID_DEFAULT_MODEL"),
+            Some(&"custom:openai/gpt-5.2-codex".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn droid_endpoint_requires_base_url() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let err = upsert_provider_endpoint(
+            root.path(),
+            PROVIDER_DROID,
+            HarnessEndpointUpsert {
+                endpoint_id: None,
+                name: "droid endpoint".to_string(),
+                base_url: None,
+                api_shape: Some(HarnessApiShape::OpenaiResponses),
+                auth_type: None,
+                model_override: Some("openai/gpt-5.2-codex".to_string()),
+                api_key: Some("sk-test".to_string()),
+            },
+        )
+        .await
+        .expect_err("base_url should be required");
+        assert!(
+            err.to_string().contains("base_url is required"),
+            "droid should reject missing base_url: {err}"
+        );
     }
 
     #[tokio::test]
@@ -2816,6 +3039,52 @@ mod tests {
 
         assert!(!endpoint_home.exists());
     }
+
+    #[tokio::test]
+    async fn deleting_droid_endpoint_removes_endpoint_home() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let endpoint = upsert_provider_endpoint(
+            root.path(),
+            PROVIDER_DROID,
+            HarnessEndpointUpsert {
+                endpoint_id: None,
+                name: "Droid endpoint".to_string(),
+                base_url: Some("https://openrouter.ai/api/v1".to_string()),
+                api_shape: Some(HarnessApiShape::OpenaiResponses),
+                auth_type: None,
+                model_override: Some("openai/gpt-5.2-codex".to_string()),
+                api_key: Some("sk-test".to_string()),
+            },
+        )
+        .await
+        .expect("upsert");
+
+        set_provider_source_selection(
+            root.path(),
+            PROVIDER_DROID,
+            HarnessSourceKind::Endpoint,
+            Some(endpoint.id.clone()),
+        )
+        .await
+        .expect("select");
+
+        resolve_provider_source_for_probe(root.path(), PROVIDER_DROID)
+            .await
+            .expect("resolve probe");
+
+        let endpoint_home = droid_endpoint_home(root.path(), &endpoint.id);
+        assert!(endpoint_home
+            .join(".factory")
+            .join("settings.json")
+            .exists());
+
+        delete_provider_endpoint(root.path(), PROVIDER_DROID, &endpoint.id)
+            .await
+            .expect("delete endpoint");
+
+        assert!(!endpoint_home.exists());
+    }
+
     #[tokio::test]
     async fn deleting_kiro_endpoint_removes_runtime_root_endpoint_home() {
         let root = tempfile::tempdir().expect("tempdir");

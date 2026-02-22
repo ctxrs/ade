@@ -11,6 +11,7 @@ export const OPENROUTER_ENDPOINT_FIRST_PASS_HARNESSES: EndpointHarnessMatrixEntr
   { providerId: "opencode", menuLabel: "OpenCode", searchTerm: "opencode" },
   { providerId: "mistral", menuLabel: "Mistral Vibe", searchTerm: "mistral" },
   { providerId: "goose", menuLabel: "Goose", searchTerm: "goose" },
+  { providerId: "droid", menuLabel: "Droid", searchTerm: "droid" },
   { providerId: "kimi", menuLabel: "Kimi", searchTerm: "kimi" },
   { providerId: "cagent", menuLabel: "cagent", searchTerm: "cagent" },
   { providerId: "pi", menuLabel: "Pi", searchTerm: "pi" },
@@ -26,7 +27,6 @@ export const OPENROUTER_ENDPOINT_FIRST_PASS_EXCLUDED_PROVIDER_TOKEN_ONLY = [
   "cursor",
   "auggie",
   "amp",
-  "droid",
   "continue",
 ] as const;
 

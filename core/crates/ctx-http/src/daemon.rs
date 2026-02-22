@@ -373,6 +373,16 @@ fn maybe_set_qwen_openai_auth_type(
     cmd
 }
 
+fn maybe_set_bridge_env_override(
+    mut cmd: installer::AgentServerCommand,
+) -> installer::AgentServerCommand {
+    if cmd.args.iter().any(|arg| arg == "--override-with-envs") {
+        return cmd;
+    }
+    cmd.args.push("--override-with-envs".to_string());
+    cmd
+}
+
 pub(crate) fn normalize_acp_provider_command(
     data_root: &Path,
     provider_id: &str,
@@ -383,8 +393,13 @@ pub(crate) fn normalize_acp_provider_command(
     } else {
         cmd
     };
-    if provider_id == "qwen" {
+    let cmd = if provider_id == "qwen" {
         maybe_set_qwen_openai_auth_type(cmd)
+    } else {
+        cmd
+    };
+    if provider_id == "openhands" {
+        maybe_set_bridge_env_override(cmd)
     } else {
         cmd
     }
@@ -1113,6 +1128,22 @@ mod tests {
                 "--auth-type".to_string(),
                 "openai".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn normalizes_openhands_command_with_env_override_flag() {
+        let temp = tempdir().unwrap();
+        let input = installer::AgentServerCommand {
+            command: "/tmp/openhands".to_string(),
+            args: vec!["acp".to_string()],
+            dependencies: Vec::new(),
+            managed: None,
+        };
+        let normalized = normalize_acp_provider_command(temp.path(), "openhands", input);
+        assert_eq!(
+            normalized.args,
+            vec!["acp".to_string(), "--override-with-envs".to_string()]
         );
     }
 }

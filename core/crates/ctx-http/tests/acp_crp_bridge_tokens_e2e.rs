@@ -549,9 +549,10 @@ fn build_env(
     }
 
     if provider.id == "goose" {
-        env.insert("GOOSE_PROVIDER".to_string(), "openai".to_string());
+        env.insert("GOOSE_PROVIDER".to_string(), "openrouter".to_string());
         env.insert("GOOSE_MODEL".to_string(), model_id.to_string());
         env.insert("GOOSE_DISABLE_KEYRING".to_string(), "1".to_string());
+        env.insert("OPENROUTER_MODEL".to_string(), model_id.to_string());
     }
 
     if provider.id == "kimi" {

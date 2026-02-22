@@ -41,7 +41,7 @@ ensure_endpoint_ui_bundles() {
   fi
 
   local bundle_dir="${CTX_E2E_BUNDLE_DIR:-${repo_root}/apps/desktop/src-tauri/bundles}"
-  local first_pass_providers="${CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-acp-crp-bridge,codex,qwen,opencode,mistral,goose,kimi,cagent,pi,cline,swe-agent,openhands}"
+  local first_pass_providers="${CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-acp-crp-bridge,codex,qwen,opencode,mistral,goose,droid,kimi,cagent,pi,cline,swe-agent,openhands}"
   local matrix_json="${CTX_BUNDLE_MATRIX_JSON:-${repo_root}/crates/ctx-http/src/provider_matrix.json}"
   local run_id="${CTX_E2E_RUN_ID:-$(date +%s)-$$}"
   local bundle_build_dir="${CTX_E2E_BUNDLE_BUILD_DIR:-/tmp/ctx-e2e-bundle-build-${run_id}}"
@@ -57,8 +57,8 @@ ensure_endpoint_ui_bundles() {
   CTX_BUNDLE_ONLY_PROVIDERS="${first_pass_providers}" \
   CTX_BUNDLE_SKIP_IMAGES="${CTX_E2E_ENDPOINT_SKIP_BUNDLE_IMAGES:-1}" \
   CTX_BUNDLE_INCLUDE_BRIDGE="1" \
-  CTX_BUNDLE_LOCAL_ADAPTERS="auto" \
-  CTX_BUNDLE_BUILD_LOCAL_ADAPTERS="0" \
+  CTX_BUNDLE_LOCAL_ADAPTERS="true" \
+  CTX_BUNDLE_BUILD_LOCAL_ADAPTERS="1" \
   CTX_BUNDLE_USE_ACP_SHIMS="0" \
   CARGO_TARGET_DIR="${cargo_target_dir}" \
   CARGO_HOME="${cargo_home_dir}" \
@@ -128,6 +128,12 @@ case "${suite}" in
       echo "skipping endpoint-ui tests; missing OpenRouter API key (set OPENROUTER_API_KEY or configure title_generation in ${CTX_DATA_ROOT:-$HOME/.ctx}/settings.json)" >&2
       exit 0
     fi
+
+    export OPENAI_API_KEY="${OPENAI_API_KEY:-${OPENROUTER_API_KEY}}"
+    export OPENAI_BASE_URL="${OPENAI_BASE_URL:-${OPENROUTER_BASE_URL}}"
+    export GOOSE_PROVIDER="${GOOSE_PROVIDER:-openrouter}"
+    export GOOSE_DISABLE_KEYRING="${GOOSE_DISABLE_KEYRING:-1}"
+    export GOOSE_MODEL="${GOOSE_MODEL:-${CTX_E2E_GOOSE_OPENROUTER_MODEL_OVERRIDE:-${CTX_E2E_OPENROUTER_MODEL_OVERRIDE:-openai/gpt-5.2-codex}}}"
 
     ensure_endpoint_ui_bundles
 

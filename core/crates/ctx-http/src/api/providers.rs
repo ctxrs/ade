@@ -4648,14 +4648,40 @@ fn selected_endpoint_record_from_harness_config(
         .cloned()
 }
 
+fn droid_model_id_for_endpoint_model_override(model_override: Option<&str>) -> Option<String> {
+    let model = model_override?.trim();
+    if model.is_empty() {
+        return None;
+    }
+    if model.starts_with("custom:") {
+        return Some(model.to_string());
+    }
+    Some(format!("custom:{model}"))
+}
+
+fn endpoint_current_model_id(
+    provider_id: &str,
+    endpoint: &harness_sources::HarnessEndpointRecord,
+) -> Option<String> {
+    if provider_id == "droid" {
+        return droid_model_id_for_endpoint_model_override(endpoint.model_override.as_deref());
+    }
+    endpoint
+        .model_override
+        .as_ref()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 fn endpoint_models_payload(
+    provider_id: &str,
     endpoint: &harness_sources::HarnessEndpointRecord,
     now: chrono::DateTime<chrono::Utc>,
 ) -> serde_json::Value {
     let stale = harness_sources::endpoint_model_catalog_is_stale(endpoint, now);
     serde_json::json!({
         "models": endpoint.model_catalog_models,
-        "current_model_id": endpoint.model_override,
+        "current_model_id": endpoint_current_model_id(provider_id, endpoint),
         "meta": {
             "source_kind": "endpoint",
             "catalog_status": endpoint.model_catalog_status,
@@ -4857,7 +4883,7 @@ pub(super) async fn get_provider_options(
             raw_resp["source"] = serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
         }
         if let Some(endpoint) = selected_endpoint.as_ref() {
-            raw_resp["models"] = endpoint_models_payload(endpoint, now);
+            raw_resp["models"] = endpoint_models_payload(&provider_id, endpoint, now);
             if harness_sources::endpoint_model_catalog_is_stale(endpoint, now) {
                 let state = Arc::clone(&state);
                 let provider_id_for_refresh = provider_id.clone();
@@ -4934,7 +4960,7 @@ pub(super) async fn get_provider_options(
                 "auth_required": false,
                 "has_active_auth": has_active_auth,
                 "auth_mode": auth_mode,
-                "models": endpoint_models_payload(endpoint, now),
+                "models": endpoint_models_payload(&provider_id, endpoint, now),
                 "probed_at": now.to_rfc3339(),
             });
             if let Some(source) = source_config.as_ref() {
@@ -6208,7 +6234,7 @@ ZXY987654321
             name: Some("GPT-5.2".to_string()),
         }];
 
-        let payload = endpoint_models_payload(&endpoint, now);
+        let payload = endpoint_models_payload("codex", &endpoint, now);
         assert_eq!(
             payload
                 .pointer("/models/0/id")
@@ -6244,6 +6270,21 @@ ZXY987654321
                 .pointer("/meta/stale")
                 .and_then(serde_json::Value::as_bool),
             Some(false)
+        );
+    }
+
+    #[test]
+    fn endpoint_models_payload_prefixes_droid_model_override_with_custom_namespace() {
+        let now = Utc::now();
+        let mut endpoint = test_endpoint("ep-1");
+        endpoint.model_override = Some("openai/gpt-5.2".to_string());
+
+        let payload = endpoint_models_payload("droid", &endpoint, now);
+        assert_eq!(
+            payload
+                .pointer("/current_model_id")
+                .and_then(serde_json::Value::as_str),
+            Some("custom:openai/gpt-5.2")
         );
     }
 

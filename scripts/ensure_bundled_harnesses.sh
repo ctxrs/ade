@@ -452,7 +452,7 @@ acp_provider_command_candidates() {
     cline) printf '%s' "cline-acp cline" ;;
     auggie) printf '%s' "auggie" ;;
     continue) printf '%s' "cn continue" ;;
-    openhands) printf '%s' "openhands openhands-cli" ;;
+    openhands) printf '%s' "openhands-acp openhands openhands-cli" ;;
     amp) printf '%s' "amp-acp amp" ;;
     droid) printf '%s' "droid-acp droid" ;;
     copilot) printf '%s' "copilot-cli-acp github-copilot-cli copilot" ;;
@@ -464,7 +464,7 @@ acp_provider_command_candidates() {
 acp_provider_default_args() {
   case "${1:-}" in
     qwen) printf '%s' "--experimental-acp" ;;
-    opencode|goose|continue|openhands) printf '%s' "acp" ;;
+    opencode|goose|continue) printf '%s' "acp" ;;
     kimi|auggie) printf '%s' "--acp" ;;
     *) printf '%s' "" ;;
   esac
@@ -528,6 +528,8 @@ local_adapter_dir() {
   case "${1:-}" in
     amp) printf '%s' "amp-acp" ;;
     pi) printf '%s' "pi-acp" ;;
+    goose) printf '%s' "openhands-acp" ;;
+    openhands) printf '%s' "openhands-acp" ;;
     droid) printf '%s' "droid-acp" ;;
     copilot) printf '%s' "copilot-cli-acp" ;;
     kiro) printf '%s' "kiro-acp" ;;
@@ -601,12 +603,25 @@ local_adapter_binary_path() {
 }
 
 local_bridge_binary_path() {
+  local prefer_native="0"
+  if [[ "${CTX_BUNDLE_BRIDGE_FORCE_TARGET:-0}" != "1" ]] && [[ "$host_os" == "$os" ]] && [[ "$host_arch" == "$arch" ]]; then
+    prefer_native="1"
+  fi
+
   if [[ -n "${CARGO_TARGET_DIR:-}" ]]; then
+    if [[ "$prefer_native" == "1" ]]; then
+      printf '%s' "$CARGO_TARGET_DIR/release/${BRIDGE_BIN}${BIN_EXT}"
+      return 0
+    fi
     if [[ -n "${rust_target:-}" ]]; then
       printf '%s' "$CARGO_TARGET_DIR/$rust_target/release/${BRIDGE_BIN}${BIN_EXT}"
     else
       printf '%s' "$CARGO_TARGET_DIR/release/${BRIDGE_BIN}${BIN_EXT}"
     fi
+    return 0
+  fi
+  if [[ "$prefer_native" == "1" ]]; then
+    printf '%s' "$BRIDGE_DIR/target/release/${BRIDGE_BIN}${BIN_EXT}"
     return 0
   fi
   printf '%s' "$BRIDGE_DIR/target/$rust_target/release/${BRIDGE_BIN}${BIN_EXT}"
@@ -651,7 +666,11 @@ require_bridge_binary() {
         build_bridge_in_container
       else
         require_cmd cargo
-        (cd "$BRIDGE_DIR" && cargo build --release --target "$rust_target")
+        if [[ "${CTX_BUNDLE_BRIDGE_FORCE_TARGET:-0}" != "1" ]] && [[ "$host_os" == "$os" ]] && [[ "$host_arch" == "$arch" ]]; then
+          (cd "$BRIDGE_DIR" && cargo build --release)
+        else
+          (cd "$BRIDGE_DIR" && cargo build --release --target "$rust_target")
+        fi
       fi
     fi
   fi
@@ -676,6 +695,16 @@ local_adapter_node_entrypoint() {
       local dir
       dir="$(local_adapter_dir "pi")"
       printf '%s' "$LOCAL_ADAPTERS_DIR/$dir/dist/bin/pi-acp.js"
+      ;;
+    goose)
+      local dir
+      dir="$(local_adapter_dir "goose")"
+      printf '%s' "$LOCAL_ADAPTERS_DIR/$dir/dist/bin/goose-acp.js"
+      ;;
+    openhands)
+      local dir
+      dir="$(local_adapter_dir "openhands")"
+      printf '%s' "$LOCAL_ADAPTERS_DIR/$dir/dist/bin/openhands-acp.js"
       ;;
     *)
       printf '%s' ""
@@ -1259,7 +1288,7 @@ build_local_adapters() {
   fi
 
   local node_adapter_id
-  for node_adapter_id in amp pi; do
+  for node_adapter_id in amp pi goose openhands; do
     if ! provider_selected_for_bundle "$node_adapter_id"; then
       continue
     fi
@@ -2295,7 +2324,7 @@ if ! is_falsy "$LOCAL_ADAPTER_MODE"; then
   fi
 
   adapter_version_override="${CTX_BUNDLE_ADAPTER_VERSION:-}"
-  for id in amp pi droid copilot kiro; do
+  for id in amp pi goose openhands droid copilot kiro; do
     if ! provider_selected_for_bundle "$id"; then
       continue
     fi
@@ -2307,7 +2336,7 @@ if ! is_falsy "$LOCAL_ADAPTER_MODE"; then
       version="local"
     fi
 
-    if [[ "$id" == "amp" || "$id" == "pi" ]]; then
+    if [[ "$id" == "amp" || "$id" == "pi" || "$id" == "goose" || "$id" == "openhands" ]]; then
       src="$(local_adapter_node_entrypoint "$id")"
       if [[ ! -f "$src" ]]; then
         dir="$(local_adapter_dir "$id")"
@@ -2404,6 +2433,7 @@ while IFS=$'\x1f' read -r provider_id kind version url archive bin_path package 
       mkdir -p "$provider_root"
       dest="$provider_root/$bin_path"
       mkdir -p "$(dirname "$dest")"
+      rm -f "$dest"
       cp "$url" "$dest"
       if [[ "$os" != "windows" ]]; then
         chmod +x "$dest" || true
@@ -2440,6 +2470,7 @@ while IFS=$'\x1f' read -r provider_id kind version url archive bin_path package 
         mkdir -p "$provider_root"
         dest="$provider_root/$bin_path"
         mkdir -p "$(dirname "$dest")"
+        rm -f "$dest"
         cp "$url" "$dest"
       fi
 
