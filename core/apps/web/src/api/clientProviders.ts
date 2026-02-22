@@ -68,6 +68,7 @@ export type ProvidersBootstrapResponse = {
   kiro_accounts: KiroAccountsResponse;
   cursor_accounts: CursorAccountsResponse;
   amp_accounts: AmpAccountsResponse;
+  auggie_accounts?: AuggieAccountsResponse;
 };
 
 export const getProvidersBootstrap = (workspaceId: string) =>
@@ -297,6 +298,15 @@ export type AmpAccountEntry = {
   last_used_at?: string | null;
 };
 
+export type AuggieAccountEntry = {
+  id: string;
+  label: string;
+  kind?: string;
+  email?: string | null;
+  created_at: string;
+  last_used_at?: string | null;
+};
+
 export type CodexAccountUsageEntry = {
   account_id: string | null;
   label: string;
@@ -368,6 +378,11 @@ export type CursorAccountsResponse = {
 export type AmpAccountsResponse = {
   active_account_id: string | null;
   accounts: AmpAccountEntry[];
+};
+
+export type AuggieAccountsResponse = {
+  active_account_id: string | null;
+  accounts: AuggieAccountEntry[];
 };
 
 export type CodexLoginStartResponse = {

@@ -398,7 +398,7 @@ impl ProviderAdapter for MistralLoginTestAdapter {
         _method_id: Option<String>,
         event_sink: mpsc::Sender<NormalizedEvent>,
     ) -> Result<()> {
-        if env.get("HOME").is_none() {
+        if !env.contains_key("HOME") {
             return Err(anyhow!("HOME missing"));
         }
         match &self.fixture {

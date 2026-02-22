@@ -253,6 +253,28 @@ const takeNextAuthUrlToOpen = (
   return normalized;
 };
 
+export const extractGithubDeviceCodeFromAuthUrl = (
+  authUrl: string | null | undefined,
+): string | null => {
+  const trimmed = authUrl?.trim() ?? "";
+  if (!trimmed) return null;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.hostname.toLowerCase() !== "github.com") return null;
+    const path = parsed.pathname.replace(/\/+$/, "");
+    if (path !== "/login/device") return null;
+    const code = parsed.searchParams.get("user_code")?.trim() ?? "";
+    return code || null;
+  } catch {
+    return null;
+  }
+};
+
+export const shouldAutoOpenCopilotAuthUrl = (authUrl: string): boolean => {
+  void authUrl;
+  return false;
+};
+
 export const shouldOpenPolledClaudeAuthUrl = (params: {
   loginStartedAtMs: number;
   initialAuthUrl: string | null | undefined;
@@ -267,6 +289,8 @@ export const shouldOpenPolledClaudeAuthUrl = (params: {
   }
   return polled !== initial;
 };
+
+export const shouldAutoOpenKimiAuthUrl = (): boolean => false;
 
 type ResolveUpsertedEndpointArgs = {
   requestedEndpointId: string | null;
@@ -727,6 +751,8 @@ export function useHarnessAuthenticationController({
       subscription_auth_token_json: "",
       subscription_oauth_creds_json: "",
       subscription_google_accounts_json: "",
+      subscription_device_code: null,
+      subscription_auth_url: null,
       subscription_status: null,
       subscription_busy: false,
       api_key_busy: false,

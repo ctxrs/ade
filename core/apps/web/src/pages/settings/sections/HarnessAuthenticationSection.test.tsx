@@ -160,7 +160,7 @@ describe("HarnessAuthenticationSection Gemini subscription modal", () => {
     expect(submitHarnessSubscriptionModal).toHaveBeenCalledTimes(1);
   });
 
-  it("renders a clickable manual sign-in link when auth URL is present", () => {
+  it("shows manual browser-open guidance text when auth URL is present", () => {
     const authUrl = "https://example.com/oauth/start";
     mockUseHarnessAuthenticationController.mockReturnValue(
       makeController({
@@ -180,14 +180,14 @@ describe("HarnessAuthenticationSection Gemini subscription modal", () => {
       />,
     );
 
-    const link = screen.getByRole("link", { name: "Open sign-in link" });
-    expect(link).toHaveAttribute("href", authUrl);
-    expect(link).toHaveAttribute("target", "_blank");
+    expect(screen.getByText("Couldn't open browser automatically. Use the sign-in link below.")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Open sign-in link" })).not.toBeInTheDocument();
+    expect(authUrl).toContain("/oauth/");
   });
 });
 
 describe("HarnessAuthenticationSection Copilot subscription modal", () => {
-  it("shows guided GitHub sign-in without token fallback field", () => {
+  it("shows token-based Copilot subscription fields", () => {
     mockUseHarnessAuthenticationController.mockReturnValue(
       makeController({ harnessAuthModal: makeCopilotSubscriptionModal() }),
     );
@@ -201,15 +201,15 @@ describe("HarnessAuthenticationSection Copilot subscription modal", () => {
     );
 
     expect(
-      screen.getByText("Sign in with GitHub to capture managed Copilot auth automatically."),
+      screen.getByText("Paste a GitHub token with Copilot entitlement for the managed Copilot account."),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Sign in with GitHub" })).toBeInTheDocument();
-    expect(screen.queryByText("Token (optional fallback)")).not.toBeInTheDocument();
-    expect(screen.queryByPlaceholderText("Copilot subscription")).not.toBeInTheDocument();
-    expect(screen.queryByPlaceholderText("you@example.com")).not.toBeInTheDocument();
+    expect(screen.getByText("Token")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Copilot subscription")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("you@example.com")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save subscription" })).toBeInTheDocument();
   });
 
-  it("shows device code field when copilot login status includes one", () => {
+  it("does not render device code field even when copilot modal state carries one", () => {
     mockUseHarnessAuthenticationController.mockReturnValue(
       makeController({
         harnessAuthModal: {
@@ -228,7 +228,7 @@ describe("HarnessAuthenticationSection Copilot subscription modal", () => {
       />,
     );
 
-    expect(screen.getByText("GitHub device code")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("ABCD-1234")).toBeInTheDocument();
+    expect(screen.queryByText("GitHub device code")).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("ABCD-1234")).not.toBeInTheDocument();
   });
 });

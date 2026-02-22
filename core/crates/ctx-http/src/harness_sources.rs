@@ -572,12 +572,10 @@ fn normalize_base_url_for_provider(provider_id: &str, raw: Option<&str>) -> Resu
                     anyhow::bail!("base_url is required");
                 }
                 Ok(String::new())
+            } else if provider_id == PROVIDER_CLAUDE {
+                normalize_claude_anthropic_base_url(trimmed)
             } else {
-                if provider_id == PROVIDER_CLAUDE {
-                    normalize_claude_anthropic_base_url(trimmed)
-                } else {
-                    normalize_base_url(trimmed)
-                }
+                normalize_base_url(trimmed)
             }
         }
         None => {
