@@ -1706,12 +1706,14 @@ async fn resolve_internal(
             ensure_safe_endpoint_id(&endpoint.id)?;
             let cline_home_root = runtime_data_root.unwrap_or(data_root);
             let cline_home = cline_endpoint_home(cline_home_root, &endpoint.id);
-            tokio::fs::create_dir_all(&cline_home).await.with_context(|| {
-                format!(
-                    "creating cline endpoint home {}",
-                    cline_home.to_string_lossy()
-                )
-            })?;
+            tokio::fs::create_dir_all(&cline_home)
+                .await
+                .with_context(|| {
+                    format!(
+                        "creating cline endpoint home {}",
+                        cline_home.to_string_lossy()
+                    )
+                })?;
             let cline_home_str = cline_home.to_string_lossy().to_string();
             env.insert("CLINE_DIR".to_string(), cline_home_str.clone());
             env.insert("HOME".to_string(), cline_home_str);

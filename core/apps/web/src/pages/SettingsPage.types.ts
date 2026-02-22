@@ -75,6 +75,7 @@ export type HarnessAuthModalState = {
   subscription_auth_token_json: string;
   subscription_oauth_creds_json: string;
   subscription_google_accounts_json: string;
+  subscription_auth_url: string | null;
   subscription_status: string | null;
   subscription_busy: boolean;
   api_key_busy: boolean;

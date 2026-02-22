@@ -398,6 +398,23 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             delete(delete_amp_account),
         )
         .route(
+            "/api/providers/auggie/accounts/login/start",
+            post(start_auggie_login),
+        )
+        .route(
+            "/api/providers/auggie/accounts/login/:id",
+            get(get_auggie_login),
+        )
+        .route("/api/providers/auggie/accounts", get(list_auggie_accounts))
+        .route(
+            "/api/providers/auggie/active-account",
+            put(set_auggie_active_account),
+        )
+        .route(
+            "/api/providers/auggie/accounts/:id",
+            delete(delete_auggie_account),
+        )
+        .route(
             "/api/providers/kimi/accounts",
             get(list_kimi_accounts).post(upsert_kimi_account),
         )

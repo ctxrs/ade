@@ -1325,7 +1325,7 @@ fn extract_auth_url_from_stderr_line(line: &str) -> Option<String> {
                 }
             })
             .unwrap_or(line.len());
-        let candidate = line[start..end].trim_end_matches(|ch| matches!(ch, '.' | ',' | ';' | ':'));
+        let candidate = line[start..end].trim_end_matches(['.', ',', ';', ':']);
         if candidate.starts_with("http://") || candidate.starts_with("https://") {
             return Some(candidate.to_string());
         }
@@ -1336,6 +1336,14 @@ fn extract_auth_url_from_stderr_line(line: &str) -> Option<String> {
 
 fn extract_auth_error_from_stderr_line(line: &str) -> Option<String> {
     let lowered = line.to_ascii_lowercase();
+    if lowered.contains("auggie does not currently support authenticating over acp")
+        || lowered.contains("please run `auggie login` from your terminal then try again")
+    {
+        return Some(
+            "Auggie does not currently support ACP authentication in this environment. Run `auggie login` via the fallback flow."
+                .to_string(),
+        );
+    }
     if lowered.contains("interactive consent could not be obtained")
         || lowered.contains("please run gemini cli in an interactive terminal to authenticate")
     {
@@ -2449,6 +2457,17 @@ mod tests {
     }
 
     #[test]
+    fn extract_auth_error_from_stderr_line_detects_auggie_acp_auth_unsupported() {
+        let line = "message: 'Authentication required: Auggie does not currently support authenticating over ACP. Please run `auggie login` from your terminal then try again.'";
+        assert_eq!(
+            extract_auth_error_from_stderr_line(line).as_deref(),
+            Some(
+                "Auggie does not currently support ACP authentication in this environment. Run `auggie login` via the fallback flow."
+            )
+        );
+    }
+
+    #[test]
     fn tool_completed_retains_started_preview_when_completed_omits_it() {
         let mut tool_output_cache: HashMap<String, String> = HashMap::new();
         let mut tool_input_cache: HashMap<String, CachedToolInput> = HashMap::new();
@@ -2669,7 +2688,10 @@ mod tests {
         );
         let probe =
             synthetic_models_probe_for_provider("cline", &env).expect("cline synthetic probe");
-        assert_eq!(probe.current_model_id.as_deref(), Some("openai/gpt-5.2-codex"));
+        assert_eq!(
+            probe.current_model_id.as_deref(),
+            Some("openai/gpt-5.2-codex")
+        );
         assert_eq!(probe.models.len(), 1);
         assert_eq!(probe.models[0].id, "openai/gpt-5.2-codex");
     }

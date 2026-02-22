@@ -16,11 +16,13 @@ function makeGeminiSubscriptionModal(): HarnessAuthModalState {
   return {
     provider_id: "gemini",
     stage: "subscription",
+    endpoint_id: null,
     endpoint_provider_id: "gemini",
     gemini_endpoint_auth_type: "gemini_api_key",
     endpoint_name: "",
     base_url: "",
     api_key: "",
+    manual_model_ids: "",
     subscription_label: "",
     subscription_token: "",
     subscription_email: "",
@@ -30,6 +32,7 @@ function makeGeminiSubscriptionModal(): HarnessAuthModalState {
     subscription_auth_token_json: "",
     subscription_oauth_creds_json: "",
     subscription_google_accounts_json: "",
+    subscription_auth_url: null,
     subscription_status: null,
     subscription_busy: false,
     api_key_busy: false,
@@ -124,5 +127,30 @@ describe("HarnessAuthenticationSection Gemini subscription modal", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Sign in with Google" }));
     expect(submitHarnessSubscriptionModal).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders a clickable manual sign-in link when auth URL is present", () => {
+    const authUrl = "https://example.com/oauth/start";
+    mockUseHarnessAuthenticationController.mockReturnValue(
+      makeController({
+        harnessAuthModal: {
+          ...makeGeminiSubscriptionModal(),
+          subscription_status: "Couldn't open browser automatically. Use the sign-in link below.",
+          subscription_auth_url: authUrl,
+        },
+      }),
+    );
+
+    render(
+      <HarnessAuthenticationSection
+        workspaceId="ws-1"
+        active
+        modalOnly
+      />,
+    );
+
+    const link = screen.getByRole("link", { name: "Open sign-in link" });
+    expect(link).toHaveAttribute("href", authUrl);
+    expect(link).toHaveAttribute("target", "_blank");
   });
 });

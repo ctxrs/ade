@@ -98,6 +98,7 @@ pub struct ProviderRuntime {
     pub claude_login_sessions: Mutex<HashMap<String, provider_accounts::ClaudeLoginStatus>>,
     pub gemini_login_sessions: Mutex<HashMap<String, provider_accounts::GeminiLoginStatus>>,
     pub amp_login_sessions: Mutex<HashMap<String, provider_accounts::AmpLoginStatus>>,
+    pub auggie_login_sessions: Mutex<HashMap<String, provider_accounts::AuggieLoginStatus>>,
     pub claude_login_inputs: Mutex<HashMap<String, mpsc::UnboundedSender<String>>>,
     pub installs: Mutex<HashMap<InstallId, InstallState>>,
 }
@@ -431,6 +432,7 @@ impl AppState {
                 claude_login_sessions: Mutex::new(HashMap::new()),
                 gemini_login_sessions: Mutex::new(HashMap::new()),
                 amp_login_sessions: Mutex::new(HashMap::new()),
+                auggie_login_sessions: Mutex::new(HashMap::new()),
                 claude_login_inputs: Mutex::new(HashMap::new()),
                 installs: Mutex::new(HashMap::new()),
             },

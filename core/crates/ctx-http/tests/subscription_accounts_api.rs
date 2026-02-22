@@ -62,6 +62,20 @@ struct GeminiLoginStatusResponse {
     error: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct AuggieLoginStartResponse {
+    login_id: String,
+    auth_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AuggieLoginStatusResponse {
+    status: String,
+    account_id: Option<String>,
+    auth_url: Option<String>,
+    error: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 enum GeminiLoginFixture {
     Success {
@@ -106,6 +120,54 @@ impl GeminiLoginTestAdapter {
     fn no_auth_url() -> Self {
         Self {
             fixture: GeminiLoginFixture::NoAuthUrl,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum AuggieLoginFixture {
+    Success {
+        session_auth_json: String,
+        auth_url: Option<String>,
+        email: Option<String>,
+    },
+    Failure {
+        error: String,
+    },
+    NoAuthUrl,
+}
+
+#[derive(Debug, Clone)]
+struct AuggieLoginTestAdapter {
+    fixture: AuggieLoginFixture,
+}
+
+impl AuggieLoginTestAdapter {
+    fn success(
+        session_auth_json: impl Into<String>,
+        auth_url: Option<String>,
+        email: Option<String>,
+    ) -> Self {
+        Self {
+            fixture: AuggieLoginFixture::Success {
+                session_auth_json: session_auth_json.into(),
+                auth_url,
+                email,
+            },
+        }
+    }
+
+    fn failure(error: impl Into<String>) -> Self {
+        Self {
+            fixture: AuggieLoginFixture::Failure {
+                error: error.into(),
+            },
+        }
+    }
+
+    fn no_auth_url() -> Self {
+        Self {
+            fixture: AuggieLoginFixture::NoAuthUrl,
         }
     }
 }
@@ -212,6 +274,106 @@ fn providers_with_gemini_adapter(
 ) -> HashMap<String, Arc<dyn ProviderAdapter>> {
     let mut providers = common::fake_providers();
     providers.insert("gemini".to_string(), adapter);
+    providers
+}
+
+#[async_trait]
+impl ProviderAdapter for AuggieLoginTestAdapter {
+    async fn inspect(&self) -> Result<ProviderStatus> {
+        Ok(ProviderStatus {
+            provider_id: "auggie".to_string(),
+            installed: true,
+            detected_path: None,
+            version: Some("test".to_string()),
+            capabilities: None,
+            health: ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+        })
+    }
+
+    async fn run(
+        &self,
+        _input: TurnInput,
+        _workdir: PathBuf,
+        _env: HashMap<String, String>,
+        _event_sink: mpsc::Sender<NormalizedEvent>,
+    ) -> Result<RunHandle> {
+        Err(anyhow!("run is not used in this test adapter"))
+    }
+
+    async fn cancel(&self, _handle: RunHandle) -> Result<()> {
+        Ok(())
+    }
+
+    async fn authenticate_session(
+        &self,
+        _session_key: String,
+        _workdir: PathBuf,
+        env: HashMap<String, String>,
+        method_id: Option<String>,
+        event_sink: mpsc::Sender<NormalizedEvent>,
+    ) -> Result<()> {
+        if method_id.is_some() {
+            return Err(anyhow!(
+                "unexpected method_id: {:?}",
+                method_id.unwrap_or_default()
+            ));
+        }
+        let Some(home) = env.get("HOME") else {
+            return Err(anyhow!("HOME missing"));
+        };
+        let augment_dir = PathBuf::from(home).join(".augment");
+        tokio::fs::create_dir_all(&augment_dir).await?;
+
+        match &self.fixture {
+            AuggieLoginFixture::Success {
+                session_auth_json,
+                auth_url,
+                email,
+            } => {
+                if let Some(auth_url) = auth_url.as_ref() {
+                    let _ = event_sink
+                        .send(NormalizedEvent {
+                            event_type: SessionEventType::Notice,
+                            payload_json: json!({ "auth_url": auth_url }),
+                        })
+                        .await;
+                }
+                tokio::fs::write(augment_dir.join("session.json"), session_auth_json).await?;
+                let _ = event_sink
+                    .send(NormalizedEvent {
+                        event_type: SessionEventType::Notice,
+                        payload_json: json!({
+                            "code": "auth_complete",
+                            "email": email,
+                        }),
+                    })
+                    .await;
+                Ok(())
+            }
+            AuggieLoginFixture::Failure { error } => {
+                let _ = event_sink
+                    .send(NormalizedEvent {
+                        event_type: SessionEventType::Error,
+                        payload_json: json!({ "message": error }),
+                    })
+                    .await;
+                Err(anyhow!("{error}"))
+            }
+            AuggieLoginFixture::NoAuthUrl => {
+                tokio::time::sleep(Duration::from_millis(600)).await;
+                Ok(())
+            }
+        }
+    }
+}
+
+fn providers_with_auggie_adapter(
+    adapter: Arc<dyn ProviderAdapter>,
+) -> HashMap<String, Arc<dyn ProviderAdapter>> {
+    let mut providers = common::fake_providers();
+    providers.insert("auggie".to_string(), adapter);
     providers
 }
 
@@ -376,6 +538,34 @@ async fn poll_gemini_login_status(
         }
         if Instant::now() >= deadline {
             panic!("gemini login did not complete in time");
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+async fn poll_auggie_login_status(
+    server: &common::TestServer,
+    login_id: &str,
+) -> AuggieLoginStatusResponse {
+    let status_url = format!(
+        "{}/api/providers/auggie/accounts/login/{}",
+        server.base_url, login_id
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let resp = server
+            .client
+            .get(&status_url)
+            .send()
+            .await
+            .expect("auggie status request");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: AuggieLoginStatusResponse = resp.json().await.expect("auggie status body");
+        if body.status != "pending" {
+            return body;
+        }
+        if Instant::now() >= deadline {
+            panic!("auggie login did not complete in time");
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
@@ -1058,6 +1248,180 @@ async fn gemini_login_fails_fast_when_no_auth_url_is_emitted() {
     let start_body: GeminiLoginStartResponse = start_resp.json().await.expect("start body");
 
     let status = poll_gemini_login_status(&server, &start_body.login_id).await;
+    assert_eq!(status.status, "failed");
+    assert!(status
+        .error
+        .unwrap_or_default()
+        .contains("did not emit an OAuth URL"));
+}
+
+#[tokio::test]
+async fn auggie_login_start_and_status_success_persists_account() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let providers = providers_with_auggie_adapter(Arc::new(AuggieLoginTestAdapter::success(
+        r#"{"sessionAuth":{"token":"abc"},"apiUrl":"https://api.augmentcode.com"}"#,
+        Some("https://augmentcode.com/auth?state=test".to_string()),
+        Some("auggie-dev@example.com".to_string()),
+    )));
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        providers,
+        "http://127.0.0.1:0",
+    );
+    let server = common::spawn_http_server(common::router(state)).await;
+
+    let start_url = format!(
+        "{}/api/providers/auggie/accounts/login/start",
+        server.base_url
+    );
+    let start_resp = server
+        .client
+        .post(start_url)
+        .json(&json!({ "label": "Auggie OAuth" }))
+        .send()
+        .await
+        .expect("start auggie login request");
+    assert_eq!(start_resp.status(), StatusCode::OK);
+    let start_body: AuggieLoginStartResponse = start_resp.json().await.expect("start body");
+    assert!(!start_body.login_id.is_empty());
+    assert!(start_body.auth_url.is_none());
+
+    let status = poll_auggie_login_status(&server, &start_body.login_id).await;
+    assert_eq!(status.status, "success");
+    assert!(status.account_id.is_some());
+    assert!(status.error.is_none());
+    assert!(status.auth_url.is_none());
+
+    let accounts_url = format!("{}/api/providers/auggie/accounts", server.base_url);
+    let accounts_resp = server
+        .client
+        .get(&accounts_url)
+        .send()
+        .await
+        .expect("auggie accounts request");
+    assert_eq!(accounts_resp.status(), StatusCode::OK);
+    let accounts: SubscriptionAccountsResponse = accounts_resp.json().await.expect("accounts body");
+    assert_eq!(accounts.accounts.len(), 1);
+    assert_eq!(accounts.active_account_id, status.account_id);
+    assert_eq!(accounts.accounts[0].label.as_deref(), Some("Auggie OAuth"));
+
+    let missing = server
+        .client
+        .put(format!(
+            "{}/api/providers/auggie/active-account",
+            server.base_url
+        ))
+        .json(&json!({ "account_id": "missing-account" }))
+        .send()
+        .await
+        .expect("set active missing request");
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+
+    let activated = server
+        .client
+        .put(format!(
+            "{}/api/providers/auggie/active-account",
+            server.base_url
+        ))
+        .json(&json!({ "account_id": accounts.accounts[0].id }))
+        .send()
+        .await
+        .expect("set active request");
+    assert_eq!(activated.status(), StatusCode::OK);
+
+    let deleted = server
+        .client
+        .delete(format!("{accounts_url}/{}", accounts.accounts[0].id))
+        .send()
+        .await
+        .expect("delete account request");
+    assert_eq!(deleted.status(), StatusCode::OK);
+    let deleted_body: SubscriptionAccountsResponse =
+        deleted.json().await.expect("delete response body");
+    assert!(deleted_body.accounts.is_empty());
+    assert!(deleted_body.active_account_id.is_none());
+}
+
+#[tokio::test]
+async fn auggie_login_start_and_status_failure_reports_error() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let providers = providers_with_auggie_adapter(Arc::new(AuggieLoginTestAdapter::failure(
+        "auggie auth failed",
+    )));
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        providers,
+        "http://127.0.0.1:0",
+    );
+    let server = common::spawn_http_server(common::router(state)).await;
+
+    let start_url = format!(
+        "{}/api/providers/auggie/accounts/login/start",
+        server.base_url
+    );
+    let start_resp = server
+        .client
+        .post(start_url)
+        .json(&json!({}))
+        .send()
+        .await
+        .expect("start auggie login request");
+    assert_eq!(start_resp.status(), StatusCode::OK);
+    let start_body: AuggieLoginStartResponse = start_resp.json().await.expect("start body");
+
+    let status = poll_auggie_login_status(&server, &start_body.login_id).await;
+    assert_eq!(status.status, "failed");
+    assert!(status.account_id.is_none());
+    assert!(status
+        .error
+        .unwrap_or_default()
+        .contains("auggie auth failed"));
+
+    let accounts_url = format!("{}/api/providers/auggie/accounts", server.base_url);
+    let accounts_resp = server
+        .client
+        .get(accounts_url)
+        .send()
+        .await
+        .expect("auggie accounts request");
+    assert_eq!(accounts_resp.status(), StatusCode::OK);
+    let accounts: SubscriptionAccountsResponse = accounts_resp.json().await.expect("accounts body");
+    assert!(accounts.accounts.is_empty());
+    assert!(accounts.active_account_id.is_none());
+}
+
+#[tokio::test]
+async fn auggie_login_fails_fast_when_no_auth_url_is_emitted() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let providers = providers_with_auggie_adapter(Arc::new(AuggieLoginTestAdapter::no_auth_url()));
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        providers,
+        "http://127.0.0.1:0",
+    );
+    let server = common::spawn_http_server(common::router(state)).await;
+
+    let start_url = format!(
+        "{}/api/providers/auggie/accounts/login/start",
+        server.base_url
+    );
+    let start_resp = server
+        .client
+        .post(start_url)
+        .json(&json!({}))
+        .send()
+        .await
+        .expect("start auggie login request");
+    assert_eq!(start_resp.status(), StatusCode::OK);
+    let start_body: AuggieLoginStartResponse = start_resp.json().await.expect("start body");
+
+    let status = poll_auggie_login_status(&server, &start_body.login_id).await;
     assert_eq!(status.status, "failed");
     assert!(status
         .error

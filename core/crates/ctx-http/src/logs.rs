@@ -61,8 +61,14 @@ pub fn redact_sensitive(input: &str) -> String {
     out = redact_after_marker(out, "TOKEN=");
     out = redact_after_marker(out, "CTX_AUTH_TOKEN=");
     out = redact_after_marker(out, "CLAUDE_CODE_OAUTH_TOKEN=");
+    out = redact_after_marker(out, "AUGMENT_SESSION_AUTH=");
+    out = redact_after_marker(out, "AUGMENT_API_TOKEN=");
     out = redact_after_marker(out, "\"CLAUDE_CODE_OAUTH_TOKEN\":\"");
     out = redact_after_marker(out, "\"claude_code_oauth_token\":\"");
+    out = redact_after_marker(out, "\"AUGMENT_SESSION_AUTH\":\"");
+    out = redact_after_marker(out, "\"augment_session_auth\":\"");
+    out = redact_after_marker(out, "\"AUGMENT_API_TOKEN\":\"");
+    out = redact_after_marker(out, "\"augment_api_token\":\"");
     out = redact_after_marker(out, "ctxAuthToken\":\"");
     out = redact_after_marker(out, "ctx_auth_token\":\"");
     out

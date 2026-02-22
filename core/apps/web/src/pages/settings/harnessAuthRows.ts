@@ -1,4 +1,5 @@
 import type {
+  AuggieAccountEntry,
   AmpAccountEntry,
   ClaudeAccountEntry,
   CopilotAccountEntry,
@@ -50,6 +51,8 @@ type BuildHarnessAuthRowsArgs = {
   cursor_active_account_id?: string | null;
   amp_accounts?: AmpAccountEntry[];
   amp_active_account_id?: string | null;
+  auggie_accounts?: AuggieAccountEntry[];
+  auggie_active_account_id?: string | null;
 };
 
 const codexAccountLabel = (account: CodexAccountEntry): string => {
@@ -94,6 +97,12 @@ const ampAccountLabel = (account: AmpAccountEntry): string => {
   return account.id;
 };
 
+const auggieAccountLabel = (account: AuggieAccountEntry): string => {
+  if (account.email && account.email.trim()) return account.email.trim();
+  if (account.label.trim()) return account.label.trim();
+  return account.id;
+};
+
 export const defaultEndpointBaseUrlForProvider = (providerId: string): string => {
   if (providerId === "codex") return "https://api.openai.com/v1";
   if (providerId === "claude-crp") return "https://api.anthropic.com/v1";
@@ -121,6 +130,8 @@ export const buildHarnessAuthRows = ({
   cursor_active_account_id,
   amp_accounts = [],
   amp_active_account_id,
+  auggie_accounts = [],
+  auggie_active_account_id,
 }: BuildHarnessAuthRowsArgs): HarnessAuthRow[] => {
   const rows: HarnessAuthRow[] = [];
 
@@ -223,6 +234,20 @@ export const buildHarnessAuthRows = ({
         kind: "subscription",
         label: ampAccountLabel(account),
         active: selected_source_kind === "subscription" && amp_active_account_id === account.id,
+        selectable: true,
+        account_id: account.id,
+        can_delete: true,
+      });
+    }
+  }
+
+  if (provider_id === "auggie" && auggie_accounts.length > 0) {
+    for (const account of auggie_accounts) {
+      rows.push({
+        key: `subscription:${account.id}`,
+        kind: "subscription",
+        label: auggieAccountLabel(account),
+        active: selected_source_kind === "subscription" && auggie_active_account_id === account.id,
         selectable: true,
         account_id: account.id,
         can_delete: true,
