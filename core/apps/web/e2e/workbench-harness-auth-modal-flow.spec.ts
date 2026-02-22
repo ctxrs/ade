@@ -182,6 +182,13 @@ test("workbench: unauthed harness opens auth modal and API key flow readies harn
   await expect(modal.getByRole("button", { name: "API Key" })).toBeVisible();
 
   await modal.getByRole("button", { name: "API Key" }).click();
+  await expect(modal.getByRole("link", { name: "Cursor Integrations" })).toHaveAttribute(
+    "href",
+    "https://cursor.com/dashboard?tab=integrations",
+  );
+  await expect(modal.getByText("Label (optional)")).toBeVisible();
+  await expect(modal.getByText("Manual model slugs (optional)")).toHaveCount(0);
+  await expect(modal.getByText("Base URL")).toHaveCount(0);
   await modal.locator("input[type='password']").fill("cursor-test-token");
   await modal.getByRole("button", { name: "Add API key" }).click();
   await expect(modal).toBeHidden({ timeout: 10_000 });

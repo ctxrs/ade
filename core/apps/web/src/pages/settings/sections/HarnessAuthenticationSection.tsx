@@ -160,6 +160,9 @@ export function HarnessAuthenticationSection({
   const modalRequiresBaseUrl = harnessAuthModal
     ? harnessEndpointRequiresBaseUrl(harnessAuthModal.provider_id)
     : true;
+  const modalProviderUsesNativeKeyFlow = harnessAuthModal
+    ? harnessAuthModal.provider_id === "cursor" || harnessAuthModal.provider_id === "gemini"
+    : false;
   const modalAllowsCustomBaseUrl = activeModalEndpointPreset?.id === "other";
   const modalAllowsOptionalBaseUrl = harnessAuthModal
     ? supportsOptionalBaseUrlForHarness(harnessAuthModal.provider_id)
@@ -179,10 +182,13 @@ export function HarnessAuthenticationSection({
         ? "Google API key"
         : "Gemini API key"
       : "API key";
+  const modalEndpointNameLabel = modalProviderUsesNativeKeyFlow ? "Label (optional)" : "Name (optional)";
   const modalApiKeyPlaceholder = harnessAuthModal?.provider_id === "kiro"
     ? '{"token":"..."}'
     : harnessAuthModal?.provider_id === "gemini"
       ? "AIza..."
+    : harnessAuthModal?.provider_id === "cursor"
+      ? "key_..."
     : harnessAuthModal?.provider_id === "auggie"
         ? "Auggie session token"
         : "sk-...";
@@ -878,7 +884,44 @@ export function HarnessAuthenticationSection({
               </div>
             ) : (
               <div className="settings-harness-modal-fields">
-                {modalRequiresBaseUrl ? (
+                {harnessAuthModal.provider_id === "cursor" ? (
+                  <div className="settings-row-desc">
+                    Get your Cursor API key from{" "}
+                    <a
+                      className="settings-harness-help-link"
+                      href="https://cursor.com/dashboard?tab=integrations"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Cursor Integrations
+                    </a>
+                    .
+                  </div>
+                ) : null}
+                {harnessAuthModal.provider_id === "gemini" ? (
+                  <div className="settings-row-desc">
+                    Create Gemini keys in{" "}
+                    <a
+                      className="settings-harness-help-link"
+                      href="https://aistudio.google.com/app/apikey"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Google AI Studio
+                    </a>
+                    . For Vertex AI keys, use{" "}
+                    <a
+                      className="settings-harness-help-link"
+                      href="https://console.cloud.google.com/apis/credentials"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Google Cloud Credentials
+                    </a>
+                    .
+                  </div>
+                ) : null}
+                {modalRequiresBaseUrl && !modalProviderUsesNativeKeyFlow ? (
                   <label className="settings-harness-modal-label">
                     Provider
                     <Select
@@ -910,10 +953,14 @@ export function HarnessAuthenticationSection({
                     <Select
                       value={harnessAuthModal.gemini_endpoint_auth_type}
                       onValueChange={(nextAuthType) => {
+                        const nextProviderId = nextAuthType === "vertex_ai" ? "google_vertex" : "google_ai_studio";
+                        const nextPreset = getHarnessEndpointProviderPreset(nextProviderId);
                         patchHarnessAuthModal({
                           gemini_endpoint_auth_type: nextAuthType === "vertex_ai"
                             ? "vertex_ai"
                             : "gemini_api_key",
+                          endpoint_provider_id: nextProviderId,
+                          base_url: nextPreset.base_url ?? "",
                         });
                       }}
                     >
@@ -937,25 +984,27 @@ export function HarnessAuthenticationSection({
                     onChange={(e) => patchHarnessAuthModal({ api_key: e.target.value })}
                   />
                 </label>
+                {!modalProviderUsesNativeKeyFlow ? (
+                  <label className="settings-harness-modal-label">
+                    Manual model slugs (optional)
+                    <textarea
+                      className="settings-control settings-control-wide"
+                      value={harnessAuthModal.manual_model_ids}
+                      onChange={(e) => patchHarnessAuthModal({ manual_model_ids: e.target.value })}
+                      placeholder={"openai/gpt-5.2\nanthropic/claude-sonnet-4.5"}
+                      rows={4}
+                    />
+                  </label>
+                ) : null}
                 <label className="settings-harness-modal-label">
-                  Manual model slugs (optional)
-                  <textarea
-                    className="settings-control settings-control-wide"
-                    value={harnessAuthModal.manual_model_ids}
-                    onChange={(e) => patchHarnessAuthModal({ manual_model_ids: e.target.value })}
-                    placeholder={"openai/gpt-5.2\nanthropic/claude-sonnet-4.5"}
-                    rows={4}
-                  />
-                </label>
-                <label className="settings-harness-modal-label">
-                  Name (optional)
+                  {modalEndpointNameLabel}
                   <input
                     className="settings-control settings-control-wide"
                     value={harnessAuthModal.endpoint_name}
                     onChange={(e) => patchHarnessAuthModal({ endpoint_name: e.target.value })}
                   />
                 </label>
-                {showBaseUrlInput ? (
+                {showBaseUrlInput && !modalProviderUsesNativeKeyFlow ? (
                   <label className="settings-harness-modal-label">
                     Base URL{modalRequiresBaseUrl ? "" : " (optional)"}
                     <input

@@ -3,7 +3,7 @@ set -euo pipefail
 
 suite="${1:-}"
 if [[ -z "${suite}" ]]; then
-  echo "usage: $0 {e2e|runner|tokens|endpoint-ui}" >&2
+  echo "usage: $0 {e2e|runner|tokens|endpoint-ui|provider-api-auth}" >&2
   exit 2
 fi
 
@@ -42,6 +42,7 @@ ensure_endpoint_ui_bundles() {
 
   local bundle_dir="${CTX_E2E_BUNDLE_DIR:-${repo_root}/apps/desktop/src-tauri/bundles}"
   local first_pass_providers="${CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-acp-crp-bridge,codex,qwen,opencode,mistral,goose,kimi,cline,swe-agent,openhands}"
+  local matrix_json="${CTX_BUNDLE_MATRIX_JSON:-${repo_root}/crates/ctx-http/src/provider_matrix.json}"
   local run_id="${CTX_E2E_RUN_ID:-$(date +%s)-$$}"
   local bundle_build_dir="${CTX_E2E_BUNDLE_BUILD_DIR:-/tmp/ctx-e2e-bundle-build-${run_id}}"
   local cargo_target_dir="${CTX_E2E_CARGO_TARGET_DIR:-/tmp/ctx-e2e-cargo-${run_id}}"
@@ -52,6 +53,7 @@ ensure_endpoint_ui_bundles() {
   echo "preparing bundled provider runtimes for endpoint-ui suite (providers: ${first_pass_providers})"
   CTX_BUNDLE_DIR="${bundle_dir}" \
   CTX_BUNDLE_BUILD_DIR="${bundle_build_dir}" \
+  CTX_BUNDLE_MATRIX_JSON="${matrix_json}" \
   CTX_BUNDLE_ONLY_PROVIDERS="${first_pass_providers}" \
   CTX_BUNDLE_SKIP_IMAGES="${CTX_E2E_ENDPOINT_SKIP_BUNDLE_IMAGES:-1}" \
   CTX_BUNDLE_INCLUDE_BRIDGE="1" \
@@ -69,8 +71,10 @@ ensure_endpoint_ui_bundles() {
   export CARGO_TARGET_DIR="${cargo_target_dir}"
   export CTX_E2E_CARGO_HOME="${cargo_home_dir}"
   export CTX_BUNDLE_BUILD_DIR="${bundle_build_dir}"
+  export CTX_BUNDLE_MATRIX_JSON="${matrix_json}"
   echo "using CTX_BUNDLE_DIR=${CTX_BUNDLE_DIR}"
   echo "using CTX_BUNDLE_BUILD_DIR=${CTX_BUNDLE_BUILD_DIR}"
+  echo "using CTX_BUNDLE_MATRIX_JSON=${CTX_BUNDLE_MATRIX_JSON}"
   echo "using CTX_E2E_CARGO_TARGET_DIR=${CTX_E2E_CARGO_TARGET_DIR}"
   echo "using CTX_E2E_CARGO_HOME=${CTX_E2E_CARGO_HOME}"
   echo "enforcing bundled-only runtime resolution for: ${CTX_E2E_BUNDLED_ONLY_PROVIDERS}"
@@ -133,8 +137,41 @@ case "${suite}" in
     )
     exit 0
     ;;
+  provider-api-auth)
+    export CTX_E2E_TIER="provider-api-auth"
+
+    missing_provider_auth_keys=()
+    if [[ -z "${CTX_E2E_CURSOR_API_KEY:-}" ]]; then
+      missing_provider_auth_keys+=("CTX_E2E_CURSOR_API_KEY")
+    fi
+    if [[ -z "${CTX_E2E_GEMINI_API_KEY:-}" ]]; then
+      missing_provider_auth_keys+=("CTX_E2E_GEMINI_API_KEY")
+    fi
+
+    if (( ${#missing_provider_auth_keys[@]} > 0 )); then
+      missing_keys_csv="$(IFS=,; echo "${missing_provider_auth_keys[*]}")"
+      if [[ -n "${CI:-}" ]]; then
+        echo "missing ${missing_keys_csv}; set provider API key secrets before running provider-api-auth suite" >&2
+        exit 1
+      fi
+      echo "skipping provider-api-auth tests; missing ${missing_keys_csv}" >&2
+      exit 0
+    fi
+
+    export CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS="${CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-${CTX_E2E_PROVIDER_AUTH_BUNDLE_PROVIDERS:-acp-crp-bridge,cursor,gemini}}"
+    ensure_endpoint_ui_bundles
+
+    (
+      cd "${repo_root}/apps/web"
+      pnpm exec playwright test -c playwright.config.ts \
+        e2e/workbench-cursor-provider-api-key-real.spec.ts \
+        e2e/workbench-gemini-provider-api-key-real.spec.ts \
+        --workers=1
+    )
+    exit 0
+    ;;
   *)
-    echo "usage: $0 {e2e|runner|tokens|endpoint-ui}" >&2
+    echo "usage: $0 {e2e|runner|tokens|endpoint-ui|provider-api-auth}" >&2
     exit 2
     ;;
 esac
