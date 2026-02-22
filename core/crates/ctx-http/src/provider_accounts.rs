@@ -10,33 +10,32 @@ const CTX_CODEX_HOST_AUTH_PATH_ENV: &str = "CTX_CODEX_HOST_AUTH_PATH";
 const CODEX_SECRET_VERSION: u32 = 1;
 const CLAUDE_SECRET_VERSION: u32 = 1;
 const GEMINI_SECRET_VERSION: u32 = 1;
+const QWEN_SECRET_VERSION: u32 = 1;
 const KIMI_SECRET_VERSION: u32 = 1;
 const COPILOT_SECRET_VERSION: u32 = 1;
 const KIRO_SECRET_VERSION: u32 = 1;
 const CURSOR_SECRET_VERSION: u32 = 1;
-const AUGGIE_SECRET_VERSION: u32 = 1;
 const CODEX_RUNTIME_OWNER_FILE: &str = ".ctx-active-account-id";
 pub const CODEX_CREDENTIAL_KIND_OAUTH: &str = "oauth";
 pub const CODEX_CREDENTIAL_KIND_API_KEY: &str = "api_key";
 pub const CLAUDE_CREDENTIAL_KIND_SETUP_TOKEN: &str = "setup_token";
 pub const GEMINI_CREDENTIAL_KIND_OAUTH_PERSONAL: &str = "oauth-personal";
+pub const QWEN_CREDENTIAL_KIND_OAUTH: &str = "oauth";
 pub const KIMI_CREDENTIAL_KIND_CREDENTIALS_JSON: &str = "credentials-json";
+pub const MISTRAL_CREDENTIAL_KIND_BROWSER_OAUTH: &str = "browser-oauth";
 pub const COPILOT_CREDENTIAL_KIND_GH_TOKEN: &str = "gh-token";
 pub const KIRO_CREDENTIAL_KIND_AUTH_TOKEN_JSON: &str = "auth-token-json";
 pub const CURSOR_CREDENTIAL_KIND_API_KEY: &str = "api-key";
 pub const AMP_CREDENTIAL_KIND_BROWSER_OAUTH: &str = "browser-oauth";
-pub const AUGGIE_CREDENTIAL_KIND_BROWSER_OAUTH: &str = "browser-oauth";
 pub const GEMINI_AUTH_SELECTED_TYPE_OAUTH_PERSONAL: &str = "oauth-personal";
+pub const QWEN_AUTH_SELECTED_TYPE_OAUTH: &str = "qwen-oauth";
 pub const GEMINI_FORCE_FILE_STORAGE_ENV: &str = "GEMINI_FORCE_FILE_STORAGE";
 pub const KIMI_SHARE_DIR_ENV: &str = "KIMI_SHARE_DIR";
 pub const CODEX_API_SHAPE_OPENAI_RESPONSES: &str = "openai_responses";
 pub const CODEX_AUTH_TYPE_BEARER: &str = "bearer";
 pub const CODEX_DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 pub const KIRO_AUTH_TOKEN_RELATIVE_PATH: &str = ".aws/sso/cache/kiro-auth-token.json";
-pub const AUGGIE_SESSION_AUTH_ENV: &str = "AUGMENT_SESSION_AUTH";
-pub const AUGGIE_API_TOKEN_ENV: &str = "AUGMENT_API_TOKEN";
-pub const AUGGIE_API_URL_ENV: &str = "AUGMENT_API_URL";
-pub const AUGGIE_SESSION_RELATIVE_PATH: &str = ".augment/session.json";
+pub const QWEN_OAUTH_CREDS_RELATIVE_PATH: &str = ".qwen/oauth_creds.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CodexSecretEnvelope {
@@ -57,6 +56,12 @@ struct GeminiSecretEnvelope {
     oauth_creds: serde_json::Value,
     #[serde(default)]
     google_accounts: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct QwenSecretEnvelope {
+    version: u32,
+    oauth_creds: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,12 +91,6 @@ struct CursorSecretEnvelope {
     api_key: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct AuggieSecretEnvelope {
-    version: u32,
-    session_auth: serde_json::Value,
-}
-
 fn default_codex_credential_kind() -> String {
     CODEX_CREDENTIAL_KIND_OAUTH.to_string()
 }
@@ -104,8 +103,16 @@ fn default_gemini_credential_kind() -> String {
     GEMINI_CREDENTIAL_KIND_OAUTH_PERSONAL.to_string()
 }
 
+fn default_qwen_credential_kind() -> String {
+    QWEN_CREDENTIAL_KIND_OAUTH.to_string()
+}
+
 fn default_kimi_credential_kind() -> String {
     KIMI_CREDENTIAL_KIND_CREDENTIALS_JSON.to_string()
+}
+
+fn default_mistral_credential_kind() -> String {
+    MISTRAL_CREDENTIAL_KIND_BROWSER_OAUTH.to_string()
 }
 
 fn default_copilot_credential_kind() -> String {
@@ -122,10 +129,6 @@ fn default_cursor_credential_kind() -> String {
 
 fn default_amp_credential_kind() -> String {
     AMP_CREDENTIAL_KIND_BROWSER_OAUTH.to_string()
-}
-
-fn default_auggie_credential_kind() -> String {
-    AUGGIE_CREDENTIAL_KIND_BROWSER_OAUTH.to_string()
 }
 
 fn default_codex_api_shape() -> String {
@@ -236,6 +239,29 @@ pub struct GeminiAccountRegistry {
     pub active_account_id: Option<String>,
     #[serde(default)]
     pub accounts: Vec<GeminiAccountEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QwenAccountEntry {
+    pub id: String,
+    pub label: String,
+    #[serde(default = "default_qwen_credential_kind")]
+    pub kind: String,
+    #[serde(default)]
+    pub email: Option<String>,
+    pub created_at: DateTime<Utc>,
+    #[serde(default)]
+    pub last_used_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub secret_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct QwenAccountRegistry {
+    #[serde(default)]
+    pub active_account_id: Option<String>,
+    #[serde(default)]
+    pub accounts: Vec<QwenAccountEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -352,26 +378,24 @@ pub struct AmpAccountRegistry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuggieAccountEntry {
+pub struct MistralAccountEntry {
     pub id: String,
     pub label: String,
-    #[serde(default = "default_auggie_credential_kind")]
+    #[serde(default = "default_mistral_credential_kind")]
     pub kind: String,
     #[serde(default)]
     pub email: Option<String>,
     pub created_at: DateTime<Utc>,
     #[serde(default)]
     pub last_used_at: Option<DateTime<Utc>>,
-    #[serde(default)]
-    pub secret_ref: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct AuggieAccountRegistry {
+pub struct MistralAccountRegistry {
     #[serde(default)]
     pub active_account_id: Option<String>,
     #[serde(default)]
-    pub accounts: Vec<AuggieAccountEntry>,
+    pub accounts: Vec<MistralAccountEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -412,6 +436,18 @@ pub struct GeminiLoginStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QwenLoginStatus {
+    pub login_id: String,
+    #[serde(default)]
+    pub auth_url: Option<String>,
+    pub status: String,
+    #[serde(default)]
+    pub account_id: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AmpLoginStatus {
     pub login_id: String,
     #[serde(default)]
@@ -422,31 +458,17 @@ pub struct AmpLoginStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KimiLoginStatus {
+pub struct MistralLoginStatus {
     pub login_id: String,
     #[serde(default)]
     pub auth_url: Option<String>,
     pub status: String,
     #[serde(default)]
-    pub account_id: Option<String>,
-    #[serde(default)]
     pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CopilotLoginStatus {
-    pub login_id: String,
-    #[serde(default)]
-    pub auth_url: Option<String>,
-    pub status: String,
-    #[serde(default)]
-    pub account_id: Option<String>,
-    #[serde(default)]
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuggieLoginStatus {
+pub struct KiroLoginStatus {
     pub login_id: String,
     #[serde(default)]
     pub auth_url: Option<String>,
@@ -483,8 +505,16 @@ pub fn gemini_accounts_root(data_root: &Path) -> PathBuf {
     data_root.join("providers").join("gemini").join("accounts")
 }
 
+pub fn qwen_accounts_root(data_root: &Path) -> PathBuf {
+    data_root.join("providers").join("qwen").join("accounts")
+}
+
 pub fn kimi_accounts_root(data_root: &Path) -> PathBuf {
     data_root.join("providers").join("kimi").join("accounts")
+}
+
+pub fn mistral_accounts_root(data_root: &Path) -> PathBuf {
+    data_root.join("providers").join("mistral").join("accounts")
 }
 
 pub fn copilot_accounts_root(data_root: &Path) -> PathBuf {
@@ -503,10 +533,6 @@ pub fn amp_accounts_root(data_root: &Path) -> PathBuf {
     data_root.join("providers").join("amp").join("accounts")
 }
 
-pub fn auggie_accounts_root(data_root: &Path) -> PathBuf {
-    data_root.join("providers").join("auggie").join("accounts")
-}
-
 pub fn codex_secrets_root(data_root: &Path) -> PathBuf {
     data_root.join("secrets").join("codex")
 }
@@ -517,6 +543,10 @@ pub fn claude_secrets_root(data_root: &Path) -> PathBuf {
 
 pub fn gemini_secrets_root(data_root: &Path) -> PathBuf {
     data_root.join("secrets").join("gemini")
+}
+
+pub fn qwen_secrets_root(data_root: &Path) -> PathBuf {
+    data_root.join("secrets").join("qwen")
 }
 
 pub fn kimi_secrets_root(data_root: &Path) -> PathBuf {
@@ -535,10 +565,6 @@ pub fn cursor_secrets_root(data_root: &Path) -> PathBuf {
     data_root.join("secrets").join("cursor")
 }
 
-pub fn auggie_secrets_root(data_root: &Path) -> PathBuf {
-    data_root.join("secrets").join("auggie")
-}
-
 fn codex_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf {
     codex_secrets_root(data_root).join(secret_ref)
 }
@@ -549,6 +575,10 @@ fn claude_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf {
 
 fn gemini_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf {
     gemini_secrets_root(data_root).join(secret_ref)
+}
+
+fn qwen_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf {
+    qwen_secrets_root(data_root).join(secret_ref)
 }
 
 fn kimi_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf {
@@ -565,10 +595,6 @@ fn kiro_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf {
 
 fn cursor_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf {
     cursor_secrets_root(data_root).join(secret_ref)
-}
-
-fn auggie_secret_path(data_root: &Path, secret_ref: &str) -> PathBuf {
-    auggie_secrets_root(data_root).join(secret_ref)
 }
 
 pub fn codex_runtime_home(data_root: &Path) -> PathBuf {
@@ -591,8 +617,16 @@ pub fn gemini_registry_path(data_root: &Path) -> PathBuf {
     gemini_accounts_root(data_root).join("index.json")
 }
 
+pub fn qwen_registry_path(data_root: &Path) -> PathBuf {
+    qwen_accounts_root(data_root).join("index.json")
+}
+
 pub fn kimi_registry_path(data_root: &Path) -> PathBuf {
     kimi_accounts_root(data_root).join("index.json")
+}
+
+pub fn mistral_registry_path(data_root: &Path) -> PathBuf {
+    mistral_accounts_root(data_root).join("index.json")
 }
 
 pub fn copilot_registry_path(data_root: &Path) -> PathBuf {
@@ -611,12 +645,12 @@ pub fn amp_registry_path(data_root: &Path) -> PathBuf {
     amp_accounts_root(data_root).join("index.json")
 }
 
-pub fn auggie_registry_path(data_root: &Path) -> PathBuf {
-    auggie_accounts_root(data_root).join("index.json")
-}
-
 pub fn amp_runtime_home(data_root: &Path) -> PathBuf {
     data_root.join("providers").join("amp").join("home")
+}
+
+pub fn mistral_runtime_home(data_root: &Path) -> PathBuf {
+    data_root.join("providers").join("mistral").join("home")
 }
 
 pub fn codex_account_dir(data_root: &Path, account_id: &str) -> PathBuf {
@@ -631,8 +665,16 @@ pub fn gemini_account_home(data_root: &Path, account_id: &str) -> PathBuf {
     gemini_accounts_root(data_root).join(account_id)
 }
 
+pub fn qwen_account_home(data_root: &Path, account_id: &str) -> PathBuf {
+    qwen_accounts_root(data_root).join(account_id)
+}
+
 pub fn kimi_account_home(data_root: &Path, account_id: &str) -> PathBuf {
     kimi_accounts_root(data_root).join(account_id)
+}
+
+pub fn mistral_account_home(data_root: &Path, account_id: &str) -> PathBuf {
+    mistral_accounts_root(data_root).join(account_id)
 }
 
 pub fn copilot_account_dir(data_root: &Path, account_id: &str) -> PathBuf {
@@ -645,10 +687,6 @@ pub fn kiro_account_home(data_root: &Path, account_id: &str) -> PathBuf {
 
 pub fn cursor_account_home(data_root: &Path, account_id: &str) -> PathBuf {
     cursor_accounts_root(data_root).join(account_id)
-}
-
-pub fn auggie_account_home(data_root: &Path, account_id: &str) -> PathBuf {
-    auggie_accounts_root(data_root).join(account_id)
 }
 
 fn ensure_safe_account_id(account_id: &str) -> Result<()> {
@@ -770,6 +808,24 @@ pub async fn save_gemini_registry(
     Ok(())
 }
 
+pub async fn load_qwen_registry(data_root: &Path) -> QwenAccountRegistry {
+    let path = qwen_registry_path(data_root);
+    match tokio::fs::read_to_string(&path).await {
+        Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+        Err(_) => QwenAccountRegistry::default(),
+    }
+}
+
+pub async fn save_qwen_registry(data_root: &Path, registry: &QwenAccountRegistry) -> Result<()> {
+    let path = qwen_registry_path(data_root);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let payload = serde_json::to_vec_pretty(registry)?;
+    tokio::fs::write(path, payload).await?;
+    Ok(())
+}
+
 pub async fn load_kimi_registry(data_root: &Path) -> KimiAccountRegistry {
     let path = kimi_registry_path(data_root);
     match tokio::fs::read_to_string(&path).await {
@@ -780,6 +836,27 @@ pub async fn load_kimi_registry(data_root: &Path) -> KimiAccountRegistry {
 
 pub async fn save_kimi_registry(data_root: &Path, registry: &KimiAccountRegistry) -> Result<()> {
     let path = kimi_registry_path(data_root);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let payload = serde_json::to_vec_pretty(registry)?;
+    tokio::fs::write(path, payload).await?;
+    Ok(())
+}
+
+pub async fn load_mistral_registry(data_root: &Path) -> MistralAccountRegistry {
+    let path = mistral_registry_path(data_root);
+    match tokio::fs::read_to_string(&path).await {
+        Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+        Err(_) => MistralAccountRegistry::default(),
+    }
+}
+
+pub async fn save_mistral_registry(
+    data_root: &Path,
+    registry: &MistralAccountRegistry,
+) -> Result<()> {
+    let path = mistral_registry_path(data_root);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
@@ -858,27 +935,6 @@ pub async fn load_amp_registry(data_root: &Path) -> AmpAccountRegistry {
 
 pub async fn save_amp_registry(data_root: &Path, registry: &AmpAccountRegistry) -> Result<()> {
     let path = amp_registry_path(data_root);
-    if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
-    let payload = serde_json::to_vec_pretty(registry)?;
-    tokio::fs::write(path, payload).await?;
-    Ok(())
-}
-
-pub async fn load_auggie_registry(data_root: &Path) -> AuggieAccountRegistry {
-    let path = auggie_registry_path(data_root);
-    match tokio::fs::read_to_string(&path).await {
-        Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
-        Err(_) => AuggieAccountRegistry::default(),
-    }
-}
-
-pub async fn save_auggie_registry(
-    data_root: &Path,
-    registry: &AuggieAccountRegistry,
-) -> Result<()> {
-    let path = auggie_registry_path(data_root);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
@@ -1548,6 +1604,244 @@ pub fn normalize_gemini_label(label: Option<String>, account_id: &str) -> String
         .unwrap_or_else(|| format!("Gemini Account {account_id}"))
 }
 
+async fn write_qwen_secret_for_account(
+    data_root: &Path,
+    account_id: &str,
+    oauth_creds_json: &str,
+) -> Result<String> {
+    let oauth_creds = parse_required_json_object(oauth_creds_json, "oauth_creds_json")?;
+    let secret_ref = format!("{account_id}.json");
+    let path = qwen_secret_path(data_root, &secret_ref);
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let envelope = QwenSecretEnvelope {
+        version: QWEN_SECRET_VERSION,
+        oauth_creds,
+    };
+    write_secure_file_atomic(&path, &serde_json::to_vec_pretty(&envelope)?).await?;
+    Ok(secret_ref)
+}
+
+async fn read_qwen_secret_for_ref(
+    data_root: &Path,
+    secret_ref: &str,
+) -> Result<QwenSecretEnvelope> {
+    let path = qwen_secret_path(data_root, secret_ref);
+    let payload = tokio::fs::read_to_string(&path)
+        .await
+        .with_context(|| format!("reading qwen secret {}", path.display()))?;
+    let parsed: QwenSecretEnvelope = serde_json::from_str(&payload)
+        .with_context(|| format!("invalid qwen secret {}", path.display()))?;
+    if parsed.version != QWEN_SECRET_VERSION {
+        bail!(
+            "unsupported qwen secret version {} at {}",
+            parsed.version,
+            path.display()
+        );
+    }
+    if !parsed.oauth_creds.is_object() {
+        bail!("qwen oauth_creds must be a JSON object");
+    }
+    Ok(parsed)
+}
+
+async fn ensure_qwen_account_home(
+    data_root: &Path,
+    account_id: &str,
+    secret: &QwenSecretEnvelope,
+) -> Result<PathBuf> {
+    let home = qwen_account_home(data_root, account_id);
+    let qwen_dir = home.join(".qwen");
+    tokio::fs::create_dir_all(&qwen_dir).await?;
+    write_secure_file_atomic(
+        &qwen_dir.join("oauth_creds.json"),
+        &serde_json::to_vec_pretty(&secret.oauth_creds)?,
+    )
+    .await?;
+    let settings = serde_json::json!({
+        "$version": 2,
+        "security": {
+            "auth": {
+                "selectedType": QWEN_AUTH_SELECTED_TYPE_OAUTH
+            }
+        }
+    });
+    write_secure_file_atomic(
+        &qwen_dir.join("settings.json"),
+        &serde_json::to_vec_pretty(&settings)?,
+    )
+    .await?;
+    tokio::fs::create_dir_all(home.join(".config")).await?;
+    tokio::fs::create_dir_all(home.join(".cache")).await?;
+    Ok(home)
+}
+
+pub async fn add_qwen_account(
+    data_root: &Path,
+    label: Option<String>,
+    oauth_creds_json: String,
+    email: Option<String>,
+) -> Result<QwenAccountRegistry> {
+    let oauth_creds = parse_required_json_object(&oauth_creds_json, "oauth_creds_json")?;
+    let mut registry = load_qwen_registry(data_root).await;
+    let mut existing_account_id: Option<String> = None;
+
+    for existing in &registry.accounts {
+        let Some(secret_ref) = existing.secret_ref.as_deref() else {
+            continue;
+        };
+        if let Ok(existing_secret) = read_qwen_secret_for_ref(data_root, secret_ref).await {
+            if existing_secret.oauth_creds == oauth_creds {
+                existing_account_id = Some(existing.id.clone());
+                break;
+            }
+        }
+    }
+
+    if let Some(account_id) = existing_account_id {
+        if let Some(entry) = registry
+            .accounts
+            .iter_mut()
+            .find(|entry| entry.id == account_id)
+        {
+            apply_label_update(label.clone(), &mut entry.label);
+            apply_email_update(email.clone(), &mut entry.email);
+            entry.last_used_at = Some(Utc::now());
+        }
+        registry.active_account_id = Some(account_id);
+        save_qwen_registry(data_root, &registry).await?;
+        return Ok(registry);
+    }
+
+    let account_id = uuid::Uuid::new_v4().to_string();
+    let secret_ref =
+        write_qwen_secret_for_account(data_root, &account_id, &oauth_creds_json).await?;
+    let entry = QwenAccountEntry {
+        id: account_id.clone(),
+        label: normalize_qwen_label(label, &account_id),
+        kind: QWEN_CREDENTIAL_KIND_OAUTH.to_string(),
+        email: normalize_optional_email(email),
+        created_at: Utc::now(),
+        last_used_at: Some(Utc::now()),
+        secret_ref: Some(secret_ref),
+    };
+    registry.accounts.push(entry);
+    registry.active_account_id = Some(account_id);
+    save_qwen_registry(data_root, &registry).await?;
+    Ok(registry)
+}
+
+pub async fn set_active_qwen_account(
+    data_root: &Path,
+    account_id: Option<String>,
+) -> Result<QwenAccountRegistry> {
+    let mut registry = load_qwen_registry(data_root).await;
+    if let Some(active_id) = account_id.as_deref() {
+        let Some(entry) = registry.accounts.iter().find(|a| a.id == active_id) else {
+            bail!("unknown account");
+        };
+        if entry.secret_ref.as_deref().is_none() {
+            bail!("active account has no secret");
+        }
+    }
+    registry.active_account_id = account_id.clone();
+    if let Some(active_id) = account_id {
+        let now = Utc::now();
+        if let Some(entry) = registry.accounts.iter_mut().find(|a| a.id == active_id) {
+            entry.last_used_at = Some(now);
+        }
+    }
+    save_qwen_registry(data_root, &registry).await?;
+    Ok(registry)
+}
+
+pub async fn remove_qwen_account(
+    data_root: &Path,
+    account_id: &str,
+) -> Result<QwenAccountRegistry> {
+    ensure_safe_account_id(account_id)?;
+    let mut registry = load_qwen_registry(data_root).await;
+    let was_active = registry.active_account_id.as_deref() == Some(account_id);
+    let removed: Vec<QwenAccountEntry> = registry
+        .accounts
+        .iter()
+        .filter(|a| a.id == account_id)
+        .cloned()
+        .collect();
+    registry.accounts.retain(|a| a.id != account_id);
+    if was_active {
+        registry.active_account_id = None;
+    }
+    save_qwen_registry(data_root, &registry).await?;
+
+    for entry in removed {
+        if let Some(secret_ref) = entry.secret_ref {
+            let secret_path = qwen_secret_path(data_root, &secret_ref);
+            if secret_path.exists() {
+                let _ = tokio::fs::remove_file(secret_path).await;
+            }
+        }
+    }
+
+    let account_home = qwen_account_home(data_root, account_id);
+    if account_home.exists() {
+        tokio::fs::remove_dir_all(account_home).await?;
+    }
+    remove_projected_account_home_for_runtime_roots(
+        data_root,
+        account_id,
+        qwen_account_home,
+        "qwen",
+    )
+    .await?;
+
+    Ok(registry)
+}
+
+pub fn qwen_env_for_account(data_root: &Path, account_id: &str) -> HashMap<String, String> {
+    let home = qwen_account_home(data_root, account_id);
+    let mut env = HashMap::new();
+    env.insert("HOME".to_string(), home.to_string_lossy().to_string());
+    env.insert(
+        "XDG_CONFIG_HOME".to_string(),
+        home.join(".config").to_string_lossy().to_string(),
+    );
+    env.insert(
+        "XDG_CACHE_HOME".to_string(),
+        home.join(".cache").to_string_lossy().to_string(),
+    );
+    env
+}
+
+pub async fn qwen_env_for_active_account(data_root: &Path) -> Result<HashMap<String, String>> {
+    let registry = load_qwen_registry(data_root).await;
+    let Some(active) = registry
+        .active_account_id
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    else {
+        return Ok(HashMap::new());
+    };
+    let Some(entry) = registry.accounts.iter().find(|a| a.id == active) else {
+        return Ok(HashMap::new());
+    };
+    let Some(secret_ref) = entry.secret_ref.as_deref() else {
+        bail!("active qwen account has no secret reference");
+    };
+    let secret = read_qwen_secret_for_ref(data_root, secret_ref).await?;
+    let _ = ensure_qwen_account_home(data_root, active, &secret).await?;
+    Ok(qwen_env_for_account(data_root, active))
+}
+
+pub fn normalize_qwen_label(label: Option<String>, account_id: &str) -> String {
+    label
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("Qwen Account {account_id}"))
+}
+
 fn normalize_kimi_provider(provider: Option<String>) -> Result<String> {
     let provider = provider
         .map(|raw| raw.trim().to_string())
@@ -1782,17 +2076,14 @@ pub async fn remove_kimi_account(
 }
 
 pub fn kimi_env_for_account(data_root: &Path, account_id: &str) -> HashMap<String, String> {
-    let home = kimi_account_home(data_root, account_id);
-    let share_dir = home.join(".kimi");
-    let home_value = home.to_string_lossy().to_string();
     let mut env = HashMap::new();
     env.insert(
         KIMI_SHARE_DIR_ENV.to_string(),
-        share_dir.to_string_lossy().to_string(),
+        kimi_account_home(data_root, account_id)
+            .join(".kimi")
+            .to_string_lossy()
+            .to_string(),
     );
-    // Kimi CLI resolves config/credentials from Path.home()/.kimi. Keep it isolated.
-    env.insert("HOME".to_string(), home_value.clone());
-    env.insert("USERPROFILE".to_string(), home_value);
     env
 }
 
@@ -1991,7 +2282,6 @@ pub fn copilot_env_for_account(
     token: &str,
 ) -> HashMap<String, String> {
     let mut env = HashMap::new();
-    env.insert("COPILOT_GITHUB_TOKEN".to_string(), token.to_string());
     env.insert("GH_TOKEN".to_string(), token.to_string());
     env.insert("GITHUB_TOKEN".to_string(), token.to_string());
     env
@@ -2610,6 +2900,160 @@ pub fn normalize_amp_label(label: Option<String>, account_id: &str) -> String {
         .unwrap_or_else(|| format!("Amp Account {account_id}"))
 }
 
+fn mistral_env_for_home(home: &Path) -> HashMap<String, String> {
+    let mut env = HashMap::new();
+    env.insert("HOME".to_string(), home.to_string_lossy().to_string());
+    env.insert(
+        "XDG_CONFIG_HOME".to_string(),
+        home.join(".config").to_string_lossy().to_string(),
+    );
+    env.insert(
+        "XDG_CACHE_HOME".to_string(),
+        home.join(".cache").to_string_lossy().to_string(),
+    );
+    env
+}
+
+pub async fn ensure_mistral_runtime_home(data_root: &Path) -> Result<PathBuf> {
+    let home = mistral_runtime_home(data_root);
+    tokio::fs::create_dir_all(home.join(".config")).await?;
+    tokio::fs::create_dir_all(home.join(".cache")).await?;
+    Ok(home)
+}
+
+pub async fn clear_mistral_runtime_home(data_root: &Path) -> Result<()> {
+    match tokio::fs::remove_dir_all(mistral_runtime_home(data_root)).await {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err).context("removing mistral runtime home"),
+    }
+}
+
+pub async fn upsert_mistral_account(
+    data_root: &Path,
+    label: Option<String>,
+    email: Option<String>,
+) -> Result<MistralAccountRegistry> {
+    let mut registry = load_mistral_registry(data_root).await;
+    let normalized_email = normalize_optional_email(email);
+    let existing_id = normalized_email
+        .as_deref()
+        .and_then(|target| {
+            registry
+                .accounts
+                .iter()
+                .find(|entry| entry.email.as_deref() == Some(target))
+                .map(|entry| entry.id.clone())
+        })
+        .or_else(|| {
+            registry
+                .active_account_id
+                .clone()
+                .filter(|id| registry.accounts.iter().any(|entry| entry.id == *id))
+        });
+
+    if let Some(existing_id) = existing_id {
+        if let Some(entry) = registry
+            .accounts
+            .iter_mut()
+            .find(|entry| entry.id == existing_id)
+        {
+            apply_label_update(label, &mut entry.label);
+            if normalized_email.is_some() {
+                entry.email = normalized_email.clone();
+            }
+            entry.last_used_at = Some(Utc::now());
+        }
+        registry.active_account_id = Some(existing_id);
+        save_mistral_registry(data_root, &registry).await?;
+        let _ = ensure_mistral_runtime_home(data_root).await?;
+        return Ok(registry);
+    }
+
+    let account_id = uuid::Uuid::new_v4().to_string();
+    registry.accounts.push(MistralAccountEntry {
+        id: account_id.clone(),
+        label: normalize_mistral_label(label, &account_id),
+        kind: MISTRAL_CREDENTIAL_KIND_BROWSER_OAUTH.to_string(),
+        email: normalized_email,
+        created_at: Utc::now(),
+        last_used_at: Some(Utc::now()),
+    });
+    registry.active_account_id = Some(account_id);
+    save_mistral_registry(data_root, &registry).await?;
+    let _ = ensure_mistral_runtime_home(data_root).await?;
+    Ok(registry)
+}
+
+pub async fn set_active_mistral_account(
+    data_root: &Path,
+    account_id: Option<String>,
+) -> Result<MistralAccountRegistry> {
+    let mut registry = load_mistral_registry(data_root).await;
+    if let Some(active_id) = account_id.as_deref() {
+        if !registry.accounts.iter().any(|entry| entry.id == active_id) {
+            bail!("unknown account");
+        }
+    }
+    registry.active_account_id = account_id.clone();
+    if let Some(active_id) = account_id {
+        if let Some(entry) = registry
+            .accounts
+            .iter_mut()
+            .find(|entry| entry.id == active_id)
+        {
+            entry.last_used_at = Some(Utc::now());
+        }
+        let _ = ensure_mistral_runtime_home(data_root).await?;
+    } else {
+        clear_mistral_runtime_home(data_root).await?;
+    }
+    save_mistral_registry(data_root, &registry).await?;
+    Ok(registry)
+}
+
+pub async fn remove_mistral_account(
+    data_root: &Path,
+    account_id: &str,
+) -> Result<MistralAccountRegistry> {
+    ensure_safe_account_id(account_id)?;
+    let mut registry = load_mistral_registry(data_root).await;
+    let was_active = registry.active_account_id.as_deref() == Some(account_id);
+    registry.accounts.retain(|entry| entry.id != account_id);
+    if was_active {
+        registry.active_account_id = None;
+    }
+    save_mistral_registry(data_root, &registry).await?;
+    if was_active {
+        clear_mistral_runtime_home(data_root).await?;
+    }
+    Ok(registry)
+}
+
+pub async fn mistral_env_for_active_account(data_root: &Path) -> Result<HashMap<String, String>> {
+    let registry = load_mistral_registry(data_root).await;
+    let Some(active) = registry
+        .active_account_id
+        .as_deref()
+        .map(|raw| raw.trim())
+        .filter(|raw| !raw.is_empty())
+    else {
+        return Ok(HashMap::new());
+    };
+    if !registry.accounts.iter().any(|entry| entry.id == active) {
+        return Ok(HashMap::new());
+    }
+    let home = ensure_mistral_runtime_home(data_root).await?;
+    Ok(mistral_env_for_home(&home))
+}
+
+pub fn normalize_mistral_label(label: Option<String>, account_id: &str) -> String {
+    label
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("Mistral Account {account_id}"))
+}
+
 fn amp_secrets_path(data_root: &Path) -> PathBuf {
     amp_runtime_home(data_root)
         .join(".local")
@@ -2642,267 +3086,6 @@ pub async fn ensure_amp_registry_from_runtime_auth(data_root: &Path) -> Result<A
         return Ok(registry);
     }
     upsert_amp_account(data_root, Some("Amp Imported Session".to_string()), None).await
-}
-
-fn extract_auggie_field(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
-    keys.iter().find_map(|key| {
-        value
-            .get(*key)
-            .and_then(serde_json::Value::as_str)
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .map(ToString::to_string)
-    })
-}
-
-fn auggie_env_for_account(
-    data_root: &Path,
-    account_id: &str,
-    secret: &AuggieSecretEnvelope,
-) -> HashMap<String, String> {
-    let mut env = HashMap::new();
-    let home = auggie_account_home(data_root, account_id);
-    env.insert("HOME".to_string(), home.to_string_lossy().to_string());
-    env.insert(
-        "XDG_CONFIG_HOME".to_string(),
-        home.join(".config").to_string_lossy().to_string(),
-    );
-    env.insert(
-        "XDG_CACHE_HOME".to_string(),
-        home.join(".cache").to_string_lossy().to_string(),
-    );
-    if let Ok(session_json) = serde_json::to_string(&secret.session_auth) {
-        env.insert(AUGGIE_SESSION_AUTH_ENV.to_string(), session_json);
-    }
-    if let Some(api_token) = extract_auggie_field(
-        &secret.session_auth,
-        &[
-            "accessToken",
-            "access_token",
-            "apiToken",
-            "api_token",
-            "token",
-        ],
-    ) {
-        env.insert(AUGGIE_API_TOKEN_ENV.to_string(), api_token);
-    }
-    if let Some(api_url) = extract_auggie_field(
-        &secret.session_auth,
-        &["tenantURL", "tenant_url", "api_url"],
-    ) {
-        env.insert(AUGGIE_API_URL_ENV.to_string(), api_url);
-    }
-    env
-}
-
-async fn write_auggie_secret_for_account(
-    data_root: &Path,
-    account_id: &str,
-    session_auth_json: &str,
-) -> Result<String> {
-    let session_auth = parse_required_json_object(session_auth_json, "session_auth_json")?;
-    let secret_ref = format!("{account_id}.json");
-    let path = auggie_secret_path(data_root, &secret_ref);
-    if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
-    let envelope = AuggieSecretEnvelope {
-        version: AUGGIE_SECRET_VERSION,
-        session_auth,
-    };
-    write_secure_file_atomic(&path, &serde_json::to_vec_pretty(&envelope)?).await?;
-    Ok(secret_ref)
-}
-
-async fn read_auggie_secret_for_ref(
-    data_root: &Path,
-    secret_ref: &str,
-) -> Result<AuggieSecretEnvelope> {
-    let path = auggie_secret_path(data_root, secret_ref);
-    let payload = tokio::fs::read_to_string(&path)
-        .await
-        .with_context(|| format!("reading auggie secret {}", path.display()))?;
-    let parsed: AuggieSecretEnvelope = serde_json::from_str(&payload)
-        .with_context(|| format!("invalid auggie secret {}", path.display()))?;
-    if parsed.version != AUGGIE_SECRET_VERSION {
-        bail!(
-            "unsupported auggie secret version {} at {}",
-            parsed.version,
-            path.display()
-        );
-    }
-    if !parsed.session_auth.is_object() {
-        bail!("auggie session_auth must be a JSON object");
-    }
-    Ok(parsed)
-}
-
-async fn ensure_auggie_account_home(
-    data_root: &Path,
-    account_id: &str,
-    secret: &AuggieSecretEnvelope,
-) -> Result<PathBuf> {
-    let home = auggie_account_home(data_root, account_id);
-    let augment_dir = home.join(".augment");
-    tokio::fs::create_dir_all(&augment_dir).await?;
-    tokio::fs::create_dir_all(home.join(".config")).await?;
-    tokio::fs::create_dir_all(home.join(".cache")).await?;
-    let session_path = home.join(AUGGIE_SESSION_RELATIVE_PATH);
-    write_secure_file_atomic(
-        &session_path,
-        &serde_json::to_vec_pretty(&secret.session_auth)?,
-    )
-    .await?;
-    Ok(home)
-}
-
-pub async fn add_auggie_account(
-    data_root: &Path,
-    label: Option<String>,
-    session_auth_json: String,
-    email: Option<String>,
-) -> Result<AuggieAccountRegistry> {
-    let session_auth = parse_required_json_object(&session_auth_json, "session_auth_json")?;
-    let mut registry = load_auggie_registry(data_root).await;
-    let mut existing_account_id: Option<String> = None;
-
-    for existing in &registry.accounts {
-        let Some(secret_ref) = existing.secret_ref.as_deref() else {
-            continue;
-        };
-        if let Ok(existing_secret) = read_auggie_secret_for_ref(data_root, secret_ref).await {
-            if existing_secret.session_auth == session_auth {
-                existing_account_id = Some(existing.id.clone());
-                break;
-            }
-        }
-    }
-
-    if let Some(account_id) = existing_account_id {
-        if let Some(entry) = registry
-            .accounts
-            .iter_mut()
-            .find(|entry| entry.id == account_id)
-        {
-            apply_label_update(label.clone(), &mut entry.label);
-            apply_email_update(email.clone(), &mut entry.email);
-            entry.last_used_at = Some(Utc::now());
-        }
-        registry.active_account_id = Some(account_id);
-        save_auggie_registry(data_root, &registry).await?;
-        return Ok(registry);
-    }
-
-    let account_id = uuid::Uuid::new_v4().to_string();
-    let secret_ref =
-        write_auggie_secret_for_account(data_root, &account_id, &session_auth_json).await?;
-    let entry = AuggieAccountEntry {
-        id: account_id.clone(),
-        label: normalize_auggie_label(label, &account_id),
-        kind: AUGGIE_CREDENTIAL_KIND_BROWSER_OAUTH.to_string(),
-        email: normalize_optional_email(email),
-        created_at: Utc::now(),
-        last_used_at: Some(Utc::now()),
-        secret_ref: Some(secret_ref),
-    };
-    registry.accounts.push(entry);
-    registry.active_account_id = Some(account_id);
-    save_auggie_registry(data_root, &registry).await?;
-    Ok(registry)
-}
-
-pub async fn set_active_auggie_account(
-    data_root: &Path,
-    account_id: Option<String>,
-) -> Result<AuggieAccountRegistry> {
-    let mut registry = load_auggie_registry(data_root).await;
-    if let Some(active_id) = account_id.as_deref() {
-        let Some(entry) = registry.accounts.iter().find(|a| a.id == active_id) else {
-            bail!("unknown account");
-        };
-        if entry.secret_ref.as_deref().is_none() {
-            bail!("active account has no secret");
-        }
-    }
-    registry.active_account_id = account_id.clone();
-    if let Some(active_id) = account_id {
-        let now = Utc::now();
-        if let Some(entry) = registry.accounts.iter_mut().find(|a| a.id == active_id) {
-            entry.last_used_at = Some(now);
-        }
-    }
-    save_auggie_registry(data_root, &registry).await?;
-    Ok(registry)
-}
-
-pub async fn remove_auggie_account(
-    data_root: &Path,
-    account_id: &str,
-) -> Result<AuggieAccountRegistry> {
-    ensure_safe_account_id(account_id)?;
-    let mut registry = load_auggie_registry(data_root).await;
-    let was_active = registry.active_account_id.as_deref() == Some(account_id);
-    let removed: Vec<AuggieAccountEntry> = registry
-        .accounts
-        .iter()
-        .filter(|a| a.id == account_id)
-        .cloned()
-        .collect();
-    registry.accounts.retain(|a| a.id != account_id);
-    if was_active {
-        registry.active_account_id = None;
-    }
-    save_auggie_registry(data_root, &registry).await?;
-
-    for entry in removed {
-        if let Some(secret_ref) = entry.secret_ref {
-            let secret_path = auggie_secret_path(data_root, &secret_ref);
-            if secret_path.exists() {
-                let _ = tokio::fs::remove_file(secret_path).await;
-            }
-        }
-    }
-
-    let account_home = auggie_account_home(data_root, account_id);
-    if account_home.exists() {
-        tokio::fs::remove_dir_all(account_home).await?;
-    }
-    remove_projected_account_home_for_runtime_roots(
-        data_root,
-        account_id,
-        auggie_account_home,
-        "auggie",
-    )
-    .await?;
-    Ok(registry)
-}
-
-pub async fn auggie_env_for_active_account(data_root: &Path) -> Result<HashMap<String, String>> {
-    let registry = load_auggie_registry(data_root).await;
-    let Some(active) = registry
-        .active_account_id
-        .as_deref()
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-    else {
-        return Ok(HashMap::new());
-    };
-    let Some(entry) = registry.accounts.iter().find(|a| a.id == active) else {
-        return Ok(HashMap::new());
-    };
-    let Some(secret_ref) = entry.secret_ref.as_deref() else {
-        bail!("active auggie account has no secret reference");
-    };
-    let secret = read_auggie_secret_for_ref(data_root, secret_ref).await?;
-    let _ = ensure_auggie_account_home(data_root, active, &secret).await?;
-    Ok(auggie_env_for_account(data_root, active, &secret))
-}
-
-pub fn normalize_auggie_label(label: Option<String>, account_id: &str) -> String {
-    label
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| format!("Auggie Account {account_id}"))
 }
 
 pub async fn codex_env_for_runtime_home(state_root: &Path) -> Result<HashMap<String, String>> {
@@ -3476,12 +3659,13 @@ pub async fn subscription_env_for_active_account(
         "codex" => codex_env_for_active_account(data_root).await,
         "claude-crp" => claude_env_for_active_account(data_root).await,
         "gemini" => gemini_env_for_active_account(data_root).await,
+        "qwen" => qwen_env_for_active_account(data_root).await,
         "kimi" => kimi_env_for_active_account(data_root).await,
+        "mistral" => mistral_env_for_active_account(data_root).await,
         "copilot" => copilot_env_for_active_account(data_root).await,
         "kiro" => kiro_env_for_active_account(data_root).await,
         "cursor" => cursor_env_for_active_account(data_root).await,
         "amp" => amp_env_for_active_account(data_root).await,
-        "auggie" => auggie_env_for_active_account(data_root).await,
         _ => Ok(HashMap::new()),
     }
 }
@@ -3537,6 +3721,26 @@ pub async fn subscription_env_for_active_account_with_runtime_root(
             let _ = ensure_gemini_account_home(runtime_root, active, &secret).await?;
             Ok(gemini_env_for_account(runtime_root, active))
         }
+        "qwen" => {
+            let registry = load_qwen_registry(data_root).await;
+            let Some(active) = registry
+                .active_account_id
+                .as_deref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+            else {
+                return Ok(HashMap::new());
+            };
+            let Some(entry) = registry.accounts.iter().find(|a| a.id == active) else {
+                return Ok(HashMap::new());
+            };
+            let Some(secret_ref) = entry.secret_ref.as_deref() else {
+                bail!("active qwen account has no secret reference");
+            };
+            let secret = read_qwen_secret_for_ref(data_root, secret_ref).await?;
+            let _ = ensure_qwen_account_home(runtime_root, active, &secret).await?;
+            Ok(qwen_env_for_account(runtime_root, active))
+        }
         "kimi" => {
             let registry = load_kimi_registry(data_root).await;
             let Some(active) = registry
@@ -3556,6 +3760,22 @@ pub async fn subscription_env_for_active_account_with_runtime_root(
             let secret = read_kimi_secret_for_ref(data_root, secret_ref).await?;
             let _ = ensure_kimi_account_home(runtime_root, active, &secret).await?;
             Ok(kimi_env_for_account(runtime_root, active))
+        }
+        "mistral" => {
+            let registry = load_mistral_registry(data_root).await;
+            let Some(active) = registry
+                .active_account_id
+                .as_deref()
+                .map(|raw| raw.trim())
+                .filter(|raw| !raw.is_empty())
+            else {
+                return Ok(HashMap::new());
+            };
+            if !registry.accounts.iter().any(|entry| entry.id == active) {
+                return Ok(HashMap::new());
+            }
+            let home = ensure_mistral_runtime_home(runtime_root).await?;
+            Ok(mistral_env_for_home(&home))
         }
         "copilot" => copilot_env_for_active_account(data_root).await,
         "kiro" => {
@@ -3613,26 +3833,6 @@ pub async fn subscription_env_for_active_account_with_runtime_root(
             }
             let home = ensure_amp_runtime_home(runtime_root).await?;
             Ok(amp_env_for_home(&home))
-        }
-        "auggie" => {
-            let registry = load_auggie_registry(data_root).await;
-            let Some(active) = registry
-                .active_account_id
-                .as_deref()
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
-            else {
-                return Ok(HashMap::new());
-            };
-            let Some(entry) = registry.accounts.iter().find(|a| a.id == active) else {
-                return Ok(HashMap::new());
-            };
-            let Some(secret_ref) = entry.secret_ref.as_deref() else {
-                bail!("active auggie account has no secret reference");
-            };
-            let secret = read_auggie_secret_for_ref(data_root, secret_ref).await?;
-            let _ = ensure_auggie_account_home(runtime_root, active, &secret).await?;
-            Ok(auggie_env_for_account(runtime_root, active, &secret))
         }
         _ => Ok(HashMap::new()),
     }
@@ -4494,8 +4694,6 @@ mod tests {
         let share_dir = env
             .get(KIMI_SHARE_DIR_ENV)
             .expect("KIMI_SHARE_DIR should be set");
-        let home_dir = env.get("HOME").expect("HOME should be set for Kimi");
-        assert_eq!(Path::new(home_dir).join(".kimi"), PathBuf::from(share_dir));
         assert!(share_dir.contains(&active_id));
         let credentials_path = Path::new(share_dir)
             .join("credentials")
@@ -4617,10 +4815,6 @@ mod tests {
         .unwrap();
         let active_id = registry.active_account_id.clone().expect("active account");
         let env = copilot_env_for_active_account(root).await.unwrap();
-        assert_eq!(
-            env.get("COPILOT_GITHUB_TOKEN"),
-            Some(&"ghp_abc".to_string())
-        );
         assert_eq!(env.get("GH_TOKEN"), Some(&"ghp_abc".to_string()));
         assert_eq!(env.get("GITHUB_TOKEN"), Some(&"ghp_abc".to_string()));
         assert!(copilot_account_dir(root, &active_id).exists());
@@ -4953,53 +5147,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn auggie_active_account_projects_session_auth_env() {
+    async fn qwen_active_account_projects_oauth_creds_under_home() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        let registry = add_auggie_account(
-            root,
-            Some("Auggie Test".to_string()),
-            r#"{"accessToken":"aug-token","tenantURL":"https://tenant.augmentcode.com"}"#
-                .to_string(),
-            Some("auggie@example.com".to_string()),
-        )
-        .await
-        .unwrap();
+        let oauth_json = r#"{"access_token":"token-a","refresh_token":"token-r","token_type":"Bearer","expiry_date":4102444800000}"#;
+        let registry =
+            add_qwen_account(root, Some("Qwen".to_string()), oauth_json.to_string(), None)
+                .await
+                .unwrap();
         let active_id = registry.active_account_id.clone().expect("active account");
-
-        let env = auggie_env_for_active_account(root).await.unwrap();
+        let env = qwen_env_for_active_account(root).await.unwrap();
         let home = PathBuf::from(env.get("HOME").expect("HOME should be set"));
-        assert!(home.starts_with(root));
-        assert_eq!(
-            env.get(AUGGIE_API_TOKEN_ENV),
-            Some(&"aug-token".to_string())
-        );
-        assert_eq!(
-            env.get(AUGGIE_API_URL_ENV),
-            Some(&"https://tenant.augmentcode.com".to_string())
-        );
-        assert!(env.contains_key(AUGGIE_SESSION_AUTH_ENV));
-        assert!(home.join(AUGGIE_SESSION_RELATIVE_PATH).exists());
-        assert!(registry.accounts.iter().any(|entry| entry.id == active_id));
+        assert!(home.ends_with(active_id));
+        let creds_path = home.join(QWEN_OAUTH_CREDS_RELATIVE_PATH);
+        assert!(creds_path.exists());
+        let settings_path = home.join(".qwen").join("settings.json");
+        let settings = tokio::fs::read_to_string(settings_path).await.unwrap();
+        assert!(settings.contains(QWEN_AUTH_SELECTED_TYPE_OAUTH));
     }
 
     #[tokio::test]
-    async fn deleting_active_auggie_account_clears_projection() {
+    async fn mistral_active_account_projects_runtime_home_env() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        let registry = add_auggie_account(
+        let registry = upsert_mistral_account(
             root,
-            Some("Auggie Test".to_string()),
-            r#"{"accessToken":"aug-token"}"#.to_string(),
-            None,
+            Some("Mistral".to_string()),
+            Some("mistral@example.com".to_string()),
         )
         .await
         .unwrap();
-        let active_id = registry.active_account_id.clone().expect("active account");
-        let _ = remove_auggie_account(root, &active_id).await.unwrap();
-        let env = auggie_env_for_active_account(root).await.unwrap();
-        assert!(env.is_empty());
-        assert!(!auggie_account_home(root, &active_id).exists());
+        assert!(registry.active_account_id.is_some());
+        let env = mistral_env_for_active_account(root).await.unwrap();
+        let home = PathBuf::from(env.get("HOME").expect("HOME should be set"));
+        assert_eq!(home, mistral_runtime_home(root));
+        assert!(home.join(".config").exists());
+        assert!(home.join(".cache").exists());
     }
 
     #[tokio::test]
@@ -5018,6 +5201,14 @@ mod tests {
             Some("Gemini".to_string()),
             r#"{"access_token":"token-a","refresh_token":"token-r"}"#.to_string(),
             None,
+            None,
+        )
+        .await
+        .unwrap();
+        let _ = add_qwen_account(
+            root,
+            Some("Qwen".to_string()),
+            r#"{"access_token":"token-a","refresh_token":"token-r","token_type":"Bearer","expiry_date":4102444800000}"#.to_string(),
             None,
         )
         .await
@@ -5063,11 +5254,10 @@ mod tests {
         )
         .await
         .unwrap();
-        let _ = add_auggie_account(
+        let _ = upsert_mistral_account(
             root,
-            Some("Auggie".to_string()),
-            r#"{"accessToken":"aug-token"}"#.to_string(),
-            None,
+            Some("Mistral".to_string()),
+            Some("mistral@example.com".to_string()),
         )
         .await
         .unwrap();
@@ -5080,15 +5270,21 @@ mod tests {
             .await
             .unwrap();
         assert!(gemini_env.contains_key("GEMINI_CLI_HOME"));
+        let qwen_env = subscription_env_for_active_account(root, "qwen")
+            .await
+            .unwrap();
+        assert!(qwen_env.contains_key("HOME"));
         let kimi_env = subscription_env_for_active_account(root, "kimi")
             .await
             .unwrap();
         assert!(kimi_env.contains_key(KIMI_SHARE_DIR_ENV));
-        assert!(kimi_env.contains_key("HOME"));
+        let mistral_env = subscription_env_for_active_account(root, "mistral")
+            .await
+            .unwrap();
+        assert!(mistral_env.contains_key("HOME"));
         let copilot_env = subscription_env_for_active_account(root, "copilot")
             .await
             .unwrap();
-        assert!(copilot_env.contains_key("COPILOT_GITHUB_TOKEN"));
         assert!(copilot_env.contains_key("GH_TOKEN"));
         let kiro_env = subscription_env_for_active_account(root, "kiro")
             .await
@@ -5102,10 +5298,6 @@ mod tests {
             .await
             .unwrap();
         assert!(amp_env.contains_key("HOME"));
-        let auggie_env = subscription_env_for_active_account(root, "auggie")
-            .await
-            .unwrap();
-        assert!(auggie_env.contains_key(AUGGIE_SESSION_AUTH_ENV));
         let unknown_env = subscription_env_for_active_account(root, "unknown")
             .await
             .unwrap();
@@ -5131,6 +5323,14 @@ mod tests {
             Some("Gemini".to_string()),
             r#"{"access_token":"token-a","refresh_token":"token-r"}"#.to_string(),
             None,
+            None,
+        )
+        .await
+        .unwrap();
+        let _ = add_qwen_account(
+            root,
+            Some("Qwen".to_string()),
+            r#"{"access_token":"token-a","refresh_token":"token-r","token_type":"Bearer","expiry_date":4102444800000}"#.to_string(),
             None,
         )
         .await
@@ -5168,11 +5368,10 @@ mod tests {
         )
         .await
         .unwrap();
-        let _ = add_auggie_account(
+        let _ = upsert_mistral_account(
             root,
-            Some("Auggie".to_string()),
-            r#"{"accessToken":"aug-token"}"#.to_string(),
-            None,
+            Some("Mistral".to_string()),
+            Some("mistral@example.com".to_string()),
         )
         .await
         .unwrap();
@@ -5191,15 +5390,19 @@ mod tests {
         let gemini_home = PathBuf::from(gemini_env.get("GEMINI_CLI_HOME").unwrap());
         assert!(gemini_home.starts_with(runtime_root));
 
+        let qwen_env =
+            subscription_env_for_active_account_with_runtime_root(root, runtime_root, "qwen")
+                .await
+                .unwrap();
+        let qwen_home = PathBuf::from(qwen_env.get("HOME").unwrap());
+        assert!(qwen_home.starts_with(runtime_root));
+
         let kimi_env =
             subscription_env_for_active_account_with_runtime_root(root, runtime_root, "kimi")
                 .await
                 .unwrap();
         let kimi_share = PathBuf::from(kimi_env.get(KIMI_SHARE_DIR_ENV).unwrap());
-        let kimi_home = PathBuf::from(kimi_env.get("HOME").unwrap());
         assert!(kimi_share.starts_with(runtime_root));
-        assert!(kimi_home.starts_with(runtime_root));
-        assert_eq!(kimi_home.join(".kimi"), kimi_share);
 
         let kiro_env =
             subscription_env_for_active_account_with_runtime_root(root, runtime_root, "kiro")
@@ -5230,12 +5433,11 @@ mod tests {
         let amp_cache = PathBuf::from(amp_env.get("XDG_CACHE_HOME").unwrap());
         assert!(amp_cache.starts_with(runtime_root));
 
-        let auggie_env =
-            subscription_env_for_active_account_with_runtime_root(root, runtime_root, "auggie")
+        let mistral_env =
+            subscription_env_for_active_account_with_runtime_root(root, runtime_root, "mistral")
                 .await
                 .unwrap();
-        let auggie_home = PathBuf::from(auggie_env.get("HOME").unwrap());
-        assert!(auggie_home.starts_with(runtime_root));
-        assert!(auggie_env.contains_key(AUGGIE_SESSION_AUTH_ENV));
+        let mistral_home = PathBuf::from(mistral_env.get("HOME").unwrap());
+        assert!(mistral_home.starts_with(runtime_root));
     }
 }

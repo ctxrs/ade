@@ -57,18 +57,15 @@ export function subscriptionPrimaryActionLabel(modal: HarnessAuthModalState): st
   }
   if (
     modal.provider_id === "codex"
-    || modal.provider_id === "copilot"
     || modal.provider_id === "cursor"
     || modal.provider_id === "amp"
-    || modal.provider_id === "auggie"
     || modal.provider_id === "gemini"
-    || modal.provider_id === "kimi"
+    || modal.provider_id === "qwen"
+    || modal.provider_id === "mistral"
+    || modal.provider_id === "kiro"
     || (modal.provider_id === "claude-crp" && !claudeSetupTokenProvided(modal))
   ) {
-    if (modal.provider_id === "gemini") return "Sign in with Google";
-    if (modal.provider_id === "kimi") return "Sign in with Kimi";
-    if (modal.provider_id === "copilot") return "Sign in with GitHub";
-    return "Start sign-in";
+    return modal.provider_id === "gemini" ? "Sign in with Google" : "Start sign-in";
   }
   return "Save subscription";
 }
@@ -83,10 +80,10 @@ export function shouldAutoStartSubscriptionFlow(providerId: string): boolean {
   return providerId === "codex"
     || providerId === "claude-crp"
     || providerId === "gemini"
-    || providerId === "kimi"
+    || providerId === "qwen"
     || providerId === "amp"
-    || providerId === "copilot"
-    || providerId === "auggie";
+    || providerId === "mistral"
+    || providerId === "kiro";
 }
 
 export function HarnessAuthenticationSection({
@@ -110,8 +107,12 @@ export function HarnessAuthenticationSection({
     claudeAccountsBusy,
     geminiAccounts,
     geminiAccountsBusy,
+    qwenAccounts,
+    qwenAccountsBusy,
     kimiAccounts,
     kimiAccountsBusy,
+    mistralAccounts,
+    mistralAccountsBusy,
     copilotAccounts,
     copilotAccountsBusy,
     kiroAccounts,
@@ -120,8 +121,6 @@ export function HarnessAuthenticationSection({
     cursorAccountsBusy,
     ampAccounts,
     ampAccountsBusy,
-    auggieAccounts,
-    auggieAccountsBusy,
     harnessAuthModal,
     openHarnessAuthModal,
     closeHarnessAuthModal,
@@ -134,12 +133,13 @@ export function HarnessAuthenticationSection({
     onCodexDelete,
     onClaudeDelete,
     onGeminiDelete,
+    onQwenDelete,
     onKimiDelete,
+    onMistralDelete,
     onCopilotDelete,
     onKiroDelete,
     onCursorDelete,
     onAmpDelete,
-    onAuggieDelete,
     providerError,
     supportsHarnessEndpointConfig,
     harnessEndpointRequiresBaseUrl,
@@ -187,21 +187,16 @@ export function HarnessAuthenticationSection({
       ? false
       : harnessAuthModal.provider_id === "cursor"
         || supportsHarnessEndpointConfig(harnessAuthModal.provider_id);
-  const modalApiKeyLabel = harnessAuthModal?.provider_id === "kiro"
-    ? "Auth token JSON"
-    : harnessAuthModal?.provider_id === "gemini"
+  const modalApiKeyLabel = harnessAuthModal?.provider_id === "gemini"
       ? harnessAuthModal.gemini_endpoint_auth_type === "vertex_ai"
         ? "Google API key"
         : "Gemini API key"
       : "API key";
-  const modalApiKeyPlaceholder = harnessAuthModal?.provider_id === "kiro"
-    ? '{"token":"..."}'
-    : harnessAuthModal?.provider_id === "gemini"
+  const modalApiKeyPlaceholder = harnessAuthModal?.provider_id === "gemini"
       ? "AIza..."
     : harnessAuthModal?.provider_id === "auggie"
         ? "Auggie session token"
         : "sk-...";
-  const modalSubscriptionAuthUrl = harnessAuthModal?.subscription_auth_url?.trim() ?? "";
   const lastModalProviderIdRef = useRef<string | null>(null);
   const suppressReopenProviderIdRef = useRef<string | null>(null);
 
@@ -294,8 +289,12 @@ export function HarnessAuthenticationSection({
               claude_active_account_id: id === "claude-crp" ? (claudeAccounts?.active_account_id ?? null) : null,
               gemini_accounts: id === "gemini" ? (geminiAccounts?.accounts ?? []) : [],
               gemini_active_account_id: id === "gemini" ? (geminiAccounts?.active_account_id ?? null) : null,
+              qwen_accounts: id === "qwen" ? (qwenAccounts?.accounts ?? []) : [],
+              qwen_active_account_id: id === "qwen" ? (qwenAccounts?.active_account_id ?? null) : null,
               kimi_accounts: id === "kimi" ? (kimiAccounts?.accounts ?? []) : [],
               kimi_active_account_id: id === "kimi" ? (kimiAccounts?.active_account_id ?? null) : null,
+              mistral_accounts: id === "mistral" ? (mistralAccounts?.accounts ?? []) : [],
+              mistral_active_account_id: id === "mistral" ? (mistralAccounts?.active_account_id ?? null) : null,
               copilot_accounts: id === "copilot" ? (copilotAccounts?.accounts ?? []) : [],
               copilot_active_account_id: id === "copilot" ? (copilotAccounts?.active_account_id ?? null) : null,
               kiro_accounts: id === "kiro" ? (kiroAccounts?.accounts ?? []) : [],
@@ -304,8 +303,6 @@ export function HarnessAuthenticationSection({
               cursor_active_account_id: id === "cursor" ? (cursorAccounts?.active_account_id ?? null) : null,
               amp_accounts: id === "amp" ? (ampAccounts?.accounts ?? []) : [],
               amp_active_account_id: id === "amp" ? (ampAccounts?.active_account_id ?? null) : null,
-              auggie_accounts: id === "auggie" ? (auggieAccounts?.accounts ?? []) : [],
-              auggie_active_account_id: id === "auggie" ? (auggieAccounts?.active_account_id ?? null) : null,
             });
             const addBusy = harnessAuthModal?.provider_id === id
               ? harnessAuthModal.api_key_busy || harnessAuthModal.subscription_busy
@@ -315,12 +312,13 @@ export function HarnessAuthenticationSection({
               || (id === "codex" && codexAccountsBusy)
               || (id === "claude-crp" && claudeAccountsBusy)
               || (id === "gemini" && geminiAccountsBusy)
+              || (id === "qwen" && qwenAccountsBusy)
               || (id === "kimi" && kimiAccountsBusy)
+              || (id === "mistral" && mistralAccountsBusy)
               || (id === "copilot" && copilotAccountsBusy)
               || (id === "kiro" && kiroAccountsBusy)
               || (id === "cursor" && cursorAccountsBusy)
-              || (id === "amp" && ampAccountsBusy)
-              || (id === "auggie" && auggieAccountsBusy);
+              || (id === "amp" && ampAccountsBusy);
 
             const installStyle: CSSProperties | undefined =
               installBusyLocal && installUi?.pct !== null
@@ -499,6 +497,18 @@ export function HarnessAuthenticationSection({
                                       Delete
                                     </DropdownMenuItem>
                                   ) : null}
+                                  {row.kind === "subscription" && id === "qwen" && row.account_id && row.can_delete ? (
+                                    <DropdownMenuItem
+                                      className="tw-text-[var(--error-contrast)] focus:tw-bg-[var(--error-soft)]"
+                                      onSelect={() => {
+                                        const accountId = row.account_id;
+                                        if (!accountId) return;
+                                        void onQwenDelete(accountId);
+                                      }}
+                                    >
+                                      Delete
+                                    </DropdownMenuItem>
+                                  ) : null}
                                   {row.kind === "subscription" && id === "kimi" && row.account_id && row.can_delete ? (
                                     <DropdownMenuItem
                                       className="tw-text-[var(--error-contrast)] focus:tw-bg-[var(--error-soft)]"
@@ -506,6 +516,18 @@ export function HarnessAuthenticationSection({
                                         const accountId = row.account_id;
                                         if (!accountId) return;
                                         void onKimiDelete(accountId);
+                                      }}
+                                    >
+                                      Delete
+                                    </DropdownMenuItem>
+                                  ) : null}
+                                  {row.kind === "subscription" && id === "mistral" && row.account_id && row.can_delete ? (
+                                    <DropdownMenuItem
+                                      className="tw-text-[var(--error-contrast)] focus:tw-bg-[var(--error-soft)]"
+                                      onSelect={() => {
+                                        const accountId = row.account_id;
+                                        if (!accountId) return;
+                                        void onMistralDelete(accountId);
                                       }}
                                     >
                                       Delete
@@ -554,18 +576,6 @@ export function HarnessAuthenticationSection({
                                         const accountId = row.account_id;
                                         if (!accountId) return;
                                         void onAmpDelete(accountId);
-                                      }}
-                                    >
-                                      Delete
-                                    </DropdownMenuItem>
-                                  ) : null}
-                                  {row.kind === "subscription" && id === "auggie" && row.account_id && row.can_delete ? (
-                                    <DropdownMenuItem
-                                      className="tw-text-[var(--error-contrast)] focus:tw-bg-[var(--error-soft)]"
-                                      onSelect={() => {
-                                        const accountId = row.account_id;
-                                        if (!accountId) return;
-                                        void onAuggieDelete(accountId);
                                       }}
                                     >
                                       Delete
@@ -656,7 +666,6 @@ export function HarnessAuthenticationSection({
                         subscription_auth_token_json: "",
                         subscription_oauth_creds_json: "",
                         subscription_google_accounts_json: "",
-                        subscription_auth_url: null,
                       });
                       if (shouldAutoStartSubscriptionFlow(harnessAuthModal.provider_id)) {
                         void submitHarnessSubscriptionModal();
@@ -685,7 +694,6 @@ export function HarnessAuthenticationSection({
                         subscription_auth_token_json: "",
                         subscription_oauth_creds_json: "",
                         subscription_google_accounts_json: "",
-                        subscription_auth_url: null,
                         base_url: modalRequiresBaseUrl
                           ? (getHarnessEndpointProviderPreset(harnessAuthModal.endpoint_provider_id).base_url
                             ?? harnessAuthModal.base_url)
@@ -712,16 +720,18 @@ export function HarnessAuthenticationSection({
                       ? "Sign in with Claude in your browser. We capture the token automatically. If that fails, paste the token below."
                       : harnessAuthModal.provider_id === "gemini"
                         ? "Sign in with Google to capture managed Gemini OAuth credentials automatically."
+                        : harnessAuthModal.provider_id === "qwen"
+                          ? "Sign in with Qwen in your browser to capture managed OAuth credentials automatically."
                         : harnessAuthModal.provider_id === "amp"
                           ? "Sign in with Amp in your browser to complete OAuth on this host."
-                          : harnessAuthModal.provider_id === "auggie"
-                            ? "Sign in with Auggie in your browser to complete OAuth on this host."
+                          : harnessAuthModal.provider_id === "mistral"
+                            ? "Sign in with Mistral in your browser to complete managed OAuth on this host."
                         : harnessAuthModal.provider_id === "kimi"
-                          ? "Sign in with Kimi to capture managed credentials automatically."
+                          ? "Paste Kimi credentials JSON for a managed Kimi share directory."
                           : harnessAuthModal.provider_id === "copilot"
-                            ? "Sign in with GitHub to capture managed Copilot auth automatically."
+                            ? "Paste a GitHub token with Copilot entitlement for the managed Copilot account."
                             : harnessAuthModal.provider_id === "kiro"
-                              ? "Paste the Kiro auth token JSON for a managed token cache."
+                              ? "Sign in with Kiro in your browser to capture managed OAuth credentials automatically."
                               : harnessAuthModal.provider_id === "cursor"
                                 ? "Sign in with Cursor on this host (unmanaged)."
                       : "Authenticate this harness for the selected workspace."}
@@ -767,22 +777,47 @@ export function HarnessAuthenticationSection({
                         autoFocus
                       />
                     </label>
+                    <label className="settings-harness-modal-label">
+                      Email (optional)
+                      <input
+                        className="settings-control"
+                        value={harnessAuthModal.subscription_email}
+                        onChange={(e) => patchHarnessAuthModal({ subscription_email: e.target.value })}
+                        placeholder="you@example.com"
+                      />
+                    </label>
+                    <label className="settings-harness-modal-label">
+                      Provider (optional)
+                      <input
+                        className="settings-control"
+                        value={harnessAuthModal.subscription_provider}
+                        onChange={(e) => patchHarnessAuthModal({ subscription_provider: e.target.value })}
+                        placeholder="moonshot"
+                      />
+                    </label>
+                    <label className="settings-harness-modal-label">
+                      Credentials JSON
+                      <textarea
+                        className="settings-control settings-control-wide"
+                        value={harnessAuthModal.subscription_credentials_json}
+                        onChange={(e) => patchHarnessAuthModal({ subscription_credentials_json: e.target.value })}
+                        placeholder='{"access_token":"...","refresh_token":"..."}'
+                        rows={6}
+                      />
+                    </label>
+                    <label className="settings-harness-modal-label">
+                      Config TOML (optional)
+                      <textarea
+                        className="settings-control settings-control-wide"
+                        value={harnessAuthModal.subscription_config_toml}
+                        onChange={(e) => patchHarnessAuthModal({ subscription_config_toml: e.target.value })}
+                        placeholder='current_provider = "moonshot"'
+                        rows={4}
+                      />
+                    </label>
                   </>
                 ) : null}
                 {harnessAuthModal.provider_id === "copilot" ? (
-                  harnessAuthModal.subscription_device_code ? (
-                    <label className="settings-harness-modal-label">
-                      GitHub device code
-                      <input
-                        className="settings-control"
-                        value={harnessAuthModal.subscription_device_code}
-                        readOnly
-                        onFocus={(event) => event.currentTarget.select()}
-                      />
-                    </label>
-                  ) : null
-                ) : null}
-                {harnessAuthModal.provider_id === "kiro" ? (
                   <>
                     <label className="settings-harness-modal-label">
                       Label (optional)
@@ -790,7 +825,7 @@ export function HarnessAuthenticationSection({
                         className="settings-control"
                         value={harnessAuthModal.subscription_label}
                         onChange={(e) => patchHarnessAuthModal({ subscription_label: e.target.value })}
-                        placeholder="Kiro subscription"
+                        placeholder="Copilot subscription"
                         autoFocus
                       />
                     </label>
@@ -804,32 +839,20 @@ export function HarnessAuthenticationSection({
                       />
                     </label>
                     <label className="settings-harness-modal-label">
-                      Auth Token JSON
-                      <textarea
-                        className="settings-control settings-control-wide"
-                        value={harnessAuthModal.subscription_auth_token_json}
-                        onChange={(e) => patchHarnessAuthModal({ subscription_auth_token_json: e.target.value })}
-                        placeholder='{"accessToken":"...","expiresAt":"..."}'
-                        rows={6}
+                      Token
+                      <input
+                        className="settings-control"
+                        value={harnessAuthModal.subscription_token}
+                        onChange={(e) => patchHarnessAuthModal({ subscription_token: e.target.value })}
+                        placeholder="ghp_..."
+                        type="password"
                       />
                     </label>
                   </>
                 ) : null}
-                {harnessAuthModal.subscription_status || modalSubscriptionAuthUrl ? (
+                {harnessAuthModal.subscription_status ? (
                   <div className="settings-row-desc settings-harness-modal-status">
-                    {harnessAuthModal.subscription_status ? (
-                      <div>{harnessAuthModal.subscription_status}</div>
-                    ) : null}
-                    {modalSubscriptionAuthUrl ? (
-                      <a
-                        className="settings-harness-modal-auth-link"
-                        href={modalSubscriptionAuthUrl}
-                        target="_blank"
-                        rel="noreferrer noopener"
-                      >
-                        Open sign-in link
-                      </a>
-                    ) : null}
+                    {harnessAuthModal.subscription_status}
                   </div>
                 ) : null}
                 <div className="modal-actions settings-harness-modal-actions">
@@ -848,8 +871,6 @@ export function HarnessAuthenticationSection({
                         subscription_auth_token_json: "",
                         subscription_oauth_creds_json: "",
                         subscription_google_accounts_json: "",
-                        subscription_device_code: null,
-                        subscription_auth_url: null,
                       })}
                     disabled={harnessAuthModal.subscription_busy}
                   >
@@ -967,7 +988,6 @@ export function HarnessAuthenticationSection({
                         api_key: "",
                         manual_model_ids: "",
                         subscription_status: null,
-                        subscription_auth_url: null,
                       })}
                   >
                     Back

@@ -10,6 +10,8 @@ import type {
   HarnessSourceKind,
   KimiAccountEntry,
   KiroAccountEntry,
+  MistralAccountEntry,
+  QwenAccountEntry,
 } from "../../api/client";
 
 export type HarnessAuthRow = {
@@ -41,8 +43,12 @@ type BuildHarnessAuthRowsArgs = {
   claude_active_account_id?: string | null;
   gemini_accounts: GeminiAccountEntry[];
   gemini_active_account_id?: string | null;
+  qwen_accounts: QwenAccountEntry[];
+  qwen_active_account_id?: string | null;
   kimi_accounts: KimiAccountEntry[];
   kimi_active_account_id?: string | null;
+  mistral_accounts: MistralAccountEntry[];
+  mistral_active_account_id?: string | null;
   copilot_accounts: CopilotAccountEntry[];
   copilot_active_account_id?: string | null;
   kiro_accounts: KiroAccountEntry[];
@@ -73,7 +79,19 @@ const geminiAccountLabel = (account: GeminiAccountEntry): string => {
   return account.id;
 };
 
+const qwenAccountLabel = (account: QwenAccountEntry): string => {
+  if (account.email && account.email.trim()) return account.email.trim();
+  if (account.label.trim()) return account.label.trim();
+  return account.id;
+};
+
 const kimiAccountLabel = (account: KimiAccountEntry): string => {
+  if (account.email && account.email.trim()) return account.email.trim();
+  if (account.label.trim()) return account.label.trim();
+  return account.id;
+};
+
+const mistralAccountLabel = (account: MistralAccountEntry): string => {
   if (account.email && account.email.trim()) return account.email.trim();
   if (account.label.trim()) return account.label.trim();
   return account.id;
@@ -120,8 +138,12 @@ export const buildHarnessAuthRows = ({
   claude_active_account_id,
   gemini_accounts,
   gemini_active_account_id,
+  qwen_accounts,
+  qwen_active_account_id,
   kimi_accounts,
   kimi_active_account_id,
+  mistral_accounts,
+  mistral_active_account_id,
   copilot_accounts,
   copilot_active_account_id,
   kiro_accounts,
@@ -177,6 +199,20 @@ export const buildHarnessAuthRows = ({
     }
   }
 
+  if (provider_id === "qwen" && qwen_accounts.length > 0) {
+    for (const account of qwen_accounts) {
+      rows.push({
+        key: `subscription:${account.id}`,
+        kind: "subscription",
+        label: qwenAccountLabel(account),
+        active: selected_source_kind === "subscription" && qwen_active_account_id === account.id,
+        selectable: true,
+        account_id: account.id,
+        can_delete: true,
+      });
+    }
+  }
+
   if (provider_id === "kimi" && kimi_accounts.length > 0) {
     for (const account of kimi_accounts) {
       rows.push({
@@ -184,6 +220,21 @@ export const buildHarnessAuthRows = ({
         kind: "subscription",
         label: kimiAccountLabel(account),
         active: selected_source_kind === "subscription" && kimi_active_account_id === account.id,
+        selectable: true,
+        account_id: account.id,
+        can_delete: true,
+      });
+    }
+  }
+
+  if (provider_id === "mistral" && mistral_accounts.length > 0) {
+    for (const account of mistral_accounts) {
+      rows.push({
+        key: `subscription:${account.id}`,
+        kind: "subscription",
+        label: mistralAccountLabel(account),
+        active:
+          selected_source_kind === "subscription" && mistral_active_account_id === account.id,
         selectable: true,
         account_id: account.id,
         can_delete: true,

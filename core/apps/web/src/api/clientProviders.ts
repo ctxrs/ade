@@ -61,12 +61,13 @@ export type ProvidersBootstrapResponse = {
   codex_accounts: CodexAccountsResponse;
   claude_accounts: ClaudeAccountsResponse;
   gemini_accounts: GeminiAccountsResponse;
+  qwen_accounts: QwenAccountsResponse;
   kimi_accounts: KimiAccountsResponse;
+  mistral_accounts: MistralAccountsResponse;
   copilot_accounts: CopilotAccountsResponse;
   kiro_accounts: KiroAccountsResponse;
   cursor_accounts: CursorAccountsResponse;
   amp_accounts: AmpAccountsResponse;
-  auggie_accounts: AuggieAccountsResponse;
 };
 
 export const getProvidersBootstrap = (workspaceId: string) =>
@@ -233,7 +234,25 @@ export type GeminiAccountEntry = {
   last_used_at?: string | null;
 };
 
+export type QwenAccountEntry = {
+  id: string;
+  label: string;
+  kind?: string;
+  email?: string | null;
+  created_at: string;
+  last_used_at?: string | null;
+};
+
 export type KimiAccountEntry = {
+  id: string;
+  label: string;
+  kind?: string;
+  email?: string | null;
+  created_at: string;
+  last_used_at?: string | null;
+};
+
+export type MistralAccountEntry = {
   id: string;
   label: string;
   kind?: string;
@@ -316,15 +335,24 @@ export type GeminiAccountsResponse = {
   accounts: GeminiAccountEntry[];
 };
 
+export type QwenAccountsResponse = {
+  active_account_id: string | null;
+  accounts: QwenAccountEntry[];
+};
+
 export type KimiAccountsResponse = {
   active_account_id: string | null;
   accounts: KimiAccountEntry[];
 };
 
+export type MistralAccountsResponse = {
+  active_account_id: string | null;
+  accounts: MistralAccountEntry[];
+};
+
 export type CopilotAccountsResponse = {
   active_account_id: string | null;
   accounts: CopilotAccountEntry[];
-  logins: CopilotLoginStatus[];
 };
 
 export type KiroAccountsResponse = {
@@ -340,20 +368,6 @@ export type CursorAccountsResponse = {
 export type AmpAccountsResponse = {
   active_account_id: string | null;
   accounts: AmpAccountEntry[];
-};
-
-export type AuggieAccountEntry = {
-  id: string;
-  label: string;
-  kind?: string;
-  email?: string | null;
-  created_at: string;
-  last_used_at?: string | null;
-};
-
-export type AuggieAccountsResponse = {
-  active_account_id: string | null;
-  accounts: AuggieAccountEntry[];
 };
 
 export type CodexLoginStartResponse = {
@@ -398,6 +412,19 @@ export type GeminiLoginStartResponse = {
   auth_url?: string | null;
 };
 
+export type QwenLoginStatus = {
+  login_id: string;
+  auth_url?: string | null;
+  status: string;
+  account_id?: string | null;
+  error?: string | null;
+};
+
+export type QwenLoginStartResponse = {
+  login_id: string;
+  auth_url?: string | null;
+};
+
 export type AmpLoginStatus = {
   login_id: string;
   auth_url?: string | null;
@@ -410,7 +437,19 @@ export type AmpLoginStartResponse = {
   auth_url?: string | null;
 };
 
-export type KimiLoginStatus = {
+export type MistralLoginStatus = {
+  login_id: string;
+  auth_url?: string | null;
+  status: string;
+  error?: string | null;
+};
+
+export type MistralLoginStartResponse = {
+  login_id: string;
+  auth_url?: string | null;
+};
+
+export type KiroLoginStatus = {
   login_id: string;
   auth_url?: string | null;
   status: string;
@@ -418,33 +457,7 @@ export type KimiLoginStatus = {
   error?: string | null;
 };
 
-export type KimiLoginStartResponse = {
-  login_id: string;
-  auth_url?: string | null;
-};
-
-export type CopilotLoginStatus = {
-  login_id: string;
-  auth_url?: string | null;
-  status: string;
-  account_id?: string | null;
-  error?: string | null;
-};
-
-export type CopilotLoginStartResponse = {
-  login_id: string;
-  auth_url?: string | null;
-};
-
-export type AuggieLoginStatus = {
-  login_id: string;
-  auth_url?: string | null;
-  status: string;
-  account_id?: string | null;
-  error?: string | null;
-};
-
-export type AuggieLoginStartResponse = {
+export type KiroLoginStartResponse = {
   login_id: string;
   auth_url?: string | null;
 };
@@ -590,6 +603,29 @@ export const startGeminiLogin = (label?: string) =>
 export const getGeminiLogin = (loginId: string) =>
   apiAny<GeminiLoginStatus>(`/api/providers/gemini/accounts/login/${loginId}`);
 
+export const listQwenAccounts = () =>
+  apiAny<QwenAccountsResponse>(`/api/providers/qwen/accounts`);
+
+export const startQwenLogin = (label?: string) =>
+  apiAny<QwenLoginStartResponse>(`/api/providers/qwen/accounts/login/start`, {
+    method: "POST",
+    body: JSON.stringify(label ? { label } : {}),
+  });
+
+export const getQwenLogin = (loginId: string) =>
+  apiAny<QwenLoginStatus>(`/api/providers/qwen/accounts/login/${loginId}`);
+
+export const setQwenActiveAccount = (accountId: string | null) =>
+  apiAny<QwenAccountsResponse>(`/api/providers/qwen/active-account`, {
+    method: "PUT",
+    body: JSON.stringify({ account_id: accountId }),
+  });
+
+export const deleteQwenAccount = (accountId: string) =>
+  apiAny<QwenAccountsResponse>(`/api/providers/qwen/accounts/${accountId}`, {
+    method: "DELETE",
+  });
+
 export const startAmpLogin = (label?: string) =>
   apiAny<AmpLoginStartResponse>(`/api/providers/amp/accounts/login/start`, {
     method: "POST",
@@ -613,26 +649,26 @@ export const deleteAmpAccount = (accountId: string) =>
     method: "DELETE",
   });
 
-export const startAuggieLogin = (label?: string) =>
-  apiAny<AuggieLoginStartResponse>(`/api/providers/auggie/accounts/login/start`, {
+export const listMistralAccounts = () =>
+  apiAny<MistralAccountsResponse>(`/api/providers/mistral/accounts`);
+
+export const startMistralLogin = (label?: string) =>
+  apiAny<MistralLoginStartResponse>(`/api/providers/mistral/accounts/login/start`, {
     method: "POST",
     body: JSON.stringify(label ? { label } : {}),
   });
 
-export const getAuggieLogin = (loginId: string) =>
-  apiAny<AuggieLoginStatus>(`/api/providers/auggie/accounts/login/${loginId}`);
+export const getMistralLogin = (loginId: string) =>
+  apiAny<MistralLoginStatus>(`/api/providers/mistral/accounts/login/${loginId}`);
 
-export const listAuggieAccounts = () =>
-  apiAny<AuggieAccountsResponse>(`/api/providers/auggie/accounts`);
-
-export const setAuggieActiveAccount = (accountId: string | null) =>
-  apiAny<AuggieAccountsResponse>(`/api/providers/auggie/active-account`, {
+export const setMistralActiveAccount = (accountId: string | null) =>
+  apiAny<MistralAccountsResponse>(`/api/providers/mistral/active-account`, {
     method: "PUT",
     body: JSON.stringify({ account_id: accountId }),
   });
 
-export const deleteAuggieAccount = (accountId: string) =>
-  apiAny<AuggieAccountsResponse>(`/api/providers/auggie/accounts/${accountId}`, {
+export const deleteMistralAccount = (accountId: string) =>
+  apiAny<MistralAccountsResponse>(`/api/providers/mistral/accounts/${accountId}`, {
     method: "DELETE",
   });
 
@@ -663,15 +699,6 @@ export const deleteGeminiAccount = (accountId: string) =>
 
 export const listKimiAccounts = () =>
   apiAny<KimiAccountsResponse>(`/api/providers/kimi/accounts`);
-
-export const startKimiLogin = (label?: string) =>
-  apiAny<KimiLoginStartResponse>(`/api/providers/kimi/accounts/login/start`, {
-    method: "POST",
-    body: JSON.stringify(label ? { label } : {}),
-  });
-
-export const getKimiLogin = (loginId: string) =>
-  apiAny<KimiLoginStatus>(`/api/providers/kimi/accounts/login/${loginId}`);
 
 export const upsertKimiAccount = (
   credentialsJson: string,
@@ -707,15 +734,6 @@ export const deleteKimiAccount = (accountId: string) =>
 export const listCopilotAccounts = () =>
   apiAny<CopilotAccountsResponse>(`/api/providers/copilot/accounts`);
 
-export const startCopilotLogin = (label?: string) =>
-  apiAny<CopilotLoginStartResponse>(`/api/providers/copilot/accounts/login/start`, {
-    method: "POST",
-    body: JSON.stringify(label ? { label } : {}),
-  });
-
-export const getCopilotLogin = (loginId: string) =>
-  apiAny<CopilotLoginStatus>(`/api/providers/copilot/accounts/login/${loginId}`);
-
 export const upsertCopilotAccount = (
   token: string,
   opts?: { label?: string; email?: string },
@@ -742,6 +760,15 @@ export const deleteCopilotAccount = (accountId: string) =>
 
 export const listKiroAccounts = () =>
   apiAny<KiroAccountsResponse>(`/api/providers/kiro/accounts`);
+
+export const startKiroLogin = (label?: string) =>
+  apiAny<KiroLoginStartResponse>(`/api/providers/kiro/accounts/login/start`, {
+    method: "POST",
+    body: JSON.stringify(label ? { label } : {}),
+  });
+
+export const getKiroLogin = (loginId: string) =>
+  apiAny<KiroLoginStatus>(`/api/providers/kiro/accounts/login/${loginId}`);
 
 export const upsertKiroAccount = (
   authTokenJson: string,

@@ -383,6 +383,23 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             "/api/providers/gemini/accounts/:id",
             delete(delete_gemini_account),
         )
+        .route("/api/providers/qwen/accounts", get(list_qwen_accounts))
+        .route(
+            "/api/providers/qwen/accounts/login/start",
+            post(start_qwen_login),
+        )
+        .route(
+            "/api/providers/qwen/accounts/login/:id",
+            get(get_qwen_login),
+        )
+        .route(
+            "/api/providers/qwen/active-account",
+            put(set_qwen_active_account),
+        )
+        .route(
+            "/api/providers/qwen/accounts/:id",
+            delete(delete_qwen_account),
+        )
         .route(
             "/api/providers/amp/accounts/login/start",
             post(start_amp_login),
@@ -398,33 +415,28 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             delete(delete_amp_account),
         )
         .route(
-            "/api/providers/auggie/accounts/login/start",
-            post(start_auggie_login),
+            "/api/providers/mistral/accounts",
+            get(list_mistral_accounts),
         )
         .route(
-            "/api/providers/auggie/accounts/login/:id",
-            get(get_auggie_login),
-        )
-        .route("/api/providers/auggie/accounts", get(list_auggie_accounts))
-        .route(
-            "/api/providers/auggie/active-account",
-            put(set_auggie_active_account),
+            "/api/providers/mistral/accounts/login/start",
+            post(start_mistral_login),
         )
         .route(
-            "/api/providers/auggie/accounts/:id",
-            delete(delete_auggie_account),
+            "/api/providers/mistral/accounts/login/:id",
+            get(get_mistral_login),
+        )
+        .route(
+            "/api/providers/mistral/active-account",
+            put(set_mistral_active_account),
+        )
+        .route(
+            "/api/providers/mistral/accounts/:id",
+            delete(delete_mistral_account),
         )
         .route(
             "/api/providers/kimi/accounts",
             get(list_kimi_accounts).post(upsert_kimi_account),
-        )
-        .route(
-            "/api/providers/kimi/accounts/login/start",
-            post(start_kimi_login),
-        )
-        .route(
-            "/api/providers/kimi/accounts/login/:id",
-            get(get_kimi_login),
         )
         .route(
             "/api/providers/kimi/active-account",
@@ -439,14 +451,6 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             get(list_copilot_accounts).post(upsert_copilot_account),
         )
         .route(
-            "/api/providers/copilot/accounts/login/start",
-            post(start_copilot_login),
-        )
-        .route(
-            "/api/providers/copilot/accounts/login/:id",
-            get(get_copilot_login),
-        )
-        .route(
             "/api/providers/copilot/active-account",
             put(set_copilot_active_account),
         )
@@ -457,6 +461,14 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route(
             "/api/providers/kiro/accounts",
             get(list_kiro_accounts).post(upsert_kiro_account),
+        )
+        .route(
+            "/api/providers/kiro/accounts/login/start",
+            post(start_kiro_login),
+        )
+        .route(
+            "/api/providers/kiro/accounts/login/:id",
+            get(get_kiro_login),
         )
         .route(
             "/api/providers/kiro/active-account",
