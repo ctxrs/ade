@@ -17,6 +17,8 @@ e2e/workbench-diff-pane-no-overflow.spec.ts
 e2e/workbench-dummy-workspace.spec.ts
 e2e/workbench-harness-auth-modal-flow.spec.ts
 e2e/workbench-harness-menu-prod-availability.spec.ts
+e2e/workbench-cursor-provider-api-key-real.spec.ts
+e2e/workbench-gemini-provider-api-key-real.spec.ts
 e2e/workbench-inline-command-wrap.spec.ts
 e2e/workbench-new-task-drag-drop-image.spec.ts
 e2e/workbench-endpoint-harness-openrouter-matrix.spec.ts
