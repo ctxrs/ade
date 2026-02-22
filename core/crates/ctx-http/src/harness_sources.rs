@@ -359,7 +359,6 @@ fn normalize_provider_id(provider_id: &str) -> Option<&'static str> {
         PROVIDER_GOOSE => Some(PROVIDER_GOOSE),
         PROVIDER_AMP => Some(PROVIDER_AMP),
         PROVIDER_DROID => Some(PROVIDER_DROID),
-        PROVIDER_CONTINUE => Some(PROVIDER_CONTINUE),
         PROVIDER_OPENHANDS => Some(PROVIDER_OPENHANDS),
         PROVIDER_COPILOT => Some(PROVIDER_COPILOT),
         PROVIDER_KIRO => Some(PROVIDER_KIRO),
@@ -383,7 +382,6 @@ fn provider_supports_harness_endpoint(canonical_provider_id: &str) -> bool {
             | PROVIDER_GOOSE
             | PROVIDER_AMP
             | PROVIDER_DROID
-            | PROVIDER_CONTINUE
             | PROVIDER_OPENHANDS
             | PROVIDER_COPILOT
             | PROVIDER_KIRO
@@ -408,7 +406,6 @@ pub fn default_shape_for_provider(provider_id: &str) -> Option<HarnessApiShape> 
         Some(PROVIDER_GOOSE) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_AMP) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_DROID) => Some(HarnessApiShape::OpenaiResponses),
-        Some(PROVIDER_CONTINUE) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_OPENHANDS) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_COPILOT) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_KIRO) => Some(HarnessApiShape::OpenaiResponses),
@@ -459,8 +456,8 @@ pub fn ensure_shape_compatible(provider_id: &str, shape: HarnessApiShape) -> Res
             }
         }
         PROVIDER_QWEN | PROVIDER_OPENCODE | PROVIDER_MISTRAL | PROVIDER_GOOSE | PROVIDER_AMP
-        | PROVIDER_DROID | PROVIDER_CONTINUE | PROVIDER_OPENHANDS | PROVIDER_COPILOT
-        | PROVIDER_KIRO | PROVIDER_AUGGIE | PROVIDER_PI => {
+        | PROVIDER_DROID | PROVIDER_OPENHANDS | PROVIDER_COPILOT | PROVIDER_KIRO
+        | PROVIDER_AUGGIE | PROVIDER_PI => {
             if shape != HarnessApiShape::OpenaiResponses {
                 anyhow::bail!(
                     "{} requires api_shape=openai_responses; found {}",
@@ -2532,7 +2529,6 @@ mod tests {
             (PROVIDER_MISTRAL, &["MISTRAL_API_KEY", "MISTRAL_BASE_URL"]),
             (PROVIDER_AMP, &["AMP_API_KEY"]),
             (PROVIDER_DROID, &["FACTORY_API_KEY"]),
-            (PROVIDER_CONTINUE, &["CONTINUE_API_KEY"]),
             (PROVIDER_COPILOT, &["GH_TOKEN", "GITHUB_TOKEN"]),
             (
                 PROVIDER_KIRO,

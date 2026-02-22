@@ -221,9 +221,21 @@ pub(super) struct GeminiAccountsResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub(super) struct QwenAccountsResponse {
+    active_account_id: Option<String>,
+    accounts: Vec<provider_accounts::QwenAccountEntry>,
+}
+
+#[derive(Debug, Serialize)]
 pub(super) struct KimiAccountsResponse {
     active_account_id: Option<String>,
     accounts: Vec<provider_accounts::KimiAccountEntry>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct MistralAccountsResponse {
+    active_account_id: Option<String>,
+    accounts: Vec<provider_accounts::MistralAccountEntry>,
 }
 
 #[derive(Debug, Serialize)]
@@ -252,7 +264,9 @@ pub(super) struct ProvidersBootstrapResponse {
     codex_accounts: CodexAccountsResponse,
     claude_accounts: ClaudeAccountsResponse,
     gemini_accounts: GeminiAccountsResponse,
+    qwen_accounts: QwenAccountsResponse,
     kimi_accounts: KimiAccountsResponse,
+    mistral_accounts: MistralAccountsResponse,
     copilot_accounts: CopilotAccountsResponse,
     kiro_accounts: KiroAccountsResponse,
     cursor_accounts: CursorAccountsResponse,
@@ -356,6 +370,18 @@ pub(super) struct GeminiLoginStartResp {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct QwenLoginStartReq {
+    label: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct QwenLoginStartResp {
+    login_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auth_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct AmpLoginStartReq {
     label: Option<String>,
 }
@@ -368,7 +394,36 @@ pub(super) struct AmpLoginStartResp {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct MistralLoginStartReq {
+    label: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct MistralLoginStartResp {
+    login_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auth_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct KiroLoginStartReq {
+    label: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct KiroLoginStartResp {
+    login_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auth_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct GeminiActiveAccountReq {
+    account_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct QwenActiveAccountReq {
     account_id: Option<String>,
 }
 
@@ -386,6 +441,11 @@ pub(super) struct KimiAccountUpsertReq {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct KimiActiveAccountReq {
+    account_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct MistralActiveAccountReq {
     account_id: Option<String>,
 }
 
@@ -505,8 +565,15 @@ const CODEX_LOGIN_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 const CLAUDE_LOGIN_URL_WAIT: Duration = Duration::from_secs(4);
 const GEMINI_LOGIN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(300);
 const GEMINI_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
+const QWEN_LOGIN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(300);
+const QWEN_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
 const AMP_LOGIN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(300);
 const AMP_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
+const MISTRAL_LOGIN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(300);
+const MISTRAL_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
+const KIRO_LOGIN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(300);
+const KIRO_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
+const QWEN_OAUTH_AUTH_METHOD_ID: &str = "qwen-oauth";
 const AMP_BROWSER_AUTH_METHOD_ID: &str = "amp_browser_login";
 const CLAUDE_LOGIN_NO_AUTH_URL_TIMEOUT: Duration = Duration::from_secs(8);
 const CLAUDE_LOGIN_URL_SETTLE_WAIT: Duration = Duration::from_millis(500);
@@ -584,12 +651,39 @@ fn gemini_login_timeout() -> Duration {
     Duration::from_secs(seconds)
 }
 
+fn qwen_login_timeout() -> Duration {
+    let seconds = std::env::var("CTX_QWEN_LOGIN_TIMEOUT_SECS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(QWEN_LOGIN_TIMEOUT_DEFAULT.as_secs());
+    Duration::from_secs(seconds)
+}
+
 fn amp_login_timeout() -> Duration {
     let seconds = std::env::var("CTX_AMP_LOGIN_TIMEOUT_SECS")
         .ok()
         .and_then(|raw| raw.trim().parse::<u64>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(AMP_LOGIN_TIMEOUT_DEFAULT.as_secs());
+    Duration::from_secs(seconds)
+}
+
+fn mistral_login_timeout() -> Duration {
+    let seconds = std::env::var("CTX_MISTRAL_LOGIN_TIMEOUT_SECS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(MISTRAL_LOGIN_TIMEOUT_DEFAULT.as_secs());
+    Duration::from_secs(seconds)
+}
+
+fn kiro_login_timeout() -> Duration {
+    let seconds = std::env::var("CTX_KIRO_LOGIN_TIMEOUT_SECS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(KIRO_LOGIN_TIMEOUT_DEFAULT.as_secs());
     Duration::from_secs(seconds)
 }
 
@@ -660,6 +754,25 @@ fn extract_auth_url_from_value(value: &serde_json::Value) -> Option<String> {
     }
 }
 
+fn auth_notice_code(payload: &serde_json::Value) -> &str {
+    payload
+        .get("code")
+        .or_else(|| payload.get("kind"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+}
+
+fn is_auth_success_notice_code(code: &str) -> bool {
+    matches!(
+        code,
+        "auth_complete" | "auth_completed" | "auth_success" | "authenticated"
+    )
+}
+
+fn is_auth_failure_notice_code(code: &str) -> bool {
+    matches!(code, "auth_failed" | "auth_error")
+}
+
 async fn codex_accounts_response(state: &Arc<AppState>) -> CodexAccountsResponse {
     let registry = provider_accounts::load_codex_registry(&state.core.data_root).await;
     let logins = {
@@ -689,9 +802,25 @@ async fn gemini_accounts_response(state: &Arc<AppState>) -> GeminiAccountsRespon
     }
 }
 
+async fn qwen_accounts_response(state: &Arc<AppState>) -> QwenAccountsResponse {
+    let registry = provider_accounts::load_qwen_registry(&state.core.data_root).await;
+    QwenAccountsResponse {
+        active_account_id: registry.active_account_id,
+        accounts: registry.accounts,
+    }
+}
+
 async fn kimi_accounts_response(state: &Arc<AppState>) -> KimiAccountsResponse {
     let registry = provider_accounts::load_kimi_registry(&state.core.data_root).await;
     KimiAccountsResponse {
+        active_account_id: registry.active_account_id,
+        accounts: registry.accounts,
+    }
+}
+
+async fn mistral_accounts_response(state: &Arc<AppState>) -> MistralAccountsResponse {
+    let registry = provider_accounts::load_mistral_registry(&state.core.data_root).await;
+    MistralAccountsResponse {
         active_account_id: registry.active_account_id,
         accounts: registry.accounts,
     }
@@ -760,8 +889,16 @@ async fn restart_gemini_providers_for_auth_change(state: &Arc<AppState>, reason:
     restart_provider_for_auth_change(state, "gemini", reason).await;
 }
 
+async fn restart_qwen_providers_for_auth_change(state: &Arc<AppState>, reason: &str) {
+    restart_provider_for_auth_change(state, "qwen", reason).await;
+}
+
 async fn restart_amp_providers_for_auth_change(state: &Arc<AppState>, reason: &str) {
     restart_provider_for_auth_change(state, "amp", reason).await;
+}
+
+async fn restart_mistral_providers_for_auth_change(state: &Arc<AppState>, reason: &str) {
+    restart_provider_for_auth_change(state, "mistral", reason).await;
 }
 
 async fn restart_kimi_providers_for_auth_change(state: &Arc<AppState>, reason: &str) {
@@ -1545,6 +1682,253 @@ pub(super) async fn get_gemini_login(
     Ok(Json(status))
 }
 
+fn qwen_login_home(data_root: &StdPath, login_id: &str) -> PathBuf {
+    data_root
+        .join("providers")
+        .join("qwen")
+        .join("login-sessions")
+        .join(login_id)
+}
+
+async fn monitor_qwen_login(state: Arc<AppState>, login_id: String, label: Option<String>) {
+    let adapter = {
+        let map = state.providers.adapters.lock().await;
+        map.get("qwen").cloned()
+    };
+    let Some(adapter) = adapter else {
+        let mut map = state.providers.qwen_login_sessions.lock().await;
+        if let Some(entry) = map.get_mut(&login_id) {
+            entry.status = "failed".to_string();
+            entry.error = Some("provider adapter not available".to_string());
+        }
+        return;
+    };
+
+    let login_home = qwen_login_home(&state.core.data_root, &login_id);
+    let workdir = login_home.join("workspace");
+    if let Err(err) = tokio::fs::create_dir_all(&workdir).await {
+        let mut map = state.providers.qwen_login_sessions.lock().await;
+        if let Some(entry) = map.get_mut(&login_id) {
+            entry.status = "failed".to_string();
+            entry.error = Some(format!("failed to prepare login workspace: {err}"));
+        }
+        return;
+    }
+    let _ = tokio::fs::create_dir_all(login_home.join(".config")).await;
+    let _ = tokio::fs::create_dir_all(login_home.join(".cache")).await;
+
+    let mut provider_env = HashMap::new();
+    provider_env.insert("CTX_DAEMON_URL".to_string(), state.core.daemon_url.clone());
+    if let Some(token) = state.core.auth_token.clone() {
+        provider_env.insert("CTX_AUTH_TOKEN".to_string(), token);
+    }
+    provider_env.insert(
+        "CTX_DATA_ROOT".to_string(),
+        state.core.data_root.to_string_lossy().to_string(),
+    );
+    provider_env.insert("HOME".to_string(), login_home.to_string_lossy().to_string());
+    provider_env.insert(
+        "XDG_CONFIG_HOME".to_string(),
+        login_home.join(".config").to_string_lossy().to_string(),
+    );
+    provider_env.insert(
+        "XDG_CACHE_HOME".to_string(),
+        login_home.join(".cache").to_string_lossy().to_string(),
+    );
+
+    let (event_tx, mut event_rx) = mpsc::channel(64);
+    let auth_result = adapter
+        .authenticate_session(
+            format!("qwen-login-{login_id}"),
+            workdir,
+            provider_env,
+            Some(QWEN_OAUTH_AUTH_METHOD_ID.to_string()),
+            event_tx,
+        )
+        .await;
+    if let Err(err) = auth_result {
+        let mut map = state.providers.qwen_login_sessions.lock().await;
+        if let Some(entry) = map.get_mut(&login_id) {
+            entry.status = "failed".to_string();
+            entry.error = Some(logs::redact_sensitive(&err.to_string()));
+        }
+        let _ = tokio::fs::remove_dir_all(&login_home).await;
+        return;
+    }
+
+    let oauth_path = login_home.join(provider_accounts::QWEN_OAUTH_CREDS_RELATIVE_PATH);
+    let started_at = Instant::now();
+    let timeout = qwen_login_timeout();
+    let mut observed_auth_url = false;
+    let mut observed_email = None::<String>;
+
+    loop {
+        let mut channel_disconnected = false;
+        loop {
+            match event_rx.try_recv() {
+                Ok(event) => {
+                    if let Some(auth_url) = extract_auth_url_from_value(&event.payload_json) {
+                        observed_auth_url = true;
+                        let mut map = state.providers.qwen_login_sessions.lock().await;
+                        if let Some(entry) = map.get_mut(&login_id) {
+                            entry.auth_url = Some(auth_url);
+                        }
+                    }
+                    if observed_email.is_none() {
+                        observed_email = first_email_from_value(&event.payload_json);
+                    }
+                    if matches!(event.event_type, ctx_core::models::SessionEventType::Error) {
+                        let message = event
+                            .payload_json
+                            .get("message")
+                            .and_then(serde_json::Value::as_str)
+                            .map(logs::redact_sensitive)
+                            .unwrap_or_else(|| "qwen authenticate reported an error".to_string());
+                        let mut map = state.providers.qwen_login_sessions.lock().await;
+                        if let Some(entry) = map.get_mut(&login_id) {
+                            entry.status = "failed".to_string();
+                            entry.error = Some(message);
+                        }
+                        let _ = tokio::fs::remove_dir_all(&login_home).await;
+                        return;
+                    }
+                }
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                    channel_disconnected = true;
+                    break;
+                }
+            }
+        }
+
+        let oauth_raw = tokio::fs::read_to_string(&oauth_path)
+            .await
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        if let Some(oauth_raw) = oauth_raw {
+            let oauth_value = serde_json::from_str::<serde_json::Value>(&oauth_raw);
+            let oauth_valid = oauth_value
+                .as_ref()
+                .ok()
+                .is_some_and(serde_json::Value::is_object);
+            if !oauth_valid {
+                let mut map = state.providers.qwen_login_sessions.lock().await;
+                if let Some(entry) = map.get_mut(&login_id) {
+                    entry.status = "failed".to_string();
+                    entry.error =
+                        Some("captured oauth_creds.json is not a valid JSON object".to_string());
+                }
+                let _ = tokio::fs::remove_dir_all(&login_home).await;
+                return;
+            }
+
+            let added = provider_accounts::add_qwen_account(
+                &state.core.data_root,
+                label.clone(),
+                oauth_raw,
+                observed_email.clone(),
+            )
+            .await;
+            match added {
+                Ok(registry) => {
+                    let mut map = state.providers.qwen_login_sessions.lock().await;
+                    if let Some(entry) = map.get_mut(&login_id) {
+                        entry.status = "success".to_string();
+                        entry.account_id = registry.active_account_id.clone();
+                        entry.error = None;
+                    }
+                    restart_qwen_providers_for_auth_change(&state, "qwen auth updated").await;
+                }
+                Err(err) => {
+                    let mut map = state.providers.qwen_login_sessions.lock().await;
+                    if let Some(entry) = map.get_mut(&login_id) {
+                        entry.status = "failed".to_string();
+                        entry.error = Some(logs::redact_sensitive(&err.to_string()));
+                    }
+                }
+            }
+            let _ = tokio::fs::remove_dir_all(&login_home).await;
+            return;
+        }
+
+        if channel_disconnected && !observed_auth_url {
+            let mut map = state.providers.qwen_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(&login_id) {
+                entry.status = "failed".to_string();
+                if entry.error.is_none() {
+                    entry.error = Some(
+                        "Qwen sign-in did not emit an OAuth URL in this environment.".to_string(),
+                    );
+                }
+            }
+            let _ = tokio::fs::remove_dir_all(&login_home).await;
+            return;
+        }
+
+        if started_at.elapsed() >= timeout {
+            let mut map = state.providers.qwen_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(&login_id) {
+                entry.status = "timeout".to_string();
+                if entry.error.is_none() {
+                    entry.error = Some("timed out waiting for Qwen OAuth completion".to_string());
+                }
+            }
+            let _ = tokio::fs::remove_dir_all(&login_home).await;
+            return;
+        }
+
+        tokio::time::sleep(QWEN_LOGIN_POLL_INTERVAL).await;
+    }
+}
+
+pub(super) async fn start_qwen_login(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<QwenLoginStartReq>,
+) -> Result<Json<QwenLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let login_id = uuid::Uuid::new_v4().to_string();
+    {
+        let mut map = state.providers.qwen_login_sessions.lock().await;
+        map.insert(
+            login_id.clone(),
+            provider_accounts::QwenLoginStatus {
+                login_id: login_id.clone(),
+                auth_url: None,
+                status: "pending".to_string(),
+                account_id: None,
+                error: None,
+            },
+        );
+    }
+
+    let state_clone = Arc::clone(&state);
+    let login_id_for_task = login_id.clone();
+    tokio::spawn(async move {
+        monitor_qwen_login(state_clone, login_id_for_task, req.label).await;
+    });
+
+    Ok(Json(QwenLoginStartResp {
+        login_id,
+        auth_url: None,
+    }))
+}
+
+pub(super) async fn get_qwen_login(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<provider_accounts::QwenLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
+    let map = state.providers.qwen_login_sessions.lock().await;
+    let status = map.get(&id).cloned().ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "login not found".to_string(),
+            }),
+        )
+    })?;
+    Ok(Json(status))
+}
+
 fn amp_login_home(data_root: &StdPath, login_id: &str) -> PathBuf {
     data_root
         .join("providers")
@@ -1796,6 +2180,520 @@ pub(super) async fn get_amp_login(
     Ok(Json(status))
 }
 
+fn mistral_login_home(data_root: &StdPath, login_id: &str) -> PathBuf {
+    data_root
+        .join("providers")
+        .join("mistral")
+        .join("login-sessions")
+        .join(login_id)
+}
+
+async fn monitor_mistral_login(state: Arc<AppState>, login_id: String, label: Option<String>) {
+    let adapter = {
+        let map = state.providers.adapters.lock().await;
+        map.get("mistral").cloned()
+    };
+    let Some(adapter) = adapter else {
+        let mut map = state.providers.mistral_login_sessions.lock().await;
+        if let Some(entry) = map.get_mut(&login_id) {
+            entry.status = "failed".to_string();
+            entry.error = Some("provider adapter not available".to_string());
+        }
+        return;
+    };
+
+    let login_home = mistral_login_home(&state.core.data_root, &login_id);
+    let workdir = login_home.join("workspace");
+    if let Err(err) = tokio::fs::create_dir_all(&workdir).await {
+        let mut map = state.providers.mistral_login_sessions.lock().await;
+        if let Some(entry) = map.get_mut(&login_id) {
+            entry.status = "failed".to_string();
+            entry.error = Some(format!("failed to prepare login workspace: {err}"));
+        }
+        return;
+    }
+    let mistral_home =
+        match provider_accounts::ensure_mistral_runtime_home(&state.core.data_root).await {
+            Ok(home) => home,
+            Err(err) => {
+                let mut map = state.providers.mistral_login_sessions.lock().await;
+                if let Some(entry) = map.get_mut(&login_id) {
+                    entry.status = "failed".to_string();
+                    entry.error = Some(format!("failed to prepare mistral runtime home: {err}"));
+                }
+                let _ = tokio::fs::remove_dir_all(&login_home).await;
+                return;
+            }
+        };
+
+    let mut provider_env = HashMap::new();
+    provider_env.insert("CTX_DAEMON_URL".to_string(), state.core.daemon_url.clone());
+    if let Some(token) = state.core.auth_token.clone() {
+        provider_env.insert("CTX_AUTH_TOKEN".to_string(), token);
+    }
+    provider_env.insert(
+        "CTX_DATA_ROOT".to_string(),
+        state.core.data_root.to_string_lossy().to_string(),
+    );
+    provider_env.insert(
+        "HOME".to_string(),
+        mistral_home.to_string_lossy().to_string(),
+    );
+    provider_env.insert(
+        "XDG_CONFIG_HOME".to_string(),
+        mistral_home.join(".config").to_string_lossy().to_string(),
+    );
+    provider_env.insert(
+        "XDG_CACHE_HOME".to_string(),
+        mistral_home.join(".cache").to_string_lossy().to_string(),
+    );
+
+    let (event_tx, mut event_rx) = mpsc::channel(64);
+    let auth_result = adapter
+        .authenticate_session(
+            format!("mistral-login-{login_id}"),
+            workdir,
+            provider_env,
+            None,
+            event_tx,
+        )
+        .await;
+    if let Err(err) = auth_result {
+        let mut map = state.providers.mistral_login_sessions.lock().await;
+        if let Some(entry) = map.get_mut(&login_id) {
+            entry.status = "failed".to_string();
+            entry.error = Some(logs::redact_sensitive(&err.to_string()));
+        }
+        let _ = tokio::fs::remove_dir_all(&login_home).await;
+        return;
+    }
+
+    let started_at = Instant::now();
+    let timeout = mistral_login_timeout();
+    let mut observed_auth_url = false;
+    let mut observed_email = None::<String>;
+
+    loop {
+        if started_at.elapsed() >= timeout {
+            let mut map = state.providers.mistral_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(&login_id) {
+                entry.status = "timeout".to_string();
+                if entry.error.is_none() {
+                    entry.error =
+                        Some("timed out waiting for Mistral OAuth completion".to_string());
+                }
+            }
+            let _ = tokio::fs::remove_dir_all(&login_home).await;
+            return;
+        }
+
+        let event = match tokio::time::timeout(MISTRAL_LOGIN_POLL_INTERVAL, event_rx.recv()).await {
+            Ok(Some(event)) => event,
+            Ok(None) => {
+                let mut map = state.providers.mistral_login_sessions.lock().await;
+                if let Some(entry) = map.get_mut(&login_id) {
+                    entry.status = "failed".to_string();
+                    if entry.error.is_none() {
+                        entry.error = Some(if observed_auth_url {
+                            "Mistral sign-in session ended before completion.".to_string()
+                        } else {
+                            "Mistral sign-in did not emit an OAuth URL in this environment."
+                                .to_string()
+                        });
+                    }
+                }
+                let _ = tokio::fs::remove_dir_all(&login_home).await;
+                return;
+            }
+            Err(_) => continue,
+        };
+
+        if let Some(auth_url) = extract_auth_url_from_value(&event.payload_json) {
+            observed_auth_url = true;
+            let mut map = state.providers.mistral_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(&login_id) {
+                entry.auth_url = Some(auth_url);
+            }
+        }
+        if observed_email.is_none() {
+            observed_email = first_email_from_value(&event.payload_json);
+        }
+
+        if matches!(event.event_type, ctx_core::models::SessionEventType::Error) {
+            let message = event
+                .payload_json
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .map(logs::redact_sensitive)
+                .unwrap_or_else(|| "mistral authenticate reported an error".to_string());
+            let mut map = state.providers.mistral_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(&login_id) {
+                entry.status = "failed".to_string();
+                entry.error = Some(message);
+            }
+            let _ = tokio::fs::remove_dir_all(&login_home).await;
+            return;
+        }
+
+        if matches!(event.event_type, ctx_core::models::SessionEventType::Notice) {
+            let code = auth_notice_code(&event.payload_json);
+            if is_auth_success_notice_code(code) {
+                if let Err(err) = provider_accounts::upsert_mistral_account(
+                    &state.core.data_root,
+                    label.clone(),
+                    observed_email.clone(),
+                )
+                .await
+                {
+                    let mut map = state.providers.mistral_login_sessions.lock().await;
+                    if let Some(entry) = map.get_mut(&login_id) {
+                        entry.status = "failed".to_string();
+                        entry.error = Some(logs::redact_sensitive(&err.to_string()));
+                    }
+                    let _ = tokio::fs::remove_dir_all(&login_home).await;
+                    return;
+                }
+                let mut map = state.providers.mistral_login_sessions.lock().await;
+                if let Some(entry) = map.get_mut(&login_id) {
+                    entry.status = "success".to_string();
+                    entry.auth_url = None;
+                    entry.error = None;
+                }
+                restart_mistral_providers_for_auth_change(&state, "mistral auth updated").await;
+                let _ = tokio::fs::remove_dir_all(&login_home).await;
+                return;
+            }
+            if is_auth_failure_notice_code(code) {
+                let message = event
+                    .payload_json
+                    .get("message")
+                    .and_then(serde_json::Value::as_str)
+                    .map(logs::redact_sensitive)
+                    .unwrap_or_else(|| "Mistral sign-in failed. Retry.".to_string());
+                let mut map = state.providers.mistral_login_sessions.lock().await;
+                if let Some(entry) = map.get_mut(&login_id) {
+                    entry.status = "failed".to_string();
+                    entry.error = Some(message);
+                }
+                let _ = tokio::fs::remove_dir_all(&login_home).await;
+                return;
+            }
+        }
+    }
+}
+
+pub(super) async fn start_mistral_login(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<MistralLoginStartReq>,
+) -> Result<Json<MistralLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let label = req.label;
+    let login_id = uuid::Uuid::new_v4().to_string();
+    {
+        let mut map = state.providers.mistral_login_sessions.lock().await;
+        map.insert(
+            login_id.clone(),
+            provider_accounts::MistralLoginStatus {
+                login_id: login_id.clone(),
+                auth_url: None,
+                status: "pending".to_string(),
+                error: None,
+            },
+        );
+    }
+
+    let state_clone = Arc::clone(&state);
+    let login_id_for_task = login_id.clone();
+    tokio::spawn(async move {
+        monitor_mistral_login(state_clone, login_id_for_task, label).await;
+    });
+
+    Ok(Json(MistralLoginStartResp {
+        login_id,
+        auth_url: None,
+    }))
+}
+
+pub(super) async fn get_mistral_login(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<provider_accounts::MistralLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
+    let map = state.providers.mistral_login_sessions.lock().await;
+    let status = map.get(&id).cloned().ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "login not found".to_string(),
+            }),
+        )
+    })?;
+    Ok(Json(status))
+}
+
+fn kiro_login_home(data_root: &StdPath, login_id: &str) -> PathBuf {
+    data_root
+        .join("providers")
+        .join("kiro")
+        .join("login-sessions")
+        .join(login_id)
+}
+
+async fn monitor_kiro_login(state: Arc<AppState>, login_id: String, label: Option<String>) {
+    let adapter = {
+        let map = state.providers.adapters.lock().await;
+        map.get("kiro").cloned()
+    };
+    let Some(adapter) = adapter else {
+        let mut map = state.providers.kiro_login_sessions.lock().await;
+        if let Some(entry) = map.get_mut(&login_id) {
+            entry.status = "failed".to_string();
+            entry.error = Some("provider adapter not available".to_string());
+        }
+        return;
+    };
+
+    let login_home = kiro_login_home(&state.core.data_root, &login_id);
+    let workdir = login_home.join("workspace");
+    if let Err(err) = tokio::fs::create_dir_all(&workdir).await {
+        let mut map = state.providers.kiro_login_sessions.lock().await;
+        if let Some(entry) = map.get_mut(&login_id) {
+            entry.status = "failed".to_string();
+            entry.error = Some(format!("failed to prepare login workspace: {err}"));
+        }
+        return;
+    }
+    let _ = tokio::fs::create_dir_all(login_home.join(".config")).await;
+    let _ = tokio::fs::create_dir_all(login_home.join(".cache")).await;
+
+    let mut provider_env = HashMap::new();
+    provider_env.insert("CTX_DAEMON_URL".to_string(), state.core.daemon_url.clone());
+    if let Some(token) = state.core.auth_token.clone() {
+        provider_env.insert("CTX_AUTH_TOKEN".to_string(), token);
+    }
+    provider_env.insert(
+        "CTX_DATA_ROOT".to_string(),
+        state.core.data_root.to_string_lossy().to_string(),
+    );
+    provider_env.insert("HOME".to_string(), login_home.to_string_lossy().to_string());
+    provider_env.insert(
+        "XDG_CONFIG_HOME".to_string(),
+        login_home.join(".config").to_string_lossy().to_string(),
+    );
+    provider_env.insert(
+        "XDG_CACHE_HOME".to_string(),
+        login_home.join(".cache").to_string_lossy().to_string(),
+    );
+
+    let (event_tx, mut event_rx) = mpsc::channel(64);
+    let auth_result = adapter
+        .authenticate_session(
+            format!("kiro-login-{login_id}"),
+            workdir,
+            provider_env,
+            None,
+            event_tx,
+        )
+        .await;
+    if let Err(err) = auth_result {
+        let mut map = state.providers.kiro_login_sessions.lock().await;
+        if let Some(entry) = map.get_mut(&login_id) {
+            entry.status = "failed".to_string();
+            entry.error = Some(logs::redact_sensitive(&err.to_string()));
+        }
+        let _ = tokio::fs::remove_dir_all(&login_home).await;
+        return;
+    }
+
+    let auth_token_path = login_home.join(provider_accounts::KIRO_AUTH_TOKEN_RELATIVE_PATH);
+    let started_at = Instant::now();
+    let timeout = kiro_login_timeout();
+    let mut observed_auth_url = false;
+    let mut observed_email = None::<String>;
+
+    loop {
+        let auth_token_raw = tokio::fs::read_to_string(&auth_token_path)
+            .await
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        if let Some(auth_token_raw) = auth_token_raw {
+            let parsed = serde_json::from_str::<serde_json::Value>(&auth_token_raw);
+            let auth_token_valid = parsed
+                .as_ref()
+                .ok()
+                .is_some_and(serde_json::Value::is_object);
+            if !auth_token_valid {
+                let mut map = state.providers.kiro_login_sessions.lock().await;
+                if let Some(entry) = map.get_mut(&login_id) {
+                    entry.status = "failed".to_string();
+                    entry.error = Some(
+                        "captured kiro auth token file is not a valid JSON object".to_string(),
+                    );
+                }
+                let _ = tokio::fs::remove_dir_all(&login_home).await;
+                return;
+            }
+            if observed_email.is_none() {
+                observed_email = parsed.as_ref().ok().and_then(first_email_from_value);
+            }
+
+            let added = provider_accounts::add_kiro_account(
+                &state.core.data_root,
+                label.clone(),
+                auth_token_raw,
+                observed_email.clone(),
+            )
+            .await;
+            match added {
+                Ok(registry) => {
+                    let mut map = state.providers.kiro_login_sessions.lock().await;
+                    if let Some(entry) = map.get_mut(&login_id) {
+                        entry.status = "success".to_string();
+                        entry.account_id = registry.active_account_id.clone();
+                        entry.error = None;
+                    }
+                    restart_kiro_providers_for_auth_change(&state, "kiro auth updated").await;
+                }
+                Err(err) => {
+                    let mut map = state.providers.kiro_login_sessions.lock().await;
+                    if let Some(entry) = map.get_mut(&login_id) {
+                        entry.status = "failed".to_string();
+                        entry.error = Some(logs::redact_sensitive(&err.to_string()));
+                    }
+                }
+            }
+            let _ = tokio::fs::remove_dir_all(&login_home).await;
+            return;
+        }
+
+        if started_at.elapsed() >= timeout {
+            let mut map = state.providers.kiro_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(&login_id) {
+                entry.status = "timeout".to_string();
+                if entry.error.is_none() {
+                    entry.error = Some("timed out waiting for Kiro OAuth completion".to_string());
+                }
+            }
+            let _ = tokio::fs::remove_dir_all(&login_home).await;
+            return;
+        }
+
+        let event = match tokio::time::timeout(KIRO_LOGIN_POLL_INTERVAL, event_rx.recv()).await {
+            Ok(Some(event)) => event,
+            Ok(None) => {
+                let mut map = state.providers.kiro_login_sessions.lock().await;
+                if let Some(entry) = map.get_mut(&login_id) {
+                    entry.status = "failed".to_string();
+                    if entry.error.is_none() {
+                        entry.error = Some(if observed_auth_url {
+                            "Kiro sign-in session ended before completion.".to_string()
+                        } else {
+                            "Kiro sign-in did not emit an OAuth URL in this environment."
+                                .to_string()
+                        });
+                    }
+                }
+                let _ = tokio::fs::remove_dir_all(&login_home).await;
+                return;
+            }
+            Err(_) => continue,
+        };
+
+        if let Some(auth_url) = extract_auth_url_from_value(&event.payload_json) {
+            observed_auth_url = true;
+            let mut map = state.providers.kiro_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(&login_id) {
+                entry.auth_url = Some(auth_url);
+            }
+        }
+        if observed_email.is_none() {
+            observed_email = first_email_from_value(&event.payload_json);
+        }
+
+        if matches!(event.event_type, ctx_core::models::SessionEventType::Error) {
+            let message = event
+                .payload_json
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .map(logs::redact_sensitive)
+                .unwrap_or_else(|| "kiro authenticate reported an error".to_string());
+            let mut map = state.providers.kiro_login_sessions.lock().await;
+            if let Some(entry) = map.get_mut(&login_id) {
+                entry.status = "failed".to_string();
+                entry.error = Some(message);
+            }
+            let _ = tokio::fs::remove_dir_all(&login_home).await;
+            return;
+        }
+
+        if matches!(event.event_type, ctx_core::models::SessionEventType::Notice) {
+            let code = auth_notice_code(&event.payload_json);
+            if is_auth_failure_notice_code(code) {
+                let message = event
+                    .payload_json
+                    .get("message")
+                    .and_then(serde_json::Value::as_str)
+                    .map(logs::redact_sensitive)
+                    .unwrap_or_else(|| "Kiro sign-in failed. Retry.".to_string());
+                let mut map = state.providers.kiro_login_sessions.lock().await;
+                if let Some(entry) = map.get_mut(&login_id) {
+                    entry.status = "failed".to_string();
+                    entry.error = Some(message);
+                }
+                let _ = tokio::fs::remove_dir_all(&login_home).await;
+                return;
+            }
+        }
+    }
+}
+
+pub(super) async fn start_kiro_login(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<KiroLoginStartReq>,
+) -> Result<Json<KiroLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let label = req.label;
+    let login_id = uuid::Uuid::new_v4().to_string();
+    {
+        let mut map = state.providers.kiro_login_sessions.lock().await;
+        map.insert(
+            login_id.clone(),
+            provider_accounts::KiroLoginStatus {
+                login_id: login_id.clone(),
+                auth_url: None,
+                status: "pending".to_string(),
+                account_id: None,
+                error: None,
+            },
+        );
+    }
+
+    let state_clone = Arc::clone(&state);
+    let login_id_for_task = login_id.clone();
+    tokio::spawn(async move {
+        monitor_kiro_login(state_clone, login_id_for_task, label).await;
+    });
+
+    Ok(Json(KiroLoginStartResp {
+        login_id,
+        auth_url: None,
+    }))
+}
+
+pub(super) async fn get_kiro_login(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<provider_accounts::KiroLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
+    let map = state.providers.kiro_login_sessions.lock().await;
+    let status = map.get(&id).cloned().ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "login not found".to_string(),
+            }),
+        )
+    })?;
+    Ok(Json(status))
+}
+
 pub(super) async fn list_amp_accounts(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<AmpAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
@@ -1950,6 +2848,59 @@ pub(super) async fn delete_gemini_account(
     Ok(Json(gemini_accounts_response(&state).await))
 }
 
+pub(super) async fn list_qwen_accounts(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<QwenAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    Ok(Json(qwen_accounts_response(&state).await))
+}
+
+pub(super) async fn set_qwen_active_account(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<QwenActiveAccountReq>,
+) -> Result<Json<QwenAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    if let Some(ref account_id) = req.account_id {
+        let registry = provider_accounts::load_qwen_registry(&state.core.data_root).await;
+        if !registry.accounts.iter().any(|a| a.id == *account_id) {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "unknown account".to_string(),
+                }),
+            ));
+        }
+    }
+    provider_accounts::set_active_qwen_account(&state.core.data_root, req.account_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    restart_qwen_providers_for_auth_change(&state, "qwen auth updated").await;
+    Ok(Json(qwen_accounts_response(&state).await))
+}
+
+pub(super) async fn delete_qwen_account(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<QwenAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    provider_accounts::remove_qwen_account(&state.core.data_root, &id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    restart_qwen_providers_for_auth_change(&state, "qwen auth updated").await;
+    Ok(Json(qwen_accounts_response(&state).await))
+}
+
 pub(super) async fn list_kimi_accounts(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<KimiAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
@@ -2026,6 +2977,59 @@ pub(super) async fn delete_kimi_account(
         })?;
     restart_kimi_providers_for_auth_change(&state, "kimi auth updated").await;
     Ok(Json(kimi_accounts_response(&state).await))
+}
+
+pub(super) async fn list_mistral_accounts(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<MistralAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    Ok(Json(mistral_accounts_response(&state).await))
+}
+
+pub(super) async fn set_mistral_active_account(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<MistralActiveAccountReq>,
+) -> Result<Json<MistralAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    if let Some(ref account_id) = req.account_id {
+        let registry = provider_accounts::load_mistral_registry(&state.core.data_root).await;
+        if !registry.accounts.iter().any(|a| a.id == *account_id) {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "unknown account".to_string(),
+                }),
+            ));
+        }
+    }
+    provider_accounts::set_active_mistral_account(&state.core.data_root, req.account_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    restart_mistral_providers_for_auth_change(&state, "mistral auth updated").await;
+    Ok(Json(mistral_accounts_response(&state).await))
+}
+
+pub(super) async fn delete_mistral_account(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<MistralAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    provider_accounts::remove_mistral_account(&state.core.data_root, &id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    restart_mistral_providers_for_auth_change(&state, "mistral auth updated").await;
+    Ok(Json(mistral_accounts_response(&state).await))
 }
 
 pub(super) async fn list_copilot_accounts(
@@ -3498,7 +4502,9 @@ pub(super) async fn get_workspace_providers_bootstrap(
         codex_accounts: codex_accounts_response(&state).await,
         claude_accounts: claude_accounts_response(&state).await,
         gemini_accounts: gemini_accounts_response(&state).await,
+        qwen_accounts: qwen_accounts_response(&state).await,
         kimi_accounts: kimi_accounts_response(&state).await,
+        mistral_accounts: mistral_accounts_response(&state).await,
         copilot_accounts: copilot_accounts_response(&state).await,
         kiro_accounts: kiro_accounts_response(&state).await,
         cursor_accounts: cursor_accounts_response(&state).await,

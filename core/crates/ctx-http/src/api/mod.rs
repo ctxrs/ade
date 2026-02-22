@@ -383,6 +383,23 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             "/api/providers/gemini/accounts/:id",
             delete(delete_gemini_account),
         )
+        .route("/api/providers/qwen/accounts", get(list_qwen_accounts))
+        .route(
+            "/api/providers/qwen/accounts/login/start",
+            post(start_qwen_login),
+        )
+        .route(
+            "/api/providers/qwen/accounts/login/:id",
+            get(get_qwen_login),
+        )
+        .route(
+            "/api/providers/qwen/active-account",
+            put(set_qwen_active_account),
+        )
+        .route(
+            "/api/providers/qwen/accounts/:id",
+            delete(delete_qwen_account),
+        )
         .route(
             "/api/providers/amp/accounts/login/start",
             post(start_amp_login),
@@ -396,6 +413,26 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route(
             "/api/providers/amp/accounts/:id",
             delete(delete_amp_account),
+        )
+        .route(
+            "/api/providers/mistral/accounts",
+            get(list_mistral_accounts),
+        )
+        .route(
+            "/api/providers/mistral/accounts/login/start",
+            post(start_mistral_login),
+        )
+        .route(
+            "/api/providers/mistral/accounts/login/:id",
+            get(get_mistral_login),
+        )
+        .route(
+            "/api/providers/mistral/active-account",
+            put(set_mistral_active_account),
+        )
+        .route(
+            "/api/providers/mistral/accounts/:id",
+            delete(delete_mistral_account),
         )
         .route(
             "/api/providers/kimi/accounts",
@@ -424,6 +461,14 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route(
             "/api/providers/kiro/accounts",
             get(list_kiro_accounts).post(upsert_kiro_account),
+        )
+        .route(
+            "/api/providers/kiro/accounts/login/start",
+            post(start_kiro_login),
+        )
+        .route(
+            "/api/providers/kiro/accounts/login/:id",
+            get(get_kiro_login),
         )
         .route(
             "/api/providers/kiro/active-account",

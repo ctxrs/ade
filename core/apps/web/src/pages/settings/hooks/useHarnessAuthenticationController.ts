@@ -9,19 +9,26 @@ import {
   deleteCursorAccount,
   deleteGeminiAccount,
   deleteKimiAccount,
+  deleteMistralAccount,
   deleteKiroAccount,
+  deleteQwenAccount,
   deleteProviderHarnessEndpoint,
   listAmpAccounts,
   getAmpLogin,
   getClaudeLogin,
   getCodexLogin,
   getGeminiLogin,
+  getKiroLogin,
+  getMistralLogin,
+  getQwenLogin,
   getInstall,
   listClaudeAccounts,
   listCopilotAccounts,
   listGeminiAccounts,
   listKimiAccounts,
+  listMistralAccounts,
   listKiroAccounts,
+  listQwenAccounts,
   installAllProviders,
   installProvider,
   listCodexAccounts,
@@ -36,16 +43,20 @@ import {
   setAmpActiveAccount,
   setGeminiActiveAccount,
   setKimiActiveAccount,
+  setMistralActiveAccount,
   setKiroActiveAccount,
+  setQwenActiveAccount,
   startCodexLogin,
   startAmpLogin,
   startClaudeLogin,
   startGeminiLogin,
+  startKiroLogin,
+  startMistralLogin,
+  startQwenLogin,
   upsertClaudeAccount,
   upsertCopilotAccount,
   upsertCursorAccount,
   upsertKimiAccount,
-  upsertKiroAccount,
   upsertProviderHarnessEndpoint,
   verifyProviderForWorkspace,
   type ClaudeAccountsResponse,
@@ -58,7 +69,9 @@ import {
   type HarnessProviderSourceConfig,
   type KimiAccountsResponse,
   type KiroAccountsResponse,
+  type MistralAccountsResponse,
   type ProviderStatus,
+  type QwenAccountsResponse,
 } from "../../../api/client";
 import { desktopStartCodexLoginRelay, isDesktopApp, openExternalLink } from "../../../utils/desktop";
 import {
@@ -97,8 +110,12 @@ type HarnessAuthenticationController = {
   claudeAccountsBusy: boolean;
   geminiAccounts: GeminiAccountsResponse | null;
   geminiAccountsBusy: boolean;
+  qwenAccounts: QwenAccountsResponse | null;
+  qwenAccountsBusy: boolean;
   kimiAccounts: KimiAccountsResponse | null;
   kimiAccountsBusy: boolean;
+  mistralAccounts: MistralAccountsResponse | null;
+  mistralAccountsBusy: boolean;
   copilotAccounts: CopilotAccountsResponse | null;
   copilotAccountsBusy: boolean;
   kiroAccounts: KiroAccountsResponse | null;
@@ -119,7 +136,9 @@ type HarnessAuthenticationController = {
   onCodexDelete: (accountId: string) => Promise<void>;
   onClaudeDelete: (accountId: string) => Promise<void>;
   onGeminiDelete: (accountId: string) => Promise<void>;
+  onQwenDelete: (accountId: string) => Promise<void>;
   onKimiDelete: (accountId: string) => Promise<void>;
+  onMistralDelete: (accountId: string) => Promise<void>;
   onCopilotDelete: (accountId: string) => Promise<void>;
   onKiroDelete: (accountId: string) => Promise<void>;
   onCursorDelete: (accountId: string) => Promise<void>;
@@ -140,7 +159,6 @@ const HARNESSES_WITH_ENDPOINT_CONFIG = new Set([
   "goose",
   "amp",
   "droid",
-  "continue",
   "openhands",
   "copilot",
   "kiro",
@@ -184,8 +202,14 @@ const looksLikeClaudeSetupToken = (value: string): boolean => value.trim().start
 const CLAUDE_POLLED_AUTH_URL_OPEN_GRACE_MS = 5000;
 const GEMINI_LOGIN_POLL_ATTEMPTS = 90;
 const GEMINI_LOGIN_POLL_INTERVAL_MS = 1600;
+const QWEN_LOGIN_POLL_ATTEMPTS = 90;
+const QWEN_LOGIN_POLL_INTERVAL_MS = 1600;
 const AMP_LOGIN_POLL_ATTEMPTS = 90;
 const AMP_LOGIN_POLL_INTERVAL_MS = 1600;
+const MISTRAL_LOGIN_POLL_ATTEMPTS = 90;
+const MISTRAL_LOGIN_POLL_INTERVAL_MS = 1600;
+const KIRO_LOGIN_POLL_ATTEMPTS = 90;
+const KIRO_LOGIN_POLL_INTERVAL_MS = 1600;
 
 export const shouldSkipDuplicateAmpLoginStart = (params: {
   providerId: string;
@@ -300,8 +324,12 @@ export function useHarnessAuthenticationController({
   const [claudeAccountsBusy, setClaudeAccountsBusy] = useState(false);
   const [geminiAccounts, setGeminiAccounts] = useState<GeminiAccountsResponse | null>(null);
   const [geminiAccountsBusy, setGeminiAccountsBusy] = useState(false);
+  const [qwenAccounts, setQwenAccounts] = useState<QwenAccountsResponse | null>(null);
+  const [qwenAccountsBusy, setQwenAccountsBusy] = useState(false);
   const [kimiAccounts, setKimiAccounts] = useState<KimiAccountsResponse | null>(null);
   const [kimiAccountsBusy, setKimiAccountsBusy] = useState(false);
+  const [mistralAccounts, setMistralAccounts] = useState<MistralAccountsResponse | null>(null);
+  const [mistralAccountsBusy, setMistralAccountsBusy] = useState(false);
   const [copilotAccounts, setCopilotAccounts] = useState<CopilotAccountsResponse | null>(null);
   const [copilotAccountsBusy, setCopilotAccountsBusy] = useState(false);
   const [kiroAccounts, setKiroAccounts] = useState<KiroAccountsResponse | null>(null);
@@ -379,7 +407,9 @@ export function useHarnessAuthenticationController({
     setCodexAccounts(bootstrap.codex_accounts);
     setClaudeAccounts(bootstrap.claude_accounts);
     setGeminiAccounts(bootstrap.gemini_accounts);
+    setQwenAccounts(bootstrap.qwen_accounts);
     setKimiAccounts(bootstrap.kimi_accounts);
+    setMistralAccounts(bootstrap.mistral_accounts);
     setCopilotAccounts(bootstrap.copilot_accounts);
     setKiroAccounts(bootstrap.kiro_accounts);
     setCursorAccounts(bootstrap.cursor_accounts);
@@ -477,6 +507,24 @@ export function useHarnessAuthenticationController({
     }
   }, []);
 
+  const refreshQwenAccounts = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) {
+      setQwenAccountsBusy(true);
+    }
+    try {
+      const next = await listQwenAccounts();
+      setQwenAccounts(next);
+      return next;
+    } catch (error) {
+      setProviderError(messageFromError(error));
+      return null;
+    } finally {
+      if (!opts?.silent) {
+        setQwenAccountsBusy(false);
+      }
+    }
+  }, []);
+
   const refreshKimiAccounts = useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) {
       setKimiAccountsBusy(true);
@@ -491,6 +539,24 @@ export function useHarnessAuthenticationController({
     } finally {
       if (!opts?.silent) {
         setKimiAccountsBusy(false);
+      }
+    }
+  }, []);
+
+  const refreshMistralAccounts = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) {
+      setMistralAccountsBusy(true);
+    }
+    try {
+      const next = await listMistralAccounts();
+      setMistralAccounts(next);
+      return next;
+    } catch (error) {
+      setProviderError(messageFromError(error));
+      return null;
+    } finally {
+      if (!opts?.silent) {
+        setMistralAccountsBusy(false);
       }
     }
   }, []);
@@ -851,6 +917,35 @@ export function useHarnessAuthenticationController({
     return { status: "timeout" };
   }, []);
 
+  const waitForQwenLoginOutcome = useCallback(async (
+    loginId: string,
+    onAuthUrl?: (authUrl: string) => Promise<void>,
+    opts?: { openedAuthUrl?: string | null },
+  ): Promise<{ status: "success" | "failed" | "timeout"; error?: string | null }> => {
+    const openedAuthUrls = new Set<string>();
+    takeNextAuthUrlToOpen(opts?.openedAuthUrl, openedAuthUrls);
+    for (let attempt = 0; attempt < QWEN_LOGIN_POLL_ATTEMPTS; attempt += 1) {
+      try {
+        const status = await getQwenLogin(loginId);
+        if (status.status === "success") return { status: "success" };
+        if (status.status === "failed") return { status: "failed", error: status.error };
+        if (status.status === "timeout") return { status: "timeout", error: status.error };
+        if (shouldOpenPolledAuthUrlForStatus(status.status)) {
+          const authUrl = takeNextAuthUrlToOpen(status.auth_url, openedAuthUrls);
+          if (authUrl && onAuthUrl) {
+            await onAuthUrl(authUrl);
+          }
+        }
+      } catch {
+        // continue polling
+      }
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, QWEN_LOGIN_POLL_INTERVAL_MS);
+      });
+    }
+    return { status: "timeout" };
+  }, []);
+
   const waitForAmpLoginOutcome = useCallback(async (
     loginId: string,
     onAuthUrl?: (authUrl: string) => Promise<void>,
@@ -875,6 +970,64 @@ export function useHarnessAuthenticationController({
       }
       await new Promise((resolve) => {
         window.setTimeout(resolve, AMP_LOGIN_POLL_INTERVAL_MS);
+      });
+    }
+    return { status: "timeout" };
+  }, []);
+
+  const waitForMistralLoginOutcome = useCallback(async (
+    loginId: string,
+    onAuthUrl?: (authUrl: string) => Promise<void>,
+    opts?: { openedAuthUrl?: string | null },
+  ): Promise<{ status: "success" | "failed" | "timeout"; error?: string | null }> => {
+    const openedAuthUrls = new Set<string>();
+    takeNextAuthUrlToOpen(opts?.openedAuthUrl, openedAuthUrls);
+    for (let attempt = 0; attempt < MISTRAL_LOGIN_POLL_ATTEMPTS; attempt += 1) {
+      try {
+        const status = await getMistralLogin(loginId);
+        if (status.status === "success") return { status: "success" };
+        if (status.status === "failed") return { status: "failed", error: status.error };
+        if (status.status === "timeout") return { status: "timeout", error: status.error };
+        if (shouldOpenPolledAuthUrlForStatus(status.status)) {
+          const authUrl = takeNextAuthUrlToOpen(status.auth_url, openedAuthUrls);
+          if (authUrl && onAuthUrl) {
+            await onAuthUrl(authUrl);
+          }
+        }
+      } catch {
+        // continue polling
+      }
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, MISTRAL_LOGIN_POLL_INTERVAL_MS);
+      });
+    }
+    return { status: "timeout" };
+  }, []);
+
+  const waitForKiroLoginOutcome = useCallback(async (
+    loginId: string,
+    onAuthUrl?: (authUrl: string) => Promise<void>,
+    opts?: { openedAuthUrl?: string | null },
+  ): Promise<{ status: "success" | "failed" | "timeout"; error?: string | null }> => {
+    const openedAuthUrls = new Set<string>();
+    takeNextAuthUrlToOpen(opts?.openedAuthUrl, openedAuthUrls);
+    for (let attempt = 0; attempt < KIRO_LOGIN_POLL_ATTEMPTS; attempt += 1) {
+      try {
+        const status = await getKiroLogin(loginId);
+        if (status.status === "success") return { status: "success" };
+        if (status.status === "failed") return { status: "failed", error: status.error };
+        if (status.status === "timeout") return { status: "timeout", error: status.error };
+        if (shouldOpenPolledAuthUrlForStatus(status.status)) {
+          const authUrl = takeNextAuthUrlToOpen(status.auth_url, openedAuthUrls);
+          if (authUrl && onAuthUrl) {
+            await onAuthUrl(authUrl);
+          }
+        }
+      } catch {
+        // continue polling
+      }
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, KIRO_LOGIN_POLL_INTERVAL_MS);
       });
     }
     return { status: "timeout" };
@@ -1140,6 +1293,85 @@ export function useHarnessAuthenticationController({
         return;
       }
 
+      if (modal.provider_id === "qwen") {
+        const label = modal.subscription_label.trim();
+        const openQwenAuthUrl = async (authUrl: string): Promise<boolean> => {
+          const opened = await openExternalLink(authUrl);
+          if (opened) return true;
+          setHarnessAuthModal((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  subscription_status:
+                    `Couldn't open browser automatically. Open this URL manually: ${authUrl}`,
+                }
+              : prev);
+          return false;
+        };
+
+        const login = await startQwenLogin(label ? label : undefined);
+        const initialAuthUrl = takeNextAuthUrlToOpen(login.auth_url, new Set<string>());
+        let initialAuthOpened = false;
+        if (initialAuthUrl) {
+          initialAuthOpened = await openQwenAuthUrl(initialAuthUrl);
+        }
+        setHarnessAuthModal((prev) =>
+          prev
+            ? {
+                ...prev,
+                subscription_status: initialAuthUrl && !initialAuthOpened
+                  ? `Couldn't open browser automatically. Open this URL manually: ${initialAuthUrl}`
+                  : "Waiting for Qwen sign-in to complete in your browser...",
+              }
+            : prev);
+        const outcome = await waitForQwenLoginOutcome(login.login_id, async (authUrl) => {
+          await openQwenAuthUrl(authUrl);
+        }, {
+          openedAuthUrl: initialAuthUrl,
+        });
+        await refreshQwenAccounts();
+        if (outcome.status === "success") {
+          await onSelectProviderSource("qwen", "subscription", null);
+          closeHarnessAuthModal();
+          return;
+        }
+        if (outcome.error && outcome.error.trim()) {
+          setProviderError(outcome.error);
+        }
+        if (outcome.status === "failed") {
+          const failureMessage = outcome.error?.trim() || "Sign-in failed. Retry.";
+          setHarnessAuthModal((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  subscription_status: failureMessage,
+                }
+              : prev);
+          return;
+        }
+        if (outcome.status === "timeout") {
+          const timeoutMessage =
+            outcome.error?.trim() || "Timed out waiting for Qwen sign-in completion. Retry.";
+          setHarnessAuthModal((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  subscription_status: timeoutMessage,
+                }
+              : prev);
+          return;
+        }
+        setHarnessAuthModal((prev) =>
+          prev
+            ? {
+                ...prev,
+                subscription_status:
+                  "Still waiting for completion. Keep this dialog open or retry.",
+              }
+            : prev);
+        return;
+      }
+
       if (modal.provider_id === "amp") {
         const label = modal.subscription_label.trim();
         const openAmpAuthUrl = async (authUrl: string): Promise<boolean> => {
@@ -1219,6 +1451,164 @@ export function useHarnessAuthenticationController({
         return;
       }
 
+      if (modal.provider_id === "mistral") {
+        const label = modal.subscription_label.trim();
+        const openMistralAuthUrl = async (authUrl: string): Promise<boolean> => {
+          const opened = await openExternalLink(authUrl);
+          if (opened) return true;
+          setHarnessAuthModal((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  subscription_status:
+                    `Couldn't open browser automatically. Open this URL manually: ${authUrl}`,
+                }
+              : prev);
+          return false;
+        };
+
+        const login = await startMistralLogin(label ? label : undefined);
+        const initialAuthUrl = takeNextAuthUrlToOpen(login.auth_url, new Set<string>());
+        let initialAuthOpened = false;
+        if (initialAuthUrl) {
+          initialAuthOpened = await openMistralAuthUrl(initialAuthUrl);
+        }
+        setHarnessAuthModal((prev) =>
+          prev
+            ? {
+                ...prev,
+                subscription_status: initialAuthUrl && !initialAuthOpened
+                  ? `Couldn't open browser automatically. Open this URL manually: ${initialAuthUrl}`
+                  : "Waiting for Mistral sign-in to complete in your browser...",
+              }
+            : prev);
+        const outcome = await waitForMistralLoginOutcome(login.login_id, async (authUrl) => {
+          await openMistralAuthUrl(authUrl);
+        }, {
+          openedAuthUrl: initialAuthUrl,
+        });
+        await refreshMistralAccounts();
+        if (outcome.status === "success") {
+          await onSelectProviderSource("mistral", "subscription", null);
+          closeHarnessAuthModal();
+          return;
+        }
+        if (outcome.error && outcome.error.trim()) {
+          setProviderError(outcome.error);
+        }
+        if (outcome.status === "failed") {
+          const failureMessage = outcome.error?.trim() || "Sign-in failed. Retry.";
+          setHarnessAuthModal((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  subscription_status: failureMessage,
+                }
+              : prev);
+          return;
+        }
+        if (outcome.status === "timeout") {
+          const timeoutMessage =
+            outcome.error?.trim() || "Timed out waiting for Mistral sign-in completion. Retry.";
+          setHarnessAuthModal((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  subscription_status: timeoutMessage,
+                }
+              : prev);
+          return;
+        }
+        setHarnessAuthModal((prev) =>
+          prev
+            ? {
+                ...prev,
+                subscription_status:
+                  "Still waiting for completion. Keep this dialog open or retry.",
+              }
+            : prev);
+        return;
+      }
+
+      if (modal.provider_id === "kiro") {
+        const label = modal.subscription_label.trim();
+        const openKiroAuthUrl = async (authUrl: string): Promise<boolean> => {
+          const opened = await openExternalLink(authUrl);
+          if (opened) return true;
+          setHarnessAuthModal((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  subscription_status:
+                    `Couldn't open browser automatically. Open this URL manually: ${authUrl}`,
+                }
+              : prev);
+          return false;
+        };
+
+        const login = await startKiroLogin(label ? label : undefined);
+        const initialAuthUrl = takeNextAuthUrlToOpen(login.auth_url, new Set<string>());
+        let initialAuthOpened = false;
+        if (initialAuthUrl) {
+          initialAuthOpened = await openKiroAuthUrl(initialAuthUrl);
+        }
+        setHarnessAuthModal((prev) =>
+          prev
+            ? {
+                ...prev,
+                subscription_status: initialAuthUrl && !initialAuthOpened
+                  ? `Couldn't open browser automatically. Open this URL manually: ${initialAuthUrl}`
+                  : "Waiting for Kiro sign-in to complete in your browser...",
+              }
+            : prev);
+        const outcome = await waitForKiroLoginOutcome(login.login_id, async (authUrl) => {
+          await openKiroAuthUrl(authUrl);
+        }, {
+          openedAuthUrl: initialAuthUrl,
+        });
+        await refreshKiroAccounts();
+        if (outcome.status === "success") {
+          await onSelectProviderSource("kiro", "subscription", null);
+          closeHarnessAuthModal();
+          return;
+        }
+        if (outcome.error && outcome.error.trim()) {
+          setProviderError(outcome.error);
+        }
+        if (outcome.status === "failed") {
+          const failureMessage = outcome.error?.trim() || "Sign-in failed. Retry.";
+          setHarnessAuthModal((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  subscription_status: failureMessage,
+                }
+              : prev);
+          return;
+        }
+        if (outcome.status === "timeout") {
+          const timeoutMessage =
+            outcome.error?.trim() || "Timed out waiting for Kiro sign-in completion. Retry.";
+          setHarnessAuthModal((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  subscription_status: timeoutMessage,
+                }
+              : prev);
+          return;
+        }
+        setHarnessAuthModal((prev) =>
+          prev
+            ? {
+                ...prev,
+                subscription_status:
+                  "Still waiting for completion. Keep this dialog open or retry.",
+              }
+            : prev);
+        return;
+      }
+
       if (modal.provider_id === "kimi") {
         const credentialsJson = modal.subscription_credentials_json.trim();
         if (!credentialsJson) {
@@ -1259,24 +1649,6 @@ export function useHarnessAuthenticationController({
         return;
       }
 
-      if (modal.provider_id === "kiro") {
-        const authTokenJson = modal.subscription_auth_token_json.trim();
-        if (!authTokenJson) {
-          throw new Error("Auth token JSON is required.");
-        }
-        const label = modal.subscription_label.trim();
-        const email = modal.subscription_email.trim();
-        const next = await upsertKiroAccount(authTokenJson, {
-          ...(label ? { label } : {}),
-          ...(email ? { email } : {}),
-        });
-        setKiroAccounts(next);
-        await refreshBootstrapAfterMutation();
-        await selectSubscriptionSourceIfSupported(modal.provider_id);
-        closeHarnessAuthModal();
-        return;
-      }
-
       if (!workspaceId) {
         throw new Error("Select a workspace first.");
       }
@@ -1303,12 +1675,18 @@ export function useHarnessAuthenticationController({
     harnessAuthModal,
     openCodexAuthUrl,
     refreshAmpAccounts,
+    refreshKiroAccounts,
+    refreshMistralAccounts,
+    refreshQwenAccounts,
     onSelectProviderSource,
     refreshClaudeAccounts,
     refreshCodexAccounts,
     refreshGeminiAccounts,
     refreshBootstrapAfterMutation,
     selectSubscriptionSourceIfSupported,
+    waitForKiroLoginOutcome,
+    waitForMistralLoginOutcome,
+    waitForQwenLoginOutcome,
     waitForAmpLoginOutcome,
     waitForClaudeLoginOutcome,
     waitForCodexLoginOutcome,
@@ -1400,6 +1778,34 @@ export function useHarnessAuthenticationController({
     }
   }, [refreshBootstrapAfterMutation]);
 
+  const onQwenDelete = useCallback(async (accountId: string) => {
+    setQwenAccountsBusy(true);
+    setProviderError(null);
+    try {
+      const next = await deleteQwenAccount(accountId);
+      setQwenAccounts(next);
+      await refreshBootstrapAfterMutation();
+    } catch (error) {
+      setProviderError(messageFromError(error));
+    } finally {
+      setQwenAccountsBusy(false);
+    }
+  }, [refreshBootstrapAfterMutation]);
+
+  const onQwenSetActive = useCallback(async (accountId: string | null) => {
+    setQwenAccountsBusy(true);
+    setProviderError(null);
+    try {
+      const next = await setQwenActiveAccount(accountId);
+      setQwenAccounts(next);
+      await refreshBootstrapAfterMutation();
+    } catch (error) {
+      setProviderError(messageFromError(error));
+    } finally {
+      setQwenAccountsBusy(false);
+    }
+  }, [refreshBootstrapAfterMutation]);
+
   const onKimiDelete = useCallback(async (accountId: string) => {
     setKimiAccountsBusy(true);
     setProviderError(null);
@@ -1425,6 +1831,34 @@ export function useHarnessAuthenticationController({
       setProviderError(messageFromError(error));
     } finally {
       setKimiAccountsBusy(false);
+    }
+  }, [refreshBootstrapAfterMutation]);
+
+  const onMistralDelete = useCallback(async (accountId: string) => {
+    setMistralAccountsBusy(true);
+    setProviderError(null);
+    try {
+      const next = await deleteMistralAccount(accountId);
+      setMistralAccounts(next);
+      await refreshBootstrapAfterMutation();
+    } catch (error) {
+      setProviderError(messageFromError(error));
+    } finally {
+      setMistralAccountsBusy(false);
+    }
+  }, [refreshBootstrapAfterMutation]);
+
+  const onMistralSetActive = useCallback(async (accountId: string | null) => {
+    setMistralAccountsBusy(true);
+    setProviderError(null);
+    try {
+      const next = await setMistralActiveAccount(accountId);
+      setMistralAccounts(next);
+      await refreshBootstrapAfterMutation();
+    } catch (error) {
+      setProviderError(messageFromError(error));
+    } finally {
+      setMistralAccountsBusy(false);
     }
   }, [refreshBootstrapAfterMutation]);
 
@@ -1551,8 +1985,12 @@ export function useHarnessAuthenticationController({
         await onClaudeSetActive(row.account_id);
       } else if (providerId === "gemini" && row.account_id) {
         await onGeminiSetActive(row.account_id);
+      } else if (providerId === "qwen" && row.account_id) {
+        await onQwenSetActive(row.account_id);
       } else if (providerId === "kimi" && row.account_id) {
         await onKimiSetActive(row.account_id);
+      } else if (providerId === "mistral" && row.account_id) {
+        await onMistralSetActive(row.account_id);
       } else if (providerId === "copilot" && row.account_id) {
         await onCopilotSetActive(row.account_id);
       } else if (providerId === "kiro" && row.account_id) {
@@ -1573,8 +2011,10 @@ export function useHarnessAuthenticationController({
     onCodexSetActive,
     onCopilotSetActive,
     onGeminiSetActive,
+    onMistralSetActive,
     onKimiSetActive,
     onKiroSetActive,
+    onQwenSetActive,
     onCursorSetActive,
     onAmpSetActive,
     onSelectProviderSource,
@@ -1743,8 +2183,12 @@ export function useHarnessAuthenticationController({
     claudeAccountsBusy,
     geminiAccounts,
     geminiAccountsBusy,
+    qwenAccounts,
+    qwenAccountsBusy,
     kimiAccounts,
     kimiAccountsBusy,
+    mistralAccounts,
+    mistralAccountsBusy,
     copilotAccounts,
     copilotAccountsBusy,
     kiroAccounts,
@@ -1765,7 +2209,9 @@ export function useHarnessAuthenticationController({
     onCodexDelete,
     onClaudeDelete,
     onGeminiDelete,
+    onQwenDelete,
     onKimiDelete,
+    onMistralDelete,
     onCopilotDelete,
     onKiroDelete,
     onCursorDelete,

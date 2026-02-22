@@ -61,7 +61,9 @@ export type ProvidersBootstrapResponse = {
   codex_accounts: CodexAccountsResponse;
   claude_accounts: ClaudeAccountsResponse;
   gemini_accounts: GeminiAccountsResponse;
+  qwen_accounts: QwenAccountsResponse;
   kimi_accounts: KimiAccountsResponse;
+  mistral_accounts: MistralAccountsResponse;
   copilot_accounts: CopilotAccountsResponse;
   kiro_accounts: KiroAccountsResponse;
   cursor_accounts: CursorAccountsResponse;
@@ -232,7 +234,25 @@ export type GeminiAccountEntry = {
   last_used_at?: string | null;
 };
 
+export type QwenAccountEntry = {
+  id: string;
+  label: string;
+  kind?: string;
+  email?: string | null;
+  created_at: string;
+  last_used_at?: string | null;
+};
+
 export type KimiAccountEntry = {
+  id: string;
+  label: string;
+  kind?: string;
+  email?: string | null;
+  created_at: string;
+  last_used_at?: string | null;
+};
+
+export type MistralAccountEntry = {
   id: string;
   label: string;
   kind?: string;
@@ -315,9 +335,19 @@ export type GeminiAccountsResponse = {
   accounts: GeminiAccountEntry[];
 };
 
+export type QwenAccountsResponse = {
+  active_account_id: string | null;
+  accounts: QwenAccountEntry[];
+};
+
 export type KimiAccountsResponse = {
   active_account_id: string | null;
   accounts: KimiAccountEntry[];
+};
+
+export type MistralAccountsResponse = {
+  active_account_id: string | null;
+  accounts: MistralAccountEntry[];
 };
 
 export type CopilotAccountsResponse = {
@@ -382,6 +412,19 @@ export type GeminiLoginStartResponse = {
   auth_url?: string | null;
 };
 
+export type QwenLoginStatus = {
+  login_id: string;
+  auth_url?: string | null;
+  status: string;
+  account_id?: string | null;
+  error?: string | null;
+};
+
+export type QwenLoginStartResponse = {
+  login_id: string;
+  auth_url?: string | null;
+};
+
 export type AmpLoginStatus = {
   login_id: string;
   auth_url?: string | null;
@@ -390,6 +433,31 @@ export type AmpLoginStatus = {
 };
 
 export type AmpLoginStartResponse = {
+  login_id: string;
+  auth_url?: string | null;
+};
+
+export type MistralLoginStatus = {
+  login_id: string;
+  auth_url?: string | null;
+  status: string;
+  error?: string | null;
+};
+
+export type MistralLoginStartResponse = {
+  login_id: string;
+  auth_url?: string | null;
+};
+
+export type KiroLoginStatus = {
+  login_id: string;
+  auth_url?: string | null;
+  status: string;
+  account_id?: string | null;
+  error?: string | null;
+};
+
+export type KiroLoginStartResponse = {
   login_id: string;
   auth_url?: string | null;
 };
@@ -535,6 +603,29 @@ export const startGeminiLogin = (label?: string) =>
 export const getGeminiLogin = (loginId: string) =>
   apiAny<GeminiLoginStatus>(`/api/providers/gemini/accounts/login/${loginId}`);
 
+export const listQwenAccounts = () =>
+  apiAny<QwenAccountsResponse>(`/api/providers/qwen/accounts`);
+
+export const startQwenLogin = (label?: string) =>
+  apiAny<QwenLoginStartResponse>(`/api/providers/qwen/accounts/login/start`, {
+    method: "POST",
+    body: JSON.stringify(label ? { label } : {}),
+  });
+
+export const getQwenLogin = (loginId: string) =>
+  apiAny<QwenLoginStatus>(`/api/providers/qwen/accounts/login/${loginId}`);
+
+export const setQwenActiveAccount = (accountId: string | null) =>
+  apiAny<QwenAccountsResponse>(`/api/providers/qwen/active-account`, {
+    method: "PUT",
+    body: JSON.stringify({ account_id: accountId }),
+  });
+
+export const deleteQwenAccount = (accountId: string) =>
+  apiAny<QwenAccountsResponse>(`/api/providers/qwen/accounts/${accountId}`, {
+    method: "DELETE",
+  });
+
 export const startAmpLogin = (label?: string) =>
   apiAny<AmpLoginStartResponse>(`/api/providers/amp/accounts/login/start`, {
     method: "POST",
@@ -555,6 +646,29 @@ export const setAmpActiveAccount = (accountId: string | null) =>
 
 export const deleteAmpAccount = (accountId: string) =>
   apiAny<AmpAccountsResponse>(`/api/providers/amp/accounts/${accountId}`, {
+    method: "DELETE",
+  });
+
+export const listMistralAccounts = () =>
+  apiAny<MistralAccountsResponse>(`/api/providers/mistral/accounts`);
+
+export const startMistralLogin = (label?: string) =>
+  apiAny<MistralLoginStartResponse>(`/api/providers/mistral/accounts/login/start`, {
+    method: "POST",
+    body: JSON.stringify(label ? { label } : {}),
+  });
+
+export const getMistralLogin = (loginId: string) =>
+  apiAny<MistralLoginStatus>(`/api/providers/mistral/accounts/login/${loginId}`);
+
+export const setMistralActiveAccount = (accountId: string | null) =>
+  apiAny<MistralAccountsResponse>(`/api/providers/mistral/active-account`, {
+    method: "PUT",
+    body: JSON.stringify({ account_id: accountId }),
+  });
+
+export const deleteMistralAccount = (accountId: string) =>
+  apiAny<MistralAccountsResponse>(`/api/providers/mistral/accounts/${accountId}`, {
     method: "DELETE",
   });
 
@@ -646,6 +760,15 @@ export const deleteCopilotAccount = (accountId: string) =>
 
 export const listKiroAccounts = () =>
   apiAny<KiroAccountsResponse>(`/api/providers/kiro/accounts`);
+
+export const startKiroLogin = (label?: string) =>
+  apiAny<KiroLoginStartResponse>(`/api/providers/kiro/accounts/login/start`, {
+    method: "POST",
+    body: JSON.stringify(label ? { label } : {}),
+  });
+
+export const getKiroLogin = (loginId: string) =>
+  apiAny<KiroLoginStatus>(`/api/providers/kiro/accounts/login/${loginId}`);
 
 export const upsertKiroAccount = (
   authTokenJson: string,
