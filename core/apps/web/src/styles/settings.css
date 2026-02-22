@@ -816,6 +816,16 @@
   gap: 10px;
 }
 
+.settings-harness-help-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.settings-harness-help-link:hover {
+  color: var(--accent-strong);
+}
+
 .settings-harness-modal-label {
   display: grid;
   gap: 6px;

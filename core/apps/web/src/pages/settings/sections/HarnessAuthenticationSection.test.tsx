@@ -64,6 +64,34 @@ function makeCopilotSubscriptionModal(): HarnessAuthModalState {
   };
 }
 
+function makeApiKeyModal(providerId: "cursor" | "gemini"): HarnessAuthModalState {
+  return {
+    provider_id: providerId,
+    stage: "api_key",
+    endpoint_id: null,
+    endpoint_provider_id: providerId === "gemini" ? "google_ai_studio" : "other",
+    gemini_endpoint_auth_type: "gemini_api_key",
+    endpoint_name: "",
+    base_url: "",
+    api_key: "",
+    manual_model_ids: "",
+    subscription_label: "",
+    subscription_token: "",
+    subscription_email: "",
+    subscription_provider: "",
+    subscription_credentials_json: "",
+    subscription_config_toml: "",
+    subscription_auth_token_json: "",
+    subscription_oauth_creds_json: "",
+    subscription_google_accounts_json: "",
+    subscription_device_code: null,
+    subscription_auth_url: null,
+    subscription_status: null,
+    subscription_busy: false,
+    api_key_busy: false,
+  };
+}
+
 function makeController(
   overrides: Partial<HarnessAuthController> = {},
 ): HarnessAuthController {
@@ -183,6 +211,75 @@ describe("HarnessAuthenticationSection Gemini subscription modal", () => {
     expect(screen.getByText("Couldn't open browser automatically. Use the sign-in link below.")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Open sign-in link" })).not.toBeInTheDocument();
     expect(authUrl).toContain("/oauth/");
+  });
+
+  it("shows Cursor provider-key help links and hides endpoint-only fields", () => {
+    mockUseHarnessAuthenticationController.mockReturnValue(
+      makeController({ harnessAuthModal: makeApiKeyModal("cursor") }),
+    );
+
+    render(
+      <HarnessAuthenticationSection
+        workspaceId="ws-1"
+        active
+        modalOnly
+      />,
+    );
+
+    const cursorIntegrationsLink = screen.getByRole("link", { name: "Cursor Integrations" });
+    expect(cursorIntegrationsLink).toHaveAttribute("href", "https://cursor.com/dashboard?tab=integrations");
+    expect(screen.getByText("Label (optional)")).toBeInTheDocument();
+    expect(screen.queryByText("Manual model slugs (optional)")).not.toBeInTheDocument();
+    expect(screen.queryByText("Base URL (optional)")).not.toBeInTheDocument();
+  });
+
+  it("shows Gemini key links/mode selector and hides endpoint-only fields", () => {
+    mockUseHarnessAuthenticationController.mockReturnValue(
+      makeController({ harnessAuthModal: makeApiKeyModal("gemini") }),
+    );
+
+    render(
+      <HarnessAuthenticationSection
+        workspaceId="ws-1"
+        active
+        modalOnly
+      />,
+    );
+
+    expect(screen.getByText("Gemini auth mode")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Google AI Studio" })).toHaveAttribute(
+      "href",
+      "https://aistudio.google.com/app/apikey",
+    );
+    expect(screen.getByRole("link", { name: "Google Cloud Credentials" })).toHaveAttribute(
+      "href",
+      "https://console.cloud.google.com/apis/credentials",
+    );
+    expect(screen.getByText("Label (optional)")).toBeInTheDocument();
+    expect(screen.queryByText("Manual model slugs (optional)")).not.toBeInTheDocument();
+    expect(screen.queryByText("Base URL (optional)")).not.toBeInTheDocument();
+  });
+
+  it("shows Vertex AI key label when Gemini auth mode is vertex_ai", () => {
+    const vertexModal = makeApiKeyModal("gemini");
+    vertexModal.gemini_endpoint_auth_type = "vertex_ai";
+    vertexModal.endpoint_provider_id = "google_vertex";
+    vertexModal.base_url =
+      "https://REGION-aiplatform.googleapis.com/v1/projects/PROJECT/locations/REGION/endpoints/openapi";
+
+    mockUseHarnessAuthenticationController.mockReturnValue(
+      makeController({ harnessAuthModal: vertexModal }),
+    );
+
+    render(
+      <HarnessAuthenticationSection
+        workspaceId="ws-1"
+        active
+        modalOnly
+      />,
+    );
+
+    expect(screen.getByText("Google API key")).toBeInTheDocument();
   });
 });
 

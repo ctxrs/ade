@@ -737,9 +737,11 @@ export function useHarnessAuthenticationController({
       endpoint_provider_id: defaultPresetId,
       gemini_endpoint_auth_type: "gemini_api_key",
       endpoint_name: "",
-      base_url: requiresBaseUrl
-        ? (defaultPreset.base_url ?? defaultEndpointBaseUrlForProvider(providerId))
-        : "",
+      base_url: providerId === "gemini"
+        ? (defaultPreset.base_url ?? "")
+        : requiresBaseUrl
+          ? (defaultPreset.base_url ?? defaultEndpointBaseUrlForProvider(providerId))
+          : "",
       api_key: "",
       manual_model_ids: "",
       subscription_label: "",
@@ -789,6 +791,10 @@ export function useHarnessAuthenticationController({
     const geminiAuthType = modal.provider_id === "gemini" ? modal.gemini_endpoint_auth_type : null;
     const base = modal.base_url.trim();
     const normalizedBase = normalizeOptionalBaseUrl(base);
+    const defaultPresetBase = modal.provider_id === "gemini"
+      ? normalizeOptionalBaseUrl(getHarnessEndpointProviderPreset(modal.endpoint_provider_id).base_url ?? "")
+      : null;
+    const effectiveBaseUrl = modal.provider_id === "gemini" ? (normalizedBase ?? defaultPresetBase) : normalizedBase;
     const key = modal.api_key.trim();
     const manualModelIds = modal.manual_model_ids
       .split(/[\n,]/)
@@ -824,7 +830,7 @@ export function useHarnessAuthenticationController({
       const next = await upsertProviderHarnessEndpoint(modal.provider_id, {
         endpoint_id: requestedEndpointId,
         name,
-        base_url: normalizedBase,
+        base_url: effectiveBaseUrl,
         api_shape: requiresApiShape ? defaultShapeForHarnessProvider(modal.provider_id) : null,
         auth_type: geminiAuthType,
         api_key: key,
@@ -835,7 +841,7 @@ export function useHarnessAuthenticationController({
         previousEndpointIds,
         nextEndpoints: next.endpoints,
         name,
-        normalizedBase,
+        normalizedBase: effectiveBaseUrl,
         geminiAuthType,
       });
       const selected = upsertedEndpoint?.id ?? next.selected_endpoint_id ?? requestedEndpointId ?? null;

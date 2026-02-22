@@ -101,6 +101,28 @@ sys.exit(result.returncode)
 PY
 }
 
+maybe_adhoc_codesign_macos_binary() {
+  local bin_path="$1"
+  if [[ "$os" != "macos" ]]; then
+    return 0
+  fi
+  if [[ -z "$bin_path" || ! -f "$bin_path" ]]; then
+    return 0
+  fi
+  if ! command -v codesign >/dev/null 2>&1; then
+    return 0
+  fi
+  if command -v file >/dev/null 2>&1; then
+    local file_desc
+    file_desc="$(file -b "$bin_path" 2>/dev/null || true)"
+    if [[ "$file_desc" != *"Mach-O"* ]]; then
+      return 0
+    fi
+  fi
+  # Re-sign copied local binaries to avoid stale/invalid signatures causing runtime SIGKILL.
+  codesign --force --sign - "$bin_path" >/dev/null 2>&1 || true
+}
+
 # Build-time container contract:
 # - Build-time operations (containerized codex-crp builds + bundled harness image builds)
 #   use Docker as the only engine, with Docker buildx required for image bundling.
@@ -2386,6 +2408,7 @@ while IFS=$'\x1f' read -r provider_id kind version url archive bin_path package 
       if [[ "$os" != "windows" ]]; then
         chmod +x "$dest" || true
       fi
+      maybe_adhoc_codesign_macos_binary "$dest"
       echo "$version" > "$version_marker"
       command_path="$dest"
       ;;
@@ -2517,6 +2540,7 @@ print(json.dumps(args, separators=(",", ":")))
 PY
 )"
       fi
+      maybe_adhoc_codesign_macos_binary "$command_path"
       ;;
     npm)
       if is_truthy "$skip_runtimes_raw"; then
