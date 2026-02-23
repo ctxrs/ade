@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help dev verify-quick desktop-profile-build desktop-profile-launch desktop-profile-dev
+.PHONY: help dev verify-quick mintlify-pull mintlify-push desktop-profile-build desktop-profile-launch desktop-profile-dev
 
 PNPM ?= pnpm
 PROFILE ?= dev
@@ -22,6 +22,8 @@ help:
 	@echo
 	@echo "  dev                     Run daemon dev server (proxy to core/Makefile)"
 	@echo "  verify-quick            Run workspace quick verification (pnpm -C core verify:quick)"
+	@echo "  mintlify-pull           Pull Mintlify editor changes into mintlify-docs/"
+	@echo "  mintlify-push           Push mintlify-docs/ to the mirror repo"
 	@echo "  desktop-profile-build   Build named desktop profile (PROFILE=<name>)"
 	@echo "  desktop-profile-launch  Build + launch named desktop profile (PROFILE=<name>)"
 	@echo "  desktop-profile-dev     Run profile-scoped tauri+web hot-reload loop (PROFILE=<name>)"
@@ -31,6 +33,12 @@ dev:
 
 verify-quick:
 	$(PNPM) -C core verify:quick
+
+mintlify-pull:
+	./scripts/mintlify/pull-subtree.sh
+
+mintlify-push:
+	./scripts/mintlify/push-subtree.sh
 
 desktop-profile-build:
 	@set -euo pipefail; \
