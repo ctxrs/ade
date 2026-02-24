@@ -1174,19 +1174,28 @@ async fn import_gemini_env_candidate(
         let env_map = parse_env_file(&String::from_utf8_lossy(bytes));
         if let Some(key) = env_value_case_insensitive(&env_map, &["GOOGLE_API_KEY"]) {
             (key, None, Some("vertex_ai".to_string()))
+        } else if let Some(key) = env_value_case_insensitive(&env_map, &["GEMINI_API_KEY"]) {
+            (key, None, Some("gemini_api_key".to_string()))
         } else {
-            let (key, url) = parse_endpoint_env_candidate(
-                "gemini",
-                material,
-                &["GEMINI_API_KEY", "OPENAI_API_KEY"],
-            )?;
-            let auth_type = if url.is_some() {
-                // Preserve legacy OpenAI-compatible Gemini endpoint imports when a base URL is present.
-                Some("bearer".to_string())
+            let base_url = env_value_case_insensitive(
+                &env_map,
+                &["OPENAI_BASE_URL", "BASE_URL", "CTX_GATEWAY_BASE_URL"],
+            );
+            if base_url
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+            {
+                anyhow::bail!(
+                    "Gemini OpenAI-compatible endpoint imports are not supported; use Gemini OAuth or GEMINI_API_KEY"
+                );
+            }
+            if let Some(key) = env_value_case_insensitive(&env_map, &["OPENAI_API_KEY"]) {
+                (key, None, Some("gemini_api_key".to_string()))
             } else {
-                Some("gemini_api_key".to_string())
-            };
-            (key, url, auth_type)
+                anyhow::bail!(
+                    "No importable Gemini API key found (expected GEMINI_API_KEY, GOOGLE_API_KEY, or OPENAI_API_KEY)"
+                );
+            }
         }
     };
     import_endpoint_candidate(
@@ -1718,7 +1727,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gemini_env_candidate_with_base_url_imports_legacy_bearer_endpoint() {
+    async fn gemini_env_candidate_with_base_url_is_rejected() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         let base_url = "https://generativelanguage.googleapis.com/v1beta/openai";
@@ -1747,28 +1756,12 @@ mod tests {
             label: Some("Gemini legacy endpoint".to_string()),
         };
 
-        let result = import_candidate_to_canonical(root, &material)
+        let err = import_candidate_to_canonical(root, &material)
             .await
-            .unwrap();
-        assert_eq!(result.status, "imported");
-        let config = harness_sources::get_provider_source_config(root, "gemini")
-            .await
-            .unwrap();
-        assert_eq!(
-            config.selected_source_kind,
-            harness_sources::HarnessSourceKind::Endpoint
-        );
-        let selected_id = config
-            .selected_endpoint_id
-            .as_deref()
-            .expect("selected endpoint id");
-        let endpoint = config
-            .endpoints
-            .iter()
-            .find(|endpoint| endpoint.id == selected_id)
-            .expect("selected endpoint");
-        assert_eq!(endpoint.auth_type, "bearer");
-        assert_eq!(endpoint.base_url.as_deref(), Some(base_url));
+            .expect_err("import should fail");
+        assert!(err
+            .to_string()
+            .contains("OpenAI-compatible endpoint imports are not supported"));
     }
 
     #[tokio::test]

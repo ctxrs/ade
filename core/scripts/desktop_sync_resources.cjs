@@ -6,6 +6,9 @@ const crypto = require("crypto");
 const args = process.argv.slice(2);
 const profileIdx = args.indexOf("--profile");
 const profile = profileIdx !== -1 ? args[profileIdx + 1] : "debug";
+const syncBundlesEnabled = !["0", "false", "no", "off"].includes(
+  String(process.env.CTX_DESKTOP_SYNC_BUNDLES || "1").trim().toLowerCase(),
+);
 
 const coreRoot = path.resolve(__dirname, "..");
 const desktopTauriRoot = path.join(coreRoot, "apps", "desktop", "src-tauri");
@@ -88,6 +91,33 @@ const assertBundledProviderTargets = (bundleDir, providerId, targets) => {
       `bundle manifest missing ${providerId} targets: ${missing.join(
         ", "
       )}. Ensure cross-arch codex bundling is configured for release packaging.`
+    );
+  }
+};
+
+const assertBundledRuntimeTargets = (bundleDir, runtimeId, targets) => {
+  const manifest = readBundleManifest(bundleDir);
+  const runtimes = Array.isArray(manifest?.runtimes) ? manifest.runtimes : [];
+  const missing = [];
+  for (const target of targets) {
+    const found = runtimes.some(
+      (r) =>
+        r &&
+        r.id === runtimeId &&
+        r.os === target.os &&
+        r.arch === target.arch &&
+        typeof r.root === "string" &&
+        r.root.trim().length > 0 &&
+        typeof r.bin === "string" &&
+        r.bin.trim().length > 0,
+    );
+    if (!found) missing.push(`${target.os}/${target.arch}`);
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `bundle manifest missing ${runtimeId} runtime targets: ${missing.join(
+        ", ",
+      )}. Container/provider startup requires bundled host+linux runtimes.`,
     );
   }
 };
@@ -317,7 +347,14 @@ const bundleRemoteDaemons = (bundleDir) => {
 const resetBundleDir = () => {
   fs.mkdirSync(destBundleDir, { recursive: true });
   // Keep lightweight repo-tracked resources that are used at runtime (and ignore rules).
-  const keep = new Set(["README.md", ".gitkeep", ".gitignore", "lucide-settings.svg"]);
+  const keep = new Set([
+    "README.md",
+    ".gitkeep",
+    ".gitignore",
+    "lucide-settings.svg",
+    "runtime_lock.v1.json",
+    "runtime_lock.v2.json",
+  ]);
   for (const entry of fs.readdirSync(destBundleDir)) {
     if (keep.has(entry)) continue;
     fs.rmSync(path.join(destBundleDir, entry), { recursive: true, force: true });
@@ -367,24 +404,16 @@ const writePlaceholderBundleManifest = () => {
   fs.writeFileSync(manifestPath, `${JSON.stringify(placeholder, null, 2)}\n`, "utf8");
 };
 
-const shouldSyncBundles = () => {
-  const flag = String(process.env.CTX_DESKTOP_SYNC_BUNDLES || "").trim();
-  if (flag) return flag === "1" || flag.toLowerCase() === "true";
-  // Desktop prep should include bundles by default so debug and release both exercise
-  // the same runtime/provider packaging paths.
-  return profile === "release" || profile === "debug";
-};
-
 const syncBundles = () => {
-  if (!shouldSyncBundles()) {
-    writePlaceholderBundleManifest();
-    return destBundleDir;
-  }
   if (!fs.existsSync(bundleScript)) {
     throw new Error(`missing bundle script: ${bundleScript}`);
   }
   resetBundleDir();
-  const env = { ...process.env, CTX_BUNDLE_DIR: destBundleDir };
+  const env = {
+    ...process.env,
+    CTX_BUNDLE_DIR: destBundleDir,
+    CTX_BUNDLE_DEPENDENCY_AWARE_RUNTIMES: "0",
+  };
   // keep harness/provider bundle builds on their own target dirs; forwarding the
   // desktop CARGO_TARGET_DIR can make adapter binary resolution brittle.
   delete env.CARGO_TARGET_DIR;
@@ -419,17 +448,32 @@ const syncBundles = () => {
   // Container mode runs Linux containers even on macOS/Windows. Bundle Linux provider
   // binaries too so "disk-isolated container" can work offline/out-of-box.
   if (process.platform === "darwin") {
-    const linuxTargets = [
-      { arch: "aarch64", buildCodexCrp: true },
-      { arch: "x86_64", buildCodexCrp: false },
-    ];
+    const hostLinuxArch = process.arch === "arm64" ? "aarch64" : "x86_64";
+    const linuxTargets = [{ arch: hostLinuxArch, buildCodexCrp: hostLinuxArch === "aarch64" }];
+    const linuxProviders = [
+      "acp-crp-bridge",
+      "gemini",
+      "cursor",
+      "codex",
+      "qwen",
+      "opencode",
+      "mistral",
+      "goose",
+      "droid",
+      "kimi",
+      "cagent",
+      "pi",
+      "cline",
+      "swe-agent",
+      "openhands",
+    ].join(",");
     for (const target of linuxTargets) {
       const linuxEnv = {
         ...env,
         CTX_BUNDLE_APPEND: "1",
         CTX_BUNDLE_OS: "linux",
         CTX_BUNDLE_ARCH: target.arch,
-        CTX_BUNDLE_ONLY_PROVIDERS: "codex,acp-crp-bridge,cursor,pi",
+        CTX_BUNDLE_ONLY_PROVIDERS: linuxProviders,
         CTX_BUNDLE_SKIP_RUNTIMES: "0",
         CTX_BUNDLE_SKIP_IMAGES: "1",
         CTX_BUNDLE_INCLUDE_BRIDGE: "1",
@@ -439,9 +483,8 @@ const syncBundles = () => {
         CTX_BUNDLE_PODMAN: "0",
       };
       if (target.buildCodexCrp && !linuxEnv.CTX_BUNDLE_BUILD_CODEX_CRP) {
-        // Managed codex artifacts currently publish linux/x86_64 only.
-        // Build linux/aarch64 locally so Apple Silicon container sessions work.
-        // Build-time container paths in ensure_bundled_harnesses.sh are Docker-only.
+        // Build linux/aarch64 codex-crp locally on Apple Silicon so container sessions
+        // do not depend on external managed artifacts.
         linuxEnv.CTX_BUNDLE_BUILD_CODEX_CRP = "1";
       }
       const linuxRes = childProcess.spawnSync(bundleScript, {
@@ -455,20 +498,25 @@ const syncBundles = () => {
       }
     }
     assertBundledProviderTargets(destBundleDir, "codex", [
-      { os: "linux", arch: "aarch64" },
-      { os: "linux", arch: "x86_64" },
+      { os: "linux", arch: hostLinuxArch },
     ]);
     assertBundledProviderTargets(destBundleDir, "acp-crp-bridge", [
-      { os: "linux", arch: "aarch64" },
-      { os: "linux", arch: "x86_64" },
+      { os: "linux", arch: hostLinuxArch },
+    ]);
+    assertBundledProviderTargets(destBundleDir, "gemini", [
+      { os: "linux", arch: hostLinuxArch },
     ]);
     assertBundledProviderTargets(destBundleDir, "cursor", [
-      { os: "linux", arch: "aarch64" },
-      { os: "linux", arch: "x86_64" },
+      { os: "linux", arch: hostLinuxArch },
     ]);
     assertBundledProviderTargets(destBundleDir, "pi", [
-      { os: "linux", arch: "aarch64" },
-      { os: "linux", arch: "x86_64" },
+      { os: "linux", arch: hostLinuxArch },
+    ]);
+    assertBundledRuntimeTargets(destBundleDir, "node", [
+      { os: "linux", arch: hostLinuxArch },
+    ]);
+    assertBundledRuntimeTargets(destBundleDir, "python", [
+      { os: "linux", arch: hostLinuxArch },
     ]);
   }
 
@@ -488,6 +536,17 @@ const syncBundles = () => {
   // for both arches in every desktop bundle.
   bundleRemoteDaemons(destBundleDir);
 
+  return destBundleDir;
+};
+
+const verifyExistingBundles = () => {
+  const manifestPath = path.join(destBundleDir, "manifest.json");
+  if (!fs.existsSync(manifestPath)) {
+    throw new Error(
+      `missing existing bundle manifest: ${manifestPath}. Run CTX_RUNTIME_PROFILE=source-all pnpm -C core desktop:runtime:prepare to materialize bundled artifacts.`,
+    );
+  }
+  readBundleManifest(destBundleDir);
   return destBundleDir;
 };
 
@@ -551,7 +610,7 @@ const main = () => {
     ctx: copySidecar("ctx"),
     ctxMcp: copySidecar("ctx-mcp"),
     webDist: copyWebDist(),
-    bundles: syncBundles(),
+    bundles: syncBundlesEnabled ? syncBundles() : verifyExistingBundles(),
   };
 
   console.log("desktop_sync_resources:", copied);

@@ -87,6 +87,73 @@ fn bundled_linux_candidate(path: &str) -> BundledLinuxRewrite {
     bundled_linux_candidate_for_marker(path, "runtimes")
 }
 
+#[derive(Debug, Deserialize)]
+struct BundledManifestRuntimeEntry {
+    id: String,
+    os: String,
+    arch: String,
+    root: String,
+    bin: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct BundledManifestForRuntimeRewrite {
+    #[serde(default)]
+    runtimes: Vec<BundledManifestRuntimeEntry>,
+}
+
+fn bundles_root_for_path(path: &Path) -> Option<PathBuf> {
+    path.ancestors().find_map(|ancestor| {
+        if ancestor
+            .file_name()
+            .is_some_and(|name| name == std::ffi::OsStr::new("bundles"))
+        {
+            Some(ancestor.to_path_buf())
+        } else {
+            None
+        }
+    })
+}
+
+fn resolve_runtime_linux_path_from_manifest(path: &str) -> Option<String> {
+    let source_path = Path::new(path);
+    let bundles_root = bundles_root_for_path(source_path)?;
+    let rel = source_path.strip_prefix(&bundles_root).ok()?;
+    let mut parts = rel.components();
+    if parts.next()?.as_os_str() != std::ffi::OsStr::new("runtimes") {
+        return None;
+    }
+    let runtime_id = parts.next()?.as_os_str().to_string_lossy().to_string();
+    let _host_os = parts.next()?;
+    let arch = parts.next()?.as_os_str().to_string_lossy().to_string();
+    let source_bin_name = source_path.file_name()?.to_string_lossy().to_string();
+
+    let manifest_path = bundles_root.join("manifest.json");
+    let raw = std::fs::read_to_string(&manifest_path).ok()?;
+    let manifest: BundledManifestForRuntimeRewrite = serde_json::from_str(&raw).ok()?;
+    let runtime = manifest
+        .runtimes
+        .iter()
+        .find(|entry| entry.id == runtime_id && entry.os == "linux" && entry.arch == arch)?;
+    let root = Path::new(&runtime.root);
+    let runtime_root = if root.is_absolute() {
+        root.to_path_buf()
+    } else {
+        bundles_root.join(root)
+    };
+    let candidate = runtime_root.join(&runtime.bin);
+    if !candidate.exists() {
+        return None;
+    }
+    if candidate
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy() == source_bin_name)
+    {
+        return Some(candidate.to_string_lossy().to_string());
+    }
+    None
+}
+
 fn rewrite_bundled_path_for_linux(path: &str) -> Result<String> {
     match bundled_linux_candidate(path) {
         BundledLinuxRewrite::NotBundledPath | BundledLinuxRewrite::AlreadyLinux => {
@@ -95,6 +162,8 @@ fn rewrite_bundled_path_for_linux(path: &str) -> Result<String> {
         BundledLinuxRewrite::Candidate(candidate) => {
             if std::path::Path::new(&candidate).exists() {
                 Ok(candidate)
+            } else if let Some(runtime_candidate) = resolve_runtime_linux_path_from_manifest(path) {
+                Ok(runtime_candidate)
             } else {
                 anyhow::bail!(
                     "missing linux bundled path for container execution: source='{}' expected='{}'",
@@ -2533,6 +2602,44 @@ mod tests {
             .join("bundles/providers/acp-crp-bridge/linux/aarch64/acp-crp-bridge");
         fs::create_dir_all(linux.parent().expect("parent")).expect("mkdir");
         fs::write(&linux, b"ok").expect("write");
+
+        let rewritten = rewrite_bundled_path_for_linux(host.to_string_lossy().as_ref())
+            .expect("rewrite should succeed");
+        assert_eq!(rewritten, linux.to_string_lossy());
+    }
+
+    #[test]
+    fn rewrite_bundled_path_for_linux_rewrites_runtime_flavor_directory() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let host = tmp
+            .path()
+            .join("bundles/runtimes/node/macos/aarch64/node-v24.12.0-darwin-arm64/bin/node");
+        let linux = tmp
+            .path()
+            .join("bundles/runtimes/node/linux/aarch64/node-v24.12.0-linux-arm64/bin/node");
+        fs::create_dir_all(linux.parent().expect("parent")).expect("mkdir");
+        fs::write(&linux, b"ok").expect("write");
+        let manifest_path = tmp.path().join("bundles/manifest.json");
+        fs::write(
+            &manifest_path,
+            serde_json::json!({
+                "version": 1,
+                "providers": [],
+                "runtimes": [
+                    {
+                        "id": "node",
+                        "os": "linux",
+                        "arch": "aarch64",
+                        "root": "runtimes/node/linux/aarch64/node-v24.12.0-linux-arm64",
+                        "bin": "bin/node"
+                    }
+                ],
+                "images": [],
+                "daemons": []
+            })
+            .to_string(),
+        )
+        .expect("write manifest");
 
         let rewritten = rewrite_bundled_path_for_linux(host.to_string_lossy().as_ref())
             .expect("rewrite should succeed");

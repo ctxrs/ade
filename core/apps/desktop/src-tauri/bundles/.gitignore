@@ -6,3 +6,5 @@
 /images/
 /daemons/*
 !/daemons/placeholder.txt
+/runtime_state.json
+/runtime_manifest.effective.json

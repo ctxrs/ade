@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import {
+  getProviderOptions,
   getInstall,
   installAllProviders,
   installProvider,
@@ -23,6 +24,29 @@ type UseWorkbenchProvidersArgs = {
   workspaceId: string;
   setDraftHarness: Dispatch<SetStateAction<DraftHarness | null>>;
   onStartError: (message: string | null) => void;
+};
+
+const MODEL_DISCOVERY_PROVIDER_IDS = new Set(["codex", "claude-crp"]);
+
+const hasProviderModels = (options: ProviderOptions | undefined): boolean => {
+  const raw = options?.models;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+  const record = raw as Record<string, unknown>;
+  const current = record.currentModelId ?? record.current_model_id;
+  if (typeof current === "string" && current.trim().length > 0) return true;
+  const list = record.availableModels ?? record.available_models ?? record.models;
+  return Array.isArray(list) && list.length > 0;
+};
+
+export const shouldHydrateProviderModels = (
+  providerId: string,
+  options: ProviderOptions | undefined,
+): boolean => {
+  if (!MODEL_DISCOVERY_PROVIDER_IDS.has(providerId)) return false;
+  if (!options) return false;
+  if (options.has_active_auth !== true) return false;
+  if (options.source?.selected_source_kind === "endpoint") return false;
+  return !hasProviderModels(options);
 };
 
 const toErrorMessage = (error: unknown): string => {
@@ -326,7 +350,8 @@ export function useWorkbenchProviders({
   }, [defaultProviderId, providers.length, providersById, setDraftHarness]);
 
   // This loads workspace-scoped auth/config summary from providers/bootstrap.
-  // It intentionally avoids runtime probes and uses endpoint model catalogs only from cached bootstrap payloads.
+  // For model-capable subscription providers (Codex/Claude), it additionally
+  // hydrates detailed provider options once after auth so model catalogs appear.
   const ensureProviderAuthSummary = useCallback(
     async (providerId: string, opts?: { force?: boolean }): Promise<ProviderOptions | undefined> => {
       if (!workspaceId) return;
@@ -336,12 +361,25 @@ export function useWorkbenchProviders({
       const force = opts?.force ?? false;
       const existing = providerAuthSummaryInFlightRef.current[providerId];
       if (existing && !force) return existing;
-      if (!force && providerOptions[providerId]) return providerOptions[providerId];
+      const cached = providerOptions[providerId];
+      if (!force && cached && !shouldHydrateProviderModels(providerId, cached)) {
+        return cached;
+      }
 
       const request = (force ? refreshProvidersBootstrap(workspaceId) : loadProvidersBootstrap(workspaceId))
-        .then((bootstrap) => {
+        .then(async (bootstrap) => {
           applyProvidersBootstrap(bootstrap);
-          return bootstrap.provider_options[providerId];
+          let next = bootstrap.provider_options[providerId];
+          if (shouldHydrateProviderModels(providerId, next)) {
+            try {
+              const detailed = await getProviderOptions(workspaceId, providerId);
+              setProviderOptions((prev) => ({ ...prev, [providerId]: detailed }));
+              next = detailed;
+            } catch {
+              // Keep bootstrap options when probe is unavailable; caller still gets auth summary.
+            }
+          }
+          return next;
         })
         .finally(() => {
           if (providerAuthSummaryInFlightRef.current[providerId] === request) {

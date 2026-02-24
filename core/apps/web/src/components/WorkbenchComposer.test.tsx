@@ -557,6 +557,71 @@ describe("WorkbenchComposer textarea sizing", () => {
     expect(screen.getByTitle("Authentication configured")).toBeInTheDocument();
   });
 
+  it("hydrates provider auth summary even when bootstrap options already exist", async () => {
+    const ensureProviderAuthSummary = vi.fn(async () => undefined);
+
+    const NewTaskHarness = () => {
+      const [value, setValue] = useState("");
+      const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
+      const [draftHarness, setDraftHarness] = useState<DraftHarness | null>({ providerId: "claude-crp", modelId: "" });
+      const harnessCatalog: HarnessCatalogEntry[] = [{ id: "claude-crp", label: "Claude Code", logoSrc: "" }];
+      const providersById: Record<string, ProviderStatus> = {
+        "claude-crp": { provider_id: "claude-crp", installed: true, health: "ok", diagnostics: [] },
+      };
+      const providerOptions: Record<string, ProviderOptions | undefined> = {
+        "claude-crp": {
+          ...baseOptions("claude-crp"),
+          has_active_auth: true,
+          auth_mode: "subscription",
+          source: {
+            provider_id: "claude-crp",
+            selected_source_kind: "subscription",
+            selected_endpoint_id: null,
+            endpoints: [],
+          },
+        },
+      };
+
+      return (
+        <WorkbenchComposer
+          variant="newSession"
+          value={value}
+          setValue={setValue}
+          placeholder="@ for context, / for commands"
+          inputDisabled={false}
+          sessionIdForAutocomplete={null}
+          workspaceIdForAutocomplete={null}
+          slashCommands={[]}
+          attachments={attachments}
+          setAttachments={setAttachments}
+          onSend={vi.fn()}
+          sendDisabled={false}
+          sendDisabledReason={null}
+          onInterrupt={null}
+          modeId={modeId}
+          setModeId={setModeId}
+          harnessCatalog={harnessCatalog}
+          providersById={providersById}
+          providerInstallsById={{}}
+          onInstallProvider={vi.fn()}
+          onInstallAllProviders={vi.fn()}
+          providerOptions={providerOptions}
+          ensureProviderAuthSummary={ensureProviderAuthSummary}
+          draftHarness={draftHarness}
+          setDraftHarness={setDraftHarness}
+          defaultProviderId="claude-crp"
+        />
+      );
+    };
+
+    render(<NewTaskHarness />);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(ensureProviderAuthSummary).toHaveBeenCalledWith("claude-crp");
+  });
+
   it("shows an explicit unselected harness state", async () => {
     const NewTaskHarness = () => {
       const [value, setValue] = useState("");

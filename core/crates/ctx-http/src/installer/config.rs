@@ -259,7 +259,16 @@ fn env_flag_truthy(var_name: &str) -> bool {
     }
 }
 
+fn bundled_mode_active() -> bool {
+    std::env::var("CTX_BUNDLE_DIR")
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+}
+
 fn bundled_only_mode_applies_to_provider(provider_id: &str) -> bool {
+    if bundled_mode_active() {
+        return true;
+    }
     if !env_flag_truthy("CTX_E2E_BUNDLED_ONLY") {
         return false;
     }
@@ -361,6 +370,7 @@ mod tests {
     #[test]
     fn bundled_only_provider_scope_defaults_to_all_when_empty() {
         let _guard = env_lock().lock().expect("lock env");
+        let _bundle_dir = EnvVarGuard::unset("CTX_BUNDLE_DIR");
         let _strict = EnvVarGuard::set("CTX_E2E_BUNDLED_ONLY", "1");
         let _providers = EnvVarGuard::set("CTX_E2E_BUNDLED_ONLY_PROVIDERS", " , ");
         assert!(bundled_only_mode_applies_to_provider("codex"));
@@ -370,9 +380,20 @@ mod tests {
     #[test]
     fn bundled_only_mode_can_be_disabled() {
         let _guard = env_lock().lock().expect("lock env");
+        let _bundle_dir = EnvVarGuard::unset("CTX_BUNDLE_DIR");
         let _strict = EnvVarGuard::unset("CTX_E2E_BUNDLED_ONLY");
         let _providers = EnvVarGuard::unset("CTX_E2E_BUNDLED_ONLY_PROVIDERS");
         assert!(!bundled_only_mode_applies_to_provider("codex"));
+    }
+
+    #[test]
+    fn bundled_mode_is_enabled_when_bundle_dir_is_present() {
+        let _guard = env_lock().lock().expect("lock env");
+        let temp = tempdir().expect("tempdir");
+        let _bundle_dir = EnvVarGuard::set("CTX_BUNDLE_DIR", &temp.path().to_string_lossy());
+        let _strict = EnvVarGuard::unset("CTX_E2E_BUNDLED_ONLY");
+        let _providers = EnvVarGuard::unset("CTX_E2E_BUNDLED_ONLY_PROVIDERS");
+        assert!(bundled_only_mode_applies_to_provider("codex"));
     }
 }
 

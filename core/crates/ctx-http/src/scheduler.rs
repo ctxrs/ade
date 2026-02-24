@@ -379,13 +379,6 @@ async fn start_turn(
     let workdir_canonical = tokio::fs::canonicalize(&workdir_root).await.ok();
     let workdir_str = workdir_root.to_string_lossy().to_string();
 
-    let adapter = {
-        let map = state.providers.adapters.lock().await;
-        map.get(&session.provider_id)
-            .cloned()
-            .ok_or_else(|| anyhow!("provider not available: {}", session.provider_id))?
-    };
-
     let mut message = queued.message;
     let message_id = message.id;
     let perf_run_id = queued.run_id.clone();
@@ -645,7 +638,22 @@ async fn start_turn(
         provider_env.insert(key.clone(), value.clone());
     }
 
-    if session.provider_id == "codex" && is_container && using_endpoint_source {
+    let runtime_provider_id =
+        runtime_provider_id_for_session_provider(&session.provider_id, &resolved_source);
+    if runtime_provider_id != session.provider_id {
+        provider_env.insert(
+            "CTX_PROVIDER_RUNTIME_ID".to_string(),
+            runtime_provider_id.to_string(),
+        );
+    }
+    let adapter = {
+        let map = state.providers.adapters.lock().await;
+        map.get(runtime_provider_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("provider not available: {}", runtime_provider_id))?
+    };
+
+    if runtime_provider_id == "codex" && is_container && using_endpoint_source {
         if let Some(root) = runtime_plan.env_overrides.get("CTX_DATA_ROOT") {
             if let Some(api_key) = provider_env.get("OPENAI_API_KEY").cloned() {
                 let codex_home = provider_accounts::codex_runtime_home(std::path::Path::new(root));
@@ -666,7 +674,7 @@ async fn start_turn(
         }
     }
 
-    if session.provider_id == "codex"
+    if runtime_provider_id == "codex"
         && !provider_env.contains_key("CODEX_HOME")
         && !using_endpoint_source
     {
@@ -692,26 +700,26 @@ async fn start_turn(
             }
         }
     }
-    if session.provider_id != "codex" && !using_endpoint_source {
+    if runtime_provider_id != "codex" && !using_endpoint_source {
         let env = if is_container {
             if let Some(root) = runtime_plan.env_overrides.get("CTX_DATA_ROOT") {
                 provider_accounts::subscription_env_for_active_account_with_runtime_root(
                     &state.core.data_root,
                     Path::new(root),
-                    &session.provider_id,
+                    runtime_provider_id,
                 )
                 .await?
             } else {
                 provider_accounts::subscription_env_for_active_account(
                     &state.core.data_root,
-                    &session.provider_id,
+                    runtime_provider_id,
                 )
                 .await?
             }
         } else {
             provider_accounts::subscription_env_for_active_account(
                 &state.core.data_root,
-                &session.provider_id,
+                runtime_provider_id,
             )
             .await?
         };
@@ -719,11 +727,11 @@ async fn start_turn(
             provider_env.insert(key, value);
         }
     }
-    if session.provider_id == "codex" {
+    if runtime_provider_id == "codex" {
         let codex_home = provider_env
             .get("CODEX_HOME")
             .cloned()
-            .ok_or_else(|| anyhow!("missing CODEX_HOME for {}", session.provider_id))?;
+            .ok_or_else(|| anyhow!("missing CODEX_HOME for {}", runtime_provider_id))?;
         provider_accounts::ensure_codex_auth_ready(Path::new(&codex_home))
             .await
             .map_err(|err| {
@@ -740,7 +748,7 @@ async fn start_turn(
     }
 
     if let Ok(cfg) = installer::load_agent_server_config(&state.core.data_root).await {
-        if let Some(cmd) = cfg.providers.get(&session.provider_id) {
+        if let Some(cmd) = cfg.providers.get(runtime_provider_id) {
             let mut bin_dirs: Vec<std::path::PathBuf> = Vec::new();
             for dep in &cmd.dependencies {
                 if let Some(meta) = cfg.managed_installs.get(dep) {
@@ -2248,9 +2256,21 @@ fn provider_supports_system_prompt_append(provider_id: &str) -> bool {
     matches!(provider_id, "claude-crp" | "codex")
 }
 
+fn runtime_provider_id_for_session_provider<'a>(
+    session_provider_id: &'a str,
+    _resolved_source: &harness_sources::ResolvedHarnessSource,
+) -> &'a str {
+    session_provider_id
+}
+
 #[cfg(test)]
 mod strip_emitted_prefix_tests {
-    use super::strip_emitted_prefix;
+    use super::{runtime_provider_id_for_session_provider, strip_emitted_prefix};
+    use crate::harness_sources::{
+        HarnessApiShape, HarnessEndpointRecord, HarnessEndpointVerificationStatus,
+        HarnessSourceKind, ResolvedHarnessSource,
+    };
+    use chrono::Utc;
 
     #[test]
     fn returns_full_when_no_emitted() {
@@ -2277,6 +2297,52 @@ mod strip_emitted_prefix_tests {
         assert_eq!(
             strip_emitted_prefix("Hello", "Nope"),
             Some("Hello".to_string())
+        );
+    }
+
+    #[test]
+    fn gemini_bearer_endpoint_keeps_gemini_runtime_provider() {
+        let source = ResolvedHarnessSource {
+            source_kind: HarnessSourceKind::Endpoint,
+            endpoint: Some(HarnessEndpointRecord {
+                id: "ep".to_string(),
+                provider_id: "gemini".to_string(),
+                name: "Gemini Legacy Bearer".to_string(),
+                base_url: Some("https://openrouter.ai/api/v1".to_string()),
+                api_shape: HarnessApiShape::OpenaiResponses,
+                auth_type: "bearer".to_string(),
+                model_override: None,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+                last_verification_status: HarnessEndpointVerificationStatus::Unknown,
+                last_verification_at: None,
+                last_error: None,
+                has_api_key: true,
+                model_catalog_status: crate::harness_sources::EndpointModelCatalogStatus::Unknown,
+                model_catalog_fetched_at: None,
+                model_catalog_error: None,
+                model_catalog_models: Vec::new(),
+                manual_model_ids: Vec::new(),
+                model_catalog_source: None,
+            }),
+            env: std::collections::HashMap::new(),
+        };
+        assert_eq!(
+            runtime_provider_id_for_session_provider("gemini", &source),
+            "gemini"
+        );
+    }
+
+    #[test]
+    fn gemini_subscription_keeps_gemini_runtime_provider() {
+        let source = ResolvedHarnessSource {
+            source_kind: HarnessSourceKind::Subscription,
+            endpoint: None,
+            env: std::collections::HashMap::new(),
+        };
+        assert_eq!(
+            runtime_provider_id_for_session_provider("gemini", &source),
+            "gemini"
         );
     }
 }

@@ -11,6 +11,7 @@ pub const LLM_ALLOWLIST: &[&str] = &[
     "api.cohere.ai",
     "api.together.xyz",
     "api.openrouter.ai",
+    "openrouter.ai",
     "generativelanguage.googleapis.com",
     "vertex.googleapis.com",
     "dashscope.aliyuncs.com",
@@ -80,6 +81,11 @@ mod tests {
     fn allowlist_enforces_llm_only() {
         assert!(allowed_host(
             "api.openai.com",
+            ContainerNetworkMode::LlmOnly,
+            &[]
+        ));
+        assert!(allowed_host(
+            "openrouter.ai",
             ContainerNetworkMode::LlmOnly,
             &[]
         ));

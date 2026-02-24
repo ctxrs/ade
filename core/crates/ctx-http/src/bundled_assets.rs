@@ -4,6 +4,7 @@ use std::sync::OnceLock;
 use serde::{Deserialize, Serialize};
 
 const BUNDLE_ENV_DIR: &str = "CTX_BUNDLE_DIR";
+const BUNDLE_ENV_MANIFEST: &str = "CTX_BUNDLE_MANIFEST";
 const MANIFEST_FILENAME: &str = "manifest.json";
 const MANIFEST_VERSION: u32 = 1;
 
@@ -86,6 +87,16 @@ fn bundle_dir() -> Option<PathBuf> {
 }
 
 fn manifest_path(root: &Path) -> PathBuf {
+    if let Ok(raw) = std::env::var(BUNDLE_ENV_MANIFEST) {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            let candidate = PathBuf::from(trimmed);
+            if candidate.is_absolute() {
+                return candidate;
+            }
+            return root.join(candidate);
+        }
+    }
     root.join(MANIFEST_FILENAME)
 }
 
@@ -263,4 +274,45 @@ pub fn bundled_ctx_harness_image_tar(expected_image: &str) -> Option<PathBuf> {
         let direct = root.join(&entry.tar);
         direct.exists().then_some(direct)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn manifest_path_uses_explicit_absolute_override() {
+        let _guard = env_lock().lock().expect("env lock poisoned");
+        let root = PathBuf::from("/tmp/ctx-bundles-root");
+        let absolute = PathBuf::from("/tmp/ctx-manifest-absolute.json");
+        std::env::set_var(BUNDLE_ENV_MANIFEST, absolute.to_string_lossy().to_string());
+        let resolved = manifest_path(&root);
+        std::env::remove_var(BUNDLE_ENV_MANIFEST);
+        assert_eq!(resolved, absolute);
+    }
+
+    #[test]
+    fn manifest_path_uses_relative_override_with_bundle_root() {
+        let _guard = env_lock().lock().expect("env lock poisoned");
+        let root = PathBuf::from("/tmp/ctx-bundles-root");
+        std::env::set_var(BUNDLE_ENV_MANIFEST, "runtime_manifest.effective.json");
+        let resolved = manifest_path(&root);
+        std::env::remove_var(BUNDLE_ENV_MANIFEST);
+        assert_eq!(resolved, root.join("runtime_manifest.effective.json"));
+    }
+
+    #[test]
+    fn manifest_path_defaults_to_bundle_manifest() {
+        let _guard = env_lock().lock().expect("env lock poisoned");
+        std::env::remove_var(BUNDLE_ENV_MANIFEST);
+        let root = PathBuf::from("/tmp/ctx-bundles-root");
+        let resolved = manifest_path(&root);
+        assert_eq!(resolved, root.join(MANIFEST_FILENAME));
+    }
 }

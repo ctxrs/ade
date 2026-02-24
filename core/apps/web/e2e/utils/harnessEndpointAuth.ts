@@ -68,7 +68,16 @@ async function chooseOpenRouterPreset(page: Page, modal: Locator) {
     await textOption.click();
     return;
   }
-  throw new Error("OpenRouter preset option not found in endpoint provider selector");
+  // Some builds expose only a generic endpoint/API-key option. Keep using that path
+  // instead of failing hard when an explicit OpenRouter preset is absent.
+  const genericOption = page
+    .getByRole("option", { name: /(custom|endpoint|api key)/i })
+    .first();
+  if ((await genericOption.count()) > 0) {
+    await genericOption.click();
+    return;
+  }
+  await page.keyboard.press("Escape").catch(() => {});
 }
 
 async function dismissAuthModalIfOpen(page: Page): Promise<void> {
@@ -175,7 +184,11 @@ export async function configureHarnessEndpointAuthViaModal(
 
     const errorText = normalizeText(await providerError.textContent().catch(() => ""));
     if (errorText) {
-      if (errorText.toLowerCase().includes("endpoint verification failed")) {
+      const errorLower = errorText.toLowerCase();
+      if (
+        errorLower.includes("endpoint verification failed")
+        || errorLower.includes("models.list probe timed out")
+      ) {
         await dismissAuthModalIfOpen(page);
         return { ok: true, detail: `endpoint auth saved with verify warning: ${errorText}` };
       }

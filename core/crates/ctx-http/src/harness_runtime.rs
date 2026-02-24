@@ -1355,6 +1355,48 @@ fn looks_like_recoverable_machine_start_error(message_lc: &str) -> bool {
         || message_lc.contains("lock")
 }
 
+fn podman_machine_temp_state_paths(machine_name: &str) -> Vec<PathBuf> {
+    let podman_tmp = std::env::temp_dir().join("podman");
+    vec![
+        podman_tmp.join("gvproxy.pid"),
+        podman_tmp.join(format!("{machine_name}-api.sock")),
+        podman_tmp.join(format!("{machine_name}-gvproxy.sock")),
+        podman_tmp.join(format!("{machine_name}.sock")),
+    ]
+}
+
+fn clear_stale_podman_machine_temp_state(
+    machine_name: &str,
+    observer: Option<&dyn HarnessSetupObserver>,
+) {
+    let mut removed: Vec<String> = Vec::new();
+    for path in podman_machine_temp_state_paths(machine_name) {
+        match std::fs::remove_file(&path) {
+            Ok(()) => removed.push(path.to_string_lossy().to_string()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => {
+                observe_log(
+                    observer,
+                    HarnessSetupPhase::MachineStartOrInit,
+                    HarnessSetupLogLevel::Warn,
+                    &format!(
+                        "failed to clear stale podman temp state at {}: {err}",
+                        path.display()
+                    ),
+                );
+            }
+        }
+    }
+    if !removed.is_empty() {
+        observe_log(
+            observer,
+            HarnessSetupPhase::MachineStartOrInit,
+            HarnessSetupLogLevel::Info,
+            &format!("cleared stale podman temp state: {}", removed.join(", ")),
+        );
+    }
+}
+
 async fn ensure_podman_machine_running_with_observer(
     data_root: &Path,
     observer: Option<&dyn HarnessSetupObserver>,
@@ -1394,6 +1436,9 @@ async fn ensure_podman_machine_running_with_observer(
         HarnessSetupPhase::MachineStartOrInit,
         "starting or initializing podman machine",
     );
+    // Podman may leave stale temp state (gvproxy pid/socket markers) across crashed starts,
+    // causing repeated "starting" or connection-refused loops. Clear these markers before start.
+    clear_stale_podman_machine_temp_state(CTX_PODMAN_MACHINE_NAME, observer);
 
     // Prefer starting an existing machine; fall back to init when no machine exists.
     let start_out = {
@@ -1549,6 +1594,67 @@ async fn ensure_podman_machine_running_with_observer(
             Err(err) => last_err = err.to_string(),
         }
         tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+
+    // Final recovery: recreate the dedicated ctx machine once if it still cannot be reached.
+    if podman_machine_present(data_root).await.unwrap_or(false) {
+        observe_log(
+            observer,
+            HarnessSetupPhase::MachineStartOrInit,
+            HarnessSetupLogLevel::Warn,
+            "podman machine still unreachable after restart; recreating machine",
+        );
+        clear_stale_podman_machine_temp_state(CTX_PODMAN_MACHINE_NAME, observer);
+
+        let mut rm = podman_command(data_root)?;
+        rm.arg("machine")
+            .arg("rm")
+            .arg("-f")
+            .arg(CTX_PODMAN_MACHINE_NAME);
+        let rm_out = command_output_with_timeout(rm, PODMAN_MACHINE_START_TIMEOUT).await?;
+        if !rm_out.status.success() {
+            let stderr = String::from_utf8_lossy(&rm_out.stderr).trim().to_string();
+            let stdout = String::from_utf8_lossy(&rm_out.stdout).trim().to_string();
+            let combined = format!("{stderr}\n{stdout}").trim().to_string();
+            if !combined.is_empty() {
+                last_err = format!("podman machine rm -f failed: {combined}");
+            }
+        }
+
+        let mut init = podman_command(data_root)?;
+        init.arg("machine")
+            .arg("init")
+            .arg("--now")
+            .arg(CTX_PODMAN_MACHINE_NAME);
+        let init_out = command_output_with_timeout(init, PODMAN_MACHINE_INIT_TIMEOUT).await?;
+        if !init_out.status.success() {
+            let stderr = String::from_utf8_lossy(&init_out.stderr).trim().to_string();
+            let stdout = String::from_utf8_lossy(&init_out.stdout).trim().to_string();
+            let combined = format!("{stderr}\n{stdout}").trim().to_string();
+            if !combined.is_empty() {
+                last_err = format!("podman machine init --now failed after recreate: {combined}");
+            }
+        } else {
+            let deadline = tokio::time::Instant::now() + PODMAN_MACHINE_READY_TIMEOUT;
+            while tokio::time::Instant::now() < deadline {
+                let mut cmd = podman_command(data_root)?;
+                cmd.arg("info");
+                match command_output_with_timeout(cmd, PODMAN_INFO_TIMEOUT).await {
+                    Ok(out) if out.status.success() => {
+                        observe_log(
+                            observer,
+                            HarnessSetupPhase::MachineStartOrInit,
+                            HarnessSetupLogLevel::Info,
+                            "podman machine recovered after recreation",
+                        );
+                        return Ok(());
+                    }
+                    Ok(out) => last_err = String::from_utf8_lossy(&out.stderr).trim().to_string(),
+                    Err(err) => last_err = err.to_string(),
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        }
     }
 
     if last_err.trim().is_empty() {
@@ -1822,5 +1928,20 @@ mod tests {
         assert!(!looks_like_recoverable_machine_start_error(
             "error: unknown vm provider configuration"
         ));
+    }
+
+    #[test]
+    fn podman_machine_temp_state_paths_match_expected_names() {
+        let paths = podman_machine_temp_state_paths("ctx");
+        let rendered: Vec<String> = paths
+            .into_iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
+        assert!(rendered.iter().any(|p| p.ends_with("podman/gvproxy.pid")));
+        assert!(rendered.iter().any(|p| p.ends_with("podman/ctx-api.sock")));
+        assert!(rendered
+            .iter()
+            .any(|p| p.ends_with("podman/ctx-gvproxy.sock")));
+        assert!(rendered.iter().any(|p| p.ends_with("podman/ctx.sock")));
     }
 }

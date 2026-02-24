@@ -347,7 +347,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
   useEffect(() => {
     if (!newSession) return;
     for (const providerId of providerIdsToEnsure) {
-      if (newSession.providerOptions[providerId]) continue;
       const st = newSession.providersById[providerId];
       if (!(st?.installed && st.health === "ok")) continue;
       newSession.ensureProviderAuthSummary(providerId).catch(() => {});
@@ -359,7 +358,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     if (openMenu !== "harness") return;
     for (const [providerId, status] of Object.entries(newSession.providersById)) {
       if (!(status?.installed && status.health === "ok")) continue;
-      if (newSession.providerOptions[providerId]) continue;
       newSession.ensureProviderAuthSummary(providerId).catch(() => {});
     }
   }, [newSession, openMenu]);

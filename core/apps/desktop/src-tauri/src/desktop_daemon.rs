@@ -1185,6 +1185,15 @@ fn dev_bin(name: &str) -> Option<PathBuf> {
     } else {
         ""
     };
+    if let Ok(raw) = std::env::var("CTX_DESKTOP_DEV_BIN_DIR") {
+        let raw = raw.trim();
+        if !raw.is_empty() {
+            let candidate = PathBuf::from(raw).join(format!("{name}{bin_ext}"));
+            if candidate.exists() && path_matches_current_platform_binary(&candidate) {
+                return Some(candidate);
+            }
+        }
+    }
     if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
         let candidate = PathBuf::from(target_dir)
             .join("debug")

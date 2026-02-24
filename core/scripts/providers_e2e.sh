@@ -40,29 +40,84 @@ ensure_endpoint_ui_bundles() {
     exit 1
   fi
 
-  local bundle_dir="${CTX_E2E_BUNDLE_DIR:-${repo_root}/apps/desktop/src-tauri/bundles}"
-  local first_pass_providers="${CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-acp-crp-bridge,codex,qwen,opencode,mistral,goose,droid,kimi,cagent,pi,cline,swe-agent,openhands}"
+  local cache_key="${CTX_E2E_CACHE_KEY:-endpoint-ui}"
+  local canonical_bundle_dir="${repo_root}/apps/desktop/src-tauri/bundles"
+  local bundle_dir="${CTX_E2E_BUNDLE_DIR:-/tmp/ctx-e2e-bundles-${cache_key}}"
+  local first_pass_providers="${CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-acp-crp-bridge,codex,gemini,qwen,opencode,mistral,goose,droid,kimi,openhands}"
   local matrix_json="${CTX_BUNDLE_MATRIX_JSON:-${repo_root}/crates/ctx-http/src/provider_matrix.json}"
-  local run_id="${CTX_E2E_RUN_ID:-$(date +%s)-$$}"
-  local bundle_build_dir="${CTX_E2E_BUNDLE_BUILD_DIR:-/tmp/ctx-e2e-bundle-build-${run_id}}"
-  local cargo_target_dir="${CTX_E2E_CARGO_TARGET_DIR:-/tmp/ctx-e2e-cargo-${run_id}}"
-  local cargo_home_dir="${CTX_E2E_CARGO_HOME:-/tmp/ctx-e2e-cargo-home-${run_id}}"
+  local bundle_build_dir="${CTX_E2E_BUNDLE_BUILD_DIR:-/tmp/ctx-e2e-bundle-build-${cache_key}}"
+  local cargo_target_dir="${CTX_E2E_CARGO_TARGET_DIR:-/tmp/ctx-e2e-cargo-${cache_key}}"
+  local cargo_home_dir="${CTX_E2E_CARGO_HOME:-/tmp/ctx-e2e-cargo-home-${cache_key}}"
+
+  local bundle_skip_images="${CTX_E2E_ENDPOINT_SKIP_BUNDLE_IMAGES:-0}"
+  local bundle_podman="${CTX_E2E_ENDPOINT_BUNDLE_PODMAN:-}"
+  if [[ -z "${bundle_podman}" && "${OSTYPE:-}" == darwin* ]]; then
+    bundle_podman="1"
+  fi
+  local podman_version="${PODMAN_VERSION:-5.7.1}"
+  local podman_archive_url="${PODMAN_ARCHIVE_URL:-}"
+  if [[ -z "${podman_archive_url}" && "${bundle_podman}" == "1" && "${OSTYPE:-}" == darwin* ]]; then
+    local podman_arch="amd64"
+    if [[ "$(uname -m)" == "arm64" ]]; then
+      podman_arch="arm64"
+    fi
+    podman_archive_url="https://github.com/containers/podman/releases/download/v${podman_version}/podman-remote-release-darwin_${podman_arch}.zip"
+  fi
+
+  if [[ "${bundle_dir}" == "${canonical_bundle_dir}" && "${CTX_E2E_ALLOW_CANONICAL_BUNDLES:-0}" != "1" ]]; then
+    echo "refusing to use canonical desktop bundles dir for e2e: ${bundle_dir}" >&2
+    echo "set CTX_E2E_BUNDLE_DIR to an isolated path (or CTX_E2E_ALLOW_CANONICAL_BUNDLES=1 to override intentionally)" >&2
+    exit 1
+  fi
 
   mkdir -p "${bundle_build_dir}" "${cargo_target_dir}" "${cargo_home_dir}"
+  mkdir -p "${bundle_dir}"
+  rm -rf "${bundle_dir}/providers" "${bundle_dir}/runtimes" "${bundle_dir}/images"
+  rm -f "${bundle_dir}/manifest.json"
 
   echo "preparing bundled provider runtimes for endpoint-ui suite (providers: ${first_pass_providers})"
   CTX_BUNDLE_DIR="${bundle_dir}" \
   CTX_BUNDLE_BUILD_DIR="${bundle_build_dir}" \
   CTX_BUNDLE_MATRIX_JSON="${matrix_json}" \
   CTX_BUNDLE_ONLY_PROVIDERS="${first_pass_providers}" \
-  CTX_BUNDLE_SKIP_IMAGES="${CTX_E2E_ENDPOINT_SKIP_BUNDLE_IMAGES:-1}" \
+  CTX_BUNDLE_SKIP_IMAGES="${bundle_skip_images}" \
+  CTX_BUNDLE_HARNESS_IMAGE="${CTX_E2E_ENDPOINT_BUNDLE_HARNESS_IMAGE:-1}" \
   CTX_BUNDLE_INCLUDE_BRIDGE="1" \
   CTX_BUNDLE_LOCAL_ADAPTERS="true" \
   CTX_BUNDLE_BUILD_LOCAL_ADAPTERS="1" \
-  CTX_BUNDLE_USE_ACP_SHIMS="0" \
+  CTX_BUNDLE_USE_ACP_SHIMS="1" \
+  CTX_BUNDLE_PODMAN="${bundle_podman:-0}" \
+  PODMAN_VERSION="${podman_version}" \
+  PODMAN_ARCHIVE_URL="${podman_archive_url}" \
+  PODMAN_BIN_REL="${PODMAN_BIN_REL:-usr/bin/podman}" \
   CARGO_TARGET_DIR="${cargo_target_dir}" \
   CARGO_HOME="${cargo_home_dir}" \
   "${bundle_script}" >/dev/null
+
+  if [[ "${OSTYPE:-}" == darwin* ]]; then
+    local linux_arch="x86_64"
+    if [[ "$(uname -m)" == "arm64" ]]; then
+      linux_arch="aarch64"
+    fi
+    CTX_BUNDLE_DIR="${bundle_dir}" \
+    CTX_BUNDLE_BUILD_DIR="${bundle_build_dir}" \
+    CTX_BUNDLE_MATRIX_JSON="${matrix_json}" \
+    CTX_BUNDLE_APPEND="1" \
+    CTX_BUNDLE_OS="linux" \
+    CTX_BUNDLE_ARCH="${linux_arch}" \
+    CTX_BUNDLE_ONLY_PROVIDERS="${first_pass_providers}" \
+    CTX_BUNDLE_SKIP_IMAGES="1" \
+    CTX_BUNDLE_HARNESS_IMAGE="0" \
+    CTX_BUNDLE_INCLUDE_BRIDGE="1" \
+    CTX_BUNDLE_LOCAL_ADAPTERS="auto" \
+    CTX_BUNDLE_BUILD_LOCAL_ADAPTERS="0" \
+    CTX_BUNDLE_USE_ACP_SHIMS="1" \
+    CTX_BUNDLE_PODMAN="0" \
+    CTX_BUNDLE_BUILD_CODEX_CRP="${CTX_BUNDLE_BUILD_CODEX_CRP:-1}" \
+    CARGO_TARGET_DIR="${cargo_target_dir}" \
+    CARGO_HOME="${cargo_home_dir}" \
+    "${bundle_script}" >/dev/null
+  fi
 
   export CTX_BUNDLE_DIR="${bundle_dir}"
   export CTX_E2E_BUNDLED_ONLY="1"
@@ -139,7 +194,9 @@ case "${suite}" in
 
     (
       cd "${repo_root}/apps/web"
-      pnpm exec playwright test -c playwright.config.ts e2e/workbench-endpoint-harness-openrouter-matrix.spec.ts
+      pnpm exec playwright test -c playwright.config.ts \
+        e2e/workbench-endpoint-harness-openrouter-matrix.spec.ts \
+        --workers=1
     )
     exit 0
     ;;

@@ -268,6 +268,14 @@ fn qwen_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
         .join(endpoint_id)
 }
 
+fn gemini_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
+    data_root
+        .join("providers")
+        .join("gemini")
+        .join("endpoint-homes")
+        .join(endpoint_id)
+}
+
 fn kiro_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
     data_root
         .join("providers")
@@ -581,6 +589,10 @@ fn normalize_base_url_for_provider(provider_id: &str, raw: Option<&str>) -> Resu
                     anyhow::bail!("base_url is required");
                 }
                 Ok(String::new())
+            } else if provider_id == PROVIDER_GEMINI {
+                anyhow::bail!(
+                    "gemini does not support custom endpoint base_url; use Gemini OAuth or Gemini API key auth"
+                );
             } else if provider_id == PROVIDER_CLAUDE {
                 normalize_claude_anthropic_base_url(trimmed)
             } else {
@@ -607,9 +619,7 @@ fn normalize_auth_type_for_provider(provider_id: &str, raw: Option<&str>) -> Res
                 .unwrap_or(GEMINI_AUTH_TYPE_GEMINI_API_KEY)
                 .to_ascii_lowercase();
             match normalized.as_str() {
-                GEMINI_AUTH_TYPE_GEMINI_API_KEY
-                | GEMINI_AUTH_TYPE_VERTEX_AI
-                | CODEX_AUTH_TYPE_BEARER => Ok(normalized),
+                GEMINI_AUTH_TYPE_GEMINI_API_KEY | GEMINI_AUTH_TYPE_VERTEX_AI => Ok(normalized),
                 _ => anyhow::bail!(
                     "auth_type '{}' is not supported for gemini (expected '{}' or '{}')",
                     normalized,
@@ -1222,6 +1232,21 @@ pub async fn delete_provider_endpoint(
                         });
                     }
                 }
+            } else if canonical == PROVIDER_GEMINI {
+                ensure_safe_endpoint_id(&removed_endpoint_id)?;
+                let endpoint_home = gemini_endpoint_home(data_root, &removed_endpoint_id);
+                match tokio::fs::remove_dir_all(&endpoint_home).await {
+                    Ok(()) => {}
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(err) => {
+                        return Err(err).with_context(|| {
+                            format!(
+                                "removing gemini endpoint home for endpoint {}",
+                                removed_endpoint_id
+                            )
+                        });
+                    }
+                }
             } else if canonical == PROVIDER_KIRO {
                 ensure_safe_endpoint_id(&removed_endpoint_id)?;
                 remove_kiro_endpoint_home_for_root(data_root, &removed_endpoint_id).await?;
@@ -1735,6 +1760,23 @@ async fn resolve_internal(
         }
         PROVIDER_GEMINI => {
             ensure_shape_compatible(canonical, endpoint.api_shape)?;
+            ensure_safe_endpoint_id(&endpoint.id)?;
+            let gemini_home_root = runtime_data_root.unwrap_or(data_root);
+            let gemini_home = gemini_endpoint_home(gemini_home_root, &endpoint.id);
+            tokio::fs::create_dir_all(gemini_home.join(".gemini"))
+                .await
+                .with_context(|| {
+                    format!("creating gemini endpoint home for endpoint {}", endpoint.id)
+                })?;
+            env.insert(
+                "HOME".to_string(),
+                gemini_home.to_string_lossy().to_string(),
+            );
+            env.insert(
+                "GEMINI_CLI_HOME".to_string(),
+                gemini_home.to_string_lossy().to_string(),
+            );
+            env.insert("GEMINI_FORCE_FILE_STORAGE".to_string(), "true".to_string());
             match endpoint.auth_type.as_str() {
                 GEMINI_AUTH_TYPE_VERTEX_AI => {
                     env.insert("GOOGLE_API_KEY".to_string(), api_key);
@@ -1744,10 +1786,12 @@ async fn resolve_internal(
                     env.insert("GEMINI_API_KEY".to_string(), api_key);
                 }
                 _ => {
-                    // Legacy compatibility for previously stored OpenAI-compatible Gemini endpoints.
-                    let base_url = endpoint_base_url_or_err(&endpoint)?;
-                    env.insert("OPENAI_API_KEY".to_string(), api_key);
-                    env.insert("OPENAI_BASE_URL".to_string(), base_url);
+                    anyhow::bail!(
+                        "unsupported gemini endpoint auth_type '{}' (use '{}' or '{}')",
+                        endpoint.auth_type,
+                        GEMINI_AUTH_TYPE_GEMINI_API_KEY,
+                        GEMINI_AUTH_TYPE_VERTEX_AI
+                    );
                 }
             }
         }
@@ -2423,6 +2467,22 @@ mod tests {
             resolved.env.get("GEMINI_API_KEY"),
             Some(&"gemini-key".to_string())
         );
+        let home = PathBuf::from(
+            resolved
+                .env
+                .get("HOME")
+                .expect("HOME should be set for gemini endpoint"),
+        );
+        assert!(home.starts_with(root.path()));
+        assert_eq!(
+            resolved.env.get("GEMINI_CLI_HOME"),
+            Some(&home.to_string_lossy().to_string())
+        );
+        assert_eq!(
+            resolved.env.get("GEMINI_FORCE_FILE_STORAGE"),
+            Some(&"true".to_string())
+        );
+        assert!(home.join(".gemini").exists());
         assert!(!resolved.env.contains_key("OPENAI_API_KEY"));
         assert!(!resolved.env.contains_key("OPENAI_BASE_URL"));
     }
@@ -2467,8 +2527,56 @@ mod tests {
             resolved.env.get("GOOGLE_GENAI_USE_VERTEXAI"),
             Some(&"true".to_string())
         );
+        assert!(resolved.env.contains_key("HOME"));
+        assert!(resolved.env.contains_key("GEMINI_CLI_HOME"));
         assert!(!resolved.env.contains_key("OPENAI_API_KEY"));
         assert!(!resolved.env.contains_key("OPENAI_BASE_URL"));
+    }
+
+    #[tokio::test]
+    async fn gemini_endpoint_rejects_custom_base_url() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let err = upsert_provider_endpoint(
+            root.path(),
+            PROVIDER_GEMINI,
+            HarnessEndpointUpsert {
+                endpoint_id: None,
+                name: "Gemini OpenAI".to_string(),
+                base_url: Some("https://openrouter.ai/api/v1".to_string()),
+                api_shape: Some(HarnessApiShape::OpenaiResponses),
+                auth_type: Some(GEMINI_AUTH_TYPE_GEMINI_API_KEY.to_string()),
+                model_override: Some("openai/gpt-5.2".to_string()),
+                api_key: Some("openrouter-key".to_string()),
+            },
+        )
+        .await
+        .expect_err("upsert should fail");
+        assert!(err
+            .to_string()
+            .contains("does not support custom endpoint base_url"));
+    }
+
+    #[tokio::test]
+    async fn gemini_endpoint_rejects_bearer_auth_type() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let err = upsert_provider_endpoint(
+            root.path(),
+            PROVIDER_GEMINI,
+            HarnessEndpointUpsert {
+                endpoint_id: None,
+                name: "Gemini Bearer".to_string(),
+                base_url: None,
+                api_shape: Some(HarnessApiShape::OpenaiResponses),
+                auth_type: Some(CODEX_AUTH_TYPE_BEARER.to_string()),
+                model_override: None,
+                api_key: Some("key".to_string()),
+            },
+        )
+        .await
+        .expect_err("upsert should fail");
+        assert!(err
+            .to_string()
+            .contains("auth_type 'bearer' is not supported"));
     }
 
     #[tokio::test]

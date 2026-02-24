@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
@@ -158,15 +157,6 @@ pub struct ProviderMatrixCache {
     pub matrix: Option<ProviderMatrix>,
 }
 
-pub fn default_matrix_base_url() -> String {
-    std::env::var("CTX_PROVIDER_MATRIX_BASE_URL")
-        .unwrap_or_else(|_| updates::default_download_base_url())
-}
-
-pub fn default_matrix_channel() -> String {
-    std::env::var("CTX_PROVIDER_MATRIX_CHANNEL").unwrap_or_else(|_| "stable".to_string())
-}
-
 pub fn matrix_cache_path(data_root: &Path) -> PathBuf {
     data_root.join("providers").join(MATRIX_CACHE_FILENAME)
 }
@@ -176,35 +166,11 @@ pub fn builtin_matrix() -> ProviderMatrix {
 }
 
 pub async fn load_matrix(data_root: &Path) -> ProviderMatrix {
-    let cached = load_cached_matrix(data_root);
-    let refresh = cached
-        .as_ref()
-        .and_then(|_| cached_age_ok(data_root).ok())
-        .map(|ok| !ok)
-        .unwrap_or(true);
-
-    if !refresh {
-        if let Some(matrix) = cached {
-            return matrix;
-        }
-    }
-
-    let base_url = default_matrix_base_url();
-    let channel = default_matrix_channel();
-    match fetch_remote_matrix(&base_url, &channel).await {
-        Ok(matrix) => {
-            let _ = save_cached_matrix(data_root, &matrix).await;
-            return matrix;
-        }
-        Err(err) => {
-            tracing::warn!("failed to fetch provider matrix: {err:#}");
-        }
-    }
-
-    if let Some(matrix) = cached {
+    // Desktop/runtime invariant: provider matrix is bundled (or local cached), never
+    // dynamically refreshed from remote endpoints at runtime.
+    if let Some(matrix) = load_cached_matrix(data_root) {
         return matrix;
     }
-
     builtin_matrix()
 }
 
@@ -551,7 +517,10 @@ fn load_cached_matrix(data_root: &Path) -> Option<ProviderMatrix> {
     Some(parsed)
 }
 
-async fn save_cached_matrix(data_root: &Path, matrix: &ProviderMatrix) -> Result<()> {
+#[cfg(test)]
+async fn save_cached_matrix(data_root: &Path, matrix: &ProviderMatrix) -> anyhow::Result<()> {
+    use anyhow::Context;
+
     let path = matrix_cache_path(data_root);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent)
@@ -563,61 +532,6 @@ async fn save_cached_matrix(data_root: &Path, matrix: &ProviderMatrix) -> Result
         .await
         .with_context(|| format!("writing {}", path.display()))?;
     Ok(())
-}
-
-fn cached_age_ok(data_root: &Path) -> Result<bool> {
-    let path = matrix_cache_path(data_root);
-    if !path.exists() {
-        return Ok(false);
-    }
-    let meta = std::fs::metadata(&path).context("reading matrix metadata")?;
-    let modified = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-    let age = SystemTime::now()
-        .duration_since(modified)
-        .unwrap_or(Duration::from_secs(0));
-    Ok(age < MATRIX_CACHE_TTL)
-}
-
-async fn fetch_remote_matrix(base_url: &str, channel: &str) -> Result<ProviderMatrix> {
-    let mut url = format!(
-        "{}/provider-matrix/{}/latest.json",
-        base_url.trim_end_matches('/'),
-        channel
-    );
-
-    let mut params = Vec::new();
-    params.push(("context_version", env!("CARGO_PKG_VERSION").to_string()));
-    if let Some(platform) = updates::platform_key() {
-        params.push(("platform", platform.to_string()));
-    }
-    if !params.is_empty() {
-        let qs = params
-            .iter()
-            .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
-            .collect::<Vec<_>>()
-            .join("&");
-        url.push('?');
-        url.push_str(&qs);
-    }
-
-    let txt = reqwest::get(&url)
-        .await
-        .with_context(|| format!("fetching provider matrix: {url}"))?
-        .error_for_status()
-        .with_context(|| format!("provider matrix http error: {url}"))?
-        .text()
-        .await
-        .context("reading provider matrix body")?;
-    let parsed: ProviderMatrix =
-        serde_json::from_str(&txt).context("parsing provider matrix JSON")?;
-    if parsed.version != MATRIX_SCHEMA_VERSION {
-        anyhow::bail!(
-            "unsupported provider matrix version {} (expected {})",
-            parsed.version,
-            MATRIX_SCHEMA_VERSION
-        );
-    }
-    Ok(parsed)
 }
 
 fn release_matches_context(release: &ProviderRelease, context_version: Option<&Version>) -> bool {
@@ -720,6 +634,7 @@ fn extract_version(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn parse_version_loose_accepts_two_part_versions() {
@@ -770,5 +685,43 @@ mod tests {
     fn version_matches_suffix_release() {
         assert!(version_matches("1.0.1-cli", "1.0.1"));
         assert!(version_matches("1.0.1", "1.0.1-cli"));
+    }
+
+    #[tokio::test]
+    async fn load_matrix_returns_cached_when_present() {
+        let dir = tempdir().expect("tempdir");
+        let data_root = dir.path();
+
+        let cached = ProviderMatrix {
+            version: MATRIX_SCHEMA_VERSION,
+            generated_at: Some("2026-02-23T00:00:00Z".to_string()),
+            providers: vec![ProviderMatrixEntry {
+                id: "cached-provider".to_string(),
+                display_name: Some("Cached Provider".to_string()),
+                tier: Some("tier3".to_string()),
+                command: None,
+                managed_install: None,
+                dependencies: vec![],
+                version_probe: None,
+                releases: vec![],
+            }],
+        };
+        save_cached_matrix(data_root, &cached)
+            .await
+            .expect("save cached matrix");
+
+        let loaded = load_matrix(data_root).await;
+        assert_eq!(loaded.version, MATRIX_SCHEMA_VERSION);
+        assert_eq!(loaded.providers.len(), 1);
+        assert_eq!(loaded.providers[0].id, "cached-provider");
+    }
+
+    #[tokio::test]
+    async fn load_matrix_returns_builtin_when_cache_missing() {
+        let dir = tempdir().expect("tempdir");
+        let loaded = load_matrix(dir.path()).await;
+        let builtin = builtin_matrix();
+        assert_eq!(loaded.version, builtin.version);
+        assert_eq!(loaded.providers.len(), builtin.providers.len());
     }
 }
