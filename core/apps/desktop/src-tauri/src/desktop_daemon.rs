@@ -755,33 +755,43 @@ fn parity_profile_enabled() -> bool {
     )
 }
 
-fn parse_target(raw: &str) -> Option<RuntimeTarget> {
+fn normalize_target_token(raw: &str, host_value: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.eq_ignore_ascii_case("host") {
+        return Some(host_value.to_string());
+    }
+    Some(trimmed.to_string())
+}
+
+fn parse_target(raw: &str, host_os: &str, host_arch: &str) -> Option<RuntimeTarget> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return None;
     }
     let (os, arch) = trimmed.split_once('/')?;
-    let os = os.trim();
-    let arch = arch.trim();
-    if os.is_empty() || arch.is_empty() {
-        return None;
-    }
+    let os = normalize_target_token(os, host_os)?;
+    let arch = normalize_target_token(arch, host_arch)?;
     Some(RuntimeTarget {
-        os: os.to_string(),
-        arch: arch.to_string(),
+        os,
+        arch,
     })
 }
 
 fn required_targets_or_default(
     configured: &[String],
     fallback: &[RuntimeTarget],
+    host_os: &str,
+    host_arch: &str,
 ) -> Vec<RuntimeTarget> {
     if configured.is_empty() {
         return fallback.to_vec();
     }
     let mut out = Vec::<RuntimeTarget>::new();
     for value in configured {
-        if let Some(target) = parse_target(value) {
+        if let Some(target) = parse_target(value, host_os, host_arch) {
             if !out.contains(&target) {
                 out.push(target);
             }
@@ -928,16 +938,33 @@ pub(super) fn enforce_desktop_parity_bundle_preflight(app: &tauri::AppHandle) ->
     let provider_default_targets = host_default_provider_targets();
     let runtime_default_targets = host_default_runtime_targets();
     let image_default_targets = host_default_image_targets();
+    let host_os = std::env::consts::OS;
+    let host_arch = std::env::consts::ARCH;
     let provider_targets = host_relevant_targets(
-        &required_targets_or_default(&lock.required.targets.provider, &provider_default_targets),
+        &required_targets_or_default(
+            &lock.required.targets.provider,
+            &provider_default_targets,
+            host_os,
+            host_arch,
+        ),
         &provider_default_targets,
     );
     let runtime_targets = host_relevant_targets(
-        &required_targets_or_default(&lock.required.targets.runtime, &runtime_default_targets),
+        &required_targets_or_default(
+            &lock.required.targets.runtime,
+            &runtime_default_targets,
+            host_os,
+            host_arch,
+        ),
         &runtime_default_targets,
     );
     let image_targets = host_relevant_targets(
-        &required_targets_or_default(&lock.required.targets.image, &image_default_targets),
+        &required_targets_or_default(
+            &lock.required.targets.image,
+            &image_default_targets,
+            host_os,
+            host_arch,
+        ),
         &image_default_targets,
     );
 
@@ -2088,15 +2115,26 @@ mod desktop_daemon_tests {
     #[test]
     fn parse_target_requires_os_arch_pair() {
         assert_eq!(
-            parse_target("linux/x86_64"),
+            parse_target("linux/x86_64", "macos", "aarch64"),
             Some(RuntimeTarget {
                 os: "linux".to_string(),
                 arch: "x86_64".to_string(),
             })
         );
-        assert_eq!(parse_target("linux"), None);
-        assert_eq!(parse_target(""), None);
-        assert_eq!(parse_target("linux/"), None);
+        assert_eq!(parse_target("linux", "macos", "aarch64"), None);
+        assert_eq!(parse_target("", "macos", "aarch64"), None);
+        assert_eq!(parse_target("linux/", "macos", "aarch64"), None);
+    }
+
+    #[test]
+    fn parse_target_normalizes_host_tokens() {
+        assert_eq!(
+            parse_target("host/host", "macos", "aarch64"),
+            Some(RuntimeTarget {
+                os: "macos".to_string(),
+                arch: "aarch64".to_string(),
+            })
+        );
     }
 
     #[test]
@@ -2105,9 +2143,35 @@ mod desktop_daemon_tests {
             os: "macos".to_string(),
             arch: "aarch64".to_string(),
         }];
-        assert_eq!(required_targets_or_default(&[], &fallback), fallback);
         assert_eq!(
-            required_targets_or_default(&["invalid".to_string()], &fallback),
+            required_targets_or_default(&[], &fallback, "macos", "aarch64"),
+            fallback
+        );
+        assert_eq!(
+            required_targets_or_default(&["invalid".to_string()], &fallback, "macos", "aarch64"),
+            fallback
+        );
+    }
+
+    #[test]
+    fn required_targets_normalize_host_and_preserve_concrete_targets() {
+        let fallback = vec![
+            RuntimeTarget {
+                os: "macos".to_string(),
+                arch: "aarch64".to_string(),
+            },
+            RuntimeTarget {
+                os: "linux".to_string(),
+                arch: "x86_64".to_string(),
+            },
+        ];
+        assert_eq!(
+            required_targets_or_default(
+                &["host/host".to_string(), "linux/x86_64".to_string()],
+                &fallback,
+                "macos",
+                "aarch64",
+            ),
             fallback
         );
     }
