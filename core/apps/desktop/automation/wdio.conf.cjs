@@ -418,8 +418,9 @@ const startExternalDaemon = async () => {
 const buildAppIfMissing = () => {
   if (SKIP_APP_BUILD) return;
   const appPathLooksLikeBundle = process.platform === "darwin" && APP_PATH.endsWith(".app");
+  const darwinBundles = String(process.env.CTX_AUTOMATION_TAURI_BUNDLES || "app").trim() || "app";
   const buildArgs = appPathLooksLikeBundle
-    ? ["tauri", "build", "--debug", "--", "--features", "automation"]
+    ? ["tauri", "build", "--debug", "--bundles", darwinBundles, "--", "--features", "automation"]
     : ["tauri", "build", "--debug", "--no-bundle", "--", "--features", "automation"];
   const result = spawnSync(
     "pnpm",
@@ -470,7 +471,7 @@ exports.config = {
     if (isDarwin && !process.env.CN_API_KEY) {
       throw new Error(
         "CN_API_KEY is required for CrabNebula WebDriver on macOS. " +
-          "Load it from Infisical in core/ (see core/.infisical.json and core/apps/desktop/README_AUTOMATION.md).",
+          "Load it from Infisical in core/ (core/.infisical.json), or run `pnpm -C core verify:desktop-smoke` which loads Infisical by default.",
       );
     }
     // Ensure we don't hit the single-instance path (which can forward to a stale app instance

@@ -6,14 +6,23 @@ import * as path from "node:path";
 import * as os from "node:os";
 import * as fs from "node:fs";
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import type { ModelInfo } from "@anthropic-ai/claude-agent-sdk";
 import { translateClaudeEventsToCrp } from "./translate.js";
 
 const MAX_TOOL_INPUT_BYTES = 64 * 1024;
+const CLAUDE_SUBSCRIPTION_MODELS: Array<{ id: string; name: string }> = [
+  { id: "default", name: "Default" },
+  { id: "sonnet", name: "Sonnet" },
+  { id: "opus", name: "Opus" }
+];
 
 type CrpCommand = {
   type?: string;
   [key: string]: unknown;
+};
+
+type CrpCommandEnvelope = {
+  v?: unknown;
+  command?: unknown;
 };
 
 type SessionState = {
@@ -73,6 +82,18 @@ function warn(message: string): void {
   process.stderr.write(`[claude-crp] ${message}\n`);
 }
 
+function buildClaudeProcessEnv(): Record<string, string> {
+  const nodeBinDir = path.dirname(process.execPath);
+  const existingPath = process.env.PATH ?? "";
+  const combinedPath = existingPath
+    ? `${nodeBinDir}${path.delimiter}${existingPath}`
+    : nodeBinDir;
+  return {
+    ...process.env,
+    PATH: combinedPath
+  } as Record<string, string>;
+}
+
 function resolveCwd(cwd: string): string {
   if (!cwd) return cwd;
   try {
@@ -115,6 +136,15 @@ function extractPrompt(command: CrpCommand): string | null {
   }
 
   return parts.length ? parts.join("\n") : null;
+}
+
+function parseIncomingCommand(parsed: unknown): CrpCommand | null {
+  if (!parsed || typeof parsed !== "object") return null;
+  const maybeEnvelope = parsed as CrpCommandEnvelope;
+  if (maybeEnvelope.command && typeof maybeEnvelope.command === "object") {
+    return maybeEnvelope.command as CrpCommand;
+  }
+  return parsed as CrpCommand;
 }
 
 async function openSession(command: CrpCommand, state: { session: SessionState | null }) {
@@ -171,6 +201,7 @@ function buildQueryOptions(turn: TurnState) {
     includePartialMessages: true,
     settingSources: ["user", "project", "local"],
     tools: { type: "preset", preset: "claude_code" },
+    env: buildClaudeProcessEnv(),
     ...(shouldResume
       ? { resume: turn.sessionId }
       : { extraArgs: { "session-id": turn.sessionId } }),
@@ -200,101 +231,27 @@ function extractModelsListConfig(command: CrpCommand): { model?: string; cwd?: s
   return { model, cwd };
 }
 
-function buildModelsListOptions(params: {
-  cwd: string;
-  model?: string;
-  sessionId: string;
-  abortController: AbortController;
-}): Record<string, unknown> {
-  const claudeConfigDir =
-    typeof process.env.CLAUDE_CONFIG_DIR === "string" && process.env.CLAUDE_CONFIG_DIR.trim()
-      ? process.env.CLAUDE_CONFIG_DIR.trim()
-      : path.join(os.homedir(), ".claude");
-  const resolvedCwd = resolveCwd(params.cwd);
-  const projectKey = projectKeyForCwd(params.cwd);
-  const sessionFilePath = path.join(
-    claudeConfigDir,
-    "projects",
-    projectKey,
-    `${params.sessionId}.jsonl`
-  );
-  const shouldResume = fs.existsSync(sessionFilePath);
-
-  const options: Record<string, unknown> = {
-    cwd: resolvedCwd,
-    includePartialMessages: false,
-    settingSources: ["user", "project", "local"],
-    tools: { type: "preset", preset: "claude_code" },
-    ...(shouldResume
-      ? { resume: params.sessionId }
-      : { extraArgs: { "session-id": params.sessionId } }),
-    abortController: params.abortController,
-    canUseTool: async () => ({ behavior: "allow" }),
-    stderr: (data: string) => {
-      process.stderr.write(String(data));
-      if (!String(data).endsWith("\n")) process.stderr.write("\n");
-    }
-  };
-
-  if (params.model) {
-    options.model = params.model;
-  }
-
-  return options;
+function appendUniqueModel(
+  models: Array<{ id: string; name?: string }>,
+  modelId: string,
+  modelName?: string
+): void {
+  const nextId = modelId.trim();
+  if (!nextId) return;
+  if (models.some((entry) => entry.id === nextId)) return;
+  models.push({ id: nextId, name: modelName?.trim() || undefined });
 }
 
 async function listModels(command: CrpCommand, state: { session: SessionState | null }) {
-  const { model, cwd } = extractModelsListConfig(command);
+  const { model } = extractModelsListConfig(command);
   const session = state.session;
   const resolvedModel = model ?? session?.defaultModel;
-  const resolvedCwd = cwd ?? session?.defaultCwd ?? process.cwd();
-  const sessionId = session?.sessionId ?? randomUUID();
-  const abortController = new AbortController();
 
-  const options = buildModelsListOptions({
-    cwd: resolvedCwd,
-    model: resolvedModel,
-    sessionId,
-    abortController
-  });
+  const models: Array<{ id: string; name?: string }> = CLAUDE_SUBSCRIPTION_MODELS.map(
+    (entry) => ({ ...entry })
+  );
 
-  let releaseInput: (() => void) | null = null;
-  const inputStream = (async function* () {
-    await new Promise<void>((resolve) => {
-      releaseInput = resolve;
-    });
-  })();
-
-  let supportedModels: ModelInfo[] = [];
-  try {
-    const q = query({ prompt: inputStream, options });
-    supportedModels = await q.supportedModels();
-  } catch (err) {
-    warn(`models.list failed: ${err}`);
-    throw err;
-  } finally {
-    if (releaseInput) releaseInput();
-    try {
-      abortController.abort();
-    } catch {
-      // Ignore abort failures.
-    }
-  }
-
-  const models: Array<{ id: string; name?: string }> = [];
-  if (Array.isArray(supportedModels)) {
-    for (const modelInfo of supportedModels) {
-      if (!modelInfo || typeof modelInfo !== "object") continue;
-      const value = (modelInfo as { value?: unknown }).value;
-      if (typeof value !== "string" || !value) continue;
-      const name = (modelInfo as { displayName?: unknown }).displayName;
-      models.push({ id: value, name: typeof name === "string" ? name : undefined });
-    }
-  }
-
-  if (resolvedModel && !models.some((entry) => entry.id === resolvedModel)) {
-    models.push({ id: resolvedModel, name: resolvedModel });
-  }
+  if (resolvedModel) appendUniqueModel(models, resolvedModel, resolvedModel);
 
   const currentModelId = resolvedModel ?? models[0]?.id;
 
@@ -523,11 +480,15 @@ async function handleLine(line: string, state: { session: SessionState | null })
   const trimmed = line.trim();
   if (!trimmed) return;
 
-  let command: CrpCommand;
+  let command: CrpCommand | null;
   try {
-    command = JSON.parse(trimmed);
+    command = parseIncomingCommand(JSON.parse(trimmed));
   } catch (err) {
     warn(`invalid JSONL: ${err}`);
+    return;
+  }
+  if (!command || typeof command !== "object") {
+    warn("invalid command payload");
     return;
   }
 
@@ -560,13 +521,13 @@ export async function runRuntime(): Promise<void> {
   const state: { session: SessionState | null } = { session: null };
   const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
 
-  rl.on("line", (line) => {
-    void handleLine(line, state).catch((err) => {
+  for await (const line of rl) {
+    try {
+      await handleLine(line, state);
+    } catch (err) {
       warn(`command handling failed: ${err}`);
-    });
-  });
-
-  await once(rl, "close");
+    }
+  }
 
   if (state.session?.activeTurn) {
     await requestCancel(state.session.activeTurn);

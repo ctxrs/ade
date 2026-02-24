@@ -3648,7 +3648,12 @@ pub async fn codex_env_for_active_account(data_root: &Path) -> Result<HashMap<St
     }
 
     clear_runtime_auth_projection(data_root).await?;
-    codex_env_for_runtime_home(data_root).await
+    let env = codex_env_for_runtime_home(data_root).await?;
+    if seeding_codex_auth_from_host_enabled() {
+        let runtime_home = codex_runtime_home(data_root);
+        seed_codex_auth_from_host(&runtime_home).await?;
+    }
+    Ok(env)
 }
 
 pub async fn subscription_env_for_active_account(
@@ -4024,6 +4029,8 @@ mod tests {
     async fn codex_env_defaults_to_runtime_home() {
         let _env_lock = lock_env().await;
         let _guard = EnvGuard::without("CTX_CODEX_HOME");
+        let _seed_guard = EnvGuard::without(CTX_SEED_CODEX_AUTH_FROM_HOST_ENV);
+        let _path_guard = EnvGuard::without(CTX_CODEX_HOST_AUTH_PATH_ENV);
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
 
@@ -4031,6 +4038,48 @@ mod tests {
         let home = env.get("CODEX_HOME").unwrap();
         assert_eq!(home, &codex_runtime_home(root).to_string_lossy());
         assert!(codex_runtime_home(root).exists());
+    }
+
+    #[tokio::test]
+    async fn codex_env_seeds_runtime_home_from_host_when_enabled_without_active_account() {
+        let _env_lock = lock_env().await;
+        let _guard = EnvGuard::without("CTX_CODEX_HOME");
+        let _seed_guard = EnvGuard::set(CTX_SEED_CODEX_AUTH_FROM_HOST_ENV, "1");
+        let host = tempfile::tempdir().unwrap();
+        let host_auth = host.path().join("auth.json");
+        tokio::fs::write(&host_auth, br#"{"OPENAI_API_KEY":"seeded-key"}"#)
+            .await
+            .unwrap();
+        let _path_guard = EnvGuard::set(
+            CTX_CODEX_HOST_AUTH_PATH_ENV,
+            host_auth.to_string_lossy().as_ref(),
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+
+        let env = codex_env_for_active_account(root).await.unwrap();
+        let home = env.get("CODEX_HOME").unwrap();
+        assert_eq!(home, &codex_runtime_home(root).to_string_lossy());
+        ensure_codex_auth_ready(Path::new(home)).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn codex_env_seed_enabled_fails_when_host_auth_missing() {
+        let _env_lock = lock_env().await;
+        let _guard = EnvGuard::without("CTX_CODEX_HOME");
+        let _seed_guard = EnvGuard::set(CTX_SEED_CODEX_AUTH_FROM_HOST_ENV, "1");
+        let missing = tempfile::tempdir()
+            .unwrap()
+            .path()
+            .join("missing-auth.json");
+        let _path_guard = EnvGuard::set(
+            CTX_CODEX_HOST_AUTH_PATH_ENV,
+            missing.to_string_lossy().as_ref(),
+        );
+        let dir = tempfile::tempdir().unwrap();
+
+        let err = codex_env_for_active_account(dir.path()).await.unwrap_err();
+        assert!(err.to_string().contains("host auth file is missing"));
     }
 
     #[tokio::test]

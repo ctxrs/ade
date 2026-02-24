@@ -65,12 +65,7 @@ const ensureParityPrep = ({ prepEnv }) => {
   run("node", ["scripts/desktop_check_versions.cjs"], { env: prepEnv });
   run("cargo", ["build", "-p", "ctx-http", "-p", "ctx-mcp"], { env: prepEnv });
   run("pnpm", ["-C", "apps/web", "build"], { env: prepEnv });
-  run("node", ["scripts/desktop_sync_resources.cjs", "--profile", "debug"], {
-    env: {
-      ...prepEnv,
-      CTX_DESKTOP_SYNC_BUNDLES: "0",
-    },
-  });
+  run("node", ["scripts/desktop_sync_resources.cjs", "--profile", "debug"], { env: prepEnv });
 };
 
 const writeRuntimeState = ({

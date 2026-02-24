@@ -142,11 +142,27 @@ const currentStepKey = async () => {
   });
 };
 
-const waitForStep = async (key) => {
-  await browser.waitUntil(
-    async () => (await currentStepKey()) === key,
-    { timeout: 30000, timeoutMsg: `expected step '${key}'` },
-  );
+const waitForStep = async (key, timeoutMs = 30000) => {
+  let last = null;
+  await browser.waitUntil(async () => {
+    last = await currentStepKey();
+    return last === key;
+  }, {
+    timeout: timeoutMs,
+    timeoutMsg: `expected step '${key}', got '${last || "unknown"}'`,
+  });
+};
+
+const waitForStepChange = async (fromKey, timeoutMs = 15000) => {
+  let last = null;
+  await browser.waitUntil(async () => {
+    last = await currentStepKey();
+    return last !== fromKey;
+  }, {
+    timeout: timeoutMs,
+    timeoutMsg: `expected step to change from '${fromKey}', still '${last || "unknown"}'`,
+  });
+  return await currentStepKey();
 };
 
 const clickOption = async (stepKey, optionId) => {
@@ -212,7 +228,14 @@ const ensureContainerOptionVisible = async (optionId, timeoutMs = 15000) => {
 };
 
 const clickNext = async () => {
-  await clickTestId("wizard-next");
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const state = await clickNextIfEnabled();
+    if (state.clicked) return;
+    await browser.pause(100);
+  }
+  const key = await currentStepKey();
+  throw new Error(`wizard-next not clickable at step '${key || "unknown"}'`);
 };
 
 const clickNextIfEnabled = async () => {
@@ -367,6 +390,142 @@ const collectCodexSmokeDiagnostics = async (workspaceId) => {
   return diag;
 };
 
+const ensureCodexHarnessSelected = async (timeoutMs = 30000) => {
+  const readHarnessState = async () => {
+    return await browser.execute(() => {
+      const trigger = document.querySelector(".wb-switcher-harness");
+      const label = String(
+        trigger?.querySelector(".wb-switcher-label")?.textContent
+          || trigger?.getAttribute("aria-label")
+          || "",
+      ).trim();
+      const menuOpen = Boolean(document.querySelector(".wb-harness-menu"));
+      const codexRow = Array.from(document.querySelectorAll(".wb-harness-row")).find((row) => {
+        const name = String(row.querySelector(".wb-harness-name")?.textContent || "").trim().toLowerCase();
+        return name === "codex" || name.includes("codex");
+      }) || null;
+      const codexDisabled = codexRow
+        ? Boolean(codexRow.querySelector(".wb-harness-row-main")?.hasAttribute("disabled"))
+        : null;
+      const rows = Array.from(document.querySelectorAll(".wb-harness-row")).map((row) => {
+        const name = String(row.querySelector(".wb-harness-name")?.textContent || "").trim();
+        const disabled = Boolean(row.querySelector(".wb-harness-row-main")?.hasAttribute("disabled"));
+        return { name, disabled };
+      });
+      return {
+        label,
+        menuOpen,
+        hasCodexRow: Boolean(codexRow),
+        codexDisabled,
+        rows,
+      };
+    });
+  };
+
+  let state = await readHarnessState();
+  if (/codex/i.test(state.label)) {
+    return;
+  }
+
+  const opened = await browser.execute(() => {
+    const trigger = document.querySelector(".wb-switcher-harness");
+    if (!(trigger instanceof HTMLButtonElement)) return false;
+    trigger.click();
+    return true;
+  });
+  if (!opened) throw new Error("harness selector trigger not found in composer");
+
+  await browser.waitUntil(async () => {
+    const s = await readHarnessState();
+    return s.menuOpen;
+  }, { timeout: 5000, timeoutMsg: "harness menu did not open" });
+
+  const clicked = await browser.execute(() => {
+    const rows = Array.from(document.querySelectorAll(".wb-harness-row"));
+    const codexRow = rows.find((row) => {
+      const name = String(row.querySelector(".wb-harness-name")?.textContent || "").trim().toLowerCase();
+      return name === "codex" || name.includes("codex");
+    });
+    if (!codexRow) return { ok: false, reason: "missing" };
+    const button = codexRow.querySelector(".wb-harness-row-main");
+    if (!(button instanceof HTMLButtonElement)) return { ok: false, reason: "missing-button" };
+    if (button.disabled) return { ok: false, reason: "disabled" };
+    button.click();
+    return { ok: true, reason: "clicked" };
+  });
+
+  if (!clicked?.ok) {
+    state = await readHarnessState();
+    throw new Error(
+      `unable to select Codex harness (${clicked?.reason || "unknown"}); harness_rows=${JSON.stringify(state.rows)}`,
+    );
+  }
+
+  await browser.waitUntil(async () => {
+    const s = await readHarnessState();
+    return /codex/i.test(s.label);
+  }, { timeout: timeoutMs, timeoutMsg: "harness selection did not settle on Codex" });
+};
+
+const runCodexComposerSmoke = async (workspaceId, timeoutMs = 240000) => {
+  await waitForSelector("textarea.wb-new-composer-textarea", 60000);
+  await ensureCodexHarnessSelected();
+  await setTextareaSelector("textarea.wb-new-composer-textarea", "hello");
+  await clickSelector("button.wb-send");
+
+  let lastState = "{}";
+  try {
+    await browser.waitUntil(
+      async () => {
+        const state = await browser.execute(() => {
+          const assistantEls = Array.from(document.querySelectorAll(".wb-assistant-entry, .msg.assistant"));
+          const assistantText = assistantEls
+            .map((el) => String(el.textContent || "").trim())
+            .filter(Boolean)
+            .join("\n");
+          const wbBanner = Array.from(document.querySelectorAll(".wb-banner"))
+            .map((el) => String(el.textContent || "").trim())
+            .filter(Boolean)
+            .join(" | ");
+          const failHeader = Array.from(document.querySelectorAll(".wb-session-slot .banner strong"))
+            .map((el) => String(el.textContent || "").trim())
+            .find((t) => /failed to start/i.test(t)) || "";
+          const failDetail = Array.from(document.querySelectorAll(".wb-session-slot .banner .error"))
+            .map((el) => String(el.textContent || "").trim())
+            .find(Boolean) || "";
+          return {
+            assistantText,
+            wbBanner,
+            failHeader,
+            failDetail,
+          };
+        });
+        const diag = {
+          assistantText: String(state?.assistantText || ""),
+          wbBanner: String(state?.wbBanner || ""),
+          failHeader: String(state?.failHeader || ""),
+          failDetail: String(state?.failDetail || ""),
+        };
+        lastState = JSON.stringify(diag);
+        if (diag.failHeader || diag.failDetail || /failed to start/i.test(diag.wbBanner)) {
+          throw new Error(`Codex session failed to start: ${lastState}`);
+        }
+        return diag.assistantText.length > 0;
+      },
+      {
+        timeout: timeoutMs,
+        interval: 250,
+        timeoutMsg: `no assistant response received in time; last_state=${lastState}`,
+      },
+    );
+  } catch (err) {
+    const apiDiag = await collectCodexSmokeDiagnostics(workspaceId);
+    throw new Error(
+      `codex smoke did not complete: ${String(err)}; ui=${lastState}; api=${JSON.stringify(apiDiag)}`,
+    );
+  }
+};
+
 const getWorkspace = async (id) => {
   const resp = await daemonJson("GET", `/api/workspaces/${id}`);
   if (resp.status !== 200) throw new Error(`GET /api/workspaces/${id} failed (${resp.status})`);
@@ -468,6 +627,11 @@ const clickAuthImportSkip = async () => {
   if (!ok) throw new Error("failed to skip auth-import step");
 };
 
+const clickTitlingSkip = async () => {
+  await waitForTestId("wizard-titling-skip");
+  await clickTestId("wizard-titling-skip");
+};
+
 const ensureReadyForSourceSelection = async ({ location, container }, timeoutMs = 60000) => {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
@@ -475,6 +639,11 @@ const ensureReadyForSourceSelection = async ({ location, container }, timeoutMs 
     if (key === "source") return;
     if (key === "auth-import") {
       await clickAuthImportSkip();
+      await browser.pause(100);
+      continue;
+    }
+    if (key === "session-titling") {
+      await clickTitlingSkip();
       await browser.pause(100);
       continue;
     }
@@ -502,6 +671,13 @@ const ensureReadyForSourceSelection = async ({ location, container }, timeoutMs 
       if (!location) throw new Error("location step reached but scenario.location is missing");
       await clickOption("location", location);
       await browser.pause(100);
+      const afterSelect = await currentStepKey();
+      if (afterSelect === "location") {
+        const next = await clickNextIfEnabled();
+        if (next.clicked) {
+          await browser.pause(100);
+        }
+      }
       continue;
     }
     if (key === "network" || key === "setup" || key === "merge-queue" || key === "confirm") {
@@ -725,7 +901,7 @@ const runWizardScenario = async (scenario) => {
     await browser.pause(50);
   }
 
-  await waitForStep("location");
+  await waitForStep("location", 90000);
   await clickOption("location", scenario.location);
 
   if (scenario.location === "remote") {
@@ -807,40 +983,76 @@ const runWizardScenario = async (scenario) => {
   }
   await clickNext();
 
-  const afterSource = await currentStepKey();
+  let afterSource;
+  try {
+    afterSource = await waitForStepChange("source");
+  } catch (error) {
+    const sourceDiag = await browser.execute(() => {
+      const root = document.querySelector('[data-testid="workspace-setup"]');
+      const step = root ? root.getAttribute("data-step-key") : null;
+      const errEl = document.querySelector(".wizard-error");
+      const err = errEl ? String(errEl.textContent || "").trim() : "";
+      const srcPath = document.querySelector('[data-testid="wizard-source-path"]');
+      const wsName = document.querySelector('[data-testid="wizard-workspace-name"]');
+      const next = document.querySelector('[data-testid="wizard-next"]');
+      const selectedSource = root
+        ? root.querySelector('[data-testid^="wizard-option-source-"].is-selected')?.getAttribute("data-testid") || ""
+        : "";
+      return {
+        step,
+        err,
+        selectedSource,
+        sourcePath: srcPath instanceof HTMLInputElement ? srcPath.value : "",
+        workspaceName: wsName instanceof HTMLInputElement ? wsName.value : "",
+        nextDisabled: next instanceof HTMLButtonElement ? next.disabled : null,
+      };
+    });
+    throw new Error(
+      `source step did not advance after Next: ${String(error)}; source_diag=${JSON.stringify(sourceDiag)}`,
+    );
+  }
   if (afterSource === "network") {
     await clickOption("network", scenario.network);
     if (scenario.network === "allowlist") {
       await setInput("wizard-network-allowlist", scenario.networkAllowlist || "github.com");
+    }
+    const afterNetworkSelection = await currentStepKey();
+    if (afterNetworkSelection === "network") {
       await clickNext();
     }
   }
 
-  await waitForStep("setup");
-  if (scenario.setupHook) {
-    await setInput("wizard-setup-hook", scenario.setupHook);
-  }
-  await clickNext();
-
-  await waitForStep("merge-queue");
-  if (scenario.mergeQueue.kind === "skip") {
-    await clickTestId("wizard-merge-skip");
-  } else {
-    await setInput("wizard-merge-target-branch", scenario.mergeQueue.targetBranch || "main");
-    if (scenario.mergeQueue.verifyCommand) {
-      await setInput("wizard-merge-verify-command", scenario.mergeQueue.verifyCommand);
-    }
-    if (scenario.mergeQueue.pushOnSuccess) {
-      await clickTestId("wizard-merge-advanced-toggle");
-      await setChecked("wizard-merge-push-on-success", true);
-      if (scenario.mergeQueue.pushRemote) {
-        await setInput("wizard-merge-push-remote", scenario.mergeQueue.pushRemote);
-      }
-      if (scenario.mergeQueue.pushBranch) {
-        await setInput("wizard-merge-push-branch", scenario.mergeQueue.pushBranch);
-      }
+  let current = await currentStepKey();
+  if (current === "setup") {
+    if (scenario.setupHook) {
+      await setInput("wizard-setup-hook", scenario.setupHook);
     }
     await clickNext();
+    current = await currentStepKey();
+  }
+
+  if (current === "merge-queue") {
+    if (scenario.mergeQueue.kind === "skip") {
+      await clickTestId("wizard-merge-skip");
+    } else {
+      await setInput("wizard-merge-target-branch", scenario.mergeQueue.targetBranch || "main");
+      if (scenario.mergeQueue.verifyCommand) {
+        await setInput("wizard-merge-verify-command", scenario.mergeQueue.verifyCommand);
+      }
+      if (scenario.mergeQueue.pushOnSuccess) {
+        await clickTestId("wizard-merge-advanced-toggle");
+        await setChecked("wizard-merge-push-on-success", true);
+        if (scenario.mergeQueue.pushRemote) {
+          await setInput("wizard-merge-push-remote", scenario.mergeQueue.pushRemote);
+        }
+        if (scenario.mergeQueue.pushBranch) {
+          await setInput("wizard-merge-push-branch", scenario.mergeQueue.pushBranch);
+        }
+      }
+      await clickNext();
+    }
+  } else if (current !== "confirm") {
+    throw new Error(`expected step 'setup'|'merge-queue'|'confirm', got '${current || "unknown"}'`);
   }
 
   await waitForStep("confirm");
@@ -1079,67 +1291,29 @@ describe("launcher workspace wizard (e2e)", () => {
     });
 
     await assertConnectedLocalAndListening();
-    // Wait for the workbench to render the new-task composer, then send a simple prompt.
-    await waitForSelector("textarea.wb-new-composer-textarea", 60000);
-    await setTextareaSelector("textarea.wb-new-composer-textarea", "hello");
-    await clickSelector("button.wb-send");
-
-    // Wait for any assistant response, but fail fast if the UI reports session start failure.
-    let lastState = "{}";
-    try {
-      await browser.waitUntil(
-        async () => {
-          const state = await browser.execute(() => {
-            const assistantEls = Array.from(document.querySelectorAll(".wb-assistant-entry, .msg.assistant"));
-            const assistantText = assistantEls
-              .map((el) => String(el.textContent || "").trim())
-              .filter(Boolean)
-              .join("\n");
-            const wbBanner = Array.from(document.querySelectorAll(".wb-banner"))
-              .map((el) => String(el.textContent || "").trim())
-              .filter(Boolean)
-              .join(" | ");
-            const failHeader = Array.from(document.querySelectorAll(".wb-session-slot .banner strong"))
-              .map((el) => String(el.textContent || "").trim())
-              .find((t) => /failed to start/i.test(t)) || "";
-            const failDetail = Array.from(document.querySelectorAll(".wb-session-slot .banner .error"))
-              .map((el) => String(el.textContent || "").trim())
-              .find(Boolean) || "";
-            return {
-              assistantText,
-              wbBanner,
-              failHeader,
-              failDetail,
-            };
-          });
-          const diag = {
-            assistantText: String(state?.assistantText || ""),
-            wbBanner: String(state?.wbBanner || ""),
-            failHeader: String(state?.failHeader || ""),
-            failDetail: String(state?.failDetail || ""),
-          };
-          lastState = JSON.stringify(diag);
-          if (diag.failHeader || diag.failDetail || /failed to start/i.test(diag.wbBanner)) {
-            throw new Error(`Codex session failed to start: ${lastState}`);
-          }
-          return diag.assistantText.length > 0;
-        },
-        {
-          timeout: 240000,
-          interval: 250,
-          timeoutMsg: `no assistant response received in time; last_state=${lastState}`,
-        },
-      );
-    } catch (err) {
-      const apiDiag = await collectCodexSmokeDiagnostics(id);
-      throw new Error(
-        `codex smoke did not complete: ${String(err)}; ui=${lastState}; api=${JSON.stringify(apiDiag)}`,
-      );
-    }
+    await runCodexComposerSmoke(id, 240000);
 
     // Sanity: ensure we stayed in the same workspace route.
     const ws = await getWorkspace(id);
     await assertLocalWorkspaceConfig(id, { environment: "container_host_mounted" });
+  });
+
+  it("local host can start Codex and respond", async function () {
+    if (!scenarioEnabled("local-codex-host-smoke", ["local", "host", "provider"])) this.skip();
+    this.timeout(420000);
+
+    const dest = path.join(localBase, "codex-host-direct");
+    const id = await runWizardScenario({
+      location: "local",
+      container: "no-container",
+      source: { kind: "new", destPath: dest, workspaceName: "codex-host-smoke" },
+      setupHook: "",
+      mergeQueue: { kind: "skip" },
+    });
+
+    await assertConnectedLocalAndListening();
+    await runCodexComposerSmoke(id, 240000);
+    await assertLocalWorkspaceConfig(id, { environment: "host" });
   });
 
   it("remote import works end-to-end", async function () {

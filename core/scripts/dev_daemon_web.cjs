@@ -4,6 +4,8 @@ const childProcess = require("node:child_process");
 const os = require("node:os");
 const path = require("node:path");
 
+const { resolveLaunchMode } = require("./desktop_mode.cjs");
+
 const coreRoot = path.resolve(__dirname, "..");
 const daemonBind = process.env.CTX_DAEMON_BIND || "127.0.0.1:4399";
 const daemonUrl = process.env.CTX_DAEMON_URL || `http://${daemonBind}`;
@@ -35,8 +37,15 @@ const spawn = (command, args, env) => {
 };
 
 const main = () => {
+  const mode = resolveLaunchMode({ surface: "daemon-web" });
+  console.log(
+    `desktop_mode_start: channel=${mode.channel} profile=${mode.profile} surface=${mode.surface}`,
+  );
   const sharedEnv = {
     ...process.env,
+    CTX_DESKTOP_CHANNEL: mode.channel,
+    CTX_RUNTIME_PROFILE: mode.profile,
+    CTX_LAUNCH_SURFACE: mode.surface,
     CTX_DATA_DIR: dataDir,
   };
 

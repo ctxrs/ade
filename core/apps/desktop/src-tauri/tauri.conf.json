@@ -34,6 +34,8 @@
       "bin/*",
       "web/dist/**/*",
       "bundles/manifest.json",
+      "bundles/runtime_lock.v1.json",
+      "bundles/runtime_lock.v2.json",
       "bundles/providers/**/*",
       "bundles/runtimes/**/*",
       "bundles/images/**/*",

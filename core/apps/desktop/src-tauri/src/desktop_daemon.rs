@@ -668,9 +668,30 @@ struct DesktopBundledAssetsManifest {
     #[allow(dead_code)]
     pub version: u32,
     #[serde(default)]
+    pub providers: Vec<DesktopBundledProvider>,
+    #[serde(default)]
+    pub runtimes: Vec<DesktopBundledRuntime>,
+    #[serde(default)]
     pub daemons: Vec<DesktopBundledDaemon>,
     #[serde(default)]
     pub images: Vec<DesktopBundledImage>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DesktopBundledProvider {
+    pub id: String,
+    pub os: String,
+    pub arch: String,
+    pub command: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DesktopBundledRuntime {
+    pub id: String,
+    pub os: String,
+    pub arch: String,
+    pub root: String,
+    pub bin: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -688,6 +709,330 @@ struct DesktopBundledImage {
     pub arch: String,
     pub tar: String,
     pub image: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct RuntimeLockRequiredTargets {
+    #[serde(default)]
+    provider: Vec<String>,
+    #[serde(default)]
+    runtime: Vec<String>,
+    #[serde(default)]
+    image: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct RuntimeLockRequired {
+    #[serde(default)]
+    provider_ids: Vec<String>,
+    #[serde(default)]
+    runtime_ids: Vec<String>,
+    #[serde(default)]
+    image_ids: Vec<String>,
+    #[serde(default)]
+    targets: RuntimeLockRequiredTargets,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RuntimeLockV2 {
+    version: u32,
+    required: RuntimeLockRequired,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimeTarget {
+    os: String,
+    arch: String,
+}
+
+fn parity_profile_enabled() -> bool {
+    matches!(
+        std::env::var("CTX_RUNTIME_PROFILE")
+            .ok()
+            .map(|v| v.trim().to_ascii_lowercase())
+            .as_deref(),
+        None | Some("") | Some("parity")
+    )
+}
+
+fn parse_target(raw: &str) -> Option<RuntimeTarget> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let (os, arch) = trimmed.split_once('/')?;
+    let os = os.trim();
+    let arch = arch.trim();
+    if os.is_empty() || arch.is_empty() {
+        return None;
+    }
+    Some(RuntimeTarget {
+        os: os.to_string(),
+        arch: arch.to_string(),
+    })
+}
+
+fn required_targets_or_default(
+    configured: &[String],
+    fallback: &[RuntimeTarget],
+) -> Vec<RuntimeTarget> {
+    if configured.is_empty() {
+        return fallback.to_vec();
+    }
+    let mut out = Vec::<RuntimeTarget>::new();
+    for value in configured {
+        if let Some(target) = parse_target(value) {
+            if !out.contains(&target) {
+                out.push(target);
+            }
+        }
+    }
+    if out.is_empty() {
+        return fallback.to_vec();
+    }
+    out
+}
+
+fn host_default_provider_targets() -> Vec<RuntimeTarget> {
+    let host_os = std::env::consts::OS.to_string();
+    let host_arch = std::env::consts::ARCH.to_string();
+    if host_os == "macos" && host_arch == "aarch64" {
+        return vec![
+            RuntimeTarget {
+                os: "macos".to_string(),
+                arch: "aarch64".to_string(),
+            },
+            RuntimeTarget {
+                os: "linux".to_string(),
+                arch: "aarch64".to_string(),
+            },
+            RuntimeTarget {
+                os: "linux".to_string(),
+                arch: "x86_64".to_string(),
+            },
+        ];
+    }
+    let mut out = vec![RuntimeTarget {
+        os: host_os.clone(),
+        arch: host_arch.clone(),
+    }];
+    let linux_target = RuntimeTarget {
+        os: "linux".to_string(),
+        arch: host_arch,
+    };
+    if !out.contains(&linux_target) {
+        out.push(linux_target);
+    }
+    out
+}
+
+fn host_default_runtime_targets() -> Vec<RuntimeTarget> {
+    host_default_provider_targets()
+}
+
+fn host_default_image_targets() -> Vec<RuntimeTarget> {
+    let host_arch = std::env::consts::ARCH.to_string();
+    if std::env::consts::OS == "macos" && host_arch == "aarch64" {
+        return vec![
+            RuntimeTarget {
+                os: "linux".to_string(),
+                arch: "aarch64".to_string(),
+            },
+            RuntimeTarget {
+                os: "linux".to_string(),
+                arch: "x86_64".to_string(),
+            },
+        ];
+    }
+    vec![RuntimeTarget {
+        os: "linux".to_string(),
+        arch: host_arch,
+    }]
+}
+
+fn host_relevant_targets(
+    all_targets: &[RuntimeTarget],
+    fallback: &[RuntimeTarget],
+) -> Vec<RuntimeTarget> {
+    let allowed = fallback;
+    let mut out = Vec::<RuntimeTarget>::new();
+    for target in all_targets {
+        if allowed.contains(target) && !out.contains(target) {
+            out.push(target.clone());
+        }
+    }
+    if !out.is_empty() {
+        return out;
+    }
+    fallback.to_vec()
+}
+
+fn bundle_manifest_path(bundle_dir: &Path) -> PathBuf {
+    if let Ok(raw) = std::env::var("CTX_BUNDLE_MANIFEST") {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            let candidate = PathBuf::from(trimmed);
+            if candidate.is_absolute() {
+                return candidate;
+            }
+            return bundle_dir.join(candidate);
+        }
+    }
+    bundle_dir.join("manifest.json")
+}
+
+pub(super) fn enforce_desktop_parity_bundle_preflight(app: &tauri::AppHandle) -> Result<()> {
+    if !parity_profile_enabled() {
+        return Ok(());
+    }
+    let channel = std::env::var("CTX_DESKTOP_CHANNEL")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "dev".to_string());
+    let surface = std::env::var("CTX_LAUNCH_SURFACE")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "desktop".to_string());
+
+    let bundle_dir = desktop_bundle_dir(app).ok_or_else(|| anyhow!("bundle dir not found"))?;
+    let manifest_path = bundle_manifest_path(&bundle_dir);
+    let manifest_parent = manifest_path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| bundle_dir.clone());
+    let manifest_sibling_lock = manifest_parent.join("runtime_lock.v2.json");
+    let lock_path = if manifest_sibling_lock.exists() {
+        manifest_sibling_lock
+    } else {
+        bundle_dir.join("runtime_lock.v2.json")
+    };
+    let lock_raw = std::fs::read_to_string(&lock_path)
+        .with_context(|| format!("reading {}", lock_path.display()))?;
+    let lock: RuntimeLockV2 = serde_json::from_str(&lock_raw)
+        .with_context(|| format!("parsing {}", lock_path.display()))?;
+    if lock.version != 2 {
+        anyhow::bail!(
+            "unsupported runtime lock version {} at {}",
+            lock.version,
+            lock_path.display()
+        );
+    }
+
+    let manifest_raw = std::fs::read_to_string(&manifest_path)
+        .with_context(|| format!("reading {}", manifest_path.display()))?;
+    let manifest: DesktopBundledAssetsManifest = serde_json::from_str(&manifest_raw)
+        .with_context(|| format!("parsing {}", manifest_path.display()))?;
+
+    let provider_default_targets = host_default_provider_targets();
+    let runtime_default_targets = host_default_runtime_targets();
+    let image_default_targets = host_default_image_targets();
+    let provider_targets = host_relevant_targets(
+        &required_targets_or_default(&lock.required.targets.provider, &provider_default_targets),
+        &provider_default_targets,
+    );
+    let runtime_targets = host_relevant_targets(
+        &required_targets_or_default(&lock.required.targets.runtime, &runtime_default_targets),
+        &runtime_default_targets,
+    );
+    let image_targets = host_relevant_targets(
+        &required_targets_or_default(&lock.required.targets.image, &image_default_targets),
+        &image_default_targets,
+    );
+
+    let mut failures = Vec::<String>::new();
+
+    for provider_id in &lock.required.provider_ids {
+        for target in &provider_targets {
+            let Some(entry) = manifest.providers.iter().find(|entry| {
+                entry.id == *provider_id && entry.os == target.os && entry.arch == target.arch
+            }) else {
+                failures.push(format!(
+                    "missing provider entry: {} ({}/{})",
+                    provider_id, target.os, target.arch
+                ));
+                continue;
+            };
+            let command_path = bundle_dir.join(&entry.command);
+            if !command_path.exists() {
+                failures.push(format!(
+                    "missing provider command file: {} ({}/{}) at {}",
+                    provider_id,
+                    target.os,
+                    target.arch,
+                    command_path.display()
+                ));
+            }
+        }
+    }
+
+    for runtime_id in &lock.required.runtime_ids {
+        for target in &runtime_targets {
+            let Some(entry) = manifest.runtimes.iter().find(|entry| {
+                entry.id == *runtime_id && entry.os == target.os && entry.arch == target.arch
+            }) else {
+                failures.push(format!(
+                    "missing runtime entry: {} ({}/{})",
+                    runtime_id, target.os, target.arch
+                ));
+                continue;
+            };
+            let root_path = bundle_dir.join(&entry.root);
+            if !root_path.exists() {
+                failures.push(format!(
+                    "missing runtime root dir: {} ({}/{}) at {}",
+                    runtime_id,
+                    target.os,
+                    target.arch,
+                    root_path.display()
+                ));
+                continue;
+            }
+            let bin_path = root_path.join(&entry.bin);
+            if !bin_path.exists() {
+                failures.push(format!(
+                    "missing runtime binary file: {} ({}/{}) at {}",
+                    runtime_id,
+                    target.os,
+                    target.arch,
+                    bin_path.display()
+                ));
+            }
+        }
+    }
+
+    for image_id in &lock.required.image_ids {
+        for target in &image_targets {
+            let Some(entry) = manifest.images.iter().find(|entry| {
+                entry.id == *image_id && entry.os == target.os && entry.arch == target.arch
+            }) else {
+                failures.push(format!(
+                    "missing image entry: {} ({}/{})",
+                    image_id, target.os, target.arch
+                ));
+                continue;
+            };
+            let tar_path = bundle_dir.join(&entry.tar);
+            if !tar_path.exists() {
+                failures.push(format!(
+                    "missing image tar file: {} ({}/{}) at {}",
+                    image_id,
+                    target.os,
+                    target.arch,
+                    tar_path.display()
+                ));
+            }
+        }
+    }
+
+    if !failures.is_empty() {
+        anyhow::bail!(
+            "desktop parity preflight failed (channel={channel} profile=parity surface={surface}): {}",
+            failures.join("; ")
+        );
+    }
+    Ok(())
 }
 
 fn normalize_arch_token(raw: &str) -> Option<&'static str> {
@@ -1738,5 +2083,64 @@ mod desktop_daemon_tests {
         ));
 
         std::fs::remove_dir_all(&expected_dir).ok();
+    }
+
+    #[test]
+    fn parse_target_requires_os_arch_pair() {
+        assert_eq!(
+            parse_target("linux/x86_64"),
+            Some(RuntimeTarget {
+                os: "linux".to_string(),
+                arch: "x86_64".to_string(),
+            })
+        );
+        assert_eq!(parse_target("linux"), None);
+        assert_eq!(parse_target(""), None);
+        assert_eq!(parse_target("linux/"), None);
+    }
+
+    #[test]
+    fn required_targets_falls_back_when_configured_is_empty_or_invalid() {
+        let fallback = vec![RuntimeTarget {
+            os: "macos".to_string(),
+            arch: "aarch64".to_string(),
+        }];
+        assert_eq!(required_targets_or_default(&[], &fallback), fallback);
+        assert_eq!(
+            required_targets_or_default(&["invalid".to_string()], &fallback),
+            fallback
+        );
+    }
+
+    #[test]
+    fn host_relevant_targets_filters_to_allowed_subset() {
+        let configured = vec![
+            RuntimeTarget {
+                os: "macos".to_string(),
+                arch: "aarch64".to_string(),
+            },
+            RuntimeTarget {
+                os: "linux".to_string(),
+                arch: "x86_64".to_string(),
+            },
+        ];
+        let fallback = vec![RuntimeTarget {
+            os: "linux".to_string(),
+            arch: "x86_64".to_string(),
+        }];
+        assert_eq!(host_relevant_targets(&configured, &fallback), fallback);
+    }
+
+    #[test]
+    fn host_relevant_targets_uses_fallback_when_none_match() {
+        let configured = vec![RuntimeTarget {
+            os: "windows".to_string(),
+            arch: "x86_64".to_string(),
+        }];
+        let fallback = vec![RuntimeTarget {
+            os: "linux".to_string(),
+            arch: "aarch64".to_string(),
+        }];
+        assert_eq!(host_relevant_targets(&configured, &fallback), fallback);
     }
 }

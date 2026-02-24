@@ -52,7 +52,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "$(uname -s)" == "Darwin" && -z "${CN_API_KEY:-}" ]]; then
-  echo "error: CN_API_KEY is required on macOS for desktop automation." >&2
+  echo "error: CN_API_KEY is required on macOS for desktop automation (stored in Infisical for core/)." >&2
   exit 1
 fi
 

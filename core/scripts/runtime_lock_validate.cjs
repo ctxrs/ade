@@ -123,19 +123,91 @@ const validateRequiredArray = (value, label, errors) => {
   return out;
 };
 
-const requiredProviderTargets = (hostOs, hostArch) => [
-  { os: hostOs, arch: hostArch, label: `host ${hostOs}/${hostArch}` },
-  { os: "linux", arch: hostArch, label: `container linux/${hostArch}` },
-];
+const defaultProviderTargets = (hostOs, hostArch) => {
+  if (hostOs === "macos" && hostArch === "aarch64") {
+    return [
+      { os: "macos", arch: "aarch64", label: "host macos/aarch64" },
+      { os: "linux", arch: "aarch64", label: "container linux/aarch64" },
+      { os: "linux", arch: "x86_64", label: "container linux/x86_64" },
+    ];
+  }
+  return [
+    { os: hostOs, arch: hostArch, label: `host ${hostOs}/${hostArch}` },
+    { os: "linux", arch: hostArch, label: `container linux/${hostArch}` },
+  ];
+};
 
-const requiredRuntimeTargets = (hostOs, hostArch) => [
-  { os: hostOs, arch: hostArch, label: `host ${hostOs}/${hostArch}` },
-  { os: "linux", arch: hostArch, label: `container linux/${hostArch}` },
-];
+const defaultRuntimeTargets = (hostOs, hostArch) => {
+  if (hostOs === "macos" && hostArch === "aarch64") {
+    return [
+      { os: "macos", arch: "aarch64", label: "host macos/aarch64" },
+      { os: "linux", arch: "aarch64", label: "container linux/aarch64" },
+      { os: "linux", arch: "x86_64", label: "container linux/x86_64" },
+    ];
+  }
+  return [
+    { os: hostOs, arch: hostArch, label: `host ${hostOs}/${hostArch}` },
+    { os: "linux", arch: hostArch, label: `container linux/${hostArch}` },
+  ];
+};
 
-const requiredImageTargets = (hostArch) => [
-  { os: "linux", arch: hostArch, label: `linux/${hostArch}` },
-];
+const defaultImageTargets = (hostOs, hostArch) => {
+  if (hostOs === "macos" && hostArch === "aarch64") {
+    return [
+      { os: "linux", arch: "aarch64", label: "linux/aarch64" },
+      { os: "linux", arch: "x86_64", label: "linux/x86_64" },
+    ];
+  }
+  return [{ os: "linux", arch: hostArch, label: `linux/${hostArch}` }];
+};
+
+const parseRequiredTargetEntry = (value, hostOs, hostArch, kind, errors) => {
+  if (!isNonEmptyString(value)) {
+    errors.push(`runtime lock required.targets.${kind} entries must be non-empty strings`);
+    return null;
+  }
+  const [rawOs, rawArch] = String(value).split("/");
+  if (!isNonEmptyString(rawOs) || !isNonEmptyString(rawArch)) {
+    errors.push(`runtime lock required.targets.${kind} entry must be '<os>/<arch>' (got ${JSON.stringify(value)})`);
+    return null;
+  }
+  const os = normalizeTargetToken(rawOs.trim(), hostOs);
+  const arch = normalizeTargetToken(rawArch.trim(), hostArch);
+  if (!isNonEmptyString(os) || !isNonEmptyString(arch)) {
+    errors.push(`runtime lock required.targets.${kind} entry resolves to invalid os/arch: ${JSON.stringify(value)}`);
+    return null;
+  }
+  return {
+    os,
+    arch,
+    label: `${os}/${arch}`,
+  };
+};
+
+const resolveRequiredTargets = ({ lock, hostOs, hostArch, kind, errors }) => {
+  const configuredTargets = lock?.required?.targets?.[kind];
+  if (!Array.isArray(configuredTargets) || configuredTargets.length === 0) {
+    if (kind === "provider") return defaultProviderTargets(hostOs, hostArch);
+    if (kind === "runtime") return defaultRuntimeTargets(hostOs, hostArch);
+    if (kind === "image") return defaultImageTargets(hostOs, hostArch);
+    return [];
+  }
+
+  const out = [];
+  const seen = new Set();
+  for (const entry of configuredTargets) {
+    const parsed = parseRequiredTargetEntry(entry, hostOs, hostArch, kind, errors);
+    if (!parsed) continue;
+    const dedupeKey = `${parsed.os}/${parsed.arch}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    out.push(parsed);
+  }
+  if (out.length === 0) {
+    errors.push(`runtime lock required.targets.${kind} must contain at least one valid target`);
+  }
+  return out;
+};
 
 const findComponent = ({ components, kind, id, os, arch, hostOs, hostArch }) =>
   components.find(
@@ -312,7 +384,17 @@ const loadOverrides = ({ profile, overridesPath, errors }) => {
   return { overrides: normalized, appliedOverrides: normalized.map((override) => ({ ...override })) };
 };
 
-const validateManifestEntries = ({ lock, manifest, manifestPath, hostOs, hostArch, errors }) => {
+const validateManifestEntries = ({
+  lock,
+  manifest,
+  manifestPath,
+  hostOs,
+  hostArch,
+  providerTargets,
+  runtimeTargets,
+  imageTargets,
+  errors,
+}) => {
   if (manifest.version !== 1) {
     errors.push(`bundle manifest version must be 1 (got ${JSON.stringify(manifest.version)})`);
   }
@@ -328,7 +410,7 @@ const validateManifestEntries = ({ lock, manifest, manifestPath, hostOs, hostArc
   const bundlesRoot = path.dirname(manifestPath);
 
   for (const providerId of providerIds) {
-    for (const target of requiredProviderTargets(hostOs, hostArch)) {
+    for (const target of providerTargets) {
       const entry = findManifestEntry(manifest.providers || [], providerId, target.os, target.arch);
       if (!entry) {
         errors.push(`missing provider bundle entry for ${providerId} (${target.label})`);
@@ -340,7 +422,7 @@ const validateManifestEntries = ({ lock, manifest, manifestPath, hostOs, hostArc
   }
 
   for (const runtimeId of runtimeIds) {
-    for (const target of requiredRuntimeTargets(hostOs, hostArch)) {
+    for (const target of runtimeTargets) {
       const entry = findManifestEntry(manifest.runtimes || [], runtimeId, target.os, target.arch);
       if (!entry) {
         errors.push(`missing runtime bundle entry for ${runtimeId} (${target.label})`);
@@ -357,7 +439,7 @@ const validateManifestEntries = ({ lock, manifest, manifestPath, hostOs, hostArc
   }
 
   for (const imageId of imageIds) {
-    for (const target of requiredImageTargets(hostArch)) {
+    for (const target of imageTargets) {
       const entry = findManifestEntry(manifest.images || [], imageId, target.os, target.arch);
       if (!entry) {
         errors.push(`missing image bundle entry for ${imageId} (${target.label})`);
@@ -442,11 +524,14 @@ const validateLockV2 = ({ lock, manifest, manifestPath, profile, overridesPath, 
   const requiredProviderIds = validateRequiredArray(lock?.required?.provider_ids, "runtime lock required.provider_ids", errors);
   const requiredRuntimeIds = validateRequiredArray(lock?.required?.runtime_ids, "runtime lock required.runtime_ids", errors);
   const requiredImageIds = validateRequiredArray(lock?.required?.image_ids, "runtime lock required.image_ids", errors);
+  const providerTargets = resolveRequiredTargets({ lock, hostOs, hostArch, kind: "provider", errors });
+  const runtimeTargets = resolveRequiredTargets({ lock, hostOs, hostArch, kind: "runtime", errors });
+  const imageTargets = resolveRequiredTargets({ lock, hostOs, hostArch, kind: "image", errors });
 
   const requiredComponents = [];
 
   for (const providerId of requiredProviderIds) {
-    for (const target of requiredProviderTargets(hostOs, hostArch)) {
+    for (const target of providerTargets) {
       const component = findComponent({
         components,
         kind: "provider",
@@ -465,7 +550,7 @@ const validateLockV2 = ({ lock, manifest, manifestPath, profile, overridesPath, 
   }
 
   for (const runtimeId of requiredRuntimeIds) {
-    for (const target of requiredRuntimeTargets(hostOs, hostArch)) {
+    for (const target of runtimeTargets) {
       const component = findComponent({
         components,
         kind: "runtime",
@@ -484,7 +569,7 @@ const validateLockV2 = ({ lock, manifest, manifestPath, profile, overridesPath, 
   }
 
   for (const imageId of requiredImageIds) {
-    for (const target of requiredImageTargets(hostArch)) {
+    for (const target of imageTargets) {
       const component = findComponent({
         components,
         kind: "image",
@@ -526,6 +611,9 @@ const validateLockV2 = ({ lock, manifest, manifestPath, profile, overridesPath, 
     manifestPath,
     hostOs,
     hostArch,
+    providerTargets,
+    runtimeTargets,
+    imageTargets,
     errors,
   });
 
@@ -536,12 +624,18 @@ const validateLockV1 = ({ lock, manifest, manifestPath, hostOs, hostArch, errors
   if (lock.version !== 1) {
     errors.push(`runtime lock version must be 1 (got ${JSON.stringify(lock.version)})`);
   }
+  const providerTargets = resolveRequiredTargets({ lock, hostOs, hostArch, kind: "provider", errors });
+  const runtimeTargets = resolveRequiredTargets({ lock, hostOs, hostArch, kind: "runtime", errors });
+  const imageTargets = resolveRequiredTargets({ lock, hostOs, hostArch, kind: "image", errors });
   validateManifestEntries({
     lock,
     manifest,
     manifestPath,
     hostOs,
     hostArch,
+    providerTargets,
+    runtimeTargets,
+    imageTargets,
     errors,
   });
   return { manifest, appliedOverrides: [] };

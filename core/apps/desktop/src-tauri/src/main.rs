@@ -135,6 +135,7 @@ fn main() {
             desktop_apply_app_update,
         ])
         .setup(|app| {
+            enforce_desktop_parity_bundle_preflight(&app.handle())?;
             open_main_window(&app.handle())?;
             install_macos_dock_menu_bridge(app.handle().clone());
             schedule_local_daemon_prewarm(app.handle().clone());

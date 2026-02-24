@@ -7,6 +7,7 @@
     "build": "tsup src/runtime.ts --format esm --target node18 --out-dir dist --clean --sourcemap --splitting false",
     "capture": "node ./scripts/capture.mjs",
     "start": "pnpm run build && node ./bin/claude-crp",
+    "test:runtime": "pnpm run build && node --test tests/*.test.mjs",
     "update:fixtures": "node ./scripts/translate_fixtures.mjs --update",
     "test:fixtures": "node ./scripts/verify_fixtures.mjs",
     "version": "node ./bin/claude-crp --version"

@@ -9,14 +9,33 @@ const profile = profileIdx !== -1 ? args[profileIdx + 1] : "debug";
 const syncBundlesEnabled = !["0", "false", "no", "off"].includes(
   String(process.env.CTX_DESKTOP_SYNC_BUNDLES || "1").trim().toLowerCase(),
 );
+const runtimeProfile = String(process.env.CTX_RUNTIME_PROFILE || "parity").trim().toLowerCase();
+const sourceAllRuntimeProfile = runtimeProfile === "source-all";
 
 const coreRoot = path.resolve(__dirname, "..");
 const desktopTauriRoot = path.join(coreRoot, "apps", "desktop", "src-tauri");
+const providerMatrixPath = path.join(coreRoot, "crates", "ctx-http", "src", "provider_matrix.json");
 const destBinDir = path.join(desktopTauriRoot, "bin");
 const destWebDistDir = path.join(desktopTauriRoot, "web", "dist");
 const destBundleDir = path.join(desktopTauriRoot, "bundles");
 const bundleScript = path.join(coreRoot, "..", "scripts", "ensure_bundled_harnesses.sh");
 const harnessRuntimeRs = path.join(coreRoot, "crates", "ctx-http", "src", "harness_runtime.rs");
+const runtimeLockPath = path.join(destBundleDir, "runtime_lock.v2.json");
+const hostManifestArch = process.arch === "arm64" ? "aarch64" : process.arch === "x64" ? "x86_64" : process.arch;
+const parityProviderTargets = [
+  { os: "macos", arch: hostManifestArch },
+  { os: "linux", arch: "aarch64" },
+  { os: "linux", arch: "x86_64" },
+];
+const parityRuntimeTargets = [
+  { os: "macos", arch: hostManifestArch },
+  { os: "linux", arch: "aarch64" },
+  { os: "linux", arch: "x86_64" },
+];
+const parityImageTargets = [
+  { os: "linux", arch: "aarch64" },
+  { os: "linux", arch: "x86_64" },
+];
 
 const isWindows = process.platform === "win32";
 const binExt = isWindows ? ".exe" : "";
@@ -70,6 +89,31 @@ const readBundleManifest = (bundleDir) => {
   }
 };
 
+const hasManagedProviderTarget = (providerId, os, arch) => {
+  if (!fs.existsSync(providerMatrixPath)) return false;
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(providerMatrixPath, "utf8"));
+  } catch {
+    return false;
+  }
+  const providers = Array.isArray(parsed?.providers) ? parsed.providers : [];
+  const provider = providers.find((entry) => entry && entry.id === providerId);
+  if (!provider || typeof provider !== "object") return false;
+  const managedInstall =
+    provider.managed_install && typeof provider.managed_install === "object"
+      ? provider.managed_install
+      : null;
+  const targets =
+    managedInstall && managedInstall.targets && typeof managedInstall.targets === "object"
+      ? managedInstall.targets
+      : null;
+  if (!targets) return false;
+  const legacyKey = `${os}-${arch}`;
+  const slashKey = `${os}/${arch}`;
+  return Boolean(targets[legacyKey] || targets[slashKey]);
+};
+
 const assertBundledProviderTargets = (bundleDir, providerId, targets) => {
   const manifest = readBundleManifest(bundleDir);
   const providers = Array.isArray(manifest?.providers) ? manifest.providers : [];
@@ -90,7 +134,7 @@ const assertBundledProviderTargets = (bundleDir, providerId, targets) => {
     throw new Error(
       `bundle manifest missing ${providerId} targets: ${missing.join(
         ", "
-      )}. Ensure cross-arch codex bundling is configured for release packaging.`
+      )}. Ensure parity bundle generation includes all required targets.`
     );
   }
 };
@@ -122,38 +166,55 @@ const assertBundledRuntimeTargets = (bundleDir, runtimeId, targets) => {
   }
 };
 
-const localLinuxArchForImageGuard = () => {
-  if (process.arch === "arm64") return "aarch64";
-  if (process.arch === "x64") return "x86_64";
-  return null;
-};
-
-const assertBundledHarnessImageForLocalArch = (bundleDir, expectedImage, arch) => {
+const assertBundledHarnessImageTargets = (bundleDir, expectedImage, targets) => {
   const manifest = readBundleManifest(bundleDir);
   const images = Array.isArray(manifest?.images) ? manifest.images : [];
-  const entry = images.find(
-    (img) =>
-      img &&
-      img.id === "ctx-harness" &&
-      img.os === "linux" &&
-      img.arch === arch &&
-      img.image === expectedImage &&
-      typeof img.tar === "string" &&
-      img.tar.trim().length > 0,
-  );
-  if (!entry) {
-    throw new Error(
-      `bundle manifest missing ctx-harness linux/${arch} image '${expectedImage}'. ` +
-        `Set CTX_BUNDLE_HARNESS_IMAGE=1 for debug builds (or both for release) before packaging.`,
+  for (const target of targets) {
+    const entry = images.find(
+      (img) =>
+        img &&
+        img.id === "ctx-harness" &&
+        img.os === target.os &&
+        img.arch === target.arch &&
+        img.image === expectedImage &&
+        typeof img.tar === "string" &&
+        img.tar.trim().length > 0,
     );
+    if (!entry) {
+      throw new Error(
+        `bundle manifest missing ctx-harness ${target.os}/${target.arch} image '${expectedImage}'. ` +
+          "Set CTX_BUNDLE_HARNESS_IMAGE=both for parity bundles.",
+      );
+    }
+    const tarPath = path.isAbsolute(entry.tar) ? entry.tar : path.join(bundleDir, entry.tar);
+    if (!fs.existsSync(tarPath)) {
+      throw new Error(
+        `bundle manifest references missing ctx-harness image tar for ${target.os}/${target.arch}: ${tarPath}. ` +
+          "Re-run desktop bundle sync with CTX_BUNDLE_HARNESS_IMAGE=both.",
+      );
+    }
   }
-  const tarPath = path.isAbsolute(entry.tar) ? entry.tar : path.join(bundleDir, entry.tar);
-  if (!fs.existsSync(tarPath)) {
-    throw new Error(
-      `bundle manifest references missing ctx-harness image tar for linux/${arch}: ${tarPath}. ` +
-        `Re-run desktop bundle sync with CTX_BUNDLE_HARNESS_IMAGE enabled.`,
-    );
+};
+
+const readRuntimeLockRequiredProviderIds = () => {
+  if (!fs.existsSync(runtimeLockPath)) {
+    throw new Error(`missing runtime lock for parity enforcement: ${runtimeLockPath}`);
   }
+  let lock;
+  try {
+    lock = JSON.parse(fs.readFileSync(runtimeLockPath, "utf8"));
+  } catch (error) {
+    throw new Error(`failed to parse runtime lock ${runtimeLockPath}: ${error?.message ?? error}`);
+  }
+  const ids = Array.isArray(lock?.required?.provider_ids)
+    ? lock.required.provider_ids
+        .map((entry) => String(entry || "").trim())
+        .filter((entry) => entry.length > 0)
+    : [];
+  if (ids.length === 0) {
+    throw new Error(`runtime lock ${runtimeLockPath} has no required.provider_ids`);
+  }
+  return [...new Set(ids)].sort();
 };
 
 const ensureExecutable = (filePath) => {
@@ -417,13 +478,8 @@ const syncBundles = () => {
   // keep harness/provider bundle builds on their own target dirs; forwarding the
   // desktop CARGO_TARGET_DIR can make adapter binary resolution brittle.
   delete env.CARGO_TARGET_DIR;
-  // Bundle default harness image tar for both debug and release so managed staging
-  // works without registry pulls.
-  if (profile === "release") {
-    env.CTX_BUNDLE_HARNESS_IMAGE = env.CTX_BUNDLE_HARNESS_IMAGE || "both";
-  } else if (profile === "debug") {
-    env.CTX_BUNDLE_HARNESS_IMAGE = env.CTX_BUNDLE_HARNESS_IMAGE || "1";
-  }
+  // Parity contract requires both Linux image targets for local container and remote flows.
+  env.CTX_BUNDLE_HARNESS_IMAGE = env.CTX_BUNDLE_HARNESS_IMAGE || "both";
   // For desktop builds on macOS we want container mode to work out-of-box without relying on
   // system Podman installs (PATH). Bundle Podman (plus helper binaries) deterministically.
   if (process.platform === "darwin") {
@@ -448,25 +504,16 @@ const syncBundles = () => {
   // Container mode runs Linux containers even on macOS/Windows. Bundle Linux provider
   // binaries too so "disk-isolated container" can work offline/out-of-box.
   if (process.platform === "darwin") {
-    const hostLinuxArch = process.arch === "arm64" ? "aarch64" : "x86_64";
-    const linuxTargets = [{ arch: hostLinuxArch, buildCodexCrp: hostLinuxArch === "aarch64" }];
-    const linuxProviders = [
-      "acp-crp-bridge",
-      "gemini",
-      "cursor",
-      "codex",
-      "qwen",
-      "opencode",
-      "mistral",
-      "goose",
-      "droid",
-      "kimi",
-      "cagent",
-      "pi",
-      "cline",
-      "swe-agent",
-      "openhands",
-    ].join(",");
+    const requiredProviderIds = readRuntimeLockRequiredProviderIds();
+    const codexLinuxArmManagedAvailable = hasManagedProviderTarget("codex", "linux", "aarch64");
+    const linuxTargets = [
+      {
+        arch: "aarch64",
+        buildCodexCrp: sourceAllRuntimeProfile || !codexLinuxArmManagedAvailable,
+      },
+      { arch: "x86_64", buildCodexCrp: false },
+    ];
+    const linuxProviders = requiredProviderIds.join(",");
     for (const target of linuxTargets) {
       const linuxEnv = {
         ...env,
@@ -475,16 +522,15 @@ const syncBundles = () => {
         CTX_BUNDLE_ARCH: target.arch,
         CTX_BUNDLE_ONLY_PROVIDERS: linuxProviders,
         CTX_BUNDLE_SKIP_RUNTIMES: "0",
-        CTX_BUNDLE_SKIP_IMAGES: "1",
+        CTX_BUNDLE_SKIP_IMAGES: "0",
         CTX_BUNDLE_INCLUDE_BRIDGE: "1",
         CTX_BUNDLE_LOCAL_ADAPTERS: "auto",
         CTX_BUNDLE_BUILD_LOCAL_ADAPTERS: "0",
-        CTX_BUNDLE_HARNESS_IMAGE: "0",
+        CTX_BUNDLE_HARNESS_IMAGE: "1",
         CTX_BUNDLE_PODMAN: "0",
       };
       if (target.buildCodexCrp && !linuxEnv.CTX_BUNDLE_BUILD_CODEX_CRP) {
-        // Build linux/aarch64 codex-crp locally on Apple Silicon so container sessions
-        // do not depend on external managed artifacts.
+        // Source-all profile explicitly opts into building codex-crp locally.
         linuxEnv.CTX_BUNDLE_BUILD_CODEX_CRP = "1";
       }
       const linuxRes = childProcess.spawnSync(bundleScript, {
@@ -497,39 +543,16 @@ const syncBundles = () => {
         );
       }
     }
-    assertBundledProviderTargets(destBundleDir, "codex", [
-      { os: "linux", arch: hostLinuxArch },
-    ]);
-    assertBundledProviderTargets(destBundleDir, "acp-crp-bridge", [
-      { os: "linux", arch: hostLinuxArch },
-    ]);
-    assertBundledProviderTargets(destBundleDir, "gemini", [
-      { os: "linux", arch: hostLinuxArch },
-    ]);
-    assertBundledProviderTargets(destBundleDir, "cursor", [
-      { os: "linux", arch: hostLinuxArch },
-    ]);
-    assertBundledProviderTargets(destBundleDir, "pi", [
-      { os: "linux", arch: hostLinuxArch },
-    ]);
-    assertBundledRuntimeTargets(destBundleDir, "node", [
-      { os: "linux", arch: hostLinuxArch },
-    ]);
-    assertBundledRuntimeTargets(destBundleDir, "python", [
-      { os: "linux", arch: hostLinuxArch },
-    ]);
+    for (const providerId of requiredProviderIds) {
+      assertBundledProviderTargets(destBundleDir, providerId, parityProviderTargets);
+    }
+    assertBundledRuntimeTargets(destBundleDir, "node", parityRuntimeTargets);
+    assertBundledRuntimeTargets(destBundleDir, "python", parityRuntimeTargets);
   }
 
   if (profile === "debug" || profile === "release") {
-    const localLinuxArch = localLinuxArchForImageGuard();
-    if (localLinuxArch) {
-      const expectedImage = readRustStringConst(harnessRuntimeRs, "DEFAULT_CONTAINER_IMAGE");
-      assertBundledHarnessImageForLocalArch(destBundleDir, expectedImage, localLinuxArch);
-    } else {
-      console.warn(
-        `warn: skipping ctx-harness image manifest guard for unsupported host arch '${process.arch}'`,
-      );
-    }
+    const expectedImage = readRustStringConst(harnessRuntimeRs, "DEFAULT_CONTAINER_IMAGE");
+    assertBundledHarnessImageTargets(destBundleDir, expectedImage, parityImageTargets);
   }
 
   // Zero-config remote bootstrap requires shipping managed Linux daemon binaries

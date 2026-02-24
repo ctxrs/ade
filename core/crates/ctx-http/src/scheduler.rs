@@ -76,6 +76,51 @@ fn provider_mode_id_for(
     }
 }
 
+fn prepend_runtime_bin_dirs_to_provider_path(
+    provider_env: &mut HashMap<String, String>,
+    cfg: &installer::AgentServerConfigFile,
+    runtime_provider_id: &str,
+    data_root: &Path,
+) {
+    let mut bin_dirs: Vec<PathBuf> = Vec::new();
+    if let Ok(Some(runtime_cmd)) =
+        installer::resolve_runtime_provider_command(cfg, runtime_provider_id)
+    {
+        let runtime_cmd_path = Path::new(&runtime_cmd.command_abs_path);
+        if let Some(parent) = runtime_cmd_path.parent() {
+            let parent_dir = parent.to_path_buf();
+            if !bin_dirs.contains(&parent_dir) {
+                bin_dirs.push(parent_dir);
+            }
+        }
+        for dep in &runtime_cmd.dependencies {
+            if let Some(meta) = cfg.managed_installs.get(dep) {
+                if let Some(rel) = meta.bin_dir_rel.as_ref() {
+                    let dep_dir = data_root.join(rel);
+                    if !bin_dirs.contains(&dep_dir) {
+                        bin_dirs.push(dep_dir);
+                    }
+                }
+            }
+        }
+    }
+    if bin_dirs.is_empty() {
+        return;
+    }
+
+    let mut path_parts: Vec<PathBuf> = bin_dirs;
+    if let Some(current) = provider_env
+        .get("PATH")
+        .cloned()
+        .or_else(|| std::env::var("PATH").ok())
+    {
+        path_parts.extend(std::env::split_paths(std::ffi::OsStr::new(&current)));
+    }
+    if let Ok(joined) = std::env::join_paths(path_parts) {
+        provider_env.insert("PATH".to_string(), joined.to_string_lossy().to_string());
+    }
+}
+
 pub async fn session_worker(
     state: Arc<AppState>,
     session: Session,
@@ -692,9 +737,9 @@ async fn start_turn(
                     codex_home.to_string_lossy().to_string(),
                 );
             }
-        } else if let Ok(env) =
-            provider_accounts::codex_env_for_active_account(&state.core.data_root).await
-        {
+        } else {
+            let env =
+                provider_accounts::codex_env_for_active_account(&state.core.data_root).await?;
             for (key, value) in env {
                 provider_env.insert(key, value);
             }
@@ -748,25 +793,12 @@ async fn start_turn(
     }
 
     if let Ok(cfg) = installer::load_agent_server_config(&state.core.data_root).await {
-        if let Some(cmd) = cfg.providers.get(runtime_provider_id) {
-            let mut bin_dirs: Vec<std::path::PathBuf> = Vec::new();
-            for dep in &cmd.dependencies {
-                if let Some(meta) = cfg.managed_installs.get(dep) {
-                    if let Some(rel) = meta.bin_dir_rel.as_ref() {
-                        bin_dirs.push(state.core.data_root.join(rel));
-                    }
-                }
-            }
-            if !bin_dirs.is_empty() {
-                let mut path_parts: Vec<std::path::PathBuf> = bin_dirs;
-                if let Some(current) = std::env::var_os("PATH") {
-                    path_parts.extend(std::env::split_paths(&current));
-                }
-                if let Ok(joined) = std::env::join_paths(path_parts) {
-                    provider_env.insert("PATH".to_string(), joined.to_string_lossy().to_string());
-                }
-            }
-        }
+        prepend_runtime_bin_dirs_to_provider_path(
+            &mut provider_env,
+            &cfg,
+            runtime_provider_id,
+            &state.core.data_root,
+        );
     }
 
     let prompt_config = workspace_config::load_agent_system_prompt_append(&store)
@@ -2265,12 +2297,19 @@ fn runtime_provider_id_for_session_provider<'a>(
 
 #[cfg(test)]
 mod strip_emitted_prefix_tests {
-    use super::{runtime_provider_id_for_session_provider, strip_emitted_prefix};
+    use super::{
+        prepend_runtime_bin_dirs_to_provider_path, runtime_provider_id_for_session_provider,
+        strip_emitted_prefix,
+    };
     use crate::harness_sources::{
         HarnessApiShape, HarnessEndpointRecord, HarnessEndpointVerificationStatus,
         HarnessSourceKind, ResolvedHarnessSource,
     };
+    use crate::installer::{AgentServerCommand, AgentServerConfigFile, ManagedInstallMetadata};
     use chrono::Utc;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use tempfile::tempdir;
 
     #[test]
     fn returns_full_when_no_emitted() {
@@ -2344,5 +2383,93 @@ mod strip_emitted_prefix_tests {
             runtime_provider_id_for_session_provider("gemini", &source),
             "gemini"
         );
+    }
+
+    #[test]
+    fn runtime_path_includes_command_parent_before_existing_path() {
+        let tmp = tempdir().expect("tempdir");
+        let data_root = tmp.path().join("data");
+        let provider_bin_dir = tmp.path().join("provider-bin");
+        std::fs::create_dir_all(&data_root).expect("data_root");
+        std::fs::create_dir_all(&provider_bin_dir).expect("provider_bin_dir");
+        let provider_cmd = provider_bin_dir.join("provider-cmd");
+        std::fs::write(&provider_cmd, b"#!/bin/sh\n").expect("provider_cmd");
+
+        let mut cfg = AgentServerConfigFile::default();
+        cfg.providers.insert(
+            "test-provider".to_string(),
+            AgentServerCommand {
+                command: provider_cmd.to_string_lossy().to_string(),
+                args: Vec::new(),
+                dependencies: Vec::new(),
+                managed: None,
+            },
+        );
+
+        let mut provider_env = HashMap::new();
+        provider_env.insert("PATH".to_string(), "/usr/bin".to_string());
+        prepend_runtime_bin_dirs_to_provider_path(
+            &mut provider_env,
+            &cfg,
+            "test-provider",
+            &data_root,
+        );
+
+        let path_value = provider_env.get("PATH").expect("path");
+        let split: Vec<PathBuf> = std::env::split_paths(std::ffi::OsStr::new(path_value)).collect();
+        let expected_first =
+            std::fs::canonicalize(&provider_bin_dir).expect("canonical provider_bin_dir");
+        assert_eq!(split.first().expect("first path"), &expected_first);
+    }
+
+    #[test]
+    fn runtime_path_includes_dependency_bin_dirs() {
+        let tmp = tempdir().expect("tempdir");
+        let data_root = tmp.path().join("data");
+        let provider_bin_dir = tmp.path().join("provider-bin");
+        let managed_bin_rel = "managed/dep/bin";
+        let managed_bin_dir = data_root.join(managed_bin_rel);
+        std::fs::create_dir_all(&managed_bin_dir).expect("managed_bin_dir");
+        std::fs::create_dir_all(&provider_bin_dir).expect("provider_bin_dir");
+        let provider_cmd = provider_bin_dir.join("provider-cmd");
+        std::fs::write(&provider_cmd, b"#!/bin/sh\n").expect("provider_cmd");
+
+        let mut cfg = AgentServerConfigFile::default();
+        cfg.providers.insert(
+            "test-provider".to_string(),
+            AgentServerCommand {
+                command: provider_cmd.to_string_lossy().to_string(),
+                args: Vec::new(),
+                dependencies: vec!["dep-node".to_string()],
+                managed: None,
+            },
+        );
+        cfg.managed_installs.insert(
+            "dep-node".to_string(),
+            ManagedInstallMetadata {
+                package: None,
+                version: None,
+                install_dir_rel: None,
+                bin_dir_rel: Some(managed_bin_rel.to_string()),
+                last_success_at: None,
+                last_error: None,
+            },
+        );
+
+        let mut provider_env = HashMap::new();
+        provider_env.insert("PATH".to_string(), "/usr/bin".to_string());
+        prepend_runtime_bin_dirs_to_provider_path(
+            &mut provider_env,
+            &cfg,
+            "test-provider",
+            &data_root,
+        );
+
+        let path_value = provider_env.get("PATH").expect("path");
+        let split: Vec<PathBuf> = std::env::split_paths(std::ffi::OsStr::new(path_value)).collect();
+        let expected_first =
+            std::fs::canonicalize(&provider_bin_dir).expect("canonical provider_bin_dir");
+        assert_eq!(split.first().expect("first path"), &expected_first);
+        assert_eq!(split.get(1).expect("second path"), &managed_bin_dir);
     }
 }

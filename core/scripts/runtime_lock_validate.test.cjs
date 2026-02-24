@@ -12,6 +12,8 @@ const writeJson = (filePath, value) => {
 
 const hostOs = process.platform === "darwin" ? "macos" : process.platform === "win32" ? "windows" : "linux";
 const hostArch = process.arch === "arm64" ? "aarch64" : process.arch === "x64" ? "x86_64" : process.arch;
+const secondaryLinuxArch = hostArch === "aarch64" ? "x86_64" : "aarch64";
+const linuxTargetsForFixture = [...new Set([hostArch, secondaryLinuxArch])];
 
 const makeFixture = () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "runtime-lock-"));
@@ -20,46 +22,88 @@ const makeFixture = () => {
   const overridesPath = path.join(dir, "runtime_overrides.json");
 
   const providerHostPath = path.join(dir, "providers", "gemini-host");
-  const providerLinuxPath = path.join(dir, "providers", "gemini-linux");
+  const providerLinuxPaths = Object.fromEntries(
+    linuxTargetsForFixture.map((arch) => [arch, path.join(dir, "providers", `gemini-linux-${arch}`)]),
+  );
   const bridgeHostPath = path.join(dir, "providers", "bridge-host");
-  const bridgeLinuxPath = path.join(dir, "providers", "bridge-linux");
+  const bridgeLinuxPaths = Object.fromEntries(
+    linuxTargetsForFixture.map((arch) => [arch, path.join(dir, "providers", `bridge-linux-${arch}`)]),
+  );
   fs.mkdirSync(path.dirname(providerHostPath), { recursive: true });
   fs.writeFileSync(providerHostPath, "ok\n", "utf8");
-  fs.writeFileSync(providerLinuxPath, "ok\n", "utf8");
+  for (const providerPath of Object.values(providerLinuxPaths)) {
+    fs.writeFileSync(providerPath, "ok\n", "utf8");
+  }
   fs.writeFileSync(bridgeHostPath, "ok\n", "utf8");
-  fs.writeFileSync(bridgeLinuxPath, "ok\n", "utf8");
+  for (const bridgePath of Object.values(bridgeLinuxPaths)) {
+    fs.writeFileSync(bridgePath, "ok\n", "utf8");
+  }
 
   const runtimeHostRoot = path.join(dir, "runtimes", "node-host");
-  const runtimeLinuxRoot = path.join(dir, "runtimes", "node-linux");
+  const runtimeLinuxRoots = Object.fromEntries(
+    linuxTargetsForFixture.map((arch) => [arch, path.join(dir, "runtimes", `node-linux-${arch}`)]),
+  );
   const pythonHostRoot = path.join(dir, "runtimes", "python-host");
-  const pythonLinuxRoot = path.join(dir, "runtimes", "python-linux");
-  for (const runtimeRoot of [runtimeHostRoot, runtimeLinuxRoot, pythonHostRoot, pythonLinuxRoot]) {
+  const pythonLinuxRoots = Object.fromEntries(
+    linuxTargetsForFixture.map((arch) => [arch, path.join(dir, "runtimes", `python-linux-${arch}`)]),
+  );
+  for (const runtimeRoot of [
+    runtimeHostRoot,
+    pythonHostRoot,
+    ...Object.values(runtimeLinuxRoots),
+    ...Object.values(pythonLinuxRoots),
+  ]) {
     fs.mkdirSync(path.join(runtimeRoot, "bin"), { recursive: true });
   }
   fs.writeFileSync(path.join(runtimeHostRoot, "bin", "node"), "ok\n", "utf8");
-  fs.writeFileSync(path.join(runtimeLinuxRoot, "bin", "node"), "ok\n", "utf8");
+  for (const runtimeLinuxRoot of Object.values(runtimeLinuxRoots)) {
+    fs.writeFileSync(path.join(runtimeLinuxRoot, "bin", "node"), "ok\n", "utf8");
+  }
   fs.writeFileSync(path.join(pythonHostRoot, "bin", "python3"), "ok\n", "utf8");
-  fs.writeFileSync(path.join(pythonLinuxRoot, "bin", "python3"), "ok\n", "utf8");
+  for (const pythonLinuxRoot of Object.values(pythonLinuxRoots)) {
+    fs.writeFileSync(path.join(pythonLinuxRoot, "bin", "python3"), "ok\n", "utf8");
+  }
 
-  const imageTar = path.join(dir, "images", "ctx-harness-linux.tar");
-  fs.mkdirSync(path.dirname(imageTar), { recursive: true });
-  fs.writeFileSync(imageTar, "tar\n", "utf8");
+  const imageTars = Object.fromEntries(
+    linuxTargetsForFixture.map((arch) => [arch, path.join(dir, "images", `ctx-harness-linux-${arch}.tar`)]),
+  );
+  fs.mkdirSync(path.join(dir, "images"), { recursive: true });
+  for (const imageTar of Object.values(imageTars)) {
+    fs.writeFileSync(imageTar, "tar\n", "utf8");
+  }
 
   const manifest = {
     version: 1,
     providers: [
       { id: "gemini", os: hostOs, arch: hostArch, command: providerHostPath },
-      { id: "gemini", os: "linux", arch: hostArch, command: providerLinuxPath },
       { id: "acp-crp-bridge", os: hostOs, arch: hostArch, command: bridgeHostPath },
-      { id: "acp-crp-bridge", os: "linux", arch: hostArch, command: bridgeLinuxPath },
+      ...linuxTargetsForFixture.map((arch) => ({ id: "gemini", os: "linux", arch, command: providerLinuxPaths[arch] })),
+      ...linuxTargetsForFixture.map((arch) => ({
+        id: "acp-crp-bridge",
+        os: "linux",
+        arch,
+        command: bridgeLinuxPaths[arch],
+      })),
     ],
     runtimes: [
       { id: "node", os: hostOs, arch: hostArch, root: runtimeHostRoot, bin: "bin/node" },
-      { id: "node", os: "linux", arch: hostArch, root: runtimeLinuxRoot, bin: "bin/node" },
       { id: "python", os: hostOs, arch: hostArch, root: pythonHostRoot, bin: "bin/python3" },
-      { id: "python", os: "linux", arch: hostArch, root: pythonLinuxRoot, bin: "bin/python3" },
+      ...linuxTargetsForFixture.map((arch) => ({
+        id: "node",
+        os: "linux",
+        arch,
+        root: runtimeLinuxRoots[arch],
+        bin: "bin/node",
+      })),
+      ...linuxTargetsForFixture.map((arch) => ({
+        id: "python",
+        os: "linux",
+        arch,
+        root: pythonLinuxRoots[arch],
+        bin: "bin/python3",
+      })),
     ],
-    images: [{ id: "ctx-harness", os: "linux", arch: hostArch, tar: imageTar }],
+    images: linuxTargetsForFixture.map((arch) => ({ id: "ctx-harness", os: "linux", arch, tar: imageTars[arch] })),
   };
 
   writeJson(manifestPath, manifest);
@@ -69,9 +113,9 @@ const makeFixture = () => {
     lockPath,
     manifestPath,
     overridesPath,
-    imageTar,
+    imageTars,
     providerHostPath,
-    providerLinuxPath,
+    providerLinuxPaths,
   };
 };
 
@@ -123,6 +167,50 @@ test("runtime lock v1 validation rejects missing linux provider entry", () => {
   assert.match(result.errors.join("\n"), /missing provider bundle entry for gemini \(container linux\//);
 });
 
+test("runtime lock v1 validation rejects missing explicit linux/x86_64 target", () => {
+  const fixture = makeFixture();
+  const manifest = JSON.parse(fs.readFileSync(fixture.manifestPath, "utf8"));
+  manifest.providers = manifest.providers.filter(
+    (entry) => !(entry.id === "gemini" && entry.os === "linux" && entry.arch === "x86_64"),
+  );
+  writeJson(fixture.manifestPath, manifest);
+
+  writeJson(fixture.lockPath, {
+    version: 1,
+    required: {
+      targets: {
+        provider: ["host/host", "linux/aarch64", "linux/x86_64"],
+        runtime: ["host/host", "linux/aarch64", "linux/x86_64"],
+        image: ["linux/aarch64", "linux/x86_64"],
+      },
+      provider_ids: ["gemini"],
+      runtime_ids: ["node"],
+      image_ids: ["ctx-harness"],
+    },
+  });
+
+  const result = validateRuntimeLock({ lockPath: fixture.lockPath, manifestPath: fixture.manifestPath });
+  assert.equal(result.ok, false);
+  assert.match(result.errors.join("\n"), /missing provider bundle entry for gemini \(linux\/x86_64\)/);
+});
+
+const makeStandardV2Components = (sourceType) => [
+  makeV2Component({ kind: "provider", id: "gemini", os: "host", arch: "host", sourceType }),
+  makeV2Component({ kind: "provider", id: "gemini", os: "linux", arch: "aarch64", sourceType }),
+  makeV2Component({ kind: "provider", id: "gemini", os: "linux", arch: "x86_64", sourceType }),
+  makeV2Component({ kind: "provider", id: "acp-crp-bridge", os: "host", arch: "host", sourceType }),
+  makeV2Component({ kind: "provider", id: "acp-crp-bridge", os: "linux", arch: "aarch64", sourceType }),
+  makeV2Component({ kind: "provider", id: "acp-crp-bridge", os: "linux", arch: "x86_64", sourceType }),
+  makeV2Component({ kind: "runtime", id: "node", os: "host", arch: "host", sourceType }),
+  makeV2Component({ kind: "runtime", id: "node", os: "linux", arch: "aarch64", sourceType }),
+  makeV2Component({ kind: "runtime", id: "node", os: "linux", arch: "x86_64", sourceType }),
+  makeV2Component({ kind: "runtime", id: "python", os: "host", arch: "host", sourceType }),
+  makeV2Component({ kind: "runtime", id: "python", os: "linux", arch: "aarch64", sourceType }),
+  makeV2Component({ kind: "runtime", id: "python", os: "linux", arch: "x86_64", sourceType }),
+  makeV2Component({ kind: "image", id: "ctx-harness", os: "linux", arch: "aarch64", sourceType }),
+  makeV2Component({ kind: "image", id: "ctx-harness", os: "linux", arch: "x86_64", sourceType }),
+];
+
 test("runtime lock v2 parity profile enforces allowed source types", () => {
   const fixture = makeFixture();
 
@@ -138,17 +226,7 @@ test("runtime lock v2 parity profile enforces allowed source types", () => {
       runtime_ids: ["node", "python"],
       image_ids: ["ctx-harness"],
     },
-    components: [
-      makeV2Component({ kind: "provider", id: "gemini", os: "host", arch: "host", sourceType: "local" }),
-      makeV2Component({ kind: "provider", id: "gemini", os: "linux", arch: "host", sourceType: "local" }),
-      makeV2Component({ kind: "provider", id: "acp-crp-bridge", os: "host", arch: "host", sourceType: "local" }),
-      makeV2Component({ kind: "provider", id: "acp-crp-bridge", os: "linux", arch: "host", sourceType: "local" }),
-      makeV2Component({ kind: "runtime", id: "node", os: "host", arch: "host", sourceType: "local" }),
-      makeV2Component({ kind: "runtime", id: "node", os: "linux", arch: "host", sourceType: "local" }),
-      makeV2Component({ kind: "runtime", id: "python", os: "host", arch: "host", sourceType: "local" }),
-      makeV2Component({ kind: "runtime", id: "python", os: "linux", arch: "host", sourceType: "local" }),
-      makeV2Component({ kind: "image", id: "ctx-harness", os: "linux", arch: "host", sourceType: "local" }),
-    ],
+    components: makeStandardV2Components("local"),
   });
 
   const result = validateRuntimeLock({ lockPath: fixture.lockPath, manifestPath: fixture.manifestPath, profile: "parity" });
@@ -171,17 +249,7 @@ test("runtime lock v2 source-all profile accepts local sources", () => {
       runtime_ids: ["node", "python"],
       image_ids: ["ctx-harness"],
     },
-    components: [
-      makeV2Component({ kind: "provider", id: "gemini", os: "host", arch: "host", sourceType: "local" }),
-      makeV2Component({ kind: "provider", id: "gemini", os: "linux", arch: "host", sourceType: "local" }),
-      makeV2Component({ kind: "provider", id: "acp-crp-bridge", os: "host", arch: "host", sourceType: "local" }),
-      makeV2Component({ kind: "provider", id: "acp-crp-bridge", os: "linux", arch: "host", sourceType: "local" }),
-      makeV2Component({ kind: "runtime", id: "node", os: "host", arch: "host", sourceType: "local" }),
-      makeV2Component({ kind: "runtime", id: "node", os: "linux", arch: "host", sourceType: "local" }),
-      makeV2Component({ kind: "runtime", id: "python", os: "host", arch: "host", sourceType: "local" }),
-      makeV2Component({ kind: "runtime", id: "python", os: "linux", arch: "host", sourceType: "local" }),
-      makeV2Component({ kind: "image", id: "ctx-harness", os: "linux", arch: "host", sourceType: "local" }),
-    ],
+    components: makeStandardV2Components("local"),
   });
 
   const result = validateRuntimeLock({
@@ -210,17 +278,7 @@ test("runtime lock v2 override profile rewrites effective manifest entries", () 
       runtime_ids: ["node", "python"],
       image_ids: ["ctx-harness"],
     },
-    components: [
-      makeV2Component({ kind: "provider", id: "gemini", os: "host", arch: "host", sourceType: "ci" }),
-      makeV2Component({ kind: "provider", id: "gemini", os: "linux", arch: "host", sourceType: "ci" }),
-      makeV2Component({ kind: "provider", id: "acp-crp-bridge", os: "host", arch: "host", sourceType: "ci" }),
-      makeV2Component({ kind: "provider", id: "acp-crp-bridge", os: "linux", arch: "host", sourceType: "ci" }),
-      makeV2Component({ kind: "runtime", id: "node", os: "host", arch: "host", sourceType: "ci" }),
-      makeV2Component({ kind: "runtime", id: "node", os: "linux", arch: "host", sourceType: "ci" }),
-      makeV2Component({ kind: "runtime", id: "python", os: "host", arch: "host", sourceType: "ci" }),
-      makeV2Component({ kind: "runtime", id: "python", os: "linux", arch: "host", sourceType: "ci" }),
-      makeV2Component({ kind: "image", id: "ctx-harness", os: "linux", arch: "host", sourceType: "ci" }),
-    ],
+    components: makeStandardV2Components("ci"),
   });
 
   writeJson(fixture.overridesPath, {
