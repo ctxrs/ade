@@ -17,7 +17,7 @@ anyhow = { workspace = true }
 base64 = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 codex-arg0 = { workspace = true }
-codex-common = { workspace = true, features = ["cli"] }
+codex-utils-cli = { workspace = true }
 codex-core = { workspace = true }
 codex-protocol = { workspace = true }
 schemars = { workspace = true }

@@ -119,12 +119,14 @@ impl WidgetRef for &FileSearchPopup {
                 .iter()
                 .map(|m| GenericDisplayRow {
                     name: m.path.to_string_lossy().to_string(),
+                    name_prefix_spans: Vec::new(),
                     match_indices: m
                         .indices
                         .as_ref()
                         .map(|v| v.iter().map(|&i| i as usize).collect()),
                     display_shortcut: None,
                     description: None,
+                    category_tag: None,
                     wrap_indent: None,
                     is_disabled: false,
                     disabled_reason: None,

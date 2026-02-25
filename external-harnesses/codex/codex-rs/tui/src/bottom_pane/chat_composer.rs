@@ -21,24 +21,51 @@
 //! The Up/Down history path is managed by [`ChatComposerHistory`]. It merges:
 //!
 //! - Persistent cross-session history (text-only; no element ranges or attachments).
-//! - Local in-session history (full text + text elements + local image paths).
+//! - Local in-session history (full text + text elements + local/remote image attachments).
 //!
-//! When recalling a local entry, the composer rehydrates text elements and image attachments.
+//! When recalling a local entry, the composer rehydrates text elements and both attachment kinds
+//! (local image paths + remote image URLs).
 //! When recalling a persistent entry, only the text is restored.
+//! Recalled entries move the cursor to end-of-line so repeated Up/Down presses keep shell-like
+//! history traversal semantics instead of dropping to column 0.
 //!
 //! # Submission and Prompt Expansion
+//!
+//! When steer is enabled, `Enter` submits immediately. `Tab` requests queuing while a task is
+//! running; if no task is running, `Tab` submits just like Enter so input is never dropped.
+//! `Tab` does not submit when entering a `!` shell command.
 //!
 //! On submit/queue paths, the composer:
 //!
 //! - Expands pending paste placeholders so element ranges align with the final text.
 //! - Trims whitespace and rebases text elements accordingly.
 //! - Expands `/prompts:` custom prompts (named or numeric args), preserving text elements.
-//! - Prunes attached images so only placeholders that survive expansion are sent.
+//! - Prunes local attached images so only placeholders that survive expansion are sent.
+//! - Preserves remote image URLs as separate attachments even when text is empty.
 //!
 //! The numeric auto-submit path used by the slash popup performs the same pending-paste expansion
 //! and attachment pruning, and clears pending paste state on success.
 //! Slash commands with arguments (like `/plan` and `/review`) reuse the same preparation path so
 //! pasted content and text elements are preserved when extracting args.
+//!
+//! # Remote Image Rows (Up/Down/Delete)
+//!
+//! Remote image URLs are rendered as non-editable `[Image #N]` rows above the textarea (inside the
+//! same composer block). These rows represent image attachments rehydrated from app-server/backtrack
+//! history; TUI users can remove them, but cannot type into that row region.
+//!
+//! Keyboard behavior:
+//!
+//! - `Up` at textarea cursor `0` enters remote-row selection at the last remote image.
+//! - `Up`/`Down` move selection between remote rows.
+//! - `Down` on the last row clears selection and returns control to the textarea.
+//! - `Delete`/`Backspace` remove the selected remote image row.
+//!
+//! Placeholder numbering is unified across remote and local images:
+//!
+//! - Remote rows occupy `[Image #1]..[Image #M]`.
+//! - Local placeholders are offset after that range (`[Image #M+1]..`).
+//! - Deleting a remote row relabels local placeholders to keep numbering contiguous.
 //!
 //! # Non-bracketed Paste Bursts
 //!
@@ -82,9 +109,23 @@
 //! edits and renders a placeholder prompt instead of the editable textarea. This is part of the
 //! overall state machine, since it affects which transitions are even possible from a given UI
 //! state.
+//!
+//! # Voice Hold-To-Talk Without Key Release
+//!
+//! On terminals that do not report `KeyEventKind::Release`, space hold-to-talk uses repeated
+//! space key events as "still held" evidence:
+//!
+//! - For pending holds (non-empty composer), if timeout elapses without any repeated space event,
+//!   we treat the key as a normal typed space.
+//! - If repeated space events are seen before timeout, we proceed with hold-to-talk.
+//! - While recording, repeated space events keep the recording alive; if they stop for a short
+//!   window, we stop and transcribe.
+use crate::bottom_pane::footer::mode_indicator_line;
 use crate::key_hint;
 use crate::key_hint::KeyBinding;
 use crate::key_hint::has_ctrl_or_alt;
+use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
+use crate::ui_consts::FOOTER_INDENT_COLS;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
@@ -98,6 +139,7 @@ use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
 use ratatui::widgets::Block;
+use ratatui::widgets::Paragraph;
 use ratatui::widgets::StatefulWidgetRef;
 use ratatui::widgets::WidgetRef;
 
@@ -118,6 +160,7 @@ use super::footer::footer_height;
 use super::footer::footer_hint_items_width;
 use super::footer::footer_line_width;
 use super::footer::inset_footer_hint_area;
+use super::footer::max_left_width_for_right;
 use super::footer::render_context_right;
 use super::footer::render_footer_from_props;
 use super::footer::render_footer_hint_items;
@@ -142,22 +185,24 @@ use crate::render::RectExt;
 use crate::render::renderable::Renderable;
 use crate::slash_command::SlashCommand;
 use crate::style::user_message_style;
-use codex_common::fuzzy_match::fuzzy_match;
 use codex_protocol::custom_prompts::CustomPrompt;
 use codex_protocol::custom_prompts::PROMPTS_CMD_PREFIX;
 use codex_protocol::models::local_image_label_text;
 use codex_protocol::user_input::ByteRange;
 use codex_protocol::user_input::TextElement;
+use codex_utils_fuzzy_match::fuzzy_match;
 
 use crate::app_event::AppEvent;
 use crate::app_event::ConnectorsSnapshot;
 use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::LocalImageAttachment;
+use crate::bottom_pane::MentionBinding;
 use crate::bottom_pane::textarea::TextArea;
 use crate::bottom_pane::textarea::TextAreaState;
 use crate::clipboard_paste::normalize_pasted_path;
 use crate::clipboard_paste::pasted_image_format;
 use crate::history_cell;
+use crate::tui::FrameRequester;
 use crate::ui_consts::LIVE_PREFIX_COLS;
 use codex_chatgpt::connectors;
 use codex_chatgpt::connectors::AppInfo;
@@ -169,9 +214,17 @@ use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::ops::Range;
 use std::path::PathBuf;
+use std::sync::Arc;
+#[cfg(not(target_os = "linux"))]
+use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
+#[cfg(not(target_os = "linux"))]
+use std::thread;
 use std::time::Duration;
 use std::time::Instant;
-
+#[cfg(not(target_os = "linux"))]
+use tokio::runtime::Handle;
 /// If the pasted content exceeds this number of characters, replace it with a
 /// placeholder in the UI.
 const LARGE_PASTE_CHAR_THRESHOLD: usize = 1000;
@@ -251,6 +304,35 @@ impl ChatComposerConfig {
         }
     }
 }
+
+#[derive(Default)]
+struct VoiceState {
+    transcription_enabled: bool,
+    // Spacebar hold-to-talk state.
+    space_hold_started_at: Option<Instant>,
+    space_hold_element_id: Option<String>,
+    space_hold_trigger: Option<Arc<AtomicBool>>,
+    key_release_supported: bool,
+    space_hold_repeat_seen: bool,
+    #[cfg(not(target_os = "linux"))]
+    voice: Option<crate::voice::VoiceCapture>,
+    #[cfg(not(target_os = "linux"))]
+    recording_placeholder_id: Option<String>,
+    #[cfg(not(target_os = "linux"))]
+    space_recording_started_at: Option<Instant>,
+    #[cfg(not(target_os = "linux"))]
+    space_recording_last_repeat_at: Option<Instant>,
+}
+
+impl VoiceState {
+    fn new(key_release_supported: bool) -> Self {
+        Self {
+            key_release_supported,
+            ..Default::default()
+        }
+    }
+}
+
 pub(crate) struct ChatComposer {
     textarea: TextArea,
     textarea_state: RefCell<TextAreaState>,
@@ -266,9 +348,14 @@ pub(crate) struct ChatComposer {
     pending_pastes: Vec<(String, String)>,
     large_paste_counters: HashMap<usize, usize>,
     has_focus: bool,
-    /// Invariant: attached images are labeled `[Image #1]..[Image #N]` in vec order.
+    frame_requester: Option<FrameRequester>,
+    /// Invariant: attached images are labeled in vec order as
+    /// `[Image #M+1]..[Image #N]`, where `M` is the number of remote images.
     attached_images: Vec<AttachedImage>,
     placeholder_text: String,
+    voice_state: VoiceState,
+    // Spinner control flags keyed by placeholder id; set to true to stop.
+    spinner_stop_flags: HashMap<String, Arc<AtomicBool>>,
     is_task_running: bool,
     /// When false, the composer is temporarily read-only (e.g. during sandbox setup).
     input_enabled: bool,
@@ -280,13 +367,21 @@ pub(crate) struct ChatComposer {
     custom_prompts: Vec<CustomPrompt>,
     footer_mode: FooterMode,
     footer_hint_override: Option<Vec<(String, String)>>,
+    remote_image_urls: Vec<String>,
+    /// Tracks keyboard selection for the remote-image rows so Up/Down + Delete/Backspace
+    /// can highlight and remove remote attachments from the composer UI.
+    selected_remote_image_index: Option<usize>,
     footer_flash: Option<FooterFlash>,
     context_window_percent: Option<i64>,
+    // Monotonically increasing identifier for textarea elements we insert.
+    #[cfg(not(target_os = "linux"))]
+    next_element_id: u64,
     context_window_used_tokens: Option<i64>,
     skills: Option<Vec<SkillMetadata>>,
     connectors_snapshot: Option<ConnectorsSnapshot>,
     dismissed_mention_popup_token: Option<String>,
-    mention_paths: HashMap<String, String>,
+    mention_bindings: HashMap<u64, ComposerMentionBinding>,
+    recent_submission_mention_bindings: Vec<MentionBinding>,
     /// When enabled, `Enter` submits immediately and `Tab` requests queuing behavior.
     steer_enabled: bool,
     collaboration_modes_enabled: bool,
@@ -294,13 +389,22 @@ pub(crate) struct ChatComposer {
     collaboration_mode_indicator: Option<CollaborationModeIndicator>,
     connectors_enabled: bool,
     personality_command_enabled: bool,
+    realtime_conversation_enabled: bool,
     windows_degraded_sandbox_active: bool,
+    status_line_value: Option<Line<'static>>,
+    status_line_enabled: bool,
 }
 
 #[derive(Clone, Debug)]
 struct FooterFlash {
     line: Line<'static>,
     expires_at: Instant,
+}
+
+#[derive(Clone, Debug)]
+struct ComposerMentionBinding {
+    mention: String,
+    path: String,
 }
 
 /// Popup state – at most one can be visible at any time.
@@ -360,8 +464,11 @@ impl ChatComposer {
             pending_pastes: Vec::new(),
             large_paste_counters: HashMap::new(),
             has_focus: has_input_focus,
+            frame_requester: None,
             attached_images: Vec::new(),
             placeholder_text,
+            voice_state: VoiceState::new(enhanced_keys_supported),
+            spinner_stop_flags: HashMap::new(),
             is_task_running: false,
             input_enabled: true,
             input_disabled_placeholder: None,
@@ -370,24 +477,43 @@ impl ChatComposer {
             custom_prompts: Vec::new(),
             footer_mode: FooterMode::ComposerEmpty,
             footer_hint_override: None,
+            remote_image_urls: Vec::new(),
+            selected_remote_image_index: None,
             footer_flash: None,
             context_window_percent: None,
+            #[cfg(not(target_os = "linux"))]
+            next_element_id: 0,
             context_window_used_tokens: None,
             skills: None,
             connectors_snapshot: None,
             dismissed_mention_popup_token: None,
-            mention_paths: HashMap::new(),
+            mention_bindings: HashMap::new(),
+            recent_submission_mention_bindings: Vec::new(),
             steer_enabled: false,
             collaboration_modes_enabled: false,
             config,
             collaboration_mode_indicator: None,
             connectors_enabled: false,
             personality_command_enabled: false,
+            realtime_conversation_enabled: false,
             windows_degraded_sandbox_active: false,
+            status_line_value: None,
+            status_line_enabled: false,
         };
         // Apply configuration via the setter to keep side-effects centralized.
         this.set_disable_paste_burst(disable_paste_burst);
         this
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn next_id(&mut self) -> String {
+        let id = self.next_element_id;
+        self.next_element_id = self.next_element_id.wrapping_add(1);
+        id.to_string()
+    }
+
+    pub(crate) fn set_frame_requester(&mut self, frame_requester: FrameRequester) {
+        self.frame_requester = Some(frame_requester);
     }
 
     pub fn set_skill_mentions(&mut self, skills: Option<Vec<SkillMetadata>>) {
@@ -404,16 +530,31 @@ impl ChatComposer {
 
     pub fn set_connector_mentions(&mut self, connectors_snapshot: Option<ConnectorsSnapshot>) {
         self.connectors_snapshot = connectors_snapshot;
+        self.sync_popups();
     }
 
-    pub(crate) fn take_mention_paths(&mut self) -> HashMap<String, String> {
-        std::mem::take(&mut self.mention_paths)
+    pub(crate) fn take_mention_bindings(&mut self) -> Vec<MentionBinding> {
+        let elements = self.current_mention_elements();
+        let mut ordered = Vec::new();
+        for (id, mention) in elements {
+            if let Some(binding) = self.mention_bindings.remove(&id)
+                && binding.mention == mention
+            {
+                ordered.push(MentionBinding {
+                    mention: binding.mention,
+                    path: binding.path,
+                });
+            }
+        }
+        self.mention_bindings.clear();
+        ordered
     }
 
     /// Enables or disables "Steer" behavior for submission keys.
     ///
     /// When steer is enabled, `Enter` produces [`InputResult::Submitted`] (send immediately) and
-    /// `Tab` produces [`InputResult::Queued`] (eligible to queue if a task is running).
+    /// `Tab` produces [`InputResult::Queued`] when a task is running; otherwise it submits
+    /// immediately. `Tab` does not submit when the input is a `!` shell command.
     /// When steer is disabled, `Enter` produces [`InputResult::Queued`], preserving the default
     /// "queue while a task is running" behavior.
     pub fn set_steer_enabled(&mut self, enabled: bool) {
@@ -438,6 +579,27 @@ impl ChatComposer {
     pub fn set_personality_command_enabled(&mut self, enabled: bool) {
         self.personality_command_enabled = enabled;
     }
+
+    pub fn set_realtime_conversation_enabled(&mut self, enabled: bool) {
+        self.realtime_conversation_enabled = enabled;
+    }
+
+    pub fn set_voice_transcription_enabled(&mut self, enabled: bool) {
+        self.voice_state.transcription_enabled = enabled;
+        if !enabled {
+            self.voice_state.space_hold_started_at = None;
+            if let Some(id) = self.voice_state.space_hold_element_id.take() {
+                let _ = self.textarea.replace_element_by_id(&id, " ");
+            }
+            self.voice_state.space_hold_trigger = None;
+            self.voice_state.space_hold_repeat_seen = false;
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn voice_transcription_enabled(&self) -> bool {
+        self.voice_state.transcription_enabled && cfg!(not(target_os = "linux"))
+    }
     /// Centralized feature gating keeps config checks out of call sites.
     fn popups_enabled(&self) -> bool {
         self.config.popups_enabled
@@ -454,11 +616,11 @@ impl ChatComposer {
     pub fn set_windows_degraded_sandbox_active(&mut self, enabled: bool) {
         self.windows_degraded_sandbox_active = enabled;
     }
-    fn layout_areas(&self, area: Rect) -> [Rect; 3] {
+    fn layout_areas(&self, area: Rect) -> [Rect; 4] {
         let footer_props = self.footer_props();
         let footer_hint_height = self
             .custom_footer_height()
-            .unwrap_or_else(|| footer_height(footer_props));
+            .unwrap_or_else(|| footer_height(&footer_props));
         let footer_spacing = Self::footer_spacing(footer_hint_height);
         let footer_total_height = footer_hint_height + footer_spacing;
         let popup_constraint = match &self.active_popup {
@@ -473,8 +635,24 @@ impl ChatComposer {
         };
         let [composer_rect, popup_rect] =
             Layout::vertical([Constraint::Min(3), popup_constraint]).areas(area);
-        let textarea_rect = composer_rect.inset(Insets::tlbr(1, LIVE_PREFIX_COLS, 1, 1));
-        [composer_rect, textarea_rect, popup_rect]
+        let mut textarea_rect = composer_rect.inset(Insets::tlbr(1, LIVE_PREFIX_COLS, 1, 1));
+        let remote_images_height = self
+            .remote_images_lines(textarea_rect.width)
+            .len()
+            .try_into()
+            .unwrap_or(u16::MAX)
+            .min(textarea_rect.height.saturating_sub(1));
+        let remote_images_separator = u16::from(remote_images_height > 0);
+        let consumed = remote_images_height.saturating_add(remote_images_separator);
+        let remote_images_rect = Rect {
+            x: textarea_rect.x,
+            y: textarea_rect.y,
+            width: textarea_rect.width,
+            height: remote_images_height,
+        };
+        textarea_rect.y = textarea_rect.y.saturating_add(consumed);
+        textarea_rect.height = textarea_rect.height.saturating_sub(consumed);
+        [composer_rect, remote_images_rect, textarea_rect, popup_rect]
     }
 
     fn footer_spacing(footer_hint_height: u16) -> u16 {
@@ -485,9 +663,25 @@ impl ChatComposer {
         }
     }
 
-    /// Returns true if the composer currently contains no user input.
+    pub fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
+        if !self.input_enabled {
+            return None;
+        }
+
+        // Hide the cursor while recording voice input.
+        #[cfg(not(target_os = "linux"))]
+        if self.voice_state.voice.is_some() {
+            return None;
+        }
+        let [_, _, textarea_rect, _] = self.layout_areas(area);
+        let state = *self.textarea_state.borrow();
+        self.textarea.cursor_pos_with_state(textarea_rect, state)
+    }
+    /// Returns true if the composer currently contains no user-entered input.
     pub(crate) fn is_empty(&self) -> bool {
         self.textarea.is_empty()
+            && self.attached_images.is_empty()
+            && self.remote_image_urls.is_empty()
     }
 
     /// Record the history metadata advertised by `SessionConfiguredEvent` so
@@ -496,9 +690,12 @@ impl ChatComposer {
         self.history.set_metadata(log_id, entry_count);
     }
 
-    /// Integrate an asynchronous response to an on-demand history lookup. If
-    /// the entry is present and the offset matches the current cursor we
-    /// immediately populate the textarea.
+    /// Integrate an asynchronous response to an on-demand history lookup.
+    ///
+    /// If the entry is present and the offset still matches the active history cursor, the
+    /// composer rehydrates the entry immediately. This path intentionally routes through
+    /// [`Self::apply_history_entry`] so cursor placement remains aligned with keyboard history
+    /// recall semantics.
     pub(crate) fn on_history_entry_response(
         &mut self,
         log_id: u64,
@@ -510,7 +707,7 @@ impl ChatComposer {
         };
         // Persistent ↑/↓ history is text-only (backwards-compatible and avoids persisting
         // attachments), but local in-session ↑/↓ history can rehydrate elements and image paths.
-        self.set_text_content(entry.text, entry.text_elements, entry.local_image_paths);
+        self.apply_history_entry(entry);
         true
     }
 
@@ -533,6 +730,10 @@ impl ChatComposer {
     /// In all cases, clears any paste-burst Enter suppression state so a real paste cannot affect
     /// the next user Enter key, then syncs popup state.
     pub fn handle_paste(&mut self, pasted: String) -> bool {
+        #[cfg(not(target_os = "linux"))]
+        if self.voice_state.voice.is_some() {
+            return false;
+        }
         let pasted = pasted.replace("\r\n", "\n").replace('\r', "\n");
         let char_count = pasted.chars().count();
         if char_count > LARGE_PASTE_CHAR_THRESHOLD {
@@ -545,9 +746,8 @@ impl ChatComposer {
         {
             self.textarea.insert_str(" ");
         } else {
-            self.textarea.insert_str(&pasted);
+            self.insert_str(&pasted);
         }
-        // Explicit paste events should not trigger Enter suppression.
         self.paste_burst.clear_after_explicit_paste();
         self.sync_popups();
         true
@@ -608,8 +808,8 @@ impl ChatComposer {
     /// Replace the composer content with text from an external editor.
     /// Clears pending paste placeholders and keeps only attachments whose
     /// placeholder labels still appear in the new text. Image placeholders
-    /// are renumbered to `[Image #1]..[Image #N]`. Cursor is placed at the end
-    /// after rebuilding elements.
+    /// are renumbered to `[Image #M+1]..[Image #N]` (where `M` is the number of
+    /// remote images). Cursor is placed at the end after rebuilding elements.
     pub(crate) fn apply_external_edit(&mut self, text: String) {
         self.pending_pastes.clear();
 
@@ -671,7 +871,8 @@ impl ChatComposer {
             self.textarea.insert_str(&text[idx..]);
         }
 
-        // Keep image placeholders normalized to [Image #1].. in attachment order.
+        // Keep local image placeholders normalized in attachment order after the
+        // remote-image prefix.
         self.relabel_attached_images_and_update_placeholders();
         self.textarea.set_cursor(self.textarea.text().len());
         self.sync_popups();
@@ -705,6 +906,25 @@ impl ChatComposer {
         self.footer_hint_override = items;
     }
 
+    pub(crate) fn set_remote_image_urls(&mut self, urls: Vec<String>) {
+        self.remote_image_urls = urls;
+        self.selected_remote_image_index = None;
+        self.relabel_attached_images_and_update_placeholders();
+        self.sync_popups();
+    }
+
+    pub(crate) fn remote_image_urls(&self) -> Vec<String> {
+        self.remote_image_urls.clone()
+    }
+
+    pub(crate) fn take_remote_image_urls(&mut self) -> Vec<String> {
+        let urls = std::mem::take(&mut self.remote_image_urls);
+        self.selected_remote_image_index = None;
+        self.relabel_attached_images_and_update_placeholders();
+        self.sync_popups();
+        urls
+    }
+
     #[cfg(test)]
     pub(crate) fn show_footer_flash(&mut self, line: Line<'static>, duration: Duration) {
         let expires_at = Instant::now()
@@ -724,56 +944,60 @@ impl ChatComposer {
     /// This is the "fresh draft" path: it clears pending paste payloads and
     /// mention link targets. Callers restoring a previously submitted draft
     /// that must keep `$name -> path` resolution should use
-    /// [`Self::set_text_content_with_mention_paths`] instead.
+    /// [`Self::set_text_content_with_mention_bindings`] instead.
     pub(crate) fn set_text_content(
         &mut self,
         text: String,
         text_elements: Vec<TextElement>,
         local_image_paths: Vec<PathBuf>,
     ) {
-        self.set_text_content_with_mention_paths(
+        self.set_text_content_with_mention_bindings(
             text,
             text_elements,
             local_image_paths,
-            HashMap::new(),
+            Vec::new(),
         );
     }
 
     /// Replace the entire composer content while restoring mention link targets.
     ///
     /// Mention popup insertion stores both visible text (for example `$file`)
-    /// and hidden `mention_paths` used to resolve the canonical target during
+    /// and hidden mention bindings used to resolve the canonical target during
     /// submission. Use this method when restoring an interrupted or blocked
     /// draft; if callers restore only text and images, mentions can appear
     /// intact to users while resolving to the wrong target or dropping on
     /// retry.
-    pub(crate) fn set_text_content_with_mention_paths(
+    ///
+    /// This helper intentionally places the cursor at the start of the restored text. Callers
+    /// that need end-of-line restore behavior (for example shell-style history recall) should call
+    /// [`Self::move_cursor_to_end`] after this method.
+    pub(crate) fn set_text_content_with_mention_bindings(
         &mut self,
         text: String,
         text_elements: Vec<TextElement>,
         local_image_paths: Vec<PathBuf>,
-        mention_paths: HashMap<String, String>,
+        mention_bindings: Vec<MentionBinding>,
     ) {
+        #[cfg(not(target_os = "linux"))]
+        self.stop_all_transcription_spinners();
+
         // Clear any existing content, placeholders, and attachments first.
         self.textarea.set_text_clearing_elements("");
         self.pending_pastes.clear();
         self.attached_images.clear();
-        self.mention_paths = mention_paths;
+        self.mention_bindings.clear();
 
         self.textarea.set_text_with_elements(&text, &text_elements);
 
-        let image_placeholders: HashSet<String> = text_elements
-            .iter()
-            .filter_map(|elem| elem.placeholder(&text).map(str::to_string))
-            .collect();
         for (idx, path) in local_image_paths.into_iter().enumerate() {
-            let placeholder = local_image_label_text(idx + 1);
-            if image_placeholders.contains(&placeholder) {
-                self.attached_images
-                    .push(AttachedImage { placeholder, path });
-            }
+            let placeholder = local_image_label_text(self.remote_image_urls.len() + idx + 1);
+            self.attached_images
+                .push(AttachedImage { placeholder, path });
         }
 
+        self.bind_mentions_from_snapshot(mention_bindings);
+        self.relabel_attached_images_and_update_placeholders();
+        self.selected_remote_image_index = None;
         self.textarea.set_cursor(0);
         self.sync_popups();
     }
@@ -800,12 +1024,20 @@ impl ChatComposer {
             .iter()
             .map(|img| img.path.clone())
             .collect();
+        let pending_pastes = std::mem::take(&mut self.pending_pastes);
+        let remote_image_urls = self.remote_image_urls.clone();
+        let mention_bindings = self.snapshot_mention_bindings();
         self.set_text_content(String::new(), Vec::new(), Vec::new());
+        self.remote_image_urls.clear();
+        self.selected_remote_image_index = None;
         self.history.reset_navigation();
         self.history.record_local_submission(HistoryEntry {
             text: previous.clone(),
             text_elements,
             local_image_paths,
+            remote_image_urls,
+            mention_bindings,
+            pending_pastes,
         });
         Some(previous)
     }
@@ -813,6 +1045,33 @@ impl ChatComposer {
     /// Get the current composer text.
     pub(crate) fn current_text(&self) -> String {
         self.textarea.text().to_string()
+    }
+
+    /// Rehydrate a history entry into the composer with shell-like cursor placement.
+    ///
+    /// This path restores text, elements, images, mention bindings, and pending paste payloads,
+    /// then moves the cursor to end-of-line. If a caller reused
+    /// [`Self::set_text_content_with_mention_bindings`] directly for history recall and forgot the
+    /// final cursor move, repeated Up/Down would stop navigating history because cursor-gating
+    /// treats interior positions as normal editing mode.
+    fn apply_history_entry(&mut self, entry: HistoryEntry) {
+        let HistoryEntry {
+            text,
+            text_elements,
+            local_image_paths,
+            remote_image_urls,
+            mention_bindings,
+            pending_pastes,
+        } = entry;
+        self.set_remote_image_urls(remote_image_urls);
+        self.set_text_content_with_mention_bindings(
+            text,
+            text_elements,
+            local_image_paths,
+            mention_bindings,
+        );
+        self.set_pending_pastes(pending_pastes);
+        self.move_cursor_to_end();
     }
 
     pub(crate) fn text_elements(&self) -> Vec<TextElement> {
@@ -837,6 +1096,14 @@ impl ChatComposer {
             .collect()
     }
 
+    pub(crate) fn mention_bindings(&self) -> Vec<MentionBinding> {
+        self.snapshot_mention_bindings()
+    }
+
+    pub(crate) fn take_recent_submission_mention_bindings(&mut self) -> Vec<MentionBinding> {
+        std::mem::take(&mut self.recent_submission_mention_bindings)
+    }
+
     fn prune_attached_images_for_submission(&mut self, text: &str, text_elements: &[TextElement]) {
         if self.attached_images.is_empty() {
             return;
@@ -851,7 +1118,7 @@ impl ChatComposer {
 
     /// Insert an attachment placeholder and track it for the next submission.
     pub fn attach_image(&mut self, path: PathBuf) {
-        let image_number = self.attached_images.len() + 1;
+        let image_number = self.remote_image_urls.len() + self.attached_images.len() + 1;
         let placeholder = local_image_label_text(image_number);
         // Insert as an element to match large paste placeholder behavior:
         // styled distinctly and treated atomically for cursor/mutations.
@@ -972,8 +1239,46 @@ impl ChatComposer {
 
     /// Handle a key event coming from the main UI.
     pub fn handle_key_event(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
+        if matches!(key_event.kind, KeyEventKind::Release) {
+            self.voice_state.key_release_supported = true;
+        }
+
+        // Timer-based conversion is handled in the pre-draw tick.
+        // If recording, stop on Space release when supported. On terminals without key-release
+        // events, Space repeat events are handled as "still held" and stop is driven by timeout
+        // in `process_space_hold_trigger`.
+        if let Some(result) = self.handle_key_event_while_recording(key_event) {
+            return result;
+        }
+
         if !self.input_enabled {
             return (InputResult::None, false);
+        }
+
+        // Outside of recording, ignore all key releases globally except for Space,
+        // which is handled explicitly for hold-to-talk behavior below.
+        if matches!(key_event.kind, KeyEventKind::Release)
+            && !matches!(key_event.code, KeyCode::Char(' '))
+        {
+            return (InputResult::None, false);
+        }
+
+        // If a space hold is pending and another non-space key is pressed, cancel the hold
+        // and convert the element into a plain space.
+        if self.voice_state.space_hold_started_at.is_some()
+            && !matches!(key_event.code, KeyCode::Char(' '))
+        {
+            self.voice_state.space_hold_started_at = None;
+            if let Some(id) = self.voice_state.space_hold_element_id.take() {
+                let _ = self.textarea.replace_element_by_id(&id, " ");
+            }
+            self.voice_state.space_hold_trigger = None;
+            self.voice_state.space_hold_repeat_seen = false;
+            // fall through to normal handling of this other key
+        }
+
+        if let Some(result) = self.handle_voice_space_key_event(&key_event) {
+            return result;
         }
 
         let result = match &mut self.active_popup {
@@ -982,10 +1287,8 @@ impl ChatComposer {
             ActivePopup::Skill(_) => self.handle_key_event_with_skill_popup(key_event),
             ActivePopup::None => self.handle_key_event_without_popup(key_event),
         };
-
         // Update (or hide/show) popup after processing the key.
         self.sync_popups();
-
         result
     }
 
@@ -1344,7 +1647,11 @@ impl ChatComposer {
             } => {
                 let Some(sel) = popup.selected_match() else {
                     self.active_popup = ActivePopup::None;
-                    return (InputResult::None, true);
+                    return if key_event.code == KeyCode::Enter {
+                        self.handle_key_event_without_popup(key_event)
+                    } else {
+                        (InputResult::None, true)
+                    };
                 };
 
                 let sel_path = sel.to_string_lossy().to_string();
@@ -1395,7 +1702,6 @@ impl ChatComposer {
                     // Non-image: inserting file path.
                     self.insert_selected_path(&sel_path);
                 }
-                // No selection: treat Enter as closing the popup/session.
                 self.active_popup = ActivePopup::None;
                 (InputResult::None, true)
             }
@@ -1468,10 +1774,7 @@ impl ChatComposer {
 
         if close_popup {
             if let Some((insert_text, path)) = selected_mention {
-                if let Some(path) = path.as_deref() {
-                    self.record_mention_path(&insert_text, path);
-                }
-                self.insert_selected_mention(&insert_text);
+                self.insert_selected_mention(&insert_text, path.as_deref());
             }
             self.active_popup = ActivePopup::None;
         }
@@ -1481,7 +1784,11 @@ impl ChatComposer {
 
     fn is_image_path(path: &str) -> bool {
         let lower = path.to_ascii_lowercase();
-        lower.ends_with(".png") || lower.ends_with(".jpg") || lower.ends_with(".jpeg")
+        lower.ends_with(".png")
+            || lower.ends_with(".jpg")
+            || lower.ends_with(".jpeg")
+            || lower.ends_with(".gif")
+            || lower.ends_with(".webp")
     }
 
     fn trim_text_elements(
@@ -1614,6 +1921,10 @@ impl ChatComposer {
     /// - The cursor may be anywhere *inside* the token (including on the
     ///   leading prefix). It does **not** need to be at the end of the line.
     /// - A token is delimited by ASCII whitespace (space, tab, newline).
+    /// - If the cursor is on `prefix` inside an existing token (for example the
+    ///   second `@` in `@scope/pkg@latest`), keep treating the surrounding
+    ///   whitespace-delimited token as the active token rather than starting a
+    ///   new token at that nested prefix.
     /// - If the token under the cursor starts with `prefix`, that token is
     ///   returned without the leading prefix. When `allow_empty` is true, a
     ///   lone prefix character yields `Some(String::new())` to surface hints.
@@ -1707,7 +2018,15 @@ impl ChatComposer {
             return left_prefixed;
         }
         if after_cursor.starts_with(prefix) {
-            return right_prefixed.or(left_prefixed);
+            let prefix_starts_token = before_cursor
+                .chars()
+                .next_back()
+                .is_none_or(char::is_whitespace);
+            return if prefix_starts_token {
+                right_prefixed.or(left_prefixed)
+            } else {
+                left_prefixed
+            };
         }
         left_prefixed.or(right_prefixed)
     }
@@ -1778,7 +2097,7 @@ impl ChatComposer {
         self.textarea.set_cursor(new_cursor);
     }
 
-    fn insert_selected_mention(&mut self, insert_text: &str) {
+    fn insert_selected_mention(&mut self, insert_text: &str, path: Option<&str>) {
         let cursor_offset = self.textarea.cursor();
         let text = self.textarea.text();
         let safe_cursor = Self::clamp_to_char_boundary(text, cursor_offset);
@@ -1799,26 +2118,28 @@ impl ChatComposer {
             .unwrap_or(after_cursor.len());
         let end_idx = safe_cursor + end_rel_idx;
 
-        let inserted = insert_text.to_string();
+        // Remove the active token and insert the selected mention as an atomic element.
+        self.textarea.replace_range(start_idx..end_idx, "");
+        self.textarea.set_cursor(start_idx);
+        let id = self.textarea.insert_element(insert_text);
 
-        let mut new_text =
-            String::with_capacity(text.len() - (end_idx - start_idx) + inserted.len() + 1);
-        new_text.push_str(&text[..start_idx]);
-        new_text.push_str(&inserted);
-        new_text.push(' ');
-        new_text.push_str(&text[end_idx..]);
+        if let (Some(path), Some(mention)) =
+            (path, Self::mention_name_from_insert_text(insert_text))
+        {
+            self.mention_bindings.insert(
+                id,
+                ComposerMentionBinding {
+                    mention,
+                    path: path.to_string(),
+                },
+            );
+        }
 
-        // Mention insertion rebuilds plain text, so drop existing elements.
-        self.textarea.set_text_clearing_elements(&new_text);
-        let new_cursor = start_idx.saturating_add(inserted.len()).saturating_add(1);
+        self.textarea.insert_str(" ");
+        let new_cursor = start_idx
+            .saturating_add(insert_text.len())
+            .saturating_add(1);
         self.textarea.set_cursor(new_cursor);
-    }
-
-    fn record_mention_path(&mut self, insert_text: &str, path: &str) {
-        let Some(name) = Self::mention_name_from_insert_text(insert_text) else {
-            return;
-        };
-        self.mention_paths.insert(name, path.to_string());
     }
 
     fn mention_name_from_insert_text(insert_text: &str) -> Option<String> {
@@ -1837,6 +2158,67 @@ impl ChatComposer {
         }
     }
 
+    fn current_mention_elements(&self) -> Vec<(u64, String)> {
+        self.textarea
+            .text_element_snapshots()
+            .into_iter()
+            .filter_map(|snapshot| {
+                Self::mention_name_from_insert_text(snapshot.text.as_str())
+                    .map(|mention| (snapshot.id, mention))
+            })
+            .collect()
+    }
+
+    fn snapshot_mention_bindings(&self) -> Vec<MentionBinding> {
+        let mut ordered = Vec::new();
+        for (id, mention) in self.current_mention_elements() {
+            if let Some(binding) = self.mention_bindings.get(&id)
+                && binding.mention == mention
+            {
+                ordered.push(MentionBinding {
+                    mention: binding.mention.clone(),
+                    path: binding.path.clone(),
+                });
+            }
+        }
+        ordered
+    }
+
+    fn bind_mentions_from_snapshot(&mut self, mention_bindings: Vec<MentionBinding>) {
+        self.mention_bindings.clear();
+        if mention_bindings.is_empty() {
+            return;
+        }
+
+        let text = self.textarea.text().to_string();
+        let mut scan_from = 0usize;
+        for binding in mention_bindings {
+            let token = format!("${}", binding.mention);
+            let Some(range) =
+                find_next_mention_token_range(text.as_str(), token.as_str(), scan_from)
+            else {
+                continue;
+            };
+
+            let id = if let Some(id) = self.textarea.add_element_range(range.clone()) {
+                Some(id)
+            } else {
+                self.textarea.element_id_for_exact_range(range.clone())
+            };
+
+            if let Some(id) = id {
+                self.mention_bindings.insert(
+                    id,
+                    ComposerMentionBinding {
+                        mention: binding.mention,
+                        path: binding.path,
+                    },
+                );
+                scan_from = range.end;
+            }
+        }
+    }
+
     /// Prepare text for submission/queuing. Returns None if submission should be suppressed.
     /// On success, clears pending paste payloads because placeholders have been expanded.
     ///
@@ -1848,6 +2230,7 @@ impl ChatComposer {
         let mut text = self.textarea.text().to_string();
         let original_input = text.clone();
         let original_text_elements = self.textarea.text_elements();
+        let original_mention_bindings = self.snapshot_mention_bindings();
         let original_local_image_paths = self
             .attached_images
             .iter()
@@ -1856,6 +2239,7 @@ impl ChatComposer {
         let original_pending_pastes = self.pending_pastes.clone();
         let mut text_elements = original_text_elements.clone();
         let input_starts_with_space = original_input.starts_with(' ');
+        self.recent_submission_mention_bindings.clear();
         self.textarea.set_text_clearing_elements("");
 
         if !self.pending_pastes.is_empty() {
@@ -1882,6 +2266,7 @@ impl ChatComposer {
                     self.collaboration_modes_enabled,
                     self.connectors_enabled,
                     self.personality_command_enabled,
+                    self.realtime_conversation_enabled,
                     self.windows_degraded_sandbox_active,
                 )
                 .is_some();
@@ -1901,10 +2286,11 @@ impl ChatComposer {
                     self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
                         history_cell::new_info_event(message, None),
                     )));
-                    self.set_text_content(
+                    self.set_text_content_with_mention_bindings(
                         original_input.clone(),
                         original_text_elements,
                         original_local_image_paths,
+                        original_mention_bindings,
                     );
                     self.pending_pastes.clone_from(&original_pending_pastes);
                     self.textarea.set_cursor(original_input.len());
@@ -1921,10 +2307,11 @@ impl ChatComposer {
                         self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
                             history_cell::new_error_event(err.user_message()),
                         )));
-                        self.set_text_content(
+                        self.set_text_content_with_mention_bindings(
                             original_input.clone(),
                             original_text_elements,
                             original_local_image_paths,
+                            original_mention_bindings,
                         );
                         self.pending_pastes.clone_from(&original_pending_pastes);
                         self.textarea.set_cursor(original_input.len());
@@ -1939,10 +2326,15 @@ impl ChatComposer {
         // Custom prompt expansion can remove or rewrite image placeholders, so prune any
         // attachments that no longer have a corresponding placeholder in the expanded text.
         self.prune_attached_images_for_submission(&text, &text_elements);
-        if text.is_empty() && self.attached_images.is_empty() {
+        if text.is_empty() && self.attached_images.is_empty() && self.remote_image_urls.is_empty() {
             return None;
         }
-        if record_history && (!text.is_empty() || !self.attached_images.is_empty()) {
+        self.recent_submission_mention_bindings = original_mention_bindings.clone();
+        if record_history
+            && (!text.is_empty()
+                || !self.attached_images.is_empty()
+                || !self.remote_image_urls.is_empty())
+        {
             let local_image_paths = self
                 .attached_images
                 .iter()
@@ -1952,6 +2344,9 @@ impl ChatComposer {
                 text: text.clone(),
                 text_elements: text_elements.clone(),
                 local_image_paths,
+                remote_image_urls: self.remote_image_urls.clone(),
+                mention_bindings: original_mention_bindings,
+                pending_pastes: Vec::new(),
             });
         }
         self.pending_pastes.clear();
@@ -2014,6 +2409,7 @@ impl ChatComposer {
 
         let original_input = self.textarea.text().to_string();
         let original_text_elements = self.textarea.text_elements();
+        let original_mention_bindings = self.snapshot_mention_bindings();
         let original_local_image_paths = self
             .attached_images
             .iter()
@@ -2045,10 +2441,11 @@ impl ChatComposer {
             }
         } else {
             // Restore text if submission was suppressed.
-            self.set_text_content(
+            self.set_text_content_with_mention_bindings(
                 original_input,
                 original_text_elements,
                 original_local_image_paths,
+                original_mention_bindings,
             );
             self.pending_pastes = original_pending_pastes;
             (InputResult::None, true)
@@ -2069,6 +2466,7 @@ impl ChatComposer {
                 self.collaboration_modes_enabled,
                 self.connectors_enabled,
                 self.personality_command_enabled,
+                self.realtime_conversation_enabled,
                 self.windows_degraded_sandbox_active,
             )
         {
@@ -2103,6 +2501,7 @@ impl ChatComposer {
             self.collaboration_modes_enabled,
             self.connectors_enabled,
             self.personality_command_enabled,
+            self.realtime_conversation_enabled,
             self.windows_degraded_sandbox_active,
         )?;
 
@@ -2188,8 +2587,95 @@ impl ChatComposer {
             .collect()
     }
 
+    fn remote_images_lines(&self, _width: u16) -> Vec<Line<'static>> {
+        self.remote_image_urls
+            .iter()
+            .enumerate()
+            .map(|(idx, _)| {
+                let label = local_image_label_text(idx + 1);
+                if self.selected_remote_image_index == Some(idx) {
+                    label.cyan().reversed().into()
+                } else {
+                    label.cyan().into()
+                }
+            })
+            .collect()
+    }
+
+    fn clear_remote_image_selection(&mut self) {
+        self.selected_remote_image_index = None;
+    }
+
+    fn remove_selected_remote_image(&mut self, selected_index: usize) {
+        if selected_index >= self.remote_image_urls.len() {
+            self.clear_remote_image_selection();
+            return;
+        }
+        self.remote_image_urls.remove(selected_index);
+        self.selected_remote_image_index = if self.remote_image_urls.is_empty() {
+            None
+        } else {
+            Some(selected_index.min(self.remote_image_urls.len() - 1))
+        };
+        self.relabel_attached_images_and_update_placeholders();
+        self.sync_popups();
+    }
+
+    fn handle_remote_image_selection_key(
+        &mut self,
+        key_event: &KeyEvent,
+    ) -> Option<(InputResult, bool)> {
+        if self.remote_image_urls.is_empty()
+            || key_event.modifiers != KeyModifiers::NONE
+            || key_event.kind != KeyEventKind::Press
+        {
+            return None;
+        }
+
+        match key_event.code {
+            KeyCode::Up => {
+                if let Some(selected) = self.selected_remote_image_index {
+                    self.selected_remote_image_index = Some(selected.saturating_sub(1));
+                    Some((InputResult::None, true))
+                } else if self.textarea.cursor() == 0 {
+                    self.selected_remote_image_index = Some(self.remote_image_urls.len() - 1);
+                    Some((InputResult::None, true))
+                } else {
+                    None
+                }
+            }
+            KeyCode::Down => {
+                if let Some(selected) = self.selected_remote_image_index {
+                    if selected + 1 < self.remote_image_urls.len() {
+                        self.selected_remote_image_index = Some(selected + 1);
+                    } else {
+                        self.clear_remote_image_selection();
+                    }
+                    Some((InputResult::None, true))
+                } else {
+                    None
+                }
+            }
+            KeyCode::Delete | KeyCode::Backspace => {
+                if let Some(selected) = self.selected_remote_image_index {
+                    self.remove_selected_remote_image(selected);
+                    Some((InputResult::None, true))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
     /// Handle key event when no popup is visible.
     fn handle_key_event_without_popup(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
+        if let Some((result, redraw)) = self.handle_remote_image_selection_key(&key_event) {
+            return (result, redraw);
+        }
+        if self.selected_remote_image_index.is_some() {
+            self.clear_remote_image_selection();
+        }
         if self.handle_shortcut_overlay_key(&key_event) {
             return (InputResult::None, true);
         }
@@ -2218,6 +2704,7 @@ impl ChatComposer {
             // -------------------------------------------------------------
             KeyEvent {
                 code: KeyCode::Up | KeyCode::Down,
+                kind: KeyEventKind::Press | KeyEventKind::Repeat,
                 ..
             }
             | KeyEvent {
@@ -2237,11 +2724,7 @@ impl ChatComposer {
                         _ => unreachable!(),
                     };
                     if let Some(entry) = replace_entry {
-                        self.set_text_content(
-                            entry.text,
-                            entry.text_elements,
-                            entry.local_image_paths,
-                        );
+                        self.apply_history_entry(entry);
                         return (InputResult::None, true);
                     }
                 }
@@ -2252,7 +2735,17 @@ impl ChatComposer {
                 modifiers: KeyModifiers::NONE,
                 kind: KeyEventKind::Press,
                 ..
-            } if self.is_task_running => self.handle_submission(true),
+            } if self.steer_enabled && !self.is_bang_shell_command() => {
+                self.handle_submission(self.is_task_running)
+            }
+            KeyEvent {
+                code: KeyCode::Tab,
+                modifiers: KeyModifiers::NONE,
+                kind: KeyEventKind::Press,
+                ..
+            } if self.is_task_running && !self.is_bang_shell_command() => {
+                self.handle_submission(true)
+            }
             KeyEvent {
                 code: KeyCode::Enter,
                 modifiers: KeyModifiers::NONE,
@@ -2263,6 +2756,140 @@ impl ChatComposer {
             }
             input => self.handle_input_basic(input),
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn handle_voice_space_key_event(
+        &mut self,
+        _key_event: &KeyEvent,
+    ) -> Option<(InputResult, bool)> {
+        None
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn handle_voice_space_key_event(
+        &mut self,
+        key_event: &KeyEvent,
+    ) -> Option<(InputResult, bool)> {
+        if !self.voice_transcription_enabled() || !matches!(key_event.code, KeyCode::Char(' ')) {
+            return None;
+        }
+        match key_event.kind {
+            KeyEventKind::Press => {
+                if self.paste_burst.is_active() {
+                    return None;
+                }
+
+                // If textarea is empty, start recording immediately without inserting a space.
+                if self.textarea.text().is_empty() {
+                    if self.start_recording_with_placeholder() {
+                        return Some((InputResult::None, true));
+                    }
+                    return None;
+                }
+
+                // If a hold is already pending, swallow further press events to
+                // avoid inserting multiple spaces and resetting the timer on key repeat.
+                if self.voice_state.space_hold_started_at.is_some() {
+                    if !self.voice_state.key_release_supported {
+                        self.voice_state.space_hold_repeat_seen = true;
+                    }
+                    return Some((InputResult::None, false));
+                }
+
+                // Insert a named element that renders as a space so we can later
+                // remove it on timeout or convert it to a plain space on release.
+                let elem_id = self.next_id();
+                self.textarea.insert_named_element(" ", elem_id.clone());
+
+                // Record pending hold metadata.
+                self.voice_state.space_hold_started_at = Some(Instant::now());
+                self.voice_state.space_hold_element_id = Some(elem_id);
+                self.voice_state.space_hold_repeat_seen = false;
+
+                // Spawn a delayed task to flip an atomic flag; we check it on next key event.
+                let flag = Arc::new(AtomicBool::new(false));
+                let frame = self.frame_requester.clone();
+                Self::schedule_space_hold_timer(flag.clone(), frame);
+                self.voice_state.space_hold_trigger = Some(flag);
+
+                Some((InputResult::None, true))
+            }
+            // If we see a repeat before release, handling occurs in the top-level pending block.
+            KeyEventKind::Repeat => {
+                // Swallow repeats while a hold is pending to avoid extra spaces.
+                if self.voice_state.space_hold_started_at.is_some() {
+                    if !self.voice_state.key_release_supported {
+                        self.voice_state.space_hold_repeat_seen = true;
+                    }
+                    return Some((InputResult::None, false));
+                }
+                // Fallback: if no pending hold, treat as normal input.
+                None
+            }
+            // Space release without pending (fallback): treat as normal input.
+            KeyEventKind::Release => {
+                // If a hold is pending, convert the element to a plain space and clear state.
+                self.voice_state.space_hold_started_at = None;
+                if let Some(id) = self.voice_state.space_hold_element_id.take() {
+                    let _ = self.textarea.replace_element_by_id(&id, " ");
+                }
+                self.voice_state.space_hold_trigger = None;
+                self.voice_state.space_hold_repeat_seen = false;
+                Some((InputResult::None, true))
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn handle_key_event_while_recording(
+        &mut self,
+        _key_event: KeyEvent,
+    ) -> Option<(InputResult, bool)> {
+        None
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn handle_key_event_while_recording(
+        &mut self,
+        key_event: KeyEvent,
+    ) -> Option<(InputResult, bool)> {
+        if self.voice_state.voice.is_some() {
+            let should_stop = if self.voice_state.key_release_supported {
+                match key_event.kind {
+                    KeyEventKind::Release => matches!(key_event.code, KeyCode::Char(' ')),
+                    KeyEventKind::Press | KeyEventKind::Repeat => {
+                        !matches!(key_event.code, KeyCode::Char(' '))
+                    }
+                }
+            } else {
+                match key_event.kind {
+                    KeyEventKind::Release => matches!(key_event.code, KeyCode::Char(' ')),
+                    KeyEventKind::Press | KeyEventKind::Repeat => {
+                        if matches!(key_event.code, KeyCode::Char(' ')) {
+                            self.voice_state.space_recording_last_repeat_at = Some(Instant::now());
+                            false
+                        } else {
+                            true
+                        }
+                    }
+                }
+            };
+
+            if should_stop {
+                let needs_redraw = self.stop_recording_and_start_transcription();
+                return Some((InputResult::None, needs_redraw));
+            }
+
+            // Swallow non-stopping keys while recording.
+            return Some((InputResult::None, false));
+        }
+
+        None
+    }
+
+    fn is_bang_shell_command(&self) -> bool {
+        self.textarea.text().trim_start().starts_with('!')
     }
 
     /// Applies any due `PasteBurst` flush at time `now`.
@@ -2280,8 +2907,6 @@ impl ChatComposer {
                 true
             }
             FlushResult::Typed(ch) => {
-                // Mirror insert_str() behavior so popups stay in sync when a
-                // pending fast char flushes as normal typed input.
                 self.textarea.insert_str(ch.to_string().as_str());
                 self.sync_popups();
                 true
@@ -2305,6 +2930,12 @@ impl ChatComposer {
     ///   otherwise `clear_window_after_non_char()` can leave buffered text waiting without a
     ///   timestamp to time out against.
     fn handle_input_basic(&mut self, input: KeyEvent) -> (InputResult, bool) {
+        // Ignore key releases here to avoid treating them as additional input
+        // (e.g., appending the same character twice via paste-burst logic).
+        if !matches!(input.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+            return (InputResult::None, false);
+        }
+
         self.handle_input_basic_with_time(input, Instant::now())
     }
 
@@ -2402,7 +3033,10 @@ impl ChatComposer {
         // For non-char inputs (or after flushing), handle normally.
         // Track element removals so we can drop any corresponding placeholders without scanning
         // the full text. (Placeholders are atomic elements; when deleted, the element disappears.)
-        let elements_before = if self.pending_pastes.is_empty() && self.attached_images.is_empty() {
+        let elements_before = if self.pending_pastes.is_empty()
+            && self.attached_images.is_empty()
+            && self.remote_image_urls.is_empty()
+        {
             None
         } else {
             Some(self.textarea.element_payloads())
@@ -2465,7 +3099,7 @@ impl ChatComposer {
 
     fn relabel_attached_images_and_update_placeholders(&mut self) {
         for idx in 0..self.attached_images.len() {
-            let expected = local_image_label_text(idx + 1);
+            let expected = local_image_label_text(self.remote_image_urls.len() + idx + 1);
             let current = self.attached_images[idx].placeholder.clone();
             if current == expected {
                 continue;
@@ -2524,6 +3158,8 @@ impl ChatComposer {
             is_wsl,
             context_window_percent: self.context_window_percent,
             context_window_used_tokens: self.context_window_used_tokens,
+            status_line_value: self.status_line_value.clone(),
+            status_line_enabled: self.status_line_enabled,
         }
     }
 
@@ -2565,7 +3201,7 @@ impl ChatComposer {
             .map(|items| if items.is_empty() { 0 } else { 1 })
     }
 
-    fn sync_popups(&mut self) {
+    pub(crate) fn sync_popups(&mut self) {
         self.sync_slash_command_elements();
         if !self.popups_enabled() {
             self.active_popup = ActivePopup::None;
@@ -2698,6 +3334,7 @@ impl ChatComposer {
             self.collaboration_modes_enabled,
             self.connectors_enabled,
             self.personality_command_enabled,
+            self.realtime_conversation_enabled,
             self.windows_degraded_sandbox_active,
         )
         .is_some();
@@ -2759,6 +3396,7 @@ impl ChatComposer {
             self.collaboration_modes_enabled,
             self.connectors_enabled,
             self.personality_command_enabled,
+            self.realtime_conversation_enabled,
             self.windows_degraded_sandbox_active,
         ) {
             return true;
@@ -2812,12 +3450,14 @@ impl ChatComposer {
                     let collaboration_modes_enabled = self.collaboration_modes_enabled;
                     let connectors_enabled = self.connectors_enabled;
                     let personality_command_enabled = self.personality_command_enabled;
+                    let realtime_conversation_enabled = self.realtime_conversation_enabled;
                     let mut command_popup = CommandPopup::new(
                         self.custom_prompts.clone(),
                         CommandPopupFlags {
                             collaboration_modes_enabled,
                             connectors_enabled,
                             personality_command_enabled,
+                            realtime_conversation_enabled,
                             windows_degraded_sandbox_active: self.windows_degraded_sandbox_active,
                         },
                     );
@@ -2919,7 +3559,9 @@ impl ChatComposer {
                     description,
                     insert_text: format!("${skill_name}"),
                     search_terms,
-                    path: Some(skill.path.to_string_lossy().into_owned()),
+                    path: Some(skill.path_to_skills_md.to_string_lossy().into_owned()),
+                    category_tag: (skill.scope == codex_protocol::protocol::SkillScope::Repo)
+                        .then(|| "[Repo]".to_string()),
                 });
             }
         }
@@ -2928,7 +3570,7 @@ impl ChatComposer {
             && let Some(snapshot) = self.connectors_snapshot.as_ref()
         {
             for connector in &snapshot.connectors {
-                if !connector.is_accessible {
+                if !connector.is_accessible || !connector.is_enabled {
                     continue;
                 }
                 let display_name = connectors::connector_display_label(connector);
@@ -2942,7 +3584,18 @@ impl ChatComposer {
                     insert_text: format!("${slug}"),
                     search_terms,
                     path: Some(format!("app://{connector_id}")),
+                    category_tag: Some("[App]".to_string()),
                 });
+            }
+        }
+
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for mention in &mentions {
+            *counts.entry(mention.insert_text.clone()).or_insert(0) += 1;
+        }
+        for mention in &mut mentions {
+            if counts.get(&mention.insert_text).copied().unwrap_or(0) <= 1 {
+                mention.category_tag = None;
             }
         }
 
@@ -2950,15 +3603,7 @@ impl ChatComposer {
     }
 
     fn connector_brief_description(connector: &AppInfo) -> String {
-        let status_label = if connector.is_accessible {
-            "Connected"
-        } else {
-            "Can be installed"
-        };
-        match Self::connector_description(connector) {
-            Some(description) => format!("{status_label} - {description}"),
-            None => status_label.to_string(),
-        }
+        Self::connector_description(connector).unwrap_or_default()
     }
 
     fn connector_description(connector: &AppInfo) -> Option<String> {
@@ -2972,6 +3617,11 @@ impl ChatComposer {
 
     fn set_has_focus(&mut self, has_focus: bool) {
         self.has_focus = has_focus;
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub(crate) fn is_recording(&self) -> bool {
+        self.voice_state.voice.is_some()
     }
 
     #[allow(dead_code)]
@@ -3006,6 +3656,329 @@ impl ChatComposer {
             self.footer_mode = reset_mode_after_activity(self.footer_mode);
         }
     }
+
+    #[cfg(not(target_os = "linux"))]
+    fn schedule_space_hold_timer(flag: Arc<AtomicBool>, frame: Option<FrameRequester>) {
+        const HOLD_DELAY_MILLIS: u64 = 500;
+        if let Ok(handle) = Handle::try_current() {
+            let flag_clone = flag;
+            let frame_clone = frame;
+            handle.spawn(async move {
+                tokio::time::sleep(Duration::from_millis(HOLD_DELAY_MILLIS)).await;
+                Self::complete_space_hold_timer(flag_clone, frame_clone);
+            });
+        } else {
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(HOLD_DELAY_MILLIS));
+                Self::complete_space_hold_timer(flag, frame);
+            });
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn complete_space_hold_timer(flag: Arc<AtomicBool>, frame: Option<FrameRequester>) {
+        flag.store(true, Ordering::Relaxed);
+        if let Some(frame) = frame {
+            frame.schedule_frame();
+        }
+    }
+
+    pub(crate) fn set_status_line(&mut self, status_line: Option<Line<'static>>) -> bool {
+        if self.status_line_value == status_line {
+            return false;
+        }
+        self.status_line_value = status_line;
+        true
+    }
+
+    pub(crate) fn set_status_line_enabled(&mut self, enabled: bool) -> bool {
+        if self.status_line_enabled == enabled {
+            return false;
+        }
+        self.status_line_enabled = enabled;
+        true
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+impl ChatComposer {
+    pub(crate) fn process_space_hold_trigger(&mut self) {
+        if self.voice_transcription_enabled()
+            && let Some(flag) = self.voice_state.space_hold_trigger.as_ref()
+            && flag.load(Ordering::Relaxed)
+            && self.voice_state.space_hold_started_at.is_some()
+            && self.voice_state.voice.is_none()
+        {
+            let _ = self.on_space_hold_timeout();
+        }
+
+        const SPACE_REPEAT_INITIAL_GRACE_MILLIS: u64 = 700;
+        const SPACE_REPEAT_IDLE_TIMEOUT_MILLIS: u64 = 250;
+        if !self.voice_state.key_release_supported && self.voice_state.voice.is_some() {
+            let now = Instant::now();
+            let initial_grace = Duration::from_millis(SPACE_REPEAT_INITIAL_GRACE_MILLIS);
+            let repeat_idle_timeout = Duration::from_millis(SPACE_REPEAT_IDLE_TIMEOUT_MILLIS);
+            if let Some(started_at) = self.voice_state.space_recording_started_at
+                && now.saturating_duration_since(started_at) >= initial_grace
+            {
+                let should_stop = match self.voice_state.space_recording_last_repeat_at {
+                    Some(last_repeat_at) => {
+                        now.saturating_duration_since(last_repeat_at) >= repeat_idle_timeout
+                    }
+                    None => true,
+                };
+                if should_stop {
+                    let _ = self.stop_recording_and_start_transcription();
+                }
+            }
+        }
+    }
+
+    /// Called when the 500ms space hold timeout elapses.
+    ///
+    /// On terminals without key-release reporting, this only transitions into voice capture if we
+    /// observed repeated Space events while pending; otherwise the keypress is treated as a typed
+    /// space.
+    pub(crate) fn on_space_hold_timeout(&mut self) -> bool {
+        if !self.voice_transcription_enabled() {
+            return false;
+        }
+        if self.voice_state.voice.is_some() {
+            return false;
+        }
+        if self.voice_state.space_hold_started_at.is_some() {
+            if !self.voice_state.key_release_supported && !self.voice_state.space_hold_repeat_seen {
+                if let Some(id) = self.voice_state.space_hold_element_id.take() {
+                    let _ = self.textarea.replace_element_by_id(&id, " ");
+                }
+                self.voice_state.space_hold_started_at = None;
+                self.voice_state.space_hold_trigger = None;
+                self.voice_state.space_hold_repeat_seen = false;
+                return true;
+            }
+
+            // Preserve the typed space when transitioning into voice capture, but
+            // avoid duplicating an existing trailing space. In either case,
+            // convert/remove the temporary named element before inserting the
+            // recording/transcribing placeholder.
+            if let Some(id) = self.voice_state.space_hold_element_id.take() {
+                let replacement = if self
+                    .textarea
+                    .named_element_range(&id)
+                    .and_then(|range| self.textarea.text()[..range.start].chars().next_back())
+                    .is_some_and(|ch| ch == ' ')
+                {
+                    ""
+                } else {
+                    " "
+                };
+                let _ = self.textarea.replace_element_by_id(&id, replacement);
+            }
+            // Clear pending state before starting capture
+            self.voice_state.space_hold_started_at = None;
+            self.voice_state.space_hold_trigger = None;
+            self.voice_state.space_hold_repeat_seen = false;
+
+            // Start voice capture
+            self.start_recording_with_placeholder()
+        } else {
+            false
+        }
+    }
+
+    /// Stop recording if active, update the placeholder, and spawn background transcription.
+    /// Returns true if the UI should redraw.
+    fn stop_recording_and_start_transcription(&mut self) -> bool {
+        let Some(vc) = self.voice_state.voice.take() else {
+            return false;
+        };
+        self.voice_state.space_recording_started_at = None;
+        self.voice_state.space_recording_last_repeat_at = None;
+        match vc.stop() {
+            Ok(audio) => {
+                // If the recording is too short, remove the placeholder immediately
+                // and skip the transcribing state entirely.
+                let total_samples = audio.data.len() as f32;
+                let samples_per_second = (audio.sample_rate as f32) * (audio.channels as f32);
+                let duration_seconds = if samples_per_second > 0.0 {
+                    total_samples / samples_per_second
+                } else {
+                    0.0
+                };
+                const MIN_DURATION_SECONDS: f32 = 1.0;
+                if duration_seconds < MIN_DURATION_SECONDS {
+                    if let Some(id) = self.voice_state.recording_placeholder_id.take() {
+                        let _ = self.textarea.replace_element_by_id(&id, "");
+                    }
+                    return true;
+                }
+
+                // Otherwise, update the placeholder to show a spinner and proceed.
+                let id = match self.voice_state.recording_placeholder_id.take() {
+                    Some(id) => id,
+                    None => self.next_id(),
+                };
+
+                let placeholder_range = self.textarea.named_element_range(&id);
+                let prompt_source = if let Some(range) = &placeholder_range {
+                    self.textarea.text()[..range.start].to_string()
+                } else {
+                    self.textarea.text().to_string()
+                };
+
+                // Initialize with first spinner frame immediately.
+                let _ = self.textarea.update_named_element_by_id(&id, "⠋");
+                // Spawn animated braille spinner until transcription finishes (or times out).
+                self.spawn_transcribing_spinner(id.clone());
+                let tx = self.app_event_tx.clone();
+                crate::voice::transcribe_async(id, audio, Some(prompt_source), tx);
+                true
+            }
+            Err(e) => {
+                tracing::error!("failed to stop voice capture: {e}");
+                true
+            }
+        }
+    }
+
+    /// Start voice capture and insert a placeholder element for the live meter.
+    /// Returns true if recording began and UI should redraw; false on failure.
+    fn start_recording_with_placeholder(&mut self) -> bool {
+        match crate::voice::VoiceCapture::start() {
+            Ok(vc) => {
+                self.voice_state.voice = Some(vc);
+                if self.voice_state.key_release_supported {
+                    self.voice_state.space_recording_started_at = None;
+                } else {
+                    self.voice_state.space_recording_started_at = Some(Instant::now());
+                }
+                self.voice_state.space_recording_last_repeat_at = None;
+                // Insert visible placeholder for the meter (no label)
+                let id = self.next_id();
+                self.textarea.insert_named_element("", id.clone());
+                self.voice_state.recording_placeholder_id = Some(id);
+                // Spawn metering animation
+                if let Some(v) = &self.voice_state.voice {
+                    let data = v.data_arc();
+                    let stop = v.stopped_flag();
+                    let sr = v.sample_rate();
+                    let ch = v.channels();
+                    let peak = v.last_peak_arc();
+                    if let Some(idref) = &self.voice_state.recording_placeholder_id {
+                        self.spawn_recording_meter(idref.clone(), sr, ch, data, peak, stop);
+                    }
+                }
+                true
+            }
+            Err(e) => {
+                self.voice_state.space_recording_started_at = None;
+                self.voice_state.space_recording_last_repeat_at = None;
+                tracing::error!("failed to start voice capture: {e}");
+                false
+            }
+        }
+    }
+
+    fn spawn_recording_meter(
+        &self,
+        id: String,
+        _sample_rate: u32,
+        _channels: u16,
+        _data: Arc<Mutex<Vec<i16>>>,
+        last_peak: Arc<std::sync::atomic::AtomicU16>,
+        stop: Arc<std::sync::atomic::AtomicBool>,
+    ) {
+        let tx = self.app_event_tx.clone();
+        let task = move || {
+            use std::time::Duration;
+            let mut meter = crate::voice::RecordingMeterState::new();
+            loop {
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                let text = meter.next_text(last_peak.load(Ordering::Relaxed));
+                tx.send(crate::app_event::AppEvent::UpdateRecordingMeter {
+                    id: id.clone(),
+                    text,
+                });
+
+                thread::sleep(Duration::from_millis(100));
+            }
+        };
+
+        if let Ok(handle) = Handle::try_current() {
+            handle.spawn_blocking(task);
+        } else {
+            thread::spawn(task);
+        }
+    }
+
+    fn spawn_transcribing_spinner(&mut self, id: String) {
+        self.stop_transcription_spinner(&id);
+        let stop = Arc::new(AtomicBool::new(false));
+        self.spinner_stop_flags
+            .insert(id.clone(), Arc::clone(&stop));
+
+        let tx = self.app_event_tx.clone();
+        let task = move || {
+            use std::time::Duration;
+            let frames: Vec<&'static str> = vec!["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+            let mut i: usize = 0;
+            // Safety stop after ~60s to avoid a runaway task if events are lost.
+            let max_ticks = 600usize; // 600 * 100ms = 60s
+            for _ in 0..max_ticks {
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                let text = frames[i % frames.len()].to_string();
+                tx.send(crate::app_event::AppEvent::UpdateRecordingMeter {
+                    id: id.clone(),
+                    text,
+                });
+                i = i.wrapping_add(1);
+                thread::sleep(Duration::from_millis(100));
+            }
+        };
+
+        if let Ok(handle) = Handle::try_current() {
+            handle.spawn_blocking(task);
+        } else {
+            thread::spawn(task);
+        }
+    }
+
+    fn stop_transcription_spinner(&mut self, id: &str) {
+        if let Some(flag) = self.spinner_stop_flags.remove(id) {
+            flag.store(true, Ordering::Relaxed);
+        }
+    }
+
+    fn stop_all_transcription_spinners(&mut self) {
+        for (_id, flag) in self.spinner_stop_flags.drain() {
+            flag.store(true, Ordering::Relaxed);
+        }
+    }
+
+    pub fn replace_transcription(&mut self, id: &str, text: &str) {
+        self.stop_transcription_spinner(id);
+        let _ = self.textarea.replace_element_by_id(id, text);
+    }
+
+    pub fn update_transcription_in_place(&mut self, id: &str, text: &str) -> bool {
+        self.textarea.update_named_element_by_id(id, text)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn insert_transcription_placeholder(&mut self, text: &str) -> String {
+        let id = self.next_id();
+        self.textarea.insert_named_element(text, id.clone());
+        id
+    }
+
+    pub fn remove_transcription_placeholder(&mut self, id: &str) {
+        self.stop_transcription_spinner(id);
+        let _ = self.textarea.replace_element_by_id(id, "");
+    }
 }
 
 fn skill_display_name(skill: &SkillMetadata) -> &str {
@@ -3031,13 +4004,49 @@ fn is_mention_name_char(byte: u8) -> bool {
     matches!(byte, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'-')
 }
 
+fn find_next_mention_token_range(text: &str, token: &str, from: usize) -> Option<Range<usize>> {
+    if token.is_empty() || from >= text.len() {
+        return None;
+    }
+    let bytes = text.as_bytes();
+    let token_bytes = token.as_bytes();
+    let mut index = from;
+
+    while index < bytes.len() {
+        if bytes[index] != b'$' {
+            index += 1;
+            continue;
+        }
+
+        let end = index.saturating_add(token_bytes.len());
+        if end > bytes.len() {
+            return None;
+        }
+        if &bytes[index..end] != token_bytes {
+            index += 1;
+            continue;
+        }
+
+        if bytes
+            .get(end)
+            .is_none_or(|byte| !is_mention_name_char(*byte))
+        {
+            return Some(index..end);
+        }
+
+        index = end;
+    }
+
+    None
+}
+
 impl Renderable for ChatComposer {
     fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
-        if !self.input_enabled {
+        if !self.input_enabled || self.selected_remote_image_index.is_some() {
             return None;
         }
 
-        let [_, textarea_rect, _] = self.layout_areas(area);
+        let [_, _, textarea_rect, _] = self.layout_areas(area);
         let state = *self.textarea_state.borrow();
         self.textarea.cursor_pos_with_state(textarea_rect, state)
     }
@@ -3046,12 +4055,20 @@ impl Renderable for ChatComposer {
         let footer_props = self.footer_props();
         let footer_hint_height = self
             .custom_footer_height()
-            .unwrap_or_else(|| footer_height(footer_props));
+            .unwrap_or_else(|| footer_height(&footer_props));
         let footer_spacing = Self::footer_spacing(footer_hint_height);
         let footer_total_height = footer_hint_height + footer_spacing;
         const COLS_WITH_MARGIN: u16 = LIVE_PREFIX_COLS + 1;
-        self.textarea
-            .desired_height(width.saturating_sub(COLS_WITH_MARGIN))
+        let inner_width = width.saturating_sub(COLS_WITH_MARGIN);
+        let remote_images_height: u16 = self
+            .remote_images_lines(inner_width)
+            .len()
+            .try_into()
+            .unwrap_or(u16::MAX);
+        let remote_images_separator = u16::from(remote_images_height > 0);
+        self.textarea.desired_height(inner_width)
+            + remote_images_height
+            + remote_images_separator
             + 2
             + match &self.active_popup {
                 ActivePopup::None => footer_total_height,
@@ -3068,7 +4085,8 @@ impl Renderable for ChatComposer {
 
 impl ChatComposer {
     pub(crate) fn render_with_mask(&self, area: Rect, buf: &mut Buffer, mask_char: Option<char>) {
-        let [composer_rect, textarea_rect, popup_rect] = self.layout_areas(area);
+        let [composer_rect, remote_images_rect, textarea_rect, popup_rect] =
+            self.layout_areas(area);
         match &self.active_popup {
             ActivePopup::Command(popup) => {
                 popup.render_ref(popup_rect, buf);
@@ -3099,14 +4117,9 @@ impl ChatComposer {
                     | FooterMode::ShortcutOverlay
                     | FooterMode::EscHint => false,
                 };
-                let context_line = context_window_line(
-                    footer_props.context_window_percent,
-                    footer_props.context_window_used_tokens,
-                );
-                let context_width = context_line.width() as u16;
                 let custom_height = self.custom_footer_height();
                 let footer_hint_height =
-                    custom_height.unwrap_or_else(|| footer_height(footer_props));
+                    custom_height.unwrap_or_else(|| footer_height(&footer_props));
                 let footer_spacing = Self::footer_spacing(footer_hint_height);
                 let hint_rect = if footer_spacing > 0 && footer_hint_height > 0 {
                     let [_, hint_rect] = Layout::vertical([
@@ -3118,24 +4131,80 @@ impl ChatComposer {
                 } else {
                     popup_rect
                 };
-                let left_width = if self.footer_flash_visible() {
+                let available_width =
+                    hint_rect.width.saturating_sub(FOOTER_INDENT_COLS as u16) as usize;
+                let status_line = footer_props
+                    .status_line_value
+                    .as_ref()
+                    .map(|line| line.clone().dim());
+                let status_line_candidate = footer_props.status_line_enabled
+                    && matches!(
+                        footer_props.mode,
+                        FooterMode::ComposerEmpty | FooterMode::ComposerHasDraft
+                    );
+                let mut truncated_status_line = if status_line_candidate {
+                    status_line.as_ref().map(|line| {
+                        truncate_line_with_ellipsis_if_overflow(line.clone(), available_width)
+                    })
+                } else {
+                    None
+                };
+                let status_line_active = status_line_candidate && truncated_status_line.is_some();
+                let left_mode_indicator = if status_line_active {
+                    None
+                } else {
+                    self.collaboration_mode_indicator
+                };
+                let mut left_width = if self.footer_flash_visible() {
                     self.footer_flash
                         .as_ref()
                         .map(|flash| flash.line.width() as u16)
                         .unwrap_or(0)
                 } else if let Some(items) = self.footer_hint_override.as_ref() {
                     footer_hint_items_width(items)
+                } else if status_line_active {
+                    truncated_status_line
+                        .as_ref()
+                        .map(|line| line.width() as u16)
+                        .unwrap_or(0)
                 } else {
                     footer_line_width(
-                        footer_props,
-                        self.collaboration_mode_indicator,
+                        &footer_props,
+                        left_mode_indicator,
                         show_cycle_hint,
                         show_shortcuts_hint,
                         show_queue_hint,
                     )
                 };
+                let right_line = if status_line_active {
+                    let full =
+                        mode_indicator_line(self.collaboration_mode_indicator, show_cycle_hint);
+                    let compact = mode_indicator_line(self.collaboration_mode_indicator, false);
+                    let full_width = full.as_ref().map(|l| l.width() as u16).unwrap_or(0);
+                    if can_show_left_with_context(hint_rect, left_width, full_width) {
+                        full
+                    } else {
+                        compact
+                    }
+                } else {
+                    Some(context_window_line(
+                        footer_props.context_window_percent,
+                        footer_props.context_window_used_tokens,
+                    ))
+                };
+                let right_width = right_line.as_ref().map(|l| l.width() as u16).unwrap_or(0);
+                if status_line_active
+                    && let Some(max_left) = max_left_width_for_right(hint_rect, right_width)
+                    && left_width > max_left
+                    && let Some(line) = status_line.as_ref().map(|line| {
+                        truncate_line_with_ellipsis_if_overflow(line.clone(), max_left as usize)
+                    })
+                {
+                    left_width = line.width() as u16;
+                    truncated_status_line = Some(line);
+                }
                 let can_show_left_and_context =
-                    can_show_left_with_context(hint_rect, left_width, context_width);
+                    can_show_left_with_context(hint_rect, left_width, right_width);
                 let has_override =
                     self.footer_flash_visible() || self.footer_hint_override.is_some();
                 let single_line_layout = if has_override {
@@ -3149,8 +4218,8 @@ impl ChatComposer {
                             // the context indicator on narrow widths.
                             Some(single_line_footer_layout(
                                 hint_rect,
-                                context_width,
-                                self.collaboration_mode_indicator,
+                                right_width,
+                                left_mode_indicator,
                                 show_cycle_hint,
                                 show_shortcuts_hint,
                                 show_queue_hint,
@@ -3161,7 +4230,7 @@ impl ChatComposer {
                         | FooterMode::ShortcutOverlay => None,
                     }
                 };
-                let show_context = if matches!(
+                let show_right = if matches!(
                     footer_props.mode,
                     FooterMode::EscHint
                         | FooterMode::QuitShortcutReminder
@@ -3178,15 +4247,31 @@ impl ChatComposer {
                 if let Some((summary_left, _)) = single_line_layout {
                     match summary_left {
                         SummaryLeft::Default => {
-                            render_footer_from_props(
-                                hint_rect,
-                                buf,
-                                footer_props,
-                                self.collaboration_mode_indicator,
-                                show_cycle_hint,
-                                show_shortcuts_hint,
-                                show_queue_hint,
-                            );
+                            if status_line_active {
+                                if let Some(line) = truncated_status_line.clone() {
+                                    render_footer_line(hint_rect, buf, line);
+                                } else {
+                                    render_footer_from_props(
+                                        hint_rect,
+                                        buf,
+                                        &footer_props,
+                                        left_mode_indicator,
+                                        show_cycle_hint,
+                                        show_shortcuts_hint,
+                                        show_queue_hint,
+                                    );
+                                }
+                            } else {
+                                render_footer_from_props(
+                                    hint_rect,
+                                    buf,
+                                    &footer_props,
+                                    left_mode_indicator,
+                                    show_cycle_hint,
+                                    show_shortcuts_hint,
+                                    show_queue_hint,
+                                );
+                            }
                         }
                         SummaryLeft::Custom(line) => {
                             render_footer_line(hint_rect, buf, line);
@@ -3199,11 +4284,15 @@ impl ChatComposer {
                     }
                 } else if let Some(items) = self.footer_hint_override.as_ref() {
                     render_footer_hint_items(hint_rect, buf, items);
+                } else if status_line_active {
+                    if let Some(line) = truncated_status_line {
+                        render_footer_line(hint_rect, buf, line);
+                    }
                 } else {
                     render_footer_from_props(
                         hint_rect,
                         buf,
-                        footer_props,
+                        &footer_props,
                         self.collaboration_mode_indicator,
                         show_cycle_hint,
                         show_shortcuts_hint,
@@ -3211,13 +4300,18 @@ impl ChatComposer {
                     );
                 }
 
-                if show_context {
-                    render_context_right(hint_rect, buf, &context_line);
+                if show_right && let Some(line) = &right_line {
+                    render_context_right(hint_rect, buf, line);
                 }
             }
         }
         let style = user_message_style();
         Block::default().style(style).render_ref(composer_rect, buf);
+        if !remote_images_rect.is_empty() {
+            Paragraph::new(self.remote_images_lines(remote_images_rect.width))
+                .style(style)
+                .render_ref(remote_images_rect, buf);
+        }
         if !textarea_rect.is_empty() {
             let prompt = if self.input_enabled {
                 "›".bold()
@@ -3309,6 +4403,15 @@ fn prompt_selection_action(
                 // By now we know this custom prompt has no args, so no text elements to preserve.
                 text_elements: Vec::new(),
             }
+        }
+    }
+}
+
+impl Drop for ChatComposer {
+    fn drop(&mut self) {
+        // Stop any running spinner tasks.
+        for (_id, flag) in self.spinner_stop_flags.drain() {
+            flag.store(true, Ordering::Relaxed);
         }
     }
 }
@@ -3488,7 +4591,7 @@ mod tests {
         );
         setup(&mut composer);
         let footer_props = composer.footer_props();
-        let footer_lines = footer_height(footer_props);
+        let footer_lines = footer_height(&footer_props);
         let footer_spacing = ChatComposer::footer_spacing(footer_lines);
         let height = footer_lines + footer_spacing + 8;
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
@@ -3819,8 +4922,197 @@ mod tests {
 
         assert_eq!(
             composer.history.navigate_up(&composer.app_event_tx),
-            Some(HistoryEntry::from_text("draft text".to_string()))
+            Some(HistoryEntry::new("draft text".to_string()))
         );
+    }
+
+    #[test]
+    fn clear_for_ctrl_c_preserves_pending_paste_history_entry() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+
+        let large = "x".repeat(LARGE_PASTE_CHAR_THRESHOLD + 5);
+        composer.handle_paste(large.clone());
+        let char_count = large.chars().count();
+        let placeholder = format!("[Pasted Content {char_count} chars]");
+        assert_eq!(composer.textarea.text(), placeholder);
+        assert_eq!(
+            composer.pending_pastes,
+            vec![(placeholder.clone(), large.clone())]
+        );
+
+        composer.clear_for_ctrl_c();
+        assert!(composer.is_empty());
+
+        let history_entry = composer
+            .history
+            .navigate_up(&composer.app_event_tx)
+            .expect("expected history entry");
+        let text_elements = vec![TextElement::new(
+            (0..placeholder.len()).into(),
+            Some(placeholder.clone()),
+        )];
+        assert_eq!(
+            history_entry,
+            HistoryEntry::with_pending(
+                placeholder.clone(),
+                text_elements,
+                Vec::new(),
+                vec![(placeholder.clone(), large.clone())]
+            )
+        );
+
+        composer.apply_history_entry(history_entry);
+        assert_eq!(composer.textarea.text(), placeholder);
+        assert_eq!(composer.pending_pastes, vec![(placeholder.clone(), large)]);
+        assert_eq!(composer.textarea.element_payloads(), vec![placeholder]);
+
+        composer.set_steer_enabled(true);
+        let (result, _needs_redraw) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        match result {
+            InputResult::Submitted {
+                text,
+                text_elements,
+            } => {
+                assert_eq!(text, "x".repeat(LARGE_PASTE_CHAR_THRESHOLD + 5));
+                assert!(text_elements.is_empty());
+            }
+            _ => panic!("expected Submitted"),
+        }
+    }
+
+    #[test]
+    fn clear_for_ctrl_c_preserves_image_draft_state() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+
+        let path = PathBuf::from("example.png");
+        composer.attach_image(path.clone());
+        let placeholder = local_image_label_text(1);
+
+        composer.clear_for_ctrl_c();
+        assert!(composer.is_empty());
+
+        let history_entry = composer
+            .history
+            .navigate_up(&composer.app_event_tx)
+            .expect("expected history entry");
+        let text_elements = vec![TextElement::new(
+            (0..placeholder.len()).into(),
+            Some(placeholder.clone()),
+        )];
+        assert_eq!(
+            history_entry,
+            HistoryEntry::with_pending(
+                placeholder.clone(),
+                text_elements,
+                vec![path.clone()],
+                Vec::new()
+            )
+        );
+
+        composer.apply_history_entry(history_entry);
+        assert_eq!(composer.textarea.text(), placeholder);
+        assert_eq!(composer.local_image_paths(), vec![path]);
+        assert_eq!(composer.textarea.element_payloads(), vec![placeholder]);
+    }
+
+    #[test]
+    fn clear_for_ctrl_c_preserves_remote_offset_image_labels() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+        let remote_image_url = "https://example.com/one.png".to_string();
+        composer.set_remote_image_urls(vec![remote_image_url.clone()]);
+        let text = "[Image #2] draft".to_string();
+        let text_elements = vec![TextElement::new(
+            (0.."[Image #2]".len()).into(),
+            Some("[Image #2]".to_string()),
+        )];
+        let local_image_path = PathBuf::from("/tmp/local-draft.png");
+        composer.set_text_content(text, text_elements, vec![local_image_path.clone()]);
+        let expected_text = composer.current_text();
+        let expected_elements = composer.text_elements();
+        assert_eq!(expected_text, "[Image #2] draft");
+        assert_eq!(
+            expected_elements[0].placeholder(&expected_text),
+            Some("[Image #2]")
+        );
+
+        assert_eq!(composer.clear_for_ctrl_c(), Some(expected_text.clone()));
+
+        assert_eq!(
+            composer.history.navigate_up(&composer.app_event_tx),
+            Some(HistoryEntry::with_pending_and_remote(
+                expected_text,
+                expected_elements,
+                vec![local_image_path],
+                Vec::new(),
+                vec![remote_image_url],
+            ))
+        );
+    }
+
+    #[test]
+    fn apply_history_entry_preserves_local_placeholders_after_remote_prefix() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+
+        let remote_image_url = "https://example.com/one.png".to_string();
+        let local_image_path = PathBuf::from("/tmp/local-draft.png");
+        composer.apply_history_entry(HistoryEntry::with_pending_and_remote(
+            "[Image #2] draft".to_string(),
+            vec![TextElement::new(
+                (0.."[Image #2]".len()).into(),
+                Some("[Image #2]".to_string()),
+            )],
+            vec![local_image_path.clone()],
+            Vec::new(),
+            vec![remote_image_url.clone()],
+        ));
+
+        let restored_text = composer.current_text();
+        assert_eq!(restored_text, "[Image #2] draft");
+        let restored_elements = composer.text_elements();
+        assert_eq!(restored_elements.len(), 1);
+        assert_eq!(
+            restored_elements[0].placeholder(&restored_text),
+            Some("[Image #2]")
+        );
+        assert_eq!(composer.local_image_paths(), vec![local_image_path]);
+        assert_eq!(composer.remote_image_urls(), vec![remote_image_url]);
     }
 
     /// Behavior: `?` toggles the shortcut overlay only when the composer is otherwise empty. After
@@ -3909,6 +5201,80 @@ mod tests {
 
         assert_eq!(composer.textarea.text(), "hi?there");
         assert_ne!(composer.footer_mode, FooterMode::ShortcutOverlay);
+    }
+
+    #[test]
+    fn set_connector_mentions_refreshes_open_mention_popup() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+        composer.set_connectors_enabled(true);
+        composer.set_text_content("$".to_string(), Vec::new(), Vec::new());
+        assert!(matches!(composer.active_popup, ActivePopup::None));
+
+        let connectors = vec![AppInfo {
+            id: "connector_1".to_string(),
+            name: "Notion".to_string(),
+            description: Some("Workspace docs".to_string()),
+            logo_url: None,
+            logo_url_dark: None,
+            distribution_channel: None,
+            branding: None,
+            app_metadata: None,
+            labels: None,
+            install_url: Some("https://example.test/notion".to_string()),
+            is_accessible: true,
+            is_enabled: true,
+        }];
+        composer.set_connector_mentions(Some(ConnectorsSnapshot { connectors }));
+
+        let ActivePopup::Skill(popup) = &composer.active_popup else {
+            panic!("expected mention popup to open after connectors update");
+        };
+        let mention = popup
+            .selected_mention()
+            .expect("expected connector mention to be selected");
+        assert_eq!(mention.insert_text, "$notion".to_string());
+        assert_eq!(mention.path, Some("app://connector_1".to_string()));
+    }
+
+    #[test]
+    fn set_connector_mentions_excludes_disabled_apps_from_mention_popup() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+        composer.set_connectors_enabled(true);
+        composer.set_text_content("$".to_string(), Vec::new(), Vec::new());
+
+        let connectors = vec![AppInfo {
+            id: "connector_1".to_string(),
+            name: "Notion".to_string(),
+            description: Some("Workspace docs".to_string()),
+            logo_url: None,
+            logo_url_dark: None,
+            distribution_channel: None,
+            branding: None,
+            app_metadata: None,
+            labels: None,
+            install_url: Some("https://example.test/notion".to_string()),
+            is_accessible: true,
+            is_enabled: false,
+        }];
+        composer.set_connector_mentions(Some(ConnectorsSnapshot { connectors }));
+
+        assert!(matches!(composer.active_popup, ActivePopup::None));
     }
 
     #[test]
@@ -4086,6 +5452,115 @@ mod tests {
                 result, expected,
                 "Failed for whitespace boundary case: {description} - input: '{input}', cursor: {cursor_pos}",
             );
+        }
+    }
+
+    #[test]
+    fn test_current_at_token_tracks_tokens_with_second_at() {
+        let input = "npx -y @kaeawc/auto-mobile@latest";
+        let token_start = input.find("@kaeawc").expect("scoped npm package present");
+        let version_at = input
+            .rfind("@latest")
+            .expect("version suffix present in scoped npm package");
+        let test_cases = vec![
+            (token_start, "Cursor at leading @"),
+            (token_start + 8, "Cursor inside scoped package name"),
+            (version_at, "Cursor at version @"),
+            (input.len(), "Cursor at end of token"),
+        ];
+
+        for (cursor_pos, description) in test_cases {
+            let mut textarea = TextArea::new();
+            textarea.insert_str(input);
+            textarea.set_cursor(cursor_pos);
+
+            let result = ChatComposer::current_at_token(&textarea);
+            assert_eq!(
+                result,
+                Some("kaeawc/auto-mobile@latest".to_string()),
+                "Failed for case: {description} - input: '{input}', cursor: {cursor_pos}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_current_at_token_allows_file_queries_with_second_at() {
+        let input = "@icons/icon@2x.png";
+        let version_at = input
+            .rfind("@2x")
+            .expect("second @ in file token should be present");
+        let test_cases = vec![
+            (0, "Cursor at leading @"),
+            (8, "Cursor before second @"),
+            (version_at, "Cursor at second @"),
+            (input.len(), "Cursor at end of token"),
+        ];
+
+        for (cursor_pos, description) in test_cases {
+            let mut textarea = TextArea::new();
+            textarea.insert_str(input);
+            textarea.set_cursor(cursor_pos);
+
+            let result = ChatComposer::current_at_token(&textarea);
+            assert!(
+                result.is_some(),
+                "Failed for case: {description} - input: '{input}', cursor: {cursor_pos}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_current_at_token_ignores_mid_word_at() {
+        let input = "foo@bar";
+        let at_pos = input.find('@').expect("@ present");
+        let test_cases = vec![
+            (at_pos, "Cursor at mid-word @"),
+            (input.len(), "Cursor at end of word containing @"),
+        ];
+
+        for (cursor_pos, description) in test_cases {
+            let mut textarea = TextArea::new();
+            textarea.insert_str(input);
+            textarea.set_cursor(cursor_pos);
+
+            let result = ChatComposer::current_at_token(&textarea);
+            assert_eq!(
+                result, None,
+                "Failed for case: {description} - input: '{input}', cursor: {cursor_pos}"
+            );
+        }
+    }
+
+    #[test]
+    fn enter_submits_when_file_popup_has_no_selection() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+        composer.set_steer_enabled(true);
+
+        let input = "npx -y @kaeawc/auto-mobile@latest";
+        composer.textarea.insert_str(input);
+        composer.textarea.set_cursor(input.len());
+        composer.sync_popups();
+
+        assert!(matches!(composer.active_popup, ActivePopup::File(_)));
+
+        let (result, consumed) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(consumed);
+        match result {
+            InputResult::Submitted { text, .. } => assert_eq!(text, input),
+            _ => panic!("expected Submitted"),
         }
     }
 
@@ -4627,6 +6102,43 @@ mod tests {
     }
 
     #[test]
+    fn remote_image_rows_snapshots() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
+        snapshot_composer_state("remote_image_rows", false, |composer| {
+            composer.set_remote_image_urls(vec![
+                "https://example.com/one.png".to_string(),
+                "https://example.com/two.png".to_string(),
+            ]);
+            composer.set_text_content("describe these".to_string(), Vec::new(), Vec::new());
+        });
+
+        snapshot_composer_state("remote_image_rows_selected", false, |composer| {
+            composer.set_remote_image_urls(vec![
+                "https://example.com/one.png".to_string(),
+                "https://example.com/two.png".to_string(),
+            ]);
+            composer.set_text_content("describe these".to_string(), Vec::new(), Vec::new());
+            composer.textarea.set_cursor(0);
+            let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        });
+
+        snapshot_composer_state("remote_image_rows_after_delete_first", false, |composer| {
+            composer.set_remote_image_urls(vec![
+                "https://example.com/one.png".to_string(),
+                "https://example.com/two.png".to_string(),
+            ]);
+            composer.set_text_content("describe these".to_string(), Vec::new(), Vec::new());
+            composer.textarea.set_cursor(0);
+            let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+            let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+            let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
+        });
+    }
+
+    #[test]
     fn slash_popup_model_first_for_mo_ui() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
@@ -4753,11 +6265,19 @@ mod tests {
     fn type_chars_humanlike(composer: &mut ChatComposer, chars: &[char]) {
         use crossterm::event::KeyCode;
         use crossterm::event::KeyEvent;
+        use crossterm::event::KeyEventKind;
         use crossterm::event::KeyModifiers;
         for &ch in chars {
             let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
             std::thread::sleep(ChatComposer::recommended_paste_flush_delay());
             let _ = composer.flush_paste_burst_if_due();
+            if ch == ' ' {
+                let _ = composer.handle_key_event(KeyEvent::new_with_kind(
+                    KeyCode::Char(' '),
+                    KeyModifiers::NONE,
+                    KeyEventKind::Release,
+                ));
+            }
         }
     }
 
@@ -4845,6 +6365,195 @@ mod tests {
             }
         }
         assert!(found_error, "expected error history cell to be sent");
+    }
+
+    #[test]
+    fn voice_transcription_disabled_treats_space_as_normal_input() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyEventKind;
+        use crossterm::event::KeyModifiers;
+
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            true,
+        );
+        composer.set_text_content("x".to_string(), Vec::new(), Vec::new());
+        composer.move_cursor_to_end();
+
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        let _ = composer.handle_key_event(KeyEvent::new_with_kind(
+            KeyCode::Char(' '),
+            KeyModifiers::NONE,
+            KeyEventKind::Release,
+        ));
+
+        assert_eq!("x ", composer.textarea.text());
+        assert!(composer.voice_state.space_hold_started_at.is_none());
+        assert!(composer.voice_state.space_hold_element_id.is_none());
+        assert!(composer.voice_state.space_hold_trigger.is_none());
+        assert!(!composer.voice_state.space_hold_repeat_seen);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn space_hold_timeout_without_release_or_repeat_keeps_typed_space() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+        composer.set_voice_transcription_enabled(true);
+
+        composer.set_text_content("x".to_string(), Vec::new(), Vec::new());
+        composer.move_cursor_to_end();
+        let elem_id = "space-hold".to_string();
+        composer.textarea.insert_named_element(" ", elem_id.clone());
+        composer.voice_state.space_hold_started_at = Some(Instant::now());
+        composer.voice_state.space_hold_element_id = Some(elem_id);
+        composer.voice_state.space_hold_trigger = Some(Arc::new(AtomicBool::new(true)));
+        composer.voice_state.key_release_supported = false;
+        composer.voice_state.space_hold_repeat_seen = false;
+        assert_eq!("x ", composer.textarea.text());
+
+        composer.process_space_hold_trigger();
+
+        assert_eq!("x ", composer.textarea.text());
+        assert!(composer.voice_state.space_hold_started_at.is_none());
+        assert!(!composer.voice_state.space_hold_repeat_seen);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn space_hold_timeout_with_repeat_uses_hold_path_without_release() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+        composer.set_voice_transcription_enabled(true);
+
+        composer.set_text_content("x".to_string(), Vec::new(), Vec::new());
+        composer.move_cursor_to_end();
+        let elem_id = "space-hold".to_string();
+        composer.textarea.insert_named_element(" ", elem_id.clone());
+        composer.voice_state.space_hold_started_at = Some(Instant::now());
+        composer.voice_state.space_hold_element_id = Some(elem_id);
+        composer.voice_state.space_hold_trigger = Some(Arc::new(AtomicBool::new(true)));
+        composer.voice_state.key_release_supported = false;
+        composer.voice_state.space_hold_repeat_seen = true;
+
+        composer.process_space_hold_trigger();
+
+        assert_eq!("x ", composer.textarea.text());
+        assert!(composer.voice_state.space_hold_started_at.is_none());
+        assert!(!composer.voice_state.space_hold_repeat_seen);
+        if composer.is_recording() {
+            let _ = composer.stop_recording_and_start_transcription();
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn space_hold_timeout_with_repeat_does_not_duplicate_existing_space() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+        composer.set_voice_transcription_enabled(true);
+
+        composer.set_text_content("x ".to_string(), Vec::new(), Vec::new());
+        composer.move_cursor_to_end();
+        let elem_id = "space-hold".to_string();
+        composer.textarea.insert_named_element(" ", elem_id.clone());
+        composer.voice_state.space_hold_started_at = Some(Instant::now());
+        composer.voice_state.space_hold_element_id = Some(elem_id);
+        composer.voice_state.space_hold_trigger = Some(Arc::new(AtomicBool::new(true)));
+        composer.voice_state.key_release_supported = false;
+        composer.voice_state.space_hold_repeat_seen = true;
+
+        composer.process_space_hold_trigger();
+
+        assert_eq!("x ", composer.textarea.text());
+        assert!(composer.voice_state.space_hold_started_at.is_none());
+        assert!(!composer.voice_state.space_hold_repeat_seen);
+        if composer.is_recording() {
+            let _ = composer.stop_recording_and_start_transcription();
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn replace_transcription_stops_spinner_for_placeholder() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+
+        let id = "voice-placeholder".to_string();
+        composer.textarea.insert_named_element("", id.clone());
+        let flag = Arc::new(AtomicBool::new(false));
+        composer
+            .spinner_stop_flags
+            .insert(id.clone(), Arc::clone(&flag));
+
+        composer.replace_transcription(&id, "transcribed text");
+
+        assert!(flag.load(Ordering::Relaxed));
+        assert!(!composer.spinner_stop_flags.contains_key(&id));
+        assert_eq!(composer.textarea.text(), "transcribed text");
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn set_text_content_stops_all_transcription_spinners() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+
+        let flag_one = Arc::new(AtomicBool::new(false));
+        let flag_two = Arc::new(AtomicBool::new(false));
+        composer
+            .spinner_stop_flags
+            .insert("voice-1".to_string(), Arc::clone(&flag_one));
+        composer
+            .spinner_stop_flags
+            .insert("voice-2".to_string(), Arc::clone(&flag_two));
+
+        composer.set_text_content("draft".to_string(), Vec::new(), Vec::new());
+
+        assert!(flag_one.load(Ordering::Relaxed));
+        assert!(flag_two.load(Ordering::Relaxed));
+        assert!(composer.spinner_stop_flags.is_empty());
     }
 
     #[test]
@@ -5017,6 +6726,65 @@ mod tests {
         let elements = composer.textarea.text_elements();
         assert_eq!(text, "x/review ");
         assert!(elements.is_empty());
+    }
+
+    #[test]
+    fn tab_submits_when_no_task_running_in_steer_mode() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+        composer.set_steer_enabled(true);
+
+        type_chars_humanlike(&mut composer, &['h', 'i']);
+
+        let (result, _needs_redraw) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+
+        assert!(matches!(
+            result,
+            InputResult::Submitted { ref text, .. } if text == "hi"
+        ));
+        assert!(composer.textarea.is_empty());
+    }
+
+    #[test]
+    fn tab_does_not_submit_for_bang_shell_command_in_steer_mode() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+        composer.set_steer_enabled(true);
+        composer.set_task_running(false);
+
+        type_chars_humanlike(&mut composer, &['!', 'l', 's']);
+
+        let (result, _needs_redraw) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+
+        assert!(matches!(result, InputResult::None));
+        assert!(
+            composer.textarea.text().starts_with("!ls"),
+            "expected Tab not to submit or clear a `!` command"
+        );
     }
 
     #[test]
@@ -5425,7 +7193,7 @@ mod tests {
     }
 
     #[test]
-    fn history_navigation_restores_image_attachments() {
+    fn submit_captures_recent_mention_bindings_before_clearing_textarea() {
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let mut composer = ChatComposer::new(
@@ -5436,6 +7204,42 @@ mod tests {
             false,
         );
         composer.set_steer_enabled(true);
+
+        let mention_bindings = vec![MentionBinding {
+            mention: "figma".to_string(),
+            path: "/tmp/user/figma/SKILL.md".to_string(),
+        }];
+        composer.set_text_content_with_mention_bindings(
+            "$figma please".to_string(),
+            Vec::new(),
+            Vec::new(),
+            mention_bindings.clone(),
+        );
+
+        let (result, _) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(matches!(result, InputResult::Submitted { .. }));
+        assert_eq!(
+            composer.take_recent_submission_mention_bindings(),
+            mention_bindings
+        );
+        assert!(composer.take_mention_bindings().is_empty());
+    }
+
+    #[test]
+    fn history_navigation_restores_remote_and_local_image_attachments() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+        composer.set_steer_enabled(true);
+        let remote_image_url = "https://example.com/remote.png".to_string();
+        composer.set_remote_image_urls(vec![remote_image_url.clone()]);
         let path = PathBuf::from("/tmp/image1.png");
         composer.attach_image(path.clone());
 
@@ -5443,16 +7247,94 @@ mod tests {
             composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert!(matches!(result, InputResult::Submitted { .. }));
 
+        let _ = composer.take_remote_image_urls();
         composer.set_text_content(String::new(), Vec::new(), Vec::new());
 
         let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
 
         let text = composer.current_text();
-        assert_eq!(text, "[Image #1]");
+        assert_eq!(text, "[Image #2]");
         let text_elements = composer.text_elements();
         assert_eq!(text_elements.len(), 1);
-        assert_eq!(text_elements[0].placeholder(&text), Some("[Image #1]"));
+        assert_eq!(text_elements[0].placeholder(&text), Some("[Image #2]"));
         assert_eq!(composer.local_image_paths(), vec![path]);
+        assert_eq!(composer.remote_image_urls(), vec![remote_image_url]);
+    }
+
+    #[test]
+    fn history_navigation_restores_remote_only_submissions() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+        let remote_image_urls = vec![
+            "https://example.com/one.png".to_string(),
+            "https://example.com/two.png".to_string(),
+        ];
+        composer.set_remote_image_urls(remote_image_urls.clone());
+
+        let (submitted_text, submitted_elements) = composer
+            .prepare_submission_text(true)
+            .expect("remote-only submission should be prepared");
+        assert_eq!(submitted_text, "");
+        assert!(submitted_elements.is_empty());
+
+        let _ = composer.take_remote_image_urls();
+        composer.set_text_content(String::new(), Vec::new(), Vec::new());
+
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(composer.current_text(), "");
+        assert!(composer.text_elements().is_empty());
+        assert_eq!(composer.remote_image_urls(), remote_image_urls);
+    }
+
+    #[test]
+    fn history_navigation_leaves_cursor_at_end_of_line() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+        composer.set_steer_enabled(true);
+
+        type_chars_humanlike(&mut composer, &['f', 'i', 'r', 's', 't']);
+        let (result, _needs_redraw) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(matches!(result, InputResult::Submitted { .. }));
+
+        type_chars_humanlike(&mut composer, &['s', 'e', 'c', 'o', 'n', 'd']);
+        let (result, _needs_redraw) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(matches!(result, InputResult::Submitted { .. }));
+
+        let (_result, _needs_redraw) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(composer.textarea.text(), "second");
+        assert_eq!(composer.textarea.cursor(), composer.textarea.text().len());
+
+        let (_result, _needs_redraw) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(composer.textarea.text(), "first");
+        assert_eq!(composer.textarea.cursor(), composer.textarea.text().len());
+
+        let (_result, _needs_redraw) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(composer.textarea.text(), "second");
+        assert_eq!(composer.textarea.cursor(), composer.textarea.text().len());
+
+        let (_result, _needs_redraw) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert!(composer.textarea.is_empty());
+        assert_eq!(composer.textarea.cursor(), composer.textarea.text().len());
     }
 
     #[test]
@@ -7210,6 +9092,34 @@ mod tests {
     }
 
     #[test]
+    fn apply_external_edit_renumbers_image_placeholders() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+
+        let first_path = PathBuf::from("img1.png");
+        let second_path = PathBuf::from("img2.png");
+        composer.attach_image(first_path);
+        composer.attach_image(second_path.clone());
+
+        let placeholder2 = local_image_label_text(2);
+        composer.apply_external_edit(format!("Keep {placeholder2}"));
+
+        let placeholder1 = local_image_label_text(1);
+        assert_eq!(composer.current_text(), format!("Keep {placeholder1}"));
+        assert_eq!(composer.attached_images.len(), 1);
+        assert_eq!(composer.attached_images[0].placeholder, placeholder1);
+        assert_eq!(composer.local_image_paths(), vec![second_path]);
+        assert_eq!(composer.textarea.element_payloads(), vec![placeholder1]);
+    }
+
+    #[test]
     fn current_text_with_pending_expands_placeholders() {
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
@@ -7260,6 +9170,141 @@ mod tests {
             format!("{placeholder} extra {placeholder}")
         );
         assert_eq!(composer.attached_images.len(), 1);
+    }
+
+    #[test]
+    fn remote_images_do_not_modify_textarea_text_or_elements() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+
+        composer.set_remote_image_urls(vec![
+            "https://example.com/one.png".to_string(),
+            "https://example.com/two.png".to_string(),
+        ]);
+
+        assert_eq!(composer.current_text(), "");
+        assert_eq!(composer.text_elements(), Vec::<TextElement>::new());
+    }
+
+    #[test]
+    fn attach_image_after_remote_prefix_uses_offset_label() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+
+        composer.set_remote_image_urls(vec![
+            "https://example.com/one.png".to_string(),
+            "https://example.com/two.png".to_string(),
+        ]);
+        composer.attach_image(PathBuf::from("/tmp/local.png"));
+
+        assert_eq!(composer.attached_images[0].placeholder, "[Image #3]");
+        assert_eq!(composer.current_text(), "[Image #3]");
+    }
+
+    #[test]
+    fn prepare_submission_keeps_remote_offset_local_placeholder_numbering() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+
+        composer.set_remote_image_urls(vec!["https://example.com/one.png".to_string()]);
+        let base_text = "[Image #2] hello".to_string();
+        let base_elements = vec![TextElement::new(
+            (0.."[Image #2]".len()).into(),
+            Some("[Image #2]".to_string()),
+        )];
+        composer.set_text_content(
+            base_text,
+            base_elements,
+            vec![PathBuf::from("/tmp/local.png")],
+        );
+
+        let (submitted_text, submitted_elements) = composer
+            .prepare_submission_text(true)
+            .expect("remote+local submission should be generated");
+        assert_eq!(submitted_text, "[Image #2] hello");
+        assert_eq!(
+            submitted_elements,
+            vec![TextElement::new(
+                (0.."[Image #2]".len()).into(),
+                Some("[Image #2]".to_string())
+            )]
+        );
+    }
+
+    #[test]
+    fn prepare_submission_with_only_remote_images_returns_empty_text() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+
+        composer.set_remote_image_urls(vec!["https://example.com/one.png".to_string()]);
+        let (submitted_text, submitted_elements) = composer
+            .prepare_submission_text(true)
+            .expect("remote-only submission should be generated");
+        assert_eq!(submitted_text, "");
+        assert!(submitted_elements.is_empty());
+    }
+
+    #[test]
+    fn delete_selected_remote_image_relabels_local_placeholders() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+
+        composer.set_remote_image_urls(vec![
+            "https://example.com/one.png".to_string(),
+            "https://example.com/two.png".to_string(),
+        ]);
+        composer.attach_image(PathBuf::from("/tmp/local.png"));
+        composer.textarea.set_cursor(0);
+
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
+        assert_eq!(
+            composer.remote_image_urls(),
+            vec!["https://example.com/one.png".to_string()]
+        );
+        assert_eq!(composer.current_text(), "[Image #2]");
+        assert_eq!(composer.attached_images[0].placeholder, "[Image #2]");
+
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
+        assert_eq!(composer.remote_image_urls(), Vec::<String>::new());
+        assert_eq!(composer.current_text(), "[Image #1]");
+        assert_eq!(composer.attached_images[0].placeholder, "[Image #1]");
     }
 
     #[test]

@@ -1,5 +1,6 @@
-use std::path::PathBuf;
+use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::RwLock;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
@@ -7,6 +8,9 @@ use crate::codex_message_processor::CodexMessageProcessor;
 use crate::codex_message_processor::CodexMessageProcessorArgs;
 use crate::config_api::ConfigApi;
 use crate::error_code::INVALID_REQUEST_ERROR_CODE;
+use crate::external_agent_config_api::ExternalAgentConfigApi;
+use crate::outgoing_message::ConnectionId;
+use crate::outgoing_message::ConnectionRequestId;
 use crate::outgoing_message::OutgoingMessageSender;
 use async_trait::async_trait;
 use codex_app_server_protocol::ChatgptAuthTokensRefreshParams;
@@ -19,16 +23,18 @@ use codex_app_server_protocol::ConfigReadParams;
 use codex_app_server_protocol::ConfigValueWriteParams;
 use codex_app_server_protocol::ConfigWarningNotification;
 use codex_app_server_protocol::ExperimentalApi;
+use codex_app_server_protocol::ExternalAgentConfigDetectParams;
+use codex_app_server_protocol::ExternalAgentConfigImportParams;
 use codex_app_server_protocol::InitializeResponse;
 use codex_app_server_protocol::JSONRPCError;
 use codex_app_server_protocol::JSONRPCErrorError;
 use codex_app_server_protocol::JSONRPCNotification;
 use codex_app_server_protocol::JSONRPCRequest;
 use codex_app_server_protocol::JSONRPCResponse;
-use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ServerRequestPayload;
 use codex_app_server_protocol::experimental_required_message;
+use codex_arg0::Arg0DispatchPaths;
 use codex_core::AuthManager;
 use codex_core::ThreadManager;
 use codex_core::auth::ExternalAuthRefreshContext;
@@ -46,7 +52,9 @@ use codex_core::default_client::set_default_originator;
 use codex_feedback::CodexFeedback;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::SessionSource;
+use futures::FutureExt;
 use tokio::sync::broadcast;
+use tokio::sync::watch;
 use tokio::time::Duration;
 use tokio::time::timeout;
 use toml::Value as TomlValue;
@@ -83,9 +91,20 @@ impl ExternalAuthRefresher for ExternalAuthRefreshBridge {
             .await;
 
         let result = match timeout(EXTERNAL_AUTH_REFRESH_TIMEOUT, rx).await {
-            Ok(result) => result.map_err(|err| {
-                std::io::Error::other(format!("auth refresh request canceled: {err}"))
-            })?,
+            Ok(result) => {
+                // Two failure scenarios:
+                // 1) `oneshot::Receiver` failed (sender dropped) => request canceled/channel closed.
+                // 2) client answered with JSON-RPC error payload => propagate code/message.
+                let result = result.map_err(|err| {
+                    std::io::Error::other(format!("auth refresh request canceled: {err}"))
+                })?;
+                result.map_err(|err| {
+                    std::io::Error::other(format!(
+                        "auth refresh request failed: code={} message={}",
+                        err.code, err.message
+                    ))
+                })?
+            }
             Err(_) => {
                 let _canceled = self.outgoing.cancel_request(&request_id).await;
                 return Err(std::io::Error::other(format!(
@@ -100,7 +119,8 @@ impl ExternalAuthRefresher for ExternalAuthRefreshBridge {
 
         Ok(ExternalAuthTokens {
             access_token: response.access_token,
-            id_token: response.id_token,
+            chatgpt_account_id: response.chatgpt_account_id,
+            chatgpt_plan_type: response.chatgpt_plan_type,
         })
     }
 }
@@ -109,16 +129,23 @@ pub(crate) struct MessageProcessor {
     outgoing: Arc<OutgoingMessageSender>,
     codex_message_processor: CodexMessageProcessor,
     config_api: ConfigApi,
+    external_agent_config_api: ExternalAgentConfigApi,
     config: Arc<Config>,
-    initialized: bool,
-    experimental_api_enabled: Arc<AtomicBool>,
-    config_warnings: Vec<ConfigWarningNotification>,
+    config_warnings: Arc<Vec<ConfigWarningNotification>>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ConnectionSessionState {
+    pub(crate) initialized: bool,
+    pub(crate) experimental_api_enabled: bool,
+    pub(crate) opted_out_notification_methods: HashSet<String>,
 }
 
 pub(crate) struct MessageProcessorArgs {
-    pub(crate) outgoing: OutgoingMessageSender,
-    pub(crate) codex_linux_sandbox_exe: Option<PathBuf>,
+    pub(crate) outgoing: Arc<OutgoingMessageSender>,
+    pub(crate) arg0_paths: Arg0DispatchPaths,
     pub(crate) config: Arc<Config>,
+    pub(crate) single_client_mode: bool,
     pub(crate) cli_overrides: Vec<(String, TomlValue)>,
     pub(crate) loader_overrides: LoaderOverrides,
     pub(crate) cloud_requirements: CloudRequirementsLoader,
@@ -132,16 +159,15 @@ impl MessageProcessor {
     pub(crate) fn new(args: MessageProcessorArgs) -> Self {
         let MessageProcessorArgs {
             outgoing,
-            codex_linux_sandbox_exe,
+            arg0_paths,
             config,
+            single_client_mode,
             cli_overrides,
             loader_overrides,
             cloud_requirements,
             feedback,
             config_warnings,
         } = args;
-        let outgoing = Arc::new(outgoing);
-        let experimental_api_enabled = Arc::new(AtomicBool::new(false));
         let auth_manager = AuthManager::shared(
             config.codex_home.clone(),
             false,
@@ -155,15 +181,18 @@ impl MessageProcessor {
             config.codex_home.clone(),
             auth_manager.clone(),
             SessionSource::VSCode,
+            config.model_catalog.clone(),
         ));
+        let cloud_requirements = Arc::new(RwLock::new(cloud_requirements));
         let codex_message_processor = CodexMessageProcessor::new(CodexMessageProcessorArgs {
             auth_manager,
             thread_manager,
             outgoing: outgoing.clone(),
-            codex_linux_sandbox_exe,
+            arg0_paths,
             config: Arc::clone(&config),
             cli_overrides: cli_overrides.clone(),
             cloud_requirements: cloud_requirements.clone(),
+            single_client_mode,
             feedback,
         });
         let config_api = ConfigApi::new(
@@ -172,20 +201,35 @@ impl MessageProcessor {
             loader_overrides,
             cloud_requirements,
         );
+        let external_agent_config_api = ExternalAgentConfigApi::new(config.codex_home.clone());
 
         Self {
             outgoing,
             codex_message_processor,
             config_api,
+            external_agent_config_api,
             config,
-            initialized: false,
-            experimental_api_enabled,
-            config_warnings,
+            config_warnings: Arc::new(config_warnings),
         }
     }
 
-    pub(crate) async fn process_request(&mut self, request: JSONRPCRequest) {
-        let request_id = request.id.clone();
+    pub(crate) async fn process_request(
+        &mut self,
+        connection_id: ConnectionId,
+        request: JSONRPCRequest,
+        session: &mut ConnectionSessionState,
+        outbound_initialized: &AtomicBool,
+    ) {
+        let request_method = request.method.as_str();
+        tracing::trace!(
+            ?connection_id,
+            request_id = ?request.id,
+            "app-server request: {request_method}"
+        );
+        let request_id = ConnectionRequestId {
+            connection_id,
+            request_id: request.id.clone(),
+        };
         let request_json = match serde_json::to_value(&request) {
             Ok(request_json) => request_json,
             Err(err) => {
@@ -216,7 +260,11 @@ impl MessageProcessor {
             // Handle Initialize internally so CodexMessageProcessor does not have to concern
             // itself with the `initialized` bool.
             ClientRequest::Initialize { request_id, params } => {
-                if self.initialized {
+                let request_id = ConnectionRequestId {
+                    connection_id,
+                    request_id,
+                };
+                if session.initialized {
                     let error = JSONRPCErrorError {
                         code: INVALID_REQUEST_ERROR_CODE,
                         message: "Already initialized".to_string(),
@@ -225,12 +273,25 @@ impl MessageProcessor {
                     self.outgoing.send_error(request_id, error).await;
                     return;
                 } else {
-                    let experimental_api_enabled = params
-                        .capabilities
-                        .as_ref()
-                        .is_some_and(|cap| cap.experimental_api);
-                    self.experimental_api_enabled
-                        .store(experimental_api_enabled, Ordering::Relaxed);
+                    // TODO(maxj): Revisit capability scoping for `experimental_api_enabled`.
+                    // Current behavior is per-connection. Reviewer feedback notes this can
+                    // create odd cross-client behavior (for example dynamic tool calls on a
+                    // shared thread when another connected client did not opt into
+                    // experimental API). Proposed direction is instance-global first-write-wins
+                    // with initialize-time mismatch rejection.
+                    let (experimental_api_enabled, opt_out_notification_methods) =
+                        match params.capabilities {
+                            Some(capabilities) => (
+                                capabilities.experimental_api,
+                                capabilities
+                                    .opt_out_notification_methods
+                                    .unwrap_or_default(),
+                            ),
+                            None => (false, Vec::new()),
+                        };
+                    session.experimental_api_enabled = experimental_api_enabled;
+                    session.opted_out_notification_methods =
+                        opt_out_notification_methods.into_iter().collect();
                     let ClientInfo {
                         name,
                         title: _title,
@@ -246,7 +307,7 @@ impl MessageProcessor {
                                     ),
                                     data: None,
                                 };
-                                self.outgoing.send_error(request_id, error).await;
+                                self.outgoing.send_error(request_id.clone(), error).await;
                                 return;
                             }
                             SetOriginatorError::AlreadyInitialized => {
@@ -267,22 +328,13 @@ impl MessageProcessor {
                     let response = InitializeResponse { user_agent };
                     self.outgoing.send_response(request_id, response).await;
 
-                    self.initialized = true;
-                    if !self.config_warnings.is_empty() {
-                        for notification in self.config_warnings.drain(..) {
-                            self.outgoing
-                                .send_server_notification(ServerNotification::ConfigWarning(
-                                    notification,
-                                ))
-                                .await;
-                        }
-                    }
-
+                    session.initialized = true;
+                    outbound_initialized.store(true, Ordering::Release);
                     return;
                 }
             }
             _ => {
-                if !self.initialized {
+                if !session.initialized {
                     let error = JSONRPCErrorError {
                         code: INVALID_REQUEST_ERROR_CODE,
                         message: "Not initialized".to_string(),
@@ -295,7 +347,7 @@ impl MessageProcessor {
         }
 
         if let Some(reason) = codex_request.experimental_reason()
-            && !self.experimental_api_enabled.load(Ordering::Relaxed)
+            && !session.experimental_api_enabled
         {
             let error = JSONRPCErrorError {
                 code: INVALID_REQUEST_ERROR_CODE,
@@ -308,22 +360,73 @@ impl MessageProcessor {
 
         match codex_request {
             ClientRequest::ConfigRead { request_id, params } => {
-                self.handle_config_read(request_id, params).await;
+                self.handle_config_read(
+                    ConnectionRequestId {
+                        connection_id,
+                        request_id,
+                    },
+                    params,
+                )
+                .await;
+            }
+            ClientRequest::ExternalAgentConfigDetect { request_id, params } => {
+                self.handle_external_agent_config_detect(
+                    ConnectionRequestId {
+                        connection_id,
+                        request_id,
+                    },
+                    params,
+                )
+                .await;
+            }
+            ClientRequest::ExternalAgentConfigImport { request_id, params } => {
+                self.handle_external_agent_config_import(
+                    ConnectionRequestId {
+                        connection_id,
+                        request_id,
+                    },
+                    params,
+                )
+                .await;
             }
             ClientRequest::ConfigValueWrite { request_id, params } => {
-                self.handle_config_value_write(request_id, params).await;
+                self.handle_config_value_write(
+                    ConnectionRequestId {
+                        connection_id,
+                        request_id,
+                    },
+                    params,
+                )
+                .await;
             }
             ClientRequest::ConfigBatchWrite { request_id, params } => {
-                self.handle_config_batch_write(request_id, params).await;
+                self.handle_config_batch_write(
+                    ConnectionRequestId {
+                        connection_id,
+                        request_id,
+                    },
+                    params,
+                )
+                .await;
             }
             ClientRequest::ConfigRequirementsRead {
                 request_id,
                 params: _,
             } => {
-                self.handle_config_requirements_read(request_id).await;
+                self.handle_config_requirements_read(ConnectionRequestId {
+                    connection_id,
+                    request_id,
+                })
+                .await;
             }
             other => {
-                self.codex_message_processor.process_request(other).await;
+                // Box the delegated future so this wrapper's async state machine does not
+                // inline the full `CodexMessageProcessor::process_request` future, which
+                // can otherwise push worker-thread stack usage over the edge.
+                self.codex_message_processor
+                    .process_request(connection_id, other)
+                    .boxed()
+                    .await;
             }
         }
     }
@@ -338,13 +441,33 @@ impl MessageProcessor {
         self.codex_message_processor.thread_created_receiver()
     }
 
-    pub(crate) async fn try_attach_thread_listener(&mut self, thread_id: ThreadId) {
-        if !self.initialized {
-            return;
+    pub(crate) async fn send_initialize_notifications(&self) {
+        for notification in self.config_warnings.iter().cloned() {
+            self.outgoing
+                .send_server_notification(ServerNotification::ConfigWarning(notification))
+                .await;
         }
+    }
+
+    pub(crate) async fn try_attach_thread_listener(
+        &mut self,
+        thread_id: ThreadId,
+        connection_ids: Vec<ConnectionId>,
+    ) {
         self.codex_message_processor
-            .try_attach_thread_listener(thread_id)
+            .try_attach_thread_listener(thread_id, connection_ids)
             .await;
+    }
+
+    pub(crate) async fn connection_closed(&mut self, connection_id: ConnectionId) {
+        self.codex_message_processor
+            .connection_closed(connection_id)
+            .await;
+    }
+
+    pub(crate) fn subscribe_running_assistant_turn_count(&self) -> watch::Receiver<usize> {
+        self.codex_message_processor
+            .subscribe_running_assistant_turn_count()
     }
 
     /// Handle a standalone JSON-RPC response originating from the peer.
@@ -360,7 +483,7 @@ impl MessageProcessor {
         self.outgoing.notify_client_error(err.id, err.error).await;
     }
 
-    async fn handle_config_read(&self, request_id: RequestId, params: ConfigReadParams) {
+    async fn handle_config_read(&self, request_id: ConnectionRequestId, params: ConfigReadParams) {
         match self.config_api.read(params).await {
             Ok(response) => self.outgoing.send_response(request_id, response).await,
             Err(error) => self.outgoing.send_error(request_id, error).await,
@@ -369,7 +492,7 @@ impl MessageProcessor {
 
     async fn handle_config_value_write(
         &self,
-        request_id: RequestId,
+        request_id: ConnectionRequestId,
         params: ConfigValueWriteParams,
     ) {
         match self.config_api.write_value(params).await {
@@ -380,7 +503,7 @@ impl MessageProcessor {
 
     async fn handle_config_batch_write(
         &self,
-        request_id: RequestId,
+        request_id: ConnectionRequestId,
         params: ConfigBatchWriteParams,
     ) {
         match self.config_api.batch_write(params).await {
@@ -389,8 +512,30 @@ impl MessageProcessor {
         }
     }
 
-    async fn handle_config_requirements_read(&self, request_id: RequestId) {
+    async fn handle_config_requirements_read(&self, request_id: ConnectionRequestId) {
         match self.config_api.config_requirements_read().await {
+            Ok(response) => self.outgoing.send_response(request_id, response).await,
+            Err(error) => self.outgoing.send_error(request_id, error).await,
+        }
+    }
+
+    async fn handle_external_agent_config_detect(
+        &self,
+        request_id: ConnectionRequestId,
+        params: ExternalAgentConfigDetectParams,
+    ) {
+        match self.external_agent_config_api.detect(params).await {
+            Ok(response) => self.outgoing.send_response(request_id, response).await,
+            Err(error) => self.outgoing.send_error(request_id, error).await,
+        }
+    }
+
+    async fn handle_external_agent_config_import(
+        &self,
+        request_id: ConnectionRequestId,
+        params: ExternalAgentConfigImportParams,
+    ) {
+        match self.external_agent_config_api.import(params).await {
             Ok(response) => self.outgoing.send_response(request_id, response).await,
             Err(error) => self.outgoing.send_error(request_id, error).await,
         }

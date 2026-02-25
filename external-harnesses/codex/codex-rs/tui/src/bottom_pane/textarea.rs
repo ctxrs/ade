@@ -3,6 +3,7 @@ use codex_protocol::user_input::ByteRange;
 use codex_protocol::user_input::TextElement as UserTextElement;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
+use crossterm::event::KeyEventKind;
 use crossterm::event::KeyModifiers;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -25,7 +26,16 @@ fn is_word_separator(ch: char) -> bool {
 
 #[derive(Debug, Clone)]
 struct TextElement {
+    id: u64,
     range: Range<usize>,
+    name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TextElementSnapshot {
+    pub(crate) id: u64,
+    pub(crate) range: Range<usize>,
+    pub(crate) text: String,
 }
 
 #[derive(Debug)]
@@ -35,6 +45,7 @@ pub(crate) struct TextArea {
     wrap_cache: RefCell<Option<WrapCache>>,
     preferred_col: Option<usize>,
     elements: Vec<TextElement>,
+    next_element_id: u64,
     kill_buffer: String,
 }
 
@@ -58,6 +69,7 @@ impl TextArea {
             wrap_cache: RefCell::new(None),
             preferred_col: None,
             elements: Vec::new(),
+            next_element_id: 1,
             kill_buffer: String::new(),
         }
     }
@@ -87,7 +99,12 @@ impl TextArea {
                 if start >= end {
                     continue;
                 }
-                self.elements.push(TextElement { range: start..end });
+                let id = self.next_element_id();
+                self.elements.push(TextElement {
+                    id,
+                    range: start..end,
+                    name: None,
+                });
             }
             self.elements.sort_by_key(|e| e.range.start);
         }
@@ -242,6 +259,11 @@ impl TextArea {
     }
 
     pub fn input(&mut self, event: KeyEvent) {
+        // Only process key presses or repeats; ignore releases to avoid inserting
+        // characters on key-up events when modifiers are no longer reported.
+        if !matches!(event.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+            return;
+        }
         match event {
             // Some terminals (or configurations) send Control key chords as
             // C0 control characters without reporting the CONTROL modifier.
@@ -308,7 +330,12 @@ impl TextArea {
                 code: KeyCode::Delete,
                 modifiers: KeyModifiers::ALT,
                 ..
-            }  => self.delete_forward_word(),
+            }
+            | KeyEvent {
+                code: KeyCode::Char('d'),
+                modifiers: KeyModifiers::ALT,
+                ..
+            } => self.delete_forward_word(),
             KeyEvent {
                 code: KeyCode::Delete,
                 ..
@@ -766,6 +793,28 @@ impl TextArea {
             .collect()
     }
 
+    pub(crate) fn text_element_snapshots(&self) -> Vec<TextElementSnapshot> {
+        self.elements
+            .iter()
+            .filter_map(|element| {
+                self.text
+                    .get(element.range.clone())
+                    .map(|text| TextElementSnapshot {
+                        id: element.id,
+                        range: element.range.clone(),
+                        text: text.to_string(),
+                    })
+            })
+            .collect()
+    }
+
+    pub(crate) fn element_id_for_exact_range(&self, range: Range<usize>) -> Option<u64> {
+        self.elements
+            .iter()
+            .find(|element| element.range == range)
+            .map(|element| element.id)
+    }
+
     /// Renames a single text element in-place, keeping it atomic.
     ///
     /// Use this when the element payload is an identifier (e.g. a placeholder) that must be
@@ -835,41 +884,109 @@ impl TextArea {
         true
     }
 
-    pub fn insert_element(&mut self, text: &str) {
+    pub fn insert_element(&mut self, text: &str) -> u64 {
         let start = self.clamp_pos_for_insertion(self.cursor_pos);
         self.insert_str_at(start, text);
         let end = start + text.len();
-        self.add_element(start..end);
+        let id = self.add_element(start..end);
         // Place cursor at end of inserted element
         self.set_cursor(end);
+        id
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn insert_named_element(&mut self, text: &str, id: String) {
+        let start = self.clamp_pos_for_insertion(self.cursor_pos);
+        self.insert_str_at(start, text);
+        let end = start + text.len();
+        self.add_element_with_id(start..end, Some(id));
+        // Place cursor at end of inserted element
+        self.set_cursor(end);
+    }
+
+    pub fn replace_element_by_id(&mut self, id: &str, text: &str) -> bool {
+        if let Some(idx) = self
+            .elements
+            .iter()
+            .position(|e| e.name.as_deref() == Some(id))
+        {
+            let range = self.elements[idx].range.clone();
+            self.replace_range_raw(range, text);
+            self.elements.retain(|e| e.name.as_deref() != Some(id));
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Update the element's text in place, preserving its id so callers can
+    /// update it again later (e.g. recording -> transcribing -> final).
+    #[allow(dead_code)]
+    pub fn update_named_element_by_id(&mut self, id: &str, text: &str) -> bool {
+        if let Some(elem_idx) = self
+            .elements
+            .iter()
+            .position(|e| e.name.as_deref() == Some(id))
+        {
+            let old_range = self.elements[elem_idx].range.clone();
+            let start = old_range.start;
+            self.replace_range_raw(old_range, text);
+            // After replace_range_raw, the old element entry was removed if fully overlapped.
+            // Re-add an updated element with the same id and new range.
+            let new_end = start + text.len();
+            self.add_element_with_id(start..new_end, Some(id.to_string()));
+            true
+        } else {
+            false
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn named_element_range(&self, id: &str) -> Option<std::ops::Range<usize>> {
+        self.elements
+            .iter()
+            .find(|e| e.name.as_deref() == Some(id))
+            .map(|e| e.range.clone())
+    }
+
+    fn add_element_with_id(&mut self, range: Range<usize>, name: Option<String>) -> u64 {
+        let id = self.next_element_id();
+        let elem = TextElement { id, range, name };
+        self.elements.push(elem);
+        self.elements.sort_by_key(|e| e.range.start);
+        id
+    }
+
+    fn add_element(&mut self, range: Range<usize>) -> u64 {
+        self.add_element_with_id(range, None)
     }
 
     /// Mark an existing text range as an atomic element without changing the text.
     ///
     /// This is used to convert already-typed tokens (like `/plan`) into elements
     /// so they render and edit atomically. Overlapping or duplicate ranges are ignored.
-    pub fn add_element_range(&mut self, range: Range<usize>) {
+    pub fn add_element_range(&mut self, range: Range<usize>) -> Option<u64> {
         let start = self.clamp_pos_to_char_boundary(range.start.min(self.text.len()));
         let end = self.clamp_pos_to_char_boundary(range.end.min(self.text.len()));
         if start >= end {
-            return;
+            return None;
         }
         if self
             .elements
             .iter()
             .any(|e| e.range.start == start && e.range.end == end)
         {
-            return;
+            return None;
         }
         if self
             .elements
             .iter()
             .any(|e| start < e.range.end && end > e.range.start)
         {
-            return;
+            return None;
         }
-        self.elements.push(TextElement { range: start..end });
-        self.elements.sort_by_key(|e| e.range.start);
+        let id = self.add_element(start..end);
+        Some(id)
     }
 
     pub fn remove_element_range(&mut self, range: Range<usize>) -> bool {
@@ -884,12 +1001,11 @@ impl TextArea {
         len_before != self.elements.len()
     }
 
-    fn add_element(&mut self, range: Range<usize>) {
-        let elem = TextElement { range };
-        self.elements.push(elem);
-        self.elements.sort_by_key(|e| e.range.start);
+    fn next_element_id(&mut self) -> u64 {
+        let id = self.next_element_id;
+        self.next_element_id = self.next_element_id.saturating_add(1);
+        id
     }
-
     fn find_element_containing(&self, pos: usize) -> Option<usize> {
         self.elements
             .iter()
@@ -1711,6 +1827,15 @@ mod tests {
         t.input(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
         assert_eq!(t.text(), "ello");
         assert_eq!(t.cursor(), 0);
+    }
+
+    #[test]
+    fn delete_forward_word_alt_d() {
+        let mut t = ta_with("hello world");
+        t.set_cursor(6);
+        t.input(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::ALT));
+        pretty_assertions::assert_eq!(t.text(), "hello ");
+        pretty_assertions::assert_eq!(t.cursor(), 6);
     }
 
     #[test]

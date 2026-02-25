@@ -1,17 +1,40 @@
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::Arc;
 
+use crate::config::Permissions;
+use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::SkillScope;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SkillMetadata {
     pub name: String,
     pub description: String,
     pub short_description: Option<String>,
     pub interface: Option<SkillInterface>,
     pub dependencies: Option<SkillDependencies>,
-    pub path: PathBuf,
+    pub policy: Option<SkillPolicy>,
+    pub permission_profile: Option<PermissionProfile>,
+    // This is an experimental field.
+    pub permissions: Option<Permissions>,
+    /// Path to the SKILLS.md file that declares this skill.
+    pub path_to_skills_md: PathBuf,
     pub scope: SkillScope,
+}
+
+impl SkillMetadata {
+    fn allow_implicit_invocation(&self) -> bool {
+        self.policy
+            .as_ref()
+            .and_then(|policy| policy.allow_implicit_invocation)
+            .unwrap_or(true)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SkillPolicy {
+    pub allow_implicit_invocation: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,17 +73,23 @@ pub struct SkillLoadOutcome {
     pub skills: Vec<SkillMetadata>,
     pub errors: Vec<SkillError>,
     pub disabled_paths: HashSet<PathBuf>,
+    pub(crate) implicit_skills_by_scripts_dir: Arc<HashMap<PathBuf, SkillMetadata>>,
+    pub(crate) implicit_skills_by_doc_path: Arc<HashMap<PathBuf, SkillMetadata>>,
 }
 
 impl SkillLoadOutcome {
     pub fn is_skill_enabled(&self, skill: &SkillMetadata) -> bool {
-        !self.disabled_paths.contains(&skill.path)
+        !self.disabled_paths.contains(&skill.path_to_skills_md)
     }
 
-    pub fn enabled_skills(&self) -> Vec<SkillMetadata> {
+    pub fn is_skill_allowed_for_implicit_invocation(&self, skill: &SkillMetadata) -> bool {
+        self.is_skill_enabled(skill) && skill.allow_implicit_invocation()
+    }
+
+    pub fn allowed_skills_for_implicit_invocation(&self) -> Vec<SkillMetadata> {
         self.skills
             .iter()
-            .filter(|skill| self.is_skill_enabled(skill))
+            .filter(|skill| self.is_skill_allowed_for_implicit_invocation(skill))
             .cloned()
             .collect()
     }

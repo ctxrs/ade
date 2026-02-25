@@ -1,10 +1,101 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "definitions": {
+    "AdditionalFileSystemPermissions": {
+      "properties": {
+        "read": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "write": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "AdditionalMacOsPermissions": {
+      "properties": {
+        "accessibility": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "automations": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/MacOsAutomationValue"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "calendar": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "preferences": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/MacOsPreferencesValue"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "AdditionalPermissionProfile": {
+      "properties": {
+        "fileSystem": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AdditionalFileSystemPermissions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "macos": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AdditionalMacOsPermissions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "network": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "ApplyPatchApprovalParams": {
       "properties": {
         "callId": {
-          "description": "Use to correlate this with [codex_core::protocol::PatchApplyBeginEvent] and [codex_core::protocol::PatchApplyEndEvent].",
+          "description": "Use to correlate this with [codex_protocol::protocol::PatchApplyBeginEvent] and [codex_protocol::protocol::PatchApplyEndEvent].",
           "type": "string"
         },
         "conversationId": {
@@ -41,7 +132,7 @@
     "ChatgptAuthTokensRefreshParams": {
       "properties": {
         "previousAccountId": {
-          "description": "Workspace/account identifier that Codex was previously using.\n\nClients that manage multiple accounts/workspaces can use this as a hint to refresh the token for the correct workspace.\n\nThis may be `null` when the prior ID token did not include a workspace identifier (`chatgpt_account_id`) or when the token could not be parsed.",
+          "description": "Workspace/account identifier that Codex was previously using.\n\nClients that manage multiple accounts/workspaces can use this as a hint to refresh the token for the correct workspace.\n\nThis may be `null` when the prior auth state did not include a workspace identifier (`chatgpt_account_id`).",
           "type": [
             "string",
             "null"
@@ -179,6 +270,13 @@
     },
     "CommandExecutionRequestApprovalParams": {
       "properties": {
+        "approvalId": {
+          "description": "Unique identifier for this specific approval callback.\n\nFor regular shell/unified_exec approvals, this is null.\n\nFor zsh-exec-bridge subcommand approvals, multiple callbacks can belong to one parent `itemId`, so `approvalId` is a distinct opaque callback id (a UUID) used to disambiguate routing.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "command": {
           "description": "The command to be executed.",
           "type": [
@@ -206,10 +304,31 @@
         "itemId": {
           "type": "string"
         },
+        "networkApprovalContext": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/NetworkApprovalContext"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional context for a managed-network approval prompt."
+        },
         "proposedExecpolicyAmendment": {
           "description": "Optional proposed execpolicy amendment to allow similar commands without prompting.",
           "items": {
             "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "proposedNetworkPolicyAmendments": {
+          "description": "Optional proposed network policy amendments (allow/deny host) for future requests.",
+          "items": {
+            "$ref": "#/definitions/NetworkPolicyAmendment"
           },
           "type": [
             "array",
@@ -264,8 +383,15 @@
     },
     "ExecCommandApprovalParams": {
       "properties": {
+        "approvalId": {
+          "description": "Identifier for this specific approval callback.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "callId": {
-          "description": "Use to correlate this with [codex_core::protocol::ExecCommandBeginEvent] and [codex_core::protocol::ExecCommandEndEvent].",
+          "description": "Use to correlate this with [codex_protocol::protocol::ExecCommandBeginEvent] and [codex_protocol::protocol::ExecCommandEndEvent].",
           "type": "string"
         },
         "command": {
@@ -405,6 +531,75 @@
       ],
       "type": "object"
     },
+    "MacOsAutomationValue": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      ]
+    },
+    "MacOsPreferencesValue": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "NetworkApprovalContext": {
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "protocol": {
+          "$ref": "#/definitions/NetworkApprovalProtocol"
+        }
+      },
+      "required": [
+        "host",
+        "protocol"
+      ],
+      "type": "object"
+    },
+    "NetworkApprovalProtocol": {
+      "enum": [
+        "http",
+        "https",
+        "socks5Tcp",
+        "socks5Udp"
+      ],
+      "type": "string"
+    },
+    "NetworkPolicyAmendment": {
+      "properties": {
+        "action": {
+          "$ref": "#/definitions/NetworkPolicyRuleAction"
+        },
+        "host": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "host"
+      ],
+      "type": "object"
+    },
+    "NetworkPolicyRuleAction": {
+      "enum": [
+        "allow",
+        "deny"
+      ],
+      "type": "string"
+    },
     "ParsedCommand": {
       "oneOf": [
         {
@@ -526,6 +721,21 @@
           "type": "integer"
         }
       ]
+    },
+    "SkillRequestApprovalParams": {
+      "properties": {
+        "itemId": {
+          "type": "string"
+        },
+        "skillName": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "itemId",
+        "skillName"
+      ],
+      "type": "object"
     },
     "ThreadId": {
       "type": "string"
@@ -686,6 +896,30 @@
         "params"
       ],
       "title": "Item/tool/requestUserInputRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "skill/requestApproval"
+          ],
+          "title": "Skill/requestApprovalRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/SkillRequestApprovalParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "Skill/requestApprovalRequest",
       "type": "object"
     },
     {

@@ -33,7 +33,7 @@ async fn new_thread_is_recorded_in_state_db() -> Result<()> {
 
     let thread_id = test.session_configured.session_id;
     let rollout_path = test.codex.rollout_path().expect("rollout path");
-    let db_path = codex_state::state_db_path(test.config.codex_home.as_path());
+    let db_path = codex_state::state_db_path(test.config.sqlite_home.as_path());
 
     for _ in 0..100 {
         if tokio::fs::try_exists(&db_path).await.unwrap_or(false) {
@@ -43,6 +43,18 @@ async fn new_thread_is_recorded_in_state_db() -> Result<()> {
     }
 
     let db = test.codex.state_db().expect("state db enabled");
+    assert!(
+        !rollout_path.exists(),
+        "fresh thread rollout should not be materialized before first user message"
+    );
+
+    let initial_metadata = db.get_thread(thread_id).await?;
+    assert!(
+        initial_metadata.is_none(),
+        "fresh thread should not be recorded in state db before first user message"
+    );
+
+    test.submit_turn("materialize rollout").await?;
 
     let mut metadata = None;
     for _ in 0..100 {
@@ -56,6 +68,10 @@ async fn new_thread_is_recorded_in_state_db() -> Result<()> {
     let metadata = metadata.expect("thread should exist in state db");
     assert_eq!(metadata.id, thread_id);
     assert_eq!(metadata.rollout_path, rollout_path);
+    assert!(
+        rollout_path.exists(),
+        "rollout should be materialized after first user message"
+    );
 
     Ok(())
 }
@@ -107,6 +123,8 @@ async fn backfill_scans_existing_rollouts() -> Result<()> {
                     originator: "test".to_string(),
                     cli_version: "test".to_string(),
                     source: SessionSource::default(),
+                    agent_nickname: None,
+                    agent_role: None,
                     model_provider: None,
                     base_instructions: None,
                     dynamic_tools: Some(dynamic_tools_for_hook),
@@ -143,7 +161,7 @@ async fn backfill_scans_existing_rollouts() -> Result<()> {
 
     let test = builder.build(&server).await?;
 
-    let db_path = codex_state::state_db_path(test.config.codex_home.as_path());
+    let db_path = codex_state::state_db_path(test.config.sqlite_home.as_path());
     let rollout_path = test.config.codex_home.join(&rollout_rel_path);
     let default_provider = test.config.model_provider_id.clone();
 
@@ -169,7 +187,7 @@ async fn backfill_scans_existing_rollouts() -> Result<()> {
     assert_eq!(metadata.id, thread_id);
     assert_eq!(metadata.rollout_path, rollout_path);
     assert_eq!(metadata.model_provider, default_provider);
-    assert!(metadata.has_user_event);
+    assert!(metadata.first_user_message.is_some());
 
     let mut stored_tools = None;
     for _ in 0..40 {
@@ -202,7 +220,7 @@ async fn user_messages_persist_in_state_db() -> Result<()> {
     });
     let test = builder.build(&server).await?;
 
-    let db_path = codex_state::state_db_path(test.config.codex_home.as_path());
+    let db_path = codex_state::state_db_path(test.config.sqlite_home.as_path());
     for _ in 0..100 {
         if tokio::fs::try_exists(&db_path).await.unwrap_or(false) {
             break;
@@ -221,7 +239,7 @@ async fn user_messages_persist_in_state_db() -> Result<()> {
         metadata = db.get_thread(thread_id).await?;
         if metadata
             .as_ref()
-            .map(|entry| entry.has_user_event)
+            .map(|entry| entry.first_user_message.is_some())
             .unwrap_or(false)
         {
             break;
@@ -230,7 +248,7 @@ async fn user_messages_persist_in_state_db() -> Result<()> {
     }
 
     let metadata = metadata.expect("thread should exist in state db");
-    assert!(metadata.has_user_event);
+    assert!(metadata.first_user_message.is_some());
 
     Ok(())
 }

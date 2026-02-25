@@ -3,6 +3,7 @@ use app_test_support::McpProcess;
 use app_test_support::create_fake_rollout;
 use app_test_support::create_mock_responses_server_repeating_assistant;
 use app_test_support::to_response;
+use codex_app_server_protocol::JSONRPCError;
 use codex_app_server_protocol::JSONRPCNotification;
 use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::RequestId;
@@ -10,10 +11,14 @@ use codex_app_server_protocol::SessionSource;
 use codex_app_server_protocol::ThreadForkParams;
 use codex_app_server_protocol::ThreadForkResponse;
 use codex_app_server_protocol::ThreadItem;
+use codex_app_server_protocol::ThreadStartParams;
+use codex_app_server_protocol::ThreadStartResponse;
 use codex_app_server_protocol::ThreadStartedNotification;
+use codex_app_server_protocol::ThreadStatus;
 use codex_app_server_protocol::TurnStatus;
 use codex_app_server_protocol::UserInput;
 use pretty_assertions::assert_eq;
+use serde_json::Value;
 use std::path::Path;
 use tempfile::TempDir;
 use tokio::time::timeout;
@@ -66,7 +71,19 @@ async fn thread_fork_creates_new_thread_and_emits_started() -> Result<()> {
         mcp.read_stream_until_response_message(RequestId::Integer(fork_id)),
     )
     .await??;
+    let fork_result = fork_resp.result.clone();
     let ThreadForkResponse { thread, .. } = to_response::<ThreadForkResponse>(fork_resp)?;
+
+    // Wire contract: thread title field is `name`, serialized as null when unset.
+    let thread_json = fork_result
+        .get("thread")
+        .and_then(Value::as_object)
+        .expect("thread/fork result.thread must be an object");
+    assert_eq!(
+        thread_json.get("name"),
+        Some(&Value::Null),
+        "forked threads do not inherit a name; expected `name: null`"
+    );
 
     let after_contents = std::fs::read_to_string(&original_path)?;
     assert_eq!(
@@ -77,11 +94,13 @@ async fn thread_fork_creates_new_thread_and_emits_started() -> Result<()> {
     assert_ne!(thread.id, conversation_id);
     assert_eq!(thread.preview, preview);
     assert_eq!(thread.model_provider, "mock_provider");
+    assert_eq!(thread.status, ThreadStatus::Idle);
     let thread_path = thread.path.clone().expect("thread path");
     assert!(thread_path.is_absolute());
     assert_ne!(thread_path, original_path);
     assert!(thread.cwd.is_absolute());
     assert_eq!(thread.source, SessionSource::VsCode);
+    assert_eq!(thread.name, None);
 
     assert_eq!(
         thread.turns.len(),
@@ -110,9 +129,64 @@ async fn thread_fork_creates_new_thread_and_emits_started() -> Result<()> {
         mcp.read_stream_until_notification_message("thread/started"),
     )
     .await??;
+    let started_params = notif.params.clone().expect("params must be present");
+    let started_thread_json = started_params
+        .get("thread")
+        .and_then(Value::as_object)
+        .expect("thread/started params.thread must be an object");
+    assert_eq!(
+        started_thread_json.get("name"),
+        Some(&Value::Null),
+        "thread/started must serialize `name: null` when unset"
+    );
     let started: ThreadStartedNotification =
         serde_json::from_value(notif.params.expect("params must be present"))?;
     assert_eq!(started.thread, thread);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_fork_rejects_unmaterialized_thread() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri())?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let start_id = mcp
+        .send_thread_start_request(ThreadStartParams {
+            model: Some("mock-model".to_string()),
+            ..Default::default()
+        })
+        .await?;
+    let start_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(start_id)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(start_resp)?;
+
+    let fork_id = mcp
+        .send_thread_fork_request(ThreadForkParams {
+            thread_id: thread.id,
+            ..Default::default()
+        })
+        .await?;
+    let fork_err: JSONRPCError = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_error_message(RequestId::Integer(fork_id)),
+    )
+    .await??;
+    assert!(
+        fork_err
+            .error
+            .message
+            .contains("no rollout found for thread id"),
+        "unexpected fork error: {}",
+        fork_err.error.message
+    );
 
     Ok(())
 }

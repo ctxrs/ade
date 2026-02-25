@@ -2,13 +2,46 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "definitions": {
     "AskForApproval": {
-      "enum": [
-        "untrusted",
-        "on-failure",
-        "on-request",
-        "never"
-      ],
-      "type": "string"
+      "oneOf": [
+        {
+          "enum": [
+            "untrusted",
+            "on-failure",
+            "on-request",
+            "never"
+          ],
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "reject": {
+              "properties": {
+                "mcp_elicitations": {
+                  "type": "boolean"
+                },
+                "rules": {
+                  "type": "boolean"
+                },
+                "sandbox_approval": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "mcp_elicitations",
+                "rules",
+                "sandbox_approval"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "reject"
+          ],
+          "title": "RejectAskForApproval",
+          "type": "object"
+        }
+      ]
     },
     "ConfigRequirements": {
       "properties": {
@@ -30,6 +63,15 @@
             "null"
           ]
         },
+        "allowedWebSearchModes": {
+          "items": {
+            "$ref": "#/definitions/WebSearchMode"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "enforceResidency": {
           "anyOf": [
             {
@@ -38,6 +80,90 @@
             {
               "type": "null"
             }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "NetworkRequirements": {
+      "properties": {
+        "allowLocalBinding": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "allowUnixSockets": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "allowUpstreamProxy": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "allowedDomains": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "dangerouslyAllowAllUnixSockets": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "dangerouslyAllowNonLoopbackAdmin": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "dangerouslyAllowNonLoopbackProxy": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "deniedDomains": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "enabled": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "httpPort": {
+          "format": "uint16",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "socksPort": {
+          "format": "uint16",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
           ]
         }
       },
@@ -54,6 +180,14 @@
         "read-only",
         "workspace-write",
         "danger-full-access"
+      ],
+      "type": "string"
+    },
+    "WebSearchMode": {
+      "enum": [
+        "disabled",
+        "cached",
+        "live"
       ],
       "type": "string"
     }

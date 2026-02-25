@@ -136,11 +136,27 @@ pub struct ProviderRelease {
     #[serde(default)]
     pub upstream_version: Option<String>,
     #[serde(default)]
+    pub provenance: Option<ProviderReleaseProvenance>,
+    #[serde(default)]
     pub context_min: Option<String>,
     #[serde(default)]
     pub context_max: Option<String>,
     #[serde(default)]
     pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderReleaseProvenance {
+    #[serde(default)]
+    pub upstream_repo: Option<String>,
+    #[serde(default)]
+    pub upstream_release_tag: Option<String>,
+    #[serde(default)]
+    pub upstream_commit_sha: Option<String>,
+    #[serde(default)]
+    pub ctx_repo: Option<String>,
+    #[serde(default)]
+    pub ctx_release_tag: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -653,6 +669,7 @@ mod tests {
                 context_min: None,
                 context_max: None,
                 notes: None,
+                provenance: None,
             },
             ProviderRelease {
                 version: "0.7.3".to_string(),
@@ -661,6 +678,7 @@ mod tests {
                 context_min: None,
                 context_max: None,
                 notes: None,
+                provenance: None,
             },
         ];
         let refs = releases.iter().collect::<Vec<_>>();
@@ -677,6 +695,7 @@ mod tests {
             context_min: Some("1.2.0".to_string()),
             context_max: None,
             notes: None,
+            provenance: None,
         };
         let ctx = Version::parse("1.1.0").ok();
         assert!(!release_matches_context(&release, ctx.as_ref()));

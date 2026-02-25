@@ -62,10 +62,16 @@ pub struct ThreadMetadata {
     pub updated_at: DateTime<Utc>,
     /// The session source (stringified enum).
     pub source: String,
+    /// Optional random unique nickname assigned to an AgentControl-spawned sub-agent.
+    pub agent_nickname: Option<String>,
+    /// Optional role (agent_role) assigned to an AgentControl-spawned sub-agent.
+    pub agent_role: Option<String>,
     /// The model provider identifier.
     pub model_provider: String,
     /// The working directory for the thread.
     pub cwd: PathBuf,
+    /// Version of the CLI that created the thread.
+    pub cli_version: String,
     /// A best-effort thread title.
     pub title: String,
     /// The sandbox policy (stringified enum).
@@ -74,8 +80,8 @@ pub struct ThreadMetadata {
     pub approval_mode: String,
     /// The last observed token usage.
     pub tokens_used: i64,
-    /// Whether the thread has observed a user message.
-    pub has_user_event: bool,
+    /// First user message observed for this thread, if any.
+    pub first_user_message: Option<String>,
     /// The archive timestamp, if the thread is archived.
     pub archived_at: Option<DateTime<Utc>>,
     /// The git commit SHA, if known.
@@ -99,10 +105,16 @@ pub struct ThreadMetadataBuilder {
     pub updated_at: Option<DateTime<Utc>>,
     /// The session source.
     pub source: SessionSource,
+    /// Optional random unique nickname assigned to the session.
+    pub agent_nickname: Option<String>,
+    /// Optional role (agent_role) assigned to the session.
+    pub agent_role: Option<String>,
     /// The model provider identifier, if known.
     pub model_provider: Option<String>,
     /// The working directory for the thread.
     pub cwd: PathBuf,
+    /// Version of the CLI that created the thread.
+    pub cli_version: Option<String>,
     /// The sandbox policy.
     pub sandbox_policy: SandboxPolicy,
     /// The approval mode.
@@ -131,9 +143,12 @@ impl ThreadMetadataBuilder {
             created_at,
             updated_at: None,
             source,
+            agent_nickname: None,
+            agent_role: None,
             model_provider: None,
             cwd: PathBuf::new(),
-            sandbox_policy: SandboxPolicy::ReadOnly,
+            cli_version: None,
+            sandbox_policy: SandboxPolicy::new_read_only_policy(),
             approval_mode: AskForApproval::OnRequest,
             archived_at: None,
             git_sha: None,
@@ -158,16 +173,19 @@ impl ThreadMetadataBuilder {
             created_at,
             updated_at,
             source,
+            agent_nickname: self.agent_nickname.clone(),
+            agent_role: self.agent_role.clone(),
             model_provider: self
                 .model_provider
                 .clone()
                 .unwrap_or_else(|| default_provider.to_string()),
             cwd: self.cwd.clone(),
+            cli_version: self.cli_version.clone().unwrap_or_default(),
             title: String::new(),
             sandbox_policy,
             approval_mode,
             tokens_used: 0,
-            has_user_event: false,
+            first_user_message: None,
             archived_at: self.archived_at.map(canonicalize_datetime),
             git_sha: self.git_sha.clone(),
             git_branch: self.git_branch.clone(),
@@ -195,11 +213,20 @@ impl ThreadMetadata {
         if self.source != other.source {
             diffs.push("source");
         }
+        if self.agent_nickname != other.agent_nickname {
+            diffs.push("agent_nickname");
+        }
+        if self.agent_role != other.agent_role {
+            diffs.push("agent_role");
+        }
         if self.model_provider != other.model_provider {
             diffs.push("model_provider");
         }
         if self.cwd != other.cwd {
             diffs.push("cwd");
+        }
+        if self.cli_version != other.cli_version {
+            diffs.push("cli_version");
         }
         if self.title != other.title {
             diffs.push("title");
@@ -213,8 +240,8 @@ impl ThreadMetadata {
         if self.tokens_used != other.tokens_used {
             diffs.push("tokens_used");
         }
-        if self.has_user_event != other.has_user_event {
-            diffs.push("has_user_event");
+        if self.first_user_message != other.first_user_message {
+            diffs.push("first_user_message");
         }
         if self.archived_at != other.archived_at {
             diffs.push("archived_at");
@@ -243,13 +270,16 @@ pub(crate) struct ThreadRow {
     created_at: i64,
     updated_at: i64,
     source: String,
+    agent_nickname: Option<String>,
+    agent_role: Option<String>,
     model_provider: String,
     cwd: String,
+    cli_version: String,
     title: String,
     sandbox_policy: String,
     approval_mode: String,
     tokens_used: i64,
-    has_user_event: bool,
+    first_user_message: String,
     archived_at: Option<i64>,
     git_sha: Option<String>,
     git_branch: Option<String>,
@@ -264,13 +294,16 @@ impl ThreadRow {
             created_at: row.try_get("created_at")?,
             updated_at: row.try_get("updated_at")?,
             source: row.try_get("source")?,
+            agent_nickname: row.try_get("agent_nickname")?,
+            agent_role: row.try_get("agent_role")?,
             model_provider: row.try_get("model_provider")?,
             cwd: row.try_get("cwd")?,
+            cli_version: row.try_get("cli_version")?,
             title: row.try_get("title")?,
             sandbox_policy: row.try_get("sandbox_policy")?,
             approval_mode: row.try_get("approval_mode")?,
             tokens_used: row.try_get("tokens_used")?,
-            has_user_event: row.try_get("has_user_event")?,
+            first_user_message: row.try_get("first_user_message")?,
             archived_at: row.try_get("archived_at")?,
             git_sha: row.try_get("git_sha")?,
             git_branch: row.try_get("git_branch")?,
@@ -289,13 +322,16 @@ impl TryFrom<ThreadRow> for ThreadMetadata {
             created_at,
             updated_at,
             source,
+            agent_nickname,
+            agent_role,
             model_provider,
             cwd,
+            cli_version,
             title,
             sandbox_policy,
             approval_mode,
             tokens_used,
-            has_user_event,
+            first_user_message,
             archived_at,
             git_sha,
             git_branch,
@@ -307,13 +343,16 @@ impl TryFrom<ThreadRow> for ThreadMetadata {
             created_at: epoch_seconds_to_datetime(created_at)?,
             updated_at: epoch_seconds_to_datetime(updated_at)?,
             source,
+            agent_nickname,
+            agent_role,
             model_provider,
             cwd: PathBuf::from(cwd),
+            cli_version,
             title,
             sandbox_policy,
             approval_mode,
             tokens_used,
-            has_user_event,
+            first_user_message: (!first_user_message.is_empty()).then_some(first_user_message),
             archived_at: archived_at.map(epoch_seconds_to_datetime).transpose()?,
             git_sha,
             git_branch,

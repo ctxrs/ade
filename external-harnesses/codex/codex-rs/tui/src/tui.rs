@@ -214,6 +214,8 @@ pub fn init() -> Result<Terminal> {
     }
     set_modes()?;
 
+    flush_terminal_input_buffer();
+
     set_panic_hook();
 
     let backend = CrosstermBackend::new(stdout());
@@ -441,6 +443,10 @@ impl Tui {
     pub fn insert_history_lines(&mut self, lines: Vec<Line<'static>>) {
         self.pending_history_lines.extend(lines);
         self.frame_requester().schedule_frame();
+    }
+
+    pub fn clear_pending_history_lines(&mut self) {
+        self.pending_history_lines.clear();
     }
 
     pub fn draw(

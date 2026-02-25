@@ -17,6 +17,7 @@ fi
 
 "$python_cmd" - "$MATRIX_JSON" "$LOCK_JSON" <<'PY'
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -64,6 +65,67 @@ for provider_id in required:
             errors.append(f"provider npm entrypoint missing: {provider_id}")
     else:
         errors.append(f"provider managed_install.kind unsupported: {provider_id} ({kind})")
+
+    if provider_id == "codex":
+        releases = [r for r in releases if isinstance(r, dict)]
+        release = releases[0] if releases else {}
+        provenance = release.get("provenance") if isinstance(release, dict) else {}
+        if not isinstance(provenance, dict):
+            provenance = {}
+
+        upstream_repo = str(provenance.get("upstream_repo") or "").strip()
+        upstream_release_tag = str(provenance.get("upstream_release_tag") or "").strip()
+        upstream_commit_sha = str(provenance.get("upstream_commit_sha") or "").strip()
+        ctx_repo = str(provenance.get("ctx_repo") or "").strip()
+        ctx_release_tag = str(provenance.get("ctx_release_tag") or "").strip()
+
+        if not re.match(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", upstream_repo):
+            errors.append("provider codex provenance.upstream_repo missing/invalid")
+        if not re.match(r"^rust-v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$", upstream_release_tag):
+            errors.append("provider codex provenance.upstream_release_tag missing/invalid")
+        if not re.match(r"^[0-9a-fA-F]{40}$", upstream_commit_sha):
+            errors.append("provider codex provenance.upstream_commit_sha missing/invalid")
+        if not re.match(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", ctx_repo):
+            errors.append("provider codex provenance.ctx_repo missing/invalid")
+        if not re.match(r"^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$", ctx_release_tag):
+            errors.append("provider codex provenance.ctx_release_tag missing/invalid")
+
+        managed_version = str(managed.get("version") or "").strip()
+        release_version = str(release.get("version") or "").strip()
+        if managed_version and release_version and managed_version != release_version:
+            errors.append(
+                f"provider codex release.version mismatch ({release_version} vs managed {managed_version})"
+            )
+        if managed_version and ctx_release_tag and ctx_release_tag != f"v{managed_version}":
+            errors.append(
+                f"provider codex provenance.ctx_release_tag mismatch ({ctx_release_tag} vs expected v{managed_version})"
+            )
+
+        targets = managed.get("targets") if isinstance(managed, dict) else {}
+        if not isinstance(targets, dict) or not targets:
+            errors.append("provider codex managed_install.targets missing")
+        else:
+            expected_prefix = (
+                f"https://github.com/{ctx_repo}/releases/download/{ctx_release_tag}/"
+                if ctx_repo and ctx_release_tag
+                else ""
+            )
+            for target_id, target in targets.items():
+                if not isinstance(target, dict):
+                    errors.append(f"provider codex target invalid ({target_id})")
+                    continue
+                url = str(target.get("url") or "").strip()
+                if not url:
+                    errors.append(f"provider codex target URL missing ({target_id})")
+                    continue
+                if expected_prefix and not url.startswith(expected_prefix):
+                    errors.append(
+                        f"provider codex target URL does not match ctx release tag ({target_id})"
+                    )
+                if managed_version and f"codex-crp-{managed_version}" not in url:
+                    errors.append(
+                        f"provider codex target URL missing managed version ({target_id})"
+                    )
 
 if errors:
     for error in errors:

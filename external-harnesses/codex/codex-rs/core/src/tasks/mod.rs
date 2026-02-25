@@ -31,6 +31,7 @@ use crate::state::ActiveTurn;
 use crate::state::RunningTask;
 use crate::state::TaskKind;
 use codex_protocol::models::ContentItem;
+use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::user_input::UserInput;
@@ -40,10 +41,12 @@ pub(crate) use ghost_snapshot::GhostSnapshotTask;
 pub(crate) use regular::RegularTask;
 pub(crate) use review::ReviewTask;
 pub(crate) use undo::UndoTask;
+pub(crate) use user_shell::UserShellCommandMode;
 pub(crate) use user_shell::UserShellCommandTask;
+pub(crate) use user_shell::execute_user_shell_command;
 
 const GRACEFULL_INTERRUPTION_TIMEOUT_MS: u64 = 100;
-const TURN_ABORTED_INTERRUPTED_GUIDANCE: &str = "The user interrupted the previous turn on purpose. If any tools/commands were aborted, they may have partially executed; verify current state before retrying.";
+const TURN_ABORTED_INTERRUPTED_GUIDANCE: &str = "The user interrupted the previous turn on purpose. Any running unified exec processes were terminated. If any tools/commands were aborted, they may have partially executed; verify current state before retrying.";
 
 /// Thin wrapper that exposes the parts of [`Session`] task runners need.
 #[derive(Clone)]
@@ -117,8 +120,7 @@ impl Session {
         task: T,
     ) {
         self.abort_all_tasks(TurnAbortReason::Replaced).await;
-        self.seed_initial_context_if_needed(turn_context.as_ref())
-            .await;
+        self.clear_connector_selection().await;
 
         let task: Arc<dyn SessionTask> = Arc::new(task);
         let task_kind = task.kind();
@@ -144,11 +146,11 @@ impl Session {
                             task_cancellation_token.child_token(),
                         )
                         .await;
-                    session_ctx.clone_session().flush_rollout().await;
+                    let sess = session_ctx.clone_session();
+                    sess.flush_rollout().await;
                     if !task_cancellation_token.is_cancelled() {
                         // Emit completion uniformly from spawn site so all tasks share the same lifecycle.
-                        let sess = session_ctx.clone_session();
-                        sess.on_task_finished(ctx_for_finish, last_agent_message)
+                        sess.on_task_finished(Arc::clone(&ctx_for_finish), last_agent_message)
                             .await;
                     }
                     done_clone.notify_waiters();
@@ -178,7 +180,9 @@ impl Session {
         for task in self.take_all_running_tasks().await {
             self.handle_task_abort(task, reason.clone()).await;
         }
-        self.close_unified_exec_processes().await;
+        if reason == TurnAbortReason::Interrupted {
+            self.close_unified_exec_processes().await;
+        }
     }
 
     pub async fn on_task_finished(
@@ -186,20 +190,36 @@ impl Session {
         turn_context: Arc<TurnContext>,
         last_agent_message: Option<String>,
     ) {
+        turn_context
+            .turn_metadata_state
+            .cancel_git_enrichment_task();
+
         let mut active = self.active_turn.lock().await;
-        let should_close_processes = if let Some(at) = active.as_mut()
+        let mut pending_input = Vec::<ResponseInputItem>::new();
+        let mut should_clear_active_turn = false;
+        if let Some(at) = active.as_mut()
             && at.remove_task(&turn_context.sub_id)
         {
-            *active = None;
-            true
-        } else {
-            false
-        };
-        drop(active);
-        if should_close_processes {
-            self.close_unified_exec_processes().await;
+            let mut ts = at.turn_state.lock().await;
+            pending_input = ts.take_pending_input();
+            should_clear_active_turn = true;
         }
-        let event = EventMsg::TurnComplete(TurnCompleteEvent { last_agent_message });
+        if should_clear_active_turn {
+            *active = None;
+        }
+        drop(active);
+        if !pending_input.is_empty() {
+            let pending_response_items = pending_input
+                .into_iter()
+                .map(ResponseItem::from)
+                .collect::<Vec<_>>();
+            self.record_conversation_items(turn_context.as_ref(), &pending_response_items)
+                .await;
+        }
+        let event = EventMsg::TurnComplete(TurnCompleteEvent {
+            turn_id: turn_context.sub_id.clone(),
+            last_agent_message,
+        });
         self.send_event(turn_context.as_ref(), event).await;
     }
 
@@ -222,7 +242,7 @@ impl Session {
         }
     }
 
-    async fn close_unified_exec_processes(&self) {
+    pub(crate) async fn close_unified_exec_processes(&self) {
         self.services
             .unified_exec_manager
             .terminate_all_processes()
@@ -237,6 +257,9 @@ impl Session {
 
         trace!(task_kind = ?task.kind, sub_id, "aborting running task");
         task.cancellation_token.cancel();
+        task.turn_context
+            .turn_metadata_state
+            .cancel_git_enrichment_task();
         let session_task = task.task;
 
         select! {
@@ -275,7 +298,10 @@ impl Session {
             self.flush_rollout().await;
         }
 
-        let event = EventMsg::TurnAborted(TurnAbortedEvent { reason });
+        let event = EventMsg::TurnAborted(TurnAbortedEvent {
+            turn_id: Some(task.turn_context.sub_id.clone()),
+            reason,
+        });
         self.send_event(task.turn_context.as_ref(), event).await;
     }
 }

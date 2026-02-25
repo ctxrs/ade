@@ -17,8 +17,9 @@ use crate::protocol::CrpTurnStatus;
 use async_trait::async_trait;
 use base64::Engine;
 use clap::Parser;
+use codex_arg0::Arg0DispatchPaths;
 use codex_arg0::arg0_dispatch_or_else;
-use codex_common::CliConfigOverrides;
+use codex_utils_cli::CliConfigOverrides;
 use codex_core::ARCHIVED_SESSIONS_SUBDIR;
 use codex_core::AuthManager;
 use codex_core::CodexThread;
@@ -36,18 +37,18 @@ use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
 use codex_core::default_client::set_default_originator;
 use codex_core::find_thread_path_by_id_str;
-use codex_core::protocol::AskForApproval;
-use codex_core::protocol::Event;
-use codex_core::protocol::EventMsg;
-use codex_core::protocol::ExecCommandSource;
-use codex_core::protocol::ExecOutputStream;
-use codex_core::protocol::FileChange;
-use codex_core::protocol::Op;
-use codex_core::protocol::ReviewRequest;
-use codex_core::protocol::ReviewTarget;
-use codex_core::protocol::SandboxPolicy;
-use codex_core::protocol::Submission;
-use codex_core::protocol::TurnAbortReason;
+use codex_protocol::protocol::AskForApproval;
+use codex_protocol::protocol::Event;
+use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::ExecCommandSource;
+use codex_protocol::protocol::ExecOutputStream;
+use codex_protocol::protocol::FileChange;
+use codex_protocol::protocol::Op;
+use codex_protocol::protocol::ReviewRequest;
+use codex_protocol::protocol::ReviewTarget;
+use codex_protocol::protocol::SandboxPolicy;
+use codex_protocol::protocol::Submission;
+use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::ThreadId;
 use codex_protocol::items::AgentMessageContent;
 use codex_protocol::items::AgentMessageItem;
@@ -515,11 +516,14 @@ mod replay_golden_tests {
             .join(file)
     }
 
-    fn replay_fixture(input_name: &str) -> Vec<serde_json::Value> {
+    fn replay_fixture(input_name: &str) -> anyhow::Result<Vec<serde_json::Value>> {
         let input_path = testdata_path(input_name);
         let input = fs::read_to_string(&input_path)
             .unwrap_or_else(|e| panic!("failed to read {}: {e}", input_path.display()));
+        replay_fixture_from_str(&input)
+    }
 
+    fn replay_fixture_from_str(input: &str) -> anyhow::Result<Vec<serde_json::Value>> {
         let mut tracker = TurnTracker::new("replay_session".to_string());
 
         let mut seq: u64 = 0;
@@ -538,38 +542,15 @@ mod replay_golden_tests {
         };
         out.push(serde_json::to_value(&opened).unwrap());
 
-        for line in input.lines() {
+        for (idx, line) in input.lines().enumerate() {
+            let line_no = idx + 1;
             let trimmed = line.trim();
             if trimmed.is_empty() {
                 continue;
             }
 
-            let v: serde_json::Value = match serde_json::from_str(trimmed) {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-
-            let msg_type = v
-                .get("event")
-                .and_then(|e| e.get("msg"))
-                .and_then(|m| m.get("type"))
-                .and_then(|t| t.as_str())
-                .unwrap_or("");
-
-            match msg_type {
-                // Large / legacy / redundant events shouldn't influence the CRP output.
-                "raw_response_item" => continue,
-                "agent_message_delta" | "agent_message" => continue,
-                "agent_reasoning_delta" | "agent_reasoning" => continue,
-                _ => {}
-            }
-
-            let Some(ev_val) = v.get("event") else {
+            let Some(event) = parse_replay_input_line(trimmed, line_no)? else {
                 continue;
-            };
-            let event: Event = match serde_json::from_value(ev_val.clone()) {
-                Ok(ev) => ev,
-                Err(_) => continue,
             };
 
             for (channel, event) in map_codex_event(&mut tracker, event) {
@@ -584,11 +565,13 @@ mod replay_golden_tests {
             }
         }
 
-        out
+        Ok(out)
     }
 
     fn assert_fixture(input: &str, expected: &str) {
-        let got = replay_fixture(input);
+        let got = replay_fixture(input).unwrap_or_else(|e| {
+            panic!("failed replaying fixture {input}: {e}");
+        });
         let expected_path = testdata_path(expected);
         let expected_contents = fs::read_to_string(&expected_path)
             .unwrap_or_else(|e| panic!("failed to read {}: {e}", expected_path.display()));
@@ -629,6 +612,17 @@ mod replay_golden_tests {
             "message_delta_final.input.jsonl",
             "message_delta_final.expected.jsonl",
         );
+    }
+
+    #[test]
+    fn replay_fixture_fails_when_task_complete_is_missing_turn_id() {
+        let input = r#"{"event":{"id":"fixture-turn-1","msg":{"last_agent_message":"done","type":"task_complete"}},"i":1}"#;
+        let err = replay_fixture_from_str(input)
+            .expect_err("missing turn_id on task_complete should fail replay");
+        let msg = err.to_string();
+        assert!(msg.contains("line 1"), "{msg}");
+        assert!(msg.contains("task_complete"), "{msg}");
+        assert!(msg.contains("turn_id") || msg.contains("missing field"), "{msg}");
     }
 }
 
@@ -756,13 +750,13 @@ fn main() -> anyhow::Result<()> {
     //
     // If we parse CLI args before calling `arg0_dispatch_or_else`, clap will reject the
     // `--codex-run-as-apply-patch` flag and `apply_patch` will be broken.
-    arg0_dispatch_or_else(|codex_linux_sandbox_exe| async move {
+    arg0_dispatch_or_else(|arg0_paths| async move {
         let cli = Cli::parse();
-        run_main(cli, codex_linux_sandbox_exe).await
+        run_main(cli, arg0_paths).await
     })
 }
 
-async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()> {
+async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
     if let Err(err) = set_default_originator("codex_crp".to_string()) {
         warn!(?err, "Failed to set codex CRP originator override");
     }
@@ -838,7 +832,7 @@ async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow:
                                     &router,
                                     &event_tx,
                                     &cli_kv_overrides,
-                                    codex_linux_sandbox_exe.clone(),
+                                    arg0_paths.clone(),
                                     &tool_request_tx,
                                 ).await?;
                             }
@@ -947,38 +941,15 @@ async fn run_replay_codex_events(
         .await?;
     out.write_all(b"\n").await?;
 
+    let mut line_no: usize = 0;
     while let Some(line) = reader.next_line().await? {
+        line_no += 1;
         if line.trim().is_empty() {
             continue;
         }
 
-        let v: serde_json::Value = match serde_json::from_str(&line) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-
-        // Dump format: { "i": <n>, "event": { "id": "...", "msg": { "type": "..." } } }
-        let msg_type = v
-            .get("event")
-            .and_then(|e| e.get("msg"))
-            .and_then(|m| m.get("type"))
-            .and_then(|t| t.as_str())
-            .unwrap_or("");
-
-        // Ignore large / legacy / redundant events for the offline translator.
-        match msg_type {
-            "raw_response_item" => continue,
-            "agent_message_delta" | "agent_message" => continue,
-            "agent_reasoning_delta" | "agent_reasoning" => continue,
-            _ => {}
-        }
-
-        let Some(ev_val) = v.get("event") else {
+        let Some(event) = parse_replay_input_line(&line, line_no)? else {
             continue;
-        };
-        let event: Event = match serde_json::from_value(ev_val.clone()) {
-            Ok(ev) => ev,
-            Err(_) => continue,
         };
 
         for (channel, event) in map_codex_event(&mut tracker, event) {
@@ -999,13 +970,56 @@ async fn run_replay_codex_events(
     Ok(())
 }
 
+fn is_replay_ignored_msg_type(msg_type: &str) -> bool {
+    matches!(
+        msg_type,
+        "raw_response_item"
+            | "agent_message_delta"
+            | "agent_message"
+            | "agent_reasoning_delta"
+            | "agent_reasoning"
+    )
+}
+
+fn parse_replay_input_line(line: &str, line_no: usize) -> anyhow::Result<Option<Event>> {
+    let v: serde_json::Value = match serde_json::from_str(line) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+
+    // Dump format: { "i": <n>, "event": { "id": "...", "msg": { "type": "..." } } }
+    let msg_type = v
+        .get("event")
+        .and_then(|e| e.get("msg"))
+        .and_then(|m| m.get("type"))
+        .and_then(|t| t.as_str())
+        .unwrap_or("unknown");
+
+    // Ignore large / legacy / redundant events for the offline translator.
+    if is_replay_ignored_msg_type(msg_type) {
+        return Ok(None);
+    }
+
+    let Some(ev_val) = v.get("event") else {
+        return Ok(None);
+    };
+
+    let event: Event = serde_json::from_value(ev_val.clone()).map_err(|err| {
+        anyhow::anyhow!(
+            "failed to decode codex event at line {line_no} (msg type: {msg_type}): {err}"
+        )
+    })?;
+
+    Ok(Some(event))
+}
+
 async fn handle_command(
     command: CrpCommand,
     session: &mut Option<SessionState>,
     router: &CrpEventRouter,
     event_tx: &mpsc::UnboundedSender<Event>,
     cli_kv_overrides: &[(String, toml::Value)],
-    codex_linux_sandbox_exe: Option<PathBuf>,
+    arg0_paths: Arg0DispatchPaths,
     _tool_request_tx: &mpsc::UnboundedSender<ToolBridgeRequest>,
 ) -> anyhow::Result<()> {
     match command {
@@ -1041,7 +1055,7 @@ async fn handle_command(
             let state = open_session(
                 config,
                 cli_kv_overrides,
-                codex_linux_sandbox_exe,
+                arg0_paths.clone(),
                 provider_session_id.clone(),
             )
             .await?;
@@ -1288,19 +1302,20 @@ async fn handle_command(
             });
 
             let config =
-                load_config_from_crp(config, cli_kv_overrides, codex_linux_sandbox_exe).await?;
+                load_config_from_crp(config, cli_kv_overrides, arg0_paths.clone()).await?;
             let auth_manager = AuthManager::shared(
                 config.codex_home.clone(),
                 true,
                 config.cli_auth_credentials_store_mode,
             );
-            let thread_manager =
-                ThreadManager::new(config.codex_home.clone(), auth_manager, SessionSource::Exec);
+            let thread_manager = ThreadManager::new(
+                config.codex_home.clone(),
+                auth_manager,
+                SessionSource::Exec,
+                config.model_catalog.clone(),
+            );
             let presets = thread_manager
-                .list_models(
-                    &config,
-                    codex_core::models_manager::manager::RefreshStrategy::OnlineIfUncached,
-                )
+                .list_models(codex_core::models_manager::manager::RefreshStrategy::OnlineIfUncached)
                 .await;
             let models = build_crp_model_infos(&presets);
             let current_model_id = build_current_model_id(&config, &presets);
@@ -1346,7 +1361,7 @@ async fn handle_command(
 async fn load_config_from_crp(
     session_config: CrpSessionConfig,
     cli_kv_overrides: &[(String, toml::Value)],
-    codex_linux_sandbox_exe: Option<PathBuf>,
+    arg0_paths: Arg0DispatchPaths,
 ) -> anyhow::Result<Config> {
     let session_effort = session_config.reasoning_effort.clone();
     let (model_override, effort_override) = session_config
@@ -1363,7 +1378,11 @@ async fn load_config_from_crp(
         sandbox_mode: session_config.sandbox_mode,
         cwd: session_config.cwd,
         model_provider: session_config.model_provider,
-        codex_linux_sandbox_exe,
+        codex_linux_sandbox_exe: arg0_paths.codex_linux_sandbox_exe,
+        main_execve_wrapper_exe: arg0_paths.main_execve_wrapper_exe,
+        js_repl_node_path: None,
+        js_repl_node_module_dirs: None,
+        zsh_path: None,
         base_instructions: None,
         developer_instructions: None,
         personality: session_config.personality,
@@ -1419,11 +1438,10 @@ fn split_model_and_effort(model: &str) -> (String, Option<ReasoningEffort>) {
 async fn open_session(
     session_config: CrpSessionConfig,
     cli_kv_overrides: &[(String, toml::Value)],
-    codex_linux_sandbox_exe: Option<PathBuf>,
+    arg0_paths: Arg0DispatchPaths,
     provider_session_id: Option<String>,
 ) -> anyhow::Result<SessionState> {
-    let config =
-        load_config_from_crp(session_config, cli_kv_overrides, codex_linux_sandbox_exe).await?;
+    let config = load_config_from_crp(session_config, cli_kv_overrides, arg0_paths).await?;
 
     let auth_manager = AuthManager::shared(
         config.codex_home.clone(),
@@ -1434,12 +1452,12 @@ async fn open_session(
         config.codex_home.clone(),
         Arc::clone(&auth_manager),
         SessionSource::Exec,
+        config.model_catalog.clone(),
     );
     let default_model = thread_manager
         .get_models_manager()
         .get_default_model(
             &config.model,
-            &config,
             codex_core::models_manager::manager::RefreshStrategy::OnlineIfUncached,
         )
         .await;
@@ -1497,8 +1515,8 @@ async fn open_session(
         default_model,
         default_effort: config.model_reasoning_effort,
         default_summary: config.model_reasoning_summary,
-        default_approval_policy: config.approval_policy.value(),
-        default_sandbox_policy: config.sandbox_policy.get().clone(),
+        default_approval_policy: config.permissions.approval_policy.value(),
+        default_sandbox_policy: config.permissions.sandbox_policy.get().clone(),
     })
 }
 
@@ -2985,16 +3003,17 @@ fn agent_message_text(item: &AgentMessageItem) -> String {
 mod tests {
     use super::*;
     use base64::Engine;
-    use codex_core::protocol::AgentMessageContentDeltaEvent;
-    use codex_core::protocol::ExecCommandBeginEvent;
-    use codex_core::protocol::ExecCommandEndEvent;
-    use codex_core::protocol::ExecCommandOutputDeltaEvent;
-    use codex_core::protocol::ExecCommandSource;
-    use codex_core::protocol::ItemCompletedEvent;
-    use codex_core::protocol::ReasoningContentDeltaEvent;
-    use codex_core::protocol::ReasoningRawContentDeltaEvent;
-    use codex_core::protocol::TurnCompleteEvent;
-    use codex_core::protocol::TurnStartedEvent;
+    use codex_protocol::protocol::AgentMessageContentDeltaEvent;
+    use codex_protocol::protocol::ExecCommandBeginEvent;
+    use codex_protocol::protocol::ExecCommandEndEvent;
+    use codex_protocol::protocol::ExecCommandStatus;
+    use codex_protocol::protocol::ExecCommandOutputDeltaEvent;
+    use codex_protocol::protocol::ExecCommandSource;
+    use codex_protocol::protocol::ItemCompletedEvent;
+    use codex_protocol::protocol::ReasoningContentDeltaEvent;
+    use codex_protocol::protocol::ReasoningRawContentDeltaEvent;
+    use codex_protocol::protocol::TurnCompleteEvent;
+    use codex_protocol::protocol::TurnStartedEvent;
     use codex_protocol::items::ReasoningItem;
     use codex_protocol::parse_command::ParsedCommand;
     use pretty_assertions::assert_eq;
@@ -3011,6 +3030,7 @@ mod tests {
             Event {
                 id: turn_id.clone(),
                 msg: EventMsg::TurnStarted(TurnStartedEvent {
+                    turn_id: turn_id.clone(),
                     model_context_window: None,
                     collaboration_mode_kind: Default::default(),
                 }),
@@ -3059,6 +3079,7 @@ mod tests {
                     formatted_output: "hi
 "
                     .to_string(),
+                    status: ExecCommandStatus::Completed,
                 }),
             },
             Event {
@@ -3073,6 +3094,7 @@ mod tests {
             Event {
                 id: turn_id,
                 msg: EventMsg::TurnComplete(TurnCompleteEvent {
+                    turn_id: "turn-1".to_string(),
                     last_agent_message: Some("done".to_string()),
                 }),
             },
@@ -3149,6 +3171,7 @@ mod tests {
             Event {
                 id: turn_id.clone(),
                 msg: EventMsg::TurnStarted(TurnStartedEvent {
+                    turn_id: turn_id.clone(),
                     model_context_window: None,
                     collaboration_mode_kind: Default::default(),
                 }),
