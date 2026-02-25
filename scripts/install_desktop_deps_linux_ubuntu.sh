@@ -79,6 +79,8 @@ packages=(
   librsvg2-dev
   libssl-dev
   musl
+  libc++1
+  tk
 )
 
 echo "${BOLD}Installing desktop (Tauri v2) Linux build dependencies (Ubuntu/Debian)${RESET}"
