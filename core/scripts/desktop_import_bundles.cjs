@@ -55,8 +55,16 @@ const main = () => {
   }
 
   const coreRoot = path.resolve(__dirname, "..");
-  const destDir = path.join(coreRoot, "apps", "desktop", "src-tauri", "bundles");
-  const keepFiles = [".gitignore", "README.md", "lucide-settings.svg"];
+  const destDir = process.env.CTX_DESKTOP_IMPORT_DEST
+    ? path.resolve(process.env.CTX_DESKTOP_IMPORT_DEST)
+    : path.join(coreRoot, "apps", "desktop", "src-tauri", "bundles");
+  const keepFiles = [
+    ".gitignore",
+    "README.md",
+    "lucide-settings.svg",
+    "runtime_lock.v1.json",
+    "runtime_lock.v2.json",
+  ];
   const keepBackups = new Map();
   if (fs.existsSync(destDir)) {
     for (const file of keepFiles) {
