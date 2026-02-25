@@ -15,6 +15,7 @@ trap 'rm -rf "$tmp_root"' EXIT
 bundle_x64="$tmp_root/x64"
 bundle_arm64="$tmp_root/arm64"
 bundle_out="$tmp_root/out"
+bundle_out_single="$tmp_root/out-single"
 mkdir -p "$bundle_x64/providers/codex/linux/x86_64"
 mkdir -p "$bundle_arm64/providers/codex/linux/aarch64"
 mkdir -p "$bundle_x64/images" "$bundle_arm64/images"
@@ -132,6 +133,31 @@ if len(images) != 2:
     raise SystemExit(f"expected 2 images, got {len(images)}")
 if len(daemons) != 2:
     raise SystemExit(f"expected 2 daemons, got {len(daemons)}")
+PY
+
+node "$MERGE_SCRIPT" \
+  --input "$bundle_x64" \
+  --output "$bundle_out_single" \
+  --require-provider codex:linux:x86_64 \
+  --require-image ctx-harness:linux:x86_64 \
+  --require-daemon ctx-daemon:linux:x86_64
+
+python3 - "$bundle_out_single/manifest.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+data = json.loads(path.read_text(encoding="utf-8"))
+providers = data.get("providers") or []
+images = data.get("images") or []
+daemons = data.get("daemons") or []
+if len(providers) != 1:
+    raise SystemExit(f"expected 1 provider, got {len(providers)}")
+if len(images) != 1:
+    raise SystemExit(f"expected 1 image, got {len(images)}")
+if len(daemons) != 1:
+    raise SystemExit(f"expected 1 daemon, got {len(daemons)}")
 PY
 
 conflict_dir="$tmp_root/conflict"

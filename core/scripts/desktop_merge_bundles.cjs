@@ -9,7 +9,7 @@ const usage = () => {
     [
       "usage:",
       "  node core/scripts/desktop_merge_bundles.cjs \\",
-      "    --input <bundle-dir> --input <bundle-dir> --output <bundle-dir> \\",
+      "    --input <bundle-dir> [--input <bundle-dir> ...] --output <bundle-dir> \\",
       "    [--require-provider id:os:arch] [--require-runtime id:os:arch] [--require-image id:os:arch] [--require-daemon id:os:arch]",
     ].join("\n"),
   );
@@ -62,7 +62,7 @@ const parseArgs = (argv) => {
         throw new Error(`unknown argument: ${flag}`);
     }
   }
-  if (args.inputs.length < 2) throw new Error("expected at least two --input values");
+  if (args.inputs.length < 1) throw new Error("expected at least one --input value");
   if (!args.output) throw new Error("missing required --output");
   return args;
 };
