@@ -5624,47 +5624,17 @@ pub(super) async fn authenticate_provider_for_workspace(
 }
 
 pub(super) async fn install_provider(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<InstallStartResponse>, (StatusCode, Json<serde_json::Value>)> {
-    if id == "codex-crp" {
-        return Err(invalid_provider_id_error("codex-crp", "codex"));
-    }
-    let matrix = crate::provider_matrix::load_matrix_cached(
-        &state.core.data_root,
-        &state.providers.matrix_cache,
-    )
-    .await;
-    if !installer::is_supported_managed_provider(&matrix, &id) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": format!("unsupported provider for managed install: {id}")
-            })),
-        ));
-    }
-
-    let (install_id, started_new) = state.start_install(id.clone()).await;
-    if started_new {
-        let state2 = state.clone();
-        let provider_id = id.clone();
-        tokio::spawn(async move {
-            if let Err(e) = installer::install_provider_with_progress(
-                state2.clone(),
-                install_id,
-                provider_id.clone(),
+    Err((
+        StatusCode::GONE,
+        Json(serde_json::json!({
+            "error": format!(
+                "provider installs are disabled; provider '{id}' must be bundled in deterministic runtime assets"
             )
-            .await
-            {
-                tracing::error!("provider install failed ({provider_id}): {e:#}");
-            }
-        });
-    }
-
-    Ok(Json(InstallStartResponse {
-        provider_id: id,
-        install_id,
-    }))
+        })),
+    ))
 }
 
 #[derive(Debug, Serialize)]
@@ -5674,88 +5644,16 @@ pub(super) struct LspInstallStartResponse {
 }
 
 pub(super) async fn install_lsp_server(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
+    State(_state): State<Arc<AppState>>,
+    Path(_id): Path<String>,
 ) -> Result<Json<LspInstallStartResponse>, StatusCode> {
-    if !installer::is_supported_managed_lsp_server(&id) {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-
-    let install_key = format!("lsp:{id}");
-    let (install_id, started_new) = state.start_install(install_key).await;
-    if started_new {
-        let state2 = state.clone();
-        let server_id = id.clone();
-        tokio::spawn(async move {
-            if let Err(e) = installer::install_lsp_server_with_progress(
-                state2.clone(),
-                install_id,
-                server_id.clone(),
-            )
-            .await
-            {
-                tracing::error!("lsp install failed ({server_id}): {e:#}");
-            }
-        });
-    }
-
-    Ok(Json(LspInstallStartResponse {
-        server_id: id,
-        install_id,
-    }))
+    Err(StatusCode::GONE)
 }
 
 pub(super) async fn install_all_providers(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<InstallStartResponse>>, StatusCode> {
-    let mut out = Vec::new();
-    let matrix = crate::provider_matrix::load_matrix_cached(
-        &state.core.data_root,
-        &state.providers.matrix_cache,
-    )
-    .await;
-    for entry in matrix.providers.iter() {
-        if !installer::is_supported_managed_provider(&matrix, &entry.id) {
-            continue;
-        }
-        let id = entry.id.as_str();
-        if let Some(install_id) = state.find_running_install(id).await {
-            out.push(InstallStartResponse {
-                provider_id: id.to_string(),
-                install_id,
-            });
-            continue;
-        }
-
-        let status = state.providers.statuses.lock().await.get(id).cloned();
-        if let Some(st) = status {
-            if st.installed && matches!(st.health, ctx_providers::adapters::ProviderHealth::Ok) {
-                continue;
-            }
-        }
-
-        let (install_id, started_new) = state.start_install(id.to_string()).await;
-        if started_new {
-            let state2 = state.clone();
-            let provider_id = id.to_string();
-            tokio::spawn(async move {
-                if let Err(e) = installer::install_provider_with_progress(
-                    state2.clone(),
-                    install_id,
-                    provider_id.clone(),
-                )
-                .await
-                {
-                    tracing::error!("provider install failed ({provider_id}): {e:#}");
-                }
-            });
-        }
-        out.push(InstallStartResponse {
-            provider_id: id.to_string(),
-            install_id,
-        });
-    }
-    Ok(Json(out))
+    Err(StatusCode::GONE)
 }
 
 #[derive(Debug, Serialize)]

@@ -590,7 +590,12 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                     String(h.id).toLowerCase().includes(q) || String(h.label).toLowerCase().includes(q),
                 )
               : all;
-            const visible = filtered;
+            const visible = installControlsEnabled
+              ? filtered
+              : filtered.filter((h) => {
+                  const status = ns.providersById[String(h.id)];
+                  return status?.installed === true && status?.health === "ok";
+                });
             if (visible.length === 0) return <div className="wb-menu-empty">No matching agents.</div>;
 
             return visible.map((h) => {

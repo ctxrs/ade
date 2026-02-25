@@ -21,6 +21,7 @@ const destBundleDir = path.join(desktopTauriRoot, "bundles");
 const bundleScript = path.join(coreRoot, "..", "scripts", "ensure_bundled_harnesses.sh");
 const harnessRuntimeRs = path.join(coreRoot, "crates", "ctx-http", "src", "harness_runtime.rs");
 const runtimeLockPath = path.join(destBundleDir, "runtime_lock.v2.json");
+const hostManifestOs = process.platform === "darwin" ? "macos" : process.platform === "win32" ? "windows" : "linux";
 const hostManifestArch = process.arch === "arm64" ? "aarch64" : process.arch === "x64" ? "x86_64" : process.arch;
 const parityProviderTargets = [
   { os: "macos", arch: hostManifestArch },
@@ -196,16 +197,19 @@ const assertBundledHarnessImageTargets = (bundleDir, expectedImage, targets) => 
   }
 };
 
-const readRuntimeLockRequiredProviderIds = () => {
+const readRuntimeLock = () => {
   if (!fs.existsSync(runtimeLockPath)) {
     throw new Error(`missing runtime lock for parity enforcement: ${runtimeLockPath}`);
   }
-  let lock;
   try {
-    lock = JSON.parse(fs.readFileSync(runtimeLockPath, "utf8"));
+    return JSON.parse(fs.readFileSync(runtimeLockPath, "utf8"));
   } catch (error) {
     throw new Error(`failed to parse runtime lock ${runtimeLockPath}: ${error?.message ?? error}`);
   }
+};
+
+const readRuntimeLockRequiredProviderIds = () => {
+  const lock = readRuntimeLock();
   const ids = Array.isArray(lock?.required?.provider_ids)
     ? lock.required.provider_ids
         .map((entry) => String(entry || "").trim())
@@ -215,6 +219,70 @@ const readRuntimeLockRequiredProviderIds = () => {
     throw new Error(`runtime lock ${runtimeLockPath} has no required.provider_ids`);
   }
   return [...new Set(ids)].sort();
+};
+
+const readPinnedPodmanConfig = ({ os, arch }) => {
+  const lock = readRuntimeLock();
+  const components = Array.isArray(lock?.components) ? lock.components : [];
+  const component = components.find(
+    (entry) => entry?.kind === "runtime" && entry?.id === "podman" && entry?.os === os && entry?.arch === arch,
+  );
+  if (!component) {
+    throw new Error(`runtime lock ${runtimeLockPath} missing runtime/podman component for ${os}/${arch}`);
+  }
+  const version = String(component.version || "").trim();
+  if (!version) {
+    throw new Error(`runtime lock podman component ${os}/${arch} missing version`);
+  }
+  const sources = Array.isArray(component.sources) ? component.sources : [];
+  const archiveSource = sources.find((source) => {
+    const sourceType = String(source?.source_type || "").trim();
+    const uri = String(source?.uri || "").trim();
+    return (sourceType === "vendor" || sourceType === "ci") && uri.startsWith("http");
+  });
+  if (!archiveSource) {
+    throw new Error(
+      `runtime lock podman component ${os}/${arch} missing vendor/ci archive source URI`,
+    );
+  }
+  const archiveUrl = String(archiveSource.uri || "").trim();
+  const archiveSha256 = String(archiveSource.sha256 || "").trim();
+  if (!archiveSha256) {
+    throw new Error(`runtime lock podman component ${os}/${arch} missing archive sha256`);
+  }
+  const binRel = String(component.bin || "").trim() || "usr/bin/podman";
+  const extractSubdir = String(component.extract_subdir || "").trim();
+  const gvproxyUrl = String(component?.helpers?.gvproxy?.uri || "").trim();
+  const gvproxySha256 = String(component?.helpers?.gvproxy?.sha256 || "").trim();
+  const vfkitUrl = String(component?.helpers?.vfkit?.uri || "").trim();
+  const vfkitSha256 = String(component?.helpers?.vfkit?.sha256 || "").trim();
+  if (!gvproxyUrl || !gvproxySha256 || !vfkitUrl || !vfkitSha256) {
+    throw new Error(
+      `runtime lock podman component ${os}/${arch} missing helper URIs/sha256 for gvproxy or vfkit`,
+    );
+  }
+
+  return {
+    version,
+    archiveUrl,
+    archiveSha256,
+    binRel,
+    extractSubdir,
+    gvproxyUrl,
+    gvproxySha256,
+    vfkitUrl,
+    vfkitSha256,
+  };
+};
+
+const applyPinnedEnv = (env, key, value) => {
+  if (!value) return;
+  if (env[key] && env[key] !== value) {
+    throw new Error(
+      `${key} is pinned by runtime lock and cannot be overridden (expected '${value}', got '${env[key]}')`,
+    );
+  }
+  env[key] = value;
 };
 
 const ensureExecutable = (filePath) => {
@@ -485,12 +553,16 @@ const syncBundles = () => {
   if (process.platform === "darwin") {
     env.CTX_BUNDLE_PODMAN = env.CTX_BUNDLE_PODMAN || "1";
     if (env.CTX_BUNDLE_PODMAN === "1") {
-      env.PODMAN_VERSION = env.PODMAN_VERSION || "5.7.1";
-      if (!env.PODMAN_ARCHIVE_URL) {
-        const arch = process.arch === "arm64" ? "arm64" : "amd64";
-        env.PODMAN_ARCHIVE_URL = `https://github.com/containers/podman/releases/download/v${env.PODMAN_VERSION}/podman-remote-release-darwin_${arch}.zip`;
-      }
-      env.PODMAN_BIN_REL = env.PODMAN_BIN_REL || "usr/bin/podman";
+      const pinnedPodman = readPinnedPodmanConfig({ os: hostManifestOs, arch: hostManifestArch });
+      applyPinnedEnv(env, "PODMAN_VERSION", pinnedPodman.version);
+      applyPinnedEnv(env, "PODMAN_ARCHIVE_URL", pinnedPodman.archiveUrl);
+      applyPinnedEnv(env, "PODMAN_ARCHIVE_SHA256", pinnedPodman.archiveSha256);
+      applyPinnedEnv(env, "PODMAN_BIN_REL", pinnedPodman.binRel);
+      applyPinnedEnv(env, "PODMAN_EXTRACT_SUBDIR", pinnedPodman.extractSubdir);
+      applyPinnedEnv(env, "PODMAN_GVPROXY_URL", pinnedPodman.gvproxyUrl);
+      applyPinnedEnv(env, "PODMAN_GVPROXY_SHA256", pinnedPodman.gvproxySha256);
+      applyPinnedEnv(env, "PODMAN_VFKIT_URL", pinnedPodman.vfkitUrl);
+      applyPinnedEnv(env, "PODMAN_VFKIT_SHA256", pinnedPodman.vfkitSha256);
     }
   }
   const res = childProcess.spawnSync(bundleScript, {
@@ -548,6 +620,9 @@ const syncBundles = () => {
     }
     assertBundledRuntimeTargets(destBundleDir, "node", parityRuntimeTargets);
     assertBundledRuntimeTargets(destBundleDir, "python", parityRuntimeTargets);
+    if (env.CTX_BUNDLE_PODMAN === "1") {
+      assertBundledRuntimeTargets(destBundleDir, "podman", [{ os: hostManifestOs, arch: hostManifestArch }]);
+    }
   }
 
   if (profile === "debug" || profile === "release") {

@@ -54,7 +54,7 @@ ensure_endpoint_ui_bundles() {
   if [[ -z "${bundle_podman}" && "${OSTYPE:-}" == darwin* ]]; then
     bundle_podman="1"
   fi
-  local podman_version="${PODMAN_VERSION:-5.7.1}"
+  local podman_version="${PODMAN_VERSION:-5.8.0}"
   local podman_archive_url="${PODMAN_ARCHIVE_URL:-}"
   if [[ -z "${podman_archive_url}" && "${bundle_podman}" == "1" && "${OSTYPE:-}" == darwin* ]]; then
     local podman_arch="amd64"

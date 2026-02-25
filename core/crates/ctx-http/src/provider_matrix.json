@@ -1,7 +1,240 @@
 {
   "version": 2,
-  "generated_at": "2026-02-02T00:00:00Z",
+  "generated_at": "2026-02-25T00:00:00Z",
   "providers": [
+    {
+      "id": "acp-crp-bridge",
+      "display_name": "ACP CRP Bridge",
+      "tier": "tier2",
+      "command": {
+        "command": "acp-crp-bridge",
+        "args": []
+      },
+      "managed_install": {
+        "kind": "archive",
+        "version": "0.1.0",
+        "args": [],
+        "targets": {}
+      },
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
+      "releases": [
+        {
+          "version": "0.1.0",
+          "status": "supported",
+          "context_min": "0.1.0",
+          "notes": "Pinned workspace adapter source (external-harnesses/acp-crp-bridge/Cargo.toml)"
+        }
+      ]
+    },
+    {
+      "id": "amp",
+      "display_name": "Amp",
+      "tier": "tier2",
+      "command": {
+        "command": "amp-acp",
+        "args": []
+      },
+      "managed_install": {
+        "kind": "archive",
+        "version": "0.1.0",
+        "args": [],
+        "targets": {}
+      },
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
+      "releases": [
+        {
+          "version": "0.1.0",
+          "status": "supported",
+          "context_min": "0.1.0",
+          "notes": "Pinned workspace adapter source (harness-adapters/example-acp/package.json)",
+          "upstream_version": "0.1.0-20260225163317-g66eef91"
+        }
+      ]
+    },
+    {
+      "id": "auggie",
+      "display_name": "Auggie",
+      "tier": "tier2",
+      "command": {
+        "command": "auggie",
+        "args": [
+          "--acp"
+        ]
+      },
+      "managed_install": {
+        "kind": "npm",
+        "package": "@augmentcode/auggie",
+        "entrypoint": "node_modules/@augmentcode/auggie/augment.mjs",
+        "args": [
+          "--acp"
+        ]
+      },
+      "version_probe": {
+        "kind": "node_package",
+        "package": "@augmentcode/auggie"
+      },
+      "releases": [
+        {
+          "version": "0.16.2",
+          "status": "supported",
+          "context_min": "0.1.0",
+          "notes": "Pinned Auggie CLI ACP bundle release"
+        }
+      ]
+    },
+    {
+      "id": "cagent",
+      "display_name": "cagent",
+      "tier": "tier2",
+      "command": {
+        "command": "cagent",
+        "args": []
+      },
+      "managed_install": {
+        "kind": "archive",
+        "version": "1.27.0",
+        "args": [],
+        "targets": {
+          "darwin-aarch64": {
+            "url": "https://github.com/docker/cagent/releases/download/v1.27.0/cagent-darwin-arm64",
+            "archive": "none",
+            "bin_path": "cagent"
+          },
+          "darwin-x86_64": {
+            "url": "https://github.com/docker/cagent/releases/download/v1.27.0/cagent-darwin-amd64",
+            "archive": "none",
+            "bin_path": "cagent"
+          },
+          "linux-aarch64": {
+            "url": "https://github.com/docker/cagent/releases/download/v1.27.0/cagent-linux-arm64",
+            "archive": "none",
+            "bin_path": "cagent"
+          },
+          "linux-x86_64": {
+            "url": "https://github.com/docker/cagent/releases/download/v1.27.0/cagent-linux-amd64",
+            "archive": "none",
+            "bin_path": "cagent"
+          }
+        }
+      },
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
+      "releases": [
+        {
+          "version": "1.27.0",
+          "status": "supported",
+          "context_min": "0.1.0",
+          "notes": "Pinned Docker cagent release"
+        }
+      ]
+    },
+    {
+      "id": "claude-cli",
+      "display_name": "Claude CLI",
+      "tier": "tier2",
+      "command": {
+        "command": "claude",
+        "args": []
+      },
+      "managed_install": {
+        "kind": "npm",
+        "package": "@anthropic-ai/claude-code",
+        "entrypoint": "node_modules/@anthropic-ai/claude-code/cli.js",
+        "args": []
+      },
+      "version_probe": {
+        "kind": "node_package",
+        "package": "@anthropic-ai/claude-code"
+      },
+      "releases": [
+        {
+          "version": "2.1.56",
+          "status": "supported",
+          "context_min": "0.1.0",
+          "notes": "Pinned Anthropic Claude Code CLI bundle release"
+        }
+      ]
+    },
+    {
+      "id": "claude-crp",
+      "display_name": "Claude",
+      "tier": "tier2",
+      "command": {
+        "command": "claude-crp",
+        "args": []
+      },
+      "managed_install": {
+        "kind": "archive",
+        "version": "0.0.0-ctx.1",
+        "args": [],
+        "targets": {
+          "linux-x86_64": {
+            "url": "https://github.com/ctxrs/claude-crp/releases/download/v0.0.0-ctx.1/claude-crp-0.0.0-ctx.1-x86_64-unknown-linux-gnu.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "claude-crp"
+          }
+        }
+      },
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
+      "releases": [
+        {
+          "version": "0.0.0-ctx.1",
+          "status": "supported",
+          "context_min": "0.1.0",
+          "notes": "Pinned workspace adapter source (external-harnesses/claude-crp/package.json)"
+        }
+      ]
+    },
+    {
+      "id": "cline",
+      "display_name": "Cline",
+      "tier": "tier2",
+      "command": {
+        "command": "cline",
+        "args": [
+          "--acp"
+        ]
+      },
+      "managed_install": {
+        "kind": "npm",
+        "package": "cline",
+        "entrypoint": "node_modules/cline/dist/cli.mjs",
+        "args": [
+          "--acp"
+        ]
+      },
+      "version_probe": {
+        "kind": "node_package",
+        "package": "cline"
+      },
+      "releases": [
+        {
+          "version": "2.5.0",
+          "status": "supported",
+          "context_min": "0.1.0",
+          "notes": "Pinned Cline CLI ACP bundle release"
+        }
+      ]
+    },
     {
       "id": "codex",
       "display_name": "Codex",
@@ -57,37 +290,32 @@
       ]
     },
     {
-      "id": "claude-crp",
-      "display_name": "Claude",
+      "id": "copilot",
+      "display_name": "Copilot",
       "tier": "tier2",
       "command": {
-        "command": "claude-crp",
+        "command": "copilot",
         "args": []
       },
       "managed_install": {
-        "kind": "archive",
-        "version": "0.0.0-ctx.1",
-        "args": [],
-        "targets": {
-          "linux-x86_64": {
-            "url": "https://github.com/ctxrs/claude-crp/releases/download/v0.0.0-ctx.1/claude-crp-0.0.0-ctx.1-x86_64-unknown-linux-gnu.tar.gz",
-            "archive": "tar_gz",
-            "bin_path": "claude-crp"
-          }
-        }
+        "kind": "npm",
+        "package": "@github/copilot",
+        "entrypoint": "node_modules/@github/copilot/npm-loader.js",
+        "args": [
+          "--acp",
+          "--stdio"
+        ]
       },
       "version_probe": {
-        "kind": "command",
-        "args": [
-          "--version"
-        ]
+        "kind": "node_package",
+        "package": "@github/copilot"
       },
       "releases": [
         {
-          "version": "0.0.0-ctx.1",
-          "status": "blocked",
+          "version": "0.0.418",
+          "status": "supported",
           "context_min": "0.1.0",
-          "notes": "Release pending for managed installs"
+          "notes": "Pinned GitHub Copilot CLI ACP bundle release"
         }
       ]
     },
@@ -119,6 +347,35 @@
       ]
     },
     {
+      "id": "droid",
+      "display_name": "Droid",
+      "tier": "tier2",
+      "command": {
+        "command": "droid-acp",
+        "args": []
+      },
+      "managed_install": {
+        "kind": "archive",
+        "version": "0.1.0",
+        "args": [],
+        "targets": {}
+      },
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
+      "releases": [
+        {
+          "version": "0.1.0",
+          "status": "supported",
+          "context_min": "0.1.0",
+          "notes": "Pinned workspace adapter source (harness-adapters/droid-acp/Cargo.toml)"
+        }
+      ]
+    },
+    {
       "id": "gemini",
       "display_name": "Gemini",
       "tier": "tier2",
@@ -142,10 +399,304 @@
       },
       "releases": [
         {
-          "version": "0.29.5",
+          "version": "0.30.0",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned Gemini CLI ACP bundle release (bundle-only in ctx runtime)"
+        }
+      ]
+    },
+    {
+      "id": "goose",
+      "display_name": "Goose",
+      "tier": "tier2",
+      "command": {
+        "command": "goose-acp",
+        "args": []
+      },
+      "managed_install": {
+        "kind": "archive",
+        "version": "0.1.0",
+        "args": [],
+        "targets": {}
+      },
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
+      "releases": [
+        {
+          "version": "0.1.0",
+          "status": "supported",
+          "context_min": "0.1.0",
+          "notes": "Pinned workspace adapter source (harness-adapters/openhands-acp/package.json)",
+          "upstream_version": "1.25.0"
+        }
+      ]
+    },
+    {
+      "id": "kimi",
+      "display_name": "Kimi",
+      "tier": "tier2",
+      "command": {
+        "command": "kimi",
+        "args": [
+          "--acp"
+        ]
+      },
+      "managed_install": {
+        "kind": "python",
+        "package": "kimi-cli",
+        "version": "1.14.0",
+        "entrypoint": "kimi",
+        "args": [
+          "--acp"
+        ]
+      },
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
+      "releases": [
+        {
+          "version": "1.14.0",
+          "status": "supported",
+          "context_min": "0.1.0",
+          "notes": "Pinned Kimi CLI ACP bundle release"
+        }
+      ]
+    },
+    {
+      "id": "kiro",
+      "display_name": "Kiro",
+      "tier": "tier2",
+      "command": {
+        "command": "kiro-cli",
+        "args": [
+          "acp"
+        ]
+      },
+      "managed_install": {
+        "kind": "archive",
+        "version": "1.26.2",
+        "args": [
+          "acp"
+        ],
+        "targets": {
+          "darwin-aarch64": {
+            "url": "https://desktop-release.q.us-east-1.amazonaws.com/1.26.2/Kiro%20CLI.dmg",
+            "archive": "dmg",
+            "bin_path": "kiro-cli"
+          },
+          "darwin-x86_64": {
+            "url": "https://desktop-release.q.us-east-1.amazonaws.com/1.26.2/Kiro%20CLI.dmg",
+            "archive": "dmg",
+            "bin_path": "kiro-cli"
+          },
+          "linux-aarch64": {
+            "url": "https://desktop-release.q.us-east-1.amazonaws.com/1.26.2/kirocli-aarch64-linux.zip",
+            "archive": "zip",
+            "bin_path": "kiro-cli"
+          },
+          "linux-x86_64": {
+            "url": "https://desktop-release.q.us-east-1.amazonaws.com/1.26.2/kirocli-x86_64-linux.zip",
+            "archive": "zip",
+            "bin_path": "kiro-cli"
+          }
+        }
+      },
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
+      "releases": [
+        {
+          "version": "1.26.2",
+          "status": "supported",
+          "context_min": "0.1.0",
+          "upstream_version": "1.26.2",
+          "notes": "Pinned Kiro CLI ACP bundle release"
+        }
+      ]
+    },
+    {
+      "id": "mistral",
+      "display_name": "Mistral",
+      "tier": "tier2",
+      "command": {
+        "command": "vibe-acp",
+        "args": []
+      },
+      "managed_install": {
+        "kind": "python",
+        "package": "mistral-vibe",
+        "version": "2.2.1",
+        "entrypoint": "vibe-acp",
+        "args": []
+      },
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
+      "releases": [
+        {
+          "version": "2.2.1",
+          "status": "supported",
+          "context_min": "0.1.0",
+          "notes": "Pinned Mistral Vibe ACP bundle release"
+        }
+      ]
+    },
+    {
+      "id": "opencode",
+      "display_name": "OpenCode",
+      "tier": "tier2",
+      "command": {
+        "command": "opencode",
+        "args": [
+          "acp"
+        ]
+      },
+      "managed_install": {
+        "kind": "archive",
+        "version": "1.2.14",
+        "args": [
+          "acp"
+        ],
+        "targets": {
+          "darwin-aarch64": {
+            "url": "https://github.com/anomalyco/opencode/releases/download/v1.2.14/opencode-darwin-arm64.zip",
+            "archive": "zip",
+            "bin_path": "opencode"
+          },
+          "darwin-x86_64": {
+            "url": "https://github.com/anomalyco/opencode/releases/download/v1.2.14/opencode-darwin-x64.zip",
+            "archive": "zip",
+            "bin_path": "opencode"
+          },
+          "linux-aarch64": {
+            "url": "https://github.com/anomalyco/opencode/releases/download/v1.2.14/opencode-linux-arm64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "opencode"
+          },
+          "linux-x86_64": {
+            "url": "https://github.com/anomalyco/opencode/releases/download/v1.2.14/opencode-linux-x64-baseline.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "opencode"
+          }
+        }
+      },
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
+      "releases": [
+        {
+          "version": "1.2.14",
+          "status": "supported",
+          "context_min": "0.1.0",
+          "notes": "Pinned OpenCode CLI ACP bundle release"
+        }
+      ]
+    },
+    {
+      "id": "openhands",
+      "display_name": "OpenHands",
+      "tier": "tier2",
+      "command": {
+        "command": "openhands-acp",
+        "args": []
+      },
+      "managed_install": {
+        "kind": "archive",
+        "version": "0.1.0",
+        "args": [],
+        "targets": {}
+      },
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
+      "releases": [
+        {
+          "version": "0.1.0",
+          "status": "supported",
+          "context_min": "0.1.0",
+          "notes": "Pinned workspace adapter source (harness-adapters/openhands-acp/package.json)",
+          "upstream_version": "1.4.0"
+        }
+      ]
+    },
+    {
+      "id": "pi",
+      "display_name": "Pi",
+      "tier": "tier2",
+      "command": {
+        "command": "pi-acp",
+        "args": []
+      },
+      "managed_install": {
+        "kind": "archive",
+        "version": "0.1.0",
+        "args": [],
+        "targets": {}
+      },
+      "version_probe": {
+        "kind": "command",
+        "args": [
+          "--version"
+        ]
+      },
+      "releases": [
+        {
+          "version": "0.1.0",
+          "status": "supported",
+          "context_min": "0.1.0",
+          "notes": "Pinned workspace adapter source (harness-adapters/pi-acp/package.json)",
+          "upstream_version": "0.55.0"
+        }
+      ]
+    },
+    {
+      "id": "qwen",
+      "display_name": "Qwen",
+      "tier": "tier2",
+      "command": {
+        "command": "qwen",
+        "args": [
+          "--experimental-acp"
+        ]
+      },
+      "managed_install": {
+        "kind": "npm",
+        "package": "@qwen-code/qwen-code",
+        "entrypoint": "node_modules/@qwen-code/qwen-code/cli.js",
+        "args": [
+          "--experimental-acp"
+        ]
+      },
+      "version_probe": {
+        "kind": "node_package",
+        "package": "@qwen-code/qwen-code"
+      },
+      "releases": [
+        {
+          "version": "0.10.6",
+          "status": "supported",
+          "context_min": "0.1.0",
+          "notes": "Pinned Qwen Code CLI ACP bundle release"
         }
       ]
     }

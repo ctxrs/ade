@@ -118,6 +118,7 @@ pub enum ProviderArchiveKind {
     TarGz,
     TarBz2,
     Zip,
+    Dmg,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

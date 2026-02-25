@@ -254,15 +254,14 @@ read_const() {
 NODE_VERSION="$(read_const NODE_VERSION "$INSTALLER_RS")"
 PYTHON_VERSION="$(read_const PYTHON_VERSION "$INSTALLER_RS")"
 PYTHON_BUILD_TAG="$(read_const PYTHON_BUILD_TAG "$INSTALLER_RS")"
-CLAUDE_CLI_PACKAGE="${CTX_BUNDLE_CLAUDE_CLI_PACKAGE:-@anthropic-ai/claude-code}"
-CLAUDE_CLI_VERSION="${CTX_BUNDLE_CLAUDE_CLI_VERSION:-2.1.47}"
-CLAUDE_CLI_ENTRYPOINT="${CTX_BUNDLE_CLAUDE_CLI_ENTRYPOINT:-cli.js}"
-KIMI_CLI_VERSION="${CTX_BUNDLE_KIMI_CLI_VERSION:-1.12.0}"
 PODMAN_VERSION="${PODMAN_VERSION:-}"
 PODMAN_ARCHIVE_URL="${PODMAN_ARCHIVE_URL:-}"
 PODMAN_ARCHIVE_PATH="${PODMAN_ARCHIVE_PATH:-}"
+PODMAN_ARCHIVE_SHA256="${PODMAN_ARCHIVE_SHA256:-}"
 PODMAN_BIN_REL="${PODMAN_BIN_REL:-}"
 PODMAN_EXTRACT_SUBDIR="${PODMAN_EXTRACT_SUBDIR:-}"
+PODMAN_GVPROXY_SHA256="${PODMAN_GVPROXY_SHA256:-}"
+PODMAN_VFKIT_SHA256="${PODMAN_VFKIT_SHA256:-}"
 DOCKER_HEALTH_TIMEOUT_SECS="${CTX_BUNDLE_DOCKER_HEALTH_TIMEOUT_SECS:-8}"
 DOCKER_HEALTH_WAIT_SECS="${CTX_BUNDLE_DOCKER_HEALTH_WAIT_SECS:-60}"
 
@@ -417,110 +416,11 @@ CODEX_CRP_WORKSPACE="${CTX_BUNDLE_CODEX_CRP_WORKSPACE:-$ROOT/external-harnesses/
 CODEX_CRP_BUILD_MODE="${CTX_BUNDLE_BUILD_CODEX_CRP:-auto}"
 CLAUDE_CRP_WORKSPACE="${CTX_BUNDLE_CLAUDE_CRP_WORKSPACE:-$ROOT/external-harnesses/claude-crp}"
 LOCAL_ADAPTERS_DIR="${CTX_BUNDLE_ADAPTERS_DIR:-$ROOT/harness-adapters}"
-LOCAL_ADAPTER_MODE="${CTX_BUNDLE_LOCAL_ADAPTERS:-auto}"
+LOCAL_ADAPTER_MODE="${CTX_BUNDLE_LOCAL_ADAPTERS:-on}"
 BUILD_LOCAL_ADAPTERS="${CTX_BUNDLE_BUILD_LOCAL_ADAPTERS:-0}"
-USE_ACP_SHIMS="${CTX_BUNDLE_USE_ACP_SHIMS:-1}"
 # The bridge is required for bundles; build it when missing unless explicitly disabled.
 BUILD_LOCAL_BRIDGE="${CTX_BUNDLE_BUILD_LOCAL_BRIDGE:-1}"
 INCLUDE_BRIDGE="${CTX_BUNDLE_INCLUDE_BRIDGE:-1}"
-# Kimi must use the real CLI runtime so `kimi login --json` can emit OAuth URLs.
-# Do not route it through ACP shim wrappers.
-ACP_PROVIDER_IDS=(
-  qwen
-  opencode
-  mistral
-  goose
-  kimi
-  cline
-  cagent
-  auggie
-  openhands
-  amp
-  droid
-  copilot
-  kiro
-)
-
-acp_provider_command_candidates() {
-  case "${1:-}" in
-    qwen) printf '%s' "qwen qwen-code" ;;
-    opencode) printf '%s' "opencode" ;;
-    mistral) printf '%s' "vibe-acp mistral mistral-vibe" ;;
-    goose) printf '%s' "goose" ;;
-    kimi) printf '%s' "kimi" ;;
-    cline) printf '%s' "cline-acp cline" ;;
-    auggie) printf '%s' "auggie" ;;
-    openhands) printf '%s' "openhands-acp openhands openhands-cli" ;;
-    amp) printf '%s' "amp-acp amp" ;;
-    droid) printf '%s' "droid-acp droid" ;;
-    copilot) printf '%s' "copilot-cli-acp github-copilot-cli copilot" ;;
-    kiro) printf '%s' "kiro-acp kiro" ;;
-    *) printf '%s' "${1:-}" ;;
-  esac
-}
-
-acp_provider_default_args() {
-  case "${1:-}" in
-    qwen) printf '%s' "--experimental-acp" ;;
-    opencode|goose) printf '%s' "acp" ;;
-    kimi|auggie) printf '%s' "--acp" ;;
-    *) printf '%s' "" ;;
-  esac
-}
-
-generate_acp_provider_shim() {
-  local provider_id="$1"
-  local candidates
-  candidates="$(acp_provider_command_candidates "$provider_id")"
-  local default_args
-  default_args="$(acp_provider_default_args "$provider_id")"
-  local upper
-  upper="$(printf '%s' "$provider_id" | tr '[:lower:]-' '[:upper:]_')"
-  local cmd_var="CTX_ACP_${upper}_COMMAND"
-  local args_var="CTX_ACP_${upper}_ARGS"
-  local shim_dir="$bundle_build_dir/acp-shims/${os}/${arch}"
-  local shim_path="$shim_dir/${provider_id}-acp.sh"
-  mkdir -p "$shim_dir"
-  cat > "$shim_path" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-
-command_path=""
-if [[ -n "\${$cmd_var:-}" ]]; then
-  command_path="\${$cmd_var}"
-fi
-
-if [[ -z "\$command_path" ]]; then
-  for candidate in $candidates; do
-    if command -v "\$candidate" >/dev/null 2>&1; then
-      command_path="\$(command -v "\$candidate")"
-      break
-    fi
-  done
-fi
-
-if [[ -z "\$command_path" ]]; then
-  echo "ctx: no ACP runtime command found for provider '$provider_id'" >&2
-  echo "Set $cmd_var (absolute path or executable name) to configure it." >&2
-  exit 127
-fi
-
-default_args="$default_args"
-extra_args=()
-if [[ -n "\$default_args" ]]; then
-  # shellcheck disable=SC2206
-  extra_args=(\$default_args)
-fi
-if [[ -n "\${$args_var:-}" ]]; then
-  # shellcheck disable=SC2206
-  extra_args=(\${$args_var})
-fi
-
-exec "\$command_path" "\${extra_args[@]}"
-EOF
-  chmod +x "$shim_path"
-  printf '%s' "$shim_path"
-}
 
 local_adapter_dir() {
   case "${1:-}" in
@@ -529,8 +429,6 @@ local_adapter_dir() {
     goose) printf '%s' "openhands-acp" ;;
     openhands) printf '%s' "openhands-acp" ;;
     droid) printf '%s' "droid-acp" ;;
-    copilot) printf '%s' "copilot-cli-acp" ;;
-    kiro) printf '%s' "kiro-acp" ;;
     *) printf '%s' "" ;;
   esac
 }
@@ -538,8 +436,6 @@ local_adapter_dir() {
 local_adapter_bin() {
   case "${1:-}" in
     droid) printf '%s' "droid-acp" ;;
-    copilot) printf '%s' "copilot-cli-acp" ;;
-    kiro) printf '%s' "kiro-acp" ;;
     *) printf '%s' "" ;;
   esac
 }
@@ -549,14 +445,52 @@ get_matrix_version() {
   run_python - "$MATRIX_JSON" "$provider_id" <<'PY'
 import json
 import sys
+import re
 
 path = sys.argv[1]
 provider_id = sys.argv[2]
 data = json.loads(open(path, "r", encoding="utf-8").read())
+
+def parse_version_loose(raw: str):
+    if not raw:
+        return None
+    trimmed = raw.strip().lstrip("v")
+    if not trimmed:
+        return None
+    if trimmed.count(".") == 1:
+        trimmed = f"{trimmed}.0"
+    match = re.match(r"([0-9]+(?:\.[0-9]+)*)", trimmed)
+    if not match:
+        return None
+    try:
+        return tuple(int(part) for part in match.group(1).split("."))
+    except ValueError:
+        return None
+
+def select_latest_release(candidates):
+    best = None
+    best_v = None
+    for release in candidates:
+        parsed = parse_version_loose(str(release.get("version") or ""))
+        if parsed is None:
+            continue
+        if best_v is None or parsed > best_v:
+            best_v = parsed
+            best = release
+    if best is not None:
+        return best
+    return candidates[-1] if candidates else None
+
 for provider in data.get("providers", []):
     if provider.get("id") == provider_id:
         mi = provider.get("managed_install") or {}
-        print(mi.get("version") or "")
+        version = mi.get("version") or ""
+        if version:
+            print(version)
+            sys.exit(0)
+        releases = [r for r in provider.get("releases", []) if r.get("status") == "supported"]
+        release = select_latest_release(releases)
+        print(release.get("version", "") if release else "")
         sys.exit(0)
 print("")
 PY
@@ -675,6 +609,21 @@ require_bridge_binary() {
   if [[ ! -f "$bridge_out" ]]; then
     log "error: missing acp-crp-bridge binary at $bridge_out"
     exit 5
+  fi
+}
+
+verify_sha256_if_expected() {
+  local path="$1"
+  local expected="$2"
+  local label="$3"
+  if [[ -z "$expected" ]]; then
+    return
+  fi
+  local actual
+  actual="$(sha256_file "$path")"
+  if [[ "$actual" != "$expected" ]]; then
+    log "error: ${label} sha256 mismatch (expected $expected, got $actual)"
+    exit 4
   fi
 }
 
@@ -1310,7 +1259,7 @@ build_local_adapters() {
   done
 
   local id
-  for id in droid copilot kiro; do
+  for id in droid; do
     local dir
     dir="$(local_adapter_dir "$id")"
     local bin
@@ -1472,13 +1421,19 @@ ensure_podman_macos_helpers() {
     local tmp
     tmp="$(mktemp -p "$helpers_dir" "gvproxy.XXXXXX")"
     fetch_file "$gvproxy_url" "$tmp"
+    verify_sha256_if_expected "$tmp" "$PODMAN_GVPROXY_SHA256" "podman helper gvproxy"
     mv "$tmp" "$gvproxy_path"
+  else
+    verify_sha256_if_expected "$gvproxy_path" "$PODMAN_GVPROXY_SHA256" "podman helper gvproxy"
   fi
   if [[ ! -f "$vfkit_path" ]]; then
     local tmp
     tmp="$(mktemp -p "$helpers_dir" "vfkit.XXXXXX")"
     fetch_file "$vfkit_url" "$tmp"
+    verify_sha256_if_expected "$tmp" "$PODMAN_VFKIT_SHA256" "podman helper vfkit"
     mv "$tmp" "$vfkit_path"
+  else
+    verify_sha256_if_expected "$vfkit_path" "$PODMAN_VFKIT_SHA256" "podman helper vfkit"
   fi
 
   chmod +x "$gvproxy_path" "$vfkit_path" || true
@@ -1531,6 +1486,7 @@ ensure_podman_runtime() {
     log "error: PODMAN_ARCHIVE_URL or PODMAN_ARCHIVE_PATH is required when CTX_BUNDLE_PODMAN=1"
     exit 3
   fi
+  verify_sha256_if_expected "$archive_path" "$PODMAN_ARCHIVE_SHA256" "podman archive"
 
   local extract_dir
   extract_dir="$(mktemp -d "$(dirname "$podman_root_abs")/podman-${PODMAN_VERSION}.extract.XXXXXX")"
@@ -2046,51 +2002,6 @@ for provider in data.get("providers", []):
         print(line)
 PY
 
-if provider_selected_for_bundle "claude-crp" || provider_selected_for_bundle "claude-cli"; then
-  run_python - "$providers_src" "$CLAUDE_CLI_VERSION" "$CLAUDE_CLI_PACKAGE" "$CLAUDE_CLI_ENTRYPOINT" <<'PY'
-import json
-import sys
-
-path = sys.argv[1]
-version = sys.argv[2]
-package = sys.argv[3]
-entrypoint = sys.argv[4]
-sep = "\x1f"
-
-rows = []
-with open(path, "r", encoding="utf-8") as fh:
-    for line in fh:
-        stripped = line.strip()
-        if not stripped:
-            continue
-        provider_id = stripped.split(sep, 1)[0]
-        if provider_id in {"claude-cli", "claude-crp"}:
-            continue
-        rows.append(stripped)
-
-rows.append(
-    sep.join(
-        [
-            "claude-cli",
-            "npm",
-            version,
-            "",
-            "",
-            "",
-            package,
-            entrypoint,
-            json.dumps([], separators=(",", ":")),
-        ]
-    )
-)
-
-with open(path, "w", encoding="utf-8") as fh:
-    fh.write("\n".join(rows))
-    if rows:
-        fh.write("\n")
-PY
-fi
-
 local_providers_src="$(mktemp /tmp/ctx-bundle-local-providers.XXXXXX)"
 local_ids=()
 
@@ -2301,20 +2212,6 @@ if should_bundle_local_claude_crp; then
   add_local_provider "claude-crp" "local-node" "$claude_crp_version" "$CLAUDE_CRP_WORKSPACE" "bin/claude-crp" "[]"
 fi
 
-if is_truthy "$USE_ACP_SHIMS"; then
-  for id in "${ACP_PROVIDER_IDS[@]}"; do
-    if ! provider_selected_for_bundle "$id"; then
-      continue
-    fi
-    version="$(get_matrix_version "$id")"
-    if [[ -z "$version" ]]; then
-      version="local"
-    fi
-    src="$(generate_acp_provider_shim "$id")"
-    add_local_provider "$id" "local-bin" "$version" "$src" "$(basename "$src")" "[]"
-  done
-fi
-
 if ! is_falsy "$LOCAL_ADAPTER_MODE"; then
   local_adapter_required=0
   if is_truthy "$LOCAL_ADAPTER_MODE"; then
@@ -2322,7 +2219,7 @@ if ! is_falsy "$LOCAL_ADAPTER_MODE"; then
   fi
 
   adapter_version_override="${CTX_BUNDLE_ADAPTER_VERSION:-}"
-  for id in amp pi goose openhands droid copilot kiro; do
+  for id in amp pi goose openhands droid; do
     if ! provider_selected_for_bundle "$id"; then
       continue
     fi
@@ -2366,6 +2263,14 @@ if ! is_falsy "$LOCAL_ADAPTER_MODE"; then
     fi
 
     src="$(local_adapter_binary_path "$id" || true)"
+    if [[ ! -f "$src" ]]; then
+      dir="$(local_adapter_dir "$id")"
+      if [[ -n "$dir" && -d "$LOCAL_ADAPTERS_DIR/$dir" ]]; then
+        require_cmd cargo
+        (cd "$LOCAL_ADAPTERS_DIR/$dir" && cargo build --release --target "$rust_target")
+        src="$(local_adapter_binary_path "$id" || true)"
+      fi
+    fi
     if [[ -f "$src" ]]; then
       add_local_provider "$id" "local-bin" "$version" "$src" "$(basename "$src")" "[]"
     elif [[ "$local_adapter_required" == "1" ]]; then
@@ -2530,6 +2435,27 @@ PY
             unzip -q "$tmp_file" -d "$provider_root"
             rm -f "$tmp_file"
             ;;
+          dmg)
+            if [[ "$os" != "macos" ]]; then
+              log "error: archive type 'dmg' for $provider_id requires macOS host tooling"
+              exit 5
+            fi
+            require_cmd hdiutil
+            dmg_mount_dir="$(mktemp -d "/tmp/ctx-dmg-${provider_id}.XXXXXX")"
+            if ! hdiutil attach -nobrowse -readonly -mountpoint "$dmg_mount_dir" "$tmp_file" >/dev/null; then
+              rm -rf "$dmg_mount_dir" "$tmp_file"
+              log "error: failed to mount dmg for $provider_id"
+              exit 5
+            fi
+            if ! cp -R "$dmg_mount_dir"/. "$provider_root"/; then
+              hdiutil detach "$dmg_mount_dir" -force >/dev/null 2>&1 || true
+              rm -rf "$dmg_mount_dir" "$tmp_file"
+              log "error: failed to copy dmg payload for $provider_id"
+              exit 5
+            fi
+            hdiutil detach "$dmg_mount_dir" -force >/dev/null 2>&1 || true
+            rm -rf "$dmg_mount_dir" "$tmp_file"
+            ;;
           *)
             log "error: unsupported archive type '$archive' for $provider_id"
             exit 5
@@ -2631,9 +2557,6 @@ PY
       if is_truthy "$skip_runtimes_raw"; then
         log "error: cannot bundle python provider $provider_id when CTX_BUNDLE_SKIP_RUNTIMES=1"
         exit 5
-      fi
-      if [[ "$provider_id" == "kimi" && "$package" == "kimi-cli" ]]; then
-        version="$KIMI_CLI_VERSION"
       fi
       if [[ -z "$version" || -z "$package" || -z "$entrypoint" ]]; then
         log "error: missing python metadata for $provider_id"

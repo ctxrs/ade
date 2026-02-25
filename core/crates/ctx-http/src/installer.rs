@@ -1,13 +1,11 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use chrono::Utc;
 use sha2::Digest;
 use tokio::process::Command;
-use tokio::sync::Mutex;
 use tokio::time::timeout;
 
 use crate::bundled_assets;
@@ -30,9 +28,9 @@ pub use config::{
     ProviderRuntimeCommandSource, UserLspConfigFile, UserLspServerSpec,
 };
 
-const NODE_VERSION: &str = "24.12.0";
-const PYTHON_VERSION: &str = "3.13.11";
-const PYTHON_BUILD_TAG: &str = "20251217";
+const NODE_VERSION: &str = "24.14.0";
+const PYTHON_VERSION: &str = "3.13.12";
+const PYTHON_BUILD_TAG: &str = "20260211";
 
 const TYPESCRIPT_LS_VERSION: &str = "5.1.3";
 const TYPESCRIPT_VERSION: &str = "5.9.3";
@@ -50,18 +48,8 @@ const RETRY_BACKOFF_BASE_MS: u64 = 750;
 const LAST_ERROR_MAX_LEN: usize = 8000;
 const INSTALL_EVENT_ERROR_MAX_LEN: usize = 6000;
 
-static NODE_RUNTIME_INSTALL_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-static PYTHON_RUNTIME_INSTALL_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 const TITLE_GENERATION_LOCAL_INSTALL_KEY: &str = "title_generation_local";
-const BUNDLE_ONLY_PROVIDER_IDS: &[&str] = &["gemini"];
-
-fn node_runtime_install_lock() -> &'static Mutex<()> {
-    NODE_RUNTIME_INSTALL_LOCK.get_or_init(|| Mutex::new(()))
-}
-
-fn python_runtime_install_lock() -> &'static Mutex<()> {
-    PYTHON_RUNTIME_INSTALL_LOCK.get_or_init(|| Mutex::new(()))
-}
+const MANAGED_PROVIDER_INSTALLS_ENABLED: bool = false;
 
 pub async fn install_provider(state: &AppState, provider_id: &str) -> Result<()> {
     install_provider_impl(state, provider_id, None).await
@@ -71,7 +59,7 @@ pub fn is_supported_managed_provider(
     matrix: &provider_matrix::ProviderMatrix,
     provider_id: &str,
 ) -> bool {
-    if BUNDLE_ONLY_PROVIDER_IDS.contains(&provider_id) {
+    if !MANAGED_PROVIDER_INSTALLS_ENABLED {
         return false;
     }
     provider_matrix::is_managed_supported(matrix, provider_id)
@@ -225,6 +213,7 @@ enum AgentServerArchive {
     TarGz,
     TarBz2,
     Zip,
+    Dmg,
 }
 
 fn zed_target_key() -> Result<&'static str> {
@@ -337,6 +326,9 @@ async fn install_agent_server_url_binary(
             };
             ensure_executable(&resolved)?;
             Ok(resolved)
+        }
+        AgentServerArchive::Dmg => {
+            anyhow::bail!("dmg archive extraction is not supported in managed installs")
         }
     }
 }
@@ -1154,6 +1146,7 @@ fn map_archive_kind(kind: provider_matrix::ProviderArchiveKind) -> AgentServerAr
         provider_matrix::ProviderArchiveKind::TarGz => AgentServerArchive::TarGz,
         provider_matrix::ProviderArchiveKind::TarBz2 => AgentServerArchive::TarBz2,
         provider_matrix::ProviderArchiveKind::Zip => AgentServerArchive::Zip,
+        provider_matrix::ProviderArchiveKind::Dmg => AgentServerArchive::Dmg,
     }
 }
 
@@ -1162,9 +1155,9 @@ async fn install_provider_impl(
     provider_id: &str,
     install_id: Option<InstallId>,
 ) -> Result<()> {
-    if BUNDLE_ONLY_PROVIDER_IDS.contains(&provider_id) {
+    if !MANAGED_PROVIDER_INSTALLS_ENABLED {
         anyhow::bail!(
-            "provider '{}' is bundle-only and must be shipped in bundled harness assets",
+            "managed provider installs are disabled; provider '{}' must be shipped in bundled harness assets",
             provider_id
         );
     }
@@ -1705,7 +1698,7 @@ pub(crate) async fn ensure_node_runtime(
     state: &AppState,
     install_id: Option<InstallId>,
     provider_id: &str,
-    data_root: &Path,
+    _data_root: &Path,
 ) -> Result<NodeRuntime> {
     let target = node_target_triple()?;
     if let Some(bundled) = bundled_assets::bundled_node_runtime() {
@@ -1729,193 +1722,13 @@ pub(crate) async fn ensure_node_runtime(
                     npm_cli_js,
                 });
             }
-        } else {
-            tracing::warn!(
-                "bundled Node runtime version {} does not match expected {}",
-                bundled.version,
-                NODE_VERSION
-            );
         }
     }
-    let folder = format!("node-v{NODE_VERSION}-{target}");
-    let node_root = data_root.join("runtimes").join("node").join(&folder);
-    let (node_bin, npm_cli_js) = node_runtime_paths(&node_root);
-
-    if node_bin.exists() && npm_cli_js.exists() {
-        emit_install(
-            state,
-            install_id,
-            provider_id,
-            InstallEventLevel::Info,
-            "node",
-            format!("Using existing Node runtime v{NODE_VERSION} ({target})"),
-            None,
-            None,
-            None,
-        )
-        .await;
-        return Ok(NodeRuntime {
-            node_root,
-            node_bin,
-            npm_cli_js,
-        });
-    }
-
-    // `install_all` runs provider installs concurrently; without a lock, multiple tasks can race by
-    // deleting/recreating the same `.extract` directory and corrupting the unpack.
-    let _lock = node_runtime_install_lock().lock().await;
-
-    // Another task may have completed the install while we waited.
-    if node_bin.exists() && npm_cli_js.exists() {
-        emit_install(
-            state,
-            install_id,
-            provider_id,
-            InstallEventLevel::Info,
-            "node",
-            format!("Using existing Node runtime v{NODE_VERSION} ({target})"),
-            None,
-            None,
-            None,
-        )
-        .await;
-        return Ok(NodeRuntime {
-            node_root,
-            node_bin,
-            npm_cli_js,
-        });
-    }
-
-    if let Some(parent) = node_root.parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
-
-    let (archive_ext, archive_label) = if cfg!(windows) {
-        ("zip", "zip")
-    } else {
-        ("tar.gz", "tar_gz")
-    };
-    let url = format!("https://nodejs.org/dist/v{NODE_VERSION}/{folder}.{archive_ext}");
-    let tmp = data_root
-        .join("runtimes")
-        .join("node")
-        .join(format!("{folder}.{archive_ext}"));
-    emit_install(
-        state,
-        install_id,
-        provider_id,
-        InstallEventLevel::Info,
-        "node_download",
-        format!("Downloading Node runtime from {url}"),
-        None,
-        None,
-        None,
-    )
-    .await;
-    download_to_file(state, install_id, provider_id, "node_download", &url, &tmp).await?;
-
-    let extract_root = data_root
-        .join("runtimes")
-        .join("node")
-        .join(format!("{folder}.extract"));
-    if extract_root.exists() {
-        tokio::fs::remove_dir_all(&extract_root).await.ok();
-    }
-    tokio::fs::create_dir_all(&extract_root).await?;
-
-    emit_install(
-        state,
-        install_id,
-        provider_id,
-        InstallEventLevel::Info,
-        "node_extract",
-        "Extracting Node runtime".to_string(),
-        None,
-        None,
-        None,
-    )
-    .await;
-
-    let tmp2 = tmp.clone();
-    let extract_root2 = extract_root.clone();
-    tokio::task::spawn_blocking(move || -> Result<()> {
-        if archive_label == "zip" {
-            extract_zip_to_dir(&tmp2, &extract_root2)?;
-        } else {
-            let tar_gz = std::fs::File::open(&tmp2)?;
-            let dec = flate2::read::GzDecoder::new(tar_gz);
-            let mut archive = tar::Archive::new(dec);
-            archive.unpack(&extract_root2)?;
-        }
-        Ok(())
-    })
-    .await??;
-
-    // Node tarballs contain a single top-level folder named `node-vX.Y.Z-<target>`.
-    let extracted = extract_root.join(&folder);
-    if !extracted.exists() {
-        anyhow::bail!(
-            "node extraction failed: missing {folder} in {}",
-            extract_root.display()
-        );
-    }
-
-    if node_root.exists() {
-        tokio::fs::remove_dir_all(&node_root).await.ok();
-    }
-    tokio::fs::rename(&extracted, &node_root).await?;
-    tokio::fs::remove_dir_all(&extract_root).await.ok();
-    tokio::fs::remove_file(&tmp).await.ok();
-
-    if !node_bin.exists() || !npm_cli_js.exists() {
-        anyhow::bail!(
-            "node runtime incomplete after install (node: {}, npm: {})",
-            node_bin.display(),
-            npm_cli_js.display()
-        );
-    }
-
-    emit_install(
-        state,
-        install_id,
-        provider_id,
-        InstallEventLevel::Success,
-        "node_extract",
-        "Node runtime ready".to_string(),
-        None,
-        None,
-        None,
-    )
-    .await;
-
-    Ok(NodeRuntime {
-        node_root,
-        node_bin,
-        npm_cli_js,
-    })
-}
-
-fn node_runtime_paths(node_root: &Path) -> (PathBuf, PathBuf) {
-    if cfg!(windows) {
-        (
-            node_root.join("node.exe"),
-            node_root
-                .join("node_modules")
-                .join("npm")
-                .join("bin")
-                .join("npm-cli.js"),
-        )
-    } else {
-        (
-            node_root.join("bin").join("node"),
-            node_root
-                .join("lib")
-                .join("node_modules")
-                .join("npm")
-                .join("bin")
-                .join("npm-cli.js"),
-        )
-    }
+    anyhow::bail!(
+        "bundled Node runtime is required for deterministic harness execution; expected node version {} for target {}",
+        NODE_VERSION,
+        target
+    );
 }
 
 fn node_target_triple() -> Result<&'static str> {
@@ -1929,7 +1742,7 @@ fn node_target_triple() -> Result<&'static str> {
         ("windows", "x86_64") => Ok("win-x64"),
         ("windows", "aarch64") => Ok("win-arm64"),
         _ => anyhow::bail!(
-            "unsupported platform for managed node install: {os}/{arch}. Supported: macos (aarch64/x86_64), linux (aarch64/x86_64), windows (aarch64/x86_64)."
+            "unsupported platform for bundled node runtime: {os}/{arch}. Supported: macos (aarch64/x86_64), linux (aarch64/x86_64), windows (aarch64/x86_64)."
         ),
     }
 }
@@ -1938,7 +1751,7 @@ async fn ensure_python_runtime(
     state: &AppState,
     install_id: Option<InstallId>,
     provider_id: &str,
-    data_root: &Path,
+    _data_root: &Path,
 ) -> Result<PythonRuntime> {
     let target = python_target_triple()?;
     if let Some(bundled) = bundled_assets::bundled_python_runtime() {
@@ -1959,161 +1772,14 @@ async fn ensure_python_runtime(
                 python_root: bundled.root,
                 python_bin: bundled.bin,
             });
-        } else {
-            tracing::warn!(
-                "bundled Python runtime version {} does not match expected {}",
-                bundled.version,
-                PYTHON_VERSION
-            );
         }
     }
-    let folder = format!("cpython-{PYTHON_VERSION}+{PYTHON_BUILD_TAG}-{target}");
-    let python_root = data_root.join("runtimes").join("python").join(&folder);
-    let python_bin = resolve_python_bin(&python_root);
-
-    if python_bin.exists() {
-        emit_install(
-            state,
-            install_id,
-            provider_id,
-            InstallEventLevel::Info,
-            "python",
-            format!("Using existing Python runtime {PYTHON_VERSION} ({target})"),
-            None,
-            None,
-            None,
-        )
-        .await;
-        return Ok(PythonRuntime {
-            python_root,
-            python_bin,
-        });
-    }
-
-    let _lock = python_runtime_install_lock().lock().await;
-    let python_bin = resolve_python_bin(&python_root);
-    if python_bin.exists() {
-        emit_install(
-            state,
-            install_id,
-            provider_id,
-            InstallEventLevel::Info,
-            "python",
-            format!("Using existing Python runtime {PYTHON_VERSION} ({target})"),
-            None,
-            None,
-            None,
-        )
-        .await;
-        return Ok(PythonRuntime {
-            python_root,
-            python_bin,
-        });
-    }
-
-    if let Some(parent) = python_root.parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
-
-    let asset = format!("cpython-{PYTHON_VERSION}+{PYTHON_BUILD_TAG}-{target}-install_only.tar.gz");
-    let url = format!(
-        "https://github.com/indygreg/python-build-standalone/releases/download/{PYTHON_BUILD_TAG}/{asset}"
+    anyhow::bail!(
+        "bundled Python runtime is required for deterministic harness execution; expected python {}+{} for target {}",
+        PYTHON_VERSION,
+        PYTHON_BUILD_TAG,
+        target
     );
-    let tmp = data_root.join("runtimes").join("python").join(&asset);
-
-    emit_install(
-        state,
-        install_id,
-        provider_id,
-        InstallEventLevel::Info,
-        "python_download",
-        format!("Downloading Python runtime from {url}"),
-        None,
-        None,
-        None,
-    )
-    .await;
-    download_to_file(
-        state,
-        install_id,
-        provider_id,
-        "python_download",
-        &url,
-        &tmp,
-    )
-    .await?;
-
-    let extract_root = data_root
-        .join("runtimes")
-        .join("python")
-        .join(format!("{folder}.extract"));
-    if extract_root.exists() {
-        tokio::fs::remove_dir_all(&extract_root).await.ok();
-    }
-    tokio::fs::create_dir_all(&extract_root).await?;
-
-    emit_install(
-        state,
-        install_id,
-        provider_id,
-        InstallEventLevel::Info,
-        "python_extract",
-        "Extracting Python runtime".to_string(),
-        None,
-        None,
-        None,
-    )
-    .await;
-
-    let tmp2 = tmp.clone();
-    let extract_root2 = extract_root.clone();
-    tokio::task::spawn_blocking(move || -> Result<()> {
-        let tar_gz = std::fs::File::open(&tmp2)?;
-        let dec = flate2::read::GzDecoder::new(tar_gz);
-        let mut archive = tar::Archive::new(dec);
-        archive.unpack(&extract_root2)?;
-        Ok(())
-    })
-    .await??;
-
-    let extracted = extract_root.join("python");
-    if !extracted.exists() {
-        anyhow::bail!(
-            "python extraction failed: missing python/ in {}",
-            extract_root.display()
-        );
-    }
-
-    if python_root.exists() {
-        tokio::fs::remove_dir_all(&python_root).await.ok();
-    }
-    tokio::fs::rename(&extracted, &python_root).await?;
-
-    let python_bin = resolve_python_bin(&python_root);
-    if !python_bin.exists() {
-        anyhow::bail!(
-            "python runtime incomplete after install (python: {})",
-            python_bin.display()
-        );
-    }
-
-    emit_install(
-        state,
-        install_id,
-        provider_id,
-        InstallEventLevel::Success,
-        "python_extract",
-        format!("Installed Python runtime {PYTHON_VERSION} ({target})"),
-        None,
-        None,
-        None,
-    )
-    .await;
-
-    Ok(PythonRuntime {
-        python_root,
-        python_bin,
-    })
 }
 
 fn python_target_triple() -> Result<&'static str> {
@@ -2127,21 +1793,8 @@ fn python_target_triple() -> Result<&'static str> {
         ("windows", "x86_64") => Ok("x86_64-pc-windows-msvc"),
         ("windows", "aarch64") => Ok("aarch64-pc-windows-msvc"),
         _ => anyhow::bail!(
-            "unsupported platform for managed python install: {os}/{arch}. Supported: macos (aarch64/x86_64), linux (aarch64/x86_64), windows (aarch64/x86_64)."
+            "unsupported platform for bundled python runtime: {os}/{arch}. Supported: macos (aarch64/x86_64), linux (aarch64/x86_64), windows (aarch64/x86_64)."
         ),
-    }
-}
-
-fn resolve_python_bin(python_root: &Path) -> PathBuf {
-    if cfg!(windows) {
-        python_root.join("python.exe")
-    } else {
-        let primary = python_root.join("bin").join("python3");
-        if primary.exists() {
-            primary
-        } else {
-            python_root.join("bin").join("python")
-        }
     }
 }
 
@@ -3267,8 +2920,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn gemini_is_bundle_only_not_managed_install_supported() {
+    fn managed_provider_installs_are_disabled() {
         let matrix = provider_matrix::builtin_matrix();
+        assert!(!is_supported_managed_provider(&matrix, "codex"));
         assert!(!is_supported_managed_provider(&matrix, "gemini"));
+        assert!(!is_supported_managed_provider(&matrix, "opencode"));
     }
 }
