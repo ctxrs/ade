@@ -1603,6 +1603,35 @@ fn local_daemon_health_matches_expected(
     true
 }
 
+fn display_nonempty(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        "<empty>".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn spawned_local_daemon_incompatibility_message(
+    base_url: &str,
+    expected_data_dir: &Path,
+    expected_desktop_version: &str,
+    expected_desktop_dev_instance_id: &str,
+    health: &DaemonHealthSummary,
+) -> String {
+    format!(
+        "spawned local daemon is incompatible (expected_version={}, daemon_version={}, expected_dev_instance_id={}, daemon_dev_instance_id={}, expected_data_dir={}, daemon_data_root={}, daemon_pid={}, url={})",
+        display_nonempty(expected_desktop_version),
+        display_nonempty(&health.compatibility.desktop_exact_version),
+        display_nonempty(expected_desktop_dev_instance_id),
+        display_nonempty(&health.compatibility.desktop_dev_instance_id),
+        expected_data_dir.display(),
+        display_nonempty(&health.data_root),
+        health.pid,
+        base_url,
+    )
+}
+
 fn existing_local_daemon_matches(
     base_url: &str,
     expected_data_dir: &Path,
@@ -2256,18 +2285,22 @@ fn spawn_and_validate_local_daemon(
 ) -> Result<SpawnedLocalDaemonReady> {
     let (url, child, systemd_scope) = spawn_daemon(app, data_dir, true)?;
     let pending = PendingSpawnedLocalDaemon::new(url, child, systemd_scope);
-    let compatible = existing_local_daemon_matches(
-        pending.url(),
+    let health = daemon_health(pending.url())
+        .context("requesting /api/health for spawned local daemon compatibility")?;
+    let compatible = local_daemon_health_matches_expected(
+        &health,
         data_dir,
         desktop_version,
         desktop_dev_instance_id,
-    )
-    .context("validating spawned local daemon compatibility")?;
+    );
     if !compatible {
-        anyhow::bail!(
-            "spawned local daemon is incompatible (version={desktop_version}, dev_instance_id={desktop_dev_instance_id}, url={})",
-            pending.url()
-        );
+        anyhow::bail!("{}", spawned_local_daemon_incompatibility_message(
+            pending.url(),
+            data_dir,
+            desktop_version,
+            desktop_dev_instance_id,
+            &health
+        ));
     }
     let auth = read_daemon_auth_with_retry(data_dir)?;
     let (url, child, systemd_scope) = pending.disarm()?;
@@ -2372,6 +2405,38 @@ mod desktop_daemon_tests {
         ));
 
         std::fs::remove_dir_all(&expected_dir).ok();
+    }
+
+    #[test]
+    fn spawned_daemon_incompatibility_message_reports_expected_and_actual_values() {
+        let expected_dir = std::env::temp_dir().join(format!(
+            "ctx-daemon-spawn-incompatible-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let health = DaemonHealthSummary {
+            pid: 4242,
+            data_root: "/tmp/ctx-daemon-other".to_string(),
+            compatibility: DaemonHealthCompatibility {
+                desktop_exact_version: "0.1.1".to_string(),
+                desktop_dev_instance_id: "dev-other".to_string(),
+            },
+        };
+
+        let msg = spawned_local_daemon_incompatibility_message(
+            "http://127.0.0.1:4123",
+            &expected_dir,
+            "0.2.20",
+            "dev-main",
+            &health,
+        );
+
+        assert!(msg.contains("expected_version=0.2.20"));
+        assert!(msg.contains("daemon_version=0.1.1"));
+        assert!(msg.contains("expected_dev_instance_id=dev-main"));
+        assert!(msg.contains("daemon_dev_instance_id=dev-other"));
+        assert!(msg.contains("daemon_data_root=/tmp/ctx-daemon-other"));
+        assert!(msg.contains("daemon_pid=4242"));
+        assert!(msg.contains("url=http://127.0.0.1:4123"));
     }
 
     #[test]

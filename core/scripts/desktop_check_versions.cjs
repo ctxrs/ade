@@ -6,6 +6,7 @@ const coreRoot = path.resolve(__dirname, "..");
 const desktopPkgJsonPath = path.join(coreRoot, "apps", "desktop", "package.json");
 const tauriConfPath = path.join(coreRoot, "apps", "desktop", "src-tauri", "tauri.conf.json");
 const tauriCargoTomlPath = path.join(coreRoot, "apps", "desktop", "src-tauri", "Cargo.toml");
+const daemonCargoTomlPath = path.join(coreRoot, "crates", "ctx-http", "Cargo.toml");
 
 const readJson = (p) => JSON.parse(fs.readFileSync(p, "utf8"));
 
@@ -40,6 +41,7 @@ const main = () => {
   const tauriConf = readJson(tauriConfPath);
   const tauriVersion = tauriConf.package?.version ?? tauriConf.version;
   const cargoVersion = readCargoVersion(tauriCargoTomlPath);
+  const daemonCargoVersion = readCargoVersion(daemonCargoTomlPath);
 
   const problems = [];
   if (!desktopVersion) {
@@ -56,6 +58,11 @@ const main = () => {
   if (desktopVersion !== cargoVersion) {
     problems.push(
       `version mismatch: apps/desktop/package.json=${desktopVersion} src-tauri/Cargo.toml=${cargoVersion}`,
+    );
+  }
+  if (desktopVersion !== daemonCargoVersion) {
+    problems.push(
+      `version mismatch: apps/desktop/package.json=${desktopVersion} crates/ctx-http/Cargo.toml=${daemonCargoVersion}`,
     );
   }
 
