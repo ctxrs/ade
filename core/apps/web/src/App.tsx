@@ -9,7 +9,6 @@ import ProvidersPage from "./pages/ProvidersPage";
 import DiagnosticsPage from "./pages/DiagnosticsPage";
 import SettingsPage from "./pages/SettingsPage";
 import WorkspaceSetupPage from "./pages/WorkspaceSetupPage";
-import CrashCoursePage from "./pages/CrashCoursePage";
 import { SessionSupervisorProvider } from "./state/sessionSupervisor";
 import { SettingsStoreProvider, useSettingsSnapshot } from "./state/settingsStore";
 import { loadLauncherRecents } from "./state/launcherRecentsStore";
@@ -229,10 +228,14 @@ function DesktopMenuBridge() {
           navigate("/settings#agent_harnesses");
           emitMenuTrace({ commandId, layer: "app", status: "handled", note: "navigate-agent-harnesses" });
           return;
-        case "help.crash-course":
         case "help.keyboard-shortcuts":
-          navigate("/crash-course");
-          emitMenuTrace({ commandId, layer: "app", status: "handled", note: "navigate-crash-course" });
+          navigate(settingsTargetForPath(location.pathname));
+          emitMenuTrace({
+            commandId,
+            layer: "app",
+            status: "handled",
+            note: "navigate-settings-keyboard-shortcuts",
+          });
           return;
         case "help.open-logs-folder":
           void openLogsFolder().catch(() => {});
@@ -351,7 +354,6 @@ export default function App() {
           <DesktopMenuBridge />
           <Routes>
             <Route path="/" element={<LauncherPage />} />
-            <Route path="/crash-course" element={<CrashCoursePage />} />
             <Route path="/workspace-setup" element={<WorkspaceSetupPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/providers" element={<ProvidersPage />} />

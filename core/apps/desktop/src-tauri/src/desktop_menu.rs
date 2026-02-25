@@ -36,7 +36,6 @@ pub(super) const CMD_GO_WORKSPACE_SETUP: &str = "go.workspace-setup";
 pub(super) const CMD_GO_SETTINGS: &str = "go.settings";
 pub(super) const CMD_GO_DIAGNOSTICS: &str = "go.diagnostics";
 pub(super) const CMD_GO_AGENT_HARNESSES: &str = "go.agent-harnesses";
-pub(super) const CMD_HELP_CRASH_COURSE: &str = "help.crash-course";
 pub(super) const CMD_HELP_KEYBOARD_SHORTCUTS: &str = "help.keyboard-shortcuts";
 pub(super) const CMD_HELP_OPEN_LOGS_FOLDER: &str = "help.open-logs-folder";
 pub(super) const CMD_HELP_REPORT_ISSUE: &str = "help.report-issue";
@@ -451,7 +450,6 @@ fn build_window_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::
 }
 
 fn build_help_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wry>> {
-    let crash_course = menu_item(app, CMD_HELP_CRASH_COURSE, "Crash Course", None, true)?;
     let keyboard_shortcuts = menu_item(
         app,
         CMD_HELP_KEYBOARD_SHORTCUTS,
@@ -473,7 +471,6 @@ fn build_help_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wr
     {
         let submenu_id = macos_help_submenu_id().unwrap_or("help");
         return SubmenuBuilder::with_id(app, submenu_id, "Help")
-            .item(&crash_course)
             .item(&keyboard_shortcuts)
             .item(&open_logs_folder)
             .item(&diagnostics)
@@ -484,7 +481,6 @@ fn build_help_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wr
     #[cfg(not(target_os = "macos"))]
     {
         return SubmenuBuilder::new(app, "Help")
-            .item(&crash_course)
             .item(&keyboard_shortcuts)
             .item(&open_logs_folder)
             .item(&diagnostics)

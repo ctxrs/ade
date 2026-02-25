@@ -34,7 +34,6 @@ const ALL_MENU_COMMAND_IDS = [
   "go.settings",
   "go.diagnostics",
   "go.agent-harnesses",
-  "help.crash-course",
   "help.keyboard-shortcuts",
   "help.open-logs-folder",
   "help.report-issue",
@@ -67,7 +66,6 @@ const MENU_TEST_ORDER = [
   "go.settings",
   "go.diagnostics",
   "go.agent-harnesses",
-  "help.crash-course",
   "help.keyboard-shortcuts",
   "help.open-logs-folder",
   "help.diagnostics",
@@ -84,7 +82,6 @@ const APP_HANDLED_COMMANDS = new Set([
   "go.settings",
   "go.diagnostics",
   "go.agent-harnesses",
-  "help.crash-course",
   "help.keyboard-shortcuts",
   "help.open-logs-folder",
   "help.report-issue",
@@ -106,8 +103,7 @@ const NAV_EXPECTATIONS = new Map([
   ["go.diagnostics", (_workspaceId) => "/diagnostics"],
   ["help.diagnostics", (_workspaceId) => "/diagnostics"],
   ["go.agent-harnesses", (_workspaceId) => "/settings#agent_harnesses"],
-  ["help.crash-course", (_workspaceId) => "/crash-course"],
-  ["help.keyboard-shortcuts", (_workspaceId) => "/crash-course"],
+  ["help.keyboard-shortcuts", (workspaceId) => `/settings?ws=${encodeURIComponent(workspaceId)}`],
 ]);
 
 const assertSetEqual = (a, b, label) => {

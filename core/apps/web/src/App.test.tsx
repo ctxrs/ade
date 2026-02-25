@@ -69,11 +69,6 @@ vi.mock("./pages/WorkspaceSetupPage", () => ({
   default: () => <div>Workspace Setup Screen</div>,
 }));
 
-vi.mock("./pages/CrashCoursePage", () => ({
-  __esModule: true,
-  default: () => <div>Crash Course Screen</div>,
-}));
-
 vi.mock("./state/sessionSupervisor", () => ({
   SessionSupervisorProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
@@ -361,7 +356,6 @@ test("desktop menu action forwards workbench-scoped commands to the web menu bus
     "go.diagnostics",
     "help.diagnostics",
     "go.agent-harnesses",
-    "help.crash-course",
     "help.keyboard-shortcuts",
     "help.open-logs-folder",
   ]);
