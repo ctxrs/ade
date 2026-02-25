@@ -175,25 +175,27 @@ function coerceNumber(value: unknown): number | null {
   return null;
 }
 
-function readMessageOrderSeq(message: any): number {
-  const raw = message?.order_seq ?? message?.turn_sequence;
+function readMessageOrderSeq(message: unknown): number {
+  const record = asRecord(message);
+  const raw = record.order_seq ?? record.turn_sequence;
   return Number(raw ?? Number.NaN);
 }
 
-export function normalizeContextWindowMetrics(metrics: any): ContextWindowInfo | null {
-  if (!metrics || typeof metrics !== "object") return null;
-  const windowTokens = coerceNumber(metrics.context_window_tokens);
+export function normalizeContextWindowMetrics(metrics: unknown): ContextWindowInfo | null {
+  const record = asRecord(metrics);
+  if (!record) return null;
+  const windowTokens = coerceNumber(record.context_window_tokens);
   if (!windowTokens || windowTokens <= 0) return null;
 
-  const contextTokensEstimate = coerceNumber(metrics.context_tokens_estimate);
+  const contextTokensEstimate = coerceNumber(record.context_tokens_estimate);
 
   let usedTokens: number | null = null;
   if (contextTokensEstimate != null) {
     usedTokens = contextTokensEstimate;
   }
 
-  let remainingTokens = coerceNumber(metrics.remaining_tokens_estimate);
-  let remainingFraction = coerceNumber(metrics.remaining_fraction);
+  let remainingTokens = coerceNumber(record.remaining_tokens_estimate);
+  let remainingFraction = coerceNumber(record.remaining_fraction);
 
   if (remainingFraction != null && remainingFraction > 1) {
     remainingFraction = remainingFraction <= 100 ? remainingFraction / 100 : null;
@@ -296,8 +298,8 @@ function buildSystemMessageGroups(messages: Message[]): SortableThreadGroup[] {
       }
       return [];
     }
-    const attachments = Array.isArray((m as any).attachments)
-      ? ((m as any).attachments as MessageAttachment[])
+    const attachments = Array.isArray(m.attachments)
+      ? m.attachments
       : [];
     return [{
       sort_seq: entry.orderSeq as number,
@@ -383,6 +385,45 @@ type ActivityEntry = {
   order_seq?: number;
 };
 
+type ToolLocation = Extract<ThreadItem, { kind: "tool" }>["locations"][number];
+
+function resolveToolUpdateRecord(payload: Record<string, unknown>): Record<string, unknown> {
+  const nested = asRecord(payload.update);
+  return Object.keys(nested).length > 0 ? nested : payload;
+}
+
+function readToolCallId(payload: Record<string, unknown>, update: Record<string, unknown>): string {
+  const rawInputRecord = asRecord(update.rawInput);
+  const rawInputLegacyRecord = asRecord(update.raw_input);
+  const toolCall = asRecord(update.toolCall);
+  const toolCallRawInput = asRecord(toolCall.rawInput);
+  return String(
+    payload.tool_call_id ??
+      update.toolCallId ??
+      update.tool_call_id ??
+      rawInputRecord.call_id ??
+      rawInputLegacyRecord.call_id ??
+      toolCallRawInput.call_id ??
+      "",
+  ).trim();
+}
+
+function normalizeToolLocations(locations: unknown): ToolLocation[] {
+  const locs = Array.isArray(locations) ? locations : [];
+  const out: ToolLocation[] = [];
+  for (const loc of locs) {
+    const locRecord = asRecord(loc);
+    const pathValue = locRecord.path;
+    const rangeValue = locRecord.range;
+    if (typeof pathValue !== "string" && rangeValue === undefined) continue;
+    out.push({
+      path: typeof pathValue === "string" ? pathValue : undefined,
+      range: rangeValue,
+    });
+  }
+  return out;
+}
+
 function ensureToolItem(
   toolById: Map<string, Extract<ThreadItem, { kind: "tool" }>>,
   turnId: string,
@@ -414,37 +455,40 @@ function ensureToolItem(
 function applyToolUpdateFromEvent(
   tool: Extract<ThreadItem, { kind: "tool" }>,
   ev: SessionEvent,
-  update: any,
+  update: unknown,
 ) {
+  const updateRecord = asRecord(update);
+  const toolCall = asRecord(updateRecord.toolCall);
+  const rawInput = updateRecord.rawInput;
+  const toolCallRawInput = toolCall.rawInput;
   tool.updated_at = ev.created_at;
   tool.updates_seen += 1;
   tool.raw = ev.payload_json ?? tool.raw;
 
-  const nextKind = String(update?.kind ?? update?.toolCall?.kind ?? "").trim();
+  const nextKind = String(updateRecord.kind ?? toolCall?.kind ?? "").trim();
   if (nextKind) tool.tool_kind = nextKind;
 
   const nextTitle = String(
-    update?.title ??
-      update?.tool_label ??
-      update?.toolLabel ??
-      update?.toolCall?.title ??
-      update?.toolCall?.tool_label ??
-      update?.toolCall?.toolLabel ??
-      update?.toolCall?.name ??
+    updateRecord.title ??
+      updateRecord.tool_label ??
+      updateRecord.toolLabel ??
+      toolCall?.title ??
+      toolCall?.tool_label ??
+      toolCall?.toolLabel ??
+      toolCall?.name ??
       "",
   ).trim();
   if (nextTitle) tool.title = nextTitle;
   else if (tool.tool_kind && tool.title === "Tool") tool.title = humanToolKind(tool.tool_kind);
 
-  const nextStatus = String(update?.status ?? update?.toolCall?.status ?? "").trim();
+  const nextStatus = String(updateRecord.status ?? toolCall?.status ?? "").trim();
   if (nextStatus) tool.status = normalizeToolStatus(nextStatus, ev.event_type);
   else if (ev.event_type === "tool_result") tool.status = "completed";
 
-  const locs = Array.isArray(update?.locations) ? update.locations : [];
-  tool.locations = locs.map((l: any) => ({ path: l?.path, range: l?.range }));
+  tool.locations = normalizeToolLocations(updateRecord.locations);
 
   const input =
-    update?.rawInput ?? update?.toolCall?.rawInput ?? update?.toolCall?.input ?? update?.input ?? update?.input_preview ?? null;
+    rawInput ?? toolCallRawInput ?? toolCall.input ?? updateRecord.input ?? updateRecord.input_preview ?? null;
   if (input != null) tool.input = input;
 
   const nextOutput = extractToolOutputText(update);
@@ -548,17 +592,9 @@ function buildTurnActivityTimeline(opts: {
     if (ev.event_type === "tool_call" || ev.event_type === "tool_call_update" || ev.event_type === "tool_result") {
       const orderSeq = readEventOrderSeq(ev);
       if (!Number.isFinite(orderSeq)) continue;
-      const update = (ev.payload_json as any)?.update ?? ev.payload_json ?? {};
-      const toolCallId =
-        String(
-          ev.payload_json?.tool_call_id ??
-            update?.toolCallId ??
-            update?.tool_call_id ??
-            update?.rawInput?.call_id ??
-            update?.raw_input?.call_id ??
-            update?.toolCall?.rawInput?.call_id ??
-            "",
-        ).trim();
+      const payload = asRecord(ev.payload_json);
+      const update = resolveToolUpdateRecord(payload);
+      const toolCallId = readToolCallId(payload, update);
       if (!toolCallId) {
         continue;
       }
@@ -684,8 +720,8 @@ export function buildWorkbenchThreadViewModelFromTurns(
       ? {
         id: headerId,
         content: userMessage.content ?? "",
-        attachments: Array.isArray((userMessage as any).attachments)
-          ? ((userMessage as any).attachments as MessageAttachment[])
+        attachments: Array.isArray(userMessage.attachments)
+          ? userMessage.attachments
           : [],
         created_at: userMessage.created_at,
       }
@@ -695,7 +731,7 @@ export function buildWorkbenchThreadViewModelFromTurns(
     let tools = (toolsByTurnId[turnId] ?? []).map((tool) => {
       const toolKind = String(tool.tool_kind ?? "tool");
       const title = String(tool.title ?? humanToolKind(toolKind));
-      const summaryOnly = (tool as any).summary_only === true;
+      const summaryOnly = asRecord(tool).summary_only === true;
       const hasDetails =
         !summaryOnly && (tool.input_json != null || String(tool.output_text ?? "").trim().length > 0);
       return {
@@ -758,7 +794,7 @@ export function buildWorkbenchThreadViewModelFromTurns(
           console.error("[WorkbenchThreadViewModel] assistant message missing id", {
             turnId,
             created_at: m.created_at,
-            order_seq: (m as any).order_seq ?? null,
+            order_seq: asRecord(m).order_seq ?? null,
             turn_sequence: m.turn_sequence ?? null,
           });
         }
@@ -1094,9 +1130,9 @@ function buildWorkbenchThreadViewModelFromEvents(
             g.assistant.is_complete = true;
           }
         }
-        const update = (ev.payload_json as any)?.update ?? ev.payload_json ?? {};
-        const toolCallId =
-          String(ev.payload_json?.tool_call_id ?? update?.toolCallId ?? update?.rawInput?.call_id ?? "").trim();
+        const payload = asRecord(ev.payload_json);
+        const update = resolveToolUpdateRecord(payload);
+        const toolCallId = readToolCallId(payload, update);
         if (!toolCallId) continue;
         const orderSeq = readEventOrderSeq(ev);
         if (!Number.isFinite(orderSeq)) continue;
@@ -1341,45 +1377,15 @@ function buildWorkbenchThreadViewModelFromEvents(
           case "tool_call":
           case "tool_call_update":
           case "tool_result": {
-            const update = (ev.payload_json as any)?.update ?? ev.payload_json ?? {};
-            const toolCallId =
-              String(ev.payload_json?.tool_call_id ?? update?.toolCallId ?? update?.rawInput?.call_id ?? "").trim();
+            const payload = asRecord(ev.payload_json);
+            const update = resolveToolUpdateRecord(payload);
+            const toolCallId = readToolCallId(payload, update);
             if (!toolCallId) {
               debugEvents.push(ev);
               break;
             }
             const tool = ensureTool(g, toolCallId, ev.created_at);
-            tool.updated_at = ev.created_at;
-            tool.updates_seen += 1;
-            tool.raw = ev.payload_json;
-
-            const nextKind = String(update?.kind ?? update?.toolCall?.kind ?? "").trim();
-            if (nextKind) tool.tool_kind = nextKind;
-
-            const nextTitle = String(update?.title ?? update?.toolCall?.title ?? update?.toolCall?.name ?? "").trim();
-            if (nextTitle) tool.title = nextTitle;
-            else if (tool.tool_kind && tool.title === "Tool") tool.title = humanToolKind(tool.tool_kind);
-
-            const nextStatus = String(update?.status ?? update?.toolCall?.status ?? "").trim();
-            if (nextStatus) tool.status = normalizeToolStatus(nextStatus, ev.event_type);
-            else if (ev.event_type === "tool_result") tool.status = "completed";
-
-            const locs = Array.isArray(update?.locations) ? update.locations : [];
-            tool.locations = locs.map((l: any) => ({ path: l?.path, range: l?.range }));
-
-            const rawInput =
-              update?.rawInput ?? update?.toolCall?.rawInput ?? update?.toolCall?.input ?? update?.input ?? null;
-            if (rawInput != null) tool.input = rawInput;
-
-            const output =
-              update?.outputText ??
-              update?.output_text ??
-              update?.toolCall?.outputText ??
-              update?.toolCall?.output_text ??
-              update?.result ??
-              null;
-            if (typeof output === "string") tool.output_text = output;
-
+            applyToolUpdateFromEvent(tool, ev, update);
             break;
           }
           default: {
@@ -1463,7 +1469,7 @@ function buildWorkbenchThreadViewModelFromEvents(
       header: {
         id: mid,
         content: u.content ?? "",
-        attachments: Array.isArray((u as any).attachments) ? ((u as any).attachments as MessageAttachment[]) : [],
+        attachments: Array.isArray(u.attachments) ? u.attachments : [],
         created_at: u.created_at,
       },
       first_at: u.created_at,
@@ -1598,45 +1604,15 @@ function buildWorkbenchThreadViewModelFromEvents(
         case "tool_call":
         case "tool_call_update":
         case "tool_result": {
-          const update = (ev.payload_json as any)?.update ?? ev.payload_json ?? {};
-          const toolCallId =
-            String(ev.payload_json?.tool_call_id ?? update?.toolCallId ?? update?.rawInput?.call_id ?? "").trim();
+          const payload = asRecord(ev.payload_json);
+          const update = resolveToolUpdateRecord(payload);
+          const toolCallId = readToolCallId(payload, update);
           if (!toolCallId) {
             debugEvents.push(ev);
             break;
           }
           const tool = ensureTool(g, toolCallId, ev.created_at);
-          tool.updated_at = ev.created_at;
-          tool.updates_seen += 1;
-          tool.raw = ev.payload_json;
-
-          const nextKind = String(update?.kind ?? update?.toolCall?.kind ?? "").trim();
-          if (nextKind) tool.tool_kind = nextKind;
-
-          const nextTitle = String(update?.title ?? update?.toolCall?.title ?? update?.toolCall?.name ?? "").trim();
-          if (nextTitle) tool.title = nextTitle;
-          else if (tool.tool_kind && tool.title === "Tool") tool.title = humanToolKind(tool.tool_kind);
-
-          const nextStatus = String(update?.status ?? update?.toolCall?.status ?? "").trim();
-          if (nextStatus) tool.status = normalizeToolStatus(nextStatus, ev.event_type);
-          else if (ev.event_type === "tool_result") tool.status = "completed";
-
-          const locs = Array.isArray(update?.locations) ? update.locations : [];
-          tool.locations = locs.map((l: any) => ({ path: l?.path, range: l?.range }));
-
-          const rawInput =
-            update?.rawInput ?? update?.toolCall?.rawInput ?? update?.toolCall?.input ?? update?.input ?? null;
-          if (rawInput != null) tool.input = rawInput;
-
-          const output =
-            update?.outputText ??
-            update?.output_text ??
-            update?.toolCall?.outputText ??
-            update?.toolCall?.output_text ??
-            update?.result ??
-            null;
-          if (typeof output === "string") tool.output_text = output;
-
+          applyToolUpdateFromEvent(tool, ev, update);
           break;
         }
         default: {
@@ -1734,9 +1710,9 @@ function buildWorkbenchThreadViewModelFromEvents(
           noticeInserted.add(noticeItem.id);
         }
       }
-      const update = (ev.payload_json as any)?.update ?? ev.payload_json ?? {};
-      const toolCallId =
-        String(ev.payload_json?.tool_call_id ?? update?.toolCallId ?? update?.rawInput?.call_id ?? "").trim();
+      const payload = asRecord(ev.payload_json);
+      const update = resolveToolUpdateRecord(payload);
+      const toolCallId = readToolCallId(payload, update);
       if (!toolCallId) continue;
       ensureTool(g, toolCallId, ev.created_at);
     }
@@ -1756,22 +1732,31 @@ function buildWorkbenchThreadViewModelFromEvents(
   return { groups: mergeGroupsWithSystemMessages(groups, messages), debugEvents };
 }
 
-function extractToolOutputText(update: any): string {
+function extractToolOutputText(update: unknown): string {
+  const updateRecord = asRecord(update);
+  const rawOutput = asRecord(updateRecord.rawOutput);
+  const toolCall = asRecord(updateRecord.toolCall);
+  const toolCallRawOutput = asRecord(toolCall?.rawOutput);
   const direct =
-    update?.outputText ??
-    update?.output_text ??
-    update?.output_preview ??
-    update?.result ??
-    update?.rawOutput?.aggregated_output ??
-    update?.rawOutput?.output ??
+    updateRecord.outputText ??
+    updateRecord.output_text ??
+    updateRecord.output_preview ??
+    updateRecord.result ??
+    rawOutput?.aggregated_output ??
+    rawOutput?.output ??
+    toolCall?.outputText ??
+    toolCall?.output_text ??
+    toolCallRawOutput?.aggregated_output ??
+    toolCallRawOutput?.output ??
     null;
   if (typeof direct === "string" && direct.trim()) return direct.trim();
 
-  const blocks = Array.isArray(update?.content) ? update.content : [];
+  const blocks = Array.isArray(updateRecord.content) ? updateRecord.content : [];
   const parts: string[] = [];
   for (const b of blocks) {
-    const c = b?.content ?? b;
-    const t = c?.text;
+    const blockRecord = asRecord(b);
+    const contentRecord = asRecord(blockRecord?.content ?? b);
+    const t = contentRecord?.text;
     if (typeof t === "string") parts.push(t);
   }
   return parts.join("").trim();
@@ -1787,7 +1772,7 @@ function mergeStreamingText(prev: string, next: string): string {
   return n.length >= p.length ? n : p;
 }
 
-function pickFirstString(...values: any[]): string | null {
+function pickFirstString(...values: unknown[]): string | null {
   for (const v of values) {
     if (typeof v === "string" && v.trim()) return v.trim();
   }
@@ -1820,28 +1805,29 @@ function formatElapsedSeconds(totalSeconds: number): string {
   return `${seconds}s`;
 }
 
-function isStatusUpdateMeta(meta: any): boolean {
-  if (!meta || typeof meta !== "object") return false;
-  const codexMeta = meta?.codex ?? {};
-  const reasoningKind = codexMeta?.reasoning_kind ?? codexMeta?.reasoningKind;
+function isStatusUpdateMeta(meta: unknown): boolean {
+  const metaRecord = asRecord(meta);
+  if (!metaRecord) return false;
+  const codexMeta = asRecord(metaRecord.codex);
+  const reasoningKind = codexMeta.reasoning_kind ?? codexMeta.reasoningKind;
   if (reasoningKind === "status") return true;
 
   const statusText = pickFirstString(
-    meta?.status_text,
-    meta?.statusText,
-    meta?.status_string,
-    meta?.statusString,
-    codexMeta?.status_text,
-    codexMeta?.statusText,
-    codexMeta?.status_string,
-    codexMeta?.statusString,
+    metaRecord.status_text,
+    metaRecord.statusText,
+    metaRecord.status_string,
+    metaRecord.statusString,
+    codexMeta.status_text,
+    codexMeta.statusText,
+    codexMeta.status_string,
+    codexMeta.statusString,
   );
   if (statusText) return true;
 
   const statusValue =
-    typeof meta?.status === "string"
-      ? meta.status
-      : typeof codexMeta?.status === "string"
+    typeof metaRecord.status === "string"
+      ? metaRecord.status
+      : typeof codexMeta.status === "string"
         ? codexMeta.status
         : null;
   if (statusValue && isNonToolStatus(statusValue)) return true;

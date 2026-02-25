@@ -65,7 +65,7 @@ export function MergeQueueLivePanelOrphaned(props: MergeQueueLivePanelOrphanedPr
                 <div />
               </div>
               {entries.map((entry) => {
-                const entryId = idToString(entry.id as any);
+                const entryId = idToString(entry.id);
                 const updatedMs = Date.parse(entry.updated_at);
                 const updatedLabel = Number.isFinite(updatedMs)
                   ? `${formatAge(Date.now() - updatedMs)} ago`

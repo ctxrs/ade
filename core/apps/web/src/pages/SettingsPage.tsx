@@ -31,6 +31,7 @@ import {
   isDesktopApp,
 } from "../utils/desktop";
 import { ensureDesktopNotificationPermission } from "../utils/desktopNotifications";
+import { errorMessage } from "../utils/errorMessage";
 import {
   trackCheckoutStarted,
   trackEntitlementActivated,
@@ -248,13 +249,13 @@ export default function SettingsPage() {
     try {
       const res = await supabase.functions.invoke("entitlements", { method: "GET" });
       if (res.error) throw res.error;
-      const next = (res.data ?? null) as any;
+      const next = (res.data ?? null) as EntitlementsSnapshot | null;
       setEntitlements(next);
       if (next) writeCachedValue(window.localStorage, ENTITLEMENTS_CACHE_KEY, next);
       return next;
-    } catch (e: any) {
+    } catch (e: unknown) {
       if (!opts?.silent) {
-        setBillingError(e?.message ?? String(e));
+        setBillingError(errorMessage(e));
       }
       return null;
     } finally {
@@ -270,8 +271,8 @@ export default function SettingsPage() {
     try {
       const status = await getMobileAccessStatus();
       setMobileStatus(status);
-    } catch (e: any) {
-      setMobileStatusError(e?.message ?? String(e));
+    } catch (e: unknown) {
+      setMobileStatusError(errorMessage(e));
     } finally {
       setMobileStatusBusy(false);
     }
@@ -298,8 +299,8 @@ export default function SettingsPage() {
       const resp = await enableMobileAccess(token);
       setMobileQr(resp);
       setMobileStatus(resp.status);
-    } catch (e: any) {
-      setMobileEnableError(e?.message ?? String(e));
+    } catch (e: unknown) {
+      setMobileEnableError(errorMessage(e));
     } finally {
       setMobileEnableBusy(false);
     }
@@ -313,8 +314,8 @@ export default function SettingsPage() {
       await disableMobileAccess(token);
       setMobileQr(null);
       await refreshMobileAccess();
-    } catch (e: any) {
-      setMobileEnableError(e?.message ?? String(e));
+    } catch (e: unknown) {
+      setMobileEnableError(errorMessage(e));
     } finally {
       setMobileEnableBusy(false);
     }
@@ -380,8 +381,8 @@ export default function SettingsPage() {
           body: checkoutSessionId ? { checkout_session_id: checkoutSessionId } : {},
         });
         if (res.error) throw res.error;
-      } catch (e: any) {
-        setBillingError(e?.message ?? String(e));
+      } catch (e: unknown) {
+        setBillingError(errorMessage(e));
       }
     };
 
@@ -463,9 +464,9 @@ export default function SettingsPage() {
         }
 
         setLoaded(true);
-      } catch (e: any) {
+      } catch (e: unknown) {
         if (cancelled) return;
-        setLoadError(e?.message ?? String(e));
+        setLoadError(errorMessage(e));
         setLoaded(true);
       }
     })();
@@ -483,9 +484,9 @@ export default function SettingsPage() {
         setEditorSettings(settings);
         setEditorLoaded(true);
       })
-      .catch((e: any) => {
+      .catch((e: unknown) => {
         if (cancelled) return;
-        setEditorError(e?.message ?? String(e));
+        setEditorError(errorMessage(e));
         setEditorLoaded(true);
       });
     return () => {
@@ -521,9 +522,9 @@ export default function SettingsPage() {
       if (next.sandboxing?.provider_control_mode) {
         setProviderControlMode(next.sandboxing.provider_control_mode);
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       if (seq !== saveSeq.current) return;
-      setSaveError(e?.message ?? String(e));
+      setSaveError(errorMessage(e));
     } finally {
       if (seq === saveSeq.current) setSaving(false);
     }
@@ -628,7 +629,7 @@ export default function SettingsPage() {
       };
       desktopUpdateEditorSettings(next)
         .then((next) => setEditorSettings(next))
-        .catch((e: any) => setEditorError(e?.message ?? String(e)))
+        .catch((e: unknown) => setEditorError(errorMessage(e)))
         .finally(() => setEditorSaving(false));
     }, 350);
     return () => window.clearTimeout(t);
@@ -668,8 +669,8 @@ export default function SettingsPage() {
       try {
         const snapshot = await getResourceUtilization(workspaceId);
         if (!cancelled) setResourceSnapshot(snapshot);
-      } catch (e: any) {
-        if (!cancelled) setResourceError(e?.message ?? String(e));
+      } catch (e: unknown) {
+        if (!cancelled) setResourceError(errorMessage(e));
       } finally {
         if (!cancelled) setResourceLoading(false);
       }
@@ -725,8 +726,8 @@ export default function SettingsPage() {
       try {
         const response = await devRestartProviders(mode);
         setDevRestartResults(response.results);
-      } catch (err: any) {
-        setDevRestartError(err?.message ?? String(err));
+      } catch (err: unknown) {
+        setDevRestartError(errorMessage(err));
       } finally {
         setDevRestartBusy(false);
       }
@@ -779,8 +780,8 @@ export default function SettingsPage() {
           }
         }
         await updateClientSettings({ desktopNotifications: { turnCompleted: next } });
-      } catch (err: any) {
-        setClientSettingsError(err?.message ?? String(err));
+      } catch (err: unknown) {
+        setClientSettingsError(errorMessage(err));
       } finally {
         setClientSettingsSaving(false);
       }
@@ -1149,7 +1150,7 @@ export default function SettingsPage() {
       const system = snapshot?.system;
       const disk = snapshot?.workspace?.disk;
       const workspaceName =
-        workspaces.find((ws) => idToString((ws as any).id) === workspaceId)?.name ?? "Workspace";
+        workspaces.find((ws) => idToString(ws.id) === workspaceId)?.name ?? "Workspace";
 
       const memoryPct =
         system && system.memory_total_bytes > 0
@@ -1389,8 +1390,8 @@ export default function SettingsPage() {
             password: billingPassword,
           });
           if (error) throw error;
-        } catch (e: any) {
-          setBillingError(e?.message ?? String(e));
+        } catch (e: unknown) {
+          setBillingError(errorMessage(e));
         } finally {
           setBillingBusy(false);
         }
@@ -1405,8 +1406,8 @@ export default function SettingsPage() {
             password: billingPassword,
           });
           if (error) throw error;
-        } catch (e: any) {
-          setBillingError(e?.message ?? String(e));
+        } catch (e: unknown) {
+          setBillingError(errorMessage(e));
         } finally {
           setBillingBusy(false);
         }
@@ -1418,8 +1419,8 @@ export default function SettingsPage() {
         try {
           const { error } = await supabase.auth.signOut();
           if (error) throw error;
-        } catch (e: any) {
-          setBillingError(e?.message ?? String(e));
+        } catch (e: unknown) {
+          setBillingError(errorMessage(e));
         } finally {
           setBillingBusy(false);
         }
@@ -1442,8 +1443,8 @@ export default function SettingsPage() {
             trackCheckoutStarted,
           });
           window.location.href = url;
-        } catch (e: any) {
-          setBillingError(e?.message ?? String(e));
+        } catch (e: unknown) {
+          setBillingError(errorMessage(e));
           setBillingBusy(false);
         }
       };
@@ -1456,11 +1457,12 @@ export default function SettingsPage() {
             body: { return_path: billingReturnPath },
           });
           if (res.error) throw res.error;
-          const url = String((res.data as any)?.url ?? "").trim();
+          const data = (res.data && typeof res.data === "object") ? (res.data as Record<string, unknown>) : null;
+          const url = typeof data?.url === "string" ? data.url.trim() : "";
           if (!url) throw new Error("Portal URL missing.");
           window.location.href = url;
-        } catch (e: any) {
-          setBillingError(e?.message ?? String(e));
+        } catch (e: unknown) {
+          setBillingError(errorMessage(e));
           setBillingBusy(false);
         }
       };
