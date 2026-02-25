@@ -298,7 +298,7 @@ const resolveRemoteDaemonBuilderImage = () => {
   if (requested) return requested;
   // Prefer a conservative glibc baseline so bundled daemon binaries run on a wider
   // range of Linux remotes (including our Debian bookworm fixture).
-  return "rust:1-bookworm";
+  return "rust:1.88-bookworm";
 };
 
 const upsertManifestDaemons = (bundleDir, daemonEntries) => {
