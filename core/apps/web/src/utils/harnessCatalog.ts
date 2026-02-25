@@ -13,7 +13,6 @@ import mistralLogo from "../assets/emdash-logos/mistral.png";
 import codexLogo from "../assets/emdash-logos/openai.png";
 import opencodeLogo from "../assets/emdash-logos/opencode.png";
 import qwenLogo from "../assets/emdash-logos/qwen.png";
-import continueLogo from "../assets/harness-logos/continue.png";
 import openhandsLogo from "../assets/harness-logos/openhands.png";
 import piLogo from "../assets/harness-logos/pi.svg";
 
@@ -45,7 +44,6 @@ export const HARNESS_CATALOG: HarnessCatalogEntry[] = [
   { id: "kiro", label: "Kiro", logoSrc: kiroLogo },
 
   // Additional harnesses from specs/21_harness_providers.md
-  { id: "continue", label: "Continue", logoSrc: continueLogo, invertInLight: true },
   { id: "openhands", label: "OpenHands", logoSrc: openhandsLogo },
 ];
 

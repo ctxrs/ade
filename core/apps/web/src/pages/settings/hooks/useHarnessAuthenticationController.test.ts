@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   extractGithubDeviceCodeFromAuthUrl,
   resolveUpsertedEndpoint,
+  resolveHarnessAuthModalInitialStage,
   shouldSkipDuplicateAmpLoginStart,
   shouldAutoOpenKimiAuthUrl,
   shouldCompleteClaudeLoginWithCallbackCode,
   shouldOpenPolledAuthUrlForStatus,
   shouldOpenPolledClaudeAuthUrl,
   shouldAutoOpenCopilotAuthUrl,
+  supportsHarnessSubscriptionAuth,
   takeNextClaudeAuthUrlToOpen,
   toErrorObject,
 } from "./useHarnessAuthenticationController";
@@ -256,5 +258,30 @@ describe("shouldOpenPolledClaudeAuthUrl", () => {
 describe("shouldAutoOpenKimiAuthUrl", () => {
   it("keeps Kimi browser open behavior single-source to avoid duplicate tabs", () => {
     expect(shouldAutoOpenKimiAuthUrl()).toBe(false);
+  });
+});
+
+describe("supportsHarnessSubscriptionAuth", () => {
+  it("returns false for API-key-only providers", () => {
+    expect(supportsHarnessSubscriptionAuth("opencode")).toBe(false);
+    expect(supportsHarnessSubscriptionAuth("pi")).toBe(false);
+  });
+
+  it("returns true for subscription-capable providers", () => {
+    expect(supportsHarnessSubscriptionAuth("codex")).toBe(true);
+    expect(supportsHarnessSubscriptionAuth("claude-crp")).toBe(true);
+    expect(supportsHarnessSubscriptionAuth("gemini")).toBe(true);
+  });
+});
+
+describe("resolveHarnessAuthModalInitialStage", () => {
+  it("routes API-key-only providers directly to api_key", () => {
+    expect(resolveHarnessAuthModalInitialStage("opencode")).toBe("api_key");
+    expect(resolveHarnessAuthModalInitialStage("pi")).toBe("api_key");
+  });
+
+  it("keeps choose stage for providers supporting both methods", () => {
+    expect(resolveHarnessAuthModalInitialStage("codex")).toBe("choose");
+    expect(resolveHarnessAuthModalInitialStage("claude-crp")).toBe("choose");
   });
 });

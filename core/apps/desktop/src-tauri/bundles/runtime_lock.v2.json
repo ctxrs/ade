@@ -50,7 +50,6 @@
       "claude-crp",
       "cline",
       "codex",
-      "continue",
       "copilot",
       "cursor",
       "droid",
@@ -525,63 +524,6 @@
         {
           "source_type": "ci",
           "uri": "locked://providers/codex/linux/x86_64",
-          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
-        }
-      ]
-    },
-    {
-      "kind": "provider",
-      "id": "continue",
-      "os": "macos",
-      "arch": "aarch64",
-      "variant": "default",
-      "version": "locked",
-      "sources": [
-        {
-          "source_type": "local",
-          "build": "desktop:prep"
-        },
-        {
-          "source_type": "ci",
-          "uri": "locked://providers/continue/macos/aarch64",
-          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
-        }
-      ]
-    },
-    {
-      "kind": "provider",
-      "id": "continue",
-      "os": "linux",
-      "arch": "aarch64",
-      "variant": "default",
-      "version": "locked",
-      "sources": [
-        {
-          "source_type": "local",
-          "build": "desktop:prep"
-        },
-        {
-          "source_type": "ci",
-          "uri": "locked://providers/continue/linux/aarch64",
-          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
-        }
-      ]
-    },
-    {
-      "kind": "provider",
-      "id": "continue",
-      "os": "linux",
-      "arch": "x86_64",
-      "variant": "default",
-      "version": "locked",
-      "sources": [
-        {
-          "source_type": "local",
-          "build": "desktop:prep"
-        },
-        {
-          "source_type": "ci",
-          "uri": "locked://providers/continue/linux/x86_64",
           "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
         }
       ]

@@ -145,6 +145,7 @@ type HarnessAuthenticationController = {
   onAmpDelete: (accountId: string) => Promise<void>;
   providerError: string | null;
   supportsHarnessEndpointConfig: (providerId: string) => boolean;
+  supportsHarnessSubscriptionAuth: (providerId: string) => boolean;
   harnessEndpointRequiresBaseUrl: (providerId: string) => boolean;
 };
 
@@ -169,6 +170,23 @@ const HARNESSES_WITH_ENDPOINT_CONFIG = new Set([
 const supportsHarnessEndpointConfigStatic = (providerId: string): boolean =>
   HARNESSES_WITH_ENDPOINT_CONFIG.has(providerId);
 
+const HARNESSES_WITH_SUBSCRIPTION_AUTH = new Set([
+  "codex",
+  "claude-crp",
+  "gemini",
+  "kimi",
+  "qwen",
+  "mistral",
+  "amp",
+  "copilot",
+  "kiro",
+  "cursor",
+  "auggie",
+]);
+
+export const supportsHarnessSubscriptionAuth = (providerId: string): boolean =>
+  HARNESSES_WITH_SUBSCRIPTION_AUTH.has(providerId);
+
 const HARNESSES_WITH_ENDPOINT_BASE_URL = new Set([
   "codex",
   "claude-crp",
@@ -177,6 +195,7 @@ const HARNESSES_WITH_ENDPOINT_BASE_URL = new Set([
   "opencode",
   "mistral",
   "goose",
+  "pi",
   "droid",
   "openhands",
 ]);
@@ -186,6 +205,14 @@ const harnessEndpointRequiresBaseUrl = (providerId: string): boolean =>
 
 const harnessEndpointRequiresApiShape = (providerId: string): boolean =>
   HARNESSES_WITH_ENDPOINT_BASE_URL.has(providerId);
+
+export const resolveHarnessAuthModalInitialStage = (providerId: string): HarnessAuthModalState["stage"] => {
+  const supportsApiKey = providerId === "cursor" || supportsHarnessEndpointConfigStatic(providerId);
+  const supportsSubscription = supportsHarnessSubscriptionAuth(providerId);
+  if (supportsApiKey && !supportsSubscription) return "api_key";
+  if (!supportsApiKey && supportsSubscription) return "subscription";
+  return "choose";
+};
 
 const messageFromError = (error: unknown): string => {
   if (error instanceof Error && error.message) {
@@ -733,7 +760,7 @@ export function useHarnessAuthenticationController({
     setProviderError(null);
     setHarnessAuthModal({
       provider_id: providerId,
-      stage: "choose",
+      stage: resolveHarnessAuthModalInitialStage(providerId),
       endpoint_id: null,
       endpoint_provider_id: defaultPresetId,
       gemini_endpoint_auth_type: "gemini_api_key",
@@ -2251,6 +2278,7 @@ export function useHarnessAuthenticationController({
     onAmpDelete,
     providerError,
     supportsHarnessEndpointConfig,
+    supportsHarnessSubscriptionAuth,
     harnessEndpointRequiresBaseUrl,
   };
 }

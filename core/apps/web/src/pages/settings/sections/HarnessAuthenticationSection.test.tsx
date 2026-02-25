@@ -64,7 +64,7 @@ function makeCopilotSubscriptionModal(): HarnessAuthModalState {
   };
 }
 
-function makeApiKeyModal(providerId: "cursor" | "gemini"): HarnessAuthModalState {
+function makeApiKeyModal(providerId: "cursor" | "gemini" | "opencode" | "pi"): HarnessAuthModalState {
   return {
     provider_id: providerId,
     stage: "api_key",
@@ -101,6 +101,34 @@ function makeEndpointApiKeyModal(): HarnessAuthModalState {
     gemini_endpoint_auth_type: "gemini_api_key",
     endpoint_name: "",
     base_url: "https://api.openai.com/v1",
+    api_key: "",
+    manual_model_ids: "",
+    subscription_label: "",
+    subscription_token: "",
+    subscription_email: "",
+    subscription_provider: "",
+    subscription_credentials_json: "",
+    subscription_config_toml: "",
+    subscription_auth_token_json: "",
+    subscription_oauth_creds_json: "",
+    subscription_google_accounts_json: "",
+    subscription_device_code: null,
+    subscription_auth_url: null,
+    subscription_status: null,
+    subscription_busy: false,
+    api_key_busy: false,
+  };
+}
+
+function makeChooseModal(providerId: "amp" | "pi"): HarnessAuthModalState {
+  return {
+    provider_id: providerId,
+    stage: "choose",
+    endpoint_id: null,
+    endpoint_provider_id: "openrouter",
+    gemini_endpoint_auth_type: "gemini_api_key",
+    endpoint_name: "",
+    base_url: "",
     api_key: "",
     manual_model_ids: "",
     subscription_label: "",
@@ -172,6 +200,7 @@ function makeController(
     onAmpDelete: asyncNoop,
     providerError: null,
     supportsHarnessEndpointConfig: () => true,
+    supportsHarnessSubscriptionAuth: () => true,
     harnessEndpointRequiresBaseUrl: () => false,
     ...overrides,
   } as HarnessAuthController;
@@ -331,6 +360,70 @@ describe("HarnessAuthenticationSection Gemini subscription modal", () => {
     expect(providerLogo).not.toBeNull();
     expect(providerLogo?.getAttribute("src")).toContain("OpenAI.svg");
   });
+
+  it("starts Amp browser sign-in when selecting Subscription from chooser", () => {
+    const submitHarnessSubscriptionModal = vi.fn(async () => {});
+    mockUseHarnessAuthenticationController.mockReturnValue(
+      makeController({
+        harnessAuthModal: makeChooseModal("amp"),
+        submitHarnessSubscriptionModal,
+      }),
+    );
+
+    render(
+      <HarnessAuthenticationSection
+        workspaceId="ws-1"
+        active
+        modalOnly
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Subscription" }));
+    expect(submitHarnessSubscriptionModal).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows endpoint provider selector for Pi api key auth", () => {
+    mockUseHarnessAuthenticationController.mockReturnValue(
+      makeController({
+        harnessAuthModal: makeApiKeyModal("pi"),
+        harnessEndpointRequiresBaseUrl: (providerId: string) => providerId === "pi",
+      }),
+    );
+
+    render(
+      <HarnessAuthenticationSection
+        workspaceId="ws-1"
+        active
+        modalOnly
+      />,
+    );
+
+    expect(screen.getByText("Provider")).toBeInTheDocument();
+    expect(screen.getByText("Manual model slugs (optional)")).toBeInTheDocument();
+    expect(screen.getByText("Base URL")).toBeInTheDocument();
+  });
+
+  it("closes API-key-only provider modal on Back instead of reopening chooser", () => {
+    const closeHarnessAuthModal = vi.fn();
+    mockUseHarnessAuthenticationController.mockReturnValue(
+      makeController({
+        harnessAuthModal: makeApiKeyModal("opencode"),
+        supportsHarnessSubscriptionAuth: (providerId: string) => providerId !== "opencode",
+        closeHarnessAuthModal,
+      }),
+    );
+
+    render(
+      <HarnessAuthenticationSection
+        workspaceId="ws-1"
+        active
+        modalOnly
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(closeHarnessAuthModal).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("HarnessAuthenticationSection Copilot subscription modal", () => {
@@ -353,7 +446,7 @@ describe("HarnessAuthenticationSection Copilot subscription modal", () => {
     expect(screen.getByText("Token")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Copilot subscription")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("you@example.com")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Save subscription" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign in with GitHub" })).toBeInTheDocument();
   });
 
   it("does not render device code field even when copilot modal state carries one", () => {

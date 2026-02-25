@@ -59,6 +59,7 @@ export function subscriptionPrimaryActionLabel(modal: HarnessAuthModalState): st
   if (
     modal.provider_id === "codex"
     || modal.provider_id === "cursor"
+    || modal.provider_id === "auggie"
     || modal.provider_id === "amp"
     || modal.provider_id === "gemini"
     || modal.provider_id === "qwen"
@@ -67,6 +68,12 @@ export function subscriptionPrimaryActionLabel(modal: HarnessAuthModalState): st
     || (modal.provider_id === "claude-crp" && !claudeSetupTokenProvided(modal))
   ) {
     return modal.provider_id === "gemini" ? "Sign in with Google" : "Start sign-in";
+  }
+  if (modal.provider_id === "kimi") {
+    return "Sign in with Kimi";
+  }
+  if (modal.provider_id === "copilot") {
+    return "Sign in with GitHub";
   }
   return "Save subscription";
 }
@@ -81,10 +88,13 @@ export function shouldAutoStartSubscriptionFlow(providerId: string): boolean {
   return providerId === "codex"
     || providerId === "claude-crp"
     || providerId === "gemini"
+    || providerId === "kimi"
     || providerId === "qwen"
     || providerId === "amp"
     || providerId === "mistral"
-    || providerId === "kiro";
+    || providerId === "kiro"
+    || providerId === "copilot"
+    || providerId === "auggie";
 }
 
 export function HarnessAuthenticationSection({
@@ -143,6 +153,7 @@ export function HarnessAuthenticationSection({
     onAmpDelete,
     providerError,
     supportsHarnessEndpointConfig,
+    supportsHarnessSubscriptionAuth,
     harnessEndpointRequiresBaseUrl,
   } = useHarnessAuthenticationController({
     workspaceId,
@@ -191,6 +202,9 @@ export function HarnessAuthenticationSection({
       ? false
       : harnessAuthModal.provider_id === "cursor"
         || supportsHarnessEndpointConfig(harnessAuthModal.provider_id);
+  const modalSupportsSubscription = harnessAuthModal === null
+    ? false
+    : supportsHarnessSubscriptionAuth(harnessAuthModal.provider_id);
   const modalApiKeyLabel = harnessAuthModal?.provider_id === "gemini"
       ? harnessAuthModal.gemini_endpoint_auth_type === "vertex_ai"
         ? "Google API key"
@@ -675,65 +689,64 @@ export function HarnessAuthenticationSection({
             {harnessAuthModal.stage === "choose" ? (
               <div className="settings-harness-modal-choice-stack">
                 <div className="settings-harness-modal-choice-grid">
-                  <button
-                    type="button"
-                    className="settings-btn settings-harness-modal-choice-btn"
-                    onClick={() => {
-                      patchHarnessAuthModal({
-                        stage: "subscription",
-                        subscription_status: null,
-                        subscription_label: "",
-                        subscription_token: "",
-                        subscription_email: "",
-                        subscription_provider: "",
-                        subscription_credentials_json: "",
-                        subscription_config_toml: "",
-                        subscription_auth_token_json: "",
-                        subscription_oauth_creds_json: "",
-                        subscription_google_accounts_json: "",
-                      });
-                      if (shouldAutoStartSubscriptionFlow(harnessAuthModal.provider_id)) {
-                        void submitHarnessSubscriptionModal();
-                      }
-                    }}
-                    disabled={harnessAuthModal.subscription_busy || harnessAuthModal.api_key_busy}
-                  >
-                    <UserIcon size={18} className="settings-harness-modal-choice-icon" aria-hidden="true" />
-                    <span>Subscription</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="settings-btn settings-harness-modal-choice-btn"
-                    onClick={() =>
-                      patchHarnessAuthModal({
-                        stage: "api_key",
-                        api_key: "",
-                        manual_model_ids: "",
-                        subscription_status: null,
-                        subscription_label: "",
-                        subscription_token: "",
-                        subscription_email: "",
-                        subscription_provider: "",
-                        subscription_credentials_json: "",
-                        subscription_config_toml: "",
-                        subscription_auth_token_json: "",
-                        subscription_oauth_creds_json: "",
-                        subscription_google_accounts_json: "",
-                        base_url: modalRequiresBaseUrl
-                          ? (getHarnessEndpointProviderPreset(harnessAuthModal.endpoint_provider_id).base_url
-                            ?? harnessAuthModal.base_url)
-                          : "",
-                      })}
-                    disabled={!modalSupportsApiKey}
-                    title={
-                      modalSupportsApiKey
-                        ? "Add API key auth"
-                        : "API key auth not supported for this harness yet"
-                    }
-                  >
-                    <KeyRound size={18} className="settings-harness-modal-choice-icon" aria-hidden="true" />
-                    <span>API Key</span>
-                  </button>
+                  {modalSupportsSubscription ? (
+                    <button
+                      type="button"
+                      className="settings-btn settings-harness-modal-choice-btn"
+                      onClick={() => {
+                        patchHarnessAuthModal({
+                          stage: "subscription",
+                          subscription_status: null,
+                          subscription_label: "",
+                          subscription_token: "",
+                          subscription_email: "",
+                          subscription_provider: "",
+                          subscription_credentials_json: "",
+                          subscription_config_toml: "",
+                          subscription_auth_token_json: "",
+                          subscription_oauth_creds_json: "",
+                          subscription_google_accounts_json: "",
+                        });
+                        if (shouldAutoStartSubscriptionFlow(harnessAuthModal.provider_id)) {
+                          void submitHarnessSubscriptionModal();
+                        }
+                      }}
+                      disabled={harnessAuthModal.subscription_busy || harnessAuthModal.api_key_busy}
+                    >
+                      <UserIcon size={18} className="settings-harness-modal-choice-icon" aria-hidden="true" />
+                      <span>Subscription</span>
+                    </button>
+                  ) : null}
+                  {modalSupportsApiKey ? (
+                    <button
+                      type="button"
+                      className="settings-btn settings-harness-modal-choice-btn"
+                      onClick={() =>
+                        patchHarnessAuthModal({
+                          stage: "api_key",
+                          api_key: "",
+                          manual_model_ids: "",
+                          subscription_status: null,
+                          subscription_label: "",
+                          subscription_token: "",
+                          subscription_email: "",
+                          subscription_provider: "",
+                          subscription_credentials_json: "",
+                          subscription_config_toml: "",
+                          subscription_auth_token_json: "",
+                          subscription_oauth_creds_json: "",
+                          subscription_google_accounts_json: "",
+                          base_url: modalRequiresBaseUrl
+                            ? (getHarnessEndpointProviderPreset(harnessAuthModal.endpoint_provider_id).base_url
+                              ?? harnessAuthModal.base_url)
+                            : "",
+                        })}
+                      title="Add API key auth"
+                    >
+                      <KeyRound size={18} className="settings-harness-modal-choice-icon" aria-hidden="true" />
+                      <span>API Key</span>
+                    </button>
+                  ) : null}
                 </div>
               </div>
             ) : harnessAuthModal.stage === "subscription" ? (
@@ -884,7 +897,11 @@ export function HarnessAuthenticationSection({
                   <button
                     type="button"
                     className="settings-btn settings-btn-secondary"
-                    onClick={() =>
+                    onClick={() => {
+                      if (!modalSupportsApiKey) {
+                        closeHarnessAuthModal();
+                        return;
+                      }
                       patchHarnessAuthModal({
                         stage: "choose",
                         subscription_status: null,
@@ -896,7 +913,8 @@ export function HarnessAuthenticationSection({
                         subscription_auth_token_json: "",
                         subscription_oauth_creds_json: "",
                         subscription_google_accounts_json: "",
-                      })}
+                      });
+                    }}
                     disabled={harnessAuthModal.subscription_busy}
                   >
                     Back
@@ -1052,13 +1070,18 @@ export function HarnessAuthenticationSection({
                   <button
                     type="button"
                     className="settings-btn settings-btn-secondary"
-                    onClick={() =>
+                    onClick={() => {
+                      if (!modalSupportsSubscription) {
+                        closeHarnessAuthModal();
+                        return;
+                      }
                       patchHarnessAuthModal({
                         stage: "choose",
                         api_key: "",
                         manual_model_ids: "",
                         subscription_status: null,
-                      })}
+                      });
+                    }}
                   >
                     Back
                   </button>

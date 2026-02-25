@@ -434,7 +434,6 @@ ACP_PROVIDER_IDS=(
   cline
   cagent
   auggie
-  continue
   openhands
   amp
   droid
@@ -451,7 +450,6 @@ acp_provider_command_candidates() {
     kimi) printf '%s' "kimi" ;;
     cline) printf '%s' "cline-acp cline" ;;
     auggie) printf '%s' "auggie" ;;
-    continue) printf '%s' "cn continue" ;;
     openhands) printf '%s' "openhands-acp openhands openhands-cli" ;;
     amp) printf '%s' "amp-acp amp" ;;
     droid) printf '%s' "droid-acp droid" ;;
@@ -464,7 +462,7 @@ acp_provider_command_candidates() {
 acp_provider_default_args() {
   case "${1:-}" in
     qwen) printf '%s' "--experimental-acp" ;;
-    opencode|goose|continue) printf '%s' "acp" ;;
+    opencode|goose) printf '%s' "acp" ;;
     kimi|auggie) printf '%s' "--acp" ;;
     *) printf '%s' "" ;;
   esac

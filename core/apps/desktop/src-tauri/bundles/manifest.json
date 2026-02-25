@@ -261,36 +261,6 @@
       "args": []
     },
     {
-      "id": "continue",
-      "protocol": "acp",
-      "version": "local",
-      "os": "linux",
-      "arch": "aarch64",
-      "sha256": "ae2b8aa58af5838eb15a9dd7b6648c14256547211115539833d3448325bd94e1",
-      "command": "providers/continue/linux/aarch64/continue-acp.sh",
-      "args": []
-    },
-    {
-      "id": "continue",
-      "protocol": "acp",
-      "version": "local",
-      "os": "linux",
-      "arch": "x86_64",
-      "sha256": "ae2b8aa58af5838eb15a9dd7b6648c14256547211115539833d3448325bd94e1",
-      "command": "providers/continue/linux/x86_64/continue-acp.sh",
-      "args": []
-    },
-    {
-      "id": "continue",
-      "protocol": "acp",
-      "version": "local",
-      "os": "macos",
-      "arch": "aarch64",
-      "sha256": "ae2b8aa58af5838eb15a9dd7b6648c14256547211115539833d3448325bd94e1",
-      "command": "providers/continue/macos/aarch64/continue-acp.sh",
-      "args": []
-    },
-    {
       "id": "copilot",
       "protocol": "acp",
       "version": "local",

@@ -27,7 +27,6 @@ export const OPENROUTER_ENDPOINT_FIRST_PASS_EXCLUDED_PROVIDER_TOKEN_ONLY = [
   "pi",
   "cline",
   "cagent",
-  "continue",
 ] as const;
 
 // Tracked but unsupported harnesses intentionally excluded from first-pass endpoint e2e.

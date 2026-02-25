@@ -209,9 +209,13 @@ const V1_TEMPORARILY_EXCLUDED_ENDPOINT_PROVIDER_IDS = new Set([
 // Presets are intentionally launch-focused: known direct endpoints where stable,
 // otherwise OpenRouter-compatible fallback so users can still route via one key.
 export const HARNESS_ENDPOINT_PROVIDER_PRESETS: HarnessEndpointProviderPreset[] =
-  ALL_HARNESS_ENDPOINT_PROVIDER_PRESETS.filter(
-    (preset) => !V1_TEMPORARILY_EXCLUDED_ENDPOINT_PROVIDER_IDS.has(preset.id),
-  );
+  ALL_HARNESS_ENDPOINT_PROVIDER_PRESETS
+    .filter((preset) => !V1_TEMPORARILY_EXCLUDED_ENDPOINT_PROVIDER_IDS.has(preset.id))
+    .sort((left, right) => {
+      if (left.id === "other") return 1;
+      if (right.id === "other") return -1;
+      return left.label.localeCompare(right.label, undefined, { sensitivity: "base" });
+    });
 
 const PRESET_BY_ID = new Map(ALL_HARNESS_ENDPOINT_PROVIDER_PRESETS.map((preset) => [preset.id, preset]));
 const OTHER_PRESET: HarnessEndpointProviderPreset = {

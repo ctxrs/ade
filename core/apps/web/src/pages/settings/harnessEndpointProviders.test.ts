@@ -19,10 +19,12 @@ describe("harnessEndpointProviders", () => {
     expect(defaultEndpointProviderPresetForHarness("cursor")).toBe("other");
   });
 
-  it("keeps openrouter and other as final options", () => {
-    const len = HARNESS_ENDPOINT_PROVIDER_PRESETS.length;
-    expect(HARNESS_ENDPOINT_PROVIDER_PRESETS[len - 2]?.id).toBe("openrouter");
-    expect(HARNESS_ENDPOINT_PROVIDER_PRESETS[len - 1]?.id).toBe("other");
+  it("keeps endpoint presets alphabetized and pins Other as final option", () => {
+    const withoutOther = HARNESS_ENDPOINT_PROVIDER_PRESETS.filter((preset) => preset.id !== "other");
+    const labels = withoutOther.map((preset) => preset.label);
+    const sorted = [...labels].sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
+    expect(labels).toEqual(sorted);
+    expect(HARNESS_ENDPOINT_PROVIDER_PRESETS[HARNESS_ENDPOINT_PROVIDER_PRESETS.length - 1]?.id).toBe("other");
   });
 
   it("maps default harness shapes", () => {

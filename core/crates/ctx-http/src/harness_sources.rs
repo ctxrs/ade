@@ -20,7 +20,6 @@ const PROVIDER_MISTRAL: &str = "mistral";
 const PROVIDER_GOOSE: &str = "goose";
 const PROVIDER_AMP: &str = "amp";
 const PROVIDER_DROID: &str = "droid";
-const PROVIDER_CONTINUE: &str = "continue";
 const PROVIDER_OPENHANDS: &str = "openhands";
 const PROVIDER_COPILOT: &str = "copilot";
 const PROVIDER_KIRO: &str = "kiro";
@@ -1929,10 +1928,6 @@ async fn resolve_internal(
             if let Some(model) = droid_default_model {
                 env.insert("DROID_DEFAULT_MODEL".to_string(), model);
             }
-        }
-        PROVIDER_CONTINUE => {
-            ensure_shape_compatible(canonical, endpoint.api_shape)?;
-            env.insert("CONTINUE_API_KEY".to_string(), api_key);
         }
         PROVIDER_OPENHANDS => {
             let base_url = endpoint_base_url_or_err(&endpoint)?;
