@@ -194,7 +194,7 @@ export default function LauncherPage() {
               {recents.slice(0, 8).map((r) => {
                 const key = r.kind === "local" ? `local:${r.root_path}` : `ssh:${r.user ?? ""}@${r.host}:${r.remote_port}`;
                 const location = r.kind === "local"
-                  ? `Local: ${r.root_path}`
+                  ? (isDaemonManagedLocalContainerPath(r.root_path) ? "Local container" : `Local: ${r.root_path}`)
                   : `Remote [${r.label}]: ${r.remote_data_dir ?? "/workspace"}`;
                 return (
                   <button
@@ -222,4 +222,9 @@ function lastSegment(path: string): string {
   const s = String(path || "").trim().replace(/\/+$/, "");
   const idx = s.lastIndexOf("/");
   return idx >= 0 ? s.slice(idx + 1) : s;
+}
+
+function isDaemonManagedLocalContainerPath(path: string): boolean {
+  const normalized = String(path || "").toLowerCase();
+  return normalized.includes("/rs.ctx.desktop/daemon/workspaces/");
 }

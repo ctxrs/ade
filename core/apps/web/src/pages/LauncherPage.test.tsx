@@ -84,6 +84,22 @@ describe("LauncherPage recents", () => {
     expect(loadLauncherRecents).toHaveBeenCalled();
   });
 
+  it("shows daemon-managed local container recents as Local container", async () => {
+    vi.mocked(loadLauncherRecents).mockResolvedValueOnce([
+      {
+        kind: "local",
+        label: "workspace-abc",
+        root_path: "/Users/example-user/Library/Application Support/rs.ctx.desktop/daemon/workspaces/workspace-abc",
+        updated_at_ms: 1000,
+      },
+    ]);
+
+    render(<LauncherPage />);
+
+    expect(await screen.findByText("workspace-abc")).toBeInTheDocument();
+    expect(screen.getByText("Local container")).toBeInTheDocument();
+  });
+
   it("upserts recents when opening a local recent workspace", async () => {
     vi.mocked(loadLauncherRecents).mockResolvedValueOnce([
       {
