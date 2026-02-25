@@ -511,7 +511,7 @@ export default function WorkspaceSetupPage() {
 
   const waitForDaemonReady = async (timeoutMs: number) => {
     const started = Date.now();
-    let lastErr: any = null;
+    let lastErr: unknown = null;
     while (Date.now() - started < timeoutMs) {
       try {
         await getHealth();
@@ -1218,9 +1218,9 @@ export default function WorkspaceSetupPage() {
           setRemotePathSuggestions(entries);
           setRemotePathStatus("idle");
         })
-        .catch((err: any) => {
+        .catch((err: unknown) => {
           setRemotePathStatus("error");
-          setRemotePathError(err?.message ?? String(err));
+          setRemotePathError(messageFromError(err));
         });
     }, 250);
     return () => window.clearTimeout(handle);
@@ -1324,14 +1324,15 @@ export default function WorkspaceSetupPage() {
             setImportRepoNote(null);
           } else {
             setImportRepoStatus("error");
-            const detail = String((st as any).error ?? "").trim();
+            const detail = String(st.error ?? "").trim();
             setImportRepoNote(detail ? `Not a git repo: ${detail}` : "Not a git repo.");
           }
         })
-        .catch((e: any) => {
+        .catch((e: unknown) => {
           if (cancelled) return;
           setImportRepoStatus("error");
-          setImportRepoNote(e?.message ? `Remote repo check failed: ${e.message}` : "Remote repo check failed.");
+          const detail = messageFromError(e);
+          setImportRepoNote(detail ? `Remote repo check failed: ${detail}` : "Remote repo check failed.");
         });
     }, 400);
     return () => {
@@ -1531,8 +1532,8 @@ export default function WorkspaceSetupPage() {
           setAuthImportBusy(false);
           return;
         }
-      } catch (err: any) {
-        setAuthImportError(err?.message ?? String(err));
+      } catch (err: unknown) {
+        setAuthImportError(messageFromError(err));
         setAuthImportBusy(false);
         return;
       }
@@ -1580,14 +1581,14 @@ export default function WorkspaceSetupPage() {
               user: parsedRemote.user ?? null,
               remote_port: parsedRemotePort,
               remote_data_dir: normalizedDataDir,
-            }).catch((err: any) => {
-              console.debug("remote prewarm kickoff skipped/failed", err?.message ?? String(err));
+            }).catch((err: unknown) => {
+              console.debug("remote prewarm kickoff skipped/failed", messageFromError(err));
             });
             const nextRecents = upsertSshRecent(parsedRemote.host, parsedRemote.user ?? null);
             setSshRecents(nextRecents);
-          } catch (err: any) {
+          } catch (err: unknown) {
             setRemoteStatus("error");
-            setRemoteError(err?.message ?? String(err));
+            setRemoteError(messageFromError(err));
             return;
           }
         }
@@ -1724,8 +1725,8 @@ export default function WorkspaceSetupPage() {
               settle(new Error("Lost workspace launch stream before setup finished."));
             }
           })
-          .catch((err: any) => {
-            settle(new Error(err?.message ?? String(err)));
+          .catch((err: unknown) => {
+            settle(new Error(messageFromError(err)));
           });
       };
     });
@@ -1831,7 +1832,7 @@ export default function WorkspaceSetupPage() {
         try {
           const all = await getAllWorkspaces();
           return all
-            .map((workspace) => String((workspace as any).name ?? "").trim())
+            .map((workspace) => String(workspace.name ?? "").trim())
             .filter(Boolean);
         } catch {
           // Name collision avoidance is best-effort; do not block creation on listing failures.
@@ -1863,7 +1864,7 @@ export default function WorkspaceSetupPage() {
           rootPath = String(init.path ?? "").trim() || rootPath;
           st = await repoStatus({ path: rootPath });
           if (!st.is_repo) {
-            const detailAfter = String((st as any).error ?? "").trim();
+            const detailAfter = String(st.error ?? "").trim();
             throw new Error(detailAfter ? `Selected folder is not a repo: ${detailAfter}` : "Selected folder is not a repo.");
           }
         }
@@ -1874,9 +1875,9 @@ export default function WorkspaceSetupPage() {
         setImportRepoNote(null);
         // Prefer existing workspace if already registered.
         const all = await getAllWorkspaces();
-        const hit = all.find((w) => String((w as any).root_path) === rootPath);
+        const hit = all.find((w) => String(w.root_path) === rootPath);
         if (hit) {
-          wsId = idToString((hit as any).id);
+          wsId = idToString(hit.id);
         } else {
           name = workspaceName.trim() || undefined;
         }
@@ -1939,7 +1940,7 @@ export default function WorkspaceSetupPage() {
       const workspaceKind = selections.location === "remote" ? "remote" : "local";
       if (!wsId) {
         const created = await createWorkspace(rootPath, name, workspaceKind, "wizard");
-        wsId = idToString((created as any).id);
+        wsId = idToString(created.id);
       }
 
       // 4. Persist per-workspace execution settings.
@@ -2017,8 +2018,8 @@ export default function WorkspaceSetupPage() {
         workspaceKind,
       });
       navigate(`/workspaces/${wsId}`, { replace: true });
-    } catch (e: any) {
-      const msg = e?.message ?? String(e);
+    } catch (e: unknown) {
+      const msg = messageFromError(e);
       setCreateError(msg);
 
       const stepKeyForError = (m: string): WizardStep["key"] | null => {

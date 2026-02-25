@@ -111,8 +111,8 @@ export type SessionCacheEntry = {
   mode?: SessionMode;
   loadState: SessionLoadState;
   session?: Session;
-  acpModels?: any;
-  acpModes?: any;
+  acpModels?: unknown;
+  acpModes?: unknown;
   acpCurrentModelId?: string;
   turns: SessionTurn[];
   turnToolsByTurnId: Record<string, SessionTurnTool[]>;
@@ -134,7 +134,7 @@ export type SessionCacheEntry = {
   gitStatusSummary?: GitStatusSummary | null;
   summaryCheckpoint?: SessionSummaryCheckpoint | null;
   headWindow?: SessionHeadWindow | null;
-  diagnosticsByPath?: Record<string, any[]>;
+  diagnosticsByPath?: Record<string, unknown[]>;
   lastEventSeq?: number;
   loading: boolean;
   error?: string;
@@ -161,30 +161,35 @@ type OpenOptions = {
 };
 
 type AcpMeta = {
-  models?: any;
-  modes?: any;
+  models?: unknown;
+  modes?: unknown;
   currentModelId?: string;
 };
 
-const readAcpCurrentModelId = (models: any): string | undefined => {
-  if (!models || typeof models !== "object") return;
-  return models.currentModelId ?? models.current_model_id ?? undefined;
+const readAcpCurrentModelId = (models: unknown): string | undefined => {
+  const record = asRecord(models);
+  if (!record) return;
+  const modelId = record.currentModelId ?? record.current_model_id;
+  return typeof modelId === "string" ? modelId : undefined;
 };
 
-const hasModelList = (models: any): boolean => {
+const hasModelList = (models: unknown): boolean => {
+  const record = asRecord(models);
+  if (!record) return false;
   const list =
-    models?.availableModels ??
-    models?.available_models ??
-    models?.models ??
+    record.availableModels ??
+    record.available_models ??
+    record.models ??
     [];
   return Array.isArray(list) && list.length > 0;
 };
 
 const extractAcpMetaFromEvent = (event: SessionEvent): AcpMeta | null => {
   if (event.event_type !== "init") return null;
-  const payload = (event as any)?.payload_json ?? {};
-  const models = payload?.models ?? undefined;
-  const modes = payload?.modes ?? undefined;
+  const payload = asRecord(event.payload_json);
+  if (!payload) return null;
+  const models = payload.models ?? undefined;
+  const modes = payload.modes ?? undefined;
   if (!models && !modes) return null;
   return {
     models,
@@ -215,7 +220,7 @@ type InternalEntry = SessionCacheEntry & {
   stateRev?: number;
   stateAppliedRev?: number;
   stateFetchToken: number;
-  diagnosticsByPath: Record<string, any[]>;
+  diagnosticsByPath: Record<string, unknown[]>;
   loadedFromCache: boolean;
   headFromCache: boolean;
   thoughtCacheByKey: Record<string, ThoughtCacheEntry>;
@@ -1320,7 +1325,8 @@ export class SessionSupervisor {
     entry.turnsHydrated = true;
     entry.hasMoreTurns = head.has_more_turns;
     entry.lastEventSeq = head.last_event_seq;
-    const headStateRev = (head as any)?.state_rev ?? (head as any)?.stateRev;
+    const headRecord = asRecord(head);
+    const headStateRev = headRecord?.state_rev ?? headRecord?.stateRev;
     if (typeof headStateRev === "number") {
       entry.stateRev = headStateRev;
     }

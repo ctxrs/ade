@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Message, SessionEvent, SessionTurn } from "../api/client";
+import type { Message, SessionEvent, SessionTurn, SessionTurnTool } from "../api/client";
 import type { ThreadItem } from "./SessionPage.types";
 
 vi.mock("react-syntax-highlighter", () => ({ Prism: () => null }));
@@ -599,6 +599,78 @@ describe("buildWorkbenchThreadViewModel", () => {
     const out = buildWorkbenchThreadViewModel(turns as unknown as SessionTurn[], messages as unknown as Message[], {}, events as unknown as SessionEvent[]);
     const items = out.groups[0]?.items ?? [];
     expect(items.map((it) => it.kind)).toEqual(["tool", "thought", "turn_status"]);
+  }, 10000);
+
+  it("does not synthesize empty object input when tool update omits input fields", async () => {
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+
+    const turns = [
+      {
+        turn_id: "t1",
+        session_id: "s1",
+        user_message_id: "m1",
+        status: "running",
+        started_at: "2025-12-15T00:00:00.000Z",
+        updated_at: "2025-12-15T00:00:05.000Z",
+        tool_total: 1,
+        tool_pending: 1,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      },
+    ];
+
+    const messages = [
+      {
+        id: "m1",
+        session_id: "s1",
+        role: "user",
+        content: "hello",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:00.000Z",
+        turn_id: "t1",
+        order_seq: 1,
+      },
+    ];
+
+    const toolsByTurnId = {
+      t1: [
+        {
+          tool_call_id: "tool-1",
+          tool_kind: "search",
+          title: "search",
+          status: "pending",
+          created_at: "2025-12-15T00:00:01.000Z",
+          updated_at: "2025-12-15T00:00:01.000Z",
+          input_json: null,
+          output_text: "",
+        },
+      ],
+    } as unknown as Record<string, SessionTurnTool[]>;
+
+    const events = [
+      {
+        seq: 1,
+        id: "e1",
+        session_id: "s1",
+        run_id: "r1",
+        turn_id: "t1",
+        event_type: "tool_call_update",
+        payload_json: { tool_call_id: "tool-1", status: "running", order_seq: 2 },
+        created_at: "2025-12-15T00:00:02.000Z",
+      },
+    ];
+
+    const out = buildWorkbenchThreadViewModel(
+      turns as unknown as SessionTurn[],
+      messages as unknown as Message[],
+      toolsByTurnId,
+      events as unknown as SessionEvent[],
+    );
+    const tool = out.groups[0]?.items.find(isToolItem);
+    expect(tool?.input).toBeNull();
+    expect(tool?.has_details).toBe(false);
   }, 10000);
 
   it("uses the latest status update text per turn", async () => {

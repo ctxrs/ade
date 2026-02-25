@@ -135,31 +135,36 @@ function readNonEmptyString(value: unknown): string | null {
   return text ? text : null;
 }
 
-function extractErrorDetails(payload: any): string | null {
-  if (!payload) return null;
+function extractErrorDetails(payload: unknown): string | null {
+  const record = asRecord(payload);
+  if (!record) return null;
   const direct =
-    readNonEmptyString(payload.details) ??
-    readNonEmptyString(payload.detail) ??
-    readNonEmptyString(payload.additional_details) ??
-    readNonEmptyString(payload.additionalDetails);
+    readNonEmptyString(record.details) ??
+    readNonEmptyString(record.detail) ??
+    readNonEmptyString(record.additional_details) ??
+    readNonEmptyString(record.additionalDetails);
   if (direct) return direct;
 
-  const codexInfo = payload.codex_error_info ?? payload.codexErrorInfo;
+  const codexInfo = record.codex_error_info ?? record.codexErrorInfo;
   const codexText = extractErrorMessageFromObject(codexInfo);
   if (codexText) return codexText;
 
-  const kind = readNonEmptyString(payload.kind);
+  const kind = readNonEmptyString(record.kind);
   return kind;
 }
 
-export function extractErrorMessage(payload: any): string | null {
-  if (!payload) return null;
+export function extractErrorMessage(payload: unknown): string | null {
+  const payloadText = readNonEmptyString(payload);
+  if (payloadText) return payloadText;
+
+  const record = asRecord(payload);
+  if (!record) return null;
   const details = extractErrorDetails(payload);
   const direct =
-    readNonEmptyString(payload.message) ??
-    readNonEmptyString(payload.error) ??
-    readNonEmptyString(payload.error_message) ??
-    readNonEmptyString(payload.errorMessage);
+    readNonEmptyString(record.message) ??
+    readNonEmptyString(record.error) ??
+    readNonEmptyString(record.error_message) ??
+    readNonEmptyString(record.errorMessage);
   if (direct) {
     if (details && !direct.includes(details)) {
       return `${direct}\nDetails: ${details}`;
@@ -167,7 +172,7 @@ export function extractErrorMessage(payload: any): string | null {
     return direct;
   }
 
-  const update = payload.update ?? payload;
+  const update = record.update ?? record;
   const updateText = extractErrorMessageFromObject(update);
   if (updateText) {
     if (details && !updateText.includes(details)) {
@@ -176,12 +181,14 @@ export function extractErrorMessage(payload: any): string | null {
     return updateText;
   }
 
-  const meta = update?._meta ?? update?.meta ?? payload._meta ?? payload.meta ?? null;
+  const updateRecord = asRecord(update);
+  const meta = updateRecord?._meta ?? updateRecord?.meta ?? record._meta ?? record.meta ?? null;
+  const metaRecord = asRecord(meta);
   const metaText =
-    readNonEmptyString(meta?.statusText) ??
-    readNonEmptyString(meta?.status_text) ??
-    readNonEmptyString(meta?.message) ??
-    readNonEmptyString(meta?.error);
+    readNonEmptyString(metaRecord?.statusText) ??
+    readNonEmptyString(metaRecord?.status_text) ??
+    readNonEmptyString(metaRecord?.message) ??
+    readNonEmptyString(metaRecord?.error);
   if (metaText) {
     if (details && !metaText.includes(details)) {
       return `${metaText}\nDetails: ${details}`;
@@ -191,32 +198,34 @@ export function extractErrorMessage(payload: any): string | null {
   return details;
 }
 
-function extractErrorMessageFromObject(value: any): string | null {
+function extractErrorMessageFromObject(value: unknown): string | null {
   if (!value) return null;
   if (typeof value === "string") return readNonEmptyString(value);
-  if (typeof value !== "object") return null;
+  const record = asRecord(value);
+  if (!record) return null;
 
   const direct =
-    readNonEmptyString(value.message) ??
-    readNonEmptyString(value.error_message) ??
-    readNonEmptyString(value.errorMessage);
+    readNonEmptyString(record.message) ??
+    readNonEmptyString(record.error_message) ??
+    readNonEmptyString(record.errorMessage);
   if (direct) return direct;
 
-  const data = value.data ?? value.details ?? value.detail;
+  const data = record.data ?? record.details ?? record.detail;
+  const dataRecord = asRecord(data);
   const dataText =
     readNonEmptyString(data) ??
-    readNonEmptyString(data?.message) ??
-    readNonEmptyString(data?.error);
+    readNonEmptyString(dataRecord?.message) ??
+    readNonEmptyString(dataRecord?.error);
   if (dataText) return dataText;
 
-  const nested = value.error ?? value.cause;
+  const nested = record.error ?? record.cause;
   const nestedText =
     typeof nested === "object"
       ? extractErrorMessageFromObject(nested)
       : readNonEmptyString(nested);
   if (nestedText) return nestedText;
 
-  const meta = value._meta ?? value.meta;
+  const meta = asRecord(record._meta ?? record.meta);
   return readNonEmptyString(meta?.statusText) ?? readNonEmptyString(meta?.status_text);
 }
 

@@ -13,7 +13,7 @@
     "wal:attach": "node ./scripts/wal-attach.mjs",
     "any:report": "node ./scripts/explicit-any-report.mjs --format table",
     "any:baseline": "node ./scripts/explicit-any-report.mjs --write-baseline --format table",
-    "any:enforce": "node ./scripts/explicit-any-report.mjs --enforce --format table",
+    "any:enforce": "node ./scripts/explicit-any-report.mjs --enforce --enforce-mode zero --format table",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:quiet": "vitest run --silent --reporter=dot",

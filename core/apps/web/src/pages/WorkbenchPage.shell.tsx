@@ -69,6 +69,7 @@ import {
   type DesktopStorageNotice,
 } from "../utils/desktop";
 import { copyTextToClipboard } from "../utils/clipboard";
+import { errorMessage } from "../utils/errorMessage";
 import { pickPreferredSessionId } from "../utils/workbenchSelection";
 import { parseModelId } from "../utils/modelEffort";
 import { getLoadTestTelemetry } from "../utils/loadTestTelemetry";
@@ -641,11 +642,13 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
 
   const ensureActiveSessionSelection = useCallback(
-    (taskId: string, sessions: Array<{ session: any }>, preferredSessionId?: string | null) => {
+    (taskId: string, sessions: Array<{ session?: Session | null }>, preferredSessionId?: string | null) => {
       const activeTab = workbenchStore.getActiveTab();
       const prevSessionId =
         activeTab?.kind === "task" && activeTab.ref.taskId === taskId ? (activeTab.ref.sessionId ?? null) : null;
-      const sessionList = sessions.map((s) => s.session).filter(Boolean);
+      const sessionList = sessions
+        .map((s) => s.session)
+        .filter((session): session is Session => Boolean(session));
       const nextSessionId = preferredSessionId
         ? preferredSessionId
         : pickPreferredSessionId(sessionList, prevSessionId ?? null);
@@ -915,7 +918,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const providerIdsByTaskFromSessions = useMemo(() => {
     const byTask: Record<string, Array<{ providerId: string; updatedAt: number }>> = {};
     for (const entry of Object.values(sessionSnap.sessions)) {
-      const sess: any = entry.session;
+      const sess = entry.session;
       const taskId = sess ? idToString(sess.task_id) : "";
       const providerId = String(sess?.provider_id ?? "").trim();
       if (!taskId || !providerId) continue;
@@ -1222,8 +1225,8 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         workspaceSnapshotStore.applyTaskUpdate(updated);
         clearRenameDraft(taskId);
         cancelRenameTask();
-      } catch (e: any) {
-        window.alert(e?.message ?? "Failed to rename.");
+      } catch (e: unknown) {
+        window.alert(errorMessage(e) || "Failed to rename.");
       }
     },
     [cancelRenameTask, clearRenameDraft, tasksById, workspaceSnapshotStore],
@@ -1492,8 +1495,8 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         if (activeTaskId === taskId) {
           focusNewTask();
         }
-      } catch (e: any) {
-        window.alert(e?.message ?? "Failed to delete task.");
+      } catch (e: unknown) {
+        window.alert(errorMessage(e) || "Failed to delete task.");
       }
     },
     [activeTaskId, focusNewTask, tasksById],
@@ -1854,9 +1857,10 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           }
           supervisor.setDiff(sessionId, resp.diff ?? "");
           setDiffContentErrorBySessionId((prev) => ({ ...prev, [sessionId]: undefined }));
-        } catch (err: any) {
+        } catch (err: unknown) {
           supervisor.setDiff(sessionId, "");
-          const msg = err?.message ? `Failed to load diff content: ${err.message}` : "Failed to load diff content.";
+          const detail = errorMessage(err);
+          const msg = detail ? `Failed to load diff content: ${detail}` : "Failed to load diff content.";
           setDiffContentErrorBySessionId((prev) => ({ ...prev, [sessionId]: msg }));
         }
       })().finally(() => {
@@ -2302,8 +2306,8 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       if (!primaryMessagePosted) {
         throw new Error("Failed to start the first session.");
       }
-    } catch (e: any) {
-      const message = e?.message ?? String(e);
+    } catch (e: unknown) {
+      const message = errorMessage(e);
       setOptimisticTasks((prev) =>
         prev.map((item) =>
           item.id === currentTaskId ? { ...item, localStatus: "failed", localError: message } : item,
@@ -2557,16 +2561,17 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     lines.push("---");
     lines.push("");
 
-    const attachmentLine = (atts: any[]): string => {
+    const attachmentLine = (atts: MessageAttachment[]): string => {
       const names = (atts ?? [])
-        .map((a) => String(a?.name ?? a?.blob_id ?? a?.kind ?? "").trim())
+        .map((a) => String(a.name ?? ("blob_id" in a ? a.blob_id : a.kind) ?? "").trim())
         .filter(Boolean);
       if (names.length === 0) return "";
       return `Attachments: ${names.join(", ")}`;
     };
 
-    for (let i = 0; i < (thread.groups ?? []).length; i++) {
-      const g: any = (thread.groups ?? [])[i];
+    for (let i = 0; i < thread.groups.length; i++) {
+      const g = thread.groups[i];
+      if (!g) continue;
       lines.push(`## Turn ${i + 1}`);
       lines.push("");
 
@@ -2582,7 +2587,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         lines.push("");
       }
 
-      const items: any[] = Array.isArray(g?.items) ? g.items : [];
+      const items = Array.isArray(g.items) ? g.items : [];
       for (const item of items) {
         if (!item || item.kind === "spacer") continue;
         if (item.kind === "tool") {
@@ -2657,7 +2662,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
           lines.push("");
         }
 
-        const items: any[] = Array.isArray(g?.items) ? g.items : [];
+        const items = Array.isArray(g.items) ? g.items : [];
         for (const item of items) {
           if (!item || item.kind !== "assistant") continue;
           lines.push("Assistant:");
@@ -2712,8 +2717,8 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     try {
       const fileBase = `${sanitizeFileName(payload.title)}-session-log`;
       await saveMarkdownExport(fileBase, payload.markdown);
-    } catch (e: any) {
-      window.alert(e?.message ?? "Failed to export session log.");
+    } catch (e: unknown) {
+      window.alert(errorMessage(e) || "Failed to export session log.");
     }
   }, [buildSessionLogExport]);
 
@@ -2732,8 +2737,8 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     try {
       const fileBase = `${sanitizeFileName(payload.title)}-transcript`;
       await saveMarkdownExport(fileBase, payload.markdown);
-    } catch (e: any) {
-      window.alert(e?.message ?? "Failed to export transcript.");
+    } catch (e: unknown) {
+      window.alert(errorMessage(e) || "Failed to export transcript.");
     }
   }, [buildTranscriptExport]);
 
@@ -3052,15 +3057,21 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const useHtmlTopbar = !desktopUi || desktopPlatform !== "macos";
   const workspaceTitle = workspace?.name ?? "";
 
-  const rootStyle = useMemo(() => {
+  type RootStyle = React.CSSProperties & {
+    "--wb-sidebar-width": string;
+    "--wb-terminal-offset": string;
+    "--wb-topbar-height": string;
+  };
+
+  const rootStyle = useMemo<RootStyle>(() => {
     const max = Math.max(170, window.innerWidth - 240);
     const clamped = Math.min(max, Math.max(170, Math.round(sidebarWidth)));
     const terminalOffset = terminalOpen ? terminalHeight : 0;
     return {
-      ["--wb-sidebar-width" as any]: `${clamped}px`,
-      ["--wb-terminal-offset" as any]: `${terminalOffset}px`,
-      ["--wb-topbar-height" as any]: useHtmlTopbar ? "46px" : "0px",
-    } as React.CSSProperties;
+      "--wb-sidebar-width": `${clamped}px`,
+      "--wb-terminal-offset": `${terminalOffset}px`,
+      "--wb-topbar-height": useHtmlTopbar ? "46px" : "0px",
+    };
   }, [sidebarWidth, terminalHeight, terminalOpen, useHtmlTopbar]);
 
   useEffect(() => {

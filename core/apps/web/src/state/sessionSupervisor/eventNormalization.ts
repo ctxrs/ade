@@ -1,16 +1,22 @@
+const asRecord = (value: unknown): Record<string, unknown> | null => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+};
+
 export const readPayloadString = (
-  payload: any,
+  payload: unknown,
   keys: string[],
 ): string | null => {
-  if (!payload || typeof payload !== "object") return null;
+  const record = asRecord(payload);
+  if (!record) return null;
   for (const key of keys) {
-    const value = (payload as any)?.[key];
+    const value = record[key];
     if (typeof value === "string" && value.trim()) return value;
   }
   return null;
 };
 
-export const pickFirstString = (...values: any[]): string | null => {
+export const pickFirstString = (...values: unknown[]): string | null => {
   for (const v of values) {
     if (typeof v === "string" && v.trim()) return v.trim();
   }

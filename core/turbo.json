@@ -16,6 +16,18 @@
         ".turbo/tsbuildinfo/**"
       ]
     },
+    "any:enforce": {
+      "dependsOn": [
+        "typecheck"
+      ],
+      "inputs": [
+        "src/**",
+        "e2e/**",
+        "scripts/explicit-any-report.mjs",
+        "package.json"
+      ],
+      "outputs": []
+    },
     "test:quiet": {
       "dependsOn": [
         "typecheck",
@@ -85,9 +97,7 @@
         "../external-harnesses/codex/codex-rs/**",
         "!../external-harnesses/codex/codex-rs/target/**"
       ],
-      "outputs": [
-        "../external-harnesses/codex/codex-rs/target/**/codex-crp"
-      ]
+      "outputs": []
     },
     "crp:codex:test": {
       "dependsOn": [

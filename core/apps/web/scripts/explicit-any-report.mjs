@@ -18,6 +18,7 @@ function parseArgs(argv) {
     enforce: false,
     writeBaseline: false,
     baseline: null,
+    enforceMode: "zero",
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -39,9 +40,17 @@ function parseArgs(argv) {
       i += 1;
       continue;
     }
+    if (arg === "--enforce-mode") {
+      out.enforceMode = String(argv[i + 1] || "zero");
+      i += 1;
+      continue;
+    }
   }
   if (out.format !== "table" && out.format !== "json") {
     throw new Error(`Unsupported --format value: ${out.format}`);
+  }
+  if (out.enforceMode !== "zero" && out.enforceMode !== "baseline") {
+    throw new Error(`Unsupported --enforce-mode value: ${out.enforceMode}`);
   }
   return out;
 }
@@ -221,6 +230,25 @@ function compareAgainstBaseline(report, baseline) {
   return violations;
 }
 
+function compareAgainstZero(report) {
+  const violations = [];
+  const checks = [
+    ["src.production.explicitPatternMatches", report.src.production.explicitPatternMatches],
+    ["src.production.asAny", report.src.production.asAny],
+    ["src.production.typeAny", report.src.production.typeAny],
+    ["src.production.catchAny", report.src.production.catchAny],
+    ["src.production.recordStringAny", report.src.production.recordStringAny],
+    ["src.production.promiseAny", report.src.production.promiseAny],
+    ["src.production.arrayAny", report.src.production.arrayAny],
+  ];
+  for (const [name, current] of checks) {
+    if (current !== 0) {
+      violations.push(`${name}: current=${current} expected=0`);
+    }
+  }
+  return violations;
+}
+
 function main() {
   const args = parseArgs(process.argv.slice(2));
   const webRoot = process.cwd();
@@ -245,14 +273,19 @@ function main() {
   }
 
   if (args.enforce) {
-    if (baselinePath == null) {
-      throw new Error("baseline enforcement requires --baseline <path>");
+    let violations = [];
+    if (args.enforceMode === "baseline") {
+      if (baselinePath == null) {
+        throw new Error("baseline enforcement requires --baseline <path>");
+      }
+      if (!fs.existsSync(baselinePath)) {
+        throw new Error(`Baseline file not found: ${baselinePath}`);
+      }
+      const baseline = JSON.parse(fs.readFileSync(baselinePath, "utf8"));
+      violations = compareAgainstBaseline(report, baseline);
+    } else {
+      violations = compareAgainstZero(report);
     }
-    if (!fs.existsSync(baselinePath)) {
-      throw new Error(`Baseline file not found: ${baselinePath}`);
-    }
-    const baseline = JSON.parse(fs.readFileSync(baselinePath, "utf8"));
-    const violations = compareAgainstBaseline(report, baseline);
     if (violations.length > 0) {
       process.stderr.write(`\nexplicit-any enforcement failed (${violations.length}):\n`);
       for (const v of violations) process.stderr.write(`- ${v}\n`);
