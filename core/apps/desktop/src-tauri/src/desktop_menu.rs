@@ -595,7 +595,6 @@ pub(super) fn is_menu_command_id(id: &str) -> bool {
             | CMD_GO_SETTINGS
             | CMD_GO_DIAGNOSTICS
             | CMD_GO_AGENT_HARNESSES
-            | CMD_HELP_CRASH_COURSE
             | CMD_HELP_KEYBOARD_SHORTCUTS
             | CMD_HELP_OPEN_LOGS_FOLDER
             | CMD_HELP_REPORT_ISSUE
