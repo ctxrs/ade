@@ -21,6 +21,7 @@ import { buildHarnessAuthRows } from "../harnessAuthRows";
 import {
   getHarnessEndpointProviderPreset,
   HARNESS_ENDPOINT_PROVIDER_PRESETS,
+  type HarnessEndpointProviderPreset,
   supportsOptionalBaseUrlForHarness,
 } from "../harnessEndpointProviders";
 import { useHarnessAuthenticationController } from "../hooks/useHarnessAuthenticationController";
@@ -205,6 +206,22 @@ export function HarnessAuthenticationSection({
     : harnessAuthModal?.provider_id === "auggie"
         ? "Auggie session token"
         : "sk-...";
+  const renderEndpointProviderIdentity = (preset: HarnessEndpointProviderPreset) => (
+    <span className="settings-endpoint-provider-option">
+      {preset.logo_src ? (
+        <img
+          className={`settings-endpoint-provider-logo ${preset.invert_in_dark ? "wb-invert" : ""} ${
+            preset.invert_in_light ? "wb-invert-light" : ""
+          }`}
+          src={preset.logo_src}
+          alt=""
+        />
+      ) : (
+        <span className="settings-endpoint-provider-logo-fallback" aria-hidden="true" />
+      )}
+      <span className="settings-endpoint-provider-label">{preset.label}</span>
+    </span>
+  );
   const lastModalProviderIdRef = useRef<string | null>(null);
   const suppressReopenProviderIdRef = useRef<string | null>(null);
 
@@ -948,13 +965,15 @@ export function HarnessAuthenticationSection({
                         });
                       }}
                     >
-                      <SelectTrigger className="tw-min-w-[10rem]">
-                        <SelectValue />
+                      <SelectTrigger className="tw-min-w-[10rem] [&>span]:!tw-inline-flex [&>span]:!tw-items-center [&>span]:!tw-gap-2 [&>span]:!tw-line-clamp-none">
+                        {renderEndpointProviderIdentity(
+                          getHarnessEndpointProviderPreset(harnessAuthModal.endpoint_provider_id),
+                        )}
                       </SelectTrigger>
                       <SelectContent className="tw-z-[1101]">
                         {HARNESS_ENDPOINT_PROVIDER_PRESETS.map((preset) => (
                           <SelectItem key={preset.id} value={preset.id}>
-                            {preset.label}
+                            {renderEndpointProviderIdentity(preset)}
                           </SelectItem>
                         ))}
                       </SelectContent>

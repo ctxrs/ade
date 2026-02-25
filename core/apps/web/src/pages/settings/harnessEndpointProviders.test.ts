@@ -36,9 +36,17 @@ describe("harnessEndpointProviders", () => {
     expect(other.base_url).toBeNull();
   });
 
-  it("uses anthropic root base URL for claude-compatible endpoints", () => {
+  it("uses anthropic v1 base URL for claude-compatible endpoints", () => {
     const anthropic = getHarnessEndpointProviderPreset("anthropic");
-    expect(anthropic.base_url).toBe("https://api.anthropic.com");
+    expect(anthropic.base_url).toBe("https://api.anthropic.com/v1");
+  });
+
+  it("attaches provider logos for dropdown rendering", () => {
+    const openai = getHarnessEndpointProviderPreset("openai");
+    const other = getHarnessEndpointProviderPreset("other");
+    expect(openai.logo_src).toContain("OpenAI.svg");
+    expect(openai.invert_in_dark).toBe(true);
+    expect(other.logo_src).toBeNull();
   });
 
   it("builds incremental default endpoint names by provider", () => {

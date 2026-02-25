@@ -92,6 +92,34 @@ function makeApiKeyModal(providerId: "cursor" | "gemini"): HarnessAuthModalState
   };
 }
 
+function makeEndpointApiKeyModal(): HarnessAuthModalState {
+  return {
+    provider_id: "codex",
+    stage: "api_key",
+    endpoint_id: null,
+    endpoint_provider_id: "openai",
+    gemini_endpoint_auth_type: "gemini_api_key",
+    endpoint_name: "",
+    base_url: "https://api.openai.com/v1",
+    api_key: "",
+    manual_model_ids: "",
+    subscription_label: "",
+    subscription_token: "",
+    subscription_email: "",
+    subscription_provider: "",
+    subscription_credentials_json: "",
+    subscription_config_toml: "",
+    subscription_auth_token_json: "",
+    subscription_oauth_creds_json: "",
+    subscription_google_accounts_json: "",
+    subscription_device_code: null,
+    subscription_auth_url: null,
+    subscription_status: null,
+    subscription_busy: false,
+    api_key_busy: false,
+  };
+}
+
 function makeController(
   overrides: Partial<HarnessAuthController> = {},
 ): HarnessAuthController {
@@ -280,6 +308,28 @@ describe("HarnessAuthenticationSection Gemini subscription modal", () => {
     );
 
     expect(screen.getByText("Google API key")).toBeInTheDocument();
+  });
+
+  it("renders provider logos in endpoint provider dropdown", () => {
+    mockUseHarnessAuthenticationController.mockReturnValue(
+      makeController({
+        harnessAuthModal: makeEndpointApiKeyModal(),
+        harnessEndpointRequiresBaseUrl: () => true,
+      }),
+    );
+
+    render(
+      <HarnessAuthenticationSection
+        workspaceId="ws-1"
+        active
+        modalOnly
+      />,
+    );
+
+    expect(screen.getByText("Provider")).toBeInTheDocument();
+    const providerLogo = document.querySelector(".settings-endpoint-provider-logo") as HTMLImageElement | null;
+    expect(providerLogo).not.toBeNull();
+    expect(providerLogo?.getAttribute("src")).toContain("OpenAI.svg");
   });
 });
 
