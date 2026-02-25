@@ -43,6 +43,8 @@ struct DaemonHealthCompatibility {
 #[derive(Debug, Default, Deserialize)]
 struct DaemonHealthSummary {
     #[serde(default)]
+    pid: u32,
+    #[serde(default)]
     data_root: String,
     #[serde(default)]
     compatibility: DaemonHealthCompatibility,
@@ -586,15 +588,272 @@ fn resolve_existing_local_daemon(
     };
     let desktop_version = app.package_info().version.to_string();
     let desktop_dev_instance_id = desktop_dev_instance_id();
-    if existing_local_daemon_matches_or_absent(
-        url,
+    let Ok(health) = daemon_health(url) else {
+        return Ok(None);
+    };
+    if local_daemon_health_matches_expected(
+        &health,
         data_dir,
         &desktop_version,
         desktop_dev_instance_id,
     ) {
         return Ok(Some((url.to_string(), auth.token)));
     }
+    if should_reclaim_incompatible_local_daemon(url, &health, data_dir) {
+        if let Err(err) = reclaim_incompatible_local_daemon(url, &health)
+            .with_context(|| format!("reclaiming incompatible local daemon at {url}"))
+        {
+            eprintln!("{err:#}");
+        }
+    }
     Ok(None)
+}
+
+fn should_reclaim_incompatible_local_daemon(
+    base_url: &str,
+    health: &DaemonHealthSummary,
+    expected_data_dir: &Path,
+) -> bool {
+    if health.pid == 0 {
+        return false;
+    }
+    let Ok(parsed) = Url::parse(base_url) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    if !is_loopback_host_name(host) {
+        return false;
+    }
+    let daemon_data_root = health.data_root.trim();
+    if daemon_data_root.is_empty() {
+        return false;
+    }
+    let daemon_root = normalize_path_for_compare(Path::new(daemon_data_root));
+    let expected_root = normalize_path_for_compare(expected_data_dir);
+    daemon_root == expected_root
+}
+
+fn reclaim_incompatible_local_daemon(base_url: &str, health: &DaemonHealthSummary) -> Result<()> {
+    if health.pid == 0 {
+        anyhow::bail!("incompatible local daemon missing pid");
+    }
+    let pid = health.pid;
+    let graceful_revalidated = daemon_reports_expected_pid(base_url, pid);
+    let graceful_err = if graceful_revalidated {
+        terminate_pid(pid, false).err()
+    } else {
+        None
+    };
+    if wait_until_daemon_reclaimed(base_url, pid, Duration::from_secs(3)) {
+        return Ok(());
+    }
+    let force_revalidated = daemon_reports_expected_pid(base_url, pid);
+    let force_err = if force_revalidated {
+        terminate_pid(pid, true).err()
+    } else {
+        None
+    };
+    if wait_until_daemon_reclaimed(base_url, pid, Duration::from_secs(2)) {
+        return Ok(());
+    }
+    let mut details = Vec::new();
+    if !graceful_revalidated {
+        details.push(
+            "skipped graceful terminate (daemon pid could not be revalidated via /api/health)"
+                .to_string(),
+        );
+    }
+    if let Some(err) = graceful_err {
+        details.push(format!("graceful terminate failed: {err:#}"));
+    }
+    if !force_revalidated {
+        details.push(
+            "skipped force terminate (daemon pid could not be revalidated via /api/health)"
+                .to_string(),
+        );
+    }
+    if let Some(err) = force_err {
+        details.push(format!("force terminate failed: {err:#}"));
+    }
+    if details.is_empty() {
+        anyhow::bail!("incompatible local daemon pid {} did not exit", pid);
+    }
+    anyhow::bail!(
+        "incompatible local daemon pid {} did not exit ({})",
+        pid,
+        details.join("; ")
+    );
+}
+
+fn wait_until_daemon_reclaimed(base_url: &str, pid: u32, timeout: Duration) -> bool {
+    const RECLAIM_HEALTH_PROBE_MAX_TIMEOUT: Duration = Duration::from_millis(250);
+    let deadline = Instant::now() + timeout;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return false;
+        }
+        let health_timeout =
+            reclaim_health_probe_timeout(remaining, RECLAIM_HEALTH_PROBE_MAX_TIMEOUT);
+        let health = daemon_health_with_timeout(base_url, health_timeout).ok();
+        let pid_alive = is_pid_alive(pid).unwrap_or(true);
+        if reclaim_complete(pid, pid_alive, health.as_ref()) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(120));
+    }
+}
+
+fn reclaim_health_probe_timeout(remaining: Duration, max_probe_timeout: Duration) -> Duration {
+    if remaining.is_zero() {
+        return Duration::from_millis(1);
+    }
+    std::cmp::min(remaining, max_probe_timeout)
+}
+
+fn reclaim_complete(pid: u32, pid_alive: bool, health: Option<&DaemonHealthSummary>) -> bool {
+    let same_pid_serving_health = health.map(|h| h.pid == pid).unwrap_or(false);
+    !pid_alive && !same_pid_serving_health
+}
+
+fn daemon_reports_expected_pid(base_url: &str, pid: u32) -> bool {
+    let health = daemon_health(base_url).ok();
+    health_reports_expected_pid(pid, health.as_ref())
+}
+
+fn health_reports_expected_pid(pid: u32, health: Option<&DaemonHealthSummary>) -> bool {
+    health.map(|h| h.pid == pid).unwrap_or(false)
+}
+
+fn is_pid_alive(pid: u32) -> Result<bool> {
+    if pid == 0 {
+        return Ok(false);
+    }
+
+    #[cfg(unix)]
+    {
+        let output = Command::new("kill")
+            .arg("-0")
+            .arg(pid.to_string())
+            .output()
+            .with_context(|| format!("running kill -0 {pid}"))?;
+        if output.status.success() {
+            return Ok(true);
+        }
+        if command_reports_missing_process(&output) {
+            return Ok(false);
+        }
+        if command_reports_permission_denied(&output) {
+            return Ok(true);
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        anyhow::bail!("kill -0 {pid} failed: {stderr}");
+    }
+
+    #[cfg(windows)]
+    {
+        let output = Command::new("tasklist")
+            .arg("/FI")
+            .arg(format!("PID eq {pid}"))
+            .arg("/FO")
+            .arg("CSV")
+            .arg("/NH")
+            .output()
+            .with_context(|| format!("running tasklist for pid {pid}"))?;
+        if !output.status.success() {
+            if command_reports_missing_process(&output) {
+                return Ok(false);
+            }
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            anyhow::bail!("tasklist pid {pid} failed: {stderr}");
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let pid_token = format!(",\"{pid}\",");
+        if stdout.contains(&pid_token) {
+            return Ok(true);
+        }
+        if command_reports_missing_process(&output) {
+            return Ok(false);
+        }
+        Ok(false)
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = pid;
+        anyhow::bail!("pid liveness checks are unsupported on this platform");
+    }
+}
+
+fn terminate_pid(pid: u32, force: bool) -> Result<()> {
+    if pid == 0 {
+        anyhow::bail!("invalid pid 0");
+    }
+
+    #[cfg(unix)]
+    {
+        let signal = if force { "-KILL" } else { "-TERM" };
+        let output = Command::new("kill")
+            .arg(signal)
+            .arg(pid.to_string())
+            .output()
+            .with_context(|| format!("running kill {signal} {pid}"))?;
+        if output.status.success() || command_reports_missing_process(&output) {
+            return Ok(());
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        anyhow::bail!("kill {signal} {pid} failed: {stderr}");
+    }
+
+    #[cfg(windows)]
+    {
+        let mut cmd = Command::new("taskkill");
+        cmd.arg("/PID").arg(pid.to_string()).arg("/T");
+        if force {
+            cmd.arg("/F");
+        }
+        let output = cmd
+            .output()
+            .with_context(|| format!("running taskkill for pid {pid}"))?;
+        if output.status.success() || command_reports_missing_process(&output) {
+            return Ok(());
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        anyhow::bail!("taskkill pid {pid} failed: {stderr}");
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (pid, force);
+        anyhow::bail!("process termination is unsupported on this platform");
+    }
+}
+
+fn command_reports_missing_process(output: &std::process::Output) -> bool {
+    let stdout = String::from_utf8_lossy(&output.stdout).to_ascii_lowercase();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
+    stdout.contains("no such process")
+        || stderr.contains("no such process")
+        || stdout.contains("not found")
+        || stderr.contains("not found")
+        || stdout.contains("not running")
+        || stderr.contains("not running")
+        || stdout.contains("no running instance")
+        || stderr.contains("no running instance")
+}
+
+fn command_reports_permission_denied(output: &std::process::Output) -> bool {
+    let stdout = String::from_utf8_lossy(&output.stdout).to_ascii_lowercase();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
+    stdout.contains("operation not permitted")
+        || stderr.contains("operation not permitted")
+        || stdout.contains("permission denied")
+        || stderr.contains("permission denied")
 }
 
 fn read_remote_daemon_auth(
@@ -774,10 +1033,7 @@ fn parse_target(raw: &str, host_os: &str, host_arch: &str) -> Option<RuntimeTarg
     let (os, arch) = trimmed.split_once('/')?;
     let os = normalize_target_token(os, host_os)?;
     let arch = normalize_target_token(arch, host_arch)?;
-    Some(RuntimeTarget {
-        os,
-        arch,
-    })
+    Some(RuntimeTarget { os, arch })
 }
 
 fn required_targets_or_default(
@@ -1290,9 +1546,13 @@ pub(super) fn ensure_remote_ctx_harness_image(
 }
 
 fn daemon_health(base_url: &str) -> Result<DaemonHealthSummary> {
+    daemon_health_with_timeout(base_url, Duration::from_secs(5))
+}
+
+fn daemon_health_with_timeout(base_url: &str, timeout: Duration) -> Result<DaemonHealthSummary> {
     let url = format!("{}/api/health", base_url.trim_end_matches('/'));
     let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(5))
+        .timeout(timeout)
         .build()
         .context("building http client")?;
     let res = client.get(url).send().context("requesting /api/health")?;
@@ -2050,6 +2310,7 @@ mod desktop_daemon_tests {
         std::fs::create_dir_all(&other_dir).expect("create other dir");
 
         let matching = DaemonHealthSummary {
+            pid: 42,
             data_root: expected_dir.to_string_lossy().to_string(),
             compatibility: DaemonHealthCompatibility {
                 desktop_exact_version: "1.2.3".to_string(),
@@ -2078,6 +2339,7 @@ mod desktop_daemon_tests {
         }
 
         let wrong_root = DaemonHealthSummary {
+            pid: 42,
             data_root: other_dir.to_string_lossy().to_string(),
             compatibility: DaemonHealthCompatibility {
                 desktop_exact_version: "1.2.3".to_string(),
@@ -2110,6 +2372,118 @@ mod desktop_daemon_tests {
         ));
 
         std::fs::remove_dir_all(&expected_dir).ok();
+    }
+
+    #[test]
+    fn reclaim_predicate_requires_loopback_same_data_dir_and_pid() {
+        let expected_dir =
+            std::env::temp_dir().join(format!("ctx-daemon-reclaim-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&expected_dir).expect("create expected dir");
+        let other_dir = expected_dir.join("other");
+        std::fs::create_dir_all(&other_dir).expect("create other dir");
+
+        let compatible_root = DaemonHealthSummary {
+            pid: 100,
+            data_root: expected_dir.to_string_lossy().to_string(),
+            compatibility: DaemonHealthCompatibility::default(),
+        };
+        assert!(should_reclaim_incompatible_local_daemon(
+            "http://127.0.0.1:4123",
+            &compatible_root,
+            &expected_dir,
+        ));
+
+        let non_loopback = DaemonHealthSummary {
+            pid: 100,
+            data_root: expected_dir.to_string_lossy().to_string(),
+            compatibility: DaemonHealthCompatibility::default(),
+        };
+        assert!(!should_reclaim_incompatible_local_daemon(
+            "http://192.168.1.30:4123",
+            &non_loopback,
+            &expected_dir,
+        ));
+
+        let wrong_root = DaemonHealthSummary {
+            pid: 100,
+            data_root: other_dir.to_string_lossy().to_string(),
+            compatibility: DaemonHealthCompatibility::default(),
+        };
+        assert!(!should_reclaim_incompatible_local_daemon(
+            "http://127.0.0.1:4123",
+            &wrong_root,
+            &expected_dir,
+        ));
+
+        let missing_pid = DaemonHealthSummary {
+            pid: 0,
+            data_root: expected_dir.to_string_lossy().to_string(),
+            compatibility: DaemonHealthCompatibility::default(),
+        };
+        assert!(!should_reclaim_incompatible_local_daemon(
+            "http://127.0.0.1:4123",
+            &missing_pid,
+            &expected_dir,
+        ));
+
+        std::fs::remove_dir_all(&expected_dir).ok();
+    }
+
+    #[test]
+    fn reclaim_complete_requires_pid_exit_and_no_same_pid_health() {
+        let pid = 4242u32;
+        let same_pid_health = DaemonHealthSummary {
+            pid,
+            data_root: "/tmp/ctx".to_string(),
+            compatibility: DaemonHealthCompatibility::default(),
+        };
+        let other_pid_health = DaemonHealthSummary {
+            pid: pid + 1,
+            data_root: "/tmp/ctx".to_string(),
+            compatibility: DaemonHealthCompatibility::default(),
+        };
+
+        assert!(!reclaim_complete(pid, true, None));
+        assert!(!reclaim_complete(pid, true, Some(&same_pid_health)));
+        assert!(!reclaim_complete(pid, false, Some(&same_pid_health)));
+        assert!(reclaim_complete(pid, false, None));
+        assert!(reclaim_complete(pid, false, Some(&other_pid_health)));
+    }
+
+    #[test]
+    fn health_reports_expected_pid_only_when_health_matches_pid() {
+        let pid = 5151u32;
+        let matching = DaemonHealthSummary {
+            pid,
+            data_root: "/tmp/ctx".to_string(),
+            compatibility: DaemonHealthCompatibility::default(),
+        };
+        let other = DaemonHealthSummary {
+            pid: pid + 1,
+            data_root: "/tmp/ctx".to_string(),
+            compatibility: DaemonHealthCompatibility::default(),
+        };
+
+        assert!(health_reports_expected_pid(pid, Some(&matching)));
+        assert!(!health_reports_expected_pid(pid, Some(&other)));
+        assert!(!health_reports_expected_pid(pid, None));
+    }
+
+    #[test]
+    fn reclaim_health_probe_timeout_respects_remaining_budget() {
+        let max_probe = Duration::from_millis(250);
+        assert_eq!(
+            reclaim_health_probe_timeout(Duration::from_millis(900), max_probe),
+            max_probe
+        );
+        assert_eq!(
+            reclaim_health_probe_timeout(Duration::from_millis(40), max_probe),
+            Duration::from_millis(40)
+        );
+        assert_eq!(
+            reclaim_health_probe_timeout(Duration::ZERO, max_probe),
+            Duration::from_millis(1)
+        );
     }
 
     #[test]
