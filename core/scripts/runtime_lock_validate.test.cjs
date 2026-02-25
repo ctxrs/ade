@@ -15,6 +15,24 @@ const hostArch = process.arch === "arm64" ? "aarch64" : process.arch === "x64" ?
 const secondaryLinuxArch = hostArch === "aarch64" ? "x86_64" : "aarch64";
 const linuxTargetsForFixture = [...new Set([hostArch, secondaryLinuxArch])];
 
+const normalizeTarget = (osValue, archValue) => ({
+  os: osValue === "host" ? hostOs : osValue,
+  arch: archValue === "host" ? hostArch : archValue,
+});
+
+const dedupeByTarget = (entries) => {
+  const seen = new Set();
+  const result = [];
+  for (const entry of entries) {
+    const normalized = normalizeTarget(entry.os, entry.arch);
+    const key = `${entry.id}::${normalized.os}::${normalized.arch}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(entry);
+  }
+  return result;
+};
+
 const makeFixture = () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "runtime-lock-"));
   const lockPath = path.join(dir, "runtime_lock.json");
@@ -72,37 +90,39 @@ const makeFixture = () => {
     fs.writeFileSync(imageTar, "tar\n", "utf8");
   }
 
+  const providers = dedupeByTarget([
+    { id: "gemini", os: hostOs, arch: hostArch, command: providerHostPath },
+    { id: "acp-crp-bridge", os: hostOs, arch: hostArch, command: bridgeHostPath },
+    ...linuxTargetsForFixture.map((arch) => ({ id: "gemini", os: "linux", arch, command: providerLinuxPaths[arch] })),
+    ...linuxTargetsForFixture.map((arch) => ({
+      id: "acp-crp-bridge",
+      os: "linux",
+      arch,
+      command: bridgeLinuxPaths[arch],
+    })),
+  ]);
+  const runtimes = dedupeByTarget([
+    { id: "node", os: hostOs, arch: hostArch, root: runtimeHostRoot, bin: "bin/node" },
+    { id: "python", os: hostOs, arch: hostArch, root: pythonHostRoot, bin: "bin/python3" },
+    ...linuxTargetsForFixture.map((arch) => ({
+      id: "node",
+      os: "linux",
+      arch,
+      root: runtimeLinuxRoots[arch],
+      bin: "bin/node",
+    })),
+    ...linuxTargetsForFixture.map((arch) => ({
+      id: "python",
+      os: "linux",
+      arch,
+      root: pythonLinuxRoots[arch],
+      bin: "bin/python3",
+    })),
+  ]);
   const manifest = {
     version: 1,
-    providers: [
-      { id: "gemini", os: hostOs, arch: hostArch, command: providerHostPath },
-      { id: "acp-crp-bridge", os: hostOs, arch: hostArch, command: bridgeHostPath },
-      ...linuxTargetsForFixture.map((arch) => ({ id: "gemini", os: "linux", arch, command: providerLinuxPaths[arch] })),
-      ...linuxTargetsForFixture.map((arch) => ({
-        id: "acp-crp-bridge",
-        os: "linux",
-        arch,
-        command: bridgeLinuxPaths[arch],
-      })),
-    ],
-    runtimes: [
-      { id: "node", os: hostOs, arch: hostArch, root: runtimeHostRoot, bin: "bin/node" },
-      { id: "python", os: hostOs, arch: hostArch, root: pythonHostRoot, bin: "bin/python3" },
-      ...linuxTargetsForFixture.map((arch) => ({
-        id: "node",
-        os: "linux",
-        arch,
-        root: runtimeLinuxRoots[arch],
-        bin: "bin/node",
-      })),
-      ...linuxTargetsForFixture.map((arch) => ({
-        id: "python",
-        os: "linux",
-        arch,
-        root: pythonLinuxRoots[arch],
-        bin: "bin/python3",
-      })),
-    ],
+    providers,
+    runtimes,
     images: linuxTargetsForFixture.map((arch) => ({ id: "ctx-harness", os: "linux", arch, tar: imageTars[arch] })),
   };
 
@@ -194,7 +214,7 @@ test("runtime lock v1 validation rejects missing explicit linux/x86_64 target", 
   assert.match(result.errors.join("\n"), /missing provider bundle entry for gemini \(linux\/x86_64\)/);
 });
 
-const makeStandardV2Components = (sourceType) => [
+const makeStandardV2Components = (sourceType) => dedupeByTarget([
   makeV2Component({ kind: "provider", id: "gemini", os: "host", arch: "host", sourceType }),
   makeV2Component({ kind: "provider", id: "gemini", os: "linux", arch: "aarch64", sourceType }),
   makeV2Component({ kind: "provider", id: "gemini", os: "linux", arch: "x86_64", sourceType }),
@@ -209,7 +229,7 @@ const makeStandardV2Components = (sourceType) => [
   makeV2Component({ kind: "runtime", id: "python", os: "linux", arch: "x86_64", sourceType }),
   makeV2Component({ kind: "image", id: "ctx-harness", os: "linux", arch: "aarch64", sourceType }),
   makeV2Component({ kind: "image", id: "ctx-harness", os: "linux", arch: "x86_64", sourceType }),
-];
+]);
 
 test("runtime lock v2 parity profile enforces allowed source types", () => {
   const fixture = makeFixture();
