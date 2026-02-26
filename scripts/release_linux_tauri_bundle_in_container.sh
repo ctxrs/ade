@@ -34,6 +34,26 @@ if ! ldconfig -p | grep -Fq "$musl_soname"; then
   exit 1
 fi
 
+# linuxdeploy must resolve hashed bundled glibc library names during AppImage packaging.
+# Keep this scoped to non-musl Linux bundle directories to avoid reintroducing musl/glibc conflicts.
+bundle_lib_path="$(
+  find core/apps/desktop/src-tauri/bundles \
+    -type f \( -name '*.so' -o -name '*.so.*' \) \
+    -path "*/linux/${tauri_arch}/*" \
+    ! -path '*musl*' \
+    -print \
+    | sed -E 's#/[^/]+$##' \
+    | LC_ALL=C sort -u \
+    | paste -sd: -
+)"
+if [[ -n "$bundle_lib_path" ]]; then
+  if [[ -n "${LD_LIBRARY_PATH:-}" ]]; then
+    export LD_LIBRARY_PATH="$bundle_lib_path:$LD_LIBRARY_PATH"
+  else
+    export LD_LIBRARY_PATH="$bundle_lib_path"
+  fi
+fi
+
 export APPIMAGE_EXTRACT_AND_RUN=1
 
 tauri_cache_candidates=()
