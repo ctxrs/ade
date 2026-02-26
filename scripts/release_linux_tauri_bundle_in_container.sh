@@ -48,25 +48,61 @@ else
   export LD_LIBRARY_PATH="$lib_path"
 fi
 
+tauri_cache_candidates=()
+if [[ -n "${XDG_CACHE_HOME:-}" ]]; then
+  tauri_cache_candidates+=("$XDG_CACHE_HOME/tauri")
+fi
+if [[ -n "${HOME:-}" ]]; then
+  tauri_cache_candidates+=("$HOME/.cache/tauri")
+fi
+
+select_tauri_cache_dir() {
+  local linuxdeploy_name="linuxdeploy-${tauri_arch}.AppImage"
+  local plugin_name="linuxdeploy-plugin-appimage-${tauri_arch}.AppImage"
+  local candidate
+  for candidate in "${tauri_cache_candidates[@]}"; do
+    if [[ -f "$candidate/$linuxdeploy_name" || -f "$candidate/$plugin_name" ]]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  if [[ ${#tauri_cache_candidates[@]} -gt 0 ]]; then
+    printf '%s' "${tauri_cache_candidates[0]}"
+    return 0
+  fi
+  printf '%s' "."
+}
+
 if ! RUST_LOG=tauri_bundler=debug pnpm -C core/apps/desktop exec tauri build --bundles appimage; then
   echo "::group::linuxdeploy diagnostics (${platform})"
 
-  tauri_cache_dir="$HOME/.cache/tauri"
+  tauri_cache_dir="$(select_tauri_cache_dir)"
   linuxdeploy_path="$tauri_cache_dir/linuxdeploy-${tauri_arch}.AppImage"
   plugin_path="$tauri_cache_dir/linuxdeploy-plugin-appimage-${tauri_arch}.AppImage"
   appdir_path="$(find core/apps/desktop/src-tauri/target/release/bundle/appimage -maxdepth 1 -type d -name '*.AppDir' | head -n 1 || true)"
 
+  echo "tauri_cache_candidates=${tauri_cache_candidates[*]:-<none>}"
   echo "tauri_cache_dir=$tauri_cache_dir"
   echo "linuxdeploy_path=$linuxdeploy_path"
   echo "plugin_path=$plugin_path"
   echo "appdir_path=$appdir_path"
 
-  ls -al "$tauri_cache_dir" || true
+  for candidate in "${tauri_cache_candidates[@]}"; do
+    echo "cache candidate listing: $candidate"
+    ls -al "$candidate" || true
+  done
+  if [[ ! " ${tauri_cache_candidates[*]} " =~ " $tauri_cache_dir " ]]; then
+    ls -al "$tauri_cache_dir" || true
+  fi
   file "$linuxdeploy_path" "$plugin_path" || true
   chmod +x "$linuxdeploy_path" "$plugin_path" || true
 
-  export LINUXDEPLOY_PLUGIN_DIR="$tauri_cache_dir"
-  "$linuxdeploy_path" --appimage-extract-and-run --version || true
+  if [[ -x "$linuxdeploy_path" ]]; then
+    export LINUXDEPLOY_PLUGIN_DIR="$tauri_cache_dir"
+    "$linuxdeploy_path" --appimage-extract-and-run --version || true
+  else
+    echo "linuxdeploy binary is unavailable/executable at: $linuxdeploy_path"
+  fi
 
   if [[ -n "$appdir_path" && -d "$appdir_path" ]]; then
     echo "::group::ldd probe (${platform})"
@@ -91,7 +127,9 @@ if ! RUST_LOG=tauri_bundler=debug pnpm -C core/apps/desktop exec tauri build --b
       echo "ldd probe found no failing ELF files in $appdir_path"
     fi
     echo "::endgroup::"
-    "$linuxdeploy_path" --appimage-extract-and-run --verbosity 3 --appdir "$appdir_path" --plugin gtk --output appimage || true
+    if [[ -x "$linuxdeploy_path" ]]; then
+      "$linuxdeploy_path" --appimage-extract-and-run --verbosity 3 --appdir "$appdir_path" --plugin gtk --output appimage || true
+    fi
   fi
 
   echo "::endgroup::"
