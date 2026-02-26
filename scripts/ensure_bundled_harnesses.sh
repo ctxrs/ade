@@ -124,8 +124,8 @@ maybe_adhoc_codesign_macos_binary() {
 }
 
 # Build-time container contract:
-# - Build-time operations (containerized codex-crp builds + bundled harness image builds)
-#   use Docker as the only engine, with Docker buildx required for image bundling.
+# - Build-time operations (bundled harness image builds) use Docker as the only engine,
+#   with Docker buildx required for image bundling.
 # - Podman remains a bundled runtime artifact for runtime container execution only.
 docker_buildx_output_looks_unhealthy() {
   local output="$1"
@@ -412,8 +412,6 @@ PY
 
 BRIDGE_DIR="${CTX_BUNDLE_BRIDGE_DIR:-$ROOT/external-harnesses/acp-crp-bridge}"
 BRIDGE_BIN="acp-crp-bridge"
-CODEX_CRP_WORKSPACE="${CTX_BUNDLE_CODEX_CRP_WORKSPACE:-$ROOT/external-harnesses/codex/codex-rs}"
-CODEX_CRP_BUILD_MODE="${CTX_BUNDLE_BUILD_CODEX_CRP:-auto}"
 CLAUDE_CRP_WORKSPACE="${CTX_BUNDLE_CLAUDE_CRP_WORKSPACE:-$ROOT/external-harnesses/claude-crp}"
 LOCAL_ADAPTERS_DIR="${CTX_BUNDLE_ADAPTERS_DIR:-$ROOT/harness-adapters}"
 LOCAL_ADAPTER_MODE="${CTX_BUNDLE_LOCAL_ADAPTERS:-on}"
@@ -2041,105 +2039,6 @@ if ! is_falsy "$INCLUDE_BRIDGE"; then
   add_local_provider "acp-crp-bridge" "local-bin" "local" "$bridge_src" "$(basename "$bridge_src")" "[]"
 fi
 
-should_build_codex_crp() {
-  if ! provider_selected_for_bundle "codex"; then
-    return 1
-  fi
-  if is_truthy "$CODEX_CRP_BUILD_MODE"; then
-    return 0
-  fi
-  if is_falsy "$CODEX_CRP_BUILD_MODE"; then
-    return 1
-  fi
-  # auto: build codex-crp from local source when available, but only for platforms where we
-  # don't currently ship a managed archive.
-  #
-  # Guardrail: if the caller is explicitly cross-bundling (CTX_BUNDLE_OS/ARCH), avoid auto
-  # building to prevent surprising cross-compilation requirements / wrong-arch binaries.
-  if [[ -n "${bundle_os:-}" || -n "${bundle_arch:-}" ]]; then
-    return 1
-  fi
-  # Today we ship a managed archive for linux/x86_64 only (see provider_matrix.json), so:
-  # - build on macOS for local-host execution
-  # - build on linux/aarch64 so container-mode works offline on Apple Silicon
-  if [[ "$os" == "macos" || ("$os" == "linux" && "$arch" == "aarch64") ]]; then
-    [[ -d "$CODEX_CRP_WORKSPACE" ]]
-  else
-    return 1
-  fi
-}
-
-local_codex_crp_binary_path() {
-  if [[ ! -d "$CODEX_CRP_WORKSPACE" ]]; then
-    return 1
-  fi
-  local profile="${CTX_BUNDLE_CODEX_CRP_PROFILE:-release}"
-  local target_dir="${CTX_BUNDLE_CODEX_CRP_TARGET_DIR:-$bundle_build_dir/codex-crp/${os}/${arch}}"
-
-	local profile_args=()
-	if [[ "$profile" == "release" ]]; then
-	  profile_args+=(--release)
-	elif [[ "$profile" != "debug" ]]; then
-	  log "error: invalid CTX_BUNDLE_CODEX_CRP_PROFILE: $profile (expected debug|release)"
-	  exit 5
-	fi
-
-	# codex-crp release defaults are intentionally very heavy upstream; use a lighter optimized
-	# profile so local bundling is practical in CI/dev and consistent with container builds below.
-	local -a cargo_profile_env=()
-	if [[ "$profile" == "release" ]]; then
-	  cargo_profile_env+=(
-	    "CARGO_PROFILE_RELEASE_LTO=false"
-	    "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16"
-	    "CARGO_PROFILE_RELEASE_OPT_LEVEL=2"
-	  )
-	fi
-
-	build_codex_crp_in_container() {
-	  if ! ensure_docker_ready_for_builds "0" "codex-crp container build"; then
-	    log "error: building codex-crp for ${os}/${arch} requires Docker on PATH and a healthy daemon."
-	    log "       Ensure Docker Desktop (or Docker Engine) is running and retry."
-	    exit 5
-	  fi
-
-	  mkdir -p "$target_dir"
-
-	  local platform="linux/arm64"
-	  if [[ "$arch" == "x86_64" ]]; then
-	    platform="linux/amd64"
-	  fi
-
-	  local image="${CTX_BUNDLE_RUST_IMAGE:-rust:1}"
-
-	  local -a run_args
-	  run_args=(run --rm --platform "$platform" -v "$CODEX_CRP_WORKSPACE:/work:rw" -v "$target_dir:/target:rw" -w /work -e CARGO_TARGET_DIR=/target)
-
-	  # Avoid `bash -l` here: login shells can reset PATH and drop Cargo.
-	  #
-	  # Also: `codex-crp` upstream ships with a very heavy release profile (fat LTO, 1 codegen unit),
-	  # which can OOM on typical Docker Desktop configs. Override to a lighter release build: still
-	  # optimized, but much less memory hungry.
-	  docker "${run_args[@]}" "$image" bash -c "set -euo pipefail; export PATH=\"/usr/local/cargo/bin:\$PATH\"; rustup target add '$rust_target' >/dev/null 2>&1 || true; ${cargo_profile_env[*]} cargo build -p codex-crp --target '$rust_target' ${profile_args[*]}"
-	}
-
-	if [[ "$os" == "linux" && "$host_os" != "linux" ]]; then
-	  build_codex_crp_in_container
-	else
-	  require_cmd cargo
-	  (
-	    cd "$CODEX_CRP_WORKSPACE"
-	    env CARGO_TARGET_DIR="$target_dir" "${cargo_profile_env[@]}" cargo build -p codex-crp --target "$rust_target" "${profile_args[@]}"
-	  )
-	fi
-
-	local bin="$target_dir/$rust_target/$profile/codex-crp$BIN_EXT"
-	if [[ ! -f "$bin" ]]; then
-	  log "error: codex-crp binary not found at $bin"
-	  exit 5
-	fi
-	printf '%s' "$bin"
-}
-
 should_bundle_local_claude_crp() {
   if ! provider_selected_for_bundle "claude-crp"; then
     return 1
@@ -2177,20 +2076,6 @@ ensure_local_claude_crp_dist() {
   fi
   return 0
 }
-
-if should_build_codex_crp; then
-  codex_crp_version="$(get_matrix_version "codex")"
-  if [[ -z "$codex_crp_version" ]]; then
-    codex_crp_version="local"
-  fi
-  codex_crp_bin="$(local_codex_crp_binary_path || true)"
-  if [[ -n "$codex_crp_bin" && -f "$codex_crp_bin" ]]; then
-    add_local_provider "codex" "local-bin" "$codex_crp_version" "$codex_crp_bin" "codex-crp$BIN_EXT" "[]"
-  else
-    log "error: codex-crp build requested but source not available at $CODEX_CRP_WORKSPACE"
-    exit 5
-  fi
-fi
 
 if should_bundle_local_claude_crp; then
   claude_crp_version="$(get_matrix_version "claude-crp")"

@@ -113,7 +113,6 @@ ensure_endpoint_ui_bundles() {
     CTX_BUNDLE_BUILD_LOCAL_ADAPTERS="0" \
     CTX_BUNDLE_USE_ACP_SHIMS="1" \
     CTX_BUNDLE_PODMAN="0" \
-    CTX_BUNDLE_BUILD_CODEX_CRP="${CTX_BUNDLE_BUILD_CODEX_CRP:-1}" \
     CARGO_TARGET_DIR="${cargo_target_dir}" \
     CARGO_HOME="${cargo_home_dir}" \
     "${bundle_script}" >/dev/null

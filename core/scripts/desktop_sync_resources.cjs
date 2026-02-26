@@ -10,12 +10,9 @@ const profile = profileIdx !== -1 ? args[profileIdx + 1] : "debug";
 const syncBundlesEnabled = !["0", "false", "no", "off"].includes(
   String(process.env.CTX_DESKTOP_SYNC_BUNDLES || "1").trim().toLowerCase(),
 );
-const runtimeProfile = String(process.env.CTX_RUNTIME_PROFILE || "parity").trim().toLowerCase();
-const sourceAllRuntimeProfile = runtimeProfile === "source-all";
 
 const coreRoot = path.resolve(__dirname, "..");
 const desktopTauriRoot = path.join(coreRoot, "apps", "desktop", "src-tauri");
-const providerMatrixPath = path.join(coreRoot, "crates", "ctx-http", "src", "provider_matrix.json");
 const destBinDir = path.join(desktopTauriRoot, "bin");
 const destWebDistDir = path.join(desktopTauriRoot, "web", "dist");
 const destBundleDir = path.join(desktopTauriRoot, "bundles");
@@ -89,31 +86,6 @@ const readBundleManifest = (bundleDir) => {
   } catch (e) {
     throw new Error(`failed to parse bundle manifest ${manifestPath}: ${e?.message ?? e}`);
   }
-};
-
-const hasManagedProviderTarget = (providerId, os, arch) => {
-  if (!fs.existsSync(providerMatrixPath)) return false;
-  let parsed;
-  try {
-    parsed = JSON.parse(fs.readFileSync(providerMatrixPath, "utf8"));
-  } catch {
-    return false;
-  }
-  const providers = Array.isArray(parsed?.providers) ? parsed.providers : [];
-  const provider = providers.find((entry) => entry && entry.id === providerId);
-  if (!provider || typeof provider !== "object") return false;
-  const managedInstall =
-    provider.managed_install && typeof provider.managed_install === "object"
-      ? provider.managed_install
-      : null;
-  const targets =
-    managedInstall && managedInstall.targets && typeof managedInstall.targets === "object"
-      ? managedInstall.targets
-      : null;
-  if (!targets) return false;
-  const legacyKey = `${os}-${arch}`;
-  const slashKey = `${os}/${arch}`;
-  return Boolean(targets[legacyKey] || targets[slashKey]);
 };
 
 const assertBundledProviderTargets = (bundleDir, providerId, targets) => {
@@ -578,14 +550,7 @@ const syncBundles = () => {
   // binaries too so "disk-isolated container" can work offline/out-of-box.
   if (process.platform === "darwin") {
     const requiredProviderIds = readRuntimeLockRequiredProviderIds();
-    const codexLinuxArmManagedAvailable = hasManagedProviderTarget("codex", "linux", "aarch64");
-    const linuxTargets = [
-      {
-        arch: "aarch64",
-        buildCodexCrp: sourceAllRuntimeProfile || !codexLinuxArmManagedAvailable,
-      },
-      { arch: "x86_64", buildCodexCrp: false },
-    ];
+    const linuxTargets = [{ arch: "aarch64" }, { arch: "x86_64" }];
     const linuxProviders = requiredProviderIds.join(",");
     for (const target of linuxTargets) {
       const linuxEnv = {
@@ -602,10 +567,6 @@ const syncBundles = () => {
         CTX_BUNDLE_HARNESS_IMAGE: "1",
         CTX_BUNDLE_PODMAN: "0",
       };
-      if (target.buildCodexCrp && !linuxEnv.CTX_BUNDLE_BUILD_CODEX_CRP) {
-        // Source-all profile explicitly opts into building codex-crp locally.
-        linuxEnv.CTX_BUNDLE_BUILD_CODEX_CRP = "1";
-      }
       const linuxRes = childProcess.spawnSync(bundleScript, {
         env: linuxEnv,
         stdio: "inherit",
