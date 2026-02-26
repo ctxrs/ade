@@ -85,6 +85,30 @@ candidate_stream() {
     -print0
 }
 
+host_lib_dirs() {
+  declare -A seen=()
+  local ordered_dirs=()
+  while IFS= read -r -d '' file_path; do
+    local file_desc dir
+    file_desc="$(file -b "$file_path" 2>/dev/null || true)"
+    [[ "$file_desc" == *"ELF"* ]] || continue
+    [[ "$file_desc" == *"$elf_arch_token"* ]] || continue
+    dir="$(dirname "$file_path")"
+    if [[ -z "${seen[$dir]:-}" ]]; then
+      seen["$dir"]=1
+      ordered_dirs+=("$dir")
+    fi
+  done < <(candidate_stream)
+
+  if [[ "${#ordered_dirs[@]}" -eq 0 ]]; then
+    return 0
+  fi
+
+  local joined
+  joined="$(IFS=:; printf '%s' "${ordered_dirs[*]}")"
+  printf '%s' "$joined"
+}
+
 if [[ "$mode" == "normalize" || "$mode" == "both" ]]; then
   patched=0
   while IFS= read -r -d '' file_path; do
@@ -101,12 +125,18 @@ if [[ "$mode" == "normalize" || "$mode" == "both" ]]; then
 fi
 
 if [[ "$mode" == "closure" || "$mode" == "both" ]]; then
+  host_dirs="$(host_lib_dirs)"
   unresolved=0
   while IFS= read -r -d '' file_path; do
     file_desc="$(file -b "$file_path" 2>/dev/null || true)"
     [[ "$file_desc" == *"ELF"* ]] || continue
     [[ "$file_desc" == *"$elf_arch_token"* ]] || continue
-    ldd_out="$(ldd "$file_path" 2>&1 || true)"
+    file_dir="$(dirname "$file_path")"
+    if [[ -n "$host_dirs" ]]; then
+      ldd_out="$(env LD_LIBRARY_PATH="$file_dir:$host_dirs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ldd "$file_path" 2>&1 || true)"
+    else
+      ldd_out="$(ldd "$file_path" 2>&1 || true)"
+    fi
     if printf '%s\n' "$ldd_out" | grep -Eiq 'not found'; then
       unresolved=1
       echo "::group::unresolved deps: $file_path"
