@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+platform="${RELEASE_PLATFORM:-}"
+case "$platform" in
+  linux-x64)
+    tauri_arch="x86_64"
+    bundle_arch="x86_64"
+    ;;
+  linux-arm64)
+    tauri_arch="aarch64"
+    bundle_arch="aarch64"
+    ;;
+  *)
+    echo "error: unsupported RELEASE_PLATFORM for linux containerized Tauri build: ${platform:-<empty>}" >&2
+    exit 1
+    ;;
+esac
+
+for cmd in pnpm patchelf file readelf ldd appstreamcli xdg-mime desktop-file-validate mksquashfs zsyncmake gtk-update-icon-cache; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "error: missing required command in release image: $cmd" >&2
+    exit 1
+  fi
+done
+
+scripts/linux_bundle_gate.sh --platform "$platform" --mode both
+
+lib_path="$(
+  find core/apps/desktop/src-tauri/bundles \
+    -type f \( -name '*.so' -o -name '*.so.*' \) \
+    -path "*/linux/${bundle_arch}/*" \
+    -print \
+    | sed -E 's#/[^/]+$##' \
+    | LC_ALL=C sort -u \
+    | paste -sd: -
+)"
+
+if [[ -z "$lib_path" ]]; then
+  echo "error: no bundled linux shared-library directories found for arch ${bundle_arch}" >&2
+  exit 1
+fi
+
+export APPIMAGE_EXTRACT_AND_RUN=1
+if [[ -n "${LD_LIBRARY_PATH:-}" ]]; then
+  export LD_LIBRARY_PATH="$lib_path:$LD_LIBRARY_PATH"
+else
+  export LD_LIBRARY_PATH="$lib_path"
+fi
+
+if ! RUST_LOG=tauri_bundler=debug pnpm -C core/apps/desktop exec tauri build --bundles appimage; then
+  echo "::group::linuxdeploy diagnostics (${platform})"
+
+  tauri_cache_dir="$HOME/.cache/tauri"
+  linuxdeploy_path="$tauri_cache_dir/linuxdeploy-${tauri_arch}.AppImage"
+  plugin_path="$tauri_cache_dir/linuxdeploy-plugin-appimage-${tauri_arch}.AppImage"
+  appdir_path="$(find core/apps/desktop/src-tauri/target/release/bundle/appimage -maxdepth 1 -type d -name '*.AppDir' | head -n 1 || true)"
+
+  echo "tauri_cache_dir=$tauri_cache_dir"
+  echo "linuxdeploy_path=$linuxdeploy_path"
+  echo "plugin_path=$plugin_path"
+  echo "appdir_path=$appdir_path"
+
+  ls -al "$tauri_cache_dir" || true
+  file "$linuxdeploy_path" "$plugin_path" || true
+  chmod +x "$linuxdeploy_path" "$plugin_path" || true
+
+  export LINUXDEPLOY_PLUGIN_DIR="$tauri_cache_dir"
+  "$linuxdeploy_path" --appimage-extract-and-run --version || true
+
+  if [[ -n "$appdir_path" && -d "$appdir_path" ]]; then
+    echo "::group::ldd probe (${platform})"
+    ldd_probe_failed=0
+    while IFS= read -r candidate; do
+      file_desc="$(file -b "$candidate" 2>/dev/null || true)"
+      if [[ "$file_desc" != *"ELF"* ]]; then
+        continue
+      fi
+      if ! ldd "$candidate" >"/tmp/ldd-probe.out" 2>&1; then
+        if grep -Eqi 'not a dynamic executable|statically linked' /tmp/ldd-probe.out; then
+          continue
+        fi
+        echo "ldd probe failed for: $candidate"
+        echo "file: $file_desc"
+        cat /tmp/ldd-probe.out || true
+        ldd_probe_failed=1
+        continue
+      fi
+    done < <(find "$appdir_path" -type f | LC_ALL=C sort)
+    if [[ "$ldd_probe_failed" -eq 0 ]]; then
+      echo "ldd probe found no failing ELF files in $appdir_path"
+    fi
+    echo "::endgroup::"
+    "$linuxdeploy_path" --appimage-extract-and-run --verbosity 3 --appdir "$appdir_path" --plugin gtk --output appimage || true
+  fi
+
+  echo "::endgroup::"
+  exit 1
+fi
