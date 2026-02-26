@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const childProcess = require("child_process");
 const crypto = require("crypto");
+const { shouldBundleRemoteDaemons } = require("./desktop_sync_resources_remote_daemon_policy.cjs");
 
 const args = process.argv.slice(2);
 const profileIdx = args.indexOf("--profile");
@@ -630,9 +631,15 @@ const syncBundles = () => {
     assertBundledHarnessImageTargets(destBundleDir, expectedImage, parityImageTargets);
   }
 
-  // Zero-config remote bootstrap requires shipping managed Linux daemon binaries
-  // for both arches in every desktop bundle.
-  bundleRemoteDaemons(destBundleDir);
+  if (shouldBundleRemoteDaemons(process.env)) {
+    // Zero-config remote bootstrap requires shipping managed Linux daemon binaries
+    // for both arches in every desktop bundle.
+    bundleRemoteDaemons(destBundleDir);
+  } else {
+    console.log(
+      "desktop_sync_resources: skipping remote daemon bundle build (CTX_BUNDLE_REMOTE_DAEMONS=0)",
+    );
+  }
 
   return destBundleDir;
 };
