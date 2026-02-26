@@ -90,10 +90,28 @@ is_musl_linked_elf() {
 
 pruned_foreign_arch_elf=0
 pruned_musl_targeted_elf=0
+pruned_non_linux_os_elf=0
+
+is_non_linux_path_elf() {
+  local path="$1"
+  local lower
+  lower="$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$lower" == *"/freebsd"* || "$lower" == *"/darwin"* || "$lower" == *"/macos"* || "$lower" == *"/win32"* || "$lower" == *"/windows"* || "$lower" == *"/openbsd"* || "$lower" == *"/netbsd"* || "$lower" == *"/android"* || "$lower" == *"/sunos"* || "$lower" == *"/aix"* ]]; then
+    return 0
+  fi
+  return 1
+}
 
 while IFS= read -r -d '' path; do
   file_desc="$(file -b "$path" 2>/dev/null || true)"
   [[ "$file_desc" == *"ELF"* ]] || continue
+
+  if is_non_linux_path_elf "$path"; then
+    echo "pruning non-linux target-path ELF from glibc package: $path [$file_desc]"
+    rm -f "$path"
+    pruned_non_linux_os_elf=$((pruned_non_linux_os_elf + 1))
+    continue
+  fi
 
   if [[ "$file_desc" != *"$elf_arch_token"* ]]; then
     echo "pruning foreign-arch ELF: $path [$file_desc]"
@@ -111,13 +129,20 @@ done < <(find "$bundles_dir" -type f -print0)
 
 echo "pruned_foreign_arch_elf=$pruned_foreign_arch_elf"
 echo "pruned_musl_targeted_elf=$pruned_musl_targeted_elf"
+echo "pruned_non_linux_os_elf=$pruned_non_linux_os_elf"
 
 # Enforce contract: no target-arch musl-linked ELF can remain for glibc packaging.
 remaining_musl=0
+remaining_non_linux=0
 while IFS= read -r -d '' path; do
   file_desc="$(file -b "$path" 2>/dev/null || true)"
   [[ "$file_desc" == *"ELF"* ]] || continue
   [[ "$file_desc" == *"$elf_arch_token"* ]] || continue
+  if is_non_linux_path_elf "$path"; then
+    echo "error: non-linux target-path ELF remains after prune: $path [$file_desc]" >&2
+    remaining_non_linux=1
+    continue
+  fi
   if is_musl_linked_elf "$path"; then
     echo "error: musl-linked target-arch ELF remains after prune: $path [$file_desc]" >&2
     remaining_musl=1
@@ -126,5 +151,10 @@ done < <(find "$bundles_dir" -type f -print0)
 
 if [[ "$remaining_musl" -ne 0 ]]; then
   echo "error: glibc release package still contains musl-linked target-arch ELF artifacts" >&2
+  exit 1
+fi
+
+if [[ "$remaining_non_linux" -ne 0 ]]; then
+  echo "error: glibc release package still contains non-linux target-path ELF artifacts" >&2
   exit 1
 fi

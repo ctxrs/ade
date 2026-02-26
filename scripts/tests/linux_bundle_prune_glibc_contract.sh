@@ -15,15 +15,18 @@ trap 'rm -rf "$tmp_root"' EXIT
 bundles_dir="$tmp_root/bundles"
 mock_bin="$tmp_root/mock-bin"
 mkdir -p "$bundles_dir/providers/demo/linux/aarch64/lib" "$bundles_dir/providers/demo/linux/aarch64/bin" "$mock_bin"
+mkdir -p "$bundles_dir/providers/demo/linux/aarch64/node_modules/koffi/build/koffi/freebsd_arm64"
 
 glibc_ok="$bundles_dir/providers/demo/linux/aarch64/lib/glibc-ok.so"
 musl_hidden="$bundles_dir/providers/demo/linux/aarch64/lib/libvips-cpp.so.42"
 foreign_elf="$bundles_dir/providers/demo/linux/aarch64/bin/foreign-helper"
+non_linux_os_elf="$bundles_dir/providers/demo/linux/aarch64/node_modules/koffi/build/koffi/freebsd_arm64/koffi.node"
 non_elf="$bundles_dir/providers/demo/linux/aarch64/lib/readme.txt"
 
 printf 'glibc\n' > "$glibc_ok"
 printf 'musl\n' > "$musl_hidden"
 printf 'foreign\n' > "$foreign_elf"
+printf 'freebsd\n' > "$non_linux_os_elf"
 printf 'text\n' > "$non_elf"
 
 cat > "$mock_bin/file" <<'SH'
@@ -42,6 +45,9 @@ case "$target" in
     ;;
   *foreign-helper)
     echo "ELF 64-bit LSB executable, x86-64, version 1 (SYSV), dynamically linked"
+    ;;
+  *freebsd_arm64/koffi.node)
+    echo "ELF 64-bit LSB shared object, ARM aarch64, version 1 (SYSV), dynamically linked"
     ;;
   *)
     echo "ASCII text"
@@ -104,6 +110,12 @@ Dynamic section at offset 0x0 contains 1 entry:
  0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]
 OUT
         ;;
+      *freebsd_arm64/koffi.node)
+        cat <<'OUT'
+Dynamic section at offset 0x0 contains 1 entry:
+ 0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]
+OUT
+        ;;
       *)
         cat <<'OUT'
 Dynamic section at offset 0x0 contains 0 entries:
@@ -130,6 +142,10 @@ if [[ -f "$musl_hidden" ]]; then
 fi
 if [[ -f "$foreign_elf" ]]; then
   echo "error: expected foreign-arch ELF to be pruned: $foreign_elf" >&2
+  exit 1
+fi
+if [[ -f "$non_linux_os_elf" ]]; then
+  echo "error: expected non-linux target-path ELF to be pruned: $non_linux_os_elf" >&2
   exit 1
 fi
 if [[ ! -f "$non_elf" ]]; then
