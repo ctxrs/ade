@@ -495,12 +495,12 @@
         ],
         "targets": {
           "darwin-aarch64": {
-            "url": "https://desktop-release.q.us-east-1.amazonaws.com/1.26.2/Kiro CLI.dmg",
+            "url": "https://desktop-release.q.us-east-1.amazonaws.com/1.26.2/Kiro%20CLI.dmg",
             "archive": "dmg",
             "bin_path": "kiro-cli"
           },
           "darwin-x86_64": {
-            "url": "https://desktop-release.q.us-east-1.amazonaws.com/1.26.2/Kiro CLI.dmg",
+            "url": "https://desktop-release.q.us-east-1.amazonaws.com/1.26.2/Kiro%20CLI.dmg",
             "archive": "dmg",
             "bin_path": "kiro-cli"
           },
