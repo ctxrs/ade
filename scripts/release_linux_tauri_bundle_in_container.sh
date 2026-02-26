@@ -6,10 +6,14 @@ case "$platform" in
   linux-x64)
     tauri_arch="x86_64"
     bundle_arch="x86_64"
+    musl_loader_name="ld-musl-x86_64.so.1"
+    musl_soname="libc.musl-x86_64.so.1"
     ;;
   linux-arm64)
     tauri_arch="aarch64"
     bundle_arch="aarch64"
+    musl_loader_name="ld-musl-aarch64.so.1"
+    musl_soname="libc.musl-aarch64.so.1"
     ;;
   *)
     echo "error: unsupported RELEASE_PLATFORM for linux containerized Tauri build: ${platform:-<empty>}" >&2
@@ -39,6 +43,25 @@ lib_path="$(
 if [[ -z "$lib_path" ]]; then
   echo "error: no bundled linux shared-library directories found for arch ${bundle_arch}" >&2
   exit 1
+fi
+
+# linuxdeploy resolves sonames from runtime search paths inside the container.
+# Ensure musl soname is present there even if host-runner ldconfig changes are not visible in containerized builds.
+musl_loader=""
+for candidate in "/lib/${musl_loader_name}" "/usr/lib/${musl_loader_name}" "/lib64/${musl_loader_name}"; do
+  if [[ -f "$candidate" ]]; then
+    musl_loader="$candidate"
+    break
+  fi
+done
+if [[ -n "$musl_loader" ]]; then
+  compat_dir="$PWD/.release-musl-compat/${platform}"
+  mkdir -p "$compat_dir"
+  cp -f "$musl_loader" "$compat_dir/$musl_soname"
+  chmod 0644 "$compat_dir/$musl_soname"
+  lib_path="$compat_dir:$lib_path"
+else
+  echo "warn: could not locate musl loader ${musl_loader_name} in container; linuxdeploy may fail to resolve ${musl_soname}" >&2
 fi
 
 export APPIMAGE_EXTRACT_AND_RUN=1
@@ -86,6 +109,8 @@ if ! RUST_LOG=tauri_bundler=debug pnpm -C core/apps/desktop exec tauri build --b
 
   echo "tauri_cache_candidates=${tauri_cache_candidates[*]:-<none>}"
   echo "tauri_cache_dir=$tauri_cache_dir"
+  echo "musl_soname=$musl_soname"
+  echo "musl_loader=${musl_loader:-<missing>}"
   echo "linuxdeploy_path=$linuxdeploy_path"
   echo "plugin_path=$plugin_path"
   echo "appdir_path=$appdir_path"
