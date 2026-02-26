@@ -245,11 +245,11 @@
       },
       "managed_install": {
         "kind": "archive",
-        "version": "0.0.0-ctx.3",
+        "version": "0.0.0-ctx.4",
         "args": [],
         "targets": {
           "linux-x86_64": {
-            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.0.0-ctx.3/codex-crp-0.0.0-ctx.3-x86_64-unknown-linux-gnu.tar.gz",
+            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.0.0-ctx.4/codex-crp-0.0.0-ctx.4-x86_64-unknown-linux-gnu.tar.gz",
             "archive": "tar_gz",
             "bin_path": "codex-crp"
           }
@@ -263,18 +263,18 @@
       },
       "releases": [
         {
-          "version": "0.0.0-ctx.3",
-          "upstream_version": "0.98.0",
+          "version": "0.0.0-ctx.4",
+          "upstream_version": "0.105.0",
           "provenance": {
             "upstream_repo": "openai/codex",
-            "upstream_release_tag": "rust-v0.98.0",
-            "upstream_commit_sha": "82464689ce0ba8a3b2065e73a8aa0cfdf2ad0625",
+            "upstream_release_tag": "rust-v0.105.0",
+            "upstream_commit_sha": "a7eda6a29b3ee25549f385197ff109508dc49a90",
             "ctx_repo": "ctxrs/codex-crp",
-            "ctx_release_tag": "v0.0.0-ctx.3"
+            "ctx_release_tag": "v0.0.0-ctx.4"
           },
           "status": "supported",
           "context_min": "0.1.0",
-          "notes": "Linux x86_64 only. Release-only intake from openai/codex rust-v0.98.0"
+          "notes": "Linux x86_64 only. Release-only intake from openai/codex rust-v0.105.0"
         },
         {
           "version": "0.0.0-ctx.2",
