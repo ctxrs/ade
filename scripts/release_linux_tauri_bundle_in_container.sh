@@ -79,6 +79,9 @@ if ! RUST_LOG=tauri_bundler=debug pnpm -C core/apps/desktop exec tauri build --b
   tauri_cache_dir="$(select_tauri_cache_dir)"
   linuxdeploy_path="$tauri_cache_dir/linuxdeploy-${tauri_arch}.AppImage"
   plugin_path="$tauri_cache_dir/linuxdeploy-plugin-appimage-${tauri_arch}.AppImage"
+  if [[ ! -f "$plugin_path" ]]; then
+    plugin_path="$tauri_cache_dir/linuxdeploy-plugin-appimage.AppImage"
+  fi
   appdir_path="$(find core/apps/desktop/src-tauri/target/release/bundle/appimage -maxdepth 1 -type d -name '*.AppDir' | head -n 1 || true)"
 
   echo "tauri_cache_candidates=${tauri_cache_candidates[*]:-<none>}"
