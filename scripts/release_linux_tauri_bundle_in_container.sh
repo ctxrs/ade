@@ -28,6 +28,12 @@ done
 
 scripts/linux_bundle_gate.sh --platform "$platform" --mode both
 
+if ! ldconfig -p | grep -Fq "libc++.so.9.0"; then
+  echo "error: required libc++ soname is not registered in linker cache: libc++.so.9.0" >&2
+  echo "       release lane tool deps must register it before invoking this script." >&2
+  exit 1
+fi
+
 if ! ldconfig -p | grep -Fq "$musl_soname"; then
   echo "error: required musl soname is not registered in linker cache: $musl_soname" >&2
   echo "       release lane tool deps must register it before invoking this script." >&2
