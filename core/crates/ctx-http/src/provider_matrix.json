@@ -57,7 +57,7 @@
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned workspace adapter source (harness-adapters/example-acp/package.json)",
-          "upstream_version": "0.1.0-20260225163317-g66eef91"
+          "upstream_version": "0.1.0-20260226004329-g07a9845"
         }
       ]
     },
@@ -85,7 +85,7 @@
       },
       "releases": [
         {
-          "version": "0.16.2",
+          "version": "0.17.0",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned Auggie CLI ACP bundle release"
@@ -162,7 +162,7 @@
       },
       "releases": [
         {
-          "version": "2.1.56",
+          "version": "2.1.59",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned Anthropic Claude Code CLI bundle release"
@@ -439,7 +439,7 @@
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned workspace adapter source (harness-adapters/openhands-acp/package.json)",
-          "upstream_version": "1.25.0"
+          "upstream_version": "1.25.1"
         }
       ]
     },
@@ -495,12 +495,12 @@
         ],
         "targets": {
           "darwin-aarch64": {
-            "url": "https://desktop-release.q.us-east-1.amazonaws.com/1.26.2/Kiro%20CLI.dmg",
+            "url": "https://desktop-release.q.us-east-1.amazonaws.com/1.26.2/Kiro CLI.dmg",
             "archive": "dmg",
             "bin_path": "kiro-cli"
           },
           "darwin-x86_64": {
-            "url": "https://desktop-release.q.us-east-1.amazonaws.com/1.26.2/Kiro%20CLI.dmg",
+            "url": "https://desktop-release.q.us-east-1.amazonaws.com/1.26.2/Kiro CLI.dmg",
             "archive": "dmg",
             "bin_path": "kiro-cli"
           },
@@ -672,7 +672,7 @@
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned workspace adapter source (harness-adapters/pi-acp/package.json)",
-          "upstream_version": "0.55.0"
+          "upstream_version": "0.55.1"
         }
       ]
     },
