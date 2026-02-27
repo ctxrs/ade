@@ -161,10 +161,14 @@ if ! RUST_LOG=tauri_bundler=debug pnpm -C core/apps/desktop exec tauri build --b
       if [[ ! -d "$search_dir" ]]; then
         return 0
       fi
-      find "$search_dir" -maxdepth 1 -type f -name '*.AppImage' -printf '%T@ %p\n' 2>/dev/null \
-        | LC_ALL=C sort -n \
-        | tail -n 1 \
-        | sed -E 's/^[0-9]+(\.[0-9]+)? //'
+      local latest
+      latest="$(
+        find "$search_dir" -maxdepth 1 -type f -name '*.AppImage' -printf '%T@ %p\n' 2>/dev/null \
+          | LC_ALL=C sort -n \
+          | tail -n 1 \
+          | sed -E 's/^[0-9]+(\.[0-9]+)? //' || true
+      )"
+      printf '%s' "$latest"
     }
 
     appimage_bundle_dir="core/apps/desktop/src-tauri/target/release/bundle/appimage"
