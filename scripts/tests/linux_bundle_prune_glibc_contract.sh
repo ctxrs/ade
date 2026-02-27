@@ -16,17 +16,23 @@ bundles_dir="$tmp_root/bundles"
 mock_bin="$tmp_root/mock-bin"
 mkdir -p "$bundles_dir/providers/demo/linux/aarch64/lib" "$bundles_dir/providers/demo/linux/aarch64/bin" "$mock_bin"
 mkdir -p "$bundles_dir/providers/demo/linux/aarch64/node_modules/koffi/build/koffi/freebsd_arm64"
+mkdir -p "$bundles_dir/providers/demo/linux/aarch64/node_modules/@vendor/ripgrep/arm64-linux"
+mkdir -p "$bundles_dir/providers/demo/linux/aarch64/bin/core-static"
 
 glibc_ok="$bundles_dir/providers/demo/linux/aarch64/lib/glibc-ok.so"
 musl_hidden="$bundles_dir/providers/demo/linux/aarch64/lib/libvips-cpp.so.42"
 foreign_elf="$bundles_dir/providers/demo/linux/aarch64/bin/foreign-helper"
 non_linux_os_elf="$bundles_dir/providers/demo/linux/aarch64/node_modules/koffi/build/koffi/freebsd_arm64/koffi.node"
+static_node_elf="$bundles_dir/providers/demo/linux/aarch64/node_modules/@vendor/ripgrep/arm64-linux/rg"
+static_core_elf="$bundles_dir/providers/demo/linux/aarch64/bin/core-static/provider-helper"
 non_elf="$bundles_dir/providers/demo/linux/aarch64/lib/readme.txt"
 
 printf 'glibc\n' > "$glibc_ok"
 printf 'musl\n' > "$musl_hidden"
 printf 'foreign\n' > "$foreign_elf"
 printf 'freebsd\n' > "$non_linux_os_elf"
+printf 'static-node\n' > "$static_node_elf"
+printf 'static-core\n' > "$static_core_elf"
 printf 'text\n' > "$non_elf"
 
 cat > "$mock_bin/file" <<'SH'
@@ -36,6 +42,17 @@ if [[ "${1:-}" == "-b" ]]; then
   shift
 fi
 target="${1:-}"
+if [[ -f "$target" ]]; then
+  first_line="$(head -n 1 "$target" 2>/dev/null || true)"
+  if [[ "$first_line" == "#!/bin/sh" ]]; then
+    echo "POSIX shell script, ASCII text executable"
+    exit 0
+  fi
+fi
+if [[ "$target" == *.ctxbin.gz ]]; then
+  echo "gzip compressed data"
+  exit 0
+fi
 case "$target" in
   *glibc-ok.so)
     echo "ELF 64-bit LSB shared object, ARM aarch64, version 1 (SYSV), dynamically linked"
@@ -48,6 +65,12 @@ case "$target" in
     ;;
   *freebsd_arm64/koffi.node)
     echo "ELF 64-bit LSB shared object, ARM aarch64, version 1 (SYSV), dynamically linked"
+    ;;
+  *arm64-linux/rg)
+    echo "ELF 64-bit LSB executable, ARM aarch64, version 1 (SYSV), statically linked, stripped"
+    ;;
+  *core-static/provider-helper)
+    echo "ELF 64-bit LSB executable, ARM aarch64, version 1 (SYSV), statically linked, stripped"
     ;;
   *)
     echo "ASCII text"
@@ -116,6 +139,16 @@ Dynamic section at offset 0x0 contains 1 entry:
  0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]
 OUT
         ;;
+      *arm64-linux/rg)
+        cat <<'OUT'
+Dynamic section at offset 0x0 contains 0 entries:
+OUT
+        ;;
+      *core-static/provider-helper)
+        cat <<'OUT'
+Dynamic section at offset 0x0 contains 0 entries:
+OUT
+        ;;
       *)
         cat <<'OUT'
 Dynamic section at offset 0x0 contains 0 entries:
@@ -146,6 +179,32 @@ if [[ -f "$foreign_elf" ]]; then
 fi
 if [[ -f "$non_linux_os_elf" ]]; then
   echo "error: expected non-linux target-path ELF to be pruned: $non_linux_os_elf" >&2
+  exit 1
+fi
+if [[ -f "$static_node_elf" ]]; then
+  if [[ ! -f "${static_node_elf}.ctxbin.gz" ]]; then
+    echo "error: expected wrapped payload for static provider node/vendor ELF: ${static_node_elf}.ctxbin.gz" >&2
+    exit 1
+  fi
+  if ! grep -q 'static-provider-bin' "$static_node_elf"; then
+    echo "error: expected static provider node/vendor ELF to be replaced with launcher script: $static_node_elf" >&2
+    exit 1
+  fi
+else
+  echo "error: expected wrapped launcher to remain at static provider node/vendor path: $static_node_elf" >&2
+  exit 1
+fi
+if [[ -f "$static_core_elf" ]]; then
+  if [[ ! -f "${static_core_elf}.ctxbin.gz" ]]; then
+    echo "error: expected wrapped payload for static provider ELF: ${static_core_elf}.ctxbin.gz" >&2
+    exit 1
+  fi
+  if ! grep -q 'static-provider-bin' "$static_core_elf"; then
+    echo "error: expected static provider ELF to be replaced with launcher script: $static_core_elf" >&2
+    exit 1
+  fi
+else
+  echo "error: expected wrapped launcher to remain at static provider path: $static_core_elf" >&2
   exit 1
 fi
 if [[ ! -f "$non_elf" ]]; then

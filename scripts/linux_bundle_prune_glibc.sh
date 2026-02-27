@@ -54,7 +54,7 @@ case "$release_platform" in
     ;;
 esac
 
-for cmd in find file readelf grep rm; do
+for cmd in awk cksum chmod find file grep gzip mkdir mv readelf rm; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "error: required tool '$cmd' is missing from PATH" >&2
     exit 1
@@ -91,6 +91,7 @@ is_musl_linked_elf() {
 pruned_foreign_arch_elf=0
 pruned_musl_targeted_elf=0
 pruned_non_linux_os_elf=0
+wrapped_static_provider_elf=0
 
 is_non_linux_path_elf() {
   local path="$1"
@@ -100,6 +101,67 @@ is_non_linux_path_elf() {
     return 0
   fi
   return 1
+}
+
+is_provider_bundle_path() {
+  local path="$1"
+  local lower
+  lower="$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$lower" == *"/providers/"* ]]; then
+    return 0
+  fi
+  return 1
+}
+
+is_static_elf() {
+  local path="$1"
+  local dynamic_headers
+  dynamic_headers="$(readelf -d "$path" 2>/dev/null || true)"
+  if [[ -z "$dynamic_headers" ]]; then
+    return 0
+  fi
+  if printf '%s\n' "$dynamic_headers" | grep -Eq 'Shared library: \['; then
+    return 1
+  fi
+  return 0
+}
+
+wrap_static_provider_elf() {
+  local path="$1"
+  local payload="${path}.ctxbin.gz"
+
+  if [[ -f "$payload" ]]; then
+    rm -f "$payload"
+  fi
+
+  gzip -n -f "$path"
+  mv -f "${path}.gz" "$payload"
+
+  cat > "$path" <<'SH'
+#!/bin/sh
+set -eu
+
+self_path="$0"
+payload="${self_path}.ctxbin.gz"
+if [ ! -f "$payload" ]; then
+  echo "error: missing static payload: $payload" >&2
+  exit 127
+fi
+
+cache_root="${XDG_CACHE_HOME:-$HOME/.cache}/ctx/static-provider-bin"
+mkdir -p "$cache_root"
+payload_sig="$(cksum "$payload" | awk '{print $1"-"$2}')"
+cache_bin="$cache_root/$(basename "$self_path").$payload_sig"
+if [ ! -x "$cache_bin" ]; then
+  tmp="$cache_bin.tmp.$$"
+  gzip -dc "$payload" > "$tmp"
+  chmod 0755 "$tmp"
+  mv -f "$tmp" "$cache_bin"
+fi
+
+exec "$cache_bin" "$@"
+SH
+  chmod 0755 "$path"
 }
 
 while IFS= read -r -d '' path; do
@@ -124,16 +186,27 @@ while IFS= read -r -d '' path; do
     echo "pruning musl-linked ELF from glibc package: $path [$file_desc]"
     rm -f "$path"
     pruned_musl_targeted_elf=$((pruned_musl_targeted_elf + 1))
+    continue
+  fi
+
+  # linuxdeploy GTK plugin aborts on static ELF payloads. Preserve provider runtime paths by
+  # replacing static provider ELF files with a launcher script + compressed payload.
+  if is_provider_bundle_path "$path" && is_static_elf "$path"; then
+    echo "wrapping static provider ELF for glibc package: $path [$file_desc]"
+    wrap_static_provider_elf "$path"
+    wrapped_static_provider_elf=$((wrapped_static_provider_elf + 1))
   fi
 done < <(find "$bundles_dir" -type f -print0)
 
 echo "pruned_foreign_arch_elf=$pruned_foreign_arch_elf"
 echo "pruned_musl_targeted_elf=$pruned_musl_targeted_elf"
 echo "pruned_non_linux_os_elf=$pruned_non_linux_os_elf"
+echo "wrapped_static_provider_elf=$wrapped_static_provider_elf"
 
 # Enforce contract: no target-arch musl-linked ELF can remain for glibc packaging.
 remaining_musl=0
 remaining_non_linux=0
+remaining_static_provider=0
 while IFS= read -r -d '' path; do
   file_desc="$(file -b "$path" 2>/dev/null || true)"
   [[ "$file_desc" == *"ELF"* ]] || continue
@@ -146,6 +219,11 @@ while IFS= read -r -d '' path; do
   if is_musl_linked_elf "$path"; then
     echo "error: musl-linked target-arch ELF remains after prune: $path [$file_desc]" >&2
     remaining_musl=1
+    continue
+  fi
+  if is_provider_bundle_path "$path" && is_static_elf "$path"; then
+    echo "error: static provider ELF remains after prune/wrap: $path [$file_desc]" >&2
+    remaining_static_provider=1
   fi
 done < <(find "$bundles_dir" -type f -print0)
 
@@ -156,5 +234,10 @@ fi
 
 if [[ "$remaining_non_linux" -ne 0 ]]; then
   echo "error: glibc release package still contains non-linux target-path ELF artifacts" >&2
+  exit 1
+fi
+
+if [[ "$remaining_static_provider" -ne 0 ]]; then
+  echo "error: glibc release package still contains static provider ELF artifacts" >&2
   exit 1
 fi
