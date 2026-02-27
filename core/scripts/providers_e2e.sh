@@ -34,6 +34,60 @@ has_openrouter_creds() {
   openrouter_settings_present
 }
 
+csv_contains_provider() {
+  local csv="${1:-}"
+  local provider="${2:-}"
+  local value
+  IFS=',' read -r -a _providers <<<"${csv}"
+  for value in "${_providers[@]:-}"; do
+    value="${value// /}"
+    if [[ "$value" == "$provider" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+csv_remove_provider() {
+  local csv="${1:-}"
+  local provider="${2:-}"
+  local value
+  local out=()
+  IFS=',' read -r -a _providers <<<"${csv}"
+  for value in "${_providers[@]:-}"; do
+    value="${value// /}"
+    if [[ -z "$value" || "$value" == "$provider" ]]; then
+      continue
+    fi
+    out+=("$value")
+  done
+  local result=""
+  if (( ${#out[@]} > 0 )); then
+    local old_ifs="${IFS}"
+    IFS=','
+    result="${out[*]}"
+    IFS="${old_ifs}"
+  fi
+  printf '%s' "$result"
+}
+
+matrix_has_archive_target() {
+  local matrix_path="$1"
+  local provider_id="$2"
+  local target_key="$3"
+  node -e '
+const fs = require("node:fs");
+const [matrixPath, providerId, targetKey] = process.argv.slice(1);
+const matrix = JSON.parse(fs.readFileSync(matrixPath, "utf8"));
+const provider = (matrix.providers || []).find((row) => row.id === providerId);
+if (!provider) process.exit(1);
+const managed = provider.managed_install || {};
+const targets = managed.targets || {};
+if (!targets[targetKey]) process.exit(1);
+process.exit(0);
+' "$matrix_path" "$provider_id" "$target_key"
+}
+
 ensure_endpoint_ui_bundles() {
   if [[ ! -x "${bundle_script}" ]]; then
     echo "missing bundle script: ${bundle_script}" >&2
@@ -96,26 +150,62 @@ ensure_endpoint_ui_bundles() {
 
   if [[ "${OSTYPE:-}" == darwin* ]]; then
     local linux_arch="x86_64"
+    local append_providers="${first_pass_providers}"
+    local codex_append_fallback_arch=""
     if [[ "$(uname -m)" == "arm64" ]]; then
       linux_arch="aarch64"
+      if csv_contains_provider "${first_pass_providers}" "codex"; then
+        if ! matrix_has_archive_target "${matrix_json}" "codex" "linux-aarch64"; then
+          if matrix_has_archive_target "${matrix_json}" "codex" "linux-x86_64"; then
+            append_providers="$(csv_remove_provider "${append_providers}" "codex")"
+            codex_append_fallback_arch="x86_64"
+            echo "warn: codex missing linux/aarch64 target in matrix; appending codex from linux/x86_64 fallback" >&2
+          else
+            echo "error: codex missing linux/aarch64 and linux/x86_64 targets in matrix: ${matrix_json}" >&2
+            exit 1
+          fi
+        fi
+      fi
     fi
-    CTX_BUNDLE_DIR="${bundle_dir}" \
-    CTX_BUNDLE_BUILD_DIR="${bundle_build_dir}" \
-    CTX_BUNDLE_MATRIX_JSON="${matrix_json}" \
-    CTX_BUNDLE_APPEND="1" \
-    CTX_BUNDLE_OS="linux" \
-    CTX_BUNDLE_ARCH="${linux_arch}" \
-    CTX_BUNDLE_ONLY_PROVIDERS="${first_pass_providers}" \
-    CTX_BUNDLE_SKIP_IMAGES="1" \
-    CTX_BUNDLE_HARNESS_IMAGE="0" \
-    CTX_BUNDLE_INCLUDE_BRIDGE="1" \
-    CTX_BUNDLE_LOCAL_ADAPTERS="auto" \
-    CTX_BUNDLE_BUILD_LOCAL_ADAPTERS="0" \
-    CTX_BUNDLE_USE_ACP_SHIMS="1" \
-    CTX_BUNDLE_PODMAN="0" \
-    CARGO_TARGET_DIR="${cargo_target_dir}" \
-    CARGO_HOME="${cargo_home_dir}" \
-    "${bundle_script}" >/dev/null
+    if [[ -n "${append_providers}" ]]; then
+      CTX_BUNDLE_DIR="${bundle_dir}" \
+      CTX_BUNDLE_BUILD_DIR="${bundle_build_dir}" \
+      CTX_BUNDLE_MATRIX_JSON="${matrix_json}" \
+      CTX_BUNDLE_APPEND="1" \
+      CTX_BUNDLE_OS="linux" \
+      CTX_BUNDLE_ARCH="${linux_arch}" \
+      CTX_BUNDLE_ONLY_PROVIDERS="${append_providers}" \
+      CTX_BUNDLE_SKIP_IMAGES="1" \
+      CTX_BUNDLE_HARNESS_IMAGE="0" \
+      CTX_BUNDLE_INCLUDE_BRIDGE="1" \
+      CTX_BUNDLE_LOCAL_ADAPTERS="auto" \
+      CTX_BUNDLE_BUILD_LOCAL_ADAPTERS="0" \
+      CTX_BUNDLE_USE_ACP_SHIMS="1" \
+      CTX_BUNDLE_PODMAN="0" \
+      CARGO_TARGET_DIR="${cargo_target_dir}" \
+      CARGO_HOME="${cargo_home_dir}" \
+      "${bundle_script}" >/dev/null
+    fi
+
+    if [[ -n "${codex_append_fallback_arch}" ]]; then
+      CTX_BUNDLE_DIR="${bundle_dir}" \
+      CTX_BUNDLE_BUILD_DIR="${bundle_build_dir}" \
+      CTX_BUNDLE_MATRIX_JSON="${matrix_json}" \
+      CTX_BUNDLE_APPEND="1" \
+      CTX_BUNDLE_OS="linux" \
+      CTX_BUNDLE_ARCH="${codex_append_fallback_arch}" \
+      CTX_BUNDLE_ONLY_PROVIDERS="codex" \
+      CTX_BUNDLE_SKIP_IMAGES="1" \
+      CTX_BUNDLE_HARNESS_IMAGE="0" \
+      CTX_BUNDLE_INCLUDE_BRIDGE="0" \
+      CTX_BUNDLE_LOCAL_ADAPTERS="off" \
+      CTX_BUNDLE_BUILD_LOCAL_ADAPTERS="0" \
+      CTX_BUNDLE_USE_ACP_SHIMS="1" \
+      CTX_BUNDLE_PODMAN="0" \
+      CARGO_TARGET_DIR="${cargo_target_dir}" \
+      CARGO_HOME="${cargo_home_dir}" \
+      "${bundle_script}" >/dev/null
+    fi
   fi
 
   export CTX_BUNDLE_DIR="${bundle_dir}"
