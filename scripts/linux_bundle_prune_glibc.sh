@@ -54,7 +54,7 @@ case "$release_platform" in
     ;;
 esac
 
-for cmd in awk cksum chmod find file grep gzip ldd mkdir mv readelf rm; do
+for cmd in awk cksum chmod find file grep gzip ldd mkdir mktemp mv readelf rm; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "error: required tool '$cmd' is missing from PATH" >&2
     exit 1
@@ -193,11 +193,20 @@ while IFS= read -r -d '' path; do
   # Preserve provider runtime paths by replacing provider ELF executables with a launcher
   # script + compressed payload.
   if is_provider_bundle_path "$path" && [[ "$file_desc" == *"executable"* ]]; then
+    # If a provider ELF is currently a symlink, materialize it first so wrapping does not
+    # preserve the symlink indirection into AppDir packaging.
+    if [[ -L "$path" ]]; then
+      tmp_materialized="$(mktemp)"
+      cat "$path" > "$tmp_materialized"
+      rm -f "$path"
+      mv -f "$tmp_materialized" "$path"
+      chmod 0755 "$path"
+    fi
     echo "wrapping provider executable ELF for glibc package: $path [$file_desc]"
     wrap_static_provider_elf "$path"
     wrapped_provider_exec_elf=$((wrapped_provider_exec_elf + 1))
   fi
-done < <(find "$bundles_dir" -type f -print0)
+done < <(find "$bundles_dir" \( -type f -o -type l \) -print0)
 
 echo "pruned_foreign_arch_elf=$pruned_foreign_arch_elf"
 echo "pruned_musl_targeted_elf=$pruned_musl_targeted_elf"
@@ -226,7 +235,7 @@ while IFS= read -r -d '' path; do
     echo "error: provider executable ELF remains after prune/wrap: $path [$file_desc]" >&2
     remaining_provider_executable=1
   fi
-done < <(find "$bundles_dir" -type f -print0)
+done < <(find "$bundles_dir" \( -type f -o -type l \) -print0)
 
 if [[ "$remaining_musl" -ne 0 ]]; then
   echo "error: glibc release package still contains musl-linked target-arch ELF artifacts" >&2

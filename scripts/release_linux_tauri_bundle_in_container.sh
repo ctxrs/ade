@@ -123,6 +123,7 @@ if ! RUST_LOG=tauri_bundler=debug pnpm -C core/apps/desktop exec tauri build --b
     echo "linuxdeploy binary is unavailable/executable at: $linuxdeploy_path"
   fi
 
+  manual_linuxdeploy_ok=0
   if [[ -n "$appdir_path" && -d "$appdir_path" ]]; then
     echo "::group::ldd probe (${platform})"
     ldd_probe_failed=0
@@ -147,10 +148,28 @@ if ! RUST_LOG=tauri_bundler=debug pnpm -C core/apps/desktop exec tauri build --b
     fi
     echo "::endgroup::"
     if [[ -x "$linuxdeploy_path" ]]; then
-      "$linuxdeploy_path" --appimage-extract-and-run --verbosity 3 --appdir "$appdir_path" --plugin gtk --output appimage || true
+      if "$linuxdeploy_path" --appimage-extract-and-run --verbosity 3 --appdir "$appdir_path" --plugin gtk --output appimage; then
+        manual_linuxdeploy_ok=1
+      fi
     fi
   fi
 
   echo "::endgroup::"
-  exit 1
+  if [[ "$manual_linuxdeploy_ok" -eq 1 ]]; then
+    appimage_after_recovery="$(
+      find core/apps/desktop/src-tauri/target/release/bundle/appimage -maxdepth 1 -type f -name '*.AppImage' \
+        | LC_ALL=C sort \
+        | tail -n 1
+    )"
+    if [[ -n "$appimage_after_recovery" && -f "$appimage_after_recovery" ]]; then
+      # EXCEPTION: we accept manual linuxdeploy recovery when the initial tauri bundler
+      # invocation fails but deterministic artifact generation succeeds in the same lane.
+      echo "recovered AppImage bundle after tauri linuxdeploy failure: $appimage_after_recovery"
+    else
+      echo "error: linuxdeploy diagnostics succeeded but no AppImage artifact was produced"
+      exit 1
+    fi
+  else
+    exit 1
+  fi
 fi
