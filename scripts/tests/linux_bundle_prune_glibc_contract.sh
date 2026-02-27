@@ -25,6 +25,7 @@ foreign_elf="$bundles_dir/providers/demo/linux/aarch64/bin/foreign-helper"
 non_linux_os_elf="$bundles_dir/providers/demo/linux/aarch64/node_modules/koffi/build/koffi/freebsd_arm64/koffi.node"
 static_node_elf="$bundles_dir/providers/demo/linux/aarch64/node_modules/@vendor/ripgrep/arm64-linux/rg"
 static_core_elf="$bundles_dir/providers/demo/linux/aarch64/bin/core-static/provider-helper"
+dynamic_provider_elf="$bundles_dir/providers/demo/linux/aarch64/bin/dynamic-provider"
 ldd_fail_provider_elf="$bundles_dir/providers/demo/linux/aarch64/bin/opencode"
 non_elf="$bundles_dir/providers/demo/linux/aarch64/lib/readme.txt"
 
@@ -34,6 +35,7 @@ printf 'foreign\n' > "$foreign_elf"
 printf 'freebsd\n' > "$non_linux_os_elf"
 printf 'static-node\n' > "$static_node_elf"
 printf 'static-core\n' > "$static_core_elf"
+printf 'dynamic-provider\n' > "$dynamic_provider_elf"
 printf 'ldd-fail-provider\n' > "$ldd_fail_provider_elf"
 printf 'text\n' > "$non_elf"
 
@@ -73,6 +75,9 @@ case "$target" in
     ;;
   *core-static/provider-helper)
     echo "ELF 64-bit LSB executable, ARM aarch64, version 1 (SYSV), statically linked, stripped"
+    ;;
+  *bin/dynamic-provider)
+    echo "ELF 64-bit LSB executable, ARM aarch64, version 1 (SYSV), dynamically linked"
     ;;
   *bin/opencode)
     echo "ELF 64-bit LSB executable, ARM aarch64, version 1 (SYSV), dynamically linked"
@@ -152,6 +157,12 @@ OUT
       *core-static/provider-helper)
         cat <<'OUT'
 Dynamic section at offset 0x0 contains 0 entries:
+OUT
+        ;;
+      *bin/dynamic-provider)
+        cat <<'OUT'
+Dynamic section at offset 0x0 contains 1 entry:
+ 0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]
 OUT
         ;;
       *bin/opencode)
@@ -245,6 +256,19 @@ if [[ -f "$ldd_fail_provider_elf" ]]; then
   fi
 else
   echo "error: expected wrapped launcher to remain at ldd-failing provider path: $ldd_fail_provider_elf" >&2
+  exit 1
+fi
+if [[ -f "$dynamic_provider_elf" ]]; then
+  if [[ ! -f "${dynamic_provider_elf}.ctxbin.gz" ]]; then
+    echo "error: expected wrapped payload for dynamic provider ELF: ${dynamic_provider_elf}.ctxbin.gz" >&2
+    exit 1
+  fi
+  if ! grep -q 'static-provider-bin' "$dynamic_provider_elf"; then
+    echo "error: expected dynamic provider ELF to be replaced with launcher script: $dynamic_provider_elf" >&2
+    exit 1
+  fi
+else
+  echo "error: expected wrapped launcher to remain at dynamic provider path: $dynamic_provider_elf" >&2
   exit 1
 fi
 if [[ ! -f "$non_elf" ]]; then

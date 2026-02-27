@@ -91,7 +91,7 @@ is_musl_linked_elf() {
 pruned_foreign_arch_elf=0
 pruned_musl_targeted_elf=0
 pruned_non_linux_os_elf=0
-wrapped_static_provider_elf=0
+wrapped_provider_exec_elf=0
 
 is_non_linux_path_elf() {
   local path="$1"
@@ -124,14 +124,6 @@ is_static_elf() {
     return 1
   fi
   return 0
-}
-
-ldd_succeeds() {
-  local path="$1"
-  if ldd "$path" >/dev/null 2>&1; then
-    return 0
-  fi
-  return 1
 }
 
 wrap_static_provider_elf() {
@@ -197,25 +189,25 @@ while IFS= read -r -d '' path; do
     continue
   fi
 
-  # linuxdeploy GTK plugin aborts on provider payloads where patchelf/ldd traversal fails.
-  # Preserve provider runtime paths by replacing incompatible provider ELF files with a
-  # launcher script + compressed payload.
-  if is_provider_bundle_path "$path" && ( is_static_elf "$path" || ! ldd_succeeds "$path" ); then
-    echo "wrapping incompatible provider ELF for glibc package: $path [$file_desc]"
+  # linuxdeploy GTK plugin can abort on provider executables while probing ELF dependencies.
+  # Preserve provider runtime paths by replacing provider ELF executables with a launcher
+  # script + compressed payload.
+  if is_provider_bundle_path "$path" && [[ "$file_desc" == *"executable"* ]]; then
+    echo "wrapping provider executable ELF for glibc package: $path [$file_desc]"
     wrap_static_provider_elf "$path"
-    wrapped_static_provider_elf=$((wrapped_static_provider_elf + 1))
+    wrapped_provider_exec_elf=$((wrapped_provider_exec_elf + 1))
   fi
 done < <(find "$bundles_dir" -type f -print0)
 
 echo "pruned_foreign_arch_elf=$pruned_foreign_arch_elf"
 echo "pruned_musl_targeted_elf=$pruned_musl_targeted_elf"
 echo "pruned_non_linux_os_elf=$pruned_non_linux_os_elf"
-echo "wrapped_static_provider_elf=$wrapped_static_provider_elf"
+echo "wrapped_provider_exec_elf=$wrapped_provider_exec_elf"
 
 # Enforce contract: no target-arch musl-linked ELF can remain for glibc packaging.
 remaining_musl=0
 remaining_non_linux=0
-remaining_static_provider=0
+remaining_provider_executable=0
 while IFS= read -r -d '' path; do
   file_desc="$(file -b "$path" 2>/dev/null || true)"
   [[ "$file_desc" == *"ELF"* ]] || continue
@@ -230,9 +222,9 @@ while IFS= read -r -d '' path; do
     remaining_musl=1
     continue
   fi
-  if is_provider_bundle_path "$path" && is_static_elf "$path"; then
-    echo "error: static provider ELF remains after prune/wrap: $path [$file_desc]" >&2
-    remaining_static_provider=1
+  if is_provider_bundle_path "$path" && [[ "$file_desc" == *"executable"* ]]; then
+    echo "error: provider executable ELF remains after prune/wrap: $path [$file_desc]" >&2
+    remaining_provider_executable=1
   fi
 done < <(find "$bundles_dir" -type f -print0)
 
@@ -246,7 +238,7 @@ if [[ "$remaining_non_linux" -ne 0 ]]; then
   exit 1
 fi
 
-if [[ "$remaining_static_provider" -ne 0 ]]; then
-  echo "error: glibc release package still contains static provider ELF artifacts" >&2
+if [[ "$remaining_provider_executable" -ne 0 ]]; then
+  echo "error: glibc release package still contains provider executable ELF artifacts" >&2
   exit 1
 fi
