@@ -25,6 +25,7 @@ foreign_elf="$bundles_dir/providers/demo/linux/aarch64/bin/foreign-helper"
 non_linux_os_elf="$bundles_dir/providers/demo/linux/aarch64/node_modules/koffi/build/koffi/freebsd_arm64/koffi.node"
 static_node_elf="$bundles_dir/providers/demo/linux/aarch64/node_modules/@vendor/ripgrep/arm64-linux/rg"
 static_core_elf="$bundles_dir/providers/demo/linux/aarch64/bin/core-static/provider-helper"
+ldd_fail_provider_elf="$bundles_dir/providers/demo/linux/aarch64/bin/opencode"
 non_elf="$bundles_dir/providers/demo/linux/aarch64/lib/readme.txt"
 
 printf 'glibc\n' > "$glibc_ok"
@@ -33,6 +34,7 @@ printf 'foreign\n' > "$foreign_elf"
 printf 'freebsd\n' > "$non_linux_os_elf"
 printf 'static-node\n' > "$static_node_elf"
 printf 'static-core\n' > "$static_core_elf"
+printf 'ldd-fail-provider\n' > "$ldd_fail_provider_elf"
 printf 'text\n' > "$non_elf"
 
 cat > "$mock_bin/file" <<'SH'
@@ -71,6 +73,9 @@ case "$target" in
     ;;
   *core-static/provider-helper)
     echo "ELF 64-bit LSB executable, ARM aarch64, version 1 (SYSV), statically linked, stripped"
+    ;;
+  *bin/opencode)
+    echo "ELF 64-bit LSB executable, ARM aarch64, version 1 (SYSV), dynamically linked"
     ;;
   *)
     echo "ASCII text"
@@ -149,6 +154,12 @@ OUT
 Dynamic section at offset 0x0 contains 0 entries:
 OUT
         ;;
+      *bin/opencode)
+        cat <<'OUT'
+Dynamic section at offset 0x0 contains 1 entry:
+ 0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]
+OUT
+        ;;
       *)
         cat <<'OUT'
 Dynamic section at offset 0x0 contains 0 entries:
@@ -162,6 +173,22 @@ OUT
 esac
 SH
 chmod +x "$mock_bin/readelf"
+
+cat > "$mock_bin/ldd" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+target="${1:-}"
+case "$target" in
+  *bin/opencode)
+    echo "not a dynamic executable" >&2
+    exit 1
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+SH
+chmod +x "$mock_bin/ldd"
 
 PATH="$mock_bin:$PATH" "$PRUNE_SCRIPT" --platform linux-arm64 --bundles-dir "$bundles_dir"
 
@@ -205,6 +232,19 @@ if [[ -f "$static_core_elf" ]]; then
   fi
 else
   echo "error: expected wrapped launcher to remain at static provider path: $static_core_elf" >&2
+  exit 1
+fi
+if [[ -f "$ldd_fail_provider_elf" ]]; then
+  if [[ ! -f "${ldd_fail_provider_elf}.ctxbin.gz" ]]; then
+    echo "error: expected wrapped payload for ldd-failing provider ELF: ${ldd_fail_provider_elf}.ctxbin.gz" >&2
+    exit 1
+  fi
+  if ! grep -q 'static-provider-bin' "$ldd_fail_provider_elf"; then
+    echo "error: expected ldd-failing provider ELF to be replaced with launcher script: $ldd_fail_provider_elf" >&2
+    exit 1
+  fi
+else
+  echo "error: expected wrapped launcher to remain at ldd-failing provider path: $ldd_fail_provider_elf" >&2
   exit 1
 fi
 if [[ ! -f "$non_elf" ]]; then

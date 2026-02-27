@@ -54,7 +54,7 @@ case "$release_platform" in
     ;;
 esac
 
-for cmd in awk cksum chmod find file grep gzip mkdir mv readelf rm; do
+for cmd in awk cksum chmod find file grep gzip ldd mkdir mv readelf rm; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "error: required tool '$cmd' is missing from PATH" >&2
     exit 1
@@ -126,6 +126,14 @@ is_static_elf() {
   return 0
 }
 
+ldd_succeeds() {
+  local path="$1"
+  if ldd "$path" >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
 wrap_static_provider_elf() {
   local path="$1"
   local payload="${path}.ctxbin.gz"
@@ -189,10 +197,11 @@ while IFS= read -r -d '' path; do
     continue
   fi
 
-  # linuxdeploy GTK plugin aborts on static ELF payloads. Preserve provider runtime paths by
-  # replacing static provider ELF files with a launcher script + compressed payload.
-  if is_provider_bundle_path "$path" && is_static_elf "$path"; then
-    echo "wrapping static provider ELF for glibc package: $path [$file_desc]"
+  # linuxdeploy GTK plugin aborts on provider payloads where patchelf/ldd traversal fails.
+  # Preserve provider runtime paths by replacing incompatible provider ELF files with a
+  # launcher script + compressed payload.
+  if is_provider_bundle_path "$path" && ( is_static_elf "$path" || ! ldd_succeeds "$path" ); then
+    echo "wrapping incompatible provider ELF for glibc package: $path [$file_desc]"
     wrap_static_provider_elf "$path"
     wrapped_static_provider_elf=$((wrapped_static_provider_elf + 1))
   fi
