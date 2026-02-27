@@ -156,12 +156,30 @@ if ! RUST_LOG=tauri_bundler=debug pnpm -C core/apps/desktop exec tauri build --b
 
   echo "::endgroup::"
   if [[ "$manual_linuxdeploy_ok" -eq 1 ]]; then
-    appimage_after_recovery="$(
-      find core/apps/desktop/src-tauri/target/release/bundle/appimage -maxdepth 1 -type f -name '*.AppImage' \
-        | LC_ALL=C sort \
-        | tail -n 1
-    )"
+    pick_latest_appimage() {
+      local search_dir="$1"
+      if [[ ! -d "$search_dir" ]]; then
+        return 0
+      fi
+      find "$search_dir" -maxdepth 1 -type f -name '*.AppImage' -printf '%T@ %p\n' 2>/dev/null \
+        | LC_ALL=C sort -n \
+        | tail -n 1 \
+        | sed -E 's/^[0-9]+(\.[0-9]+)? //'
+    }
+
+    appimage_bundle_dir="core/apps/desktop/src-tauri/target/release/bundle/appimage"
+    mkdir -p "$appimage_bundle_dir"
+    appimage_after_recovery="$(pick_latest_appimage "$appimage_bundle_dir")"
+    if [[ -z "$appimage_after_recovery" ]]; then
+      appimage_after_recovery="$(pick_latest_appimage ".")"
+    fi
     if [[ -n "$appimage_after_recovery" && -f "$appimage_after_recovery" ]]; then
+      if [[ "$appimage_after_recovery" != "$appimage_bundle_dir/"* ]]; then
+        recovered_basename="$(basename "$appimage_after_recovery")"
+        normalized_recovery_path="$appimage_bundle_dir/$recovered_basename"
+        mv -f "$appimage_after_recovery" "$normalized_recovery_path"
+        appimage_after_recovery="$normalized_recovery_path"
+      fi
       # EXCEPTION: we accept manual linuxdeploy recovery when the initial tauri bundler
       # invocation fails but deterministic artifact generation succeeds in the same lane.
       echo "recovered AppImage bundle after tauri linuxdeploy failure: $appimage_after_recovery"
