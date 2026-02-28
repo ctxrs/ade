@@ -17,6 +17,13 @@ import { HARNESS_CATALOG, type HarnessCatalogEntry, UNSUPPORTED_HARNESS_IDS } fr
 import { PROVIDER_INSTALLS_ENABLED } from "../../../utils/providerInstallGate";
 import { Card, Row } from "../../SettingsPage.components";
 import { clampPct } from "../../SettingsPage.utils";
+import {
+  formatByteSize,
+  installErrorSummary,
+  installTargetLabel,
+  parseInstallTarget,
+  providerInstallSizeBytes,
+} from "../../../utils/providerInstallUi";
 import { buildHarnessAuthRows } from "../harnessAuthRows";
 import {
   getHarnessEndpointProviderPreset,
@@ -107,6 +114,7 @@ export function HarnessAuthenticationSection({
     installBusy,
     onInstallAll,
     onInstall,
+    onCancelInstall,
     providerHarnessConfig,
     providerHarnessBusy,
     codexAccounts,
@@ -296,6 +304,9 @@ export function HarnessAuthenticationSection({
             const installed = provider.installed === true && provider.health === "ok";
             const installSupported = provider.details?.install_supported === "true";
             const installUi = installs[id];
+            const installTarget = parseInstallTarget(provider.details?.install_target);
+            const installSize = formatByteSize(providerInstallSizeBytes(provider));
+            const installContextLabel = `${installTargetLabel(installTarget)}${installSize ? ` · ${installSize}` : ""}`;
             const installRunning = installUi?.state === "running" || provider.details?.install_running === "true";
             const installBusyLocal = installBusy !== null || installRunning;
             const installLabel =
@@ -303,9 +314,14 @@ export function HarnessAuthenticationSection({
                 ? `${clampPct(installUi.pct)}%`
                 : installBusyLocal
                   ? "Installing…"
+                  : installUi?.state === "cancelled"
+                    ? "Cancelled"
                   : provider.installed
                     ? "Update"
                     : "Install";
+            const installFailureMessage = installUi?.state === "failed" || installUi?.state === "cancelled"
+              ? installErrorSummary(installUi.errorCode, installUi.error)
+              : null;
 
             const harnessCfg = providerHarnessConfig[id];
             const sourceBusy = providerHarnessBusy[id] || false;
@@ -608,19 +624,40 @@ export function HarnessAuthenticationSection({
                 </div>
                 {!installed ? (
                   <div className="settings-row-right settings-harness-actions">
+                    <span className="settings-harness-inline-note" title={installContextLabel}>{installContextLabel}</span>
                     {installControlsEnabled ? (
-                      <button
-                        type="button"
-                        className="settings-btn settings-btn-secondary"
-                        onClick={() => {
-                          void onInstall(id);
-                        }}
-                        disabled={!installSupported || installBusyLocal}
-                        style={installStyle}
-                        title={!installSupported ? "Install not supported yet" : "Install this harness"}
-                      >
-                        {installLabel}
-                      </button>
+                      <div className="settings-harness-install-actions">
+                        <button
+                          type="button"
+                          className="settings-btn settings-btn-secondary"
+                          onClick={() => {
+                            void onInstall(id);
+                          }}
+                          disabled={!installSupported || installBusyLocal}
+                          style={installStyle}
+                          title={!installSupported ? "Install not supported yet" : `Install this harness (${installContextLabel})`}
+                        >
+                          {installLabel}
+                        </button>
+                        {installRunning ? (
+                          <button
+                            type="button"
+                            className="settings-btn settings-btn-tertiary"
+                            onClick={() => {
+                              void onCancelInstall(id);
+                            }}
+                            disabled={installBusy === "all"}
+                            title="Cancel install"
+                          >
+                            Cancel
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {installFailureMessage ? (
+                      <span className="settings-harness-inline-error" title={installFailureMessage}>
+                        {installFailureMessage}
+                      </span>
                     ) : null}
                   </div>
                 ) : null}

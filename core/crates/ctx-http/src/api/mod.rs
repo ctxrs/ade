@@ -473,6 +473,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/providers/:id/install", post(install_provider))
         .route("/api/providers/install/:install_id", get(get_install))
         .route(
+            "/api/providers/install/:install_id/cancel",
+            post(cancel_install),
+        )
+        .route(
             "/api/providers/install/:install_id/events",
             get(list_install_events),
         )
@@ -957,7 +961,7 @@ async fn get_title_generation_local_status(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let install_id = state
-        .find_running_install(TITLE_GENERATION_LOCAL_INSTALL_KEY)
+        .find_running_install(TITLE_GENERATION_LOCAL_INSTALL_KEY, None)
         .await;
     Ok(Json(TitleGenerationLocalStatusResponse {
         ready: status.ready,
@@ -972,7 +976,7 @@ async fn install_title_generation_local(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<TitleGenerationLocalInstallResponse>, StatusCode> {
     let (install_id, started_new) = state
-        .start_install(TITLE_GENERATION_LOCAL_INSTALL_KEY.to_string())
+        .start_install(TITLE_GENERATION_LOCAL_INSTALL_KEY.to_string(), None)
         .await;
     if started_new {
         let state2 = state.clone();

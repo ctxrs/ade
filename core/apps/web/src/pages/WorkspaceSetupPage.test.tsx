@@ -341,6 +341,14 @@ describe("WorkspaceSetupPage", () => {
       .mockResolvedValueOnce([
         providerStatusFixture({
           provider_id: "codex",
+          installed: false,
+          health: "error",
+          details: { install_supported: "true" },
+        }),
+      ] as never)
+      .mockResolvedValueOnce([
+        providerStatusFixture({
+          provider_id: "codex",
           installed: true,
           health: "ok",
           details: { install_supported: "true" },
@@ -400,7 +408,7 @@ describe("WorkspaceSetupPage", () => {
     fireEvent.click(screen.getByTestId("wizard-next"));
 
     await waitFor(() => {
-      expect(installProvider).toHaveBeenCalledWith("codex");
+      expect(installProvider).toHaveBeenCalledWith("codex", "container");
       expect(wizardStepKey()).toBe("source");
     });
   });

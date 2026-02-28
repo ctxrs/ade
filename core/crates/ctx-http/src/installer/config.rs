@@ -7,13 +7,15 @@ use serde::{Deserialize, Serialize};
 use ctx_lsp::LspManagerConfig;
 
 use crate::bundled_assets;
-use crate::installs::truncate_for_storage;
+use crate::installs::{truncate_for_storage, InstallErrorCode, InstallTarget};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManagedInstallError {
     pub at: String,
     pub stage: String,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<InstallErrorCode>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,6 +24,8 @@ pub struct ManagedInstallMetadata {
     pub package: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<InstallTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub install_dir_rel: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -105,6 +109,11 @@ pub fn apply_managed_install_details(
         status
             .details
             .insert("managed_version".to_string(), v.clone());
+    }
+    if let Some(target) = meta.target {
+        status
+            .details
+            .insert("managed_target".to_string(), target.as_str().to_string());
     }
     if let Some(p) = &meta.package {
         status
@@ -278,6 +287,90 @@ fn bundled_only_mode_applies_to_provider(provider_id: &str) -> bool {
     providers.contains(&provider_id)
 }
 
+fn is_legacy_bundle_path(path: &str) -> bool {
+    let normalized = path.trim().replace('\\', "/").to_ascii_lowercase();
+    normalized.contains("/contents/resources/bundles/")
+        || normalized.contains("/src-tauri/bundles/")
+        || normalized.contains("/bundles/providers/")
+}
+
+fn is_legacy_bundle_rel(path: &str) -> bool {
+    let normalized = path.trim().replace('\\', "/").to_ascii_lowercase();
+    normalized.starts_with("bundles/")
+        || normalized.starts_with("./bundles/")
+        || normalized.contains("/bundles/")
+}
+
+fn migrate_agent_server_config(cfg: &mut AgentServerConfigFile) -> bool {
+    let mut changed = false;
+    let mut drop_provider_entries = Vec::new();
+    let mut drop_managed_entries = Vec::new();
+
+    for (provider_id, command) in cfg.providers.iter_mut() {
+        let Some(managed) = command.managed.as_mut() else {
+            continue;
+        };
+
+        if managed.target.is_none() {
+            managed.target = Some(InstallTarget::Host);
+            changed = true;
+        }
+
+        let has_legacy_rel = managed
+            .install_dir_rel
+            .as_deref()
+            .map(is_legacy_bundle_rel)
+            .unwrap_or(false)
+            || managed
+                .bin_dir_rel
+                .as_deref()
+                .map(is_legacy_bundle_rel)
+                .unwrap_or(false);
+
+        if is_legacy_bundle_path(&command.command) || has_legacy_rel {
+            drop_provider_entries.push(provider_id.clone());
+            drop_managed_entries.push(provider_id.clone());
+        }
+    }
+
+    for (provider_id, managed) in cfg.managed_installs.iter_mut() {
+        if managed.target.is_none() {
+            managed.target = Some(InstallTarget::Host);
+            changed = true;
+        }
+        let has_legacy_rel = managed
+            .install_dir_rel
+            .as_deref()
+            .map(is_legacy_bundle_rel)
+            .unwrap_or(false)
+            || managed
+                .bin_dir_rel
+                .as_deref()
+                .map(is_legacy_bundle_rel)
+                .unwrap_or(false);
+        if has_legacy_rel {
+            drop_managed_entries.push(provider_id.clone());
+        }
+    }
+
+    if !drop_provider_entries.is_empty() {
+        for provider_id in drop_provider_entries {
+            cfg.providers.remove(&provider_id);
+        }
+        changed = true;
+    }
+    if !drop_managed_entries.is_empty() {
+        drop_managed_entries.sort();
+        drop_managed_entries.dedup();
+        for provider_id in drop_managed_entries {
+            cfg.managed_installs.remove(&provider_id);
+        }
+        changed = true;
+    }
+
+    changed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -344,6 +437,7 @@ mod tests {
                 managed: Some(ManagedInstallMetadata {
                     package: Some("qwen-managed".to_string()),
                     version: Some("1.0.0".to_string()),
+                    target: None,
                     install_dir_rel: None,
                     bin_dir_rel: None,
                     last_success_at: None,
@@ -386,6 +480,71 @@ mod tests {
         let _providers = EnvVarGuard::unset("CTX_E2E_BUNDLED_ONLY_PROVIDERS");
         assert!(!bundled_only_mode_applies_to_provider("codex"));
     }
+
+    #[test]
+    fn migration_sets_default_target_for_legacy_managed_metadata() {
+        let mut cfg = AgentServerConfigFile::default();
+        cfg.managed_installs.insert(
+            "codex".to_string(),
+            ManagedInstallMetadata {
+                package: Some("@openai/codex".to_string()),
+                version: Some("0.2.54".to_string()),
+                target: None,
+                install_dir_rel: Some("providers/agent-servers/codex/0.2.54".to_string()),
+                bin_dir_rel: None,
+                last_success_at: None,
+                last_error: None,
+            },
+        );
+
+        assert!(migrate_agent_server_config(&mut cfg));
+        assert_eq!(
+            cfg.managed_installs
+                .get("codex")
+                .and_then(|meta| meta.target),
+            Some(InstallTarget::Host)
+        );
+    }
+
+    #[test]
+    fn migration_drops_legacy_bundled_provider_commands() {
+        let mut cfg = AgentServerConfigFile::default();
+        cfg.providers.insert(
+            "codex".to_string(),
+            AgentServerCommand {
+                command:
+                    "/Applications/ctx.app/Contents/Resources/bundles/providers/codex/macos/aarch64/codex"
+                        .to_string(),
+                args: Vec::new(),
+                dependencies: Vec::new(),
+                managed: Some(ManagedInstallMetadata {
+                    package: Some("@openai/codex".to_string()),
+                    version: Some("0.2.54".to_string()),
+                    target: None,
+                    install_dir_rel: Some("bundles/providers/codex/macos/aarch64".to_string()),
+                    bin_dir_rel: None,
+                    last_success_at: None,
+                    last_error: None,
+                }),
+            },
+        );
+        cfg.managed_installs.insert(
+            "codex".to_string(),
+            ManagedInstallMetadata {
+                package: Some("@openai/codex".to_string()),
+                version: Some("0.2.54".to_string()),
+                target: None,
+                install_dir_rel: Some("bundles/providers/codex/macos/aarch64".to_string()),
+                bin_dir_rel: None,
+                last_success_at: None,
+                last_error: None,
+            },
+        );
+
+        assert!(migrate_agent_server_config(&mut cfg));
+        assert!(!cfg.providers.contains_key("codex"));
+        assert!(!cfg.managed_installs.contains_key("codex"));
+    }
 }
 
 pub fn agent_server_config_path(data_root: &Path) -> PathBuf {
@@ -404,7 +563,17 @@ pub async fn load_agent_server_config(data_root: &Path) -> Result<AgentServerCon
     if txt.trim().is_empty() {
         return Ok(AgentServerConfigFile::default());
     }
-    serde_json::from_str(&txt).context("parsing agent server config")
+    let mut cfg: AgentServerConfigFile =
+        serde_json::from_str(&txt).context("parsing agent server config")?;
+    if migrate_agent_server_config(&mut cfg) {
+        if let Err(error) = save_agent_server_config(data_root, &cfg).await {
+            tracing::warn!(
+                "failed to persist migrated agent server config at {}: {error:#}",
+                path.display()
+            );
+        }
+    }
+    Ok(cfg)
 }
 
 pub async fn save_agent_server_config(data_root: &Path, cfg: &AgentServerConfigFile) -> Result<()> {

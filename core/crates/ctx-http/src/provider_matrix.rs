@@ -109,6 +109,8 @@ pub struct ProviderArchiveTarget {
     pub url: String,
     #[serde(default)]
     pub sha256: Option<String>,
+    #[serde(default)]
+    pub size_bytes: Option<u64>,
     pub archive: ProviderArchiveKind,
     pub bin_path: String,
 }

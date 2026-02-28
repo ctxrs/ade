@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -12,7 +13,10 @@ use tokio::time::timeout;
 
 use crate::bundled_assets;
 use crate::daemon::AppState;
-use crate::installs::{truncate_for_storage, InstallEventLevel, InstallId, InstallProgressEvent};
+use crate::installs::{
+    truncate_for_storage, InstallErrorCode, InstallEventLevel, InstallId, InstallProgressEvent,
+    InstallTarget,
+};
 use crate::lsp_catalog::{LspCatalogArchive, LspCatalogInstall};
 use crate::provider_matrix;
 use crate::title_generation_local;
@@ -52,6 +56,7 @@ const INSTALL_EVENT_ERROR_MAX_LEN: usize = 6000;
 
 static NODE_RUNTIME_INSTALL_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static PYTHON_RUNTIME_INSTALL_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static PROVIDER_INSTALL_LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
 const TITLE_GENERATION_LOCAL_INSTALL_KEY: &str = "title_generation_local";
 const MANAGED_PROVIDER_INSTALLS_ENABLED: bool = true;
 
@@ -63,8 +68,27 @@ fn python_runtime_install_lock() -> &'static Mutex<()> {
     PYTHON_RUNTIME_INSTALL_LOCK.get_or_init(|| Mutex::new(()))
 }
 
+fn provider_install_locks() -> &'static Mutex<HashMap<String, Arc<Mutex<()>>>> {
+    PROVIDER_INSTALL_LOCKS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+async fn acquire_provider_install_lock(
+    provider_id: &str,
+    target: InstallTarget,
+) -> tokio::sync::OwnedMutexGuard<()> {
+    let key = format!("{provider_id}@{}", target.as_str());
+    let lock = {
+        let mut locks = provider_install_locks().lock().await;
+        locks
+            .entry(key)
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    };
+    lock.lock_owned().await
+}
+
 pub async fn install_provider(state: &AppState, provider_id: &str) -> Result<()> {
-    install_provider_impl(state, provider_id, None).await
+    install_provider_impl(state, provider_id, InstallTarget::Host, None).await
 }
 
 pub fn is_supported_managed_provider(
@@ -75,6 +99,105 @@ pub fn is_supported_managed_provider(
         return false;
     }
     provider_matrix::is_managed_supported(matrix, provider_id)
+}
+
+pub fn parse_install_target(raw: Option<&str>) -> Result<InstallTarget> {
+    let Some(raw) = raw else {
+        return Ok(InstallTarget::Host);
+    };
+    let normalized = raw.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "" | "host" => Ok(InstallTarget::Host),
+        "container" => Ok(InstallTarget::Container),
+        "linux-aarch64" => Ok(InstallTarget::LinuxAarch64),
+        "linux-x86_64" => Ok(InstallTarget::LinuxX8664),
+        other => anyhow::bail!(
+            "invalid install target '{}'; expected host, container, linux-aarch64, or linux-x86_64",
+            other
+        ),
+    }
+}
+
+pub fn resolve_matrix_target_key(target: InstallTarget) -> Result<&'static str> {
+    match target {
+        InstallTarget::Host => host_target_key(),
+        InstallTarget::Container => container_target_key(),
+        InstallTarget::LinuxAarch64 => Ok("linux-aarch64"),
+        InstallTarget::LinuxX8664 => Ok("linux-x86_64"),
+    }
+}
+
+pub fn is_supported_managed_provider_for_target(
+    matrix: &provider_matrix::ProviderMatrix,
+    provider_id: &str,
+    target: InstallTarget,
+) -> bool {
+    if !is_supported_managed_provider(matrix, provider_id) {
+        return false;
+    }
+    let Some(entry) = provider_matrix::get_entry(matrix, provider_id) else {
+        return false;
+    };
+    let Some(install) = entry.managed_install.as_ref() else {
+        return false;
+    };
+    let target_key = match resolve_matrix_target_key(target) {
+        Ok(key) => key,
+        Err(_) => return false,
+    };
+
+    // Archive installs are target-specific; npm/python installs are host-target only.
+    match install {
+        provider_matrix::ProviderInstall::Archive { targets, .. } => {
+            targets.contains_key(target_key)
+        }
+        provider_matrix::ProviderInstall::Npm { .. }
+        | provider_matrix::ProviderInstall::Python { .. } => {
+            matches!(target, InstallTarget::Host)
+        }
+    }
+}
+
+pub fn managed_install_download_size_bytes(
+    matrix: &provider_matrix::ProviderMatrix,
+    provider_id: &str,
+    target: InstallTarget,
+) -> Option<u64> {
+    let entry = provider_matrix::get_entry(matrix, provider_id)?;
+    let install = entry.managed_install.as_ref()?;
+    let target_key = resolve_matrix_target_key(target).ok()?;
+
+    let mut total: u64 = 0;
+    let mut any = false;
+
+    match install {
+        provider_matrix::ProviderInstall::Archive { targets, .. } => {
+            let target_entry = targets.get(target_key)?;
+            let size = target_entry.size_bytes?;
+            total = total.saturating_add(size);
+            any = true;
+        }
+        provider_matrix::ProviderInstall::Npm { .. }
+        | provider_matrix::ProviderInstall::Python { .. } => {}
+    }
+
+    for dependency in &entry.dependencies {
+        match &dependency.install {
+            provider_matrix::DependencyInstall::Archive { targets, .. } => {
+                let target_entry = targets.get(target_key)?;
+                let size = target_entry.size_bytes?;
+                total = total.saturating_add(size);
+                any = true;
+            }
+            provider_matrix::DependencyInstall::Npm { .. } => {}
+        }
+    }
+
+    if any {
+        Some(total)
+    } else {
+        None
+    }
 }
 
 pub fn is_supported_managed_lsp_server(server_id: &str) -> bool {
@@ -88,17 +211,20 @@ pub async fn install_provider_with_progress(
     state: std::sync::Arc<AppState>,
     install_id: InstallId,
     provider_id: String,
+    target: InstallTarget,
 ) -> Result<()> {
     provider_matrix::invalidate_matrix_cache(&state.providers.matrix_cache).await;
-    let res = install_provider_impl(state.as_ref(), &provider_id, Some(install_id)).await;
+    let res = install_provider_impl(state.as_ref(), &provider_id, target, Some(install_id)).await;
     match &res {
-        Ok(()) => state.finish_install(install_id, true, None).await,
+        Ok(()) => state.finish_install(install_id, true, None, None).await,
         Err(e) => {
+            let code = classify_install_error("provider_install", e);
             state
                 .finish_install(
                     install_id,
                     false,
                     Some(truncate_for_storage(&format!("{e:#}"), 12_000)),
+                    Some(code),
                 )
                 .await
         }
@@ -228,7 +354,7 @@ enum AgentServerArchive {
     Dmg,
 }
 
-fn zed_target_key() -> Result<&'static str> {
+fn host_target_key() -> Result<&'static str> {
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
     match (os, arch) {
@@ -242,12 +368,58 @@ fn zed_target_key() -> Result<&'static str> {
     }
 }
 
+fn container_target_key() -> Result<&'static str> {
+    match std::env::consts::ARCH {
+        "x86_64" => Ok("linux-x86_64"),
+        "aarch64" => Ok("linux-aarch64"),
+        other => anyhow::bail!("unsupported container architecture: {other}"),
+    }
+}
+
 fn extract_tar_bz2_to_dir(tar_bz2_path: &Path, out_dir: &Path) -> Result<()> {
     let tar_bz2 = std::fs::File::open(tar_bz2_path)
         .with_context(|| format!("open {}", tar_bz2_path.display()))?;
     let dec = bzip2::read::BzDecoder::new(tar_bz2);
     let mut archive = tar::Archive::new(dec);
     archive.unpack(out_dir).context("extract tar.bz2")?;
+    Ok(())
+}
+
+async fn prepare_atomic_install_dir(install_dir: &Path) -> Result<PathBuf> {
+    let parent = install_dir
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("install dir has no parent: {}", install_dir.display()))?;
+    tokio::fs::create_dir_all(parent).await.ok();
+    let install_name = install_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("install");
+    let staging_dir = parent.join(format!(
+        ".{install_name}.staging-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    if staging_dir.exists() {
+        tokio::fs::remove_dir_all(&staging_dir).await.ok();
+    }
+    tokio::fs::create_dir_all(&staging_dir)
+        .await
+        .with_context(|| format!("creating staging dir: {}", staging_dir.display()))?;
+    Ok(staging_dir)
+}
+
+async fn commit_atomic_install_dir(staging_dir: &Path, install_dir: &Path) -> Result<()> {
+    if install_dir.exists() {
+        tokio::fs::remove_dir_all(install_dir).await.ok();
+    }
+    tokio::fs::rename(staging_dir, install_dir)
+        .await
+        .with_context(|| {
+            format!(
+                "committing staging dir {} -> {}",
+                staging_dir.display(),
+                install_dir.display()
+            )
+        })?;
     Ok(())
 }
 
@@ -262,19 +434,19 @@ async fn install_agent_server_url_binary(
     expected_sha256: Option<&str>,
     archive: AgentServerArchive,
     bin_path: &str,
+    target: InstallTarget,
     stage: &mut &'static str,
 ) -> Result<PathBuf> {
     let data_root = &state.core.data_root;
-    let install_dir = data_root
-        .join("providers")
-        .join("agent-servers")
-        .join(provider_id)
-        .join(version);
-    tokio::fs::create_dir_all(&install_dir).await.ok();
+    let install_dir = install_dir_for_provider(data_root, provider_id, version, target);
 
     let tmp_dir = data_root.join("providers").join("tmp");
     tokio::fs::create_dir_all(&tmp_dir).await.ok();
-    let tmp = tmp_dir.join(format!("{provider_id}-{version}.download"));
+    let tmp = tmp_dir.join(format!(
+        "{provider_id}-{version}-{}.download",
+        target.as_str()
+    ));
+    let staging_dir = prepare_atomic_install_dir(&install_dir).await?;
 
     *stage = "download";
     download_to_file(state, install_id, event_provider_id, "download", url, &tmp).await?;
@@ -329,57 +501,88 @@ async fn install_agent_server_url_binary(
     )
     .await;
 
-    match archive {
+    let resolved_in_staging = match archive {
         AgentServerArchive::None => {
-            let dest = install_dir.join(bin_path);
+            let dest = staging_dir.join(bin_path);
             if let Some(parent) = dest.parent() {
                 std::fs::create_dir_all(parent).ok();
             }
-            std::fs::rename(&tmp, &dest).ok();
+            std::fs::rename(&tmp, &dest).with_context(|| {
+                format!("move downloaded binary into staging: {}", dest.display())
+            })?;
             ensure_executable(&dest)?;
-            Ok(dest)
+            dest
         }
         AgentServerArchive::TarGz => {
             let tar_gz =
                 std::fs::File::open(&tmp).with_context(|| format!("open {}", tmp.display()))?;
             let dec = flate2::read::GzDecoder::new(tar_gz);
             let mut archive = tar::Archive::new(dec);
-            archive.unpack(&install_dir).context("extract tar.gz")?;
-            let direct = install_dir.join(bin_path);
-            let resolved = if direct.exists() {
+            archive.unpack(&staging_dir).context("extract tar.gz")?;
+            let direct = staging_dir.join(bin_path);
+            if direct.exists() {
                 direct
             } else {
-                find_unique_path_ending_with(&install_dir, bin_path)?
-            };
-            ensure_executable(&resolved)?;
-            Ok(resolved)
+                find_unique_path_ending_with(&staging_dir, bin_path)?
+            }
         }
         AgentServerArchive::TarBz2 => {
-            extract_tar_bz2_to_dir(&tmp, &install_dir)?;
-            let direct = install_dir.join(bin_path);
-            let resolved = if direct.exists() {
+            extract_tar_bz2_to_dir(&tmp, &staging_dir)?;
+            let direct = staging_dir.join(bin_path);
+            if direct.exists() {
                 direct
             } else {
-                find_unique_path_ending_with(&install_dir, bin_path)?
-            };
-            ensure_executable(&resolved)?;
-            Ok(resolved)
+                find_unique_path_ending_with(&staging_dir, bin_path)?
+            }
         }
         AgentServerArchive::Zip => {
-            extract_zip_to_dir(&tmp, &install_dir)?;
+            extract_zip_to_dir(&tmp, &staging_dir)?;
+            let direct = staging_dir.join(bin_path);
+            if direct.exists() {
+                direct
+            } else {
+                find_unique_path_ending_with(&staging_dir, bin_path)?
+            }
+        }
+        AgentServerArchive::Dmg => {
+            tokio::fs::remove_dir_all(&staging_dir).await.ok();
+            anyhow::bail!("dmg archive extraction is not supported in managed installs")
+        }
+    };
+    ensure_executable(&resolved_in_staging)?;
+
+    let relative_bin = resolved_in_staging
+        .strip_prefix(&staging_dir)
+        .ok()
+        .map(|path| path.to_path_buf());
+
+    if let Err(error) = commit_atomic_install_dir(&staging_dir, &install_dir).await {
+        tokio::fs::remove_dir_all(&staging_dir).await.ok();
+        return Err(error);
+    }
+
+    let resolved = if let Some(relative_bin) = relative_bin {
+        let candidate = install_dir.join(relative_bin);
+        if candidate.exists() {
+            candidate
+        } else {
             let direct = install_dir.join(bin_path);
-            let resolved = if direct.exists() {
+            if direct.exists() {
                 direct
             } else {
                 find_unique_path_ending_with(&install_dir, bin_path)?
-            };
-            ensure_executable(&resolved)?;
-            Ok(resolved)
+            }
         }
-        AgentServerArchive::Dmg => {
-            anyhow::bail!("dmg archive extraction is not supported in managed installs")
+    } else {
+        let direct = install_dir.join(bin_path);
+        if direct.exists() {
+            direct
+        } else {
+            find_unique_path_ending_with(&install_dir, bin_path)?
         }
-    }
+    };
+    ensure_executable(&resolved)?;
+    Ok(resolved)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -514,13 +717,15 @@ pub async fn install_lsp_catalog_server_with_progress(
 ) -> Result<()> {
     let res = install_lsp_catalog_server_impl(state.as_ref(), &catalog_id, Some(install_id)).await;
     match &res {
-        Ok(()) => state.finish_install(install_id, true, None).await,
+        Ok(()) => state.finish_install(install_id, true, None, None).await,
         Err(e) => {
+            let code = classify_install_error("lsp_catalog_install", e);
             state
                 .finish_install(
                     install_id,
                     false,
                     Some(truncate_for_storage(&format!("{e:#}"), 12_000)),
+                    Some(code),
                 )
                 .await
         }
@@ -572,6 +777,7 @@ async fn install_lsp_catalog_server_impl(
             let meta = ManagedInstallMetadata {
                 package: Some("system".to_string()),
                 version: None,
+                target: None,
                 install_dir_rel: None,
                 bin_dir_rel: None,
                 last_success_at: Some(Utc::now().to_rfc3339()),
@@ -641,6 +847,7 @@ async fn install_lsp_catalog_server_impl(
             let meta = ManagedInstallMetadata {
                 package: Some(module),
                 version: Some(version.clone()),
+                target: None,
                 install_dir_rel: Some(install_dir_rel(&data_root, &install_dir)),
                 bin_dir_rel: None,
                 last_success_at: Some(Utc::now().to_rfc3339()),
@@ -688,6 +895,7 @@ async fn install_lsp_catalog_server_impl(
             let meta = ManagedInstallMetadata {
                 package: Some(t.url.clone()),
                 version: Some(version.clone()),
+                target: None,
                 install_dir_rel: Some(install_dir_rel(&data_root, bin.parent().unwrap_or(&bin))),
                 bin_dir_rel: None,
                 last_success_at: Some(Utc::now().to_rfc3339()),
@@ -740,13 +948,15 @@ pub async fn install_lsp_server_with_progress(
 ) -> Result<()> {
     let res = install_lsp_server_impl(state.as_ref(), &server_id, Some(install_id)).await;
     match &res {
-        Ok(()) => state.finish_install(install_id, true, None).await,
+        Ok(()) => state.finish_install(install_id, true, None, None).await,
         Err(e) => {
+            let code = classify_install_error("lsp_install", e);
             state
                 .finish_install(
                     install_id,
                     false,
                     Some(truncate_for_storage(&format!("{e:#}"), 12_000)),
+                    Some(code),
                 )
                 .await
         }
@@ -773,14 +983,11 @@ async fn install_managed_npm_provider(
     version: &str,
     script_rel: &str,
     extra_args: Vec<String>,
+    target: InstallTarget,
     stage: &mut &'static str,
 ) -> Result<ManagedProviderInstall> {
     let data_root = state.core.data_root.clone();
-    let install_dir = data_root
-        .join("providers")
-        .join("agent-servers")
-        .join(provider_id)
-        .join(version);
+    let install_dir = install_dir_for_provider(&data_root, provider_id, version, target);
     let install_dir_rel = install_dir_rel(&data_root, &install_dir);
 
     *stage = "node";
@@ -822,6 +1029,7 @@ async fn install_managed_npm_provider(
     let meta = ManagedInstallMetadata {
         package: Some(package.to_string()),
         version: Some(version.to_string()),
+        target: Some(target),
         install_dir_rel: Some(install_dir_rel),
         bin_dir_rel: None,
         last_success_at: Some(Utc::now().to_rfc3339()),
@@ -846,6 +1054,7 @@ async fn install_managed_archive_provider(
     archive: AgentServerArchive,
     bin_path: &str,
     args: Vec<String>,
+    target: InstallTarget,
     stage: &mut &'static str,
 ) -> Result<ManagedProviderInstall> {
     let bin = install_agent_server_url_binary(
@@ -858,21 +1067,17 @@ async fn install_managed_archive_provider(
         expected_sha256,
         archive,
         bin_path,
+        target,
         stage,
     )
     .await
     .context("installing agent server binary")?;
 
-    let install_dir = state
-        .core
-        .data_root
-        .join("providers")
-        .join("agent-servers")
-        .join(provider_id)
-        .join(version);
+    let install_dir = install_dir_for_provider(&state.core.data_root, provider_id, version, target);
     let meta = ManagedInstallMetadata {
         package: Some(url.to_string()),
         version: Some(version.to_string()),
+        target: Some(target),
         install_dir_rel: Some(install_dir_rel(&state.core.data_root, &install_dir)),
         bin_dir_rel: None,
         last_success_at: Some(Utc::now().to_rfc3339()),
@@ -895,6 +1100,7 @@ async fn install_managed_python_provider(
     version: &str,
     entrypoint: &str,
     args: Vec<String>,
+    target: InstallTarget,
     stage: &mut &'static str,
 ) -> Result<ManagedProviderInstall> {
     *stage = "python";
@@ -903,11 +1109,7 @@ async fn install_managed_python_provider(
         .context("ensuring managed Python runtime")?
         .python_bin;
     let data_root = state.core.data_root.clone();
-    let install_dir = data_root
-        .join("providers")
-        .join("agent-servers")
-        .join(provider_id)
-        .join(version);
+    let install_dir = install_dir_for_provider(&data_root, provider_id, version, target);
     let install_dir_rel = install_dir_rel(&data_root, &install_dir);
     let venv_dir = install_dir.join("venv");
 
@@ -1020,6 +1222,7 @@ async fn install_managed_python_provider(
     let meta = ManagedInstallMetadata {
         package: Some(package.to_string()),
         version: Some(version.to_string()),
+        target: Some(target),
         install_dir_rel: Some(install_dir_rel),
         bin_dir_rel: None,
         last_success_at: Some(Utc::now().to_rfc3339()),
@@ -1061,6 +1264,7 @@ async fn install_managed_npm_dependency(
             let meta = ManagedInstallMetadata {
                 package: Some(package.to_string()),
                 version: Some(version.to_string()),
+                target: Some(InstallTarget::Host),
                 install_dir_rel: Some(install_dir_rel_value.clone()),
                 bin_dir_rel: Some(bin_dir_rel_value.clone()),
                 last_success_at: Some(Utc::now().to_rfc3339()),
@@ -1116,6 +1320,7 @@ async fn install_managed_npm_dependency(
     let meta = ManagedInstallMetadata {
         package: Some(package.to_string()),
         version: Some(version.to_string()),
+        target: Some(InstallTarget::Host),
         install_dir_rel: Some(install_dir_rel_value),
         bin_dir_rel: Some(bin_dir_rel_value),
         last_success_at: Some(Utc::now().to_rfc3339()),
@@ -1136,14 +1341,11 @@ async fn install_managed_archive_dependency(
     expected_sha256: Option<&str>,
     archive: AgentServerArchive,
     bin_path: &str,
+    target: InstallTarget,
     stage: &mut &'static str,
 ) -> Result<ManagedDependencyInstall> {
     let data_root = state.core.data_root.clone();
-    let install_dir = data_root
-        .join("providers")
-        .join("agent-servers")
-        .join(dependency_id)
-        .join(version);
+    let install_dir = install_dir_for_provider(&data_root, dependency_id, version, target);
 
     let existing = if install_dir.exists() {
         let direct = install_dir.join(bin_path);
@@ -1170,6 +1372,7 @@ async fn install_managed_archive_dependency(
             expected_sha256,
             archive,
             bin_path,
+            target,
             stage,
         )
         .await
@@ -1180,6 +1383,7 @@ async fn install_managed_archive_dependency(
     let meta = ManagedInstallMetadata {
         package: Some(url.to_string()),
         version: Some(version.to_string()),
+        target: Some(target),
         install_dir_rel: Some(install_dir_rel(&data_root, &install_dir)),
         bin_dir_rel: Some(install_dir_rel(&data_root, &bin_dir)),
         last_success_at: Some(Utc::now().to_rfc3339()),
@@ -1206,6 +1410,7 @@ fn map_archive_kind(kind: provider_matrix::ProviderArchiveKind) -> AgentServerAr
 async fn install_provider_impl(
     state: &AppState,
     provider_id: &str,
+    target: InstallTarget,
     install_id: Option<InstallId>,
 ) -> Result<()> {
     if !MANAGED_PROVIDER_INSTALLS_ENABLED {
@@ -1216,19 +1421,26 @@ async fn install_provider_impl(
     }
 
     let provider_id = provider_id.to_string();
+    let _provider_install_lock = acquire_provider_install_lock(&provider_id, target).await;
+    let requested_target_label = target.as_str();
+    let resolved_target_key =
+        resolve_matrix_target_key(target).context("resolving install target key")?;
     let mut stage: &'static str = "start";
     let mut error_package: Option<String> = None;
     let mut error_version: Option<String> = None;
     let mut error_install_dir_rel: Option<String> = None;
 
     let res: Result<()> = async {
+        ensure_install_not_cancelled(state, install_id).await?;
         emit_install(
             state,
             install_id,
             &provider_id,
             InstallEventLevel::Info,
             "start",
-            format!("Installing managed provider: {provider_id}"),
+            format!(
+                "Installing managed provider: {provider_id} (target: {requested_target_label}, resolved: {resolved_target_key})"
+            ),
             None,
             None,
             None,
@@ -1252,6 +1464,7 @@ async fn install_provider_impl(
         let mut dependency_ids: Vec<String> = Vec::new();
         if !entry.dependencies.is_empty() {
             stage = "dependencies";
+            ensure_install_not_cancelled(state, install_id).await?;
             emit_install(
                 state,
                 install_id,
@@ -1266,9 +1479,18 @@ async fn install_provider_impl(
             .await;
 
             for dep in &entry.dependencies {
+                ensure_install_not_cancelled(state, install_id).await?;
                 dependency_ids.push(dep.id.clone());
                 let managed = match &dep.install {
                     provider_matrix::DependencyInstall::Npm { package, version } => {
+                        if !matches!(target, InstallTarget::Host) {
+                            anyhow::bail!(
+                                "target '{}' is not supported for npm dependency '{}' (provider '{}'); use target host",
+                                requested_target_label,
+                                dep.id,
+                                provider_id
+                            );
+                        }
                         error_package = Some(package.clone());
                         error_version = Some(version.clone());
                         error_install_dir_rel =
@@ -1285,9 +1507,12 @@ async fn install_provider_impl(
                         .await?
                     }
                     provider_matrix::DependencyInstall::Archive { version, targets } => {
-                        let target = zed_target_key().context("resolving platform target")?;
-                        let target_entry = targets.get(target).ok_or_else(|| {
-                            anyhow::anyhow!("unsupported dependency target {}: {target}", dep.id)
+                        let target_entry = targets.get(resolved_target_key).ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "unsupported dependency target {}: {}",
+                                dep.id,
+                                resolved_target_key
+                            )
                         })?;
                         error_package = Some(target_entry.url.clone());
                         error_version = Some(version.clone());
@@ -1303,6 +1528,7 @@ async fn install_provider_impl(
                             target_entry.sha256.as_deref(),
                             map_archive_kind(target_entry.archive),
                             &target_entry.bin_path,
+                            target,
                             &mut stage,
                         )
                         .await?
@@ -1320,12 +1546,20 @@ async fn install_provider_impl(
             }
         }
 
+        ensure_install_not_cancelled(state, install_id).await?;
         let managed = match install {
             provider_matrix::ProviderInstall::Npm {
                 package,
                 entrypoint,
                 args,
             } => {
+                if !matches!(target, InstallTarget::Host) {
+                    anyhow::bail!(
+                        "target '{}' is not supported for npm provider '{}' installs; use target host",
+                        requested_target_label,
+                        provider_id
+                    );
+                }
                 let version = release.version.clone();
                 error_package = Some(package.clone());
                 error_version = Some(version.clone());
@@ -1341,6 +1575,7 @@ async fn install_provider_impl(
                     &version,
                     entrypoint,
                     resolve_install_args(args),
+                    target,
                     &mut stage,
                 )
                 .await?
@@ -1351,6 +1586,13 @@ async fn install_provider_impl(
                 entrypoint,
                 args,
             } => {
+                if !matches!(target, InstallTarget::Host) {
+                    anyhow::bail!(
+                        "target '{}' is not supported for python provider '{}' installs; use target host",
+                        requested_target_label,
+                        provider_id
+                    );
+                }
                 if provider_matrix::normalize_version(version)
                     != provider_matrix::normalize_version(&release.version)
                 {
@@ -1374,6 +1616,7 @@ async fn install_provider_impl(
                     version,
                     entrypoint,
                     resolve_install_args(args),
+                    target,
                     &mut stage,
                 )
                 .await?
@@ -1392,9 +1635,10 @@ async fn install_provider_impl(
                         version
                     );
                 }
-                let target = zed_target_key().context("resolving platform target")?;
-                let target_entry = targets.get(target).ok_or_else(|| {
-                    anyhow::anyhow!("unsupported provider target {provider_id}: {target}")
+                let target_entry = targets.get(resolved_target_key).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "unsupported provider target {provider_id}: {resolved_target_key}"
+                    )
                 })?;
                 error_package = Some(target_entry.url.clone());
                 error_version = Some(version.clone());
@@ -1412,6 +1656,7 @@ async fn install_provider_impl(
                     map_archive_kind(target_entry.archive),
                     &target_entry.bin_path,
                     resolve_install_args(args),
+                    target,
                     &mut stage,
                 )
                 .await?
@@ -1419,6 +1664,7 @@ async fn install_provider_impl(
         };
 
         stage = "inspect";
+        ensure_install_not_cancelled(state, install_id).await?;
         emit_install(
             state,
             install_id,
@@ -1443,6 +1689,7 @@ async fn install_provider_impl(
         }
 
         stage = "refresh";
+        ensure_install_not_cancelled(state, install_id).await?;
         let mut status_cfg = load_agent_server_config(&state.core.data_root)
             .await
             .unwrap_or_default();
@@ -1470,6 +1717,7 @@ async fn install_provider_impl(
         }
 
         stage = "registry";
+        ensure_install_not_cancelled(state, install_id).await?;
         emit_install(
             state,
             install_id,
@@ -1531,7 +1779,8 @@ async fn install_provider_impl(
     .await;
 
     if let Err(e) = &res {
-        emit_install(
+        let error_code = classify_install_error(stage, e);
+        emit_install_with_code(
             state,
             install_id,
             &provider_id,
@@ -1541,6 +1790,7 @@ async fn install_provider_impl(
             None,
             None,
             None,
+            Some(error_code),
         )
         .await;
         update_registry_last_error(
@@ -1548,9 +1798,11 @@ async fn install_provider_impl(
             &provider_id,
             stage,
             e,
+            error_code,
             error_package.as_deref(),
             error_version.as_deref(),
             error_install_dir_rel.clone(),
+            Some(target),
         )
         .await;
     }
@@ -1570,15 +1822,48 @@ async fn emit_install(
     total_bytes: Option<u64>,
     attempt: Option<u32>,
 ) {
+    emit_install_with_code(
+        state,
+        install_id,
+        provider_id,
+        level,
+        stage,
+        message,
+        bytes,
+        total_bytes,
+        attempt,
+        None,
+    )
+    .await;
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn emit_install_with_code(
+    state: &AppState,
+    install_id: Option<InstallId>,
+    provider_id: &str,
+    level: InstallEventLevel,
+    stage: &str,
+    message: String,
+    bytes: Option<u64>,
+    total_bytes: Option<u64>,
+    attempt: Option<u32>,
+    error_code: Option<InstallErrorCode>,
+) {
     let Some(install_id) = install_id else {
         return;
     };
+    let target = state
+        .get_install_info(install_id)
+        .await
+        .and_then(|info| info.target);
     state
         .emit_install_event(
             install_id,
             InstallProgressEvent {
                 install_id,
                 provider_id: provider_id.to_string(),
+                target,
                 at: Utc::now(),
                 stage: stage.to_string(),
                 message,
@@ -1586,19 +1871,86 @@ async fn emit_install(
                 bytes,
                 total_bytes,
                 attempt,
+                error_code,
             },
         )
         .await;
 }
 
+async fn ensure_install_not_cancelled(
+    state: &AppState,
+    install_id: Option<InstallId>,
+) -> Result<()> {
+    let Some(install_id) = install_id else {
+        return Ok(());
+    };
+    if state.is_install_cancelled(install_id).await {
+        anyhow::bail!("install canceled by user");
+    }
+    Ok(())
+}
+
+fn classify_install_error(stage: &str, err: &anyhow::Error) -> InstallErrorCode {
+    let text = format!("{err:#}").to_ascii_lowercase();
+    if text.contains("install canceled by user") {
+        return InstallErrorCode::Cancelled;
+    }
+    if text.contains("invalid install target") {
+        return InstallErrorCode::InvalidTarget;
+    }
+    if text.contains("unsupported provider target")
+        || text.contains("unsupported dependency target")
+        || text.contains("is not supported for")
+    {
+        return InstallErrorCode::UnsupportedTarget;
+    }
+    if text.contains("checksum mismatch") {
+        return InstallErrorCode::ChecksumMismatch;
+    }
+    if text.contains("timed out") {
+        return InstallErrorCode::Timeout;
+    }
+    if stage == "refresh" || text.contains("not healthy") {
+        return InstallErrorCode::HealthCheckFailed;
+    }
+    if stage == "registry"
+        || text.contains("managed install registry")
+        || text.contains("saving lsp server config")
+    {
+        return InstallErrorCode::RegistryWriteFailed;
+    }
+    if text.contains("matrix version mismatch") || text.contains("no compatible release") {
+        return InstallErrorCode::MatrixMismatch;
+    }
+    if text.contains("download")
+        || text.contains("http error")
+        || text.contains("sending request")
+        || text.contains("streaming download")
+    {
+        return InstallErrorCode::DownloadFailed;
+    }
+    if text.contains("install failed")
+        || text.contains("process")
+        || text.contains("command")
+        || text.contains("pip")
+        || text.contains("npm")
+    {
+        return InstallErrorCode::CommandFailed;
+    }
+    InstallErrorCode::Unknown
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn update_registry_last_error(
     data_root: &Path,
     provider_id: &str,
     stage: &str,
     err: &anyhow::Error,
+    code: InstallErrorCode,
     package: Option<&str>,
     version: Option<&str>,
     install_dir_rel: Option<String>,
+    target: Option<InstallTarget>,
 ) {
     let mut cfg = load_agent_server_config(data_root)
         .await
@@ -1611,6 +1963,7 @@ async fn update_registry_last_error(
             .unwrap_or(ManagedInstallMetadata {
                 package: package.map(|s| s.to_string()),
                 version: version.map(|s| s.to_string()),
+                target,
                 install_dir_rel: install_dir_rel_clone,
                 bin_dir_rel: None,
                 last_success_at: None,
@@ -1625,11 +1978,15 @@ async fn update_registry_last_error(
     if meta.install_dir_rel.is_none() {
         meta.install_dir_rel = install_dir_rel;
     }
+    if meta.target.is_none() {
+        meta.target = target;
+    }
 
     meta.last_error = Some(ManagedInstallError {
         at: Utc::now().to_rfc3339(),
         stage: stage.to_string(),
         message: truncate_for_storage(&format!("{err:#}"), LAST_ERROR_MAX_LEN),
+        code: Some(code),
     });
     cfg.managed_installs
         .insert(provider_id.to_string(), meta.clone());
@@ -1747,6 +2104,32 @@ fn install_dir_rel(data_root: &Path, install_dir: &Path) -> String {
         .strip_prefix(data_root)
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| install_dir.to_string_lossy().to_string())
+}
+
+fn install_target_dir_component(target: InstallTarget) -> Option<&'static str> {
+    match target {
+        InstallTarget::Host => None,
+        InstallTarget::Container => Some("container"),
+        InstallTarget::LinuxAarch64 => Some("linux-aarch64"),
+        InstallTarget::LinuxX8664 => Some("linux-x86_64"),
+    }
+}
+
+fn install_dir_for_provider(
+    data_root: &Path,
+    provider_id: &str,
+    version: &str,
+    target: InstallTarget,
+) -> PathBuf {
+    let mut out = data_root
+        .join("providers")
+        .join("agent-servers")
+        .join(provider_id)
+        .join(version);
+    if let Some(component) = install_target_dir_component(target) {
+        out = out.join(component);
+    }
+    out
 }
 
 pub(crate) async fn ensure_node_runtime(
@@ -2251,6 +2634,7 @@ async fn npm_install(
     let package_manager = if pnpm_bin.is_some() { "pnpm" } else { "npm" };
 
     for attempt in 1..=RETRY_COUNT {
+        ensure_install_not_cancelled(state, install_id).await?;
         emit_install(
             state,
             install_id,
@@ -2377,6 +2761,7 @@ async fn download_to_file(
     path: &Path,
 ) -> Result<()> {
     for attempt in 1..=RETRY_COUNT {
+        ensure_install_not_cancelled(state, install_id).await?;
         let attempt_res: Result<()> = async {
             if let Some(parent) = path.parent() {
                 tokio::fs::create_dir_all(parent).await.ok();
@@ -2396,20 +2781,74 @@ async fn download_to_file(
                     .timeout(DOWNLOAD_TIMEOUT)
                     .build()
                     .context("building http client")?;
+                let existing_len = tokio::fs::metadata(path)
+                    .await
+                    .map(|meta| meta.len())
+                    .unwrap_or(0);
+                let mut request = client.get(url);
+                if existing_len > 0 {
+                    use reqwest::header::RANGE;
+                    request = request.header(RANGE, format!("bytes={existing_len}-"));
+                    emit_install(
+                        state,
+                        install_id,
+                        provider_id,
+                        InstallEventLevel::Info,
+                        stage,
+                        format!("resuming download from byte {existing_len}"),
+                        Some(existing_len),
+                        None,
+                        Some(attempt),
+                    )
+                    .await;
+                }
 
-                let resp = client.get(url).send().await.context("sending request")?;
+                let resp = request.send().await.context("sending request")?;
+                let status = resp.status();
+                if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+                    tokio::fs::remove_file(path).await.ok();
+                    anyhow::bail!("server rejected ranged resume request");
+                }
                 let resp = resp.error_for_status().context("http error")?;
 
-                let total = resp.content_length();
+                let (resumed, total) =
+                    resolve_download_resume(existing_len, status, resp.content_length());
                 let mut stream = resp.bytes_stream();
-                let mut file = tokio::fs::File::create(path)
-                    .await
-                    .with_context(|| format!("creating download target: {}", path.display()))?;
+                let mut file = if resumed {
+                    tokio::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(path)
+                        .await
+                        .with_context(|| {
+                            format!("opening download target for append: {}", path.display())
+                        })?
+                } else {
+                    if existing_len > 0 {
+                        emit_install(
+                            state,
+                            install_id,
+                            provider_id,
+                            InstallEventLevel::Warning,
+                            stage,
+                            "server does not support resume; restarting download from byte 0"
+                                .to_string(),
+                            None,
+                            total,
+                            Some(attempt),
+                        )
+                        .await;
+                    }
+                    tokio::fs::File::create(path)
+                        .await
+                        .with_context(|| format!("creating download target: {}", path.display()))?
+                };
                 use futures::StreamExt;
                 use tokio::io::AsyncWriteExt;
 
-                let mut downloaded: u64 = 0;
+                let mut downloaded: u64 = if resumed { existing_len } else { 0 };
                 while let Some(chunk) = stream.next().await {
+                    ensure_install_not_cancelled(state, install_id).await?;
                     let bytes = chunk.context("streaming download")?;
                     downloaded += bytes.len() as u64;
                     file.write_all(&bytes).await.context("writing download")?;
@@ -2472,6 +2911,19 @@ async fn download_to_file(
     }
 
     Ok(())
+}
+
+fn resolve_download_resume(
+    existing_len: u64,
+    status: reqwest::StatusCode,
+    content_length: Option<u64>,
+) -> (bool, Option<u64>) {
+    let resumed = existing_len > 0 && status == reqwest::StatusCode::PARTIAL_CONTENT;
+    let total = match content_length {
+        Some(remaining) if resumed => Some(existing_len.saturating_add(remaining)),
+        other => other,
+    };
+    (resumed, total)
 }
 
 async fn run_command_with_timeout(mut cmd: Command, dur: Duration) -> Result<std::process::Output> {
@@ -2621,6 +3073,7 @@ async fn install_lsp_server_impl(
             let meta = ManagedInstallMetadata {
                 package: Some(package.to_string()),
                 version: Some(version.to_string()),
+                target: None,
                 install_dir_rel: Some(install_dir_rel),
                 bin_dir_rel: None,
                 last_success_at: Some(Utc::now().to_rfc3339()),
@@ -2987,7 +3440,8 @@ async fn install_lsp_server_impl(
     .await;
 
     if let Err(e) = &res {
-        emit_install(
+        let error_code = classify_install_error(stage, e);
+        emit_install_with_code(
             state,
             install_id,
             &provider_id,
@@ -2997,6 +3451,7 @@ async fn install_lsp_server_impl(
             None,
             None,
             None,
+            Some(error_code),
         )
         .await;
 
@@ -3007,6 +3462,7 @@ async fn install_lsp_server_impl(
             ManagedInstallMetadata {
                 package: None,
                 version: None,
+                target: None,
                 install_dir_rel: None,
                 bin_dir_rel: None,
                 last_success_at: None,
@@ -3014,6 +3470,7 @@ async fn install_lsp_server_impl(
                     at: Utc::now().to_rfc3339(),
                     stage: stage.to_string(),
                     message: truncate_for_storage(&format!("{e:#}"), LAST_ERROR_MAX_LEN),
+                    code: Some(error_code),
                 }),
             },
         );
@@ -3029,13 +3486,15 @@ pub async fn install_title_generation_local_with_progress(
 ) -> Result<()> {
     let res = install_title_generation_local_impl(state.as_ref(), Some(install_id)).await;
     match &res {
-        Ok(()) => state.finish_install(install_id, true, None).await,
+        Ok(()) => state.finish_install(install_id, true, None, None).await,
         Err(e) => {
+            let code = classify_install_error("title_generation_install", e);
             state
                 .finish_install(
                     install_id,
                     false,
                     Some(truncate_for_storage(&format!("{e:#}"), 12_000)),
+                    Some(code),
                 )
                 .await
         }
@@ -3327,12 +3786,44 @@ async fn sha256_file(path: &Path) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
 
     #[test]
     fn managed_provider_installs_are_enabled_for_supported_entries() {
         let matrix = provider_matrix::builtin_matrix();
         assert!(is_supported_managed_provider(&matrix, "codex"));
         assert!(is_supported_managed_provider(&matrix, "opencode"));
+    }
+
+    #[test]
+    fn parse_install_target_defaults_to_host() {
+        assert_eq!(
+            parse_install_target(None).expect("default install target"),
+            InstallTarget::Host
+        );
+    }
+
+    #[test]
+    fn parse_install_target_rejects_unknown_values() {
+        let err =
+            parse_install_target(Some("not-a-target")).expect_err("invalid target should fail");
+        assert!(err.to_string().contains("invalid install target"));
+    }
+
+    #[test]
+    fn managed_provider_target_support_matches_install_kind() {
+        let matrix = provider_matrix::builtin_matrix();
+        assert!(is_supported_managed_provider_for_target(
+            &matrix,
+            "codex",
+            InstallTarget::Container
+        ));
+        assert!(!is_supported_managed_provider_for_target(
+            &matrix,
+            "auggie",
+            InstallTarget::Container
+        ));
     }
 
     #[test]
@@ -3345,5 +3836,109 @@ mod tests {
         let err = validate_sha256_digest("abcd1234", "ffff1234")
             .expect_err("mismatched digest should fail");
         assert!(err.to_string().contains("archive checksum mismatch"));
+    }
+
+    #[test]
+    fn resolve_download_resume_handles_partial_content() {
+        let (resumed, total) =
+            resolve_download_resume(120, reqwest::StatusCode::PARTIAL_CONTENT, Some(880));
+        assert!(resumed);
+        assert_eq!(total, Some(1000));
+    }
+
+    #[test]
+    fn resolve_download_resume_restarts_on_non_partial_status() {
+        let (resumed, total) = resolve_download_resume(120, reqwest::StatusCode::OK, Some(880));
+        assert!(!resumed);
+        assert_eq!(total, Some(880));
+    }
+
+    #[test]
+    fn classify_install_error_maps_codes() {
+        assert_eq!(
+            classify_install_error("download", &anyhow::anyhow!("sending request failed")),
+            InstallErrorCode::DownloadFailed
+        );
+        assert_eq!(
+            classify_install_error("refresh", &anyhow::anyhow!("provider not healthy")),
+            InstallErrorCode::HealthCheckFailed
+        );
+        assert_eq!(
+            classify_install_error(
+                "registry",
+                &anyhow::anyhow!("managed install registry write failed")
+            ),
+            InstallErrorCode::RegistryWriteFailed
+        );
+        assert_eq!(
+            classify_install_error("download", &anyhow::anyhow!("install canceled by user")),
+            InstallErrorCode::Cancelled
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_install_lock_serializes_same_provider_target() {
+        let first = acquire_provider_install_lock("codex", InstallTarget::Container).await;
+        let acquired = Arc::new(AtomicBool::new(false));
+        let acquired2 = acquired.clone();
+        let waiter = tokio::spawn(async move {
+            let _second = acquire_provider_install_lock("codex", InstallTarget::Container).await;
+            acquired2.store(true, Ordering::SeqCst);
+        });
+
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        assert!(
+            !acquired.load(Ordering::SeqCst),
+            "second lock should block while first lock is held"
+        );
+
+        drop(first);
+        tokio::time::timeout(Duration::from_secs(1), waiter)
+            .await
+            .expect("second lock should acquire after first unlock")
+            .expect("waiter task should finish without panic");
+        assert!(acquired.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn atomic_install_commit_replaces_existing_install_dir() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let install_dir = temp.path().join("providers").join("codex").join("1.2.3");
+        tokio::fs::create_dir_all(install_dir.join("old"))
+            .await
+            .expect("create old dir");
+        tokio::fs::write(install_dir.join("old").join("keep.txt"), b"old")
+            .await
+            .expect("write old file");
+
+        let staging_dir = prepare_atomic_install_dir(&install_dir)
+            .await
+            .expect("prepare staging dir");
+        tokio::fs::create_dir_all(staging_dir.join("new"))
+            .await
+            .expect("create new dir");
+        tokio::fs::write(staging_dir.join("new").join("fresh.txt"), b"new")
+            .await
+            .expect("write new file");
+
+        commit_atomic_install_dir(&staging_dir, &install_dir)
+            .await
+            .expect("commit install dir");
+
+        assert!(
+            tokio::fs::metadata(staging_dir).await.is_err(),
+            "staging dir should be moved into final location"
+        );
+        assert!(
+            tokio::fs::metadata(install_dir.join("new").join("fresh.txt"))
+                .await
+                .is_ok()
+        );
+        assert!(
+            tokio::fs::metadata(install_dir.join("old").join("keep.txt"))
+                .await
+                .is_err(),
+            "old install contents should be replaced"
+        );
     }
 }

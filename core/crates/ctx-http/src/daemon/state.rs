@@ -10,9 +10,12 @@ use crate::buffers::BufferStore;
 use crate::edit_plans::{EditPlan, EditPlanId};
 use crate::execution_setup::ExecutionSetupCoordinator;
 use crate::harness_runtime::HarnessRuntimeManager;
-use crate::installs::{InstallId, InstallProgressEvent, InstallState, InstallStateKind};
+use crate::installs::{
+    InstallErrorCode, InstallEventLevel, InstallId, InstallProgressEvent, InstallState,
+    InstallStateKind, InstallTarget,
+};
 use crate::mobile_tunnel::MobileTunnelManager;
-use crate::ops_events::OpsEvents;
+use crate::ops_events::{OpsEvent, OpsEvents};
 use crate::order_seq::OrderSeqState;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
 use crate::provider_accounts;
@@ -911,10 +914,17 @@ impl AppState {
         stats
     }
 
-    pub async fn find_running_install(&self, provider_id: &str) -> Option<InstallId> {
+    pub async fn find_running_install(
+        &self,
+        provider_id: &str,
+        target: Option<InstallTarget>,
+    ) -> Option<InstallId> {
         let map = self.providers.installs.lock().await;
         map.iter().find_map(|(id, st)| {
-            if st.provider_id == provider_id && matches!(st.state, InstallStateKind::Running) {
+            if st.provider_id == provider_id
+                && st.target == target
+                && matches!(st.state, InstallStateKind::Running)
+            {
                 Some(*id)
             } else {
                 None
@@ -922,17 +932,37 @@ impl AppState {
         })
     }
 
-    pub async fn start_install(&self, provider_id: String) -> (InstallId, bool) {
-        if let Some(existing) = self.find_running_install(&provider_id).await {
+    pub async fn start_install(
+        &self,
+        provider_id: String,
+        target: Option<InstallTarget>,
+    ) -> (InstallId, bool) {
+        if let Some(existing) = self.find_running_install(&provider_id, target).await {
+            let mut event = OpsEvent::new("info", "provider_install_joined");
+            event.provider_id = Some(provider_id.clone());
+            event.meta = Some(serde_json::json!({
+                "install_id": existing.to_string(),
+                "target": target.map(|value| value.as_str()),
+            }));
+            self.telemetry.ops_events.emit(event);
             return (existing, false);
         }
         let install_id = InstallId::new_v4();
-        let state = InstallState::new(provider_id);
+        let state = InstallState::new(provider_id, target);
+        let provider_id = state.provider_id.clone();
+        let target = state.target;
         self.providers
             .installs
             .lock()
             .await
             .insert(install_id, state);
+        let mut event = OpsEvent::new("info", "provider_install_started");
+        event.provider_id = Some(provider_id);
+        event.meta = Some(serde_json::json!({
+            "install_id": install_id.to_string(),
+            "target": target.map(|value| value.as_str()),
+        }));
+        self.telemetry.ops_events.emit(event);
         (install_id, true)
     }
 
@@ -984,17 +1014,134 @@ impl AppState {
         let _ = st.tx.send(event);
     }
 
-    pub async fn finish_install(&self, install_id: InstallId, ok: bool, error: Option<String>) {
+    pub async fn finish_install(
+        &self,
+        install_id: InstallId,
+        ok: bool,
+        error: Option<String>,
+        error_code: Option<InstallErrorCode>,
+    ) {
         let mut map = self.providers.installs.lock().await;
         let Some(st) = map.get_mut(&install_id) else {
             return;
         };
-        st.state = if ok {
-            InstallStateKind::Succeeded
+        if !matches!(st.state, InstallStateKind::Cancelled) {
+            st.state = if ok {
+                InstallStateKind::Succeeded
+            } else {
+                InstallStateKind::Failed
+            };
+        }
+        if !ok || matches!(st.state, InstallStateKind::Cancelled) {
+            st.error = error.or_else(|| {
+                if matches!(st.state, InstallStateKind::Cancelled) {
+                    Some("Install canceled by user".to_string())
+                } else {
+                    None
+                }
+            });
+            st.error_code = error_code.or({
+                if matches!(st.state, InstallStateKind::Cancelled) {
+                    Some(InstallErrorCode::Cancelled)
+                } else {
+                    None
+                }
+            });
         } else {
-            InstallStateKind::Failed
-        };
-        st.error = error;
+            st.error = None;
+            st.error_code = None;
+        }
         st.finished_at = Some(chrono::Utc::now());
+        let provider_id = st.provider_id.clone();
+        let target = st.target;
+        let state = st.state;
+        let error = st.error.clone();
+        let error_code = st.error_code;
+        drop(map);
+
+        let event_name = match state {
+            InstallStateKind::Succeeded => "provider_install_succeeded",
+            InstallStateKind::Failed => "provider_install_failed",
+            InstallStateKind::Cancelled => "provider_install_cancelled",
+            InstallStateKind::Running => "provider_install_running",
+        };
+        let mut event = OpsEvent::new(
+            if matches!(state, InstallStateKind::Failed) {
+                "warn"
+            } else {
+                "info"
+            },
+            event_name,
+        );
+        event.provider_id = Some(provider_id);
+        event.meta = Some(serde_json::json!({
+            "install_id": install_id.to_string(),
+            "target": target.map(|value| value.as_str()),
+            "state": match state {
+                InstallStateKind::Running => "running",
+                InstallStateKind::Succeeded => "succeeded",
+                InstallStateKind::Failed => "failed",
+                InstallStateKind::Cancelled => "cancelled",
+            },
+            "error": error,
+            "error_code": error_code.and_then(|value| serde_json::to_value(value).ok()),
+            "ok": ok,
+        }));
+        self.telemetry.ops_events.emit(event);
+    }
+
+    pub async fn is_install_cancelled(&self, install_id: InstallId) -> bool {
+        let map = self.providers.installs.lock().await;
+        map.get(&install_id)
+            .map(|st| matches!(st.state, InstallStateKind::Cancelled))
+            .unwrap_or(false)
+    }
+
+    pub async fn cancel_install(
+        &self,
+        install_id: InstallId,
+    ) -> Option<crate::installs::InstallInfo> {
+        let mut map = self.providers.installs.lock().await;
+        let st = map.get_mut(&install_id)?;
+        if !matches!(st.state, InstallStateKind::Running) {
+            return Some(st.info(install_id));
+        }
+
+        st.state = InstallStateKind::Cancelled;
+        st.error = Some("Install canceled by user".to_string());
+        st.error_code = Some(InstallErrorCode::Cancelled);
+        st.finished_at = Some(chrono::Utc::now());
+
+        let event = InstallProgressEvent {
+            install_id,
+            provider_id: st.provider_id.clone(),
+            target: st.target,
+            at: chrono::Utc::now(),
+            stage: "cancelled".to_string(),
+            message: "Install canceled by user".to_string(),
+            level: InstallEventLevel::Warning,
+            bytes: None,
+            total_bytes: None,
+            attempt: None,
+            error_code: Some(InstallErrorCode::Cancelled),
+        };
+        if st.events.len() >= 256 {
+            st.events.pop_front();
+        }
+        st.events.push_back(event.clone());
+        let _ = st.tx.send(event);
+        let provider_id = st.provider_id.clone();
+        let target = st.target;
+        drop(map);
+
+        let mut ops_event = OpsEvent::new("info", "provider_install_cancel_requested");
+        ops_event.provider_id = Some(provider_id);
+        ops_event.meta = Some(serde_json::json!({
+            "install_id": install_id.to_string(),
+            "target": target.map(|value| value.as_str()),
+        }));
+        self.telemetry.ops_events.emit(ops_event);
+
+        self.get_install_info(install_id).await
     }
 }

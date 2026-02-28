@@ -302,6 +302,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     providerOptions,
     installAllBusy,
     installProviderFromMenu,
+    cancelProviderInstallFromMenu,
     installAllProvidersFromMenu,
     ensureProviderAuthSummary,
   } = useWorkbenchProviders({
@@ -3289,6 +3290,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                 providersById={providersById}
                 providerInstallsById={providerInstallsById}
                 onInstallProvider={installProviderFromMenu}
+                onCancelInstallProvider={cancelProviderInstallFromMenu}
                 onInstallAllProviders={installAllProvidersFromMenu}
                 installAllBusy={installAllBusy}
                 providerOptions={providerOptions}

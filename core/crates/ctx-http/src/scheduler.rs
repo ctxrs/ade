@@ -2449,6 +2449,7 @@ mod strip_emitted_prefix_tests {
             ManagedInstallMetadata {
                 package: None,
                 version: None,
+                target: None,
                 install_dir_rel: None,
                 bin_dir_rel: Some(managed_bin_rel.to_string()),
                 last_success_at: None,

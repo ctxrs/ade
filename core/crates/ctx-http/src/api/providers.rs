@@ -22,16 +22,18 @@ use url::Url;
 
 use super::errors::ApiErrorResp;
 use crate::daemon::{normalize_acp_provider_command, AppState};
+use crate::execution_effective;
 use crate::harness_sources;
 use crate::harness_sources::{
     HarnessApiShape, HarnessEndpointUpsert, HarnessEndpointVerificationStatus, HarnessSourceKind,
 };
 use crate::installer;
-use crate::installs::{InstallId, InstallInfo, InstallProgressEvent};
+use crate::installs::{InstallId, InstallInfo, InstallProgressEvent, InstallTarget};
 use crate::logs;
 use crate::provider_accounts;
 use crate::provider_auth_import;
 use crate::provider_usage;
+use crate::settings::ExecutionMode;
 use ctx_core::ids::WorkspaceId;
 use ctx_providers::adapters::{ProviderRestartMode, ProviderStatus};
 use ctx_providers::crp::probe_crp_models;
@@ -56,13 +58,24 @@ fn invalid_provider_id_error(
     )
 }
 
-pub(super) async fn list_providers(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<ProviderStatus>>, StatusCode> {
-    Ok(Json(providers_statuses_response(&state).await))
+#[derive(Debug, Default, Deserialize)]
+pub(super) struct InstallTargetQuery {
+    target: Option<String>,
 }
 
-async fn providers_statuses_response(state: &Arc<AppState>) -> Vec<ProviderStatus> {
+pub(super) async fn list_providers(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<InstallTargetQuery>,
+) -> Result<Json<Vec<ProviderStatus>>, StatusCode> {
+    let target = installer::parse_install_target(query.target.as_deref())
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(Json(providers_statuses_response(&state, target).await))
+}
+
+async fn providers_statuses_response(
+    state: &Arc<AppState>,
+    target: InstallTarget,
+) -> Vec<ProviderStatus> {
     let map = state.providers.statuses.lock().await;
     let mut out: Vec<ProviderStatus> = map.values().cloned().collect();
     drop(map);
@@ -87,13 +100,30 @@ async fn providers_statuses_response(state: &Arc<AppState>) -> Vec<ProviderStatu
         }
         status.details.insert(
             "install_supported".into(),
-            if installer::is_supported_managed_provider(&matrix, &status.provider_id) {
+            if installer::is_supported_managed_provider_for_target(
+                &matrix,
+                &status.provider_id,
+                target,
+            ) {
                 "true".into()
             } else {
                 "false".into()
             },
         );
-        if let Some(install_id) = state.find_running_install(&status.provider_id).await {
+        status
+            .details
+            .insert("install_target".into(), target.as_str().to_string());
+        if let Some(bytes) =
+            installer::managed_install_download_size_bytes(&matrix, &status.provider_id, target)
+        {
+            status
+                .details
+                .insert("install_download_size_bytes".into(), bytes.to_string());
+        }
+        if let Some(install_id) = state
+            .find_running_install(&status.provider_id, Some(target))
+            .await
+        {
             status
                 .details
                 .insert("install_running".into(), "true".into());
@@ -108,6 +138,7 @@ async fn providers_statuses_response(state: &Arc<AppState>) -> Vec<ProviderStatu
 pub(super) async fn get_provider(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    Query(query): Query<InstallTargetQuery>,
 ) -> Result<Json<ProviderStatus>, (StatusCode, Json<serde_json::Value>)> {
     if id == "codex-crp" {
         return Err(invalid_provider_id_error("codex-crp", "codex"));
@@ -120,6 +151,12 @@ pub(super) async fn get_provider(
         })),
     ))?;
     drop(map);
+    let target = installer::parse_install_target(query.target.as_deref()).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+    })?;
 
     let managed = installer::load_agent_server_config(&state.core.data_root)
         .await
@@ -132,13 +169,24 @@ pub(super) async fn get_provider(
     installer::apply_managed_install_details(&mut status, &managed);
     status.details.insert(
         "install_supported".into(),
-        if installer::is_supported_managed_provider(&matrix, &status.provider_id) {
+        if installer::is_supported_managed_provider_for_target(&matrix, &status.provider_id, target)
+        {
             "true".into()
         } else {
             "false".into()
         },
     );
-    if let Some(install_id) = state.find_running_install(&id).await {
+    status
+        .details
+        .insert("install_target".into(), target.as_str().to_string());
+    if let Some(bytes) =
+        installer::managed_install_download_size_bytes(&matrix, &status.provider_id, target)
+    {
+        status
+            .details
+            .insert("install_download_size_bytes".into(), bytes.to_string());
+    }
+    if let Some(install_id) = state.find_running_install(&id, Some(target)).await {
         status
             .details
             .insert("install_running".into(), "true".into());
@@ -3954,6 +4002,7 @@ pub(super) async fn fetch_codex_account_details(
 pub(super) struct InstallStartResponse {
     provider_id: String,
     install_id: InstallId,
+    target: InstallTarget,
 }
 
 #[derive(Debug, Deserialize)]
@@ -4045,7 +4094,26 @@ pub(super) async fn get_workspace_providers_bootstrap(
         ));
     }
 
-    let providers = providers_statuses_response(&state).await;
+    let install_target = match execution_effective::effective_execution_settings(
+        state.as_ref(),
+        ws_id,
+    )
+    .await
+    {
+        Ok(effective) if matches!(effective.mode, ExecutionMode::Container) => {
+            InstallTarget::Container
+        }
+        Ok(_) => InstallTarget::Host,
+        Err(error) => {
+            tracing::warn!(
+                    "providers bootstrap falling back to host install target for workspace {}: {error:#}",
+                    ws_id.0
+                );
+            InstallTarget::Host
+        }
+    };
+
+    let providers = providers_statuses_response(&state, install_target).await;
     let mut provider_options = HashMap::new();
     let mut provider_harness_config = HashMap::new();
     let ws_id_str = ws_id.0.to_string();
@@ -5228,25 +5296,38 @@ pub(super) async fn authenticate_provider_for_workspace(
 pub(super) async fn install_provider(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    Query(query): Query<InstallTargetQuery>,
 ) -> Result<Json<InstallStartResponse>, (StatusCode, Json<serde_json::Value>)> {
     if id == "codex-crp" {
         return Err(invalid_provider_id_error("codex-crp", "codex"));
     }
+    let target = installer::parse_install_target(query.target.as_deref()).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": e.to_string()
+            })),
+        )
+    })?;
+
     let matrix = crate::provider_matrix::load_matrix_cached(
         &state.core.data_root,
         &state.providers.matrix_cache,
     )
     .await;
-    if !installer::is_supported_managed_provider(&matrix, &id) {
+    if !installer::is_supported_managed_provider_for_target(&matrix, &id, target) {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
-                "error": format!("unsupported provider for managed install: {id}")
+                "error": format!(
+                    "unsupported provider for managed install target '{}': {id}",
+                    target.as_str()
+                )
             })),
         ));
     }
 
-    let (install_id, started_new) = state.start_install(id.clone()).await;
+    let (install_id, started_new) = state.start_install(id.clone(), Some(target)).await;
     if started_new {
         let state2 = state.clone();
         let provider_id = id.clone();
@@ -5255,6 +5336,7 @@ pub(super) async fn install_provider(
                 state2.clone(),
                 install_id,
                 provider_id.clone(),
+                target,
             )
             .await
             {
@@ -5266,6 +5348,7 @@ pub(super) async fn install_provider(
     Ok(Json(InstallStartResponse {
         provider_id: id,
         install_id,
+        target,
     }))
 }
 
@@ -5284,7 +5367,7 @@ pub(super) async fn install_lsp_server(
     }
 
     let install_key = format!("lsp:{id}");
-    let (install_id, started_new) = state.start_install(install_key).await;
+    let (install_id, started_new) = state.start_install(install_key, None).await;
     if started_new {
         let state2 = state.clone();
         let server_id = id.clone();
@@ -5309,7 +5392,10 @@ pub(super) async fn install_lsp_server(
 
 pub(super) async fn install_all_providers(
     State(state): State<Arc<AppState>>,
+    Query(query): Query<InstallTargetQuery>,
 ) -> Result<Json<Vec<InstallStartResponse>>, StatusCode> {
+    let target = installer::parse_install_target(query.target.as_deref())
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
     let mut out = Vec::new();
     let matrix = crate::provider_matrix::load_matrix_cached(
         &state.core.data_root,
@@ -5317,14 +5403,15 @@ pub(super) async fn install_all_providers(
     )
     .await;
     for entry in &matrix.providers {
-        if !installer::is_supported_managed_provider(&matrix, &entry.id) {
+        if !installer::is_supported_managed_provider_for_target(&matrix, &entry.id, target) {
             continue;
         }
         let id = entry.id.as_str();
-        if let Some(install_id) = state.find_running_install(id).await {
+        if let Some(install_id) = state.find_running_install(id, Some(target)).await {
             out.push(InstallStartResponse {
                 provider_id: id.to_string(),
                 install_id,
+                target,
             });
             continue;
         }
@@ -5336,7 +5423,7 @@ pub(super) async fn install_all_providers(
             }
         }
 
-        let (install_id, started_new) = state.start_install(id.to_string()).await;
+        let (install_id, started_new) = state.start_install(id.to_string(), Some(target)).await;
         if started_new {
             let state2 = state.clone();
             let provider_id = id.to_string();
@@ -5345,6 +5432,7 @@ pub(super) async fn install_all_providers(
                     state2.clone(),
                     install_id,
                     provider_id.clone(),
+                    target,
                 )
                 .await
                 {
@@ -5355,6 +5443,7 @@ pub(super) async fn install_all_providers(
         out.push(InstallStartResponse {
             provider_id: id.to_string(),
             install_id,
+            target,
         });
     }
     Ok(Json(out))
@@ -5399,6 +5488,19 @@ pub(super) async fn get_install(
         uuid::Uuid::parse_str(&install_id).map_err(|_| StatusCode::BAD_REQUEST)?;
     state
         .get_install_info(install_id)
+        .await
+        .map(Json)
+        .ok_or(StatusCode::NOT_FOUND)
+}
+
+pub(super) async fn cancel_install(
+    State(state): State<Arc<AppState>>,
+    Path(install_id): Path<String>,
+) -> Result<Json<InstallInfo>, StatusCode> {
+    let install_id: InstallId =
+        uuid::Uuid::parse_str(&install_id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    state
+        .cancel_install(install_id)
         .await
         .map(Json)
         .ok_or(StatusCode::NOT_FOUND)

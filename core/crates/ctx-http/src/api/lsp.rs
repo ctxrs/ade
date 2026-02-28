@@ -162,7 +162,7 @@ pub(super) async fn install_lsp_catalog_server(
     }
 
     let install_key = format!("lsp:{id}");
-    let (install_id, started_new) = state.start_install(install_key).await;
+    let (install_id, started_new) = state.start_install(install_key, None).await;
     if started_new {
         let state2 = state.clone();
         let catalog_id = id.clone();

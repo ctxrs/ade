@@ -7,6 +7,7 @@ import LauncherBrand from "../components/LauncherBrand";
 import {
   applyDaemonDesktopConnection,
   buildExecutionLaunchWsUrl,
+  cancelInstall,
   createWorkspace,
   getInstall,
   getExecutionLaunchStatus,
@@ -22,6 +23,8 @@ import {
   listWorkspaces,
   startExecutionLaunch,
   startExecutionRuntimePrewarm,
+  type InstallInfo,
+  type InstallTarget,
   type ExecutionLaunchLogLine,
   type ExecutionLaunchSnapshot,
   type ExecutionLaunchStreamEvent,
@@ -96,6 +99,14 @@ import {
 } from "./workspaceSetup/flowController";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
 import {
+  computeInstallPct,
+  formatByteSize,
+  installErrorSummary,
+  installTargetLabel,
+  parseInstallTarget,
+  providerInstallSizeBytes,
+} from "../utils/providerInstallUi";
+import {
   trackWizardAbandoned,
   trackWizardCompleted,
   trackWizardStarted,
@@ -126,8 +137,9 @@ type ImportInitDialogState = {
 
 type LocalInstallState = {
   installId: string;
-  state: "running" | "succeeded" | "failed";
+  state: InstallInfo["state"];
   pct: number | null;
+  errorCode?: InstallInfo["error_code"];
   error?: string;
 };
 
@@ -139,12 +151,16 @@ type HarnessInstallProviderRow = {
   installSupported: boolean;
   installRunning: boolean;
   installId?: string;
+  installTarget?: InstallTarget;
+  installSizeBytes?: number | null;
 };
 
 type HarnessInstallRowState = {
   installId: string;
-  state: "running" | "succeeded" | "failed";
+  state: InstallInfo["state"];
   pct: number | null;
+  target?: InstallTarget;
+  errorCode?: InstallInfo["error_code"];
   error?: string;
 };
 
@@ -516,6 +532,8 @@ export default function WorkspaceSetupPage() {
     : harnessSelectedCount > 0
       ? `${harnessSelectedCount} selected for download`
       : "Skipped for now";
+  const selectedHarnessInstallTarget: InstallTarget =
+    selections.container && selections.container !== "no-container" ? "container" : "host";
   const titlingProbeResolved = !selections.location || titlingProbeDone || !canProbeTitling;
   const titlingFlowGateSatisfied = step.key === "location" || step.key === "auth-import" || titlingProbeResolved;
   const canAdvance = (!requiresSelection || hasSelection)
@@ -636,6 +654,7 @@ export default function WorkspaceSetupPage() {
     const installSupported = provider.details?.install_supported === "true";
     if (!installSupported) return null;
     const harness = harnessByProviderId.get(provider.provider_id);
+    const installTarget = parseInstallTarget(provider.details?.install_target) ?? selectedHarnessInstallTarget;
     return {
       providerId: provider.provider_id,
       label: harness?.label ?? provider.provider_id,
@@ -644,6 +663,8 @@ export default function WorkspaceSetupPage() {
       installSupported,
       installRunning: provider.details?.install_running === "true",
       installId: provider.details?.install_id,
+      installTarget,
+      installSizeBytes: providerInstallSizeBytes(provider),
     };
   };
 
@@ -654,18 +675,15 @@ export default function WorkspaceSetupPage() {
     const poll = async () => {
       try {
         const info = await getInstall(installId);
-        const pct =
-          typeof info.last_event?.bytes === "number"
-          && typeof info.last_event?.total_bytes === "number"
-          && info.last_event.total_bytes > 0
-            ? Math.max(0, Math.min(100, Math.round((info.last_event.bytes / info.last_event.total_bytes) * 100)))
-            : null;
+        const pct = computeInstallPct(info, harnessInstallRows[providerId]?.pct ?? null);
         setHarnessInstallRows((prev) => ({
           ...prev,
           [providerId]: {
             installId,
             state: info.state,
             pct,
+            target: info.target,
+            errorCode: info.error_code,
             error: info.error,
           },
         }));
@@ -687,28 +705,51 @@ export default function WorkspaceSetupPage() {
   const waitForHarnessInstallCompletion = async (
     providerId: string,
     installId: string,
-  ): Promise<{ state: "succeeded" | "failed"; error?: string }> => {
+  ): Promise<{
+    state: Extract<InstallInfo["state"], "succeeded" | "failed" | "cancelled">;
+    error?: string;
+    errorCode?: InstallInfo["error_code"];
+  }> => {
     while (true) {
       const info = await getInstall(installId);
-      const pct =
-        typeof info.last_event?.bytes === "number"
-        && typeof info.last_event?.total_bytes === "number"
-        && info.last_event.total_bytes > 0
-          ? Math.max(0, Math.min(100, Math.round((info.last_event.bytes / info.last_event.total_bytes) * 100)))
-          : null;
+      const pct = computeInstallPct(info, harnessInstallRows[providerId]?.pct ?? null);
       setHarnessInstallRows((prev) => ({
         ...prev,
         [providerId]: {
           installId,
           state: info.state,
           pct,
+          target: info.target,
+          errorCode: info.error_code,
           error: info.error,
         },
       }));
       if (info.state !== "running") {
-        return { state: info.state, error: info.error };
+        return { state: info.state, error: info.error, errorCode: info.error_code };
       }
       await sleepMs(900);
+    }
+  };
+
+  const cancelHarnessInstall = async (providerId: string) => {
+    const installId = harnessInstallRows[providerId]?.installId
+      ?? harnessInstallCandidates.find((candidate) => candidate.providerId === providerId)?.installId;
+    if (!installId) return;
+    try {
+      const info = await cancelInstall(installId);
+      setHarnessInstallRows((prev) => ({
+        ...prev,
+        [providerId]: {
+          installId,
+          state: info.state,
+          pct: computeInstallPct(info, prev[providerId]?.pct ?? null),
+          target: info.target,
+          errorCode: info.error_code,
+          error: info.error,
+        },
+      }));
+    } catch (error) {
+      setHarnessInstallError(messageFromError(error));
     }
   };
 
@@ -754,16 +795,12 @@ export default function WorkspaceSetupPage() {
       try {
         const info = await getInstall(installId);
         if (generation !== titlingInstallPollGenerationRef.current) return;
-        const pct =
-          typeof info.last_event?.bytes === "number"
-          && typeof info.last_event?.total_bytes === "number"
-          && info.last_event.total_bytes > 0
-            ? Math.max(0, Math.min(100, Math.round((info.last_event.bytes / info.last_event.total_bytes) * 100)))
-            : null;
+        const pct = computeInstallPct(info, titlingLocalInstall?.pct ?? null);
         setTitlingLocalInstall({
           installId,
           state: info.state,
           pct,
+          errorCode: info.error_code,
           error: info.error,
         });
         if (info.state !== "running") {
@@ -1055,9 +1092,11 @@ export default function WorkspaceSetupPage() {
       if (remoteStatusRef.current !== "connected") return [];
     }
 
+    const installTarget: InstallTarget =
+      selections.container && selections.container !== "no-container" ? "container" : "host";
     const scanKey = target === "local"
-      ? "local|@"
-      : `remote|${parsedRemote?.user ?? ""}@${parsedRemote?.host ?? ""}`;
+      ? `local|@|${installTarget}`
+      : `remote|${parsedRemote?.user ?? ""}@${parsedRemote?.host ?? ""}|${installTarget}`;
     if (harnessInstallScannedKey === scanKey) return harnessInstallCandidates;
 
     if (
@@ -1075,7 +1114,7 @@ export default function WorkspaceSetupPage() {
     const scanPromise = (async () => {
       try {
         await connectDaemonForImport(target);
-        const providers = await listProviders();
+        const providers = await listProviders(installTarget);
         if (!isCurrentFlowRunToken(harnessInstallScanRunRef.current, scanRun)) return [];
         const rows = providers
           .map((provider) => mapHarnessInstallCandidate(provider))
@@ -1124,6 +1163,7 @@ export default function WorkspaceSetupPage() {
     parsedRemote?.user,
     parsedRemotePort,
     remoteDataDirInput,
+    selections.container,
   ]);
 
   const shouldAutoAdvance = (stepKey: string, optionId: string): boolean => {
@@ -1846,7 +1886,7 @@ export default function WorkspaceSetupPage() {
       await connectDaemonForImport();
       const results = await Promise.all(
         selectedRows.map(async (row) => {
-          const started = await installProvider(row.providerId);
+          const started = await installProvider(row.providerId, selectedHarnessInstallTarget);
           const installId = started.install_id;
           setHarnessInstallRows((prev) => ({
             ...prev,
@@ -1854,6 +1894,7 @@ export default function WorkspaceSetupPage() {
               installId,
               state: "running",
               pct: null,
+              target: started.target,
             },
           }));
           const done = await waitForHarnessInstallCompletion(row.providerId, installId);
@@ -1865,7 +1906,8 @@ export default function WorkspaceSetupPage() {
         .filter((result) => result.done.state !== "succeeded")
         .map((result) => {
           const label = harnessInstallCandidates.find((candidate) => candidate.providerId === result.providerId)?.label ?? result.providerId;
-          return `${label}${result.done.error ? `: ${result.done.error}` : ""}`;
+          const summary = installErrorSummary(result.done.errorCode, result.done.error);
+          return `${label}: ${summary}`;
         });
       if (failures.length > 0) {
         setHarnessInstallError(`Some downloads failed. ${failures.join(" ; ")}`);
@@ -2810,6 +2852,13 @@ export default function WorkspaceSetupPage() {
                           const running = installUi?.state === "running" || candidate.installRunning;
                           const disabled = !candidate.installSupported || installedReady || running || harnessInstallBusy;
                           const harness = harnessByProviderId.get(candidate.providerId);
+                          const installTarget = installUi?.target ?? candidate.installTarget ?? selectedHarnessInstallTarget;
+                          const sizeLabel = formatByteSize(candidate.installSizeBytes ?? null);
+                          const installContextLabel = `${installTargetLabel(installTarget)}${sizeLabel ? ` · ${sizeLabel}` : ""}`;
+                          const installFailureMessage =
+                            installUi?.state === "failed" || installUi?.state === "cancelled"
+                              ? installErrorSummary(installUi.errorCode, installUi.error)
+                              : null;
                           return (
                             <label
                               key={candidate.providerId}
@@ -2843,13 +2892,29 @@ export default function WorkspaceSetupPage() {
                               </div>
                               <div className="wizard-auth-import-path">
                                 {installedReady
-                                  ? "Installed"
+                                  ? `Installed · ${installContextLabel}`
                                   : running
-                                    ? `Downloading${typeof installUi?.pct === "number" ? ` (${installUi.pct}%)` : ""}`
-                                    : "Not installed"}
+                                    ? `Downloading${typeof installUi?.pct === "number" ? ` (${installUi.pct}%)` : ""} · ${installContextLabel}`
+                                    : `Not installed · ${installContextLabel}`}
                               </div>
-                              {installUi?.state === "failed" && installUi.error ? (
-                                <div className="wizard-error wizard-note--tight">{installUi.error}</div>
+                              {running ? (
+                                <div className="wizard-auth-import-actions">
+                                  <button
+                                    type="button"
+                                    className="wizard-inline-action"
+                                    onClick={(event) => {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      void cancelHarnessInstall(candidate.providerId);
+                                    }}
+                                    disabled={harnessInstallBusy !== true}
+                                  >
+                                    Cancel install
+                                  </button>
+                                </div>
+                              ) : null}
+                              {installFailureMessage ? (
+                                <div className="wizard-error wizard-note--tight">{installFailureMessage}</div>
                               ) : null}
                             </label>
                           );
@@ -2926,6 +2991,8 @@ export default function WorkspaceSetupPage() {
                             ? "Starting local model download…"
                             : titlingLocalInstall?.state === "running"
                               ? `Installing local model${typeof titlingLocalInstall.pct === "number" ? ` (${titlingLocalInstall.pct}%)` : ""}. This continues in background.`
+                              : titlingLocalInstall?.state === "cancelled"
+                                ? "Local model install cancelled."
                               : titlingLocalInstall?.state === "failed"
                                 ? `Local model install failed${titlingLocalInstall.error ? `: ${titlingLocalInstall.error}` : "."}`
                                 : "Local model is not ready yet. Titles use fallback until install completes."}

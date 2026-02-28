@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   authenticateProviderForWorkspace,
+  cancelInstall,
   completeClaudeLogin,
   deleteAmpAccount,
   deleteClaudeAccount,
@@ -74,7 +75,6 @@ import {
   refreshProvidersBootstrap,
 } from "../../../state/providersBootstrapStore";
 import type { HarnessAuthModalState, InstallSession } from "../../SettingsPage.types";
-import { clampPct } from "../../SettingsPage.utils";
 import { defaultEndpointBaseUrlForProvider, type HarnessAuthRow } from "../harnessAuthRows";
 import {
   defaultEndpointProviderPresetForHarness,
@@ -84,6 +84,7 @@ import {
   nextDefaultEndpointName,
   nextTokenEndpointName,
 } from "../harnessEndpointProviders";
+import { computeInstallPct, parseInstallTarget } from "../../../utils/providerInstallUi";
 
 type UseHarnessAuthenticationControllerArgs = {
   workspaceId: string | null;
@@ -96,6 +97,7 @@ type HarnessAuthenticationController = {
   installBusy: string | null;
   onInstallAll: () => Promise<void>;
   onInstall: (providerId: string) => Promise<void>;
+  onCancelInstall: (providerId: string) => Promise<void>;
   providerHarnessConfig: Record<string, HarnessProviderSourceConfig | undefined>;
   providerHarnessBusy: Record<string, boolean>;
   codexAccounts: CodexAccountsResponse | null;
@@ -377,6 +379,8 @@ export function useHarnessAuthenticationController({
   const [ampAccountsBusy, setAmpAccountsBusy] = useState(false);
 
   const installPollTimeoutsRef = useRef<Record<string, number>>({});
+  const installsRef = useRef<Record<string, InstallSession>>({});
+  const providersByIdRef = useRef<Record<string, ProviderStatus>>({});
   const providerHarnessConfigRef = useRef<Record<string, HarnessProviderSourceConfig | undefined>>({});
   const providerHarnessBusyRef = useRef<Record<string, boolean>>({});
   const providerEndpointUnsupportedRef = useRef<Record<string, boolean>>({});
@@ -399,6 +403,16 @@ export function useHarnessAuthenticationController({
   useEffect(() => {
     providerEndpointUnsupportedRef.current = providerEndpointUnsupported;
   }, [providerEndpointUnsupported]);
+
+  useEffect(() => {
+    installsRef.current = installs;
+  }, [installs]);
+
+  useEffect(() => {
+    providersByIdRef.current = Object.fromEntries(
+      providers.map((provider) => [provider.provider_id, provider]),
+    );
+  }, [providers]);
 
   const markProviderEndpointUnsupported = useCallback((providerId: string) => {
     setProviderEndpointUnsupported((prev) => {
@@ -480,7 +494,7 @@ export function useHarnessAuthenticationController({
       return bootstrap?.providers ?? [];
     }
     try {
-      const next = await listProviders();
+      const next = await listProviders("host");
       setProviders(next);
       return next;
     } catch (error) {
@@ -1916,26 +1930,25 @@ export function useHarnessAuthenticationController({
         installId,
         state: "running",
         pct: prev[providerId]?.pct ?? null,
+        target: prev[providerId]?.target,
+        errorCode: undefined,
         streamError: prev[providerId]?.streamError,
-        error: prev[providerId]?.error,
+        error: undefined,
       },
     }));
 
     const poll = async () => {
       try {
         const info = await getInstall(installId);
-        const pct =
-          typeof info.last_event?.bytes === "number"
-          && typeof info.last_event?.total_bytes === "number"
-          && info.last_event.total_bytes > 0
-            ? clampPct(Math.round((info.last_event.bytes / info.last_event.total_bytes) * 100))
-            : null;
+        const pct = computeInstallPct(info, installsRef.current[providerId]?.pct ?? null);
         setInstalls((prev) => ({
           ...prev,
           [providerId]: {
             installId,
             state: info.state,
             pct,
+            target: info.target,
+            errorCode: info.error_code,
             streamError: prev[providerId]?.streamError,
             error: info.error,
           },
@@ -1964,20 +1977,26 @@ export function useHarnessAuthenticationController({
     setInstallBusy(providerId);
     setProviderError(null);
     try {
-      const { install_id } = await installProvider(providerId);
+      const target =
+        parseInstallTarget(providers.find((provider) => provider.provider_id === providerId)?.details?.install_target)
+        ?? "host";
+      const { install_id } = await installProvider(providerId, target);
       await attachInstall(providerId, install_id);
     } catch (error) {
       setProviderError(messageFromError(error));
     } finally {
       setInstallBusy(null);
     }
-  }, [attachInstall]);
+  }, [attachInstall, providers]);
 
   const onInstallAll = useCallback(async () => {
     setInstallBusy("all");
     setProviderError(null);
     try {
-      const started = await installAllProviders();
+      const target = parseInstallTarget(
+        providers.find((provider) => provider.details?.install_target)?.details?.install_target,
+      ) ?? "host";
+      const started = await installAllProviders(target);
       for (const install of started) {
         attachInstall(install.provider_id, install.install_id).catch(() => {});
       }
@@ -1986,7 +2005,31 @@ export function useHarnessAuthenticationController({
     } finally {
       setInstallBusy(null);
     }
-  }, [attachInstall]);
+  }, [attachInstall, providers]);
+
+  const onCancelInstall = useCallback(async (providerId: string) => {
+    setProviderError(null);
+    const installId = installsRef.current[providerId]?.installId ?? providersByIdRef.current[providerId]?.details?.install_id;
+    if (!installId) return;
+    try {
+      const info = await cancelInstall(installId);
+      setInstalls((prev) => ({
+        ...prev,
+        [providerId]: {
+          installId,
+          state: info.state,
+          pct: computeInstallPct(info, prev[providerId]?.pct ?? null),
+          target: info.target,
+          errorCode: info.error_code,
+          streamError: prev[providerId]?.streamError,
+          error: info.error,
+        },
+      }));
+      await refreshProviders();
+    } catch (error) {
+      setProviderError(messageFromError(error));
+    }
+  }, [refreshProviders]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -2060,6 +2103,7 @@ export function useHarnessAuthenticationController({
     installBusy,
     onInstallAll,
     onInstall,
+    onCancelInstall,
     providerHarnessConfig,
     providerHarnessBusy,
     codexAccounts,

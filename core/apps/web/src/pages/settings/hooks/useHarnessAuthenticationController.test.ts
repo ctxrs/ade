@@ -265,13 +265,13 @@ describe("supportsHarnessSubscriptionAuth", () => {
   it("returns false for API-key-only providers", () => {
     expect(supportsHarnessSubscriptionAuth("opencode")).toBe(false);
     expect(supportsHarnessSubscriptionAuth("pi")).toBe(false);
-    expect(supportsHarnessSubscriptionAuth("cursor")).toBe(false);
   });
 
   it("returns true for subscription-capable providers", () => {
     expect(supportsHarnessSubscriptionAuth("codex")).toBe(true);
     expect(supportsHarnessSubscriptionAuth("claude-crp")).toBe(true);
     expect(supportsHarnessSubscriptionAuth("gemini")).toBe(true);
+    expect(supportsHarnessSubscriptionAuth("cursor")).toBe(true);
   });
 });
 
@@ -279,11 +279,11 @@ describe("resolveHarnessAuthModalInitialStage", () => {
   it("routes API-key-only providers directly to api_key", () => {
     expect(resolveHarnessAuthModalInitialStage("opencode")).toBe("api_key");
     expect(resolveHarnessAuthModalInitialStage("pi")).toBe("api_key");
-    expect(resolveHarnessAuthModalInitialStage("cursor")).toBe("api_key");
   });
 
   it("keeps choose stage for providers supporting both methods", () => {
     expect(resolveHarnessAuthModalInitialStage("codex")).toBe("choose");
     expect(resolveHarnessAuthModalInitialStage("claude-crp")).toBe("choose");
+    expect(resolveHarnessAuthModalInitialStage("cursor")).toBe("choose");
   });
 });

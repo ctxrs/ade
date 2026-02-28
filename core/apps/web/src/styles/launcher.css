@@ -936,6 +936,30 @@
   word-break: break-all;
 }
 
+.wizard-auth-import-actions {
+  padding-left: 24px;
+}
+
+.wizard-inline-action {
+  appearance: none;
+  border: 1px solid rgba(231, 231, 231, 0.22);
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(231, 231, 231, 0.84);
+  font-size: 11px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+
+.wizard-inline-action:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.wizard-inline-action:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .wizard-skip {
   appearance: none;
   border: none;

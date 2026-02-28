@@ -1,5 +1,11 @@
 import type React from "react";
-import type { MessageAttachment, ProviderOptions, ProviderStatus } from "../../api/client";
+import type {
+  InstallErrorCode,
+  InstallTarget,
+  MessageAttachment,
+  ProviderOptions,
+  ProviderStatus,
+} from "../../api/client";
 import type { SlashCommandDescriptor } from "../../state/useComposerAutocomplete";
 import type { SessionViewVerbosity } from "../../state/uiStateStore";
 import type { HarnessCatalogEntry } from "../../utils/harnessCatalog";
@@ -57,12 +63,16 @@ export type NewSessionProps = SharedProps & {
     string,
     | {
         installId: string;
-        state: "running" | "succeeded" | "failed";
+        state: "running" | "succeeded" | "failed" | "cancelled";
         pct: number | null;
+        target?: InstallTarget;
+        errorCode?: InstallErrorCode;
+        error?: string;
       }
     | undefined
   >;
   onInstallProvider: (providerId: string) => void;
+  onCancelInstallProvider?: (providerId: string) => void;
   onInstallAllProviders: () => void;
   installAllBusy?: boolean;
   providerOptions: Record<string, ProviderOptions | undefined>;

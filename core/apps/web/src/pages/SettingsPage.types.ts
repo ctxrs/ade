@@ -28,6 +28,8 @@ export type InstallSession = {
   installId: string;
   state: InstallInfo["state"];
   pct: number | null;
+  target?: InstallInfo["target"];
+  errorCode?: InstallInfo["error_code"];
   streamError?: string;
   error?: string;
 };

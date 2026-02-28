@@ -66,7 +66,7 @@ async fn generate_title_local_real_runtime() {
     );
 
     let (install_id, _started) = state
-        .start_install("title_generation_local".to_string())
+        .start_install("title_generation_local".to_string(), None)
         .await;
     installer::install_title_generation_local_with_progress(state.clone(), install_id)
         .await

@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import {
+  cancelInstall,
   getProviderOptions,
   getInstall,
   installAllProviders,
   installProvider,
   type InstallInfo,
+  type InstallTarget,
   type ProviderOptions,
   type ProviderStatus,
 } from "../../api/client";
@@ -13,11 +15,15 @@ import {
   refreshProvidersBootstrap,
 } from "../../state/providersBootstrapStore";
 import type { DraftHarness } from "../../components/WorkbenchComposer";
+import { computeInstallPct, parseInstallTarget } from "../../utils/providerInstallUi";
 
 type ProviderInstallState = {
   installId: string;
   state: InstallInfo["state"];
   pct: number | null;
+  target?: InstallTarget;
+  errorCode?: InstallInfo["error_code"];
+  error?: string;
 };
 
 type UseWorkbenchProvidersArgs = {
@@ -158,6 +164,9 @@ export function useWorkbenchProviders({
           installId,
           state: "running",
           pct: prev[providerId]?.pct ?? 0,
+          target: prev[providerId]?.target,
+          errorCode: undefined,
+          error: undefined,
         },
       };
     });
@@ -189,23 +198,6 @@ export function useWorkbenchProviders({
     );
     if (active.length === 0) return;
 
-    const stagePct: Record<string, number> = {
-      start: 2,
-      download: 10,
-      node: 15,
-      node_download: 18,
-      node_extract: 22,
-      prepare: 25,
-      venv: 35,
-      npm_install: 65,
-      pip_install: 70,
-      extract: 78,
-      entrypoint: 80,
-      inspect: 90,
-      refresh: 95,
-      registry: 98,
-    };
-
     let cancelled = false;
     const tick = async () => {
       if (cancelled) return;
@@ -215,20 +207,7 @@ export function useWorkbenchProviders({
         active.map(async ([providerId, install]) => {
           try {
             const info = await getInstall(install.installId);
-            const last = info.last_event;
-            const pct =
-              typeof last?.bytes === "number" && typeof last?.total_bytes === "number" && last.total_bytes > 0
-                ? (() => {
-                    const raw = Math.max(0, Math.min(100, Math.round((last.bytes / last.total_bytes) * 100)));
-                    const stage = typeof last?.stage === "string" ? last.stage : "";
-                    if (stage.includes("download")) {
-                      return Math.round((raw / 100) * 75);
-                    }
-                    return raw;
-                  })()
-                : typeof last?.stage === "string"
-                  ? (stagePct[last.stage] ?? install.pct ?? 0)
-                  : (install.pct ?? 0);
+            const pct = computeInstallPct(info, install.pct);
 
             setProviderInstallsById((prev) => {
               const existing = prev[providerId];
@@ -241,7 +220,14 @@ export function useWorkbenchProviders({
                     : (existing.pct ?? 0);
               return {
                 ...prev,
-                [providerId]: { installId: install.installId, state: info.state, pct: stablePct },
+                [providerId]: {
+                  installId: install.installId,
+                  state: info.state,
+                  pct: stablePct,
+                  target: info.target,
+                  errorCode: info.error_code,
+                  error: info.error,
+                },
               };
             });
 
@@ -293,20 +279,24 @@ export function useWorkbenchProviders({
     async (providerId: string) => {
       onStartError(null);
       try {
-        const { install_id: installId } = await installProvider(providerId);
+        const target = parseInstallTarget(providersById[providerId]?.details?.install_target);
+        const { install_id: installId } = await installProvider(providerId, target);
         attachProviderInstall(providerId, installId);
       } catch (error: unknown) {
         onStartError(toErrorMessage(error));
       }
     },
-    [attachProviderInstall, onStartError],
+    [attachProviderInstall, onStartError, providersById],
   );
 
   const installAllProvidersFromMenu = useCallback(async () => {
     onStartError(null);
     setInstallAllBusy(true);
     try {
-      const installs = await installAllProviders();
+      const target = parseInstallTarget(
+        providers.find((provider) => provider.details?.install_target)?.details?.install_target,
+      ) ?? "host";
+      const installs = await installAllProviders(target);
       for (const { provider_id: providerId, install_id: installId } of installs) {
         attachProviderInstall(providerId, installId);
       }
@@ -315,7 +305,32 @@ export function useWorkbenchProviders({
     } finally {
       setInstallAllBusy(false);
     }
-  }, [attachProviderInstall, onStartError]);
+  }, [attachProviderInstall, onStartError, providers]);
+
+  const cancelProviderInstallFromMenu = useCallback(
+    async (providerId: string) => {
+      onStartError(null);
+      const installId = providerInstallsById[providerId]?.installId ?? providersById[providerId]?.details?.install_id;
+      if (!installId) return;
+      try {
+        const info = await cancelInstall(installId);
+        setProviderInstallsById((prev) => ({
+          ...prev,
+          [providerId]: {
+            installId,
+            state: info.state,
+            pct: computeInstallPct(info, prev[providerId]?.pct ?? null),
+            target: info.target,
+            errorCode: info.error_code,
+            error: info.error,
+          },
+        }));
+      } catch (error: unknown) {
+        onStartError(toErrorMessage(error));
+      }
+    },
+    [onStartError, providerInstallsById, providersById],
+  );
 
   useEffect(() => {
     if (Object.keys(providerInstallsById).length === 0) return;
@@ -400,6 +415,7 @@ export function useWorkbenchProviders({
     providerOptions,
     installAllBusy,
     installProviderFromMenu,
+    cancelProviderInstallFromMenu,
     installAllProvidersFromMenu,
     ensureProviderAuthSummary,
   };
