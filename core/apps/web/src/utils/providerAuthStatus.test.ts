@@ -36,11 +36,11 @@ describe("hasConfiguredHarnessAuth", () => {
     expect(hasConfiguredHarnessAuth("amp", options)).toBe(true);
   });
 
-  it("returns true for codex/cursor unmanaged subscription fallback modes", () => {
+  it("returns true for codex unmanaged subscription fallback mode only", () => {
     const sourceSubscription = {
       ...baseOptions(),
       source: {
-        provider_id: "amp",
+        provider_id: "codex",
         selected_source_kind: "subscription" as const,
         selected_endpoint_id: null,
         endpoints: [],
@@ -50,8 +50,11 @@ describe("hasConfiguredHarnessAuth", () => {
       ...baseOptions(),
       auth_mode: "subscription" as const,
     };
+    expect(hasConfiguredHarnessAuth("codex", sourceSubscription)).toBe(true);
+    expect(hasConfiguredHarnessAuth("cursor", sourceSubscription)).toBe(false);
     expect(hasConfiguredHarnessAuth("amp", sourceSubscription)).toBe(false);
     expect(hasConfiguredHarnessAuth("codex", authModeSubscription)).toBe(true);
+    expect(hasConfiguredHarnessAuth("cursor", authModeSubscription)).toBe(false);
     expect(hasConfiguredHarnessAuth("amp", authModeSubscription)).toBe(false);
   });
 

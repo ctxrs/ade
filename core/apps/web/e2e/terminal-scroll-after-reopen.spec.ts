@@ -4,7 +4,6 @@ import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
-import { selectHarnessBySearch } from "./utils/harnessEndpointAuth";
 import type { Locator, Page } from "playwright/test";
 
 const AUTH_TOKEN = process.env.CTX_E2E_AUTH_TOKEN ?? "ctx-e2e-auth-token";
@@ -30,6 +29,14 @@ type TerminalRegistryWindow = Window & {
 type TerminalSession = {
   id: unknown;
   status: string;
+};
+
+type TaskRecord = {
+  id: string;
+};
+
+type SessionRecord = {
+  id: string;
 };
 
 const readTerminalId = (value: unknown): string | undefined => {
@@ -76,10 +83,8 @@ test("terminal scroll stays consistent after closing and reopening panel while o
     token: AUTH_TOKEN,
   });
 
-  // Create a task so the workbench (and terminal toggle) is visible.
-  await selectHarnessBySearch(page, "fake", /fake/i);
-  await page.locator("textarea.wb-composer-textarea").first().fill("terminal scroll test");
-  await page.getByRole("button", { name: "Send" }).click();
+  // Seed a deterministic task/session so this test only validates terminal behavior.
+  await createTaskAndSessionForWorkspace(page, workspaceId);
 
   const rows = page.locator(".wb-task-row");
   await expect(rows).toHaveCount(1, { timeout: 20_000 });
@@ -190,6 +195,31 @@ async function createStreamingWorkspaceTerminal(
     .toBe("running");
 
   return terminalId;
+}
+
+async function createTaskAndSessionForWorkspace(page: Page, workspaceId: string): Promise<void> {
+  const taskResp = await page.request.post(`/api/workspaces/${workspaceId}/tasks`, {
+    headers: { authorization: `Bearer ${AUTH_TOKEN}` },
+    data: {
+      title: "terminal scroll test",
+      create_default_session: false,
+    },
+  });
+  expect(taskResp.ok()).toBeTruthy();
+  const task = (await taskResp.json()) as TaskRecord;
+  if (!task.id) throw new Error("failed to parse seeded task id");
+
+  const sessionResp = await page.request.post(`/api/tasks/${task.id}/sessions`, {
+    headers: { authorization: `Bearer ${AUTH_TOKEN}` },
+    data: {
+      provider_id: "fake",
+      model_id: "fake-model",
+      env_target: "worktree",
+    },
+  });
+  expect(sessionResp.ok()).toBeTruthy();
+  const session = (await sessionResp.json()) as SessionRecord;
+  if (!session.id) throw new Error("failed to parse seeded session id");
 }
 
 async function openTerminalPanel(page: Page) {

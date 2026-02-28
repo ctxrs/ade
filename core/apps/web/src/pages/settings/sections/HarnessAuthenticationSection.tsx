@@ -58,7 +58,6 @@ export function subscriptionPrimaryActionLabel(modal: HarnessAuthModalState): st
   }
   if (
     modal.provider_id === "codex"
-    || modal.provider_id === "cursor"
     || modal.provider_id === "auggie"
     || modal.provider_id === "amp"
     || modal.provider_id === "gemini"
@@ -770,8 +769,6 @@ export function HarnessAuthenticationSection({
                             ? "Paste a GitHub token with Copilot entitlement for the managed Copilot account."
                             : harnessAuthModal.provider_id === "kiro"
                               ? "Sign in with Kiro in your browser to capture managed OAuth credentials automatically."
-                              : harnessAuthModal.provider_id === "cursor"
-                                ? "Sign in with Cursor on this host (unmanaged)."
                       : "Authenticate this harness for the selected workspace."}
                 </div>
                 {harnessAuthModal.provider_id === "claude-crp" ? (

@@ -15,12 +15,12 @@ export function hasConfiguredHarnessAuth(
 
   const unmanagedSubscriptionSelected =
     providerOptions.source?.selected_source_kind === "subscription"
-    && (providerId === "cursor" || providerId === "codex");
+    && providerId === "codex";
   if (unmanagedSubscriptionSelected) return true;
 
   const unmanagedSubscriptionAuthMode =
     providerOptions.auth_mode === "subscription"
-    && (providerId === "cursor" || providerId === "codex");
+    && providerId === "codex";
   if (unmanagedSubscriptionAuthMode) return true;
 
   return false;

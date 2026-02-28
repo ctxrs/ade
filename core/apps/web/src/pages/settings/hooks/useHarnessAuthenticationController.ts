@@ -180,7 +180,6 @@ const HARNESSES_WITH_SUBSCRIPTION_AUTH = new Set([
   "amp",
   "copilot",
   "kiro",
-  "cursor",
   "auggie",
 ]);
 

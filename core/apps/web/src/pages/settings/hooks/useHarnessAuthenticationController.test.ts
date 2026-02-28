@@ -265,6 +265,7 @@ describe("supportsHarnessSubscriptionAuth", () => {
   it("returns false for API-key-only providers", () => {
     expect(supportsHarnessSubscriptionAuth("opencode")).toBe(false);
     expect(supportsHarnessSubscriptionAuth("pi")).toBe(false);
+    expect(supportsHarnessSubscriptionAuth("cursor")).toBe(false);
   });
 
   it("returns true for subscription-capable providers", () => {
@@ -278,6 +279,7 @@ describe("resolveHarnessAuthModalInitialStage", () => {
   it("routes API-key-only providers directly to api_key", () => {
     expect(resolveHarnessAuthModalInitialStage("opencode")).toBe("api_key");
     expect(resolveHarnessAuthModalInitialStage("pi")).toBe("api_key");
+    expect(resolveHarnessAuthModalInitialStage("cursor")).toBe("api_key");
   });
 
   it("keeps choose stage for providers supporting both methods", () => {

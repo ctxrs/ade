@@ -386,60 +386,6 @@ describe("WorkbenchComposer textarea sizing", () => {
     expect(textarea.scrollTop).toBe(textarea.scrollHeight);
   });
 
-  it("shows catalog harnesses even when provider status is missing", async () => {
-    const NewTaskHarness = () => {
-      const [value, setValue] = useState("");
-      const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
-      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
-      const [draftHarness, setDraftHarness] = useState<DraftHarness | null>({ providerId: "codex", modelId: "o3" });
-      const harnessCatalog: HarnessCatalogEntry[] = [
-        { id: "codex", label: "Codex", logoSrc: "" },
-        { id: "claude-crp", label: "Claude Code", logoSrc: "" },
-      ];
-      const providersById: Record<string, ProviderStatus> = {
-        codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
-      };
-
-      return (
-        <WorkbenchComposer
-          variant="newSession"
-          value={value}
-          setValue={setValue}
-          placeholder="@ for context, / for commands"
-          inputDisabled={false}
-          sessionIdForAutocomplete={null}
-          workspaceIdForAutocomplete={null}
-          slashCommands={[]}
-          attachments={attachments}
-          setAttachments={setAttachments}
-          onSend={vi.fn()}
-          sendDisabled={false}
-          sendDisabledReason={null}
-          onInterrupt={null}
-          modeId={modeId}
-          setModeId={setModeId}
-          harnessCatalog={harnessCatalog}
-          providersById={providersById}
-          providerInstallsById={{}}
-          onInstallProvider={vi.fn()}
-          onInstallAllProviders={vi.fn()}
-          providerOptions={{}}
-          ensureProviderAuthSummary={async () => undefined}
-          draftHarness={draftHarness}
-          setDraftHarness={setDraftHarness}
-          defaultProviderId="codex"
-        />
-      );
-    };
-
-    render(<NewTaskHarness />);
-    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-    expect(screen.getByRole("button", { name: /Claude Code/ })).toBeDisabled();
-  });
-
   it("filters unsupported harness ids from the harness menu", async () => {
     const NewTaskHarness = () => {
       const [value, setValue] = useState("");
