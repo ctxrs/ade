@@ -9,7 +9,6 @@ import type {
   HarnessEndpointRecord,
   HarnessSourceKind,
   KimiAccountEntry,
-  KiroAccountEntry,
   MistralAccountEntry,
   QwenAccountEntry,
 } from "../../api/client";
@@ -51,8 +50,6 @@ type BuildHarnessAuthRowsArgs = {
   mistral_active_account_id?: string | null;
   copilot_accounts: CopilotAccountEntry[];
   copilot_active_account_id?: string | null;
-  kiro_accounts: KiroAccountEntry[];
-  kiro_active_account_id?: string | null;
   cursor_accounts: CursorAccountEntry[];
   cursor_active_account_id?: string | null;
   amp_accounts?: AmpAccountEntry[];
@@ -103,18 +100,11 @@ const copilotAccountLabel = (account: CopilotAccountEntry): string => {
   return account.id;
 };
 
-const kiroAccountLabel = (account: KiroAccountEntry): string => {
-  if (account.email && account.email.trim()) return account.email.trim();
-  if (account.label.trim()) return account.label.trim();
-  return account.id;
-};
-
 const cursorAccountLabel = (account: CursorAccountEntry): string => {
   if (account.email && account.email.trim()) return account.email.trim();
   if (account.label.trim()) return account.label.trim();
   return account.id;
 };
-
 const ampAccountLabel = (account: AmpAccountEntry): string => {
   if (account.email && account.email.trim()) return account.email.trim();
   if (account.label.trim()) return account.label.trim();
@@ -152,8 +142,6 @@ export const buildHarnessAuthRows = ({
   mistral_active_account_id,
   copilot_accounts,
   copilot_active_account_id,
-  kiro_accounts,
-  kiro_active_account_id,
   cursor_accounts,
   cursor_active_account_id,
   amp_accounts = [],
@@ -256,20 +244,6 @@ export const buildHarnessAuthRows = ({
         label: copilotAccountLabel(account),
         active:
           selected_source_kind === "subscription" && copilot_active_account_id === account.id,
-        selectable: true,
-        account_id: account.id,
-        can_delete: true,
-      });
-    }
-  }
-
-  if (provider_id === "kiro" && kiro_accounts.length > 0) {
-    for (const account of kiro_accounts) {
-      rows.push({
-        key: `subscription:${account.id}`,
-        kind: "subscription",
-        label: kiroAccountLabel(account),
-        active: selected_source_kind === "subscription" && kiro_active_account_id === account.id,
         selectable: true,
         account_id: account.id,
         can_delete: true,

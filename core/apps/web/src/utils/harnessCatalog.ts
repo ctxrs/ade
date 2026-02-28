@@ -8,7 +8,6 @@ import geminiLogo from "../assets/emdash-logos/gemini.png";
 import copilotLogo from "../assets/emdash-logos/ghcopilot.png";
 import gooseLogo from "../assets/emdash-logos/goose.png";
 import kimiLogo from "../assets/emdash-logos/kimi.png";
-import kiroLogo from "../assets/emdash-logos/kiro.png";
 import mistralLogo from "../assets/emdash-logos/mistral.png";
 import codexLogo from "../assets/emdash-logos/openai.png";
 import opencodeLogo from "../assets/emdash-logos/opencode.png";
@@ -41,7 +40,6 @@ export const HARNESS_CATALOG: HarnessCatalogEntry[] = [
   { id: "auggie", label: "Auggie", logoSrc: augmentLogo, invertInDark: true },
   { id: "goose", label: "Goose", logoSrc: gooseLogo },
   { id: "kimi", label: "Kimi", logoSrc: kimiLogo },
-  { id: "kiro", label: "Kiro", logoSrc: kiroLogo },
 
   // Additional harnesses from specs/21_harness_providers.md
   { id: "openhands", label: "OpenHands", logoSrc: openhandsLogo },

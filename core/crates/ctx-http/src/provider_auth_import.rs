@@ -281,21 +281,6 @@ fn build_catalog(roots: &HostRoots) -> Vec<PathSpec> {
             path: roots.home.join(".gemini").join(".env"),
         },
         PathSpec {
-            provider_id: "kiro",
-            provider_label: "Kiro",
-            kind: "auth_file",
-            signal_strength: "weak",
-            confidence: "medium",
-            importable: true,
-            unsupported_reason: None,
-            path: roots
-                .home
-                .join(".aws")
-                .join("sso")
-                .join("cache")
-                .join("kiro-auth-token.json"),
-        },
-        PathSpec {
             provider_id: "gemini",
             provider_label: "Gemini",
             kind: "auth_file",
@@ -972,7 +957,6 @@ async fn set_subscription_source_if_supported(data_root: &Path, provider_id: &st
             | "cline"
             | "openhands"
             | "copilot"
-            | "kiro"
             | "auggie"
             | "pi"
     );
@@ -1249,51 +1233,6 @@ async fn import_amp_candidate(
     .await
 }
 
-async fn import_kiro_candidate(
-    data_root: &Path,
-    material: &CandidateMaterial,
-) -> Result<ProviderAuthImportResult> {
-    let Some(bytes) = material.secret_bytes.as_ref() else {
-        return Ok(import_result(
-            material,
-            "unsupported",
-            None,
-            Some("No importable auth material.".to_string()),
-        ));
-    };
-    let auth_token_json =
-        String::from_utf8(bytes.to_vec()).context("kiro auth file must be UTF-8 JSON")?;
-    let before_len = provider_accounts::load_kiro_registry(data_root)
-        .await
-        .accounts
-        .len();
-    let registry = provider_accounts::add_kiro_account(
-        data_root,
-        material.label.clone(),
-        auth_token_json,
-        None,
-    )
-    .await?;
-    let imported = registry.accounts.len() > before_len;
-    if imported {
-        set_subscription_source_if_supported(data_root, "kiro").await?;
-    }
-    Ok(import_result(
-        material,
-        if imported {
-            "imported"
-        } else {
-            "already_imported"
-        },
-        registry.active_account_id,
-        Some(if imported {
-            "Kiro auth imported.".to_string()
-        } else {
-            "Matching Kiro auth is already imported.".to_string()
-        }),
-    ))
-}
-
 async fn import_candidate_to_canonical(
     data_root: &Path,
     material: &CandidateMaterial,
@@ -1322,7 +1261,6 @@ async fn import_candidate_to_canonical(
         "qwen" => import_qwen_candidate(data_root, material).await,
         "opencode" => import_opencode_candidate(data_root, material).await,
         "amp" => import_amp_candidate(data_root, material).await,
-        "kiro" => import_kiro_candidate(data_root, material).await,
         _ => Ok(import_result(
             material,
             "unsupported",

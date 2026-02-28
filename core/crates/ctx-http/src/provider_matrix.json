@@ -478,61 +478,6 @@
       ]
     },
     {
-      "id": "kiro",
-      "display_name": "Kiro",
-      "tier": "tier2",
-      "command": {
-        "command": "kiro-cli",
-        "args": [
-          "acp"
-        ]
-      },
-      "managed_install": {
-        "kind": "archive",
-        "version": "1.26.2",
-        "args": [
-          "acp"
-        ],
-        "targets": {
-          "darwin-aarch64": {
-            "url": "https://desktop-release.q.us-east-1.amazonaws.com/1.26.2/Kiro%20CLI.dmg",
-            "archive": "dmg",
-            "bin_path": "kiro-cli"
-          },
-          "darwin-x86_64": {
-            "url": "https://desktop-release.q.us-east-1.amazonaws.com/1.26.2/Kiro%20CLI.dmg",
-            "archive": "dmg",
-            "bin_path": "kiro-cli"
-          },
-          "linux-aarch64": {
-            "url": "https://desktop-release.q.us-east-1.amazonaws.com/1.26.2/kirocli-aarch64-linux.zip",
-            "archive": "zip",
-            "bin_path": "kiro-cli"
-          },
-          "linux-x86_64": {
-            "url": "https://desktop-release.q.us-east-1.amazonaws.com/1.26.2/kirocli-x86_64-linux.zip",
-            "archive": "zip",
-            "bin_path": "kiro-cli"
-          }
-        }
-      },
-      "version_probe": {
-        "kind": "command",
-        "args": [
-          "--version"
-        ]
-      },
-      "releases": [
-        {
-          "version": "1.26.2",
-          "status": "supported",
-          "context_min": "0.1.0",
-          "upstream_version": "1.26.2",
-          "notes": "Pinned Kiro CLI ACP bundle release"
-        }
-      ]
-    },
-    {
       "id": "mistral",
       "display_name": "Mistral",
       "tier": "tier2",

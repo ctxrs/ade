@@ -462,36 +462,6 @@
       "args": []
     },
     {
-      "id": "kiro",
-      "protocol": "acp",
-      "version": "local",
-      "os": "linux",
-      "arch": "aarch64",
-      "sha256": "542799b90516bacd086ae483846d62a240c2b6cc5dabd4b7ff837b8b94633633",
-      "command": "providers/kiro/linux/aarch64/kiro-acp.sh",
-      "args": []
-    },
-    {
-      "id": "kiro",
-      "protocol": "acp",
-      "version": "local",
-      "os": "linux",
-      "arch": "x86_64",
-      "sha256": "542799b90516bacd086ae483846d62a240c2b6cc5dabd4b7ff837b8b94633633",
-      "command": "providers/kiro/linux/x86_64/kiro-acp.sh",
-      "args": []
-    },
-    {
-      "id": "kiro",
-      "protocol": "acp",
-      "version": "local",
-      "os": "macos",
-      "arch": "aarch64",
-      "sha256": "542799b90516bacd086ae483846d62a240c2b6cc5dabd4b7ff837b8b94633633",
-      "command": "providers/kiro/macos/aarch64/kiro-acp.sh",
-      "args": []
-    },
-    {
       "id": "mistral",
       "protocol": "acp",
       "version": "local",

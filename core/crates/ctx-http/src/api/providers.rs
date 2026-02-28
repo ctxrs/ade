@@ -245,12 +245,6 @@ pub(super) struct CopilotAccountsResponse {
 }
 
 #[derive(Debug, Serialize)]
-pub(super) struct KiroAccountsResponse {
-    active_account_id: Option<String>,
-    accounts: Vec<provider_accounts::KiroAccountEntry>,
-}
-
-#[derive(Debug, Serialize)]
 pub(super) struct CursorAccountsResponse {
     active_account_id: Option<String>,
     accounts: Vec<provider_accounts::CursorAccountEntry>,
@@ -268,7 +262,6 @@ pub(super) struct ProvidersBootstrapResponse {
     kimi_accounts: KimiAccountsResponse,
     mistral_accounts: MistralAccountsResponse,
     copilot_accounts: CopilotAccountsResponse,
-    kiro_accounts: KiroAccountsResponse,
     cursor_accounts: CursorAccountsResponse,
     amp_accounts: AmpAccountsResponse,
 }
@@ -406,18 +399,6 @@ pub(super) struct MistralLoginStartResp {
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct KiroLoginStartReq {
-    label: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct KiroLoginStartResp {
-    login_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    auth_url: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 pub(super) struct GeminiActiveAccountReq {
     account_id: Option<String>,
 }
@@ -459,19 +440,6 @@ pub(super) struct CopilotAccountUpsertReq {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct CopilotActiveAccountReq {
-    account_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct KiroAccountUpsertReq {
-    label: Option<String>,
-    auth_token_json: String,
-    #[serde(default)]
-    email: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct KiroActiveAccountReq {
     account_id: Option<String>,
 }
 
@@ -571,8 +539,6 @@ const AMP_LOGIN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(300);
 const AMP_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
 const MISTRAL_LOGIN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(300);
 const MISTRAL_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
-const KIRO_LOGIN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(300);
-const KIRO_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
 const QWEN_OAUTH_AUTH_METHOD_ID: &str = "qwen-oauth";
 const AMP_BROWSER_AUTH_METHOD_ID: &str = "amp_browser_login";
 const CLAUDE_LOGIN_NO_AUTH_URL_TIMEOUT: Duration = Duration::from_secs(8);
@@ -675,15 +641,6 @@ fn mistral_login_timeout() -> Duration {
         .and_then(|raw| raw.trim().parse::<u64>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(MISTRAL_LOGIN_TIMEOUT_DEFAULT.as_secs());
-    Duration::from_secs(seconds)
-}
-
-fn kiro_login_timeout() -> Duration {
-    let seconds = std::env::var("CTX_KIRO_LOGIN_TIMEOUT_SECS")
-        .ok()
-        .and_then(|raw| raw.trim().parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(KIRO_LOGIN_TIMEOUT_DEFAULT.as_secs());
     Duration::from_secs(seconds)
 }
 
@@ -834,14 +791,6 @@ async fn copilot_accounts_response(state: &Arc<AppState>) -> CopilotAccountsResp
     }
 }
 
-async fn kiro_accounts_response(state: &Arc<AppState>) -> KiroAccountsResponse {
-    let registry = provider_accounts::load_kiro_registry(&state.core.data_root).await;
-    KiroAccountsResponse {
-        active_account_id: registry.active_account_id,
-        accounts: registry.accounts,
-    }
-}
-
 async fn cursor_accounts_response(state: &Arc<AppState>) -> CursorAccountsResponse {
     let registry = provider_accounts::load_cursor_registry(&state.core.data_root).await;
     CursorAccountsResponse {
@@ -907,10 +856,6 @@ async fn restart_kimi_providers_for_auth_change(state: &Arc<AppState>, reason: &
 
 async fn restart_copilot_providers_for_auth_change(state: &Arc<AppState>, reason: &str) {
     restart_provider_for_auth_change(state, "copilot", reason).await;
-}
-
-async fn restart_kiro_providers_for_auth_change(state: &Arc<AppState>, reason: &str) {
-    restart_provider_for_auth_change(state, "kiro", reason).await;
 }
 
 async fn restart_cursor_providers_for_auth_change(state: &Arc<AppState>, reason: &str) {
@@ -2429,271 +2374,6 @@ pub(super) async fn get_mistral_login(
     Ok(Json(status))
 }
 
-fn kiro_login_home(data_root: &StdPath, login_id: &str) -> PathBuf {
-    data_root
-        .join("providers")
-        .join("kiro")
-        .join("login-sessions")
-        .join(login_id)
-}
-
-async fn monitor_kiro_login(state: Arc<AppState>, login_id: String, label: Option<String>) {
-    let adapter = {
-        let map = state.providers.adapters.lock().await;
-        map.get("kiro").cloned()
-    };
-    let Some(adapter) = adapter else {
-        let mut map = state.providers.kiro_login_sessions.lock().await;
-        if let Some(entry) = map.get_mut(&login_id) {
-            entry.status = "failed".to_string();
-            entry.error = Some("provider adapter not available".to_string());
-        }
-        return;
-    };
-
-    let login_home = kiro_login_home(&state.core.data_root, &login_id);
-    let workdir = login_home.join("workspace");
-    if let Err(err) = tokio::fs::create_dir_all(&workdir).await {
-        let mut map = state.providers.kiro_login_sessions.lock().await;
-        if let Some(entry) = map.get_mut(&login_id) {
-            entry.status = "failed".to_string();
-            entry.error = Some(format!("failed to prepare login workspace: {err}"));
-        }
-        return;
-    }
-    let _ = tokio::fs::create_dir_all(login_home.join(".config")).await;
-    let _ = tokio::fs::create_dir_all(login_home.join(".cache")).await;
-
-    let mut provider_env = HashMap::new();
-    provider_env.insert("CTX_DAEMON_URL".to_string(), state.core.daemon_url.clone());
-    if let Some(token) = state.core.auth_token.clone() {
-        provider_env.insert("CTX_AUTH_TOKEN".to_string(), token);
-    }
-    provider_env.insert(
-        "CTX_DATA_ROOT".to_string(),
-        state.core.data_root.to_string_lossy().to_string(),
-    );
-    provider_env.insert("HOME".to_string(), login_home.to_string_lossy().to_string());
-    provider_env.insert(
-        "XDG_CONFIG_HOME".to_string(),
-        login_home.join(".config").to_string_lossy().to_string(),
-    );
-    provider_env.insert(
-        "XDG_CACHE_HOME".to_string(),
-        login_home.join(".cache").to_string_lossy().to_string(),
-    );
-
-    let (event_tx, mut event_rx) = mpsc::channel(64);
-    let auth_result = adapter
-        .authenticate_session(
-            format!("kiro-login-{login_id}"),
-            workdir,
-            provider_env,
-            None,
-            event_tx,
-        )
-        .await;
-    if let Err(err) = auth_result {
-        let mut map = state.providers.kiro_login_sessions.lock().await;
-        if let Some(entry) = map.get_mut(&login_id) {
-            entry.status = "failed".to_string();
-            entry.error = Some(logs::redact_sensitive(&err.to_string()));
-        }
-        let _ = tokio::fs::remove_dir_all(&login_home).await;
-        return;
-    }
-
-    let auth_token_path = login_home.join(provider_accounts::KIRO_AUTH_TOKEN_RELATIVE_PATH);
-    let started_at = Instant::now();
-    let timeout = kiro_login_timeout();
-    let mut observed_auth_url = false;
-    let mut observed_email = None::<String>;
-
-    loop {
-        let auth_token_raw = tokio::fs::read_to_string(&auth_token_path)
-            .await
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty());
-        if let Some(auth_token_raw) = auth_token_raw {
-            let parsed = serde_json::from_str::<serde_json::Value>(&auth_token_raw);
-            let auth_token_valid = parsed
-                .as_ref()
-                .ok()
-                .is_some_and(serde_json::Value::is_object);
-            if !auth_token_valid {
-                let mut map = state.providers.kiro_login_sessions.lock().await;
-                if let Some(entry) = map.get_mut(&login_id) {
-                    entry.status = "failed".to_string();
-                    entry.error = Some(
-                        "captured kiro auth token file is not a valid JSON object".to_string(),
-                    );
-                }
-                let _ = tokio::fs::remove_dir_all(&login_home).await;
-                return;
-            }
-            if observed_email.is_none() {
-                observed_email = parsed.as_ref().ok().and_then(first_email_from_value);
-            }
-
-            let added = provider_accounts::add_kiro_account(
-                &state.core.data_root,
-                label.clone(),
-                auth_token_raw,
-                observed_email.clone(),
-            )
-            .await;
-            match added {
-                Ok(registry) => {
-                    let mut map = state.providers.kiro_login_sessions.lock().await;
-                    if let Some(entry) = map.get_mut(&login_id) {
-                        entry.status = "success".to_string();
-                        entry.account_id = registry.active_account_id.clone();
-                        entry.error = None;
-                    }
-                    restart_kiro_providers_for_auth_change(&state, "kiro auth updated").await;
-                }
-                Err(err) => {
-                    let mut map = state.providers.kiro_login_sessions.lock().await;
-                    if let Some(entry) = map.get_mut(&login_id) {
-                        entry.status = "failed".to_string();
-                        entry.error = Some(logs::redact_sensitive(&err.to_string()));
-                    }
-                }
-            }
-            let _ = tokio::fs::remove_dir_all(&login_home).await;
-            return;
-        }
-
-        if started_at.elapsed() >= timeout {
-            let mut map = state.providers.kiro_login_sessions.lock().await;
-            if let Some(entry) = map.get_mut(&login_id) {
-                entry.status = "timeout".to_string();
-                if entry.error.is_none() {
-                    entry.error = Some("timed out waiting for Kiro OAuth completion".to_string());
-                }
-            }
-            let _ = tokio::fs::remove_dir_all(&login_home).await;
-            return;
-        }
-
-        let event = match tokio::time::timeout(KIRO_LOGIN_POLL_INTERVAL, event_rx.recv()).await {
-            Ok(Some(event)) => event,
-            Ok(None) => {
-                let mut map = state.providers.kiro_login_sessions.lock().await;
-                if let Some(entry) = map.get_mut(&login_id) {
-                    entry.status = "failed".to_string();
-                    if entry.error.is_none() {
-                        entry.error = Some(if observed_auth_url {
-                            "Kiro sign-in session ended before completion.".to_string()
-                        } else {
-                            "Kiro sign-in did not emit an OAuth URL in this environment."
-                                .to_string()
-                        });
-                    }
-                }
-                let _ = tokio::fs::remove_dir_all(&login_home).await;
-                return;
-            }
-            Err(_) => continue,
-        };
-
-        if let Some(auth_url) = extract_auth_url_from_value(&event.payload_json) {
-            observed_auth_url = true;
-            let mut map = state.providers.kiro_login_sessions.lock().await;
-            if let Some(entry) = map.get_mut(&login_id) {
-                entry.auth_url = Some(auth_url);
-            }
-        }
-        if observed_email.is_none() {
-            observed_email = first_email_from_value(&event.payload_json);
-        }
-
-        if matches!(event.event_type, ctx_core::models::SessionEventType::Error) {
-            let message = event
-                .payload_json
-                .get("message")
-                .and_then(serde_json::Value::as_str)
-                .map(logs::redact_sensitive)
-                .unwrap_or_else(|| "kiro authenticate reported an error".to_string());
-            let mut map = state.providers.kiro_login_sessions.lock().await;
-            if let Some(entry) = map.get_mut(&login_id) {
-                entry.status = "failed".to_string();
-                entry.error = Some(message);
-            }
-            let _ = tokio::fs::remove_dir_all(&login_home).await;
-            return;
-        }
-
-        if matches!(event.event_type, ctx_core::models::SessionEventType::Notice) {
-            let code = auth_notice_code(&event.payload_json);
-            if is_auth_failure_notice_code(code) {
-                let message = event
-                    .payload_json
-                    .get("message")
-                    .and_then(serde_json::Value::as_str)
-                    .map(logs::redact_sensitive)
-                    .unwrap_or_else(|| "Kiro sign-in failed. Retry.".to_string());
-                let mut map = state.providers.kiro_login_sessions.lock().await;
-                if let Some(entry) = map.get_mut(&login_id) {
-                    entry.status = "failed".to_string();
-                    entry.error = Some(message);
-                }
-                let _ = tokio::fs::remove_dir_all(&login_home).await;
-                return;
-            }
-        }
-    }
-}
-
-pub(super) async fn start_kiro_login(
-    State(state): State<Arc<AppState>>,
-    Json(req): Json<KiroLoginStartReq>,
-) -> Result<Json<KiroLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
-    let label = req.label;
-    let login_id = uuid::Uuid::new_v4().to_string();
-    {
-        let mut map = state.providers.kiro_login_sessions.lock().await;
-        map.insert(
-            login_id.clone(),
-            provider_accounts::KiroLoginStatus {
-                login_id: login_id.clone(),
-                auth_url: None,
-                status: "pending".to_string(),
-                account_id: None,
-                error: None,
-            },
-        );
-    }
-
-    let state_clone = Arc::clone(&state);
-    let login_id_for_task = login_id.clone();
-    tokio::spawn(async move {
-        monitor_kiro_login(state_clone, login_id_for_task, label).await;
-    });
-
-    Ok(Json(KiroLoginStartResp {
-        login_id,
-        auth_url: None,
-    }))
-}
-
-pub(super) async fn get_kiro_login(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<Json<provider_accounts::KiroLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
-    let map = state.providers.kiro_login_sessions.lock().await;
-    let status = map.get(&id).cloned().ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "login not found".to_string(),
-            }),
-        )
-    })?;
-    Ok(Json(status))
-}
-
 pub(super) async fn list_amp_accounts(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<AmpAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
@@ -3101,82 +2781,6 @@ pub(super) async fn delete_copilot_account(
         })?;
     restart_copilot_providers_for_auth_change(&state, "copilot auth updated").await;
     Ok(Json(copilot_accounts_response(&state).await))
-}
-
-pub(super) async fn list_kiro_accounts(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<KiroAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    Ok(Json(kiro_accounts_response(&state).await))
-}
-
-pub(super) async fn upsert_kiro_account(
-    State(state): State<Arc<AppState>>,
-    Json(req): Json<KiroAccountUpsertReq>,
-) -> Result<Json<KiroAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    provider_accounts::add_kiro_account(
-        &state.core.data_root,
-        req.label,
-        req.auth_token_json,
-        req.email,
-    )
-    .await
-    .map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: e.to_string(),
-            }),
-        )
-    })?;
-    restart_kiro_providers_for_auth_change(&state, "kiro auth updated").await;
-    Ok(Json(kiro_accounts_response(&state).await))
-}
-
-pub(super) async fn set_kiro_active_account(
-    State(state): State<Arc<AppState>>,
-    Json(req): Json<KiroActiveAccountReq>,
-) -> Result<Json<KiroAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    if let Some(ref account_id) = req.account_id {
-        let registry = provider_accounts::load_kiro_registry(&state.core.data_root).await;
-        if !registry.accounts.iter().any(|a| a.id == *account_id) {
-            return Err((
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "unknown account".to_string(),
-                }),
-            ));
-        }
-    }
-    provider_accounts::set_active_kiro_account(&state.core.data_root, req.account_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: e.to_string(),
-                }),
-            )
-        })?;
-    restart_kiro_providers_for_auth_change(&state, "kiro auth updated").await;
-    Ok(Json(kiro_accounts_response(&state).await))
-}
-
-pub(super) async fn delete_kiro_account(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<Json<KiroAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    provider_accounts::remove_kiro_account(&state.core.data_root, &id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: e.to_string(),
-                }),
-            )
-        })?;
-    restart_kiro_providers_for_auth_change(&state, "kiro auth updated").await;
-    Ok(Json(kiro_accounts_response(&state).await))
 }
 
 pub(super) async fn list_cursor_accounts(
@@ -4506,7 +4110,6 @@ pub(super) async fn get_workspace_providers_bootstrap(
         kimi_accounts: kimi_accounts_response(&state).await,
         mistral_accounts: mistral_accounts_response(&state).await,
         copilot_accounts: copilot_accounts_response(&state).await,
-        kiro_accounts: kiro_accounts_response(&state).await,
         cursor_accounts: cursor_accounts_response(&state).await,
         amp_accounts: amp_accounts_response(&state).await.map_err(|e| {
             (

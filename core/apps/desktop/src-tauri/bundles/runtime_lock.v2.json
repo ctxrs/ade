@@ -56,7 +56,6 @@
       "gemini",
       "goose",
       "kimi",
-      "kiro",
       "mistral",
       "opencode",
       "openhands",
@@ -866,63 +865,6 @@
         {
           "source_type": "ci",
           "uri": "locked://providers/kimi/linux/x86_64",
-          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
-        }
-      ]
-    },
-    {
-      "kind": "provider",
-      "id": "kiro",
-      "os": "macos",
-      "arch": "aarch64",
-      "variant": "default",
-      "version": "locked",
-      "sources": [
-        {
-          "source_type": "local",
-          "build": "desktop:prep"
-        },
-        {
-          "source_type": "ci",
-          "uri": "locked://providers/kiro/macos/aarch64",
-          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
-        }
-      ]
-    },
-    {
-      "kind": "provider",
-      "id": "kiro",
-      "os": "linux",
-      "arch": "aarch64",
-      "variant": "default",
-      "version": "locked",
-      "sources": [
-        {
-          "source_type": "local",
-          "build": "desktop:prep"
-        },
-        {
-          "source_type": "ci",
-          "uri": "locked://providers/kiro/linux/aarch64",
-          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
-        }
-      ]
-    },
-    {
-      "kind": "provider",
-      "id": "kiro",
-      "os": "linux",
-      "arch": "x86_64",
-      "variant": "default",
-      "version": "locked",
-      "sources": [
-        {
-          "source_type": "local",
-          "build": "desktop:prep"
-        },
-        {
-          "source_type": "ci",
-          "uri": "locked://providers/kiro/linux/x86_64",
           "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
         }
       ]

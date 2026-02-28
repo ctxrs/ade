@@ -63,7 +63,6 @@ export function subscriptionPrimaryActionLabel(modal: HarnessAuthModalState): st
     || modal.provider_id === "gemini"
     || modal.provider_id === "qwen"
     || modal.provider_id === "mistral"
-    || modal.provider_id === "kiro"
     || (modal.provider_id === "claude-crp" && !claudeSetupTokenProvided(modal))
   ) {
     return modal.provider_id === "gemini" ? "Sign in with Google" : "Start sign-in";
@@ -91,7 +90,6 @@ export function shouldAutoStartSubscriptionFlow(providerId: string): boolean {
     || providerId === "qwen"
     || providerId === "amp"
     || providerId === "mistral"
-    || providerId === "kiro"
     || providerId === "copilot"
     || providerId === "auggie";
 }
@@ -125,8 +123,6 @@ export function HarnessAuthenticationSection({
     mistralAccountsBusy,
     copilotAccounts,
     copilotAccountsBusy,
-    kiroAccounts,
-    kiroAccountsBusy,
     cursorAccounts,
     cursorAccountsBusy,
     ampAccounts,
@@ -147,7 +143,6 @@ export function HarnessAuthenticationSection({
     onKimiDelete,
     onMistralDelete,
     onCopilotDelete,
-    onKiroDelete,
     onCursorDelete,
     onAmpDelete,
     providerError,
@@ -210,9 +205,7 @@ export function HarnessAuthenticationSection({
         : "Gemini API key"
       : "API key";
   const modalEndpointNameLabel = modalProviderUsesNativeKeyFlow ? "Label (optional)" : "Name (optional)";
-  const modalApiKeyPlaceholder = harnessAuthModal?.provider_id === "kiro"
-    ? '{"token":"..."}'
-    : harnessAuthModal?.provider_id === "gemini"
+  const modalApiKeyPlaceholder = harnessAuthModal?.provider_id === "gemini"
       ? "AIza..."
     : harnessAuthModal?.provider_id === "cursor"
       ? "key_..."
@@ -335,8 +328,6 @@ export function HarnessAuthenticationSection({
               mistral_active_account_id: id === "mistral" ? (mistralAccounts?.active_account_id ?? null) : null,
               copilot_accounts: id === "copilot" ? (copilotAccounts?.accounts ?? []) : [],
               copilot_active_account_id: id === "copilot" ? (copilotAccounts?.active_account_id ?? null) : null,
-              kiro_accounts: id === "kiro" ? (kiroAccounts?.accounts ?? []) : [],
-              kiro_active_account_id: id === "kiro" ? (kiroAccounts?.active_account_id ?? null) : null,
               cursor_accounts: id === "cursor" ? (cursorAccounts?.accounts ?? []) : [],
               cursor_active_account_id: id === "cursor" ? (cursorAccounts?.active_account_id ?? null) : null,
               amp_accounts: id === "amp" ? (ampAccounts?.accounts ?? []) : [],
@@ -354,7 +345,6 @@ export function HarnessAuthenticationSection({
               || (id === "kimi" && kimiAccountsBusy)
               || (id === "mistral" && mistralAccountsBusy)
               || (id === "copilot" && copilotAccountsBusy)
-              || (id === "kiro" && kiroAccountsBusy)
               || (id === "cursor" && cursorAccountsBusy)
               || (id === "amp" && ampAccountsBusy);
 
@@ -583,18 +573,6 @@ export function HarnessAuthenticationSection({
                                       Delete
                                     </DropdownMenuItem>
                                   ) : null}
-                                  {row.kind === "subscription" && id === "kiro" && row.account_id && row.can_delete ? (
-                                    <DropdownMenuItem
-                                      className="tw-text-[var(--error-contrast)] focus:tw-bg-[var(--error-soft)]"
-                                      onSelect={() => {
-                                        const accountId = row.account_id;
-                                        if (!accountId) return;
-                                        void onKiroDelete(accountId);
-                                      }}
-                                    >
-                                      Delete
-                                    </DropdownMenuItem>
-                                  ) : null}
                                   {row.kind === "subscription" && id === "cursor" && row.account_id && row.can_delete ? (
                                     <DropdownMenuItem
                                       className="tw-text-[var(--error-contrast)] focus:tw-bg-[var(--error-soft)]"
@@ -767,8 +745,8 @@ export function HarnessAuthenticationSection({
                           ? "Paste Kimi credentials JSON for a managed Kimi share directory."
                           : harnessAuthModal.provider_id === "copilot"
                             ? "Paste a GitHub token with Copilot entitlement for the managed Copilot account."
-                            : harnessAuthModal.provider_id === "kiro"
-                              ? "Sign in with Kiro in your browser to capture managed OAuth credentials automatically."
+                            : harnessAuthModal.provider_id === "cursor"
+                              ? "Sign in with Cursor on this host (unmanaged)."
                       : "Authenticate this harness for the selected workspace."}
                 </div>
                 {harnessAuthModal.provider_id === "claude-crp" ? (

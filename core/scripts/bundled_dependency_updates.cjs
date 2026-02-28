@@ -34,11 +34,6 @@ const workspaceProviderVersionSources = {
 const providerUpstreamVersionSources = {
   amp: { kind: "npm", package: "@example/sdk" },
   goose: { kind: "github_release", repo: "block/goose" },
-  kiro: {
-    kind: "json_manifest_version",
-    url: "https://desktop-release.q.us-east-1.amazonaws.com/latest/manifest.json",
-    field: "version",
-  },
   openhands: { kind: "github_release", repo: "All-Hands-AI/OpenHands" },
   pi: { kind: "npm", package: "@mariozechner/pi-coding-agent" },
 };
@@ -206,82 +201,6 @@ const fetchPypiLatest = async (pkgName) => {
   return version;
 };
 
-const fetchKiroCliManagedLatest = async () => {
-  const manifestUrl = "https://desktop-release.q.us-east-1.amazonaws.com/latest/manifest.json";
-  const baseUrl = "https://desktop-release.q.us-east-1.amazonaws.com";
-  const payload = await fetchJson(manifestUrl);
-  const version = normalizeVersion(String(payload?.version || "").trim());
-  if (!version) {
-    throw new Error("missing Kiro CLI manifest version");
-  }
-  const packages = Array.isArray(payload?.packages) ? payload.packages : [];
-  const findPackage = ({ os, architecture, fileType, variant }) =>
-    packages.find(
-      (pkg) =>
-        String(pkg?.os || "").trim() === os &&
-        String(pkg?.architecture || "").trim() === architecture &&
-        String(pkg?.fileType || "").trim() === fileType &&
-        String(pkg?.variant || "").trim() === variant,
-    );
-
-  const mac = findPackage({
-    os: "macos",
-    architecture: "universal",
-    fileType: "dmg",
-    variant: "full",
-  });
-  const linuxArm = findPackage({
-    os: "linux",
-    architecture: "aarch64",
-    fileType: "zip",
-    variant: "headless",
-  });
-  const linuxX64 = findPackage({
-    os: "linux",
-    architecture: "x86_64",
-    fileType: "zip",
-    variant: "headless",
-  });
-  if (!mac || !linuxArm || !linuxX64) {
-    throw new Error("failed to resolve required Kiro CLI packages from manifest");
-  }
-  const macDownload = String(mac.download || "").trim();
-  const linuxArmDownload = String(linuxArm.download || "").trim();
-  const linuxX64Download = String(linuxX64.download || "").trim();
-  if (!macDownload || !linuxArmDownload || !linuxX64Download) {
-    throw new Error("Kiro CLI manifest package missing download path");
-  }
-
-  const targets = {
-    "darwin-aarch64": {
-      url: `${baseUrl}/${macDownload}`,
-      archive: "dmg",
-      bin_path: "kiro-cli",
-    },
-    "darwin-x86_64": {
-      url: `${baseUrl}/${macDownload}`,
-      archive: "dmg",
-      bin_path: "kiro-cli",
-    },
-    "linux-aarch64": {
-      url: `${baseUrl}/${linuxArmDownload}`,
-      archive: "zip",
-      bin_path: "kiro-cli",
-    },
-    "linux-x86_64": {
-      url: `${baseUrl}/${linuxX64Download}`,
-      archive: "zip",
-      bin_path: "kiro-cli",
-    },
-  };
-
-  return {
-    version,
-    manifestUrl,
-    targets,
-  };
-};
-
 const parseGithubReleaseRepoFromUrl = (rawUrl) => {
   const match = String(rawUrl || "").match(
     /^https:\/\/github\.com\/([^/]+\/[^/]+)\/releases\/download\/[^/]+\/[^/]+$/,
@@ -386,17 +305,6 @@ const resolveProviderLatest = async (entry) => {
   const providerId = String(entry.id || "").trim();
   const managed = entry.managed_install || {};
   const kind = managed.kind;
-
-  if (providerId === "kiro") {
-    const kiro = await fetchKiroCliManagedLatest();
-    return {
-      providerId,
-      resolver: "manifest:kiro",
-      latestVersion: kiro.version,
-      sourcePath: kiro.manifestUrl,
-      updateTargets: { type: "replace_targets", targets: kiro.targets },
-    };
-  }
 
   const workspaceVersion = workspaceVersionForProvider(providerId);
   if (workspaceVersion) {
