@@ -248,6 +248,21 @@
         "version": "0.0.0-ctx.4",
         "args": [],
         "targets": {
+          "darwin-aarch64": {
+            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.0.0-ctx.4/codex-crp-0.0.0-ctx.4-aarch64-apple-darwin.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "codex-crp"
+          },
+          "darwin-x86_64": {
+            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.0.0-ctx.4/codex-crp-0.0.0-ctx.4-x86_64-apple-darwin.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "codex-crp"
+          },
+          "linux-aarch64": {
+            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.0.0-ctx.4/codex-crp-0.0.0-ctx.4-aarch64-unknown-linux-gnu.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "codex-crp"
+          },
           "linux-x86_64": {
             "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.0.0-ctx.4/codex-crp-0.0.0-ctx.4-x86_64-unknown-linux-gnu.tar.gz",
             "archive": "tar_gz",
@@ -274,7 +289,7 @@
           },
           "status": "supported",
           "context_min": "0.1.0",
-          "notes": "Linux x86_64 only. Release-only intake from openai/codex rust-v0.105.0"
+          "notes": "Release-only intake from openai/codex rust-v0.105.0"
         },
         {
           "version": "0.0.0-ctx.2",
