@@ -73,7 +73,7 @@ for provider_id in required:
         if not isinstance(targets, dict):
             errors.append("provider claude-crp managed_install.targets missing")
             targets = {}
-        required_targets = ["darwin-aarch64", "linux-aarch64", "linux-x86_64"]
+        required_targets = ["darwin-aarch64", "darwin-x86_64", "linux-aarch64", "linux-x86_64"]
         for target_key in required_targets:
             target = targets.get(target_key)
             if not isinstance(target, dict):

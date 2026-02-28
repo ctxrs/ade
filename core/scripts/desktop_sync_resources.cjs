@@ -616,7 +616,7 @@ const syncBundles = () => {
         CTX_BUNDLE_SKIP_RUNTIMES: needsLinuxRuntime ? "0" : "1",
         CTX_BUNDLE_SKIP_IMAGES: needsLinuxImage ? "0" : "1",
         CTX_BUNDLE_INCLUDE_BRIDGE: "1",
-        CTX_BUNDLE_LOCAL_ADAPTERS: "auto",
+        CTX_BUNDLE_LOCAL_ADAPTERS: "off",
         CTX_BUNDLE_BUILD_LOCAL_ADAPTERS: "0",
         CTX_BUNDLE_HARNESS_IMAGE: needsLinuxImage ? "1" : "0",
         CTX_BUNDLE_PODMAN: "0",
