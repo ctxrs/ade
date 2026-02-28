@@ -700,6 +700,67 @@ shutil.copytree(src, dst, ignore=ignore, symlinks=True)
 PY
 }
 
+copy_dmg_payload_without_external_symlinks() {
+  local mount_root="$1"
+  local dest_root="$2"
+  run_python - "$mount_root" "$dest_root" <<'PY'
+import os
+import shutil
+import sys
+from pathlib import Path
+
+src_root = Path(sys.argv[1]).resolve()
+dst_root = Path(sys.argv[2])
+
+
+def is_within_root(path: Path) -> bool:
+    try:
+        path.relative_to(src_root)
+        return True
+    except ValueError:
+        return False
+
+
+def remove_existing(path: Path) -> None:
+    try:
+        if path.is_symlink() or path.is_file():
+            path.unlink()
+        elif path.is_dir():
+            shutil.rmtree(path)
+    except FileNotFoundError:
+        return
+
+
+def copy_tree(src_dir: Path, dst_dir: Path) -> None:
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    for src_path in src_dir.iterdir():
+        dst_path = dst_dir / src_path.name
+        if src_path.is_symlink():
+            # Some DMGs include links like Applications -> /Applications.
+            # Copying those into the bundle tree causes host traversal and permission failures.
+            target = os.readlink(src_path)
+            resolved = (src_path.parent / target).resolve(strict=False)
+            if not is_within_root(resolved):
+                continue
+            remove_existing(dst_path)
+            os.symlink(target, dst_path)
+            continue
+
+        if src_path.is_dir():
+            if dst_path.is_symlink() or dst_path.is_file():
+                remove_existing(dst_path)
+            copy_tree(src_path, dst_path)
+            continue
+
+        remove_existing(dst_path)
+        shutil.copy2(src_path, dst_path)
+
+
+dst_root.mkdir(parents=True, exist_ok=True)
+copy_tree(src_root, dst_root)
+PY
+}
+
 anthropic_ripgrep_target() {
   case "${os}/${arch}" in
     linux/x86_64) printf '%s' "x64-linux" ;;
@@ -2447,7 +2508,7 @@ PY
               log "error: failed to mount dmg for $provider_id"
               exit 5
             fi
-            if ! cp -R "$dmg_mount_dir"/. "$provider_root"/; then
+            if ! copy_dmg_payload_without_external_symlinks "$dmg_mount_dir" "$provider_root"; then
               hdiutil detach "$dmg_mount_dir" -force >/dev/null 2>&1 || true
               rm -rf "$dmg_mount_dir" "$tmp_file"
               log "error: failed to copy dmg payload for $provider_id"
