@@ -10,7 +10,6 @@ import {
   deleteGeminiAccount,
   deleteKimiAccount,
   deleteMistralAccount,
-  deleteKiroAccount,
   deleteQwenAccount,
   deleteProviderHarnessEndpoint,
   listAmpAccounts,
@@ -18,7 +17,6 @@ import {
   getClaudeLogin,
   getCodexLogin,
   getGeminiLogin,
-  getKiroLogin,
   getMistralLogin,
   getQwenLogin,
   getInstall,
@@ -27,7 +25,6 @@ import {
   listGeminiAccounts,
   listKimiAccounts,
   listMistralAccounts,
-  listKiroAccounts,
   listQwenAccounts,
   installAllProviders,
   installProvider,
@@ -44,13 +41,11 @@ import {
   setGeminiActiveAccount,
   setKimiActiveAccount,
   setMistralActiveAccount,
-  setKiroActiveAccount,
   setQwenActiveAccount,
   startCodexLogin,
   startAmpLogin,
   startClaudeLogin,
   startGeminiLogin,
-  startKiroLogin,
   startMistralLogin,
   startQwenLogin,
   upsertClaudeAccount,
@@ -68,7 +63,6 @@ import {
   type HarnessEndpointRecord,
   type HarnessProviderSourceConfig,
   type KimiAccountsResponse,
-  type KiroAccountsResponse,
   type MistralAccountsResponse,
   type ProviderStatus,
   type QwenAccountsResponse,
@@ -118,8 +112,6 @@ type HarnessAuthenticationController = {
   mistralAccountsBusy: boolean;
   copilotAccounts: CopilotAccountsResponse | null;
   copilotAccountsBusy: boolean;
-  kiroAccounts: KiroAccountsResponse | null;
-  kiroAccountsBusy: boolean;
   cursorAccounts: CursorAccountsResponse | null;
   cursorAccountsBusy: boolean;
   ampAccounts: AmpAccountsResponse | null;
@@ -140,7 +132,6 @@ type HarnessAuthenticationController = {
   onKimiDelete: (accountId: string) => Promise<void>;
   onMistralDelete: (accountId: string) => Promise<void>;
   onCopilotDelete: (accountId: string) => Promise<void>;
-  onKiroDelete: (accountId: string) => Promise<void>;
   onCursorDelete: (accountId: string) => Promise<void>;
   onAmpDelete: (accountId: string) => Promise<void>;
   providerError: string | null;
@@ -162,7 +153,6 @@ const HARNESSES_WITH_ENDPOINT_CONFIG = new Set([
   "droid",
   "openhands",
   "copilot",
-  "kiro",
   "auggie",
   "pi",
 ]);
@@ -179,7 +169,6 @@ const HARNESSES_WITH_SUBSCRIPTION_AUTH = new Set([
   "mistral",
   "amp",
   "copilot",
-  "kiro",
   "cursor",
   "auggie",
 ]);
@@ -236,8 +225,6 @@ const AMP_LOGIN_POLL_ATTEMPTS = 90;
 const AMP_LOGIN_POLL_INTERVAL_MS = 1600;
 const MISTRAL_LOGIN_POLL_ATTEMPTS = 90;
 const MISTRAL_LOGIN_POLL_INTERVAL_MS = 1600;
-const KIRO_LOGIN_POLL_ATTEMPTS = 90;
-const KIRO_LOGIN_POLL_INTERVAL_MS = 1600;
 
 export const shouldSkipDuplicateAmpLoginStart = (params: {
   providerId: string;
@@ -384,8 +371,6 @@ export function useHarnessAuthenticationController({
   const [mistralAccountsBusy, setMistralAccountsBusy] = useState(false);
   const [copilotAccounts, setCopilotAccounts] = useState<CopilotAccountsResponse | null>(null);
   const [copilotAccountsBusy, setCopilotAccountsBusy] = useState(false);
-  const [kiroAccounts, setKiroAccounts] = useState<KiroAccountsResponse | null>(null);
-  const [kiroAccountsBusy, setKiroAccountsBusy] = useState(false);
   const [cursorAccounts, setCursorAccounts] = useState<CursorAccountsResponse | null>(null);
   const [cursorAccountsBusy, setCursorAccountsBusy] = useState(false);
   const [ampAccounts, setAmpAccounts] = useState<AmpAccountsResponse | null>(null);
@@ -463,7 +448,6 @@ export function useHarnessAuthenticationController({
     setKimiAccounts(bootstrap.kimi_accounts);
     setMistralAccounts(bootstrap.mistral_accounts);
     setCopilotAccounts(bootstrap.copilot_accounts);
-    setKiroAccounts(bootstrap.kiro_accounts);
     setCursorAccounts(bootstrap.cursor_accounts);
     setAmpAccounts(bootstrap.amp_accounts);
   }, []);
@@ -627,24 +611,6 @@ export function useHarnessAuthenticationController({
     } finally {
       if (!opts?.silent) {
         setCopilotAccountsBusy(false);
-      }
-    }
-  }, []);
-
-  const refreshKiroAccounts = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) {
-      setKiroAccountsBusy(true);
-    }
-    try {
-      const next = await listKiroAccounts();
-      setKiroAccounts(next);
-      return next;
-    } catch (error) {
-      setProviderError(messageFromError(error));
-      return null;
-    } finally {
-      if (!opts?.silent) {
-        setKiroAccountsBusy(false);
       }
     }
   }, []);
@@ -1059,35 +1025,6 @@ export function useHarnessAuthenticationController({
       }
       await new Promise((resolve) => {
         window.setTimeout(resolve, MISTRAL_LOGIN_POLL_INTERVAL_MS);
-      });
-    }
-    return { status: "timeout" };
-  }, []);
-
-  const waitForKiroLoginOutcome = useCallback(async (
-    loginId: string,
-    onAuthUrl?: (authUrl: string) => Promise<void>,
-    opts?: { openedAuthUrl?: string | null },
-  ): Promise<{ status: "success" | "failed" | "timeout"; error?: string | null }> => {
-    const openedAuthUrls = new Set<string>();
-    takeNextAuthUrlToOpen(opts?.openedAuthUrl, openedAuthUrls);
-    for (let attempt = 0; attempt < KIRO_LOGIN_POLL_ATTEMPTS; attempt += 1) {
-      try {
-        const status = await getKiroLogin(loginId);
-        if (status.status === "success") return { status: "success" };
-        if (status.status === "failed") return { status: "failed", error: status.error };
-        if (status.status === "timeout") return { status: "timeout", error: status.error };
-        if (shouldOpenPolledAuthUrlForStatus(status.status)) {
-          const authUrl = takeNextAuthUrlToOpen(status.auth_url, openedAuthUrls);
-          if (authUrl && onAuthUrl) {
-            await onAuthUrl(authUrl);
-          }
-        }
-      } catch {
-        // continue polling
-      }
-      await new Promise((resolve) => {
-        window.setTimeout(resolve, KIRO_LOGIN_POLL_INTERVAL_MS);
       });
     }
     return { status: "timeout" };
@@ -1590,85 +1527,6 @@ export function useHarnessAuthenticationController({
         return;
       }
 
-      if (modal.provider_id === "kiro") {
-        const label = modal.subscription_label.trim();
-        const openKiroAuthUrl = async (authUrl: string): Promise<boolean> => {
-          const opened = await openExternalLink(authUrl);
-          if (opened) return true;
-          setHarnessAuthModal((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  subscription_status:
-                    `Couldn't open browser automatically. Open this URL manually: ${authUrl}`,
-                }
-              : prev);
-          return false;
-        };
-
-        const login = await startKiroLogin(label ? label : undefined);
-        const initialAuthUrl = takeNextAuthUrlToOpen(login.auth_url, new Set<string>());
-        let initialAuthOpened = false;
-        if (initialAuthUrl) {
-          initialAuthOpened = await openKiroAuthUrl(initialAuthUrl);
-        }
-        setHarnessAuthModal((prev) =>
-          prev
-            ? {
-                ...prev,
-                subscription_status: initialAuthUrl && !initialAuthOpened
-                  ? `Couldn't open browser automatically. Open this URL manually: ${initialAuthUrl}`
-                  : "Waiting for Kiro sign-in to complete in your browser...",
-              }
-            : prev);
-        const outcome = await waitForKiroLoginOutcome(login.login_id, async (authUrl) => {
-          await openKiroAuthUrl(authUrl);
-        }, {
-          openedAuthUrl: initialAuthUrl,
-        });
-        await refreshKiroAccounts();
-        if (outcome.status === "success") {
-          await onSelectProviderSource("kiro", "subscription", null);
-          closeHarnessAuthModal();
-          return;
-        }
-        if (outcome.error && outcome.error.trim()) {
-          setProviderError(outcome.error);
-        }
-        if (outcome.status === "failed") {
-          const failureMessage = outcome.error?.trim() || "Sign-in failed. Retry.";
-          setHarnessAuthModal((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  subscription_status: failureMessage,
-                }
-              : prev);
-          return;
-        }
-        if (outcome.status === "timeout") {
-          const timeoutMessage =
-            outcome.error?.trim() || "Timed out waiting for Kiro sign-in completion. Retry.";
-          setHarnessAuthModal((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  subscription_status: timeoutMessage,
-                }
-              : prev);
-          return;
-        }
-        setHarnessAuthModal((prev) =>
-          prev
-            ? {
-                ...prev,
-                subscription_status:
-                  "Still waiting for completion. Keep this dialog open or retry.",
-              }
-            : prev);
-        return;
-      }
-
       if (modal.provider_id === "kimi") {
         const credentialsJson = modal.subscription_credentials_json.trim();
         if (!credentialsJson) {
@@ -1735,7 +1593,6 @@ export function useHarnessAuthenticationController({
     harnessAuthModal,
     openCodexAuthUrl,
     refreshAmpAccounts,
-    refreshKiroAccounts,
     refreshMistralAccounts,
     refreshQwenAccounts,
     onSelectProviderSource,
@@ -1744,7 +1601,6 @@ export function useHarnessAuthenticationController({
     refreshGeminiAccounts,
     refreshBootstrapAfterMutation,
     selectSubscriptionSourceIfSupported,
-    waitForKiroLoginOutcome,
     waitForMistralLoginOutcome,
     waitForQwenLoginOutcome,
     waitForAmpLoginOutcome,
@@ -1950,34 +1806,6 @@ export function useHarnessAuthenticationController({
     }
   }, [refreshBootstrapAfterMutation]);
 
-  const onKiroDelete = useCallback(async (accountId: string) => {
-    setKiroAccountsBusy(true);
-    setProviderError(null);
-    try {
-      const next = await deleteKiroAccount(accountId);
-      setKiroAccounts(next);
-      await refreshBootstrapAfterMutation();
-    } catch (error) {
-      setProviderError(messageFromError(error));
-    } finally {
-      setKiroAccountsBusy(false);
-    }
-  }, [refreshBootstrapAfterMutation]);
-
-  const onKiroSetActive = useCallback(async (accountId: string | null) => {
-    setKiroAccountsBusy(true);
-    setProviderError(null);
-    try {
-      const next = await setKiroActiveAccount(accountId);
-      setKiroAccounts(next);
-      await refreshBootstrapAfterMutation();
-    } catch (error) {
-      setProviderError(messageFromError(error));
-    } finally {
-      setKiroAccountsBusy(false);
-    }
-  }, [refreshBootstrapAfterMutation]);
-
   const onCursorDelete = useCallback(async (accountId: string) => {
     setCursorAccountsBusy(true);
     setProviderError(null);
@@ -2053,8 +1881,6 @@ export function useHarnessAuthenticationController({
         await onMistralSetActive(row.account_id);
       } else if (providerId === "copilot" && row.account_id) {
         await onCopilotSetActive(row.account_id);
-      } else if (providerId === "kiro" && row.account_id) {
-        await onKiroSetActive(row.account_id);
       } else if (providerId === "cursor" && row.account_id) {
         await onCursorSetActive(row.account_id);
       } else if (providerId === "amp" && row.account_id) {
@@ -2073,7 +1899,6 @@ export function useHarnessAuthenticationController({
     onGeminiSetActive,
     onMistralSetActive,
     onKimiSetActive,
-    onKiroSetActive,
     onQwenSetActive,
     onCursorSetActive,
     onAmpSetActive,
@@ -2251,8 +2076,6 @@ export function useHarnessAuthenticationController({
     mistralAccountsBusy,
     copilotAccounts,
     copilotAccountsBusy,
-    kiroAccounts,
-    kiroAccountsBusy,
     cursorAccounts,
     cursorAccountsBusy,
     ampAccounts,
@@ -2273,7 +2096,6 @@ export function useHarnessAuthenticationController({
     onKimiDelete,
     onMistralDelete,
     onCopilotDelete,
-    onKiroDelete,
     onCursorDelete,
     onAmpDelete,
     providerError,

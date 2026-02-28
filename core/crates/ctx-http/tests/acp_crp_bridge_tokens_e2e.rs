@@ -80,12 +80,6 @@ const PROVIDERS: &[ProviderSpec] = &[
         opencode_config: false,
     },
     ProviderSpec {
-        id: "kiro",
-        fallback_cmd: "kiro-acp",
-        fallback_args: &[],
-        opencode_config: false,
-    },
-    ProviderSpec {
         id: "continue",
         fallback_cmd: "cn",
         fallback_args: &["acp"],
@@ -462,12 +456,6 @@ fn provider_skip_reason(provider: ProviderSpec) -> Option<String> {
     }
     if provider.id == "cursor" {
         return Some("requires Cursor login/session; not OpenRouter-compatible".to_string());
-    }
-    if provider.id == "kiro" {
-        let allow = env_truthy("KIRO_TOKEN_TESTS");
-        if !allow {
-            return Some("requires Kiro CLI login; set KIRO_TOKEN_TESTS=1 to attempt".to_string());
-        }
     }
     if provider.id == "continue" {
         let has_continue_auth = std::env::var("CONTINUE_API_KEY")

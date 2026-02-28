@@ -20,7 +20,6 @@ export const OPENROUTER_ENDPOINT_FIRST_PASS_HARNESSES: EndpointHarnessMatrixEntr
 export const OPENROUTER_ENDPOINT_FIRST_PASS_EXCLUDED_PROVIDER_TOKEN_ONLY = [
   "gemini",
   "copilot",
-  "kiro",
   "cursor",
   "auggie",
   "amp",

@@ -37,12 +37,12 @@ mkdir -p "$host_apps/Fake.app/Contents/_CodeSignature"
 printf 'host-content\n' > "$host_apps/Fake.app/Contents/_CodeSignature/CodeDirectory"
 
 dmg_src="$tmp_root/dmg-src"
-mkdir -p "$dmg_src/kiro/bin"
-printf '#!/usr/bin/env bash\necho kiro\n' > "$dmg_src/kiro/bin/kiro-cli"
-chmod +x "$dmg_src/kiro/bin/kiro-cli"
+mkdir -p "$dmg_src/demo-provider/bin"
+printf '#!/usr/bin/env bash\necho demo-provider\n' > "$dmg_src/demo-provider/bin/demo-provider-cli"
+chmod +x "$dmg_src/demo-provider/bin/demo-provider-cli"
 ln -s "$host_apps" "$dmg_src/Applications"
 
-dmg_path="$tmp_root/kiro.dmg"
+dmg_path="$tmp_root/demo-provider.dmg"
 hdiutil create \
   -quiet \
   -volname "ctx-dmg-test" \
@@ -57,7 +57,7 @@ cat > "$matrix_path" <<EOF
   "version": 2,
   "providers": [
     {
-      "id": "kiro",
+      "id": "demo-provider",
       "kind": "archive",
       "managed_install": {
         "kind": "archive",
@@ -67,7 +67,7 @@ cat > "$matrix_path" <<EOF
           "darwin-aarch64": {
             "url": "file://$dmg_path",
             "archive": "dmg",
-            "bin_path": "kiro/bin/kiro-cli"
+            "bin_path": "demo-provider/bin/demo-provider-cli"
           }
         }
       }
@@ -78,7 +78,7 @@ EOF
 
 bundle_dir="$tmp_root/bundle"
 CTX_BUNDLE_DIR="$bundle_dir" \
-CTX_BUNDLE_ONLY_PROVIDERS="kiro" \
+CTX_BUNDLE_ONLY_PROVIDERS="demo-provider" \
 CTX_BUNDLE_MATRIX_JSON="$matrix_path" \
 CTX_BUNDLE_OS="macos" \
 CTX_BUNDLE_ARCH="aarch64" \
@@ -103,12 +103,12 @@ if len(providers) != 1:
     raise SystemExit(1)
 
 entry = providers[0]
-if entry.get("id") != "kiro":
-    print(f"expected kiro provider entry, got {entry.get('id')!r}", file=sys.stderr)
+if entry.get("id") != "demo-provider":
+    print(f"expected demo-provider entry, got {entry.get('id')!r}", file=sys.stderr)
     raise SystemExit(1)
 
 bundle_root = manifest_path.parent
-provider_root = bundle_root / "providers" / "kiro" / "macos" / "aarch64"
+provider_root = bundle_root / "providers" / "demo-provider" / "macos" / "aarch64"
 if not provider_root.exists():
     print(f"missing provider root: {provider_root}", file=sys.stderr)
     raise SystemExit(1)

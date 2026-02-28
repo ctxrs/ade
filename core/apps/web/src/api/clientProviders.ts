@@ -65,7 +65,6 @@ export type ProvidersBootstrapResponse = {
   kimi_accounts: KimiAccountsResponse;
   mistral_accounts: MistralAccountsResponse;
   copilot_accounts: CopilotAccountsResponse;
-  kiro_accounts: KiroAccountsResponse;
   cursor_accounts: CursorAccountsResponse;
   amp_accounts: AmpAccountsResponse;
   auggie_accounts?: AuggieAccountsResponse;
@@ -271,15 +270,6 @@ export type CopilotAccountEntry = {
   last_used_at?: string | null;
 };
 
-export type KiroAccountEntry = {
-  id: string;
-  label: string;
-  kind?: string;
-  email?: string | null;
-  created_at: string;
-  last_used_at?: string | null;
-};
-
 export type CursorAccountEntry = {
   id: string;
   label: string;
@@ -363,11 +353,6 @@ export type MistralAccountsResponse = {
 export type CopilotAccountsResponse = {
   active_account_id: string | null;
   accounts: CopilotAccountEntry[];
-};
-
-export type KiroAccountsResponse = {
-  active_account_id: string | null;
-  accounts: KiroAccountEntry[];
 };
 
 export type CursorAccountsResponse = {
@@ -460,19 +445,6 @@ export type MistralLoginStatus = {
 };
 
 export type MistralLoginStartResponse = {
-  login_id: string;
-  auth_url?: string | null;
-};
-
-export type KiroLoginStatus = {
-  login_id: string;
-  auth_url?: string | null;
-  status: string;
-  account_id?: string | null;
-  error?: string | null;
-};
-
-export type KiroLoginStartResponse = {
   login_id: string;
   auth_url?: string | null;
 };
@@ -770,42 +742,6 @@ export const setCopilotActiveAccount = (accountId: string | null) =>
 
 export const deleteCopilotAccount = (accountId: string) =>
   apiAny<CopilotAccountsResponse>(`/api/providers/copilot/accounts/${accountId}`, {
-    method: "DELETE",
-  });
-
-export const listKiroAccounts = () =>
-  apiAny<KiroAccountsResponse>(`/api/providers/kiro/accounts`);
-
-export const startKiroLogin = (label?: string) =>
-  apiAny<KiroLoginStartResponse>(`/api/providers/kiro/accounts/login/start`, {
-    method: "POST",
-    body: JSON.stringify(label ? { label } : {}),
-  });
-
-export const getKiroLogin = (loginId: string) =>
-  apiAny<KiroLoginStatus>(`/api/providers/kiro/accounts/login/${loginId}`);
-
-export const upsertKiroAccount = (
-  authTokenJson: string,
-  opts?: { label?: string; email?: string },
-) =>
-  apiAny<KiroAccountsResponse>(`/api/providers/kiro/accounts`, {
-    method: "POST",
-    body: JSON.stringify({
-      auth_token_json: authTokenJson,
-      ...(opts?.label ? { label: opts.label } : {}),
-      ...(opts?.email ? { email: opts.email } : {}),
-    }),
-  });
-
-export const setKiroActiveAccount = (accountId: string | null) =>
-  apiAny<KiroAccountsResponse>(`/api/providers/kiro/active-account`, {
-    method: "PUT",
-    body: JSON.stringify({ account_id: accountId }),
-  });
-
-export const deleteKiroAccount = (accountId: string) =>
-  apiAny<KiroAccountsResponse>(`/api/providers/kiro/accounts/${accountId}`, {
     method: "DELETE",
   });
 

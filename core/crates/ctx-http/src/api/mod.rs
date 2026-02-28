@@ -459,26 +459,6 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             delete(delete_copilot_account),
         )
         .route(
-            "/api/providers/kiro/accounts",
-            get(list_kiro_accounts).post(upsert_kiro_account),
-        )
-        .route(
-            "/api/providers/kiro/accounts/login/start",
-            post(start_kiro_login),
-        )
-        .route(
-            "/api/providers/kiro/accounts/login/:id",
-            get(get_kiro_login),
-        )
-        .route(
-            "/api/providers/kiro/active-account",
-            put(set_kiro_active_account),
-        )
-        .route(
-            "/api/providers/kiro/accounts/:id",
-            delete(delete_kiro_account),
-        )
-        .route(
             "/api/providers/cursor/accounts",
             get(list_cursor_accounts).post(upsert_cursor_account),
         )

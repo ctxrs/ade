@@ -29,8 +29,6 @@ describe("buildHarnessAuthRows", () => {
       mistral_active_account_id: null,
       copilot_accounts: [],
       copilot_active_account_id: null,
-      kiro_accounts: [],
-      kiro_active_account_id: null,
       cursor_accounts: [],
       cursor_active_account_id: null,
       codex_accounts: [
@@ -77,8 +75,6 @@ describe("buildHarnessAuthRows", () => {
       mistral_active_account_id: null,
       copilot_accounts: [],
       copilot_active_account_id: null,
-      kiro_accounts: [],
-      kiro_active_account_id: null,
       cursor_accounts: [],
       cursor_active_account_id: null,
       endpoints: [
@@ -153,8 +149,6 @@ describe("buildHarnessAuthRows", () => {
       mistral_active_account_id: null,
       copilot_accounts: [],
       copilot_active_account_id: null,
-      kiro_accounts: [],
-      kiro_active_account_id: null,
       cursor_accounts: [],
       cursor_active_account_id: null,
       endpoints: [],
@@ -182,8 +176,6 @@ describe("buildHarnessAuthRows", () => {
       mistral_active_account_id: null,
       copilot_accounts: [],
       copilot_active_account_id: null,
-      kiro_accounts: [],
-      kiro_active_account_id: null,
       cursor_accounts: [],
       cursor_active_account_id: null,
       claude_accounts: [
@@ -225,8 +217,6 @@ describe("buildHarnessAuthRows", () => {
       mistral_active_account_id: null,
       copilot_accounts: [],
       copilot_active_account_id: null,
-      kiro_accounts: [],
-      kiro_active_account_id: null,
       cursor_accounts: [],
       cursor_active_account_id: null,
       gemini_active_account_id: "gemini-2",
@@ -255,7 +245,7 @@ describe("buildHarnessAuthRows", () => {
     expect(rows[0]?.label).toBe("gemini-a@example.com");
   });
 
-  it("builds qwen/kimi/mistral/copilot/kiro subscription rows and marks active", () => {
+  it("builds qwen/kimi/mistral/copilot subscription rows and marks active", () => {
     const qwenRows = buildHarnessAuthRows({
       provider_id: "qwen",
       selected_source_kind: "subscription",
@@ -278,8 +268,6 @@ describe("buildHarnessAuthRows", () => {
       mistral_active_account_id: null,
       copilot_accounts: [],
       copilot_active_account_id: null,
-      kiro_accounts: [],
-      kiro_active_account_id: null,
       cursor_accounts: [],
       cursor_active_account_id: null,
     });
@@ -307,8 +295,6 @@ describe("buildHarnessAuthRows", () => {
       ],
       copilot_accounts: [],
       copilot_active_account_id: null,
-      kiro_accounts: [],
-      kiro_active_account_id: null,
       cursor_accounts: [],
       cursor_active_account_id: null,
     });
@@ -335,8 +321,6 @@ describe("buildHarnessAuthRows", () => {
       ],
       copilot_accounts: [],
       copilot_active_account_id: null,
-      kiro_accounts: [],
-      kiro_active_account_id: null,
       cursor_accounts: [],
       cursor_active_account_id: null,
     });
@@ -363,40 +347,11 @@ describe("buildHarnessAuthRows", () => {
       copilot_accounts: [
         { id: "copilot-1", label: "Copilot", email: "copilot@example.com", created_at: "2026-01-01T00:00:00Z" },
       ],
-      kiro_accounts: [],
-      kiro_active_account_id: null,
       cursor_accounts: [],
       cursor_active_account_id: null,
     });
     expect(copilotRows.find((row) => row.active)?.account_id).toBe("copilot-1");
 
-    const kiroRows = buildHarnessAuthRows({
-      provider_id: "kiro",
-      selected_source_kind: "subscription",
-      selected_endpoint_id: null,
-      endpoints: [],
-      codex_accounts: [],
-      codex_active_account_id: null,
-      claude_accounts: [],
-      claude_active_account_id: null,
-      gemini_accounts: [],
-      gemini_active_account_id: null,
-      qwen_accounts: [],
-      qwen_active_account_id: null,
-      kimi_accounts: [],
-      kimi_active_account_id: null,
-      mistral_accounts: [],
-      mistral_active_account_id: null,
-      copilot_accounts: [],
-      copilot_active_account_id: null,
-      kiro_active_account_id: "kiro-1",
-      kiro_accounts: [
-        { id: "kiro-1", label: "Kiro", email: "kiro@example.com", created_at: "2026-01-01T00:00:00Z" },
-      ],
-      cursor_accounts: [],
-      cursor_active_account_id: null,
-    });
-    expect(kiroRows.find((row) => row.active)?.account_id).toBe("kiro-1");
   });
 
   it("builds cursor unmanaged subscription row gated by source kind", () => {
@@ -419,8 +374,6 @@ describe("buildHarnessAuthRows", () => {
       mistral_active_account_id: null,
       copilot_accounts: [],
       copilot_active_account_id: null,
-      kiro_accounts: [],
-      kiro_active_account_id: null,
       cursor_active_account_id: "cursor-2",
       cursor_accounts: [
         { id: "cursor-1", label: "Cursor A", email: "cursor-a@example.com", created_at: "2026-01-01T00:00:00Z" },
@@ -452,8 +405,6 @@ describe("buildHarnessAuthRows", () => {
       mistral_active_account_id: null,
       copilot_accounts: [],
       copilot_active_account_id: null,
-      kiro_accounts: [],
-      kiro_active_account_id: null,
       cursor_active_account_id: null,
       cursor_accounts: [],
     });
@@ -481,8 +432,6 @@ describe("buildHarnessAuthRows", () => {
       mistral_active_account_id: null,
       copilot_accounts: [],
       copilot_active_account_id: null,
-      kiro_accounts: [],
-      kiro_active_account_id: null,
       cursor_active_account_id: null,
       cursor_accounts: [],
       amp_active_account_id: "amp-2",
@@ -515,8 +464,6 @@ describe("buildHarnessAuthRows", () => {
       mistral_active_account_id: null,
       copilot_accounts: [],
       copilot_active_account_id: null,
-      kiro_accounts: [],
-      kiro_active_account_id: null,
       cursor_active_account_id: null,
       cursor_accounts: [],
       amp_active_account_id: "amp-2",
@@ -549,8 +496,6 @@ describe("buildHarnessAuthRows", () => {
       mistral_active_account_id: null,
       copilot_accounts: [],
       copilot_active_account_id: null,
-      kiro_accounts: [],
-      kiro_active_account_id: null,
       cursor_active_account_id: null,
       cursor_accounts: [],
       auggie_active_account_id: "auggie-2",
@@ -583,8 +528,6 @@ describe("buildHarnessAuthRows", () => {
       mistral_active_account_id: null,
       copilot_accounts: [],
       copilot_active_account_id: null,
-      kiro_accounts: [],
-      kiro_active_account_id: null,
       cursor_active_account_id: null,
       cursor_accounts: [],
       auggie_active_account_id: "auggie-2",

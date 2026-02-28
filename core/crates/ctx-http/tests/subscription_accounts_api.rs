@@ -89,19 +89,6 @@ struct MistralLoginStatusResponse {
     error: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct KiroLoginStartResponse {
-    login_id: String,
-    auth_url: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct KiroLoginStatusResponse {
-    status: String,
-    account_id: Option<String>,
-    error: Option<String>,
-}
-
 #[derive(Debug, Clone)]
 enum GeminiLoginFixture {
     Success {
@@ -426,98 +413,6 @@ impl ProviderAdapter for MistralLoginTestAdapter {
     }
 }
 
-#[derive(Debug, Clone)]
-enum KiroLoginFixture {
-    Success {
-        auth_token_json: String,
-        auth_url: Option<String>,
-    },
-}
-
-#[derive(Debug, Clone)]
-struct KiroLoginTestAdapter {
-    fixture: KiroLoginFixture,
-}
-
-impl KiroLoginTestAdapter {
-    fn success(auth_token_json: impl Into<String>, auth_url: Option<String>) -> Self {
-        Self {
-            fixture: KiroLoginFixture::Success {
-                auth_token_json: auth_token_json.into(),
-                auth_url,
-            },
-        }
-    }
-}
-
-#[async_trait]
-impl ProviderAdapter for KiroLoginTestAdapter {
-    async fn inspect(&self) -> Result<ProviderStatus> {
-        Ok(ProviderStatus {
-            provider_id: "kiro".to_string(),
-            installed: true,
-            detected_path: None,
-            version: Some("test".to_string()),
-            capabilities: None,
-            health: ProviderHealth::Ok,
-            diagnostics: Vec::new(),
-            details: HashMap::new(),
-        })
-    }
-
-    async fn run(
-        &self,
-        _input: TurnInput,
-        _workdir: PathBuf,
-        _env: HashMap<String, String>,
-        _event_sink: mpsc::Sender<NormalizedEvent>,
-    ) -> Result<RunHandle> {
-        Err(anyhow!("run is not used in this test adapter"))
-    }
-
-    async fn cancel(&self, _handle: RunHandle) -> Result<()> {
-        Ok(())
-    }
-
-    async fn authenticate_session(
-        &self,
-        _session_key: String,
-        _workdir: PathBuf,
-        env: HashMap<String, String>,
-        _method_id: Option<String>,
-        event_sink: mpsc::Sender<NormalizedEvent>,
-    ) -> Result<()> {
-        let Some(home) = env.get("HOME") else {
-            return Err(anyhow!("HOME missing"));
-        };
-        match &self.fixture {
-            KiroLoginFixture::Success {
-                auth_token_json,
-                auth_url,
-            } => {
-                if let Some(auth_url) = auth_url.as_ref() {
-                    let _ = event_sink
-                        .send(NormalizedEvent {
-                            event_type: SessionEventType::Notice,
-                            payload_json: json!({ "auth_url": auth_url }),
-                        })
-                        .await;
-                }
-                let token_path = PathBuf::from(home)
-                    .join(".aws")
-                    .join("sso")
-                    .join("cache")
-                    .join("kiro-auth-token.json");
-                if let Some(parent) = token_path.parent() {
-                    tokio::fs::create_dir_all(parent).await?;
-                }
-                tokio::fs::write(token_path, auth_token_json).await?;
-                Ok(())
-            }
-        }
-    }
-}
-
 fn providers_with_gemini_adapter(
     adapter: Arc<dyn ProviderAdapter>,
 ) -> HashMap<String, Arc<dyn ProviderAdapter>> {
@@ -539,14 +434,6 @@ fn providers_with_mistral_adapter(
 ) -> HashMap<String, Arc<dyn ProviderAdapter>> {
     let mut providers = common::fake_providers();
     providers.insert("mistral".to_string(), adapter);
-    providers
-}
-
-fn providers_with_kiro_adapter(
-    adapter: Arc<dyn ProviderAdapter>,
-) -> HashMap<String, Arc<dyn ProviderAdapter>> {
-    let mut providers = common::fake_providers();
-    providers.insert("kiro".to_string(), adapter);
     providers
 }
 
@@ -767,34 +654,6 @@ async fn poll_mistral_login_status(
         }
         if Instant::now() >= deadline {
             panic!("mistral login did not complete in time");
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-}
-
-async fn poll_kiro_login_status(
-    server: &common::TestServer,
-    login_id: &str,
-) -> KiroLoginStatusResponse {
-    let status_url = format!(
-        "{}/api/providers/kiro/accounts/login/{}",
-        server.base_url, login_id
-    );
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let resp = server
-            .client
-            .get(&status_url)
-            .send()
-            .await
-            .expect("kiro status request");
-        assert_eq!(resp.status(), StatusCode::OK);
-        let body: KiroLoginStatusResponse = resp.json().await.expect("kiro status body");
-        if body.status != "pending" {
-            return body;
-        }
-        if Instant::now() >= deadline {
-            panic!("kiro login did not complete in time");
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
@@ -1588,57 +1447,6 @@ async fn mistral_login_start_and_status_success_persists_account() {
 }
 
 #[tokio::test]
-async fn kiro_login_start_and_status_success_persists_account() {
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
-    let providers = providers_with_kiro_adapter(Arc::new(KiroLoginTestAdapter::success(
-        r#"{"accessToken":"access","expiresAt":"2099-01-01T00:00:00Z"}"#,
-        Some("https://kiro.dev/oauth/authorize?code=test".to_string()),
-    )));
-    let state = common::build_state(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:0",
-    );
-    let server = common::spawn_http_server(common::router(state)).await;
-
-    let start_url = format!(
-        "{}/api/providers/kiro/accounts/login/start",
-        server.base_url
-    );
-    let start_resp = server
-        .client
-        .post(start_url)
-        .json(&json!({ "label": "Kiro OAuth" }))
-        .send()
-        .await
-        .expect("start kiro login request");
-    assert_eq!(start_resp.status(), StatusCode::OK);
-    let start_body: KiroLoginStartResponse = start_resp.json().await.expect("start body");
-    assert!(!start_body.login_id.is_empty());
-    assert!(start_body.auth_url.is_none());
-
-    let status = poll_kiro_login_status(&server, &start_body.login_id).await;
-    assert_eq!(status.status, "success");
-    assert!(status.account_id.is_some());
-    assert!(status.error.is_none());
-
-    let accounts_url = format!("{}/api/providers/kiro/accounts", server.base_url);
-    let accounts_resp = server
-        .client
-        .get(accounts_url)
-        .send()
-        .await
-        .expect("kiro accounts request");
-    assert_eq!(accounts_resp.status(), StatusCode::OK);
-    let accounts: SubscriptionAccountsResponse = accounts_resp.json().await.expect("accounts body");
-    assert_eq!(accounts.accounts.len(), 1);
-    assert_eq!(accounts.active_account_id, status.account_id);
-    assert_eq!(accounts.accounts[0].label.as_deref(), Some("Kiro OAuth"));
-}
-
-#[tokio::test]
 async fn kimi_subscription_accounts_crud_round_trip() {
     assert_managed_subscription_crud(
         "kimi",
@@ -1660,19 +1468,6 @@ async fn copilot_subscription_accounts_crud_round_trip() {
         json!({
             "label": "Copilot Team",
             "token": "ghp_abc",
-            "email": "dev@example.com"
-        }),
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn kiro_subscription_accounts_crud_round_trip() {
-    assert_managed_subscription_crud(
-        "kiro",
-        json!({
-            "label": "Kiro Team",
-            "auth_token_json": "{\"accessToken\":\"a\",\"expiresAt\":\"2099-01-01T00:00:00Z\"}",
             "email": "dev@example.com"
         }),
     )
@@ -1739,34 +1534,6 @@ async fn kimi_upsert_rejects_invalid_credentials_json() {
         .json(&json!({
             "label": "Kimi Bad",
             "credentials_json": "not-json"
-        }))
-        .send()
-        .await
-        .expect("invalid upsert request");
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    let body: ErrorResp = resp.json().await.expect("error response json");
-    assert!(body.error.contains("valid JSON"));
-}
-
-#[tokio::test]
-async fn kiro_upsert_rejects_invalid_auth_token_json() {
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let server = common::spawn_http_server(common::router(state)).await;
-    let accounts_url = format!("{}/api/providers/kiro/accounts", server.base_url);
-
-    let resp = server
-        .client
-        .post(accounts_url)
-        .json(&json!({
-            "label": "Kiro Bad",
-            "auth_token_json": "not-json"
         }))
         .send()
         .await

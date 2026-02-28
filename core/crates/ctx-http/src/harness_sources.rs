@@ -22,7 +22,6 @@ const PROVIDER_AMP: &str = "amp";
 const PROVIDER_DROID: &str = "droid";
 const PROVIDER_OPENHANDS: &str = "openhands";
 const PROVIDER_COPILOT: &str = "copilot";
-const PROVIDER_KIRO: &str = "kiro";
 const PROVIDER_AUGGIE: &str = "auggie";
 const PROVIDER_PI: &str = "pi";
 const PROVIDER_CURSOR: &str = "cursor";
@@ -31,7 +30,6 @@ const CODEX_AUTH_TYPE_BEARER: &str = "bearer";
 const CLAUDE_AUTH_TYPE_API_KEY: &str = "api_key";
 const GEMINI_AUTH_TYPE_GEMINI_API_KEY: &str = "gemini_api_key";
 const GEMINI_AUTH_TYPE_VERTEX_AI: &str = "vertex_ai";
-const KIRO_AUTH_TOKEN_RELATIVE_PATH: &str = ".aws/sso/cache/kiro-auth-token.json";
 const ENDPOINT_MODEL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(20);
 const ENDPOINT_MODEL_CATALOG_TTL: Duration = Duration::from_secs(60 * 60 * 24);
 const GENERIC_ENDPOINT_NAMESPACE_LABELS: &[&str] = &[
@@ -275,14 +273,6 @@ fn gemini_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
         .join(endpoint_id)
 }
 
-fn kiro_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
-    data_root
-        .join("providers")
-        .join("kiro")
-        .join("endpoint-homes")
-        .join(endpoint_id)
-}
-
 fn droid_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
     data_root
         .join("providers")
@@ -320,48 +310,6 @@ fn subscription_env_for_provider(
     env
 }
 
-fn container_workspaces_root(data_root: &Path) -> PathBuf {
-    data_root.join("containers").join("workspaces")
-}
-
-async fn container_runtime_data_roots(data_root: &Path) -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    let mut entries = match tokio::fs::read_dir(container_workspaces_root(data_root)).await {
-        Ok(entries) => entries,
-        Err(_) => return roots,
-    };
-
-    while let Ok(Some(entry)) = entries.next_entry().await {
-        let runtime_root = entry.path().join("data");
-        match tokio::fs::metadata(&runtime_root).await {
-            Ok(metadata) if metadata.is_dir() => roots.push(runtime_root),
-            _ => {}
-        }
-    }
-
-    roots
-}
-
-async fn remove_kiro_endpoint_home_for_root(root: &Path, endpoint_id: &str) -> Result<()> {
-    let endpoint_home = kiro_endpoint_home(root, endpoint_id);
-    match tokio::fs::remove_dir_all(&endpoint_home).await {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(err)
-            .with_context(|| format!("removing kiro endpoint home for endpoint {}", endpoint_id)),
-    }
-}
-
-async fn remove_kiro_endpoint_homes_for_runtime_roots(
-    data_root: &Path,
-    endpoint_id: &str,
-) -> Result<()> {
-    for runtime_root in container_runtime_data_roots(data_root).await {
-        remove_kiro_endpoint_home_for_root(&runtime_root, endpoint_id).await?;
-    }
-    Ok(())
-}
-
 fn normalize_provider_id(provider_id: &str) -> Option<&'static str> {
     match provider_id {
         PROVIDER_CODEX => Some(PROVIDER_CODEX),
@@ -376,7 +324,6 @@ fn normalize_provider_id(provider_id: &str) -> Option<&'static str> {
         PROVIDER_DROID => Some(PROVIDER_DROID),
         PROVIDER_OPENHANDS => Some(PROVIDER_OPENHANDS),
         PROVIDER_COPILOT => Some(PROVIDER_COPILOT),
-        PROVIDER_KIRO => Some(PROVIDER_KIRO),
         PROVIDER_AUGGIE => Some(PROVIDER_AUGGIE),
         PROVIDER_PI => Some(PROVIDER_PI),
         PROVIDER_CURSOR => Some(PROVIDER_CURSOR),
@@ -399,7 +346,6 @@ fn provider_supports_harness_endpoint(canonical_provider_id: &str) -> bool {
             | PROVIDER_DROID
             | PROVIDER_OPENHANDS
             | PROVIDER_COPILOT
-            | PROVIDER_KIRO
             | PROVIDER_AUGGIE
             | PROVIDER_PI
     )
@@ -423,7 +369,6 @@ pub fn default_shape_for_provider(provider_id: &str) -> Option<HarnessApiShape> 
         Some(PROVIDER_DROID) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_OPENHANDS) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_COPILOT) => Some(HarnessApiShape::OpenaiResponses),
-        Some(PROVIDER_KIRO) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_AUGGIE) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_PI) => Some(HarnessApiShape::OpenaiResponses),
         _ => None,
@@ -471,8 +416,8 @@ pub fn ensure_shape_compatible(provider_id: &str, shape: HarnessApiShape) -> Res
             }
         }
         PROVIDER_QWEN | PROVIDER_OPENCODE | PROVIDER_MISTRAL | PROVIDER_GOOSE | PROVIDER_AMP
-        | PROVIDER_DROID | PROVIDER_OPENHANDS | PROVIDER_COPILOT | PROVIDER_KIRO
-        | PROVIDER_AUGGIE | PROVIDER_PI => {
+        | PROVIDER_DROID | PROVIDER_OPENHANDS | PROVIDER_COPILOT | PROVIDER_AUGGIE
+        | PROVIDER_PI => {
             if shape != HarnessApiShape::OpenaiResponses {
                 anyhow::bail!(
                     "{} requires api_shape=openai_responses; found {}",
@@ -881,15 +826,6 @@ async fn write_endpoint_secret(data_root: &Path, secret_ref: &str, api_key: &str
     Ok(())
 }
 
-fn parse_required_json_object(raw: &str, field_name: &str) -> Result<serde_json::Value> {
-    let parsed: serde_json::Value =
-        serde_json::from_str(raw).with_context(|| format!("{field_name} must be valid JSON"))?;
-    if !parsed.is_object() {
-        anyhow::bail!("{field_name} must be a JSON object");
-    }
-    Ok(parsed)
-}
-
 async fn read_endpoint_secret(data_root: &Path, secret_ref: &str) -> Result<String> {
     let path = endpoint_secret_path(data_root, secret_ref);
     let raw = tokio::fs::read_to_string(&path)
@@ -1072,12 +1008,6 @@ pub async fn upsert_provider_endpoint(
         .as_ref()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    if canonical == PROVIDER_KIRO {
-        if let Some(api_key) = input.api_key.as_ref() {
-            let _ = parse_required_json_object(api_key, "api_key")?;
-        }
-    }
-
     let _registry_write_guard = REGISTRY_WRITE_LOCK.lock().await;
     let mut registry = load_registry(data_root).await?;
     let provider = registry
@@ -1246,11 +1176,6 @@ pub async fn delete_provider_endpoint(
                         });
                     }
                 }
-            } else if canonical == PROVIDER_KIRO {
-                ensure_safe_endpoint_id(&removed_endpoint_id)?;
-                remove_kiro_endpoint_home_for_root(data_root, &removed_endpoint_id).await?;
-                remove_kiro_endpoint_homes_for_runtime_roots(data_root, &removed_endpoint_id)
-                    .await?;
             } else if canonical == PROVIDER_DROID {
                 ensure_safe_endpoint_id(&removed_endpoint_id)?;
                 let endpoint_home = droid_endpoint_home(data_root, &removed_endpoint_id);
@@ -1645,29 +1570,6 @@ async fn prepare_droid_home_with_endpoint_settings(
     Ok(droid_cli_model_id_from_model(model_id))
 }
 
-async fn prepare_kiro_home_with_auth_token_json(
-    kiro_home: &Path,
-    auth_token_json: &str,
-) -> Result<()> {
-    let auth_token = parse_required_json_object(auth_token_json, "api_key")?;
-    tokio::fs::create_dir_all(kiro_home).await?;
-    let token_path = kiro_home.join(KIRO_AUTH_TOKEN_RELATIVE_PATH);
-    if let Some(parent) = token_path.parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
-    let payload = serde_json::to_vec_pretty(&auth_token)?;
-    tokio::fs::write(&token_path, payload).await?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ =
-            tokio::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o600)).await;
-    }
-    tokio::fs::create_dir_all(kiro_home.join(".config")).await?;
-    tokio::fs::create_dir_all(kiro_home.join(".cache")).await?;
-    Ok(())
-}
-
 fn provider_store<'a>(
     registry: &'a HarnessSourceRegistryInternal,
     provider_id: &str,
@@ -1967,22 +1869,6 @@ async fn resolve_internal(
             {
                 env.insert("PI_ACP_MODEL".to_string(), model);
             }
-        }
-        PROVIDER_KIRO => {
-            ensure_shape_compatible(canonical, endpoint.api_shape)?;
-            ensure_safe_endpoint_id(&endpoint.id)?;
-            let kiro_home_root = runtime_data_root.unwrap_or(data_root);
-            let kiro_home = kiro_endpoint_home(kiro_home_root, &endpoint.id);
-            prepare_kiro_home_with_auth_token_json(&kiro_home, &api_key).await?;
-            env.insert("HOME".to_string(), kiro_home.to_string_lossy().to_string());
-            env.insert(
-                "XDG_CONFIG_HOME".to_string(),
-                kiro_home.join(".config").to_string_lossy().to_string(),
-            );
-            env.insert(
-                "XDG_CACHE_HOME".to_string(),
-                kiro_home.join(".cache").to_string_lossy().to_string(),
-            );
         }
         PROVIDER_AUGGIE => {
             ensure_shape_compatible(canonical, endpoint.api_shape)?;
@@ -2783,10 +2669,6 @@ mod tests {
             ),
             (PROVIDER_COPILOT, &["GH_TOKEN", "GITHUB_TOKEN"]),
             (
-                PROVIDER_KIRO,
-                &["HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"],
-            ),
-            (
                 PROVIDER_AUGGIE,
                 &["AUGMENT_SESSION_AUTH", "AUGMENT_API_TOKEN"],
             ),
@@ -2808,7 +2690,6 @@ mod tests {
                     endpoint_id: None,
                     name: format!("{provider_id} endpoint"),
                     base_url: if *provider_id == PROVIDER_COPILOT
-                        || *provider_id == PROVIDER_KIRO
                         || *provider_id == PROVIDER_AUGGIE
                         || *provider_id == PROVIDER_PI
                     {
@@ -2817,7 +2698,6 @@ mod tests {
                         Some("https://openrouter.ai/api/v1".to_string())
                     },
                     api_shape: if *provider_id == PROVIDER_COPILOT
-                        || *provider_id == PROVIDER_KIRO
                         || *provider_id == PROVIDER_AUGGIE
                         || *provider_id == PROVIDER_PI
                     {
@@ -2827,11 +2707,7 @@ mod tests {
                     },
                     auth_type: None,
                     model_override: Some("test-model".to_string()),
-                    api_key: Some(if *provider_id == PROVIDER_KIRO {
-                        r#"{"token":"test-token","exp":"2099-01-01T00:00:00Z"}"#.to_string()
-                    } else {
-                        "test-key".to_string()
-                    }),
+                    api_key: Some("test-key".to_string()),
                 },
             )
             .await
@@ -3011,55 +2887,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn kiro_endpoint_uses_runtime_root_for_run_resolution_when_provided() {
-        let root = tempfile::tempdir().expect("tempdir");
-        let runtime_root = tempfile::tempdir().expect("runtime tempdir");
-        let endpoint = upsert_provider_endpoint(
-            root.path(),
-            PROVIDER_KIRO,
-            HarnessEndpointUpsert {
-                endpoint_id: None,
-                name: "Kiro token".to_string(),
-                base_url: None,
-                api_shape: None,
-                auth_type: None,
-                model_override: None,
-                api_key: Some(r#"{"token":"test-token","exp":"2099-01-01T00:00:00Z"}"#.to_string()),
-            },
-        )
-        .await
-        .expect("upsert endpoint");
-
-        set_provider_source_selection(
-            root.path(),
-            PROVIDER_KIRO,
-            HarnessSourceKind::Endpoint,
-            Some(endpoint.id.clone()),
-        )
-        .await
-        .expect("select endpoint");
-
-        let resolved = resolve_provider_source_for_run_with_runtime_root(
-            root.path(),
-            PROVIDER_KIRO,
-            Some(runtime_root.path()),
-        )
-        .await
-        .expect("resolve run with runtime root");
-
-        let home = PathBuf::from(
-            resolved
-                .env
-                .get("HOME")
-                .expect("HOME should be set for kiro endpoint"),
-        );
-        assert!(home.starts_with(runtime_root.path()));
-
-        let token_path = home.join(KIRO_AUTH_TOKEN_RELATIVE_PATH);
-        assert!(token_path.exists());
-    }
-
-    #[tokio::test]
     async fn deleting_codex_endpoint_removes_endpoint_home() {
         let root = tempfile::tempdir().expect("tempdir");
         let endpoint = upsert_provider_endpoint(
@@ -3182,62 +3009,6 @@ mod tests {
             .exists());
 
         delete_provider_endpoint(root.path(), PROVIDER_DROID, &endpoint.id)
-            .await
-            .expect("delete endpoint");
-
-        assert!(!endpoint_home.exists());
-    }
-
-    #[tokio::test]
-    async fn deleting_kiro_endpoint_removes_runtime_root_endpoint_home() {
-        let root = tempfile::tempdir().expect("tempdir");
-        let runtime_root = root
-            .path()
-            .join("containers")
-            .join("workspaces")
-            .join("workspace-kiro")
-            .join("data");
-        tokio::fs::create_dir_all(&runtime_root)
-            .await
-            .expect("runtime root");
-
-        let endpoint = upsert_provider_endpoint(
-            root.path(),
-            PROVIDER_KIRO,
-            HarnessEndpointUpsert {
-                endpoint_id: None,
-                name: "Kiro token".to_string(),
-                base_url: None,
-                api_shape: None,
-                auth_type: None,
-                model_override: None,
-                api_key: Some(r#"{"token":"test-token","exp":"2099-01-01T00:00:00Z"}"#.to_string()),
-            },
-        )
-        .await
-        .expect("upsert endpoint");
-
-        set_provider_source_selection(
-            root.path(),
-            PROVIDER_KIRO,
-            HarnessSourceKind::Endpoint,
-            Some(endpoint.id.clone()),
-        )
-        .await
-        .expect("select endpoint");
-
-        resolve_provider_source_for_run_with_runtime_root(
-            root.path(),
-            PROVIDER_KIRO,
-            Some(&runtime_root),
-        )
-        .await
-        .expect("resolve run with runtime root");
-
-        let endpoint_home = kiro_endpoint_home(&runtime_root, &endpoint.id);
-        assert!(endpoint_home.join(KIRO_AUTH_TOKEN_RELATIVE_PATH).exists());
-
-        delete_provider_endpoint(root.path(), PROVIDER_KIRO, &endpoint.id)
             .await
             .expect("delete endpoint");
 
