@@ -107,8 +107,13 @@ const componentKey = (component, hostOs, hostArch) => {
 
 const cloneJson = (value) => JSON.parse(JSON.stringify(value));
 
-const validateRequiredArray = (value, label, errors) => {
-  if (!Array.isArray(value) || value.length === 0) {
+const validateRequiredArray = (value, label, errors, options = {}) => {
+  const allowEmpty = options.allowEmpty === true;
+  if (!Array.isArray(value)) {
+    errors.push(`${label} must be an array`);
+    return [];
+  }
+  if (!allowEmpty && value.length === 0) {
     errors.push(`${label} must be a non-empty array`);
     return [];
   }
@@ -405,7 +410,12 @@ const validateManifestEntries = ({
 
   const providerIds = validateRequiredArray(lock?.required?.provider_ids, "runtime lock required.provider_ids", errors);
   const runtimeIds = validateRequiredArray(lock?.required?.runtime_ids, "runtime lock required.runtime_ids", errors);
-  const imageIds = validateRequiredArray(lock?.required?.image_ids, "runtime lock required.image_ids", errors);
+  const imageIds = validateRequiredArray(
+    lock?.required?.image_ids,
+    "runtime lock required.image_ids",
+    errors,
+    { allowEmpty: true },
+  );
 
   const bundlesRoot = path.dirname(manifestPath);
 
@@ -523,7 +533,12 @@ const validateLockV2 = ({ lock, manifest, manifestPath, profile, overridesPath, 
 
   const requiredProviderIds = validateRequiredArray(lock?.required?.provider_ids, "runtime lock required.provider_ids", errors);
   const requiredRuntimeIds = validateRequiredArray(lock?.required?.runtime_ids, "runtime lock required.runtime_ids", errors);
-  const requiredImageIds = validateRequiredArray(lock?.required?.image_ids, "runtime lock required.image_ids", errors);
+  const requiredImageIds = validateRequiredArray(
+    lock?.required?.image_ids,
+    "runtime lock required.image_ids",
+    errors,
+    { allowEmpty: true },
+  );
   const providerTargets = resolveRequiredTargets({ lock, hostOs, hostArch, kind: "provider", errors });
   const runtimeTargets = resolveRequiredTargets({ lock, hostOs, hostArch, kind: "runtime", errors });
   const imageTargets = resolveRequiredTargets({ lock, hostOs, hostArch, kind: "image", errors });

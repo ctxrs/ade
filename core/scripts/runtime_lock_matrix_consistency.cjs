@@ -93,9 +93,15 @@ const parseTarget = ({ raw, hostOs, hostArch, errors, label }) => {
   return { os, arch };
 };
 
-const parseRequiredTargets = ({ lock, kind, hostOs, hostArch, errors }) => {
+const parseRequiredTargets = ({ lock, kind, hostOs, hostArch, errors, allowEmpty = false }) => {
   const rawTargets = lock?.required?.targets?.[kind];
-  if (!Array.isArray(rawTargets) || rawTargets.length === 0) {
+  if (!Array.isArray(rawTargets)) {
+    if (allowEmpty) return [];
+    errors.push(`runtime lock required.targets.${kind} must be a non-empty array`);
+    return [];
+  }
+  if (rawTargets.length === 0) {
+    if (allowEmpty) return [];
     errors.push(`runtime lock required.targets.${kind} must be a non-empty array`);
     return [];
   }
@@ -108,6 +114,9 @@ const parseRequiredTargets = ({ lock, kind, hostOs, hostArch, errors }) => {
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(parsed);
+  }
+  if (!allowEmpty && out.length === 0) {
+    errors.push(`runtime lock required.targets.${kind} must contain at least one valid target`);
   }
   return out;
 };
@@ -146,13 +155,17 @@ const validateLockMatrixConsistency = ({ lock, matrix, hostOs, hostArch }) => {
   if (requiredRuntimeIds.length === 0) {
     errors.push('runtime lock required.runtime_ids must be non-empty');
   }
-  if (requiredImageIds.length === 0) {
-    errors.push('runtime lock required.image_ids must be non-empty');
-  }
 
   const providerTargets = parseRequiredTargets({ lock, kind: 'provider', hostOs, hostArch, errors });
   const runtimeTargets = parseRequiredTargets({ lock, kind: 'runtime', hostOs, hostArch, errors });
-  const imageTargets = parseRequiredTargets({ lock, kind: 'image', hostOs, hostArch, errors });
+  const imageTargets = parseRequiredTargets({
+    lock,
+    kind: 'image',
+    hostOs,
+    hostArch,
+    errors,
+    allowEmpty: requiredImageIds.length === 0,
+  });
   const requiredProviderTargetKeys = new Set(providerTargets.map((target) => `${target.os}/${target.arch}`));
 
   const hasComponent = ({ kind, id, os, arch }) =>

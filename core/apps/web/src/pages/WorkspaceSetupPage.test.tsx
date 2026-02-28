@@ -9,6 +9,8 @@ import {
   getExecutionLaunchStatus,
   getHealth,
   getSettings,
+  installProvider,
+  listProviders,
   getTitleGenerationLocalStatus,
   importProviderAuthCandidates,
   installTitleGenerationLocal,
@@ -53,6 +55,8 @@ vi.mock("../api/client", async () => {
     getExecutionLaunchStatus: vi.fn(),
     getHealth: vi.fn(),
     getSettings: vi.fn(),
+    installProvider: vi.fn(),
+    listProviders: vi.fn(),
     getTitleGenerationLocalStatus: vi.fn(),
     importProviderAuthCandidates: vi.fn(),
     installTitleGenerationLocal: vi.fn(),
@@ -121,6 +125,33 @@ const selectLocalAndContinue = async () => {
   });
 };
 
+const providerStatusFixture = (overrides?: Partial<import("@ctx/types").ProviderStatus>): import("@ctx/types").ProviderStatus => ({
+  provider_id: "codex",
+  installed: false,
+  health: "error",
+  diagnostics: [],
+  details: {
+    install_supported: "true",
+  },
+  ...overrides,
+});
+
+const configuredTitlingSettingsFixture = () => ({
+  title_generation: {
+    mode: "remote",
+    remote: {
+      base_url: "https://openrouter.ai/api/v1",
+      api_key: "sk-ready",
+      model: "google/gemini-3-flash-preview",
+      use_json: true,
+    },
+    local: {
+      model_id: "ggml-org/Qwen3-1.7B-GGUF",
+      use_json: true,
+    },
+  },
+});
+
 describe("WorkspaceSetupPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -138,6 +169,8 @@ describe("WorkspaceSetupPage", () => {
       compatibility: { desktop_exact_version: "0.0.0-test", mobile_api_min: 1, mobile_api_max: 1 },
     } as never);
     vi.mocked(getSettings).mockResolvedValue({ title_generation: null } as never);
+    vi.mocked(listProviders).mockResolvedValue([] as never);
+    vi.mocked(installProvider).mockResolvedValue({ provider_id: "codex", install_id: "install_provider_test" } as never);
     vi.mocked(getTitleGenerationLocalStatus).mockResolvedValue({
       ready: false,
       runtime: { version: "0.0.0-test", installed: false, path: null },
@@ -239,6 +272,136 @@ describe("WorkspaceSetupPage", () => {
 
     await waitFor(() => {
       expect(wizardStepKey()).not.toBe("location");
+    });
+  });
+
+  it("shows harness downloads step after container when downloadable providers are missing", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue(configuredTitlingSettingsFixture() as never);
+    vi.mocked(listProviders).mockResolvedValue([
+      providerStatusFixture({
+        provider_id: "codex",
+        installed: false,
+        health: "error",
+        details: { install_supported: "true" },
+      }),
+    ] as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    await selectLocalAndContinue();
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-option-container-disk-isolated"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("harness-downloads");
+    });
+    expect(screen.getByTestId("wizard-harness-checkbox-codex")).toBeInTheDocument();
+  });
+
+  it("skips harness downloads step when providers are already installed", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue(configuredTitlingSettingsFixture() as never);
+    vi.mocked(listProviders).mockResolvedValue([
+      providerStatusFixture({
+        provider_id: "codex",
+        installed: true,
+        health: "ok",
+        details: { install_supported: "true" },
+      }),
+    ] as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    await selectLocalAndContinue();
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-option-container-disk-isolated"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("source");
+    });
+  });
+
+  it("downloads selected harnesses from wizard and advances on success", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue(configuredTitlingSettingsFixture() as never);
+    vi.mocked(listProviders)
+      .mockResolvedValueOnce([
+        providerStatusFixture({
+          provider_id: "codex",
+          installed: false,
+          health: "error",
+          details: { install_supported: "true" },
+        }),
+      ] as never)
+      .mockResolvedValueOnce([
+        providerStatusFixture({
+          provider_id: "codex",
+          installed: true,
+          health: "ok",
+          details: { install_supported: "true" },
+        }),
+      ] as never);
+    vi.mocked(installProvider).mockResolvedValue({
+      provider_id: "codex",
+      install_id: "install_codex",
+    } as never);
+    vi.mocked(getInstall)
+      .mockResolvedValueOnce({
+        install_id: "install_codex",
+        provider_id: "codex",
+        state: "running",
+        started_at: "2026-02-28T00:00:00Z",
+        finished_at: undefined,
+        error: undefined,
+        last_event: {
+          install_id: "install_codex",
+          provider_id: "codex",
+          at: "2026-02-28T00:00:00Z",
+          stage: "download",
+          message: "downloading…",
+          level: "info",
+          bytes: 5,
+          total_bytes: 10,
+        },
+      } as never)
+      .mockResolvedValueOnce({
+        install_id: "install_codex",
+        provider_id: "codex",
+        state: "succeeded",
+        started_at: "2026-02-28T00:00:00Z",
+        finished_at: "2026-02-28T00:00:02Z",
+        error: undefined,
+        last_event: {
+          install_id: "install_codex",
+          provider_id: "codex",
+          at: "2026-02-28T00:00:02Z",
+          stage: "done",
+          message: "Install complete",
+          level: "success",
+        },
+      } as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    await selectLocalAndContinue();
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+    });
+    fireEvent.click(screen.getByTestId("wizard-option-container-disk-isolated"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("harness-downloads");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
+    await waitFor(() => {
+      expect(installProvider).toHaveBeenCalledWith("codex");
+      expect(wizardStepKey()).toBe("source");
     });
   });
 

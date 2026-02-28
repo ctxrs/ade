@@ -259,16 +259,7 @@ fn env_flag_truthy(var_name: &str) -> bool {
     }
 }
 
-fn bundled_mode_active() -> bool {
-    std::env::var("CTX_BUNDLE_DIR")
-        .map(|value| !value.trim().is_empty())
-        .unwrap_or(false)
-}
-
 fn bundled_only_mode_applies_to_provider(provider_id: &str) -> bool {
-    if bundled_mode_active() {
-        return true;
-    }
     if !env_flag_truthy("CTX_E2E_BUNDLED_ONLY") {
         return false;
     }
@@ -387,13 +378,13 @@ mod tests {
     }
 
     #[test]
-    fn bundled_mode_is_enabled_when_bundle_dir_is_present() {
+    fn bundle_dir_alone_does_not_force_bundled_only_mode() {
         let _guard = env_lock().lock().expect("lock env");
         let temp = tempdir().expect("tempdir");
         let _bundle_dir = EnvVarGuard::set("CTX_BUNDLE_DIR", &temp.path().to_string_lossy());
         let _strict = EnvVarGuard::unset("CTX_E2E_BUNDLED_ONLY");
         let _providers = EnvVarGuard::unset("CTX_E2E_BUNDLED_ONLY_PROVIDERS");
-        assert!(bundled_only_mode_applies_to_provider("codex"));
+        assert!(!bundled_only_mode_applies_to_provider("codex"));
     }
 }
 

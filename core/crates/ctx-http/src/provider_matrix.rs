@@ -107,6 +107,8 @@ pub enum DependencyInstall {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderArchiveTarget {
     pub url: String,
+    #[serde(default)]
+    pub sha256: Option<String>,
     pub archive: ProviderArchiveKind,
     pub bin_path: String,
 }

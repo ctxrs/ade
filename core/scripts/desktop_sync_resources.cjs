@@ -181,17 +181,45 @@ const readRuntimeLock = () => {
   }
 };
 
-const readRuntimeLockRequiredProviderIds = () => {
+const normalizeTargetToken = (token, hostValue) => {
+  const trimmed = String(token || "").trim();
+  if (!trimmed) return null;
+  if (trimmed === "host") return hostValue;
+  return trimmed;
+};
+
+const readRuntimeLockRequiredIds = (kind) => {
   const lock = readRuntimeLock();
-  const ids = Array.isArray(lock?.required?.provider_ids)
-    ? lock.required.provider_ids
+  const key = `${kind}_ids`;
+  const ids = Array.isArray(lock?.required?.[key])
+    ? lock.required[key]
         .map((entry) => String(entry || "").trim())
         .filter((entry) => entry.length > 0)
     : [];
-  if (ids.length === 0) {
-    throw new Error(`runtime lock ${runtimeLockPath} has no required.provider_ids`);
-  }
   return [...new Set(ids)].sort();
+};
+
+const readRuntimeLockRequiredTargets = (kind, fallbackTargets) => {
+  const lock = readRuntimeLock();
+  const configured = Array.isArray(lock?.required?.targets?.[kind])
+    ? lock.required.targets[kind]
+    : [];
+  if (configured.length === 0) {
+    return fallbackTargets;
+  }
+  const seen = new Set();
+  const targets = [];
+  for (const raw of configured) {
+    const [rawOs, rawArch] = String(raw || "").split("/");
+    const os = normalizeTargetToken(rawOs, hostManifestOs);
+    const arch = normalizeTargetToken(rawArch, hostManifestArch);
+    if (!os || !arch) continue;
+    const key = `${os}/${arch}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    targets.push({ os, arch });
+  }
+  return targets.length > 0 ? targets : fallbackTargets;
 };
 
 const readPinnedPodmanConfig = ({ os, arch }) => {
@@ -516,11 +544,25 @@ const syncBundles = () => {
     CTX_BUNDLE_DIR: destBundleDir,
     CTX_BUNDLE_DEPENDENCY_AWARE_RUNTIMES: "0",
   };
+  const requiredProviderIds = readRuntimeLockRequiredIds("provider");
+  const requiredRuntimeIds = readRuntimeLockRequiredIds("runtime");
+  const requiredImageIds = readRuntimeLockRequiredIds("image");
+  const requiredProviderTargets = readRuntimeLockRequiredTargets("provider", parityProviderTargets);
+  const requiredRuntimeTargets = readRuntimeLockRequiredTargets("runtime", parityRuntimeTargets);
+  const requiredImageTargets = readRuntimeLockRequiredTargets("image", parityImageTargets);
   // keep harness/provider bundle builds on their own target dirs; forwarding the
   // desktop CARGO_TARGET_DIR can make adapter binary resolution brittle.
   delete env.CARGO_TARGET_DIR;
-  // Parity contract requires both Linux image targets for local container and remote flows.
-  env.CTX_BUNDLE_HARNESS_IMAGE = env.CTX_BUNDLE_HARNESS_IMAGE || "both";
+  env.CTX_BUNDLE_ONLY_PROVIDERS = env.CTX_BUNDLE_ONLY_PROVIDERS
+    || (requiredProviderIds.length > 0 ? requiredProviderIds.join(",") : "__none__");
+  if (requiredRuntimeIds.length === 0) {
+    env.CTX_BUNDLE_SKIP_RUNTIMES = env.CTX_BUNDLE_SKIP_RUNTIMES || "1";
+  }
+  if (requiredImageIds.length === 0) {
+    env.CTX_BUNDLE_SKIP_IMAGES = env.CTX_BUNDLE_SKIP_IMAGES || "1";
+  }
+  const requiresHarnessImage = requiredImageIds.includes("ctx-harness");
+  env.CTX_BUNDLE_HARNESS_IMAGE = env.CTX_BUNDLE_HARNESS_IMAGE || (requiresHarnessImage ? "both" : "0");
   // For desktop builds on macOS we want container mode to work out-of-box without relying on
   // system Podman installs (PATH). Bundle Podman (plus helper binaries) deterministically.
   if (process.platform === "darwin") {
@@ -549,22 +591,34 @@ const syncBundles = () => {
   // Container mode runs Linux containers even on macOS/Windows. Bundle Linux provider
   // binaries too so "disk-isolated container" can work offline/out-of-box.
   if (process.platform === "darwin") {
-    const requiredProviderIds = readRuntimeLockRequiredProviderIds();
-    const linuxTargets = [{ arch: "aarch64" }, { arch: "x86_64" }];
-    const linuxProviders = requiredProviderIds.join(",");
-    for (const target of linuxTargets) {
+    const linuxProviderTargets = requiredProviderTargets.filter((target) => target.os === "linux");
+    const linuxRuntimeTargets = requiredRuntimeTargets.filter((target) => target.os === "linux");
+    const linuxImageTargets = requiredImageTargets.filter((target) => target.os === "linux");
+    const linuxArchSet = new Set([
+      ...(requiredProviderIds.length > 0 ? linuxProviderTargets.map((target) => target.arch) : []),
+      ...(requiredRuntimeIds.length > 0 ? linuxRuntimeTargets.map((target) => target.arch) : []),
+      ...(requiredImageIds.length > 0 ? linuxImageTargets.map((target) => target.arch) : []),
+    ]);
+    const linuxArchTargets = [...linuxArchSet].map((arch) => ({ arch }));
+    const linuxProviders = requiredProviderIds.length > 0 ? requiredProviderIds.join(",") : "__none__";
+
+    for (const target of linuxArchTargets) {
+      const needsLinuxRuntime = requiredRuntimeIds.length > 0
+        && linuxRuntimeTargets.some((entry) => entry.arch === target.arch);
+      const needsLinuxImage = requiredImageIds.length > 0
+        && linuxImageTargets.some((entry) => entry.arch === target.arch);
       const linuxEnv = {
         ...env,
         CTX_BUNDLE_APPEND: "1",
         CTX_BUNDLE_OS: "linux",
         CTX_BUNDLE_ARCH: target.arch,
         CTX_BUNDLE_ONLY_PROVIDERS: linuxProviders,
-        CTX_BUNDLE_SKIP_RUNTIMES: "0",
-        CTX_BUNDLE_SKIP_IMAGES: "0",
+        CTX_BUNDLE_SKIP_RUNTIMES: needsLinuxRuntime ? "0" : "1",
+        CTX_BUNDLE_SKIP_IMAGES: needsLinuxImage ? "0" : "1",
         CTX_BUNDLE_INCLUDE_BRIDGE: "1",
         CTX_BUNDLE_LOCAL_ADAPTERS: "auto",
         CTX_BUNDLE_BUILD_LOCAL_ADAPTERS: "0",
-        CTX_BUNDLE_HARNESS_IMAGE: "1",
+        CTX_BUNDLE_HARNESS_IMAGE: needsLinuxImage ? "1" : "0",
         CTX_BUNDLE_PODMAN: "0",
       };
       const linuxRes = childProcess.spawnSync(bundleScript, {
@@ -578,18 +632,19 @@ const syncBundles = () => {
       }
     }
     for (const providerId of requiredProviderIds) {
-      assertBundledProviderTargets(destBundleDir, providerId, parityProviderTargets);
+      assertBundledProviderTargets(destBundleDir, providerId, requiredProviderTargets);
     }
-    assertBundledRuntimeTargets(destBundleDir, "node", parityRuntimeTargets);
-    assertBundledRuntimeTargets(destBundleDir, "python", parityRuntimeTargets);
+    for (const runtimeId of requiredRuntimeIds) {
+      assertBundledRuntimeTargets(destBundleDir, runtimeId, requiredRuntimeTargets);
+    }
     if (env.CTX_BUNDLE_PODMAN === "1") {
       assertBundledRuntimeTargets(destBundleDir, "podman", [{ os: hostManifestOs, arch: hostManifestArch }]);
     }
   }
 
-  if (profile === "debug" || profile === "release") {
+  if ((profile === "debug" || profile === "release") && requiredImageIds.includes("ctx-harness")) {
     const expectedImage = readRustStringConst(harnessRuntimeRs, "DEFAULT_CONTAINER_IMAGE");
-    assertBundledHarnessImageTargets(destBundleDir, expectedImage, parityImageTargets);
+    assertBundledHarnessImageTargets(destBundleDir, expectedImage, requiredImageTargets);
   }
 
   if (shouldBundleRemoteDaemons(process.env)) {

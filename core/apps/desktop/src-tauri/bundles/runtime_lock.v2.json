@@ -27,48 +27,21 @@
   "required": {
     "targets": {
       "provider": [
-        "host/host",
-        "linux/aarch64",
-        "linux/x86_64"
+        "host/host"
       ],
       "runtime": [
-        "host/host",
-        "linux/aarch64",
-        "linux/x86_64"
+        "host/host"
       ],
-      "image": [
-        "linux/aarch64",
-        "linux/x86_64"
-      ]
+      "image": []
     },
     "provider_ids": [
-      "acp-crp-bridge",
-      "amp",
-      "auggie",
-      "cagent",
-      "claude-cli",
-      "claude-crp",
-      "cline",
-      "codex",
-      "copilot",
-      "cursor",
-      "droid",
-      "gemini",
-      "goose",
-      "kimi",
-      "mistral",
-      "opencode",
-      "openhands",
-      "pi",
-      "qwen"
+      "acp-crp-bridge"
     ],
     "runtime_ids": [
       "node",
       "python"
     ],
-    "image_ids": [
-      "ctx-harness"
-    ]
+    "image_ids": []
   },
   "components": [
     {
