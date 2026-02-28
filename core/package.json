@@ -27,6 +27,7 @@
     "test:bundles:runtime-lock-podman": "bash -lc '../scripts/tests/runtime_lock_podman_pinned.sh'",
     "test:bundles:docker-only": "bash -lc '../scripts/tests/ensure_bundled_harnesses_docker_only.sh'",
     "test:bundles:opencode-managed": "bash -lc '../scripts/tests/ensure_bundled_harnesses_opencode_managed.sh'",
+    "test:bundles:dmg-symlink-copy": "bash -lc 'bash ../scripts/tests/ensure_bundled_harnesses_dmg_symlink_copy.sh'",
     "test:bundles:merge": "bash -lc '../scripts/tests/desktop_merge_bundles.sh'",
     "test:bundles:linux-glibc-prune": "bash -lc '../scripts/tests/linux_bundle_prune_glibc_contract.sh'",
     "coverage:daemon": "mkdir -p coverage && CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=${CARGO_TARGET_DIR_COVERAGE:-$PWD/target/llvm-cov} cargo llvm-cov --workspace --lcov --output-path coverage/daemon.lcov",

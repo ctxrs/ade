@@ -778,6 +778,23 @@ prune_provider_node_payload() {
   prune_napi_keyring_musl_packages "$provider_root"
 }
 
+copy_dmg_payload() {
+  local dmg_mount_dir="$1"
+  local provider_root="$2"
+
+  # Keep symlinks as symlinks; dereferencing `/Applications` can recursively copy host apps.
+  cp -RP "$dmg_mount_dir"/. "$provider_root"/
+
+  local applications_link="$provider_root/Applications"
+  if [[ -L "$applications_link" ]]; then
+    local target
+    target="$(readlink "$applications_link" || true)"
+    if [[ "$target" == "/Applications" ]]; then
+      rm -f "$applications_link"
+    fi
+  fi
+}
+
 write_cline_bundle_stubs() {
   local provider_root="$1"
   local node_modules_root="$provider_root/node_modules"
@@ -2162,7 +2179,7 @@ if ! is_falsy "$LOCAL_ADAPTER_MODE"; then
       log "error: missing local adapter binary for $id at $src"
       exit 5
     fi
-  done
+      done
 fi
 
 if [[ ${#local_ids[@]} -gt 0 ]]; then
@@ -2332,7 +2349,7 @@ PY
               log "error: failed to mount dmg for $provider_id"
               exit 5
             fi
-            if ! cp -R "$dmg_mount_dir"/. "$provider_root"/; then
+            if ! copy_dmg_payload "$dmg_mount_dir" "$provider_root"; then
               hdiutil detach "$dmg_mount_dir" -force >/dev/null 2>&1 || true
               rm -rf "$dmg_mount_dir" "$tmp_file"
               log "error: failed to copy dmg payload for $provider_id"
