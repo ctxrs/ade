@@ -39,7 +39,7 @@
     "desktop:runtime:prepare:override": "CTX_RUNTIME_PROFILE=override node scripts/desktop_runtime_prepare.cjs",
     "desktop:runtime:lock:validate": "node scripts/runtime_lock_validate.cjs --profile ${CTX_RUNTIME_PROFILE:-parity}",
     "desktop:runtime:lock:check-matrix": "node scripts/runtime_lock_matrix_consistency.cjs",
-    "desktop:runtime:lock:test": "node --test scripts/runtime_lock_validate.test.cjs scripts/runtime_lock_matrix_consistency.test.cjs scripts/desktop_mode_contract.test.cjs scripts/providers_e2e_bundle_isolation.test.cjs scripts/desktop_import_bundles.test.cjs scripts/desktop_sync_resources_remote_daemon_policy.test.cjs",
+    "desktop:runtime:lock:test": "node --test scripts/runtime_lock_validate.test.cjs scripts/runtime_lock_matrix_consistency.test.cjs scripts/desktop_mode_contract.test.cjs scripts/providers_e2e_bundle_isolation.test.cjs scripts/desktop_import_bundles.test.cjs scripts/desktop_normalize_bundle_permissions.test.cjs scripts/desktop_sync_resources_remote_daemon_policy.test.cjs",
     "desktop:dev": "CTX_DESKTOP_CHANNEL=dev CTX_RUNTIME_PROFILE=parity CTX_LAUNCH_SURFACE=desktop node scripts/desktop_dev_local.cjs",
     "desktop:dev:override": "CTX_DESKTOP_CHANNEL=dev CTX_RUNTIME_PROFILE=override CTX_LAUNCH_SURFACE=desktop node scripts/desktop_dev_local.cjs",
     "desktop:dev:source": "CTX_DESKTOP_CHANNEL=dev CTX_RUNTIME_PROFILE=source-all CTX_LAUNCH_SURFACE=desktop node scripts/desktop_dev_local.cjs",

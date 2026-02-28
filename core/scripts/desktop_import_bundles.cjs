@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 const fs = require("fs");
 const path = require("path");
+const { normalizePermissionsRecursive } = require("./desktop_normalize_bundle_permissions.cjs");
 
 const usage = () => {
   console.error("usage: node core/scripts/desktop_import_bundles.cjs --from <bundle-dir>");
@@ -35,29 +36,6 @@ const copyRecursive = (srcDir, destDir) => {
     if (entry.isFile()) {
       fs.mkdirSync(path.dirname(destPath), { recursive: true });
       fs.copyFileSync(srcPath, destPath);
-    }
-  }
-};
-
-const normalizePermissionsRecursive = (rootDir) => {
-  if (!fs.existsSync(rootDir)) return;
-  const stack = [rootDir];
-  while (stack.length > 0) {
-    const current = stack.pop();
-    const entries = fs.readdirSync(current, { withFileTypes: true });
-    for (const entry of entries) {
-      const full = path.join(current, entry.name);
-      if (entry.isDirectory()) {
-        // Keep bundle trees traversable/readable for downstream packaging on all runners.
-        fs.chmodSync(full, 0o755);
-        stack.push(full);
-        continue;
-      }
-      if (entry.isFile()) {
-        const mode = fs.statSync(full).mode & 0o777;
-        const executable = (mode & 0o111) !== 0;
-        fs.chmodSync(full, executable ? 0o755 : 0o644);
-      }
     }
   }
 };
