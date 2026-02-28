@@ -180,9 +180,8 @@ test("workbench: unauthed harness opens auth modal and API key flow readies harn
   await menu.getByRole("button", { name: /Cursor/ }).click();
   const modal = page.locator(".settings-harness-modal");
   await expect(modal).toBeVisible({ timeout: 10_000 });
-  await expect(modal.getByRole("button", { name: "Subscription" })).toBeVisible();
+  await expect(modal.getByRole("button", { name: "Subscription" })).toHaveCount(0);
   await expect(modal.getByRole("button", { name: "API Key" })).toBeVisible();
-
   await modal.getByRole("button", { name: "API Key" }).click();
   await expect(modal.getByRole("link", { name: "Cursor Integrations" })).toHaveAttribute(
     "href",
