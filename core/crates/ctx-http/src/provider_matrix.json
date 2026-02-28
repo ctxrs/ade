@@ -182,10 +182,23 @@
         "version": "0.0.0-ctx.1",
         "args": [],
         "targets": {
-          "linux-x86_64": {
-            "url": "https://github.com/ctxrs/claude-crp/releases/download/v0.0.0-ctx.1/claude-crp-0.0.0-ctx.1-x86_64-unknown-linux-gnu.tar.gz",
+          "darwin-aarch64": {
+            "url": "https://api.ctx.rs/storage/v1/object/public/releases/providers/provider-deps-canary/claude-crp/0.0.0-ctx.1/darwin/aarch64/claude-crp-0.0.0-ctx.1-darwin-aarch64.tar.gz",
             "archive": "tar_gz",
-            "bin_path": "claude-crp"
+            "bin_path": "bin/claude-crp",
+            "sha256": "3805e6e249b91ea17e338fc704c772ab3492552d604c94c20ad8f546b4d14fac"
+          },
+          "linux-aarch64": {
+            "url": "https://api.ctx.rs/storage/v1/object/public/releases/providers/provider-deps-canary/claude-crp/0.0.0-ctx.1/linux/aarch64/claude-crp-0.0.0-ctx.1-linux-aarch64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "bin/claude-crp",
+            "sha256": "d3441a5aee9befa73f96033193c1e4ff204787f03a5ee4ae7e49eb5df1616853"
+          },
+          "linux-x86_64": {
+            "url": "https://api.ctx.rs/storage/v1/object/public/releases/providers/provider-deps-canary/claude-crp/0.0.0-ctx.1/linux/x86_64/claude-crp-0.0.0-ctx.1-linux-x86_64.tar.gz",
+            "archive": "tar_gz",
+            "bin_path": "bin/claude-crp",
+            "sha256": "b6a3f6178e36df4d87956f59d73f5e551b0cbca9f8472211273df0e4e7621cba"
           }
         }
       },
@@ -200,7 +213,7 @@
           "version": "0.0.0-ctx.1",
           "status": "supported",
           "context_min": "0.1.0",
-          "notes": "Pinned workspace adapter source (external-harnesses/claude-crp/package.json)"
+          "notes": "Pinned managed archive artifacts (Supabase provider-deps channel)"
         }
       ]
     },

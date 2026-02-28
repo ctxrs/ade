@@ -412,7 +412,6 @@ PY
 
 BRIDGE_DIR="${CTX_BUNDLE_BRIDGE_DIR:-$ROOT/external-harnesses/acp-crp-bridge}"
 BRIDGE_BIN="acp-crp-bridge"
-CLAUDE_CRP_WORKSPACE="${CTX_BUNDLE_CLAUDE_CRP_WORKSPACE:-$ROOT/external-harnesses/claude-crp}"
 LOCAL_ADAPTERS_DIR="${CTX_BUNDLE_ADAPTERS_DIR:-$ROOT/harness-adapters}"
 LOCAL_ADAPTER_MODE="${CTX_BUNDLE_LOCAL_ADAPTERS:-on}"
 BUILD_LOCAL_ADAPTERS="${CTX_BUNDLE_BUILD_LOCAL_ADAPTERS:-0}"
@@ -491,24 +490,6 @@ for provider in data.get("providers", []):
         print(release.get("version", "") if release else "")
         sys.exit(0)
 print("")
-PY
-}
-
-package_json_version() {
-  local package_json="$1"
-  run_python - "$package_json" <<'PY'
-import json
-import sys
-
-path = sys.argv[1]
-try:
-    with open(path, "r", encoding="utf-8") as fh:
-        data = json.load(fh)
-except Exception:
-    print("")
-    sys.exit(0)
-value = data.get("version")
-print(value if isinstance(value, str) else "")
 PY
 }
 
@@ -1766,42 +1747,8 @@ if provider_selected_for_bundle "cline"; then
   runtime_need_node="1"
 fi
 
-if provider_selected_for_bundle "claude-crp"; then
-  if [[ ! -d "$CLAUDE_CRP_WORKSPACE" ]]; then
-    log "error: claude-crp local-only bundling requires workspace at $CLAUDE_CRP_WORKSPACE"
-    exit 5
-  fi
-  if [[ ! -f "$CLAUDE_CRP_WORKSPACE/dist/runtime.js" ]]; then
-    if [[ ! -x "$ROOT/scripts/build_claude_crp.sh" ]]; then
-      log "error: missing claude-crp build script at $ROOT/scripts/build_claude_crp.sh"
-      exit 5
-    fi
-    if ! command -v pnpm >/dev/null 2>&1; then
-      log "error: bundling claude-crp requires pnpm to build local adapter payload"
-      exit 5
-    fi
-  fi
-fi
-
 if provider_selected_for_bundle "claude-crp" || provider_selected_for_bundle "claude-cli"; then
   runtime_need_node="1"
-fi
-
-if provider_selected_for_bundle "claude-crp"; then
-  if [[ ! -d "$CLAUDE_CRP_WORKSPACE" ]]; then
-    log "error: claude-crp local-only bundling requires workspace at $CLAUDE_CRP_WORKSPACE"
-    exit 5
-  fi
-  if [[ ! -f "$CLAUDE_CRP_WORKSPACE/dist/runtime.js" ]]; then
-    if [[ ! -x "$ROOT/scripts/build_claude_crp.sh" ]]; then
-      log "error: missing claude-crp build script at $ROOT/scripts/build_claude_crp.sh"
-      exit 5
-    fi
-    if ! command -v pnpm >/dev/null 2>&1; then
-      log "error: bundling claude-crp requires pnpm to build local adapter payload"
-      exit 5
-    fi
-  fi
 fi
 
 if ! is_truthy "$skip_runtimes_raw"; then
@@ -1973,6 +1920,7 @@ for provider in data.get("providers", []):
                 target_entry.get("url", ""),
                 target_entry.get("archive", ""),
                 target_entry.get("bin_path", ""),
+                target_entry.get("sha256", ""),
                 "",
                 "",
                 json.dumps(args, separators=(",", ":")),
@@ -1994,6 +1942,7 @@ for provider in data.get("providers", []):
                 "",
                 "",
                 "",
+                "",
                 mi.get("package", ""),
                 mi.get("entrypoint", ""),
                 json.dumps(args, separators=(",", ":")),
@@ -2006,6 +1955,7 @@ for provider in data.get("providers", []):
                 provider.get("id", ""),
                 "python",
                 mi.get("version", ""),
+                "",
                 "",
                 "",
                 "",
@@ -2034,9 +1984,9 @@ add_local_provider() {
     mv "$filtered" "$local_providers_src"
   fi
   local sep=$'\x1f'
-  printf '%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n' \
+  printf '%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n' \
     "$provider_id" "$sep" "$kind" "$sep" "$version" "$sep" \
-    "$source_path" "$sep" "" "$sep" "$bin_path" "$sep" "" "$sep" "" "$sep" \
+    "$source_path" "$sep" "" "$sep" "$bin_path" "$sep" "" "$sep" "" "$sep" "" "$sep" \
     "$args_json" >> "$local_providers_src"
   local found=0
   local existing
@@ -2054,64 +2004,6 @@ add_local_provider() {
 if ! is_falsy "$INCLUDE_BRIDGE"; then
   bridge_src="$(local_bridge_binary_path)"
   add_local_provider "acp-crp-bridge" "local-bin" "local" "$bridge_src" "$(basename "$bridge_src")" "[]"
-fi
-
-should_bundle_local_claude_crp() {
-  if ! provider_selected_for_bundle "claude-crp"; then
-    return 1
-  fi
-  if [[ ! -d "$CLAUDE_CRP_WORKSPACE" ]]; then
-    log "error: claude-crp local-only bundling requires workspace at $CLAUDE_CRP_WORKSPACE"
-    exit 5
-  fi
-  return 0
-}
-
-ensure_local_claude_crp_dist() {
-  local dist_entry="$CLAUDE_CRP_WORKSPACE/dist/runtime.js"
-  if [[ -f "$dist_entry" ]]; then
-    return 0
-  fi
-  if ! should_bundle_local_claude_crp; then
-    return 1
-  fi
-  if [[ ! -x "$ROOT/scripts/build_claude_crp.sh" ]]; then
-    log "error: missing claude-crp build script at $ROOT/scripts/build_claude_crp.sh"
-    return 1
-  fi
-  if ! command -v pnpm >/dev/null 2>&1; then
-    log "error: bundling claude-crp requires pnpm to build local adapter payload"
-    return 1
-  fi
-  if ! "$ROOT/scripts/build_claude_crp.sh"; then
-    log "error: failed to build local claude-crp bundle payload"
-    return 1
-  fi
-  if [[ ! -f "$dist_entry" ]]; then
-    log "error: claude-crp build completed without dist entrypoint at $dist_entry"
-    return 1
-  fi
-  return 0
-}
-
-if should_bundle_local_claude_crp; then
-  claude_crp_version="$(get_matrix_version "claude-crp")"
-  if [[ -z "$claude_crp_version" ]]; then
-    claude_crp_version="$(package_json_version "$CLAUDE_CRP_WORKSPACE/package.json")"
-  fi
-  if [[ -z "$claude_crp_version" ]]; then
-    claude_crp_version="local"
-  fi
-
-  if ! ensure_local_claude_crp_dist; then
-    log "error: failed to prepare local claude-crp bundle payload at $CLAUDE_CRP_WORKSPACE/dist/runtime.js"
-    exit 5
-  fi
-  if [[ ! -f "$CLAUDE_CRP_WORKSPACE/bin/claude-crp" ]]; then
-    log "error: local claude-crp entrypoint missing at $CLAUDE_CRP_WORKSPACE/bin/claude-crp"
-    exit 5
-  fi
-  add_local_provider "claude-crp" "local-node" "$claude_crp_version" "$CLAUDE_CRP_WORKSPACE" "bin/claude-crp" "[]"
 fi
 
 if ! is_falsy "$LOCAL_ADAPTER_MODE"; then
@@ -2209,7 +2101,7 @@ fi
 
 providers_out="$(mktemp /tmp/ctx-bundle-providers-out.XXXXXX)"
 
-while IFS=$'\x1f' read -r provider_id kind version url archive bin_path package entrypoint args_json; do
+while IFS=$'\x1f' read -r provider_id kind version url archive bin_path expected_sha256 package entrypoint args_json; do
   if [[ -z "$provider_id" || -z "$kind" ]]; then
     continue
   fi
@@ -2306,16 +2198,23 @@ PY
       if [[ -z "$version" || -z "$url" ]]; then
         continue
       fi
+      if [[ "$provider_id" == "claude-crp" && -z "$expected_sha256" ]]; then
+        log "error: managed archive provider claude-crp requires sha256 pin for ${os}/${arch}"
+        exit 5
+      fi
       if [[ -f "$version_marker" ]]; then
         if [[ "$(cat "$version_marker" 2>/dev/null || true)" != "$version" ]]; then
           rm -rf "$provider_root"
         fi
+      elif [[ -d "$provider_root" ]]; then
+        rm -rf "$provider_root"
       fi
 
       if [[ ! -d "$provider_root" ]]; then
         mkdir -p "$provider_root"
         tmp_file="$(mktemp -p "$provider_root" "${provider_id}.XXXXXX")"
         fetch_file "$url" "$tmp_file"
+        verify_sha256_if_expected "$tmp_file" "$expected_sha256" "provider archive $provider_id"
         case "$archive" in
           none)
             dest="$provider_root/$bin_path"
@@ -2365,6 +2264,7 @@ PY
         esac
         echo "$version" > "$version_marker"
       fi
+      prune_provider_node_payload "$provider_id" "$provider_root"
       command_path="$provider_root/$bin_path"
       if [[ ! -f "$command_path" ]]; then
         command_path="$(resolve_unique_path "$provider_root" "$bin_path")"
@@ -2386,6 +2286,23 @@ PY
         fi
         command_path="$node_bin"
         entrypoint_rel="${entrypoint_path#"$bundle_dir/"}"
+        args_json="$(PROVIDER_ENTRYPOINT="$entrypoint_rel" PROVIDER_ARGS_JSON="$args_json" run_python - <<'PY'
+import json
+import os
+
+args = [os.environ["PROVIDER_ENTRYPOINT"]]
+extra = json.loads(os.environ["PROVIDER_ARGS_JSON"] or "[]")
+args.extend(extra)
+print(json.dumps(args, separators=(",", ":")))
+PY
+)"
+      elif [[ "$provider_id" == "claude-crp" ]]; then
+        if [[ -z "$node_bin" || ! -f "$node_bin" ]]; then
+          log "error: claude-crp archive provider requires bundled node runtime"
+          exit 5
+        fi
+        entrypoint_rel="${command_path#"$bundle_dir/"}"
+        command_path="$node_bin"
         args_json="$(PROVIDER_ENTRYPOINT="$entrypoint_rel" PROVIDER_ARGS_JSON="$args_json" run_python - <<'PY'
 import json
 import os

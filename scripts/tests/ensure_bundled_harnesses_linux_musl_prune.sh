@@ -9,7 +9,7 @@ if [[ ! -x "$BUNDLE_SCRIPT" ]]; then
   exit 2
 fi
 
-for cmd in node npm python3; do
+for cmd in node python3 tar; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "error: $cmd is required for this regression test" >&2
     exit 2
@@ -20,58 +20,54 @@ tmp_root="$(mktemp -d /tmp/ctx-bundle-linux-musl-prune.XXXXXX)"
 trap 'rm -rf "$tmp_root"' EXIT
 
 bundle_dir="$tmp_root/bundle"
-claude_ws="$tmp_root/claude-crp"
-gnu_pkg="$tmp_root/keyring-linux-x64-gnu"
-musl_pkg="$tmp_root/keyring-linux-x64-musl"
-mkdir -p "$claude_ws/bin" "$claude_ws/dist" "$gnu_pkg" "$musl_pkg"
+provider_root="$tmp_root/provider-root"
+archive_dir="$tmp_root/archive"
+mkdir -p "$provider_root/bin" "$provider_root/dist" "$archive_dir"
+mkdir -p "$provider_root/node_modules/@napi-rs/keyring-linux-x64-gnu/lib"
+mkdir -p "$provider_root/node_modules/@napi-rs/keyring-linux-x64-musl/lib"
 
-cat > "$gnu_pkg/package.json" <<'JSON'
-{
-  "name": "@napi-rs/keyring-linux-x64-gnu",
-  "version": "0.0.0-test",
-  "private": true
-}
-JSON
-printf 'gnu\n' > "$gnu_pkg/index.js"
-mkdir -p "$gnu_pkg/lib"
-printf 'gnu-node\n' > "$gnu_pkg/lib/keyring.linux-x64-gnu.node"
-
-cat > "$musl_pkg/package.json" <<'JSON'
-{
-  "name": "@napi-rs/keyring-linux-x64-musl",
-  "version": "0.0.0-test",
-  "private": true
-}
-JSON
-printf 'musl\n' > "$musl_pkg/index.js"
-mkdir -p "$musl_pkg/lib"
-printf 'musl-node\n' > "$musl_pkg/lib/keyring.linux-x64-musl.node"
-
-cat > "$claude_ws/package.json" <<'JSON'
+cat > "$provider_root/package.json" <<'JSON'
 {
   "name": "claude-crp",
   "version": "0.0.0-test",
   "private": true,
-  "type": "module",
-  "dependencies": {
-    "@napi-rs/keyring-linux-x64-gnu": "file:__GNU_PKG__",
-    "@napi-rs/keyring-linux-x64-musl": "file:__MUSL_PKG__"
-  }
+  "type": "module"
 }
 JSON
-sed -i.bak "s#__GNU_PKG__#${gnu_pkg}#g; s#__MUSL_PKG__#${musl_pkg}#g" "$claude_ws/package.json"
-rm -f "$claude_ws/package.json.bak"
 
-cat > "$claude_ws/bin/claude-crp" <<'JS'
+cat > "$provider_root/bin/claude-crp" <<'JS'
 #!/usr/bin/env node
-import { runRuntime } from "../dist/runtime.js";
-await runRuntime();
+import "../dist/runtime.js";
+console.log("claude-crp test");
 JS
-chmod +x "$claude_ws/bin/claude-crp"
+chmod +x "$provider_root/bin/claude-crp"
 
-cat > "$claude_ws/dist/runtime.js" <<'JS'
-export async function runRuntime() {}
+cat > "$provider_root/dist/runtime.js" <<'JS'
+export const runtime = "ok";
 JS
+
+printf 'gnu-node\n' > "$provider_root/node_modules/@napi-rs/keyring-linux-x64-gnu/lib/keyring.linux-x64-gnu.node"
+printf 'musl-node\n' > "$provider_root/node_modules/@napi-rs/keyring-linux-x64-musl/lib/keyring.linux-x64-musl.node"
+
+archive_path="$archive_dir/claude-crp-test-linux.tar.gz"
+(cd "$provider_root" && tar -czf "$archive_path" .)
+
+archive_sha="$(python3 - "$archive_path" <<'PY'
+import hashlib
+import sys
+from pathlib import Path
+
+p = Path(sys.argv[1])
+h = hashlib.sha256()
+with p.open("rb") as fh:
+    while True:
+        chunk = fh.read(1024 * 1024)
+        if not chunk:
+            break
+        h.update(chunk)
+print(h.hexdigest())
+PY
+)"
 
 node_version="$(python3 - "$ROOT/core/crates/ctx-http/src/installer.rs" <<'PY'
 import re
@@ -92,19 +88,45 @@ node_root="$bundle_dir/runtimes/node/linux/x86_64/node-v${node_version}-linux-x6
 mkdir -p "$node_root/bin" "$node_root/lib/node_modules/npm/bin"
 
 node_bin_src="$(command -v node)"
-npm_cli_src="$(node -e 'process.stdout.write(require.resolve("npm/bin/npm-cli.js"))' 2>/dev/null || true)"
-if [[ -z "$npm_cli_src" || ! -f "$npm_cli_src" ]]; then
-  npm_cli_src="$(npm root -g 2>/dev/null)/npm/bin/npm-cli.js"
-fi
-if [[ ! -f "$npm_cli_src" ]]; then
-  echo "error: failed to resolve npm-cli.js from host npm install" >&2
-  exit 2
-fi
 
 ln -s "$node_bin_src" "$node_root/bin/node"
-ln -s "$npm_cli_src" "$node_root/lib/node_modules/npm/bin/npm-cli.js"
+cat > "$node_root/lib/node_modules/npm/bin/npm-cli.js" <<'JS'
+#!/usr/bin/env node
+console.log("npm cli placeholder");
+JS
+chmod +x "$node_root/lib/node_modules/npm/bin/npm-cli.js"
+
+matrix_path="$tmp_root/provider_matrix.json"
+cat > "$matrix_path" <<JSON
+{
+  "version": 2,
+  "providers": [
+    {
+      "id": "claude-crp",
+      "display_name": "Claude",
+      "tier": "tier2",
+      "command": { "command": "claude-crp", "args": [] },
+      "managed_install": {
+        "kind": "archive",
+        "version": "0.0.0-test",
+        "args": [],
+        "targets": {
+          "linux-x86_64": {
+            "url": "file://${archive_path}",
+            "archive": "tar_gz",
+            "bin_path": "bin/claude-crp",
+            "sha256": "${archive_sha}"
+          }
+        }
+      },
+      "releases": [{ "version": "0.0.0-test", "status": "supported", "context_min": "0.1.0" }]
+    }
+  ]
+}
+JSON
 
 CTX_BUNDLE_DIR="$bundle_dir" \
+CTX_BUNDLE_MATRIX_JSON="$matrix_path" \
 CTX_BUNDLE_OS=linux \
 CTX_BUNDLE_ARCH=x86_64 \
 CTX_BUNDLE_ONLY_PROVIDERS="claude-crp" \
@@ -112,8 +134,6 @@ CTX_BUNDLE_SKIP_IMAGES=1 \
 CTX_BUNDLE_INCLUDE_BRIDGE=0 \
 CTX_BUNDLE_LOCAL_ADAPTERS=off \
 CTX_BUNDLE_BUILD_LOCAL_ADAPTERS=0 \
-CTX_BUNDLE_BUILD_CLAUDE_CRP=0 \
-CTX_BUNDLE_CLAUDE_CRP_WORKSPACE="$claude_ws" \
 "$BUNDLE_SCRIPT"
 
 python3 - "$bundle_dir" <<'PY'
@@ -141,4 +161,4 @@ if musl_dir.exists():
     raise SystemExit(1)
 PY
 
-echo "ok: ensure_bundled_harnesses prunes linux musl keyring payloads"
+echo "ok: ensure_bundled_harnesses prunes linux musl keyring payloads for managed claude-crp archive"

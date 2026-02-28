@@ -66,6 +66,29 @@ for provider_id in required:
     else:
         errors.append(f"provider managed_install.kind unsupported: {provider_id} ({kind})")
 
+    if provider_id == "claude-crp":
+        if kind != "archive":
+            errors.append("provider claude-crp must remain managed_install.kind=archive")
+        targets = managed.get("targets") if isinstance(managed, dict) else {}
+        if not isinstance(targets, dict):
+            errors.append("provider claude-crp managed_install.targets missing")
+            targets = {}
+        required_targets = ["darwin-aarch64", "linux-aarch64", "linux-x86_64"]
+        for target_key in required_targets:
+            target = targets.get(target_key)
+            if not isinstance(target, dict):
+                errors.append(f"provider claude-crp missing managed target: {target_key}")
+                continue
+            if not str(target.get("url", "")).strip():
+                errors.append(f"provider claude-crp target {target_key} missing url")
+            if str(target.get("archive", "")).strip() != "tar_gz":
+                errors.append(f"provider claude-crp target {target_key} archive must be tar_gz")
+            if str(target.get("bin_path", "")).strip() != "bin/claude-crp":
+                errors.append(f"provider claude-crp target {target_key} bin_path must be bin/claude-crp")
+            sha = str(target.get("sha256", "")).strip().lower()
+            if not re.match(r"^[0-9a-f]{64}$", sha):
+                errors.append(f"provider claude-crp target {target_key} missing/invalid sha256")
+
     if provider_id == "codex":
         releases = [r for r in releases if isinstance(r, dict)]
         release = releases[0] if releases else {}
