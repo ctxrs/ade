@@ -4318,7 +4318,8 @@ async fn provider_has_active_auth_config(
         if endpoint_selection_is_active(config) {
             return true;
         }
-        if provider_id == "codex" && config.selected_source_kind == HarnessSourceKind::Subscription {
+        if provider_id == "codex" && config.selected_source_kind == HarnessSourceKind::Subscription
+        {
             // Codex can operate in unmanaged host-login mode, where selecting
             // subscription is the strongest configured-auth signal we can rely on.
             return true;

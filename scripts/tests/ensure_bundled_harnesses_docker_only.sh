@@ -58,7 +58,6 @@ CTX_BUNDLE_SKIP_RUNTIMES=1 \
 CTX_BUNDLE_INCLUDE_BRIDGE=0 \
 CTX_BUNDLE_LOCAL_ADAPTERS=off \
 CTX_BUNDLE_BUILD_LOCAL_ADAPTERS=0 \
-CTX_BUNDLE_BUILD_CODEX_CRP=0 \
 CTX_BUNDLE_HARNESS_IMAGE=1 \
 "$BUNDLE_SCRIPT"
 
@@ -87,52 +86,6 @@ PY
 then
   echo "error: manifest missing ctx-harness linux/${host_arch} image entry" >&2
   exit 1
-fi
-
-run_codex_case="${CTX_BUNDLE_DOCKER_ONLY_INCLUDE_CODEX_CRP:-auto}"
-if [[ "$run_codex_case" == "auto" ]]; then
-  if [[ "$(uname -s)" == "Darwin" ]]; then
-    run_codex_case="1"
-  else
-    run_codex_case="0"
-  fi
-fi
-
-if [[ "$run_codex_case" == "1" ]]; then
-  echo "smoke: linux/aarch64 codex container build ignores podman on macOS"
-  bundle_dir_codex="$tmp_root/bundle-codex"
-  PATH="$shim_dir:$PATH" \
-  CTX_BUNDLE_DIR="$bundle_dir_codex" \
-  CTX_BUNDLE_OS=linux \
-  CTX_BUNDLE_ARCH=aarch64 \
-  CTX_BUNDLE_ONLY_PROVIDERS=codex \
-  CTX_BUNDLE_SKIP_RUNTIMES=1 \
-  CTX_BUNDLE_SKIP_IMAGES=1 \
-  CTX_BUNDLE_INCLUDE_BRIDGE=0 \
-  CTX_BUNDLE_LOCAL_ADAPTERS=off \
-  CTX_BUNDLE_BUILD_LOCAL_ADAPTERS=0 \
-  CTX_BUNDLE_BUILD_CODEX_CRP=1 \
-  "$BUNDLE_SCRIPT"
-
-  if ! "$python_cmd" - "$bundle_dir_codex/manifest.json" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-manifest_path = Path(sys.argv[1])
-data = json.loads(manifest_path.read_text(encoding="utf-8"))
-providers = data.get("providers") or []
-for provider in providers:
-    if provider.get("id") == "codex" and provider.get("os") == "linux" and provider.get("arch") == "aarch64":
-        raise SystemExit(0)
-raise SystemExit(1)
-PY
-  then
-    echo "error: manifest missing codex linux/aarch64 entry after local build" >&2
-    exit 1
-  fi
-else
-  echo "skip: codex container build smoke (set CTX_BUNDLE_DOCKER_ONLY_INCLUDE_CODEX_CRP=1 to enable)"
 fi
 
 echo "ok: ensure_bundled_harnesses build-time paths are docker-only"

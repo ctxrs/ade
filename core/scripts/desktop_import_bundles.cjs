@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 const fs = require("fs");
 const path = require("path");
+const { normalizePermissionsRecursive } = require("./desktop_normalize_bundle_permissions.cjs");
 
 const usage = () => {
   console.error("usage: node core/scripts/desktop_import_bundles.cjs --from <bundle-dir>");
@@ -75,6 +76,7 @@ const main = () => {
   }
   fs.rmSync(destDir, { recursive: true, force: true });
   copyRecursive(sourceDir, destDir);
+  normalizePermissionsRecursive(destDir);
   for (const [file, content] of keepBackups) {
     const full = path.join(destDir, file);
     if (fs.existsSync(full)) continue;
