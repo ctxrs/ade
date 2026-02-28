@@ -378,6 +378,8 @@ prepare_node_workspace() {
       pnpm install --prod --frozen-lockfile --ignore-scripts
     ) >&2
     rm -f "$workspace_dir/node_modules/.pnpm-workspace-state-v1.json" || true
+    rm -f "$workspace_dir/node_modules/.modules.yaml" || true
+    find "$workspace_dir/node_modules" -type d -name .bin -prune -exec rm -rf {} + 2>/dev/null || true
     touch "$ready_marker"
   fi
 
@@ -437,45 +439,6 @@ build_rust_provider() {
   write_entry "$provider_id" "$version" "tar_gz" "$binary_name" "$archive_path" "$sha" "$size_bytes"
 }
 
-build_node_binary_provider() {
-  local provider_id="$1"
-  local project_dir="$2"
-  local entrypoint_rel="$3"
-  local output_name="$4"
-  local version="$5"
-
-  require_cmd bun
-  local workspace_dir
-  workspace_dir="$(prepare_node_workspace "$project_dir")"
-  if [[ ! -e "$workspace_dir/$entrypoint_rel" ]]; then
-    echo "error: missing built node entrypoint for $provider_id at $workspace_dir/$entrypoint_rel" >&2
-    exit 1
-  fi
-
-  local tmp_dir
-  tmp_dir="$(mktemp -d "$OUT_DIR/.bun-${provider_id}.XXXXXX")"
-  local bin_path="$tmp_dir/$output_name"
-  (
-    cd "$workspace_dir"
-    bun build --compile "$entrypoint_rel" --outfile "$bin_path"
-  ) >&2
-
-  if [[ ! -f "$bin_path" ]]; then
-    echo "error: bun compile failed for $provider_id (missing $bin_path)" >&2
-    exit 1
-  fi
-
-  local archive_path
-  archive_path="$(stage_archive_from_binary "$provider_id" "$version" "$bin_path" "$output_name")"
-  rm -rf "$tmp_dir"
-
-  local sha
-  sha="$(sha256_file "$archive_path")"
-  local size_bytes
-  size_bytes="$(file_size_bytes "$archive_path")"
-  write_entry "$provider_id" "$version" "tar_gz" "$output_name" "$archive_path" "$sha" "$size_bytes"
-}
-
 build_node_project_provider() {
   local provider_id="$1"
   local project_dir="$2"
@@ -484,6 +447,7 @@ build_node_project_provider() {
 
   local workspace_dir
   workspace_dir="$(prepare_node_workspace "$project_dir")"
+  chmod +x "$workspace_dir/$entrypoint_rel" || true
   local archive_path
   archive_path="$(stage_archive_from_node_project "$provider_id" "$version" "$workspace_dir" "$entrypoint_rel")"
 
@@ -556,16 +520,16 @@ for provider in "${providers[@]}"; do
       build_rust_provider "$provider" "$ROOT/harness-adapters/droid-acp" "droid-acp" "$version" "droid-acp"
       ;;
     amp)
-      build_node_binary_provider "$provider" "$ROOT/harness-adapters/example-acp" "dist/bin/amp-acp.js" "amp-acp" "$version"
+      build_node_project_provider "$provider" "$ROOT/harness-adapters/example-acp" "dist/bin/amp-acp.js" "$version"
       ;;
     pi)
-      build_node_binary_provider "$provider" "$ROOT/harness-adapters/pi-acp" "dist/bin/pi-acp.js" "pi-acp" "$version"
+      build_node_project_provider "$provider" "$ROOT/harness-adapters/pi-acp" "dist/bin/pi-acp.js" "$version"
       ;;
     openhands)
-      build_node_binary_provider "$provider" "$ROOT/harness-adapters/openhands-acp" "dist/bin/openhands-acp.js" "openhands-acp" "$version"
+      build_node_project_provider "$provider" "$ROOT/harness-adapters/openhands-acp" "dist/bin/openhands-acp.js" "$version"
       ;;
     goose)
-      build_node_binary_provider "$provider" "$ROOT/harness-adapters/openhands-acp" "dist/bin/goose-acp.js" "goose-acp" "$version"
+      build_node_project_provider "$provider" "$ROOT/harness-adapters/openhands-acp" "dist/bin/goose-acp.js" "$version"
       ;;
     claude-crp)
       build_claude_crp_provider "$version"
