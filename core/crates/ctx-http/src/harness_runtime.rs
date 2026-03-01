@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use futures::StreamExt;
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::{fs, io::AsyncWriteExt};
@@ -20,6 +21,7 @@ use crate::settings::{
     ContainerExecutionSettings, ContainerMountMode, ContainerNetworkMode, ExecutionMode,
     ExecutionSettings,
 };
+use crate::updates;
 use url::Url;
 
 // Default container image for ctx-managed execution.
@@ -782,65 +784,178 @@ async fn ensure_container_image_available(
     }
 
     // Preferred path for the default image: deterministic load from bundled tar.
-    // If no bundled tar is present (minimal startup bundle), pull the default image at runtime.
+    // If no bundled tar is present (minimal startup bundle), download from managed runtime-lock
+    // source and load into Podman.
     if image == DEFAULT_CONTAINER_IMAGE {
-        if let Some(tar) = bundled_assets::bundled_ctx_harness_image_tar(image) {
+        let image_tar = if let Some(tar) = bundled_assets::bundled_ctx_harness_image_tar(image) {
             observe_log(
                 observer,
                 HarnessSetupPhase::ImageLoad,
                 HarnessSetupLogLevel::Info,
-                &format!("loading default harness image from {}", tar.display()),
+                &format!(
+                    "loading default harness image from bundled tar {}",
+                    tar.display()
+                ),
             );
-            let mut cmd = podman_command(data_root)?;
-            cmd.arg("load").arg("-i").arg(&tar);
-            let output = command_output_with_timeout(cmd, PODMAN_LOAD_TIMEOUT)
-                .await
-                .with_context(|| format!("podman load failed for {}", tar.display()))?;
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                if stderr.is_empty() {
-                    anyhow::bail!("podman load failed (status: {})", output.status);
-                }
-                anyhow::bail!("podman load failed: {stderr}");
-            }
-            if container_image_present(data_root, image).await? {
-                return Ok(());
-            }
-            anyhow::bail!(
-                "podman load reported success but image '{}' is still missing",
-                image
+            tar
+        } else {
+            let managed_tar =
+                ensure_managed_default_container_image_tar(data_root, observer).await?;
+            observe_log(
+                observer,
+                HarnessSetupPhase::ImageLoad,
+                HarnessSetupLogLevel::Info,
+                &format!(
+                    "loading default harness image from managed cache {}",
+                    managed_tar.display()
+                ),
             );
-        }
-
-        observe_log(
-            observer,
-            HarnessSetupPhase::ImageLoad,
-            HarnessSetupLogLevel::Info,
-            &format!("bundled default image not found; pulling {image} from registry"),
-        );
-        let mut cmd = podman_command(data_root)?;
-        cmd.arg("pull").arg("--").arg(image);
-        let output = command_output_with_timeout(cmd, PODMAN_LOAD_TIMEOUT)
-            .await
-            .with_context(|| format!("podman pull failed for {image}"))?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            if stderr.is_empty() {
-                anyhow::bail!("podman pull failed (status: {})", output.status);
-            }
-            anyhow::bail!("podman pull failed: {stderr}");
-        }
-        if container_image_present(data_root, image).await? {
-            return Ok(());
-        }
-        anyhow::bail!(
-            "podman pull reported success but image '{}' is still missing",
-            image
-        );
+            managed_tar
+        };
+        load_container_image_tar(data_root, &image_tar, image).await?;
+        return Ok(());
     }
 
     anyhow::bail!(
         "container image '{}' is not present; registry pulls are disabled, so the image must already exist in podman",
+        image
+    );
+}
+
+fn managed_default_container_image_tar_path(data_root: &Path, sha256: &str) -> PathBuf {
+    data_root
+        .join("managed")
+        .join("images")
+        .join("ctx-harness")
+        .join("linux")
+        .join(std::env::consts::ARCH)
+        .join(format!("sha256-{}.tar", sha256.trim().to_ascii_lowercase()))
+}
+
+async fn ensure_managed_default_container_image_tar(
+    data_root: &Path,
+    observer: Option<&dyn HarnessSetupObserver>,
+) -> Result<PathBuf> {
+    let source = bundled_assets::managed_ctx_harness_image_source(DEFAULT_CONTAINER_IMAGE)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "default harness image is missing from bundle and runtime lock managed sources"
+            )
+        })?;
+
+    let final_tar = managed_default_container_image_tar_path(data_root, &source.sha256);
+    if final_tar.exists() {
+        let digest = updates::sha256_hex_file(&final_tar)
+            .await
+            .with_context(|| format!("computing sha256 for {}", final_tar.display()))?;
+        if digest.eq_ignore_ascii_case(source.sha256.trim()) {
+            return Ok(final_tar);
+        }
+        observe_log(
+            observer,
+            HarnessSetupPhase::ImageLoad,
+            HarnessSetupLogLevel::Warn,
+            &format!(
+                "managed image cache checksum mismatch for {}; re-downloading",
+                final_tar.display()
+            ),
+        );
+        let _ = fs::remove_file(&final_tar).await;
+    }
+
+    let Some(parent) = final_tar.parent() else {
+        anyhow::bail!(
+            "managed image cache path has no parent: {}",
+            final_tar.display()
+        );
+    };
+    fs::create_dir_all(parent)
+        .await
+        .with_context(|| format!("creating {}", parent.display()))?;
+    let tmp_tar = final_tar.with_extension("download");
+
+    observe_log(
+        observer,
+        HarnessSetupPhase::ImageLoad,
+        HarnessSetupLogLevel::Info,
+        &format!("downloading default harness image from {}", source.uri),
+    );
+    download_managed_artifact(&source.uri, &tmp_tar).await?;
+
+    let digest = updates::sha256_hex_file(&tmp_tar)
+        .await
+        .with_context(|| format!("computing sha256 for {}", tmp_tar.display()))?;
+    if !digest.eq_ignore_ascii_case(source.sha256.trim()) {
+        let _ = fs::remove_file(&tmp_tar).await;
+        anyhow::bail!(
+            "managed harness image checksum mismatch: expected {}, got {}",
+            source.sha256.trim(),
+            digest
+        );
+    }
+    fs::rename(&tmp_tar, &final_tar).await.with_context(|| {
+        format!(
+            "moving managed image tar into place: {} -> {}",
+            tmp_tar.display(),
+            final_tar.display()
+        )
+    })?;
+    Ok(final_tar)
+}
+
+async fn download_managed_artifact(url: &str, dest: &Path) -> Result<()> {
+    let Some(parent) = dest.parent() else {
+        anyhow::bail!("download destination missing parent: {}", dest.display());
+    };
+    fs::create_dir_all(parent)
+        .await
+        .with_context(|| format!("creating {}", parent.display()))?;
+    let client = reqwest::Client::builder()
+        .timeout(PODMAN_LOAD_TIMEOUT)
+        .connect_timeout(Duration::from_secs(20))
+        .build()
+        .context("building reqwest client for managed artifact download")?;
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .with_context(|| format!("downloading managed artifact: {url}"))?
+        .error_for_status()
+        .with_context(|| format!("managed artifact download http error: {url}"))?;
+    let mut stream = response.bytes_stream();
+    let mut file = fs::File::create(dest)
+        .await
+        .with_context(|| format!("creating {}", dest.display()))?;
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.with_context(|| format!("reading download stream from {url}"))?;
+        file.write_all(&chunk)
+            .await
+            .with_context(|| format!("writing {}", dest.display()))?;
+    }
+    file.flush()
+        .await
+        .with_context(|| format!("flushing {}", dest.display()))?;
+    Ok(())
+}
+
+async fn load_container_image_tar(data_root: &Path, tar: &Path, image: &str) -> Result<()> {
+    let mut cmd = podman_command(data_root)?;
+    cmd.arg("load").arg("-i").arg(tar);
+    let output = command_output_with_timeout(cmd, PODMAN_LOAD_TIMEOUT)
+        .await
+        .with_context(|| format!("podman load failed for {}", tar.display()))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stderr.is_empty() {
+            anyhow::bail!("podman load failed (status: {})", output.status);
+        }
+        anyhow::bail!("podman load failed: {stderr}");
+    }
+    if container_image_present(data_root, image).await? {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "podman load reported success but image '{}' is still missing",
         image
     );
 }
@@ -1514,7 +1629,28 @@ async fn ensure_podman_machine_running_with_observer(
                         let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
                         let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
                         let combined = format!("{stderr}\n{stdout}").trim().to_string();
-                        anyhow::bail!("podman machine start failed: {combined}");
+                        let combined_lc = combined.to_ascii_lowercase();
+                        if looks_like_recoverable_machine_start_error(&combined_lc) {
+                            let message = if combined.is_empty() {
+                                "podman machine start (after init already exists) returned recoverable error; waiting for readiness"
+                                    .to_string()
+                            } else {
+                                format!(
+                                    "podman machine start (after init already exists) returned recoverable error; waiting for readiness: {combined}"
+                                )
+                            };
+                            observe_log(
+                                observer,
+                                HarnessSetupPhase::MachineStartOrInit,
+                                HarnessSetupLogLevel::Warn,
+                                &message,
+                            );
+                            if !combined.is_empty() {
+                                last_err = combined;
+                            }
+                        } else {
+                            anyhow::bail!("podman machine start failed: {combined}");
+                        }
                     }
                 } else {
                     anyhow::bail!("podman machine init --now failed: {combined}");
@@ -1939,6 +2075,9 @@ mod tests {
     fn recoverable_machine_start_error_detection_matches_expected_shapes() {
         assert!(looks_like_recoverable_machine_start_error(
             "error: machine is already starting"
+        ));
+        assert!(looks_like_recoverable_machine_start_error(
+            "Error: unable to start \"ctx\": already running\nStarting machine \"ctx\""
         ));
         assert!(looks_like_recoverable_machine_start_error(
             "error: resource busy while acquiring lock"

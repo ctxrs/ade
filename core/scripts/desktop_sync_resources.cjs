@@ -558,16 +558,23 @@ const syncBundles = () => {
   if (requiredRuntimeIds.length === 0) {
     env.CTX_BUNDLE_SKIP_RUNTIMES = env.CTX_BUNDLE_SKIP_RUNTIMES || "1";
   }
-  if (requiredImageIds.length === 0) {
+  const requiresHarnessImage = requiredImageIds.includes("ctx-harness");
+  if (!env.CTX_BUNDLE_HARNESS_IMAGE) {
+    env.CTX_BUNDLE_HARNESS_IMAGE = profile === "source-all" && requiresHarnessImage ? "both" : "0";
+  }
+  const bundleHarnessImages = is_truthy(env.CTX_BUNDLE_HARNESS_IMAGE)
+    || env.CTX_BUNDLE_HARNESS_IMAGE === "both"
+    || env.CTX_BUNDLE_HARNESS_IMAGE === "all";
+  if (requiredImageIds.length === 0 || !bundleHarnessImages) {
     env.CTX_BUNDLE_SKIP_IMAGES = env.CTX_BUNDLE_SKIP_IMAGES || "1";
   }
-  const requiresHarnessImage = requiredImageIds.includes("ctx-harness");
-  env.CTX_BUNDLE_HARNESS_IMAGE = env.CTX_BUNDLE_HARNESS_IMAGE || (requiresHarnessImage ? "both" : "0");
-  // For desktop builds on macOS we want container mode to work out-of-box without relying on
-  // system Podman installs (PATH). Bundle Podman (plus helper binaries) deterministically.
+  // Podman bundling is opt-in for minimal startup bundles. If runtime lock explicitly
+  // requires podman, keep bundling by default; otherwise default to lazy/system path.
   if (process.platform === "darwin") {
-    env.CTX_BUNDLE_PODMAN = env.CTX_BUNDLE_PODMAN || "1";
+    env.CTX_BUNDLE_PODMAN = env.CTX_BUNDLE_PODMAN || (requiredRuntimeIds.includes("podman") ? "1" : "0");
     if (env.CTX_BUNDLE_PODMAN === "1") {
+      // Podman is represented as a runtime artifact; force runtime lane on when explicitly bundling it.
+      env.CTX_BUNDLE_SKIP_RUNTIMES = "0";
       const pinnedPodman = readPinnedPodmanConfig({ os: hostManifestOs, arch: hostManifestArch });
       applyPinnedEnv(env, "PODMAN_VERSION", pinnedPodman.version);
       applyPinnedEnv(env, "PODMAN_ARCHIVE_URL", pinnedPodman.archiveUrl);
@@ -607,6 +614,7 @@ const syncBundles = () => {
         && linuxRuntimeTargets.some((entry) => entry.arch === target.arch);
       const needsLinuxImage = requiredImageIds.length > 0
         && linuxImageTargets.some((entry) => entry.arch === target.arch);
+      const shouldBundleLinuxImage = bundleHarnessImages && needsLinuxImage;
       const linuxEnv = {
         ...env,
         CTX_BUNDLE_APPEND: "1",
@@ -614,11 +622,11 @@ const syncBundles = () => {
         CTX_BUNDLE_ARCH: target.arch,
         CTX_BUNDLE_ONLY_PROVIDERS: linuxProviders,
         CTX_BUNDLE_SKIP_RUNTIMES: needsLinuxRuntime ? "0" : "1",
-        CTX_BUNDLE_SKIP_IMAGES: needsLinuxImage ? "0" : "1",
+        CTX_BUNDLE_SKIP_IMAGES: shouldBundleLinuxImage ? "0" : "1",
         CTX_BUNDLE_INCLUDE_BRIDGE: "1",
         CTX_BUNDLE_LOCAL_ADAPTERS: "off",
         CTX_BUNDLE_BUILD_LOCAL_ADAPTERS: "0",
-        CTX_BUNDLE_HARNESS_IMAGE: needsLinuxImage ? "1" : "0",
+        CTX_BUNDLE_HARNESS_IMAGE: shouldBundleLinuxImage ? "1" : "0",
         CTX_BUNDLE_PODMAN: "0",
       };
       const linuxRes = childProcess.spawnSync(bundleScript, {
@@ -642,7 +650,11 @@ const syncBundles = () => {
     }
   }
 
-  if ((profile === "debug" || profile === "release") && requiredImageIds.includes("ctx-harness")) {
+  if (
+    (profile === "debug" || profile === "release")
+    && requiredImageIds.includes("ctx-harness")
+    && bundleHarnessImages
+  ) {
     const expectedImage = readRustStringConst(harnessRuntimeRs, "DEFAULT_CONTAINER_IMAGE");
     assertBundledHarnessImageTargets(destBundleDir, expectedImage, requiredImageTargets);
   }

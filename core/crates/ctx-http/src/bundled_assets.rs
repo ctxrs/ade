@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -7,6 +8,8 @@ const BUNDLE_ENV_DIR: &str = "CTX_BUNDLE_DIR";
 const BUNDLE_ENV_MANIFEST: &str = "CTX_BUNDLE_MANIFEST";
 const MANIFEST_FILENAME: &str = "manifest.json";
 const MANIFEST_VERSION: u32 = 1;
+const RUNTIME_LOCK_FILENAME: &str = "runtime_lock.v2.json";
+const RUNTIME_LOCK_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BundledAssetsManifest {
@@ -77,6 +80,48 @@ pub struct BundledRuntimePaths {
     pub version: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct ManagedArtifactSource {
+    pub uri: String,
+    pub sha256: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RuntimeLockProfile {
+    #[serde(default)]
+    allowed_source_types: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RuntimeLockSource {
+    source_type: String,
+    #[serde(default)]
+    uri: Option<String>,
+    #[serde(default)]
+    sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RuntimeLockComponent {
+    kind: String,
+    id: String,
+    os: String,
+    arch: String,
+    #[serde(default)]
+    variant: Option<String>,
+    #[serde(default)]
+    sources: Vec<RuntimeLockSource>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RuntimeLockV2 {
+    version: u32,
+    #[serde(default)]
+    profiles: HashMap<String, RuntimeLockProfile>,
+    #[serde(default)]
+    components: Vec<RuntimeLockComponent>,
+}
+
 fn bundle_dir() -> Option<PathBuf> {
     let raw = std::env::var(BUNDLE_ENV_DIR).ok()?;
     let path = PathBuf::from(raw.trim());
@@ -98,6 +143,19 @@ fn manifest_path(root: &Path) -> PathBuf {
         }
     }
     root.join(MANIFEST_FILENAME)
+}
+
+fn runtime_lock_path(root: &Path) -> PathBuf {
+    let manifest = manifest_path(root);
+    let sibling = manifest
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| root.to_path_buf())
+        .join(RUNTIME_LOCK_FILENAME);
+    if sibling.exists() {
+        return sibling;
+    }
+    root.join(RUNTIME_LOCK_FILENAME)
 }
 
 fn current_platform() -> (&'static str, &'static str) {
@@ -175,6 +233,87 @@ fn load_manifest() -> Option<BundledAssetsManifest> {
         Some(parsed)
     });
     res.clone()
+}
+
+fn load_runtime_lock() -> Option<RuntimeLockV2> {
+    static LOCK: OnceLock<Option<RuntimeLockV2>> = OnceLock::new();
+    let res = LOCK.get_or_init(|| {
+        let root = bundle_dir()?;
+        let path = runtime_lock_path(&root);
+        let raw = std::fs::read_to_string(&path).ok()?;
+        let parsed: RuntimeLockV2 = match serde_json::from_str(&raw) {
+            Ok(parsed) => parsed,
+            Err(err) => {
+                tracing::warn!("failed to parse runtime lock {}: {err}", path.display());
+                return None;
+            }
+        };
+        if parsed.version != RUNTIME_LOCK_VERSION {
+            tracing::warn!(
+                "unsupported runtime lock version {} (expected {})",
+                parsed.version,
+                RUNTIME_LOCK_VERSION
+            );
+            return None;
+        }
+        Some(parsed)
+    });
+    res.clone()
+}
+
+fn active_runtime_profile() -> &'static str {
+    let raw = std::env::var("CTX_RUNTIME_PROFILE").unwrap_or_default();
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "" | "parity" => "parity",
+        "override" => "override",
+        "source-all" => "source-all",
+        _ => "parity",
+    }
+}
+
+fn allowed_source_types_for_profile(lock: &RuntimeLockV2) -> HashSet<String> {
+    let mut out = HashSet::<String>::new();
+    let profile = active_runtime_profile();
+    let cfg = lock
+        .profiles
+        .get(profile)
+        .or_else(|| lock.profiles.get("parity"));
+    if let Some(cfg) = cfg {
+        for source_type in &cfg.allowed_source_types {
+            let trimmed = source_type.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            out.insert(trimmed.to_ascii_lowercase());
+        }
+    }
+    out
+}
+
+fn select_managed_source(
+    component: &RuntimeLockComponent,
+    allowed_source_types: &HashSet<String>,
+) -> Option<ManagedArtifactSource> {
+    component.sources.iter().find_map(|source| {
+        let source_type = source.source_type.trim();
+        if source_type.is_empty() || source_type.eq_ignore_ascii_case("local") {
+            return None;
+        }
+        if !allowed_source_types.is_empty()
+            && !allowed_source_types.contains(&source_type.to_ascii_lowercase())
+        {
+            return None;
+        }
+        let uri = source.uri.as_ref()?.trim();
+        let sha256 = source.sha256.as_ref()?.trim();
+        if uri.is_empty() || sha256.is_empty() {
+            return None;
+        }
+        Some(ManagedArtifactSource {
+            uri: uri.to_string(),
+            sha256: sha256.to_string(),
+        })
+    })
 }
 
 pub fn bundled_provider_command(provider_id: &str) -> Option<BundledCommand> {
@@ -276,6 +415,29 @@ pub fn bundled_ctx_harness_image_tar(expected_image: &str) -> Option<PathBuf> {
     })
 }
 
+pub fn managed_image_source(id: &str, os: &str, arch: &str) -> Option<ManagedArtifactSource> {
+    let lock = load_runtime_lock()?;
+    let allowed_source_types = allowed_source_types_for_profile(&lock);
+    let component = lock.components.iter().find(|component| {
+        let variant = component
+            .variant
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("default");
+        component.kind == "image"
+            && component.id == id
+            && component.os == os
+            && component.arch == arch
+            && variant == "default"
+    })?;
+    select_managed_source(component, &allowed_source_types)
+}
+
+pub fn managed_ctx_harness_image_source(_expected_image: &str) -> Option<ManagedArtifactSource> {
+    managed_image_source("ctx-harness", "linux", current_arch())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,5 +476,52 @@ mod tests {
         let root = PathBuf::from("/tmp/ctx-bundles-root");
         let resolved = manifest_path(&root);
         assert_eq!(resolved, root.join(MANIFEST_FILENAME));
+    }
+
+    #[test]
+    fn select_managed_source_ignores_local_entries() {
+        let component = RuntimeLockComponent {
+            kind: "image".to_string(),
+            id: "ctx-harness".to_string(),
+            os: "linux".to_string(),
+            arch: "aarch64".to_string(),
+            variant: Some("default".to_string()),
+            sources: vec![
+                RuntimeLockSource {
+                    source_type: "local".to_string(),
+                    uri: None,
+                    sha256: None,
+                },
+                RuntimeLockSource {
+                    source_type: "ci".to_string(),
+                    uri: Some("https://example.test/image.tar".to_string()),
+                    sha256: Some("abcd".to_string()),
+                },
+            ],
+        };
+        let mut allowed = HashSet::new();
+        allowed.insert("ci".to_string());
+        let source = select_managed_source(&component, &allowed).expect("managed source");
+        assert_eq!(source.uri, "https://example.test/image.tar");
+        assert_eq!(source.sha256, "abcd");
+    }
+
+    #[test]
+    fn select_managed_source_respects_allowed_source_types() {
+        let component = RuntimeLockComponent {
+            kind: "image".to_string(),
+            id: "ctx-harness".to_string(),
+            os: "linux".to_string(),
+            arch: "x86_64".to_string(),
+            variant: Some("default".to_string()),
+            sources: vec![RuntimeLockSource {
+                source_type: "vendor".to_string(),
+                uri: Some("https://example.test/image.tar".to_string()),
+                sha256: Some("abcd".to_string()),
+            }],
+        };
+        let mut allowed = HashSet::new();
+        allowed.insert("ci".to_string());
+        assert!(select_managed_source(&component, &allowed).is_none());
     }
 }

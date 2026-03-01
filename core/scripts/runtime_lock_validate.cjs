@@ -234,14 +234,14 @@ const validateProfileSources = ({ lock, profile, requiredComponents, errors }) =
   const profileCfg = lock.profiles?.[profile];
   if (!profileCfg || typeof profileCfg !== "object") {
     errors.push(`runtime lock missing profiles.${profile}`);
-    return;
+    return new Set();
   }
   const allowedRaw = Array.isArray(profileCfg.allowed_source_types)
     ? profileCfg.allowed_source_types
     : [];
   if (allowedRaw.length === 0) {
     errors.push(`runtime lock profiles.${profile}.allowed_source_types must be non-empty`);
-    return;
+    return new Set();
   }
   const allowed = new Set();
   for (const entry of allowedRaw) {
@@ -266,6 +266,23 @@ const validateProfileSources = ({ lock, profile, requiredComponents, errors }) =
       );
     }
   }
+  return allowed;
+};
+
+const componentHasManagedDownloadSource = ({ component, allowedSourceTypes }) => {
+  if (!component || typeof component !== "object") return false;
+  const sources = Array.isArray(component.sources) ? component.sources : [];
+  for (const source of sources) {
+    const sourceType = String(source?.source_type || "").trim();
+    if (!sourceType || sourceType === "local") continue;
+    if (allowedSourceTypes instanceof Set && allowedSourceTypes.size > 0 && !allowedSourceTypes.has(sourceType)) {
+      continue;
+    }
+    const uri = String(source?.uri || "").trim();
+    const sha256 = String(source?.sha256 || "").trim();
+    if (uri && sha256) return true;
+  }
+  return false;
 };
 
 const applyOverridesToManifest = ({ manifest, overrides, hostOs, hostArch, errors }) => {
@@ -405,6 +422,8 @@ const validateManifestEntries = ({
   providerTargets,
   runtimeTargets,
   imageTargets,
+  requiredComponentMap = null,
+  allowedSourceTypes = new Set(),
   allowEmptyRequired = {
     provider: false,
     runtime: false,
@@ -466,13 +485,36 @@ const validateManifestEntries = ({
 
   for (const imageId of imageIds) {
     for (const target of imageTargets) {
+      const imageComponentKey = componentKey(
+        {
+          kind: "image",
+          id: imageId,
+          os: target.os,
+          arch: target.arch,
+          variant: "default",
+        },
+        hostOs,
+        hostArch,
+      );
+      const imageComponent =
+        requiredComponentMap instanceof Map ? requiredComponentMap.get(imageComponentKey) : null;
+      const managedImageAvailable = componentHasManagedDownloadSource({
+        component: imageComponent,
+        allowedSourceTypes,
+      });
       const entry = findManifestEntry(manifest.images || [], imageId, target.os, target.arch);
       if (!entry) {
-        errors.push(`missing image bundle entry for ${imageId} (${target.label})`);
+        if (!managedImageAvailable) {
+          errors.push(`missing image bundle entry for ${imageId} (${target.label})`);
+        }
         continue;
       }
       const tarPath = resolvePathFromManifestValue(bundlesRoot, entry.tar);
-      expectFilePath(tarPath, errors, `image tar ${imageId} (${target.label})`);
+      if (!tarPath || !fs.existsSync(tarPath)) {
+        if (!managedImageAvailable) {
+          expectFilePath(tarPath, errors, `image tar ${imageId} (${target.label})`);
+        }
+      }
     }
   }
 };
@@ -649,7 +691,10 @@ const validateLockV2 = ({ lock, manifest, manifestPath, profile, overridesPath, 
     }
   }
 
-  validateProfileSources({ lock, profile, requiredComponents, errors });
+  const allowedSourceTypes = validateProfileSources({ lock, profile, requiredComponents, errors });
+  const requiredComponentMap = new Map(
+    requiredComponents.map((component) => [componentKey(component, hostOs, hostArch), component]),
+  );
 
   const { overrides, appliedOverrides } = loadOverrides({ profile, overridesPath, errors });
   for (const override of overrides) {
@@ -676,6 +721,8 @@ const validateLockV2 = ({ lock, manifest, manifestPath, profile, overridesPath, 
     providerTargets,
     runtimeTargets,
     imageTargets,
+    requiredComponentMap,
+    allowedSourceTypes,
     allowEmptyRequired: {
       provider: requiredProviderIds.length === 0,
       runtime: requiredRuntimeIds.length === 0,

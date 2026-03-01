@@ -996,7 +996,43 @@ struct RuntimeLockRequired {
 #[derive(Debug, Clone, Deserialize)]
 struct RuntimeLockV2 {
     version: u32,
+    #[serde(default)]
+    profiles: std::collections::HashMap<String, RuntimeLockProfile>,
     required: RuntimeLockRequired,
+    #[serde(default)]
+    components: Vec<RuntimeLockComponent>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct RuntimeLockProfile {
+    #[serde(default)]
+    allowed_source_types: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct RuntimeLockComponentSource {
+    #[serde(default)]
+    source_type: String,
+    #[serde(default)]
+    uri: Option<String>,
+    #[serde(default)]
+    sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct RuntimeLockComponent {
+    #[serde(default)]
+    kind: String,
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    os: String,
+    #[serde(default)]
+    arch: String,
+    #[serde(default)]
+    variant: Option<String>,
+    #[serde(default)]
+    sources: Vec<RuntimeLockComponentSource>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1013,6 +1049,88 @@ fn parity_profile_enabled() -> bool {
             .as_deref(),
         None | Some("") | Some("parity")
     )
+}
+
+fn active_runtime_profile() -> &'static str {
+    match std::env::var("CTX_RUNTIME_PROFILE")
+        .ok()
+        .map(|v| v.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("override") => "override",
+        Some("source-all") => "source-all",
+        _ => "parity",
+    }
+}
+
+fn allowed_source_types_for_profile(
+    lock: &RuntimeLockV2,
+) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    let profile = active_runtime_profile();
+    let cfg = lock
+        .profiles
+        .get(profile)
+        .or_else(|| lock.profiles.get("parity"));
+    if let Some(cfg) = cfg {
+        for source_type in &cfg.allowed_source_types {
+            let trimmed = source_type.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            out.insert(trimmed.to_string());
+        }
+    }
+    out
+}
+
+fn lock_component_has_managed_source(
+    component: &RuntimeLockComponent,
+    allowed_sources: &std::collections::HashSet<String>,
+) -> bool {
+    component.sources.iter().any(|source| {
+        let source_type = source.source_type.trim();
+        if source_type.is_empty() || source_type == "local" {
+            return false;
+        }
+        if !allowed_sources.is_empty() && !allowed_sources.contains(source_type) {
+            return false;
+        }
+        source
+            .uri
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_some()
+            && source
+                .sha256
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_some()
+    })
+}
+
+fn required_image_has_managed_source(
+    lock: &RuntimeLockV2,
+    image_id: &str,
+    target: &RuntimeTarget,
+    allowed_sources: &std::collections::HashSet<String>,
+) -> bool {
+    lock.components.iter().any(|component| {
+        let variant = component
+            .variant
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("default");
+        component.kind == "image"
+            && component.id == image_id
+            && component.os == target.os
+            && component.arch == target.arch
+            && variant == "default"
+            && lock_component_has_managed_source(component, allowed_sources)
+    })
 }
 
 fn normalize_target_token(raw: &str, host_value: &str) -> Option<String> {
@@ -1224,6 +1342,7 @@ pub(super) fn enforce_desktop_parity_bundle_preflight(app: &tauri::AppHandle) ->
         ),
         &image_default_targets,
     );
+    let allowed_image_sources = allowed_source_types_for_profile(&lock);
 
     let mut failures = Vec::<String>::new();
 
@@ -1288,24 +1407,30 @@ pub(super) fn enforce_desktop_parity_bundle_preflight(app: &tauri::AppHandle) ->
 
     for image_id in &lock.required.image_ids {
         for target in &image_targets {
+            let managed_source_available =
+                required_image_has_managed_source(&lock, image_id, target, &allowed_image_sources);
             let Some(entry) = manifest.images.iter().find(|entry| {
                 entry.id == *image_id && entry.os == target.os && entry.arch == target.arch
             }) else {
-                failures.push(format!(
-                    "missing image entry: {} ({}/{})",
-                    image_id, target.os, target.arch
-                ));
+                if !managed_source_available {
+                    failures.push(format!(
+                        "missing image entry: {} ({}/{})",
+                        image_id, target.os, target.arch
+                    ));
+                }
                 continue;
             };
             let tar_path = bundle_dir.join(&entry.tar);
             if !tar_path.exists() {
-                failures.push(format!(
-                    "missing image tar file: {} ({}/{}) at {}",
-                    image_id,
-                    target.os,
-                    target.arch,
-                    tar_path.display()
-                ));
+                if !managed_source_available {
+                    failures.push(format!(
+                        "missing image tar file: {} ({}/{}) at {}",
+                        image_id,
+                        target.os,
+                        target.arch,
+                        tar_path.display()
+                    ));
+                }
             }
         }
     }

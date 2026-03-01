@@ -357,3 +357,38 @@ test("runtime lock v2 allows empty required provider/runtime startup sets", () =
   assert.equal(result.ok, true);
   assert.deepEqual(result.errors, []);
 });
+
+test("runtime lock v2 accepts managed required images without bundled image tar entries", () => {
+  const fixture = makeFixture();
+  const manifest = JSON.parse(fs.readFileSync(fixture.manifestPath, "utf8"));
+  manifest.images = [];
+  writeJson(fixture.manifestPath, manifest);
+
+  writeJson(fixture.lockPath, {
+    version: 2,
+    profiles: {
+      parity: { allowed_source_types: ["ci", "vendor"] },
+      override: { allowed_source_types: ["ci", "vendor", "local"] },
+      "source-all": { allowed_source_types: ["local"] },
+    },
+    required: {
+      targets: {
+        provider: [],
+        runtime: [],
+        image: ["linux/aarch64", "linux/x86_64"],
+      },
+      provider_ids: [],
+      runtime_ids: [],
+      image_ids: ["ctx-harness"],
+    },
+    components: makeStandardV2Components("ci"),
+  });
+
+  const result = validateRuntimeLock({
+    lockPath: fixture.lockPath,
+    manifestPath: fixture.manifestPath,
+    profile: "parity",
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.errors, []);
+});

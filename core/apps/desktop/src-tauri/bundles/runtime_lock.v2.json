@@ -28,11 +28,16 @@
     "targets": {
       "provider": [],
       "runtime": [],
-      "image": []
+      "image": [
+        "linux/aarch64",
+        "linux/x86_64"
+      ]
     },
     "provider_ids": [],
     "runtime_ids": [],
-    "image_ids": []
+    "image_ids": [
+      "ctx-harness"
+    ]
   },
   "components": [
     {
@@ -1306,8 +1311,8 @@
         },
         {
           "source_type": "ci",
-          "uri": "locked://images/ctx-harness/linux/aarch64",
-          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/images/ctx-harness/ubuntu-24.04/linux/aarch64/sha256-029598ff0765a76bcd305ebc8a9db68b014e322e6f1f90d73e3611c7875bb0e6/ctx-harness-linux-aarch64.tar",
+          "sha256": "029598ff0765a76bcd305ebc8a9db68b014e322e6f1f90d73e3611c7875bb0e6"
         }
       ]
     },
@@ -1325,8 +1330,8 @@
         },
         {
           "source_type": "ci",
-          "uri": "locked://images/ctx-harness/linux/x86_64",
-          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+          "uri": "https://example-project.supabase.co/storage/v1/object/public/releases/images/ctx-harness/ubuntu-24.04/linux/x86_64/sha256-c9c88aa67baab9d746a2f592084d343c2bf9f8a12a49c929d3675f7aaf3ab264/ctx-harness-linux-x86_64.tar",
+          "sha256": "c9c88aa67baab9d746a2f592084d343c2bf9f8a12a49c929d3675f7aaf3ab264"
         }
       ]
     }
