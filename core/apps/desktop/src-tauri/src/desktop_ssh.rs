@@ -672,18 +672,16 @@ fn bootstrap_ssh_key_auth_with_password(
     password_once: &str,
 ) -> Result<()> {
     let public_key = ensure_default_ssh_public_key()?;
-    let install_cmd = format!(
-        "umask 077; \
-mkdir -p \"$HOME/.ssh\"; \
-chmod 700 \"$HOME/.ssh\"; \
-touch \"$HOME/.ssh/authorized_keys\"; \
-chmod 600 \"$HOME/.ssh/authorized_keys\"; \
-if ! grep -qxF {key} \"$HOME/.ssh/authorized_keys\"; then \
-  printf '%s\\n' {key} >> \"$HOME/.ssh/authorized_keys\"; \
-fi",
-        key = shell_escape(&public_key),
-    );
-    let output = run_ssh_shell_with_password_once(host, user, password_once, &install_cmd)
+    // Stream the key through stdin to avoid brittle shell quoting for key payloads.
+    let install_cmd = ssh_authorized_keys_install_command();
+    let key_payload = format!("{public_key}\n");
+    let output = run_ssh_shell_with_password_once(
+        host,
+        user,
+        password_once,
+        install_cmd,
+        Some(key_payload.as_bytes()),
+    )
         .context("running password-once SSH bootstrap")?;
     if output.status.success() {
         return Ok(());
@@ -695,6 +693,16 @@ fi",
         anyhow::bail!("password-once SSH bootstrap failed");
     }
     anyhow::bail!("password-once SSH bootstrap failed: {detail}");
+}
+
+fn ssh_authorized_keys_install_command() -> &'static str {
+    "umask 077; \
+mkdir -p \"$HOME/.ssh\"; \
+chmod 700 \"$HOME/.ssh\"; \
+touch \"$HOME/.ssh/authorized_keys\"; \
+chmod 600 \"$HOME/.ssh/authorized_keys\"; \
+key=\"$(cat)\"; \
+grep -qxF \"$key\" \"$HOME/.ssh/authorized_keys\" || printf '%s\\n' \"$key\" >> \"$HOME/.ssh/authorized_keys\""
 }
 
 fn ensure_default_ssh_public_key() -> Result<String> {
@@ -786,6 +794,7 @@ fn run_ssh_shell_with_password_once(
     user: Option<&str>,
     password_once: &str,
     cmd: &str,
+    stdin_payload: Option<&[u8]>,
 ) -> Result<std::process::Output> {
     let target = match user {
         Some(u) if !u.trim().is_empty() => format!("{}@{}", u.trim(), host),
@@ -793,7 +802,8 @@ fn run_ssh_shell_with_password_once(
     };
     let remote_cmd = format!("sh -lc {}", shell_escape(cmd));
     let askpass_script = write_ssh_askpass_script()?;
-    let output = new_ssh_command()
+    let mut command = new_ssh_command();
+    command
         .arg("-o")
         .arg("BatchMode=no")
         .arg("-o")
@@ -818,13 +828,69 @@ fn run_ssh_shell_with_password_once(
         .env("SSH_ASKPASS_REQUIRE", "force")
         .env("DISPLAY", "ctx-desktop")
         .env("CTX_SSH_PASSWORD_ONCE", password_once)
-        .stdin(Stdio::null())
+        .stdin(if stdin_payload.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .context("running ssh with password-once credentials");
+        .stderr(Stdio::piped());
+
+    let output = (|| -> Result<std::process::Output> {
+        let mut child = command
+            .spawn()
+            .context("running ssh with password-once credentials")?;
+        if let Some(payload) = stdin_payload {
+            let Some(mut stdin) = child.stdin.take() else {
+                return Err(reap_password_once_child_after_input_error(
+                    child,
+                    "ssh stdin unavailable for password-once command",
+                ));
+            };
+            if let Err(err) = stdin.write_all(payload) {
+                drop(stdin);
+                return Err(reap_password_once_child_after_input_error(
+                    child,
+                    &format!("writing password-once SSH stdin payload: {err}"),
+                ));
+            }
+        }
+        child
+            .wait_with_output()
+            .context("waiting for password-once SSH command")
+    })();
     let _ = std::fs::remove_file(&askpass_script);
     output
+}
+
+fn format_password_once_output_detail(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !stderr.is_empty() {
+        return stderr;
+    }
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+fn reap_password_once_child_after_input_error(child: Child, reason: &str) -> anyhow::Error {
+    match child.wait_with_output() {
+        Ok(output) => {
+            let detail = format_password_once_output_detail(&output);
+            if detail.is_empty() {
+                anyhow!(
+                    "{reason}; password-once ssh exited with status {}",
+                    output.status
+                )
+            } else {
+                anyhow!(
+                    "{reason}; password-once ssh exited with status {}: {detail}",
+                    output.status
+                )
+            }
+        }
+        Err(wait_err) => anyhow!(
+            "{reason}; additionally failed waiting for password-once SSH command: {wait_err}"
+        ),
+    }
 }
 
 fn ssh_stderr_snippet(stderr_log: &std::sync::Arc<std::sync::Mutex<String>>) -> String {
@@ -1571,6 +1637,51 @@ mod remote_path_validation_tests {
         assert!(!looks_like_ssh_auth_failure(
             "ssh: connect to host devbox.example port 22: Operation timed out"
         ));
+    }
+
+    #[test]
+    fn ssh_bootstrap_authorized_keys_command_is_idempotent() {
+        let cmd = ssh_authorized_keys_install_command();
+        assert!(
+            cmd.contains("grep -qxF \"$key\" \"$HOME/.ssh/authorized_keys\" ||"),
+            "expected duplicate guard in bootstrap command: {cmd}"
+        );
+        assert!(
+            !cmd.contains("cat >> \"$HOME/.ssh/authorized_keys\""),
+            "bootstrap command should no longer append blindly: {cmd}"
+        );
+    }
+
+    #[test]
+    fn reap_password_once_child_after_input_error_reports_remote_output() {
+        #[cfg(windows)]
+        let mut cmd = {
+            let mut c = Command::new("cmd");
+            c.arg("/C")
+                .arg("echo remote-ssh-failed 1>&2 & exit /b 19");
+            c
+        };
+        #[cfg(not(windows))]
+        let mut cmd = {
+            let mut c = Command::new("sh");
+            c.arg("-lc").arg("echo remote-ssh-failed >&2; exit 19");
+            c
+        };
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let child = cmd.spawn().expect("spawn failure fixture");
+        let err = reap_password_once_child_after_input_error(child, "stdin write failed");
+        let msg = err.to_string();
+        assert!(msg.contains("stdin write failed"), "unexpected error: {msg}");
+        assert!(
+            msg.contains("password-once ssh exited with status"),
+            "missing process status detail: {msg}"
+        );
+        assert!(
+            msg.contains("remote-ssh-failed"),
+            "missing remote stderr detail: {msg}"
+        );
     }
 
     #[test]
