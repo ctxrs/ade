@@ -22,6 +22,7 @@ export type DesktopConnectionInfo = {
 export type SshConnectReq = {
   host: string;
   user?: string | null;
+  password_once?: string | null;
   remote_port?: number | null;
   start_remote?: boolean;
   remote_data_dir?: string | null;
@@ -237,7 +238,7 @@ export const desktopApplyAppUpdate = async (
 export const desktopListSshHosts = async (): Promise<DesktopSshHost[]> =>
   invoke<DesktopSshHost[]>("desktop_list_ssh_hosts");
 
-export const desktopTestSsh = async (req: { host: string; user?: string | null }): Promise<void> =>
+export const desktopTestSsh = async (req: { host: string; user?: string | null; password_once?: string | null }): Promise<void> =>
   invoke<void>("desktop_test_ssh", { req });
 
 export const desktopKickoffRemotePrewarm = async (req: {

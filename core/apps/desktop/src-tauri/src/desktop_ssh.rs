@@ -6,6 +6,8 @@ pub(super) struct SshConnectReq {
     #[serde(default)]
     user: Option<String>,
     #[serde(default)]
+    password_once: Option<String>,
+    #[serde(default)]
     remote_port: Option<u16>,
     #[serde(default = "default_true")]
     start_remote: bool,
@@ -22,6 +24,8 @@ pub(super) struct DesktopSshTestReq {
     host: String,
     #[serde(default)]
     user: Option<String>,
+    #[serde(default)]
+    password_once: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -201,7 +205,12 @@ pub(super) async fn desktop_test_ssh(req: DesktopSshTestReq) -> Result<(), Strin
             return Err("host is required".to_string());
         }
         let user = normalize_optional_text(req.user.as_deref());
-        probe_remote_linux_platform(&host, user.as_deref())
+        let password_once = normalize_optional_text(req.password_once.as_deref());
+        probe_remote_linux_platform_with_optional_password(
+            &host,
+            user.as_deref(),
+            password_once.as_deref(),
+        )
             .map(|_| ())
             .map_err(to_err)
     })
@@ -264,8 +273,10 @@ pub(super) async fn desktop_connect_ssh(
     let remote_port = req.remote_port.unwrap_or(4399);
 
     let user = req.user.clone();
+    let password_once = normalize_optional_text(req.password_once.as_deref());
     let host_for_connect = host.clone();
     let user_for_connect = user.clone();
+    let password_once_for_connect = password_once.clone();
     let remote_data_dir_for_connect = req.remote_data_dir.clone();
     let app_for_connect = app.clone();
     let remote_ctx_bin = MANAGED_REMOTE_CTX_BIN.to_string();
@@ -273,8 +284,11 @@ pub(super) async fn desktop_connect_ssh(
     let start_remote = req.start_remote;
     let (base_url, token, tunnel, effective_remote_ctx_bin) =
         tauri::async_runtime::spawn_blocking(move || {
-        let remote_platform =
-            probe_remote_linux_platform(&host_for_connect, user_for_connect.as_deref())?;
+        let remote_platform = probe_remote_linux_platform_with_optional_password(
+            &host_for_connect,
+            user_for_connect.as_deref(),
+            password_once_for_connect.as_deref(),
+        )?;
         let no_start_remote = env_bool("CTX_DESKTOP_SSH_NO_START_REMOTE", false);
         let mut effective_remote_ctx_bin: Option<String> = None;
 
@@ -622,6 +636,195 @@ fn new_ssh_command() -> Command {
         cmd.arg("-F").arg(path);
     }
     cmd
+}
+
+fn looks_like_ssh_auth_failure(message: &str) -> bool {
+    let lowered = message.to_ascii_lowercase();
+    lowered.contains("permission denied")
+        || lowered.contains("publickey")
+        || lowered.contains("authentication failed")
+        || lowered.contains("too many authentication failures")
+}
+
+fn probe_remote_linux_platform_with_optional_password(
+    host: &str,
+    user: Option<&str>,
+    password_once: Option<&str>,
+) -> Result<RemoteLinuxPlatform> {
+    match probe_remote_linux_platform(host, user) {
+        Ok(platform) => Ok(platform),
+        Err(err) => {
+            let Some(password_once) = password_once else {
+                return Err(err);
+            };
+            if !looks_like_ssh_auth_failure(&err.to_string()) {
+                return Err(err);
+            }
+            bootstrap_ssh_key_auth_with_password(host, user, password_once)?;
+            probe_remote_linux_platform(host, user)
+        }
+    }
+}
+
+fn bootstrap_ssh_key_auth_with_password(
+    host: &str,
+    user: Option<&str>,
+    password_once: &str,
+) -> Result<()> {
+    let public_key = ensure_default_ssh_public_key()?;
+    let install_cmd = format!(
+        "umask 077; \
+mkdir -p \"$HOME/.ssh\"; \
+chmod 700 \"$HOME/.ssh\"; \
+touch \"$HOME/.ssh/authorized_keys\"; \
+chmod 600 \"$HOME/.ssh/authorized_keys\"; \
+if ! grep -qxF {key} \"$HOME/.ssh/authorized_keys\"; then \
+  printf '%s\\n' {key} >> \"$HOME/.ssh/authorized_keys\"; \
+fi",
+        key = shell_escape(&public_key),
+    );
+    let output = run_ssh_shell_with_password_once(host, user, password_once, &install_cmd)
+        .context("running password-once SSH bootstrap")?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let detail = if !stderr.is_empty() { stderr } else { stdout };
+    if detail.is_empty() {
+        anyhow::bail!("password-once SSH bootstrap failed");
+    }
+    anyhow::bail!("password-once SSH bootstrap failed: {detail}");
+}
+
+fn ensure_default_ssh_public_key() -> Result<String> {
+    let ssh_dir = expand_tilde("~/.ssh")
+        .ok_or_else(|| anyhow!("unable to resolve ~/.ssh for SSH password bootstrap"))?;
+    std::fs::create_dir_all(&ssh_dir).context("creating local ~/.ssh directory")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&ssh_dir, std::fs::Permissions::from_mode(0o700))
+            .context("setting local ~/.ssh permissions")?;
+    }
+
+    let private_key_path = ssh_dir.join("id_ed25519");
+    let public_key_path = ssh_dir.join("id_ed25519.pub");
+    if !public_key_path.exists() {
+        if private_key_path.exists() {
+            let derive_output = Command::new("ssh-keygen")
+                .arg("-y")
+                .arg("-f")
+                .arg(&private_key_path)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+                .context("deriving public key from existing ~/.ssh/id_ed25519")?;
+            if !derive_output.status.success() {
+                let stderr = String::from_utf8_lossy(&derive_output.stderr).trim().to_string();
+                if stderr.is_empty() {
+                    anyhow::bail!("unable to derive ~/.ssh/id_ed25519.pub");
+                }
+                anyhow::bail!("unable to derive ~/.ssh/id_ed25519.pub: {stderr}");
+            }
+            let derived = String::from_utf8_lossy(&derive_output.stdout).trim().to_string();
+            if derived.is_empty() {
+                anyhow::bail!("derived ~/.ssh/id_ed25519.pub is empty");
+            }
+            std::fs::write(&public_key_path, format!("{derived}\n"))
+                .context("writing ~/.ssh/id_ed25519.pub")?;
+        } else {
+            let generate_output = Command::new("ssh-keygen")
+                .arg("-t")
+                .arg("ed25519")
+                .arg("-N")
+                .arg("")
+                .arg("-f")
+                .arg(&private_key_path)
+                .arg("-C")
+                .arg("ctx-desktop")
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+                .context("generating ~/.ssh/id_ed25519 for SSH password bootstrap")?;
+            if !generate_output.status.success() {
+                let stderr = String::from_utf8_lossy(&generate_output.stderr).trim().to_string();
+                if stderr.is_empty() {
+                    anyhow::bail!("unable to generate ~/.ssh/id_ed25519");
+                }
+                anyhow::bail!("unable to generate ~/.ssh/id_ed25519: {stderr}");
+            }
+        }
+    }
+
+    let public_key = std::fs::read_to_string(&public_key_path)
+        .with_context(|| format!("reading {}", public_key_path.display()))?;
+    let trimmed = public_key.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("local SSH public key is empty at {}", public_key_path.display());
+    }
+    Ok(trimmed.to_string())
+}
+
+fn write_ssh_askpass_script() -> Result<PathBuf> {
+    let path = std::env::temp_dir().join(format!("ctx-ssh-askpass-{}.sh", uuid::Uuid::new_v4()));
+    std::fs::write(&path, "#!/bin/sh\nprintf '%s\\n' \"$CTX_SSH_PASSWORD_ONCE\"\n")
+        .with_context(|| format!("writing SSH askpass helper at {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))
+            .with_context(|| format!("setting SSH askpass helper mode at {}", path.display()))?;
+    }
+    Ok(path)
+}
+
+fn run_ssh_shell_with_password_once(
+    host: &str,
+    user: Option<&str>,
+    password_once: &str,
+    cmd: &str,
+) -> Result<std::process::Output> {
+    let target = match user {
+        Some(u) if !u.trim().is_empty() => format!("{}@{}", u.trim(), host),
+        _ => host.to_string(),
+    };
+    let remote_cmd = format!("sh -lc {}", shell_escape(cmd));
+    let askpass_script = write_ssh_askpass_script()?;
+    let output = new_ssh_command()
+        .arg("-o")
+        .arg("BatchMode=no")
+        .arg("-o")
+        .arg("ConnectTimeout=15")
+        .arg("-o")
+        .arg("ConnectionAttempts=1")
+        .arg("-o")
+        .arg("NumberOfPasswordPrompts=1")
+        .arg("-o")
+        .arg("PreferredAuthentications=password,keyboard-interactive")
+        .arg("-o")
+        .arg("PasswordAuthentication=yes")
+        .arg("-o")
+        .arg("KbdInteractiveAuthentication=yes")
+        .arg("-o")
+        .arg("PubkeyAuthentication=no")
+        .arg("-o")
+        .arg("StrictHostKeyChecking=accept-new")
+        .arg(target)
+        .arg(remote_cmd)
+        .env("SSH_ASKPASS", &askpass_script)
+        .env("SSH_ASKPASS_REQUIRE", "force")
+        .env("DISPLAY", "ctx-desktop")
+        .env("CTX_SSH_PASSWORD_ONCE", password_once)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .context("running ssh with password-once credentials");
+    let _ = std::fs::remove_file(&askpass_script);
+    output
 }
 
 fn ssh_stderr_snippet(stderr_log: &std::sync::Arc<std::sync::Mutex<String>>) -> String {
@@ -1354,6 +1557,19 @@ mod remote_path_validation_tests {
         ));
         assert!(!looks_like_windows_shell_error(
             "ssh: connect to host example port 22: timed out"
+        ));
+    }
+
+    #[test]
+    fn ssh_auth_failure_detection_matches_permission_denied_errors() {
+        assert!(looks_like_ssh_auth_failure(
+            "ssh failed to probe remote platform: Permission denied (publickey,password)."
+        ));
+        assert!(looks_like_ssh_auth_failure(
+            "ssh failed: authentication failed for devbox.example"
+        ));
+        assert!(!looks_like_ssh_auth_failure(
+            "ssh: connect to host devbox.example port 22: Operation timed out"
         ));
     }
 
