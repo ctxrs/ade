@@ -910,16 +910,20 @@ const runWizardScenario = async (scenario) => {
       typeof scenario.remotePort === "number"
       || typeof scenario.remoteDataDir === "string"
     ) {
-      const hasAdvanced = await browser.execute(
+      const hasRemotePortInput = await browser.execute(
         () => Boolean(document.querySelector('[data-testid="wizard-remote-port"]')),
       );
-      if (!hasAdvanced) {
-        await clickTestId("wizard-remote-advanced-toggle");
-      }
-      if (typeof scenario.remotePort === "number") {
+      if (hasRemotePortInput && typeof scenario.remotePort === "number") {
         await setInput("wizard-remote-port", String(scenario.remotePort));
       }
-      if (typeof scenario.remoteDataDir === "string" && scenario.remoteDataDir.trim()) {
+      const hasRemoteDataDirInput = await browser.execute(
+        () => Boolean(document.querySelector('[data-testid="wizard-remote-data-dir"]')),
+      );
+      if (
+        hasRemoteDataDirInput
+        && typeof scenario.remoteDataDir === "string"
+        && scenario.remoteDataDir.trim()
+      ) {
         await setInput("wizard-remote-data-dir", scenario.remoteDataDir.trim());
       }
     }

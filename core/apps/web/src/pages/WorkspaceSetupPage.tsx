@@ -113,6 +113,7 @@ import {
   trackWizardStepViewed,
 } from "../utils/analytics";
 import { upsertLauncherRecent } from "../state/launcherRecentsStore";
+import { upsertProviderInstallProgress } from "../state/providerInstallProgressStore";
 
 type WizardOption = {
   id: string;
@@ -171,10 +172,10 @@ export default function WorkspaceSetupPage() {
   const [sshHosts, setSshHosts] = useState<DesktopSshHost[]>([]);
   const [sshRecents, setSshRecents] = useState<SshRecent[]>(() => loadSshRecents());
   const [remoteHostInput, setRemoteHostInput] = useState("");
+  const [remotePasswordInput, setRemotePasswordInput] = useState("");
   const [remoteStatus, setRemoteStatus] = useState<"idle" | "connecting" | "connected" | "error">("idle");
   const [remoteError, setRemoteError] = useState<string | null>(null);
   const [localLocationBusy, setLocalLocationBusy] = useState(false);
-  const [remoteAdvancedOpen, setRemoteAdvancedOpen] = useState(false);
   const [remotePortInput, setRemotePortInput] = useState("4399");
   const [remoteDataDirInput, setRemoteDataDirInput] = useState("");
   const [remoteProfiles, setRemoteProfiles] = useState<RemoteProfile[]>(() => loadRemoteProfiles());
@@ -219,6 +220,8 @@ export default function WorkspaceSetupPage() {
   const [harnessInstallError, setHarnessInstallError] = useState<string | null>(null);
   const [harnessInstallScannedKey, setHarnessInstallScannedKey] = useState<string | null>(null);
   const [harnessInstallRows, setHarnessInstallRows] = useState<Record<string, HarnessInstallRowState>>({});
+  const [harnessDownloadsCanScroll, setHarnessDownloadsCanScroll] = useState(false);
+  const [harnessDownloadsAtBottom, setHarnessDownloadsAtBottom] = useState(true);
   const [titlingProbeBusy, setTitlingProbeBusy] = useState(false);
   const [titlingProbeError, setTitlingProbeError] = useState<string | null>(null);
   const [titlingProbeDone, setTitlingProbeDone] = useState(false);
@@ -248,6 +251,7 @@ export default function WorkspaceSetupPage() {
   const titlingInstallPollRef = useRef<number | null>(null);
   const titlingInstallPollGenerationRef = useRef(0);
   const harnessInstallPollTimeoutsRef = useRef<Record<string, number>>({});
+  const harnessDownloadsScrollRef = useRef<HTMLDivElement | null>(null);
   const selectedDaemonTargetKeyRef = useRef<string | null>(null);
   const authImportScanPromiseRef = useRef<Promise<ProviderAuthImportCandidate[]> | null>(null);
   const authImportScanKeyRef = useRef<string | null>(null);
@@ -274,6 +278,19 @@ export default function WorkspaceSetupPage() {
     [base, invertInDark ? "wb-invert" : "", invertInLight ? "wb-invert-light" : ""]
       .filter(Boolean)
       .join(" ");
+
+  const updateHarnessDownloadsScrollState = useCallback(() => {
+    const node = harnessDownloadsScrollRef.current;
+    if (!node) {
+      setHarnessDownloadsCanScroll(false);
+      setHarnessDownloadsAtBottom(true);
+      return;
+    }
+    const canScroll = node.scrollHeight - node.clientHeight > 2;
+    const atBottom = !canScroll || node.scrollTop + node.clientHeight >= node.scrollHeight - 2;
+    setHarnessDownloadsCanScroll(canScroll);
+    setHarnessDownloadsAtBottom(atBottom);
+  }, []);
 
   const containerMode = selections.container;
   const authImportStepVisible = Boolean(selections.location) && authImportCandidates.length > 0;
@@ -435,6 +452,28 @@ export default function WorkspaceSetupPage() {
     const handle = window.setInterval(() => setLaunchTick((value) => value + 1), 1000);
     return () => window.clearInterval(handle);
   }, [creating, launchSnapshot?.job_id, launchSnapshot?.state]);
+  useEffect(() => {
+    if (currentStepKey !== "harness-downloads") {
+      setHarnessDownloadsCanScroll(false);
+      setHarnessDownloadsAtBottom(true);
+      return;
+    }
+    const handle = window.requestAnimationFrame(() => {
+      updateHarnessDownloadsScrollState();
+    });
+    window.addEventListener("resize", updateHarnessDownloadsScrollState);
+    return () => {
+      window.cancelAnimationFrame(handle);
+      window.removeEventListener("resize", updateHarnessDownloadsScrollState);
+    };
+  }, [
+    currentStepKey,
+    harnessInstallCandidates,
+    harnessInstallRows,
+    harnessInstallBusy,
+    harnessInstallError,
+    updateHarnessDownloadsScrollState,
+  ]);
 
   const stepIndex = Math.max(0, stepKeys.indexOf(currentStepKey));
   const step = steps[stepIndex];
@@ -472,6 +511,7 @@ export default function WorkspaceSetupPage() {
   const hasAllowlist = !needsAllowlist
     || networkAllowlist.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length > 0;
   const parsedRemote = parseUserHost(remoteHostInput);
+  const remotePasswordOnce = remotePasswordInput.length > 0 ? remotePasswordInput : null;
   const desktopApp = isDesktopApp();
   const parsedRemotePort = (() => {
     const raw = remotePortInput.trim();
@@ -617,6 +657,7 @@ export default function WorkspaceSetupPage() {
       const info = await desktopConnectSsh({
         host: parsed.host,
         user: parsed.user ?? null,
+        password_once: remotePasswordOnce,
         remote_port: parsedRemotePort,
         start_remote: true,
         remote_data_dir: remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null,
@@ -676,19 +717,33 @@ export default function WorkspaceSetupPage() {
       try {
         const info = await getInstall(installId);
         const pct = computeInstallPct(info, harnessInstallRows[providerId]?.pct ?? null);
+        const nextInstallState = {
+          installId,
+          state: info.state,
+          pct,
+          target: info.target,
+          errorCode: info.error_code,
+          error: info.error,
+        };
         setHarnessInstallRows((prev) => ({
           ...prev,
-          [providerId]: {
-            installId,
-            state: info.state,
-            pct,
-            target: info.target,
-            errorCode: info.error_code,
-            error: info.error,
-          },
+          [providerId]: nextInstallState,
         }));
+        setHarnessInstallCandidates((prev) =>
+          prev.map((candidate) =>
+            candidate.providerId === providerId
+              ? {
+                  ...candidate,
+                  installRunning: info.state === "running",
+                  installId,
+                }
+              : candidate,
+          ),
+        );
+        upsertProviderInstallProgress(providerId, nextInstallState);
         if (info.state !== "running") {
           clearHarnessInstallPoll(providerId);
+          setHarnessInstallScannedKey(null);
           return;
         }
       } catch {
@@ -702,52 +757,44 @@ export default function WorkspaceSetupPage() {
     await poll();
   };
 
-  const waitForHarnessInstallCompletion = async (
-    providerId: string,
-    installId: string,
-  ): Promise<{
-    state: Extract<InstallInfo["state"], "succeeded" | "failed" | "cancelled">;
-    error?: string;
-    errorCode?: InstallInfo["error_code"];
-  }> => {
-    while (true) {
-      const info = await getInstall(installId);
-      const pct = computeInstallPct(info, harnessInstallRows[providerId]?.pct ?? null);
-      setHarnessInstallRows((prev) => ({
-        ...prev,
-        [providerId]: {
-          installId,
-          state: info.state,
-          pct,
-          target: info.target,
-          errorCode: info.error_code,
-          error: info.error,
-        },
-      }));
-      if (info.state !== "running") {
-        return { state: info.state, error: info.error, errorCode: info.error_code };
-      }
-      await sleepMs(900);
-    }
-  };
-
   const cancelHarnessInstall = async (providerId: string) => {
     const installId = harnessInstallRows[providerId]?.installId
       ?? harnessInstallCandidates.find((candidate) => candidate.providerId === providerId)?.installId;
     if (!installId) return;
     try {
       const info = await cancelInstall(installId);
+      const fallbackPct = harnessInstallRows[providerId]?.pct ?? null;
+      const nextInstallState = {
+        installId,
+        state: info.state,
+        pct: computeInstallPct(info, fallbackPct),
+        target: info.target,
+        errorCode: info.error_code,
+        error: info.error,
+      };
       setHarnessInstallRows((prev) => ({
         ...prev,
         [providerId]: {
-          installId,
-          state: info.state,
-          pct: computeInstallPct(info, prev[providerId]?.pct ?? null),
-          target: info.target,
-          errorCode: info.error_code,
-          error: info.error,
+          ...nextInstallState,
+          pct: computeInstallPct(info, prev[providerId]?.pct ?? fallbackPct),
         },
       }));
+      setHarnessInstallCandidates((prev) =>
+        prev.map((candidate) =>
+          candidate.providerId === providerId
+            ? {
+                ...candidate,
+                installRunning: info.state === "running",
+                installId,
+              }
+            : candidate,
+        ),
+      );
+      if (info.state !== "running") {
+        clearHarnessInstallPoll(providerId);
+        setHarnessInstallScannedKey(null);
+      }
+      upsertProviderInstallProgress(providerId, nextInstallState);
     } catch (error) {
       setHarnessInstallError(messageFromError(error));
     }
@@ -1625,6 +1672,7 @@ export default function WorkspaceSetupPage() {
       desktopConnectSsh({
         host: parsed.host,
         user: parsed.user ?? null,
+        password_once: remotePasswordOnce,
         remote_port: parsedRemotePort,
         start_remote: true,
         remote_data_dir: remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null,
@@ -1665,6 +1713,7 @@ export default function WorkspaceSetupPage() {
     remoteHostInput,
     sourcePath,
     parsedRemotePort,
+    remotePasswordOnce,
     remoteDataDirInput,
   ]);
 
@@ -1873,7 +1922,12 @@ export default function WorkspaceSetupPage() {
     }
     const selectedRows = harnessInstallCandidates
       .filter((row) => selectionSnapshot[row.providerId])
-      .filter((row) => row.installSupported && !(row.installed && row.healthy));
+      .filter((row) => {
+        if (!row.installSupported) return false;
+        if (row.installed && row.healthy) return false;
+        const running = harnessInstallRows[row.providerId]?.state === "running" || row.installRunning;
+        return !running;
+      });
     if (selectedRows.length === 0) {
       if (currentStepKeyRef.current !== "harness-downloads") return;
       goRelativeStep(1);
@@ -1884,40 +1938,68 @@ export default function WorkspaceSetupPage() {
     setHarnessInstallError(null);
     try {
       await connectDaemonForImport();
-      const results = await Promise.all(
+      const startResults = await Promise.all(
         selectedRows.map(async (row) => {
-          const started = await installProvider(row.providerId, selectedHarnessInstallTarget);
-          const installId = started.install_id;
-          setHarnessInstallRows((prev) => ({
-            ...prev,
-            [row.providerId]: {
+          try {
+            const started = await installProvider(row.providerId, selectedHarnessInstallTarget);
+            const installId = started.install_id;
+            const nextInstallState = {
               installId,
-              state: "running",
+              state: "running" as const,
               pct: null,
               target: started.target,
-            },
-          }));
-          const done = await waitForHarnessInstallCompletion(row.providerId, installId);
-          return { providerId: row.providerId, done };
+              errorCode: undefined,
+              error: undefined,
+            };
+            setHarnessInstallRows((prev) => ({
+              ...prev,
+              [row.providerId]: nextInstallState,
+            }));
+            setHarnessInstallCandidates((prev) =>
+              prev.map((candidate) =>
+                candidate.providerId === row.providerId
+                  ? {
+                      ...candidate,
+                      installRunning: true,
+                      installId,
+                    }
+                  : candidate,
+              ),
+            );
+            upsertProviderInstallProgress(row.providerId, nextInstallState);
+            void attachHarnessInstall(row.providerId, installId);
+            return {
+              providerId: row.providerId,
+              ok: true as const,
+            };
+          } catch (error) {
+            return {
+              providerId: row.providerId,
+              ok: false as const,
+              error: messageFromError(error),
+            };
+          }
         }),
       );
 
-      const failures = results
-        .filter((result) => result.done.state !== "succeeded")
+      const failures = startResults
+        .filter((result) => !result.ok)
         .map((result) => {
           const label = harnessInstallCandidates.find((candidate) => candidate.providerId === result.providerId)?.label ?? result.providerId;
-          const summary = installErrorSummary(result.done.errorCode, result.done.error);
-          return `${label}: ${summary}`;
+          return `${label}: ${result.error}`;
         });
       if (failures.length > 0) {
-        setHarnessInstallError(`Some downloads failed. ${failures.join(" ; ")}`);
+        const prefix = failures.length === selectedRows.length
+          ? "Unable to start selected downloads."
+          : "Some downloads failed to start.";
+        setHarnessInstallError(`${prefix} ${failures.join(" ; ")}`);
+      }
+
+      const startedAny = startResults.some((result) => result.ok);
+      if (!startedAny) {
         return;
       }
 
-      if (selections.location === "local" || selections.location === "remote") {
-        setHarnessInstallScannedKey(null);
-        await scanHarnessInstallCandidatesForTarget(selections.location);
-      }
       if (currentStepKeyRef.current !== "harness-downloads") return;
       goRelativeStep(1);
     } catch (error) {
@@ -1950,9 +2032,11 @@ export default function WorkspaceSetupPage() {
             await desktopTestSsh({
               host: parsedRemote.host,
               user: parsedRemote.user ?? null,
+              password_once: remotePasswordOnce,
             });
             remoteStatusRef.current = "connected";
             setRemoteStatus("connected");
+            setRemotePasswordInput("");
             const normalizedDataDir = remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null;
             setRemoteProfiles(upsertRemoteProfile(parsedRemote.host, parsedRemote.user ?? null, {
               remote_port: parsedRemotePort ?? 4399,
@@ -2166,6 +2250,7 @@ export default function WorkspaceSetupPage() {
           ? await desktopConnectSsh({
             host: parsed!.host,
             user: parsed!.user ?? null,
+            password_once: remotePasswordOnce,
             remote_port: parsedRemotePort,
             start_remote: true,
             remote_data_dir: remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null,
@@ -2676,6 +2761,32 @@ export default function WorkspaceSetupPage() {
 	                        />
 	                      </label>
                     </div>
+                    <div className="wizard-input">
+                      <label>
+                        SSH password (one-time, optional)
+                        <input
+                          data-testid="wizard-remote-password-once"
+                          type="password"
+                          autoComplete="current-password"
+                          placeholder="Used only to install SSH key auth; never stored"
+                          value={remotePasswordInput}
+                          onChange={(e) => {
+                            setCreateError(null);
+                            setRemotePasswordInput(e.target.value);
+                            if (remoteStatus !== "idle") {
+                              setRemoteStatus("idle");
+                              setRemoteError(null);
+                            }
+                          }}
+                        />
+                      </label>
+                      <div className="wizard-note">
+                        If key auth fails, this password is used once to install your local SSH public key on the remote host.
+                      </div>
+                    </div>
+                    {/* Temporarily hiding location-step advanced remote fields.
+                        Re-enable this block if we need manual remote port/data-dir controls again. */}
+                    {/*
                     <button
                       type="button"
                       className="wizard-advanced-toggle"
@@ -2731,6 +2842,7 @@ export default function WorkspaceSetupPage() {
                         </div>
                       </div>
                     )}
+                    */}
                     {sshSuggestions.length > 0 && (
                       <div className="wizard-remote-list">
                         {sshSuggestions.map((entry) => {
@@ -2844,81 +2956,91 @@ export default function WorkspaceSetupPage() {
                       <div className="wizard-note">No downloadable harness providers detected on this daemon.</div>
                     ) : null}
                     {harnessInstallCandidates.length > 0 && (
-                      <div className="wizard-auth-import-list">
-                        {harnessInstallCandidates.map((candidate) => {
-                          const checked = Boolean(harnessInstallSelected[candidate.providerId]);
-                          const installedReady = candidate.installed && candidate.healthy;
-                          const installUi = harnessInstallRows[candidate.providerId];
-                          const running = installUi?.state === "running" || candidate.installRunning;
-                          const disabled = !candidate.installSupported || installedReady || running || harnessInstallBusy;
-                          const harness = harnessByProviderId.get(candidate.providerId);
-                          const installTarget = installUi?.target ?? candidate.installTarget ?? selectedHarnessInstallTarget;
-                          const sizeLabel = formatByteSize(candidate.installSizeBytes ?? null);
-                          const installContextLabel = `${installTargetLabel(installTarget)}${sizeLabel ? ` · ${sizeLabel}` : ""}`;
-                          const installFailureMessage =
-                            installUi?.state === "failed" || installUi?.state === "cancelled"
-                              ? installErrorSummary(installUi.errorCode, installUi.error)
-                              : null;
-                          return (
-                            <label
-                              key={candidate.providerId}
-                              className={`wizard-auth-import-row ${disabled ? "wizard-auth-import-row--disabled" : ""}`}
-                            >
-                              <div className="wizard-auth-import-title">
-                                <input
-                                  type="checkbox"
-                                  className="wizard-auth-import-checkbox"
-                                  data-testid={`wizard-harness-checkbox-${candidate.providerId}`}
-                                  checked={checked}
-                                  disabled={disabled}
-                                  onChange={(e) =>
-                                    setHarnessInstallSelected((prev) => ({ ...prev, [candidate.providerId]: e.target.checked }))
-                                  }
-                                />
-                                {harness?.logoSrc ? (
-                                  <img
-                                    className={logoClasses(
-                                      "wizard-auth-import-logo",
-                                      harness.invertInDark,
-                                      harness.invertInLight,
-                                    )}
-                                    src={harness.logoSrc}
-                                    alt=""
+                      <div
+                        className={`wizard-harness-downloads-scroll-shell${harnessDownloadsCanScroll ? " is-scrollable" : ""}${harnessDownloadsAtBottom ? " is-bottom" : ""}`}
+                        data-testid="wizard-harness-downloads-scroll-shell"
+                      >
+                        <div
+                          ref={harnessDownloadsScrollRef}
+                          className="wizard-auth-import-list wizard-auth-import-list--scrollable"
+                          onScroll={updateHarnessDownloadsScrollState}
+                        >
+                          {harnessInstallCandidates.map((candidate) => {
+                            const checked = Boolean(harnessInstallSelected[candidate.providerId]);
+                            const installedReady = candidate.installed && candidate.healthy;
+                            const installUi = harnessInstallRows[candidate.providerId];
+                            const running = installUi?.state === "running" || candidate.installRunning;
+                            const canCancelInstall = Boolean(installUi?.installId ?? candidate.installId);
+                            const disabled = !candidate.installSupported || installedReady || running || harnessInstallBusy;
+                            const harness = harnessByProviderId.get(candidate.providerId);
+                            const installTarget = installUi?.target ?? candidate.installTarget ?? selectedHarnessInstallTarget;
+                            const sizeLabel = formatByteSize(candidate.installSizeBytes ?? null);
+                            const installContextLabel = `${installTargetLabel(installTarget)}${sizeLabel ? ` · ${sizeLabel}` : ""}`;
+                            const installFailureMessage =
+                              installUi?.state === "failed" || installUi?.state === "cancelled"
+                                ? installErrorSummary(installUi.errorCode, installUi.error)
+                                : null;
+                            return (
+                              <label
+                                key={candidate.providerId}
+                                className={`wizard-auth-import-row ${disabled ? "wizard-auth-import-row--disabled" : ""}`}
+                              >
+                                <div className="wizard-auth-import-title">
+                                  <input
+                                    type="checkbox"
+                                    className="wizard-auth-import-checkbox"
+                                    data-testid={`wizard-harness-checkbox-${candidate.providerId}`}
+                                    checked={checked}
+                                    disabled={disabled}
+                                    onChange={(e) =>
+                                      setHarnessInstallSelected((prev) => ({ ...prev, [candidate.providerId]: e.target.checked }))
+                                    }
                                   />
-                                ) : (
-                                  <span className="wizard-auth-import-logo-fallback" aria-hidden="true" />
-                                )}
-                                <span className="wizard-auth-import-name">{candidate.label}</span>
-                              </div>
-                              <div className="wizard-auth-import-path">
-                                {installedReady
-                                  ? `Installed · ${installContextLabel}`
-                                  : running
-                                    ? `Downloading${typeof installUi?.pct === "number" ? ` (${installUi.pct}%)` : ""} · ${installContextLabel}`
-                                    : `Not installed · ${installContextLabel}`}
-                              </div>
-                              {running ? (
-                                <div className="wizard-auth-import-actions">
-                                  <button
-                                    type="button"
-                                    className="wizard-inline-action"
-                                    onClick={(event) => {
-                                      event.preventDefault();
-                                      event.stopPropagation();
-                                      void cancelHarnessInstall(candidate.providerId);
-                                    }}
-                                    disabled={harnessInstallBusy !== true}
-                                  >
-                                    Cancel install
-                                  </button>
+                                  {harness?.logoSrc ? (
+                                    <img
+                                      className={logoClasses(
+                                        "wizard-auth-import-logo",
+                                        harness.invertInDark,
+                                        harness.invertInLight,
+                                      )}
+                                      src={harness.logoSrc}
+                                      alt=""
+                                    />
+                                  ) : (
+                                    <span className="wizard-auth-import-logo-fallback" aria-hidden="true" />
+                                  )}
+                                  <span className="wizard-auth-import-name">{candidate.label}</span>
                                 </div>
-                              ) : null}
-                              {installFailureMessage ? (
-                                <div className="wizard-error wizard-note--tight">{installFailureMessage}</div>
-                              ) : null}
-                            </label>
-                          );
-                        })}
+                                <div className="wizard-auth-import-path">
+                                  {installedReady
+                                    ? `Installed · ${installContextLabel}`
+                                    : running
+                                      ? `Downloading${typeof installUi?.pct === "number" ? ` (${installUi.pct}%)` : ""} · ${installContextLabel}`
+                                      : `Not installed · ${installContextLabel}`}
+                                </div>
+                                {running ? (
+                                  <div className="wizard-auth-import-actions">
+                                    <button
+                                      type="button"
+                                      className="wizard-inline-action"
+                                      onClick={(event) => {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                        void cancelHarnessInstall(candidate.providerId);
+                                      }}
+                                      disabled={!canCancelInstall}
+                                    >
+                                      Cancel install
+                                    </button>
+                                  </div>
+                                ) : null}
+                                {installFailureMessage ? (
+                                  <div className="wizard-error wizard-note--tight">{installFailureMessage}</div>
+                                ) : null}
+                              </label>
+                            );
+                          })}
+                        </div>
                       </div>
                     )}
                     <button

@@ -298,6 +298,7 @@ describe("WorkspaceSetupPage", () => {
     await waitFor(() => {
       expect(wizardStepKey()).toBe("harness-downloads");
     });
+    expect(screen.getByTestId("wizard-harness-downloads-scroll-shell")).toBeInTheDocument();
     expect(screen.getByTestId("wizard-harness-checkbox-codex")).toBeInTheDocument();
   });
 
@@ -326,7 +327,7 @@ describe("WorkspaceSetupPage", () => {
     });
   });
 
-  it("downloads selected harnesses from wizard and advances on success", async () => {
+  it("starts selected harness downloads and advances without waiting for completion", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(getSettings).mockResolvedValue(configuredTitlingSettingsFixture() as never);
     vi.mocked(listProviders)
@@ -410,7 +411,104 @@ describe("WorkspaceSetupPage", () => {
     await waitFor(() => {
       expect(installProvider).toHaveBeenCalledWith("codex", "container");
       expect(wizardStepKey()).toBe("source");
+      expect(getInstall).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("keeps cancel enabled for active harness installs after scan completes", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue(configuredTitlingSettingsFixture() as never);
+    vi.mocked(getInstall).mockReset();
+    vi.mocked(listProviders).mockResolvedValue([
+      providerStatusFixture({
+        provider_id: "codex",
+        installed: false,
+        health: "error",
+        details: {
+          install_supported: "true",
+          install_running: "true",
+          install_id: "install_codex",
+        },
+      }),
+    ] as never);
+    vi.mocked(getInstall).mockResolvedValue({
+      install_id: "install_codex",
+      provider_id: "codex",
+      state: "running",
+      started_at: "2026-02-28T00:00:00Z",
+      finished_at: undefined,
+      error: undefined,
+      last_event: undefined,
+      target: "container",
+      error_code: undefined,
+    } as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    await selectLocalAndContinue();
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+    });
+    fireEvent.click(screen.getByTestId("wizard-option-container-disk-isolated"));
+    await waitFor(() => {
+      expect(["harness-downloads", "source"]).toContain(wizardStepKey());
+    });
+    if (wizardStepKey() === "source") {
+      fireEvent.click(screen.getByTestId("wizard-back"));
+      await waitFor(() => {
+        expect(wizardStepKey()).toBe("harness-downloads");
+      });
+    }
+    await waitFor(() => {
+      expect(getInstall).toHaveBeenCalled();
+    });
+
+    const cancelButton = await screen.findByRole("button", { name: "Cancel install" });
+    expect(cancelButton).toBeEnabled();
+  });
+
+  it("clears stale running state after terminal harness install failures", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue(configuredTitlingSettingsFixture() as never);
+    vi.mocked(getInstall).mockReset();
+    vi.mocked(listProviders).mockResolvedValue([
+      providerStatusFixture({
+        provider_id: "codex",
+        installed: false,
+        health: "error",
+        details: {
+          install_supported: "true",
+          install_running: "true",
+          install_id: "install_codex",
+        },
+      }),
+    ] as never);
+    vi.mocked(getInstall).mockResolvedValue({
+      install_id: "install_codex",
+      provider_id: "codex",
+      state: "failed",
+      started_at: "2026-02-28T00:00:00Z",
+      finished_at: "2026-02-28T00:00:03Z",
+      error: "download failed",
+      last_event: undefined,
+      error_code: "download_failed",
+    } as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    await selectLocalAndContinue();
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+    });
+    fireEvent.click(screen.getByTestId("wizard-option-container-disk-isolated"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("harness-downloads");
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Not installed · container/i)).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("wizard-harness-checkbox-codex")).toBeEnabled();
   });
 
   it("tracks wizard start, step viewed, and abandonment on unmount", async () => {
@@ -468,6 +566,30 @@ describe("WorkspaceSetupPage", () => {
       expect(desktopTestSsh).toHaveBeenCalledWith({
         host: "devbox.example",
         user: null,
+        password_once: null,
+      });
+    });
+  });
+
+  it("passes one-time SSH password during remote verification", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+
+    fireEvent.click(screen.getByTestId("wizard-option-location-remote"));
+    fireEvent.change(await screen.findByTestId("wizard-remote-host"), {
+      target: { value: "devbox.example" },
+    });
+    fireEvent.change(screen.getByTestId("wizard-remote-password-once"), {
+      target: { value: "hunter2" },
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    await waitFor(() => {
+      expect(desktopTestSsh).toHaveBeenCalledWith({
+        host: "devbox.example",
+        user: null,
+        password_once: "hunter2",
       });
     });
   });
@@ -525,6 +647,7 @@ describe("WorkspaceSetupPage", () => {
       expect(desktopTestSsh).toHaveBeenCalledWith({
         host: "devbox.example",
         user: null,
+        password_once: null,
       });
     });
   });
