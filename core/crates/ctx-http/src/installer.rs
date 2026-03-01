@@ -12,6 +12,7 @@ use tokio::sync::Mutex;
 use tokio::time::timeout;
 
 use crate::bundled_assets;
+use crate::container_builder;
 use crate::daemon::AppState;
 use crate::installs::{
     truncate_for_storage, InstallErrorCode, InstallEventLevel, InstallId, InstallProgressEvent,
@@ -222,14 +223,15 @@ pub fn is_supported_managed_provider_for_target(
         Err(_) => return false,
     };
 
-    // Archive installs are target-specific; npm/python installs are host-target only.
+    // Archive installs are target-specific. npm/python installs are currently
+    // supported for host and container targets.
     match install {
         provider_matrix::ProviderInstall::Archive { targets, .. } => {
             targets.contains_key(target_key)
         }
         provider_matrix::ProviderInstall::Npm { .. }
         | provider_matrix::ProviderInstall::Python { .. } => {
-            matches!(target, InstallTarget::Host)
+            matches!(target, InstallTarget::Host | InstallTarget::Container)
         }
     }
 }
@@ -330,17 +332,24 @@ fn resolve_command_path(command: &str) -> (bool, Option<PathBuf>) {
     (false, None)
 }
 
-fn venv_bin_dir(venv_dir: &Path) -> PathBuf {
-    if cfg!(windows) {
+fn target_uses_windows_layout(target: InstallTarget) -> bool {
+    match target {
+        InstallTarget::Host => cfg!(windows),
+        InstallTarget::Container | InstallTarget::LinuxAarch64 | InstallTarget::LinuxX8664 => false,
+    }
+}
+
+fn venv_bin_dir(venv_dir: &Path, target: InstallTarget) -> PathBuf {
+    if target_uses_windows_layout(target) {
         venv_dir.join("Scripts")
     } else {
         venv_dir.join("bin")
     }
 }
 
-fn venv_exe(venv_dir: &Path, name: &str) -> PathBuf {
-    let bin = venv_bin_dir(venv_dir);
-    if cfg!(windows) {
+fn venv_exe(venv_dir: &Path, name: &str, target: InstallTarget) -> PathBuf {
+    let bin = venv_bin_dir(venv_dir, target);
+    if target_uses_windows_layout(target) {
         bin.join(format!("{name}.exe"))
     } else {
         bin.join(name)
@@ -1085,6 +1094,7 @@ async fn install_managed_npm_provider(
         &node,
         &install_dir,
         &package_spec,
+        target,
     )
     .await
     .context("running package install")?;
@@ -1180,10 +1190,16 @@ async fn install_managed_python_provider(
     stage: &mut &'static str,
 ) -> Result<ManagedProviderInstall> {
     *stage = "python";
-    let python = ensure_python_runtime(state, install_id, provider_id, &state.core.data_root)
-        .await
-        .context("ensuring managed Python runtime")?
-        .python_bin;
+    let python = ensure_python_runtime(
+        state,
+        install_id,
+        provider_id,
+        &state.core.data_root,
+        target,
+    )
+    .await
+    .context("ensuring managed Python runtime")?
+    .python_bin;
     let data_root = state.core.data_root.clone();
     let install_dir = install_dir_for_provider(&data_root, provider_id, version, target);
     let install_dir_rel = install_dir_rel(&data_root, &install_dir);
@@ -1204,7 +1220,7 @@ async fn install_managed_python_provider(
     .await;
 
     if install_dir.exists() {
-        let expected = venv_exe(&venv_dir, entrypoint);
+        let expected = venv_exe(&venv_dir, entrypoint, target);
         if !expected.exists() {
             tokio::fs::remove_dir_all(&install_dir).await.ok();
         }
@@ -1227,21 +1243,76 @@ async fn install_managed_python_provider(
     )
     .await;
 
-    let mut venv_cmd = Command::new(&python);
-    venv_cmd
-        .arg("-m")
-        .arg("venv")
-        .arg(&venv_dir)
-        .kill_on_drop(true);
-    run_command_with_timeout(venv_cmd, Duration::from_secs(5 * 60))
+    if matches!(target, InstallTarget::Container) {
+        container_builder::ensure_builder_ready(&state.core.data_root)
+            .await
+            .context("ensuring container builder readiness")?;
+        let argv = vec![
+            python.to_string_lossy().to_string(),
+            "-m".to_string(),
+            "venv".to_string(),
+            venv_dir.to_string_lossy().to_string(),
+        ];
+        let out = container_builder::run_command(
+            &state.core.data_root,
+            &install_dir,
+            &[],
+            &argv,
+            Duration::from_secs(5 * 60),
+        )
         .await
         .context("creating virtualenv")?;
+        if !out.status.success() {
+            anyhow::bail!(
+                "creating virtualenv failed status={}\nstdout:\n{}\nstderr:\n{}",
+                out.status,
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+    } else {
+        let mut venv_cmd = Command::new(&python);
+        venv_cmd
+            .arg("-m")
+            .arg("venv")
+            .arg(&venv_dir)
+            .kill_on_drop(true);
+        run_command_with_timeout(venv_cmd, Duration::from_secs(5 * 60))
+            .await
+            .context("creating virtualenv")?;
+    }
 
-    let venv_python = venv_exe(&venv_dir, "python");
+    let venv_python = venv_exe(&venv_dir, "python", target);
 
-    ensure_python_pip(&venv_python)
+    if matches!(target, InstallTarget::Container) {
+        let argv = vec![
+            venv_python.to_string_lossy().to_string(),
+            "-m".to_string(),
+            "ensurepip".to_string(),
+            "--upgrade".to_string(),
+        ];
+        let out = container_builder::run_command(
+            &state.core.data_root,
+            &install_dir,
+            &[],
+            &argv,
+            Duration::from_secs(5 * 60),
+        )
         .await
         .context("ensuring pip in virtualenv")?;
+        if !out.status.success() {
+            anyhow::bail!(
+                "ensurepip failed status={}\nstdout:\n{}\nstderr:\n{}",
+                out.status,
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+    } else {
+        ensure_python_pip(&venv_python)
+            .await
+            .context("ensuring pip in virtualenv")?;
+    }
 
     let package_spec = if package.starts_with("https://") || package.starts_with("http://") {
         package.to_string()
@@ -1263,19 +1334,39 @@ async fn install_managed_python_provider(
     )
     .await;
 
-    let mut pip_cmd = Command::new(&venv_python);
-    pip_cmd
-        .arg("-m")
-        .arg("pip")
-        .arg("install")
-        .arg("--disable-pip-version-check")
-        .arg("--no-input")
-        .arg(&package_spec)
-        .env("PIP_DISABLE_PIP_VERSION_CHECK", "1")
-        .kill_on_drop(true);
-    let out = run_command_with_timeout(pip_cmd, PIP_INSTALL_TIMEOUT)
+    let out = if matches!(target, InstallTarget::Container) {
+        let argv = vec![
+            venv_python.to_string_lossy().to_string(),
+            "-m".to_string(),
+            "pip".to_string(),
+            "install".to_string(),
+            "--disable-pip-version-check".to_string(),
+            "--no-input".to_string(),
+            package_spec.clone(),
+        ];
+        let env = vec![("PIP_DISABLE_PIP_VERSION_CHECK".to_string(), "1".to_string())];
+        container_builder::run_command(
+            &state.core.data_root,
+            &install_dir,
+            &env,
+            &argv,
+            PIP_INSTALL_TIMEOUT,
+        )
         .await
-        .context("running pip install")?;
+    } else {
+        let mut pip_cmd = Command::new(&venv_python);
+        pip_cmd
+            .arg("-m")
+            .arg("pip")
+            .arg("install")
+            .arg("--disable-pip-version-check")
+            .arg("--no-input")
+            .arg(&package_spec)
+            .env("PIP_DISABLE_PIP_VERSION_CHECK", "1")
+            .kill_on_drop(true);
+        run_command_with_timeout(pip_cmd, PIP_INSTALL_TIMEOUT).await
+    }
+    .context("running pip install")?;
     if !out.status.success() {
         anyhow::bail!(
             "pip install failed ({}) status={}\nstdout:\n{}\nstderr:\n{}",
@@ -1286,7 +1377,7 @@ async fn install_managed_python_provider(
         );
     }
 
-    let exe = venv_exe(&venv_dir, entrypoint);
+    let exe = venv_exe(&venv_dir, entrypoint, target);
     if !exe.exists() {
         tokio::fs::remove_dir_all(&install_dir).await.ok();
         anyhow::bail!(
@@ -1387,6 +1478,7 @@ async fn install_managed_npm_dependency(
         &node,
         &install_dir,
         &format!("{package}@{version}"),
+        InstallTarget::Host,
     )
     .await
     .context("running package install for dependency")?;
@@ -1636,9 +1728,9 @@ async fn install_provider_impl(
                 entrypoint,
                 args,
             } => {
-                if !matches!(target, InstallTarget::Host) {
+                if !matches!(target, InstallTarget::Host | InstallTarget::Container) {
                     anyhow::bail!(
-                        "target '{}' is not supported for npm provider '{}' installs; use target host",
+                        "target '{}' is not supported for npm provider '{}' installs; use target host or container",
                         requested_target_label,
                         provider_id
                     );
@@ -1669,9 +1761,9 @@ async fn install_provider_impl(
                 entrypoint,
                 args,
             } => {
-                if !matches!(target, InstallTarget::Host) {
+                if !matches!(target, InstallTarget::Host | InstallTarget::Container) {
                     anyhow::bail!(
-                        "target '{}' is not supported for python provider '{}' installs; use target host",
+                        "target '{}' is not supported for python provider '{}' installs; use target host or container",
                         requested_target_label,
                         provider_id
                     );
@@ -2638,37 +2730,40 @@ async fn ensure_python_runtime(
     install_id: Option<InstallId>,
     provider_id: &str,
     data_root: &Path,
+    target: InstallTarget,
 ) -> Result<PythonRuntime> {
-    let target = python_target_triple()?;
-    if let Some(bundled) = bundled_assets::bundled_python_runtime() {
-        if bundled.version == PYTHON_VERSION {
-            emit_install(
-                state,
-                install_id,
-                provider_id,
-                InstallEventLevel::Info,
-                "python",
-                format!("Using bundled Python runtime {PYTHON_VERSION} ({target})"),
-                None,
-                None,
-                None,
-            )
-            .await;
-            return Ok(PythonRuntime {
-                python_root: bundled.root,
-                python_bin: bundled.bin,
-            });
-        } else {
-            tracing::warn!(
-                "bundled Python runtime version {} does not match expected {}",
-                bundled.version,
-                PYTHON_VERSION
-            );
+    let target_triple = python_target_triple_for_install_target(target)?;
+    if python_target_can_use_bundled_runtime(target) {
+        if let Some(bundled) = bundled_assets::bundled_python_runtime() {
+            if bundled.version == PYTHON_VERSION {
+                emit_install(
+                    state,
+                    install_id,
+                    provider_id,
+                    InstallEventLevel::Info,
+                    "python",
+                    format!("Using bundled Python runtime {PYTHON_VERSION} ({target_triple})"),
+                    None,
+                    None,
+                    None,
+                )
+                .await;
+                return Ok(PythonRuntime {
+                    python_root: bundled.root,
+                    python_bin: bundled.bin,
+                });
+            } else {
+                tracing::warn!(
+                    "bundled Python runtime version {} does not match expected {}",
+                    bundled.version,
+                    PYTHON_VERSION
+                );
+            }
         }
     }
-    let folder = format!("cpython-{PYTHON_VERSION}+{PYTHON_BUILD_TAG}-{target}");
+    let folder = format!("cpython-{PYTHON_VERSION}+{PYTHON_BUILD_TAG}-{target_triple}");
     let python_root = data_root.join("runtimes").join("python").join(&folder);
-    let python_bin = resolve_python_bin(&python_root);
+    let python_bin = resolve_python_bin(&python_root, target);
 
     if python_bin.exists() {
         emit_install(
@@ -2677,7 +2772,7 @@ async fn ensure_python_runtime(
             provider_id,
             InstallEventLevel::Info,
             "python",
-            format!("Using existing Python runtime {PYTHON_VERSION} ({target})"),
+            format!("Using existing Python runtime {PYTHON_VERSION} ({target_triple})"),
             None,
             None,
             None,
@@ -2690,7 +2785,7 @@ async fn ensure_python_runtime(
     }
 
     let _lock = python_runtime_install_lock().lock().await;
-    let python_bin = resolve_python_bin(&python_root);
+    let python_bin = resolve_python_bin(&python_root, target);
     if python_bin.exists() {
         emit_install(
             state,
@@ -2698,7 +2793,7 @@ async fn ensure_python_runtime(
             provider_id,
             InstallEventLevel::Info,
             "python",
-            format!("Using existing Python runtime {PYTHON_VERSION} ({target})"),
+            format!("Using existing Python runtime {PYTHON_VERSION} ({target_triple})"),
             None,
             None,
             None,
@@ -2714,7 +2809,8 @@ async fn ensure_python_runtime(
         tokio::fs::create_dir_all(parent).await?;
     }
 
-    let asset = format!("cpython-{PYTHON_VERSION}+{PYTHON_BUILD_TAG}-{target}-install_only.tar.gz");
+    let asset =
+        format!("cpython-{PYTHON_VERSION}+{PYTHON_BUILD_TAG}-{target_triple}-install_only.tar.gz");
     let url = format!(
         "https://github.com/indygreg/python-build-standalone/releases/download/{PYTHON_BUILD_TAG}/{asset}"
     );
@@ -2790,7 +2886,7 @@ async fn ensure_python_runtime(
     tokio::fs::remove_dir_all(&extract_root).await.ok();
     tokio::fs::remove_file(&tmp).await.ok();
 
-    let python_bin = resolve_python_bin(&python_root);
+    let python_bin = resolve_python_bin(&python_root, target);
     if !python_bin.exists() {
         anyhow::bail!(
             "python runtime incomplete after install (python: {})",
@@ -2804,7 +2900,7 @@ async fn ensure_python_runtime(
         provider_id,
         InstallEventLevel::Success,
         "python_extract",
-        format!("Installed Python runtime {PYTHON_VERSION} ({target})"),
+        format!("Installed Python runtime {PYTHON_VERSION} ({target_triple})"),
         None,
         None,
         None,
@@ -2817,9 +2913,24 @@ async fn ensure_python_runtime(
     })
 }
 
-fn python_target_triple() -> Result<&'static str> {
-    let os = std::env::consts::OS;
-    let arch = std::env::consts::ARCH;
+fn python_target_can_use_bundled_runtime(target: InstallTarget) -> bool {
+    matches!(target, InstallTarget::Host)
+}
+
+fn python_target_triple_for_install_target(target: InstallTarget) -> Result<&'static str> {
+    match target {
+        InstallTarget::Host => {
+            python_target_triple_for_os_arch(std::env::consts::OS, std::env::consts::ARCH)
+        }
+        InstallTarget::Container => {
+            python_target_triple_for_os_arch("linux", std::env::consts::ARCH)
+        }
+        InstallTarget::LinuxAarch64 => python_target_triple_for_os_arch("linux", "aarch64"),
+        InstallTarget::LinuxX8664 => python_target_triple_for_os_arch("linux", "x86_64"),
+    }
+}
+
+fn python_target_triple_for_os_arch(os: &str, arch: &str) -> Result<&'static str> {
     match (os, arch) {
         ("macos", "aarch64") => Ok("aarch64-apple-darwin"),
         ("macos", "x86_64") => Ok("x86_64-apple-darwin"),
@@ -2833,8 +2944,8 @@ fn python_target_triple() -> Result<&'static str> {
     }
 }
 
-fn resolve_python_bin(python_root: &Path) -> PathBuf {
-    if cfg!(windows) {
+fn resolve_python_bin(python_root: &Path, target: InstallTarget) -> PathBuf {
+    if target_uses_windows_layout(target) {
         python_root.join("python.exe")
     } else {
         let primary = python_root.join("bin").join("python3");
@@ -2887,6 +2998,7 @@ async fn npm_install(
     node: &NodeRuntime,
     install_dir: &Path,
     package_spec: &str,
+    target: InstallTarget,
 ) -> Result<()> {
     let cache_dir = install_dir.join(".npm-cache");
     tokio::fs::create_dir_all(&cache_dir).await.ok();
@@ -2898,7 +3010,11 @@ async fn npm_install(
     if let Some(existing) = std::env::var_os("PATH") {
         combined_path.push(existing);
     }
-    let pnpm_bin = which::which("pnpm").ok();
+    let pnpm_bin = if matches!(target, InstallTarget::Host) {
+        which::which("pnpm").ok()
+    } else {
+        None
+    };
     let package_manager = if pnpm_bin.is_some() { "pnpm" } else { "npm" };
 
     for attempt in 1..=RETRY_COUNT {
@@ -2916,39 +3032,82 @@ async fn npm_install(
         )
         .await;
 
-        let mut cmd = if let Some(pnpm) = pnpm_bin.as_ref() {
-            let mut cmd = Command::new(pnpm);
-            cmd.arg("add")
-                .arg("--dir")
-                .arg(install_dir)
-                .arg("--ignore-scripts")
-                .arg("--lockfile=false")
-                .arg("--reporter")
-                .arg("silent")
-                .arg(package_spec);
-            cmd
+        let out = if matches!(target, InstallTarget::Container) {
+            container_builder::ensure_builder_ready(&state.core.data_root)
+                .await
+                .context("ensuring container builder readiness")?;
+            let mut argv = Vec::with_capacity(16);
+            argv.push(node.node_bin.to_string_lossy().to_string());
+            argv.push(node.npm_cli_js.to_string_lossy().to_string());
+            argv.push("install".to_string());
+            argv.push("--prefix".to_string());
+            argv.push(install_dir.to_string_lossy().to_string());
+            argv.push("--no-audit".to_string());
+            argv.push("--no-fund".to_string());
+            argv.push("--silent".to_string());
+            argv.push("--ignore-scripts".to_string());
+            argv.push(package_spec.to_string());
+            let env = vec![
+                (
+                    "PATH".to_string(),
+                    combined_path.to_string_lossy().to_string(),
+                ),
+                (
+                    "npm_config_update_notifier".to_string(),
+                    "false".to_string(),
+                ),
+                ("npm_config_fund".to_string(), "false".to_string()),
+                ("npm_config_audit".to_string(), "false".to_string()),
+                ("npm_config_progress".to_string(), "false".to_string()),
+                (
+                    "npm_config_cache".to_string(),
+                    cache_dir.to_string_lossy().to_string(),
+                ),
+                ("npm_config_ignore_scripts".to_string(), "true".to_string()),
+            ];
+            container_builder::run_command(
+                &state.core.data_root,
+                install_dir,
+                &env,
+                &argv,
+                NPM_INSTALL_TIMEOUT,
+            )
+            .await
         } else {
-            let mut cmd = Command::new(&node.node_bin);
-            cmd.arg(&node.npm_cli_js)
-                .arg("install")
-                .arg("--prefix")
-                .arg(install_dir)
-                .arg("--no-audit")
-                .arg("--no-fund")
-                .arg("--silent")
-                .arg("--ignore-scripts")
-                .arg(package_spec)
-                .env("npm_config_update_notifier", "false")
-                .env("npm_config_fund", "false")
-                .env("npm_config_audit", "false")
-                .env("npm_config_progress", "false")
-                .env("npm_config_cache", cache_dir.clone())
-                .env("npm_config_ignore_scripts", "true");
-            cmd
+            let mut cmd = if let Some(pnpm) = pnpm_bin.as_ref() {
+                let mut cmd = Command::new(pnpm);
+                cmd.arg("add")
+                    .arg("--dir")
+                    .arg(install_dir)
+                    .arg("--ignore-scripts")
+                    .arg("--lockfile=false")
+                    .arg("--reporter")
+                    .arg("silent")
+                    .arg(package_spec);
+                cmd
+            } else {
+                let mut cmd = Command::new(&node.node_bin);
+                cmd.arg(&node.npm_cli_js)
+                    .arg("install")
+                    .arg("--prefix")
+                    .arg(install_dir)
+                    .arg("--no-audit")
+                    .arg("--no-fund")
+                    .arg("--silent")
+                    .arg("--ignore-scripts")
+                    .arg(package_spec)
+                    .env("npm_config_update_notifier", "false")
+                    .env("npm_config_fund", "false")
+                    .env("npm_config_audit", "false")
+                    .env("npm_config_progress", "false")
+                    .env("npm_config_cache", cache_dir.clone())
+                    .env("npm_config_ignore_scripts", "true");
+                cmd
+            };
+            cmd.env("PATH", combined_path.clone()).kill_on_drop(true);
+            run_command_with_timeout(cmd, NPM_INSTALL_TIMEOUT).await
         };
-        cmd.env("PATH", combined_path.clone()).kill_on_drop(true);
-
-        let out = match run_command_with_timeout(cmd, NPM_INSTALL_TIMEOUT).await {
+        let out = match out {
             Ok(out) => out,
             Err(e) => {
                 emit_install(
@@ -3226,6 +3385,7 @@ async fn npm_install_one(
         node,
         install_dir,
         &package_spec,
+        InstallTarget::Host,
     )
     .await
 }
@@ -4242,16 +4402,156 @@ mod tests {
     #[test]
     fn managed_provider_target_support_matches_install_kind() {
         let matrix = provider_matrix::builtin_matrix();
+        let harness_provider_ids = [
+            "claude-crp",
+            "codex",
+            "qwen",
+            "cursor",
+            "pi",
+            "amp",
+            "droid",
+            "gemini",
+            "copilot",
+            "opencode",
+            "cline",
+            "mistral",
+            "auggie",
+            "goose",
+            "kimi",
+            "openhands",
+        ];
+        let mut archive_count = 0usize;
+        assert_eq!(
+            harness_provider_ids.len(),
+            16,
+            "curated harness list changed; update coverage expectation"
+        );
+        for target in [InstallTarget::Host, InstallTarget::Container] {
+            let supported = harness_provider_ids
+                .iter()
+                .filter(|provider_id| {
+                    is_supported_managed_provider_for_target(&matrix, provider_id, target)
+                })
+                .count();
+            let target_label = match target {
+                InstallTarget::Host => "host",
+                InstallTarget::Container => "container",
+                InstallTarget::LinuxAarch64 => "linux-aarch64",
+                InstallTarget::LinuxX8664 => "linux-x86_64",
+            };
+            assert_eq!(
+                supported,
+                harness_provider_ids.len(),
+                "expected full harness support for {target_label}: {supported}/{}",
+                harness_provider_ids.len()
+            );
+        }
+        for provider_id in harness_provider_ids {
+            let entry = provider_matrix::get_entry(&matrix, provider_id)
+                .unwrap_or_else(|| panic!("missing provider matrix entry for {provider_id}"));
+            let install = entry
+                .managed_install
+                .as_ref()
+                .unwrap_or_else(|| panic!("missing managed_install for {provider_id}"));
+            match install {
+                provider_matrix::ProviderInstall::Archive { .. } => {
+                    archive_count += 1;
+                    assert!(
+                        is_supported_managed_provider_for_target(
+                            &matrix,
+                            provider_id,
+                            InstallTarget::LinuxAarch64
+                        ),
+                        "archive provider {provider_id} missing linux-aarch64 support"
+                    );
+                    assert!(
+                        is_supported_managed_provider_for_target(
+                            &matrix,
+                            provider_id,
+                            InstallTarget::LinuxX8664
+                        ),
+                        "archive provider {provider_id} missing linux-x86_64 support"
+                    );
+                }
+                provider_matrix::ProviderInstall::Npm { .. }
+                | provider_matrix::ProviderInstall::Python { .. } => {
+                    assert!(
+                        is_supported_managed_provider_for_target(
+                            &matrix,
+                            provider_id,
+                            InstallTarget::Host
+                        ),
+                        "managed provider {provider_id} must support host installs"
+                    );
+                    assert!(
+                        is_supported_managed_provider_for_target(
+                            &matrix,
+                            provider_id,
+                            InstallTarget::Container
+                        ),
+                        "managed provider {provider_id} must support container installs"
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            archive_count, 8,
+            "curated harness archive set changed; verify linux target coverage expectations"
+        );
         assert!(is_supported_managed_provider_for_target(
             &matrix,
             "codex",
             InstallTarget::Container
         ));
-        assert!(!is_supported_managed_provider_for_target(
+        assert!(is_supported_managed_provider_for_target(
             &matrix,
             "auggie",
             InstallTarget::Container
         ));
+    }
+
+    #[test]
+    fn python_bundled_runtime_is_host_only() {
+        assert!(python_target_can_use_bundled_runtime(InstallTarget::Host));
+        assert!(!python_target_can_use_bundled_runtime(
+            InstallTarget::Container
+        ));
+        assert!(!python_target_can_use_bundled_runtime(
+            InstallTarget::LinuxAarch64
+        ));
+        assert!(!python_target_can_use_bundled_runtime(
+            InstallTarget::LinuxX8664
+        ));
+    }
+
+    #[test]
+    fn python_paths_for_container_target_use_linux_layout() {
+        let python_root = Path::new("/tmp/python-runtime");
+        let venv_root = Path::new("/tmp/provider-venv");
+        assert_eq!(
+            resolve_python_bin(python_root, InstallTarget::Container),
+            python_root.join("bin").join("python")
+        );
+        assert_eq!(
+            venv_exe(venv_root, "python", InstallTarget::Container),
+            venv_root.join("bin").join("python")
+        );
+    }
+
+    #[test]
+    fn python_paths_for_linux_targets_use_linux_layout() {
+        let python_root = Path::new("/tmp/python-runtime");
+        let venv_root = Path::new("/tmp/provider-venv");
+        for target in [InstallTarget::LinuxAarch64, InstallTarget::LinuxX8664] {
+            assert_eq!(
+                resolve_python_bin(python_root, target),
+                python_root.join("bin").join("python")
+            );
+            assert_eq!(
+                venv_exe(venv_root, "python", target),
+                venv_root.join("bin").join("python")
+            );
+        }
     }
 
     #[test]
