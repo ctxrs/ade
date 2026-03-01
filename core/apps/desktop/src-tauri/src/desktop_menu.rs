@@ -641,6 +641,7 @@ pub(super) fn emit_menu_action(app: &tauri::AppHandle, command_id: &str) {
     let _ = app.emit(MENU_EVENT_NAME, payload);
 }
 
+#[cfg(debug_assertions)]
 fn toggle_devtools_for_focused_window(app: &tauri::AppHandle) {
     let Some(window) = focused_window(app) else {
         return;
@@ -651,6 +652,9 @@ fn toggle_devtools_for_focused_window(app: &tauri::AppHandle) {
         window.open_devtools();
     }
 }
+
+#[cfg(not(debug_assertions))]
+fn toggle_devtools_for_focused_window(_app: &tauri::AppHandle) {}
 
 pub(super) fn handle_menu_command(app: &tauri::AppHandle, command_id: &str) {
     if command_id == CMD_VIEW_TOGGLE_DEVTOOLS {
