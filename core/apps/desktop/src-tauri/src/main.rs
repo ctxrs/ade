@@ -804,7 +804,7 @@ fn desktop_trigger_menu_command(app: tauri::AppHandle, command_id: String) -> Re
         if !is_menu_command_id(&command_id) {
             return Err(format!("unknown menu command id: {command_id}"));
         }
-        emit_menu_action(&app, &command_id);
+        handle_menu_command(&app, &command_id);
         return Ok(());
     }
 

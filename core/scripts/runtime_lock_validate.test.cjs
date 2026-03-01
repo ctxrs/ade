@@ -329,3 +329,31 @@ test("runtime lock v2 override profile rewrites effective manifest entries", () 
   assert.ok(hostGemini);
   assert.equal(hostGemini.command, overrideProviderPath);
 });
+
+test("runtime lock v2 allows empty required provider/runtime startup sets", () => {
+  const fixture = makeFixture();
+
+  writeJson(fixture.lockPath, {
+    version: 2,
+    profiles: {
+      parity: { allowed_source_types: ["ci", "vendor"] },
+      override: { allowed_source_types: ["ci", "vendor", "local"] },
+      "source-all": { allowed_source_types: ["local"] },
+    },
+    required: {
+      targets: {
+        provider: [],
+        runtime: [],
+        image: [],
+      },
+      provider_ids: [],
+      runtime_ids: [],
+      image_ids: [],
+    },
+    components: makeStandardV2Components("ci"),
+  });
+
+  const result = validateRuntimeLock({ lockPath: fixture.lockPath, manifestPath: fixture.manifestPath });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.errors, []);
+});

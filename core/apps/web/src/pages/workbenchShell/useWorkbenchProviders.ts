@@ -14,6 +14,13 @@ import {
   loadProvidersBootstrap,
   refreshProvidersBootstrap,
 } from "../../state/providersBootstrapStore";
+import {
+  getProviderInstallProgressSnapshot,
+  removeProviderInstallProgress,
+  subscribeProviderInstallProgress,
+  upsertProviderInstallProgress,
+  type ProviderInstallProgressSnapshot,
+} from "../../state/providerInstallProgressStore";
 import type { DraftHarness } from "../../components/WorkbenchComposer";
 import { computeInstallPct, parseInstallTarget } from "../../utils/providerInstallUi";
 
@@ -24,6 +31,33 @@ type ProviderInstallState = {
   target?: InstallTarget;
   errorCode?: InstallInfo["error_code"];
   error?: string;
+};
+
+const sameProviderInstallState = (
+  lhs: ProviderInstallState | undefined,
+  rhs: ProviderInstallState | undefined,
+): boolean => {
+  if (!lhs && !rhs) return true;
+  if (!lhs || !rhs) return false;
+  return lhs.installId === rhs.installId
+    && lhs.state === rhs.state
+    && lhs.pct === rhs.pct
+    && lhs.target === rhs.target
+    && lhs.errorCode === rhs.errorCode
+    && lhs.error === rhs.error;
+};
+
+const sameProviderInstallStateMap = (
+  lhs: Record<string, ProviderInstallState | undefined>,
+  rhs: Record<string, ProviderInstallState | undefined>,
+): boolean => {
+  const lhsKeys = Object.keys(lhs);
+  const rhsKeys = Object.keys(rhs);
+  if (lhsKeys.length !== rhsKeys.length) return false;
+  for (const key of lhsKeys) {
+    if (!sameProviderInstallState(lhs[key], rhs[key])) return false;
+  }
+  return true;
 };
 
 type UseWorkbenchProvidersArgs = {
@@ -60,6 +94,24 @@ const toErrorMessage = (error: unknown): string => {
   return String(error);
 };
 
+const toProviderInstallState = (
+  session: ProviderInstallProgressSnapshot[string],
+): ProviderInstallState => ({
+  installId: session.installId,
+  state: session.state,
+  pct: session.pct,
+  target: session.target,
+  errorCode: session.errorCode,
+  error: session.error,
+});
+
+const providerInstallsFromSnapshot = (
+  snapshot: ProviderInstallProgressSnapshot,
+): Record<string, ProviderInstallState | undefined> =>
+  Object.fromEntries(
+    Object.entries(snapshot).map(([providerId, session]) => [providerId, toProviderInstallState(session)]),
+  );
+
 export function useWorkbenchProviders({
   workspaceId,
   setDraftHarness,
@@ -67,13 +119,20 @@ export function useWorkbenchProviders({
 }: UseWorkbenchProvidersArgs) {
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
   const [providerInstallsById, setProviderInstallsById] = useState<Record<string, ProviderInstallState | undefined>>(
-    {},
+    () => providerInstallsFromSnapshot(getProviderInstallProgressSnapshot()),
   );
   const [providerOptions, setProviderOptions] = useState<Record<string, ProviderOptions | undefined>>({});
   const [installAllBusy, setInstallAllBusy] = useState(false);
   const postInstallHandledRef = useRef<Set<string>>(new Set());
   const postInstallInFlightRef = useRef<Set<string>>(new Set());
   const providerAuthSummaryInFlightRef = useRef<Record<string, Promise<ProviderOptions | undefined>>>({});
+
+  useEffect(() => {
+    return subscribeProviderInstallProgress((snapshot) => {
+      const next = providerInstallsFromSnapshot(snapshot);
+      setProviderInstallsById((prev) => (sameProviderInstallStateMap(prev, next) ? prev : next));
+    });
+  }, []);
 
   const applyProvidersBootstrap = useCallback((bootstrap: Awaited<ReturnType<typeof loadProvidersBootstrap>>) => {
     setProviders(bootstrap.providers);
@@ -156,20 +215,26 @@ export function useWorkbenchProviders({
   }, [applyProvidersBootstrap, workspaceId]);
 
   const attachProviderInstall = useCallback((providerId: string, installId: string) => {
+    const nextInstallState: ProviderInstallState = {
+      installId,
+      state: "running",
+      pct: 0,
+      target: undefined,
+      errorCode: undefined,
+      error: undefined,
+    };
     setProviderInstallsById((prev) => {
       if (prev[providerId]?.installId === installId) return prev;
       return {
         ...prev,
         [providerId]: {
-          installId,
-          state: "running",
+          ...nextInstallState,
           pct: prev[providerId]?.pct ?? 0,
           target: prev[providerId]?.target,
-          errorCode: undefined,
-          error: undefined,
         },
       };
     });
+    upsertProviderInstallProgress(providerId, nextInstallState);
   }, []);
 
   useEffect(() => {
@@ -218,17 +283,34 @@ export function useWorkbenchProviders({
                   : typeof pct === "number" && Number.isFinite(pct)
                     ? Math.max(existing.pct ?? 0, pct)
                     : (existing.pct ?? 0);
+              const nextInstallState: ProviderInstallState = {
+                installId: install.installId,
+                state: info.state,
+                pct: stablePct,
+                target: info.target,
+                errorCode: info.error_code,
+                error: info.error,
+              };
+              if (sameProviderInstallState(existing, nextInstallState)) {
+                return prev;
+              }
               return {
                 ...prev,
-                [providerId]: {
-                  installId: install.installId,
-                  state: info.state,
-                  pct: stablePct,
-                  target: info.target,
-                  errorCode: info.error_code,
-                  error: info.error,
-                },
+                [providerId]: nextInstallState,
               };
+            });
+            upsertProviderInstallProgress(providerId, {
+              installId: install.installId,
+              state: info.state,
+              pct:
+                info.state === "succeeded"
+                  ? 100
+                  : typeof pct === "number" && Number.isFinite(pct)
+                    ? Math.max(install.pct ?? 0, pct)
+                    : (install.pct ?? 0),
+              target: info.target,
+              errorCode: info.error_code,
+              error: info.error,
             });
 
             if (info.state !== "running") {
@@ -325,6 +407,14 @@ export function useWorkbenchProviders({
             error: info.error,
           },
         }));
+        upsertProviderInstallProgress(providerId, {
+          installId,
+          state: info.state,
+          pct: computeInstallPct(info, providerInstallsById[providerId]?.pct ?? null),
+          target: info.target,
+          errorCode: info.error_code,
+          error: info.error,
+        });
       } catch (error: unknown) {
         onStartError(toErrorMessage(error));
       }
@@ -334,19 +424,13 @@ export function useWorkbenchProviders({
 
   useEffect(() => {
     if (Object.keys(providerInstallsById).length === 0) return;
-    setProviderInstallsById((prev) => {
-      let changed = false;
-      const next: typeof prev = { ...prev };
-      for (const [providerId, install] of Object.entries(prev)) {
-        const state = providersById[providerId];
-        const stillRunning = state?.details?.install_running === "true";
-        if (install?.state === "succeeded" && state?.installed && state.health === "ok" && !stillRunning) {
-          delete next[providerId];
-          changed = true;
-        }
+    for (const [providerId, install] of Object.entries(providerInstallsById)) {
+      const state = providersById[providerId];
+      const stillRunning = state?.details?.install_running === "true";
+      if (install?.state === "succeeded" && state?.installed && state.health === "ok" && !stillRunning) {
+        removeProviderInstallProgress(providerId);
       }
-      return changed ? next : prev;
-    });
+    }
   }, [providerInstallsById, providersById]);
 
   useEffect(() => {

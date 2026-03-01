@@ -395,6 +395,12 @@ pub(super) async fn load_provider_model_catalog(
             }
         }
     }
+    installer::prepend_runtime_bin_dirs_to_provider_path(
+        &mut env,
+        &cfg,
+        provider_id,
+        &state.core.data_root,
+    );
 
     let probe = match probe_crp_models(
         provider_id,

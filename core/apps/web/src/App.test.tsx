@@ -2,6 +2,7 @@ import { StrictMode, type ReactNode } from "react";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, test, vi } from "vitest";
 import App from "./App";
+import { appendDesktopLog } from "./api/client";
 import {
   desktopListen,
   desktopOpenLauncherInNewWindow,
@@ -21,6 +22,7 @@ import {
   getPendingDownloadAttributionId,
   trackAppOpened,
 } from "./utils/analytics";
+import { emitUiDiagnostic, resetUiDiagnosticsForTests } from "./state/diagnosticsChannel";
 import { useSettingsSnapshot } from "./state/settingsStore";
 
 const desktopHandlers = new Map<string, (payload?: unknown) => void>();
@@ -121,6 +123,7 @@ vi.mock("./state/uiStateStore", () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetUiDiagnosticsForTests();
   desktopHandlers.clear();
   vi.mocked(isDesktopApp).mockReturnValue(false);
   vi.mocked(desktopSetDockRecentLocalWorkspaces).mockResolvedValue();
@@ -183,6 +186,26 @@ test("renders app shell", async () => {
   render(<App />);
   // App root route is the launcher.
   expect(await screen.findByText("New Workspace")).toBeInTheDocument();
+});
+
+test("persists runtime diagnostics to desktop log", async () => {
+  vi.mocked(isDesktopApp).mockReturnValue(true);
+
+  render(<App />);
+  emitUiDiagnostic({
+    source: "runtime",
+    code: "runtime.error",
+    message: "boom",
+    severity: "error",
+    context: { filename: "main.tsx", lineno: 42 },
+  });
+
+  await waitFor(() => {
+    expect(vi.mocked(appendDesktopLog)).toHaveBeenCalledWith(
+      expect.stringContaining("ui_runtime: code=runtime.error"),
+      "error",
+    );
+  });
 });
 
 test("desktop settings event uses SPA navigation to preserve workspace context", async () => {

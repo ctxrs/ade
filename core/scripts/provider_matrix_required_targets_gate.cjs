@@ -117,6 +117,21 @@ const normalizeTargetMap = (targets) => {
   return out;
 };
 
+const requiredProviderIdsFromMatrixFallback = (providerById) => {
+  const providerIds = [];
+  for (const [providerId, entry] of providerById.entries()) {
+    const managedInstall =
+      entry?.managed_install && typeof entry.managed_install === "object" ? entry.managed_install : null;
+    if (!managedInstall) continue;
+    const kind = String(managedInstall.kind || "").trim().toLowerCase();
+    if (kind === "archive") {
+      providerIds.push(providerId);
+    }
+  }
+  providerIds.sort();
+  return providerIds;
+};
+
 const printHelp = () => {
   console.log(
     [
@@ -144,17 +159,26 @@ const main = () => {
 
   const lock = readJson(opts.lock, "runtime lock");
   const matrix = readJson(opts.matrix, "provider matrix");
-  const requiredProviderIds = Array.isArray(lock?.required?.provider_ids) ? lock.required.provider_ids : [];
-  const requiredTargets = opts.targets
-    .map((value) => splitTarget(value))
-    .filter(Boolean)
-    .map((value) => value.normalized);
-
   const providerById = new Map(
     (Array.isArray(matrix?.providers) ? matrix.providers : [])
       .filter((entry) => entry && typeof entry === "object" && typeof entry.id === "string")
       .map((entry) => [entry.id, entry]),
   );
+  const lockRequiredProviderIds =
+    Array.isArray(lock?.required?.provider_ids)
+      ? lock.required.provider_ids.map((value) => String(value || "").trim()).filter(Boolean)
+      : [];
+  const requiredProviderIds = Array.from(
+    new Set(
+      lockRequiredProviderIds.length > 0
+        ? lockRequiredProviderIds
+        : requiredProviderIdsFromMatrixFallback(providerById),
+    ),
+  );
+  const requiredTargets = opts.targets
+    .map((value) => splitTarget(value))
+    .filter(Boolean)
+    .map((value) => value.normalized);
 
   const includeProviderSet = new Set(opts.includeProviders);
   const includeKindsSet = new Set(opts.includeKinds);

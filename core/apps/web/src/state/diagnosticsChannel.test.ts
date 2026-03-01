@@ -22,6 +22,7 @@ import {
   getUiDiagnostics,
   installGlobalRuntimeDiagnosticHandlers,
   resetUiDiagnosticsForTests,
+  setUiDiagnosticPersistenceSink,
   setUiDiagnosticsMaxEventsForTests,
 } from "./diagnosticsChannel";
 
@@ -136,5 +137,39 @@ describe("diagnosticsChannel", () => {
       method: "POST",
       statusFamily: "4xx",
     }));
+  });
+
+  it("forwards diagnostics to configured persistence sink", () => {
+    const sink = vi.fn();
+    setUiDiagnosticPersistenceSink(sink);
+
+    emitUiDiagnostic({
+      source: "runtime",
+      code: "runtime.error",
+      message: "boom",
+      severity: "error",
+    });
+
+    expect(sink).toHaveBeenCalledTimes(1);
+    expect(sink).toHaveBeenCalledWith(expect.objectContaining({
+      source: "runtime",
+      code: "runtime.error",
+      message: "boom",
+      severity: "error",
+    }));
+  });
+
+  it("swallows persistence sink failures", () => {
+    setUiDiagnosticPersistenceSink(() => {
+      throw new Error("sink failed");
+    });
+
+    expect(() =>
+      emitUiDiagnostic({
+        source: "runtime",
+        code: "runtime.error",
+        message: "boom",
+        severity: "error",
+      })).not.toThrow();
   });
 });

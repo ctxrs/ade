@@ -26,6 +26,8 @@ export type UiDiagnosticInput = {
   context?: Record<string, unknown>;
 };
 
+export type UiDiagnosticPersistenceSink = (event: UiDiagnosticEvent) => void | Promise<void>;
+
 const DEFAULT_MAX_EVENTS = 200;
 let maxEvents = DEFAULT_MAX_EVENTS;
 let nextId = 1;
@@ -33,6 +35,7 @@ let events: UiDiagnosticEvent[] = [];
 const listeners = new Set<() => void>();
 let runtimeHandlersInstalled = false;
 let runtimeHandlersCleanup: (() => void) | null = null;
+let persistenceSink: UiDiagnosticPersistenceSink | null = null;
 
 const UUID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const HEX_TOKEN_PATTERN = /\b[0-9a-f]{8,}\b/gi;
@@ -188,8 +191,20 @@ export const emitUiDiagnostic = (input: UiDiagnosticInput): UiDiagnosticEvent =>
   } catch {
     // Ignore analytics failures; diagnostics channel must remain local-first and robust.
   }
+  try {
+    const forwarded = persistenceSink?.(event);
+    if (forwarded && typeof (forwarded as Promise<void>).then === "function") {
+      void (forwarded as Promise<void>).catch(() => {});
+    }
+  } catch {
+    // Ignore persistence sink failures; diagnostics channel must remain local-first and robust.
+  }
   notifyListeners();
   return event;
+};
+
+export const setUiDiagnosticPersistenceSink = (sink: UiDiagnosticPersistenceSink | null) => {
+  persistenceSink = sink;
 };
 
 export const getUiDiagnostics = (): UiDiagnosticEvent[] => [...events];
@@ -250,6 +265,7 @@ export const resetUiDiagnosticsForTests = () => {
   clearUiDiagnostics();
   maxEvents = DEFAULT_MAX_EVENTS;
   nextId = 1;
+  persistenceSink = null;
   if (runtimeHandlersCleanup) {
     runtimeHandlersCleanup();
   }

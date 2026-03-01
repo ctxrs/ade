@@ -1,0 +1,191 @@
+mod common;
+
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::Arc;
+
+use axum::http::StatusCode;
+use ctx_http::api;
+use ctx_http::daemon::AppState;
+use ctx_http::installer::{
+    save_agent_server_config, AgentServerCommand, AgentServerConfigFile, ManagedInstallMetadata,
+};
+use ctx_providers::adapters::{ProviderAdapter, ProviderHealth, ProviderStatus};
+use ctx_store::StoreManager;
+
+#[cfg(unix)]
+fn write_executable(path: &Path, contents: &str) {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::write(path, contents).expect("write executable");
+    let mut perms = std::fs::metadata(path).expect("metadata").permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(path, perms).expect("set permissions");
+}
+
+#[cfg(unix)]
+fn setup_runtime_command_with_managed_interpreter(
+    data_root: &Path,
+    provider_id: &str,
+) -> (String, String) {
+    let dep_bin_rel = format!("managed/runtime-node-{provider_id}/bin");
+    let dep_bin_dir = data_root.join(&dep_bin_rel);
+    std::fs::create_dir_all(&dep_bin_dir).expect("create dep bin dir");
+
+    let interpreter_name = format!("ctx-managed-probe-node-{provider_id}");
+    let interpreter = dep_bin_dir.join(&interpreter_name);
+    write_executable(
+        &interpreter,
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"models.list"'*)
+      echo '{"seq":1,"channel":"control","type":"models.list","models":[{"id":"fixture-model"}],"current_model_id":"fixture-model"}'
+      exit 0
+      ;;
+  esac
+done
+exit 1
+"#,
+    );
+
+    let runtime_dir = data_root
+        .join("providers")
+        .join("agent-servers")
+        .join(provider_id)
+        .join("fixture")
+        .join("dist")
+        .join("bin");
+    std::fs::create_dir_all(&runtime_dir).expect("create runtime dir");
+    let runtime_cmd = runtime_dir.join(format!("{provider_id}-acp.js"));
+    write_executable(
+        &runtime_cmd,
+        &format!("#!/usr/bin/env {interpreter_name}\n// fixture runtime\n"),
+    );
+
+    (runtime_cmd.to_string_lossy().to_string(), dep_bin_rel)
+}
+
+async fn app_state(data_root: &Path) -> Arc<AppState> {
+    let stores = StoreManager::open(data_root).await.expect("open stores");
+    let providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
+    Arc::new(AppState::new(
+        data_root.to_path_buf(),
+        stores,
+        providers,
+        "http://127.0.0.1:0".to_string(),
+        None,
+    ))
+}
+
+async fn seed_runtime_and_status(
+    state: &Arc<AppState>,
+    provider_id: &str,
+    runtime_cmd: String,
+    dep_bin_rel: String,
+) {
+    let dep_id = "runtime-node-host".to_string();
+    let mut cfg = AgentServerConfigFile::default();
+    cfg.providers.insert(
+        provider_id.to_string(),
+        AgentServerCommand {
+            command: runtime_cmd,
+            args: Vec::new(),
+            dependencies: vec![dep_id.clone()],
+            managed: None,
+        },
+    );
+    cfg.managed_installs.insert(
+        dep_id,
+        ManagedInstallMetadata {
+            package: Some("node-runtime".to_string()),
+            version: Some("fixture".to_string()),
+            target: None,
+            install_dir_rel: None,
+            bin_dir_rel: Some(dep_bin_rel),
+            last_success_at: None,
+            last_error: None,
+        },
+    );
+    save_agent_server_config(&state.core.data_root, &cfg)
+        .await
+        .expect("save runtime config");
+
+    state.providers.statuses.lock().await.insert(
+        provider_id.to_string(),
+        ProviderStatus {
+            provider_id: provider_id.to_string(),
+            installed: true,
+            detected_path: None,
+            version: None,
+            capabilities: None,
+            health: ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+        },
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn provider_options_probe_uses_managed_dependency_path() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
+    let state = app_state(data_dir.path()).await;
+    let app = api::router(state.clone());
+
+    let (runtime_cmd, dep_bin_rel) =
+        setup_runtime_command_with_managed_interpreter(data_dir.path(), "codex");
+    seed_runtime_and_status(&state, "codex", runtime_cmd, dep_bin_rel).await;
+
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let (status, body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::GET,
+        format!("/api/workspaces/{}/providers/codex/options", ws.id.0),
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "options request failed: {body:#?}");
+    assert_eq!(
+        body.get("probe_ok").and_then(serde_json::Value::as_bool),
+        Some(true),
+        "expected probe_ok=true with managed runtime path injection: {body:#?}"
+    );
+    assert_eq!(
+        body.pointer("/models/current_model_id")
+            .and_then(serde_json::Value::as_str),
+        Some("fixture-model"),
+        "expected fixture model probe result: {body:#?}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn provider_verify_probe_uses_managed_dependency_path() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
+    let state = app_state(data_dir.path()).await;
+    let app = api::router(state.clone());
+
+    let (runtime_cmd, dep_bin_rel) =
+        setup_runtime_command_with_managed_interpreter(data_dir.path(), "amp");
+    seed_runtime_and_status(&state, "amp", runtime_cmd, dep_bin_rel).await;
+
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let (status, body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::POST,
+        format!("/api/workspaces/{}/providers/amp/verify", ws.id.0),
+        Some(serde_json::json!({})),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "verify request failed: {body:#?}");
+    assert_eq!(
+        body.get("status").and_then(serde_json::Value::as_str),
+        Some("ok"),
+        "expected verify status ok with managed runtime path injection: {body:#?}"
+    );
+}

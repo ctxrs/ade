@@ -26,21 +26,12 @@
   },
   "required": {
     "targets": {
-      "provider": [
-        "host/host"
-      ],
-      "runtime": [
-        "host/host"
-      ],
+      "provider": [],
+      "runtime": [],
       "image": []
     },
-    "provider_ids": [
-      "acp-crp-bridge"
-    ],
-    "runtime_ids": [
-      "node",
-      "python"
-    ],
+    "provider_ids": [],
+    "runtime_ids": [],
     "image_ids": []
   },
   "components": [

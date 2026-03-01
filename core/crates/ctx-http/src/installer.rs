@@ -118,6 +118,82 @@ pub fn parse_install_target(raw: Option<&str>) -> Result<InstallTarget> {
     }
 }
 
+fn dependency_target_compatible_with_context(
+    dependency_target: Option<InstallTarget>,
+    container_exec: bool,
+    host_os: &str,
+    host_arch: &str,
+) -> bool {
+    match dependency_target.unwrap_or(InstallTarget::Host) {
+        InstallTarget::Host => !container_exec,
+        InstallTarget::Container => {
+            if container_exec {
+                matches!(host_arch, "x86_64" | "aarch64")
+            } else {
+                host_os == "linux" && matches!(host_arch, "x86_64" | "aarch64")
+            }
+        }
+        InstallTarget::LinuxAarch64 => {
+            host_arch == "aarch64" && (container_exec || host_os == "linux")
+        }
+        InstallTarget::LinuxX8664 => {
+            host_arch == "x86_64" && (container_exec || host_os == "linux")
+        }
+    }
+}
+
+pub(crate) fn prepend_runtime_bin_dirs_to_provider_path(
+    provider_env: &mut HashMap<String, String>,
+    cfg: &AgentServerConfigFile,
+    runtime_provider_id: &str,
+    data_root: &Path,
+) {
+    let mut bin_dirs: Vec<PathBuf> = Vec::new();
+    let container_exec = provider_env.contains_key("CTX_HARNESS_CONTAINER_ID");
+    if let Ok(Some(runtime_cmd)) = resolve_runtime_provider_command(cfg, runtime_provider_id) {
+        let runtime_cmd_path = Path::new(&runtime_cmd.command_abs_path);
+        if let Some(parent) = runtime_cmd_path.parent() {
+            let parent_dir = parent.to_path_buf();
+            if !bin_dirs.contains(&parent_dir) {
+                bin_dirs.push(parent_dir);
+            }
+        }
+        for dep in &runtime_cmd.dependencies {
+            if let Some(meta) = cfg.managed_installs.get(dep) {
+                if !dependency_target_compatible_with_context(
+                    meta.target,
+                    container_exec,
+                    std::env::consts::OS,
+                    std::env::consts::ARCH,
+                ) {
+                    continue;
+                }
+                if let Some(rel) = meta.bin_dir_rel.as_ref() {
+                    let dep_dir = data_root.join(rel);
+                    if !bin_dirs.contains(&dep_dir) {
+                        bin_dirs.push(dep_dir);
+                    }
+                }
+            }
+        }
+    }
+    if bin_dirs.is_empty() {
+        return;
+    }
+
+    let mut path_parts: Vec<PathBuf> = bin_dirs;
+    if let Some(current) = provider_env
+        .get("PATH")
+        .cloned()
+        .or_else(|| std::env::var("PATH").ok())
+    {
+        path_parts.extend(std::env::split_paths(std::ffi::OsStr::new(&current)));
+    }
+    if let Ok(joined) = std::env::join_paths(path_parts) {
+        provider_env.insert("PATH".to_string(), joined.to_string_lossy().to_string());
+    }
+}
+
 pub fn resolve_matrix_target_key(target: InstallTarget) -> Result<&'static str> {
     match target {
         InstallTarget::Host => host_target_key(),
@@ -991,7 +1067,7 @@ async fn install_managed_npm_provider(
     let install_dir_rel = install_dir_rel(&data_root, &install_dir);
 
     *stage = "node";
-    let node = ensure_node_runtime(state, install_id, provider_id, &data_root)
+    let node = ensure_node_runtime(state, install_id, provider_id, &data_root, target)
         .await
         .context("ensuring managed Node runtime")?;
 
@@ -1276,9 +1352,15 @@ async fn install_managed_npm_dependency(
     }
 
     *stage = "dependency_node";
-    let node = ensure_node_runtime(state, install_id, provider_id, &data_root)
-        .await
-        .context("ensuring managed Node runtime")?;
+    let node = ensure_node_runtime(
+        state,
+        install_id,
+        provider_id,
+        &data_root,
+        InstallTarget::Host,
+    )
+    .await
+    .context("ensuring managed Node runtime")?;
 
     *stage = "dependency_prepare";
     emit_install(
@@ -1462,6 +1544,7 @@ async fn install_provider_impl(
             .ok_or_else(|| anyhow::anyhow!("no compatible release for provider: {provider_id}"))?;
 
         let mut dependency_ids: Vec<String> = Vec::new();
+        let mut implicit_managed_dependencies: Vec<(String, ManagedInstallMetadata)> = Vec::new();
         if !entry.dependencies.is_empty() {
             stage = "dependencies";
             ensure_install_not_cancelled(state, install_id).await?;
@@ -1646,7 +1729,7 @@ async fn install_provider_impl(
                     "providers/agent-servers/{}/{}",
                     provider_id, version
                 ));
-                install_managed_archive_provider(
+                let managed = install_managed_archive_provider(
                     state,
                     install_id,
                     &provider_id,
@@ -1659,7 +1742,39 @@ async fn install_provider_impl(
                     target,
                     &mut stage,
                 )
-                .await?
+                .await?;
+                if archive_bin_requires_node_runtime(
+                    &target_entry.bin_path,
+                    Path::new(&managed.command),
+                ) {
+                    stage = "node";
+                    for dependency_target in
+                        node_runtime_dependency_targets_for_install_target(target, std::env::consts::OS)
+                    {
+                        let node = ensure_node_runtime(
+                            state,
+                            install_id,
+                            &provider_id,
+                            &state.core.data_root,
+                            dependency_target,
+                        )
+                        .await
+                        .context("ensuring managed Node runtime for archive provider")?;
+                        let dep_id = node_runtime_dependency_id(dependency_target);
+                        if !dependency_ids.contains(&dep_id) {
+                            dependency_ids.push(dep_id.clone());
+                        }
+                        implicit_managed_dependencies.push((
+                            dep_id,
+                            node_runtime_dependency_metadata(
+                                &state.core.data_root,
+                                &node,
+                                dependency_target,
+                            ),
+                        ));
+                    }
+                }
+                managed
             }
         };
 
@@ -1693,6 +1808,11 @@ async fn install_provider_impl(
         let mut status_cfg = load_agent_server_config(&state.core.data_root)
             .await
             .unwrap_or_default();
+        for (dependency_id, metadata) in &implicit_managed_dependencies {
+            status_cfg
+                .managed_installs
+                .insert(dependency_id.clone(), metadata.clone());
+        }
         status_cfg
             .managed_installs
             .insert(provider_id.clone(), managed.meta.clone());
@@ -1734,6 +1854,10 @@ async fn install_provider_impl(
         let mut cfg = load_agent_server_config(&state.core.data_root)
             .await
             .context("loading managed install registry")?;
+        for (dependency_id, metadata) in &implicit_managed_dependencies {
+            cfg.managed_installs
+                .insert(dependency_id.clone(), metadata.clone());
+        }
         cfg.managed_installs
             .insert(provider_id.clone(), managed.meta.clone());
         cfg.providers.insert(
@@ -2093,6 +2217,12 @@ pub struct NodeRuntime {
     pub npm_cli_js: PathBuf,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct NodeRuntimeTarget {
+    dist_target: &'static str,
+    is_windows: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct PythonRuntime {
     pub python_root: PathBuf,
@@ -2137,40 +2267,44 @@ pub(crate) async fn ensure_node_runtime(
     install_id: Option<InstallId>,
     provider_id: &str,
     data_root: &Path,
+    target: InstallTarget,
 ) -> Result<NodeRuntime> {
-    let target = node_target_triple()?;
-    if let Some(bundled) = bundled_assets::bundled_node_runtime() {
-        if bundled.version == NODE_VERSION {
-            if let Some(npm_cli_js) = bundled.npm_cli.clone() {
-                emit_install(
-                    state,
-                    install_id,
-                    provider_id,
-                    InstallEventLevel::Info,
-                    "node",
-                    format!("Using bundled Node runtime v{NODE_VERSION} ({target})"),
-                    None,
-                    None,
-                    None,
-                )
-                .await;
-                return Ok(NodeRuntime {
-                    node_root: bundled.root,
-                    node_bin: bundled.bin,
-                    npm_cli_js,
-                });
+    let node_target = node_runtime_target_for_install_target(target)?;
+    let target_label = node_target.dist_target;
+    if matches!(target, InstallTarget::Host) {
+        if let Some(bundled) = bundled_assets::bundled_node_runtime() {
+            if bundled.version == NODE_VERSION {
+                if let Some(npm_cli_js) = bundled.npm_cli.clone() {
+                    emit_install(
+                        state,
+                        install_id,
+                        provider_id,
+                        InstallEventLevel::Info,
+                        "node",
+                        format!("Using bundled Node runtime v{NODE_VERSION} ({target_label})"),
+                        None,
+                        None,
+                        None,
+                    )
+                    .await;
+                    return Ok(NodeRuntime {
+                        node_root: bundled.root,
+                        node_bin: bundled.bin,
+                        npm_cli_js,
+                    });
+                }
+            } else {
+                tracing::warn!(
+                    "bundled Node runtime version {} does not match expected {}",
+                    bundled.version,
+                    NODE_VERSION
+                );
             }
-        } else {
-            tracing::warn!(
-                "bundled Node runtime version {} does not match expected {}",
-                bundled.version,
-                NODE_VERSION
-            );
         }
     }
-    let folder = format!("node-v{NODE_VERSION}-{target}");
+    let folder = format!("node-v{NODE_VERSION}-{}", node_target.dist_target);
     let node_root = data_root.join("runtimes").join("node").join(&folder);
-    let (node_bin, npm_cli_js) = node_runtime_paths(&node_root);
+    let (node_bin, npm_cli_js) = node_runtime_paths(&node_root, node_target.is_windows);
 
     if node_bin.exists() && npm_cli_js.exists() {
         emit_install(
@@ -2179,7 +2313,7 @@ pub(crate) async fn ensure_node_runtime(
             provider_id,
             InstallEventLevel::Info,
             "node",
-            format!("Using existing Node runtime v{NODE_VERSION} ({target})"),
+            format!("Using existing Node runtime v{NODE_VERSION} ({target_label})"),
             None,
             None,
             None,
@@ -2204,7 +2338,7 @@ pub(crate) async fn ensure_node_runtime(
             provider_id,
             InstallEventLevel::Info,
             "node",
-            format!("Using existing Node runtime v{NODE_VERSION} ({target})"),
+            format!("Using existing Node runtime v{NODE_VERSION} ({target_label})"),
             None,
             None,
             None,
@@ -2221,7 +2355,7 @@ pub(crate) async fn ensure_node_runtime(
         tokio::fs::create_dir_all(parent).await?;
     }
 
-    let (archive_ext, archive_label) = if cfg!(windows) {
+    let (archive_ext, archive_label) = if node_target.is_windows {
         ("zip", "zip")
     } else {
         ("tar.gz", "tar_gz")
@@ -2282,7 +2416,7 @@ pub(crate) async fn ensure_node_runtime(
     })
     .await??;
 
-    // Node tarballs contain a single top-level folder named `node-vX.Y.Z-<target>`.
+    // Node archives contain a single top-level folder named `node-vX.Y.Z-<target>`.
     let extracted = extract_root.join(&folder);
     if !extracted.exists() {
         anyhow::bail!(
@@ -2326,8 +2460,8 @@ pub(crate) async fn ensure_node_runtime(
     })
 }
 
-fn node_runtime_paths(node_root: &Path) -> (PathBuf, PathBuf) {
-    if cfg!(windows) {
+fn node_runtime_paths(node_root: &Path, is_windows: bool) -> (PathBuf, PathBuf) {
+    if is_windows {
         (
             node_root.join("node.exe"),
             node_root
@@ -2349,19 +2483,153 @@ fn node_runtime_paths(node_root: &Path) -> (PathBuf, PathBuf) {
     }
 }
 
-fn node_target_triple() -> Result<&'static str> {
-    let os = std::env::consts::OS;
-    let arch = std::env::consts::ARCH;
+fn node_runtime_target_for_install_target(target: InstallTarget) -> Result<NodeRuntimeTarget> {
+    match target {
+        InstallTarget::Host => {
+            node_runtime_target_for_os_arch(std::env::consts::OS, std::env::consts::ARCH)
+        }
+        InstallTarget::Container => {
+            node_runtime_target_for_os_arch("linux", std::env::consts::ARCH)
+        }
+        InstallTarget::LinuxAarch64 => node_runtime_target_for_os_arch("linux", "aarch64"),
+        InstallTarget::LinuxX8664 => node_runtime_target_for_os_arch("linux", "x86_64"),
+    }
+}
+
+fn node_runtime_dependency_targets_for_install_target(
+    target: InstallTarget,
+    host_os: &str,
+) -> Vec<InstallTarget> {
+    let mut targets = vec![target];
+    if matches!(target, InstallTarget::Container) && host_os != "linux" {
+        targets.push(InstallTarget::Host);
+    }
+    targets
+}
+
+fn node_runtime_target_for_os_arch(os: &str, arch: &str) -> Result<NodeRuntimeTarget> {
     match (os, arch) {
-        ("macos", "aarch64") => Ok("darwin-arm64"),
-        ("macos", "x86_64") => Ok("darwin-x64"),
-        ("linux", "aarch64") => Ok("linux-arm64"),
-        ("linux", "x86_64") => Ok("linux-x64"),
-        ("windows", "x86_64") => Ok("win-x64"),
-        ("windows", "aarch64") => Ok("win-arm64"),
+        ("macos", "aarch64") => Ok(NodeRuntimeTarget {
+            dist_target: "darwin-arm64",
+            is_windows: false,
+        }),
+        ("macos", "x86_64") => Ok(NodeRuntimeTarget {
+            dist_target: "darwin-x64",
+            is_windows: false,
+        }),
+        ("linux", "aarch64") => Ok(NodeRuntimeTarget {
+            dist_target: "linux-arm64",
+            is_windows: false,
+        }),
+        ("linux", "x86_64") => Ok(NodeRuntimeTarget {
+            dist_target: "linux-x64",
+            is_windows: false,
+        }),
+        ("windows", "x86_64") => Ok(NodeRuntimeTarget {
+            dist_target: "win-x64",
+            is_windows: true,
+        }),
+        ("windows", "aarch64") => Ok(NodeRuntimeTarget {
+            dist_target: "win-arm64",
+            is_windows: true,
+        }),
         _ => anyhow::bail!(
             "unsupported platform for managed node install: {os}/{arch}. Supported: macos (aarch64/x86_64), linux (aarch64/x86_64), windows (aarch64/x86_64)."
         ),
+    }
+}
+
+fn archive_bin_requires_node_runtime(bin_path: &str, installed_bin_path: &Path) -> bool {
+    let ext = Path::new(bin_path)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase());
+    if matches!(ext.as_deref(), Some("js") | Some("mjs") | Some("cjs")) {
+        return true;
+    }
+    archive_bin_has_node_shebang(installed_bin_path)
+}
+
+fn archive_bin_has_node_shebang(path: &Path) -> bool {
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(_) => return false,
+    };
+    let mut reader = std::io::BufReader::new(file);
+    let mut first_line = String::new();
+    let bytes = match std::io::BufRead::read_line(&mut reader, &mut first_line) {
+        Ok(bytes) => bytes,
+        Err(_) => return false,
+    };
+    if bytes == 0 {
+        return false;
+    }
+    shebang_invokes_node(first_line.trim())
+}
+
+fn shebang_invokes_node(line: &str) -> bool {
+    let Some(shebang) = line.strip_prefix("#!") else {
+        return false;
+    };
+    let mut tokens = shebang.split_whitespace();
+    let Some(program) = tokens.next() else {
+        return false;
+    };
+    if shebang_token_is_node(program) {
+        return true;
+    }
+    if !shebang_token_is_env(program) {
+        return false;
+    }
+    for token in tokens {
+        if token.starts_with('-') || token.contains('=') {
+            continue;
+        }
+        return shebang_token_is_node(token);
+    }
+    false
+}
+
+fn shebang_token_is_env(token: &str) -> bool {
+    let base = shebang_token_basename(token);
+    base.eq_ignore_ascii_case("env")
+}
+
+fn shebang_token_is_node(token: &str) -> bool {
+    let base = shebang_token_basename(token);
+    base.eq_ignore_ascii_case("node") || base.eq_ignore_ascii_case("node.exe")
+}
+
+fn shebang_token_basename(token: &str) -> &str {
+    token
+        .trim_matches('"')
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(token)
+}
+
+fn node_runtime_dependency_id(target: InstallTarget) -> String {
+    format!("runtime-node-{}", target.as_str())
+}
+
+fn node_runtime_dependency_metadata(
+    data_root: &Path,
+    node: &NodeRuntime,
+    target: InstallTarget,
+) -> ManagedInstallMetadata {
+    let bin_dir = node
+        .node_bin
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| node.node_root.clone());
+    ManagedInstallMetadata {
+        package: Some("node-runtime".to_string()),
+        version: Some(NODE_VERSION.to_string()),
+        target: Some(target),
+        install_dir_rel: Some(install_dir_rel(data_root, &node.node_root)),
+        bin_dir_rel: Some(install_dir_rel(data_root, &bin_dir)),
+        last_success_at: Some(Utc::now().to_rfc3339()),
+        last_error: None,
     }
 }
 
@@ -3056,7 +3324,13 @@ async fn install_lsp_server_impl(
         .await;
 
         stage = "node";
-        let node = ensure_node_runtime(state, install_id, &provider_id, &data_root)
+        let node = ensure_node_runtime(
+            state,
+            install_id,
+            &provider_id,
+            &data_root,
+            InstallTarget::Host,
+        )
             .await
             .context("ensuring managed Node runtime")?;
 
@@ -3809,6 +4083,160 @@ mod tests {
         let err =
             parse_install_target(Some("not-a-target")).expect_err("invalid target should fail");
         assert!(err.to_string().contains("invalid install target"));
+    }
+
+    #[test]
+    fn archive_bin_requires_node_runtime_detects_javascript_entrypoints() {
+        let missing = Path::new("/__ctx_missing_entrypoint__");
+        assert!(archive_bin_requires_node_runtime(
+            "dist/bin/amp-acp.js",
+            missing
+        ));
+        assert!(archive_bin_requires_node_runtime(
+            "dist/bin/provider.mjs",
+            missing
+        ));
+        assert!(archive_bin_requires_node_runtime(
+            "dist/bin/provider.cjs",
+            missing
+        ));
+        assert!(!archive_bin_requires_node_runtime(
+            "dist/bin/provider",
+            missing
+        ));
+        assert!(!archive_bin_requires_node_runtime(
+            "dist/bin/provider.exe",
+            missing
+        ));
+    }
+
+    #[test]
+    fn archive_bin_requires_node_runtime_detects_extensionless_node_shebang() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let launcher = temp.path().join("claude-crp");
+        std::fs::write(&launcher, "#!/usr/bin/env node\nconsole.log('ctx');\n")
+            .expect("write launcher");
+        assert!(archive_bin_requires_node_runtime(
+            "bin/claude-crp",
+            &launcher
+        ));
+    }
+
+    #[test]
+    fn archive_bin_requires_node_runtime_detects_env_shebang_with_flags() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let launcher = temp.path().join("provider");
+        std::fs::write(
+            &launcher,
+            "#!/usr/bin/env -S node --no-warnings\nconsole.log('ctx');\n",
+        )
+        .expect("write launcher");
+        assert!(archive_bin_requires_node_runtime("bin/provider", &launcher));
+    }
+
+    #[test]
+    fn archive_bin_requires_node_runtime_ignores_non_node_shebang() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let launcher = temp.path().join("provider");
+        std::fs::write(&launcher, "#!/bin/sh\necho ctx\n").expect("write launcher");
+        assert!(!archive_bin_requires_node_runtime(
+            "bin/provider",
+            &launcher
+        ));
+    }
+
+    #[test]
+    fn node_runtime_dependency_id_is_target_specific() {
+        assert_eq!(
+            node_runtime_dependency_id(InstallTarget::Host),
+            "runtime-node-host"
+        );
+        assert_eq!(
+            node_runtime_dependency_id(InstallTarget::Container),
+            "runtime-node-container"
+        );
+        assert_eq!(
+            node_runtime_dependency_id(InstallTarget::LinuxAarch64),
+            "runtime-node-linux-aarch64"
+        );
+    }
+
+    #[test]
+    fn container_node_runtime_target_is_linux_for_host_arch() {
+        let target = node_runtime_target_for_install_target(InstallTarget::Container)
+            .expect("container target mapping");
+        match std::env::consts::ARCH {
+            "aarch64" => assert_eq!(target.dist_target, "linux-arm64"),
+            "x86_64" => assert_eq!(target.dist_target, "linux-x64"),
+            other => panic!("unexpected test arch: {other}"),
+        }
+        assert!(!target.is_windows);
+    }
+
+    #[test]
+    fn container_node_runtime_dependency_targets_include_host_on_non_linux() {
+        assert_eq!(
+            node_runtime_dependency_targets_for_install_target(InstallTarget::Container, "macos"),
+            vec![InstallTarget::Container, InstallTarget::Host]
+        );
+        assert_eq!(
+            node_runtime_dependency_targets_for_install_target(InstallTarget::Container, "windows"),
+            vec![InstallTarget::Container, InstallTarget::Host]
+        );
+        assert_eq!(
+            node_runtime_dependency_targets_for_install_target(InstallTarget::Container, "linux"),
+            vec![InstallTarget::Container]
+        );
+    }
+
+    #[test]
+    fn dependency_target_compatibility_filters_linux_bins_for_non_linux_host_probes() {
+        assert!(dependency_target_compatible_with_context(
+            Some(InstallTarget::Host),
+            false,
+            "macos",
+            "aarch64"
+        ));
+        assert!(!dependency_target_compatible_with_context(
+            Some(InstallTarget::Container),
+            false,
+            "macos",
+            "aarch64"
+        ));
+        assert!(!dependency_target_compatible_with_context(
+            Some(InstallTarget::LinuxAarch64),
+            false,
+            "macos",
+            "aarch64"
+        ));
+        assert!(dependency_target_compatible_with_context(
+            Some(InstallTarget::Container),
+            false,
+            "linux",
+            "x86_64"
+        ));
+    }
+
+    #[test]
+    fn dependency_target_compatibility_allows_linux_bins_for_container_exec() {
+        assert!(dependency_target_compatible_with_context(
+            Some(InstallTarget::Container),
+            true,
+            "macos",
+            "aarch64"
+        ));
+        assert!(dependency_target_compatible_with_context(
+            Some(InstallTarget::LinuxAarch64),
+            true,
+            "windows",
+            "aarch64"
+        ));
+        assert!(!dependency_target_compatible_with_context(
+            Some(InstallTarget::Host),
+            true,
+            "linux",
+            "x86_64"
+        ));
     }
 
     #[test]

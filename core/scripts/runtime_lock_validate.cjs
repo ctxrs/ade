@@ -189,12 +189,19 @@ const parseRequiredTargetEntry = (value, hostOs, hostArch, kind, errors) => {
   };
 };
 
-const resolveRequiredTargets = ({ lock, hostOs, hostArch, kind, errors }) => {
+const resolveRequiredTargets = ({ lock, hostOs, hostArch, kind, errors, allowEmpty = false }) => {
   const configuredTargets = lock?.required?.targets?.[kind];
-  if (!Array.isArray(configuredTargets) || configuredTargets.length === 0) {
+  if (!Array.isArray(configuredTargets)) {
+    if (allowEmpty) return [];
     if (kind === "provider") return defaultProviderTargets(hostOs, hostArch);
     if (kind === "runtime") return defaultRuntimeTargets(hostOs, hostArch);
     if (kind === "image") return defaultImageTargets(hostOs, hostArch);
+    return [];
+  }
+  if (configuredTargets.length === 0) {
+    if (!allowEmpty) {
+      errors.push(`runtime lock required.targets.${kind} must contain at least one valid target`);
+    }
     return [];
   }
 
@@ -208,7 +215,7 @@ const resolveRequiredTargets = ({ lock, hostOs, hostArch, kind, errors }) => {
     seen.add(dedupeKey);
     out.push(parsed);
   }
-  if (out.length === 0) {
+  if (out.length === 0 && !allowEmpty) {
     errors.push(`runtime lock required.targets.${kind} must contain at least one valid target`);
   }
   return out;
@@ -398,6 +405,11 @@ const validateManifestEntries = ({
   providerTargets,
   runtimeTargets,
   imageTargets,
+  allowEmptyRequired = {
+    provider: false,
+    runtime: false,
+    image: true,
+  },
   errors,
 }) => {
   if (manifest.version !== 1) {
@@ -408,13 +420,17 @@ const validateManifestEntries = ({
   if (!Array.isArray(manifest.runtimes)) errors.push("manifest.runtimes must be an array");
   if (!Array.isArray(manifest.images)) errors.push("manifest.images must be an array");
 
-  const providerIds = validateRequiredArray(lock?.required?.provider_ids, "runtime lock required.provider_ids", errors);
-  const runtimeIds = validateRequiredArray(lock?.required?.runtime_ids, "runtime lock required.runtime_ids", errors);
+  const providerIds = validateRequiredArray(lock?.required?.provider_ids, "runtime lock required.provider_ids", errors, {
+    allowEmpty: allowEmptyRequired.provider === true,
+  });
+  const runtimeIds = validateRequiredArray(lock?.required?.runtime_ids, "runtime lock required.runtime_ids", errors, {
+    allowEmpty: allowEmptyRequired.runtime === true,
+  });
   const imageIds = validateRequiredArray(
     lock?.required?.image_ids,
     "runtime lock required.image_ids",
     errors,
-    { allowEmpty: true },
+    { allowEmpty: allowEmptyRequired.image === true },
   );
 
   const bundlesRoot = path.dirname(manifestPath);
@@ -531,17 +547,48 @@ const validateLockV2 = ({ lock, manifest, manifestPath, profile, overridesPath, 
     }
   }
 
-  const requiredProviderIds = validateRequiredArray(lock?.required?.provider_ids, "runtime lock required.provider_ids", errors);
-  const requiredRuntimeIds = validateRequiredArray(lock?.required?.runtime_ids, "runtime lock required.runtime_ids", errors);
+  const requiredProviderIds = validateRequiredArray(
+    lock?.required?.provider_ids,
+    "runtime lock required.provider_ids",
+    errors,
+    { allowEmpty: true },
+  );
+  const requiredRuntimeIds = validateRequiredArray(
+    lock?.required?.runtime_ids,
+    "runtime lock required.runtime_ids",
+    errors,
+    { allowEmpty: true },
+  );
   const requiredImageIds = validateRequiredArray(
     lock?.required?.image_ids,
     "runtime lock required.image_ids",
     errors,
     { allowEmpty: true },
   );
-  const providerTargets = resolveRequiredTargets({ lock, hostOs, hostArch, kind: "provider", errors });
-  const runtimeTargets = resolveRequiredTargets({ lock, hostOs, hostArch, kind: "runtime", errors });
-  const imageTargets = resolveRequiredTargets({ lock, hostOs, hostArch, kind: "image", errors });
+  const providerTargets = resolveRequiredTargets({
+    lock,
+    hostOs,
+    hostArch,
+    kind: "provider",
+    errors,
+    allowEmpty: requiredProviderIds.length === 0,
+  });
+  const runtimeTargets = resolveRequiredTargets({
+    lock,
+    hostOs,
+    hostArch,
+    kind: "runtime",
+    errors,
+    allowEmpty: requiredRuntimeIds.length === 0,
+  });
+  const imageTargets = resolveRequiredTargets({
+    lock,
+    hostOs,
+    hostArch,
+    kind: "image",
+    errors,
+    allowEmpty: requiredImageIds.length === 0,
+  });
 
   const requiredComponents = [];
 
@@ -629,6 +676,11 @@ const validateLockV2 = ({ lock, manifest, manifestPath, profile, overridesPath, 
     providerTargets,
     runtimeTargets,
     imageTargets,
+    allowEmptyRequired: {
+      provider: requiredProviderIds.length === 0,
+      runtime: requiredRuntimeIds.length === 0,
+      image: requiredImageIds.length === 0,
+    },
     errors,
   });
 

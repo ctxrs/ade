@@ -74,6 +74,12 @@ import {
   loadProvidersBootstrap,
   refreshProvidersBootstrap,
 } from "../../../state/providersBootstrapStore";
+import {
+  getProviderInstallProgressSnapshot,
+  subscribeProviderInstallProgress,
+  upsertProviderInstallProgress,
+  type ProviderInstallProgressSnapshot,
+} from "../../../state/providerInstallProgressStore";
 import type { HarnessAuthModalState, InstallSession } from "../../SettingsPage.types";
 import { defaultEndpointBaseUrlForProvider, type HarnessAuthRow } from "../harnessAuthRows";
 import {
@@ -211,6 +217,23 @@ const messageFromError = (error: unknown): string => {
   }
   return String(error);
 };
+
+const toInstallSession = (session: ProviderInstallProgressSnapshot[string]): InstallSession => ({
+  installId: session.installId,
+  state: session.state,
+  pct: session.pct,
+  target: session.target,
+  errorCode: session.errorCode,
+  streamError: undefined,
+  error: session.error,
+});
+
+const installsFromProgressSnapshot = (
+  snapshot: ProviderInstallProgressSnapshot,
+): Record<string, InstallSession> =>
+  Object.fromEntries(
+    Object.entries(snapshot).map(([providerId, session]) => [providerId, toInstallSession(session)]),
+  );
 
 export const toErrorObject = (error: unknown): Error => {
   if (error instanceof Error) return error;
@@ -357,7 +380,9 @@ export function useHarnessAuthenticationController({
   const [harnessAuthModal, setHarnessAuthModal] = useState<HarnessAuthModalState | null>(null);
   const [claudePendingLoginId, setClaudePendingLoginId] = useState<string | null>(null);
   const [installBusy, setInstallBusy] = useState<string | null>(null);
-  const [installs, setInstalls] = useState<Record<string, InstallSession>>({});
+  const [installs, setInstalls] = useState<Record<string, InstallSession>>(
+    () => installsFromProgressSnapshot(getProviderInstallProgressSnapshot()),
+  );
 
   const [codexAccounts, setCodexAccounts] = useState<CodexAccountsResponse | null>(null);
   const [codexAccountsBusy, setCodexAccountsBusy] = useState(false);
@@ -385,6 +410,12 @@ export function useHarnessAuthenticationController({
   const providerHarnessBusyRef = useRef<Record<string, boolean>>({});
   const providerEndpointUnsupportedRef = useRef<Record<string, boolean>>({});
   const ampLoginInFlightRef = useRef(false);
+
+  useEffect(() => {
+    return subscribeProviderInstallProgress((snapshot) => {
+      setInstalls(installsFromProgressSnapshot(snapshot));
+    });
+  }, []);
 
   const supportsHarnessEndpointConfig = useCallback(
     (providerId: string): boolean =>
@@ -1924,35 +1955,43 @@ export function useHarnessAuthenticationController({
     if (!providerId || !installId) return;
     if (installPollTimeoutsRef.current[providerId]) return;
 
+    const nextInstallState: InstallSession = {
+      installId,
+      state: "running",
+      pct: installsRef.current[providerId]?.pct ?? null,
+      target: installsRef.current[providerId]?.target,
+      errorCode: undefined,
+      streamError: installsRef.current[providerId]?.streamError,
+      error: undefined,
+    };
+
     setInstalls((prev) => ({
       ...prev,
-      [providerId]: {
-        installId,
-        state: "running",
-        pct: prev[providerId]?.pct ?? null,
-        target: prev[providerId]?.target,
-        errorCode: undefined,
-        streamError: prev[providerId]?.streamError,
-        error: undefined,
-      },
+      [providerId]: nextInstallState,
     }));
+    upsertProviderInstallProgress(providerId, nextInstallState);
 
     const poll = async () => {
       try {
         const info = await getInstall(installId);
         const pct = computeInstallPct(info, installsRef.current[providerId]?.pct ?? null);
+        const nextPollState: InstallSession = {
+          installId,
+          state: info.state,
+          pct,
+          target: info.target,
+          errorCode: info.error_code,
+          streamError: installsRef.current[providerId]?.streamError,
+          error: info.error,
+        };
         setInstalls((prev) => ({
           ...prev,
           [providerId]: {
-            installId,
-            state: info.state,
-            pct,
-            target: info.target,
-            errorCode: info.error_code,
+            ...nextPollState,
             streamError: prev[providerId]?.streamError,
-            error: info.error,
           },
         }));
+        upsertProviderInstallProgress(providerId, nextPollState);
         if (info.state !== "running") {
           const timeout = installPollTimeoutsRef.current[providerId];
           if (timeout) {
@@ -2013,18 +2052,24 @@ export function useHarnessAuthenticationController({
     if (!installId) return;
     try {
       const info = await cancelInstall(installId);
+      const nextInstallState: InstallSession = {
+        installId,
+        state: info.state,
+        pct: computeInstallPct(info, installsRef.current[providerId]?.pct ?? null),
+        target: info.target,
+        errorCode: info.error_code,
+        streamError: installsRef.current[providerId]?.streamError,
+        error: info.error,
+      };
       setInstalls((prev) => ({
         ...prev,
         [providerId]: {
-          installId,
-          state: info.state,
+          ...nextInstallState,
           pct: computeInstallPct(info, prev[providerId]?.pct ?? null),
-          target: info.target,
-          errorCode: info.error_code,
           streamError: prev[providerId]?.streamError,
-          error: info.error,
         },
       }));
+      upsertProviderInstallProgress(providerId, nextInstallState);
       await refreshProviders();
     } catch (error) {
       setProviderError(messageFromError(error));
@@ -2066,7 +2111,14 @@ export function useHarnessAuthenticationController({
     for (const provider of providers) {
       const installId = provider.details?.install_id;
       const running = provider.details?.install_running === "true";
-      if (running && installId && !installs[provider.provider_id]) {
+      if (!running || !installId) continue;
+      const tracked = installs[provider.provider_id];
+      const hasActivePoll = Boolean(installPollTimeoutsRef.current[provider.provider_id]);
+      const shouldAttach = !tracked
+        || tracked.installId !== installId
+        || tracked.state !== "running"
+        || !hasActivePoll;
+      if (shouldAttach) {
         attachInstall(provider.provider_id, installId).catch(() => {});
       }
     }

@@ -4,6 +4,7 @@ const childProcess = require("node:child_process");
 const os = require("node:os");
 const path = require("node:path");
 const fs = require("node:fs");
+const net = require("node:net");
 
 const { resolveLaunchMode } = require("./desktop_mode.cjs");
 
@@ -39,7 +40,41 @@ const resolveCargoTargetDir = () => {
   return path.join(os.homedir(), ".cache", "cargo", "ctx-monorepo", resolveGitDirName());
 };
 
-const main = () => {
+const envFlagEnabled = (value, defaultValue = false) => {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!normalized) return defaultValue;
+  return !["0", "false", "no", "off"].includes(normalized);
+};
+
+const portIsAvailable = (host, port) =>
+  new Promise((resolve) => {
+    const server = net.createServer();
+    server.unref();
+    server.once("error", () => {
+      resolve(false);
+    });
+    server.listen({ host, port, exclusive: true }, () => {
+      server.close(() => resolve(true));
+    });
+  });
+
+const resolveWebDevPort = async (host) => {
+  const explicitPort = String(process.env.CTX_DESKTOP_WEB_DEV_PORT || "").trim();
+  if (explicitPort) return explicitPort;
+  const startPort = 5197;
+  const endPort = 5247;
+  for (let candidate = startPort; candidate <= endPort; candidate += 1) {
+    // Verify localhost availability too because devUrl points at 127.0.0.1.
+    const available = await portIsAvailable(host, candidate);
+    const localhostAvailable = host === "127.0.0.1" ? available : await portIsAvailable("127.0.0.1", candidate);
+    if (available && localhostAvailable) {
+      return String(candidate);
+    }
+  }
+  return String(startPort);
+};
+
+const main = async () => {
   const mode = resolveLaunchMode({ surface: "desktop" });
   const cargoTargetDir = resolveCargoTargetDir();
   const effectiveManifestPath = path.join(
@@ -59,10 +94,20 @@ const main = () => {
     CTX_DESKTOP_DEV_BIN_DIR: path.join(cargoTargetDir, "debug"),
     CTX_BUNDLE_MANIFEST: effectiveManifestPath,
   };
+  const useBundledWeb = envFlagEnabled(process.env.CTX_DESKTOP_USE_BUNDLED_WEB, false);
+  const webDevHost = String(process.env.CTX_DESKTOP_WEB_DEV_HOST || "127.0.0.1").trim() || "127.0.0.1";
+  const webDevPort = await resolveWebDevPort(webDevHost);
+  const webDevUrlDefault = `http://${webDevHost}:${webDevPort}`;
+  const devUrl = String(process.env.CTX_DESKTOP_WEB_DEV_URL || webDevUrlDefault).trim() || webDevUrlDefault;
+  const beforeDevCommand = String(
+    process.env.CTX_DESKTOP_WEB_BEFORE_DEV_COMMAND
+      || `CTX_DEV_HTTP=1 pnpm -C ../web exec vite --host ${webDevHost} --port ${webDevPort} --strictPort`,
+  ).trim();
   const tauriConfigOverride = JSON.stringify({
     build: {
-      beforeDevCommand: "",
-      devUrl: null,
+      // In desktop dev, default to the live webapp dev server for source maps + non-minified errors.
+      beforeDevCommand: useBundledWeb ? "" : beforeDevCommand,
+      devUrl: useBundledWeb ? null : devUrl,
     },
   });
 
@@ -95,4 +140,7 @@ const main = () => {
   );
 };
 
-main();
+main().catch((error) => {
+  console.error(`desktop_dev_local failed: ${error?.message ?? String(error)}`);
+  process.exit(1);
+});

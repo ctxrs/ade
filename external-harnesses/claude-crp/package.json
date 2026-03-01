@@ -1,6 +1,6 @@
 {
   "name": "claude-crp",
-  "version": "0.0.0-ctx.1",
+  "version": "0.2.7-ctx.1",
   "private": true,
   "type": "module",
   "scripts": {

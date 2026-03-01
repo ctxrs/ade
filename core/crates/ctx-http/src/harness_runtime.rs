@@ -781,39 +781,60 @@ async fn ensure_container_image_available(
         return Ok(());
     }
 
-    // Restricted networking is security-relevant; ctx must not silently fall back to pulling from
-    // a registry. For the default harness image, we only support deterministic loading from a
-    // bundled tarball.
+    // Preferred path for the default image: deterministic load from bundled tar.
+    // If no bundled tar is present (minimal startup bundle), pull the default image at runtime.
     if image == DEFAULT_CONTAINER_IMAGE {
-        let tar = bundled_assets::bundled_ctx_harness_image_tar(image).ok_or_else(|| {
-            anyhow::anyhow!(
-                "default harness image '{}' is not present and no bundled image tar was found (set CTX_BUNDLE_DIR or pre-load the image into podman)",
+        if let Some(tar) = bundled_assets::bundled_ctx_harness_image_tar(image) {
+            observe_log(
+                observer,
+                HarnessSetupPhase::ImageLoad,
+                HarnessSetupLogLevel::Info,
+                &format!("loading default harness image from {}", tar.display()),
+            );
+            let mut cmd = podman_command(data_root)?;
+            cmd.arg("load").arg("-i").arg(&tar);
+            let output = command_output_with_timeout(cmd, PODMAN_LOAD_TIMEOUT)
+                .await
+                .with_context(|| format!("podman load failed for {}", tar.display()))?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                if stderr.is_empty() {
+                    anyhow::bail!("podman load failed (status: {})", output.status);
+                }
+                anyhow::bail!("podman load failed: {stderr}");
+            }
+            if container_image_present(data_root, image).await? {
+                return Ok(());
+            }
+            anyhow::bail!(
+                "podman load reported success but image '{}' is still missing",
                 image
-            )
-        })?;
+            );
+        }
+
         observe_log(
             observer,
             HarnessSetupPhase::ImageLoad,
             HarnessSetupLogLevel::Info,
-            &format!("loading default harness image from {}", tar.display()),
+            &format!("bundled default image not found; pulling {image} from registry"),
         );
         let mut cmd = podman_command(data_root)?;
-        cmd.arg("load").arg("-i").arg(&tar);
+        cmd.arg("pull").arg("--").arg(image);
         let output = command_output_with_timeout(cmd, PODMAN_LOAD_TIMEOUT)
             .await
-            .with_context(|| format!("podman load failed for {}", tar.display()))?;
+            .with_context(|| format!("podman pull failed for {image}"))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             if stderr.is_empty() {
-                anyhow::bail!("podman load failed (status: {})", output.status);
+                anyhow::bail!("podman pull failed (status: {})", output.status);
             }
-            anyhow::bail!("podman load failed: {stderr}");
+            anyhow::bail!("podman pull failed: {stderr}");
         }
         if container_image_present(data_root, image).await? {
             return Ok(());
         }
         anyhow::bail!(
-            "podman load reported success but image '{}' is still missing",
+            "podman pull reported success but image '{}' is still missing",
             image
         );
     }

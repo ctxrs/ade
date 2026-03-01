@@ -149,15 +149,22 @@ const validateLockMatrixConsistency = ({ lock, matrix, hostOs, hostArch }) => {
     ? [...new Set(lock.required.image_ids.map((id) => String(id || '').trim()).filter(Boolean))]
     : [];
 
-  if (requiredProviderIds.length === 0) {
-    errors.push('runtime lock required.provider_ids must be non-empty');
-  }
-  if (requiredRuntimeIds.length === 0) {
-    errors.push('runtime lock required.runtime_ids must be non-empty');
-  }
-
-  const providerTargets = parseRequiredTargets({ lock, kind: 'provider', hostOs, hostArch, errors });
-  const runtimeTargets = parseRequiredTargets({ lock, kind: 'runtime', hostOs, hostArch, errors });
+  const providerTargets = parseRequiredTargets({
+    lock,
+    kind: 'provider',
+    hostOs,
+    hostArch,
+    errors,
+    allowEmpty: requiredProviderIds.length === 0,
+  });
+  const runtimeTargets = parseRequiredTargets({
+    lock,
+    kind: 'runtime',
+    hostOs,
+    hostArch,
+    errors,
+    allowEmpty: requiredRuntimeIds.length === 0,
+  });
   const imageTargets = parseRequiredTargets({
     lock,
     kind: 'image',

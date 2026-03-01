@@ -11,6 +11,7 @@ import SettingsPage from "./pages/SettingsPage";
 import WorkspaceSetupPage from "./pages/WorkspaceSetupPage";
 import { SessionSupervisorProvider } from "./state/sessionSupervisor";
 import { SettingsStoreProvider, useSettingsSnapshot } from "./state/settingsStore";
+import { setUiDiagnosticPersistenceSink, type UiDiagnosticEvent } from "./state/diagnosticsChannel";
 import { loadLauncherRecents } from "./state/launcherRecentsStore";
 import { preloadHarnessLogos } from "./utils/harnessCatalog";
 import { refreshUpdateCheck } from "./utils/updateNotice";
@@ -55,6 +56,27 @@ function settingsTargetForPath(pathname: string): string {
   }
   return "/settings";
 }
+
+const RUNTIME_DIAGNOSTIC_DEDUPE_WINDOW_MS = 15_000;
+
+const safeJsonStringify = (value: unknown): string => {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return "[unserializable]";
+  }
+};
+
+const shouldPersistRuntimeDiagnostic = (event: UiDiagnosticEvent): boolean =>
+  event.source === "runtime" && (event.severity === "error" || event.fatal === true);
+
+const buildRuntimeDiagnosticLogLine = (event: UiDiagnosticEvent): string => {
+  const context =
+    event.context && Object.keys(event.context).length > 0
+      ? ` context=${safeJsonStringify(event.context)}`
+      : "";
+  return `ui_runtime: code=${event.code} severity=${event.severity} fatal=${event.fatal === true ? "true" : "false"} message=${event.message}${context}`;
+};
 
 function DesktopSettingsListener() {
   const navigate = useNavigate();
@@ -329,8 +351,32 @@ function AnalyticsSettingsBridge() {
 }
 
 export default function App() {
+  const runtimeLogDedupRef = useRef<Map<string, number>>(new Map());
+
   useEffect(() => {
     appendDesktopLog("ui: app loaded").catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!isDesktopApp()) {
+      setUiDiagnosticPersistenceSink(null);
+      return;
+    }
+    setUiDiagnosticPersistenceSink((event) => {
+      if (!shouldPersistRuntimeDiagnostic(event)) return;
+      const key = `${event.code}|${event.message}`;
+      const now = Date.now();
+      const prev = runtimeLogDedupRef.current.get(key);
+      if (typeof prev === "number" && now - prev < RUNTIME_DIAGNOSTIC_DEDUPE_WINDOW_MS) {
+        return;
+      }
+      runtimeLogDedupRef.current.set(key, now);
+      void appendDesktopLog(buildRuntimeDiagnosticLogLine(event), "error").catch(() => {});
+    });
+    return () => {
+      setUiDiagnosticPersistenceSink(null);
+      runtimeLogDedupRef.current.clear();
+    };
   }, []);
 
   useEffect(() => {

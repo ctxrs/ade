@@ -881,6 +881,40 @@
   gap: 8px;
 }
 
+.wizard-harness-downloads-scroll-shell {
+  position: relative;
+  max-height: clamp(180px, 40vh, 360px);
+  overflow: hidden;
+}
+
+.wizard-auth-import-list--scrollable {
+  max-height: inherit;
+  overflow-y: auto;
+  padding-right: 6px;
+  padding-bottom: 2px;
+}
+
+.wizard-harness-downloads-scroll-shell::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 6px;
+  bottom: 0;
+  height: 28px;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(
+    to bottom,
+    rgba(10, 10, 10, 0),
+    rgba(10, 10, 10, 0.84)
+  );
+  transition: opacity 120ms ease;
+}
+
+.wizard-harness-downloads-scroll-shell.is-scrollable:not(.is-bottom)::after {
+  opacity: 1;
+}
+
 .wizard-auth-import-row {
   border: 1px solid rgba(231, 231, 231, 0.14);
   border-radius: 8px;

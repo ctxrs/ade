@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import type { ProviderStatus } from "../../../api/client";
 import type { HarnessAuthModalState } from "../../SettingsPage.types";
 import type { useHarnessAuthenticationController } from "../hooks/useHarnessAuthenticationController";
 import { HarnessAuthenticationSection } from "./HarnessAuthenticationSection";
@@ -467,5 +468,40 @@ describe("HarnessAuthenticationSection Copilot subscription modal", () => {
 
     expect(screen.queryByText("GitHub device code")).not.toBeInTheDocument();
     expect(screen.queryByDisplayValue("ABCD-1234")).not.toBeInTheDocument();
+  });
+});
+
+describe("HarnessAuthenticationSection install row rendering", () => {
+  it("renders running installs when provider reports install_running without crashing", () => {
+    const runningProvider: ProviderStatus = {
+      provider_id: "codex",
+      installed: false,
+      health: "unknown",
+      diagnostics: [],
+      details: {
+        install_supported: "true",
+        install_running: "true",
+        install_target: "host",
+      },
+    };
+
+    mockUseHarnessAuthenticationController.mockReturnValue(
+      makeController({
+        harnessAuthModal: null,
+        providers: [runningProvider],
+        installs: {},
+        installBusy: null,
+      }),
+    );
+
+    render(
+      <HarnessAuthenticationSection
+        workspaceId="ws-1"
+        active
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Installing…" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
   });
 });

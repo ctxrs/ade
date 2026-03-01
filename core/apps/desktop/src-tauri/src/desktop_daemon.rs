@@ -1,6 +1,7 @@
 use super::*;
 
 const SSH_CONFIG_OVERRIDE_ENV: &str = "CTX_DESKTOP_SSH_CONFIG_PATH";
+const DEFAULT_CTX_HARNESS_IMAGE: &str = "ghcr.io/ctxrs/ctx-harness:ubuntu-24.04";
 
 fn normalized_ssh_config_override(value: &str) -> Option<String> {
     let trimmed = value.trim();
@@ -1348,23 +1349,28 @@ pub(super) fn read_bundled_remote_daemon_binary(
     Ok(bin)
 }
 
-fn read_bundled_ctx_harness_image(app: &tauri::AppHandle, arch: &str) -> Result<(PathBuf, String)> {
+fn read_bundled_ctx_harness_image(
+    app: &tauri::AppHandle,
+    arch: &str,
+) -> Result<Option<(PathBuf, String)>> {
     let bundle_dir = desktop_bundle_dir(app).ok_or_else(|| anyhow!("bundle dir not found"))?;
     let manifest_path = bundle_dir.join("manifest.json");
     let raw = std::fs::read_to_string(&manifest_path)
         .with_context(|| format!("reading {}", manifest_path.display()))?;
     let manifest: DesktopBundledAssetsManifest = serde_json::from_str(&raw)
         .with_context(|| format!("parsing {}", manifest_path.display()))?;
-    let entry = manifest
+    let Some(entry) = manifest
         .images
         .iter()
         .find(|img| img.id == "ctx-harness" && img.os == "linux" && img.arch == arch)
-        .ok_or_else(|| anyhow!("bundled ctx-harness image tar not found for linux/{arch}"))?;
+    else {
+        return Ok(None);
+    };
     let tar = bundle_dir.join(&entry.tar);
     if !tar.exists() {
         anyhow::bail!("bundled ctx-harness image tar missing at {}", tar.display());
     }
-    Ok((tar, entry.image.clone()))
+    Ok(Some((tar, entry.image.clone())))
 }
 
 fn ssh_target(host: &str, user: Option<&str>) -> String {
@@ -1463,7 +1469,11 @@ pub(super) fn ensure_remote_ctx_harness_image(
         );
     }
 
-    let (tar, image) = read_bundled_ctx_harness_image(app, arch)?;
+    let bundled_image = read_bundled_ctx_harness_image(app, arch)?;
+    let (image, bundled_tar) = match bundled_image {
+        Some((tar, image)) => (image, Some(tar)),
+        None => (DEFAULT_CTX_HARNESS_IMAGE.to_string(), None),
+    };
 
     // Check if the image is already present.
     let exists_out = ssh_output(
@@ -1483,50 +1493,66 @@ pub(super) fn ensure_remote_ctx_harness_image(
         );
     }
 
-    // Stream tar to podman load over SSH.
-    let remote_cmd = format!(
-        "sh -lc {}",
-        shell_escape(&format!(
-            "{podman_prepare_cmd} && {podman_env_prefix} podman load"
-        ))
-    );
-    let mut child = new_ssh_command()
-        .arg("-o")
-        .arg("BatchMode=yes")
-        .arg("-o")
-        .arg("ConnectTimeout=8")
-        .arg("-o")
-        .arg("ConnectionAttempts=1")
-        .arg("-o")
-        .arg("ServerAliveInterval=5")
-        .arg("-o")
-        .arg("ServerAliveCountMax=1")
-        .arg(&target)
-        .arg(remote_cmd)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("spawning ssh for podman load")?;
-
-    {
-        let mut file =
-            std::fs::File::open(&tar).with_context(|| format!("opening {}", tar.display()))?;
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| anyhow!("ssh stdin unavailable"))?;
-        std::io::copy(&mut file, &mut stdin).context("streaming image tar to ssh")?;
-    }
-
-    let output = child
-        .wait_with_output()
-        .context("waiting for ssh podman load")?;
-    if !output.status.success() {
-        anyhow::bail!(
-            "remote podman load failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
+    if let Some(tar) = bundled_tar {
+        // Stream tar to podman load over SSH.
+        let remote_cmd = format!(
+            "sh -lc {}",
+            shell_escape(&format!(
+                "{podman_prepare_cmd} && {podman_env_prefix} podman load"
+            ))
         );
+        let mut child = new_ssh_command()
+            .arg("-o")
+            .arg("BatchMode=yes")
+            .arg("-o")
+            .arg("ConnectTimeout=8")
+            .arg("-o")
+            .arg("ConnectionAttempts=1")
+            .arg("-o")
+            .arg("ServerAliveInterval=5")
+            .arg("-o")
+            .arg("ServerAliveCountMax=1")
+            .arg(&target)
+            .arg(remote_cmd)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("spawning ssh for podman load")?;
+
+        {
+            let mut file =
+                std::fs::File::open(&tar).with_context(|| format!("opening {}", tar.display()))?;
+            let mut stdin = child
+                .stdin
+                .take()
+                .ok_or_else(|| anyhow!("ssh stdin unavailable"))?;
+            std::io::copy(&mut file, &mut stdin).context("streaming image tar to ssh")?;
+        }
+
+        let output = child
+            .wait_with_output()
+            .context("waiting for ssh podman load")?;
+        if !output.status.success() {
+            anyhow::bail!(
+                "remote podman load failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+    } else {
+        let pull_out = ssh_output(
+            &target,
+            &format!(
+                "{podman_prepare_cmd} && {podman_env_prefix} podman pull -- {}",
+                shell_escape(&image)
+            ),
+        )?;
+        if !pull_out.status.success() {
+            anyhow::bail!(
+                "remote podman pull failed: {}",
+                String::from_utf8_lossy(&pull_out.stderr).trim()
+            );
+        }
     }
     let exists_after = ssh_output(
         &target,
@@ -2294,13 +2320,16 @@ fn spawn_and_validate_local_daemon(
         desktop_dev_instance_id,
     );
     if !compatible {
-        anyhow::bail!("{}", spawned_local_daemon_incompatibility_message(
-            pending.url(),
-            data_dir,
-            desktop_version,
-            desktop_dev_instance_id,
-            &health
-        ));
+        anyhow::bail!(
+            "{}",
+            spawned_local_daemon_incompatibility_message(
+                pending.url(),
+                data_dir,
+                desktop_version,
+                desktop_dev_instance_id,
+                &health
+            )
+        );
     }
     let auth = read_daemon_auth_with_retry(data_dir)?;
     let (url, child, systemd_scope) = pending.disarm()?;

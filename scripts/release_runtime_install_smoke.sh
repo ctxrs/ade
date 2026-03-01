@@ -109,7 +109,7 @@ CTX_DEV_MODE=1 \
 "$daemon_bin" serve --bind "$bind_addr" --data-dir "$data_dir" >"$log_path" 2>&1 &
 daemon_pid="$!"
 
-health_url="http://$bind_addr/health"
+health_url="http://$bind_addr/api/health"
 for _ in {1..80}; do
   if curl -fsS "$health_url" >/dev/null 2>&1; then
     break
@@ -122,8 +122,22 @@ if ! curl -fsS "$health_url" >/dev/null 2>&1; then
   exit 1
 fi
 
+auth_path="$data_dir/daemon_auth.json"
+if [[ ! -f "$auth_path" ]]; then
+  echo "error: missing daemon auth file: $auth_path" >&2
+  cat "$log_path" >&2 || true
+  exit 1
+fi
+auth_token="$(jq -r '.token // empty' "$auth_path")"
+if [[ -z "$auth_token" ]]; then
+  echo "error: daemon auth token missing in $auth_path" >&2
+  cat "$log_path" >&2 || true
+  exit 1
+fi
+auth_header=( -H "Authorization: Bearer $auth_token" )
+
 providers_url="http://$bind_addr/api/providers?target=$install_target"
-providers_json="$(curl -fsS "$providers_url")"
+providers_json="$(curl -fsS "${auth_header[@]}" "$providers_url")"
 
 if ! jq -e --arg id "$provider_id" '.[] | select(.provider_id == $id)' <<<"$providers_json" >/dev/null; then
   provider_id="$(jq -r '.[] | select(.details.install_supported == "true") | .provider_id' <<<"$providers_json" | head -n 1)"
@@ -140,7 +154,7 @@ if [[ "$supported" != "true" ]]; then
 fi
 
 start_url="http://$bind_addr/api/providers/$provider_id/install?target=$install_target"
-start_json="$(curl -fsS -X POST "$start_url")"
+start_json="$(curl -fsS "${auth_header[@]}" -X POST "$start_url")"
 install_id="$(jq -r '.install_id // empty' <<<"$start_json")"
 if [[ -z "$install_id" || "$install_id" == "null" ]]; then
   echo "error: failed to start provider install for $provider_id: $start_json" >&2
@@ -148,13 +162,13 @@ if [[ -z "$install_id" || "$install_id" == "null" ]]; then
 fi
 
 cancel_url="http://$bind_addr/api/providers/install/$install_id/cancel"
-curl -fsS -X POST "$cancel_url" >/dev/null
+curl -fsS "${auth_header[@]}" -X POST "$cancel_url" >/dev/null
 
 info_url="http://$bind_addr/api/providers/install/$install_id"
 state=""
 error_code=""
 for _ in {1..30}; do
-  info_json="$(curl -fsS "$info_url")"
+  info_json="$(curl -fsS "${auth_header[@]}" "$info_url")"
   state="$(jq -r '.state // ""' <<<"$info_json")"
   error_code="$(jq -r '.error_code // ""' <<<"$info_json")"
   if [[ "$state" != "running" ]]; then

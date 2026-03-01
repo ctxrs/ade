@@ -76,51 +76,6 @@ fn provider_mode_id_for(
     }
 }
 
-fn prepend_runtime_bin_dirs_to_provider_path(
-    provider_env: &mut HashMap<String, String>,
-    cfg: &installer::AgentServerConfigFile,
-    runtime_provider_id: &str,
-    data_root: &Path,
-) {
-    let mut bin_dirs: Vec<PathBuf> = Vec::new();
-    if let Ok(Some(runtime_cmd)) =
-        installer::resolve_runtime_provider_command(cfg, runtime_provider_id)
-    {
-        let runtime_cmd_path = Path::new(&runtime_cmd.command_abs_path);
-        if let Some(parent) = runtime_cmd_path.parent() {
-            let parent_dir = parent.to_path_buf();
-            if !bin_dirs.contains(&parent_dir) {
-                bin_dirs.push(parent_dir);
-            }
-        }
-        for dep in &runtime_cmd.dependencies {
-            if let Some(meta) = cfg.managed_installs.get(dep) {
-                if let Some(rel) = meta.bin_dir_rel.as_ref() {
-                    let dep_dir = data_root.join(rel);
-                    if !bin_dirs.contains(&dep_dir) {
-                        bin_dirs.push(dep_dir);
-                    }
-                }
-            }
-        }
-    }
-    if bin_dirs.is_empty() {
-        return;
-    }
-
-    let mut path_parts: Vec<PathBuf> = bin_dirs;
-    if let Some(current) = provider_env
-        .get("PATH")
-        .cloned()
-        .or_else(|| std::env::var("PATH").ok())
-    {
-        path_parts.extend(std::env::split_paths(std::ffi::OsStr::new(&current)));
-    }
-    if let Ok(joined) = std::env::join_paths(path_parts) {
-        provider_env.insert("PATH".to_string(), joined.to_string_lossy().to_string());
-    }
-}
-
 pub async fn session_worker(
     state: Arc<AppState>,
     session: Session,
@@ -793,7 +748,7 @@ async fn start_turn(
     }
 
     if let Ok(cfg) = installer::load_agent_server_config(&state.core.data_root).await {
-        prepend_runtime_bin_dirs_to_provider_path(
+        installer::prepend_runtime_bin_dirs_to_provider_path(
             &mut provider_env,
             &cfg,
             runtime_provider_id,
@@ -2297,15 +2252,15 @@ fn runtime_provider_id_for_session_provider<'a>(
 
 #[cfg(test)]
 mod strip_emitted_prefix_tests {
-    use super::{
-        prepend_runtime_bin_dirs_to_provider_path, runtime_provider_id_for_session_provider,
-        strip_emitted_prefix,
-    };
+    use super::{runtime_provider_id_for_session_provider, strip_emitted_prefix};
     use crate::harness_sources::{
         HarnessApiShape, HarnessEndpointRecord, HarnessEndpointVerificationStatus,
         HarnessSourceKind, ResolvedHarnessSource,
     };
-    use crate::installer::{AgentServerCommand, AgentServerConfigFile, ManagedInstallMetadata};
+    use crate::installer::{
+        prepend_runtime_bin_dirs_to_provider_path, AgentServerCommand, AgentServerConfigFile,
+        ManagedInstallMetadata,
+    };
     use chrono::Utc;
     use std::collections::HashMap;
     use std::path::PathBuf;

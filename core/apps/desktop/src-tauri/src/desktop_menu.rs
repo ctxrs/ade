@@ -21,6 +21,7 @@ pub(super) const CMD_VIEW_TOGGLE_DIFF: &str = "view.toggle-diff";
 pub(super) const CMD_VIEW_TOGGLE_ARTIFACTS: &str = "view.toggle-artifacts";
 pub(super) const CMD_VIEW_TOGGLE_SESSIONS: &str = "view.toggle-sessions";
 pub(super) const CMD_VIEW_TOGGLE_TERMINAL: &str = "view.toggle-terminal";
+pub(super) const CMD_VIEW_TOGGLE_DEVTOOLS: &str = "view.toggle-devtools";
 pub(super) const CMD_TASK_NEW: &str = "task.new";
 pub(super) const CMD_TASK_RENAME: &str = "task.rename";
 pub(super) const CMD_TASK_ARCHIVE_TOGGLE: &str = "task.archive-toggle";
@@ -269,6 +270,13 @@ fn build_view_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wr
         false,
         false,
     )?;
+    let toggle_devtools = menu_item(
+        app,
+        CMD_VIEW_TOGGLE_DEVTOOLS,
+        "Toggle Developer Tools",
+        Some("CmdOrCtrl+Alt+I"),
+        true,
+    )?;
     let sep = PredefinedMenuItem::separator(app)?;
     let fullscreen = PredefinedMenuItem::fullscreen(app, None)?;
 
@@ -278,6 +286,7 @@ fn build_view_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wr
         .item(&toggle_artifacts)
         .item(&toggle_sessions)
         .item(&toggle_terminal)
+        .item(&toggle_devtools)
         .item(&sep)
         .item(&fullscreen)
         .build()
@@ -580,6 +589,7 @@ pub(super) fn is_menu_command_id(id: &str) -> bool {
             | CMD_VIEW_TOGGLE_ARTIFACTS
             | CMD_VIEW_TOGGLE_SESSIONS
             | CMD_VIEW_TOGGLE_TERMINAL
+            | CMD_VIEW_TOGGLE_DEVTOOLS
             | CMD_TASK_NEW
             | CMD_TASK_RENAME
             | CMD_TASK_ARCHIVE_TOGGLE
@@ -631,12 +641,31 @@ pub(super) fn emit_menu_action(app: &tauri::AppHandle, command_id: &str) {
     let _ = app.emit(MENU_EVENT_NAME, payload);
 }
 
+fn toggle_devtools_for_focused_window(app: &tauri::AppHandle) {
+    let Some(window) = focused_window(app) else {
+        return;
+    };
+    if window.is_devtools_open() {
+        window.close_devtools();
+    } else {
+        window.open_devtools();
+    }
+}
+
+pub(super) fn handle_menu_command(app: &tauri::AppHandle, command_id: &str) {
+    if command_id == CMD_VIEW_TOGGLE_DEVTOOLS {
+        toggle_devtools_for_focused_window(app);
+        return;
+    }
+    emit_menu_action(app, command_id);
+}
+
 pub(super) fn handle_app_menu_event(app: &tauri::AppHandle, event: MenuEvent) {
     let id = event.id().as_ref();
     if !is_menu_command_id(id) {
         return;
     }
-    emit_menu_action(app, id);
+    handle_menu_command(app, id);
 }
 
 fn set_enabled_for_kind(kind: &MenuItemKind<tauri::Wry>, enabled: bool) -> Result<(), String> {

@@ -309,9 +309,10 @@ export function HarnessAuthenticationSection({
             const installContextLabel = `${installTargetLabel(installTarget)}${installSize ? ` · ${installSize}` : ""}`;
             const installRunning = installUi?.state === "running" || provider.details?.install_running === "true";
             const installBusyLocal = installBusy !== null || installRunning;
+            const installPct = typeof installUi?.pct === "number" ? clampPct(installUi.pct) : null;
             const installLabel =
-              installBusyLocal && installUi?.pct !== null
-                ? `${clampPct(installUi.pct)}%`
+              installBusyLocal && installPct !== null
+                ? `${installPct}%`
                 : installBusyLocal
                   ? "Installing…"
                   : installUi?.state === "cancelled"
@@ -365,8 +366,8 @@ export function HarnessAuthenticationSection({
               || (id === "amp" && ampAccountsBusy);
 
             const installStyle: CSSProperties | undefined =
-              installBusyLocal && installUi?.pct !== null
-                ? ({ ["--settings-install-pct" as "--settings-install-pct"]: `${clampPct(installUi.pct)}%` } as CSSProperties)
+              installBusyLocal && installPct !== null
+                ? ({ ["--settings-install-pct" as "--settings-install-pct"]: `${installPct}%` } as CSSProperties)
                 : undefined;
 
             return (

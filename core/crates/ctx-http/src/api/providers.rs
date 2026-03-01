@@ -1246,17 +1246,15 @@ pub(super) async fn start_claude_login(
 ) -> Result<Json<ClaudeLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
     let login_id = uuid::Uuid::new_v4().to_string();
     let label = req.label;
-    let mut login = start_claude_login_process(&state.core.data_root)
-        .await
-        .map_err(|e| {
-            let msg = e.to_string();
-            let status = if msg.contains("runtime_command_") {
-                StatusCode::BAD_REQUEST
-            } else {
-                StatusCode::INTERNAL_SERVER_ERROR
-            };
-            (status, Json(ApiErrorResp { error: msg }))
-        })?;
+    let mut login = start_claude_login_process(&state).await.map_err(|e| {
+        let msg = e.to_string();
+        let status = if msg.contains("runtime_command_") {
+            StatusCode::BAD_REQUEST
+        } else {
+            StatusCode::INTERNAL_SERVER_ERROR
+        };
+        (status, Json(ApiErrorResp { error: msg }))
+    })?;
     let (input_tx, input_rx) = mpsc::unbounded_channel::<String>();
     {
         let mut map = state.providers.claude_login_inputs.lock().await;
@@ -2972,20 +2970,76 @@ pub(super) async fn import_provider_auth_candidates(
     Ok(Json(ProviderAuthImportResponse { results }))
 }
 
-async fn resolve_claude_setup_token_runtime(
+async fn resolve_runtime_provider_command_from_config(
     data_root: &std::path::Path,
-) -> anyhow::Result<installer::ProviderRuntimeCommand> {
+    provider_id: &str,
+) -> anyhow::Result<Option<installer::ProviderRuntimeCommand>> {
     let cfg = installer::load_agent_server_config(data_root)
         .await
         .context("loading agent server config")?;
-    let runtime_command = installer::resolve_runtime_provider_command(&cfg, "claude-cli")
-        .context("resolving runtime command for claude-cli")?
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "runtime_command_missing: provider=claude-cli (bundle claude-cli or configure an absolute runtime command)"
-            )
-        })?;
-    Ok(runtime_command)
+    installer::resolve_runtime_provider_command(&cfg, provider_id)
+        .with_context(|| format!("resolving runtime command for {provider_id}"))
+}
+
+fn should_attempt_claude_cli_bootstrap(
+    resolution: &anyhow::Result<Option<installer::ProviderRuntimeCommand>>,
+) -> bool {
+    match resolution {
+        Ok(Some(_)) => false,
+        Ok(None) => true,
+        Err(err) => {
+            let msg = err.to_string();
+            msg.contains("runtime_command_missing")
+                || msg.contains("runtime_command_not_found")
+                || msg.contains("runtime_command_not_absolute")
+        }
+    }
+}
+
+async fn resolve_claude_setup_token_runtime_with_bootstrap<F, Fut>(
+    data_root: &std::path::Path,
+    bootstrap_managed_runtime: F,
+) -> anyhow::Result<installer::ProviderRuntimeCommand>
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<()>>,
+{
+    let first_resolution =
+        resolve_runtime_provider_command_from_config(data_root, "claude-cli").await;
+    if let Ok(Some(runtime_command)) = first_resolution.as_ref() {
+        return Ok(runtime_command.clone());
+    }
+
+    if should_attempt_claude_cli_bootstrap(&first_resolution) {
+        bootstrap_managed_runtime()
+            .await
+            .context("installing managed claude-cli runtime for subscription login")?;
+        let resolved = resolve_runtime_provider_command_from_config(data_root, "claude-cli")
+            .await?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "runtime_command_missing: provider=claude-cli (bundle claude-cli or configure an absolute runtime command)"
+                )
+            })?;
+        return Ok(resolved);
+    }
+
+    match first_resolution {
+        Ok(Some(runtime_command)) => Ok(runtime_command),
+        Ok(None) => anyhow::bail!(
+            "runtime_command_missing: provider=claude-cli (bundle claude-cli or configure an absolute runtime command)"
+        ),
+        Err(err) => Err(err),
+    }
+}
+
+async fn resolve_claude_setup_token_runtime(
+    state: &Arc<AppState>,
+) -> anyhow::Result<installer::ProviderRuntimeCommand> {
+    resolve_claude_setup_token_runtime_with_bootstrap(&state.core.data_root, || async {
+        installer::install_provider(state.as_ref(), "claude-cli").await
+    })
+    .await
 }
 
 fn spawn_claude_setup_token_command(
@@ -3347,9 +3401,9 @@ fn extract_claude_setup_token(output: &str) -> Option<String> {
 }
 
 pub(super) async fn start_claude_login_process(
-    data_root: &std::path::Path,
+    state: &Arc<AppState>,
 ) -> anyhow::Result<ClaudeLoginProcess> {
-    let runtime = resolve_claude_setup_token_runtime(data_root).await?;
+    let runtime = resolve_claude_setup_token_runtime(state).await?;
     let ClaudeLoginSpawn {
         line_rx: mut rx,
         exit_rx,
@@ -4705,7 +4759,13 @@ pub(super) async fn get_provider_options(
         let args = normalized_runtime.args;
 
         let probe = match provider_probe_env(&state, &provider_id).await {
-            Ok((_source, env)) => {
+            Ok((_source, mut env)) => {
+                installer::prepend_runtime_bin_dirs_to_provider_path(
+                    &mut env,
+                    &cfg,
+                    &provider_id,
+                    &state.core.data_root,
+                );
                 probe_crp_models(
                     &provider_id,
                     command,
@@ -5110,7 +5170,13 @@ pub(super) async fn verify_provider_for_workspace(
         let args = normalized_runtime.args;
 
         match provider_probe_env(&state, &provider_id).await {
-            Ok((source, env)) => {
+            Ok((source, mut env)) => {
+                installer::prepend_runtime_bin_dirs_to_provider_path(
+                    &mut env,
+                    &cfg,
+                    &provider_id,
+                    &state.core.data_root,
+                );
                 if source.source_kind == HarnessSourceKind::Endpoint {
                     selected_endpoint_id = source
                         .endpoint
@@ -5794,6 +5860,73 @@ mod tests {
         });
         let lines = read_trailing_claude_login_lines(&mut rx, Duration::from_millis(120)).await;
         assert_eq!(lines, vec!["sk-ant-oat01-late-token".to_string()]);
+    }
+
+    #[test]
+    fn should_attempt_claude_cli_bootstrap_for_runtime_command_resolution_failures() {
+        let ok_missing: anyhow::Result<Option<installer::ProviderRuntimeCommand>> = Ok(None);
+        assert!(should_attempt_claude_cli_bootstrap(&ok_missing));
+
+        let ok_present: anyhow::Result<Option<installer::ProviderRuntimeCommand>> =
+            Ok(Some(installer::ProviderRuntimeCommand {
+                provider_id: "claude-cli".to_string(),
+                command_abs_path: "/tmp/claude".to_string(),
+                args: Vec::new(),
+                dependencies: Vec::new(),
+                source: installer::ProviderRuntimeCommandSource::UserOverride,
+            }));
+        assert!(!should_attempt_claude_cli_bootstrap(&ok_present));
+
+        let missing_err: anyhow::Result<Option<installer::ProviderRuntimeCommand>> =
+            Err(anyhow::anyhow!(
+                "runtime_command_not_found: provider=claude-cli source=managed_install command=/tmp/missing"
+            ));
+        assert!(should_attempt_claude_cli_bootstrap(&missing_err));
+
+        let unrelated_err: anyhow::Result<Option<installer::ProviderRuntimeCommand>> =
+            Err(anyhow::anyhow!("network timeout"));
+        assert!(!should_attempt_claude_cli_bootstrap(&unrelated_err));
+    }
+
+    #[tokio::test]
+    async fn resolve_claude_setup_token_runtime_bootstraps_missing_runtime_command() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let data_root = temp.path().to_path_buf();
+        let runtime_path = data_root.join("claude-cli-mock.sh");
+        std::fs::write(&runtime_path, "#!/bin/sh\nexit 0\n").expect("write runtime");
+        let runtime_path_str = runtime_path.to_string_lossy().to_string();
+        let install_called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+        let resolved = resolve_claude_setup_token_runtime_with_bootstrap(&data_root, || {
+            let data_root = data_root.clone();
+            let runtime_path_str = runtime_path_str.clone();
+            let install_called = Arc::clone(&install_called);
+            async move {
+                install_called.store(true, std::sync::atomic::Ordering::SeqCst);
+                let mut cfg = installer::load_agent_server_config(&data_root)
+                    .await
+                    .context("loading config in bootstrap test")?;
+                cfg.providers.insert(
+                    "claude-cli".to_string(),
+                    installer::AgentServerCommand {
+                        command: runtime_path_str.clone(),
+                        args: vec!["--shim".to_string()],
+                        dependencies: Vec::new(),
+                        managed: None,
+                    },
+                );
+                installer::save_agent_server_config(&data_root, &cfg)
+                    .await
+                    .context("saving config in bootstrap test")?;
+                Ok(())
+            }
+        })
+        .await
+        .expect("resolve runtime with bootstrap");
+
+        assert!(install_called.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(resolved.command_abs_path.contains("claude-cli-mock.sh"));
+        assert_eq!(resolved.args, vec!["--shim".to_string()]);
     }
 
     #[test]

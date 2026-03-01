@@ -17,6 +17,7 @@ fi
 
 "$python_cmd" - "$MATRIX_JSON" "$LOCK_JSON" <<'PY'
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -28,7 +29,23 @@ matrix = json.loads(matrix_path.read_text(encoding="utf-8"))
 lock = json.loads(lock_path.read_text(encoding="utf-8"))
 
 providers = {str(p.get("id", "")): p for p in (matrix.get("providers") or [])}
-required = [str(v) for v in (lock.get("required", {}).get("provider_ids") or []) if str(v)]
+env_required = [
+    value.strip()
+    for value in str(os.environ.get("ARCHIVE_REQUIRED_PROVIDERS", "")).split(",")
+    if value.strip()
+]
+lock_required = [str(v) for v in (lock.get("required", {}).get("provider_ids") or []) if str(v)]
+if env_required:
+    required = env_required
+elif lock_required:
+    required = lock_required
+else:
+    required = sorted(
+        provider_id
+        for provider_id, entry in providers.items()
+        if isinstance(entry.get("managed_install"), dict)
+        and str(entry.get("managed_install", {}).get("kind", "")).strip() == "archive"
+    )
 
 errors: list[str] = []
 

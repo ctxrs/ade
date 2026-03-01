@@ -33,12 +33,13 @@ const workspaceProviderVersionSources = {
 
 const providerUpstreamVersionSources = {
   amp: { kind: "npm", package: "@example/sdk" },
+  "claude-crp": { kind: "npm", package: "@anthropic-ai/claude-agent-sdk" },
   goose: { kind: "github_release", repo: "block/goose" },
   openhands: { kind: "github_release", repo: "All-Hands-AI/OpenHands" },
   pi: { kind: "npm", package: "@mariozechner/pi-coding-agent" },
 };
 
-const workspaceProviderIdsWithoutUpstreamTracking = new Set(["acp-crp-bridge", "claude-crp", "droid"]);
+const workspaceProviderIdsWithoutUpstreamTracking = new Set(["acp-crp-bridge", "droid"]);
 
 const githubReleaseCache = new Map();
 

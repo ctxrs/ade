@@ -117,3 +117,21 @@ test('cli path can evaluate fixture files', () => {
 
   assert.equal(result.ok, true);
 });
+
+test('allows empty required provider/runtime sets for minimal startup locks', () => {
+  const lock = baseLock();
+  lock.required.provider_ids = [];
+  lock.required.runtime_ids = [];
+  lock.required.targets.provider = [];
+  lock.required.targets.runtime = [];
+
+  const result = validateLockMatrixConsistency({
+    lock,
+    matrix: baseMatrix(),
+    hostOs: 'macos',
+    hostArch: 'aarch64',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.errors.length, 0);
+});
