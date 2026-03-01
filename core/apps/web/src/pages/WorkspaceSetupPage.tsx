@@ -165,6 +165,14 @@ type HarnessInstallRowState = {
   error?: string;
 };
 
+const looksLikeSshAuthFailure = (message: string): boolean => {
+  const lowered = message.toLowerCase();
+  return lowered.includes("permission denied")
+    || lowered.includes("publickey")
+    || lowered.includes("authentication failed")
+    || lowered.includes("too many authentication failures");
+};
+
 export default function WorkspaceSetupPage() {
   const navigate = useNavigate();
   const [currentStepKey, setCurrentStepKey] = useState("location");
@@ -173,6 +181,7 @@ export default function WorkspaceSetupPage() {
   const [sshRecents, setSshRecents] = useState<SshRecent[]>(() => loadSshRecents());
   const [remoteHostInput, setRemoteHostInput] = useState("");
   const [remotePasswordInput, setRemotePasswordInput] = useState("");
+  const [remotePasswordPromptVisible, setRemotePasswordPromptVisible] = useState(false);
   const [remoteStatus, setRemoteStatus] = useState<"idle" | "connecting" | "connected" | "error">("idle");
   const [remoteError, setRemoteError] = useState<string | null>(null);
   const [localLocationBusy, setLocalLocationBusy] = useState(false);
@@ -259,8 +268,10 @@ export default function WorkspaceSetupPage() {
   const harnessInstallScanPromiseRef = useRef<Promise<HarnessInstallProviderRow[]> | null>(null);
   const harnessInstallScanKeyRef = useRef<string | null>(null);
   const harnessInstallScanRunRef = useRef<FlowRunToken | null>(null);
+  const containerPrewarmInFlightRef = useRef<Record<string, true>>({});
   const pendingLocalLocationAdvanceRef = useRef(false);
   const locationAdvanceRunRef = useRef<FlowRunToken | null>(null);
+  const authImportHandledTargetKeyRef = useRef<string | null>(null);
   const currentStepKeyRef = useRef<string>("location");
   const previousStepIndexRef = useRef(0);
   const wizardStartedRef = useRef(false);
@@ -311,22 +322,6 @@ export default function WorkspaceSetupPage() {
       },
     ];
 
-    if (authImportStepVisible) {
-      out.push({
-        key: "auth-import",
-        title: "Import Existing Auth",
-        note: "Import existing provider credentials or add them later.",
-      });
-    }
-
-    if (titlingStepVisible) {
-      out.push({
-        key: "session-titling",
-        title: "Task Titling",
-        note: "Choose an LLM source for generating task titles.",
-      });
-    }
-
     out.push(
       {
         key: "container",
@@ -357,6 +352,25 @@ export default function WorkspaceSetupPage() {
         title: "Harness Downloads",
         note: "Choose which harness providers to download now.",
       },
+    );
+
+    if (authImportStepVisible) {
+      out.push({
+        key: "auth-import",
+        title: "Import Existing Auth",
+        note: "Import existing provider credentials or add them later.",
+      });
+    }
+
+    if (titlingStepVisible) {
+      out.push({
+        key: "session-titling",
+        title: "Task Titling",
+        note: "Choose an LLM source for generating task titles.",
+      });
+    }
+
+    out.push(
       {
         key: "source",
         title: "Source",
@@ -574,8 +588,6 @@ export default function WorkspaceSetupPage() {
       : "Skipped for now";
   const selectedHarnessInstallTarget: InstallTarget =
     selections.container && selections.container !== "no-container" ? "container" : "host";
-  const titlingProbeResolved = !selections.location || titlingProbeDone || !canProbeTitling;
-  const titlingFlowGateSatisfied = step.key === "location" || step.key === "auth-import" || titlingProbeResolved;
   const canAdvance = (!requiresSelection || hasSelection)
     && (!isRemoteStep || (
       hasRemoteHost
@@ -589,7 +601,6 @@ export default function WorkspaceSetupPage() {
     && (step.key !== "auth-import" || !authImportBusy)
     && (step.key !== "harness-downloads" || !harnessInstallBusy)
     && titlingStepCanAdvance
-    && titlingFlowGateSatisfied
     ;
   const showLaunchPanel = Boolean(launchSnapshot) && (creating || launchSnapshot?.state === "error");
   const currentLaunchPhaseLabel = launchPhaseLabel(launchSnapshot?.current_phase);
@@ -670,6 +681,39 @@ export default function WorkspaceSetupPage() {
     applyConnection(info);
     await waitForDaemonReady(15000);
   };
+
+  const kickoffContainerPrewarmInBackground = useCallback(async (locationOverride?: "local" | "remote") => {
+    const location = locationOverride ?? selections.location;
+    if (location !== "local" && location !== "remote") return;
+    if (!selections.container || selections.container === "no-container") return;
+    if (location === "remote") {
+      if (remoteStatusRef.current !== "connected") return;
+      if (!parsedRemote?.host) return;
+    }
+    const remoteKey = location === "remote"
+      ? `${parsedRemote?.user ?? ""}@${parsedRemote?.host ?? ""}:${parsedRemotePort ?? ""}:${remoteDataDirInput.trim()}`
+      : "local";
+    const key = `${location}:${selections.container}:${remoteKey}`;
+    if (containerPrewarmInFlightRef.current[key]) return;
+    containerPrewarmInFlightRef.current[key] = true;
+
+    try {
+      await connectDaemonForImport(location);
+      await startExecutionRuntimePrewarm();
+    } catch (err: unknown) {
+      delete containerPrewarmInFlightRef.current[key];
+      console.debug("container prewarm kickoff skipped/failed", messageFromError(err));
+      return;
+    }
+  }, [
+    connectDaemonForImport,
+    parsedRemote?.host,
+    parsedRemote?.user,
+    parsedRemotePort,
+    remoteDataDirInput,
+    selections.container,
+    selections.location,
+  ]);
 
   const messageFromError = (error: unknown): string =>
     error instanceof Error && error.message ? error.message : String(error);
@@ -1220,11 +1264,7 @@ export default function WorkspaceSetupPage() {
     return false;
   };
 
-  const nextStepAfterLocation = (candidateCount: number, titlingRequired: boolean | null): string => {
-    if (candidateCount > 0) return "auth-import";
-    if (titlingRequired) return "session-titling";
-    return "container";
-  };
+  const nextStepAfterLocation = (): string => "container";
 
   const onSelect = (stepKey: string, optionId: string) => {
     setCreateError(null);
@@ -1489,16 +1529,13 @@ export default function WorkspaceSetupPage() {
     pendingLocalLocationAdvanceRef.current = false;
     setLocalLocationBusy(true);
     void (async () => {
-      // Resolve both auth + titling before leaving Location so step topology stays stable.
       try {
-        const [candidates, titlingRequired] = await Promise.all([
-          scanAuthImportCandidatesForTarget("local"),
-          ensureTitlingProbeForCurrentTarget(),
-        ]);
+        void scanAuthImportCandidatesForTarget("local").catch(() => {});
+        void ensureTitlingProbeForCurrentTarget().catch(() => {});
         if (!isCurrentFlowRunToken(locationAdvanceRunRef.current, run)) return;
         if (selectedDaemonTargetKeyRef.current !== "local") return;
         if (currentStepKeyRef.current !== "location") return;
-        goToStepKey(nextStepAfterLocation(candidates.length, titlingRequired));
+        goToStepKey(nextStepAfterLocation());
       } finally {
         if (isCurrentFlowRunToken(locationAdvanceRunRef.current, run)) {
           setLocalLocationBusy(false);
@@ -1525,6 +1562,55 @@ export default function WorkspaceSetupPage() {
   ]);
 
   useEffect(() => {
+    const targetKey = selectedDaemonTargetKey;
+    if (!targetKey) {
+      authImportHandledTargetKeyRef.current = null;
+      return;
+    }
+    if (
+      authImportHandledTargetKeyRef.current
+      && authImportHandledTargetKeyRef.current !== targetKey
+    ) {
+      authImportHandledTargetKeyRef.current = null;
+    }
+  }, [selectedDaemonTargetKey]);
+
+  useEffect(() => {
+    if (!authImportStepVisible) return;
+    const targetKey = selectedDaemonTargetKey;
+    if (!targetKey) return;
+    if (authImportHandledTargetKeyRef.current === targetKey) return;
+    const currentKey = currentStepKeyRef.current;
+    if (currentKey === "location" || currentKey === "container" || currentKey === "harness-downloads" || currentKey === "auth-import") {
+      return;
+    }
+    goToStepKey("auth-import");
+  }, [authImportStepVisible, goToStepKey, selectedDaemonTargetKey]);
+
+  useEffect(() => {
+    if (!titlingStepVisible) return;
+    if (titlingSelectionComplete) return;
+    const targetKey = selectedDaemonTargetKey;
+    if (!targetKey) return;
+    const currentKey = currentStepKeyRef.current;
+    if (
+      currentKey === "location"
+      || currentKey === "container"
+      || currentKey === "harness-downloads"
+      || currentKey === "auth-import"
+      || currentKey === "session-titling"
+    ) {
+      return;
+    }
+    goToStepKey("session-titling");
+  }, [
+    goToStepKey,
+    selectedDaemonTargetKey,
+    titlingSelectionComplete,
+    titlingStepVisible,
+  ]);
+
+  useEffect(() => {
     if (selections.location) return;
     setAuthImportCandidates([]);
     setAuthImportSelected({});
@@ -1547,6 +1633,22 @@ export default function WorkspaceSetupPage() {
     scanHarnessInstallCandidatesForTarget,
     selections.location,
     selectedDaemonTargetKey,
+  ]);
+
+  useEffect(() => {
+    if (selections.container === "no-container" || !selections.container) return;
+    if (selections.location !== "local" && selections.location !== "remote") return;
+    if (selections.location === "remote") {
+      if (!parsedRemote?.host) return;
+      if (remoteStatus !== "connected") return;
+    }
+    void kickoffContainerPrewarmInBackground(selections.location);
+  }, [
+    kickoffContainerPrewarmInBackground,
+    parsedRemote?.host,
+    remoteStatus,
+    selections.container,
+    selections.location,
   ]);
 
   useEffect(() => {
@@ -1744,6 +1846,8 @@ export default function WorkspaceSetupPage() {
     setCreateError(null);
     remoteProfileAutoAppliedKeyRef.current = null;
     setRemoteHostInput(value);
+    setRemotePasswordInput("");
+    setRemotePasswordPromptVisible(false);
     setAuthImportScannedKey(null);
     setHarnessInstallScannedKey(null);
     if (remoteStatus !== "idle") {
@@ -1907,9 +2011,14 @@ export default function WorkspaceSetupPage() {
       }
       setAuthImportBusy(false);
     }
-    await ensureTitlingProbeForCurrentTarget();
+    const titlingRequired = await ensureTitlingProbeForCurrentTarget();
     if (currentStepKeyRef.current !== "auth-import") return;
-    goRelativeStep(1);
+    authImportHandledTargetKeyRef.current = selectedDaemonTargetKeyRef.current;
+    if (titlingRequired === true) {
+      goToStepKey("session-titling");
+      return;
+    }
+    goToStepKey("source");
   };
 
   const advanceFromHarnessDownloadsStep = async (
@@ -2037,6 +2146,7 @@ export default function WorkspaceSetupPage() {
             remoteStatusRef.current = "connected";
             setRemoteStatus("connected");
             setRemotePasswordInput("");
+            setRemotePasswordPromptVisible(false);
             const normalizedDataDir = remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null;
             setRemoteProfiles(upsertRemoteProfile(parsedRemote.host, parsedRemote.user ?? null, {
               remote_port: parsedRemotePort ?? 4399,
@@ -2054,38 +2164,34 @@ export default function WorkspaceSetupPage() {
             const nextRecents = upsertSshRecent(parsedRemote.host, parsedRemote.user ?? null);
             setSshRecents(nextRecents);
           } catch (err: unknown) {
+            const detail = messageFromError(err);
+            if (!remotePasswordPromptVisible && remotePasswordOnce === null && looksLikeSshAuthFailure(detail)) {
+              setRemotePasswordPromptVisible(true);
+              setRemoteStatus("idle");
+              setRemoteError(null);
+              return;
+            }
             setRemoteStatus("error");
-            setRemoteError(messageFromError(err));
+            setRemoteError(detail);
             return;
           }
         }
       }
 
-      let candidateCount = 0;
-      let titlingRequired: boolean | null = null;
       if (selections.location === "local") {
         setLocalLocationBusy(true);
         try {
-          // Keep next-step choice deterministic from resolved scan/probe outcomes.
-          const [candidates, required] = await Promise.all([
-            scanAuthImportCandidatesForTarget("local"),
-            ensureTitlingProbeForCurrentTarget(),
-          ]);
-          candidateCount = candidates.length;
-          titlingRequired = required;
+          void scanAuthImportCandidatesForTarget("local").catch(() => {});
+          void ensureTitlingProbeForCurrentTarget().catch(() => {});
         } finally {
           setLocalLocationBusy(false);
         }
       } else if (selections.location === "remote") {
-        const [candidates, required] = await Promise.all([
-          scanAuthImportCandidatesForTarget("remote"),
-          ensureTitlingProbeForCurrentTarget(),
-        ]);
-        candidateCount = candidates.length;
-        titlingRequired = required;
+        void scanAuthImportCandidatesForTarget("remote").catch(() => {});
+        void ensureTitlingProbeForCurrentTarget().catch(() => {});
       }
       if (currentStepKeyRef.current !== "location") return;
-      goToStepKey(nextStepAfterLocation(candidateCount, titlingRequired));
+      goToStepKey(nextStepAfterLocation());
       return;
     }
     if (step.key === "auth-import") {
@@ -2761,29 +2867,30 @@ export default function WorkspaceSetupPage() {
 	                        />
 	                      </label>
                     </div>
-                    <div className="wizard-input">
-                      <label>
-                        SSH password (one-time, optional)
-                        <input
-                          data-testid="wizard-remote-password-once"
-                          type="password"
-                          autoComplete="current-password"
-                          placeholder="Used only to install SSH key auth; never stored"
-                          value={remotePasswordInput}
-                          onChange={(e) => {
-                            setCreateError(null);
-                            setRemotePasswordInput(e.target.value);
-                            if (remoteStatus !== "idle") {
-                              setRemoteStatus("idle");
-                              setRemoteError(null);
-                            }
-                          }}
-                        />
-                      </label>
-                      <div className="wizard-note">
-                        If key auth fails, this password is used once to install your local SSH public key on the remote host.
+                    {remotePasswordPromptVisible ? (
+                      <div className="wizard-input">
+                        <label>
+                          SSH Password
+                          <input
+                            data-testid="wizard-remote-password-once"
+                            type="password"
+                            autoComplete="current-password"
+                            value={remotePasswordInput}
+                            onChange={(e) => {
+                              setCreateError(null);
+                              setRemotePasswordInput(e.target.value);
+                              if (remoteStatus !== "idle") {
+                                setRemoteStatus("idle");
+                                setRemoteError(null);
+                              }
+                            }}
+                          />
+                        </label>
+                        <div className="wizard-note">
+                          Used to install SSH key auth; never stored
+                        </div>
                       </div>
-                    </div>
+                    ) : null}
                     {/* Temporarily hiding location-step advanced remote fields.
                         Re-enable this block if we need manual remote port/data-dir controls again. */}
                     {/*

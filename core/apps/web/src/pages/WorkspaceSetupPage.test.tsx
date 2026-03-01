@@ -22,6 +22,7 @@ import {
   repoStatus,
   repoValidateDestination,
   startExecutionLaunch,
+  startExecutionRuntimePrewarm,
   updateSettings,
   updateWorkspaceExecutionConfig,
   updateWorkspaceMergeQueueConfig,
@@ -68,6 +69,7 @@ vi.mock("../api/client", async () => {
     repoValidateDestination: vi.fn(),
     repoStagingPath: vi.fn(),
     startExecutionLaunch: vi.fn(),
+    startExecutionRuntimePrewarm: vi.fn(),
     updateSettings: vi.fn(),
     updateWorkspaceExecutionConfig: vi.fn(),
     updateWorkspaceMergeQueueConfig: vi.fn(),
@@ -122,6 +124,29 @@ const selectLocalAndContinue = async () => {
   fireEvent.click(screen.getByTestId("wizard-option-location-local"));
   await waitFor(() => {
     expect(wizardStepKey()).not.toBe("location");
+  });
+};
+
+const advancePastContainerForHost = async () => {
+  await waitFor(() => {
+    expect(wizardStepKey()).toBe("container");
+  });
+  fireEvent.click(screen.getByTestId("wizard-option-container-no-container"));
+  await waitFor(() => {
+    expect(wizardStepKey()).not.toBe("container");
+  });
+  if (wizardStepKey() === "harness-downloads") {
+    fireEvent.click(screen.getByTestId("wizard-harness-skip"));
+  }
+};
+
+const advanceToTitlingStep = async () => {
+  await advancePastContainerForHost();
+  if (wizardStepKey() === "auth-import") {
+    fireEvent.click(screen.getByRole("button", { name: "Skip for now" }));
+  }
+  await waitFor(() => {
+    expect(wizardStepKey()).toBe("session-titling");
   });
 };
 
@@ -209,6 +234,17 @@ describe("WorkspaceSetupPage", () => {
     vi.mocked(startExecutionLaunch).mockResolvedValue({
       job_id: "job_test",
       workspace_id: "ws_test",
+      kind: "workspace_launch",
+      state: "ready",
+      current_phase: "ready",
+      phases: [],
+      logs: [],
+      error: null,
+    } as never);
+    vi.mocked(startExecutionRuntimePrewarm).mockResolvedValue({
+      job_id: "job_prewarm_test",
+      workspace_id: "00000000-0000-0000-0000-000000000000",
+      kind: "startup_prewarm",
       state: "ready",
       current_phase: "ready",
       phases: [],
@@ -249,7 +285,7 @@ describe("WorkspaceSetupPage", () => {
     });
   });
 
-  it("shows local progress while local preflight checks are running", async () => {
+  it("advances to container without waiting for local preflight checks", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     let resolveScan: ((value: { candidates: never[] }) => void) | null = null;
     const pendingScan = new Promise<{ candidates: never[] }>((resolve) => {
@@ -261,18 +297,16 @@ describe("WorkspaceSetupPage", () => {
     await screen.findByTestId("workspace-setup");
     fireEvent.click(screen.getByTestId("wizard-option-location-local"));
 
-    expect(await screen.findByTestId("wizard-location-local-progress")).toBeInTheDocument();
-    expect(screen.getByTestId("wizard-next")).toBeDisabled();
-    expect(screen.getByTestId("wizard-next")).toHaveTextContent("Working...");
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+    });
 
     await act(async () => {
       resolveScan?.({ candidates: [] });
       await pendingScan;
     });
 
-    await waitFor(() => {
-      expect(wizardStepKey()).not.toBe("location");
-    });
+    expect(wizardStepKey()).toBe("container");
   });
 
   it("shows harness downloads step after container when downloadable providers are missing", async () => {
@@ -569,10 +603,14 @@ describe("WorkspaceSetupPage", () => {
         password_once: null,
       });
     });
+    expect(screen.queryByTestId("wizard-remote-password-once")).not.toBeInTheDocument();
   });
 
-  it("passes one-time SSH password during remote verification", async () => {
+  it("asks for one-time SSH password only after key-auth failure", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(desktopTestSsh)
+      .mockRejectedValueOnce(new Error("ssh failed to probe remote platform: Permission denied (publickey,password)."))
+      .mockResolvedValueOnce();
     renderPage();
     await screen.findByTestId("workspace-setup");
 
@@ -580,13 +618,24 @@ describe("WorkspaceSetupPage", () => {
     fireEvent.change(await screen.findByTestId("wizard-remote-host"), {
       target: { value: "devbox.example" },
     });
+    expect(screen.queryByTestId("wizard-remote-password-once")).not.toBeInTheDocument();
+
+    const nextButton = screen.getByTestId("wizard-next");
+    fireEvent.click(nextButton);
+    await screen.findByTestId("wizard-remote-password-once");
+    expect(screen.getByText("Used to install SSH key auth; never stored")).toBeInTheDocument();
+    expect(desktopTestSsh).toHaveBeenNthCalledWith(1, {
+      host: "devbox.example",
+      user: null,
+      password_once: null,
+    });
+
     fireEvent.change(screen.getByTestId("wizard-remote-password-once"), {
       target: { value: "hunter2" },
     });
-
-    fireEvent.click(screen.getByTestId("wizard-next"));
+    fireEvent.click(nextButton);
     await waitFor(() => {
-      expect(desktopTestSsh).toHaveBeenCalledWith({
+      expect(desktopTestSsh).toHaveBeenNthCalledWith(2, {
         host: "devbox.example",
         user: null,
         password_once: "hunter2",
@@ -615,7 +664,7 @@ describe("WorkspaceSetupPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("does not auto-advance stale local prefetch after switching to remote", async () => {
+  it("does not regress step when stale local prefetch resolves after advancing", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     let resolveScan: ((value: { candidates: never[] }) => void) | null = null;
     const pendingScan = new Promise<{ candidates: never[] }>((resolve) => {
@@ -628,28 +677,16 @@ describe("WorkspaceSetupPage", () => {
 
     fireEvent.click(screen.getByTestId("wizard-option-location-local"));
     await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
       expect(listProviderAuthImportCandidates).toHaveBeenCalled();
     });
-    fireEvent.click(screen.getByTestId("wizard-option-location-remote"));
-    expect(wizardStepKey()).toBe("location");
 
     await act(async () => {
       resolveScan?.({ candidates: [] });
       await pendingScan;
     });
 
-    expect(wizardStepKey()).toBe("location");
-    fireEvent.change(screen.getByTestId("wizard-remote-host"), {
-      target: { value: "devbox.example" },
-    });
-    fireEvent.click(screen.getByTestId("wizard-next"));
-    await waitFor(() => {
-      expect(desktopTestSsh).toHaveBeenCalledWith({
-        host: "devbox.example",
-        user: null,
-        password_once: null,
-      });
-    });
+    expect(wizardStepKey()).toBe("container");
   });
 
   it("shows destination validation errors on source next before create", async () => {
@@ -811,6 +848,7 @@ describe("WorkspaceSetupPage", () => {
     renderPage();
     await screen.findByTestId("workspace-setup");
     await selectLocalAndContinue();
+    await advancePastContainerForHost();
 
     await waitFor(() => {
       expect(wizardStepKey()).toBe("auth-import");
@@ -845,6 +883,7 @@ describe("WorkspaceSetupPage", () => {
     renderPage();
     await screen.findByTestId("workspace-setup");
     await selectLocalAndContinue();
+    await advancePastContainerForHost();
 
     await waitFor(() => {
       expect(wizardStepKey()).toBe("auth-import");
@@ -891,6 +930,7 @@ describe("WorkspaceSetupPage", () => {
     renderPage();
     await screen.findByTestId("workspace-setup");
     await selectLocalAndContinue();
+    await advancePastContainerForHost();
 
     await waitFor(() => {
       expect(wizardStepKey()).toBe("auth-import");
@@ -907,7 +947,7 @@ describe("WorkspaceSetupPage", () => {
     });
   });
 
-  it("probes titling before leaving location when auth candidates exist", async () => {
+  it("probes titling in background while auth-import is available", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(getSettings).mockResolvedValue({ title_generation: null } as never);
     vi.mocked(listProviderAuthImportCandidates).mockResolvedValue({
@@ -928,6 +968,7 @@ describe("WorkspaceSetupPage", () => {
     renderPage();
     await screen.findByTestId("workspace-setup");
     await selectLocalAndContinue();
+    await advancePastContainerForHost();
 
     await waitFor(() => {
       expect(wizardStepKey()).toBe("auth-import");
@@ -962,6 +1003,7 @@ describe("WorkspaceSetupPage", () => {
     renderPage();
     await screen.findByTestId("workspace-setup");
     await selectLocalAndContinue();
+    await advancePastContainerForHost();
 
     await waitFor(() => {
       expect(wizardStepKey()).toBe("auth-import");
@@ -1004,6 +1046,7 @@ describe("WorkspaceSetupPage", () => {
     renderPage();
     await screen.findByTestId("workspace-setup");
     await selectLocalAndContinue();
+    await advancePastContainerForHost();
 
     await waitFor(() => {
       expect(wizardStepKey()).toBe("auth-import");
@@ -1056,10 +1099,11 @@ describe("WorkspaceSetupPage", () => {
 
     fireEvent.click(screen.getByTestId("wizard-option-location-local"));
     await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
       expect(listProviderAuthImportCandidates).toHaveBeenCalled();
     });
 
-    fireEvent.click(screen.getByTestId("wizard-next"));
+    fireEvent.click(screen.getByTestId("wizard-option-container-no-container"));
 
     await act(async () => {
       resolveScan?.({
@@ -1082,10 +1126,9 @@ describe("WorkspaceSetupPage", () => {
     await waitFor(() => {
       expect(wizardStepKey()).toBe("auth-import");
     });
-    expect(wizardStepKey()).not.toBe("container");
   });
 
-  it("waits for titling probe even when no auth candidates are selected", async () => {
+  it("continues to titling when no auth candidates are selected", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(listProviderAuthImportCandidates).mockResolvedValue({
       candidates: [
@@ -1106,6 +1149,7 @@ describe("WorkspaceSetupPage", () => {
     renderPage();
     await screen.findByTestId("workspace-setup");
     await selectLocalAndContinue();
+    await advancePastContainerForHost();
 
     await waitFor(() => {
       expect(wizardStepKey()).toBe("auth-import");
@@ -1128,12 +1172,44 @@ describe("WorkspaceSetupPage", () => {
     renderPage();
     await screen.findByTestId("workspace-setup");
     await selectLocalAndContinue();
+    await advancePastContainerForHost();
+
+    if (wizardStepKey() === "auth-import") {
+      fireEvent.click(screen.getByRole("button", { name: "Skip for now" }));
+    }
 
     await waitFor(() => {
       expect(wizardStepKey()).toBe("session-titling");
     });
     expect(screen.getByTestId("wizard-titling-mode-remote")).toBeInTheDocument();
     expect(screen.getByTestId("wizard-titling-mode-local")).toBeInTheDocument();
+  });
+
+  it("redirects back to session titling when async probe later marks titling as required", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(listProviderAuthImportCandidates).mockResolvedValue({ candidates: [] } as never);
+    let resolveSettings: ((value: unknown) => void) | null = null;
+    const pendingSettings = new Promise((resolve) => {
+      resolveSettings = resolve;
+    });
+    vi.mocked(getSettings).mockImplementation(() => pendingSettings as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    await selectLocalAndContinue();
+    await advancePastContainerForHost();
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("source");
+    });
+
+    await act(async () => {
+      resolveSettings?.({ title_generation: null });
+    });
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("session-titling");
+    });
   });
 
   it("does not show local titling download banner when local mode is disabled", async () => {
@@ -1202,10 +1278,7 @@ describe("WorkspaceSetupPage", () => {
     renderPage();
     await screen.findByTestId("workspace-setup");
     await selectLocalAndContinue();
-
-    await waitFor(() => {
-      expect(wizardStepKey()).toBe("session-titling");
-    });
+    await advanceToTitlingStep();
     fireEvent.click(screen.getByTestId("wizard-titling-mode-remote"));
 
     const apiKeyInput = screen.getByTestId("wizard-titling-remote-api-key");
@@ -1248,10 +1321,7 @@ describe("WorkspaceSetupPage", () => {
     renderPage();
     await screen.findByTestId("workspace-setup");
     await selectLocalAndContinue();
-
-    await waitFor(() => {
-      expect(wizardStepKey()).toBe("session-titling");
-    });
+    await advanceToTitlingStep();
     fireEvent.click(screen.getByTestId("wizard-titling-mode-remote"));
     fireEvent.change(screen.getByTestId("wizard-titling-remote-base-url"), {
       target: { value: "https://api.example/v1" },
@@ -1275,7 +1345,7 @@ describe("WorkspaceSetupPage", () => {
       }));
     });
     await waitFor(() => {
-      expect(wizardStepKey()).toBe("container");
+      expect(wizardStepKey()).toBe("source");
     });
   });
 
@@ -1286,10 +1356,7 @@ describe("WorkspaceSetupPage", () => {
     renderPage();
     await screen.findByTestId("workspace-setup");
     await selectLocalAndContinue();
-
-    await waitFor(() => {
-      expect(wizardStepKey()).toBe("session-titling");
-    });
+    await advanceToTitlingStep();
     const localButton = screen.getByTestId("wizard-titling-mode-local");
     expect(localButton).toBeDisabled();
     expect(screen.getByText("Coming soon: download a small LLM to run locally for generating task titles.")).toBeInTheDocument();
@@ -1305,10 +1372,7 @@ describe("WorkspaceSetupPage", () => {
     renderPage();
     await screen.findByTestId("workspace-setup");
     await selectLocalAndContinue();
-
-    await waitFor(() => {
-      expect(wizardStepKey()).toBe("session-titling");
-    });
+    await advanceToTitlingStep();
     expect(screen.queryByTestId("wizard-titling-local-model-id")).not.toBeInTheDocument();
     expect(screen.queryByTestId("wizard-titling-local-install")).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId("wizard-titling-mode-remote"));
@@ -1322,14 +1386,11 @@ describe("WorkspaceSetupPage", () => {
     renderPage();
     await screen.findByTestId("workspace-setup");
     await selectLocalAndContinue();
-
-    await waitFor(() => {
-      expect(wizardStepKey()).toBe("session-titling");
-    });
+    await advanceToTitlingStep();
     fireEvent.click(screen.getByTestId("wizard-titling-skip"));
 
     await waitFor(() => {
-      expect(wizardStepKey()).toBe("container");
+      expect(wizardStepKey()).toBe("source");
     });
     expect(updateSettings).not.toHaveBeenCalled();
   });
@@ -1402,14 +1463,18 @@ describe("WorkspaceSetupPage", () => {
 
     fireEvent.click(screen.getByTestId("wizard-option-location-local"));
     await waitFor(() => {
-      expect(wizardStepKey()).toBe("session-titling");
-    });
-    fireEvent.click(screen.getByTestId("wizard-titling-skip"));
-
-    await waitFor(() => {
       expect(wizardStepKey()).toBe("container");
     });
     fireEvent.click(screen.getByTestId("wizard-option-container-no-container"));
+    if (wizardStepKey() === "harness-downloads") {
+      fireEvent.click(screen.getByTestId("wizard-harness-skip"));
+    }
+    if (wizardStepKey() === "auth-import") {
+      fireEvent.click(screen.getByRole("button", { name: "Skip for now" }));
+    }
+    if (wizardStepKey() === "session-titling") {
+      fireEvent.click(screen.getByTestId("wizard-titling-skip"));
+    }
     fireEvent.click(screen.getByTestId("wizard-next"));
 
     await waitFor(() => {
