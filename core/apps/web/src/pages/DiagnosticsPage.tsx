@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useLocation } from "react-router-dom";
 import {
   applyDaemonDesktopConnection,
   appendDesktopLog,
@@ -83,6 +83,7 @@ const joinBaseAndPath = (baseUrl: string, urlPath: string): string => {
 };
 
 export default function DiagnosticsPage() {
+  const location = useLocation();
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
   const [lspStatus, setLspStatus] = useState<LspStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -157,7 +158,7 @@ export default function DiagnosticsPage() {
     }
   };
 
-  const onCheckUpdates = async () => {
+  const onCheckUpdates = useCallback(async () => {
     setError(null);
     setNotice(null);
     setUpdateBusy(true);
@@ -187,7 +188,13 @@ export default function DiagnosticsPage() {
     } finally {
       setUpdateBusy(false);
     }
-  };
+  }, [desktop, desktopPlatform]);
+
+  useEffect(() => {
+    const shouldAutoCheck = new URLSearchParams(location.search).get("check_updates") === "1";
+    if (!shouldAutoCheck) return;
+    void onCheckUpdates();
+  }, [location.search, onCheckUpdates]);
 
   const onDownloadUpdate = async () => {
     setError(null);

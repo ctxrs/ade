@@ -41,6 +41,7 @@ pub(super) const CMD_HELP_KEYBOARD_SHORTCUTS: &str = "help.keyboard-shortcuts";
 pub(super) const CMD_HELP_OPEN_LOGS_FOLDER: &str = "help.open-logs-folder";
 pub(super) const CMD_HELP_REPORT_ISSUE: &str = "help.report-issue";
 pub(super) const CMD_HELP_DIAGNOSTICS: &str = "help.diagnostics";
+pub(super) const CMD_HELP_CHECK_FOR_UPDATES: &str = "help.check-for-updates";
 
 #[derive(Debug, Clone, Serialize)]
 struct DesktopMenuActionEvent {
@@ -466,6 +467,13 @@ fn build_help_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wr
         Some("CmdOrCtrl+/"),
         true,
     )?;
+    let check_for_updates = menu_item(
+        app,
+        CMD_HELP_CHECK_FOR_UPDATES,
+        "Check for Updates...",
+        None,
+        true,
+    )?;
     let open_logs_folder = menu_item(
         app,
         CMD_HELP_OPEN_LOGS_FOLDER,
@@ -481,6 +489,7 @@ fn build_help_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wr
         let submenu_id = macos_help_submenu_id().unwrap_or("help");
         return SubmenuBuilder::with_id(app, submenu_id, "Help")
             .item(&keyboard_shortcuts)
+            .item(&check_for_updates)
             .item(&open_logs_folder)
             .item(&diagnostics)
             .item(&report_issue)
@@ -491,6 +500,7 @@ fn build_help_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wr
     {
         return SubmenuBuilder::new(app, "Help")
             .item(&keyboard_shortcuts)
+            .item(&check_for_updates)
             .item(&open_logs_folder)
             .item(&diagnostics)
             .item(&report_issue)
@@ -609,6 +619,7 @@ pub(super) fn is_menu_command_id(id: &str) -> bool {
             | CMD_HELP_OPEN_LOGS_FOLDER
             | CMD_HELP_REPORT_ISSUE
             | CMD_HELP_DIAGNOSTICS
+            | CMD_HELP_CHECK_FOR_UPDATES
     )
 }
 

@@ -179,15 +179,31 @@ fn resolve_native_updater_config(channel: &str) -> Result<DesktopNativeUpdaterCo
         .ok()
         .and_then(|raw| expand_updater_endpoint_template(&raw, channel))
         .unwrap_or(endpoint_default);
-    let pubkey = std::env::var("CTX_DESKTOP_UPDATER_PUBKEY")
-        .ok()
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty());
+    let pubkey = resolve_updater_pubkey(
+        std::env::var("CTX_DESKTOP_UPDATER_PUBKEY").ok(),
+        option_env!("CTX_DESKTOP_UPDATER_PUBKEY"),
+    );
     Ok(DesktopNativeUpdaterConfig {
         target: target.to_string(),
         endpoint,
         pubkey,
     })
+}
+
+fn normalize_nonempty(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn resolve_updater_pubkey(runtime_value: Option<String>, build_value: Option<&str>) -> Option<String> {
+    runtime_value
+        .as_deref()
+        .and_then(normalize_nonempty)
+        .or_else(|| build_value.and_then(normalize_nonempty))
 }
 
 fn default_download_base_url() -> String {
@@ -271,5 +287,27 @@ mod tests {
     fn normalize_download_id_rejects_invalid_chars() {
         let value = normalize_download_id(Some("abc def"));
         assert!(value.is_none());
+    }
+
+    #[test]
+    fn resolve_updater_pubkey_prefers_runtime_value() {
+        let key = resolve_updater_pubkey(
+            Some(" runtime-key ".to_string()),
+            Some("build-key"),
+        )
+        .expect("resolved key");
+        assert_eq!(key, "runtime-key");
+    }
+
+    #[test]
+    fn resolve_updater_pubkey_falls_back_to_build_value() {
+        let key = resolve_updater_pubkey(Some("  ".to_string()), Some(" build-key "))
+            .expect("resolved key");
+        assert_eq!(key, "build-key");
+    }
+
+    #[test]
+    fn resolve_updater_pubkey_returns_none_when_both_sources_empty() {
+        assert!(resolve_updater_pubkey(Some("".to_string()), Some("  ")).is_none());
     }
 }

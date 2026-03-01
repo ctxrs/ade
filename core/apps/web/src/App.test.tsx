@@ -380,6 +380,7 @@ test("desktop menu action forwards workbench-scoped commands to the web menu bus
     "help.diagnostics",
     "go.agent-harnesses",
     "help.keyboard-shortcuts",
+    "help.check-for-updates",
     "help.open-logs-folder",
   ]);
   const forwardedCommands = DESKTOP_MENU_COMMAND_IDS.filter((commandId) => !appHandledCommands.has(commandId));
@@ -427,5 +428,30 @@ test("desktop menu report issue opens external tracker link", async () => {
     expect(vi.mocked(openExternalLink)).toHaveBeenCalledWith(
       "https://github.com/context-labs/ctx/issues/new",
     );
+  });
+});
+
+test("desktop menu check-for-updates navigates to diagnostics auto-check route", async () => {
+  vi.mocked(isDesktopApp).mockReturnValue(true);
+  window.history.pushState({}, "", "/workspaces/ws-654");
+
+  render(<App />);
+  expect(await screen.findByText("Workbench Screen")).toBeInTheDocument();
+
+  const handler = await waitFor(() => {
+    const value = desktopHandlers.get("desktop_menu_action");
+    if (!value) {
+      throw new Error("desktop_menu_action handler not ready");
+    }
+    return value;
+  });
+
+  act(() => {
+    handler({ commandId: "help.check-for-updates" });
+  });
+
+  await waitFor(() => {
+    expect(window.location.pathname).toBe("/diagnostics");
+    expect(new URLSearchParams(window.location.search).get("check_updates")).toBe("1");
   });
 });

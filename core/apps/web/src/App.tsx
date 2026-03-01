@@ -259,6 +259,15 @@ function DesktopMenuBridge() {
             note: "navigate-settings-keyboard-shortcuts",
           });
           return;
+        case "help.check-for-updates":
+          navigate("/diagnostics?check_updates=1");
+          emitMenuTrace({
+            commandId,
+            layer: "app",
+            status: "handled",
+            note: "navigate-diagnostics-check-updates",
+          });
+          return;
         case "help.open-logs-folder":
           void openLogsFolder().catch(() => {});
           emitMenuTrace({ commandId, layer: "app", status: "handled", note: "open-logs-folder" });

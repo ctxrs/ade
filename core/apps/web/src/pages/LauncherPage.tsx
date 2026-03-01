@@ -17,6 +17,7 @@ import {
 } from "../utils/desktop";
 import { errorMessage } from "../utils/errorMessage";
 import LauncherBrand from "../components/LauncherBrand";
+import UpdateNoticeBanner from "../components/UpdateNoticeBanner";
 import { loadLauncherRecents, upsertLauncherRecent, type LauncherRecentEntry } from "../state/launcherRecentsStore";
 
 function applyConnection(info: DesktopConnectionInfo) {
@@ -170,6 +171,7 @@ export default function LauncherPage() {
 
   return (
     <div className="launcher-shell launcher-shell--crt">
+      <UpdateNoticeBanner />
       <LauncherBrand fullScreen>
         <div className="launcher-panel">
           <div className="launcher-actions">

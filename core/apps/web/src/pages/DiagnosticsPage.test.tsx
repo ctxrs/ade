@@ -56,10 +56,10 @@ vi.mock("../utils/analytics", () => ({
   setPendingDownloadAttributionId: vi.fn(async () => true),
 }));
 
-const renderPage = () =>
+const renderPage = (route = "/diagnostics") =>
   render(
     <MemoryRouter
-      initialEntries={["/diagnostics"]}
+      initialEntries={[route]}
       future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
     >
       <DiagnosticsPage />
@@ -357,6 +357,25 @@ describe("DiagnosticsPage updates", () => {
         base_url: "http://127.0.0.1:4401",
         token: "tok-new",
       });
+    });
+  });
+
+  it("auto-runs update check when opened with check_updates query", async () => {
+    vi.mocked(checkUpdates).mockResolvedValue({
+      channel: "stable",
+      base_url: "https://api.example/functions/v1",
+      platform: "windows-x64",
+      current_version: "1.0.0",
+      latest_version: "1.0.1",
+      update_available: true,
+      platform_supported: true,
+      manifest: { platforms: {} },
+    });
+
+    renderPage("/diagnostics?check_updates=1");
+
+    await waitFor(() => {
+      expect(checkUpdates).toHaveBeenCalledTimes(1);
     });
   });
 });
