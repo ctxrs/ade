@@ -327,16 +327,23 @@ const ensureBundledContainerAssets = () => {
     && typeof entry.bin === "string"
     && entry.bin.trim().length > 0
   );
-  if (!podmanRuntime) {
-    throw new Error(
-      `bundled podman runtime missing for ${hostOs}/${hostArch} in ${manifestPath}`,
+  if (podmanRuntime) {
+    const podmanBinPath = path.join(BUNDLES_DIR, podmanRuntime.root, podmanRuntime.bin);
+    if (!fs.existsSync(podmanBinPath)) {
+      throw new Error(
+        `bundled podman binary missing at ${podmanBinPath}; run pnpm -C core desktop:prep:release`,
+      );
+    }
+  } else {
+    const allowSystemPodman = ["1", "true", "yes"].includes(
+      String(process.env.CTX_ALLOW_SYSTEM_PODMAN || "0").trim().toLowerCase(),
     );
-  }
-  const podmanBinPath = path.join(BUNDLES_DIR, podmanRuntime.root, podmanRuntime.bin);
-  if (!fs.existsSync(podmanBinPath)) {
-    throw new Error(
-      `bundled podman binary missing at ${podmanBinPath}; run pnpm -C core desktop:prep:release`,
-    );
+    const systemPodman = spawnSync("which", ["podman"], { encoding: "utf8" });
+    if (!(allowSystemPodman && systemPodman.status === 0)) {
+      throw new Error(
+        `container scenarios require either bundled podman (${hostOs}/${hostArch}) or system podman with CTX_ALLOW_SYSTEM_PODMAN=1`,
+      );
+    }
   }
 
   const harnessImage = images.find((entry) =>
@@ -347,15 +354,17 @@ const ensureBundledContainerAssets = () => {
     && typeof entry.tar === "string"
     && entry.tar.trim().length > 0
   );
-  if (!harnessImage) {
-    throw new Error(
-      `bundled harness image metadata missing for linux/${hostArch} in ${manifestPath}`,
-    );
-  }
-  const harnessImageTar = path.join(BUNDLES_DIR, harnessImage.tar);
-  if (!fs.existsSync(harnessImageTar)) {
-    throw new Error(
-      `bundled harness image tar missing at ${harnessImageTar}; run pnpm -C core desktop:prep:release`,
+  if (harnessImage) {
+    const harnessImageTar = path.join(BUNDLES_DIR, harnessImage.tar);
+    if (!fs.existsSync(harnessImageTar)) {
+      throw new Error(
+        `bundled harness image tar missing at ${harnessImageTar}; run pnpm -C core desktop:prep:release`,
+      );
+    }
+  } else {
+    // Minimal bundle mode allows runtime pull for the default harness image.
+    console.error(
+      `[wdio] bundled harness image metadata missing for linux/${hostArch}; relying on runtime image pull`,
     );
   }
 };
@@ -496,6 +505,10 @@ exports.config = {
     if (!process.env.CTX_BUNDLE_DIR) {
       process.env.CTX_BUNDLE_DIR = BUNDLES_DIR;
     }
+    // Container automation can run with either bundled podman or host podman fallback.
+    if (RUNS_CONTAINER_SCENARIOS) {
+      process.env.CTX_ALLOW_SYSTEM_PODMAN = process.env.CTX_ALLOW_SYSTEM_PODMAN || "1";
+    }
     if (RUNS_CONTAINER_SCENARIOS) {
       ensureBundledContainerAssets();
     }
@@ -503,10 +516,6 @@ exports.config = {
     // Launch the app directly into the wizard route to reduce test flakiness.
     process.env.CTX_DESKTOP_START_PATH = "/workspace-setup";
     process.env.CTX_SEED_CODEX_AUTH_FROM_HOST = process.env.CTX_SEED_CODEX_AUTH_FROM_HOST || "1";
-    // Linux automation uses host Podman in CI/dev boxes; allow daemon fallback to system Podman.
-    if (process.platform === "linux") {
-      process.env.CTX_ALLOW_SYSTEM_PODMAN = process.env.CTX_ALLOW_SYSTEM_PODMAN || "1";
-    }
     // Safety default: don't start/restart remote daemons unless explicitly enabled.
     if (SSH_NO_START_REMOTE) {
       process.env.CTX_DESKTOP_SSH_NO_START_REMOTE = "1";

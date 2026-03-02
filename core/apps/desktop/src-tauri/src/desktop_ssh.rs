@@ -211,8 +211,8 @@ pub(super) async fn desktop_test_ssh(req: DesktopSshTestReq) -> Result<(), Strin
             user.as_deref(),
             password_once.as_deref(),
         )
-            .map(|_| ())
-            .map_err(to_err)
+        .map(|_| ())
+        .map_err(to_err)
     })
     .await
     .map_err(|e| format!("ssh check failed: {e}"))?
@@ -682,7 +682,7 @@ fn bootstrap_ssh_key_auth_with_password(
         install_cmd,
         Some(key_payload.as_bytes()),
     )
-        .context("running password-once SSH bootstrap")?;
+    .context("running password-once SSH bootstrap")?;
     if output.status.success() {
         return Ok(());
     }
@@ -730,13 +730,17 @@ fn ensure_default_ssh_public_key() -> Result<String> {
                 .output()
                 .context("deriving public key from existing ~/.ssh/id_ed25519")?;
             if !derive_output.status.success() {
-                let stderr = String::from_utf8_lossy(&derive_output.stderr).trim().to_string();
+                let stderr = String::from_utf8_lossy(&derive_output.stderr)
+                    .trim()
+                    .to_string();
                 if stderr.is_empty() {
                     anyhow::bail!("unable to derive ~/.ssh/id_ed25519.pub");
                 }
                 anyhow::bail!("unable to derive ~/.ssh/id_ed25519.pub: {stderr}");
             }
-            let derived = String::from_utf8_lossy(&derive_output.stdout).trim().to_string();
+            let derived = String::from_utf8_lossy(&derive_output.stdout)
+                .trim()
+                .to_string();
             if derived.is_empty() {
                 anyhow::bail!("derived ~/.ssh/id_ed25519.pub is empty");
             }
@@ -758,7 +762,9 @@ fn ensure_default_ssh_public_key() -> Result<String> {
                 .output()
                 .context("generating ~/.ssh/id_ed25519 for SSH password bootstrap")?;
             if !generate_output.status.success() {
-                let stderr = String::from_utf8_lossy(&generate_output.stderr).trim().to_string();
+                let stderr = String::from_utf8_lossy(&generate_output.stderr)
+                    .trim()
+                    .to_string();
                 if stderr.is_empty() {
                     anyhow::bail!("unable to generate ~/.ssh/id_ed25519");
                 }
@@ -771,15 +777,21 @@ fn ensure_default_ssh_public_key() -> Result<String> {
         .with_context(|| format!("reading {}", public_key_path.display()))?;
     let trimmed = public_key.trim();
     if trimmed.is_empty() {
-        anyhow::bail!("local SSH public key is empty at {}", public_key_path.display());
+        anyhow::bail!(
+            "local SSH public key is empty at {}",
+            public_key_path.display()
+        );
     }
     Ok(trimmed.to_string())
 }
 
 fn write_ssh_askpass_script() -> Result<PathBuf> {
     let path = std::env::temp_dir().join(format!("ctx-ssh-askpass-{}.sh", uuid::Uuid::new_v4()));
-    std::fs::write(&path, "#!/bin/sh\nprintf '%s\\n' \"$CTX_SSH_PASSWORD_ONCE\"\n")
-        .with_context(|| format!("writing SSH askpass helper at {}", path.display()))?;
+    std::fs::write(
+        &path,
+        "#!/bin/sh\nprintf '%s\\n' \"$CTX_SSH_PASSWORD_ONCE\"\n",
+    )
+    .with_context(|| format!("writing SSH askpass helper at {}", path.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -1657,8 +1669,7 @@ mod remote_path_validation_tests {
         #[cfg(windows)]
         let mut cmd = {
             let mut c = Command::new("cmd");
-            c.arg("/C")
-                .arg("echo remote-ssh-failed 1>&2 & exit /b 19");
+            c.arg("/C").arg("echo remote-ssh-failed 1>&2 & exit /b 19");
             c
         };
         #[cfg(not(windows))]
@@ -1673,7 +1684,10 @@ mod remote_path_validation_tests {
         let child = cmd.spawn().expect("spawn failure fixture");
         let err = reap_password_once_child_after_input_error(child, "stdin write failed");
         let msg = err.to_string();
-        assert!(msg.contains("stdin write failed"), "unexpected error: {msg}");
+        assert!(
+            msg.contains("stdin write failed"),
+            "unexpected error: {msg}"
+        );
         assert!(
             msg.contains("password-once ssh exited with status"),
             "missing process status detail: {msg}"

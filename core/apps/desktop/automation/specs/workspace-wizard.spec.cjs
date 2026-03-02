@@ -153,16 +153,38 @@ const waitForStep = async (key, timeoutMs = 30000) => {
   });
 };
 
-const waitForStepChange = async (fromKey, timeoutMs = 15000) => {
-  let last = null;
-  await browser.waitUntil(async () => {
-    last = await currentStepKey();
-    return last !== fromKey;
-  }, {
-    timeout: timeoutMs,
-    timeoutMsg: `expected step to change from '${fromKey}', still '${last || "unknown"}'`,
-  });
-  return await currentStepKey();
+const waitForSourceExitOrWorkspaceRoute = async (timeoutMs = 30000) => {
+  const started = Date.now();
+  let lastStep = null;
+  let lastPath = "";
+  while (Date.now() - started < timeoutMs) {
+    try {
+      const state = await browser.execute(() => {
+        const root = document.querySelector('[data-testid="workspace-setup"]');
+        const step = root ? root.getAttribute("data-step-key") : null;
+        return {
+          step,
+          pathname: window.location.pathname,
+        };
+      });
+      lastStep = state?.step || null;
+      lastPath = String(state?.pathname || "");
+      if (lastPath.startsWith("/workspaces/")) {
+        const id = lastPath.split("/")[2] || "";
+        if (!id) throw new Error("workspace id missing from route");
+        return { kind: "workspace", workspaceId: id };
+      }
+      if (lastStep && lastStep !== "source") {
+        return { kind: "step", step: lastStep };
+      }
+    } catch {
+      // Best effort during route transitions where the webview can be mid-navigation.
+    }
+    await browser.pause(100);
+  }
+  throw new Error(
+    `expected source transition to next step or workspace route; last_step='${lastStep || "unknown"}' last_path='${lastPath || "<none>"}'`,
+  );
 };
 
 const clickOption = async (stepKey, optionId) => {
@@ -252,22 +274,29 @@ const clickNextIfEnabled = async () => {
   });
 };
 
-const clickCreate = async () => {
+const clickCreate = async (timeoutMs = 30000) => {
   await waitForTestId("wizard-create");
-  const state = await browser.execute(() => {
-    const el = document.querySelector('[data-testid="wizard-create"]');
-    if (!(el instanceof HTMLButtonElement)) return { present: false, disabled: null, text: "" };
-    return {
-      present: true,
-      disabled: Boolean(el.disabled),
-      text: String(el.textContent || "").trim(),
-    };
-  });
-  if (!state?.present) throw new Error("wizard-create button missing at confirm step");
-  if (state?.disabled) {
-    throw new Error(`wizard-create button disabled at confirm step (label='${state.text || ""}')`);
+  const deadline = Date.now() + timeoutMs;
+  let lastState = { present: false, disabled: null, text: "" };
+  while (Date.now() < deadline) {
+    const state = await browser.execute(() => {
+      const el = document.querySelector('[data-testid="wizard-create"]');
+      if (!(el instanceof HTMLButtonElement)) return { present: false, disabled: null, text: "" };
+      return {
+        present: true,
+        disabled: Boolean(el.disabled),
+        text: String(el.textContent || "").trim(),
+      };
+    });
+    lastState = state || lastState;
+    if (state?.present && state?.disabled === false) {
+      await clickTestId("wizard-create");
+      return;
+    }
+    await browser.pause(200);
   }
-  await clickTestId("wizard-create");
+  if (!lastState?.present) throw new Error("wizard-create button missing at confirm step");
+  throw new Error(`wizard-create button disabled at confirm step (label='${lastState.text || ""}')`);
 };
 
 const setInput = async (testId, value) => {
@@ -667,6 +696,16 @@ const ensureReadyForSourceSelection = async ({ location, container }, timeoutMs 
       }
       continue;
     }
+    if (key === "harness-downloads") {
+      const next = await clickNextIfEnabled();
+      if (next.clicked) {
+        await browser.pause(100);
+      } else {
+        // Background install polling can temporarily disable Next; keep waiting.
+        await browser.pause(150);
+      }
+      continue;
+    }
     if (key === "location") {
       if (!location) throw new Error("location step reached but scenario.location is missing");
       await clickOption("location", location);
@@ -935,13 +974,17 @@ const runWizardScenario = async (scenario) => {
     if (afterLocation === "source" && scenario.container && scenario.container !== "no-container") {
       throw new Error("remote wizard did not expose container step (container modes unavailable)");
     }
-    if (afterLocation !== "source" && afterLocation !== "container") {
+    if (
+      afterLocation !== "source"
+      && afterLocation !== "container"
+      && afterLocation !== "harness-downloads"
+    ) {
       const wizardErr = await browser.execute(() => {
         const el = document.querySelector(".wizard-error");
         return el ? String(el.textContent || "").trim() : "";
       });
       throw new Error(
-        `expected step 'container' or 'source', got '${afterLocation}' (wizard-error: ${wizardErr || "none"})`,
+        `expected step 'container'|'harness-downloads'|'source', got '${afterLocation}' (wizard-error: ${wizardErr || "none"})`,
       );
     }
   }
@@ -989,7 +1032,12 @@ const runWizardScenario = async (scenario) => {
 
   let afterSource;
   try {
-    afterSource = await waitForStepChange("source");
+    const transition = await waitForSourceExitOrWorkspaceRoute();
+    if (transition.kind === "workspace") {
+      await assertNoDaemonOverlayFor(2000);
+      return transition.workspaceId;
+    }
+    afterSource = transition.step;
   } catch (error) {
     const sourceDiag = await browser.execute(() => {
       const root = document.querySelector('[data-testid="workspace-setup"]');
@@ -1004,6 +1052,7 @@ const runWizardScenario = async (scenario) => {
         : "";
       return {
         step,
+        pathname: window.location.pathname,
         err,
         selectedSource,
         sourcePath: srcPath instanceof HTMLInputElement ? srcPath.value : "",
@@ -1015,54 +1064,111 @@ const runWizardScenario = async (scenario) => {
       `source step did not advance after Next: ${String(error)}; source_diag=${JSON.stringify(sourceDiag)}`,
     );
   }
-  if (afterSource === "network") {
-    await clickOption("network", scenario.network);
-    if (scenario.network === "allowlist") {
-      await setInput("wizard-network-allowlist", scenario.networkAllowlist || "github.com");
+  let current = afterSource;
+  for (let i = 0; i < 18; i += 1) {
+    if (current === "source") {
+      const next = await clickNextIfEnabled();
+      if (!next.clicked) {
+        await browser.pause(150);
+        current = await currentStepKey();
+        continue;
+      }
+      const transition = await waitForSourceExitOrWorkspaceRoute(30000);
+      if (transition.kind === "workspace") {
+        await assertNoDaemonOverlayFor(2000);
+        return transition.workspaceId;
+      }
+      current = transition.step;
+      continue;
     }
-    const afterNetworkSelection = await currentStepKey();
-    if (afterNetworkSelection === "network") {
+
+    if (current === "auth-import") {
+      await clickAuthImportSkip();
+      await browser.pause(100);
+      current = await currentStepKey();
+      continue;
+    }
+
+    if (current === "session-titling") {
+      await clickTitlingSkip();
+      await browser.pause(100);
+      current = await currentStepKey();
+      continue;
+    }
+
+    if (current === "harness-downloads") {
+      const next = await clickNextIfEnabled();
+      await browser.pause(next.clicked ? 100 : 150);
+      current = await currentStepKey();
+      continue;
+    }
+
+    if (current === "network") {
+      await clickOption("network", scenario.network);
+      if (scenario.network === "allowlist") {
+        await setInput("wizard-network-allowlist", scenario.networkAllowlist || "github.com");
+      }
+      const afterNetworkSelection = await currentStepKey();
+      if (afterNetworkSelection === "network") {
+        await clickNext();
+      }
+      current = await currentStepKey();
+      continue;
+    }
+
+    if (current === "setup") {
+      if (scenario.setupHook) {
+        await setInput("wizard-setup-hook", scenario.setupHook);
+      }
       await clickNext();
+      current = await currentStepKey();
+      continue;
     }
+
+    if (current === "merge-queue") {
+      if (scenario.mergeQueue.kind === "skip") {
+        await clickTestId("wizard-merge-skip");
+      } else {
+        await setInput("wizard-merge-target-branch", scenario.mergeQueue.targetBranch || "main");
+        if (scenario.mergeQueue.verifyCommand) {
+          await setInput("wizard-merge-verify-command", scenario.mergeQueue.verifyCommand);
+        }
+        if (scenario.mergeQueue.pushOnSuccess) {
+          await clickTestId("wizard-merge-advanced-toggle");
+          await setChecked("wizard-merge-push-on-success", true);
+          if (scenario.mergeQueue.pushRemote) {
+            await setInput("wizard-merge-push-remote", scenario.mergeQueue.pushRemote);
+          }
+          if (scenario.mergeQueue.pushBranch) {
+            await setInput("wizard-merge-push-branch", scenario.mergeQueue.pushBranch);
+          }
+        }
+        await clickNext();
+      }
+      current = await currentStepKey();
+      continue;
+    }
+
+    if (current === "confirm") {
+      break;
+    }
+
+    throw new Error(`expected post-source wizard step, got '${current || "unknown"}'`);
   }
 
-  let current = await currentStepKey();
-  if (current === "setup") {
-    if (scenario.setupHook) {
-      await setInput("wizard-setup-hook", scenario.setupHook);
-    }
-    await clickNext();
-    current = await currentStepKey();
-  }
-
-  if (current === "merge-queue") {
-    if (scenario.mergeQueue.kind === "skip") {
-      await clickTestId("wizard-merge-skip");
-    } else {
-      await setInput("wizard-merge-target-branch", scenario.mergeQueue.targetBranch || "main");
-      if (scenario.mergeQueue.verifyCommand) {
-        await setInput("wizard-merge-verify-command", scenario.mergeQueue.verifyCommand);
-      }
-      if (scenario.mergeQueue.pushOnSuccess) {
-        await clickTestId("wizard-merge-advanced-toggle");
-        await setChecked("wizard-merge-push-on-success", true);
-        if (scenario.mergeQueue.pushRemote) {
-          await setInput("wizard-merge-push-remote", scenario.mergeQueue.pushRemote);
-        }
-        if (scenario.mergeQueue.pushBranch) {
-          await setInput("wizard-merge-push-branch", scenario.mergeQueue.pushBranch);
-        }
-      }
-      await clickNext();
-    }
-  } else if (current !== "confirm") {
-    throw new Error(`expected step 'setup'|'merge-queue'|'confirm', got '${current || "unknown"}'`);
+  if (current !== "confirm") {
+    throw new Error(`expected step 'confirm', got '${current || "unknown"}'`);
   }
 
   await waitForStep("confirm");
-  await clickCreate();
+  await clickCreate(
+    scenario.container && scenario.container !== "no-container" ? 300000 : 30000,
+  );
 
-  const id = await waitForWorkspaceRoute(scenario.location === "remote" ? 180000 : 120000);
+  const workspaceRouteTimeoutMs = scenario.location === "remote"
+    ? 180000
+    : (scenario.container && scenario.container !== "no-container" ? 300000 : 120000);
+  const id = await waitForWorkspaceRoute(workspaceRouteTimeoutMs);
   // The workbench must never render the "daemon unavailable" overlay on first navigation.
   // If connect_local returns before the daemon is reachable, this can flash briefly.
   await assertNoDaemonOverlayFor(2000);

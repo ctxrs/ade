@@ -417,6 +417,7 @@ export default function ProvidersPage() {
                 {detectedVersionLabel ? `Detected: ${detectedVersionLabel}` : "Detected: unknown"}
                 {recommendedVersionLabel ? ` · Recommended: ${recommendedVersionLabel}` : ""}
                 {p.details?.matrix_update_available === "true" ? " · Update available" : ""}
+                {p.details?.managed_dependency_update_available === "true" ? " · Dependency update available" : ""}
                 {p.details?.matrix_update_requires_context === "true" ? " · Requires ctx update" : ""}
               </div>
             )}

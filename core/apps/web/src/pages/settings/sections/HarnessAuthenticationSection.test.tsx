@@ -504,4 +504,68 @@ describe("HarnessAuthenticationSection install row rendering", () => {
     expect(screen.getByRole("button", { name: "Installing…" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
   });
+
+  it("renders update action for installed harnesses when matrix update is available", () => {
+    const installedProvider: ProviderStatus = {
+      provider_id: "codex",
+      installed: true,
+      health: "ok",
+      diagnostics: [],
+      details: {
+        install_supported: "true",
+        install_target: "host",
+        matrix_update_available: "true",
+      },
+    };
+
+    mockUseHarnessAuthenticationController.mockReturnValue(
+      makeController({
+        harnessAuthModal: null,
+        providers: [installedProvider],
+        installs: {},
+        installBusy: null,
+      }),
+    );
+
+    render(
+      <HarnessAuthenticationSection
+        workspaceId="ws-1"
+        active
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Update" })).toBeInTheDocument();
+  });
+
+  it("hides install action for installed up-to-date harnesses", () => {
+    const installedProvider: ProviderStatus = {
+      provider_id: "codex",
+      installed: true,
+      health: "ok",
+      diagnostics: [],
+      details: {
+        install_supported: "true",
+        install_target: "host",
+      },
+    };
+
+    mockUseHarnessAuthenticationController.mockReturnValue(
+      makeController({
+        harnessAuthModal: null,
+        providers: [installedProvider],
+        installs: {},
+        installBusy: null,
+      }),
+    );
+
+    render(
+      <HarnessAuthenticationSection
+        workspaceId="ws-1"
+        active
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Install" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Update" })).not.toBeInTheDocument();
+  });
 });

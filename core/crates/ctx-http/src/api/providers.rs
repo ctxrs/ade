@@ -5484,7 +5484,7 @@ pub(super) async fn install_all_providers(
 
         let status = state.providers.statuses.lock().await.get(id).cloned();
         if let Some(st) = status {
-            if st.installed && matches!(st.health, ctx_providers::adapters::ProviderHealth::Ok) {
+            if should_skip_install_for_healthy_provider(&st) {
                 continue;
             }
         }
@@ -5513,6 +5513,28 @@ pub(super) async fn install_all_providers(
         });
     }
     Ok(Json(out))
+}
+
+fn has_provider_update_available(status: &ctx_providers::adapters::ProviderStatus) -> bool {
+    let matrix_update = status
+        .details
+        .get("matrix_update_available")
+        .map(|value| value == "true")
+        .unwrap_or(false);
+    let dependency_update = status
+        .details
+        .get("managed_dependency_update_available")
+        .map(|value| value == "true")
+        .unwrap_or(false);
+    matrix_update || dependency_update
+}
+
+fn should_skip_install_for_healthy_provider(
+    status: &ctx_providers::adapters::ProviderStatus,
+) -> bool {
+    status.installed
+        && matches!(status.health, ctx_providers::adapters::ProviderHealth::Ok)
+        && !has_provider_update_available(status)
 }
 
 #[derive(Debug, Serialize)]
@@ -6256,5 +6278,57 @@ ZXY987654321
         };
         assert!(!import_result_requires_provider_restart(&unsupported));
         assert!(!import_result_requires_provider_restart(&error));
+    }
+
+    #[test]
+    fn should_skip_install_for_healthy_provider_without_updates() {
+        let status = ctx_providers::adapters::ProviderStatus {
+            provider_id: "codex".to_string(),
+            installed: true,
+            detected_path: None,
+            version: Some("1.0.0".to_string()),
+            capabilities: None,
+            health: ctx_providers::adapters::ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+        };
+        assert!(should_skip_install_for_healthy_provider(&status));
+    }
+
+    #[test]
+    fn should_not_skip_install_for_healthy_provider_with_release_update() {
+        let mut details = HashMap::new();
+        details.insert("matrix_update_available".to_string(), "true".to_string());
+        let status = ctx_providers::adapters::ProviderStatus {
+            provider_id: "codex".to_string(),
+            installed: true,
+            detected_path: None,
+            version: Some("1.0.0".to_string()),
+            capabilities: None,
+            health: ctx_providers::adapters::ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details,
+        };
+        assert!(!should_skip_install_for_healthy_provider(&status));
+    }
+
+    #[test]
+    fn should_not_skip_install_for_healthy_provider_with_dependency_update() {
+        let mut details = HashMap::new();
+        details.insert(
+            "managed_dependency_update_available".to_string(),
+            "true".to_string(),
+        );
+        let status = ctx_providers::adapters::ProviderStatus {
+            provider_id: "codex".to_string(),
+            installed: true,
+            detected_path: None,
+            version: Some("1.0.0".to_string()),
+            capabilities: None,
+            health: ctx_providers::adapters::ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details,
+        };
+        assert!(!should_skip_install_for_healthy_provider(&status));
     }
 }

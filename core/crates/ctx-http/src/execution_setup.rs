@@ -40,6 +40,25 @@ pub enum ExecutionSetupJobKind {
     WorkspaceLaunch,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimePrewarmScope {
+    #[default]
+    Runtime,
+    Builder,
+    All,
+}
+
+impl RuntimePrewarmScope {
+    fn includes_runtime(self) -> bool {
+        matches!(self, Self::Runtime | Self::All)
+    }
+
+    fn includes_builder(self) -> bool {
+        matches!(self, Self::Builder | Self::All)
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionLaunchState {
@@ -468,6 +487,7 @@ impl ExecutionSetupCoordinator {
     pub async fn start_runtime_prewarm(
         self: &Arc<Self>,
         settings: ExecutionSettings,
+        scope: RuntimePrewarmScope,
     ) -> ExecutionLaunchSnapshot {
         let workspace_id = WorkspaceId(uuid::Uuid::nil());
         let (job, snapshot) = {
@@ -502,7 +522,7 @@ impl ExecutionSetupCoordinator {
 
         let coordinator = Arc::clone(self);
         tokio::spawn(async move {
-            coordinator.run_runtime_prewarm(job, settings).await;
+            coordinator.run_runtime_prewarm(job, settings, scope).await;
         });
 
         snapshot
@@ -634,6 +654,7 @@ impl ExecutionSetupCoordinator {
         self: Arc<Self>,
         job: Arc<LaunchJob>,
         settings: ExecutionSettings,
+        scope: RuntimePrewarmScope,
     ) {
         let launch_started = std::time::Instant::now();
         let observer = LaunchObserver {
@@ -654,14 +675,31 @@ impl ExecutionSetupCoordinator {
             } else if !harness_runtime::container_runtime_available() {
                 Err(anyhow::anyhow!("container runtime unavailable"))
             } else {
-                let image = harness_runtime::resolve_container_image(&settings.container);
-                harness_runtime::prefetch_container_image_with_observer(
-                    &self.data_root,
-                    &image,
-                    Some(&observer),
-                )
-                .await
-                .context("container runtime failed")
+                let prewarm_result = async {
+                    if scope.includes_runtime() {
+                        let image = harness_runtime::resolve_container_image(&settings.container);
+                        harness_runtime::prefetch_container_image_with_observer(
+                            &self.data_root,
+                            &image,
+                            Some(&observer),
+                        )
+                        .await
+                        .context("container runtime failed")?;
+                    }
+                    if scope.includes_builder() {
+                        self.emit_phase(
+                            &job,
+                            HarnessSetupPhase::ImageLoad,
+                            "warming container builder",
+                        );
+                        crate::container_builder::ensure_builder_ready(&self.data_root)
+                            .await
+                            .context("container builder warmup failed")?;
+                    }
+                    Ok::<(), anyhow::Error>(())
+                }
+                .await;
+                prewarm_result
             };
             match attempt_result {
                 Ok(()) => break Ok(()),

@@ -1063,9 +1063,7 @@ fn active_runtime_profile() -> &'static str {
     }
 }
 
-fn allowed_source_types_for_profile(
-    lock: &RuntimeLockV2,
-) -> std::collections::HashSet<String> {
+fn allowed_source_types_for_profile(lock: &RuntimeLockV2) -> std::collections::HashSet<String> {
     let mut out = std::collections::HashSet::new();
     let profile = active_runtime_profile();
     let cfg = lock

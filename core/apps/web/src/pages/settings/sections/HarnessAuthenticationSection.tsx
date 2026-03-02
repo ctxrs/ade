@@ -302,6 +302,10 @@ export function HarnessAuthenticationSection({
             if (!provider) return null;
 
             const installed = provider.installed === true && provider.health === "ok";
+            const updateAvailable =
+              provider.details?.matrix_update_available === "true"
+              || provider.details?.managed_dependency_update_available === "true";
+            const showInstallActions = !installed || updateAvailable;
             const installSupported = provider.details?.install_supported === "true";
             const installUi = installs[id];
             const installTarget = parseInstallTarget(provider.details?.install_target);
@@ -317,7 +321,7 @@ export function HarnessAuthenticationSection({
                   ? "Installing…"
                   : installUi?.state === "cancelled"
                     ? "Cancelled"
-                  : provider.installed
+                  : updateAvailable
                     ? "Update"
                     : "Install";
             const installFailureMessage = installUi?.state === "failed" || installUi?.state === "cancelled"
@@ -623,7 +627,7 @@ export function HarnessAuthenticationSection({
                     </div>
                   ) : null}
                 </div>
-                {!installed ? (
+                {showInstallActions ? (
                   <div className="settings-row-right settings-harness-actions">
                     <span className="settings-harness-inline-note" title={installContextLabel}>{installContextLabel}</span>
                     {installControlsEnabled ? (
@@ -636,7 +640,11 @@ export function HarnessAuthenticationSection({
                           }}
                           disabled={!installSupported || installBusyLocal}
                           style={installStyle}
-                          title={!installSupported ? "Install not supported yet" : `Install this harness (${installContextLabel})`}
+                          title={
+                            !installSupported
+                              ? "Install not supported yet"
+                              : `${updateAvailable ? "Update" : "Install"} this harness (${installContextLabel})`
+                          }
                         >
                           {installLabel}
                         </button>

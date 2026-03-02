@@ -205,7 +205,7 @@ export const startExecutionLaunch = (workspaceId: string) =>
 export const startExecutionRuntimePrewarm = () =>
   apiAny<ExecutionLaunchSnapshot>("/api/execution/launch/start", {
     method: "POST",
-    body: JSON.stringify({ kind: "startup_prewarm" }),
+    body: JSON.stringify({ kind: "startup_prewarm", prewarm_scope: "all" }),
   });
 
 export const getExecutionLaunchStatus = (jobId: string) =>

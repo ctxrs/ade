@@ -4,6 +4,7 @@ pub mod attachments;
 pub mod buffers;
 pub mod bundled_assets;
 pub mod completions;
+pub mod container_builder;
 pub mod container_fs;
 pub mod daemon;
 pub mod dictation_livekit;

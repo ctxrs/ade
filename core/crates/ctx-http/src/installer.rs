@@ -61,6 +61,17 @@ static PROVIDER_INSTALL_LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> 
 const TITLE_GENERATION_LOCAL_INSTALL_KEY: &str = "title_generation_local";
 const MANAGED_PROVIDER_INSTALLS_ENABLED: bool = true;
 
+pub(crate) fn expected_managed_dependency_version(dependency_id: &str) -> Option<&'static str> {
+    let normalized = dependency_id.trim().to_ascii_lowercase();
+    if normalized.starts_with("runtime-node-") {
+        return Some(NODE_VERSION);
+    }
+    if normalized.starts_with("runtime-python-") {
+        return Some(PYTHON_VERSION);
+    }
+    None
+}
+
 fn node_runtime_install_lock() -> &'static Mutex<()> {
     NODE_RUNTIME_INSTALL_LOCK.get_or_init(|| Mutex::new(()))
 }
@@ -4522,6 +4533,19 @@ mod tests {
         assert!(!python_target_can_use_bundled_runtime(
             InstallTarget::LinuxX8664
         ));
+    }
+
+    #[test]
+    fn expected_managed_dependency_version_detects_runtime_dependencies() {
+        assert_eq!(
+            expected_managed_dependency_version("runtime-node-host"),
+            Some(NODE_VERSION)
+        );
+        assert_eq!(
+            expected_managed_dependency_version("runtime-python-container"),
+            Some(PYTHON_VERSION)
+        );
+        assert_eq!(expected_managed_dependency_version("codex"), None);
     }
 
     #[test]

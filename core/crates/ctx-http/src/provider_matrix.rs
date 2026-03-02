@@ -359,7 +359,7 @@ pub async fn apply_matrix_to_status(
         status.diagnostics.extend(diagnostics);
     }
 
-    let update_available = match (
+    let release_update_available = match (
         detected_version.as_deref(),
         status.details.get("matrix_recommended_version"),
     ) {
@@ -368,6 +368,15 @@ pub async fn apply_matrix_to_status(
         }
         _ => false,
     };
+    let dependency_update_available =
+        status.installed && managed_dependency_update_available(cfg, status);
+    if dependency_update_available {
+        status.details.insert(
+            "managed_dependency_update_available".to_string(),
+            "true".to_string(),
+        );
+    }
+    let update_available = release_update_available || dependency_update_available;
     if update_available {
         status
             .details
@@ -389,6 +398,30 @@ pub async fn apply_matrix_to_status(
             "true".to_string(),
         );
     }
+}
+
+fn managed_dependency_update_available(
+    cfg: &AgentServerConfigFile,
+    status: &ctx_providers::adapters::ProviderStatus,
+) -> bool {
+    let Some(command) = cfg.providers.get(&status.provider_id) else {
+        return false;
+    };
+    command.dependencies.iter().any(|dependency_id| {
+        let Some(expected_version) =
+            crate::installer::expected_managed_dependency_version(dependency_id)
+        else {
+            return false;
+        };
+        let installed_version = cfg
+            .managed_installs
+            .get(dependency_id)
+            .and_then(|meta| meta.version.as_deref());
+        match installed_version {
+            Some(installed) => normalize_version(installed) != normalize_version(expected_version),
+            None => true,
+        }
+    })
 }
 
 async fn detect_provider_version(
@@ -655,6 +688,7 @@ fn extract_version(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::installer::{AgentServerCommand, ManagedInstallMetadata};
     use tempfile::tempdir;
 
     #[test]
@@ -747,5 +781,106 @@ mod tests {
         let builtin = builtin_matrix();
         assert_eq!(loaded.version, builtin.version);
         assert_eq!(loaded.providers.len(), builtin.providers.len());
+    }
+
+    #[test]
+    fn managed_dependency_update_available_when_runtime_dependency_missing() {
+        let mut cfg = AgentServerConfigFile::default();
+        cfg.providers.insert(
+            "codex".to_string(),
+            AgentServerCommand {
+                command: "/tmp/codex".to_string(),
+                args: Vec::new(),
+                dependencies: vec!["runtime-node-host".to_string()],
+                managed: None,
+            },
+        );
+        let status = ctx_providers::adapters::ProviderStatus {
+            provider_id: "codex".to_string(),
+            installed: true,
+            detected_path: None,
+            version: None,
+            capabilities: None,
+            health: ctx_providers::adapters::ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+        };
+        assert!(managed_dependency_update_available(&cfg, &status));
+    }
+
+    #[test]
+    fn managed_dependency_update_available_when_runtime_dependency_version_mismatched() {
+        let mut cfg = AgentServerConfigFile::default();
+        cfg.providers.insert(
+            "codex".to_string(),
+            AgentServerCommand {
+                command: "/tmp/codex".to_string(),
+                args: Vec::new(),
+                dependencies: vec!["runtime-node-host".to_string()],
+                managed: None,
+            },
+        );
+        cfg.managed_installs.insert(
+            "runtime-node-host".to_string(),
+            ManagedInstallMetadata {
+                package: Some("node-runtime".to_string()),
+                version: Some("0.0.1".to_string()),
+                target: None,
+                install_dir_rel: None,
+                bin_dir_rel: None,
+                last_success_at: None,
+                last_error: None,
+            },
+        );
+        let status = ctx_providers::adapters::ProviderStatus {
+            provider_id: "codex".to_string(),
+            installed: true,
+            detected_path: None,
+            version: None,
+            capabilities: None,
+            health: ctx_providers::adapters::ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+        };
+        assert!(managed_dependency_update_available(&cfg, &status));
+    }
+
+    #[test]
+    fn managed_dependency_update_unavailable_when_runtime_dependency_matches_expected() {
+        let mut cfg = AgentServerConfigFile::default();
+        cfg.providers.insert(
+            "codex".to_string(),
+            AgentServerCommand {
+                command: "/tmp/codex".to_string(),
+                args: Vec::new(),
+                dependencies: vec!["runtime-node-host".to_string()],
+                managed: None,
+            },
+        );
+        let expected = crate::installer::expected_managed_dependency_version("runtime-node-host")
+            .expect("runtime node version");
+        cfg.managed_installs.insert(
+            "runtime-node-host".to_string(),
+            ManagedInstallMetadata {
+                package: Some("node-runtime".to_string()),
+                version: Some(expected.to_string()),
+                target: None,
+                install_dir_rel: None,
+                bin_dir_rel: None,
+                last_success_at: None,
+                last_error: None,
+            },
+        );
+        let status = ctx_providers::adapters::ProviderStatus {
+            provider_id: "codex".to_string(),
+            installed: true,
+            detected_path: None,
+            version: None,
+            capabilities: None,
+            health: ctx_providers::adapters::ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+        };
+        assert!(!managed_dependency_update_available(&cfg, &status));
     }
 }

@@ -14,7 +14,7 @@ use ctx_core::ids::WorkspaceId;
 use crate::daemon::AppState;
 use crate::execution_setup::{
     ExecutionLaunchSnapshot, ExecutionLaunchState, ExecutionLaunchStreamEvent,
-    ExecutionSetupJobKind,
+    ExecutionSetupJobKind, RuntimePrewarmScope,
 };
 use crate::logs;
 use crate::settings::ExecutionMode;
@@ -28,6 +28,8 @@ pub(super) struct ExecutionLaunchStartReq {
     kind: Option<ExecutionSetupJobKind>,
     #[serde(default)]
     workspace_id: Option<String>,
+    #[serde(default)]
+    prewarm_scope: RuntimePrewarmScope,
 }
 
 pub(super) async fn launch_start(
@@ -82,7 +84,7 @@ pub(super) async fn launch_start(
             state
                 .execution
                 .setup
-                .start_runtime_prewarm(execution_settings)
+                .start_runtime_prewarm(execution_settings, req.prewarm_scope)
                 .await
         }
     };
