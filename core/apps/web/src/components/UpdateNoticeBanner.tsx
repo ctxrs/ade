@@ -392,18 +392,25 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
 
   const refresh = useCallback(
     async (force = false): Promise<UpdateCheck | null> => {
-      let info = await refreshUpdateCheck(force ? { force: true } : undefined);
-      if (!info && isDesktop && !updateInfoRef.current) {
+      let info: UpdateCheck | null = null;
+      if (isDesktop) {
         try {
           const native = await desktopCheckAppUpdate("stable");
-          const latestVersion = normalizeOptionalString(native.latest_version) || null;
+          const previous = updateInfoRef.current;
+          const latestVersion =
+            normalizeOptionalString(native.latest_version)
+            || normalizeOptionalString(previous?.latest_version)
+            || null;
           info = {
             channel: "stable",
             base_url: deriveBaseUrlFromEndpoint(native.endpoint),
-            platform: normalizeOptionalString(native.target) || null,
+            platform:
+              normalizeOptionalString(native.target)
+              || normalizeOptionalString(previous?.platform)
+              || null,
             current_version: normalizeOptionalString(native.current_version),
             latest_version: latestVersion,
-            min_supported_version: null,
+            min_supported_version: normalizeOptionalString(previous?.min_supported_version) || null,
             platform_supported: true,
             in_place_update_supported: Boolean(native.configured),
             in_place_update_reason: native.configured
@@ -412,8 +419,10 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
             update_available: Boolean(native.available && latestVersion),
           };
         } catch {
-          // Keep null to preserve current behavior when both checks are unavailable.
+          // Keep null; caller will retain previous update info if available.
         }
+      } else {
+        info = await refreshUpdateCheck(force ? { force: true } : undefined);
       }
       if (info) {
         updateInfoRef.current = info;

@@ -174,6 +174,15 @@ describe("UpdateNoticeBanner", () => {
       ...baseUpdate,
       latest_version: "1.2.3",
     });
+    vi.mocked(desktopCheckAppUpdate).mockResolvedValue({
+      configured: true,
+      available: true,
+      current_version: "1.0.0",
+      latest_version: "1.2.3",
+      target: "macos-arm64",
+      endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+      message: null,
+    });
 
     renderBanner();
     await waitFor(() => {
@@ -285,10 +294,19 @@ describe("UpdateNoticeBanner", () => {
       latest_version: "2.0.0",
       min_supported_version: "1.5.0",
     });
+    vi.mocked(desktopCheckAppUpdate).mockResolvedValue({
+      configured: true,
+      available: true,
+      current_version: "1.0.0",
+      latest_version: "2.0.0",
+      target: "macos-arm64",
+      endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+      message: null,
+    });
 
     renderBanner({ allTasksIdle: false });
     await waitFor(() => {
-      expect(vi.mocked(refreshUpdateCheck)).toHaveBeenCalledWith({ force: true });
+      expect(vi.mocked(desktopCheckAppUpdate)).toHaveBeenCalledWith("stable");
     });
     expect(vi.mocked(desktopApplyAppUpdate)).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Restart app to finish update" })).toBeEnabled();
@@ -485,6 +503,15 @@ describe("UpdateNoticeBanner", () => {
       min_supported_version: "1.1.0",
     });
     vi.mocked(refreshUpdateCheck).mockResolvedValue(null);
+    vi.mocked(desktopCheckAppUpdate).mockResolvedValue({
+      configured: true,
+      available: true,
+      current_version: "1.0.0",
+      latest_version: "1.2.0",
+      target: "macos-arm64",
+      endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+      message: null,
+    });
     vi.mocked(desktopApplyAppUpdate).mockResolvedValue({
       applied: true,
       needs_restart: true,
@@ -510,6 +537,15 @@ describe("UpdateNoticeBanner", () => {
       min_supported_version: "1.1.0",
     });
     vi.mocked(refreshUpdateCheck).mockResolvedValue(null);
+    vi.mocked(desktopCheckAppUpdate).mockResolvedValue({
+      configured: true,
+      available: true,
+      current_version: "1.0.0",
+      latest_version: "1.2.0",
+      target: "macos-arm64",
+      endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+      message: null,
+    });
     vi.mocked(desktopApplyAppUpdate).mockResolvedValue({
       applied: false,
       needs_restart: true,
@@ -559,6 +595,15 @@ describe("UpdateNoticeBanner", () => {
     vi.mocked(refreshUpdateCheck).mockResolvedValue({
       ...baseUpdate,
       latest_version: "2.0.0",
+    });
+    vi.mocked(desktopCheckAppUpdate).mockResolvedValue({
+      configured: true,
+      available: true,
+      current_version: "1.0.0",
+      latest_version: "2.0.0",
+      target: "macos-arm64",
+      endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+      message: null,
     });
     vi.mocked(desktopApplyAppUpdate).mockResolvedValue({
       applied: true,
