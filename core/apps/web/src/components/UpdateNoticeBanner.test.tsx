@@ -3,7 +3,7 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import UpdateNoticeBanner from "./UpdateNoticeBanner";
 import { applyAppImageUpdate, downloadAppImageUpdate } from "../api/client";
-import { desktopApplyAppUpdate, desktopRestartApp, isDesktopApp } from "../utils/desktop";
+import { desktopApplyAppUpdate, desktopCheckAppUpdate, desktopRestartApp, isDesktopApp } from "../utils/desktop";
 import { readCachedUpdateCheck, refreshUpdateCheck, writeCachedUpdateCheck } from "../utils/updateNotice";
 
 vi.mock("../api/client", async (importOriginal) => {
@@ -21,6 +21,7 @@ vi.mock("../utils/desktop", async (importOriginal) => {
     ...original,
     isDesktopApp: vi.fn(),
     desktopApplyAppUpdate: vi.fn(),
+    desktopCheckAppUpdate: vi.fn(),
     desktopRestartApp: vi.fn(),
   };
 });
@@ -75,6 +76,15 @@ describe("UpdateNoticeBanner", () => {
       needs_restart: true,
       latest_version: "9.9.9",
       message: "ok",
+    });
+    vi.mocked(desktopCheckAppUpdate).mockResolvedValue({
+      configured: true,
+      available: false,
+      current_version: "1.0.0",
+      latest_version: null,
+      target: "macos-arm64",
+      endpoint: "https://api.example/functions/v1/releases/stable/latest-tauri.json",
+      message: null,
     });
     vi.mocked(desktopRestartApp).mockResolvedValue({
       requested: true,
@@ -180,6 +190,32 @@ describe("UpdateNoticeBanner", () => {
     });
     expect(vi.mocked(writeCachedUpdateCheck)).not.toHaveBeenCalled();
     expect(window.sessionStorage.getItem(RESTART_REQUIRED_VERSION_STORAGE_KEY)).toBe("1.2.3");
+  });
+
+  it("falls back to native desktop updater check when daemon update check is unavailable", async () => {
+    window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "1");
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(readCachedUpdateCheck).mockReturnValue(null);
+    vi.mocked(refreshUpdateCheck).mockResolvedValue(null);
+    vi.mocked(desktopCheckAppUpdate).mockResolvedValue({
+      configured: true,
+      available: true,
+      current_version: "0.4.1",
+      latest_version: "0.4.3",
+      target: "macos-arm64",
+      endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+      message: null,
+    });
+
+    renderBanner();
+    await waitFor(() => {
+      expect(vi.mocked(desktopCheckAppUpdate)).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(vi.mocked(desktopApplyAppUpdate)).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.getByTestId("update-available-snackbar")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Restart app to finish update" })).toBeEnabled();
   });
 
   it("persists restart-required state across remounts in the same app session", async () => {

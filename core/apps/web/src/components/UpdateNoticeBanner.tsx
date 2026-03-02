@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Info, X } from "lucide-react";
 import { applyAppImageUpdate, downloadAppImageUpdate, type UpdateCheck } from "../api/client";
-import { desktopApplyAppUpdate, desktopRestartApp, isDesktopApp } from "../utils/desktop";
+import { desktopApplyAppUpdate, desktopCheckAppUpdate, desktopRestartApp, isDesktopApp } from "../utils/desktop";
 import { readCachedUpdateCheck, refreshUpdateCheck, writeCachedUpdateCheck } from "../utils/updateNotice";
 
 const PROMPT_SNOOZE_STORAGE_KEY = "ctx_update_prompt_next_allowed_at_v1";
@@ -161,6 +161,26 @@ const noticeUiReducer = (state: NoticeUiState, action: NoticeUiAction): NoticeUi
 
 const normalizeOptionalString = (value: string | null | undefined): string =>
   String(value ?? "").trim();
+
+const deriveBaseUrlFromEndpoint = (endpoint: string): string => {
+  const trimmed = String(endpoint ?? "").trim();
+  if (!trimmed) return "";
+  try {
+    const url = new URL(trimmed);
+    const marker = "/releases/";
+    const idx = url.pathname.indexOf(marker);
+    if (idx >= 0) {
+      url.pathname = url.pathname.slice(0, idx);
+    } else {
+      url.pathname = "";
+    }
+    url.search = "";
+    url.hash = "";
+    return `${url.origin}${url.pathname}`.replace(/\/+$/, "");
+  } catch {
+    return "";
+  }
+};
 
 const areUpdateChecksEqual = (left: UpdateCheck | null, right: UpdateCheck | null): boolean => {
   if (left === right) return true;
@@ -372,15 +392,38 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
 
   const refresh = useCallback(
     async (force = false): Promise<UpdateCheck | null> => {
-      const info = await refreshUpdateCheck(force ? { force: true } : undefined);
+      let info = await refreshUpdateCheck(force ? { force: true } : undefined);
+      if (!info && isDesktop && !updateInfoRef.current) {
+        try {
+          const native = await desktopCheckAppUpdate("stable");
+          const latestVersion = normalizeOptionalString(native.latest_version) || null;
+          info = {
+            channel: "stable",
+            base_url: deriveBaseUrlFromEndpoint(native.endpoint),
+            platform: normalizeOptionalString(native.target) || null,
+            current_version: normalizeOptionalString(native.current_version),
+            latest_version: latestVersion,
+            min_supported_version: null,
+            platform_supported: true,
+            in_place_update_supported: Boolean(native.configured),
+            in_place_update_reason: native.configured
+              ? null
+              : normalizeOptionalString(native.message) || "Native updater is not configured.",
+            update_available: Boolean(native.available && latestVersion),
+          };
+        } catch {
+          // Keep null to preserve current behavior when both checks are unavailable.
+        }
+      }
       if (info) {
         updateInfoRef.current = info;
         setUpdateInfo((prev) => (areUpdateChecksEqual(prev, info) ? prev : info));
       }
-      reconcileRestartRequiredState(info);
-      return info;
+      const effectiveInfo = info ?? updateInfoRef.current;
+      reconcileRestartRequiredState(effectiveInfo);
+      return effectiveInfo;
     },
-    [reconcileRestartRequiredState],
+    [isDesktop, reconcileRestartRequiredState],
   );
 
   const applyUpdateNow = useCallback(
