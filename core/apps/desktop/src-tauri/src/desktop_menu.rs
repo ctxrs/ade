@@ -271,26 +271,29 @@ fn build_view_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wr
         false,
         false,
     )?;
-    let toggle_devtools = menu_item(
+    #[cfg(debug_assertions)]
+    let toggle_devtools = Some(menu_item(
         app,
         CMD_VIEW_TOGGLE_DEVTOOLS,
         "Toggle Developer Tools",
         Some("CmdOrCtrl+Alt+I"),
         true,
-    )?;
+    )?);
+    #[cfg(not(debug_assertions))]
+    let toggle_devtools: Option<MenuItem<tauri::Wry>> = None;
     let sep = PredefinedMenuItem::separator(app)?;
     let fullscreen = PredefinedMenuItem::fullscreen(app, None)?;
 
-    SubmenuBuilder::new(app, "View")
+    let mut builder = SubmenuBuilder::new(app, "View")
         .item(&toggle_sidebar)
         .item(&toggle_diff)
         .item(&toggle_artifacts)
         .item(&toggle_sessions)
-        .item(&toggle_terminal)
-        .item(&toggle_devtools)
-        .item(&sep)
-        .item(&fullscreen)
-        .build()
+        .item(&toggle_terminal);
+    if let Some(toggle_devtools) = toggle_devtools.as_ref() {
+        builder = builder.item(toggle_devtools);
+    }
+    builder.item(&sep).item(&fullscreen).build()
 }
 
 fn build_task_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wry>> {
