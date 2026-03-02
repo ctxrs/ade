@@ -932,8 +932,6 @@ struct DesktopBundledAssetsManifest {
     #[serde(default)]
     pub runtimes: Vec<DesktopBundledRuntime>,
     #[serde(default)]
-    pub daemons: Vec<DesktopBundledDaemon>,
-    #[serde(default)]
     pub images: Vec<DesktopBundledImage>,
 }
 
@@ -951,14 +949,6 @@ struct DesktopBundledRuntime {
     pub os: String,
     pub arch: String,
     pub root: String,
-    pub bin: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct DesktopBundledDaemon {
-    pub id: String,
-    pub os: String,
-    pub arch: String,
     pub bin: String,
 }
 
@@ -1448,28 +1438,6 @@ fn normalize_arch_token(raw: &str) -> Option<&'static str> {
         "aarch64" | "arm64" => Some("aarch64"),
         _ => None,
     }
-}
-
-pub(super) fn read_bundled_remote_daemon_binary(
-    app: &tauri::AppHandle,
-    arch: &str,
-) -> Result<PathBuf> {
-    let bundle_dir = desktop_bundle_dir(app).ok_or_else(|| anyhow!("bundle dir not found"))?;
-    let manifest_path = bundle_dir.join("manifest.json");
-    let raw = std::fs::read_to_string(&manifest_path)
-        .with_context(|| format!("reading {}", manifest_path.display()))?;
-    let manifest: DesktopBundledAssetsManifest = serde_json::from_str(&raw)
-        .with_context(|| format!("parsing {}", manifest_path.display()))?;
-    let entry = manifest
-        .daemons
-        .iter()
-        .find(|daemon| daemon.id == "ctx-daemon" && daemon.os == "linux" && daemon.arch == arch)
-        .ok_or_else(|| anyhow!("bundled remote daemon binary not found for linux/{arch}"))?;
-    let bin = bundle_dir.join(&entry.bin);
-    if !bin.exists() {
-        anyhow::bail!("bundled remote daemon binary missing at {}", bin.display());
-    }
-    Ok(bin)
 }
 
 fn read_bundled_ctx_harness_image(

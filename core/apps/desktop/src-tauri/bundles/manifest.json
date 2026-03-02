@@ -4,20 +4,5 @@
   "providers": [],
   "runtimes": [],
   "images": [],
-  "daemons": [
-    {
-      "id": "ctx-daemon",
-      "os": "linux",
-      "arch": "aarch64",
-      "sha256": "01ea27f601c2168189f4ad8ceedad65d0f8eeb9a28147dde511188969f0753b3",
-      "bin": "daemons/ctx-daemon-linux-aarch64"
-    },
-    {
-      "id": "ctx-daemon",
-      "os": "linux",
-      "arch": "x86_64",
-      "sha256": "d034196d83df5779a1884a15f9dc2c86055197b055f4bbd7c307dc81ad25668c",
-      "bin": "daemons/ctx-daemon-linux-x86_64"
-    }
-  ]
+  "daemons": []
 }
