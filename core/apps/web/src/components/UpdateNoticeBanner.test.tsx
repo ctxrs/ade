@@ -3,7 +3,7 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import UpdateNoticeBanner from "./UpdateNoticeBanner";
 import { applyAppImageUpdate, downloadAppImageUpdate } from "../api/client";
-import { desktopApplyAppUpdate, isDesktopApp } from "../utils/desktop";
+import { desktopApplyAppUpdate, desktopRestartApp, isDesktopApp } from "../utils/desktop";
 import { readCachedUpdateCheck, refreshUpdateCheck, writeCachedUpdateCheck } from "../utils/updateNotice";
 
 vi.mock("../api/client", async (importOriginal) => {
@@ -21,6 +21,7 @@ vi.mock("../utils/desktop", async (importOriginal) => {
     ...original,
     isDesktopApp: vi.fn(),
     desktopApplyAppUpdate: vi.fn(),
+    desktopRestartApp: vi.fn(),
   };
 });
 
@@ -74,6 +75,10 @@ describe("UpdateNoticeBanner", () => {
       needs_restart: true,
       latest_version: "9.9.9",
       message: "ok",
+    });
+    vi.mocked(desktopRestartApp).mockResolvedValue({
+      requested: true,
+      message: "Restart requested.",
     });
   });
 
@@ -167,7 +172,12 @@ describe("UpdateNoticeBanner", () => {
     expect(vi.mocked(downloadAppImageUpdate)).not.toHaveBeenCalled();
     expect(vi.mocked(applyAppImageUpdate)).not.toHaveBeenCalled();
     expect(screen.getByTestId("update-available-snackbar")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Restart app to finish update" })).toBeDisabled();
+    const restartButton = screen.getByRole("button", { name: "Restart app to finish update" });
+    expect(restartButton).toBeEnabled();
+    fireEvent.click(restartButton);
+    await waitFor(() => {
+      expect(vi.mocked(desktopRestartApp)).toHaveBeenCalledTimes(1);
+    });
     expect(vi.mocked(writeCachedUpdateCheck)).not.toHaveBeenCalled();
     expect(window.sessionStorage.getItem(RESTART_REQUIRED_VERSION_STORAGE_KEY)).toBe("1.2.3");
   });
@@ -202,7 +212,7 @@ describe("UpdateNoticeBanner", () => {
       renderBanner({ allTasksIdle: false });
       await Promise.resolve();
     });
-    expect(screen.getByRole("button", { name: "Restart app to finish update" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Restart app to finish update" })).toBeEnabled();
   });
 
   it("ignores stale localStorage restart marker after relaunch when offline", async () => {
@@ -245,7 +255,7 @@ describe("UpdateNoticeBanner", () => {
       expect(vi.mocked(refreshUpdateCheck)).toHaveBeenCalledWith({ force: true });
     });
     expect(vi.mocked(desktopApplyAppUpdate)).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Restart app to finish update" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Restart app to finish update" })).toBeEnabled();
   });
 
   it("clears pending restart on later refresh after initial forced check failure", async () => {
@@ -452,7 +462,7 @@ describe("UpdateNoticeBanner", () => {
       expect(vi.mocked(desktopApplyAppUpdate)).toHaveBeenCalledTimes(1);
     });
     expect(screen.getByRole("dialog", { name: "Update required" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Restart app to finish update" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Restart app to finish update" })).toBeEnabled();
   });
 
   it("keeps required-update blocker visible on desktop when restart is required even if apply reports false", async () => {
@@ -477,7 +487,7 @@ describe("UpdateNoticeBanner", () => {
       expect(vi.mocked(desktopApplyAppUpdate)).toHaveBeenCalledTimes(1);
     });
     expect(screen.getByRole("dialog", { name: "Update required" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Restart app to finish update" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Restart app to finish update" })).toBeEnabled();
   });
 
   it("keeps required-update blocker visible on appimage when relaunch is still required", async () => {
@@ -562,7 +572,7 @@ describe("UpdateNoticeBanner", () => {
       expect(vi.mocked(desktopApplyAppUpdate)).toHaveBeenCalledTimes(1);
     });
     expect(screen.getByTestId("update-available-snackbar")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Restart app to finish update" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Restart app to finish update" })).toBeEnabled();
     expect(vi.mocked(writeCachedUpdateCheck)).not.toHaveBeenCalled();
     expect(window.sessionStorage.getItem(RESTART_REQUIRED_VERSION_STORAGE_KEY)).toBe("2.2.0");
   });

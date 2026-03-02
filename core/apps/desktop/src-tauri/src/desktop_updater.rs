@@ -1,5 +1,7 @@
 use super::*;
 
+use std::thread;
+use std::time::Duration;
 use tauri_plugin_updater::UpdaterExt;
 use url::Url;
 
@@ -38,6 +40,12 @@ pub(super) struct DesktopAppUpdateApplyResp {
     needs_restart: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     latest_version: Option<String>,
+    message: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct DesktopAppRestartResp {
+    requested: bool,
     message: String,
 }
 
@@ -143,6 +151,20 @@ pub(super) async fn desktop_apply_app_update(
     })
 }
 
+#[tauri::command]
+pub(super) fn desktop_restart_app(app: tauri::AppHandle) -> Result<DesktopAppRestartResp, String> {
+    let app_handle = app.clone();
+    thread::spawn(move || {
+        // Allow the invoke response to flush before requesting restart.
+        thread::sleep(Duration::from_millis(80));
+        app_handle.request_restart();
+    });
+    Ok(DesktopAppRestartResp {
+        requested: true,
+        message: "Restart requested.".to_string(),
+    })
+}
+
 fn normalize_download_id(raw: Option<&str>) -> Option<String> {
     let candidate = raw?.trim();
     if candidate.is_empty() || candidate.len() > 64 {
@@ -199,7 +221,10 @@ fn normalize_nonempty(value: &str) -> Option<String> {
     }
 }
 
-fn resolve_updater_pubkey(runtime_value: Option<String>, build_value: Option<&str>) -> Option<String> {
+fn resolve_updater_pubkey(
+    runtime_value: Option<String>,
+    build_value: Option<&str>,
+) -> Option<String> {
     runtime_value
         .as_deref()
         .and_then(normalize_nonempty)
@@ -291,11 +316,8 @@ mod tests {
 
     #[test]
     fn resolve_updater_pubkey_prefers_runtime_value() {
-        let key = resolve_updater_pubkey(
-            Some(" runtime-key ".to_string()),
-            Some("build-key"),
-        )
-        .expect("resolved key");
+        let key = resolve_updater_pubkey(Some(" runtime-key ".to_string()), Some("build-key"))
+            .expect("resolved key");
         assert_eq!(key, "runtime-key");
     }
 

@@ -56,6 +56,11 @@ export type DesktopAppUpdateApplyResp = {
   message: string;
 };
 
+export type DesktopAppRestartResp = {
+  requested: boolean;
+  message: string;
+};
+
 export type DesktopStorageBatchOp =
   | { kind: "set"; key: string; value: unknown }
   | { kind: "delete"; key: string };
@@ -234,6 +239,9 @@ export const desktopApplyAppUpdate = async (
       ...(downloadId ? { download_id: downloadId } : {}),
     },
   });
+
+export const desktopRestartApp = async (): Promise<DesktopAppRestartResp> =>
+  invoke<DesktopAppRestartResp>("desktop_restart_app");
 
 export const desktopListSshHosts = async (): Promise<DesktopSshHost[]> =>
   invoke<DesktopSshHost[]>("desktop_list_ssh_hosts");

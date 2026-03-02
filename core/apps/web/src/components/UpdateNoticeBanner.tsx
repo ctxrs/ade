@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Info, X } from "lucide-react";
 import { applyAppImageUpdate, downloadAppImageUpdate, type UpdateCheck } from "../api/client";
-import { desktopApplyAppUpdate, isDesktopApp } from "../utils/desktop";
+import { desktopApplyAppUpdate, desktopRestartApp, isDesktopApp } from "../utils/desktop";
 import { readCachedUpdateCheck, refreshUpdateCheck, writeCachedUpdateCheck } from "../utils/updateNotice";
 
 const PROMPT_SNOOZE_STORAGE_KEY = "ctx_update_prompt_next_allowed_at_v1";
@@ -275,6 +275,7 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
   );
   const [idleUpdateVersions, setIdleUpdateVersions] = useState<Set<string>>(() => readIdleUpdateVersions());
   const [uiState, dispatchUi] = useReducer(noticeUiReducer, initialNoticeUiState);
+  const [restartingApp, setRestartingApp] = useState(false);
   const launchAutoApplyAttemptedRef = useRef(false);
   const applyInFlightRef = useRef(false);
   const updateInfoRef = useRef<UpdateCheck | null>(updateInfo);
@@ -522,6 +523,21 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
     void applyUpdateNow(latestKnownVersion, "manual");
   }, [applyUpdateNow, latestKnownVersion]);
 
+  const onRestartNow = useCallback(() => {
+    if (!isDesktop || restartingApp) return;
+    setRestartingApp(true);
+    void desktopRestartApp()
+      .catch((err: unknown) => {
+        dispatchUi({
+          type: "apply_failed",
+          message: err instanceof Error ? err.message : "Failed to restart app.",
+        });
+      })
+      .finally(() => {
+        setRestartingApp(false);
+      });
+  }, [isDesktop, restartingApp]);
+
   const requestUpdateOnNextIdle = useCallback(() => {
     if (latestKnownVersion) {
       setIdleUpdateVersions((prev) => {
@@ -547,6 +563,15 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
 
   const shouldRenderBanner = shouldShow || applyingUpdate || restartRequired || forcedUpdateNeedsManualInstall;
   if (!forcedUpdate && !shouldRenderBanner && !showInfoModal) return null;
+  const restartActionEnabled = restartRequired && isDesktop;
+  const updateActionDisabled = applyingUpdate || (restartRequired && (!restartActionEnabled || restartingApp));
+  const updateActionLabel = applyingUpdate
+    ? "Updating..."
+    : restartRequired
+      ? restartingApp
+        ? "Restarting..."
+        : "Restart app to finish update"
+      : "Update Now";
 
   return (
     <>
@@ -574,10 +599,10 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
               <button
                 type="button"
                 className="daemon-overlay-button"
-                disabled={applyingUpdate || restartRequired}
-                onClick={onForcedUpdateNow}
+                disabled={updateActionDisabled}
+                onClick={restartRequired ? onRestartNow : onForcedUpdateNow}
               >
-                {applyingUpdate ? "Updating..." : restartRequired ? "Restart app to finish update" : "Update Now"}
+                {updateActionLabel}
               </button>
             </div>
           </div>
@@ -610,8 +635,13 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
             {effectiveError ? <div className="wb-snackbar-error">{effectiveError}</div> : null}
           </div>
           <div className="wb-snackbar-actions wb-update-snackbar-actions">
-            <button type="button" className="wb-snackbar-btn" disabled={applyingUpdate || restartRequired} onClick={onUpdateNow}>
-              {applyingUpdate ? "Updating..." : restartRequired ? "Restart app to finish update" : "Update Now"}
+            <button
+              type="button"
+              className="wb-snackbar-btn"
+              disabled={updateActionDisabled}
+              onClick={restartRequired ? onRestartNow : onUpdateNow}
+            >
+              {updateActionLabel}
             </button>
             <button
               type="button"

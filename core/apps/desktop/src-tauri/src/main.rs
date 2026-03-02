@@ -133,6 +133,7 @@ fn main() {
             desktop_start_codex_login_relay,
             desktop_check_app_update,
             desktop_apply_app_update,
+            desktop_restart_app,
         ])
         .setup(|app| {
             enforce_desktop_parity_bundle_preflight(&app.handle())?;
