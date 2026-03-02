@@ -280,7 +280,7 @@ fn build_view_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wr
         true,
     )?);
     #[cfg(not(debug_assertions))]
-    let toggle_devtools: Option<MenuItem<tauri::Wry>> = None;
+    let toggle_devtools: Option<tauri::menu::MenuItem<tauri::Wry>> = None;
     let sep = PredefinedMenuItem::separator(app)?;
     let fullscreen = PredefinedMenuItem::fullscreen(app, None)?;
 
