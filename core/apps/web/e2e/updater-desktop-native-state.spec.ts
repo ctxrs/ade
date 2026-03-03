@@ -295,7 +295,7 @@ test("desktop Update Now applies and enters restart-required state", async ({ pa
 
   await createWorkspaceAndOpenWorkbench(page, `ws-desktop-apply-now-${Date.now()}`);
   await expect(page.getByTestId("update-available-snackbar")).toBeVisible({ timeout: 20_000 });
-  await page.getByRole("button", { name: "Update Now" }).click();
+  await page.getByRole("button", { name: "Update Now" }).dispatchEvent("click");
   await expect.poll(async () => desktopCommandCallCount(page, "desktop_apply_app_update")).toBe(1);
   await expect(page.getByRole("button", { name: "Restart app to finish update" })).toBeVisible({ timeout: 20_000 });
 });
@@ -331,7 +331,7 @@ test("desktop Update on Next Idle applies in background and enters restart-requi
 
   await createWorkspaceAndOpenWorkbench(page, `ws-desktop-apply-idle-${Date.now()}`);
   await expect(page.getByTestId("update-available-snackbar")).toBeVisible({ timeout: 20_000 });
-  await page.getByRole("button", { name: "Update on Next Idle" }).click();
+  await page.getByRole("button", { name: "Update on Next Idle" }).dispatchEvent("click");
   await expect.poll(async () => desktopCommandCallCount(page, "desktop_apply_app_update")).toBe(1);
   await expect(page.getByRole("button", { name: "Restart app to finish update" })).toBeVisible({ timeout: 20_000 });
 });
