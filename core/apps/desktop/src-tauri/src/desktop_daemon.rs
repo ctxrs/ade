@@ -110,13 +110,13 @@ pub(super) async fn desktop_connect_local(
         state.disconnect();
         if let Some((url, token)) = resolve_env_local_daemon(&app).map_err(to_err)? {
             probe_daemon_health(&url).map_err(to_err)?;
-            state.set_local_external(url, token);
+            state.set_local_external(url, token, None, false);
             return Ok(state.info());
         }
-        if let Some((url, token)) =
+        if let Some((url, token, daemon_pid)) =
             resolve_existing_local_daemon(&app, &data_dir).map_err(to_err)?
         {
-            state.set_local_external(url, token);
+            state.set_local_external(url, token, daemon_pid, true);
             return Ok(state.info());
         }
         // Block until the daemon is actually reachable before returning. The workspace wizard
@@ -130,8 +130,10 @@ pub(super) async fn desktop_connect_local(
         ) {
             Ok(value) => value,
             Err(err) => {
-                if let Ok(Some((url, token))) = resolve_existing_local_daemon(&app, &data_dir) {
-                    state.set_local_external(url, token);
+                if let Ok(Some((url, token, daemon_pid))) =
+                    resolve_existing_local_daemon(&app, &data_dir)
+                {
+                    state.set_local_external(url, token, daemon_pid, true);
                     return Ok(state.info());
                 }
                 return Err(to_err(err));
@@ -207,11 +209,11 @@ pub(super) fn ensure_local_connection(
     let desktop_dev_instance_id = desktop_dev_instance_id();
     if let Some((url, token)) = resolve_env_local_daemon(app)? {
         probe_daemon_health(&url)?;
-        state.set_local_external(url, token);
+        state.set_local_external(url, token, None, false);
         return Ok(());
     }
-    if let Some((url, token)) = resolve_existing_local_daemon(app, &data_dir)? {
-        state.set_local_external(url, token);
+    if let Some((url, token, daemon_pid)) = resolve_existing_local_daemon(app, &data_dir)? {
+        state.set_local_external(url, token, daemon_pid, true);
         return Ok(());
     }
     let spawned = match spawn_and_validate_local_daemon(
@@ -248,7 +250,10 @@ pub(super) fn ensure_local_connection(
                     "spawning local daemon failed and existing daemon is incompatible (url={url})"
                 ));
             }
-            state.set_local_external(url.to_string(), auth.token);
+            let daemon_pid = daemon_health(url)
+                .ok()
+                .and_then(|health| normalize_daemon_pid(health.pid));
+            state.set_local_external(url.to_string(), auth.token, daemon_pid, true);
             return Ok(());
         }
     };
@@ -580,7 +585,7 @@ fn resolve_env_local_daemon(app: &tauri::AppHandle) -> Result<Option<(String, St
 fn resolve_existing_local_daemon(
     app: &tauri::AppHandle,
     data_dir: &Path,
-) -> Result<Option<(String, String)>> {
+) -> Result<Option<(String, String, Option<u32>)>> {
     let Some(auth) = read_daemon_auth_if_present(data_dir)? else {
         return Ok(None);
     };
@@ -598,7 +603,11 @@ fn resolve_existing_local_daemon(
         &desktop_version,
         desktop_dev_instance_id,
     ) {
-        return Ok(Some((url.to_string(), auth.token)));
+        return Ok(Some((
+            url.to_string(),
+            auth.token,
+            normalize_daemon_pid(health.pid),
+        )));
     }
     if should_reclaim_incompatible_local_daemon(url, &health, data_dir) {
         if let Err(err) = reclaim_incompatible_local_daemon(url, &health)
@@ -608,6 +617,14 @@ fn resolve_existing_local_daemon(
         }
     }
     Ok(None)
+}
+
+fn normalize_daemon_pid(pid: u32) -> Option<u32> {
+    if pid == 0 {
+        None
+    } else {
+        Some(pid)
+    }
 }
 
 fn should_reclaim_incompatible_local_daemon(
@@ -833,6 +850,32 @@ fn terminate_pid(pid: u32, force: bool) -> Result<()> {
         let _ = (pid, force);
         anyhow::bail!("process termination is unsupported on this platform");
     }
+}
+
+pub(super) fn stop_local_daemon_pid(pid: u32) -> Result<()> {
+    if pid == 0 {
+        anyhow::bail!("invalid daemon pid 0");
+    }
+
+    let _ = terminate_pid(pid, false);
+    let soft_deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < soft_deadline {
+        if !is_pid_alive(pid).unwrap_or(false) {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(120));
+    }
+
+    let _ = terminate_pid(pid, true);
+    let hard_deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < hard_deadline {
+        if !is_pid_alive(pid).unwrap_or(false) {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(120));
+    }
+
+    anyhow::bail!("daemon pid {pid} is still alive after termination attempts")
 }
 
 fn command_reports_missing_process(output: &std::process::Output) -> bool {

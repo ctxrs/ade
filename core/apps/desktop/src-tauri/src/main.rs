@@ -183,9 +183,23 @@ fn main() {
         builder = builder.plugin(tauri_plugin_stt::init());
     }
 
-    if let Err(err) = builder.run(tauri::generate_context!()) {
-        eprintln!("error while running tauri application: {err}");
-    }
+    let app = match builder.build(tauri::generate_context!()) {
+        Ok(app) => app,
+        Err(err) => {
+            eprintln!("error while building tauri application: {err}");
+            return;
+        }
+    };
+
+    app.run(|app_handle, event| {
+        if matches!(
+            event,
+            tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }
+        ) {
+            let manager = app_handle.state::<ConnectionManager>();
+            manager.disconnect();
+        }
+    });
 }
 
 #[cfg(all(target_os = "windows", feature = "stt"))]

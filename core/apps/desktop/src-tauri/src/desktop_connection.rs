@@ -71,6 +71,8 @@ struct LocalConnection {
 struct LocalExternalConnection {
     base_url: String,
     token: String,
+    daemon_pid: Option<u32>,
+    owns_lifecycle: bool,
 }
 
 struct SshConnection {
@@ -162,7 +164,17 @@ impl ConnectionManager {
                     }
                     let _ = try_kill_child(c.child);
                 }
-                ActiveConnection::LocalExternal(_) => {}
+                ActiveConnection::LocalExternal(c) => {
+                    if c.owns_lifecycle {
+                        stop_systemd_scope("ctx-daemon");
+                        if let Some(scope) = systemd_scope_for_local_daemon_url(&c.base_url) {
+                            stop_systemd_scope(&scope);
+                        }
+                        if let Some(pid) = c.daemon_pid {
+                            let _ = stop_local_daemon_pid(pid);
+                        }
+                    }
+                }
                 ActiveConnection::Ssh(c) => {
                     let _ = try_kill_child(c.tunnel);
                 }
@@ -192,7 +204,13 @@ impl ConnectionManager {
         }));
     }
 
-    pub(super) fn set_local_external(&self, base_url: String, token: String) {
+    pub(super) fn set_local_external(
+        &self,
+        base_url: String,
+        token: String,
+        daemon_pid: Option<u32>,
+        owns_lifecycle: bool,
+    ) {
         let mut guard = match self.0.lock() {
             Ok(g) => g,
             Err(_) => return,
@@ -200,6 +218,8 @@ impl ConnectionManager {
         guard.active = Some(ActiveConnection::LocalExternal(LocalExternalConnection {
             base_url,
             token,
+            daemon_pid,
+            owns_lifecycle,
         }));
     }
 
@@ -385,5 +405,103 @@ impl ConnectionManager {
             return Err(anyhow!("blob upload failed ({status}): {body}"));
         }
         Ok(serde_json::from_str(&body).context("parsing blob upload response")?)
+    }
+}
+
+#[cfg(test)]
+mod connection_manager_tests {
+    use super::*;
+
+    #[cfg(unix)]
+    fn spawn_detached_sleep_pid() -> u32 {
+        let output = Command::new("sh")
+            .arg("-c")
+            .arg("sleep 30 >/dev/null 2>&1 & echo $!")
+            .output()
+            .expect("spawn detached sleep");
+        assert!(
+            output.status.success(),
+            "detached sleep spawn failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        stdout
+            .trim()
+            .parse::<u32>()
+            .expect("parse detached sleep pid")
+    }
+
+    #[cfg(unix)]
+    fn pid_is_alive(pid: u32) -> bool {
+        Command::new("kill")
+            .arg("-0")
+            .arg(pid.to_string())
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    }
+
+    #[cfg(unix)]
+    fn wait_for_pid_exit(pid: u32, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if !pid_is_alive(pid) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(80));
+        }
+        !pid_is_alive(pid)
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn disconnect_stops_owned_local_external_pid() {
+        let pid = spawn_detached_sleep_pid();
+        assert!(
+            pid_is_alive(pid),
+            "sleep process should be alive before disconnect"
+        );
+
+        let manager = ConnectionManager::default();
+        manager.set_local_external(
+            "http://127.0.0.1:65531".to_string(),
+            "token".to_string(),
+            Some(pid),
+            true,
+        );
+        manager.disconnect();
+
+        assert!(
+            wait_for_pid_exit(pid, Duration::from_secs(3)),
+            "owned local external pid {pid} should be terminated on disconnect"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn disconnect_does_not_stop_unowned_local_external_pid() {
+        let pid = spawn_detached_sleep_pid();
+        assert!(
+            pid_is_alive(pid),
+            "sleep process should be alive before disconnect"
+        );
+
+        let manager = ConnectionManager::default();
+        manager.set_local_external(
+            "http://127.0.0.1:65530".to_string(),
+            "token".to_string(),
+            Some(pid),
+            false,
+        );
+        manager.disconnect();
+
+        assert!(
+            pid_is_alive(pid),
+            "unowned local external pid {pid} must not be terminated by disconnect"
+        );
+        let _ = Command::new("kill")
+            .arg("-KILL")
+            .arg(pid.to_string())
+            .output();
     }
 }
