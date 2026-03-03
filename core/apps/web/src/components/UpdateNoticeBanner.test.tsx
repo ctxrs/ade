@@ -232,6 +232,55 @@ describe("UpdateNoticeBanner", () => {
     expect(screen.getByRole("button", { name: "Restart app to finish update" })).toBeEnabled();
   });
 
+  it("shows a visible desktop updater error notice when native check fails without prior state", async () => {
+    window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "0");
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(readCachedUpdateCheck).mockReturnValue(null);
+    vi.mocked(refreshUpdateCheck).mockResolvedValue(null);
+    vi.mocked(desktopGetAppUpdateState).mockRejectedValue(new Error("native updater probe failed"));
+
+    renderBanner({ allTasksIdle: false });
+    await waitFor(() => {
+      expect(vi.mocked(desktopGetAppUpdateState)).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.getByTestId("update-available-snackbar")).toBeInTheDocument();
+    expect(screen.getByText("Updater check failed.")).toBeInTheDocument();
+    expect(screen.getByText("native updater probe failed")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry check" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Update on Next Idle" })).not.toBeInTheDocument();
+  });
+
+  it("clears desktop updater error notice after a successful retry with no update available", async () => {
+    window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "0");
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(readCachedUpdateCheck).mockReturnValue(null);
+    vi.mocked(refreshUpdateCheck).mockResolvedValue(null);
+    vi.mocked(desktopGetAppUpdateState)
+      .mockRejectedValueOnce(new Error("native updater probe failed"))
+      .mockResolvedValue({
+        configured: true,
+        available: false,
+        restart_required: false,
+        current_version: "0.4.8",
+        latest_version: null,
+        target: "macos-arm64",
+        endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+        message: null,
+      });
+
+    renderBanner({ allTasksIdle: false });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Retry check" })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Retry check" }));
+    await waitFor(() => {
+      expect(vi.mocked(desktopGetAppUpdateState)).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("update-available-snackbar")).not.toBeInTheDocument();
+    });
+  });
+
   it("persists restart-required state across remounts in the same app session", async () => {
     window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "0");
     vi.mocked(isDesktopApp).mockReturnValue(true);

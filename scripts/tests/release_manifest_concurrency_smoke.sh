@@ -9,6 +9,7 @@ trap 'rm -rf "$tmp_root"' EXIT
 
 channel="stable"
 version="9.9.9"
+download_base="https://example.test/functions/v1"
 latest_json="$tmp_root/latest.json"
 latest_tauri_json="$tmp_root/latest-tauri.json"
 lock_dir="$tmp_root/manifest.lock"
@@ -40,7 +41,7 @@ cat >"$latest_tauri_json" <<'JSON'
   "pub_date": "2026-02-10T00:00:00Z",
   "platforms": {
     "linux-x64": {
-      "url": "/download/stable/8.8.8/ctx_8.8.8_linux-x64_updater.AppImage.tar.gz",
+      "url": "https://example.test/functions/v1/download/stable/8.8.8/ctx_8.8.8_linux-x64_updater.AppImage.tar.gz",
       "signature": "stale"
     }
   }
@@ -101,11 +102,12 @@ NODE
 
   local tauri_entry_json
   tauri_entry_json="$(
-    CHANNEL="$channel" VERSION="$version" PLATFORM="$platform" UPDATER_NAME="$updater_name" node - <<'NODE'
+    CHANNEL="$channel" VERSION="$version" PLATFORM="$platform" UPDATER_NAME="$updater_name" DOWNLOAD_BASE="$download_base" node - <<'NODE'
 const e = process.env;
+const downloadBase = String(e.DOWNLOAD_BASE || "").replace(/\/+$/, "");
 process.stdout.write(
   JSON.stringify({
-    url: `/download/${e.CHANNEL}/${e.VERSION}/${e.UPDATER_NAME}`,
+    url: `${downloadBase}/download/${e.CHANNEL}/${e.VERSION}/${e.UPDATER_NAME}`,
     signature: `sig-${e.PLATFORM}`,
   }),
 );
@@ -185,7 +187,7 @@ process.stdout.write(`${JSON.stringify(merged, null, 2)}\n`);
 NODE
   mv "$latest_json.next" "$latest_json"
 
-  CHANNEL="$channel" VERSION="$version" PLATFORM="$platform" PUBLISHED_AT="2026-02-19T00:00:00Z" \
+  CHANNEL="$channel" VERSION="$version" PLATFORM="$platform" PUBLISHED_AT="2026-02-19T00:00:00Z" DOWNLOAD_BASE="$download_base" \
   EXISTING_TAURI_MANIFEST_FILE="$latest_tauri_json" TAURI_PLATFORM_ENTRY_JSON="$tauri_entry_json" \
   node - <<'NODE' >"$latest_tauri_json.next"
 const fs = require("fs");
@@ -195,7 +197,18 @@ const platform = process.env.PLATFORM;
 const publishedAt = process.env.PUBLISHED_AT;
 const existingRaw = fs.readFileSync(process.env.EXISTING_TAURI_MANIFEST_FILE, "utf8");
 const platformEntry = JSON.parse(process.env.TAURI_PLATFORM_ENTRY_JSON);
-const versionPrefix = `/download/${channel}/${version}/`;
+const downloadBase = String(process.env.DOWNLOAD_BASE || "").trim().replace(/\/+$/, "");
+const versionPrefix = `${downloadBase}/download/${channel}/${version}/`;
+
+function canonicalUpdaterUrl(raw) {
+  try {
+    const parsed = new URL(String(raw || "").trim());
+    if (parsed.protocol !== "https:") return null;
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return null;
+  }
+}
 
 function isUpdaterEntry(x) {
   return Boolean(
@@ -203,13 +216,16 @@ function isUpdaterEntry(x) {
       typeof x === "object" &&
       typeof x.url === "string" &&
       x.url.trim().length > 0 &&
+      canonicalUpdaterUrl(x.url) !== null &&
       typeof x.signature === "string" &&
       x.signature.trim().length > 0,
   );
 }
 
 function entryIsCurrentVersion(entry) {
-  return isUpdaterEntry(entry) && entry.url.startsWith(versionPrefix);
+  if (!isUpdaterEntry(entry)) return false;
+  const canonical = canonicalUpdaterUrl(entry.url);
+  return Boolean(canonical && canonical.startsWith(versionPrefix));
 }
 
 if (!isUpdaterEntry(platformEntry)) {
@@ -252,10 +268,11 @@ for platform in "${platforms[@]}"; do
 done
 wait
 
-LATEST_JSON_PATH="$latest_json" LATEST_TAURI_JSON_PATH="$latest_tauri_json" EXPECTED_PLATFORMS="$(IFS=,; echo "${platforms[*]}")" \
+LATEST_JSON_PATH="$latest_json" LATEST_TAURI_JSON_PATH="$latest_tauri_json" EXPECTED_PLATFORMS="$(IFS=,; echo "${platforms[*]}")" DOWNLOAD_BASE="$download_base" \
 node - <<'NODE'
 const fs = require("fs");
 
+const downloadBase = String(process.env.DOWNLOAD_BASE || "").trim().replace(/\/+$/, "");
 const expectedPlatforms = String(process.env.EXPECTED_PLATFORMS || "")
   .split(",")
   .map((v) => v.trim())
@@ -284,6 +301,37 @@ for (const platform of expectedPlatforms) {
 
 if (latest.platforms["linux-x64"]?.desktop?.url_path?.includes("/8.8.8/")) {
   throw new Error("stale prior-version platform artifact survived merge");
+}
+
+const expectedUpdaterPrefix = `${downloadBase}/download/stable/9.9.9/`;
+for (const platform of expectedPlatforms) {
+  const updater = tauri.platforms[platform];
+  if (typeof updater.url !== "string" || !updater.url.startsWith(expectedUpdaterPrefix)) {
+    throw new Error(`updater URL not absolute/current for ${platform}: ${updater?.url}`);
+  }
+}
+
+const invalidRelative = {
+  ...tauri,
+  platforms: {
+    ...tauri.platforms,
+    "linux-x64": {
+      ...tauri.platforms["linux-x64"],
+      url: "/download/stable/9.9.9/ctx_9.9.9_linux-x64_updater.AppImage.tar.gz",
+    },
+  },
+};
+const rejectedRelative = (() => {
+  try {
+    const candidate = invalidRelative.platforms["linux-x64"]?.url;
+    const parsed = new URL(String(candidate || ""));
+    return parsed.protocol !== "https:";
+  } catch {
+    return true;
+  }
+})();
+if (!rejectedRelative) {
+  throw new Error("relative updater URL unexpectedly accepted");
 }
 
 console.log("ok: release manifest concurrent merge smoke passed");

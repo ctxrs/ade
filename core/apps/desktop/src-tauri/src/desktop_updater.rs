@@ -666,6 +666,40 @@ mod tests {
     }
 
     #[test]
+    fn tauri_manifest_parser_accepts_absolute_updater_urls() {
+        let manifest = r#"{
+          "version":"1.2.3",
+          "notes":"ctx 1.2.3",
+          "pub_date":"2026-03-03T00:00:00Z",
+          "platforms":{
+            "macos-arm64":{
+              "url":"https://api.ctx.rs/functions/v1/download/stable/1.2.3/ctx_1.2.3_macos-arm64_updater.app.tar.gz",
+              "signature":"sig"
+            }
+          }
+        }"#;
+        let parsed = serde_json::from_str::<tauri_plugin_updater::RemoteRelease>(manifest);
+        assert!(parsed.is_ok(), "absolute updater URLs should parse: {parsed:?}");
+    }
+
+    #[test]
+    fn tauri_manifest_parser_rejects_relative_updater_urls() {
+        let manifest = r#"{
+          "version":"1.2.3",
+          "notes":"ctx 1.2.3",
+          "pub_date":"2026-03-03T00:00:00Z",
+          "platforms":{
+            "macos-arm64":{
+              "url":"/download/stable/1.2.3/ctx_1.2.3_macos-arm64_updater.app.tar.gz",
+              "signature":"sig"
+            }
+          }
+        }"#;
+        let parsed = serde_json::from_str::<tauri_plugin_updater::RemoteRelease>(manifest);
+        assert!(parsed.is_err(), "relative updater URLs must be rejected");
+    }
+
+    #[test]
     fn version_is_strictly_newer_respects_semver_ordering() {
         assert!(version_is_strictly_newer("1.2.0", "1.1.9"));
         assert!(!version_is_strictly_newer("1.2.0", "1.2.0"));

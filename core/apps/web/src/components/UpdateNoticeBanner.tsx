@@ -135,6 +135,8 @@ type NoticeUiAction =
   | { type: "apply_started" }
   | { type: "apply_failed"; message: string }
   | { type: "apply_completed" }
+  | { type: "check_failed"; message: string }
+  | { type: "check_recovered" }
   | { type: "restart_required"; message: string }
   | { type: "info_opened" }
   | { type: "info_closed" };
@@ -153,6 +155,13 @@ const noticeUiReducer = (state: NoticeUiState, action: NoticeUiAction): NoticeUi
       return { ...state, phase: "ready", error: action.message };
     case "apply_completed":
       return { ...state, phase: "ready", error: null };
+    case "check_failed":
+      if (state.phase === "restart_required") return state;
+      return { ...state, phase: "ready", error: action.message };
+    case "check_recovered":
+      if (state.phase !== "ready") return state;
+      if (!state.error) return state;
+      return { ...state, error: null };
     case "restart_required":
       return { ...state, phase: "restart_required", error: action.message };
     case "info_opened":
@@ -430,16 +439,31 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
               : normalizeOptionalString(native.message) || "Native updater is not configured.",
             update_available: Boolean(native.available),
           };
+          dispatchUi({ type: "check_recovered" });
         } catch (err) {
+          const reason = err instanceof Error ? err.message : "Desktop updater check failed.";
           const previous = updateInfoRef.current;
           info = previous
             ? {
               ...previous,
               update_available: false,
-              in_place_update_reason:
-                err instanceof Error ? err.message : "Desktop updater check failed.",
+              in_place_update_reason: reason,
             }
-            : null;
+            : {
+              channel: "stable",
+              base_url: normalizeOptionalString(daemonPolicy?.base_url),
+              platform:
+                normalizeOptionalString(daemonPolicy?.platform)
+                || null,
+              current_version: normalizeOptionalString(daemonPolicy?.current_version),
+              latest_version: null,
+              min_supported_version: normalizeOptionalString(daemonPolicy?.min_supported_version) || null,
+              platform_supported: daemonPolicy?.platform_supported ?? true,
+              in_place_update_supported: false,
+              in_place_update_reason: reason,
+              update_available: false,
+            };
+          dispatchUi({ type: "check_failed", message: reason });
         }
       } else {
         info = await refreshUpdateCheck(force ? { force: true } : undefined);
@@ -654,7 +678,15 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
     void applyUpdateNow(version, "forced");
   }, [applyUpdateNow, latest, latestKnownVersion, minimumSupportedVersion]);
 
-  const shouldRenderBanner = shouldShow || applyingUpdate || restartRequired || forcedUpdateNeedsManualInstall;
+  const checkFailureOnly =
+    isDesktop
+    && Boolean(updateError)
+    && !forcedUpdate
+    && !forcedUpdateNeedsManualInstall
+    && !shouldShow
+    && !applyingUpdate
+    && !restartRequired;
+  const shouldRenderBanner = shouldShow || applyingUpdate || restartRequired || forcedUpdateNeedsManualInstall || checkFailureOnly;
   if (!forcedUpdate && !shouldRenderBanner && !showInfoModal) return null;
   const restartActionEnabled = restartRequired && isDesktop;
   const updateActionDisabled = applyingUpdate || (restartRequired && (!restartActionEnabled || restartingApp));
@@ -704,51 +736,70 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
         <div className="wb-snackbar wb-update-snackbar" role="status" aria-live="polite" data-testid="update-available-snackbar">
           <div className="wb-snackbar-body wb-update-snackbar-body">
             <div className="wb-snackbar-title wb-update-snackbar-title-row">
-              <span>Update available: {latest}.</span>
-              <button
-                type="button"
-                className="wb-update-snackbar-info-btn"
-                aria-label="Learn about update timing"
-                title="Learn about update timing"
-                onClick={() => dispatchUi({ type: "info_opened" })}
-              >
-                <Info size={14} aria-hidden="true" />
-              </button>
+              <span>{checkFailureOnly ? "Updater check failed." : `Update available: ${latest}.`}</span>
+              {!checkFailureOnly ? (
+                <button
+                  type="button"
+                  className="wb-update-snackbar-info-btn"
+                  aria-label="Learn about update timing"
+                  title="Learn about update timing"
+                  onClick={() => dispatchUi({ type: "info_opened" })}
+                >
+                  <Info size={14} aria-hidden="true" />
+                </button>
+              ) : null}
             </div>
-            <div className="wb-snackbar-subtitle">
-              <a
-                href={releaseNotesUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="wb-update-release-notes-link"
-              >
-                View release notes
-              </a>
-            </div>
+            {!checkFailureOnly ? (
+              <div className="wb-snackbar-subtitle">
+                <a
+                  href={releaseNotesUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="wb-update-release-notes-link"
+                >
+                  View release notes
+                </a>
+              </div>
+            ) : null}
             {effectiveError ? <div className="wb-snackbar-error">{effectiveError}</div> : null}
           </div>
           <div className="wb-snackbar-actions wb-update-snackbar-actions">
-            <button
-              type="button"
-              className="wb-snackbar-btn"
-              disabled={updateActionDisabled}
-              onClick={restartRequired ? onRestartNow : onUpdateNow}
-            >
-              {updateActionLabel}
-            </button>
-            <button
-              type="button"
-              className="wb-snackbar-btn wb-snackbar-btn-secondary"
-              disabled={applyingUpdate || restartRequired}
-              onClick={requestUpdateOnNextIdle}
-            >
-              Update on Next Idle
-            </button>
+            {checkFailureOnly ? (
+              <button
+                type="button"
+                className="wb-snackbar-btn"
+                disabled={applyingUpdate}
+                onClick={() => {
+                  void refresh(true);
+                }}
+              >
+                Retry check
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="wb-snackbar-btn"
+                  disabled={updateActionDisabled}
+                  onClick={restartRequired ? onRestartNow : onUpdateNow}
+                >
+                  {updateActionLabel}
+                </button>
+                <button
+                  type="button"
+                  className="wb-snackbar-btn wb-snackbar-btn-secondary"
+                  disabled={applyingUpdate || restartRequired}
+                  onClick={requestUpdateOnNextIdle}
+                >
+                  Update on Next Idle
+                </button>
+              </>
+            )}
           </div>
           <button
             type="button"
             className="wb-snackbar-close"
-            onClick={dismissForLater}
+            onClick={checkFailureOnly ? () => dispatchUi({ type: "check_recovered" }) : dismissForLater}
             aria-label="Dismiss update notice"
             disabled={applyingUpdate || restartRequired}
           >
