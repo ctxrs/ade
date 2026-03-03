@@ -247,6 +247,16 @@
   animation: blink 1s step-end infinite;
 }
 
+.cursor--block {
+  display: inline-block;
+  width: 0.34em;
+  height: 0.84em;
+  margin-left: 0.04em;
+  vertical-align: -0.08em;
+  background: currentColor;
+  box-shadow: 0 0 10px var(--phosphor-bloom);
+}
+
 @keyframes flicker {
   0% { opacity: 0.15; }
   50% { opacity: 0.2; }

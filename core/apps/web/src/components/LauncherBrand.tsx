@@ -38,7 +38,7 @@ export default function LauncherBrand({ fullScreen = false, className, children 
           <div className="launcher-brand-stack">
             <div className="terminal-content">
               <span id="typed-text">ctx</span>
-              <span className="cursor">_</span>
+              <span className="cursor cursor--block" aria-hidden="true" />
             </div>
             {children}
           </div>
