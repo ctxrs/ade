@@ -7,6 +7,7 @@ const fs = require("node:fs");
 const net = require("node:net");
 
 const { resolveLaunchMode } = require("./desktop_mode.cjs");
+const { readDesktopVersion } = require("./desktop_version.cjs");
 
 const coreRoot = path.resolve(__dirname, "..");
 
@@ -126,6 +127,7 @@ const resolveWebDevPort = async (host) => {
 
 const main = async () => {
   const mode = resolveLaunchMode({ surface: "desktop" });
+  const desktopVersion = readDesktopVersion(coreRoot);
   const cargoTargetDir = resolveCargoTargetDir();
   const effectiveManifestPath = path.join(
     coreRoot,
@@ -135,7 +137,7 @@ const main = async () => {
     "bundles",
     "runtime_manifest.effective.json",
   );
-  const prepEnv = { ...process.env, CARGO_TARGET_DIR: cargoTargetDir };
+  const prepEnv = { ...process.env, CARGO_TARGET_DIR: cargoTargetDir, VITE_CTX_APP_VERSION: desktopVersion };
   const tauriEnv = {
     ...process.env,
     CTX_DESKTOP_CHANNEL: mode.channel,
@@ -143,6 +145,7 @@ const main = async () => {
     CTX_LAUNCH_SURFACE: mode.surface,
     CTX_DESKTOP_DEV_BIN_DIR: path.join(cargoTargetDir, "debug"),
     CTX_BUNDLE_MANIFEST: effectiveManifestPath,
+    VITE_CTX_APP_VERSION: desktopVersion,
   };
   const useBundledWeb = envFlagEnabled(process.env.CTX_DESKTOP_USE_BUNDLED_WEB, false);
   const webDevHost = String(process.env.CTX_DESKTOP_WEB_DEV_HOST || "127.0.0.1").trim() || "127.0.0.1";
@@ -205,6 +208,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  readDesktopVersion,
   envFlagEnabled,
   normalizeManifestOs,
   normalizeManifestArch,

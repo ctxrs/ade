@@ -30,6 +30,17 @@ test("mode contract commands are present", () => {
   }
 });
 
+test("desktop prep scripts inject desktop version into web build", () => {
+  const scripts = packageJson.scripts || {};
+  for (const id of ["desktop:prep", "desktop:prep:release"]) {
+    const script = String(scripts[id] || "");
+    assert.ok(
+      script.includes("VITE_CTX_APP_VERSION=$(node scripts/desktop_version.cjs)"),
+      `${id} must inject desktop app version into web build`,
+    );
+  }
+});
+
 test("desktop mode defaults to dev/parity/desktop", () => {
   const mode = resolveLaunchMode({});
   assert.deepEqual(mode, {
@@ -66,4 +77,3 @@ test("desktop mode parser accepts explicit composed mode", () => {
     surface: "daemon-web",
   });
 });
-
