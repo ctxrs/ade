@@ -76,6 +76,9 @@ supabase/supabase/
 # Cloudflare Wrangler
 .wrangler/
 
+# Generated VM content pack for site
+site/public/vm-assets/content-pack.json
+
 # Xcode
 *.xcodeproj/
 *.xcworkspace/
