@@ -329,7 +329,7 @@ pub(super) async fn desktop_connect_ssh(
             let _ = try_kill_child(tunnel);
             // Bootstrap contract:
             // 1) use managed binary when present,
-            // 2) otherwise install managed binary from bundled daemon assets.
+            // 2) otherwise download/install managed binary for this release channel.
             let managed_exists = remote_ctx_bin_exists_over_ssh(
                 &host_for_connect,
                 user_for_connect.as_deref(),
@@ -1355,7 +1355,7 @@ fn install_remote_daemon_over_ssh(
         .context("spawning ssh for remote daemon install")?;
     {
         let mut file = std::fs::File::open(&local_bin)
-            .with_context(|| format!("opening bundled daemon at {}", local_bin.display()))?;
+            .with_context(|| format!("opening managed daemon at {}", local_bin.display()))?;
         let mut stdin = child
             .stdin
             .take()
