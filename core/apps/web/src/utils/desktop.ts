@@ -42,22 +42,31 @@ export type DesktopRemoteDaemonUpdateResp = {
 export type DesktopAppUpdateCheckResp = {
   configured: boolean;
   available: boolean;
+  restart_required?: boolean;
+  phase?: string;
+  staged?: boolean;
   current_version: string;
   latest_version?: string | null;
   target: string;
   endpoint: string;
   message?: string | null;
+  last_attempt_id?: string | null;
+  last_error?: string | null;
 };
 
 export type DesktopAppUpdateStateResp = {
   configured: boolean;
   available: boolean;
   restart_required: boolean;
+  phase?: string;
+  staged?: boolean;
   current_version: string;
   latest_version?: string | null;
   target: string;
   endpoint: string;
   message?: string | null;
+  last_attempt_id?: string | null;
+  last_error?: string | null;
 };
 
 export type DesktopAppUpdateApplyResp = {
@@ -71,6 +80,26 @@ export type DesktopAppUpdateApplyResp = {
 export type DesktopAppRestartResp = {
   requested: boolean;
   message: string;
+};
+
+export type DesktopAppUpdateAttemptStageResp = {
+  stage: string;
+  started_at_ms: number;
+  finished_at_ms?: number | null;
+  result: string;
+  error_code?: string | null;
+  error_message?: string | null;
+};
+
+export type DesktopAppUpdateAttemptResp = {
+  attempt_id: string;
+  channel: string;
+  current_version: string;
+  target_version?: string | null;
+  started_at_ms: number;
+  finished_at_ms?: number | null;
+  result: string;
+  stages: DesktopAppUpdateAttemptStageResp[];
 };
 
 export type DesktopStorageBatchOp =
@@ -197,7 +226,26 @@ export const openExternalLink = async (href: string): Promise<boolean> => {
 
 const invoke = async <T>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
   const mod = await import("@tauri-apps/api/core");
-  return mod.invoke<T>(cmd, args);
+  try {
+    return await mod.invoke<T>(cmd, args);
+  } catch (err: unknown) {
+    if (err instanceof Error) throw err;
+    if (typeof err === "string") throw new Error(err.trim() || `desktop invoke failed: ${cmd}`);
+    if (err && typeof err === "object") {
+      const withMessage = err as { message?: unknown };
+      if (typeof withMessage.message === "string") {
+        const message = withMessage.message.trim();
+        if (message) throw new Error(message);
+      }
+      try {
+        const encoded = JSON.stringify(err);
+        if (encoded.trim()) throw new Error(encoded);
+      } catch {
+        // ignore serialization failures
+      }
+    }
+    throw new Error(`desktop invoke failed: ${cmd}`);
+  }
 };
 
 export const desktopListen = async <T>(event: string, handler: (payload: T) => void): Promise<() => void> => {
@@ -259,6 +307,9 @@ export const desktopApplyAppUpdate = async (
 
 export const desktopRestartApp = async (): Promise<DesktopAppRestartResp> =>
   invoke<DesktopAppRestartResp>("desktop_restart_app");
+
+export const desktopGetLastAppUpdateAttempt = async (): Promise<DesktopAppUpdateAttemptResp | null> =>
+  invoke<DesktopAppUpdateAttemptResp | null>("desktop_get_last_app_update_attempt");
 
 export const desktopListSshHosts = async (): Promise<DesktopSshHost[]> =>
   invoke<DesktopSshHost[]>("desktop_list_ssh_hosts");

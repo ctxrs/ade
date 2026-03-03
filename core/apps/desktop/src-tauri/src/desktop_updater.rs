@@ -3,12 +3,120 @@ use super::*;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri_plugin_updater::UpdaterExt;
 use url::Url;
 
 const RESTART_MARKER_FILENAME: &str = "desktop_update_restart_required.json";
+const STAGED_UPDATE_META_FILENAME: &str = "desktop_update_staged.v1.json";
+const STAGED_UPDATE_BYTES_FILENAME: &str = "desktop_update_staged.v1.bin";
+const LAST_ATTEMPT_FILENAME: &str = "desktop_update_attempt_last.v1.json";
+static STAGING_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum DesktopAppUpdatePhase {
+    Idle,
+    Staging,
+    StagedReady,
+    RestartRequired,
+    Failed,
+}
+
+impl DesktopAppUpdatePhase {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Staging => "staging",
+            Self::StagedReady => "staged_ready",
+            Self::RestartRequired => "restart_required",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DesktopStagedUpdateMeta {
+    version: String,
+    target: String,
+    endpoint: String,
+    channel: String,
+    downloaded_at_ms: u64,
+    size_bytes: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum DesktopUpdateAttemptResult {
+    InProgress,
+    Succeeded,
+    Failed,
+}
+
+impl DesktopUpdateAttemptResult {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::InProgress => "in_progress",
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DesktopUpdateAttemptStage {
+    stage: String,
+    started_at_ms: u64,
+    finished_at_ms: Option<u64>,
+    result: DesktopUpdateAttemptResult,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DesktopUpdateAttempt {
+    attempt_id: String,
+    channel: String,
+    current_version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target_version: Option<String>,
+    started_at_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    finished_at_ms: Option<u64>,
+    result: DesktopUpdateAttemptResult,
+    stages: Vec<DesktopUpdateAttemptStage>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct DesktopAppUpdateAttemptResp {
+    attempt_id: String,
+    channel: String,
+    current_version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target_version: Option<String>,
+    started_at_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    finished_at_ms: Option<u64>,
+    result: String,
+    stages: Vec<DesktopAppUpdateAttemptStageResp>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct DesktopAppUpdateAttemptStageResp {
+    stage: String,
+    started_at_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    finished_at_ms: Option<u64>,
+    result: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_message: Option<String>,
+}
 
 #[derive(Debug, Deserialize)]
 pub(super) struct DesktopAppUpdateCheckReq {
@@ -20,6 +128,9 @@ pub(super) struct DesktopAppUpdateCheckReq {
 pub(super) struct DesktopAppUpdateCheckResp {
     configured: bool,
     available: bool,
+    restart_required: bool,
+    phase: String,
+    staged: bool,
     current_version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     latest_version: Option<String>,
@@ -27,6 +138,10 @@ pub(super) struct DesktopAppUpdateCheckResp {
     endpoint: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_attempt_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_error: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -34,6 +149,8 @@ pub(super) struct DesktopAppUpdateStateResp {
     configured: bool,
     available: bool,
     restart_required: bool,
+    phase: String,
+    staged: bool,
     current_version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     latest_version: Option<String>,
@@ -41,6 +158,10 @@ pub(super) struct DesktopAppUpdateStateResp {
     endpoint: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_attempt_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -76,6 +197,38 @@ struct DesktopNativeUpdaterConfig {
     pubkey: Option<String>,
 }
 
+impl From<DesktopUpdateAttempt> for DesktopAppUpdateAttemptResp {
+    fn from(value: DesktopUpdateAttempt) -> Self {
+        Self {
+            attempt_id: value.attempt_id,
+            channel: value.channel,
+            current_version: value.current_version,
+            target_version: value.target_version,
+            started_at_ms: value.started_at_ms,
+            finished_at_ms: value.finished_at_ms,
+            result: value.result.as_str().to_string(),
+            stages: value
+                .stages
+                .into_iter()
+                .map(DesktopAppUpdateAttemptStageResp::from)
+                .collect(),
+        }
+    }
+}
+
+impl From<DesktopUpdateAttemptStage> for DesktopAppUpdateAttemptStageResp {
+    fn from(value: DesktopUpdateAttemptStage) -> Self {
+        Self {
+            stage: value.stage,
+            started_at_ms: value.started_at_ms,
+            finished_at_ms: value.finished_at_ms,
+            result: value.result.as_str().to_string(),
+            error_code: value.error_code,
+            error_message: value.error_message,
+        }
+    }
+}
+
 #[tauri::command]
 pub(super) async fn desktop_check_app_update(
     app: tauri::AppHandle,
@@ -85,11 +238,16 @@ pub(super) async fn desktop_check_app_update(
     Ok(DesktopAppUpdateCheckResp {
         configured: state.configured,
         available: state.available,
+        restart_required: state.restart_required,
+        phase: state.phase,
+        staged: state.staged,
         current_version: state.current_version,
         latest_version: state.latest_version,
         target: state.target,
         endpoint: state.endpoint,
         message: state.message,
+        last_attempt_id: state.last_attempt_id,
+        last_error: state.last_error,
     })
 }
 
@@ -100,6 +258,14 @@ pub(super) async fn desktop_get_app_update_state(
 ) -> Result<DesktopAppUpdateStateResp, String> {
     let channel = desktop_ssh::normalize_update_channel(req.channel.as_deref())?;
     resolve_desktop_update_state(&app, &channel).await
+}
+
+#[tauri::command]
+pub(super) fn desktop_get_last_app_update_attempt(
+    app: tauri::AppHandle,
+) -> Result<Option<DesktopAppUpdateAttemptResp>, String> {
+    let raw = read_last_attempt_for_app(&app)?;
+    Ok(raw.map(DesktopAppUpdateAttemptResp::from))
 }
 
 #[tauri::command]
@@ -131,20 +297,44 @@ pub(super) async fn desktop_apply_app_update(
         );
     }
 
+    let mut attempt = begin_update_attempt(&channel, &pre_state.current_version);
+
     let config = resolve_native_updater_config(&channel)?;
     let pubkey = config.pubkey.as_deref().ok_or_else(|| {
         "native updater is not configured (missing CTX_DESKTOP_UPDATER_PUBKEY)".to_string()
     })?;
     let endpoint_url = endpoint_with_download_id(&config.endpoint, download_id.as_deref())?;
+    let build_stage = begin_attempt_stage(&mut attempt, "build");
     let updater = app
         .updater_builder()
         .target(config.target.clone())
         .pubkey(pubkey)
         .endpoints(vec![endpoint_url])
-        .map_err(to_err)?
+        .map_err(|e| {
+            let err = updater_stage_error("build", e);
+            fail_attempt_stage(&mut attempt, build_stage, "build", &err);
+            persist_attempt_failure_best_effort(&app, &mut attempt, err)
+        })?
         .build()
-        .map_err(to_err)?;
-    let Some(update) = updater.check().await.map_err(to_err)? else {
+        .map_err(|e| {
+            let err = updater_stage_error("build", e);
+            fail_attempt_stage(&mut attempt, build_stage, "build", &err);
+            persist_attempt_failure_best_effort(&app, &mut attempt, err)
+        })?;
+    complete_attempt_stage(&mut attempt, build_stage);
+
+    let check_stage = begin_attempt_stage(&mut attempt, "check");
+    let Some(update) = updater
+        .check()
+        .await
+        .map_err(|e| {
+            let err = updater_stage_error("check", e);
+            fail_attempt_stage(&mut attempt, check_stage, "check", &err);
+            persist_attempt_failure_best_effort(&app, &mut attempt, err)
+        })?
+    else {
+        complete_attempt_stage(&mut attempt, check_stage);
+        persist_attempt_success_best_effort(&app, &mut attempt);
         return Ok(DesktopAppUpdateApplyResp {
             applied: false,
             needs_restart: false,
@@ -153,12 +343,70 @@ pub(super) async fn desktop_apply_app_update(
             message: "No desktop app update is currently available.".to_string(),
         });
     };
+    complete_attempt_stage(&mut attempt, check_stage);
     let latest_version = update.version.clone();
+    attempt.target_version = Some(latest_version.clone());
+    eprintln!(
+        "native updater apply start: target={} version={latest_version}",
+        config.target
+    );
+
+    let verify_stage = begin_attempt_stage(&mut attempt, "verify");
+    if !version_is_strictly_newer(&latest_version, &pre_state.current_version) {
+        complete_attempt_stage(&mut attempt, verify_stage);
+        persist_attempt_success_best_effort(&app, &mut attempt);
+        return Ok(DesktopAppUpdateApplyResp {
+            applied: false,
+            needs_restart: false,
+            up_to_date: true,
+            latest_version: Some(latest_version),
+            message: "No desktop app update is currently available.".to_string(),
+        });
+    }
+    complete_attempt_stage(&mut attempt, verify_stage);
+
+    let download_stage = begin_attempt_stage(&mut attempt, "download");
+    let bytes = if let Some(staged_bytes) =
+        read_staged_update_bytes_if_matching(&app, &channel, &latest_version, &config)?
+    {
+        complete_attempt_stage(&mut attempt, download_stage);
+        staged_bytes
+    } else {
+        let fresh = update
+            .download(|_, _| {}, || {})
+            .await
+            .map_err(|e| {
+                let err = updater_stage_error("download", e);
+                fail_attempt_stage(&mut attempt, download_stage, "download", &err);
+                persist_attempt_failure_best_effort(&app, &mut attempt, err)
+            })?;
+        complete_attempt_stage(&mut attempt, download_stage);
+        fresh
+    };
+
+    let install_stage = begin_attempt_stage(&mut attempt, "install");
     update
-        .download_and_install(|_, _| {}, || {})
-        .await
-        .map_err(to_err)?;
-    write_restart_marker_for_app(&app, &latest_version)?;
+        .install(&bytes)
+        .map_err(|e| {
+            let err = updater_stage_error("install", e);
+            fail_attempt_stage(&mut attempt, install_stage, "install", &err);
+            persist_attempt_failure_best_effort(&app, &mut attempt, err)
+        })?;
+    complete_attempt_stage(&mut attempt, install_stage);
+
+    let marker_stage = begin_attempt_stage(&mut attempt, "marker");
+    write_restart_marker_for_app(&app, &latest_version)
+        .map_err(|e| {
+            let err = updater_stage_error("marker_write", e);
+            fail_attempt_stage(&mut attempt, marker_stage, "marker_write", &err);
+            persist_attempt_failure_best_effort(&app, &mut attempt, err)
+        })?;
+    complete_attempt_stage(&mut attempt, marker_stage);
+    if let Err(err) = clear_staged_update_for_app(&app) {
+        eprintln!("warn: failed to clear staged updater payload after install: {err}");
+    }
+    eprintln!("native updater apply success: version={latest_version}");
+    persist_attempt_success_best_effort(&app, &mut attempt);
 
     Ok(DesktopAppUpdateApplyResp {
         applied: true,
@@ -171,6 +419,13 @@ pub(super) async fn desktop_apply_app_update(
 
 #[tauri::command]
 pub(super) fn desktop_restart_app(app: tauri::AppHandle) -> Result<DesktopAppRestartResp, String> {
+    if let Ok(Some(mut attempt)) = read_last_attempt_for_app(&app) {
+        let stage = begin_attempt_stage(&mut attempt, "restart");
+        complete_attempt_stage(&mut attempt, stage);
+        if let Err(err) = write_last_attempt_for_app(&app, &attempt) {
+            eprintln!("warn: failed to persist updater restart stage: {err}");
+        }
+    }
     let app_handle = app.clone();
     thread::spawn(move || {
         // Allow the invoke response to flush before requesting restart.
@@ -189,23 +444,50 @@ async fn resolve_desktop_update_state(
 ) -> Result<DesktopAppUpdateStateResp, String> {
     let current_version = app.package_info().version.to_string();
     let config = resolve_native_updater_config(channel)?;
+    clear_staged_update_if_current_version_is_new_enough(app, &current_version)?;
     let pending_restart_version = reconcile_restart_marker_for_app(app, &current_version)?;
     let restart_required = pending_restart_version.is_some();
+    let last_attempt = read_last_attempt_for_app(app)?;
+    let last_attempt_id = last_attempt.as_ref().map(|entry| entry.attempt_id.clone());
+    let mut last_error = last_attempt
+        .as_ref()
+        .and_then(last_failed_stage_message)
+        .map(|value| value.to_string());
     let message = if config.pubkey.is_none() {
         Some("Native updater is not configured (missing CTX_DESKTOP_UPDATER_PUBKEY).".to_string())
     } else {
         None
     };
+    if restart_required {
+        return Ok(DesktopAppUpdateStateResp {
+            configured: config.pubkey.is_some(),
+            available: true,
+            restart_required: true,
+            phase: DesktopAppUpdatePhase::RestartRequired.as_str().to_string(),
+            staged: false,
+            current_version,
+            latest_version: pending_restart_version,
+            target: config.target,
+            endpoint: config.endpoint,
+            message: Some("Desktop update installed. Relaunch the app to complete the update.".to_string()),
+            last_attempt_id,
+            last_error,
+        });
+    }
     let Some(pubkey) = config.pubkey.as_deref() else {
         return Ok(DesktopAppUpdateStateResp {
             configured: false,
             available: false,
             restart_required,
+            phase: DesktopAppUpdatePhase::Idle.as_str().to_string(),
+            staged: false,
             current_version,
             latest_version: pending_restart_version,
             target: config.target,
             endpoint: config.endpoint,
             message,
+            last_attempt_id,
+            last_error,
         });
     };
     let endpoint_url =
@@ -218,28 +500,410 @@ async fn resolve_desktop_update_state(
         .map_err(to_err)?
         .build()
         .map_err(to_err)?;
-    let update = updater.check().await.map_err(to_err)?;
+    let update = updater.check().await.map_err(|e| {
+        let msg = updater_stage_error("check", e);
+        msg
+    })?;
     let raw_latest_version = update.as_ref().map(|v| v.version.clone());
     let latest_from_feed = normalize_latest_version(
         &current_version,
         raw_latest_version.as_deref(),
         pending_restart_version.as_deref(),
     );
-    let available = raw_latest_version
+    let latest = raw_latest_version
         .as_deref()
-        .map(|latest| version_is_strictly_newer(latest, &current_version))
-        .unwrap_or(false)
-        && !restart_required;
+        .filter(|latest| version_is_strictly_newer(latest, &current_version))
+        .map(|v| v.to_string());
+    if latest.is_none() {
+        clear_staged_update_for_app(app)?;
+        return Ok(DesktopAppUpdateStateResp {
+            configured: true,
+            available: false,
+            restart_required: false,
+            phase: DesktopAppUpdatePhase::Idle.as_str().to_string(),
+            staged: false,
+            current_version,
+            latest_version: latest_from_feed,
+            target: config.target,
+            endpoint: config.endpoint,
+            message: None,
+            last_attempt_id,
+            last_error: None,
+        });
+    }
+    let latest = latest.unwrap_or_default();
+    let staged_ready = has_matching_staged_update(app, channel, &latest, &config)?;
+    if staged_ready {
+        return Ok(DesktopAppUpdateStateResp {
+            configured: true,
+            available: true,
+            restart_required: false,
+            phase: DesktopAppUpdatePhase::StagedReady.as_str().to_string(),
+            staged: true,
+            current_version,
+            latest_version: Some(latest),
+            target: config.target,
+            endpoint: config.endpoint,
+            message: None,
+            last_attempt_id,
+            last_error: None,
+        });
+    }
+    if !STAGING_IN_PROGRESS.swap(true, Ordering::SeqCst) {
+        let app_handle = app.clone();
+        let channel_owned = channel.to_string();
+        tauri::async_runtime::spawn(async move {
+            let result = stage_update_in_background(app_handle, &channel_owned).await;
+            if let Err(err) = result {
+                eprintln!("warn: background desktop updater staging failed: {err}");
+            }
+            STAGING_IN_PROGRESS.store(false, Ordering::SeqCst);
+        });
+    }
+    if let Some(attempt) = &last_attempt {
+        if attempt.result == DesktopUpdateAttemptResult::Failed
+            && attempt.target_version.as_deref() == Some(latest.as_str())
+        {
+            last_error = last_failed_stage_message(attempt).map(|value| value.to_string());
+        }
+    }
     Ok(DesktopAppUpdateStateResp {
         configured: true,
-        available,
-        restart_required,
+        available: false,
+        restart_required: false,
+        phase: DesktopAppUpdatePhase::Staging.as_str().to_string(),
+        staged: false,
         current_version,
-        latest_version: latest_from_feed,
+        latest_version: Some(latest),
         target: config.target,
         endpoint: config.endpoint,
-        message,
+        message: Some("Downloading update in background.".to_string()),
+        last_attempt_id,
+        last_error,
     })
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn app_data_root_for_app(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("resolving app_data_dir: {e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("creating app_data_dir: {e}"))?;
+    Ok(dir)
+}
+
+fn staged_meta_path_for_app(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(app_data_root_for_app(app)?.join(STAGED_UPDATE_META_FILENAME))
+}
+
+fn staged_bytes_path_for_app(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(app_data_root_for_app(app)?.join(STAGED_UPDATE_BYTES_FILENAME))
+}
+
+fn last_attempt_path_for_app(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(app_data_root_for_app(app)?.join(LAST_ATTEMPT_FILENAME))
+}
+
+fn read_staged_update_meta_for_app(
+    app: &tauri::AppHandle,
+) -> Result<Option<DesktopStagedUpdateMeta>, String> {
+    let path = staged_meta_path_for_app(app)?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = std::fs::read_to_string(&path)
+        .map_err(|e| format!("reading staged update metadata '{}': {e}", path.display()))?;
+    let parsed = serde_json::from_str::<DesktopStagedUpdateMeta>(&raw)
+        .map_err(|e| format!("parsing staged update metadata '{}': {e}", path.display()))?;
+    if parsed.version.trim().is_empty() {
+        clear_staged_update_for_app(app)?;
+        return Ok(None);
+    }
+    Ok(Some(parsed))
+}
+
+fn write_staged_update_for_app(
+    app: &tauri::AppHandle,
+    meta: &DesktopStagedUpdateMeta,
+    bytes: &[u8],
+) -> Result<(), String> {
+    let bytes_path = staged_bytes_path_for_app(app)?;
+    let meta_path = staged_meta_path_for_app(app)?;
+    std::fs::write(&bytes_path, bytes)
+        .map_err(|e| format!("writing staged update bytes '{}': {e}", bytes_path.display()))?;
+    let encoded = serde_json::to_string_pretty(meta)
+        .map_err(|e| format!("encoding staged update metadata: {e}"))?;
+    std::fs::write(&meta_path, format!("{encoded}\n"))
+        .map_err(|e| format!("writing staged update metadata '{}': {e}", meta_path.display()))
+}
+
+fn clear_staged_update_for_app(app: &tauri::AppHandle) -> Result<(), String> {
+    let meta_path = staged_meta_path_for_app(app)?;
+    let bytes_path = staged_bytes_path_for_app(app)?;
+    if meta_path.exists() {
+        std::fs::remove_file(&meta_path)
+            .map_err(|e| format!("clearing staged update metadata '{}': {e}", meta_path.display()))?;
+    }
+    if bytes_path.exists() {
+        std::fs::remove_file(&bytes_path)
+            .map_err(|e| format!("clearing staged update bytes '{}': {e}", bytes_path.display()))?;
+    }
+    Ok(())
+}
+
+fn clear_staged_update_if_current_version_is_new_enough(
+    app: &tauri::AppHandle,
+    current_version: &str,
+) -> Result<(), String> {
+    let Some(meta) = read_staged_update_meta_for_app(app)? else {
+        return Ok(());
+    };
+    if version_is_at_or_above(current_version, &meta.version) {
+        clear_staged_update_for_app(app)?;
+    }
+    Ok(())
+}
+
+fn has_matching_staged_update(
+    app: &tauri::AppHandle,
+    channel: &str,
+    expected_version: &str,
+    config: &DesktopNativeUpdaterConfig,
+) -> Result<bool, String> {
+    let Some(meta) = read_staged_update_meta_for_app(app)? else {
+        return Ok(false);
+    };
+    if meta.version.trim() != expected_version.trim()
+        || meta.target.trim() != config.target.trim()
+        || meta.endpoint.trim() != config.endpoint.trim()
+        || meta.channel.trim() != channel.trim()
+    {
+        return Ok(false);
+    }
+    let bytes_path = staged_bytes_path_for_app(app)?;
+    let exists = bytes_path.exists();
+    if !exists {
+        clear_staged_update_for_app(app)?;
+    }
+    Ok(exists)
+}
+
+fn read_staged_update_bytes_if_matching(
+    app: &tauri::AppHandle,
+    channel: &str,
+    expected_version: &str,
+    config: &DesktopNativeUpdaterConfig,
+) -> Result<Option<Vec<u8>>, String> {
+    if !has_matching_staged_update(app, channel, expected_version, config)? {
+        return Ok(None);
+    }
+    let bytes_path = staged_bytes_path_for_app(app)?;
+    let bytes = std::fs::read(&bytes_path)
+        .map_err(|e| format!("reading staged update bytes '{}': {e}", bytes_path.display()))?;
+    if bytes.is_empty() {
+        clear_staged_update_for_app(app)?;
+        return Ok(None);
+    }
+    Ok(Some(bytes))
+}
+
+fn begin_update_attempt(channel: &str, current_version: &str) -> DesktopUpdateAttempt {
+    DesktopUpdateAttempt {
+        attempt_id: format!("desktop-updater-{}-{}", now_ms(), std::process::id()),
+        channel: channel.to_string(),
+        current_version: current_version.to_string(),
+        target_version: None,
+        started_at_ms: now_ms(),
+        finished_at_ms: None,
+        result: DesktopUpdateAttemptResult::InProgress,
+        stages: Vec::new(),
+    }
+}
+
+fn begin_attempt_stage(attempt: &mut DesktopUpdateAttempt, stage: &str) -> usize {
+    attempt.stages.push(DesktopUpdateAttemptStage {
+        stage: stage.to_string(),
+        started_at_ms: now_ms(),
+        finished_at_ms: None,
+        result: DesktopUpdateAttemptResult::InProgress,
+        error_code: None,
+        error_message: None,
+    });
+    attempt.stages.len() - 1
+}
+
+fn complete_attempt_stage(attempt: &mut DesktopUpdateAttempt, index: usize) {
+    if let Some(stage) = attempt.stages.get_mut(index) {
+        stage.finished_at_ms = Some(now_ms());
+        stage.result = DesktopUpdateAttemptResult::Succeeded;
+        stage.error_code = None;
+        stage.error_message = None;
+    }
+}
+
+fn fail_attempt_stage(
+    attempt: &mut DesktopUpdateAttempt,
+    index: usize,
+    code: &str,
+    message: &str,
+) {
+    if let Some(stage) = attempt.stages.get_mut(index) {
+        stage.finished_at_ms = Some(now_ms());
+        stage.result = DesktopUpdateAttemptResult::Failed;
+        stage.error_code = Some(code.to_string());
+        stage.error_message = Some(message.to_string());
+    }
+}
+
+fn mark_attempt_succeeded(attempt: &mut DesktopUpdateAttempt) {
+    attempt.finished_at_ms = Some(now_ms());
+    attempt.result = DesktopUpdateAttemptResult::Succeeded;
+}
+
+fn mark_attempt_failed(attempt: &mut DesktopUpdateAttempt) {
+    attempt.finished_at_ms = Some(now_ms());
+    attempt.result = DesktopUpdateAttemptResult::Failed;
+}
+
+fn persist_attempt_success_best_effort(app: &tauri::AppHandle, attempt: &mut DesktopUpdateAttempt) {
+    mark_attempt_succeeded(attempt);
+    if let Err(write_err) = write_last_attempt_for_app(app, attempt) {
+        eprintln!("warn: failed to persist updater success attempt: {write_err}");
+    }
+}
+
+fn persist_attempt_failure_best_effort(
+    app: &tauri::AppHandle,
+    attempt: &mut DesktopUpdateAttempt,
+    err: String,
+) -> String {
+    mark_attempt_failed(attempt);
+    if let Err(write_err) = write_last_attempt_for_app(app, attempt) {
+        eprintln!("warn: failed to persist updater failure attempt: {write_err}");
+    }
+    err
+}
+
+fn write_last_attempt_for_app(
+    app: &tauri::AppHandle,
+    attempt: &DesktopUpdateAttempt,
+) -> Result<(), String> {
+    let path = last_attempt_path_for_app(app)?;
+    let encoded = serde_json::to_string_pretty(attempt)
+        .map_err(|e| format!("encoding desktop updater attempt: {e}"))?;
+    std::fs::write(&path, format!("{encoded}\n"))
+        .map_err(|e| format!("writing desktop updater attempt '{}': {e}", path.display()))
+}
+
+fn read_last_attempt_for_app(app: &tauri::AppHandle) -> Result<Option<DesktopUpdateAttempt>, String> {
+    let path = last_attempt_path_for_app(app)?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = std::fs::read_to_string(&path)
+        .map_err(|e| format!("reading desktop updater attempt '{}': {e}", path.display()))?;
+    let parsed = serde_json::from_str::<DesktopUpdateAttempt>(&raw)
+        .map_err(|e| format!("parsing desktop updater attempt '{}': {e}", path.display()))?;
+    Ok(Some(parsed))
+}
+
+fn last_failed_stage_message(attempt: &DesktopUpdateAttempt) -> Option<&str> {
+    if attempt.result != DesktopUpdateAttemptResult::Failed {
+        return None;
+    }
+    attempt
+        .stages
+        .iter()
+        .rev()
+        .find_map(|stage| stage.error_message.as_deref())
+}
+
+async fn stage_update_in_background(app: tauri::AppHandle, channel: &str) -> Result<(), String> {
+    let current_version = app.package_info().version.to_string();
+    let mut attempt = begin_update_attempt(channel, &current_version);
+
+    let config = resolve_native_updater_config(channel)?;
+    let Some(pubkey) = config.pubkey.as_deref() else {
+        clear_staged_update_for_app(&app)?;
+        persist_attempt_success_best_effort(&app, &mut attempt);
+        return Ok(());
+    };
+    let endpoint_url = endpoint_with_download_id(&config.endpoint, None)?;
+    let build_stage = begin_attempt_stage(&mut attempt, "build");
+    let updater = app
+        .updater_builder()
+        .target(config.target.clone())
+        .pubkey(pubkey)
+        .endpoints(vec![endpoint_url])
+        .map_err(|e| {
+            let err = updater_stage_error("build", e);
+            fail_attempt_stage(&mut attempt, build_stage, "build", &err);
+            persist_attempt_failure_best_effort(&app, &mut attempt, err)
+        })?
+        .build()
+        .map_err(|e| {
+            let err = updater_stage_error("build", e);
+            fail_attempt_stage(&mut attempt, build_stage, "build", &err);
+            persist_attempt_failure_best_effort(&app, &mut attempt, err)
+        })?;
+    complete_attempt_stage(&mut attempt, build_stage);
+
+    let check_stage = begin_attempt_stage(&mut attempt, "check");
+    let Some(update) = updater.check().await.map_err(|e| {
+        let err = updater_stage_error("check", e);
+        fail_attempt_stage(&mut attempt, check_stage, "check", &err);
+        persist_attempt_failure_best_effort(&app, &mut attempt, err)
+    })? else {
+        complete_attempt_stage(&mut attempt, check_stage);
+        clear_staged_update_for_app(&app)?;
+        persist_attempt_success_best_effort(&app, &mut attempt);
+        return Ok(());
+    };
+    complete_attempt_stage(&mut attempt, check_stage);
+    let latest_version = update.version.clone();
+    attempt.target_version = Some(latest_version.clone());
+
+    let verify_stage = begin_attempt_stage(&mut attempt, "verify");
+    if !version_is_strictly_newer(&latest_version, &current_version) {
+        complete_attempt_stage(&mut attempt, verify_stage);
+        clear_staged_update_for_app(&app)?;
+        persist_attempt_success_best_effort(&app, &mut attempt);
+        return Ok(());
+    }
+    complete_attempt_stage(&mut attempt, verify_stage);
+
+    let download_stage = begin_attempt_stage(&mut attempt, "download");
+    let bytes = update.download(|_, _| {}, || {}).await.map_err(|e| {
+        let err = updater_stage_error("download", e);
+        fail_attempt_stage(&mut attempt, download_stage, "download", &err);
+        persist_attempt_failure_best_effort(&app, &mut attempt, err)
+    })?;
+    complete_attempt_stage(&mut attempt, download_stage);
+
+    let marker_stage = begin_attempt_stage(&mut attempt, "marker");
+    let meta = DesktopStagedUpdateMeta {
+        version: latest_version,
+        target: config.target,
+        endpoint: config.endpoint,
+        channel: channel.to_string(),
+        downloaded_at_ms: now_ms(),
+        size_bytes: bytes.len(),
+    };
+    write_staged_update_for_app(&app, &meta, &bytes).map_err(|e| {
+        let err = updater_stage_error("marker_write", e);
+        fail_attempt_stage(&mut attempt, marker_stage, "marker_write", &err);
+        persist_attempt_failure_best_effort(&app, &mut attempt, err)
+    })?;
+    complete_attempt_stage(&mut attempt, marker_stage);
+    persist_attempt_success_best_effort(&app, &mut attempt);
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -502,6 +1166,10 @@ fn normalize_nonempty(value: &str) -> Option<String> {
     }
 }
 
+fn updater_stage_error(stage: &str, err: impl std::fmt::Display) -> String {
+    format!("native updater {stage} failed: {err}")
+}
+
 fn resolve_updater_pubkey(
     runtime_value: Option<String>,
     build_value: Option<&str>,
@@ -747,5 +1415,76 @@ mod tests {
         assert_eq!(marker.as_deref(), Some("2.0.0"));
         assert!(path.exists(), "marker file should remain while restart is pending");
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn desktop_update_phase_strings_are_stable() {
+        assert_eq!(DesktopAppUpdatePhase::Idle.as_str(), "idle");
+        assert_eq!(DesktopAppUpdatePhase::Staging.as_str(), "staging");
+        assert_eq!(DesktopAppUpdatePhase::StagedReady.as_str(), "staged_ready");
+        assert_eq!(
+            DesktopAppUpdatePhase::RestartRequired.as_str(),
+            "restart_required"
+        );
+        assert_eq!(DesktopAppUpdatePhase::Failed.as_str(), "failed");
+    }
+
+    #[test]
+    fn last_failed_stage_message_reports_latest_failure() {
+        let attempt = DesktopUpdateAttempt {
+            attempt_id: "attempt".to_string(),
+            channel: "stable".to_string(),
+            current_version: "0.4.9".to_string(),
+            target_version: Some("0.4.10".to_string()),
+            started_at_ms: 1,
+            finished_at_ms: Some(2),
+            result: DesktopUpdateAttemptResult::Failed,
+            stages: vec![
+                DesktopUpdateAttemptStage {
+                    stage: "check".to_string(),
+                    started_at_ms: 1,
+                    finished_at_ms: Some(1),
+                    result: DesktopUpdateAttemptResult::Failed,
+                    error_code: Some("check".to_string()),
+                    error_message: Some("first".to_string()),
+                },
+                DesktopUpdateAttemptStage {
+                    stage: "install".to_string(),
+                    started_at_ms: 2,
+                    finished_at_ms: Some(2),
+                    result: DesktopUpdateAttemptResult::Failed,
+                    error_code: Some("install".to_string()),
+                    error_message: Some("latest".to_string()),
+                },
+            ],
+        };
+        assert_eq!(last_failed_stage_message(&attempt), Some("latest"));
+    }
+
+    #[test]
+    fn desktop_update_attempt_json_round_trip() {
+        let attempt = DesktopUpdateAttempt {
+            attempt_id: "attempt-123".to_string(),
+            channel: "stable".to_string(),
+            current_version: "0.4.9".to_string(),
+            target_version: Some("0.4.10".to_string()),
+            started_at_ms: 100,
+            finished_at_ms: Some(200),
+            result: DesktopUpdateAttemptResult::Succeeded,
+            stages: vec![DesktopUpdateAttemptStage {
+                stage: "download".to_string(),
+                started_at_ms: 120,
+                finished_at_ms: Some(180),
+                result: DesktopUpdateAttemptResult::Succeeded,
+                error_code: None,
+                error_message: None,
+            }],
+        };
+        let encoded = serde_json::to_string(&attempt).expect("encode attempt");
+        let decoded: DesktopUpdateAttempt = serde_json::from_str(&encoded).expect("decode attempt");
+        assert_eq!(decoded.attempt_id, "attempt-123");
+        assert_eq!(decoded.target_version.as_deref(), Some("0.4.10"));
+        assert_eq!(decoded.stages.len(), 1);
+        assert_eq!(decoded.stages[0].stage, "download");
     }
 }

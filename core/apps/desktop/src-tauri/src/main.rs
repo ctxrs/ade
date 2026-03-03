@@ -133,6 +133,7 @@ fn main() {
             desktop_start_codex_login_relay,
             desktop_get_app_update_state,
             desktop_check_app_update,
+            desktop_get_last_app_update_attempt,
             desktop_apply_app_update,
             desktop_restart_app,
         ])

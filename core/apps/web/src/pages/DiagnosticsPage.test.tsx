@@ -14,6 +14,7 @@ import {
   desktopApplyAppUpdate,
   desktopCheckAppUpdate,
   desktopGetConnection,
+  desktopGetLastAppUpdateAttempt,
   desktopRestartLocalDaemon,
   getDesktopPlatform,
   isDesktopApp,
@@ -41,6 +42,7 @@ vi.mock("../utils/desktop", () => ({
   desktopApplyAppUpdate: vi.fn(),
   desktopCheckAppUpdate: vi.fn(),
   desktopGetConnection: vi.fn(),
+  desktopGetLastAppUpdateAttempt: vi.fn(),
   desktopRestartLocalDaemon: vi.fn(),
   desktopUpdateRemoteDaemon: vi.fn(),
   getDesktopPlatform: vi.fn(),
@@ -105,6 +107,7 @@ describe("DiagnosticsPage updates", () => {
     vi.mocked(desktopGetConnection).mockResolvedValue({ kind: "local" });
     vi.mocked(getDesktopPlatform).mockResolvedValue("windows");
     vi.mocked(openExternalLink).mockResolvedValue(true);
+    vi.mocked(desktopGetLastAppUpdateAttempt).mockResolvedValue(null);
     vi.mocked(desktopCheckAppUpdate).mockResolvedValue({
       configured: false,
       available: false,

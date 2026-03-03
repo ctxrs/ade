@@ -23,9 +23,11 @@ import {
   desktopRestartLocalDaemon,
   desktopApplyAppUpdate,
   desktopCheckAppUpdate,
+  desktopGetLastAppUpdateAttempt,
   desktopUpdateRemoteDaemon,
   isDesktopApp,
   type DesktopAppUpdateCheckResp,
+  type DesktopAppUpdateAttemptResp,
   type DesktopPlatform,
   type DesktopConnectionInfo,
 } from "../utils/desktop";
@@ -95,6 +97,7 @@ export default function DiagnosticsPage() {
   const [downloadResp, setDownloadResp] = useState<DownloadAppImageUpdateResp | null>(null);
   const [applyResp, setApplyResp] = useState<ApplyAppImageUpdateResp | null>(null);
   const [desktopAppUpdateInfo, setDesktopAppUpdateInfo] = useState<DesktopAppUpdateCheckResp | null>(null);
+  const [desktopLastUpdateAttempt, setDesktopLastUpdateAttempt] = useState<DesktopAppUpdateAttemptResp | null>(null);
   const [desktopConnection, setDesktopConnection] = useState<DesktopConnectionInfo | null>(null);
   const [desktopPlatform, setDesktopPlatform] = useState<DesktopPlatform>("unknown");
   const desktop = isDesktopApp();
@@ -177,10 +180,15 @@ export default function DiagnosticsPage() {
       const nextIsLinux = (info.platform ?? "").startsWith("linux-") || desktopPlatform === "linux";
       if (desktop && !nextIsLinux) {
         try {
-          const nativeInfo = await desktopCheckAppUpdate("stable");
+          const [nativeInfo, attempt] = await Promise.all([
+            desktopCheckAppUpdate("stable"),
+            desktopGetLastAppUpdateAttempt().catch(() => null),
+          ]);
           setDesktopAppUpdateInfo(nativeInfo);
+          setDesktopLastUpdateAttempt(attempt);
         } catch {
           setDesktopAppUpdateInfo(null);
+          setDesktopLastUpdateAttempt(null);
         }
       }
     } catch (e: unknown) {
@@ -240,8 +248,12 @@ export default function DiagnosticsPage() {
       }
       setNotice(resp.message);
       try {
-        const nativeInfo = await desktopCheckAppUpdate("stable");
+        const [nativeInfo, attempt] = await Promise.all([
+          desktopCheckAppUpdate("stable"),
+          desktopGetLastAppUpdateAttempt().catch(() => null),
+        ]);
         setDesktopAppUpdateInfo(nativeInfo);
+        setDesktopLastUpdateAttempt(attempt);
       } catch {
         // ignore re-check failures
       }
@@ -498,6 +510,26 @@ export default function DiagnosticsPage() {
                 {desktopAppUpdateInfo.available
                   ? `Update available (${desktopAppUpdateInfo.latest_version ?? "unknown"})`
                   : "No update available"}
+              </span>
+            </div>
+          )}
+          {!isLinuxPlatform && desktopAppUpdateInfo?.configured && (
+            <div>
+              <b>Native updater phase:</b>{" "}
+              <span className="muted">
+                {String(desktopAppUpdateInfo.phase ?? "unknown")}
+                {desktopAppUpdateInfo.last_error ? ` · ${desktopAppUpdateInfo.last_error}` : ""}
+              </span>
+            </div>
+          )}
+          {desktopLastUpdateAttempt && (
+            <div>
+              <b>Last native attempt:</b>{" "}
+              <span className="muted">
+                {desktopLastUpdateAttempt.attempt_id} · {desktopLastUpdateAttempt.result}
+                {desktopLastUpdateAttempt.target_version
+                  ? ` · target ${desktopLastUpdateAttempt.target_version}`
+                  : ""}
               </span>
             </div>
           )}

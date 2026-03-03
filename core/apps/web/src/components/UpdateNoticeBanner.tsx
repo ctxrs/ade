@@ -6,8 +6,9 @@ import {
   desktopGetAppUpdateState,
   desktopRestartApp,
   isDesktopApp,
+  type DesktopAppUpdateStateResp,
 } from "../utils/desktop";
-import { readCachedUpdateCheck, refreshUpdateCheck, writeCachedUpdateCheck } from "../utils/updateNotice";
+import { readCachedUpdateCheck, refreshUpdateCheck } from "../utils/updateNotice";
 
 const PROMPT_SNOOZE_STORAGE_KEY = "ctx_update_prompt_next_allowed_at_v1";
 const IDLE_UPDATE_VERSION_STORAGE_KEY = "ctx_update_prompt_idle_versions_v1";
@@ -176,6 +177,31 @@ const noticeUiReducer = (state: NoticeUiState, action: NoticeUiAction): NoticeUi
 const normalizeOptionalString = (value: string | null | undefined): string =>
   String(value ?? "").trim();
 
+const messageFromUnknownError = (err: unknown, fallback: string): string => {
+  if (err instanceof Error) {
+    const message = String(err.message ?? "").trim();
+    return message || fallback;
+  }
+  if (typeof err === "string") {
+    const message = err.trim();
+    return message || fallback;
+  }
+  if (err && typeof err === "object") {
+    const withMessage = err as { message?: unknown };
+    if (typeof withMessage.message === "string") {
+      const message = withMessage.message.trim();
+      if (message) return message;
+    }
+    try {
+      const encoded = JSON.stringify(err);
+      if (typeof encoded === "string" && encoded.trim()) return encoded;
+    } catch {
+      // ignore serialization failures
+    }
+  }
+  return fallback;
+};
+
 const deriveBaseUrlFromEndpoint = (endpoint: string): string => {
   const trimmed = String(endpoint ?? "").trim();
   if (!trimmed) return "";
@@ -305,6 +331,7 @@ type UpdateNoticeBannerProps = {
 export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNoticeBannerProps) {
   const isDesktop = isDesktopApp();
   const [updateInfo, setUpdateInfo] = useState<UpdateCheck | null>(() => (isDesktop ? null : readCachedUpdateCheck()));
+  const [desktopNativeState, setDesktopNativeState] = useState<DesktopAppUpdateStateResp | null>(null);
   const [promptSnoozeByVersion, setPromptSnoozeByVersion] = useState<Record<string, number>>(
     () => readPromptSnoozeByVersion(),
   );
@@ -325,10 +352,19 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
   const minimumSupportedVersion = (updateInfo?.min_supported_version ?? "").trim();
   const nextPromptAtMs = latestKnownVersion ? Number(promptSnoozeByVersion[latestKnownVersion] ?? 0) : 0;
   const nowMs = Date.now();
+  const desktopPhase = normalizeOptionalString(desktopNativeState?.phase).toLowerCase();
+  const desktopStagedReady = isDesktop && (
+    desktopNativeState?.staged === true
+    || desktopPhase === "staged_ready"
+    || (Boolean(desktopNativeState) && !desktopPhase && Boolean(updateInfo?.update_available))
+  );
+  const desktopStaging = isDesktop && desktopPhase === "staging";
   const inPlaceCapability = getInPlaceCapability(updateInfo);
   const canApplyFromCurrentClient = isDesktop || inPlaceCapability.supported;
   const forcedUpdateNeedsManualInstall = isForcedUpdate(updateInfo) && !canApplyFromCurrentClient;
-  const shouldShow = Boolean(updateInfo?.update_available) && nowMs >= nextPromptAtMs;
+  const shouldShow = isDesktop
+    ? (desktopStagedReady || uiState.phase === "restart_required") && nowMs >= nextPromptAtMs
+    : Boolean(updateInfo?.update_available) && nowMs >= nextPromptAtMs;
   const forcedUpdate = isForcedUpdate(updateInfo) && canApplyFromCurrentClient;
   const applyingUpdate = uiState.phase === "applying";
   const restartRequired = uiState.phase === "restart_required";
@@ -416,13 +452,8 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
         }
         try {
           const native = await desktopGetAppUpdateState("stable");
+          setDesktopNativeState(native);
           const latestVersion = normalizeOptionalString(native.latest_version) || null;
-          const markerVersion = latestVersion || normalizeOptionalString(native.current_version);
-          if (native.restart_required && markerVersion) {
-            setRestartRequiredVersionState(markerVersion);
-          } else if (!native.restart_required) {
-            clearRestartRequiredVersionState();
-          }
           info = {
             channel: "stable",
             base_url: deriveBaseUrlFromEndpoint(native.endpoint),
@@ -435,13 +466,26 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
             platform_supported: daemonPolicy?.platform_supported ?? true,
             in_place_update_supported: Boolean(native.configured),
             in_place_update_reason: native.configured
-              ? null
+              ? normalizeOptionalString(native.last_error) || null
               : normalizeOptionalString(native.message) || "Native updater is not configured.",
             update_available: Boolean(native.available),
           };
-          dispatchUi({ type: "check_recovered" });
+          if (native.restart_required) {
+            dispatchUi({
+              type: "restart_required",
+              message: "Update installed. Relaunch the app to complete the update.",
+            });
+          } else if (desktopPhase === "failed" && (native.last_error || native.message)) {
+            dispatchUi({
+              type: "check_failed",
+              message: normalizeOptionalString(native.last_error) || normalizeOptionalString(native.message),
+            });
+          } else {
+            dispatchUi({ type: "check_recovered" });
+          }
         } catch (err) {
-          const reason = err instanceof Error ? err.message : "Desktop updater check failed.";
+          setDesktopNativeState(null);
+          const reason = messageFromUnknownError(err, "Desktop updater check failed.");
           const previous = updateInfoRef.current;
           info = previous
             ? {
@@ -473,11 +517,14 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
         setUpdateInfo((prev) => (areUpdateChecksEqual(prev, info) ? prev : info));
       }
       const effectiveInfo = info ?? updateInfoRef.current;
-      reconcileRestartRequiredState(effectiveInfo);
+      if (!isDesktop) {
+        reconcileRestartRequiredState(effectiveInfo);
+      }
       return effectiveInfo;
     },
     [
       clearRestartRequiredVersionState,
+      desktopPhase,
       isDesktop,
       reconcileRestartRequiredState,
       setRestartRequiredVersionState,
@@ -548,26 +595,8 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
           markRestartRequired(resp.message);
           return true;
         }
-        clearVersionFlags(version);
-        clearRestartRequiredVersionState();
-        snoozeVersionPrompt(version);
-        const source = updateInfoRef.current;
-        if (source) {
-          const next = {
-            ...source,
-            current_version: source.latest_version ?? source.current_version,
-            update_available: false,
-          };
-          updateInfoRef.current = next;
-          setUpdateInfo(next);
-          if (!isDesktop) {
-            writeCachedUpdateCheck(next);
-          }
-        }
-        dispatchUi({ type: "apply_completed" });
-        return true;
       } catch (err: unknown) {
-        dispatchUi({ type: "apply_failed", message: err instanceof Error ? err.message : "Failed to apply update." });
+        dispatchUi({ type: "apply_failed", message: messageFromUnknownError(err, "Failed to apply update.") });
         recoverIdleFailure();
         return false;
       } finally {
@@ -627,6 +656,17 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
   }, [applyUpdateNow, autoApplyOnLaunchEnabled, isDesktop, refresh, setRestartRequiredVersionState]);
 
   useEffect(() => {
+    if (!isDesktop) return;
+    if (!desktopStaging) return;
+    const timer = window.setTimeout(() => {
+      void refresh(true);
+    }, 4000);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [desktopStaging, isDesktop, refresh]);
+
+  useEffect(() => {
     if (forcedUpdate) return;
     if (!allTasksIdle) return;
     if (!latestKnownVersion) return;
@@ -647,7 +687,7 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
       .catch((err: unknown) => {
         dispatchUi({
           type: "apply_failed",
-          message: err instanceof Error ? err.message : "Failed to restart app.",
+          message: messageFromUnknownError(err, "Failed to restart app."),
         });
       })
       .finally(() => {

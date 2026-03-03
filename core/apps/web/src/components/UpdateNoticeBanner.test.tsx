@@ -828,6 +828,9 @@ describe("UpdateNoticeBanner", () => {
     vi.mocked(refreshUpdateCheck).mockResolvedValue(null);
 
     renderBanner({ allTasksIdle: false });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Update Now" })).toBeInTheDocument();
+    });
     fireEvent.click(screen.getByRole("button", { name: "Update Now" }));
     await waitFor(() => {
       expect(vi.mocked(downloadAppImageUpdate)).toHaveBeenCalledTimes(1);
@@ -851,6 +854,9 @@ describe("UpdateNoticeBanner", () => {
     vi.mocked(refreshUpdateCheck).mockResolvedValue(null);
 
     renderBanner({ allTasksIdle: false });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Update Now" })).toBeInTheDocument();
+    });
     fireEvent.click(screen.getByRole("button", { name: "Update Now" }));
     await waitFor(() => {
       expect(screen.getByText(/Install updates manually on this platform/i)).toBeInTheDocument();
@@ -881,6 +887,42 @@ describe("UpdateNoticeBanner", () => {
     expect(screen.getByText(/temporary apply failure/i)).toBeInTheDocument();
     expect(window.localStorage.getItem(PROMPT_SNOOZE_STORAGE_KEY) ?? "").not.toContain("3.0.0");
     expect(window.localStorage.getItem(IDLE_UPDATE_VERSION_STORAGE_KEY) ?? "").not.toContain("3.0.0");
+  });
+
+  it("surfaces string-shaped native apply errors", async () => {
+    window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "0");
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(readCachedUpdateCheck).mockReturnValue({
+      ...baseUpdate,
+      latest_version: "3.0.1",
+      platform: "macos-arm64",
+    });
+    vi.mocked(refreshUpdateCheck).mockResolvedValue({
+      ...baseUpdate,
+      latest_version: "3.0.1",
+      platform: "macos-arm64",
+    });
+    vi.mocked(desktopGetAppUpdateState).mockResolvedValue({
+      configured: true,
+      available: true,
+      restart_required: false,
+      current_version: "1.0.0",
+      latest_version: "3.0.1",
+      target: "macos-arm64",
+      endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+      message: null,
+    });
+    vi.mocked(desktopApplyAppUpdate).mockRejectedValue("native updater install failed: Permission denied");
+
+    renderBanner({ allTasksIdle: false });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Update Now" })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Update Now" }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/native updater install failed: Permission denied/i)).toBeInTheDocument();
+    });
   });
 
   it("disables dismiss while update apply is in flight", async () => {
