@@ -1,5 +1,7 @@
 use super::*;
 
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine as _;
 use std::thread;
 use std::time::Duration;
 use tauri_plugin_updater::UpdaterExt;
@@ -229,6 +231,33 @@ fn resolve_updater_pubkey(
         .as_deref()
         .and_then(normalize_nonempty)
         .or_else(|| build_value.and_then(normalize_nonempty))
+        .and_then(normalize_updater_pubkey)
+}
+
+fn normalize_updater_pubkey(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.starts_with("untrusted comment: minisign public key:") {
+        return Some(trimmed.to_string());
+    }
+    if let Some(decoded) = decode_base64_minisign_pubkey(trimmed) {
+        return Some(decoded);
+    }
+    Some(trimmed.to_string())
+}
+
+fn decode_base64_minisign_pubkey(encoded: &str) -> Option<String> {
+    let decoded_bytes = BASE64_STANDARD.decode(encoded.as_bytes()).ok()?;
+    let decoded_text = String::from_utf8(decoded_bytes).ok()?;
+    let normalized = decoded_text.replace("\r\n", "\n").trim().to_string();
+    if normalized.starts_with("untrusted comment: minisign public key:")
+        && normalized.lines().nth(1).is_some()
+    {
+        return Some(normalized);
+    }
+    None
 }
 
 fn default_download_base_url() -> String {
@@ -319,6 +348,15 @@ mod tests {
         let key = resolve_updater_pubkey(Some(" runtime-key ".to_string()), Some("build-key"))
             .expect("resolved key");
         assert_eq!(key, "runtime-key");
+    }
+
+    #[test]
+    fn resolve_updater_pubkey_decodes_base64_minisign_key() {
+        let raw =
+            "untrusted comment: minisign public key: 0D503F73CDD77B9C\nRWSce9fNcz9QDfv7dghgOH/dIA0Txkgk8rB86J5s6I15e+NkpWjU3CFs\n";
+        let encoded = BASE64_STANDARD.encode(raw.as_bytes());
+        let key = resolve_updater_pubkey(Some(encoded), None).expect("resolved key");
+        assert_eq!(key, raw.trim());
     }
 
     #[test]
