@@ -3,7 +3,7 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import UpdateNoticeBanner from "./UpdateNoticeBanner";
 import { applyAppImageUpdate, downloadAppImageUpdate } from "../api/client";
-import { desktopApplyAppUpdate, desktopCheckAppUpdate, desktopRestartApp, isDesktopApp } from "../utils/desktop";
+import { desktopApplyAppUpdate, desktopGetAppUpdateState, desktopRestartApp, isDesktopApp } from "../utils/desktop";
 import { readCachedUpdateCheck, refreshUpdateCheck, writeCachedUpdateCheck } from "../utils/updateNotice";
 
 vi.mock("../api/client", async (importOriginal) => {
@@ -21,7 +21,7 @@ vi.mock("../utils/desktop", async (importOriginal) => {
     ...original,
     isDesktopApp: vi.fn(),
     desktopApplyAppUpdate: vi.fn(),
-    desktopCheckAppUpdate: vi.fn(),
+    desktopGetAppUpdateState: vi.fn(),
     desktopRestartApp: vi.fn(),
   };
 });
@@ -77,9 +77,12 @@ describe("UpdateNoticeBanner", () => {
       latest_version: "9.9.9",
       message: "ok",
     });
-    vi.mocked(desktopCheckAppUpdate).mockResolvedValue({
+    vi.mocked(readCachedUpdateCheck).mockReturnValue(null);
+    vi.mocked(refreshUpdateCheck).mockResolvedValue(null);
+    vi.mocked(desktopGetAppUpdateState).mockResolvedValue({
       configured: true,
       available: false,
+      restart_required: false,
       current_version: "1.0.0",
       latest_version: null,
       target: "macos-arm64",
@@ -174,9 +177,10 @@ describe("UpdateNoticeBanner", () => {
       ...baseUpdate,
       latest_version: "1.2.3",
     });
-    vi.mocked(desktopCheckAppUpdate).mockResolvedValue({
+    vi.mocked(desktopGetAppUpdateState).mockResolvedValue({
       configured: true,
       available: true,
+      restart_required: false,
       current_version: "1.0.0",
       latest_version: "1.2.3",
       target: "macos-arm64",
@@ -206,9 +210,10 @@ describe("UpdateNoticeBanner", () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(readCachedUpdateCheck).mockReturnValue(null);
     vi.mocked(refreshUpdateCheck).mockResolvedValue(null);
-    vi.mocked(desktopCheckAppUpdate).mockResolvedValue({
+    vi.mocked(desktopGetAppUpdateState).mockResolvedValue({
       configured: true,
       available: true,
+      restart_required: false,
       current_version: "0.4.1",
       latest_version: "0.4.3",
       target: "macos-arm64",
@@ -218,7 +223,7 @@ describe("UpdateNoticeBanner", () => {
 
     renderBanner();
     await waitFor(() => {
-      expect(vi.mocked(desktopCheckAppUpdate)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(desktopGetAppUpdateState)).toHaveBeenCalledTimes(1);
     });
     await waitFor(() => {
       expect(vi.mocked(desktopApplyAppUpdate)).toHaveBeenCalledTimes(1);
@@ -235,7 +240,33 @@ describe("UpdateNoticeBanner", () => {
       latest_version: "2.4.0",
       min_supported_version: undefined,
     });
-    vi.mocked(refreshUpdateCheck).mockResolvedValue(null);
+    vi.mocked(refreshUpdateCheck).mockResolvedValue({
+      ...baseUpdate,
+      current_version: "1.0.0",
+      latest_version: "2.4.0",
+      min_supported_version: null,
+    });
+    vi.mocked(desktopGetAppUpdateState)
+      .mockResolvedValueOnce({
+        configured: true,
+        available: true,
+        restart_required: false,
+        current_version: "1.0.0",
+        latest_version: "2.4.0",
+        target: "macos-arm64",
+        endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+        message: null,
+      })
+      .mockResolvedValue({
+        configured: true,
+        available: false,
+        restart_required: true,
+        current_version: "1.0.0",
+        latest_version: "2.4.0",
+        target: "macos-arm64",
+        endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+        message: null,
+      });
     vi.mocked(desktopApplyAppUpdate).mockResolvedValue({
       applied: true,
       needs_restart: true,
@@ -244,6 +275,9 @@ describe("UpdateNoticeBanner", () => {
     });
 
     const firstRender = renderBanner({ allTasksIdle: false });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Update Now" })).toBeInTheDocument();
+    });
     fireEvent.click(screen.getByRole("button", { name: "Update Now" }));
     await waitFor(() => {
       expect(vi.mocked(desktopApplyAppUpdate)).toHaveBeenCalledTimes(1);
@@ -257,7 +291,9 @@ describe("UpdateNoticeBanner", () => {
       renderBanner({ allTasksIdle: false });
       await Promise.resolve();
     });
-    expect(screen.getByRole("button", { name: "Restart app to finish update" })).toBeEnabled();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Restart app to finish update" })).toBeEnabled();
+    });
   });
 
   it("ignores stale localStorage restart marker after relaunch when offline", async () => {
@@ -294,9 +330,10 @@ describe("UpdateNoticeBanner", () => {
       latest_version: "2.0.0",
       min_supported_version: "1.5.0",
     });
-    vi.mocked(desktopCheckAppUpdate).mockResolvedValue({
+    vi.mocked(desktopGetAppUpdateState).mockResolvedValue({
       configured: true,
-      available: true,
+      available: false,
+      restart_required: true,
       current_version: "1.0.0",
       latest_version: "2.0.0",
       target: "macos-arm64",
@@ -306,7 +343,7 @@ describe("UpdateNoticeBanner", () => {
 
     renderBanner({ allTasksIdle: false });
     await waitFor(() => {
-      expect(vi.mocked(desktopCheckAppUpdate)).toHaveBeenCalledWith("stable");
+      expect(vi.mocked(desktopGetAppUpdateState)).toHaveBeenCalledWith("stable");
     });
     expect(vi.mocked(desktopApplyAppUpdate)).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Restart app to finish update" })).toBeEnabled();
@@ -462,7 +499,7 @@ describe("UpdateNoticeBanner", () => {
       patch: { in_place_update_supported: false },
       expectForcedDialog: true,
     },
-  ])("forced gate matrix: $name", ({ isDesktop, patch, expectForcedDialog }) => {
+  ])("forced gate matrix: $name", async ({ isDesktop, patch, expectForcedDialog }) => {
     vi.mocked(isDesktopApp).mockReturnValue(isDesktop);
     vi.mocked(readCachedUpdateCheck).mockReturnValue({
       ...baseUpdate,
@@ -471,14 +508,36 @@ describe("UpdateNoticeBanner", () => {
       min_supported_version: "1.1.0",
       ...patch,
     });
-    vi.mocked(refreshUpdateCheck).mockResolvedValue(null);
+    vi.mocked(refreshUpdateCheck).mockResolvedValue({
+      ...baseUpdate,
+      current_version: "1.0.0",
+      latest_version: "1.2.0",
+      min_supported_version: "1.1.0",
+      ...patch,
+    });
+    if (isDesktop) {
+      vi.mocked(desktopGetAppUpdateState).mockResolvedValue({
+        configured: true,
+        available: true,
+        restart_required: false,
+        current_version: "1.0.0",
+        latest_version: "1.2.0",
+        target: "macos-arm64",
+        endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+        message: null,
+      });
+    }
 
     renderBanner({ allTasksIdle: false });
     if (expectForcedDialog) {
-      expect(screen.getByRole("dialog", { name: "Update required" })).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByRole("dialog", { name: "Update required" })).toBeInTheDocument();
+      });
       return;
     }
-    expect(screen.queryByRole("dialog", { name: "Update required" })).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Update required" })).not.toBeInTheDocument();
+    });
   });
 
   it("treats prerelease current version as below stable min supported version", () => {
@@ -488,13 +547,19 @@ describe("UpdateNoticeBanner", () => {
       latest_version: "1.2.3",
       min_supported_version: "1.2.3",
     });
-    vi.mocked(refreshUpdateCheck).mockResolvedValue(null);
+    vi.mocked(refreshUpdateCheck).mockResolvedValue({
+      ...baseUpdate,
+      current_version: "1.0.0",
+      latest_version: "1.2.0",
+      min_supported_version: "1.1.0",
+    });
 
     renderBanner();
     expect(screen.getByRole("dialog", { name: "Update required" })).toBeInTheDocument();
   });
 
   it("keeps required-update blocker visible on desktop when restart is still required", async () => {
+    window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "0");
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(readCachedUpdateCheck).mockReturnValue({
       ...baseUpdate,
@@ -502,10 +567,16 @@ describe("UpdateNoticeBanner", () => {
       latest_version: "1.2.0",
       min_supported_version: "1.1.0",
     });
-    vi.mocked(refreshUpdateCheck).mockResolvedValue(null);
-    vi.mocked(desktopCheckAppUpdate).mockResolvedValue({
+    vi.mocked(refreshUpdateCheck).mockResolvedValue({
+      ...baseUpdate,
+      current_version: "1.0.0",
+      latest_version: "1.2.0",
+      min_supported_version: "1.1.0",
+    });
+    vi.mocked(desktopGetAppUpdateState).mockResolvedValue({
       configured: true,
       available: true,
+      restart_required: false,
       current_version: "1.0.0",
       latest_version: "1.2.0",
       target: "macos-arm64",
@@ -520,6 +591,9 @@ describe("UpdateNoticeBanner", () => {
     });
 
     renderBanner();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Update Now" })).toBeInTheDocument();
+    });
     fireEvent.click(screen.getByRole("button", { name: "Update Now" }));
     await waitFor(() => {
       expect(vi.mocked(desktopApplyAppUpdate)).toHaveBeenCalledTimes(1);
@@ -529,6 +603,7 @@ describe("UpdateNoticeBanner", () => {
   });
 
   it("keeps required-update blocker visible on desktop when restart is required even if apply reports false", async () => {
+    window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "0");
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(readCachedUpdateCheck).mockReturnValue({
       ...baseUpdate,
@@ -536,10 +611,16 @@ describe("UpdateNoticeBanner", () => {
       latest_version: "1.2.0",
       min_supported_version: "1.1.0",
     });
-    vi.mocked(refreshUpdateCheck).mockResolvedValue(null);
-    vi.mocked(desktopCheckAppUpdate).mockResolvedValue({
+    vi.mocked(refreshUpdateCheck).mockResolvedValue({
+      ...baseUpdate,
+      current_version: "1.0.0",
+      latest_version: "1.2.0",
+      min_supported_version: "1.1.0",
+    });
+    vi.mocked(desktopGetAppUpdateState).mockResolvedValue({
       configured: true,
       available: true,
+      restart_required: false,
       current_version: "1.0.0",
       latest_version: "1.2.0",
       target: "macos-arm64",
@@ -554,6 +635,9 @@ describe("UpdateNoticeBanner", () => {
     });
 
     renderBanner();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Update Now" })).toBeInTheDocument();
+    });
     fireEvent.click(screen.getByRole("button", { name: "Update Now" }));
     await waitFor(() => {
       expect(vi.mocked(desktopApplyAppUpdate)).toHaveBeenCalledTimes(1);
@@ -596,15 +680,27 @@ describe("UpdateNoticeBanner", () => {
       ...baseUpdate,
       latest_version: "2.0.0",
     });
-    vi.mocked(desktopCheckAppUpdate).mockResolvedValue({
-      configured: true,
-      available: true,
-      current_version: "1.0.0",
-      latest_version: "2.0.0",
-      target: "macos-arm64",
-      endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
-      message: null,
-    });
+    vi.mocked(desktopGetAppUpdateState)
+      .mockResolvedValueOnce({
+        configured: true,
+        available: true,
+        restart_required: false,
+        current_version: "1.0.0",
+        latest_version: "2.0.0",
+        target: "macos-arm64",
+        endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+        message: null,
+      })
+      .mockResolvedValue({
+        configured: true,
+        available: false,
+        restart_required: false,
+        current_version: "2.0.0",
+        latest_version: null,
+        target: "macos-arm64",
+        endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+        message: null,
+      });
     vi.mocked(desktopApplyAppUpdate).mockResolvedValue({
       applied: true,
       needs_restart: false,
@@ -613,6 +709,9 @@ describe("UpdateNoticeBanner", () => {
     });
 
     renderBanner();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Update Now" })).toBeInTheDocument();
+    });
     fireEvent.click(screen.getByRole("button", { name: "Update Now" }));
     await waitFor(() => {
       expect(vi.mocked(desktopApplyAppUpdate)).toHaveBeenCalledTimes(1);
@@ -622,13 +721,7 @@ describe("UpdateNoticeBanner", () => {
     await waitFor(() => {
       expect(screen.queryByTestId("update-available-snackbar")).not.toBeInTheDocument();
     });
-    expect(vi.mocked(writeCachedUpdateCheck)).toHaveBeenCalledWith(
-      expect.objectContaining({
-        latest_version: "2.0.0",
-        current_version: "2.0.0",
-        update_available: false,
-      }),
-    );
+    expect(vi.mocked(writeCachedUpdateCheck)).not.toHaveBeenCalled();
   });
 
   it("keeps banner visible with restart-required state after non-forced desktop apply", async () => {
@@ -639,7 +732,21 @@ describe("UpdateNoticeBanner", () => {
       latest_version: "2.2.0",
       min_supported_version: undefined,
     });
-    vi.mocked(refreshUpdateCheck).mockResolvedValue(null);
+    vi.mocked(refreshUpdateCheck).mockResolvedValue({
+      ...baseUpdate,
+      latest_version: "2.2.0",
+      min_supported_version: null,
+    });
+    vi.mocked(desktopGetAppUpdateState).mockResolvedValue({
+      configured: true,
+      available: true,
+      restart_required: false,
+      current_version: "1.0.0",
+      latest_version: "2.2.0",
+      target: "macos-arm64",
+      endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+      message: null,
+    });
     vi.mocked(desktopApplyAppUpdate).mockResolvedValue({
       applied: true,
       needs_restart: true,
@@ -648,6 +755,9 @@ describe("UpdateNoticeBanner", () => {
     });
 
     renderBanner({ allTasksIdle: false });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Update Now" })).toBeInTheDocument();
+    });
     fireEvent.click(screen.getByRole("button", { name: "Update Now" }));
     await waitFor(() => {
       expect(vi.mocked(desktopApplyAppUpdate)).toHaveBeenCalledTimes(1);
@@ -731,7 +841,21 @@ describe("UpdateNoticeBanner", () => {
       ...baseUpdate,
       latest_version: "3.1.0",
     });
-    vi.mocked(refreshUpdateCheck).mockResolvedValue(null);
+    vi.mocked(refreshUpdateCheck).mockResolvedValue({
+      ...baseUpdate,
+      latest_version: "3.1.0",
+      min_supported_version: null,
+    });
+    vi.mocked(desktopGetAppUpdateState).mockResolvedValue({
+      configured: true,
+      available: true,
+      restart_required: false,
+      current_version: "1.0.0",
+      latest_version: "3.1.0",
+      target: "macos-arm64",
+      endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+      message: null,
+    });
     vi.mocked(desktopApplyAppUpdate).mockImplementation(
       () =>
         new Promise(() => {
@@ -740,6 +864,9 @@ describe("UpdateNoticeBanner", () => {
     );
 
     renderBanner({ allTasksIdle: false });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Update Now" })).toBeInTheDocument();
+    });
     fireEvent.click(screen.getByRole("button", { name: "Update Now" }));
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Updating..." })).toBeDisabled();

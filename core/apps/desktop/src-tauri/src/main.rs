@@ -131,6 +131,7 @@ fn main() {
             desktop_storage_consume_notice,
             desktop_daemon_request,
             desktop_start_codex_login_relay,
+            desktop_get_app_update_state,
             desktop_check_app_update,
             desktop_apply_app_update,
             desktop_restart_app,

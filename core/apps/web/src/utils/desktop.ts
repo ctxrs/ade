@@ -49,9 +49,21 @@ export type DesktopAppUpdateCheckResp = {
   message?: string | null;
 };
 
+export type DesktopAppUpdateStateResp = {
+  configured: boolean;
+  available: boolean;
+  restart_required: boolean;
+  current_version: string;
+  latest_version?: string | null;
+  target: string;
+  endpoint: string;
+  message?: string | null;
+};
+
 export type DesktopAppUpdateApplyResp = {
   applied: boolean;
   needs_restart: boolean;
+  up_to_date?: boolean;
   latest_version?: string | null;
   message: string;
 };
@@ -225,6 +237,11 @@ export const desktopUpdateRemoteDaemon = async (channel?: string): Promise<Deskt
 
 export const desktopCheckAppUpdate = async (channel?: string): Promise<DesktopAppUpdateCheckResp> =>
   invoke<DesktopAppUpdateCheckResp>("desktop_check_app_update", {
+    req: channel ? { channel } : {},
+  });
+
+export const desktopGetAppUpdateState = async (channel?: string): Promise<DesktopAppUpdateStateResp> =>
+  invoke<DesktopAppUpdateStateResp>("desktop_get_app_update_state", {
     req: channel ? { channel } : {},
   });
 

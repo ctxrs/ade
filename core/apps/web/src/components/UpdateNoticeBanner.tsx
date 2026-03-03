@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Info, X } from "lucide-react";
 import { applyAppImageUpdate, downloadAppImageUpdate, type UpdateCheck } from "../api/client";
-import { desktopApplyAppUpdate, desktopCheckAppUpdate, desktopRestartApp, isDesktopApp } from "../utils/desktop";
+import {
+  desktopApplyAppUpdate,
+  desktopGetAppUpdateState,
+  desktopRestartApp,
+  isDesktopApp,
+} from "../utils/desktop";
 import { readCachedUpdateCheck, refreshUpdateCheck, writeCachedUpdateCheck } from "../utils/updateNotice";
 
 const PROMPT_SNOOZE_STORAGE_KEY = "ctx_update_prompt_next_allowed_at_v1";
@@ -289,7 +294,8 @@ type UpdateNoticeBannerProps = {
 };
 
 export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNoticeBannerProps) {
-  const [updateInfo, setUpdateInfo] = useState<UpdateCheck | null>(() => readCachedUpdateCheck());
+  const isDesktop = isDesktopApp();
+  const [updateInfo, setUpdateInfo] = useState<UpdateCheck | null>(() => (isDesktop ? null : readCachedUpdateCheck()));
   const [promptSnoozeByVersion, setPromptSnoozeByVersion] = useState<Record<string, number>>(
     () => readPromptSnoozeByVersion(),
   );
@@ -299,7 +305,6 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
   const launchAutoApplyAttemptedRef = useRef(false);
   const applyInFlightRef = useRef(false);
   const updateInfoRef = useRef<UpdateCheck | null>(updateInfo);
-  const isDesktop = isDesktopApp();
   const autoApplyOnLaunchEnabled = shouldAutoApplyOnLaunch();
 
   useEffect(() => {
@@ -394,32 +399,47 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
     async (force = false): Promise<UpdateCheck | null> => {
       let info: UpdateCheck | null = null;
       if (isDesktop) {
+        let daemonPolicy: UpdateCheck | null = null;
         try {
-          const native = await desktopCheckAppUpdate("stable");
-          const previous = updateInfoRef.current;
-          const latestVersion =
-            normalizeOptionalString(native.latest_version)
-            || normalizeOptionalString(previous?.latest_version)
-            || null;
+          daemonPolicy = await refreshUpdateCheck(force ? { force: true } : undefined);
+        } catch {
+          daemonPolicy = null;
+        }
+        try {
+          const native = await desktopGetAppUpdateState("stable");
+          const latestVersion = normalizeOptionalString(native.latest_version) || null;
+          const markerVersion = latestVersion || normalizeOptionalString(native.current_version);
+          if (native.restart_required && markerVersion) {
+            setRestartRequiredVersionState(markerVersion);
+          } else if (!native.restart_required) {
+            clearRestartRequiredVersionState();
+          }
           info = {
             channel: "stable",
             base_url: deriveBaseUrlFromEndpoint(native.endpoint),
             platform:
               normalizeOptionalString(native.target)
-              || normalizeOptionalString(previous?.platform)
               || null,
             current_version: normalizeOptionalString(native.current_version),
             latest_version: latestVersion,
-            min_supported_version: normalizeOptionalString(previous?.min_supported_version) || null,
-            platform_supported: true,
+            min_supported_version: normalizeOptionalString(daemonPolicy?.min_supported_version) || null,
+            platform_supported: daemonPolicy?.platform_supported ?? true,
             in_place_update_supported: Boolean(native.configured),
             in_place_update_reason: native.configured
               ? null
               : normalizeOptionalString(native.message) || "Native updater is not configured.",
-            update_available: Boolean(native.available && latestVersion),
+            update_available: Boolean(native.available),
           };
-        } catch {
-          // Keep null; caller will retain previous update info if available.
+        } catch (err) {
+          const previous = updateInfoRef.current;
+          info = previous
+            ? {
+              ...previous,
+              update_available: false,
+              in_place_update_reason:
+                err instanceof Error ? err.message : "Desktop updater check failed.",
+            }
+            : null;
         }
       } else {
         info = await refreshUpdateCheck(force ? { force: true } : undefined);
@@ -432,7 +452,12 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
       reconcileRestartRequiredState(effectiveInfo);
       return effectiveInfo;
     },
-    [isDesktop, reconcileRestartRequiredState],
+    [
+      clearRestartRequiredVersionState,
+      isDesktop,
+      reconcileRestartRequiredState,
+      setRestartRequiredVersionState,
+    ],
   );
 
   const applyUpdateNow = useCallback(
@@ -455,15 +480,20 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
       try {
         if (isDesktop) {
           const resp = await desktopApplyAppUpdate("stable");
-          if (!resp.applied && !resp.needs_restart) {
-            dispatchUi({ type: "apply_failed", message: resp.message || "Update did not apply." });
-            recoverIdleFailure();
-            return false;
-          }
           if (resp.needs_restart) {
             markRestartRequired(resp.message);
             return true;
           }
+          if (resp.applied || resp.up_to_date) {
+            clearVersionFlags(version);
+            clearRestartRequiredVersionState();
+            await refresh(true);
+            dispatchUi({ type: "apply_completed" });
+            return true;
+          }
+          dispatchUi({ type: "apply_failed", message: resp.message || "Update did not apply." });
+          recoverIdleFailure();
+          return false;
         } else {
           const capability = getInPlaceCapability(updateInfoRef.current);
           if (!capability.supported) {
@@ -506,7 +536,9 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
           };
           updateInfoRef.current = next;
           setUpdateInfo(next);
-          writeCachedUpdateCheck(next);
+          if (!isDesktop) {
+            writeCachedUpdateCheck(next);
+          }
         }
         dispatchUi({ type: "apply_completed" });
         return true;
@@ -518,19 +550,28 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
         applyInFlightRef.current = false;
       }
     },
-    [clearRestartRequiredVersionState, clearVersionFlags, isDesktop, setRestartRequiredVersionState, snoozeVersionPrompt],
+    [
+      clearRestartRequiredVersionState,
+      clearVersionFlags,
+      isDesktop,
+      refresh,
+      setRestartRequiredVersionState,
+      snoozeVersionPrompt,
+    ],
   );
 
   useEffect(() => {
     let cancelled = false;
     const runInitialCheck = async () => {
-      const pendingRestartVersion = readRestartRequiredVersion();
-      if (pendingRestartVersion) {
-        setRestartRequiredVersionState(pendingRestartVersion);
-        dispatchUi({
-          type: "restart_required",
-          message: "Update installed. Relaunch the app to complete the update.",
-        });
+      if (!isDesktop) {
+        const pendingRestartVersion = readRestartRequiredVersion();
+        if (pendingRestartVersion) {
+          setRestartRequiredVersionState(pendingRestartVersion);
+          dispatchUi({
+            type: "restart_required",
+            message: "Update installed. Relaunch the app to complete the update.",
+          });
+        }
       }
       // Startup must always perform a real update check request.
       const info = await refresh(true);

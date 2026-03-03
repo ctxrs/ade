@@ -10,6 +10,10 @@ const profile = profileIdx !== -1 ? args[profileIdx + 1] : "debug";
 const syncBundlesEnabled = !["0", "false", "no", "off"].includes(
   String(process.env.CTX_DESKTOP_SYNC_BUNDLES || "1").trim().toLowerCase(),
 );
+const is_truthy = (value) => {
+  if (value == null) return false;
+  return !["0", "false", "no", "off", ""].includes(String(value).trim().toLowerCase());
+};
 
 const coreRoot = path.resolve(__dirname, "..");
 const desktopTauriRoot = path.join(coreRoot, "apps", "desktop", "src-tauri");
