@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -31,7 +31,6 @@ use url::Url;
 // - /usr/local/bin/ctx-egress-proxy (Linux binary executed inside the container)
 const DEFAULT_CONTAINER_IMAGE: &str = "ghcr.io/ctxrs/ctx-harness:ubuntu-24.04";
 const PODMAN_PATH_ENV: &str = "CTX_PODMAN_PATH";
-const PODMAN_ALLOW_SYSTEM_ENV: &str = "CTX_ALLOW_SYSTEM_PODMAN";
 const EGRESS_PROXY_BINARY: &str = "ctx-egress-proxy";
 const EGRESS_PROXY_RUNTIME_ID: &str = "ctx-egress-proxy";
 const EGRESS_PROXY_CONFIG_NAME: &str = "egress-proxy.json";
@@ -210,9 +209,7 @@ impl HarnessRuntimeManager {
         if !podman_machine_required() {
             return Ok(());
         }
-        if !podman_available() {
-            anyhow::bail!("podman unavailable");
-        }
+        ensure_managed_podman_runtime(&self.data_root, None).await?;
         if podman_machine_present(&self.data_root).await? {
             return Ok(());
         }
@@ -240,22 +237,19 @@ impl HarnessRuntimeManager {
             "CTX_DATA_ROOT_HOST".to_string(),
             self.data_root.to_string_lossy().to_string(),
         );
-        if let Some(path) = podman_binary_path() {
-            env_overrides.insert(
-                PODMAN_PATH_ENV.to_string(),
-                path.to_string_lossy().to_string(),
-            );
-        }
         if matches!(settings.mode, ExecutionMode::Host) {
             return Ok(HarnessExecutionPlan {
                 runtime: HarnessRuntimeKind::Host,
                 env_overrides,
             });
         }
-
-        if !podman_available() {
-            anyhow::bail!("podman unavailable and execution mode is container");
-        }
+        let podman_bin = ensure_managed_podman_runtime(&self.data_root, None)
+            .await
+            .context("podman unavailable and execution mode is container")?;
+        env_overrides.insert(
+            PODMAN_PATH_ENV.to_string(),
+            podman_bin.to_string_lossy().to_string(),
+        );
 
         let proxy_host = "host.containers.internal";
         let daemon_port = daemon_port_from_url(daemon_url).unwrap_or(4399);
@@ -317,9 +311,9 @@ impl HarnessRuntimeManager {
         if matches!(settings.mode, ExecutionMode::Host) {
             return Ok(());
         }
-        if !podman_available() {
-            anyhow::bail!("podman unavailable and execution mode is container");
-        }
+        ensure_managed_podman_runtime(&self.data_root, observer)
+            .await
+            .context("podman unavailable and execution mode is container")?;
         let proxy_host = "host.containers.internal";
         let daemon_port = daemon_port_from_url(daemon_url).unwrap_or(4399);
         let _ = self
@@ -721,6 +715,7 @@ pub async fn prefetch_container_image_with_observer(
         HarnessSetupPhase::MachineCheck,
         "checking container runtime",
     );
+    ensure_managed_podman_runtime(data_root, observer).await?;
     // On macOS/Windows `podman` is a remote client; image ops require a running machine.
     ensure_podman_machine_running_with_observer(data_root, observer).await?;
     observe_phase(
@@ -901,6 +896,368 @@ async fn ensure_managed_default_container_image_tar(
         )
     })?;
     Ok(final_tar)
+}
+
+fn podman_platform_tokens() -> (&'static str, &'static str) {
+    (std::env::consts::OS, std::env::consts::ARCH)
+}
+
+fn managed_podman_runtime_source() -> Option<bundled_assets::ManagedRuntimeSource> {
+    let (os, arch) = podman_platform_tokens();
+    bundled_assets::managed_runtime_source("podman", os, arch)
+}
+
+fn managed_podman_runtime_root(
+    data_root: &Path,
+    source: &bundled_assets::ManagedRuntimeSource,
+) -> PathBuf {
+    let (os, arch) = podman_platform_tokens();
+    data_root
+        .join("managed")
+        .join("runtimes")
+        .join("podman")
+        .join(os)
+        .join(arch)
+        .join(format!("podman-{}", source.version.trim()))
+}
+
+fn managed_podman_runtime_bin_path(
+    data_root: &Path,
+    source: &bundled_assets::ManagedRuntimeSource,
+) -> PathBuf {
+    managed_podman_runtime_root(data_root, source).join(source.bin.trim())
+}
+
+fn managed_podman_helper_path(runtime_root: &Path, helper_name: &str) -> Option<PathBuf> {
+    let helper = helper_name.trim();
+    if helper.is_empty() {
+        return None;
+    }
+    Some(
+        runtime_root
+            .join("usr")
+            .join("libexec")
+            .join("podman")
+            .join(helper),
+    )
+}
+
+fn managed_artifact_extension(uri: &str) -> &'static str {
+    let path = Url::parse(uri)
+        .ok()
+        .map(|parsed| parsed.path().to_string())
+        .unwrap_or_else(|| uri.to_string());
+    let path_lc = path.to_ascii_lowercase();
+    if path_lc.ends_with(".tar.gz") {
+        "tar.gz"
+    } else if path_lc.ends_with(".tgz") {
+        "tgz"
+    } else if path_lc.ends_with(".tar") {
+        "tar"
+    } else {
+        "zip"
+    }
+}
+
+fn managed_podman_archive_path(
+    data_root: &Path,
+    source: &bundled_assets::ManagedRuntimeSource,
+) -> PathBuf {
+    let (os, arch) = podman_platform_tokens();
+    let ext = managed_artifact_extension(&source.uri);
+    data_root
+        .join("managed")
+        .join("downloads")
+        .join("podman")
+        .join(os)
+        .join(arch)
+        .join(format!(
+            "sha256-{}.{}",
+            source.sha256.trim().to_ascii_lowercase(),
+            ext
+        ))
+}
+
+fn extract_zip_to_dir(zip_path: &Path, out_dir: &Path) -> Result<()> {
+    let file =
+        std::fs::File::open(zip_path).with_context(|| format!("open {}", zip_path.display()))?;
+    let mut archive = zip::ZipArchive::new(file).context("parsing zip archive")?;
+    for idx in 0..archive.len() {
+        let mut entry = archive.by_index(idx).context("zip entry")?;
+        if entry.is_dir() {
+            continue;
+        }
+        let Some(enclosed) = entry.enclosed_name().map(|p| p.to_path_buf()) else {
+            continue;
+        };
+        let dest = out_dir.join(enclosed);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("create {}", parent.display()))?;
+        }
+        let mut out =
+            std::fs::File::create(&dest).with_context(|| format!("create {}", dest.display()))?;
+        std::io::copy(&mut entry, &mut out).context("extract zip entry")?;
+        #[cfg(unix)]
+        if let Some(mode) = entry.unix_mode() {
+            let _ = std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(mode));
+        }
+    }
+    Ok(())
+}
+
+fn extract_archive_to_dir(archive_path: &Path, source_uri: &str, out_dir: &Path) -> Result<()> {
+    let kind = managed_artifact_extension(source_uri);
+    match kind {
+        "zip" => extract_zip_to_dir(archive_path, out_dir),
+        "tar.gz" | "tgz" => {
+            let archive_file = std::fs::File::open(archive_path)
+                .with_context(|| format!("open {}", archive_path.display()))?;
+            let decoder = flate2::read::GzDecoder::new(archive_file);
+            let mut archive = tar::Archive::new(decoder);
+            archive.unpack(out_dir).context("extract tar.gz archive")
+        }
+        "tar" => {
+            let archive_file = std::fs::File::open(archive_path)
+                .with_context(|| format!("open {}", archive_path.display()))?;
+            let mut archive = tar::Archive::new(archive_file);
+            archive.unpack(out_dir).context("extract tar archive")
+        }
+        _ => anyhow::bail!("unsupported podman archive type for {source_uri}"),
+    }
+}
+
+fn resolve_single_extracted_root(extract_dir: &Path) -> Result<PathBuf> {
+    let mut dirs = Vec::new();
+    let mut has_files = false;
+    for entry in std::fs::read_dir(extract_dir)
+        .with_context(|| format!("read_dir {}", extract_dir.display()))?
+    {
+        let entry = entry.with_context(|| format!("read_dir entry {}", extract_dir.display()))?;
+        let path = entry.path();
+        if path.is_dir() {
+            dirs.push(path);
+        } else {
+            has_files = true;
+        }
+    }
+    if has_files || dirs.len() != 1 {
+        return Ok(extract_dir.to_path_buf());
+    }
+    Ok(dirs.remove(0))
+}
+
+fn managed_podman_install_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+async fn ensure_managed_podman_runtime(
+    data_root: &Path,
+    observer: Option<&dyn HarnessSetupObserver>,
+) -> Result<PathBuf> {
+    if let Ok(raw) = std::env::var(PODMAN_PATH_ENV) {
+        let path = PathBuf::from(raw.trim());
+        if path.exists() {
+            return Ok(path);
+        }
+    }
+    if let Some(bundled) = bundled_assets::bundled_podman_runtime() {
+        return Ok(bundled.bin);
+    }
+    let source = managed_podman_runtime_source().ok_or_else(|| {
+        anyhow::anyhow!(
+            "managed podman runtime source is not available for {}/{}",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        )
+    })?;
+    let runtime_root = managed_podman_runtime_root(data_root, &source);
+    let runtime_bin = managed_podman_runtime_bin_path(data_root, &source);
+    if runtime_bin.exists() {
+        return Ok(runtime_bin);
+    }
+    let _install_guard = managed_podman_install_lock().lock().await;
+    if runtime_bin.exists() {
+        return Ok(runtime_bin);
+    }
+
+    observe_log(
+        observer,
+        HarnessSetupPhase::MachineCheck,
+        HarnessSetupLogLevel::Info,
+        &format!("installing managed podman runtime {}", source.version),
+    );
+
+    let final_archive = managed_podman_archive_path(data_root, &source);
+    if final_archive.exists() {
+        let digest = updates::sha256_hex_file(&final_archive)
+            .await
+            .with_context(|| format!("computing sha256 for {}", final_archive.display()))?;
+        if !digest.eq_ignore_ascii_case(source.sha256.trim()) {
+            let _ = fs::remove_file(&final_archive).await;
+        }
+    }
+    if !final_archive.exists() {
+        let Some(parent) = final_archive.parent() else {
+            anyhow::bail!(
+                "managed podman archive path has no parent: {}",
+                final_archive.display()
+            );
+        };
+        fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("creating {}", parent.display()))?;
+        let tmp_archive = final_archive.with_extension("download");
+        download_managed_artifact(&source.uri, &tmp_archive).await?;
+        let digest = updates::sha256_hex_file(&tmp_archive)
+            .await
+            .with_context(|| format!("computing sha256 for {}", tmp_archive.display()))?;
+        if !digest.eq_ignore_ascii_case(source.sha256.trim()) {
+            let _ = fs::remove_file(&tmp_archive).await;
+            anyhow::bail!(
+                "managed podman runtime checksum mismatch: expected {}, got {}",
+                source.sha256.trim(),
+                digest
+            );
+        }
+        fs::rename(&tmp_archive, &final_archive)
+            .await
+            .with_context(|| {
+                format!(
+                    "moving managed podman archive into place: {} -> {}",
+                    tmp_archive.display(),
+                    final_archive.display()
+                )
+            })?;
+    }
+
+    let Some(parent) = runtime_root.parent() else {
+        anyhow::bail!(
+            "managed runtime root has no parent: {}",
+            runtime_root.display()
+        );
+    };
+    fs::create_dir_all(parent)
+        .await
+        .with_context(|| format!("creating {}", parent.display()))?;
+    let staging_dir = parent.join(format!(".podman-staging-{}", uuid::Uuid::new_v4().simple()));
+    if staging_dir.exists() {
+        let _ = fs::remove_dir_all(&staging_dir).await;
+    }
+    fs::create_dir_all(&staging_dir)
+        .await
+        .with_context(|| format!("creating {}", staging_dir.display()))?;
+    let extract_dir = staging_dir.join("extract");
+    fs::create_dir_all(&extract_dir)
+        .await
+        .with_context(|| format!("creating {}", extract_dir.display()))?;
+    let archive_for_extract = final_archive.clone();
+    let uri_for_extract = source.uri.clone();
+    let extract_dir_for_extract = extract_dir.clone();
+    tokio::task::spawn_blocking(move || {
+        extract_archive_to_dir(
+            &archive_for_extract,
+            &uri_for_extract,
+            &extract_dir_for_extract,
+        )
+    })
+    .await
+    .context("joining managed podman extract task")??;
+    let extracted_root = tokio::task::spawn_blocking({
+        let extract_dir = extract_dir.clone();
+        move || resolve_single_extracted_root(&extract_dir)
+    })
+    .await
+    .context("joining managed podman extraction root task")??;
+
+    if runtime_root.exists() {
+        let _ = fs::remove_dir_all(&runtime_root).await;
+    }
+    fs::rename(&extracted_root, &runtime_root)
+        .await
+        .with_context(|| {
+            format!(
+                "moving extracted podman runtime into place: {} -> {}",
+                extracted_root.display(),
+                runtime_root.display()
+            )
+        })?;
+    let _ = fs::remove_dir_all(&staging_dir).await;
+
+    for (name, helper) in &source.helpers {
+        let Some(path) = managed_podman_helper_path(&runtime_root, name) else {
+            continue;
+        };
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .await
+                .with_context(|| format!("creating {}", parent.display()))?;
+        }
+        if path.exists() {
+            let digest = updates::sha256_hex_file(&path)
+                .await
+                .with_context(|| format!("computing sha256 for {}", path.display()))?;
+            if digest.eq_ignore_ascii_case(helper.sha256.trim()) {
+                continue;
+            }
+            let _ = fs::remove_file(&path).await;
+        }
+        let tmp = path.with_extension("download");
+        download_managed_artifact(&helper.uri, &tmp).await?;
+        let digest = updates::sha256_hex_file(&tmp)
+            .await
+            .with_context(|| format!("computing sha256 for {}", tmp.display()))?;
+        if !digest.eq_ignore_ascii_case(helper.sha256.trim()) {
+            let _ = fs::remove_file(&tmp).await;
+            anyhow::bail!(
+                "managed podman helper checksum mismatch ({}): expected {}, got {}",
+                name,
+                helper.sha256.trim(),
+                digest
+            );
+        }
+        fs::rename(&tmp, &path).await.with_context(|| {
+            format!(
+                "moving managed podman helper into place: {} -> {}",
+                tmp.display(),
+                path.display()
+            )
+        })?;
+    }
+
+    if !runtime_bin.exists() {
+        anyhow::bail!(
+            "managed podman runtime installed but binary is missing at {}",
+            runtime_bin.display()
+        );
+    }
+    #[cfg(unix)]
+    {
+        let mut perms = fs::metadata(&runtime_bin)
+            .await
+            .with_context(|| format!("metadata {}", runtime_bin.display()))?
+            .permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&runtime_bin, perms)
+            .await
+            .with_context(|| format!("chmod {}", runtime_bin.display()))?;
+        for name in source.helpers.keys() {
+            if let Some(helper_path) = managed_podman_helper_path(&runtime_root, name) {
+                if helper_path.exists() {
+                    let mut helper_perms = fs::metadata(&helper_path)
+                        .await
+                        .with_context(|| format!("metadata {}", helper_path.display()))?
+                        .permissions();
+                    helper_perms.set_mode(0o755);
+                    fs::set_permissions(&helper_path, helper_perms)
+                        .await
+                        .with_context(|| format!("chmod {}", helper_path.display()))?;
+                }
+            }
+        }
+    }
+    Ok(runtime_bin)
 }
 
 async fn download_managed_artifact(url: &str, dest: &Path) -> Result<()> {
@@ -1346,17 +1703,17 @@ exit 0
     }
 }
 
-fn podman_available() -> bool {
+fn podman_available(data_root: &Path) -> bool {
     if cfg!(test) {
         if let Ok(value) = std::env::var("CTX_TEST_PODMAN_AVAILABLE") {
             let value = value.trim().to_ascii_lowercase();
             return matches!(value.as_str(), "1" | "true" | "yes" | "y");
         }
     }
-    podman_binary_path().is_some()
+    podman_binary_path(data_root).is_some()
 }
 
-fn podman_binary_path() -> Option<PathBuf> {
+fn podman_binary_path(data_root: &Path) -> Option<PathBuf> {
     if let Ok(raw) = std::env::var(PODMAN_PATH_ENV) {
         let path = PathBuf::from(raw.trim());
         if path.exists() {
@@ -1366,17 +1723,13 @@ fn podman_binary_path() -> Option<PathBuf> {
     if let Some(bundled) = bundled_assets::bundled_podman_runtime() {
         return Some(bundled.bin);
     }
-    if allow_system_podman() {
-        return which::which("podman").ok();
+    if let Some(source) = managed_podman_runtime_source() {
+        let managed_path = managed_podman_runtime_bin_path(data_root, &source);
+        if managed_path.exists() {
+            return Some(managed_path);
+        }
     }
     None
-}
-
-fn allow_system_podman() -> bool {
-    std::env::var(PODMAN_ALLOW_SYSTEM_ENV)
-        .ok()
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes"))
-        .unwrap_or(false)
 }
 
 #[derive(Debug, Clone)]
@@ -1386,7 +1739,8 @@ pub(crate) struct PodmanInvocation {
 }
 
 pub(crate) fn podman_invocation(data_root: &Path) -> Result<PodmanInvocation> {
-    let bin = podman_binary_path().ok_or_else(|| anyhow::anyhow!("podman binary unavailable"))?;
+    let bin = podman_binary_path(data_root)
+        .ok_or_else(|| anyhow::anyhow!("podman binary unavailable"))?;
 
     // Keep Podman state deterministic and tied to the daemon data_root so wiping ctx state fully
     // resets container execution.
@@ -1450,8 +1804,8 @@ fn podman_machine_required() -> bool {
     cfg!(target_os = "macos") || cfg!(target_os = "windows")
 }
 
-pub fn container_runtime_available() -> bool {
-    podman_available()
+pub fn container_runtime_available(data_root: &Path) -> bool {
+    podman_available(data_root) || managed_podman_runtime_source().is_some()
 }
 
 pub async fn podman_engine_ready(data_root: &Path) -> Result<bool> {
@@ -2054,7 +2408,7 @@ mod tests {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let path = tmp.path().to_string_lossy().to_string();
         let _guard = EnvGuard::set("CTX_PODMAN_PATH", &path);
-        let resolved = podman_binary_path().expect("env override should resolve");
+        let resolved = podman_binary_path(Path::new("/tmp")).expect("env override should resolve");
         assert_eq!(resolved, tmp.path());
     }
 

@@ -47,56 +47,6 @@ const envFlagEnabled = (value, defaultValue = false) => {
   return !["0", "false", "no", "off"].includes(normalized);
 };
 
-const normalizeManifestOs = (raw) => {
-  if (raw === "darwin" || raw === "macos") return "macos";
-  if (raw === "win32" || raw === "windows") return "windows";
-  if (raw === "linux") return "linux";
-  return String(raw || "").trim();
-};
-
-const normalizeManifestArch = (raw) => {
-  if (raw === "arm64" || raw === "aarch64") return "aarch64";
-  if (raw === "x64" || raw === "x86_64" || raw === "amd64") return "x86_64";
-  return String(raw || "").trim();
-};
-
-const bundledPodmanDeclared = (manifestPath, platform = process.platform, arch = process.arch) => {
-  try {
-    if (!manifestPath || !fs.existsSync(manifestPath)) return false;
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-    const runtimes = Array.isArray(manifest?.runtimes) ? manifest.runtimes : [];
-    const expectedOs = normalizeManifestOs(platform);
-    const expectedArch = normalizeManifestArch(arch);
-    return runtimes.some((entry) =>
-      entry
-      && entry.id === "podman"
-      && entry.os === expectedOs
-      && entry.arch === expectedArch
-      && typeof entry.root === "string"
-      && entry.root.trim().length > 0
-      && typeof entry.bin === "string"
-      && entry.bin.trim().length > 0);
-  } catch {
-    return false;
-  }
-};
-
-const shouldEnableSystemPodmanFallback = ({
-  bundlePodmanEnv,
-  allowSystemPodmanEnv,
-  effectiveManifestPath,
-  platform = process.platform,
-  arch = process.arch,
-}) => {
-  if (typeof allowSystemPodmanEnv === "string" && allowSystemPodmanEnv.trim().length > 0) {
-    return false;
-  }
-  if (envFlagEnabled(bundlePodmanEnv, true) === false) {
-    return true;
-  }
-  return !bundledPodmanDeclared(effectiveManifestPath, platform, arch);
-};
-
 const portIsAvailable = (host, port) =>
   new Promise((resolve) => {
     const server = net.createServer();
@@ -166,13 +116,6 @@ const main = async () => {
 
   // Canonical desktop dev flow: prepare runtime, validate bundled lock contract, then launch.
   run("node", ["scripts/desktop_runtime_prepare.cjs"], { env: prepEnv });
-  if (shouldEnableSystemPodmanFallback({
-    bundlePodmanEnv: process.env.CTX_BUNDLE_PODMAN,
-    allowSystemPodmanEnv: process.env.CTX_ALLOW_SYSTEM_PODMAN,
-    effectiveManifestPath,
-  })) {
-    tauriEnv.CTX_ALLOW_SYSTEM_PODMAN = "1";
-  }
   const runtimeStatePath = path.join(
     coreRoot,
     "apps",
@@ -210,8 +153,4 @@ if (require.main === module) {
 module.exports = {
   readDesktopVersion,
   envFlagEnabled,
-  normalizeManifestOs,
-  normalizeManifestArch,
-  bundledPodmanDeclared,
-  shouldEnableSystemPodmanFallback,
 };

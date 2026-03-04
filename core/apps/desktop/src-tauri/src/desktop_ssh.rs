@@ -1549,6 +1549,29 @@ fn run_remote_ssh_shell(host: &str, user: Option<&str>, cmd: &str) -> Result<std
         .context("running ssh remote command")
 }
 
+fn probe_remote_podman_path(host: &str, user: Option<&str>) -> Result<Option<String>> {
+    let output = run_remote_ssh_shell(
+        host,
+        user,
+        "if command -v podman >/dev/null 2>&1; then command -v podman; else exit 1; fi",
+    )
+    .context("probing remote podman path")?;
+    if !output.status.success() {
+        if output.status.code() == Some(1) {
+            return Ok(None);
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if !stderr.is_empty() { stderr } else { stdout };
+        anyhow::bail!("remote podman probe failed: {detail}");
+    }
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if path.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(path))
+}
+
 fn start_ssh_tunnel(
     host: &str,
     user: Option<&str>,
@@ -1632,14 +1655,14 @@ fn start_remote_daemon_over_ssh(
     let log_file_expr = remote_path_expr(&log_file);
     let ctx_bin = validate_remote_ctx_bin(remote_ctx_bin)?;
     let ctx_bin_expr = remote_path_expr(&ctx_bin);
-    // Remote daemon should be able to use host Podman when available (same behavior expected in
-    // launcher container modes on Linux remotes). Pass through optional podman tuning envs.
-    let mut daemon_env = vec!["CTX_ALLOW_SYSTEM_PODMAN=1".to_string()];
-    if let Ok(v) = std::env::var("CTX_PODMAN_PATH") {
-        let trimmed = v.trim();
-        if !trimmed.is_empty() {
-            daemon_env.push(format!("CTX_PODMAN_PATH={}", shell_escape(trimmed)));
-        }
+    // Canonical path: pass an explicit podman binary path into the remote daemon when available,
+    // so runtime execution does not depend on daemon-process PATH lookup.
+    let mut daemon_env = Vec::<String>::new();
+    if let Some(remote_podman_path) = probe_remote_podman_path(host, user)? {
+        daemon_env.push(format!(
+            "CTX_PODMAN_PATH={}",
+            shell_escape(remote_podman_path.as_str())
+        ));
     }
     if let Ok(v) = std::env::var("CTX_PODMAN_MACHINE_PREFETCH") {
         let trimmed = v.trim();

@@ -335,15 +335,10 @@ const ensureBundledContainerAssets = () => {
       );
     }
   } else {
-    const allowSystemPodman = ["1", "true", "yes"].includes(
-      String(process.env.CTX_ALLOW_SYSTEM_PODMAN || "0").trim().toLowerCase(),
+    // Canonical path for thin bundles: daemon downloads managed podman runtime on demand.
+    console.error(
+      `[wdio] bundled podman runtime metadata missing for ${hostOs}/${hostArch}; relying on managed podman runtime download`,
     );
-    const systemPodman = spawnSync("which", ["podman"], { encoding: "utf8" });
-    if (!(allowSystemPodman && systemPodman.status === 0)) {
-      throw new Error(
-        `container scenarios require either bundled podman (${hostOs}/${hostArch}) or system podman with CTX_ALLOW_SYSTEM_PODMAN=1`,
-      );
-    }
   }
 
   const harnessImage = images.find((entry) =>
@@ -504,10 +499,6 @@ exports.config = {
     }
     if (!process.env.CTX_BUNDLE_DIR) {
       process.env.CTX_BUNDLE_DIR = BUNDLES_DIR;
-    }
-    // Container automation can run with either bundled podman or host podman fallback.
-    if (RUNS_CONTAINER_SCENARIOS) {
-      process.env.CTX_ALLOW_SYSTEM_PODMAN = process.env.CTX_ALLOW_SYSTEM_PODMAN || "1";
     }
     if (RUNS_CONTAINER_SCENARIOS) {
       ensureBundledContainerAssets();

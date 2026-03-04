@@ -86,6 +86,15 @@ pub struct ManagedArtifactSource {
     pub sha256: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct ManagedRuntimeSource {
+    pub uri: String,
+    pub sha256: String,
+    pub version: String,
+    pub bin: String,
+    pub helpers: HashMap<String, ManagedArtifactSource>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct RuntimeLockProfile {
     #[serde(default)]
@@ -102,6 +111,14 @@ struct RuntimeLockSource {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+struct RuntimeLockHelperSource {
+    #[serde(default)]
+    uri: Option<String>,
+    #[serde(default)]
+    sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 struct RuntimeLockComponent {
     kind: String,
     id: String,
@@ -109,6 +126,12 @@ struct RuntimeLockComponent {
     arch: String,
     #[serde(default)]
     variant: Option<String>,
+    #[serde(default)]
+    version: Option<String>,
+    #[serde(default)]
+    bin: Option<String>,
+    #[serde(default)]
+    helpers: HashMap<String, RuntimeLockHelperSource>,
     #[serde(default)]
     sources: Vec<RuntimeLockSource>,
 }
@@ -316,6 +339,47 @@ fn select_managed_source(
     })
 }
 
+fn select_managed_runtime_source(
+    component: &RuntimeLockComponent,
+    allowed_source_types: &HashSet<String>,
+) -> Option<ManagedRuntimeSource> {
+    let source = select_managed_source(component, allowed_source_types)?;
+    let version = component.version.as_deref()?.trim();
+    if version.is_empty() {
+        return None;
+    }
+    let bin = component.bin.as_deref()?.trim();
+    if bin.is_empty() {
+        return None;
+    }
+    let mut helpers = HashMap::new();
+    for (name, helper) in &component.helpers {
+        let name = name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        let uri = helper.uri.as_deref().unwrap_or("").trim();
+        let sha256 = helper.sha256.as_deref().unwrap_or("").trim();
+        if uri.is_empty() || sha256.is_empty() {
+            continue;
+        }
+        helpers.insert(
+            name.to_string(),
+            ManagedArtifactSource {
+                uri: uri.to_string(),
+                sha256: sha256.to_string(),
+            },
+        );
+    }
+    Some(ManagedRuntimeSource {
+        uri: source.uri,
+        sha256: source.sha256,
+        version: version.to_string(),
+        bin: bin.to_string(),
+        helpers,
+    })
+}
+
 pub fn bundled_provider_command(provider_id: &str) -> Option<BundledCommand> {
     let root = bundle_dir()?;
     let manifest = load_manifest()?;
@@ -434,6 +498,25 @@ pub fn managed_image_source(id: &str, os: &str, arch: &str) -> Option<ManagedArt
     select_managed_source(component, &allowed_source_types)
 }
 
+pub fn managed_runtime_source(id: &str, os: &str, arch: &str) -> Option<ManagedRuntimeSource> {
+    let lock = load_runtime_lock()?;
+    let allowed_source_types = allowed_source_types_for_profile(&lock);
+    let component = lock.components.iter().find(|component| {
+        let variant = component
+            .variant
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("default");
+        component.kind == "runtime"
+            && component.id == id
+            && component.os == os
+            && component.arch == arch
+            && variant == "default"
+    })?;
+    select_managed_runtime_source(component, &allowed_source_types)
+}
+
 pub fn managed_ctx_harness_image_source(_expected_image: &str) -> Option<ManagedArtifactSource> {
     managed_image_source("ctx-harness", "linux", current_arch())
 }
@@ -486,6 +569,9 @@ mod tests {
             os: "linux".to_string(),
             arch: "aarch64".to_string(),
             variant: Some("default".to_string()),
+            version: None,
+            bin: None,
+            helpers: HashMap::new(),
             sources: vec![
                 RuntimeLockSource {
                     source_type: "local".to_string(),
@@ -514,6 +600,9 @@ mod tests {
             os: "linux".to_string(),
             arch: "x86_64".to_string(),
             variant: Some("default".to_string()),
+            version: None,
+            bin: None,
+            helpers: HashMap::new(),
             sources: vec![RuntimeLockSource {
                 source_type: "vendor".to_string(),
                 uri: Some("https://example.test/image.tar".to_string()),
@@ -523,5 +612,43 @@ mod tests {
         let mut allowed = HashSet::new();
         allowed.insert("ci".to_string());
         assert!(select_managed_source(&component, &allowed).is_none());
+    }
+
+    #[test]
+    fn select_managed_runtime_source_extracts_version_bin_and_helpers() {
+        let component = RuntimeLockComponent {
+            kind: "runtime".to_string(),
+            id: "podman".to_string(),
+            os: "macos".to_string(),
+            arch: "aarch64".to_string(),
+            variant: Some("default".to_string()),
+            version: Some("5.8.0".to_string()),
+            bin: Some("usr/bin/podman".to_string()),
+            helpers: HashMap::from([(
+                "gvproxy".to_string(),
+                RuntimeLockHelperSource {
+                    uri: Some("https://example.test/gvproxy".to_string()),
+                    sha256: Some("1234".to_string()),
+                },
+            )]),
+            sources: vec![RuntimeLockSource {
+                source_type: "vendor".to_string(),
+                uri: Some("https://example.test/podman.zip".to_string()),
+                sha256: Some("abcd".to_string()),
+            }],
+        };
+        let mut allowed = HashSet::new();
+        allowed.insert("vendor".to_string());
+        let source = select_managed_runtime_source(&component, &allowed).expect("runtime source");
+        assert_eq!(source.uri, "https://example.test/podman.zip");
+        assert_eq!(source.sha256, "abcd");
+        assert_eq!(source.version, "5.8.0");
+        assert_eq!(source.bin, "usr/bin/podman");
+        let helper = source
+            .helpers
+            .get("gvproxy")
+            .expect("gvproxy helper should be present");
+        assert_eq!(helper.uri, "https://example.test/gvproxy");
+        assert_eq!(helper.sha256, "1234");
     }
 }

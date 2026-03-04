@@ -141,11 +141,13 @@ async fn disk_isolated_smoke_podman_volume_buffers_terminal() {
         return;
     }
 
-    // Allow using system podman for this E2E smoke.
-    let _allow_system_podman = EnvVarGuard::set("CTX_ALLOW_SYSTEM_PODMAN", "1");
+    let Some(podman_bin) = which::which("podman").ok() else {
+        return;
+    };
+    let _podman_path = EnvVarGuard::set("CTX_PODMAN_PATH", podman_bin.as_os_str());
 
     // Ensure podman is present before we spend time bootstrapping.
-    if Command::new("podman")
+    if Command::new(&podman_bin)
         .arg("version")
         .output()
         .await

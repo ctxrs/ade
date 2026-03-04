@@ -672,7 +672,7 @@ impl ExecutionSetupCoordinator {
                     "host execution mode selected; runtime prewarm skipped",
                 );
                 Ok(())
-            } else if !harness_runtime::container_runtime_available() {
+            } else if !harness_runtime::container_runtime_available(&self.data_root) {
                 Err(anyhow::anyhow!("container runtime unavailable"))
             } else {
                 let prewarm_result = async {
@@ -889,7 +889,7 @@ impl ExecutionSetupCoordinator {
         let exec = settings.execution.unwrap_or_default();
         let image = harness_runtime::resolve_container_image(&exec.container);
 
-        if !harness_runtime::container_runtime_available() {
+        if !harness_runtime::container_runtime_available(&self.data_root) {
             let snapshot = StartupPrewarmSnapshot {
                 state: StartupPrewarmState::Skipped,
                 target_image: image,

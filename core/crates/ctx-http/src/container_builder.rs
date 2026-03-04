@@ -63,7 +63,7 @@ fn builder_run_args(
 }
 
 pub async fn ensure_builder_ready(data_root: &Path) -> Result<()> {
-    if !harness_runtime::container_runtime_available() {
+    if !harness_runtime::container_runtime_available(data_root) {
         anyhow::bail!("container runtime unavailable");
     }
     harness_runtime::prefetch_container_image(

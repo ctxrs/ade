@@ -1591,10 +1591,18 @@ pub(super) fn ensure_remote_ctx_harness_image(
     };
 
     // If the remote doesn't have podman, don't block ssh connection (container mode just won't work).
-    let podman_out = ssh_output(&target, "command -v podman >/dev/null 2>&1")?;
+    let podman_out = ssh_output(
+        &target,
+        "if command -v podman >/dev/null 2>&1; then command -v podman; else exit 1; fi",
+    )?;
     if !podman_out.status.success() {
         return Ok(());
     }
+    let podman_bin = String::from_utf8_lossy(&podman_out.stdout).trim().to_string();
+    if podman_bin.is_empty() {
+        return Ok(());
+    }
+    let podman_cmd = remote_path_expr(&podman_bin);
     let prep_out = ssh_output(&target, &podman_prepare_cmd)?;
     if !prep_out.status.success() {
         anyhow::bail!(
@@ -1613,7 +1621,7 @@ pub(super) fn ensure_remote_ctx_harness_image(
     let exists_out = ssh_output(
         &target,
         &format!(
-            "{podman_env_prefix} podman image exists -- {}",
+            "{podman_env_prefix} {podman_cmd} image exists -- {}",
             shell_escape(&image)
         ),
     )?;
@@ -1632,7 +1640,7 @@ pub(super) fn ensure_remote_ctx_harness_image(
         let remote_cmd = format!(
             "sh -lc {}",
             shell_escape(&format!(
-                "{podman_prepare_cmd} && {podman_env_prefix} podman load"
+                "{podman_prepare_cmd} && {podman_env_prefix} {podman_cmd} load"
             ))
         );
         let mut child = new_ssh_command()
@@ -1677,7 +1685,7 @@ pub(super) fn ensure_remote_ctx_harness_image(
         let pull_out = ssh_output(
             &target,
             &format!(
-                "{podman_prepare_cmd} && {podman_env_prefix} podman pull -- {}",
+                "{podman_prepare_cmd} && {podman_env_prefix} {podman_cmd} pull -- {}",
                 shell_escape(&image)
             ),
         )?;
@@ -1691,7 +1699,7 @@ pub(super) fn ensure_remote_ctx_harness_image(
     let exists_after = ssh_output(
         &target,
         &format!(
-            "{podman_env_prefix} podman image exists -- {}",
+            "{podman_env_prefix} {podman_cmd} image exists -- {}",
             shell_escape(&image)
         ),
     )?;

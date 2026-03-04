@@ -339,7 +339,8 @@ async fn harness_container_podman_fake_acp() {
         eprintln!("skipping: podman not found");
         return;
     }
-    let _guard = EnvGuard::set("CTX_ALLOW_SYSTEM_PODMAN", "1");
+    let podman = podman_binary_for_tests().expect("podman not found");
+    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman.to_string_lossy());
 
     let git_repo = setup_git_repo().await;
     let data_dir = tempfile::tempdir().unwrap();
@@ -396,7 +397,8 @@ async fn harness_container_podman_egress_allowlist() {
         eprintln!("skipping: CTX_EGRESS_PROXY_PATH not set");
         return;
     }
-    let _guard = EnvGuard::set("CTX_ALLOW_SYSTEM_PODMAN", "1");
+    let podman = podman_binary_for_tests().expect("podman not found");
+    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman.to_string_lossy());
 
     let image = std::env::var("CTX_E2E_PODMAN_IMAGE").unwrap_or_else(|_| "python:3.11".to_string());
     let allow_host = "example.com";
@@ -547,7 +549,8 @@ async fn harness_container_podman_egress_allow_all() {
         eprintln!("skipping: CTX_EGRESS_PROXY_PATH not set");
         return;
     }
-    let _guard = EnvGuard::set("CTX_ALLOW_SYSTEM_PODMAN", "1");
+    let podman = podman_binary_for_tests().expect("podman not found");
+    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman.to_string_lossy());
 
     let image = std::env::var("CTX_E2E_PODMAN_IMAGE").unwrap_or_else(|_| "python:3.11".to_string());
 
@@ -675,7 +678,8 @@ async fn harness_container_podman_egress_deny_all() {
         eprintln!("skipping: CTX_EGRESS_PROXY_PATH not set");
         return;
     }
-    let _guard = EnvGuard::set("CTX_ALLOW_SYSTEM_PODMAN", "1");
+    let podman = podman_binary_for_tests().expect("podman not found");
+    let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman.to_string_lossy());
 
     let image = std::env::var("CTX_E2E_PODMAN_IMAGE").unwrap_or_else(|_| "python:3.11".to_string());
 

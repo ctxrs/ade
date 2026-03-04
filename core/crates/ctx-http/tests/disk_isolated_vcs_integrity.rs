@@ -105,8 +105,11 @@ async fn disk_isolated_task_creation_produces_valid_git_worktree() {
         return;
     }
 
-    let _allow_system_podman = EnvVarGuard::set("CTX_ALLOW_SYSTEM_PODMAN", "1");
-    if Command::new("podman")
+    let Some(podman_bin) = which::which("podman").ok() else {
+        return;
+    };
+    let _podman_path = EnvVarGuard::set("CTX_PODMAN_PATH", podman_bin.as_os_str());
+    if Command::new(&podman_bin)
         .arg("version")
         .output()
         .await
