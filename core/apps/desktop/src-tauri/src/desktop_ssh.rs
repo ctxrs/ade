@@ -1247,7 +1247,8 @@ fn ensure_managed_remote_daemon_binary(
         .as_ref()
         .ok_or_else(|| anyhow!("release manifest missing daemon artifact for {platform_key}"))?;
     let expected_sha = normalize_sha256_hex(&daemon_artifact.sha256)?;
-    let final_path = managed_remote_daemon_download_path(app, channel, platform_key, &expected_sha)?;
+    let final_path =
+        managed_remote_daemon_download_path(app, channel, platform_key, &expected_sha)?;
     if final_path.exists() {
         let digest = sha256_hex_file(&final_path)
             .with_context(|| format!("computing sha256 for {}", final_path.display()))?;
@@ -1988,11 +1989,17 @@ mod remote_path_validation_tests {
     #[test]
     fn join_url_prefers_absolute_urls_and_joins_relative_paths() {
         assert_eq!(
-            join_url("https://api.ctx.rs/functions/v1", "/releases/stable/latest.json"),
+            join_url(
+                "https://api.ctx.rs/functions/v1",
+                "/releases/stable/latest.json"
+            ),
             "https://api.ctx.rs/functions/v1/releases/stable/latest.json"
         );
         assert_eq!(
-            join_url("https://api.ctx.rs/functions/v1", "https://example.test/file"),
+            join_url(
+                "https://api.ctx.rs/functions/v1",
+                "https://example.test/file"
+            ),
             "https://example.test/file"
         );
     }
