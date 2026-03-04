@@ -2,6 +2,7 @@ export const DESKTOP_MENU_ACTION_EVENT = "desktop_menu_action" as const;
 export const WEB_MENU_COMMAND_EVENT = "ctx:menu-command" as const;
 export const WEB_MENU_STATE_EVENT = "ctx:menu-state" as const;
 export const WEB_MENU_TRACE_EVENT = "ctx:menu-trace" as const;
+export const REQUEST_UPDATE_CHECK_EVENT = "ctx:request-update-check" as const;
 
 export const DESKTOP_MENU_COMMAND_IDS = [
   "file.new-workspace",
@@ -34,7 +35,6 @@ export const DESKTOP_MENU_COMMAND_IDS = [
   "help.check-for-updates",
   "help.open-logs-folder",
   "help.report-issue",
-  "help.diagnostics",
 ] as const;
 
 export type DesktopMenuCommandId = (typeof DESKTOP_MENU_COMMAND_IDS)[number];
@@ -108,6 +108,5 @@ export const buildDesktopMenuBaseState = (pathname: string): DesktopMenuItemStat
     { id: "help.check-for-updates", enabled: true },
     { id: "help.open-logs-folder", enabled: true },
     { id: "help.report-issue", enabled: true },
-    { id: "help.diagnostics", enabled: true },
   ];
 };

@@ -4,6 +4,7 @@ import { beforeEach, test, vi } from "vitest";
 import App from "./App";
 import { appendDesktopLog } from "./api/client";
 import {
+  desktopCheckAppUpdate,
   desktopListen,
   desktopOpenLauncherInNewWindow,
   desktopOpenWorkspaceSetupInNewWindow,
@@ -14,6 +15,7 @@ import {
 } from "./utils/desktop";
 import {
   DESKTOP_MENU_COMMAND_IDS,
+  REQUEST_UPDATE_CHECK_EVENT,
   WEB_MENU_COMMAND_EVENT,
   type DesktopMenuCommandId,
 } from "./utils/desktopMenuCommands";
@@ -24,6 +26,7 @@ import {
 } from "./utils/analytics";
 import { emitUiDiagnostic, resetUiDiagnosticsForTests } from "./state/diagnosticsChannel";
 import { useSettingsSnapshot } from "./state/settingsStore";
+import { refreshUpdateCheck } from "./utils/updateNotice";
 
 const desktopHandlers = new Map<string, (payload?: unknown) => void>();
 
@@ -107,6 +110,23 @@ vi.mock("./utils/desktop", () => ({
   desktopSetMenuState: vi.fn(async () => {}),
   desktopSetDockRecentLocalWorkspaces: vi.fn(async () => {}),
   desktopSetWindowTitle: vi.fn(async () => {}),
+  desktopCheckAppUpdate: vi.fn(async () => ({
+    configured: true,
+    available: false,
+    restart_required: false,
+    current_version: "0.0.0",
+    latest_version: null,
+    target: "macos-arm64",
+    endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+    message: null,
+    phase: "idle",
+    staged: false,
+    last_error: null,
+    checked_at: null,
+    downloaded_at: null,
+    last_attempt_id: null,
+    last_attempt_started_at: null,
+  })),
   desktopOpenLauncherInNewWindow: vi.fn(async () => {}),
   desktopOpenWorkspaceSetupInNewWindow: vi.fn(async () => {}),
   openExternalLink: vi.fn(async () => true),
@@ -377,7 +397,6 @@ test("desktop menu action forwards workbench-scoped commands to the web menu bus
     "go.launcher",
     "go.settings",
     "go.diagnostics",
-    "help.diagnostics",
     "go.agent-harnesses",
     "help.keyboard-shortcuts",
     "help.check-for-updates",
@@ -431,7 +450,7 @@ test("desktop menu report issue opens external tracker link", async () => {
   });
 });
 
-test("desktop menu check-for-updates navigates to diagnostics auto-check route", async () => {
+test("desktop menu check-for-updates triggers silent native check without route navigation", async () => {
   vi.mocked(isDesktopApp).mockReturnValue(true);
   window.history.pushState({}, "", "/workspaces/ws-654");
 
@@ -446,12 +465,18 @@ test("desktop menu check-for-updates navigates to diagnostics auto-check route",
     return value;
   });
 
+  const checkEvent = vi.fn();
+  window.addEventListener(REQUEST_UPDATE_CHECK_EVENT, checkEvent as EventListener);
+
   act(() => {
     handler({ commandId: "help.check-for-updates" });
   });
 
   await waitFor(() => {
-    expect(window.location.pathname).toBe("/diagnostics");
-    expect(new URLSearchParams(window.location.search).get("check_updates")).toBe("1");
+    expect(checkEvent).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(refreshUpdateCheck)).toHaveBeenCalledWith({ force: true });
+    expect(vi.mocked(desktopCheckAppUpdate)).toHaveBeenCalledWith("stable");
   });
+  expect(window.location.pathname).toBe("/workspaces/ws-654");
+  window.removeEventListener(REQUEST_UPDATE_CHECK_EVENT, checkEvent as EventListener);
 });

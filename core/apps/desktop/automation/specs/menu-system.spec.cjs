@@ -35,9 +35,9 @@ const ALL_MENU_COMMAND_IDS = [
   "go.diagnostics",
   "go.agent-harnesses",
   "help.keyboard-shortcuts",
+  "help.check-for-updates",
   "help.open-logs-folder",
   "help.report-issue",
-  "help.diagnostics",
 ];
 
 // Keep the app in a stable workbench context while testing most commands.
@@ -67,8 +67,8 @@ const MENU_TEST_ORDER = [
   "go.diagnostics",
   "go.agent-harnesses",
   "help.keyboard-shortcuts",
+  "help.check-for-updates",
   "help.open-logs-folder",
-  "help.diagnostics",
   "task.archive-toggle",
   "task.delete",
   "file.new-workspace",
@@ -83,9 +83,9 @@ const APP_HANDLED_COMMANDS = new Set([
   "go.diagnostics",
   "go.agent-harnesses",
   "help.keyboard-shortcuts",
+  "help.check-for-updates",
   "help.open-logs-folder",
   "help.report-issue",
-  "help.diagnostics",
 ]);
 
 const TOGGLE_COMMANDS = new Set([
@@ -101,7 +101,6 @@ const NAV_EXPECTATIONS = new Map([
   ["go.workspace-setup", (_workspaceId) => "/workspace-setup"],
   ["go.settings", (workspaceId) => `/settings?ws=${encodeURIComponent(workspaceId)}`],
   ["go.diagnostics", (_workspaceId) => "/diagnostics"],
-  ["help.diagnostics", (_workspaceId) => "/diagnostics"],
   ["go.agent-harnesses", (_workspaceId) => "/settings#agent_harnesses"],
   ["help.keyboard-shortcuts", (workspaceId) => `/settings?ws=${encodeURIComponent(workspaceId)}`],
 ]);

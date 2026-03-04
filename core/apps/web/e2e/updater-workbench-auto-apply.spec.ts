@@ -156,7 +156,7 @@ test("notice appears and Update Now applies successfully", async ({ page }) => {
   await page.getByRole("button", { name: "Update Now" }).click();
   await expect.poll(() => applyCalls, { timeout: 20_000 }).toBe(1);
   await expect(page.getByTestId("update-available-snackbar")).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByRole("button", { name: "Restart app to finish update" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Update Now" })).toBeDisabled();
 });
 
 test("Update on Next Idle applies successfully", async ({ page }) => {
@@ -217,7 +217,7 @@ test("Update on Next Idle applies successfully", async ({ page }) => {
   await page.getByRole("button", { name: "Update on Next Idle" }).click();
   await expect.poll(() => applyCalls, { timeout: 20_000 }).toBe(1);
   await expect(page.getByTestId("update-available-snackbar")).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByRole("button", { name: "Restart app to finish update" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Update Now" })).toBeDisabled();
 });
 
 test("required update blocks workbench and only allows Update Now", async ({ page }) => {
@@ -280,5 +280,5 @@ test("required update blocks workbench and only allows Update Now", async ({ pag
   await page.getByRole("button", { name: "Update Now" }).click();
   await expect.poll(() => applyCalls, { timeout: 20_000 }).toBe(1);
   await expect(page.getByRole("dialog", { name: "Update required" })).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByRole("button", { name: "Restart app to finish update" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Update Now" })).toBeDisabled();
 });

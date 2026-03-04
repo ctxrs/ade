@@ -40,7 +40,6 @@ pub(super) const CMD_GO_AGENT_HARNESSES: &str = "go.agent-harnesses";
 pub(super) const CMD_HELP_KEYBOARD_SHORTCUTS: &str = "help.keyboard-shortcuts";
 pub(super) const CMD_HELP_OPEN_LOGS_FOLDER: &str = "help.open-logs-folder";
 pub(super) const CMD_HELP_REPORT_ISSUE: &str = "help.report-issue";
-pub(super) const CMD_HELP_DIAGNOSTICS: &str = "help.diagnostics";
 pub(super) const CMD_HELP_CHECK_FOR_UPDATES: &str = "help.check-for-updates";
 
 #[derive(Debug, Clone, Serialize)]
@@ -484,7 +483,6 @@ fn build_help_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wr
         None,
         true,
     )?;
-    let diagnostics = menu_item(app, CMD_HELP_DIAGNOSTICS, "Diagnostics", None, true)?;
     let report_issue = menu_item(app, CMD_HELP_REPORT_ISSUE, "Report Issue", None, true)?;
 
     #[cfg(target_os = "macos")]
@@ -494,7 +492,6 @@ fn build_help_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wr
             .item(&keyboard_shortcuts)
             .item(&check_for_updates)
             .item(&open_logs_folder)
-            .item(&diagnostics)
             .item(&report_issue)
             .build();
     }
@@ -505,7 +502,6 @@ fn build_help_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wr
             .item(&keyboard_shortcuts)
             .item(&check_for_updates)
             .item(&open_logs_folder)
-            .item(&diagnostics)
             .item(&report_issue)
             .build();
     }
@@ -621,7 +617,6 @@ pub(super) fn is_menu_command_id(id: &str) -> bool {
             | CMD_HELP_KEYBOARD_SHORTCUTS
             | CMD_HELP_OPEN_LOGS_FOLDER
             | CMD_HELP_REPORT_ISSUE
-            | CMD_HELP_DIAGNOSTICS
             | CMD_HELP_CHECK_FOR_UPDATES
     )
 }

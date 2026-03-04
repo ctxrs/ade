@@ -24,7 +24,8 @@
     "test:e2e:cross-platform": "node ./scripts/run-e2e-suite.mjs cross_platform",
     "test:e2e:soak": "node ./scripts/run-e2e-suite.mjs soak",
     "test:e2e:load": "node ./scripts/run-e2e-suite.mjs load",
-    "test:e2e:updater:smoke": "pnpm exec playwright test -c playwright.premerge.config.ts e2e/daemon-availability-update-banner.spec.ts e2e/updater-workbench-auto-apply.spec.ts e2e/updater-diagnostics-failure-safety.spec.ts e2e/updater-desktop-mismatch-confirmation.spec.ts e2e/updater-desktop-native-state.spec.ts",
+    "test:e2e:updater:smoke": "pnpm exec playwright test -c playwright.premerge.config.ts e2e/daemon-availability-update-banner.spec.ts e2e/updater-workbench-auto-apply.spec.ts e2e/updater-diagnostics-failure-safety.spec.ts e2e/updater-desktop-mismatch-confirmation.spec.ts",
+    "test:e2e:updater:ui-contract": "pnpm exec playwright test -c playwright.premerge.config.ts e2e/updater-desktop-ui-contract.spec.ts",
     "test:e2e:flake-report": "node ./scripts/flake-report.mjs --format table",
     "test:e2e:quarantine-sync": "node ./scripts/quarantine-sync.mjs",
     "typecheck": "tsc --noEmit --incremental --tsBuildInfoFile .turbo/tsbuildinfo/apps-web.tsbuildinfo"

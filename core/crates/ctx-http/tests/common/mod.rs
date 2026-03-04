@@ -20,6 +20,7 @@ use tower::ServiceExt;
 
 pub mod crp_fixture_runtime;
 pub mod openai_responses_stub;
+pub mod updates_failure_safety;
 
 const JJ_MIN_VERSION: (u64, u64, u64) = (0, 25, 0);
 

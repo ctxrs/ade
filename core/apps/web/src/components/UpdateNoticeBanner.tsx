@@ -9,6 +9,7 @@ import {
   type DesktopAppUpdateStateResp,
 } from "../utils/desktop";
 import { readCachedUpdateCheck, refreshUpdateCheck } from "../utils/updateNotice";
+import { REQUEST_UPDATE_CHECK_EVENT } from "../utils/desktopMenuCommands";
 
 const PROMPT_SNOOZE_STORAGE_KEY = "ctx_update_prompt_next_allowed_at_v1";
 const IDLE_UPDATE_VERSION_STORAGE_KEY = "ctx_update_prompt_idle_versions_v1";
@@ -16,6 +17,7 @@ const AUTO_APPLY_ON_LAUNCH_STORAGE_KEY = "ctx_update_auto_apply_on_launch_v1";
 const RESTART_REQUIRED_VERSION_STORAGE_KEY = "ctx_update_restart_required_version_v1";
 const POLL_INTERVAL_MS = 60 * 60 * 1000;
 const PROMPT_SNOOZE_MS = 24 * 60 * 60 * 1000;
+const RESTART_READY_MESSAGE = "Update takes ~1 second and preserves data. Active agents will be paused.";
 
 const readVersionSet = (key: string): Set<string> => {
   if (typeof window === "undefined") return new Set<string>();
@@ -129,12 +131,14 @@ type NoticePhase = "ready" | "applying" | "restart_required";
 type NoticeUiState = {
   phase: NoticePhase;
   error: string | null;
+  status: string | null;
   infoModalOpen: boolean;
 };
 
 type NoticeUiAction =
   | { type: "apply_started" }
   | { type: "apply_failed"; message: string }
+  | { type: "restart_failed"; message: string }
   | { type: "apply_completed" }
   | { type: "check_failed"; message: string }
   | { type: "check_recovered" }
@@ -145,26 +149,34 @@ type NoticeUiAction =
 const initialNoticeUiState: NoticeUiState = {
   phase: "ready",
   error: null,
+  status: null,
   infoModalOpen: false,
 };
 
 const noticeUiReducer = (state: NoticeUiState, action: NoticeUiAction): NoticeUiState => {
   switch (action.type) {
     case "apply_started":
-      return { ...state, phase: "applying", error: null };
+      return { ...state, phase: "applying", error: null, status: null };
     case "apply_failed":
-      return { ...state, phase: "ready", error: action.message };
+      return { ...state, phase: "ready", error: action.message, status: null };
+    case "restart_failed":
+      return {
+        ...state,
+        phase: "restart_required",
+        error: action.message,
+        status: RESTART_READY_MESSAGE,
+      };
     case "apply_completed":
-      return { ...state, phase: "ready", error: null };
+      return { ...state, phase: "ready", error: null, status: null };
     case "check_failed":
       if (state.phase === "restart_required") return state;
-      return { ...state, phase: "ready", error: action.message };
+      return { ...state, phase: "ready", error: action.message, status: null };
     case "check_recovered":
       if (state.phase !== "ready") return state;
       if (!state.error) return state;
       return { ...state, error: null };
     case "restart_required":
-      return { ...state, phase: "restart_required", error: action.message };
+      return { ...state, phase: "restart_required", error: null, status: action.message };
     case "info_opened":
       return { ...state, infoModalOpen: true };
     case "info_closed":
@@ -363,13 +375,14 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
   const canApplyFromCurrentClient = isDesktop || inPlaceCapability.supported;
   const forcedUpdateNeedsManualInstall = isForcedUpdate(updateInfo) && !canApplyFromCurrentClient;
   const shouldShow = isDesktop
-    ? (desktopStagedReady || uiState.phase === "restart_required") && nowMs >= nextPromptAtMs
+    ? uiState.phase === "restart_required"
     : Boolean(updateInfo?.update_available) && nowMs >= nextPromptAtMs;
   const forcedUpdate = isForcedUpdate(updateInfo) && canApplyFromCurrentClient;
   const applyingUpdate = uiState.phase === "applying";
   const restartRequired = uiState.phase === "restart_required";
   const showInfoModal = uiState.infoModalOpen;
   const updateError = uiState.error;
+  const updateStatus = uiState.status;
   const effectiveError =
     updateError ||
     (forcedUpdateNeedsManualInstall
@@ -433,7 +446,7 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
       }
       dispatchUi({
         type: "restart_required",
-        message: "Update installed. Relaunch the app to complete the update.",
+        message: RESTART_READY_MESSAGE,
       });
       return true;
     },
@@ -473,7 +486,7 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
           if (native.restart_required) {
             dispatchUi({
               type: "restart_required",
-              message: "Update installed. Relaunch the app to complete the update.",
+              message: RESTART_READY_MESSAGE,
             });
           } else {
             const nativePhase = normalizeOptionalString(native.phase).toLowerCase();
@@ -550,7 +563,7 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
         if (restartVersion) setRestartRequiredVersionState(restartVersion);
         dispatchUi({
           type: "restart_required",
-          message: message || "Update installed. Relaunch the app to complete the update.",
+          message: message || RESTART_READY_MESSAGE,
         });
       };
       applyInFlightRef.current = true;
@@ -623,16 +636,16 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
   useEffect(() => {
     let cancelled = false;
     const runInitialCheck = async () => {
-      if (!isDesktop) {
-        const pendingRestartVersion = readRestartRequiredVersion();
-        if (pendingRestartVersion) {
-          setRestartRequiredVersionState(pendingRestartVersion);
-          dispatchUi({
-            type: "restart_required",
-            message: "Update installed. Relaunch the app to complete the update.",
-          });
+        if (!isDesktop) {
+          const pendingRestartVersion = readRestartRequiredVersion();
+          if (pendingRestartVersion) {
+            setRestartRequiredVersionState(pendingRestartVersion);
+            dispatchUi({
+              type: "restart_required",
+              message: RESTART_READY_MESSAGE,
+            });
+          }
         }
-      }
       // Startup must always perform a real update check request.
       await refresh(true);
       if (cancelled) return;
@@ -646,6 +659,16 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
       window.clearInterval(intervalId);
     };
   }, [isDesktop, refresh, setRestartRequiredVersionState]);
+
+  useEffect(() => {
+    const onRequestUpdateCheck = () => {
+      void refresh(true);
+    };
+    window.addEventListener(REQUEST_UPDATE_CHECK_EVENT, onRequestUpdateCheck as EventListener);
+    return () => {
+      window.removeEventListener(REQUEST_UPDATE_CHECK_EVENT, onRequestUpdateCheck as EventListener);
+    };
+  }, [refresh]);
 
   useEffect(() => {
     if (!isDesktop) return;
@@ -700,7 +723,7 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
     void desktopRestartApp()
       .catch((err: unknown) => {
         dispatchUi({
-          type: "apply_failed",
+          type: "restart_failed",
           message: messageFromUnknownError(err, "Failed to restart app."),
         });
       })
@@ -709,17 +732,46 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
       });
   }, [isDesktop, restartingApp]);
 
+  useEffect(() => {
+    if (!isDesktop) return;
+    if (!restartRequired) return;
+    if (!allTasksIdle) return;
+    if (restartingApp) return;
+    const restartVersion = latestKnownVersion || readRestartRequiredVersion();
+    if (!restartVersion) return;
+    if (!idleUpdateVersions.has(restartVersion)) return;
+    setIdleUpdateVersions((prev) => {
+      if (!prev.has(restartVersion)) return prev;
+      const next = new Set(prev);
+      next.delete(restartVersion);
+      writeIdleUpdateVersions(next);
+      return next;
+    });
+    void onRestartNow();
+  }, [
+    allTasksIdle,
+    idleUpdateVersions,
+    isDesktop,
+    latestKnownVersion,
+    onRestartNow,
+    restartRequired,
+    restartingApp,
+  ]);
+
   const requestUpdateOnNextIdle = useCallback(() => {
-    if (latestKnownVersion) {
+    const version = latestKnownVersion || readRestartRequiredVersion();
+    if (version) {
       setIdleUpdateVersions((prev) => {
         const next = new Set(prev);
-        next.add(latestKnownVersion);
+        next.add(version);
         writeIdleUpdateVersions(next);
         return next;
       });
-      snoozeVersionPrompt(latestKnownVersion);
+      if (!restartRequired) {
+        snoozeVersionPrompt(version);
+      }
     }
-  }, [latestKnownVersion, snoozeVersionPrompt]);
+  }, [latestKnownVersion, restartRequired, snoozeVersionPrompt]);
 
   const releaseNotesUrl = useMemo(
     () => `https://ctx.rs/release-notes/${encodeURIComponent(latest)}`,
@@ -732,25 +784,11 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
     void applyUpdateNow(version, "forced");
   }, [applyUpdateNow, latest, latestKnownVersion, minimumSupportedVersion]);
 
-  const checkFailureOnly =
-    isDesktop
-    && Boolean(updateError)
-    && !forcedUpdate
-    && !forcedUpdateNeedsManualInstall
-    && !shouldShow
-    && !applyingUpdate
-    && !restartRequired;
-  const shouldRenderBanner = shouldShow || applyingUpdate || restartRequired || forcedUpdateNeedsManualInstall || checkFailureOnly;
+  const shouldRenderBanner = forcedUpdateNeedsManualInstall || shouldShow || (!isDesktop && (applyingUpdate || restartRequired));
   if (!forcedUpdate && !shouldRenderBanner && !showInfoModal) return null;
   const restartActionEnabled = restartRequired && isDesktop;
   const updateActionDisabled = applyingUpdate || (restartRequired && (!restartActionEnabled || restartingApp));
-  const updateActionLabel = applyingUpdate
-    ? "Updating..."
-    : restartRequired
-      ? restartingApp
-        ? "Restarting..."
-        : "Restart app to finish update"
-      : "Update Now";
+  const updateActionLabel = applyingUpdate ? "Updating..." : "Update Now";
 
   return (
     <>
@@ -790,70 +828,52 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
         <div className="wb-snackbar wb-update-snackbar" role="status" aria-live="polite" data-testid="update-available-snackbar">
           <div className="wb-snackbar-body wb-update-snackbar-body">
             <div className="wb-snackbar-title wb-update-snackbar-title-row">
-              <span>{checkFailureOnly ? "Updater check failed." : `Update available: ${latest}.`}</span>
-              {!checkFailureOnly ? (
-                <button
-                  type="button"
-                  className="wb-update-snackbar-info-btn"
-                  aria-label="Learn about update timing"
-                  title="Learn about update timing"
-                  onClick={() => dispatchUi({ type: "info_opened" })}
-                >
-                  <Info size={14} aria-hidden="true" />
-                </button>
-              ) : null}
+              <span>{`Update available: ${latest}.`}</span>
+              <button
+                type="button"
+                className="wb-update-snackbar-info-btn"
+                aria-label="Learn about update timing"
+                title="Learn about update timing"
+                onClick={() => dispatchUi({ type: "info_opened" })}
+              >
+                <Info size={14} aria-hidden="true" />
+              </button>
             </div>
-            {!checkFailureOnly ? (
-              <div className="wb-snackbar-subtitle">
-                <a
-                  href={releaseNotesUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="wb-update-release-notes-link"
-                >
-                  View release notes
-                </a>
-              </div>
-            ) : null}
+            <div className="wb-snackbar-subtitle">
+              <a
+                href={releaseNotesUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="wb-update-release-notes-link"
+              >
+                View release notes
+              </a>
+            </div>
+            {updateStatus ? <div className="wb-snackbar-subtitle">{updateStatus}</div> : null}
             {effectiveError ? <div className="wb-snackbar-error">{effectiveError}</div> : null}
           </div>
           <div className="wb-snackbar-actions wb-update-snackbar-actions">
-            {checkFailureOnly ? (
-              <button
-                type="button"
-                className="wb-snackbar-btn"
-                disabled={applyingUpdate}
-                onClick={() => {
-                  void refresh(true);
-                }}
-              >
-                Retry check
-              </button>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  className="wb-snackbar-btn"
-                  disabled={updateActionDisabled}
-                  onClick={restartRequired ? onRestartNow : onUpdateNow}
-                >
-                  {updateActionLabel}
-                </button>
-                <button
-                  type="button"
-                  className="wb-snackbar-btn wb-snackbar-btn-secondary"
-                  disabled={applyingUpdate || restartRequired}
-                  onClick={requestUpdateOnNextIdle}
-                >
-                  Update on Next Idle
-                </button>
-              </>
-            )}
+            <button
+              type="button"
+              className="wb-snackbar-btn"
+              disabled={updateActionDisabled}
+              onClick={restartRequired ? onRestartNow : onUpdateNow}
+            >
+              {updateActionLabel}
+            </button>
+            <button
+              type="button"
+              className="wb-snackbar-btn wb-snackbar-btn-secondary"
+              disabled={applyingUpdate}
+              onClick={requestUpdateOnNextIdle}
+            >
+              Update on Next Idle
+            </button>
           </div>
           <button
             type="button"
             className="wb-snackbar-close"
-            onClick={checkFailureOnly ? () => dispatchUi({ type: "check_recovered" }) : dismissForLater}
+            onClick={dismissForLater}
             aria-label="Dismiss update notice"
             disabled={applyingUpdate || restartRequired}
           >

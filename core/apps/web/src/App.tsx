@@ -16,6 +16,7 @@ import { loadLauncherRecents } from "./state/launcherRecentsStore";
 import { preloadHarnessLogos } from "./utils/harnessCatalog";
 import { refreshUpdateCheck } from "./utils/updateNotice";
 import {
+  desktopCheckAppUpdate,
   desktopListen,
   desktopOpenLauncherInNewWindow,
   desktopOpenWorkspaceSetupInNewWindow,
@@ -37,6 +38,7 @@ import {
   buildDesktopMenuBaseState,
   DESKTOP_MENU_ACTION_EVENT,
   isDesktopMenuCommandId,
+  REQUEST_UPDATE_CHECK_EVENT,
   WEB_MENU_TRACE_EVENT,
   WEB_MENU_COMMAND_EVENT,
   WEB_MENU_STATE_EVENT,
@@ -242,7 +244,6 @@ function DesktopMenuBridge() {
           emitMenuTrace({ commandId, layer: "app", status: "handled", note: "navigate-settings" });
           return;
         case "go.diagnostics":
-        case "help.diagnostics":
           navigate("/diagnostics");
           emitMenuTrace({ commandId, layer: "app", status: "handled", note: "navigate-diagnostics" });
           return;
@@ -260,12 +261,14 @@ function DesktopMenuBridge() {
           });
           return;
         case "help.check-for-updates":
-          navigate("/diagnostics?check_updates=1");
+          window.dispatchEvent(new Event(REQUEST_UPDATE_CHECK_EVENT));
+          void refreshUpdateCheck({ force: true }).catch(() => {});
+          void desktopCheckAppUpdate("stable").catch(() => {});
           emitMenuTrace({
             commandId,
             layer: "app",
             status: "handled",
-            note: "navigate-diagnostics-check-updates",
+            note: "trigger-silent-update-check",
           });
           return;
         case "help.open-logs-folder":

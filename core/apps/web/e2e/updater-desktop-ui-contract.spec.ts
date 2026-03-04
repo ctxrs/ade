@@ -229,7 +229,7 @@ const installUpdatePolicyRoute = async (page: Page, updateAvailable = true) => {
   });
 };
 
-test("desktop banner appears from native updater state", async ({ page }) => {
+test("desktop updater remains silent while only available/staging", async ({ page }) => {
   await page.addInitScript((autoApplyKey: string, snoozeKey: string, idleKey: string, restartKey: string) => {
     localStorage.removeItem("ctx_update_check_v1");
     localStorage.removeItem(snoozeKey);
@@ -253,18 +253,17 @@ test("desktop banner appears from native updater state", async ({ page }) => {
       needs_restart: true,
       up_to_date: false,
       latest_version: "0.4.8",
-      message: "Desktop update installed. Relaunch the app to complete the update.",
+      message: "Update takes ~1 second and preserves data. Active agents will be paused.",
     },
   });
   await installUpdatePolicyRoute(page, true);
 
   await createWorkspaceAndOpenWorkbench(page, `ws-desktop-banner-${Date.now()}`);
-  await expect(page.getByTestId("update-available-snackbar")).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByText(/Update available:\s*0.4.8\./)).toBeVisible({ timeout: 20_000 });
   await expect.poll(async () => desktopCommandCallCount(page, "desktop_get_app_update_state")).toBeGreaterThan(0);
+  await expect(page.getByTestId("update-available-snackbar")).toHaveCount(0);
 });
 
-test("desktop Update Now applies and enters restart-required state", async ({ page }) => {
+test("desktop Update Now requests restart in restart-required state", async ({ page }) => {
   await page.addInitScript((autoApplyKey: string, snoozeKey: string, idleKey: string, restartKey: string) => {
     localStorage.removeItem("ctx_update_check_v1");
     localStorage.removeItem(snoozeKey);
@@ -275,8 +274,8 @@ test("desktop Update Now applies and enters restart-required state", async ({ pa
   await installDesktopHarness(page, {
     updateState: {
       configured: true,
-      available: true,
-      restart_required: false,
+      available: false,
+      restart_required: true,
       current_version: "0.4.7",
       latest_version: "0.4.8",
       target: "macos-arm64",
@@ -288,7 +287,7 @@ test("desktop Update Now applies and enters restart-required state", async ({ pa
       needs_restart: true,
       up_to_date: false,
       latest_version: "0.4.8",
-      message: "Desktop update installed. Relaunch the app to complete the update.",
+      message: "Update takes ~1 second and preserves data. Active agents will be paused.",
     },
   });
   await installUpdatePolicyRoute(page, true);
@@ -296,11 +295,12 @@ test("desktop Update Now applies and enters restart-required state", async ({ pa
   await createWorkspaceAndOpenWorkbench(page, `ws-desktop-apply-now-${Date.now()}`);
   await expect(page.getByTestId("update-available-snackbar")).toBeVisible({ timeout: 20_000 });
   await page.getByRole("button", { name: "Update Now" }).dispatchEvent("click");
-  await expect.poll(async () => desktopCommandCallCount(page, "desktop_apply_app_update")).toBe(1);
-  await expect(page.getByRole("button", { name: "Restart app to finish update" })).toBeVisible({ timeout: 20_000 });
+  await expect.poll(async () => desktopCommandCallCount(page, "desktop_restart_app")).toBe(1);
+  await expect.poll(async () => desktopCommandCallCount(page, "desktop_apply_app_update")).toBe(0);
+  await expect(page.getByRole("button", { name: "Update Now" })).toBeVisible({ timeout: 20_000 });
 });
 
-test("desktop Update on Next Idle applies in background and enters restart-required state", async ({ page }) => {
+test("desktop Update on Next Idle schedules restart when restart is ready", async ({ page }) => {
   await page.addInitScript((autoApplyKey: string, snoozeKey: string, idleKey: string, restartKey: string) => {
     localStorage.removeItem("ctx_update_check_v1");
     localStorage.removeItem(snoozeKey);
@@ -311,8 +311,8 @@ test("desktop Update on Next Idle applies in background and enters restart-requi
   await installDesktopHarness(page, {
     updateState: {
       configured: true,
-      available: true,
-      restart_required: false,
+      available: false,
+      restart_required: true,
       current_version: "0.4.7",
       latest_version: "0.4.8",
       target: "macos-arm64",
@@ -324,7 +324,7 @@ test("desktop Update on Next Idle applies in background and enters restart-requi
       needs_restart: true,
       up_to_date: false,
       latest_version: "0.4.8",
-      message: "Desktop update installed. Relaunch the app to complete the update.",
+      message: "Update takes ~1 second and preserves data. Active agents will be paused.",
     },
   });
   await installUpdatePolicyRoute(page, true);
@@ -332,8 +332,9 @@ test("desktop Update on Next Idle applies in background and enters restart-requi
   await createWorkspaceAndOpenWorkbench(page, `ws-desktop-apply-idle-${Date.now()}`);
   await expect(page.getByTestId("update-available-snackbar")).toBeVisible({ timeout: 20_000 });
   await page.getByRole("button", { name: "Update on Next Idle" }).dispatchEvent("click");
-  await expect.poll(async () => desktopCommandCallCount(page, "desktop_apply_app_update")).toBe(1);
-  await expect(page.getByRole("button", { name: "Restart app to finish update" })).toBeVisible({ timeout: 20_000 });
+  await expect.poll(async () => desktopCommandCallCount(page, "desktop_restart_app")).toBe(1);
+  await expect.poll(async () => desktopCommandCallCount(page, "desktop_apply_app_update")).toBe(0);
+  await expect(page.getByRole("button", { name: "Update Now" })).toBeVisible({ timeout: 20_000 });
 });
 
 test("desktop auto-apply on launch triggers update apply when available", async ({ page }) => {
@@ -360,12 +361,12 @@ test("desktop auto-apply on launch triggers update apply when available", async 
       needs_restart: true,
       up_to_date: false,
       latest_version: "0.4.8",
-      message: "Desktop update installed. Relaunch the app to complete the update.",
+      message: "Update takes ~1 second and preserves data. Active agents will be paused.",
     },
   });
   await installUpdatePolicyRoute(page, true);
 
   await createWorkspaceAndOpenWorkbench(page, `ws-desktop-auto-${Date.now()}`);
   await expect.poll(async () => desktopCommandCallCount(page, "desktop_apply_app_update")).toBe(1);
-  await expect(page.getByRole("button", { name: "Restart app to finish update" })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole("button", { name: "Update Now" })).toBeVisible({ timeout: 20_000 });
 });
