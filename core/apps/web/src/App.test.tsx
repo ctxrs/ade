@@ -39,6 +39,11 @@ vi.mock("./components/DaemonAvailabilityOverlay", () => ({
   default: () => null,
 }));
 
+vi.mock("./components/UpdateNoticeBanner", () => ({
+  __esModule: true,
+  default: () => null,
+}));
+
 vi.mock("./pages/LauncherPage", () => ({
   __esModule: true,
   default: () => <div>New Workspace</div>,

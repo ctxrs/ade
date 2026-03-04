@@ -1,7 +1,8 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BrowserRouter, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { appendDesktopLog, openLogsFolder } from "./api/client";
 import DaemonAvailabilityOverlay from "./components/DaemonAvailabilityOverlay";
+import UpdateNoticeBanner from "./components/UpdateNoticeBanner";
 import LauncherPage from "./pages/LauncherPage";
 import WorkbenchPage from "./pages/WorkbenchPage";
 import CursorDiffDemoPage from "./pages/CursorDiffDemoPage";
@@ -48,6 +49,10 @@ import {
   type WebMenuCommandDetail,
   type WebMenuStateDetail,
 } from "./utils/desktopMenuCommands";
+import {
+  WORKBENCH_TASK_IDLE_EVENT,
+  type WorkbenchTaskIdleDetail,
+} from "./utils/updaterEvents";
 
 function settingsTargetForPath(pathname: string): string {
   if (pathname.startsWith("/workspaces/")) {
@@ -362,6 +367,33 @@ function AnalyticsSettingsBridge() {
   return null;
 }
 
+function GlobalUpdateNotice() {
+  const location = useLocation();
+  const [allTasksIdle, setAllTasksIdle] = useState(false);
+
+  useEffect(() => {
+    const onWorkbenchTaskIdle = (event: Event) => {
+      const custom = event as CustomEvent<WorkbenchTaskIdleDetail>;
+      const detail = custom.detail;
+      if (!detail || typeof detail.allTasksIdle !== "boolean") return;
+      setAllTasksIdle(detail.allTasksIdle);
+    };
+    window.addEventListener(WORKBENCH_TASK_IDLE_EVENT, onWorkbenchTaskIdle as EventListener);
+    return () => {
+      window.removeEventListener(WORKBENCH_TASK_IDLE_EVENT, onWorkbenchTaskIdle as EventListener);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!location.pathname.startsWith("/workspaces/")) {
+      // Outside workbench, idle state is unknown; avoid auto-idle update actions.
+      setAllTasksIdle(false);
+    }
+  }, [location.pathname]);
+
+  return <UpdateNoticeBanner allTasksIdle={allTasksIdle} />;
+}
+
 export default function App() {
   const runtimeLogDedupRef = useRef<Map<string, number>>(new Map());
 
@@ -410,6 +442,7 @@ export default function App() {
           <AnalyticsSettingsBridge />
           <DesktopSettingsListener />
           <DesktopMenuBridge />
+          <GlobalUpdateNotice />
           <Routes>
             <Route path="/" element={<LauncherPage />} />
             <Route path="/workspace-setup" element={<WorkspaceSetupPage />} />

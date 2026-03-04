@@ -52,7 +52,6 @@ import { SessionsPane } from "../components/SessionsPane";
 import { TerminalPanel, type TerminalPanelHandle } from "../components/TerminalPanel";
 import { TitleGenerationInstallBanner } from "../components/TitleGenerationInstallBanner";
 import { WorktreeBootstrapSnackbar } from "../components/WorktreeBootstrapSnackbar";
-import UpdateNoticeBanner from "../components/UpdateNoticeBanner";
 import { DictationOnboardingModal } from "../components/dictation/DictationOnboardingModal";
 import { buildWorkbenchThreadViewModel } from "./SessionPage";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
@@ -114,6 +113,7 @@ import { TASK_LIST_COMPONENTS } from "./WorkbenchPage.taskList";
 import { WorkbenchSessionSlot } from "./WorkbenchPage.sessionSlot";
 import { useWorkbenchDragDropAttachments } from "./workbenchShell/useWorkbenchDragDropAttachments";
 import { getDiffSummaryStats, isDiffSummaryTooLarge } from "./workbenchShell/useWorkbenchDiffPane";
+import { WORKBENCH_TASK_IDLE_EVENT, type WorkbenchTaskIdleDetail } from "../utils/updaterEvents";
 import {
   collectSelectableHarnessProviderIds,
   getHarnessMruStorageKey,
@@ -890,6 +890,17 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     }
     return { workingByTask, errorByTask, lastAssistantMsByTask };
   }, [sessionSnap.sessions, tasksForLiveInfo]);
+
+  useEffect(() => {
+    const detail: WorkbenchTaskIdleDetail = {
+      allTasksIdle: taskLiveInfo.workingByTask.size === 0,
+    };
+    window.dispatchEvent(
+      new CustomEvent<WorkbenchTaskIdleDetail>(WORKBENCH_TASK_IDLE_EVENT, {
+        detail,
+      }),
+    );
+  }, [taskLiveInfo.workingByTask.size]);
 
   useEffect(() => {
     if (optimisticTasks.length === 0) return;
@@ -3165,8 +3176,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       {transcriptNoticeSnackbar}
       {desktopStorageNoticeSnackbar}
       {topbar}
-
-      <UpdateNoticeBanner allTasksIdle={taskLiveInfo.workingByTask.size === 0} />
 
       {!activeTaskId ? (
         <HarnessAuthenticationSection
