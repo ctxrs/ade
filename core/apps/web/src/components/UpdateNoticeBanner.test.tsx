@@ -281,6 +281,103 @@ describe("UpdateNoticeBanner", () => {
     });
   });
 
+  it("shows native failed-phase message from desktop updater state", async () => {
+    window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "0");
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(readCachedUpdateCheck).mockReturnValue(null);
+    vi.mocked(refreshUpdateCheck).mockResolvedValue(null);
+    vi.mocked(desktopGetAppUpdateState).mockResolvedValue({
+      configured: true,
+      available: false,
+      restart_required: false,
+      phase: "failed",
+      current_version: "0.4.14",
+      latest_version: "0.4.15",
+      target: "macos-arm64",
+      endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+      message: "native updater download failed: Invalid symbol 32, offset 9.",
+    });
+
+    renderBanner({ allTasksIdle: false });
+    await waitFor(() => {
+      expect(vi.mocked(desktopGetAppUpdateState)).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.getByTestId("update-available-snackbar")).toBeInTheDocument();
+    expect(screen.getByText("Updater check failed.")).toBeInTheDocument();
+    expect(screen.getByText(/Invalid symbol 32, offset 9/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry check" })).toBeInTheDocument();
+  });
+
+  it("auto-applies once staging transitions to staged-ready on desktop", async () => {
+    vi.useFakeTimers();
+    try {
+      window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "1");
+      vi.mocked(isDesktopApp).mockReturnValue(true);
+      vi.mocked(readCachedUpdateCheck).mockReturnValue(null);
+      vi.mocked(refreshUpdateCheck).mockResolvedValue({
+        ...baseUpdate,
+        current_version: "0.4.14",
+        latest_version: "0.4.15",
+        update_available: true,
+      });
+      vi.mocked(desktopGetAppUpdateState)
+        .mockResolvedValueOnce({
+          configured: true,
+          available: false,
+          restart_required: false,
+          phase: "staging",
+          staged: false,
+          current_version: "0.4.14",
+          latest_version: "0.4.15",
+          target: "macos-arm64",
+          endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+          message: "Downloading update in background.",
+        })
+        .mockResolvedValueOnce({
+          configured: true,
+          available: true,
+          restart_required: false,
+          phase: "staged_ready",
+          staged: true,
+          current_version: "0.4.14",
+          latest_version: "0.4.15",
+          target: "macos-arm64",
+          endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+          message: null,
+        });
+      vi.mocked(desktopApplyAppUpdate).mockResolvedValue({
+        applied: true,
+        needs_restart: true,
+        latest_version: "0.4.15",
+        message: "Desktop update installed. Relaunch the app to complete the update.",
+      });
+
+      renderBanner({ allTasksIdle: false });
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(vi.mocked(desktopGetAppUpdateState)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(desktopApplyAppUpdate)).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4000);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(vi.mocked(desktopGetAppUpdateState)).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(desktopApplyAppUpdate)).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole("button", { name: "Restart app to finish update" })).toBeEnabled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("persists restart-required state across remounts in the same app session", async () => {
     window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "0");
     vi.mocked(isDesktopApp).mockReturnValue(true);

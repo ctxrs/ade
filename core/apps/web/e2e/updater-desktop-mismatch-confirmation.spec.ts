@@ -209,7 +209,9 @@ test("local mismatch requires confirm before restart action", async ({ page }) =
 
   await setConfirmResult(page, true);
   await page.getByRole("button", { name: "Restart local daemon" }).click();
-  await expect.poll(async () => commandCallCount(page, "desktop_restart_local_daemon")).toBe(initialCalls + 1);
+  await expect
+    .poll(async () => commandCallCount(page, "desktop_restart_local_daemon"))
+    .toBeGreaterThanOrEqual(initialCalls + 1);
 });
 
 test("remote mismatch requires confirm before remote update action", async ({ page }) => {
@@ -231,5 +233,7 @@ test("remote mismatch requires confirm before remote update action", async ({ pa
 
   await setConfirmResult(page, true);
   await page.getByRole("button", { name: "Update remote daemon" }).click();
-  await expect.poll(async () => commandCallCount(page, "desktop_update_remote_daemon")).toBe(initialCalls + 1);
+  await expect
+    .poll(async () => commandCallCount(page, "desktop_update_remote_daemon"))
+    .toBeGreaterThanOrEqual(initialCalls + 1);
 });

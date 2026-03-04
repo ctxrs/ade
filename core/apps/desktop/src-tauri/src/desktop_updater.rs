@@ -324,14 +324,11 @@ pub(super) async fn desktop_apply_app_update(
     complete_attempt_stage(&mut attempt, build_stage);
 
     let check_stage = begin_attempt_stage(&mut attempt, "check");
-    let Some(update) = updater
-        .check()
-        .await
-        .map_err(|e| {
-            let err = updater_stage_error("check", e);
-            fail_attempt_stage(&mut attempt, check_stage, "check", &err);
-            persist_attempt_failure_best_effort(&app, &mut attempt, err)
-        })?
+    let Some(update) = updater.check().await.map_err(|e| {
+        let err = updater_stage_error("check", e);
+        fail_attempt_stage(&mut attempt, check_stage, "check", &err);
+        persist_attempt_failure_best_effort(&app, &mut attempt, err)
+    })?
     else {
         complete_attempt_stage(&mut attempt, check_stage);
         persist_attempt_success_best_effort(&app, &mut attempt);
@@ -372,35 +369,29 @@ pub(super) async fn desktop_apply_app_update(
         complete_attempt_stage(&mut attempt, download_stage);
         staged_bytes
     } else {
-        let fresh = update
-            .download(|_, _| {}, || {})
-            .await
-            .map_err(|e| {
-                let err = updater_stage_error("download", e);
-                fail_attempt_stage(&mut attempt, download_stage, "download", &err);
-                persist_attempt_failure_best_effort(&app, &mut attempt, err)
-            })?;
+        let fresh = update.download(|_, _| {}, || {}).await.map_err(|e| {
+            let err = updater_stage_error("download", e);
+            fail_attempt_stage(&mut attempt, download_stage, "download", &err);
+            persist_attempt_failure_best_effort(&app, &mut attempt, err)
+        })?;
         complete_attempt_stage(&mut attempt, download_stage);
         fresh
     };
 
     let install_stage = begin_attempt_stage(&mut attempt, "install");
-    update
-        .install(&bytes)
-        .map_err(|e| {
-            let err = updater_stage_error("install", e);
-            fail_attempt_stage(&mut attempt, install_stage, "install", &err);
-            persist_attempt_failure_best_effort(&app, &mut attempt, err)
-        })?;
+    update.install(&bytes).map_err(|e| {
+        let err = updater_stage_error("install", e);
+        fail_attempt_stage(&mut attempt, install_stage, "install", &err);
+        persist_attempt_failure_best_effort(&app, &mut attempt, err)
+    })?;
     complete_attempt_stage(&mut attempt, install_stage);
 
     let marker_stage = begin_attempt_stage(&mut attempt, "marker");
-    write_restart_marker_for_app(&app, &latest_version)
-        .map_err(|e| {
-            let err = updater_stage_error("marker_write", e);
-            fail_attempt_stage(&mut attempt, marker_stage, "marker_write", &err);
-            persist_attempt_failure_best_effort(&app, &mut attempt, err)
-        })?;
+    write_restart_marker_for_app(&app, &latest_version).map_err(|e| {
+        let err = updater_stage_error("marker_write", e);
+        fail_attempt_stage(&mut attempt, marker_stage, "marker_write", &err);
+        persist_attempt_failure_best_effort(&app, &mut attempt, err)
+    })?;
     complete_attempt_stage(&mut attempt, marker_stage);
     if let Err(err) = clear_staged_update_for_app(&app) {
         eprintln!("warn: failed to clear staged updater payload after install: {err}");
@@ -469,7 +460,9 @@ async fn resolve_desktop_update_state(
             latest_version: pending_restart_version,
             target: config.target,
             endpoint: config.endpoint,
-            message: Some("Desktop update installed. Relaunch the app to complete the update.".to_string()),
+            message: Some(
+                "Desktop update installed. Relaunch the app to complete the update.".to_string(),
+            ),
             last_attempt_id,
             last_error,
         });
@@ -636,24 +629,40 @@ fn write_staged_update_for_app(
 ) -> Result<(), String> {
     let bytes_path = staged_bytes_path_for_app(app)?;
     let meta_path = staged_meta_path_for_app(app)?;
-    std::fs::write(&bytes_path, bytes)
-        .map_err(|e| format!("writing staged update bytes '{}': {e}", bytes_path.display()))?;
+    std::fs::write(&bytes_path, bytes).map_err(|e| {
+        format!(
+            "writing staged update bytes '{}': {e}",
+            bytes_path.display()
+        )
+    })?;
     let encoded = serde_json::to_string_pretty(meta)
         .map_err(|e| format!("encoding staged update metadata: {e}"))?;
-    std::fs::write(&meta_path, format!("{encoded}\n"))
-        .map_err(|e| format!("writing staged update metadata '{}': {e}", meta_path.display()))
+    std::fs::write(&meta_path, format!("{encoded}\n")).map_err(|e| {
+        format!(
+            "writing staged update metadata '{}': {e}",
+            meta_path.display()
+        )
+    })
 }
 
 fn clear_staged_update_for_app(app: &tauri::AppHandle) -> Result<(), String> {
     let meta_path = staged_meta_path_for_app(app)?;
     let bytes_path = staged_bytes_path_for_app(app)?;
     if meta_path.exists() {
-        std::fs::remove_file(&meta_path)
-            .map_err(|e| format!("clearing staged update metadata '{}': {e}", meta_path.display()))?;
+        std::fs::remove_file(&meta_path).map_err(|e| {
+            format!(
+                "clearing staged update metadata '{}': {e}",
+                meta_path.display()
+            )
+        })?;
     }
     if bytes_path.exists() {
-        std::fs::remove_file(&bytes_path)
-            .map_err(|e| format!("clearing staged update bytes '{}': {e}", bytes_path.display()))?;
+        std::fs::remove_file(&bytes_path).map_err(|e| {
+            format!(
+                "clearing staged update bytes '{}': {e}",
+                bytes_path.display()
+            )
+        })?;
     }
     Ok(())
 }
@@ -705,8 +714,12 @@ fn read_staged_update_bytes_if_matching(
         return Ok(None);
     }
     let bytes_path = staged_bytes_path_for_app(app)?;
-    let bytes = std::fs::read(&bytes_path)
-        .map_err(|e| format!("reading staged update bytes '{}': {e}", bytes_path.display()))?;
+    let bytes = std::fs::read(&bytes_path).map_err(|e| {
+        format!(
+            "reading staged update bytes '{}': {e}",
+            bytes_path.display()
+        )
+    })?;
     if bytes.is_empty() {
         clear_staged_update_for_app(app)?;
         return Ok(None);
@@ -748,12 +761,7 @@ fn complete_attempt_stage(attempt: &mut DesktopUpdateAttempt, index: usize) {
     }
 }
 
-fn fail_attempt_stage(
-    attempt: &mut DesktopUpdateAttempt,
-    index: usize,
-    code: &str,
-    message: &str,
-) {
+fn fail_attempt_stage(attempt: &mut DesktopUpdateAttempt, index: usize, code: &str, message: &str) {
     if let Some(stage) = attempt.stages.get_mut(index) {
         stage.finished_at_ms = Some(now_ms());
         stage.result = DesktopUpdateAttemptResult::Failed;
@@ -802,7 +810,9 @@ fn write_last_attempt_for_app(
         .map_err(|e| format!("writing desktop updater attempt '{}': {e}", path.display()))
 }
 
-fn read_last_attempt_for_app(app: &tauri::AppHandle) -> Result<Option<DesktopUpdateAttempt>, String> {
+fn read_last_attempt_for_app(
+    app: &tauri::AppHandle,
+) -> Result<Option<DesktopUpdateAttempt>, String> {
     let path = last_attempt_path_for_app(app)?;
     if !path.exists() {
         return Ok(None);
@@ -860,7 +870,8 @@ async fn stage_update_in_background(app: tauri::AppHandle, channel: &str) -> Res
         let err = updater_stage_error("check", e);
         fail_attempt_stage(&mut attempt, check_stage, "check", &err);
         persist_attempt_failure_best_effort(&app, &mut attempt, err)
-    })? else {
+    })?
+    else {
         complete_attempt_stage(&mut attempt, check_stage);
         clear_staged_update_for_app(&app)?;
         persist_attempt_success_best_effort(&app, &mut attempt);
@@ -1174,10 +1185,15 @@ fn resolve_updater_pubkey(
     runtime_value: Option<String>,
     build_value: Option<&str>,
 ) -> Option<String> {
-    runtime_value
+    let runtime = runtime_value
         .as_deref()
         .and_then(normalize_nonempty)
-        .or_else(|| build_value.and_then(normalize_nonempty))
+        .and_then(normalize_updater_pubkey);
+    if runtime.is_some() {
+        return runtime;
+    }
+    build_value
+        .and_then(normalize_nonempty)
         .and_then(normalize_updater_pubkey)
 }
 
@@ -1186,25 +1202,40 @@ fn normalize_updater_pubkey(value: String) -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
-    if trimmed.starts_with("untrusted comment: minisign public key:") {
-        return Some(trimmed.to_string());
+    if let Some(normalized_plain) = normalize_minisign_pubkey_text(trimmed) {
+        return Some(BASE64_STANDARD.encode(normalized_plain.as_bytes()));
     }
-    if let Some(decoded) = decode_base64_minisign_pubkey(trimmed) {
-        return Some(decoded);
+    let compact: String = trimmed
+        .chars()
+        .filter(|ch| !ch.is_ascii_whitespace())
+        .collect();
+    if let Some(decoded_plain) = decode_base64_minisign_pubkey(&compact) {
+        return Some(BASE64_STANDARD.encode(decoded_plain.as_bytes()));
     }
-    Some(trimmed.to_string())
+    None
 }
 
 fn decode_base64_minisign_pubkey(encoded: &str) -> Option<String> {
     let decoded_bytes = BASE64_STANDARD.decode(encoded.as_bytes()).ok()?;
     let decoded_text = String::from_utf8(decoded_bytes).ok()?;
-    let normalized = decoded_text.replace("\r\n", "\n").trim().to_string();
-    if normalized.starts_with("untrusted comment: minisign public key:")
-        && normalized.lines().nth(1).is_some()
-    {
-        return Some(normalized);
+    normalize_minisign_pubkey_text(&decoded_text)
+}
+
+fn normalize_minisign_pubkey_text(raw: &str) -> Option<String> {
+    let normalized = raw.replace("\r\n", "\n");
+    let mut lines = normalized
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty());
+    let header = lines.next()?;
+    if !header.starts_with("untrusted comment: minisign public key:") {
+        return None;
     }
-    None
+    let key_line = lines.next()?;
+    if key_line.is_empty() || lines.next().is_some() {
+        return None;
+    }
+    Some(format!("{header}\n{key_line}\n"))
 }
 
 fn default_download_base_url() -> String {
@@ -1307,9 +1338,19 @@ mod tests {
 
     #[test]
     fn resolve_updater_pubkey_prefers_runtime_value() {
-        let key = resolve_updater_pubkey(Some(" runtime-key ".to_string()), Some("build-key"))
+        let runtime_raw =
+            "untrusted comment: minisign public key: 0D503F73CDD77B9C\nRWSce9fNcz9QDfv7dghgOH/dIA0Txkgk8rB86J5s6I15e+NkpWjU3CFs\n";
+        let build_raw =
+            "untrusted comment: minisign public key: ABCDEF0123456789\nRWSce9fNcz9QAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n";
+        let key = resolve_updater_pubkey(Some(runtime_raw.to_string()), Some(build_raw))
             .expect("resolved key");
-        assert_eq!(key, "runtime-key");
+        let decoded = String::from_utf8(
+            BASE64_STANDARD
+                .decode(key.as_bytes())
+                .expect("runtime key should decode as base64"),
+        )
+        .expect("runtime key should decode as utf8");
+        assert_eq!(decoded, runtime_raw);
     }
 
     #[test]
@@ -1318,19 +1359,27 @@ mod tests {
             "untrusted comment: minisign public key: 0D503F73CDD77B9C\nRWSce9fNcz9QDfv7dghgOH/dIA0Txkgk8rB86J5s6I15e+NkpWjU3CFs\n";
         let encoded = BASE64_STANDARD.encode(raw.as_bytes());
         let key = resolve_updater_pubkey(Some(encoded), None).expect("resolved key");
-        assert_eq!(key, raw.trim());
+        assert_eq!(key, BASE64_STANDARD.encode(raw.as_bytes()));
     }
 
     #[test]
-    fn resolve_updater_pubkey_falls_back_to_build_value() {
-        let key = resolve_updater_pubkey(Some("  ".to_string()), Some(" build-key "))
+    fn resolve_updater_pubkey_falls_back_to_build_value_when_runtime_invalid() {
+        let build_raw =
+            "untrusted comment: minisign public key: 0D503F73CDD77B9C\nRWSce9fNcz9QDfv7dghgOH/dIA0Txkgk8rB86J5s6I15e+NkpWjU3CFs\n";
+        let key = resolve_updater_pubkey(Some("not-a-valid-key".to_string()), Some(build_raw))
             .expect("resolved key");
-        assert_eq!(key, "build-key");
+        assert_eq!(key, BASE64_STANDARD.encode(build_raw.as_bytes()));
     }
 
     #[test]
     fn resolve_updater_pubkey_returns_none_when_both_sources_empty() {
         assert!(resolve_updater_pubkey(Some("".to_string()), Some("  ")).is_none());
+    }
+
+    #[test]
+    fn resolve_updater_pubkey_rejects_invalid_values() {
+        assert!(resolve_updater_pubkey(Some("invalid".to_string()), None).is_none());
+        assert!(resolve_updater_pubkey(Some("   ".to_string()), None).is_none());
     }
 
     #[test]
@@ -1347,7 +1396,10 @@ mod tests {
           }
         }"#;
         let parsed = serde_json::from_str::<tauri_plugin_updater::RemoteRelease>(manifest);
-        assert!(parsed.is_ok(), "absolute updater URLs should parse: {parsed:?}");
+        assert!(
+            parsed.is_ok(),
+            "absolute updater URLs should parse: {parsed:?}"
+        );
     }
 
     #[test]
@@ -1376,14 +1428,8 @@ mod tests {
 
     #[test]
     fn normalize_latest_version_ignores_equal_or_older_candidates() {
-        assert_eq!(
-            normalize_latest_version("1.2.3", Some("1.2.3"), None),
-            None
-        );
-        assert_eq!(
-            normalize_latest_version("1.2.3", Some("1.2.2"), None),
-            None
-        );
+        assert_eq!(normalize_latest_version("1.2.3", Some("1.2.3"), None), None);
+        assert_eq!(normalize_latest_version("1.2.3", Some("1.2.2"), None), None);
         assert_eq!(
             normalize_latest_version("1.2.3", Some("1.2.4"), None),
             Some("1.2.4".to_string())
@@ -1413,7 +1459,10 @@ mod tests {
         write_restart_marker(&path, "2.0.0").expect("write marker");
         let marker = reconcile_restart_marker(&path, "1.9.9").expect("reconcile");
         assert_eq!(marker.as_deref(), Some("2.0.0"));
-        assert!(path.exists(), "marker file should remain while restart is pending");
+        assert!(
+            path.exists(),
+            "marker file should remain while restart is pending"
+        );
         let _ = std::fs::remove_file(path);
     }
 
