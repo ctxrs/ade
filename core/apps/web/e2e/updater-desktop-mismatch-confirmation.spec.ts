@@ -203,12 +203,13 @@ test("local mismatch requires confirm before restart action", async ({ page }) =
   await expect(page.getByRole("heading", { name: "Desktop and daemon are out of sync" })).toBeVisible();
   await expect(page.getByText(/local daemon is older than this desktop app/i)).toBeVisible();
 
+  const initialCalls = await commandCallCount(page, "desktop_restart_local_daemon");
   await page.getByRole("button", { name: "Restart local daemon" }).click();
-  await expect.poll(async () => commandCallCount(page, "desktop_restart_local_daemon")).toBe(0);
+  await expect.poll(async () => commandCallCount(page, "desktop_restart_local_daemon")).toBe(initialCalls);
 
   await setConfirmResult(page, true);
   await page.getByRole("button", { name: "Restart local daemon" }).click();
-  await expect.poll(async () => commandCallCount(page, "desktop_restart_local_daemon")).toBe(1);
+  await expect.poll(async () => commandCallCount(page, "desktop_restart_local_daemon")).toBe(initialCalls + 1);
 });
 
 test("remote mismatch requires confirm before remote update action", async ({ page }) => {
@@ -224,10 +225,11 @@ test("remote mismatch requires confirm before remote update action", async ({ pa
   await expect(page.getByRole("heading", { name: "Desktop and daemon are out of sync" })).toBeVisible();
   await expect(page.getByText(/remote daemon is older than this desktop app/i)).toBeVisible();
 
+  const initialCalls = await commandCallCount(page, "desktop_update_remote_daemon");
   await page.getByRole("button", { name: "Update remote daemon" }).click();
-  await expect.poll(async () => commandCallCount(page, "desktop_update_remote_daemon")).toBe(0);
+  await expect.poll(async () => commandCallCount(page, "desktop_update_remote_daemon")).toBe(initialCalls);
 
   await setConfirmResult(page, true);
   await page.getByRole("button", { name: "Update remote daemon" }).click();
-  await expect.poll(async () => commandCallCount(page, "desktop_update_remote_daemon")).toBe(1);
+  await expect.poll(async () => commandCallCount(page, "desktop_update_remote_daemon")).toBe(initialCalls + 1);
 });

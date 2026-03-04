@@ -73,6 +73,7 @@
     "push-mintlify": "bash -lc '../scripts/mintlify/push-subtree.sh'",
     "verify:e2e": "pnpm test:e2e:premerge",
     "verify:e2e:updater:smoke": "pnpm -C apps/web test:e2e:updater:smoke && CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$HOME/.cache/cargo/ctx-monorepo/$(basename \"$(git rev-parse --git-dir)\")} cargo test -q -p ctx-http --test updates_failure_safety_api && bash -lc '../scripts/tests/release_manifest_concurrency_smoke.sh'",
+    "verify:e2e:updater:smoke:native": "CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$HOME/.cache/cargo/ctx-monorepo/$(basename \"$(git rev-parse --git-dir)\")} cargo test -q -p ctx-http --test updates_failure_safety_api && bash -lc '../scripts/tests/release_manifest_concurrency_smoke.sh' && pnpm -C apps/desktop test:automation:updater-native-smoke",
     "release:e2e:doctor": "bash -lc '../scripts/release_e2e_with_infisical.sh doctor'",
     "release:e2e:publish": "bash -lc '../scripts/release_e2e_with_infisical.sh publish'",
     "release:e2e:verify": "bash -lc '../scripts/release_e2e_with_infisical.sh verify'",
