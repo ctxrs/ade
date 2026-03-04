@@ -137,6 +137,25 @@ const killExistingAppProcesses = () => {
   spawnSync("kill", ["-9", ...pids.map(String)], { stdio: "ignore" });
 };
 
+const ensureAppExecutable = () => {
+  if (!fs.existsSync(APP_PATH)) {
+    throw new Error(`desktop app path not found: ${APP_PATH}`);
+  }
+  const appPathStat = fs.statSync(APP_PATH);
+  if (process.platform !== "darwin" || !appPathStat.isDirectory()) return;
+  const appBin = path.resolve(APP_PATH, "Contents", "MacOS", "ctx");
+  if (!fs.existsSync(appBin)) {
+    throw new Error(`desktop app binary missing: ${appBin}`);
+  }
+  const mode = fs.statSync(appBin).mode & 0o777;
+  if ((mode & 0o111) === 0) {
+    throw new Error(
+      `desktop app binary is not executable (mode ${mode.toString(8)}): ${appBin}. ` +
+        "Ensure release artifact restore preserves or reapplies +x before updater smoke.",
+    );
+  }
+};
+
 const killStaleAutomationHelpers = () => {
   // Clear stale tauri-driver/backend processes from previous crashed runs.
   killProcesses((_pid, cmd) =>
@@ -482,6 +501,7 @@ exports.config = {
     }
     // Ensure we don't hit the single-instance path (which can forward to a stale app instance
     // without the automation plugin enabled).
+    ensureAppExecutable();
     killExistingAppProcesses();
     killStaleAutomationHelpers();
     stopStaleSystemdScope();
