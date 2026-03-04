@@ -462,6 +462,16 @@ let driverProcess = null;
 let backendLogFd = null;
 let driverLogFd = null;
 
+const attachProcessDiagnostics = (name, proc) => {
+  if (!proc) return;
+  proc.on("error", (err) => {
+    console.error(`[wdio] ${name} error: ${String(err)}`);
+  });
+  proc.on("exit", (code, signal) => {
+    console.error(`[wdio] ${name} exited (code=${code ?? "null"}, signal=${signal ?? "null"})`);
+  });
+};
+
 exports.config = {
   runner: "local",
   framework: "mocha",
@@ -604,6 +614,7 @@ exports.config = {
           },
         },
       );
+      attachProcessDiagnostics("test-runner-backend", backendProcess);
       await waitTestRunnerBackendReady("127.0.0.1", TEST_BACKEND_PORT);
     }
 
@@ -635,6 +646,7 @@ exports.config = {
       cwd: ROOT,
       env: driverEnv,
     });
+    attachProcessDiagnostics("tauri-driver", driverProcess);
     await waitTauriDriverReady();
   },
   onComplete: (exitCode) => {
