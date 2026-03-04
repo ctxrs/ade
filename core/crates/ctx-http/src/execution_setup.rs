@@ -621,7 +621,7 @@ impl ExecutionSetupCoordinator {
                 self.record_launch_metric(launch_started.elapsed().as_millis() as u64, "ready");
             }
             Err(err) => {
-                let message = format!("{err:#}");
+                let message = format_error_chain(&err);
                 let phase = job
                     .current_phase()
                     .unwrap_or(HarnessSetupPhase::ContainerStartOrCreate);
@@ -731,7 +731,7 @@ impl ExecutionSetupCoordinator {
                 self.record_launch_metric(launch_started.elapsed().as_millis() as u64, "ready");
             }
             Err(err) => {
-                let message = format!("{err:#}");
+                let message = format_error_chain(&err);
                 let phase = job.current_phase().unwrap_or(HarnessSetupPhase::ImageLoad);
                 self.emit_log(&job, phase, HarnessSetupLogLevel::Error, &message);
                 let terminal =
@@ -925,7 +925,7 @@ impl ExecutionSetupCoordinator {
         let gate = match self.compute_prewarm_gate(&image).await {
             Ok(gate) => gate,
             Err(err) => {
-                let message = err.to_string();
+                let message = format_error_chain(&err);
                 let snapshot = StartupPrewarmSnapshot {
                     state: StartupPrewarmState::Error,
                     target_image: image.clone(),
@@ -986,7 +986,7 @@ impl ExecutionSetupCoordinator {
                 self.set_startup_snapshot(snapshot).await;
             }
             Err(err) => {
-                let message = err.to_string();
+                let message = format_error_chain(&err);
                 tracing::warn!("startup prewarm failed: {message}");
                 let mut event = OpsEvent::new("warn", "execution.startup_prewarm_error");
                 event.meta = Some(json!({"image": image, "error": message}));
@@ -1090,6 +1090,25 @@ fn should_retry_machine_start_failure(
             job.current_phase(),
             Some(HarnessSetupPhase::MachineStartOrInit)
         )
+}
+
+fn format_error_chain(err: &anyhow::Error) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for cause in err.chain() {
+        let raw = cause.to_string();
+        let normalized = if raw.trim().is_empty() {
+            "<empty error cause>".to_string()
+        } else {
+            raw.trim().to_string()
+        };
+        if parts.last() != Some(&normalized) {
+            parts.push(normalized);
+        }
+    }
+    if parts.is_empty() {
+        return "unknown error".to_string();
+    }
+    parts.join(": ")
 }
 
 fn format_ts(ts: DateTime<Utc>) -> String {
@@ -1266,6 +1285,30 @@ mod tests {
         ));
         let _ = job.transition_phase(HarnessSetupPhase::ImageCheck, "checking image");
         assert!(!should_retry_machine_start_failure(&job, 1, false));
+    }
+
+    #[test]
+    fn format_error_chain_includes_context_and_cause() {
+        let err = anyhow::anyhow!("inner").context("outer");
+        assert_eq!(format_error_chain(&err), "outer: inner");
+    }
+
+    #[test]
+    fn format_error_chain_marks_empty_cause() {
+        #[derive(Debug)]
+        struct EmptyCause;
+        impl std::fmt::Display for EmptyCause {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "")
+            }
+        }
+        impl std::error::Error for EmptyCause {}
+
+        let err = anyhow::Error::new(EmptyCause).context("container runtime failed");
+        assert_eq!(
+            format_error_chain(&err),
+            "container runtime failed: <empty error cause>"
+        );
     }
 
     #[tokio::test]

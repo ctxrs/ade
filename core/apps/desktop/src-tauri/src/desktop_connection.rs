@@ -340,7 +340,9 @@ impl ConnectionManager {
         if let Some(body) = req.body {
             builder = builder.body(body);
         }
-        let res = builder.send().context("sending request")?;
+        let res = builder
+            .send()
+            .with_context(|| format!("sending request {method} {url}"))?;
         let status = res.status().as_u16();
         let content_type = res
             .headers()
@@ -503,5 +505,29 @@ mod connection_manager_tests {
             .arg("-KILL")
             .arg(pid.to_string())
             .output();
+    }
+
+    #[test]
+    fn daemon_request_error_includes_method_and_url_context() {
+        let manager = ConnectionManager::default();
+        manager.set_local_external(
+            "http://127.0.0.1:65535".to_string(),
+            "token".to_string(),
+            None,
+            false,
+        );
+        let err = manager
+            .daemon_request(DesktopDaemonRequest {
+                method: "GET".to_string(),
+                path: "/api/health".to_string(),
+                body: None,
+                headers: Vec::new(),
+            })
+            .expect_err("request should fail on closed port");
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("sending request GET http://127.0.0.1:65535/api/health"),
+            "expected method/url context in error, got: {message}"
+        );
     }
 }
