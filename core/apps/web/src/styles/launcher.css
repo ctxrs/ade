@@ -1,4 +1,10 @@
-@import url("https://fonts.googleapis.com/css2?family=VT323&display=swap");
+@font-face {
+  font-family: "VT323";
+  src: url("/fonts/VT323-Regular.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+}
 
 .launcher-shell,
 .wizard-shell {
