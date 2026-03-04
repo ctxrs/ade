@@ -304,7 +304,7 @@ function DesktopMenuBridge() {
       const detail = custom.detail;
       if (!detail || !isDesktopMenuCommandId(detail.commandId)) return;
       if (detail.commandId !== "help.report-issue") return;
-      void openExternalLink("https://github.com/context-labs/ctx/issues/new").catch(() => {});
+      void openExternalLink("https://github.com/ctxrs/ctx/issues/new").catch(() => {});
       emitMenuTrace({
         commandId: detail.commandId,
         layer: "app",

@@ -426,7 +426,7 @@ test("desktop menu report issue opens external tracker link", async () => {
 
   await waitFor(() => {
     expect(vi.mocked(openExternalLink)).toHaveBeenCalledWith(
-      "https://github.com/context-labs/ctx/issues/new",
+      "https://github.com/ctxrs/ctx/issues/new",
     );
   });
 });
