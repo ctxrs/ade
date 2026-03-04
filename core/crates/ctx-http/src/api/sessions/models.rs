@@ -380,21 +380,23 @@ pub(super) async fn load_provider_model_catalog(
     let command = runtime_command.command_abs_path;
     let args = runtime_command.args;
 
-    let mut env = std::collections::HashMap::new();
-    env.insert("CTX_DAEMON_URL".to_string(), state.core.daemon_url.clone());
-    if let Some(token) = state.core.auth_token.as_ref() {
-        env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
-    }
-    if provider_id == "codex" {
-        // Keep probing consistent with real codex sessions (they need CODEX_HOME).
-        if let Ok(extra) =
-            crate::provider_accounts::codex_env_for_active_account(&state.core.data_root).await
-        {
-            for (key, value) in extra {
-                env.insert(key, value);
-            }
+    let mut env = match crate::provider_probe::provider_probe_env_for_workspace_runtime(
+        state,
+        workspace,
+        provider_id,
+    )
+    .await
+    {
+        Ok((_source, env)) => env,
+        Err(err) => {
+            tracing::warn!(
+                provider_id = provider_id,
+                "provider probe runtime env failed: {}",
+                logs::redact_sensitive(&err)
+            );
+            return Ok(None);
         }
-    }
+    };
     installer::prepend_runtime_bin_dirs_to_provider_path(
         &mut env,
         &cfg,

@@ -34,6 +34,7 @@ pub mod provider_auth_import;
 pub mod provider_child_reclassifier;
 pub mod provider_guard;
 pub mod provider_matrix;
+pub mod provider_probe;
 pub mod provider_restart;
 pub mod provider_usage;
 pub mod resource_governance;

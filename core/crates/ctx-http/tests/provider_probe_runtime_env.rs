@@ -13,6 +13,29 @@ use ctx_http::installer::{
 use ctx_providers::adapters::{ProviderAdapter, ProviderHealth, ProviderStatus};
 use ctx_store::StoreManager;
 
+struct EnvVarGuard {
+    key: &'static str,
+    prev: Option<String>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let prev = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        Self { key, prev }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        if let Some(prev) = self.prev.take() {
+            std::env::set_var(self.key, prev);
+        } else {
+            std::env::remove_var(self.key);
+        }
+    }
+}
+
 #[cfg(unix)]
 fn write_executable(path: &Path, contents: &str) {
     use std::os::unix::fs::PermissionsExt;
@@ -21,6 +44,17 @@ fn write_executable(path: &Path, contents: &str) {
     let mut perms = std::fs::metadata(path).expect("metadata").permissions();
     perms.set_mode(0o755);
     std::fs::set_permissions(path, perms).expect("set permissions");
+}
+
+#[cfg(unix)]
+fn write_fake_podman(path: &Path) {
+    write_executable(
+        path,
+        r#"#!/bin/sh
+echo "fake podman unavailable" >&2
+exit 1
+"#,
+    );
 }
 
 #[cfg(unix)]
@@ -187,5 +221,67 @@ async fn provider_verify_probe_uses_managed_dependency_path() {
         body.get("status").and_then(serde_json::Value::as_str),
         Some("ok"),
         "expected verify status ok with managed runtime path injection: {body:#?}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn provider_options_probe_uses_workspace_runtime_context_for_container_mode() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
+    let state = app_state(data_dir.path()).await;
+    let app = api::router(state.clone());
+
+    let fake_podman = data_dir.path().join("podman");
+    write_fake_podman(&fake_podman);
+    let _podman_guard = EnvVarGuard::set(
+        "CTX_PODMAN_PATH",
+        fake_podman
+            .to_str()
+            .expect("fake podman path should be utf-8"),
+    );
+
+    let (runtime_cmd, dep_bin_rel) =
+        setup_runtime_command_with_managed_interpreter(data_dir.path(), "codex");
+    seed_runtime_and_status(&state, "codex", runtime_cmd, dep_bin_rel).await;
+
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let (cfg_status, cfg_body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::POST,
+        format!("/api/workspaces/{}/execution_config", ws.id.0),
+        Some(serde_json::json!({
+            "environment": "container_disk_isolated",
+            "network_mode": "all",
+        })),
+    )
+    .await;
+    assert_eq!(
+        cfg_status,
+        StatusCode::OK,
+        "execution config request failed: {cfg_body:#?}"
+    );
+
+    let (status, body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::GET,
+        format!("/api/workspaces/{}/providers/codex/options", ws.id.0),
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "options request failed: {body:#?}");
+    assert_eq!(
+        body.get("probe_ok").and_then(serde_json::Value::as_bool),
+        Some(false),
+        "container-mode probe must use workspace runtime context; host probe success is invalid: {body:#?}"
+    );
+    let probe_error = body
+        .get("probe_error")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    assert!(
+        probe_error.contains("probe runtime preparation failed"),
+        "expected runtime preparation failure in container mode probe: {body:#?}"
     );
 }

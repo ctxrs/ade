@@ -32,6 +32,7 @@ use crate::installs::{InstallId, InstallInfo, InstallProgressEvent, InstallTarge
 use crate::logs;
 use crate::provider_accounts;
 use crate::provider_auth_import;
+use crate::provider_probe;
 use crate::provider_usage;
 use crate::settings::ExecutionMode;
 use ctx_core::ids::WorkspaceId;
@@ -4289,43 +4290,6 @@ fn classify_probe_error(
     )
 }
 
-async fn provider_probe_env(
-    state: &Arc<AppState>,
-    provider_id: &str,
-) -> Result<
-    (
-        harness_sources::ResolvedHarnessSource,
-        HashMap<String, String>,
-    ),
-    String,
-> {
-    let source =
-        harness_sources::resolve_provider_source_for_probe(&state.core.data_root, provider_id)
-            .await
-            .map_err(|e| logs::redact_sensitive(&e.to_string()))?;
-    let mut env = HashMap::new();
-    env.insert("CTX_DAEMON_URL".to_string(), state.core.daemon_url.clone());
-    if let Some(token) = state.core.auth_token.as_ref() {
-        env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
-    }
-    if source.source_kind == HarnessSourceKind::Subscription {
-        let extra = crate::provider_accounts::subscription_env_for_active_account(
-            &state.core.data_root,
-            provider_id,
-        )
-        .await;
-        if let Ok(extra) = extra {
-            for (key, value) in extra {
-                env.insert(key, value);
-            }
-        }
-    }
-    for (key, value) in source.env.iter() {
-        env.insert(key.clone(), value.clone());
-    }
-    Ok((source, env))
-}
-
 fn cache_key_matches_provider(cache_key: &str, provider_id: &str) -> bool {
     cache_key
         .rsplit_once('/')
@@ -4758,7 +4722,13 @@ pub(super) async fn get_provider_options(
         let command = normalized_runtime.command;
         let args = normalized_runtime.args;
 
-        let probe = match provider_probe_env(&state, &provider_id).await {
+        let probe = match provider_probe::provider_probe_env_for_workspace_runtime(
+            &state,
+            &ws,
+            &provider_id,
+        )
+        .await
+        {
             Ok((_source, mut env)) => {
                 installer::prepend_runtime_bin_dirs_to_provider_path(
                     &mut env,
@@ -5169,7 +5139,13 @@ pub(super) async fn verify_provider_for_workspace(
         let command = normalized_runtime.command;
         let args = normalized_runtime.args;
 
-        match provider_probe_env(&state, &provider_id).await {
+        match provider_probe::provider_probe_env_for_workspace_runtime(
+            &state,
+            &workspace,
+            &provider_id,
+        )
+        .await
+        {
             Ok((source, mut env)) => {
                 installer::prepend_runtime_bin_dirs_to_provider_path(
                     &mut env,
@@ -5278,16 +5254,17 @@ pub(super) async fn authenticate_provider_for_workspace(
             })),
         ))?;
 
-    let (source, provider_env) = provider_probe_env(&state, &provider_id)
-        .await
-        .map_err(|err| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": err,
-                })),
-            )
-        })?;
+    let (source, provider_env) =
+        provider_probe::provider_probe_env_for_workspace_runtime(&state, &workspace, &provider_id)
+            .await
+            .map_err(|err| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": err,
+                    })),
+                )
+            })?;
     if source.source_kind == HarnessSourceKind::Endpoint {
         return Err((
             StatusCode::BAD_REQUEST,
