@@ -440,6 +440,8 @@ const buildAppIfMissing = () => {
 
 let backendProcess = null;
 let driverProcess = null;
+let backendLogFd = null;
+let driverLogFd = null;
 
 exports.config = {
   runner: "local",
@@ -563,15 +565,26 @@ exports.config = {
     buildAppIfMissing();
 
     if (isDarwin) {
-      backendProcess = spawn("pnpm", ["exec", "test-runner-backend"], {
-        stdio: "inherit",
-        cwd: ROOT,
-        env: {
-          ...process.env,
-          TEST_RUNNER_BACKEND_PORT: String(TEST_BACKEND_PORT),
+      const backendLogPath = String(process.env.CTX_AUTOMATION_CN_BACKEND_LOG || "").trim();
+      let backendStdio = "inherit";
+      if (backendLogPath) {
+        fs.mkdirSync(path.dirname(backendLogPath), { recursive: true });
+        backendLogFd = fs.openSync(backendLogPath, "a");
+        backendStdio = ["ignore", backendLogFd, backendLogFd];
+      }
+      backendProcess = spawn(
+        "pnpm",
+        ["exec", "test-runner-backend", "--host", "127.0.0.1", "--port", String(TEST_BACKEND_PORT)],
+        {
+          stdio: backendStdio,
+          cwd: ROOT,
+          env: {
+            ...process.env,
+            TEST_RUNNER_BACKEND_PORT: String(TEST_BACKEND_PORT),
+          },
         },
-      });
-      await waitTestRunnerBackendReady();
+      );
+      await waitTestRunnerBackendReady("127.0.0.1", TEST_BACKEND_PORT);
     }
 
     const driverEnv = {
@@ -590,8 +603,15 @@ exports.config = {
     const driverArgs = useXvfbForDriver
       ? ["-a", "pnpm", "exec", "tauri-driver"]
       : ["exec", "tauri-driver"];
+    const driverLogPath = String(process.env.CTX_AUTOMATION_CN_DRIVER_LOG || "").trim();
+    let driverStdio = "inherit";
+    if (driverLogPath) {
+      fs.mkdirSync(path.dirname(driverLogPath), { recursive: true });
+      driverLogFd = fs.openSync(driverLogPath, "a");
+      driverStdio = ["ignore", driverLogFd, driverLogFd];
+    }
     driverProcess = spawn(driverCmd, driverArgs, {
-      stdio: "inherit",
+      stdio: driverStdio,
       cwd: ROOT,
       env: driverEnv,
     });
@@ -608,6 +628,22 @@ exports.config = {
     if (backendProcess) {
       backendProcess.kill();
       backendProcess = null;
+    }
+    if (backendLogFd !== null) {
+      try {
+        fs.closeSync(backendLogFd);
+      } catch {
+        // ignore
+      }
+      backendLogFd = null;
+    }
+    if (driverLogFd !== null) {
+      try {
+        fs.closeSync(driverLogFd);
+      } catch {
+        // ignore
+      }
+      driverLogFd = null;
     }
     if (daemonProcess) {
       daemonProcess.kill();
