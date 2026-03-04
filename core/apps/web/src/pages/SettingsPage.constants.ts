@@ -54,7 +54,7 @@ export const SECTIONS: Array<{
   { id: "mobile_access", label: "Mobile Access", group: "main", navHidden: true },
   { id: "resource_utilization", label: "Resource Utilization", group: "main", navHidden: true },
   { id: "analytics", label: "Analytics", group: "main" },
-  { id: "dictation", label: "Dictation", group: "advanced" },
+  { id: "dictation", label: "Dictation", group: "advanced", navHidden: true },
   { id: "title_generation", label: "Title Generation", group: "advanced" },
   { id: "billing", label: "Billing", group: "advanced", navHidden: true },
   { id: "team_enterprise", label: "Team & Enterprise", group: "advanced", navHidden: true },
