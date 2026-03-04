@@ -1443,12 +1443,20 @@ fn build_mounts(
     mounts.push(bind_mount(&runtimes, &runtimes, true));
 
     // Bundled assets (desktop) are resolved via absolute paths under `CTX_BUNDLE_DIR`.
-    // When providers are spawned via `podman exec` (container execution), those paths must be
-    // visible inside the harness container as well.
+    // For container execution, mount this path only when the source path is shareable by the
+    // container runtime on this host (for macOS/Windows Podman machine this excludes paths like
+    // /Applications that are not VM-shared by default).
     if let Ok(raw) = std::env::var("CTX_BUNDLE_DIR") {
         let bundle_dir = PathBuf::from(raw.trim());
         if bundle_dir.exists() {
-            mounts.push(bind_mount(&bundle_dir, &bundle_dir, true));
+            if should_mount_bundle_dir_in_container(&bundle_dir) {
+                mounts.push(bind_mount(&bundle_dir, &bundle_dir, true));
+            } else {
+                tracing::info!(
+                    "skipping CTX_BUNDLE_DIR container mount (path not shareable by runtime): {}",
+                    bundle_dir.display()
+                );
+            }
         }
     }
 
@@ -1456,6 +1464,24 @@ fn build_mounts(
         mounts,
         external_mounts: HashSet::new(),
     }
+}
+
+fn should_mount_bundle_dir_in_container(bundle_dir: &Path) -> bool {
+    if cfg!(target_os = "linux") {
+        return true;
+    }
+    if cfg!(target_os = "macos") || cfg!(target_os = "windows") {
+        let home_var = if cfg!(target_os = "windows") {
+            "USERPROFILE"
+        } else {
+            "HOME"
+        };
+        if let Some(home) = std::env::var_os(home_var).map(PathBuf::from) {
+            return bundle_dir.starts_with(home);
+        }
+        return false;
+    }
+    true
 }
 
 fn bind_mount(src: &Path, dst: &Path, read_only: bool) -> String {
@@ -2510,6 +2536,58 @@ mod tests {
             .iter()
             .any(|p| p.ends_with("podman/ctx-gvproxy.sock")));
         assert!(rendered.iter().any(|p| p.ends_with("podman/ctx.sock")));
+    }
+
+    #[test]
+    fn bundle_dir_mount_policy_matches_platform_expectations() {
+        // Linux runtime is host-native; bundle mounts are always reachable.
+        if cfg!(target_os = "linux") {
+            assert!(should_mount_bundle_dir_in_container(Path::new(
+                "/Applications/ctx.app/Contents/Resources/bundles"
+            )));
+            return;
+        }
+
+        // Podman-machine platforms cannot reliably mount non-home host paths (for example
+        // /Applications in macOS release installs).
+        if cfg!(target_os = "macos") || cfg!(target_os = "windows") {
+            assert!(!should_mount_bundle_dir_in_container(Path::new(
+                "/Applications/ctx.app/Contents/Resources/bundles"
+            )));
+            let home_var = if cfg!(target_os = "windows") {
+                "USERPROFILE"
+            } else {
+                "HOME"
+            };
+            if let Some(home) = std::env::var_os(home_var).map(PathBuf::from) {
+                assert!(should_mount_bundle_dir_in_container(
+                    &home.join("ctx-bundles")
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn build_mounts_only_includes_bundle_dir_when_shareable() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let bundle_dir = tmp.path().join("bundles");
+        std::fs::create_dir_all(&bundle_dir).expect("create bundle dir");
+        let _guard = EnvGuard::set("CTX_BUNDLE_DIR", &bundle_dir.to_string_lossy());
+
+        let workspace = sample_workspace(&tmp);
+        let mounts = build_mounts(
+            tmp.path(),
+            &workspace,
+            None,
+            &ContainerExecutionSettings::default(),
+        )
+        .mounts;
+        let expected = bind_mount(&bundle_dir, &bundle_dir, true);
+        let has_bundle_mount = mounts.iter().any(|mount| mount == &expected);
+        assert_eq!(
+            has_bundle_mount,
+            should_mount_bundle_dir_in_container(&bundle_dir)
+        );
     }
 
     #[tokio::test]

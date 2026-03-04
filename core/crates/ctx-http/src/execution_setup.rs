@@ -621,7 +621,7 @@ impl ExecutionSetupCoordinator {
                 self.record_launch_metric(launch_started.elapsed().as_millis() as u64, "ready");
             }
             Err(err) => {
-                let message = err.to_string();
+                let message = format!("{err:#}");
                 let phase = job
                     .current_phase()
                     .unwrap_or(HarnessSetupPhase::ContainerStartOrCreate);
@@ -731,7 +731,7 @@ impl ExecutionSetupCoordinator {
                 self.record_launch_metric(launch_started.elapsed().as_millis() as u64, "ready");
             }
             Err(err) => {
-                let message = err.to_string();
+                let message = format!("{err:#}");
                 let phase = job.current_phase().unwrap_or(HarnessSetupPhase::ImageLoad);
                 self.emit_log(&job, phase, HarnessSetupLogLevel::Error, &message);
                 let terminal =
