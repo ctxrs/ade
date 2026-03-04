@@ -121,7 +121,7 @@ describe("DiagnosticsPage updates", () => {
       applied: true,
       needs_restart: true,
       latest_version: "1.0.1",
-      message: "Desktop update installed. Relaunch the app to complete the update.",
+      message: "Update takes ~1 second and preserves data. Active agents will be paused.",
     });
   });
 

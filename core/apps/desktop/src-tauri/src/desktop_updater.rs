@@ -13,6 +13,7 @@ const RESTART_MARKER_FILENAME: &str = "desktop_update_restart_required.json";
 const STAGED_UPDATE_META_FILENAME: &str = "desktop_update_staged.v1.json";
 const STAGED_UPDATE_BYTES_FILENAME: &str = "desktop_update_staged.v1.bin";
 const LAST_ATTEMPT_FILENAME: &str = "desktop_update_attempt_last.v1.json";
+const RESTART_READY_MESSAGE: &str = "Update takes ~1 second and preserves data. Active agents will be paused.";
 static STAGING_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -286,8 +287,7 @@ pub(super) async fn desktop_apply_app_update(
             needs_restart: true,
             up_to_date: false,
             latest_version: pre_state.latest_version,
-            message: "Desktop update already installed. Relaunch the app to complete the update."
-                .to_string(),
+            message: RESTART_READY_MESSAGE.to_string(),
         });
     }
 
@@ -404,7 +404,7 @@ pub(super) async fn desktop_apply_app_update(
         needs_restart: true,
         up_to_date: false,
         latest_version: Some(latest_version),
-        message: "Desktop update installed. Relaunch the app to complete the update.".to_string(),
+        message: RESTART_READY_MESSAGE.to_string(),
     })
 }
 
@@ -460,9 +460,7 @@ async fn resolve_desktop_update_state(
             latest_version: pending_restart_version,
             target: config.target,
             endpoint: config.endpoint,
-            message: Some(
-                "Desktop update installed. Relaunch the app to complete the update.".to_string(),
-            ),
+            message: Some(RESTART_READY_MESSAGE.to_string()),
             last_attempt_id,
             last_error,
         });
