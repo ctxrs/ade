@@ -827,6 +827,11 @@ fn managed_default_container_image_tar_path(data_root: &Path, sha256: &str) -> P
         .join(format!("sha256-{}.tar", sha256.trim().to_ascii_lowercase()))
 }
 
+fn managed_default_image_install_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
 async fn ensure_managed_default_container_image_tar(
     data_root: &Path,
     observer: Option<&dyn HarnessSetupObserver>,
@@ -837,6 +842,17 @@ async fn ensure_managed_default_container_image_tar(
                 "default harness image is missing from bundle and runtime lock managed sources"
             )
         })?;
+    ensure_managed_default_container_image_tar_with_source(data_root, &source, observer).await
+}
+
+async fn ensure_managed_default_container_image_tar_with_source(
+    data_root: &Path,
+    source: &bundled_assets::ManagedArtifactSource,
+    observer: Option<&dyn HarnessSetupObserver>,
+) -> Result<PathBuf> {
+    // Provider installs and startup prewarm can concurrently ensure the default harness image.
+    // Serialize this path so callers don't race on the shared temp download file.
+    let _install_guard = managed_default_image_install_lock().lock().await;
 
     let final_tar = managed_default_container_image_tar_path(data_root, &source.sha256);
     if final_tar.exists() {
@@ -2316,10 +2332,18 @@ fn container_user() -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
     use super::*;
     use chrono::Utc;
     use ctx_core::ids::WorktreeId;
+    use sha2::{Digest, Sha256};
     use tempfile::TempDir;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio::task::JoinHandle;
+    use tokio::time::{sleep, Duration};
 
     struct EnvGuard {
         key: &'static str,
@@ -2380,6 +2404,35 @@ mod tests {
 
     async fn runtime_manager(tmp: &TempDir) -> HarnessRuntimeManager {
         HarnessRuntimeManager::new(tmp.path().to_path_buf())
+    }
+
+    async fn spawn_static_http_server(body: Vec<u8>) -> (String, JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind local http listener");
+        let addr = listener.local_addr().expect("listener local addr");
+        let shared = Arc::new(body);
+        let task = tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = match listener.accept().await {
+                    Ok(pair) => pair,
+                    Err(_) => break,
+                };
+                let payload = Arc::clone(&shared);
+                tokio::spawn(async move {
+                    let mut req_buf = [0u8; 1024];
+                    let _ = socket.read(&mut req_buf).await;
+                    let headers = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        payload.len()
+                    );
+                    let _ = socket.write_all(headers.as_bytes()).await;
+                    let _ = socket.write_all(payload.as_slice()).await;
+                    let _ = socket.shutdown().await;
+                });
+            }
+        });
+        (format!("http://{addr}/image.tar"), task)
     }
 
     #[tokio::test]
@@ -2457,5 +2510,70 @@ mod tests {
             .iter()
             .any(|p| p.ends_with("podman/ctx-gvproxy.sock")));
         assert!(rendered.iter().any(|p| p.ends_with("podman/ctx.sock")));
+    }
+
+    #[tokio::test]
+    async fn managed_default_image_install_lock_serializes_callers() {
+        let lock = managed_default_image_install_lock();
+        let guard = lock.lock().await;
+        let acquired = Arc::new(AtomicBool::new(false));
+        let acquired_clone = Arc::clone(&acquired);
+
+        let waiter = tokio::spawn(async move {
+            let _wait_guard = lock.lock().await;
+            acquired_clone.store(true, Ordering::SeqCst);
+        });
+
+        sleep(Duration::from_millis(30)).await;
+        assert!(
+            !acquired.load(Ordering::SeqCst),
+            "second caller should still be blocked while first holds the lock"
+        );
+        drop(guard);
+
+        waiter.await.expect("waiter task");
+        assert!(
+            acquired.load(Ordering::SeqCst),
+            "second caller should acquire lock after first releases it"
+        );
+    }
+
+    #[tokio::test]
+    async fn managed_default_image_ensure_is_concurrency_safe() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let body = b"ctx-test-managed-image".to_vec();
+        let digest = {
+            let mut hasher = Sha256::new();
+            hasher.update(&body);
+            hex::encode(hasher.finalize())
+        };
+        let (url, server) = spawn_static_http_server(body.clone()).await;
+        let source = bundled_assets::ManagedArtifactSource {
+            uri: url,
+            sha256: digest,
+        };
+        let data_root = tmp.path().to_path_buf();
+
+        let root_a = data_root.clone();
+        let root_b = data_root.clone();
+        let source_a = source.clone();
+        let source_b = source.clone();
+        let (res_a, res_b) = tokio::join!(
+            tokio::spawn(async move {
+                ensure_managed_default_container_image_tar_with_source(&root_a, &source_a, None)
+                    .await
+            }),
+            tokio::spawn(async move {
+                ensure_managed_default_container_image_tar_with_source(&root_b, &source_b, None)
+                    .await
+            })
+        );
+        server.abort();
+
+        let path_a = res_a.expect("join a").expect("ensure a");
+        let path_b = res_b.expect("join b").expect("ensure b");
+        assert_eq!(path_a, path_b);
+        let cached = tokio::fs::read(&path_a).await.expect("read cached tar");
+        assert_eq!(cached, body);
     }
 }
