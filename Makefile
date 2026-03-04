@@ -4,7 +4,7 @@
 
 PNPM ?= pnpm
 PROFILE ?= dev
-DESKTOP_SYNC_BUNDLES ?= 1
+DESKTOP_SYNC_BUNDLES ?= 0
 DESKTOP_DEV_WEB_HOST ?= 127.0.0.1
 DESKTOP_DEV_WEB_PORT ?= 5173
 SAFE_PROFILE := $(shell printf '%s' "$(PROFILE)" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-*//;s/-*$$//')

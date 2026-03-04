@@ -41,6 +41,37 @@ test("desktop prep scripts inject desktop version into web build", () => {
   }
 });
 
+test("desktop prep scripts default to thin bundle sync", () => {
+  const scripts = packageJson.scripts || {};
+  for (const id of ["desktop:prep", "desktop:prep:dev", "desktop:prep:release"]) {
+    const script = String(scripts[id] || "");
+    assert.ok(
+      script.includes("CTX_DESKTOP_SYNC_BUNDLES=${CTX_DESKTOP_SYNC_BUNDLES:-0}"),
+      `${id} must default CTX_DESKTOP_SYNC_BUNDLES to 0 (thin manifest policy)`,
+    );
+  }
+});
+
+test("tracked desktop bundle manifest remains thin by default", () => {
+  const manifestPath = path.join(
+    coreRoot,
+    "apps",
+    "desktop",
+    "src-tauri",
+    "bundles",
+    "manifest.json",
+  );
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  for (const key of ["providers", "runtimes", "images", "daemons"]) {
+    assert.ok(Array.isArray(manifest[key]), `manifest.${key} must be an array`);
+    assert.equal(
+      manifest[key].length,
+      0,
+      `manifest.${key} must be empty for thin manifest default policy`,
+    );
+  }
+});
+
 test("desktop mode defaults to dev/parity/desktop", () => {
   const mode = resolveLaunchMode({});
   assert.deepEqual(mode, {
