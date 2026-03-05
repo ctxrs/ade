@@ -93,6 +93,7 @@ async fn providers_statuses_response(
     let show_fake = std::env::var("CTX_SHOW_FAKE_PROVIDER").ok().as_deref() == Some("1");
     for status in out.iter_mut() {
         installer::apply_managed_install_details(status, &managed);
+        installer::apply_install_target_status(status, target);
         if status.provider_id == "fake" {
             status.details.insert(
                 "ui_hidden".into(),
@@ -168,6 +169,7 @@ pub(super) async fn get_provider(
     )
     .await;
     installer::apply_managed_install_details(&mut status, &managed);
+    installer::apply_install_target_status(&mut status, target);
     status.details.insert(
         "install_supported".into(),
         if installer::is_supported_managed_provider_for_target(&matrix, &status.provider_id, target)
@@ -6243,6 +6245,55 @@ ZXY987654321
         };
         assert!(!import_result_requires_provider_restart(&unsupported));
         assert!(!import_result_requires_provider_restart(&error));
+    }
+
+    #[test]
+    fn apply_install_target_status_marks_mismatched_managed_target_missing() {
+        let mut status = ctx_providers::adapters::ProviderStatus {
+            provider_id: "codex".to_string(),
+            installed: true,
+            detected_path: Some("/tmp/codex".to_string()),
+            version: Some("1.0.0".to_string()),
+            capabilities: None,
+            health: ctx_providers::adapters::ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: HashMap::from([("managed_target".to_string(), "host".to_string())]),
+        };
+
+        installer::apply_install_target_status(&mut status, InstallTarget::Container);
+
+        assert!(!status.installed);
+        assert!(matches!(
+            status.health,
+            ctx_providers::adapters::ProviderHealth::Missing
+        ));
+        assert_eq!(
+            status.details.get("target_mismatch").map(String::as_str),
+            Some("true")
+        );
+    }
+
+    #[test]
+    fn apply_install_target_status_keeps_matching_managed_target_healthy() {
+        let mut status = ctx_providers::adapters::ProviderStatus {
+            provider_id: "codex".to_string(),
+            installed: true,
+            detected_path: Some("/tmp/codex".to_string()),
+            version: Some("1.0.0".to_string()),
+            capabilities: None,
+            health: ctx_providers::adapters::ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: HashMap::from([("managed_target".to_string(), "container".to_string())]),
+        };
+
+        installer::apply_install_target_status(&mut status, InstallTarget::Container);
+
+        assert!(status.installed);
+        assert!(matches!(
+            status.health,
+            ctx_providers::adapters::ProviderHealth::Ok
+        ));
+        assert!(!status.details.contains_key("target_mismatch"));
     }
 
     #[test]

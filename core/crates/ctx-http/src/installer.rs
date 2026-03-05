@@ -289,6 +289,61 @@ pub fn managed_install_download_size_bytes(
     }
 }
 
+pub(crate) fn apply_install_target_status(
+    status: &mut ctx_providers::adapters::ProviderStatus,
+    target: InstallTarget,
+) {
+    let requested_target = target.as_str();
+    let Some(managed_target) = status.details.get("managed_target").cloned() else {
+        return;
+    };
+    if managed_target == requested_target {
+        status.details.remove("target_mismatch");
+        return;
+    }
+
+    status.installed = false;
+    status.health = ctx_providers::adapters::ProviderHealth::Missing;
+    status
+        .details
+        .insert("target_mismatch".to_string(), "true".to_string());
+    status.details.insert(
+        "target_mismatch_reason".to_string(),
+        format!(
+            "provider managed install target is '{managed_target}', requested '{requested_target}'"
+        ),
+    );
+    let diagnostic =
+        format!("provider is installed for target '{managed_target}', not '{requested_target}'");
+    if !status.diagnostics.iter().any(|msg| msg == &diagnostic) {
+        status.diagnostics.insert(0, diagnostic);
+    }
+}
+
+fn validate_post_install_status(
+    status: &ctx_providers::adapters::ProviderStatus,
+    provider_id: &str,
+    target: InstallTarget,
+) -> Result<()> {
+    if let Some(managed_target) = status.details.get("managed_target") {
+        if managed_target != target.as_str() {
+            anyhow::bail!(
+                "install completed but provider '{}' resolved to managed target '{}' (expected '{}')",
+                provider_id,
+                managed_target,
+                target.as_str()
+            );
+        }
+    }
+    if !status.installed || !matches!(status.health, ctx_providers::adapters::ProviderHealth::Ok) {
+        anyhow::bail!(
+            "install completed but provider is not healthy: {}",
+            status.diagnostics.join("; ")
+        );
+    }
+    Ok(())
+}
+
 pub fn is_supported_managed_lsp_server(server_id: &str) -> bool {
     matches!(
         server_id,
@@ -1919,25 +1974,13 @@ async fn install_provider_impl(
         status_cfg
             .managed_installs
             .insert(provider_id.clone(), managed.meta.clone());
-        refresh_provider_statuses_with_cfg(state, status_cfg).await?;
-
-        let status = state
-            .providers
-            .statuses
-            .lock()
+        let mut verified_status = ctx_providers::adapters::ProviderAdapter::inspect(adapter.as_ref())
             .await
-            .get(&provider_id)
-            .cloned();
-        if let Some(status) = status {
-            if !status.installed
-                || !matches!(status.health, ctx_providers::adapters::ProviderHealth::Ok)
-            {
-                anyhow::bail!(
-                    "install completed but provider is not healthy: {}",
-                    status.diagnostics.join("; ")
-                );
-            }
-        }
+            .context("inspecting provider after managed install")?;
+        apply_managed_install_details(&mut verified_status, &status_cfg);
+        apply_install_target_status(&mut verified_status, target);
+        validate_post_install_status(&verified_status, &provider_id, target)?;
+        refresh_provider_statuses_with_cfg(state, status_cfg).await?;
 
         stage = "registry";
         ensure_install_not_cancelled(state, install_id).await?;
@@ -4231,8 +4274,24 @@ async fn sha256_file(path: &Path) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+
+    fn status_with_managed_target(target: &str) -> ctx_providers::adapters::ProviderStatus {
+        let mut details = HashMap::new();
+        details.insert("managed_target".to_string(), target.to_string());
+        ctx_providers::adapters::ProviderStatus {
+            provider_id: "codex".to_string(),
+            installed: true,
+            detected_path: Some("/tmp/codex".to_string()),
+            version: None,
+            capabilities: None,
+            health: ctx_providers::adapters::ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details,
+        }
+    }
 
     #[test]
     fn managed_provider_installs_are_enabled_for_supported_entries() {
@@ -4626,6 +4685,36 @@ mod tests {
             classify_install_error("download", &anyhow::anyhow!("install canceled by user")),
             InstallErrorCode::Cancelled
         );
+    }
+
+    #[test]
+    fn apply_install_target_status_marks_mismatch_as_missing() {
+        let mut status = status_with_managed_target("host");
+        apply_install_target_status(&mut status, InstallTarget::Container);
+        assert!(!status.installed);
+        assert!(matches!(
+            status.health,
+            ctx_providers::adapters::ProviderHealth::Missing
+        ));
+        assert_eq!(
+            status.details.get("target_mismatch").map(String::as_str),
+            Some("true")
+        );
+    }
+
+    #[test]
+    fn validate_post_install_status_rejects_target_mismatch() {
+        let status = status_with_managed_target("host");
+        let err = validate_post_install_status(&status, "codex", InstallTarget::Container)
+            .expect_err("target mismatch should fail verification");
+        assert!(err.to_string().contains("expected 'container'"));
+    }
+
+    #[test]
+    fn validate_post_install_status_accepts_matching_target() {
+        let status = status_with_managed_target("container");
+        validate_post_install_status(&status, "codex", InstallTarget::Container)
+            .expect("matching target should pass verification");
     }
 
     #[tokio::test]
