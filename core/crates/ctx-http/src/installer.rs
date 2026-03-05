@@ -294,11 +294,63 @@ pub(crate) fn apply_install_target_status(
     target: InstallTarget,
 ) {
     let requested_target = target.as_str();
+    if matches!(target, InstallTarget::Host) {
+        let Some(managed_target) = status.details.get("managed_target").cloned() else {
+            return;
+        };
+        if managed_target == requested_target {
+            status.details.remove("target_mismatch");
+            status.details.remove("target_unverified");
+            status.details.remove("target_mismatch_reason");
+            return;
+        }
+
+        status.installed = false;
+        status.health = ctx_providers::adapters::ProviderHealth::Missing;
+        status
+            .details
+            .insert("target_mismatch".to_string(), "true".to_string());
+        status.details.remove("target_unverified");
+        status.details.insert(
+            "target_mismatch_reason".to_string(),
+            format!(
+                "provider managed install target is '{managed_target}', requested '{requested_target}'"
+            ),
+        );
+        let diagnostic =
+            format!("provider is installed for target '{managed_target}', not '{requested_target}'");
+        if !status.diagnostics.iter().any(|msg| msg == &diagnostic) {
+            status.diagnostics.insert(0, diagnostic);
+        }
+        return;
+    }
+
     let Some(managed_target) = status.details.get("managed_target").cloned() else {
+        if !status.installed {
+            return;
+        }
+        status.installed = false;
+        status.health = ctx_providers::adapters::ProviderHealth::Missing;
+        status.details.remove("target_mismatch");
+        status.details.insert("target_unverified".to_string(), "true".to_string());
+        status.details.insert(
+            "target_mismatch_reason".to_string(),
+            format!(
+                "provider status was detected from the host environment and cannot verify target '{requested_target}'"
+            ),
+        );
+        let diagnostic = format!(
+            "provider status reflects the host environment and does not verify target '{requested_target}'"
+        );
+        if !status.diagnostics.iter().any(|msg| msg == &diagnostic) {
+            status.diagnostics.insert(0, diagnostic);
+        }
         return;
     };
     if managed_target == requested_target {
         status.details.remove("target_mismatch");
+        status.details.remove("target_unverified");
+        status.details.remove("target_mismatch_reason");
         return;
     }
 
@@ -307,6 +359,7 @@ pub(crate) fn apply_install_target_status(
     status
         .details
         .insert("target_mismatch".to_string(), "true".to_string());
+    status.details.remove("target_unverified");
     status.details.insert(
         "target_mismatch_reason".to_string(),
         format!(
@@ -4293,6 +4346,19 @@ mod tests {
         }
     }
 
+    fn host_detected_status() -> ctx_providers::adapters::ProviderStatus {
+        ctx_providers::adapters::ProviderStatus {
+            provider_id: "codex".to_string(),
+            installed: true,
+            detected_path: Some("/usr/local/bin/codex".to_string()),
+            version: None,
+            capabilities: None,
+            health: ctx_providers::adapters::ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+        }
+    }
+
     #[test]
     fn managed_provider_installs_are_enabled_for_supported_entries() {
         let matrix = provider_matrix::builtin_matrix();
@@ -4698,6 +4764,21 @@ mod tests {
         ));
         assert_eq!(
             status.details.get("target_mismatch").map(String::as_str),
+            Some("true")
+        );
+    }
+
+    #[test]
+    fn apply_install_target_status_marks_host_detected_status_unverified_for_container() {
+        let mut status = host_detected_status();
+        apply_install_target_status(&mut status, InstallTarget::Container);
+        assert!(!status.installed);
+        assert!(matches!(
+            status.health,
+            ctx_providers::adapters::ProviderHealth::Missing
+        ));
+        assert_eq!(
+            status.details.get("target_unverified").map(String::as_str),
             Some("true")
         );
     }

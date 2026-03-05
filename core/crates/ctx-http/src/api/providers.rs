@@ -6297,6 +6297,32 @@ ZXY987654321
     }
 
     #[test]
+    fn apply_install_target_status_marks_host_detected_status_unverified_for_container() {
+        let mut status = ctx_providers::adapters::ProviderStatus {
+            provider_id: "codex".to_string(),
+            installed: true,
+            detected_path: Some("/usr/local/bin/codex".to_string()),
+            version: Some("1.0.0".to_string()),
+            capabilities: None,
+            health: ctx_providers::adapters::ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+        };
+
+        installer::apply_install_target_status(&mut status, InstallTarget::Container);
+
+        assert!(!status.installed);
+        assert!(matches!(
+            status.health,
+            ctx_providers::adapters::ProviderHealth::Missing
+        ));
+        assert_eq!(
+            status.details.get("target_unverified").map(String::as_str),
+            Some("true")
+        );
+    }
+
+    #[test]
     fn should_skip_install_for_healthy_provider_without_updates() {
         let status = ctx_providers::adapters::ProviderStatus {
             provider_id: "codex".to_string(),
