@@ -92,8 +92,7 @@ async fn providers_statuses_response(
 
     let show_fake = std::env::var("CTX_SHOW_FAKE_PROVIDER").ok().as_deref() == Some("1");
     for status in out.iter_mut() {
-        installer::apply_managed_install_details(status, &managed);
-        installer::apply_install_target_status(status, target);
+        apply_target_aware_provider_status(status, &managed, target);
         if status.provider_id == "fake" {
             status.details.insert(
                 "ui_hidden".into(),
@@ -137,6 +136,15 @@ async fn providers_statuses_response(
     out
 }
 
+fn apply_target_aware_provider_status(
+    status: &mut ProviderStatus,
+    managed: &installer::AgentServerConfigFile,
+    target: InstallTarget,
+) {
+    installer::apply_managed_install_details(status, managed);
+    installer::apply_install_target_status(status, target);
+}
+
 pub(super) async fn get_provider(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -168,8 +176,7 @@ pub(super) async fn get_provider(
         &state.providers.matrix_cache,
     )
     .await;
-    installer::apply_managed_install_details(&mut status, &managed);
-    installer::apply_install_target_status(&mut status, target);
+    apply_target_aware_provider_status(&mut status, &managed, target);
     status.details.insert(
         "install_supported".into(),
         if installer::is_supported_managed_provider_for_target(&matrix, &status.provider_id, target)
@@ -5435,6 +5442,9 @@ pub(super) async fn install_all_providers(
         &state.providers.matrix_cache,
     )
     .await;
+    let managed = installer::load_agent_server_config(&state.core.data_root)
+        .await
+        .unwrap_or_default();
     for entry in &matrix.providers {
         if !installer::is_supported_managed_provider_for_target(&matrix, &entry.id, target) {
             continue;
@@ -5450,7 +5460,8 @@ pub(super) async fn install_all_providers(
         }
 
         let status = state.providers.statuses.lock().await.get(id).cloned();
-        if let Some(st) = status {
+        if let Some(mut st) = status {
+            apply_target_aware_provider_status(&mut st, &managed, target);
             if should_skip_install_for_healthy_provider(&st) {
                 continue;
             }
@@ -6371,6 +6382,33 @@ ZXY987654321
             diagnostics: Vec::new(),
             details,
         };
+        assert!(!should_skip_install_for_healthy_provider(&status));
+    }
+
+    #[test]
+    fn target_aware_status_does_not_skip_container_install_for_host_only_status() {
+        let mut status = ctx_providers::adapters::ProviderStatus {
+            provider_id: "codex".to_string(),
+            installed: true,
+            detected_path: Some("/usr/local/bin/codex".to_string()),
+            version: Some("1.0.0".to_string()),
+            capabilities: None,
+            health: ctx_providers::adapters::ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+        };
+
+        apply_target_aware_provider_status(
+            &mut status,
+            &installer::AgentServerConfigFile::default(),
+            InstallTarget::Container,
+        );
+
+        assert!(!status.installed);
+        assert!(matches!(
+            status.health,
+            ctx_providers::adapters::ProviderHealth::Missing
+        ));
         assert!(!should_skip_install_for_healthy_provider(&status));
     }
 }
