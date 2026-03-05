@@ -2577,6 +2577,8 @@ export default function WorkspaceSetupPage() {
             remote_port: parsedRemotePort ?? 4399,
             start_remote: true,
             remote_data_dir: normalizedDataDir,
+            workspace_root_path: rootPath,
+            execution_environment: environment,
             updated_at_ms: Date.now(),
           });
         } else {
@@ -2584,6 +2586,7 @@ export default function WorkspaceSetupPage() {
             kind: "local",
             label: lastPathSegment(rootPath) || rootPath,
             root_path: rootPath,
+            execution_environment: environment,
             updated_at_ms: Date.now(),
           });
         }

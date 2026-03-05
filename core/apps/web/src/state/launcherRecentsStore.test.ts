@@ -50,7 +50,13 @@ describe("launcherRecentsStore", () => {
     });
 
     await expect(loadLauncherRecents()).resolves.toEqual([
-      { kind: "local", label: "repo-a", root_path: "/tmp/repo-a", updated_at_ms: 200 },
+      {
+        kind: "local",
+        label: "repo-a",
+        root_path: "/tmp/repo-a",
+        execution_environment: undefined,
+        updated_at_ms: 200,
+      },
       {
         kind: "ssh",
         label: "devbox",
@@ -59,6 +65,8 @@ describe("launcherRecentsStore", () => {
         remote_port: 4399,
         start_remote: undefined,
         remote_data_dir: null,
+        workspace_root_path: null,
+        execution_environment: undefined,
         updated_at_ms: 100,
       },
     ]);

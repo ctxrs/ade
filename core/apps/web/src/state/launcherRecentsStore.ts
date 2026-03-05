@@ -1,10 +1,13 @@
 import { getWebappStorage } from "./storage";
 
+export type LauncherExecutionEnvironment = "host" | "container_host_mounted" | "container_disk_isolated";
+
 export type LauncherRecentEntry =
   | {
       kind: "local";
       label: string;
       root_path: string;
+      execution_environment?: LauncherExecutionEnvironment;
       updated_at_ms: number;
     }
   | {
@@ -15,6 +18,8 @@ export type LauncherRecentEntry =
       remote_port: number;
       start_remote?: boolean;
       remote_data_dir?: string | null;
+      workspace_root_path?: string | null;
+      execution_environment?: LauncherExecutionEnvironment;
       updated_at_ms: number;
     };
 
@@ -52,6 +57,13 @@ function asFiniteNumber(value: unknown): number | null {
   return value;
 }
 
+function asExecutionEnvironment(value: unknown): LauncherExecutionEnvironment | undefined {
+  if (value === "host" || value === "container_host_mounted" || value === "container_disk_isolated") {
+    return value;
+  }
+  return undefined;
+}
+
 function parseEntry(raw: unknown): LauncherRecentEntry | null {
   const rec = asRecord(raw);
   if (!rec) return null;
@@ -67,6 +79,7 @@ function parseEntry(raw: unknown): LauncherRecentEntry | null {
       kind: "local",
       label,
       root_path: rootPath,
+      execution_environment: asExecutionEnvironment(rec.execution_environment),
       updated_at_ms: updatedAt,
     };
   }
@@ -83,6 +96,8 @@ function parseEntry(raw: unknown): LauncherRecentEntry | null {
       remote_port: remotePort,
       start_remote: asBool(rec.start_remote),
       remote_data_dir: asNullableString(rec.remote_data_dir),
+      workspace_root_path: asNullableString(rec.workspace_root_path),
+      execution_environment: asExecutionEnvironment(rec.execution_environment),
       updated_at_ms: updatedAt,
     };
   }
@@ -92,7 +107,7 @@ function parseEntry(raw: unknown): LauncherRecentEntry | null {
 
 function entryKey(entry: LauncherRecentEntry): string {
   if (entry.kind === "local") return `local:${entry.root_path}`;
-  return `ssh:${entry.user ?? ""}@${entry.host}:${entry.remote_port}`;
+  return `ssh:${entry.user ?? ""}@${entry.host}:${entry.remote_port}:${entry.workspace_root_path ?? ""}:${entry.execution_environment ?? ""}`;
 }
 
 function normalizeEntries(entries: LauncherRecentEntry[]): LauncherRecentEntry[] {

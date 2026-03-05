@@ -4,6 +4,7 @@ import LauncherPage from "./LauncherPage";
 import { loadLauncherRecents, upsertLauncherRecent } from "../state/launcherRecentsStore";
 import {
   getHealth,
+  getWorkspaceExecutionConfig,
   idToString,
   listWorkspaces,
 } from "../api/client";
@@ -30,6 +31,7 @@ vi.mock("../api/client", async () => {
     ...actual,
     applyDaemonDesktopConnection: vi.fn(),
     getHealth: vi.fn(),
+    getWorkspaceExecutionConfig: vi.fn(),
     idToString: vi.fn((value: unknown) => String(value ?? "")),
     listWorkspaces: vi.fn(),
   };
@@ -60,6 +62,8 @@ describe("LauncherPage recents", () => {
     vi.mocked(desktopSetDockRecentLocalWorkspaces).mockResolvedValue();
     vi.mocked(loadLauncherRecents).mockResolvedValue([]);
     vi.mocked(upsertLauncherRecent).mockResolvedValue([]);
+    vi.mocked(listWorkspaces).mockResolvedValue([]);
+    vi.mocked(getWorkspaceExecutionConfig).mockResolvedValue({ environment: "host" } as never);
     vi.mocked(getHealth).mockResolvedValue({
       daemon_version: "0.0.0-test",
       compatibility: { desktop_exact_version: "0.0.0-test", mobile_api_min: 1, mobile_api_max: 1 },
@@ -80,11 +84,28 @@ describe("LauncherPage recents", () => {
     render(<LauncherPage />);
 
     expect(await screen.findByText("ctx-monorepo")).toBeInTheDocument();
-    expect(screen.getByText("Local: /Users/example-user/code/ctx-monorepo")).toBeInTheDocument();
+    expect(screen.getByText("~/code/ctx-monorepo (Host)")).toBeInTheDocument();
     expect(loadLauncherRecents).toHaveBeenCalled();
   });
 
-  it("shows daemon-managed local container recents as Local container", async () => {
+  it("falls back to existing workspaces when persisted launcher recents are empty", async () => {
+    vi.mocked(loadLauncherRecents).mockResolvedValueOnce([]);
+    vi.mocked(listWorkspaces).mockResolvedValueOnce([
+      {
+        id: "ws-1",
+        name: "ctx-monorepo",
+        root_path: "/Users/example-user/code/ctx-monorepo",
+        created_at: "2026-03-05T00:00:00.000Z",
+      },
+    ] as never);
+
+    render(<LauncherPage />);
+
+    expect(await screen.findByText("ctx-monorepo")).toBeInTheDocument();
+    expect(screen.getByText("~/code/ctx-monorepo (Host)")).toBeInTheDocument();
+  });
+
+  it("shows daemon-managed local container recents as local containers", async () => {
     vi.mocked(loadLauncherRecents).mockResolvedValueOnce([
       {
         kind: "local",
@@ -98,6 +119,45 @@ describe("LauncherPage recents", () => {
 
     expect(await screen.findByText("workspace-abc")).toBeInTheDocument();
     expect(screen.getByText("Local container")).toBeInTheDocument();
+  });
+
+  it("renders remote host paths with host-mode suffix", async () => {
+    vi.mocked(loadLauncherRecents).mockResolvedValueOnce([
+      {
+        kind: "ssh",
+        label: "devbox",
+        host: "devbox.example.invalid",
+        user: "user",
+        remote_port: 4399,
+        workspace_root_path: "/home/example-user/code/ctx-monorepo",
+        execution_environment: "host",
+        updated_at_ms: 1000,
+      },
+    ]);
+
+    render(<LauncherPage />);
+
+    expect(await screen.findByText("devbox")).toBeInTheDocument();
+    expect(screen.getByText("user@devbox.example.invalid:~/code/ctx-monorepo (Host)")).toBeInTheDocument();
+  });
+
+  it("renders remote disk-isolated recents as remote containers", async () => {
+    vi.mocked(loadLauncherRecents).mockResolvedValueOnce([
+      {
+        kind: "ssh",
+        label: "sealed-box",
+        host: "sealed.example.invalid",
+        user: "user",
+        remote_port: 4399,
+        execution_environment: "container_disk_isolated",
+        updated_at_ms: 1000,
+      },
+    ]);
+
+    render(<LauncherPage />);
+
+    expect(await screen.findByText("sealed-box")).toBeInTheDocument();
+    expect(screen.getByText("user@sealed.example.invalid (Remote container)")).toBeInTheDocument();
   });
 
   it("upserts recents when opening a local recent workspace", async () => {

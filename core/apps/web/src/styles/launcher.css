@@ -362,10 +362,11 @@
 }
 
 .launcher-recent-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 46%);
+  align-items: baseline;
   gap: 16px;
+  width: 100%;
   background: transparent;
   border: none;
   padding: 2px 0;
@@ -380,16 +381,22 @@
 
 .launcher-recent-name {
   font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .launcher-recent-location {
   color: var(--launcher-muted);
   font-size: 12px;
-  max-width: 48%;
+  min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: right;
+  justify-self: end;
 }
 
 .launcher-empty {
@@ -1242,12 +1249,13 @@
   }
 
   .launcher-recent-item {
-    flex-direction: column;
-    align-items: flex-start;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
   }
 
   .launcher-recent-location {
     max-width: 100%;
+    justify-self: start;
     text-align: left;
   }
 

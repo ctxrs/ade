@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   applyDaemonDesktopConnection,
   getHealth,
+  getWorkspaceExecutionConfig,
   idToString,
   listWorkspaces,
 } from "../api/client";
@@ -17,7 +18,12 @@ import {
 } from "../utils/desktop";
 import { errorMessage } from "../utils/errorMessage";
 import LauncherBrand from "../components/LauncherBrand";
-import { loadLauncherRecents, upsertLauncherRecent, type LauncherRecentEntry } from "../state/launcherRecentsStore";
+import {
+  loadLauncherRecents,
+  upsertLauncherRecent,
+  type LauncherExecutionEnvironment,
+  type LauncherRecentEntry,
+} from "../state/launcherRecentsStore";
 
 function applyConnection(info: DesktopConnectionInfo) {
   applyDaemonDesktopConnection(info);
@@ -71,31 +77,46 @@ export default function LauncherPage() {
 
   useEffect(() => {
     let cancelled = false;
-    loadLauncherRecents()
-      .then((next) => {
+    const syncDockRecents = (entries: LauncherRecentEntry[]) => {
+      if (!isDesktop) return;
+      const localEntries: DesktopDockRecentLocalWorkspace[] = entries
+        .filter((entry): entry is Extract<LauncherRecentEntry, { kind: "local" }> => entry.kind === "local")
+        .map((entry) => ({
+          label: entry.label,
+          root_path: entry.root_path,
+        }));
+      void desktopSetDockRecentLocalWorkspaces(localEntries).catch(() => {});
+    };
+
+    const loadRecents = async () => {
+      try {
+        const persisted = await loadLauncherRecents();
         if (cancelled) return;
-        setRecents(next);
-        if (!isDesktop) return;
-        const localEntries: DesktopDockRecentLocalWorkspace[] = next
-          .filter((entry): entry is Extract<LauncherRecentEntry, { kind: "local" }> => entry.kind === "local")
-          .map((entry) => ({
-            label: entry.label,
-            root_path: entry.root_path,
-          }));
-        void desktopSetDockRecentLocalWorkspaces(localEntries).catch(() => {});
-      })
-      .catch(() => {
+        if (persisted.length > 0) {
+          setRecents(persisted);
+          syncDockRecents(persisted);
+          return;
+        }
+
+        const workspaces = await listWorkspaces();
+        if (cancelled) return;
+        const inferred = await recentsFromWorkspaces(workspaces);
+        setRecents(inferred);
+        syncDockRecents(inferred);
+      } catch {
         if (cancelled) return;
         setRecents([]);
-        if (!isDesktop) return;
-        void desktopSetDockRecentLocalWorkspaces([]).catch(() => {});
-      });
+        syncDockRecents([]);
+      }
+    };
+
+    void loadRecents();
     return () => {
       cancelled = true;
     };
   }, [busy, isDesktop]);
 
-  const connectLocalAndOpen = async (rootPath?: string) => {
+  const connectLocalAndOpen = async (rootPath?: string, executionEnvironment?: LauncherExecutionEnvironment) => {
     setError(null);
     setBusy(true);
     try {
@@ -116,6 +137,7 @@ export default function LauncherPage() {
             kind: "local",
             label: lastSegment(rootPath),
             root_path: rootPath,
+            execution_environment: executionEnvironment ?? inferLocalExecutionEnvironment(rootPath),
             updated_at_ms: Date.now(),
           });
         } catch {
@@ -137,7 +159,7 @@ export default function LauncherPage() {
     setBusy(true);
     try {
       if (r.kind === "local") {
-        await connectLocalAndOpen(r.root_path);
+        await connectLocalAndOpen(r.root_path, r.execution_environment);
         return;
       }
       const info = await desktopConnectSsh({
@@ -192,10 +214,8 @@ export default function LauncherPage() {
             </div>
             <div className="launcher-recents-list">
               {recents.slice(0, 8).map((r) => {
-                const key = r.kind === "local" ? `local:${r.root_path}` : `ssh:${r.user ?? ""}@${r.host}:${r.remote_port}`;
-                const location = r.kind === "local"
-                  ? (isDaemonManagedLocalContainerPath(r.root_path) ? "Local container" : `Local: ${r.root_path}`)
-                  : `Remote [${r.label}]: ${r.remote_data_dir ?? "/workspace"}`;
+                const key = recentRenderKey(r);
+                const location = recentLocationDisplay(r);
                 return (
                   <button
                     type="button"
@@ -205,7 +225,7 @@ export default function LauncherPage() {
                     disabled={busy}
                   >
                     <span className="launcher-recent-name">{r.label}</span>
-                    <span className="launcher-recent-location">{location}</span>
+                    <span className="launcher-recent-location" title={location.title}>{location.label}</span>
                   </button>
                 );
               })}
@@ -225,6 +245,131 @@ function lastSegment(path: string): string {
 }
 
 function isDaemonManagedLocalContainerPath(path: string): boolean {
-  const normalized = String(path || "").toLowerCase();
-  return normalized.includes("/rs.ctx.desktop/daemon/workspaces/");
+  const normalized = String(path || "")
+    .trim()
+    .replace(/\\/g, "/")
+    .toLowerCase();
+  return normalized.includes("/daemon/workspaces/") || normalized.includes("/workspaces/staging/");
+}
+
+function normalizeExecutionEnvironment(value: unknown): LauncherExecutionEnvironment | undefined {
+  if (value === "host" || value === "container_host_mounted" || value === "container_disk_isolated") {
+    return value;
+  }
+  return undefined;
+}
+
+function inferLocalExecutionEnvironment(path: string): LauncherExecutionEnvironment {
+  return isDaemonManagedLocalContainerPath(path) ? "container_disk_isolated" : "host";
+}
+
+function pathForDisplay(path: string): string {
+  const normalized = String(path || "").trim().replace(/\\/g, "/");
+  if (!normalized) return normalized;
+  if (normalized.startsWith("~")) return normalized;
+
+  const macosHome = normalized.match(/^\/Users\/[^/]+(\/.*)?$/);
+  if (macosHome) return `~${macosHome[1] ?? ""}`;
+
+  const linuxHome = normalized.match(/^\/home\/[^/]+(\/.*)?$/);
+  if (linuxHome) return `~${linuxHome[1] ?? ""}`;
+
+  const windowsHome = normalized.match(/^[A-Za-z]:\/Users\/[^/]+(\/.*)?$/);
+  if (windowsHome) return `~${windowsHome[1] ?? ""}`;
+
+  return normalized;
+}
+
+function recentLocationDisplay(recent: LauncherRecentEntry): { label: string; title: string } {
+  if (recent.kind === "local") {
+    const env = normalizeExecutionEnvironment(recent.execution_environment) ?? inferLocalExecutionEnvironment(recent.root_path);
+    if (env === "container_disk_isolated") {
+      return {
+        label: "Local container",
+        title: recent.root_path,
+      };
+    }
+    const displayPath = pathForDisplay(recent.root_path);
+    if (env === "container_host_mounted") {
+      return {
+        label: `${displayPath} (Container)`,
+        title: `${recent.root_path} (Container)`,
+      };
+    }
+    return {
+      label: `${displayPath} (Host)`,
+      title: `${recent.root_path} (Host)`,
+    };
+  }
+
+  const target = sshTarget(recent);
+  const env = normalizeExecutionEnvironment(recent.execution_environment);
+  if (env === "container_disk_isolated") {
+    return {
+      label: `${target} (Remote container)`,
+      title: `Remote container on ${target}`,
+    };
+  }
+
+  const workspaceRootPath = String(recent.workspace_root_path ?? "").trim();
+  if (workspaceRootPath) {
+    const displayPath = pathForDisplay(workspaceRootPath);
+    if (env === "container_host_mounted") {
+      return {
+        label: `${target}:${displayPath} (Container)`,
+        title: `${target}:${workspaceRootPath} (Container)`,
+      };
+    }
+    return {
+      label: `${target}:${displayPath} (Host)`,
+      title: `${target}:${workspaceRootPath} (Host)`,
+    };
+  }
+
+  const remoteDir = recent.remote_data_dir?.trim() || "/workspace";
+  return {
+    label: `Remote daemon (${target})`,
+    title: `Host ${target} (data dir: ${remoteDir})`,
+  };
+}
+
+function sshTarget(recent: Extract<LauncherRecentEntry, { kind: "ssh" }>): string {
+  const user = recent.user?.trim();
+  return user ? `${user}@${recent.host}` : recent.host;
+}
+
+async function recentsFromWorkspaces(workspaces: Awaited<ReturnType<typeof listWorkspaces>>): Promise<LauncherRecentEntry[]> {
+  const entries = await Promise.all(workspaces
+    .filter((workspace) => workspace.root_path.trim().length > 0)
+    .map(async (workspace) => {
+      const workspaceId = idToString(workspace.id ?? "").trim();
+      let executionEnvironment = inferLocalExecutionEnvironment(workspace.root_path);
+      if (workspaceId) {
+        try {
+          const config = await getWorkspaceExecutionConfig(workspaceId);
+          executionEnvironment = normalizeExecutionEnvironment(config.environment) ?? executionEnvironment;
+        } catch {
+          // keep inferred fallback
+        }
+      }
+      return {
+        kind: "local" as const,
+        label: workspace.name.trim() || lastSegment(workspace.root_path),
+        root_path: workspace.root_path,
+        execution_environment: executionEnvironment,
+        updated_at_ms: workspaceCreatedAtMs(workspace.created_at),
+      };
+    }));
+  return entries.sort((a, b) => b.updated_at_ms - a.updated_at_ms);
+}
+
+function workspaceCreatedAtMs(createdAt: string): number {
+  const parsed = Date.parse(createdAt);
+  if (!Number.isFinite(parsed)) return 0;
+  return parsed;
+}
+
+function recentRenderKey(recent: LauncherRecentEntry): string {
+  if (recent.kind === "local") return `local:${recent.root_path}`;
+  return `ssh:${recent.user ?? ""}@${recent.host}:${recent.remote_port}:${recent.workspace_root_path ?? ""}:${recent.execution_environment ?? ""}`;
 }
