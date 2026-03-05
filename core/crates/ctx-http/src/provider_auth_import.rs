@@ -859,6 +859,24 @@ fn env_value_case_insensitive(env_map: &BTreeMap<String, String>, keys: &[&str])
     None
 }
 
+fn gemini_env_uses_vertex_ai(env_map: &BTreeMap<String, String>) -> bool {
+    env_value_case_insensitive(env_map, &["GOOGLE_GENAI_USE_VERTEXAI"]).is_some_and(|value| {
+        matches!(
+            value.to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    }) || env_value_case_insensitive(
+        env_map,
+        &[
+            "GOOGLE_CLOUD_PROJECT",
+            "GOOGLE_CLOUD_LOCATION",
+            "GOOGLE_VERTEX_PROJECT",
+            "GOOGLE_VERTEX_LOCATION",
+        ],
+    )
+    .is_some()
+}
+
 fn default_endpoint_base_url_for_provider(provider_id: &str) -> Option<String> {
     match provider_id {
         "qwen" | "opencode" => Some(DEFAULT_OPENROUTER_BASE_URL.to_string()),
@@ -1156,7 +1174,12 @@ async fn import_gemini_env_candidate(
         };
         let env_map = parse_env_file(&String::from_utf8_lossy(bytes));
         if let Some(key) = env_value_case_insensitive(&env_map, &["GOOGLE_API_KEY"]) {
-            (key, None, Some("vertex_ai".to_string()))
+            let auth_type = if gemini_env_uses_vertex_ai(&env_map) {
+                "vertex_ai"
+            } else {
+                "gemini_api_key"
+            };
+            (key, None, Some(auth_type.to_string()))
         } else if let Some(key) = env_value_case_insensitive(&env_map, &["GEMINI_API_KEY"]) {
             (key, None, Some("gemini_api_key".to_string()))
         } else {
@@ -1749,6 +1772,102 @@ mod tests {
             .find(|endpoint| endpoint.id == selected_id)
             .expect("selected endpoint");
         assert_eq!(endpoint.auth_type, "gemini_api_key");
+        assert!(endpoint.base_url.is_none());
+    }
+
+    #[tokio::test]
+    async fn gemini_env_candidate_with_google_api_key_imports_native_key_endpoint() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let material = CandidateMaterial {
+            candidate: ProviderAuthImportCandidate {
+                id: "gemini-env-google-api-key".to_string(),
+                provider_id: "gemini".to_string(),
+                provider_label: "Gemini".to_string(),
+                kind: "env_file".to_string(),
+                path: "/tmp/.gemini/.env".to_string(),
+                signal_strength: "strong".to_string(),
+                confidence: "high".to_string(),
+                parse_status: "parsed".to_string(),
+                unsupported_reason: None,
+                summary: None,
+                account_identity: None,
+                endpoint: None,
+                auth_type: Some("api_key".to_string()),
+                fingerprint: None,
+                last_modified: None,
+            },
+            importable: true,
+            secret_bytes: Some(b"GOOGLE_API_KEY=key-google\n".to_vec()),
+            label: Some("Gemini Google API key".to_string()),
+        };
+
+        let result = import_candidate_to_canonical(root, &material)
+            .await
+            .unwrap();
+        assert_eq!(result.status, "imported");
+        let config = harness_sources::get_provider_source_config(root, "gemini")
+            .await
+            .unwrap();
+        let selected_id = config
+            .selected_endpoint_id
+            .as_deref()
+            .expect("selected endpoint id");
+        let endpoint = config
+            .endpoints
+            .iter()
+            .find(|endpoint| endpoint.id == selected_id)
+            .expect("selected endpoint");
+        assert_eq!(endpoint.auth_type, "gemini_api_key");
+        assert!(endpoint.base_url.is_none());
+    }
+
+    #[tokio::test]
+    async fn gemini_env_candidate_with_google_api_key_and_vertex_markers_imports_vertex_ai() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let material = CandidateMaterial {
+            candidate: ProviderAuthImportCandidate {
+                id: "gemini-env-vertex".to_string(),
+                provider_id: "gemini".to_string(),
+                provider_label: "Gemini".to_string(),
+                kind: "env_file".to_string(),
+                path: "/tmp/.gemini/.env".to_string(),
+                signal_strength: "strong".to_string(),
+                confidence: "high".to_string(),
+                parse_status: "parsed".to_string(),
+                unsupported_reason: None,
+                summary: None,
+                account_identity: None,
+                endpoint: None,
+                auth_type: Some("api_key".to_string()),
+                fingerprint: None,
+                last_modified: None,
+            },
+            importable: true,
+            secret_bytes: Some(
+                b"GOOGLE_API_KEY=key-google\nGOOGLE_GENAI_USE_VERTEXAI=true\n".to_vec(),
+            ),
+            label: Some("Gemini Vertex AI".to_string()),
+        };
+
+        let result = import_candidate_to_canonical(root, &material)
+            .await
+            .unwrap();
+        assert_eq!(result.status, "imported");
+        let config = harness_sources::get_provider_source_config(root, "gemini")
+            .await
+            .unwrap();
+        let selected_id = config
+            .selected_endpoint_id
+            .as_deref()
+            .expect("selected endpoint id");
+        let endpoint = config
+            .endpoints
+            .iter()
+            .find(|endpoint| endpoint.id == selected_id)
+            .expect("selected endpoint");
+        assert_eq!(endpoint.auth_type, "vertex_ai");
         assert!(endpoint.base_url.is_none());
     }
 

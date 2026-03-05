@@ -2125,6 +2125,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn refresh_provider_endpoint_model_catalog_returns_error_state_for_unsupported_discovery()
+    {
+        let root = tempfile::tempdir().expect("tempdir");
+        let endpoint = upsert_provider_endpoint(
+            root.path(),
+            PROVIDER_GEMINI,
+            HarnessEndpointUpsert {
+                endpoint_id: None,
+                name: "Gemini Native".to_string(),
+                base_url: None,
+                api_shape: None,
+                auth_type: Some(GEMINI_AUTH_TYPE_GEMINI_API_KEY.to_string()),
+                model_override: None,
+                api_key: Some("gemini-key".to_string()),
+            },
+        )
+        .await
+        .expect("upsert endpoint");
+
+        let refreshed =
+            refresh_provider_endpoint_model_catalog(root.path(), PROVIDER_GEMINI, &endpoint.id)
+                .await
+                .expect("refresh should not fail");
+
+        assert_eq!(
+            refreshed.model_catalog_status,
+            EndpointModelCatalogStatus::Error
+        );
+        assert!(refreshed
+            .model_catalog_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("model discovery is unsupported"));
+    }
+
+    #[tokio::test]
     async fn invalid_registry_json_returns_error() {
         let root = tempfile::tempdir().expect("tempdir");
         let path = registry_path(root.path());

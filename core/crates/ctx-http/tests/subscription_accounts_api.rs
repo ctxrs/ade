@@ -89,6 +89,19 @@ struct MistralLoginStatusResponse {
     error: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct AmpLoginStartResponse {
+    login_id: String,
+    auth_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AmpLoginStatusResponse {
+    status: String,
+    auth_url: Option<String>,
+    error: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 enum GeminiLoginFixture {
     Success {
@@ -413,6 +426,102 @@ impl ProviderAdapter for MistralLoginTestAdapter {
     }
 }
 
+#[derive(Debug, Clone)]
+enum AmpLoginFixture {
+    AuthRequired {
+        auth_url: Option<String>,
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct AmpLoginTestAdapter {
+    fixture: AmpLoginFixture,
+}
+
+impl AmpLoginTestAdapter {
+    fn auth_required(auth_url: Option<String>, message: impl Into<String>) -> Self {
+        Self {
+            fixture: AmpLoginFixture::AuthRequired {
+                auth_url,
+                message: message.into(),
+            },
+        }
+    }
+}
+
+#[async_trait]
+impl ProviderAdapter for AmpLoginTestAdapter {
+    async fn inspect(&self) -> Result<ProviderStatus> {
+        Ok(ProviderStatus {
+            provider_id: "amp".to_string(),
+            installed: true,
+            detected_path: None,
+            version: Some("test".to_string()),
+            capabilities: None,
+            health: ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+        })
+    }
+
+    async fn run(
+        &self,
+        _input: TurnInput,
+        _workdir: PathBuf,
+        _env: HashMap<String, String>,
+        _event_sink: mpsc::Sender<NormalizedEvent>,
+    ) -> Result<RunHandle> {
+        Err(anyhow!("run is not used in this test adapter"))
+    }
+
+    async fn cancel(&self, _handle: RunHandle) -> Result<()> {
+        Ok(())
+    }
+
+    async fn authenticate_session(
+        &self,
+        _session_key: String,
+        _workdir: PathBuf,
+        env: HashMap<String, String>,
+        method_id: Option<String>,
+        event_sink: mpsc::Sender<NormalizedEvent>,
+    ) -> Result<()> {
+        if method_id.as_deref() != Some("amp_browser_login") {
+            return Err(anyhow!(
+                "unexpected method_id: {:?}",
+                method_id.unwrap_or_default()
+            ));
+        }
+        if !env.contains_key("HOME") {
+            return Err(anyhow!("HOME missing"));
+        }
+
+        match &self.fixture {
+            AmpLoginFixture::AuthRequired { auth_url, message } => {
+                if let Some(auth_url) = auth_url.as_ref() {
+                    let _ = event_sink
+                        .send(NormalizedEvent {
+                            event_type: SessionEventType::Notice,
+                            payload_json: json!({ "auth_url": auth_url }),
+                        })
+                        .await;
+                }
+                let _ = event_sink
+                    .send(NormalizedEvent {
+                        event_type: SessionEventType::Notice,
+                        payload_json: json!({
+                            "code": "auth_required",
+                            "message": message,
+                        }),
+                    })
+                    .await;
+                Ok(())
+            }
+        }
+    }
+}
+
 fn providers_with_gemini_adapter(
     adapter: Arc<dyn ProviderAdapter>,
 ) -> HashMap<String, Arc<dyn ProviderAdapter>> {
@@ -434,6 +543,14 @@ fn providers_with_mistral_adapter(
 ) -> HashMap<String, Arc<dyn ProviderAdapter>> {
     let mut providers = common::fake_providers();
     providers.insert("mistral".to_string(), adapter);
+    providers
+}
+
+fn providers_with_amp_adapter(
+    adapter: Arc<dyn ProviderAdapter>,
+) -> HashMap<String, Arc<dyn ProviderAdapter>> {
+    let mut providers = common::fake_providers();
+    providers.insert("amp".to_string(), adapter);
     providers
 }
 
@@ -659,6 +776,34 @@ async fn poll_mistral_login_status(
     }
 }
 
+async fn poll_amp_login_status(
+    server: &common::TestServer,
+    login_id: &str,
+) -> AmpLoginStatusResponse {
+    let status_url = format!(
+        "{}/api/providers/amp/accounts/login/{}",
+        server.base_url, login_id
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let resp = server
+            .client
+            .get(&status_url)
+            .send()
+            .await
+            .expect("amp status request");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: AmpLoginStatusResponse = resp.json().await.expect("amp status body");
+        if body.status != "pending" {
+            return body;
+        }
+        if Instant::now() >= deadline {
+            panic!("amp login did not complete in time");
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
 #[tokio::test]
 async fn claude_subscription_accounts_crud_round_trip() {
     assert_managed_subscription_crud(
@@ -751,6 +896,76 @@ echo "ZXY987654321"
     let accounts: SubscriptionAccountsResponse = accounts_resp.json().await.expect("accounts body");
     assert_eq!(accounts.accounts.len(), 1);
     assert_eq!(accounts.active_account_id, status.account_id);
+}
+
+#[tokio::test]
+async fn claude_login_waits_for_process_exit_after_output_stream_closes() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let server = common::spawn_http_server(common::router(state)).await;
+
+    let script_path = write_mock_claude_runtime(
+        data_dir.path(),
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1-}" != "--shim" || "${2-}" != "setup-token" ]]; then
+  echo "unexpected args: $*" >&2
+  exit 2
+fi
+echo "Claude setup-token URL: https://claude.ai/oauth/authorize?code=test"
+echo "Long-lived authentication token created successfully!"
+echo ""
+echo "Your OAuth token (valid for 1 year):"
+echo ""
+echo "sk-ant-oat01-abcDEF1234567890_"
+echo "ZXY987654321"
+exec >/dev/null 2>&1
+sleep 1
+"#,
+    )
+    .await;
+    let mut cfg = AgentServerConfigFile {
+        providers: HashMap::new(),
+        managed_installs: HashMap::new(),
+    };
+    cfg.providers.insert(
+        "claude-cli".to_string(),
+        AgentServerCommand {
+            command: script_path.to_string_lossy().to_string(),
+            args: vec!["--shim".to_string()],
+            dependencies: vec![],
+            managed: None,
+        },
+    );
+    save_agent_server_config(data_dir.path(), &cfg)
+        .await
+        .expect("save agent config");
+
+    let start_url = format!(
+        "{}/api/providers/claude-crp/accounts/login/start",
+        server.base_url
+    );
+    let start_resp = server
+        .client
+        .post(start_url)
+        .json(&json!({ "label": "Claude OAuth" }))
+        .send()
+        .await
+        .expect("start claude login request");
+    assert_eq!(start_resp.status(), StatusCode::OK);
+    let start_body: ClaudeLoginStartResponse = start_resp.json().await.expect("start body");
+
+    let status =
+        poll_claude_login_status(&server, &start_body.login_id, Duration::from_secs(8)).await;
+    assert_eq!(status.status, "success");
+    assert!(status.account_id.is_some());
+    assert!(status.error.is_none());
 }
 
 #[tokio::test]
@@ -1341,6 +1556,44 @@ async fn gemini_login_fails_fast_when_no_auth_url_is_emitted() {
         .error
         .unwrap_or_default()
         .contains("did not emit an OAuth URL"));
+}
+
+#[tokio::test]
+async fn amp_login_auth_required_notice_reports_real_message() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let providers = providers_with_amp_adapter(Arc::new(AmpLoginTestAdapter::auth_required(
+        Some("https://ampcode.com/auth".to_string()),
+        "Amp needs subscription approval",
+    )));
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        providers,
+        "http://127.0.0.1:0",
+    );
+    let server = common::spawn_http_server(common::router(state)).await;
+
+    let start_url = format!("{}/api/providers/amp/accounts/login/start", server.base_url);
+    let start_resp = server
+        .client
+        .post(start_url)
+        .json(&json!({}))
+        .send()
+        .await
+        .expect("start amp login request");
+    assert_eq!(start_resp.status(), StatusCode::OK);
+    let start_body: AmpLoginStartResponse = start_resp.json().await.expect("start body");
+    assert!(!start_body.login_id.is_empty());
+    assert!(start_body.auth_url.is_none());
+
+    let status = poll_amp_login_status(&server, &start_body.login_id).await;
+    assert_eq!(status.status, "failed");
+    assert_eq!(
+        status.error.as_deref(),
+        Some("Amp needs subscription approval")
+    );
+    assert_eq!(status.auth_url.as_deref(), Some("https://ampcode.com/auth"));
 }
 
 #[tokio::test]

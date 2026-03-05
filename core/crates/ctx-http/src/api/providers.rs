@@ -2106,7 +2106,7 @@ async fn monitor_amp_login(state: Arc<AppState>, login_id: String, label: Option
                 let _ = tokio::fs::remove_dir_all(&login_home).await;
                 return;
             }
-            if matches!(code, "auth_failed" | "auth_error") {
+            if matches!(code, "auth_failed" | "auth_error" | "auth_required") {
                 let message = event
                     .payload_json
                     .get("message")
@@ -3585,6 +3585,7 @@ pub(super) async fn monitor_claude_login(
 ) {
     let mut transcript = String::new();
     let mut observed_auth_url = login.auth_url.clone();
+    let mut output_closed = false;
     let auth_url_deadline = Instant::now() + CLAUDE_LOGIN_NO_AUTH_URL_TIMEOUT;
     let mut completion_deadline = observed_auth_url
         .as_ref()
@@ -3623,7 +3624,7 @@ pub(super) async fn monitor_claude_login(
         tokio::pin!(timeout_future);
 
         tokio::select! {
-            maybe_line = login.line_rx.recv() => {
+            maybe_line = login.line_rx.recv(), if !output_closed => {
                 match maybe_line {
                     Some(line) => {
                         let had_auth_url = observed_auth_url.is_some();
@@ -3640,20 +3641,7 @@ pub(super) async fn monitor_claude_login(
                         }
                     }
                     None => {
-                        match tokio::time::timeout(CLAUDE_LOGIN_EXIT_GRACE_WAIT, &mut login.exit_rx).await {
-                            Ok(Ok(result)) => {
-                                exit_result = Some(result);
-                            }
-                            Ok(Err(err)) => {
-                                exit_result = Some(Err(anyhow::anyhow!("claude setup-token exit channel closed: {err}")));
-                            }
-                            Err(_) => {
-                                timeout_error = Some(
-                                    "claude setup-token output stream closed before process exit".to_string(),
-                                );
-                            }
-                        }
-                        break;
+                        output_closed = true;
                     }
                 }
             }
