@@ -179,6 +179,27 @@ struct HarnessContainer {
     egress_guard: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CachedContainerAction {
+    Reuse,
+    Reconfigure,
+    Recreate,
+}
+
+fn cached_container_action(
+    cached: &HarnessContainer,
+    settings: &ContainerExecutionSettings,
+    external_mounts: &HashSet<String>,
+) -> CachedContainerAction {
+    if cached.mount_mode != settings.mount_mode || cached.external_mounts != *external_mounts {
+        return CachedContainerAction::Recreate;
+    }
+    if cached.network_mode != settings.network_mode || cached.allowlist != settings.allowlist {
+        return CachedContainerAction::Reconfigure;
+    }
+    CachedContainerAction::Reuse
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct HarnessContainerStatus {
     pub name: String,
@@ -511,24 +532,33 @@ impl HarnessRuntimeManager {
             "checking existing workspace container",
         );
         if let Some(container) = containers.get(&workspace.id) {
-            if container.mount_mode != settings.mount_mode
-                || container.external_mounts != mount_plan.external_mounts
-            {
-                observe_log(
-                    observer,
-                    HarnessSetupPhase::ContainerCheck,
-                    HarnessSetupLogLevel::Info,
-                    "container configuration changed; recreating",
-                );
-                recreate = true;
-            } else {
-                observe_log(
-                    observer,
-                    HarnessSetupPhase::ContainerCheck,
-                    HarnessSetupLogLevel::Info,
-                    "container already ready in runtime cache",
-                );
-                return Ok(container.clone());
+            match cached_container_action(container, settings, &mount_plan.external_mounts) {
+                CachedContainerAction::Reuse => {
+                    observe_log(
+                        observer,
+                        HarnessSetupPhase::ContainerCheck,
+                        HarnessSetupLogLevel::Info,
+                        "container already ready in runtime cache",
+                    );
+                    return Ok(container.clone());
+                }
+                CachedContainerAction::Reconfigure => {
+                    observe_log(
+                        observer,
+                        HarnessSetupPhase::ContainerCheck,
+                        HarnessSetupLogLevel::Info,
+                        "container network policy changed; reconfiguring",
+                    );
+                }
+                CachedContainerAction::Recreate => {
+                    observe_log(
+                        observer,
+                        HarnessSetupPhase::ContainerCheck,
+                        HarnessSetupLogLevel::Info,
+                        "container configuration changed; recreating",
+                    );
+                    recreate = true;
+                }
             }
         }
 
@@ -2715,6 +2745,29 @@ mod tests {
         HarnessRuntimeManager::new(tmp.path().to_path_buf())
     }
 
+    fn sample_cached_container() -> HarnessContainer {
+        let mut external_mounts = HashSet::new();
+        external_mounts.insert("/tmp/external".to_string());
+        HarnessContainer {
+            name: "ctx-harness-sample".to_string(),
+            mount_mode: ContainerMountMode::HostMounted,
+            network_mode: ContainerNetworkMode::Allowlist,
+            allowlist: vec!["github.com".to_string()],
+            external_mounts,
+            egress_guard: true,
+        }
+    }
+
+    fn sample_container_settings() -> ContainerExecutionSettings {
+        ContainerExecutionSettings {
+            runtime: crate::settings::ContainerRuntimeKind::Podman,
+            mount_mode: ContainerMountMode::HostMounted,
+            network_mode: ContainerNetworkMode::Allowlist,
+            allowlist: vec!["github.com".to_string()],
+            image: None,
+        }
+    }
+
     async fn spawn_static_http_server(body: Vec<u8>) -> (String, JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -2903,6 +2956,51 @@ mod tests {
         let (mode, allowlist) = transparent_proxy_policy(&settings);
         assert_eq!(mode, ContainerNetworkMode::Allowlist);
         assert_eq!(allowlist, settings.allowlist);
+    }
+
+    #[test]
+    fn cached_container_action_reuses_when_mounts_and_network_match() {
+        let cached = sample_cached_container();
+        let settings = sample_container_settings();
+        let action = cached_container_action(&cached, &settings, &cached.external_mounts);
+        assert_eq!(action, CachedContainerAction::Reuse);
+    }
+
+    #[test]
+    fn cached_container_action_recreates_when_mount_mode_changes() {
+        let cached = sample_cached_container();
+        let mut settings = sample_container_settings();
+        settings.mount_mode = ContainerMountMode::DiskIsolated;
+        let action = cached_container_action(&cached, &settings, &cached.external_mounts);
+        assert_eq!(action, CachedContainerAction::Recreate);
+    }
+
+    #[test]
+    fn cached_container_action_recreates_when_external_mounts_change() {
+        let cached = sample_cached_container();
+        let settings = sample_container_settings();
+        let mut changed_mounts = cached.external_mounts.clone();
+        changed_mounts.insert("/tmp/another".to_string());
+        let action = cached_container_action(&cached, &settings, &changed_mounts);
+        assert_eq!(action, CachedContainerAction::Recreate);
+    }
+
+    #[test]
+    fn cached_container_action_reconfigures_when_network_mode_changes() {
+        let cached = sample_cached_container();
+        let mut settings = sample_container_settings();
+        settings.network_mode = ContainerNetworkMode::All;
+        let action = cached_container_action(&cached, &settings, &cached.external_mounts);
+        assert_eq!(action, CachedContainerAction::Reconfigure);
+    }
+
+    #[test]
+    fn cached_container_action_reconfigures_when_allowlist_changes() {
+        let cached = sample_cached_container();
+        let mut settings = sample_container_settings();
+        settings.allowlist = vec!["example.com".to_string()];
+        let action = cached_container_action(&cached, &settings, &cached.external_mounts);
+        assert_eq!(action, CachedContainerAction::Reconfigure);
     }
 
     #[test]
