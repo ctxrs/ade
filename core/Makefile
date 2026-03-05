@@ -1,8 +1,9 @@
-.PHONY: test dev web supabase-local supabase-functions dev-preflight
+.PHONY: test dev dev-codex-crp-local web supabase-local supabase-functions dev-preflight
 
 CARGO_TARGET_DIR ?= $(HOME)/.cache/cargo/ctx-monorepo
 CTX_MCP_COMMAND ?= $(CARGO_TARGET_DIR)/debug/ctx-mcp
 CTX_CRP_PROFILE ?= debug
+CTX_INSTALL_LOCAL_CODEX_CRP ?= 0
 CTX_DEV_MODE ?= 1
 CTX_DAEMON_PORT ?= 4399
 CTX_DAEMON_BIND ?= 127.0.0.1:$(CTX_DAEMON_PORT)
@@ -69,6 +70,8 @@ DEV_MISC_SETENV := --setenv CTX_DEV_MODE=$(if $(CTX_DEV_MODE),$(CTX_DEV_MODE),$(
 DEV_MALLOC_CONF_ENV := $(if $(CTX_DAEMON_MALLOC_CONF),MALLOC_CONF=$(CTX_DAEMON_MALLOC_CONF))
 DEV_MALLOC_CONF_SETENV := $(if $(CTX_DAEMON_MALLOC_CONF),--setenv MALLOC_CONF=$(CTX_DAEMON_MALLOC_CONF))
 DEV_DAEMON_FEATURES := $(if $(CTX_DAEMON_FEATURES),--features $(CTX_DAEMON_FEATURES))
+LOCAL_CODEX_CRP_ENABLED = $(if $(filter 1 true TRUE yes YES on ON,$(CTX_INSTALL_LOCAL_CODEX_CRP)),1,0)
+DEV_CRP_TURBO_TASKS = crp:claude $(if $(filter 1,$(LOCAL_CODEX_CRP_ENABLED)),crp:codex,)
 export CARGO_TARGET_DIR
 
 ifeq ($(SUPABASE_PROD),1)
@@ -91,8 +94,8 @@ ifeq ($(SUPABASE_FUNCTIONS),1)
 endif
 
 dev: dev-preflight supabase-local supabase-functions
-	@CTX_CRP_PROFILE="$(CTX_CRP_PROFILE)" pnpm turbo run crp:codex crp:claude --filter=ctx-monorepo --cache-dir=$${TURBO_CACHE_DIR:-$$HOME/.cache/turbo/ctx-monorepo} --output-logs=new-only --log-order=grouped --concurrency=1 --ui=stream --cache=local:r,remote:r
-	@CTX_DATA_DIR=$(CTX_DAEMON_DATA_DIR) CTX_CRP_PROFILE="$(CTX_CRP_PROFILE)" ../scripts/dev_install_crp_harnesses.sh
+	@CTX_CRP_PROFILE="$(CTX_CRP_PROFILE)" pnpm turbo run $(DEV_CRP_TURBO_TASKS) --filter=ctx-monorepo --cache-dir=$${TURBO_CACHE_DIR:-$$HOME/.cache/turbo/ctx-monorepo} --output-logs=new-only --log-order=grouped --concurrency=1 --ui=stream --cache=local:r,remote:r
+	@CTX_DATA_DIR=$(CTX_DAEMON_DATA_DIR) CTX_CRP_PROFILE="$(CTX_CRP_PROFILE)" CTX_INSTALL_LOCAL_CODEX_CRP="$(CTX_INSTALL_LOCAL_CODEX_CRP)" ../scripts/dev_install_crp_harnesses.sh
 	cargo build -p ctx-mcp
 ifeq ($(shell uname -s),Linux)
 	@if command -v systemd-run >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then \
@@ -118,6 +121,9 @@ else
 	bundle_dir="$$(../scripts/ensure_bundled_harnesses.sh)"; \
 	$(DEV_LOG_ENV) $(DEV_DEBUG_ENV) $(DEV_CRP_ENV) $(DEV_MISC_ENV) $(DEV_MALLOC_CONF_ENV) CTX_BUNDLE_DIR="$$bundle_dir" CTX_MCP_COMMAND=$(CTX_MCP_COMMAND) cargo run -p ctx-http $(DEV_DAEMON_FEATURES) --bin ctx -- serve --bind $(CTX_DAEMON_BIND) $(if $(CTX_DATA_DIR),--data-dir $(CTX_DATA_DIR),)
 endif
+
+dev-codex-crp-local: CTX_INSTALL_LOCAL_CODEX_CRP=1
+dev-codex-crp-local: dev
 
 dev-preflight:
 	@if [ "$(CTX_DAEMON_STOP)" = "1" ]; then \

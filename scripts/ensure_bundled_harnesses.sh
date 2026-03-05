@@ -413,7 +413,7 @@ PY
 BRIDGE_DIR="${CTX_BUNDLE_BRIDGE_DIR:-$ROOT/external-harnesses/acp-crp-bridge}"
 BRIDGE_BIN="acp-crp-bridge"
 CODEX_CRP_WORKSPACE="${CTX_BUNDLE_CODEX_CRP_WORKSPACE:-$ROOT/external-harnesses/codex/codex-rs}"
-CODEX_CRP_BUILD_MODE="${CTX_BUNDLE_BUILD_CODEX_CRP:-auto}"
+CODEX_CRP_BUILD_MODE="${CTX_BUNDLE_BUILD_CODEX_CRP:-0}"
 CLAUDE_CRP_WORKSPACE="${CTX_BUNDLE_CLAUDE_CRP_WORKSPACE:-$ROOT/external-harnesses/claude-crp}"
 LOCAL_ADAPTERS_DIR="${CTX_BUNDLE_ADAPTERS_DIR:-$ROOT/harness-adapters}"
 LOCAL_ADAPTER_MODE="${CTX_BUNDLE_LOCAL_ADAPTERS:-on}"
@@ -2112,22 +2112,8 @@ should_build_codex_crp() {
   if is_falsy "$CODEX_CRP_BUILD_MODE"; then
     return 1
   fi
-  # auto: build codex-crp from local source when available, but only for platforms where we
-  # don't currently ship a managed archive.
-  #
-  # Guardrail: if the caller is explicitly cross-bundling (CTX_BUNDLE_OS/ARCH), avoid auto
-  # building to prevent surprising cross-compilation requirements / wrong-arch binaries.
-  if [[ -n "${bundle_os:-}" || -n "${bundle_arch:-}" ]]; then
-    return 1
-  fi
-  # Today we ship a managed archive for linux/x86_64 only (see provider_matrix.json), so:
-  # - build on macOS for local-host execution
-  # - build on linux/aarch64 so container-mode works offline on Apple Silicon
-  if [[ "$os" == "macos" || ("$os" == "linux" && "$arch" == "aarch64") ]]; then
-    [[ -d "$CODEX_CRP_WORKSPACE" ]]
-  else
-    return 1
-  fi
+  log "error: invalid CTX_BUNDLE_BUILD_CODEX_CRP='${CODEX_CRP_BUILD_MODE}' (expected 0/1)"
+  exit 5
 }
 
 local_codex_crp_binary_path() {
