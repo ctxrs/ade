@@ -17,7 +17,6 @@ import {
 
 const PROMPT_SNOOZE_STORAGE_KEY = "ctx_update_prompt_next_allowed_at_v1";
 const IDLE_UPDATE_VERSION_STORAGE_KEY = "ctx_update_prompt_idle_versions_v1";
-const AUTO_APPLY_ON_LAUNCH_STORAGE_KEY = "ctx_update_auto_apply_on_launch_v1";
 const RESTART_REQUIRED_VERSION_STORAGE_KEY = "ctx_update_restart_required_version_v1";
 const POLL_INTERVAL_MS = 60 * 60 * 1000;
 const PROMPT_SNOOZE_MS = 24 * 60 * 60 * 1000;
@@ -50,16 +49,6 @@ const writeVersionSet = (key: string, versions: Set<string>) => {
 
 const writeIdleUpdateVersions = (versions: Set<string>) =>
   writeVersionSet(IDLE_UPDATE_VERSION_STORAGE_KEY, versions);
-
-const shouldAutoApplyOnLaunch = (): boolean => {
-  if (typeof window === "undefined") return true;
-  try {
-    const raw = String(window.localStorage.getItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY) ?? "").trim().toLowerCase();
-    return !(raw === "0" || raw === "false" || raw === "off");
-  } catch {
-    return true;
-  }
-};
 
 const readRestartRequiredVersion = (): string => {
   if (typeof window === "undefined") return "";
@@ -358,7 +347,6 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
   const applyInFlightRef = useRef(false);
   const updateInfoRef = useRef<UpdateCheck | null>(updateInfo);
   const nativeStateSignatureRef = useRef<string>("");
-  const autoApplyOnLaunchEnabled = shouldAutoApplyOnLaunch();
 
   useEffect(() => {
     updateInfoRef.current = updateInfo;
@@ -713,7 +701,6 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
 
   useEffect(() => {
     if (!isDesktop) return;
-    if (!autoApplyOnLaunchEnabled) return;
     if (restartRequired) return;
     if (!desktopStagedReady) return;
     const version = latestKnownVersion;
@@ -725,7 +712,6 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
     void applyUpdateNow(version, "launch_auto");
   }, [
     applyUpdateNow,
-    autoApplyOnLaunchEnabled,
     desktopStagedReady,
     isDesktop,
     latestKnownVersion,

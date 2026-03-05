@@ -169,8 +169,8 @@ describe("UpdateNoticeBanner", () => {
     expect(window.localStorage.getItem(IDLE_UPDATE_VERSION_STORAGE_KEY)).toContain("1.2.3");
   });
 
-  it("auto-applies update on desktop launch and preserves restart-required state", async () => {
-    window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "1");
+  it("auto-applies update on desktop launch even when legacy off-switch is set, and preserves restart-required state", async () => {
+    window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "0");
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(readCachedUpdateCheck).mockReturnValue(null);
     vi.mocked(refreshUpdateCheck).mockResolvedValue({
