@@ -13,7 +13,7 @@ use tokio::time::timeout;
 
 use crate::bundled_assets;
 use crate::container_builder;
-use crate::daemon::AppState;
+use crate::daemon::{self, AppState};
 use crate::installs::{
     truncate_for_storage, InstallErrorCode, InstallEventLevel, InstallId, InstallProgressEvent,
     InstallTarget,
@@ -97,6 +97,25 @@ async fn acquire_provider_install_lock(
             .clone()
     };
     lock.lock_owned().await
+}
+
+fn managed_provider_runtime_command(
+    data_root: &Path,
+    provider_id: &str,
+    managed_cmd: AgentServerCommand,
+    bridge_cmd: Option<&AgentServerCommand>,
+) -> Result<AgentServerCommand> {
+    if !daemon::is_acp_provider_id(provider_id) {
+        return Ok(managed_cmd);
+    }
+
+    let bridge_cmd = bridge_cmd.ok_or_else(|| {
+        anyhow::anyhow!(
+            "ACP bridge runtime is not configured or invalid for provider '{provider_id}'"
+        )
+    })?;
+    let acp_cmd = daemon::normalize_acp_provider_command(data_root, provider_id, managed_cmd);
+    Ok(daemon::acp_bridge_command(bridge_cmd, acp_cmd))
 }
 
 pub async fn install_provider(state: &AppState, provider_id: &str) -> Result<()> {
@@ -2004,8 +2023,34 @@ async fn install_provider_impl(
         )
         .await;
 
+        let adapter_cfg = load_agent_server_config(&state.core.data_root)
+            .await
+            .unwrap_or_default();
+        let bridge_cmd = if daemon::is_acp_provider_id(&provider_id) {
+            resolve_runtime_provider_command(&adapter_cfg, "acp-crp-bridge")?.map(|resolved| {
+                AgentServerCommand {
+                    command: resolved.command_abs_path,
+                    args: resolved.args,
+                    dependencies: resolved.dependencies,
+                    managed: None,
+                }
+            })
+        } else {
+            None
+        };
+        let runtime_cmd = managed_provider_runtime_command(
+            &state.core.data_root,
+            &provider_id,
+            AgentServerCommand {
+                command: managed.command.clone(),
+                args: managed.args.clone(),
+                dependencies: Vec::new(),
+                managed: None,
+            },
+            bridge_cmd.as_ref(),
+        )?;
         let adapter: std::sync::Arc<Tier1CrpAdapter> = std::sync::Arc::new(
-            Tier1CrpAdapter::from_raw(&provider_id, managed.command.clone(), managed.args.clone()),
+            Tier1CrpAdapter::from_raw(&provider_id, runtime_cmd.command, runtime_cmd.args),
         );
 
         // Refresh the in-memory adapter so new Sessions use the managed install.
@@ -4483,6 +4528,54 @@ mod tests {
             node_runtime_dependency_targets_for_install_target(InstallTarget::Container, "linux"),
             vec![InstallTarget::Container]
         );
+    }
+
+    #[test]
+    fn managed_provider_runtime_command_wraps_acp_providers_with_bridge() {
+        let data_root = tempfile::tempdir().expect("tempdir");
+        let managed = AgentServerCommand {
+            command: "/tmp/opencode".to_string(),
+            args: vec!["acp".to_string()],
+            dependencies: Vec::new(),
+            managed: None,
+        };
+        let bridge = AgentServerCommand {
+            command: "/tmp/acp-crp-bridge".to_string(),
+            args: vec!["--stdio".to_string()],
+            dependencies: Vec::new(),
+            managed: None,
+        };
+
+        let runtime =
+            managed_provider_runtime_command(data_root.path(), "opencode", managed, Some(&bridge))
+                .expect("wrapped runtime command");
+
+        assert_eq!(runtime.command, "/tmp/acp-crp-bridge");
+        assert_eq!(runtime.args.first().map(String::as_str), Some("--stdio"));
+        assert!(
+            runtime.args.iter().any(|arg| arg == "--acp-command"),
+            "bridge command must include ACP command wrapper"
+        );
+        assert!(
+            runtime.args.iter().any(|arg| arg == "/tmp/opencode acp"),
+            "bridge command should point at the installed ACP command"
+        );
+    }
+
+    #[test]
+    fn managed_provider_runtime_command_keeps_native_crp_providers_raw() {
+        let managed = AgentServerCommand {
+            command: "/tmp/codex-crp".to_string(),
+            args: vec!["--stdio".to_string()],
+            dependencies: Vec::new(),
+            managed: None,
+        };
+
+        let runtime = managed_provider_runtime_command(Path::new("/tmp"), "codex", managed, None)
+            .expect("raw runtime command");
+
+        assert_eq!(runtime.command, "/tmp/codex-crp");
+        assert_eq!(runtime.args, vec!["--stdio".to_string()]);
     }
 
     #[test]

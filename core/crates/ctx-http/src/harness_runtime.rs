@@ -8,6 +8,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use futures::StreamExt;
 use sha2::Digest;
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::{fs, io::AsyncWriteExt};
@@ -33,6 +34,7 @@ use url::Url;
 // - /usr/local/bin/ctx-egress-proxy (Linux binary executed inside the container)
 const DEFAULT_CONTAINER_IMAGE: &str = "ghcr.io/ctxrs/ctx-harness:ubuntu-24.04";
 const PODMAN_PATH_ENV: &str = "CTX_PODMAN_PATH";
+const PODMAN_MACHINE_CACHE_DIR_ENV: &str = "CTX_PODMAN_MACHINE_CACHE_DIR";
 const EGRESS_PROXY_BINARY: &str = "ctx-egress-proxy";
 const EGRESS_PROXY_RUNTIME_ID: &str = "ctx-egress-proxy";
 const EGRESS_PROXY_CONFIG_NAME: &str = "egress-proxy.json";
@@ -54,6 +56,22 @@ const PODMAN_MACHINE_INIT_TIMEOUT: Duration = Duration::from_secs(8 * 60);
 const PODMAN_MACHINE_READY_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 const PODMAN_OP_TIMEOUT: Duration = Duration::from_secs(60);
 const PODMAN_LOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
+fn podman_machine_init_created_machine_grace() -> Duration {
+    if cfg!(test) {
+        Duration::from_millis(300)
+    } else {
+        Duration::from_secs(10)
+    }
+}
+
+fn podman_machine_init_poll_interval() -> Duration {
+    if cfg!(test) {
+        Duration::from_millis(50)
+    } else {
+        Duration::from_secs(1)
+    }
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -140,6 +158,260 @@ fn podman_home_root(data_root: &Path) -> PathBuf {
 
 fn podman_temp_root(data_root: &Path) -> PathBuf {
     podman_runtime_root(data_root).join("tmp")
+}
+
+fn podman_machine_cache_root(data_root: &Path) -> PathBuf {
+    data_root
+        .join("podman")
+        .join("xdg")
+        .join("data")
+        .join("containers")
+        .join("podman")
+        .join("machine")
+}
+
+fn shared_podman_machine_cache_root() -> Option<PathBuf> {
+    if let Ok(raw) = std::env::var(PODMAN_MACHINE_CACHE_DIR_ENV) {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return Some(PathBuf::from(trimmed));
+        }
+    }
+    directories::BaseDirs::new().map(|base| {
+        base.cache_dir()
+            .join("ctx")
+            .join("podman-machine")
+            .join(std::env::consts::OS)
+            .join(std::env::consts::ARCH)
+    })
+}
+
+fn collect_podman_machine_cache_file_relpaths(root: &Path) -> Result<Vec<PathBuf>> {
+    fn collect_recursive(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+        for entry in
+            std::fs::read_dir(dir).with_context(|| format!("read_dir {}", dir.display()))?
+        {
+            let entry = entry.with_context(|| format!("read_dir entry {}", dir.display()))?;
+            let path = entry.path();
+            let file_type = entry
+                .file_type()
+                .with_context(|| format!("stat {}", path.display()))?;
+            if file_type.is_dir() {
+                collect_recursive(root, &path, out)?;
+                continue;
+            }
+            if file_type.is_file() || file_type.is_symlink() {
+                let relpath = path.strip_prefix(root).with_context(|| {
+                    format!("computing relative cache path for {}", path.display())
+                })?;
+                out.push(relpath.to_path_buf());
+            }
+        }
+        Ok(())
+    }
+
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut relpaths = Vec::new();
+    for provider_dir in
+        std::fs::read_dir(root).with_context(|| format!("read_dir {}", root.display()))?
+    {
+        let provider_dir =
+            provider_dir.with_context(|| format!("read_dir entry {}", root.display()))?;
+        let provider_path = provider_dir.path();
+        if !provider_path.is_dir() {
+            continue;
+        }
+        let cache_dir = provider_path.join("cache");
+        if !cache_dir.is_dir() {
+            continue;
+        }
+        collect_recursive(root, &cache_dir, &mut relpaths)?;
+    }
+    relpaths.sort();
+    Ok(relpaths)
+}
+
+#[cfg(unix)]
+fn symlink_cache_file(src: &Path, dest: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(src, dest)
+}
+
+#[cfg(windows)]
+fn symlink_cache_file(src: &Path, dest: &Path) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_file(src, dest)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn symlink_cache_file(_src: &Path, _dest: &Path) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "file symlinks are not supported on this platform",
+    ))
+}
+
+fn podman_machine_cache_tmp_path(dest: &Path) -> PathBuf {
+    let file_name = dest
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("cache-file");
+    dest.with_file_name(format!(
+        ".{file_name}.tmp-{}",
+        uuid::Uuid::new_v4().simple()
+    ))
+}
+
+async fn materialize_podman_machine_cache_file(
+    src: &Path,
+    dest: &Path,
+    allow_symlink: bool,
+) -> Result<()> {
+    if src == dest || dest.exists() {
+        return Ok(());
+    }
+    let Some(parent) = dest.parent() else {
+        anyhow::bail!(
+            "podman machine cache target has no parent: {}",
+            dest.display()
+        );
+    };
+    fs::create_dir_all(parent)
+        .await
+        .with_context(|| format!("creating {}", parent.display()))?;
+
+    match std::fs::hard_link(src, dest) {
+        Ok(()) => return Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => return Ok(()),
+        Err(_) => {}
+    }
+    if allow_symlink {
+        match symlink_cache_file(src, dest) {
+            Ok(()) => return Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => return Ok(()),
+            Err(_) => {}
+        }
+    }
+
+    let tmp = podman_machine_cache_tmp_path(dest);
+    let _ = fs::remove_file(&tmp).await;
+    fs::copy(src, &tmp)
+        .await
+        .with_context(|| format!("copying {} -> {}", src.display(), tmp.display()))?;
+    match fs::rename(&tmp, dest).await {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            let _ = fs::remove_file(&tmp).await;
+            Ok(())
+        }
+        Err(err) => {
+            let _ = fs::remove_file(&tmp).await;
+            Err(err).with_context(|| format!("moving {} -> {}", tmp.display(), dest.display()))
+        }
+    }
+}
+
+async fn seed_shared_podman_machine_cache(
+    data_root: &Path,
+    observer: Option<&dyn HarnessSetupObserver>,
+) -> Result<()> {
+    let Some(shared_root) = shared_podman_machine_cache_root() else {
+        return Ok(());
+    };
+    let relpaths = collect_podman_machine_cache_file_relpaths(&shared_root)?;
+    if relpaths.is_empty() {
+        return Ok(());
+    }
+    let local_root = podman_machine_cache_root(data_root);
+    let mut seeded = 0usize;
+    for relpath in relpaths {
+        let src = shared_root.join(&relpath);
+        let dest = local_root.join(&relpath);
+        if dest.exists() {
+            continue;
+        }
+        materialize_podman_machine_cache_file(&src, &dest, true).await?;
+        seeded += 1;
+    }
+    if seeded > 0 {
+        observe_log(
+            observer,
+            HarnessSetupPhase::MachineStartOrInit,
+            HarnessSetupLogLevel::Info,
+            &format!(
+                "seeded {seeded} podman machine cache file(s) from {}",
+                shared_root.display()
+            ),
+        );
+    }
+    Ok(())
+}
+
+async fn persist_podman_machine_cache_to_shared(
+    data_root: &Path,
+    observer: Option<&dyn HarnessSetupObserver>,
+) -> Result<()> {
+    let Some(shared_root) = shared_podman_machine_cache_root() else {
+        return Ok(());
+    };
+    let local_root = podman_machine_cache_root(data_root);
+    let relpaths = collect_podman_machine_cache_file_relpaths(&local_root)?;
+    if relpaths.is_empty() {
+        return Ok(());
+    }
+    let mut persisted = 0usize;
+    for relpath in relpaths {
+        let src = local_root.join(&relpath);
+        let dest = shared_root.join(&relpath);
+        if src == dest || dest.exists() {
+            continue;
+        }
+        materialize_podman_machine_cache_file(&src, &dest, false).await?;
+        persisted += 1;
+    }
+    if persisted > 0 {
+        observe_log(
+            observer,
+            HarnessSetupPhase::MachineStartOrInit,
+            HarnessSetupLogLevel::Info,
+            &format!(
+                "persisted {persisted} podman machine cache file(s) into {}",
+                shared_root.display()
+            ),
+        );
+    }
+    Ok(())
+}
+
+async fn seed_shared_podman_machine_cache_best_effort(
+    data_root: &Path,
+    observer: Option<&dyn HarnessSetupObserver>,
+) {
+    if let Err(err) = seed_shared_podman_machine_cache(data_root, observer).await {
+        observe_log(
+            observer,
+            HarnessSetupPhase::MachineStartOrInit,
+            HarnessSetupLogLevel::Warn,
+            &format!("failed to seed shared podman machine cache: {err:#}"),
+        );
+        tracing::warn!("failed to seed shared podman machine cache: {err:#}");
+    }
+}
+
+async fn persist_podman_machine_cache_to_shared_best_effort(
+    data_root: &Path,
+    observer: Option<&dyn HarnessSetupObserver>,
+) {
+    if let Err(err) = persist_podman_machine_cache_to_shared(data_root, observer).await {
+        observe_log(
+            observer,
+            HarnessSetupPhase::MachineStartOrInit,
+            HarnessSetupLogLevel::Warn,
+            &format!("failed to persist shared podman machine cache: {err:#}"),
+        );
+        tracing::warn!("failed to persist shared podman machine cache: {err:#}");
+    }
 }
 
 static PODMAN_MACHINE_SINGLEFLIGHT_LOCKS: OnceLock<StdMutex<HashMap<String, Arc<Mutex<()>>>>> =
@@ -286,20 +558,30 @@ impl HarnessRuntimeManager {
             return Ok(());
         }
         ensure_managed_podman_runtime(&self.data_root, None).await?;
-        if podman_machine_present(&self.data_root).await? {
-            return Ok(());
-        }
         let machine_name = ctx_podman_machine_name(&self.data_root);
-        let mut cmd = podman_command(&self.data_root)?;
-        cmd.arg("machine").arg("init").arg(machine_name);
-        let output = command_output_with_timeout(cmd, PODMAN_MACHINE_INIT_TIMEOUT).await?;
-        if output.status.success() {
+        let machine_lock = podman_machine_singleflight_lock(&machine_name);
+        let _machine_guard = match machine_lock.try_lock() {
+            Ok(guard) => guard,
+            Err(_) => return Ok(()),
+        };
+        seed_shared_podman_machine_cache_best_effort(&self.data_root, None).await;
+        if podman_machine_present(&self.data_root).await? {
+            persist_podman_machine_cache_to_shared_best_effort(&self.data_root, None).await;
             return Ok(());
         }
-        anyhow::bail!(
-            "podman machine init failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
+        let init_outcome = run_podman_machine_init(&self.data_root, &machine_name, None).await?;
+        let output = init_outcome.output;
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let combined = format!("{stderr}\n{stdout}").trim().to_string();
+        if init_outcome.continued_after_machine_present
+            || output.status.success()
+            || combined.to_ascii_lowercase().contains("already exists")
+        {
+            persist_podman_machine_cache_to_shared_best_effort(&self.data_root, None).await;
+            return Ok(());
+        }
+        anyhow::bail!("podman machine init failed: {}", combined);
     }
 
     pub async fn prepare(
@@ -640,7 +922,9 @@ impl HarnessRuntimeManager {
             );
             let mut cmd = podman_command(&self.data_root)?;
             cmd.arg("run").arg("-d").arg("--name").arg(&name);
-            cmd.arg("--userns=keep-id");
+            if should_use_keep_id_userns() {
+                cmd.arg("--userns=keep-id");
+            }
             if let Some(user) = container_user() {
                 cmd.arg("--user").arg(user);
             }
@@ -1442,7 +1726,7 @@ pub async fn container_image_status(data_root: &Path, image: &str) -> Result<Con
                 present: false,
                 available: false,
                 error: Some(err.to_string()),
-            })
+            });
         }
     };
     let output = match output {
@@ -1452,7 +1736,7 @@ pub async fn container_image_status(data_root: &Path, image: &str) -> Result<Con
                 present: false,
                 available: false,
                 error: Some(err.to_string()),
-            })
+            });
         }
     };
     if output.status.success() {
@@ -1905,7 +2189,7 @@ pub(crate) fn podman_invocation(data_root: &Path) -> Result<PodmanInvocation> {
     let xdg_root = data_root.join("podman").join("xdg");
     let xdg_config = xdg_root.join("config");
     let xdg_data = xdg_root.join("data");
-    let xdg_run = xdg_root.join("run");
+    let xdg_run = podman_runtime_root(data_root).join("run");
     let podman_home = podman_home_root(data_root);
     let podman_tmp_root = podman_temp_root(data_root);
     std::fs::create_dir_all(&xdg_config)
@@ -2022,13 +2306,6 @@ fn looks_like_recoverable_machine_start_error(message_lc: &str) -> bool {
         || message_lc.contains("address already in use")
 }
 
-fn looks_like_recoverable_machine_init_start_error(message_lc: &str) -> bool {
-    // Some podman versions report a non-zero exit from `machine init --now` even though
-    // initialization succeeded and only the immediate startup leg flaked.
-    (message_lc.contains("machine init complete") || message_lc.contains("starting machine"))
-        && looks_like_recoverable_machine_start_error(message_lc)
-}
-
 fn podman_machine_temp_state_paths(data_root: &Path, machine_name: &str) -> Vec<PathBuf> {
     let podman_tmp = podman_temp_root(data_root).join("podman");
     let podman_home = podman_home_root(data_root).join(".podman");
@@ -2113,6 +2390,173 @@ async fn best_effort_start_machine_after_init(
     }
 }
 
+struct PodmanMachineInitOutcome {
+    output: std::process::Output,
+    continued_after_machine_present: bool,
+}
+
+async fn read_child_pipe<R>(mut reader: R) -> std::io::Result<Vec<u8>>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    let mut buf = Vec::new();
+    reader.read_to_end(&mut buf).await?;
+    Ok(buf)
+}
+
+async fn collect_child_output(
+    status: std::process::ExitStatus,
+    stdout_task: tokio::task::JoinHandle<std::io::Result<Vec<u8>>>,
+    stderr_task: tokio::task::JoinHandle<std::io::Result<Vec<u8>>>,
+) -> Result<std::process::Output> {
+    let stdout = stdout_task
+        .await
+        .context("joining podman machine init stdout capture")??;
+    let stderr = stderr_task
+        .await
+        .context("joining podman machine init stderr capture")??;
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+async fn run_podman_machine_init(
+    data_root: &Path,
+    machine_name: &str,
+    observer: Option<&dyn HarnessSetupObserver>,
+) -> Result<PodmanMachineInitOutcome> {
+    let mut init = podman_command(data_root)?;
+    init.arg("machine").arg("init").arg(machine_name);
+    init.stdout(Stdio::piped());
+    init.stderr(Stdio::piped());
+    init.kill_on_drop(true);
+    let mut child = init.spawn().context("spawning podman machine init")?;
+    let stdout = child
+        .stdout
+        .take()
+        .context("podman machine init stdout was not captured")?;
+    let stderr = child
+        .stderr
+        .take()
+        .context("podman machine init stderr was not captured")?;
+    let stdout_task = tokio::spawn(read_child_pipe(stdout));
+    let stderr_task = tokio::spawn(read_child_pipe(stderr));
+    let deadline = tokio::time::Instant::now() + PODMAN_MACHINE_INIT_TIMEOUT;
+    let mut machine_present_since: Option<tokio::time::Instant> = None;
+
+    loop {
+        if let Some(status) = child
+            .try_wait()
+            .context("polling podman machine init process")?
+        {
+            return Ok(PodmanMachineInitOutcome {
+                output: collect_child_output(status, stdout_task, stderr_task).await?,
+                continued_after_machine_present: false,
+            });
+        }
+
+        let machine_present = podman_machine_present(data_root).await.unwrap_or(false);
+        if machine_present {
+            let now = tokio::time::Instant::now();
+            let present_since = machine_present_since.get_or_insert(now);
+            if now.duration_since(*present_since) >= podman_machine_init_created_machine_grace() {
+                observe_log(
+                    observer,
+                    HarnessSetupPhase::MachineStartOrInit,
+                    HarnessSetupLogLevel::Warn,
+                    "podman machine init created machine state but did not exit; terminating init and continuing with explicit start",
+                );
+                let _ = child.start_kill();
+                let status = child
+                    .wait()
+                    .await
+                    .context("waiting for terminated podman machine init")?;
+                return Ok(PodmanMachineInitOutcome {
+                    output: collect_child_output(status, stdout_task, stderr_task).await?,
+                    continued_after_machine_present: true,
+                });
+            }
+        } else {
+            machine_present_since = None;
+        }
+
+        if tokio::time::Instant::now() >= deadline {
+            let _ = child.start_kill();
+            let status = child
+                .wait()
+                .await
+                .context("waiting for timed out podman machine init")?;
+            let output = collect_child_output(status, stdout_task, stderr_task).await?;
+            if machine_present {
+                observe_log(
+                    observer,
+                    HarnessSetupPhase::MachineStartOrInit,
+                    HarnessSetupLogLevel::Warn,
+                    "podman machine init timed out after machine creation; continuing with explicit start",
+                );
+                return Ok(PodmanMachineInitOutcome {
+                    output,
+                    continued_after_machine_present: true,
+                });
+            }
+            anyhow::bail!(
+                "podman machine init timed out after {}s",
+                PODMAN_MACHINE_INIT_TIMEOUT.as_secs()
+            );
+        }
+
+        tokio::time::sleep(podman_machine_init_poll_interval()).await;
+    }
+}
+
+async fn initialize_podman_machine(
+    data_root: &Path,
+    machine_name: &str,
+    observer: Option<&dyn HarnessSetupObserver>,
+    last_err: &mut String,
+) -> Result<()> {
+    let init_outcome = run_podman_machine_init(data_root, machine_name, observer)
+        .await
+        .context("podman machine init")?;
+    let out = init_outcome.output;
+    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let combined = format!("{stderr}\n{stdout}").trim().to_string();
+    if init_outcome.continued_after_machine_present {
+        if !combined.is_empty() {
+            *last_err = combined;
+        }
+    } else if !out.status.success() {
+        let combined_lc = combined.to_ascii_lowercase();
+        if combined_lc.contains("already exists") {
+            let message = if combined.is_empty() {
+                "podman machine init reported existing machine; starting it explicitly".to_string()
+            } else {
+                format!(
+                    "podman machine init reported existing machine; starting it explicitly: {combined}"
+                )
+            };
+            observe_log(
+                observer,
+                HarnessSetupPhase::MachineStartOrInit,
+                HarnessSetupLogLevel::Warn,
+                &message,
+            );
+            if !combined.is_empty() {
+                *last_err = combined;
+            }
+        } else if combined.is_empty() {
+            anyhow::bail!("podman machine init failed (status: {})", out.status);
+        } else {
+            anyhow::bail!("podman machine init failed: {combined}");
+        }
+    }
+
+    best_effort_start_machine_after_init(data_root, machine_name, observer, last_err).await
+}
+
 async fn ensure_podman_machine_running_with_observer(
     data_root: &Path,
     observer: Option<&dyn HarnessSetupObserver>,
@@ -2140,6 +2584,7 @@ async fn ensure_podman_machine_running_with_observer(
         );
         return Ok(());
     }
+    seed_shared_podman_machine_cache_best_effort(data_root, observer).await;
 
     // If `podman info` works, we have a running engine connection.
     // Otherwise, capture the initial failure to reuse in error messages.
@@ -2154,6 +2599,7 @@ async fn ensure_podman_machine_running_with_observer(
                     HarnessSetupLogLevel::Info,
                     "podman runtime is already reachable",
                 );
+                persist_podman_machine_cache_to_shared_best_effort(data_root, observer).await;
                 return Ok(());
             }
             Ok(out) => String::from_utf8_lossy(&out.stderr).trim().to_string(),
@@ -2193,126 +2639,9 @@ async fn ensure_podman_machine_running_with_observer(
                 observer,
                 HarnessSetupPhase::MachineStartOrInit,
                 HarnessSetupLogLevel::Info,
-                "podman machine not found; running init --now",
+                "podman machine not found; running init then explicit start",
             );
-            let mut init = podman_command(data_root)?;
-            init.arg("machine")
-                .arg("init")
-                .arg("--now")
-                .arg(&machine_name);
-            match command_output_with_timeout(init, PODMAN_MACHINE_INIT_TIMEOUT).await {
-                Err(err) => {
-                    let err_text = err.to_string();
-                    let err_lc = err_text.to_ascii_lowercase();
-                    if err_lc.contains("timed out") {
-                        let message = format!(
-                            "podman machine init --now timed out; waiting for readiness: {err_text}"
-                        );
-                        observe_log(
-                            observer,
-                            HarnessSetupPhase::MachineStartOrInit,
-                            HarnessSetupLogLevel::Warn,
-                            &message,
-                        );
-                        last_err = err_text;
-                    } else {
-                        return Err(err).context("podman machine init --now");
-                    }
-                }
-                Ok(out) if !out.status.success() => {
-                    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                    let combined = format!("{stderr}\n{stdout}").trim().to_string();
-                    let init_lc = combined.to_ascii_lowercase();
-                    if init_lc.contains("already exists") {
-                        // Race / stale detection: machine exists after all, retry start once.
-                        let mut start2 = podman_command(data_root)?;
-                        start2.arg("machine").arg("start").arg(&machine_name);
-                        let out = command_output_with_timeout(start2, PODMAN_MACHINE_START_TIMEOUT)
-                            .await
-                            .context("podman machine start (after init already exists)")?;
-                        if !out.status.success() {
-                            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                            let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                            let combined = format!("{stderr}\n{stdout}").trim().to_string();
-                            let combined_lc = combined.to_ascii_lowercase();
-                            if looks_like_recoverable_machine_start_error(&combined_lc) {
-                                let message = if combined.is_empty() {
-                                    "podman machine start (after init already exists) returned recoverable error; waiting for readiness"
-                                    .to_string()
-                                } else {
-                                    format!(
-                                    "podman machine start (after init already exists) returned recoverable error; waiting for readiness: {combined}"
-                                )
-                                };
-                                observe_log(
-                                    observer,
-                                    HarnessSetupPhase::MachineStartOrInit,
-                                    HarnessSetupLogLevel::Warn,
-                                    &message,
-                                );
-                                if !combined.is_empty() {
-                                    last_err = combined;
-                                }
-                            } else {
-                                let message = if combined.is_empty() {
-                                    "podman machine start (after init already exists) returned non-zero exit; waiting for readiness"
-                                    .to_string()
-                                } else {
-                                    format!(
-                                    "podman machine start (after init already exists) returned non-zero exit; waiting for readiness: {combined}"
-                                )
-                                };
-                                observe_log(
-                                    observer,
-                                    HarnessSetupPhase::MachineStartOrInit,
-                                    HarnessSetupLogLevel::Warn,
-                                    &message,
-                                );
-                                if !combined.is_empty() {
-                                    last_err = combined;
-                                }
-                            }
-                        }
-                    } else if looks_like_recoverable_machine_init_start_error(&init_lc) {
-                        let message = if combined.is_empty() {
-                            "podman machine init --now returned recoverable start error; waiting for readiness"
-                            .to_string()
-                        } else {
-                            format!(
-                            "podman machine init --now returned recoverable start error; waiting for readiness: {combined}"
-                        )
-                        };
-                        observe_log(
-                            observer,
-                            HarnessSetupPhase::MachineStartOrInit,
-                            HarnessSetupLogLevel::Warn,
-                            &message,
-                        );
-                        if !combined.is_empty() {
-                            last_err = combined;
-                        }
-                        best_effort_start_machine_after_init(
-                            data_root,
-                            &machine_name,
-                            observer,
-                            &mut last_err,
-                        )
-                        .await?;
-                    } else {
-                        anyhow::bail!("podman machine init --now failed: {combined}");
-                    }
-                }
-                Ok(_) => {
-                    best_effort_start_machine_after_init(
-                        data_root,
-                        &machine_name,
-                        observer,
-                        &mut last_err,
-                    )
-                    .await?;
-                }
-            }
+            initialize_podman_machine(data_root, &machine_name, observer, &mut last_err).await?;
         } else if looks_like_recoverable_machine_start_error(&combined_lc) {
             let message = if combined.is_empty() {
                 "podman machine start returned a recoverable error; waiting for readiness"
@@ -2369,6 +2698,7 @@ async fn ensure_podman_machine_running_with_observer(
                     HarnessSetupLogLevel::Info,
                     "podman machine is ready",
                 );
+                persist_podman_machine_cache_to_shared_best_effort(data_root, observer).await;
                 return Ok(());
             }
             Ok(out) => last_err = String::from_utf8_lossy(&out.stderr).trim().to_string(),
@@ -2407,6 +2737,7 @@ async fn ensure_podman_machine_running_with_observer(
                     HarnessSetupLogLevel::Info,
                     "podman machine recovered after restart",
                 );
+                persist_podman_machine_cache_to_shared_best_effort(data_root, observer).await;
                 return Ok(());
             }
             Ok(out) => last_err = String::from_utf8_lossy(&out.stderr).trim().to_string(),
@@ -2441,51 +2772,18 @@ async fn ensure_podman_machine_running_with_observer(
             }
         }
 
-        let mut init = podman_command(data_root)?;
-        init.arg("machine")
-            .arg("init")
-            .arg("--now")
-            .arg(&machine_name);
-        let init_result = command_output_with_timeout(init, PODMAN_MACHINE_INIT_TIMEOUT).await;
-        let should_poll_after_recreate = match init_result {
-            Ok(init_out) if init_out.status.success() => {
-                best_effort_start_machine_after_init(
-                    data_root,
-                    &machine_name,
-                    observer,
-                    &mut last_err,
-                )
-                .await?;
-                true
-            }
-            Ok(init_out) => {
-                let stderr = String::from_utf8_lossy(&init_out.stderr).trim().to_string();
-                let stdout = String::from_utf8_lossy(&init_out.stdout).trim().to_string();
-                let combined = format!("{stderr}\n{stdout}").trim().to_string();
-                if !combined.is_empty() {
-                    last_err =
-                        format!("podman machine init --now failed after recreate: {combined}");
-                }
-                false
-            }
+        let should_poll_after_recreate = match initialize_podman_machine(
+            data_root,
+            &machine_name,
+            observer,
+            &mut last_err,
+        )
+        .await
+        {
+            Ok(()) => true,
             Err(err) => {
-                let err_text = err.to_string();
-                let err_lc = err_text.to_ascii_lowercase();
-                if err_lc.contains("timed out") {
-                    observe_log(
-                        observer,
-                        HarnessSetupPhase::MachineStartOrInit,
-                        HarnessSetupLogLevel::Warn,
-                        &format!(
-                            "podman machine init --now timed out after recreate; waiting for readiness: {err_text}"
-                        ),
-                    );
-                    last_err =
-                        format!("podman machine init --now timed out after recreate: {err_text}");
-                    true
-                } else {
-                    return Err(err).context("podman machine init --now after recreate");
-                }
+                last_err = format!("podman machine init failed after recreate: {err:#}");
+                false
             }
         };
         if should_poll_after_recreate {
@@ -2503,6 +2801,8 @@ async fn ensure_podman_machine_running_with_observer(
                             HarnessSetupLogLevel::Info,
                             "podman machine recovered after recreation",
                         );
+                        persist_podman_machine_cache_to_shared_best_effort(data_root, observer)
+                            .await;
                         return Ok(());
                     }
                     Ok(out) => last_err = String::from_utf8_lossy(&out.stderr).trim().to_string(),
@@ -2669,6 +2969,10 @@ fn container_user() -> Option<String> {
     None
 }
 
+fn should_use_keep_id_userns() -> bool {
+    cfg!(target_os = "linux")
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -2705,6 +3009,11 @@ mod tests {
                 std::env::remove_var(self.key);
             }
         }
+    }
+
+    fn env_var_test_lock() -> &'static StdMutex<()> {
+        static LOCK: std::sync::OnceLock<StdMutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| StdMutex::new(()))
     }
 
     fn sample_workspace(tmp: &TempDir) -> Workspace {
@@ -2799,6 +3108,9 @@ mod tests {
 
     #[tokio::test]
     async fn container_mode_errors_when_podman_unavailable() {
+        let _serial = env_var_test_lock()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
         let _guard = EnvGuard::set("CTX_TEST_PODMAN_AVAILABLE", "0");
         let tmp = tempfile::tempdir().unwrap();
         let manager = runtime_manager(&tmp).await;
@@ -2820,6 +3132,9 @@ mod tests {
 
     #[test]
     fn podman_binary_path_uses_env_override() {
+        let _serial = env_var_test_lock()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let path = tmp.path().to_string_lossy().to_string();
         let _guard = EnvGuard::set("CTX_PODMAN_PATH", &path);
@@ -2828,15 +3143,125 @@ mod tests {
     }
 
     #[test]
-    fn podman_invocation_sets_home_under_short_runtime_root() {
+    fn podman_invocation_sets_paths_under_short_runtime_root() {
+        let _serial = env_var_test_lock()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
         let tmp = tempfile::tempdir().expect("tempdir");
         let podman_bin = tempfile::NamedTempFile::new().expect("podman bin");
         let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_bin.path().to_string_lossy());
         let inv = podman_invocation(tmp.path()).expect("podman invocation");
+        let runtime_dir = inv
+            .env
+            .get("XDG_RUNTIME_DIR")
+            .cloned()
+            .expect("runtime dir env");
         let home = inv.env.get("HOME").cloned().expect("home env");
         let tmpdir = inv.env.get("TMPDIR").cloned().expect("tmpdir env");
+        assert_eq!(
+            PathBuf::from(runtime_dir),
+            podman_runtime_root(tmp.path()).join("run")
+        );
         assert_eq!(PathBuf::from(home), podman_home_root(tmp.path()));
         assert_eq!(PathBuf::from(tmpdir), podman_temp_root(tmp.path()));
+    }
+
+    #[test]
+    fn keep_id_userns_is_only_enabled_on_linux() {
+        assert_eq!(should_use_keep_id_userns(), cfg!(target_os = "linux"));
+    }
+
+    #[tokio::test]
+    async fn seed_shared_podman_machine_cache_populates_local_cache_root() {
+        let _serial = env_var_test_lock()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let shared = tempfile::tempdir().expect("shared tempdir");
+        let data_root = tempfile::tempdir().expect("data root tempdir");
+        let _guard = EnvGuard::set(
+            "CTX_PODMAN_MACHINE_CACHE_DIR",
+            &shared.path().to_string_lossy(),
+        );
+        let relpath = PathBuf::from("applehv")
+            .join("cache")
+            .join("78e5fea350d7.raw.zst");
+        let shared_file = shared.path().join(&relpath);
+        std::fs::create_dir_all(shared_file.parent().expect("shared cache parent"))
+            .expect("create shared cache dir");
+        std::fs::write(&shared_file, b"seeded-machine-cache").expect("write shared cache file");
+
+        seed_shared_podman_machine_cache(data_root.path(), None)
+            .await
+            .expect("seed shared cache");
+
+        let local_file = podman_machine_cache_root(data_root.path()).join(relpath);
+        let local_body = std::fs::read(&local_file).expect("read local cache file");
+        assert_eq!(local_body, b"seeded-machine-cache");
+    }
+
+    #[tokio::test]
+    async fn persist_podman_machine_cache_to_shared_does_not_depend_on_local_path() {
+        let _serial = env_var_test_lock()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let shared = tempfile::tempdir().expect("shared tempdir");
+        let data_root = tempfile::tempdir().expect("data root tempdir");
+        let _guard = EnvGuard::set(
+            "CTX_PODMAN_MACHINE_CACHE_DIR",
+            &shared.path().to_string_lossy(),
+        );
+        let relpath = PathBuf::from("applehv")
+            .join("cache")
+            .join("persisted-machine-cache.raw.zst");
+        let local_file = podman_machine_cache_root(data_root.path()).join(&relpath);
+        std::fs::create_dir_all(local_file.parent().expect("local cache parent"))
+            .expect("create local cache dir");
+        std::fs::write(&local_file, b"persisted-machine-cache").expect("write local cache file");
+
+        persist_podman_machine_cache_to_shared(data_root.path(), None)
+            .await
+            .expect("persist shared cache");
+
+        std::fs::remove_file(&local_file).expect("remove local cache file");
+        let shared_file = shared.path().join(relpath);
+        let shared_body = std::fs::read(&shared_file).expect("read shared cache file");
+        assert_eq!(shared_body, b"persisted-machine-cache");
+    }
+
+    #[tokio::test]
+    async fn ensure_podman_machine_download_skips_when_machine_lock_is_busy() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _serial = env_var_test_lock()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let temp = tempfile::tempdir().expect("tempdir");
+        let log_path = temp.path().join("podman-invocations.log");
+        let podman_path = temp.path().join("podman.sh");
+        std::fs::write(
+            &podman_path,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"{}\"\nexit 0\n",
+                log_path.display()
+            ),
+        )
+        .expect("write podman shim");
+        std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod podman shim");
+        let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+
+        let manager = HarnessRuntimeManager::new(temp.path().to_path_buf());
+        let machine_name = ctx_podman_machine_name(temp.path());
+        let machine_lock = podman_machine_singleflight_lock(&machine_name);
+        let _machine_guard = machine_lock.lock().await;
+
+        manager
+            .ensure_podman_machine_download()
+            .await
+            .expect("prefetch should skip while launch holds the machine lock");
+
+        let log = std::fs::read_to_string(&log_path).unwrap_or_default();
+        assert!(log.trim().is_empty());
     }
 
     #[test]
@@ -2877,17 +3302,78 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn recoverable_machine_init_start_error_detection_matches_expected_shapes() {
-        assert!(looks_like_recoverable_machine_init_start_error(
-            "getting image source signatures\ncopying blob sha256:f73f...\nmachine init complete\nstarting machine \"ctx\"\nerror: vfkit exited unexpectedly with exit code 1"
-        ));
-        assert!(looks_like_recoverable_machine_init_start_error(
-            "time=\"2026-03-05T00:23:28-06:00\" level=warning msg=\"detected port conflict on machine ssh port [49401], reassigning\"\nmachine init complete\nstarting machine \"ctx\""
-        ));
-        assert!(!looks_like_recoverable_machine_init_start_error(
-            "error: failed to pull machine image: permission denied"
-        ));
+    #[tokio::test]
+    async fn initialize_podman_machine_uses_init_then_start_without_now() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _serial = env_var_test_lock()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let temp = tempfile::tempdir().expect("tempdir");
+        let log_path = temp.path().join("podman-invocations.log");
+        let podman_path = temp.path().join("podman.sh");
+        std::fs::write(
+            &podman_path,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"{}\"\nexit 0\n",
+                log_path.display()
+            ),
+        )
+        .expect("write podman shim");
+        std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod podman shim");
+        let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+
+        let mut last_err = String::new();
+        initialize_podman_machine(temp.path(), "ctx-test-machine", None, &mut last_err)
+            .await
+            .expect("initialize machine");
+
+        let log = std::fs::read_to_string(&log_path).expect("read invocation log");
+        assert!(log.contains("machine init ctx-test-machine"));
+        assert!(log.contains("machine start ctx-test-machine"));
+        assert!(!log.contains("--now"));
+        assert!(last_err.is_empty());
+    }
+
+    #[tokio::test]
+    async fn initialize_podman_machine_terminates_stuck_init_when_machine_is_present() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _serial = env_var_test_lock()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let temp = tempfile::tempdir().expect("tempdir");
+        let log_path = temp.path().join("podman-invocations.log");
+        let podman_path = temp.path().join("podman.sh");
+        std::fs::write(
+            &podman_path,
+            format!(
+                "#!/bin/sh\nLOG=\"{}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exec sleep 30\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  exit 0\nfi\nexit 0\n",
+                log_path.display()
+            ),
+        )
+        .expect("write podman shim");
+        std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod podman shim");
+        let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+
+        let mut last_err = String::new();
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            initialize_podman_machine(temp.path(), "ctx-test-machine", None, &mut last_err),
+        )
+        .await;
+        let log = std::fs::read_to_string(&log_path).unwrap_or_default();
+        let init_result = result.unwrap_or_else(|_| {
+            panic!("initialize_podman_machine timed out; invocation log:\n{log}")
+        });
+        init_result.expect("initialize machine");
+
+        assert!(log.contains("machine init ctx-test-machine"));
+        assert!(log.contains("machine inspect "));
+        assert!(log.contains("machine start ctx-test-machine"));
+        assert!(!log.contains("--now"));
     }
 
     #[test]

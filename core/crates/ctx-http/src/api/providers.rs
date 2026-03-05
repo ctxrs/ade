@@ -37,7 +37,7 @@ use crate::provider_usage;
 use crate::settings::ExecutionMode;
 use ctx_core::ids::WorkspaceId;
 use ctx_providers::adapters::{ProviderRestartMode, ProviderStatus};
-use ctx_providers::crp::probe_crp_models;
+use ctx_providers::crp::{probe_crp_models, probe_crp_runtime_launch};
 
 use super::redact_json_value;
 
@@ -4287,6 +4287,106 @@ fn classify_probe_error(
     )
 }
 
+struct PreparedProviderRuntimeProbe {
+    command: String,
+    args: Vec<String>,
+    env: HashMap<String, String>,
+    selected_endpoint_id: Option<String>,
+}
+
+enum PreparedProviderRuntimeProbeError {
+    Route((StatusCode, Json<serde_json::Value>)),
+    Verify(String),
+}
+
+async fn prepare_provider_runtime_probe(
+    state: &Arc<AppState>,
+    workspace: &ctx_core::models::Workspace,
+    provider_id: &str,
+    selected_endpoint_id: Option<String>,
+) -> Result<PreparedProviderRuntimeProbe, PreparedProviderRuntimeProbeError> {
+    let cfg = installer::load_agent_server_config(&state.core.data_root)
+        .await
+        .unwrap_or_default();
+    let runtime_command = installer::resolve_runtime_provider_command(&cfg, provider_id)
+        .map_err(|e| {
+            PreparedProviderRuntimeProbeError::Route((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": format!(
+                        "runtime_command_invalid: provider={provider_id} error={e}"
+                    ),
+                })),
+            ))
+        })?
+        .ok_or_else(|| {
+            PreparedProviderRuntimeProbeError::Route((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": format!(
+                        "runtime_command_missing: provider={provider_id} (configure an absolute runtime command)"
+                    ),
+                })),
+            ))
+        })?;
+    let normalized_runtime = normalize_acp_provider_command(
+        &state.core.data_root,
+        provider_id,
+        installer::AgentServerCommand {
+            command: runtime_command.command_abs_path,
+            args: runtime_command.args,
+            dependencies: runtime_command.dependencies,
+            managed: None,
+        },
+    );
+
+    let (source, mut env) =
+        provider_probe::provider_probe_env_for_workspace_runtime(state, workspace, provider_id)
+            .await
+            .map_err(PreparedProviderRuntimeProbeError::Verify)?;
+    installer::prepend_runtime_bin_dirs_to_provider_path(
+        &mut env,
+        &cfg,
+        provider_id,
+        &state.core.data_root,
+    );
+
+    let selected_endpoint_id = if source.source_kind == HarnessSourceKind::Endpoint {
+        source
+            .endpoint
+            .as_ref()
+            .map(|endpoint| endpoint.id.clone())
+            .or(selected_endpoint_id)
+    } else {
+        None
+    };
+
+    Ok(PreparedProviderRuntimeProbe {
+        command: normalized_runtime.command,
+        args: normalized_runtime.args,
+        env,
+        selected_endpoint_id,
+    })
+}
+
+fn endpoint_catalog_runtime_probe_failure(
+    message: String,
+    endpoint_status: HarnessEndpointVerificationStatus,
+) -> (
+    String,
+    Option<bool>,
+    Option<String>,
+    HarnessEndpointVerificationStatus,
+) {
+    let (status, auth_required, _) = classify_probe_error(&message);
+    (
+        status.to_string(),
+        auth_required,
+        Some(message),
+        endpoint_status,
+    )
+}
+
 fn cache_key_matches_provider(cache_key: &str, provider_id: &str) -> bool {
     cache_key
         .rsplit_once('/')
@@ -4390,6 +4490,55 @@ fn endpoint_selection_is_active(config: &harness_sources::HarnessProviderSourceC
         .endpoints
         .iter()
         .any(|endpoint| endpoint.id == selected_endpoint_id)
+}
+
+fn endpoint_supports_model_catalog_verify(
+    endpoint: &harness_sources::HarnessEndpointRecord,
+) -> bool {
+    endpoint.api_shape == HarnessApiShape::OpenaiResponses
+        && endpoint
+            .base_url
+            .as_ref()
+            .is_some_and(|value| !value.trim().is_empty())
+}
+
+fn endpoint_catalog_verify_outcome(
+    endpoint: &harness_sources::HarnessEndpointRecord,
+) -> (
+    String,
+    Option<bool>,
+    Option<String>,
+    HarnessEndpointVerificationStatus,
+) {
+    match endpoint.model_catalog_status {
+        harness_sources::EndpointModelCatalogStatus::Ready
+        | harness_sources::EndpointModelCatalogStatus::ManualOnly => (
+            "ok".to_string(),
+            Some(false),
+            None,
+            HarnessEndpointVerificationStatus::Valid,
+        ),
+        harness_sources::EndpointModelCatalogStatus::Unknown
+        | harness_sources::EndpointModelCatalogStatus::Error => {
+            let detail = endpoint
+                .model_catalog_error
+                .as_ref()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| {
+                    "endpoint model catalog is unavailable; refresh endpoint models in Settings"
+                        .to_string()
+                });
+            let redacted = logs::redact_sensitive(&detail);
+            let (status, auth_required, endpoint_status) = classify_probe_error(&redacted);
+            (
+                status.to_string(),
+                auth_required,
+                Some(redacted),
+                endpoint_status,
+            )
+        }
+    }
 }
 
 async fn provider_has_active_auth_config(
@@ -5084,11 +5233,13 @@ pub(super) async fn verify_provider_for_workspace(
     let mut auth_required = Some(false);
     let mut message: Option<String> = None;
     let mut endpoint_status = HarnessEndpointVerificationStatus::Valid;
-    let mut selected_endpoint_id: Option<String> = selected_endpoint_from_harness_config(
+    let source_config =
         harness_sources::get_provider_source_config(&state.core.data_root, &provider_id)
             .await
-            .ok(),
-    );
+            .ok();
+    let selected_endpoint = selected_endpoint_record_from_harness_config(source_config.as_ref());
+    let mut selected_endpoint_id: Option<String> =
+        selected_endpoint_from_harness_config(source_config);
 
     if !provider_status.installed
         || !matches!(
@@ -5100,71 +5251,94 @@ pub(super) async fn verify_provider_for_workspace(
         auth_required = Some(false);
         message = Some("provider not installed or unhealthy".to_string());
         endpoint_status = HarnessEndpointVerificationStatus::Error;
-    } else {
-        let cfg = installer::load_agent_server_config(&state.core.data_root)
-            .await
-            .unwrap_or_default();
-        let runtime_command = installer::resolve_runtime_provider_command(&cfg, &provider_id)
-            .map_err(|e| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({
-                        "error": format!(
-                            "runtime_command_invalid: provider={provider_id} error={e}"
-                        ),
-                    })),
-                )
-            })?
-            .ok_or((
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": format!(
-                        "runtime_command_missing: provider={provider_id} (configure an absolute runtime command)"
-                    ),
-                })),
-            ))?;
-        let normalized_runtime = normalize_acp_provider_command(
+    } else if let Some(endpoint) = selected_endpoint
+        .as_ref()
+        .filter(|endpoint| endpoint_supports_model_catalog_verify(endpoint))
+    {
+        match harness_sources::refresh_provider_endpoint_model_catalog(
             &state.core.data_root,
             &provider_id,
-            installer::AgentServerCommand {
-                command: runtime_command.command_abs_path,
-                args: runtime_command.args,
-                dependencies: runtime_command.dependencies,
-                managed: None,
-            },
-        );
-        let command = normalized_runtime.command;
-        let args = normalized_runtime.args;
-
-        match provider_probe::provider_probe_env_for_workspace_runtime(
-            &state,
-            &workspace,
-            &provider_id,
+            &endpoint.id,
         )
         .await
         {
-            Ok((source, mut env)) => {
-                installer::prepend_runtime_bin_dirs_to_provider_path(
-                    &mut env,
-                    &cfg,
-                    &provider_id,
-                    &state.core.data_root,
-                );
-                if source.source_kind == HarnessSourceKind::Endpoint {
-                    selected_endpoint_id = source
-                        .endpoint
-                        .as_ref()
-                        .map(|ep| ep.id.clone())
-                        .or(selected_endpoint_id);
-                } else {
-                    selected_endpoint_id = None;
+            Ok(refreshed_endpoint) => {
+                selected_endpoint_id = Some(refreshed_endpoint.id.clone());
+                let (next_status, next_auth, next_message, next_endpoint_status) =
+                    endpoint_catalog_verify_outcome(&refreshed_endpoint);
+                status = next_status;
+                auth_required = next_auth;
+                message = next_message;
+                endpoint_status = next_endpoint_status;
+            }
+            Err(err) => {
+                let msg = logs::redact_sensitive(&err.to_string());
+                let (classified, auth, endpoint_verify) = classify_probe_error(&msg);
+                status = classified.to_string();
+                auth_required = auth;
+                message = Some(msg);
+                endpoint_status = endpoint_verify;
+            }
+        }
+
+        if status == "ok" {
+            match prepare_provider_runtime_probe(
+                &state,
+                &workspace,
+                &provider_id,
+                selected_endpoint_id.clone(),
+            )
+            .await
+            {
+                Ok(prepared) => {
+                    selected_endpoint_id = prepared.selected_endpoint_id;
+                    if let Err(err) = probe_crp_runtime_launch(
+                        &provider_id,
+                        prepared.command,
+                        prepared.args,
+                        PathBuf::from(&workspace.root_path),
+                        prepared.env,
+                    )
+                    .await
+                    {
+                        let msg = logs::redact_sensitive(&err.to_string());
+                        let (next_status, next_auth, next_message, next_endpoint_status) =
+                            endpoint_catalog_runtime_probe_failure(msg, endpoint_status);
+                        status = next_status;
+                        auth_required = next_auth;
+                        message = next_message;
+                        endpoint_status = next_endpoint_status;
+                    }
                 }
+                Err(PreparedProviderRuntimeProbeError::Route(err)) => return Err(err),
+                Err(PreparedProviderRuntimeProbeError::Verify(err)) => {
+                    let msg = logs::redact_sensitive(&err);
+                    let (next_status, next_auth, next_message, next_endpoint_status) =
+                        endpoint_catalog_runtime_probe_failure(msg, endpoint_status);
+                    status = next_status;
+                    auth_required = next_auth;
+                    message = next_message;
+                    endpoint_status = next_endpoint_status;
+                }
+            }
+        }
+    } else {
+        match prepare_provider_runtime_probe(
+            &state,
+            &workspace,
+            &provider_id,
+            selected_endpoint_id.clone(),
+        )
+        .await
+        {
+            Ok(prepared) => {
+                selected_endpoint_id = prepared.selected_endpoint_id;
                 let probe = probe_crp_models(
                     &provider_id,
-                    command,
-                    args,
+                    prepared.command,
+                    prepared.args,
                     PathBuf::from(&workspace.root_path),
-                    env,
+                    prepared.env,
                 )
                 .await;
                 if let Err(err) = probe {
@@ -5176,7 +5350,8 @@ pub(super) async fn verify_provider_for_workspace(
                     endpoint_status = endpoint_verify;
                 }
             }
-            Err(err) => {
+            Err(PreparedProviderRuntimeProbeError::Route(err)) => return Err(err),
+            Err(PreparedProviderRuntimeProbeError::Verify(err)) => {
                 let msg = logs::redact_sensitive(&err);
                 let (classified, auth, endpoint_verify) = classify_probe_error(&msg);
                 status = classified.to_string();
@@ -6142,6 +6317,74 @@ ZXY987654321
             endpoints: vec![test_endpoint("ep-1")],
         };
         assert!(!endpoint_selection_is_active(&missing));
+    }
+
+    #[test]
+    fn endpoint_supports_model_catalog_verify_requires_openai_shape_and_base_url() {
+        let mut endpoint = test_endpoint("ep-1");
+        assert!(endpoint_supports_model_catalog_verify(&endpoint));
+
+        endpoint.api_shape = HarnessApiShape::AnthropicMessages;
+        assert!(!endpoint_supports_model_catalog_verify(&endpoint));
+
+        endpoint.api_shape = HarnessApiShape::OpenaiResponses;
+        endpoint.base_url = None;
+        assert!(!endpoint_supports_model_catalog_verify(&endpoint));
+    }
+
+    #[test]
+    fn endpoint_catalog_verify_outcome_ready_and_manual_only_are_valid() {
+        let mut ready = test_endpoint("ep-ready");
+        ready.model_catalog_status = harness_sources::EndpointModelCatalogStatus::Ready;
+        let (status, auth_required, message, endpoint_status) =
+            endpoint_catalog_verify_outcome(&ready);
+        assert_eq!(status, "ok");
+        assert_eq!(auth_required, Some(false));
+        assert!(message.is_none());
+        assert_eq!(endpoint_status, HarnessEndpointVerificationStatus::Valid);
+
+        let mut manual = test_endpoint("ep-manual");
+        manual.model_catalog_status = harness_sources::EndpointModelCatalogStatus::ManualOnly;
+        let (status, auth_required, message, endpoint_status) =
+            endpoint_catalog_verify_outcome(&manual);
+        assert_eq!(status, "ok");
+        assert_eq!(auth_required, Some(false));
+        assert!(message.is_none());
+        assert_eq!(endpoint_status, HarnessEndpointVerificationStatus::Valid);
+    }
+
+    #[test]
+    fn endpoint_catalog_verify_outcome_classifies_auth_errors() {
+        let mut endpoint = test_endpoint("ep-auth");
+        endpoint.model_catalog_status = harness_sources::EndpointModelCatalogStatus::Error;
+        endpoint.model_catalog_error = Some("model discovery failed with status 401".to_string());
+        let (status, auth_required, message, endpoint_status) =
+            endpoint_catalog_verify_outcome(&endpoint);
+        assert_eq!(status, "auth_required");
+        assert_eq!(auth_required, Some(true));
+        assert!(message
+            .as_deref()
+            .is_some_and(|value| value.contains("status 401")));
+        assert_eq!(endpoint_status, HarnessEndpointVerificationStatus::Invalid);
+    }
+
+    #[test]
+    fn endpoint_catalog_runtime_probe_failure_preserves_endpoint_status() {
+        let (
+            status,
+            auth_required,
+            message,
+            endpoint_status,
+        ) = endpoint_catalog_runtime_probe_failure(
+            "connection refused while launching bundled runtime".to_string(),
+            HarnessEndpointVerificationStatus::Valid,
+        );
+        assert_eq!(status, "network_error");
+        assert_eq!(auth_required, Some(false));
+        assert!(message
+            .as_deref()
+            .is_some_and(|value| value.contains("connection refused")));
+        assert_eq!(endpoint_status, HarnessEndpointVerificationStatus::Valid);
     }
 
     #[test]

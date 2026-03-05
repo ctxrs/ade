@@ -1801,7 +1801,10 @@ PY
 fi
 
 if ! is_falsy "$LOCAL_ADAPTER_MODE"; then
-  if provider_selected_for_bundle "amp" || provider_selected_for_bundle "pi"; then
+  if provider_selected_for_bundle "amp" \
+    || provider_selected_for_bundle "pi" \
+    || provider_selected_for_bundle "goose" \
+    || provider_selected_for_bundle "openhands"; then
     runtime_need_node="1"
   fi
 fi

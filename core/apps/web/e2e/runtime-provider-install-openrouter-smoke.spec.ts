@@ -1,9 +1,9 @@
-import { test, expect } from "./fixtures";
-import { mkdtempSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "fs";
+import { execSync } from "child_process";
 import { tmpdir } from "os";
 import path from "path";
-import { execSync } from "child_process";
-import type { APIRequestContext } from "playwright/test";
+import type { APIRequestContext, TestInfo } from "playwright/test";
+import { test, expect } from "./fixtures";
 
 type ProviderStatus = {
   installed: boolean;
@@ -20,9 +20,40 @@ type TerminalState = {
   modelId: string | null;
 };
 
+type ExecutionEnvironment = "host" | "container_host_mounted" | "container_disk_isolated";
+type InstallTarget = "host" | "container";
+type NetworkMode = "llm_only" | "allowlist" | "all";
+type ResultOutcome = "pass" | "fail";
+type FailureCategory = "external_outage" | "environment" | "product_regression";
+
+type ProviderResult = {
+  provider_id: string;
+  install_target: InstallTarget;
+  environment: ExecutionEnvironment;
+  network_mode: NetworkMode;
+  model_override: string;
+  install_id: string | null;
+  session_id: string | null;
+  model_id: string | null;
+  terminal_status: string | null;
+  assistant_messages: number;
+  stage: string;
+  error_code: string | null;
+  category: FailureCategory | null;
+  reason: string;
+  result: ResultOutcome;
+  elapsed_ms: number;
+};
+
+type StageError = Error & {
+  stage?: string;
+  errorCode?: string;
+};
+
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const DEFAULT_PROVIDER_ID = "codex";
 const DEFAULT_MODEL_OVERRIDE = "openai/gpt-5.2-codex";
+const DEFAULT_TERMINAL_TIMEOUT_MS = 180_000;
 const TERMINAL_TURN_STATUSES = new Set(["completed", "failed", "interrupted"]);
 
 const asRecord = (value: unknown): Record<string, unknown> => {
@@ -55,6 +86,79 @@ const readStringMap = (value: unknown): Record<string, string> => {
     }
   }
   return out;
+};
+
+const parseCsv = (value: string | undefined): string[] =>
+  String(value || "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+const envTruthy = (value: string | undefined): boolean =>
+  ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
+
+const envInt = (value: string | undefined, fallback: number): number => {
+  const parsed = Number.parseInt(String(value || "").trim(), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const providerOverrideEnvVar = (providerId: string): string =>
+  `CTX_E2E_${providerId.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_OPENROUTER_MODEL_OVERRIDE`;
+
+const createStageError = (stage: string, message: string, errorCode?: string): StageError => {
+  const error = new Error(message) as StageError;
+  error.stage = stage;
+  if (errorCode) {
+    error.errorCode = errorCode;
+  }
+  return error;
+};
+
+const toStageError = (stage: string, error: unknown): StageError => {
+  if (error instanceof Error) {
+    const typed = error as StageError;
+    if (!typed.stage) typed.stage = stage;
+    return typed;
+  }
+  return createStageError(stage, normalizeErrorMessage(String(error)));
+};
+
+const classifyFailureCategory = (stage: string, reason: string, errorCode: string | null): FailureCategory => {
+  const normalizedReason = reason.toLowerCase();
+  const normalizedCode = String(errorCode || "").toLowerCase();
+
+  if (
+    normalizedCode === "download_failed"
+    || normalizedCode === "timeout"
+    || normalizedReason.includes("rate limit")
+    || normalizedReason.includes("429")
+    || normalizedReason.includes("503")
+    || normalizedReason.includes("502")
+    || normalizedReason.includes("service unavailable")
+    || normalizedReason.includes("upstream")
+    || normalizedReason.includes("gateway")
+  ) {
+    return "external_outage";
+  }
+
+  if (
+    normalizedReason.includes("podman")
+    || normalizedReason.includes("container runtime")
+    || normalizedReason.includes("no space left")
+    || normalizedReason.includes("permission denied")
+    || normalizedReason.includes("cannot connect")
+    || normalizedReason.includes("operation not permitted")
+    || normalizedCode === "unsupported_target"
+    || normalizedCode === "invalid_target"
+  ) {
+    return "environment";
+  }
+
+  if (stage === "execution_config") {
+    return "environment";
+  }
+
+  return "product_regression";
 };
 
 const initRepo = (): string => {
@@ -92,17 +196,17 @@ async function getProviderStatus(request: APIRequestContext, providerId: string)
 async function installProviderAndWait(
   request: APIRequestContext,
   providerId: string,
-  target: "host" | "container",
-): Promise<string> {
+  target: InstallTarget,
+): Promise<{ installId: string }> {
   const start = await request.post(`/api/providers/${providerId}/install?target=${target}`, { data: {} });
   if (!start.ok()) {
     const body = normalizeErrorMessage(await start.text().catch(() => ""));
-    throw new Error(`provider install start failed (${start.status()}): ${body}`);
+    throw createStageError("install", `provider install start failed (${start.status()}): ${body}`);
   }
   const payload = asRecord(await start.json());
   const installId = readString(payload.install_id);
   if (!installId) {
-    throw new Error(`provider install response missing install_id: ${JSON.stringify(payload)}`);
+    throw createStageError("install", `provider install response missing install_id: ${JSON.stringify(payload)}`);
   }
 
   await expect
@@ -110,12 +214,13 @@ async function installProviderAndWait(
       async () => {
         const poll = await request.get(`/api/providers/install/${installId}`);
         if (!poll.ok()) {
-          throw new Error(`provider install poll failed (${poll.status()})`);
+          throw createStageError("install", `provider install poll failed (${poll.status()})`);
         }
         const info = asRecord(await poll.json());
         const state = firstText(info.state).toLowerCase();
         if (state === "failed" || state === "cancelled") {
           const lastEvent = asRecord(info.last_event);
+          const errorCode = firstText(info.error_code, lastEvent.error_code) || undefined;
           const detail = normalizeErrorMessage(
             firstText(
               lastEvent.message,
@@ -124,7 +229,7 @@ async function installProviderAndWait(
               JSON.stringify(info),
             ),
           );
-          throw new Error(`provider install ${state}: ${detail}`);
+          throw createStageError("install", `provider install ${state}: ${detail}`, errorCode);
         }
         return state;
       },
@@ -132,7 +237,113 @@ async function installProviderAndWait(
     )
     .toBe("succeeded");
 
-  return installId;
+  return { installId };
+}
+
+async function configureWorkspaceExecution(
+  request: APIRequestContext,
+  workspaceId: string,
+  environment: ExecutionEnvironment,
+  networkMode: NetworkMode,
+  allowlist: string[],
+): Promise<void> {
+  if (environment === "host") return;
+
+  const payload: Record<string, unknown> = {
+    environment,
+    network_mode: networkMode,
+  };
+  if (networkMode === "allowlist") {
+    payload.allowlist = allowlist;
+  }
+
+  const update = await request.post(`/api/workspaces/${workspaceId}/execution_config`, {
+    data: payload,
+  });
+  if (!update.ok()) {
+    const body = normalizeErrorMessage(await update.text().catch(() => ""));
+    throw createStageError(
+      "execution_config",
+      `workspace execution config update failed (${update.status()}): ${body}`,
+    );
+  }
+
+  await expect
+    .poll(
+      async () => {
+        const current = await request.get(`/api/workspaces/${workspaceId}/execution_config`);
+        if (!current.ok()) return "";
+        const config = asRecord(await current.json());
+        const currentEnvironment = firstText(config.environment);
+        const currentNetworkMode = firstText(config.network_mode);
+        if (currentEnvironment !== environment) return "";
+        if (networkMode && currentNetworkMode !== networkMode) return "";
+        return "ok";
+      },
+      { timeout: 60_000, intervals: [1_000, 2_000, 3_000] },
+    )
+    .toBe("ok");
+}
+
+async function ensureWorkspaceExecutionLaunched(
+  request: APIRequestContext,
+  workspaceId: string,
+  environment: ExecutionEnvironment,
+): Promise<void> {
+  if (environment === "host") return;
+
+  const start = await request.post("/api/execution/launch/start", {
+    data: {
+      kind: "workspace_launch",
+      workspace_id: workspaceId,
+    },
+  });
+  if (!start.ok()) {
+    const body = normalizeErrorMessage(await start.text().catch(() => ""));
+    throw createStageError(
+      "execution_launch",
+      `workspace execution launch start failed (${start.status()}): ${body}`,
+    );
+  }
+
+  const started = asRecord(await start.json());
+  const jobId = firstText(started.job_id);
+  if (!jobId) {
+    throw createStageError(
+      "execution_launch",
+      `workspace execution launch response missing job_id: ${JSON.stringify(started)}`,
+    );
+  }
+
+  let state = firstText(started.state).toLowerCase();
+  let launchError = firstText(started.error);
+  const deadline = Date.now() + 10 * 60_000;
+  while (true) {
+    if (state === "ready") return;
+    if (state === "error") {
+      const detail = normalizeErrorMessage(launchError || "unknown execution launch error");
+      throw createStageError("execution_launch", `workspace execution launch failed: ${detail}`);
+    }
+    if (Date.now() >= deadline) {
+      throw createStageError(
+        "execution_launch",
+        `workspace execution launch timed out after 600000ms (last_state=${state || "unknown"})`,
+      );
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    const status = await request.get(`/api/execution/launch/status?job_id=${encodeURIComponent(jobId)}`);
+    if (!status.ok()) {
+      const body = normalizeErrorMessage(await status.text().catch(() => ""));
+      throw createStageError(
+        "execution_launch",
+        `workspace execution launch status failed (${status.status()}): ${body}`,
+      );
+    }
+    const snapshot = asRecord(await status.json());
+    state = firstText(snapshot.state).toLowerCase();
+    launchError = firstText(snapshot.error);
+  }
 }
 
 async function configureOpenRouterEndpoint(
@@ -154,7 +365,7 @@ async function configureOpenRouterEndpoint(
   });
   if (!upsert.ok()) {
     const body = normalizeErrorMessage(await upsert.text().catch(() => ""));
-    throw new Error(`endpoint upsert failed (${upsert.status()}): ${body}`);
+    throw createStageError("endpoint_config", `endpoint upsert failed (${upsert.status()}): ${body}`);
   }
   const config = asRecord(await upsert.json());
   const endpoints = asArray(config.endpoints).map((entry) => asRecord(entry));
@@ -164,7 +375,7 @@ async function configureOpenRouterEndpoint(
     ?? asRecord({});
   const endpointId = firstText(chosen.id, config.selected_endpoint_id);
   if (!endpointId) {
-    throw new Error(`endpoint upsert returned no endpoint id: ${JSON.stringify(config)}`);
+    throw createStageError("endpoint_config", `endpoint upsert returned no endpoint id: ${JSON.stringify(config)}`);
   }
   const select = await request.post(`/api/providers/${providerId}/harness_config/select`, {
     data: {
@@ -174,7 +385,7 @@ async function configureOpenRouterEndpoint(
   });
   if (!select.ok()) {
     const body = normalizeErrorMessage(await select.text().catch(() => ""));
-    throw new Error(`endpoint select failed (${select.status()}): ${body}`);
+    throw createStageError("endpoint_config", `endpoint select failed (${select.status()}): ${body}`);
   }
 }
 
@@ -189,13 +400,13 @@ async function verifyProviderForWorkspace(
   });
   if (!response.ok()) {
     const body = normalizeErrorMessage(await response.text().catch(() => ""));
-    throw new Error(`provider verify request failed (${response.status()}): ${body}`);
+    throw createStageError("verify", `provider verify request failed (${response.status()}): ${body}`);
   }
   const payload = asRecord(await response.json());
   const status = firstText(payload.status).toLowerCase();
   if (status !== "ok") {
     const detail = normalizeErrorMessage(firstText(payload.message, JSON.stringify(payload)));
-    throw new Error(`provider verify failed (status=${status}): ${detail}`);
+    throw createStageError("verify", `provider verify failed (status=${status}): ${detail}`);
   }
 }
 
@@ -294,13 +505,184 @@ async function waitForTerminalState(
     )
     .toBe("done");
   if (!resolved) {
-    throw new Error(`session ${sessionId} did not reach terminal state`);
+    throw createStageError("first_turn", `session ${sessionId} did not reach terminal state`);
   }
   return resolved;
 }
 
-test("runtime install smoke: fresh daemon can install provider and run OpenRouter prompt", async ({ request }) => {
-  test.setTimeout(25 * 60_000);
+function summarizeDistribution(results: ProviderResult[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const row of results) {
+    out[row.result] = (out[row.result] || 0) + 1;
+  }
+  return out;
+}
+
+function summarizeFailureCategories(results: ProviderResult[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const row of results) {
+    if (row.result !== "fail") continue;
+    const key = row.category || "unknown";
+    out[key] = (out[key] || 0) + 1;
+  }
+  return out;
+}
+
+async function runProvider(
+  request: APIRequestContext,
+  workspaceId: string,
+  providerId: string,
+  installTarget: InstallTarget,
+  environment: ExecutionEnvironment,
+  networkMode: NetworkMode,
+  baseUrl: string,
+  apiKey: string,
+  modelOverride: string,
+  terminalTimeoutMs: number,
+): Promise<ProviderResult> {
+  const started = Date.now();
+  let stage = "status_before_install";
+  let installId: string | null = null;
+  let sessionId: string | null = null;
+  let modelId: string | null = null;
+
+  try {
+    const providerBefore = await getProviderStatus(request, providerId);
+    console.log(`runtime install smoke: provider=${providerId} before installed=${providerBefore.installed} health=${providerBefore.health}`);
+
+    stage = "install";
+    installId = (await installProviderAndWait(request, providerId, installTarget)).installId;
+    console.log(`runtime install smoke: provider=${providerId} install_id=${installId} completed`);
+
+    stage = "status_after_install";
+    const providerAfter = await getProviderStatus(request, providerId);
+    if (!providerAfter.installed || providerAfter.health !== "ok") {
+      const detail = normalizeErrorMessage(firstText(providerAfter.diagnostics[0], `installed=${providerAfter.installed} health=${providerAfter.health}`));
+      throw createStageError(stage, `provider unhealthy after install: ${detail}`);
+    }
+
+    stage = "endpoint_config";
+    await configureOpenRouterEndpoint(request, providerId, baseUrl, apiKey, modelOverride);
+
+    stage = "verify";
+    await verifyProviderForWorkspace(request, workspaceId, providerId);
+
+    stage = "model_resolve";
+    modelId = await resolveWorkspaceProviderModelId(request, workspaceId, providerId);
+    expect(modelId).not.toBe("");
+
+    stage = "task_create";
+    const taskResp = await request.post(`/api/workspaces/${workspaceId}/tasks`, {
+      data: {
+        title: `runtime-install-smoke-${providerId}-${Date.now()}`,
+        create_default_session: false,
+      },
+    });
+    if (!taskResp.ok()) {
+      throw createStageError(stage, `task create failed (${taskResp.status()}): ${normalizeErrorMessage(await taskResp.text().catch(() => ""))}`);
+    }
+    const taskId = firstText(asRecord(await taskResp.json()).id);
+    if (!taskId) {
+      throw createStageError(stage, "task create returned empty task id");
+    }
+
+    stage = "session_create";
+    const sessionResp = await request.post(`/api/tasks/${taskId}/sessions`, {
+      data: {
+        provider_id: providerId,
+        model_id: modelId,
+        env_target: "worktree",
+      },
+    });
+    if (!sessionResp.ok()) {
+      const body = normalizeErrorMessage(await sessionResp.text().catch(() => ""));
+      throw createStageError(stage, `session create failed (${sessionResp.status()}): ${body}`);
+    }
+    sessionId = firstText(asRecord(await sessionResp.json()).id);
+    if (!sessionId) {
+      throw createStageError(stage, "session create returned empty session id");
+    }
+
+    stage = "first_turn_request";
+    const prompt = `runtime-install-smoke-${providerId}-${Date.now()}: reply with exactly the word pong`;
+    const messageResp = await request.post(`/api/sessions/${sessionId}/messages`, {
+      data: {
+        content: prompt,
+        delivery: "immediate",
+      },
+    });
+    if (!messageResp.ok()) {
+      throw createStageError(stage, `session message failed (${messageResp.status()}): ${normalizeErrorMessage(await messageResp.text().catch(() => ""))}`);
+    }
+
+    stage = "first_turn";
+    const terminal = await waitForTerminalState(request, sessionId, terminalTimeoutMs);
+    if (terminal.terminalStatus !== "completed" || terminal.assistantMessages <= 0) {
+      const detail = normalizeErrorMessage(
+        firstText(terminal.errorMessage, `terminal_status=${terminal.terminalStatus}`, "assistant completion missing"),
+      );
+      throw createStageError(stage, `runtime install smoke session failed: ${detail}`);
+    }
+
+    return {
+      provider_id: providerId,
+      install_target: installTarget,
+      environment,
+      network_mode: networkMode,
+      model_override: modelOverride,
+      install_id: installId,
+      session_id: sessionId,
+      model_id: terminal.modelId || modelId,
+      terminal_status: terminal.terminalStatus,
+      assistant_messages: terminal.assistantMessages,
+      stage,
+      error_code: null,
+      category: null,
+      reason: "assistant completion observed",
+      result: "pass",
+      elapsed_ms: Date.now() - started,
+    };
+  } catch (rawError) {
+    const error = toStageError(stage, rawError);
+    const reason = normalizeErrorMessage(error.message || String(rawError));
+    const category = classifyFailureCategory(error.stage || stage, reason, error.errorCode || null);
+
+    return {
+      provider_id: providerId,
+      install_target: installTarget,
+      environment,
+      network_mode: networkMode,
+      model_override: modelOverride,
+      install_id: installId,
+      session_id: sessionId,
+      model_id: modelId,
+      terminal_status: null,
+      assistant_messages: 0,
+      stage: error.stage || stage,
+      error_code: error.errorCode || null,
+      category,
+      reason,
+      result: "fail",
+      elapsed_ms: Date.now() - started,
+    };
+  }
+}
+
+async function persistReport(testInfo: TestInfo, report: Record<string, unknown>, reportPath: string): Promise<void> {
+  const serialized = `${JSON.stringify(report, null, 2)}\n`;
+  await testInfo.attach("runtime-install-openrouter-smoke-report", {
+    body: serialized,
+    contentType: "application/json",
+  });
+  if (!reportPath) return;
+  const absolutePath = path.isAbsolute(reportPath) ? reportPath : path.resolve(process.cwd(), reportPath);
+  mkdirSync(path.dirname(absolutePath), { recursive: true });
+  writeFileSync(absolutePath, serialized, "utf8");
+  console.log(`runtime install smoke report written: ${absolutePath}`);
+}
+
+test("runtime install smoke: provider matrix install/probe/first-turn via OpenRouter", async ({ request }, testInfo) => {
+  test.setTimeout(35 * 60_000);
 
   if ((process.env.CTX_E2E_TIER ?? "") !== "endpoint-ui") {
     test.skip(true, "set CTX_E2E_TIER=endpoint-ui to run runtime install OpenRouter smoke");
@@ -311,10 +693,24 @@ test("runtime install smoke: fresh daemon can install provider and run OpenRoute
     test.skip(true, "missing OPENROUTER_API_KEY");
   }
 
-  const providerId = (process.env.CTX_E2E_INSTALL_SMOKE_PROVIDER ?? DEFAULT_PROVIDER_ID).trim() || DEFAULT_PROVIDER_ID;
-  const modelOverride =
+  const singleProvider = (process.env.CTX_E2E_INSTALL_SMOKE_PROVIDER ?? DEFAULT_PROVIDER_ID).trim() || DEFAULT_PROVIDER_ID;
+  const providerIds = parseCsv(process.env.CTX_E2E_INSTALL_SMOKE_PROVIDERS);
+  if (providerIds.length === 0) {
+    providerIds.push(singleProvider);
+  }
+
+  const defaultModelOverride =
     (process.env.CTX_E2E_INSTALL_SMOKE_MODEL_OVERRIDE ?? DEFAULT_MODEL_OVERRIDE).trim() || DEFAULT_MODEL_OVERRIDE;
   const baseUrl = (process.env.OPENROUTER_BASE_URL ?? "").trim() || DEFAULT_OPENROUTER_BASE_URL;
+  const executionEnvironment =
+    ((process.env.CTX_E2E_INSTALL_SMOKE_ENVIRONMENT ?? "host").trim() as ExecutionEnvironment) || "host";
+  const networkMode =
+    ((process.env.CTX_E2E_INSTALL_SMOKE_NETWORK_MODE ?? "llm_only").trim() as NetworkMode) || "llm_only";
+  const allowlist = parseCsv(process.env.CTX_E2E_INSTALL_SMOKE_ALLOWLIST);
+  const installTarget: InstallTarget = executionEnvironment === "host" ? "host" : "container";
+  const terminalTimeoutMs = envInt(process.env.CTX_E2E_INSTALL_SMOKE_TERMINAL_TIMEOUT_MS, DEFAULT_TERMINAL_TIMEOUT_MS);
+  const allowFailures = envTruthy(process.env.CTX_E2E_INSTALL_SMOKE_ALLOW_FAILURES);
+  const reportPath = (process.env.CTX_E2E_INSTALL_SMOKE_REPORT_PATH ?? "").trim();
 
   const repo = initRepo();
   const workspaceResp = await request.post("/api/workspaces", {
@@ -327,62 +723,54 @@ test("runtime install smoke: fresh daemon can install provider and run OpenRoute
   const workspaceId = firstText(asRecord(await workspaceResp.json()).id);
   expect(workspaceId).not.toBe("");
 
-  const providerBefore = await getProviderStatus(request, providerId);
-  console.log(`install smoke: provider=${providerId} before installed=${providerBefore.installed} health=${providerBefore.health}`);
+  await configureWorkspaceExecution(request, workspaceId, executionEnvironment, networkMode, allowlist);
+  await ensureWorkspaceExecutionLaunched(request, workspaceId, executionEnvironment);
 
-  const installId = await installProviderAndWait(request, providerId, "host");
-  console.log(`install smoke: provider=${providerId} install_id=${installId} completed`);
-
-  const providerAfter = await getProviderStatus(request, providerId);
-  expect(providerAfter.installed).toBeTruthy();
-  expect(providerAfter.health).toBe("ok");
-
-  await configureOpenRouterEndpoint(request, providerId, baseUrl, apiKey, modelOverride);
-  await verifyProviderForWorkspace(request, workspaceId, providerId);
-  const modelId = await resolveWorkspaceProviderModelId(request, workspaceId, providerId);
-  expect(modelId).not.toBe("");
-
-  const taskResp = await request.post(`/api/workspaces/${workspaceId}/tasks`, {
-    data: {
-      title: `runtime-install-smoke-${Date.now()}`,
-      create_default_session: false,
-    },
-  });
-  expect(taskResp.ok(), `task create failed (${taskResp.status()})`).toBeTruthy();
-  const taskId = firstText(asRecord(await taskResp.json()).id);
-  expect(taskId).not.toBe("");
-
-  const sessionResp = await request.post(`/api/tasks/${taskId}/sessions`, {
-    data: {
-      provider_id: providerId,
-      model_id: modelId,
-      env_target: "worktree",
-    },
-  });
-  if (!sessionResp.ok()) {
-    const body = normalizeErrorMessage(await sessionResp.text().catch(() => ""));
-    throw new Error(`session create failed (${sessionResp.status()}): ${body}`);
-  }
-  const sessionId = firstText(asRecord(await sessionResp.json()).id);
-  expect(sessionId).not.toBe("");
-
-  const prompt = `runtime-install-smoke-${Date.now()}: reply with exactly the word pong`;
-  const messageResp = await request.post(`/api/sessions/${sessionId}/messages`, {
-    data: {
-      content: prompt,
-      delivery: "immediate",
-    },
-  });
-  if (!messageResp.ok()) {
-    const body = normalizeErrorMessage(await messageResp.text().catch(() => ""));
-    throw new Error(`session message failed (${messageResp.status()}): ${body}`);
-  }
-
-  const terminal = await waitForTerminalState(request, sessionId, 180_000);
-  if (terminal.terminalStatus !== "completed" || terminal.assistantMessages <= 0) {
-    const detail = normalizeErrorMessage(
-      firstText(terminal.errorMessage, `terminal_status=${terminal.terminalStatus}`, "assistant completion missing"),
+  const results: ProviderResult[] = [];
+  for (const providerId of providerIds) {
+    const perProviderModelOverride =
+      (process.env[providerOverrideEnvVar(providerId)] ?? "").trim() || defaultModelOverride;
+    const result = await runProvider(
+      request,
+      workspaceId,
+      providerId,
+      installTarget,
+      executionEnvironment,
+      networkMode,
+      baseUrl,
+      apiKey,
+      perProviderModelOverride,
+      terminalTimeoutMs,
     );
-    throw new Error(`runtime install smoke session failed: ${detail}`);
+    results.push(result);
+    console.log(
+      `runtime install smoke: provider=${providerId} result=${result.result} stage=${result.stage} error_code=${result.error_code || ""} reason=${result.reason}`,
+    );
+  }
+
+  const report = {
+    generated_at: new Date().toISOString(),
+    workspace_id: workspaceId,
+    provider_ids: providerIds,
+    install_target: installTarget,
+    execution_environment: executionEnvironment,
+    network_mode: networkMode,
+    allow_failures: allowFailures,
+    terminal_timeout_ms: terminalTimeoutMs,
+    distribution: summarizeDistribution(results),
+    failure_categories: summarizeFailureCategories(results),
+    results,
+  };
+
+  await persistReport(testInfo, report, reportPath);
+
+  const failures = results.filter((row) => row.result === "fail");
+  const summaryLines = results.map(
+    (row) => `${row.provider_id} | ${row.result} | ${row.stage} | ${row.error_code || "-"} | ${row.reason}`,
+  );
+  console.log(["provider | result | stage | error_code | reason", ...summaryLines].join("\n"));
+
+  if (!allowFailures) {
+    expect(failures, `runtime install smoke failures detected\n${summaryLines.join("\n")}`).toEqual([]);
   }
 });

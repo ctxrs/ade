@@ -37,3 +37,19 @@ test("provider e2e refuses canonical desktop bundle dir mutation by default", ()
   assert.match(output, /refusing to use canonical desktop bundles dir for e2e/);
 });
 
+test("linux-arm lanes bundle acp-crp-bridge via managed provider artifacts", () => {
+  const script = require("node:fs").readFileSync(scriptPath, "utf8");
+
+  assert.match(
+    script,
+    /bundle_provider_csv="acp-crp-bridge,\$\{bundle_provider_csv\}"/,
+  );
+  assert.match(
+    script,
+    /CTX_E2E_ENDPOINT_BUNDLE_INCLUDE_BRIDGE="\$\{CTX_E2E_ENDPOINT_BUNDLE_INCLUDE_BRIDGE:-0\}"/,
+  );
+  assert.match(
+    script,
+    /managed archive bundling path as the other lane providers/,
+  );
+});

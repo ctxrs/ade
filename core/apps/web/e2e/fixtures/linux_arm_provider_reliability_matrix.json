@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "name": "linux-arm-provider-install-reliability",
+  "updated_at": "2026-03-05",
+  "expected_environment": "container_host_mounted",
+  "expected_network_mode": "llm_only",
+  "critical_providers": [
+    {
+      "provider_id": "codex",
+      "openrouter_model_override": "openai/gpt-5.2-codex"
+    },
+    {
+      "provider_id": "opencode",
+      "openrouter_model_override": "openai/gpt-5.2-codex"
+    },
+    {
+      "provider_id": "goose",
+      "openrouter_model_override": "openai/gpt-5.2-codex"
+    }
+  ],
+  "full_nightly_providers": [
+    {
+      "provider_id": "codex",
+      "openrouter_model_override": "openai/gpt-5.2-codex"
+    },
+    {
+      "provider_id": "opencode",
+      "openrouter_model_override": "openai/gpt-5.2-codex"
+    },
+    {
+      "provider_id": "goose",
+      "openrouter_model_override": "openai/gpt-5.2-codex"
+    },
+    {
+      "provider_id": "droid",
+      "openrouter_model_override": "openai/gpt-5.2-codex"
+    },
+    {
+      "provider_id": "openhands",
+      "openrouter_model_override": "openai/gpt-5.2-codex"
+    }
+  ],
+  "deferred_providers": [
+    {
+      "provider_id": "qwen",
+      "reason": "provider matrix does not currently ship linux-aarch64 managed archive target"
+    },
+    {
+      "provider_id": "mistral",
+      "reason": "provider matrix does not currently ship linux-aarch64 managed archive target"
+    },
+    {
+      "provider_id": "kimi",
+      "reason": "provider matrix does not currently ship linux-aarch64 managed archive target"
+    },
+    {
+      "provider_id": "claude-crp",
+      "reason": "requires anthropic_messages endpoint-shape lane rather than OpenRouter OpenAI-compatible lane"
+    },
+    {
+      "provider_id": "amp",
+      "reason": "requires dedicated partner-auth validation lane"
+    },
+    {
+      "provider_id": "cagent",
+      "reason": "non-chat command-agent flow is out of scope for first-turn chat smoke"
+    },
+    {
+      "provider_id": "pi",
+      "reason": "provider-specific model override/timeout path deferred to follow-up hardening"
+    }
+  ],
+  "unsupported_providers": [
+    "junie",
+    "codebuff",
+    "charm",
+    "aider",
+    "kilo"
+  ]
+}

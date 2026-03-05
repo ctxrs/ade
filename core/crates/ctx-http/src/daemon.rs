@@ -160,20 +160,49 @@ fn runtime_command_invalid_adapter(provider_id: &str, err: String) -> Arc<dyn Pr
     )
 }
 
-fn acp_bridge_adapter(
-    id: &str,
+pub(crate) fn is_acp_provider_id(provider_id: &str) -> bool {
+    matches!(
+        provider_id,
+        "gemini"
+            | "qwen"
+            | "cursor"
+            | "pi"
+            | "opencode"
+            | "mistral"
+            | "goose"
+            | "kimi"
+            | "auggie"
+            | "amp"
+            | "droid"
+            | "copilot"
+            | "cline"
+            | "openhands"
+    )
+}
+
+pub(crate) fn acp_bridge_command(
     bridge_cmd: &installer::AgentServerCommand,
     acp_cmd: installer::AgentServerCommand,
-) -> Arc<dyn ProviderAdapter> {
+) -> installer::AgentServerCommand {
     let acp_command = format_shell_command(&acp_cmd.command, &acp_cmd.args);
     let mut args = bridge_cmd.args.clone();
     args.push("--acp-command".to_string());
     args.push(acp_command);
-    Arc::new(Tier1CrpAdapter::from_raw(
-        id,
-        bridge_cmd.command.clone(),
+    installer::AgentServerCommand {
+        command: bridge_cmd.command.clone(),
         args,
-    ))
+        dependencies: Vec::new(),
+        managed: None,
+    }
+}
+
+pub(crate) fn acp_bridge_adapter(
+    id: &str,
+    bridge_cmd: &installer::AgentServerCommand,
+    acp_cmd: installer::AgentServerCommand,
+) -> Arc<dyn ProviderAdapter> {
+    let bridged = acp_bridge_command(bridge_cmd, acp_cmd);
+    Arc::new(Tier1CrpAdapter::from_raw(id, bridged.command, bridged.args))
 }
 
 fn escape_shell_arg(value: &str) -> String {
@@ -722,7 +751,7 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
         providers.insert(provider_id.to_string(), adapter);
     }
 
-    let acp_provider_ids = vec![
+    for provider_id in [
         "gemini",
         "qwen",
         "cursor",
@@ -737,8 +766,7 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
         "copilot",
         "cline",
         "openhands",
-    ];
-    for provider_id in acp_provider_ids {
+    ] {
         let bridge_missing_message = bridge_runtime_error
             .clone()
             .unwrap_or_else(|| "ACP bridge runtime is not configured or invalid".to_string());
@@ -794,6 +822,10 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
         auth_token,
         lsp_cfg,
     ));
+    state
+        .execution
+        .harness
+        .spawn_background_podman_machine_download();
     state.transport.web_sessions.clone().start_reaper().await;
     state.transport.terminals.clone().start_reaper().await;
     spawn_cache_sweeper(state.clone());

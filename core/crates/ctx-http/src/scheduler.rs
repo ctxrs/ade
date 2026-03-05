@@ -756,6 +756,17 @@ async fn start_turn(
         }
     }
 
+    if is_container {
+        if let Some(root) = runtime_plan.env_overrides.get("CTX_DATA_ROOT") {
+            provider_accounts::ensure_provider_runtime_home_env(
+                Path::new(root),
+                runtime_provider_id,
+                &mut provider_env,
+            )
+            .await?;
+        }
+    }
+
     if let Ok(cfg) = installer::load_agent_server_config(&state.core.data_root).await {
         installer::prepend_runtime_bin_dirs_to_provider_path(
             &mut provider_env,

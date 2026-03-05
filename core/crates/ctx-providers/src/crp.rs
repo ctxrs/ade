@@ -10,7 +10,7 @@ use base64::Engine;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader, BufWriter};
 use tokio::process::{Child, Command};
 use tokio::sync::{broadcast, mpsc, oneshot, watch, Mutex};
 use tokio::time::{timeout, Duration};
@@ -29,6 +29,8 @@ const CRP_VERSION: u32 = 1;
 const DEFAULT_CTX_MCP_TOOL_TIMEOUT_SECS: u64 = 2 * 60 * 60;
 const CRP_MODEL_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const CRP_MODEL_PROBE_TIMEOUT_CONTAINER: Duration = Duration::from_secs(45);
+const CRP_RUNTIME_LAUNCH_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+const CRP_RUNTIME_LAUNCH_PROBE_TIMEOUT_CONTAINER: Duration = Duration::from_secs(5);
 const CRP_AUTH_EVENT_FORWARD_TIMEOUT: Duration = Duration::from_secs(60 * 10);
 const CODEX_CRP_DUMP_CODEX_EVENTS_ENV: &str = "CODEX_CRP_DUMP_CODEX_EVENTS_PATH";
 const CODEX_CRP_DUMP_CRP_EVENTS_ENV: &str = "CODEX_CRP_DUMP_CRP_EVENTS_PATH";
@@ -212,6 +214,51 @@ fn rewrite_container_args_for_linux(args: &[String]) -> Result<Vec<String>> {
         idx += 1;
     }
     Ok(out)
+}
+
+fn resolve_node_binary_from_env(env: &HashMap<String, String>) -> Option<String> {
+    let path_value = env
+        .get("PATH")
+        .cloned()
+        .or_else(|| std::env::var("PATH").ok())?;
+    let executable_names: &[&str] = if cfg!(windows) {
+        &["node.exe", "node"]
+    } else {
+        &["node"]
+    };
+    for dir in std::env::split_paths(std::ffi::OsStr::new(&path_value)) {
+        for name in executable_names {
+            let candidate = dir.join(name);
+            if candidate.is_file() {
+                return Some(candidate.to_string_lossy().to_string());
+            }
+        }
+    }
+    None
+}
+
+fn rewrite_container_command_for_linux(
+    command: &str,
+    args: &[String],
+    env: &HashMap<String, String>,
+) -> Result<(String, Vec<String>)> {
+    let rewritten_command = rewrite_bundled_path_for_linux(command)?;
+    let rewritten_args = rewrite_container_args_for_linux(args)?;
+    let is_js_entrypoint = std::path::Path::new(&rewritten_command)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("js"));
+    if !is_js_entrypoint {
+        return Ok((rewritten_command, rewritten_args));
+    }
+    let Some(node_binary) = resolve_node_binary_from_env(env) else {
+        return Ok((rewritten_command, rewritten_args));
+    };
+    let rewritten_node = rewrite_bundled_path_for_linux(&node_binary)?;
+    let mut final_args = Vec::with_capacity(rewritten_args.len() + 1);
+    final_args.push(rewritten_command);
+    final_args.extend(rewritten_args);
+    Ok((rewritten_node, final_args))
 }
 
 fn resolve_explicit_command_path(command: &str) -> Option<PathBuf> {
@@ -1051,8 +1098,8 @@ impl CrpProcess {
         env: &HashMap<String, String>,
     ) -> Result<Arc<Self>> {
         let mut cmd = if let Some(spec) = container_exec_spec(env) {
-            let container_command = rewrite_bundled_path_for_linux(&agent.command)?;
-            let container_args = rewrite_container_args_for_linux(&agent.args)?;
+            let (container_command, container_args) =
+                rewrite_container_command_for_linux(&agent.command, &agent.args, env)?;
             build_container_exec_command(&spec, workdir, env, &container_command, &container_args)
         } else {
             let mut cmd = Command::new(&agent.command);
@@ -1077,9 +1124,7 @@ impl CrpProcess {
                 }
             }
         }
-        for (k, v) in env {
-            cmd.env(k, v);
-        }
+        apply_outer_process_env(&mut cmd, env);
 
         let mut child = cmd.spawn()?;
         let pid = child.id().unwrap_or(0);
@@ -2353,6 +2398,71 @@ fn probe_timeout_for_env(env: &HashMap<String, String>) -> Duration {
     }
 }
 
+fn runtime_launch_probe_timeout_for_env(env: &HashMap<String, String>) -> Duration {
+    if container_exec_spec(env).is_some() {
+        CRP_RUNTIME_LAUNCH_PROBE_TIMEOUT_CONTAINER
+    } else {
+        CRP_RUNTIME_LAUNCH_PROBE_TIMEOUT
+    }
+}
+
+fn spawn_probe_output_tail_reader<R>(
+    reader: R,
+    provider_id: String,
+    stream_name: &'static str,
+    tail_ref: Arc<Mutex<Vec<String>>>,
+) where
+    R: AsyncRead + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(reader).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            tracing::debug!(
+                provider_id = %provider_id,
+                stream = stream_name,
+                "crp {}: {}",
+                stream_name,
+                trimmed
+            );
+            let mut tail = tail_ref.lock().await;
+            if tail.len() >= 20 {
+                let _ = tail.remove(0);
+            }
+            tail.push(trimmed.to_string());
+        }
+    });
+}
+
+async fn format_probe_output_tail(label: &str, tail: &Arc<Mutex<Vec<String>>>) -> String {
+    let lines = tail.lock().await;
+    if lines.is_empty() {
+        String::new()
+    } else {
+        format!("; {label}_tail={}", lines.join(" | "))
+    }
+}
+
+fn apply_outer_process_env(cmd: &mut Command, env: &HashMap<String, String>) {
+    let is_container_exec = container_exec_spec(env).is_some();
+    for (key, value) in env {
+        if should_skip_outer_process_env_key(key, is_container_exec) {
+            continue;
+        }
+        cmd.env(key, value);
+    }
+}
+
+fn should_skip_outer_process_env_key(key: &str, is_container_exec: bool) -> bool {
+    if !is_container_exec {
+        return false;
+    }
+    matches!(key, "HOME" | "TMPDIR" | "TMP" | "TEMP") || key.starts_with("XDG_")
+}
+
 pub async fn probe_crp_models(
     provider_id: &str,
     command: String,
@@ -2374,8 +2484,8 @@ pub async fn probe_crp_models(
     let container_spec = container_exec_spec(&env);
     let probe_timeout = probe_timeout_for_env(&env);
     let mut cmd = if let Some(spec) = container_spec {
-        let container_command = rewrite_bundled_path_for_linux(&command)?;
-        let container_args = rewrite_container_args_for_linux(&args)?;
+        let (container_command, container_args) =
+            rewrite_container_command_for_linux(&command, &args, &env)?;
         build_container_exec_command(&spec, &workdir, &env, &container_command, &container_args)
     } else {
         let mut cmd = Command::new(&command);
@@ -2386,9 +2496,7 @@ pub async fn probe_crp_models(
     cmd.stdin(std::process::Stdio::piped());
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
-    for (k, v) in &env {
-        cmd.env(k, v);
-    }
+    apply_outer_process_env(&mut cmd, &env);
 
     let mut child = cmd
         .spawn()
@@ -2398,27 +2506,12 @@ pub async fn probe_crp_models(
     let stderr = child.stderr.take().context("capturing CRP stderr")?;
 
     let stderr_tail: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let stderr_provider = provider_id.to_string();
-    let stderr_tail_ref = Arc::clone(&stderr_tail);
-    tokio::spawn(async move {
-        let mut lines = BufReader::new(stderr).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            tracing::debug!(
-                provider_id = %stderr_provider,
-                "crp stderr: {}",
-                trimmed
-            );
-            let mut tail = stderr_tail_ref.lock().await;
-            if tail.len() >= 20 {
-                let _ = tail.remove(0);
-            }
-            tail.push(trimmed.to_string());
-        }
-    });
+    spawn_probe_output_tail_reader(
+        stderr,
+        provider_id.to_string(),
+        "stderr",
+        Arc::clone(&stderr_tail),
+    );
 
     let mut stdin = BufWriter::new(stdin);
     let mut stdout_reader = BufReader::new(stdout).lines();
@@ -2485,6 +2578,73 @@ pub async fn probe_crp_models(
     Ok(result)
 }
 
+pub async fn probe_crp_runtime_launch(
+    provider_id: &str,
+    command: String,
+    args: Vec<String>,
+    workdir: PathBuf,
+    env: HashMap<String, String>,
+) -> Result<()> {
+    let command_label = command.clone();
+    let container_spec = container_exec_spec(&env);
+    let probe_timeout = runtime_launch_probe_timeout_for_env(&env);
+    let mut cmd = if let Some(spec) = container_spec {
+        let (container_command, container_args) =
+            rewrite_container_command_for_linux(&command, &args, &env)?;
+        build_container_exec_command(&spec, &workdir, &env, &container_command, &container_args)
+    } else {
+        let mut cmd = Command::new(&command);
+        cmd.args(&args);
+        cmd.current_dir(&workdir);
+        cmd
+    };
+    cmd.stdin(std::process::Stdio::piped());
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    apply_outer_process_env(&mut cmd, &env);
+
+    let mut child = cmd
+        .spawn()
+        .with_context(|| format!("spawning CRP runtime {provider_id} ({command_label})"))?;
+    let stdout = child.stdout.take().context("capturing CRP stdout")?;
+    let stderr = child.stderr.take().context("capturing CRP stderr")?;
+
+    let stdout_tail: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    spawn_probe_output_tail_reader(
+        stdout,
+        provider_id.to_string(),
+        "stdout",
+        Arc::clone(&stdout_tail),
+    );
+    let stderr_tail: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    spawn_probe_output_tail_reader(
+        stderr,
+        provider_id.to_string(),
+        "stderr",
+        Arc::clone(&stderr_tail),
+    );
+
+    let started_at = tokio::time::Instant::now();
+    loop {
+        if let Some(exit_status) = child
+            .try_wait()
+            .with_context(|| format!("waiting for CRP runtime {provider_id} during launch probe"))?
+        {
+            let stdout_tail = format_probe_output_tail("stdout", &stdout_tail).await;
+            let stderr_tail = format_probe_output_tail("stderr", &stderr_tail).await;
+            anyhow::bail!(
+                "CRP runtime exited during launch probe with status {exit_status}{stdout_tail}{stderr_tail}"
+            );
+        }
+        if started_at.elapsed() >= probe_timeout {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
 async fn build_prompt_items(
     input: &TurnInput,
     _workdir: &PathBuf,
@@ -2541,6 +2701,8 @@ async fn build_prompt_items(
 mod tests {
     use super::*;
     use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn extract_auth_url_from_stderr_line_parses_google_url() {
@@ -2569,6 +2731,16 @@ mod tests {
                 "Auggie does not currently support ACP authentication in this environment. Run `auggie login` via the fallback flow."
             )
         );
+    }
+
+    #[test]
+    fn container_exec_outer_process_env_skips_provider_home_and_xdg_keys() {
+        assert!(should_skip_outer_process_env_key("HOME", true));
+        assert!(should_skip_outer_process_env_key("TMPDIR", true));
+        assert!(should_skip_outer_process_env_key("XDG_CONFIG_HOME", true));
+        assert!(should_skip_outer_process_env_key("XDG_STATE_HOME", true));
+        assert!(!should_skip_outer_process_env_key("OPENAI_API_KEY", true));
+        assert!(!should_skip_outer_process_env_key("HOME", false));
     }
 
     #[test]
@@ -2781,6 +2953,34 @@ mod tests {
     }
 
     #[test]
+    fn rewrite_container_command_for_linux_uses_explicit_node_binary_for_js_entrypoints() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node_dir = tmp.path().join("runtimes/node/linux/aarch64/node-v1/bin");
+        fs::create_dir_all(&node_dir).expect("mkdir node dir");
+        let node_bin = node_dir.join("node");
+        fs::write(&node_bin, b"ok").expect("write node");
+        let script = tmp
+            .path()
+            .join("providers/goose/linux/aarch64/goose-acp.js");
+        fs::create_dir_all(script.parent().expect("parent")).expect("mkdir script parent");
+        fs::write(&script, b"#!/usr/bin/env node\n").expect("write script");
+
+        let mut env = HashMap::new();
+        env.insert("PATH".to_string(), node_dir.to_string_lossy().to_string());
+        let args = vec!["--flag".to_string()];
+
+        let (command, rewritten_args) =
+            rewrite_container_command_for_linux(script.to_string_lossy().as_ref(), &args, &env)
+                .expect("rewrite command");
+
+        assert_eq!(command, node_bin.to_string_lossy());
+        assert_eq!(
+            rewritten_args,
+            vec![script.to_string_lossy().to_string(), "--flag".to_string()]
+        );
+    }
+
+    #[test]
     fn rewrite_bundled_path_for_linux_errors_when_linux_target_missing() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let host = tmp
@@ -2867,6 +3067,52 @@ mod tests {
     fn synthetic_cline_models_probe_requires_openai_model() {
         let env = HashMap::new();
         assert!(synthetic_models_probe_for_provider("cline", &env).is_none());
+    }
+
+    #[cfg(unix)]
+    fn write_probe_script(dir: &tempfile::TempDir, body: &str) -> PathBuf {
+        let script = dir.path().join("probe.sh");
+        fs::write(&script, format!("#!/bin/sh\n{body}\n")).expect("write script");
+        let mut perms = fs::metadata(&script).expect("stat script").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script, perms).expect("chmod script");
+        script
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn probe_crp_runtime_launch_accepts_runtime_that_stays_alive() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let script = write_probe_script(&tmp, "cat >/dev/null");
+        probe_crp_runtime_launch(
+            "codex",
+            script.to_string_lossy().to_string(),
+            Vec::new(),
+            tmp.path().to_path_buf(),
+            HashMap::new(),
+        )
+        .await
+        .expect("launch probe should succeed");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn probe_crp_runtime_launch_reports_early_exit_output() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let script = write_probe_script(&tmp, "echo bridge missing >&2\nexit 17");
+        let err = probe_crp_runtime_launch(
+            "opencode",
+            script.to_string_lossy().to_string(),
+            Vec::new(),
+            tmp.path().to_path_buf(),
+            HashMap::new(),
+        )
+        .await
+        .expect_err("launch probe should fail");
+        let msg = err.to_string();
+        assert!(msg.contains("launch probe"));
+        assert!(msg.contains("bridge missing"));
+        assert!(msg.contains("exit status: 17"));
     }
 
     #[cfg(feature = "fuzz_tests")]

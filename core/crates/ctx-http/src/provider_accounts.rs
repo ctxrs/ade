@@ -604,6 +604,72 @@ pub async fn ensure_codex_endpoint_runtime_home_from_env(
     Ok(())
 }
 
+pub async fn ensure_provider_runtime_home_env(
+    runtime_root: &Path,
+    provider_id: &str,
+    provider_env: &mut HashMap<String, String>,
+) -> Result<()> {
+    let preferred_home = provider_env
+        .get("CODEX_HOME")
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    let home = preferred_home.unwrap_or_else(|| {
+        runtime_root
+            .join("providers")
+            .join(provider_id)
+            .join("home")
+    });
+    let config_home = home.join(".config");
+    let cache_home = home.join(".cache");
+    let data_home = home.join(".local").join("share");
+    let state_home = home.join(".local").join("state");
+    tokio::fs::create_dir_all(&config_home)
+        .await
+        .with_context(|| {
+            format!(
+                "creating provider runtime config dir {}",
+                config_home.display()
+            )
+        })?;
+    tokio::fs::create_dir_all(&cache_home)
+        .await
+        .with_context(|| {
+            format!(
+                "creating provider runtime cache dir {}",
+                cache_home.display()
+            )
+        })?;
+    tokio::fs::create_dir_all(&data_home)
+        .await
+        .with_context(|| format!("creating provider runtime data dir {}", data_home.display()))?;
+    tokio::fs::create_dir_all(&state_home)
+        .await
+        .with_context(|| {
+            format!(
+                "creating provider runtime state dir {}",
+                state_home.display()
+            )
+        })?;
+    provider_env
+        .entry("HOME".to_string())
+        .or_insert_with(|| home.to_string_lossy().to_string());
+    provider_env
+        .entry("XDG_CONFIG_HOME".to_string())
+        .or_insert_with(|| config_home.to_string_lossy().to_string());
+    provider_env
+        .entry("XDG_CACHE_HOME".to_string())
+        .or_insert_with(|| cache_home.to_string_lossy().to_string());
+    provider_env
+        .entry("XDG_DATA_HOME".to_string())
+        .or_insert_with(|| data_home.to_string_lossy().to_string());
+    provider_env
+        .entry("XDG_STATE_HOME".to_string())
+        .or_insert_with(|| state_home.to_string_lossy().to_string());
+    Ok(())
+}
+
 fn codex_runtime_owner_path(data_root: &Path) -> PathBuf {
     codex_runtime_home(data_root).join(CODEX_RUNTIME_OWNER_FILE)
 }
@@ -3878,6 +3944,58 @@ mod tests {
         assert!(err.to_string().contains(
             "missing OPENAI_API_KEY and CODEX_HOME while preparing codex endpoint runtime home"
         ));
+    }
+
+    #[tokio::test]
+    async fn ensure_provider_runtime_home_env_sets_home_and_xdg_dirs_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut env = HashMap::new();
+
+        ensure_provider_runtime_home_env(dir.path(), "opencode", &mut env)
+            .await
+            .unwrap();
+
+        let home = env.get("HOME").cloned().unwrap_or_default();
+        let expected_config = Path::new(&home)
+            .join(".config")
+            .to_string_lossy()
+            .to_string();
+        let expected_cache = Path::new(&home)
+            .join(".cache")
+            .to_string_lossy()
+            .to_string();
+        let expected_data = Path::new(&home)
+            .join(".local/share")
+            .to_string_lossy()
+            .to_string();
+        let expected_state = Path::new(&home)
+            .join(".local/state")
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(
+            home,
+            dir.path()
+                .join("providers")
+                .join("opencode")
+                .join("home")
+                .to_string_lossy()
+        );
+        assert_eq!(
+            env.get("XDG_CONFIG_HOME").map(String::as_str),
+            Some(expected_config.as_str())
+        );
+        assert_eq!(
+            env.get("XDG_CACHE_HOME").map(String::as_str),
+            Some(expected_cache.as_str())
+        );
+        assert_eq!(
+            env.get("XDG_DATA_HOME").map(String::as_str),
+            Some(expected_data.as_str())
+        );
+        assert_eq!(
+            env.get("XDG_STATE_HOME").map(String::as_str),
+            Some(expected_state.as_str())
+        );
     }
 
     #[tokio::test]

@@ -3,7 +3,7 @@ set -euo pipefail
 
 suite="${1:-}"
 if [[ -z "${suite}" ]]; then
-  echo "usage: $0 {e2e|runner|tokens|endpoint-ui|provider-api-auth}" >&2
+  echo "usage: $0 {e2e|runner|tokens|endpoint-ui|provider-api-auth|linux-arm-critical|linux-arm-nightly}" >&2
   exit 2
 fi
 
@@ -99,11 +99,18 @@ ensure_endpoint_ui_bundles() {
   local bundle_dir="${CTX_E2E_BUNDLE_DIR:-/tmp/ctx-e2e-bundles-${cache_key}}"
   local first_pass_providers="${CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-acp-crp-bridge,codex,gemini,qwen,opencode,mistral,goose,droid,kimi,openhands}"
   local matrix_json="${CTX_BUNDLE_MATRIX_JSON:-${repo_root}/crates/ctx-http/src/provider_matrix.json}"
+  local canonical_runtime_lock="${repo_root}/apps/desktop/src-tauri/bundles/runtime_lock.v2.json"
   local bundle_build_dir="${CTX_E2E_BUNDLE_BUILD_DIR:-/tmp/ctx-e2e-bundle-build-${cache_key}}"
   local cargo_target_dir="${CTX_E2E_CARGO_TARGET_DIR:-/tmp/ctx-e2e-cargo-${cache_key}}"
   local cargo_home_dir="${CTX_E2E_CARGO_HOME:-/tmp/ctx-e2e-cargo-home-${cache_key}}"
 
   local bundle_skip_images="${CTX_E2E_ENDPOINT_SKIP_BUNDLE_IMAGES:-0}"
+  local bundle_harness_image="${CTX_E2E_ENDPOINT_BUNDLE_HARNESS_IMAGE:-1}"
+  local bundle_include_bridge="${CTX_E2E_ENDPOINT_BUNDLE_INCLUDE_BRIDGE:-1}"
+  local bundle_local_adapters="${CTX_E2E_ENDPOINT_BUNDLE_LOCAL_ADAPTERS:-true}"
+  local bundle_build_local_adapters="${CTX_E2E_ENDPOINT_BUNDLE_BUILD_LOCAL_ADAPTERS:-1}"
+  local append_local_adapters="${CTX_E2E_ENDPOINT_BUNDLE_APPEND_LOCAL_ADAPTERS:-auto}"
+  local append_build_local_adapters="${CTX_E2E_ENDPOINT_BUNDLE_APPEND_BUILD_LOCAL_ADAPTERS:-0}"
   local bundle_podman="${CTX_E2E_ENDPOINT_BUNDLE_PODMAN:-}"
   if [[ -z "${bundle_podman}" && "${OSTYPE:-}" == darwin* ]]; then
     bundle_podman="1"
@@ -135,10 +142,10 @@ ensure_endpoint_ui_bundles() {
   CTX_BUNDLE_MATRIX_JSON="${matrix_json}" \
   CTX_BUNDLE_ONLY_PROVIDERS="${first_pass_providers}" \
   CTX_BUNDLE_SKIP_IMAGES="${bundle_skip_images}" \
-  CTX_BUNDLE_HARNESS_IMAGE="${CTX_E2E_ENDPOINT_BUNDLE_HARNESS_IMAGE:-1}" \
-  CTX_BUNDLE_INCLUDE_BRIDGE="1" \
-  CTX_BUNDLE_LOCAL_ADAPTERS="true" \
-  CTX_BUNDLE_BUILD_LOCAL_ADAPTERS="1" \
+  CTX_BUNDLE_HARNESS_IMAGE="${bundle_harness_image}" \
+  CTX_BUNDLE_INCLUDE_BRIDGE="${bundle_include_bridge}" \
+  CTX_BUNDLE_LOCAL_ADAPTERS="${bundle_local_adapters}" \
+  CTX_BUNDLE_BUILD_LOCAL_ADAPTERS="${bundle_build_local_adapters}" \
   CTX_BUNDLE_USE_ACP_SHIMS="1" \
   CTX_BUNDLE_PODMAN="${bundle_podman:-0}" \
   PODMAN_VERSION="${podman_version}" \
@@ -177,9 +184,9 @@ ensure_endpoint_ui_bundles() {
       CTX_BUNDLE_ONLY_PROVIDERS="${append_providers}" \
       CTX_BUNDLE_SKIP_IMAGES="1" \
       CTX_BUNDLE_HARNESS_IMAGE="0" \
-      CTX_BUNDLE_INCLUDE_BRIDGE="1" \
-      CTX_BUNDLE_LOCAL_ADAPTERS="auto" \
-      CTX_BUNDLE_BUILD_LOCAL_ADAPTERS="0" \
+      CTX_BUNDLE_INCLUDE_BRIDGE="${bundle_include_bridge}" \
+      CTX_BUNDLE_LOCAL_ADAPTERS="${append_local_adapters}" \
+      CTX_BUNDLE_BUILD_LOCAL_ADAPTERS="${append_build_local_adapters}" \
       CTX_BUNDLE_USE_ACP_SHIMS="1" \
       CTX_BUNDLE_PODMAN="0" \
       CARGO_TARGET_DIR="${cargo_target_dir}" \
@@ -208,6 +215,57 @@ ensure_endpoint_ui_bundles() {
     fi
   fi
 
+  local bundled_runtime_lock="${bundle_dir}/runtime_lock.v2.json"
+  local runtime_lock_arch="x86_64"
+  if [[ "$(uname -m)" == "arm64" ]]; then
+    runtime_lock_arch="aarch64"
+  fi
+  if [[ ! -f "${bundled_runtime_lock}" && -f "${canonical_runtime_lock}" ]]; then
+    cp "${canonical_runtime_lock}" "${bundled_runtime_lock}"
+    echo "copied canonical runtime lock to bundle dir: ${bundled_runtime_lock}"
+  fi
+  if [[ -f "${bundled_runtime_lock}" && -f "${canonical_runtime_lock}" ]]; then
+    node -e '
+const fs = require("node:fs");
+const [bundlePath, canonicalPath, arch] = process.argv.slice(1);
+const bundle = JSON.parse(fs.readFileSync(bundlePath, "utf8"));
+const canonical = JSON.parse(fs.readFileSync(canonicalPath, "utf8"));
+const bundleComponents = Array.isArray(bundle.components) ? bundle.components : [];
+const canonicalComponents = Array.isArray(canonical.components) ? canonical.components : [];
+const keyFor = (component) => JSON.stringify([
+  component.kind || "",
+  component.id || "",
+  component.os || "",
+  component.arch || "",
+  component.variant || "default",
+]);
+const wanted = canonicalComponents.filter((component) => (
+  component.kind === "image"
+  && component.id === "ctx-harness"
+  && component.os === "linux"
+  && component.arch === arch
+  && (component.variant || "default") === "default"
+));
+if (wanted.length === 0) {
+  process.exit(0);
+}
+const existing = new Set(bundleComponents.map(keyFor));
+let changed = false;
+for (const component of wanted) {
+  const key = keyFor(component);
+  if (existing.has(key)) continue;
+  bundleComponents.push(component);
+  existing.add(key);
+  changed = true;
+}
+if (changed) {
+  bundle.components = bundleComponents;
+  fs.writeFileSync(bundlePath, `${JSON.stringify(bundle, null, 2)}\n`);
+  process.stdout.write(`added ctx-harness managed image source to ${bundlePath}\n`);
+}
+' "${bundled_runtime_lock}" "${canonical_runtime_lock}" "${runtime_lock_arch}"
+  fi
+
   export CTX_BUNDLE_DIR="${bundle_dir}"
   export CTX_E2E_BUNDLED_ONLY="1"
   export CTX_E2E_BUNDLED_ONLY_PROVIDERS="${first_pass_providers}"
@@ -222,6 +280,103 @@ ensure_endpoint_ui_bundles() {
   echo "using CTX_E2E_CARGO_TARGET_DIR=${CTX_E2E_CARGO_TARGET_DIR}"
   echo "using CTX_E2E_CARGO_HOME=${CTX_E2E_CARGO_HOME}"
   echo "enforcing bundled-only runtime resolution for: ${CTX_E2E_BUNDLED_ONLY_PROVIDERS}"
+}
+
+ensure_openrouter_creds_for_lane() {
+  local lane="${1:-}"
+  export OPENROUTER_BASE_URL="${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}"
+
+  if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
+    OPENROUTER_API_KEY="$(read_openrouter_api_key_from_settings || true)"
+    export OPENROUTER_API_KEY
+  fi
+
+  if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
+    if [[ -n "${CI:-}" ]]; then
+      echo "missing OpenRouter API key for ${lane}; set OPENROUTER_API_KEY or configure title_generation in ${CTX_DATA_ROOT:-$HOME/.ctx}/settings.json" >&2
+      exit 1
+    fi
+    echo "skipping ${lane}; missing OpenRouter API key (set OPENROUTER_API_KEY or configure title_generation in ${CTX_DATA_ROOT:-$HOME/.ctx}/settings.json)" >&2
+    exit 0
+  fi
+}
+
+run_linux_arm_runtime_install_lane() {
+  local lane="$1"
+  local allow_failures="$2"
+
+  ensure_openrouter_creds_for_lane "${lane}"
+
+  local lane_key
+  if [[ "${lane}" == "linux-arm-critical" ]]; then
+    lane_key="critical"
+  elif [[ "${lane}" == "linux-arm-nightly" ]]; then
+    lane_key="nightly"
+  else
+    echo "unsupported linux-arm lane: ${lane}" >&2
+    exit 2
+  fi
+
+  local lane_report_root="${CTX_E2E_LINUX_ARM_REPORT_DIR:-/tmp/ctx-linux-arm-provider-reliability}"
+  mkdir -p "${lane_report_root}"
+  local preflight_report="${CTX_E2E_LINUX_ARM_PREFLIGHT_REPORT:-${lane_report_root}/${lane_key}-preflight-report.json}"
+  local smoke_report="${CTX_E2E_INSTALL_SMOKE_REPORT_PATH:-${lane_report_root}/${lane_key}-runtime-install-smoke-report.json}"
+
+  local provider_csv="${CTX_E2E_INSTALL_SMOKE_PROVIDERS:-}"
+  if [[ -z "${provider_csv}" ]]; then
+    provider_csv="$(node "${repo_root}/scripts/linux_arm_provider_reliability_matrix.cjs" --lane "${lane_key}")"
+  fi
+  if [[ -z "${provider_csv}" ]]; then
+    echo "linux-arm provider matrix resolved empty provider list for lane ${lane_key}" >&2
+    exit 1
+  fi
+
+  local preflight_args=(
+    "${repo_root}/scripts/linux_arm_provider_preflight.cjs"
+    "--lane" "${lane_key}"
+    "--report" "${preflight_report}"
+  )
+  if [[ "${CTX_E2E_LINUX_ARM_PREFLIGHT_STRICT_SIZE_BYTES:-0}" == "1" ]]; then
+    preflight_args+=("--strict-size-bytes")
+  fi
+  node "${preflight_args[@]}"
+
+  # Linux-arm runtime install lanes validate bundled runtime command resolution.
+  # Scope bundle preparation to the lane provider set unless caller overrides.
+  local bundle_provider_csv="${CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-${provider_csv}}"
+  if [[ ",${bundle_provider_csv}," != *",acp-crp-bridge,"* ]]; then
+    bundle_provider_csv="acp-crp-bridge,${bundle_provider_csv}"
+  fi
+  export CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS="${bundle_provider_csv}"
+  export CTX_E2E_ENDPOINT_SKIP_BUNDLE_IMAGES="${CTX_E2E_ENDPOINT_SKIP_BUNDLE_IMAGES:-1}"
+  export CTX_E2E_ENDPOINT_BUNDLE_HARNESS_IMAGE="${CTX_E2E_ENDPOINT_BUNDLE_HARNESS_IMAGE:-0}"
+  # Keep the legacy local/source bridge path off here. ACP bridge must arrive via the same
+  # managed archive bundling path as the other lane providers.
+  export CTX_E2E_ENDPOINT_BUNDLE_INCLUDE_BRIDGE="${CTX_E2E_ENDPOINT_BUNDLE_INCLUDE_BRIDGE:-0}"
+  export CTX_E2E_ENDPOINT_BUNDLE_PODMAN="${CTX_E2E_ENDPOINT_BUNDLE_PODMAN:-1}"
+  export CTX_E2E_ENDPOINT_BUNDLE_LOCAL_ADAPTERS="${CTX_E2E_ENDPOINT_BUNDLE_LOCAL_ADAPTERS:-off}"
+  export CTX_E2E_ENDPOINT_BUNDLE_BUILD_LOCAL_ADAPTERS="${CTX_E2E_ENDPOINT_BUNDLE_BUILD_LOCAL_ADAPTERS:-0}"
+  export CTX_E2E_ENDPOINT_BUNDLE_APPEND_LOCAL_ADAPTERS="${CTX_E2E_ENDPOINT_BUNDLE_APPEND_LOCAL_ADAPTERS:-off}"
+  export CTX_E2E_ENDPOINT_BUNDLE_APPEND_BUILD_LOCAL_ADAPTERS="${CTX_E2E_ENDPOINT_BUNDLE_APPEND_BUILD_LOCAL_ADAPTERS:-0}"
+  export CTX_BUNDLE_BUILD_CODEX_CRP="${CTX_BUNDLE_BUILD_CODEX_CRP:-0}"
+  ensure_endpoint_ui_bundles
+
+  export CTX_E2E_TIER="endpoint-ui"
+  export CTX_E2E_INSTALL_SMOKE_PROVIDERS="${provider_csv}"
+  export CTX_E2E_INSTALL_SMOKE_ENVIRONMENT="${CTX_E2E_INSTALL_SMOKE_ENVIRONMENT:-container_host_mounted}"
+  export CTX_E2E_INSTALL_SMOKE_NETWORK_MODE="${CTX_E2E_INSTALL_SMOKE_NETWORK_MODE:-llm_only}"
+  export CTX_E2E_INSTALL_SMOKE_REPORT_PATH="${smoke_report}"
+  export CTX_E2E_INSTALL_SMOKE_ALLOW_FAILURES="${allow_failures}"
+  export CTX_PODMAN_MACHINE_PREFETCH="${CTX_PODMAN_MACHINE_PREFETCH:-1}"
+  export OPENAI_API_KEY="${OPENAI_API_KEY:-${OPENROUTER_API_KEY}}"
+  export OPENAI_BASE_URL="${OPENAI_BASE_URL:-${OPENROUTER_BASE_URL}}"
+
+  (
+    cd "${repo_root}/apps/web"
+    pnpm exec playwright test -c playwright.config.ts \
+      e2e/runtime-provider-install-openrouter-smoke.spec.ts \
+      --workers=1
+  )
 }
 
 tests=()
@@ -322,8 +477,18 @@ case "${suite}" in
     )
     exit 0
     ;;
+  linux-arm-critical)
+    export CTX_E2E_TIER="endpoint-ui"
+    run_linux_arm_runtime_install_lane "linux-arm-critical" "0"
+    exit 0
+    ;;
+  linux-arm-nightly)
+    export CTX_E2E_TIER="endpoint-ui"
+    run_linux_arm_runtime_install_lane "linux-arm-nightly" "1"
+    exit 0
+    ;;
   *)
-    echo "usage: $0 {e2e|runner|tokens|endpoint-ui|provider-api-auth}" >&2
+    echo "usage: $0 {e2e|runner|tokens|endpoint-ui|provider-api-auth|linux-arm-critical|linux-arm-nightly}" >&2
     exit 2
     ;;
 esac
