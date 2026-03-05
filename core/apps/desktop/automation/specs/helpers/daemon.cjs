@@ -7,6 +7,16 @@ const DAEMON_HTTP_TIMEOUT_MS = Number.parseInt(
 let cachedConnection = null;
 const waitMs = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 
+const connectionSignature = (connection) => JSON.stringify({
+  kind: connection?.kind || null,
+  base_url: connection?.base_url || null,
+  token: connection?.token || null,
+  host: connection?.host || null,
+  user: connection?.user || null,
+  remote_port: connection?.remote_port ?? null,
+  remote_data_dir: connection?.remote_data_dir || null,
+});
+
 const shouldRetryWebdriverTransportError = (error) => {
   const text = String(error || "");
   return (
@@ -73,10 +83,13 @@ const getDesktopConnection = async () => {
 };
 
 const getCachedDesktopConnection = async () => {
-  if (cachedConnection && cachedConnection.base_url && cachedConnection.token) {
+  const current = await getDesktopConnection();
+
+  if (cachedConnection && connectionSignature(cachedConnection) === connectionSignature(current)) {
     return cachedConnection;
   }
-  cachedConnection = await getDesktopConnection();
+
+  cachedConnection = current;
   return cachedConnection;
 };
 
@@ -137,12 +150,17 @@ const daemonJson = async (method, apiPath, body) => {
       const connection = await getCachedDesktopConnection();
       const resp = await daemonHttpJson(connection, method, apiPath, body);
       if (Number(resp.status) === 401 || Number(resp.status) === 403) {
-        cachedConnection = await getDesktopConnection();
-        return await daemonHttpJson(cachedConnection, method, apiPath, body);
+        cachedConnection = null;
+        const refreshedConnection = await getCachedDesktopConnection();
+        return await daemonHttpJson(refreshedConnection, method, apiPath, body);
+      }
+      if (attempt > 1) {
+        cachedConnection = connection;
       }
       return resp;
     } catch (error) {
       lastError = error;
+      cachedConnection = null;
       if (
         attempt >= DAEMON_JSON_RETRY_ATTEMPTS
         || (!shouldRetryWebdriverTransportError(error) && !shouldRetryDaemonHttpError(error))
