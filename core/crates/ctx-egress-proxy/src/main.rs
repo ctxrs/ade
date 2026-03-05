@@ -28,6 +28,7 @@ const LLM_ALLOWLIST: &[&str] = &[
     "api.cohere.ai",
     "api.together.xyz",
     "api.openrouter.ai",
+    "openrouter.ai",
     "generativelanguage.googleapis.com",
     "vertex.googleapis.com",
     "dashscope.aliyuncs.com",
@@ -378,4 +379,24 @@ fn original_dst(stream: &TcpStream) -> Result<SocketAddr> {
 #[cfg(not(target_os = "linux"))]
 fn original_dst(_stream: &TcpStream) -> Result<SocketAddr> {
     anyhow::bail!("SO_ORIGINAL_DST is only supported on linux")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn llm_only_allows_openrouter_root_host() {
+        assert!(allowed_host("openrouter.ai", ProxyMode::LlmOnly, &[]));
+    }
+
+    #[test]
+    fn llm_only_allows_openrouter_api_subdomain() {
+        assert!(allowed_host("api.openrouter.ai", ProxyMode::LlmOnly, &[]));
+    }
+
+    #[test]
+    fn llm_only_blocks_unlisted_hosts() {
+        assert!(!allowed_host("example.com", ProxyMode::LlmOnly, &[]));
+    }
 }

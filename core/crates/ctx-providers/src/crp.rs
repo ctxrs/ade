@@ -28,6 +28,7 @@ use crate::events::NormalizedEvent;
 const CRP_VERSION: u32 = 1;
 const DEFAULT_CTX_MCP_TOOL_TIMEOUT_SECS: u64 = 2 * 60 * 60;
 const CRP_MODEL_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+const CRP_MODEL_PROBE_TIMEOUT_CONTAINER: Duration = Duration::from_secs(45);
 const CRP_AUTH_EVENT_FORWARD_TIMEOUT: Duration = Duration::from_secs(60 * 10);
 const CODEX_CRP_DUMP_CODEX_EVENTS_ENV: &str = "CODEX_CRP_DUMP_CODEX_EVENTS_PATH";
 const CODEX_CRP_DUMP_CRP_EVENTS_ENV: &str = "CODEX_CRP_DUMP_CRP_EVENTS_PATH";
@@ -2344,6 +2345,14 @@ fn synthetic_models_probe_for_provider(
     })
 }
 
+fn probe_timeout_for_env(env: &HashMap<String, String>) -> Duration {
+    if container_exec_spec(env).is_some() {
+        CRP_MODEL_PROBE_TIMEOUT_CONTAINER
+    } else {
+        CRP_MODEL_PROBE_TIMEOUT
+    }
+}
+
 pub async fn probe_crp_models(
     provider_id: &str,
     command: String,
@@ -2362,7 +2371,9 @@ pub async fn probe_crp_models(
         return Ok(probe);
     }
     let command_label = command.clone();
-    let mut cmd = if let Some(spec) = container_exec_spec(&env) {
+    let container_spec = container_exec_spec(&env);
+    let probe_timeout = probe_timeout_for_env(&env);
+    let mut cmd = if let Some(spec) = container_spec {
         let container_command = rewrite_bundled_path_for_linux(&command)?;
         let container_args = rewrite_container_args_for_linux(&args)?;
         build_container_exec_command(&spec, &workdir, &env, &container_command, &container_args)
@@ -2386,7 +2397,9 @@ pub async fn probe_crp_models(
     let stdout = child.stdout.take().context("capturing CRP stdout")?;
     let stderr = child.stderr.take().context("capturing CRP stderr")?;
 
+    let stderr_tail: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let stderr_provider = provider_id.to_string();
+    let stderr_tail_ref = Arc::clone(&stderr_tail);
     tokio::spawn(async move {
         let mut lines = BufReader::new(stderr).lines();
         while let Ok(Some(line)) = lines.next_line().await {
@@ -2399,6 +2412,11 @@ pub async fn probe_crp_models(
                 "crp stderr: {}",
                 trimmed
             );
+            let mut tail = stderr_tail_ref.lock().await;
+            if tail.len() >= 20 {
+                let _ = tail.remove(0);
+            }
+            tail.push(trimmed.to_string());
         }
     });
 
@@ -2416,7 +2434,7 @@ pub async fn probe_crp_models(
     stdin.write_all(b"\n").await?;
     stdin.flush().await?;
 
-    let result = timeout(CRP_MODEL_PROBE_TIMEOUT, async {
+    let result = match timeout(probe_timeout, async {
         loop {
             let Some(line) = stdout_reader.next_line().await? else {
                 anyhow::bail!("crp runtime closed before models.list response");
@@ -2442,7 +2460,24 @@ pub async fn probe_crp_models(
         }
     })
     .await
-    .context("CRP models.list probe timed out")??;
+    {
+        Ok(result) => result?,
+        Err(_) => {
+            let stderr_tail = {
+                let lines = stderr_tail.lock().await;
+                if lines.is_empty() {
+                    String::new()
+                } else {
+                    format!("; stderr_tail={}", lines.join(" | "))
+                }
+            };
+            anyhow::bail!(
+                "CRP models.list probe timed out after {}s{}",
+                probe_timeout.as_secs(),
+                stderr_tail
+            );
+        }
+    };
 
     let _ = child.kill().await;
     let _ = child.wait().await;
@@ -2533,6 +2568,25 @@ mod tests {
             Some(
                 "Auggie does not currently support ACP authentication in this environment. Run `auggie login` via the fallback flow."
             )
+        );
+    }
+
+    #[test]
+    fn probe_timeout_for_env_defaults_to_host_timeout() {
+        let env = HashMap::<String, String>::new();
+        assert_eq!(probe_timeout_for_env(&env), CRP_MODEL_PROBE_TIMEOUT);
+    }
+
+    #[test]
+    fn probe_timeout_for_env_uses_container_timeout_when_container_exec_is_present() {
+        let mut env = HashMap::<String, String>::new();
+        env.insert(
+            "CTX_HARNESS_CONTAINER_ID".to_string(),
+            "ctx-workspace-123".to_string(),
+        );
+        assert_eq!(
+            probe_timeout_for_env(&env),
+            CRP_MODEL_PROBE_TIMEOUT_CONTAINER
         );
     }
 

@@ -7,6 +7,17 @@ CORE_DIR="${ROOT}/core"
 SCENARIOS="${CTX_AUTOMATION_SCENARIOS:-local-import}"
 INFISICAL_ENV="${INFISICAL_ENV:-dev}"
 INFISICAL_PROJECT_ID="${INFISICAL_PROJECT_ID:-}"
+DEFAULT_AUTOMATION_TMP_BASE_DIR="${CTX_AUTOMATION_TMP_BASE_DIR:-}"
+if [[ -z "${DEFAULT_AUTOMATION_TMP_BASE_DIR}" ]]; then
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    DEFAULT_AUTOMATION_TMP_BASE_DIR="${HOME}/Library/Caches/ctx-desktop-e2e"
+  else
+    DEFAULT_AUTOMATION_TMP_BASE_DIR="${HOME}/.cache/ctx-desktop-e2e"
+  fi
+fi
+mkdir -p "${DEFAULT_AUTOMATION_TMP_BASE_DIR}"
+AUTOMATION_TMPDIR="${CTX_AUTOMATION_TMPDIR:-$(mktemp -d "${DEFAULT_AUTOMATION_TMP_BASE_DIR}/ctx-desktop-e2e-tmp.XXXXXX")}"
+mkdir -p "${AUTOMATION_TMPDIR}"
 
 # Accept optional leading `--` from package scripts and pass through remaining args.
 ARGS=("$@")
@@ -37,17 +48,21 @@ if [[ "$(uname -s)" == "Darwin" && -z "${CN_API_KEY:-}" && "${INFISICAL_HELP_BYP
   if [[ "${#ARGS[@]}" -gt 0 ]]; then
     exec infisical "${INFISICAL_RUN_ARGS[@]}" \
       env CTX_AUTOMATION_SCENARIOS="${SCENARIOS}" \
+      TMPDIR="${AUTOMATION_TMPDIR}" TMP="${AUTOMATION_TMPDIR}" TEMP="${AUTOMATION_TMPDIR}" \
       pnpm -C apps/desktop exec wdio run automation/wdio.conf.cjs "${ARGS[@]}"
   fi
   exec infisical "${INFISICAL_RUN_ARGS[@]}" \
     env CTX_AUTOMATION_SCENARIOS="${SCENARIOS}" \
+    TMPDIR="${AUTOMATION_TMPDIR}" TMP="${AUTOMATION_TMPDIR}" TEMP="${AUTOMATION_TMPDIR}" \
     pnpm -C apps/desktop exec wdio run automation/wdio.conf.cjs
 fi
 
 cd "${CORE_DIR}"
 if [[ "${#ARGS[@]}" -gt 0 ]]; then
   exec env CTX_AUTOMATION_SCENARIOS="${SCENARIOS}" \
+    TMPDIR="${AUTOMATION_TMPDIR}" TMP="${AUTOMATION_TMPDIR}" TEMP="${AUTOMATION_TMPDIR}" \
     pnpm -C apps/desktop exec wdio run automation/wdio.conf.cjs "${ARGS[@]}"
 fi
 exec env CTX_AUTOMATION_SCENARIOS="${SCENARIOS}" \
+  TMPDIR="${AUTOMATION_TMPDIR}" TMP="${AUTOMATION_TMPDIR}" TEMP="${AUTOMATION_TMPDIR}" \
   pnpm -C apps/desktop exec wdio run automation/wdio.conf.cjs

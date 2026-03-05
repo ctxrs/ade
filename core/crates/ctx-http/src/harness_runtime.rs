@@ -2,11 +2,12 @@ use std::collections::{HashMap, HashSet};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use futures::StreamExt;
+use sha2::Digest;
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::{fs, io::AsyncWriteExt};
@@ -17,6 +18,7 @@ use ctx_fs::worktrees::worktrees_root;
 use serde::{Deserialize, Serialize};
 
 use crate::bundled_assets;
+use crate::network_allowlist;
 use crate::settings::{
     ContainerExecutionSettings, ContainerMountMode, ContainerNetworkMode, ExecutionMode,
     ExecutionSettings,
@@ -36,18 +38,20 @@ const EGRESS_PROXY_RUNTIME_ID: &str = "ctx-egress-proxy";
 const EGRESS_PROXY_CONFIG_NAME: &str = "egress-proxy.json";
 const TRANSPARENT_PROXY_PORT: u16 = 15001;
 const EGRESS_PROXY_CONTAINER_PATH: &str = "/usr/local/bin/ctx-egress-proxy";
-// Dedicated Podman machine name for ctx-managed container execution on macOS/Windows.
+// Dedicated Podman machine name prefix for ctx-managed container execution on macOS/Windows.
 //
-// We intentionally do not use the user's default machine name to avoid collisions and to keep
-// ctx-managed behavior deterministic.
-const CTX_PODMAN_MACHINE_NAME: &str = "ctx";
+// Final machine name is deterministic per daemon data_root to avoid cross-daemon collisions in
+// Podman's host-global machine temp/socket state.
+const CTX_PODMAN_MACHINE_PREFIX: &str = "ctx";
 // In-container root for disk-isolated workspaces (Podman volume mounted here).
 pub(crate) const CTX_CONTAINER_WORKSPACE_ROOT: &str = "/ctx/ws";
 const PODMAN_INFO_TIMEOUT: Duration = Duration::from_secs(5);
 const PODMAN_MACHINE_START_TIMEOUT: Duration = Duration::from_secs(180);
-const PODMAN_MACHINE_INIT_TIMEOUT: Duration = Duration::from_secs(30 * 60);
-// First boot can be slow on fresh installs (image download + provisioning).
-const PODMAN_MACHINE_READY_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+// Bound machine init so wedged podman subprocesses cannot stall launch indefinitely.
+const PODMAN_MACHINE_INIT_TIMEOUT: Duration = Duration::from_secs(8 * 60);
+// First boot can be slow on fresh installs (image download + provisioning), but readiness loops
+// must remain bounded tightly enough to surface actionable errors quickly.
+const PODMAN_MACHINE_READY_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 const PODMAN_OP_TIMEOUT: Duration = Duration::from_secs(60);
 const PODMAN_LOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
@@ -100,6 +104,57 @@ fn observe_log(
 
 pub(crate) fn workspace_container_name(workspace_id: WorkspaceId) -> String {
     format!("ctx-harness-{}", workspace_id.0)
+}
+
+fn ctx_podman_machine_name(data_root: &Path) -> String {
+    let hash = podman_data_root_hash(data_root);
+    format!("{CTX_PODMAN_MACHINE_PREFIX}-{hash}")
+}
+
+fn podman_data_root_hash(data_root: &Path) -> String {
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(data_root.to_string_lossy().as_bytes());
+    let digest = hasher.finalize();
+    digest[..6]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
+}
+
+fn podman_runtime_root(data_root: &Path) -> PathBuf {
+    let hash = podman_data_root_hash(data_root);
+    #[cfg(unix)]
+    {
+        // Keep podman machine socket paths short enough for unix domain socket limits.
+        PathBuf::from("/tmp").join("ctxp").join(hash)
+    }
+    #[cfg(not(unix))]
+    {
+        std::env::temp_dir().join("ctxp").join(hash)
+    }
+}
+
+fn podman_home_root(data_root: &Path) -> PathBuf {
+    podman_runtime_root(data_root).join("home")
+}
+
+fn podman_temp_root(data_root: &Path) -> PathBuf {
+    podman_runtime_root(data_root).join("tmp")
+}
+
+static PODMAN_MACHINE_SINGLEFLIGHT_LOCKS: OnceLock<StdMutex<HashMap<String, Arc<Mutex<()>>>>> =
+    OnceLock::new();
+
+fn podman_machine_singleflight_lock(machine_name: &str) -> Arc<Mutex<()>> {
+    let registry = PODMAN_MACHINE_SINGLEFLIGHT_LOCKS.get_or_init(|| StdMutex::new(HashMap::new()));
+    let mut guard = match registry.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    guard
+        .entry(machine_name.to_string())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
 }
 
 #[derive(Debug, Clone)]
@@ -213,8 +268,9 @@ impl HarnessRuntimeManager {
         if podman_machine_present(&self.data_root).await? {
             return Ok(());
         }
+        let machine_name = ctx_podman_machine_name(&self.data_root);
         let mut cmd = podman_command(&self.data_root)?;
-        cmd.arg("machine").arg("init").arg(CTX_PODMAN_MACHINE_NAME);
+        cmd.arg("machine").arg("init").arg(machine_name);
         let output = command_output_with_timeout(cmd, PODMAN_MACHINE_INIT_TIMEOUT).await?;
         if output.status.success() {
             return Ok(());
@@ -630,10 +686,11 @@ impl HarnessRuntimeManager {
                     }
                 }
             };
+            let (proxy_mode, proxy_allowlist) = transparent_proxy_policy(&settings);
             let proxy_config = TransparentProxyConfig {
                 listen: format!("127.0.0.1:{TRANSPARENT_PROXY_PORT}"),
-                mode: settings.network_mode.clone(),
-                allowlist: settings.allowlist.clone(),
+                mode: proxy_mode,
+                allowlist: proxy_allowlist,
                 max_peek_bytes: 16 * 1024,
             };
             let config_path = write_transparent_proxy_config(
@@ -1518,6 +1575,33 @@ fn proxy_runtime_path(data_root: &Path) -> PathBuf {
     proxy_runtime_root(data_root).join(EGRESS_PROXY_BINARY)
 }
 
+fn llm_only_proxy_allowlist_entries() -> Vec<String> {
+    let mut entries: Vec<String> = network_allowlist::LLM_ALLOWLIST
+        .iter()
+        .filter_map(|entry| network_allowlist::normalize_allowlist_entry(entry))
+        .collect();
+    entries.sort();
+    entries.dedup();
+    entries
+}
+
+fn transparent_proxy_policy(
+    settings: &ContainerExecutionSettings,
+) -> (ContainerNetworkMode, Vec<String>) {
+    match settings.network_mode {
+        // Use explicit allowlist mode for llm_only so policy is fully driven by daemon-side
+        // config and does not depend on baked allowlist constants inside container images.
+        ContainerNetworkMode::LlmOnly => (
+            ContainerNetworkMode::Allowlist,
+            llm_only_proxy_allowlist_entries(),
+        ),
+        ContainerNetworkMode::Allowlist => {
+            (ContainerNetworkMode::Allowlist, settings.allowlist.clone())
+        }
+        ContainerNetworkMode::All => (ContainerNetworkMode::All, Vec::new()),
+    }
+}
+
 async fn ensure_egress_proxy_binary(data_root: &Path) -> Result<PathBuf> {
     let runtime_root = proxy_runtime_root(data_root);
     fs::create_dir_all(&runtime_root).await?;
@@ -1792,14 +1876,21 @@ pub(crate) fn podman_invocation(data_root: &Path) -> Result<PodmanInvocation> {
     let xdg_config = xdg_root.join("config");
     let xdg_data = xdg_root.join("data");
     let xdg_run = xdg_root.join("run");
+    let podman_home = podman_home_root(data_root);
+    let podman_tmp_root = podman_temp_root(data_root);
     std::fs::create_dir_all(&xdg_config)
         .with_context(|| format!("create dir {}", xdg_config.display()))?;
     std::fs::create_dir_all(&xdg_data)
         .with_context(|| format!("create dir {}", xdg_data.display()))?;
     std::fs::create_dir_all(&xdg_run)
         .with_context(|| format!("create dir {}", xdg_run.display()))?;
+    std::fs::create_dir_all(&podman_home)
+        .with_context(|| format!("create dir {}", podman_home.display()))?;
+    std::fs::create_dir_all(&podman_tmp_root)
+        .with_context(|| format!("create dir {}", podman_tmp_root.display()))?;
     // Tight permissions: runtime dirs may contain sockets and are expected to be user-private.
     let _ = std::fs::set_permissions(&xdg_run, std::fs::Permissions::from_mode(0o700));
+    let _ = std::fs::set_permissions(&podman_home, std::fs::Permissions::from_mode(0o700));
 
     let mut env = HashMap::new();
     env.insert(
@@ -1814,6 +1905,16 @@ pub(crate) fn podman_invocation(data_root: &Path) -> Result<PodmanInvocation> {
         "XDG_RUNTIME_DIR".to_string(),
         xdg_run.to_string_lossy().to_string(),
     );
+    // Isolate Podman machine key/material paths from host-global HOME to keep daemon-managed
+    // runtimes deterministic and avoid cross-daemon key generation collisions.
+    env.insert(
+        "HOME".to_string(),
+        podman_home.to_string_lossy().to_string(),
+    );
+    let tmp = podman_tmp_root.to_string_lossy().to_string();
+    env.insert("TMPDIR".to_string(), tmp.clone());
+    env.insert("TMP".to_string(), tmp.clone());
+    env.insert("TEMP".to_string(), tmp);
 
     Ok(PodmanInvocation { bin, env })
 }
@@ -1860,11 +1961,10 @@ pub async fn podman_engine_ready(data_root: &Path) -> Result<bool> {
 }
 
 async fn podman_machine_present(data_root: &Path) -> Result<bool> {
+    let machine_name = ctx_podman_machine_name(data_root);
     // `inspect` is the cheapest existence check and avoids JSON schema drift.
     let mut cmd = podman_command(data_root)?;
-    cmd.arg("machine")
-        .arg("inspect")
-        .arg(CTX_PODMAN_MACHINE_NAME);
+    cmd.arg("machine").arg("inspect").arg(machine_name);
     let output = command_output_with_timeout(cmd, PODMAN_INFO_TIMEOUT).await?;
     Ok(output.status.success())
 }
@@ -1885,24 +1985,40 @@ fn looks_like_recoverable_machine_start_error(message_lc: &str) -> bool {
         || message_lc.contains("resource busy")
         || message_lc.contains("another process")
         || message_lc.contains("lock")
+        || message_lc.contains("port conflict")
+        || message_lc.contains("unable to connect to \"gvproxy\" socket")
+        || message_lc.contains("reassigning")
+        || message_lc.contains("exited unexpectedly")
+        || message_lc.contains("address already in use")
 }
 
-fn podman_machine_temp_state_paths(machine_name: &str) -> Vec<PathBuf> {
-    let podman_tmp = std::env::temp_dir().join("podman");
+fn looks_like_recoverable_machine_init_start_error(message_lc: &str) -> bool {
+    // Some podman versions report a non-zero exit from `machine init --now` even though
+    // initialization succeeded and only the immediate startup leg flaked.
+    (message_lc.contains("machine init complete") || message_lc.contains("starting machine"))
+        && looks_like_recoverable_machine_start_error(message_lc)
+}
+
+fn podman_machine_temp_state_paths(data_root: &Path, machine_name: &str) -> Vec<PathBuf> {
+    let podman_tmp = podman_temp_root(data_root).join("podman");
+    let podman_home = podman_home_root(data_root).join(".podman");
     vec![
         podman_tmp.join("gvproxy.pid"),
         podman_tmp.join(format!("{machine_name}-api.sock")),
         podman_tmp.join(format!("{machine_name}-gvproxy.sock")),
         podman_tmp.join(format!("{machine_name}.sock")),
+        podman_home.join(format!("{machine_name}-api.sock")),
+        podman_home.join(format!("{machine_name}-gvproxy.sock")),
     ]
 }
 
 fn clear_stale_podman_machine_temp_state(
+    data_root: &Path,
     machine_name: &str,
     observer: Option<&dyn HarnessSetupObserver>,
 ) {
     let mut removed: Vec<String> = Vec::new();
-    for path in podman_machine_temp_state_paths(machine_name) {
+    for path in podman_machine_temp_state_paths(data_root, machine_name) {
         match std::fs::remove_file(&path) {
             Ok(()) => removed.push(path.to_string_lossy().to_string()),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
@@ -1929,10 +2045,62 @@ fn clear_stale_podman_machine_temp_state(
     }
 }
 
+async fn best_effort_start_machine_after_init(
+    data_root: &Path,
+    machine_name: &str,
+    observer: Option<&dyn HarnessSetupObserver>,
+    last_err: &mut String,
+) -> Result<()> {
+    let mut start = podman_command(data_root)?;
+    start.arg("machine").arg("start").arg(machine_name);
+    match command_output_with_timeout(start, PODMAN_MACHINE_START_TIMEOUT).await {
+        Ok(out) if out.status.success() => Ok(()),
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            let combined = format!("{stderr}\n{stdout}").trim().to_string();
+            if !combined.is_empty() {
+                *last_err = combined.clone();
+            }
+            observe_log(
+                observer,
+                HarnessSetupPhase::MachineStartOrInit,
+                HarnessSetupLogLevel::Warn,
+                &format!("podman machine start after init returned non-zero: {combined}"),
+            );
+            Ok(())
+        }
+        Err(err) => {
+            *last_err = err.to_string();
+            observe_log(
+                observer,
+                HarnessSetupPhase::MachineStartOrInit,
+                HarnessSetupLogLevel::Warn,
+                &format!("podman machine start after init failed: {err}"),
+            );
+            Ok(())
+        }
+    }
+}
+
 async fn ensure_podman_machine_running_with_observer(
     data_root: &Path,
     observer: Option<&dyn HarnessSetupObserver>,
 ) -> Result<()> {
+    let machine_name = ctx_podman_machine_name(data_root);
+    let machine_lock = podman_machine_singleflight_lock(&machine_name);
+    let machine_guard = match machine_lock.try_lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            observe_log(
+                observer,
+                HarnessSetupPhase::MachineStartOrInit,
+                HarnessSetupLogLevel::Info,
+                "waiting for concurrent podman machine init/start operation",
+            );
+            machine_lock.lock().await
+        }
+    };
     if !podman_machine_required() {
         observe_log(
             observer,
@@ -1970,15 +2138,12 @@ async fn ensure_podman_machine_running_with_observer(
     );
     // Podman may leave stale temp state (gvproxy pid/socket markers) across crashed starts,
     // causing repeated "starting" or connection-refused loops. Clear these markers before start.
-    clear_stale_podman_machine_temp_state(CTX_PODMAN_MACHINE_NAME, observer);
+    clear_stale_podman_machine_temp_state(data_root, &machine_name, observer);
 
     // Prefer starting an existing machine; fall back to init when no machine exists.
     let start_out = {
         let mut start = podman_command(data_root)?;
-        start
-            .arg("machine")
-            .arg("start")
-            .arg(CTX_PODMAN_MACHINE_NAME);
+        start.arg("machine").arg("start").arg(&machine_name);
         command_output_with_timeout(start, PODMAN_MACHINE_START_TIMEOUT).await?
     };
     if !start_out.status.success() {
@@ -2004,52 +2169,118 @@ async fn ensure_podman_machine_running_with_observer(
             init.arg("machine")
                 .arg("init")
                 .arg("--now")
-                .arg(CTX_PODMAN_MACHINE_NAME);
-            let out = command_output_with_timeout(init, PODMAN_MACHINE_INIT_TIMEOUT).await?;
-            if !out.status.success() {
-                let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                let combined = format!("{stderr}\n{stdout}").trim().to_string();
-                let init_lc = combined.to_ascii_lowercase();
-                if init_lc.contains("already exists") {
-                    // Race / stale detection: machine exists after all, retry start once.
-                    let mut start2 = podman_command(data_root)?;
-                    start2
-                        .arg("machine")
-                        .arg("start")
-                        .arg(CTX_PODMAN_MACHINE_NAME);
-                    let out = command_output_with_timeout(start2, PODMAN_MACHINE_START_TIMEOUT)
-                        .await
-                        .context("podman machine start (after init already exists)")?;
-                    if !out.status.success() {
-                        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                        let combined = format!("{stderr}\n{stdout}").trim().to_string();
-                        let combined_lc = combined.to_ascii_lowercase();
-                        if looks_like_recoverable_machine_start_error(&combined_lc) {
-                            let message = if combined.is_empty() {
-                                "podman machine start (after init already exists) returned recoverable error; waiting for readiness"
+                .arg(&machine_name);
+            match command_output_with_timeout(init, PODMAN_MACHINE_INIT_TIMEOUT).await {
+                Err(err) => {
+                    let err_text = err.to_string();
+                    let err_lc = err_text.to_ascii_lowercase();
+                    if err_lc.contains("timed out") {
+                        let message = format!(
+                            "podman machine init --now timed out; waiting for readiness: {err_text}"
+                        );
+                        observe_log(
+                            observer,
+                            HarnessSetupPhase::MachineStartOrInit,
+                            HarnessSetupLogLevel::Warn,
+                            &message,
+                        );
+                        last_err = err_text;
+                    } else {
+                        return Err(err).context("podman machine init --now");
+                    }
+                }
+                Ok(out) if !out.status.success() => {
+                    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    let combined = format!("{stderr}\n{stdout}").trim().to_string();
+                    let init_lc = combined.to_ascii_lowercase();
+                    if init_lc.contains("already exists") {
+                        // Race / stale detection: machine exists after all, retry start once.
+                        let mut start2 = podman_command(data_root)?;
+                        start2.arg("machine").arg("start").arg(&machine_name);
+                        let out = command_output_with_timeout(start2, PODMAN_MACHINE_START_TIMEOUT)
+                            .await
+                            .context("podman machine start (after init already exists)")?;
+                        if !out.status.success() {
+                            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                            let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                            let combined = format!("{stderr}\n{stdout}").trim().to_string();
+                            let combined_lc = combined.to_ascii_lowercase();
+                            if looks_like_recoverable_machine_start_error(&combined_lc) {
+                                let message = if combined.is_empty() {
+                                    "podman machine start (after init already exists) returned recoverable error; waiting for readiness"
                                     .to_string()
-                            } else {
-                                format!(
+                                } else {
+                                    format!(
                                     "podman machine start (after init already exists) returned recoverable error; waiting for readiness: {combined}"
                                 )
-                            };
-                            observe_log(
-                                observer,
-                                HarnessSetupPhase::MachineStartOrInit,
-                                HarnessSetupLogLevel::Warn,
-                                &message,
-                            );
-                            if !combined.is_empty() {
-                                last_err = combined;
+                                };
+                                observe_log(
+                                    observer,
+                                    HarnessSetupPhase::MachineStartOrInit,
+                                    HarnessSetupLogLevel::Warn,
+                                    &message,
+                                );
+                                if !combined.is_empty() {
+                                    last_err = combined;
+                                }
+                            } else {
+                                let message = if combined.is_empty() {
+                                    "podman machine start (after init already exists) returned non-zero exit; waiting for readiness"
+                                    .to_string()
+                                } else {
+                                    format!(
+                                    "podman machine start (after init already exists) returned non-zero exit; waiting for readiness: {combined}"
+                                )
+                                };
+                                observe_log(
+                                    observer,
+                                    HarnessSetupPhase::MachineStartOrInit,
+                                    HarnessSetupLogLevel::Warn,
+                                    &message,
+                                );
+                                if !combined.is_empty() {
+                                    last_err = combined;
+                                }
                             }
-                        } else {
-                            anyhow::bail!("podman machine start failed: {combined}");
                         }
+                    } else if looks_like_recoverable_machine_init_start_error(&init_lc) {
+                        let message = if combined.is_empty() {
+                            "podman machine init --now returned recoverable start error; waiting for readiness"
+                            .to_string()
+                        } else {
+                            format!(
+                            "podman machine init --now returned recoverable start error; waiting for readiness: {combined}"
+                        )
+                        };
+                        observe_log(
+                            observer,
+                            HarnessSetupPhase::MachineStartOrInit,
+                            HarnessSetupLogLevel::Warn,
+                            &message,
+                        );
+                        if !combined.is_empty() {
+                            last_err = combined;
+                        }
+                        best_effort_start_machine_after_init(
+                            data_root,
+                            &machine_name,
+                            observer,
+                            &mut last_err,
+                        )
+                        .await?;
+                    } else {
+                        anyhow::bail!("podman machine init --now failed: {combined}");
                     }
-                } else {
-                    anyhow::bail!("podman machine init --now failed: {combined}");
+                }
+                Ok(_) => {
+                    best_effort_start_machine_after_init(
+                        data_root,
+                        &machine_name,
+                        observer,
+                        &mut last_err,
+                    )
+                    .await?;
                 }
             }
         } else if looks_like_recoverable_machine_start_error(&combined_lc) {
@@ -2095,7 +2326,9 @@ async fn ensure_podman_machine_running_with_observer(
 
     // Wait for the engine connection to become healthy (bounded by PODMAN_MACHINE_READY_TIMEOUT).
     let deadline = tokio::time::Instant::now() + PODMAN_MACHINE_READY_TIMEOUT;
+    let mut readiness_poll_count = 0usize;
     while tokio::time::Instant::now() < deadline {
+        readiness_poll_count += 1;
         let mut cmd = podman_command(data_root)?;
         cmd.arg("info");
         match command_output_with_timeout(cmd, PODMAN_INFO_TIMEOUT).await {
@@ -2111,6 +2344,10 @@ async fn ensure_podman_machine_running_with_observer(
             Ok(out) => last_err = String::from_utf8_lossy(&out.stderr).trim().to_string(),
             Err(err) => last_err = err.to_string(),
         }
+        if readiness_poll_count % 20 == 0 {
+            best_effort_start_machine_after_init(data_root, &machine_name, observer, &mut last_err)
+                .await?;
+        }
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 
@@ -2118,19 +2355,18 @@ async fn ensure_podman_machine_running_with_observer(
     // re-establish the socket.
     let _ = {
         let mut stop = podman_command(data_root)?;
-        stop.arg("machine").arg("stop").arg(CTX_PODMAN_MACHINE_NAME);
+        stop.arg("machine").arg("stop").arg(&machine_name);
         command_output_with_timeout(stop, PODMAN_MACHINE_START_TIMEOUT).await
     };
     let _ = {
         let mut start = podman_command(data_root)?;
-        start
-            .arg("machine")
-            .arg("start")
-            .arg(CTX_PODMAN_MACHINE_NAME);
+        start.arg("machine").arg("start").arg(&machine_name);
         command_output_with_timeout(start, PODMAN_MACHINE_START_TIMEOUT).await
     };
     let deadline = tokio::time::Instant::now() + PODMAN_MACHINE_READY_TIMEOUT;
+    let mut recovery_poll_count = 0usize;
     while tokio::time::Instant::now() < deadline {
+        recovery_poll_count += 1;
         let mut cmd = podman_command(data_root)?;
         cmd.arg("info");
         match command_output_with_timeout(cmd, PODMAN_INFO_TIMEOUT).await {
@@ -2146,6 +2382,10 @@ async fn ensure_podman_machine_running_with_observer(
             Ok(out) => last_err = String::from_utf8_lossy(&out.stderr).trim().to_string(),
             Err(err) => last_err = err.to_string(),
         }
+        if recovery_poll_count % 20 == 0 {
+            best_effort_start_machine_after_init(data_root, &machine_name, observer, &mut last_err)
+                .await?;
+        }
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 
@@ -2157,13 +2397,10 @@ async fn ensure_podman_machine_running_with_observer(
             HarnessSetupLogLevel::Warn,
             "podman machine still unreachable after restart; recreating machine",
         );
-        clear_stale_podman_machine_temp_state(CTX_PODMAN_MACHINE_NAME, observer);
+        clear_stale_podman_machine_temp_state(data_root, &machine_name, observer);
 
         let mut rm = podman_command(data_root)?;
-        rm.arg("machine")
-            .arg("rm")
-            .arg("-f")
-            .arg(CTX_PODMAN_MACHINE_NAME);
+        rm.arg("machine").arg("rm").arg("-f").arg(&machine_name);
         let rm_out = command_output_with_timeout(rm, PODMAN_MACHINE_START_TIMEOUT).await?;
         if !rm_out.status.success() {
             let stderr = String::from_utf8_lossy(&rm_out.stderr).trim().to_string();
@@ -2178,18 +2415,54 @@ async fn ensure_podman_machine_running_with_observer(
         init.arg("machine")
             .arg("init")
             .arg("--now")
-            .arg(CTX_PODMAN_MACHINE_NAME);
-        let init_out = command_output_with_timeout(init, PODMAN_MACHINE_INIT_TIMEOUT).await?;
-        if !init_out.status.success() {
-            let stderr = String::from_utf8_lossy(&init_out.stderr).trim().to_string();
-            let stdout = String::from_utf8_lossy(&init_out.stdout).trim().to_string();
-            let combined = format!("{stderr}\n{stdout}").trim().to_string();
-            if !combined.is_empty() {
-                last_err = format!("podman machine init --now failed after recreate: {combined}");
+            .arg(&machine_name);
+        let init_result = command_output_with_timeout(init, PODMAN_MACHINE_INIT_TIMEOUT).await;
+        let should_poll_after_recreate = match init_result {
+            Ok(init_out) if init_out.status.success() => {
+                best_effort_start_machine_after_init(
+                    data_root,
+                    &machine_name,
+                    observer,
+                    &mut last_err,
+                )
+                .await?;
+                true
             }
-        } else {
+            Ok(init_out) => {
+                let stderr = String::from_utf8_lossy(&init_out.stderr).trim().to_string();
+                let stdout = String::from_utf8_lossy(&init_out.stdout).trim().to_string();
+                let combined = format!("{stderr}\n{stdout}").trim().to_string();
+                if !combined.is_empty() {
+                    last_err =
+                        format!("podman machine init --now failed after recreate: {combined}");
+                }
+                false
+            }
+            Err(err) => {
+                let err_text = err.to_string();
+                let err_lc = err_text.to_ascii_lowercase();
+                if err_lc.contains("timed out") {
+                    observe_log(
+                        observer,
+                        HarnessSetupPhase::MachineStartOrInit,
+                        HarnessSetupLogLevel::Warn,
+                        &format!(
+                            "podman machine init --now timed out after recreate; waiting for readiness: {err_text}"
+                        ),
+                    );
+                    last_err =
+                        format!("podman machine init --now timed out after recreate: {err_text}");
+                    true
+                } else {
+                    return Err(err).context("podman machine init --now after recreate");
+                }
+            }
+        };
+        if should_poll_after_recreate {
             let deadline = tokio::time::Instant::now() + PODMAN_MACHINE_READY_TIMEOUT;
+            let mut recreate_poll_count = 0usize;
             while tokio::time::Instant::now() < deadline {
+                recreate_poll_count += 1;
                 let mut cmd = podman_command(data_root)?;
                 cmd.arg("info");
                 match command_output_with_timeout(cmd, PODMAN_INFO_TIMEOUT).await {
@@ -2205,11 +2478,21 @@ async fn ensure_podman_machine_running_with_observer(
                     Ok(out) => last_err = String::from_utf8_lossy(&out.stderr).trim().to_string(),
                     Err(err) => last_err = err.to_string(),
                 }
+                if recreate_poll_count % 20 == 0 {
+                    best_effort_start_machine_after_init(
+                        data_root,
+                        &machine_name,
+                        observer,
+                        &mut last_err,
+                    )
+                    .await?;
+                }
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
         }
     }
 
+    drop(machine_guard);
     if last_err.trim().is_empty() {
         anyhow::bail!("podman machine start completed but podman is still unreachable");
     }
@@ -2492,6 +2775,18 @@ mod tests {
     }
 
     #[test]
+    fn podman_invocation_sets_home_under_short_runtime_root() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let podman_bin = tempfile::NamedTempFile::new().expect("podman bin");
+        let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_bin.path().to_string_lossy());
+        let inv = podman_invocation(tmp.path()).expect("podman invocation");
+        let home = inv.env.get("HOME").cloned().expect("home env");
+        let tmpdir = inv.env.get("TMPDIR").cloned().expect("tmpdir env");
+        assert_eq!(PathBuf::from(home), podman_home_root(tmp.path()));
+        assert_eq!(PathBuf::from(tmpdir), podman_temp_root(tmp.path()));
+    }
+
+    #[test]
     fn missing_machine_error_detection_matches_expected_shapes() {
         assert!(looks_like_missing_machine_error(
             "error: no machine with this name exists"
@@ -2518,24 +2813,96 @@ mod tests {
         assert!(looks_like_recoverable_machine_start_error(
             "error: operation timed out while waiting for vm startup"
         ));
+        assert!(looks_like_recoverable_machine_start_error(
+            "time=\"2026-03-05T00:23:28-06:00\" level=warning msg=\"detected port conflict on machine ssh port [49401], reassigning\"\nError: vfkit exited unexpectedly with exit code 1"
+        ));
+        assert!(looks_like_recoverable_machine_start_error(
+            "Error: unable to connect to \"gvproxy\" socket at \"/tmp/podman.sock\""
+        ));
         assert!(!looks_like_recoverable_machine_start_error(
             "error: unknown vm provider configuration"
         ));
     }
 
     #[test]
+    fn recoverable_machine_init_start_error_detection_matches_expected_shapes() {
+        assert!(looks_like_recoverable_machine_init_start_error(
+            "getting image source signatures\ncopying blob sha256:f73f...\nmachine init complete\nstarting machine \"ctx\"\nerror: vfkit exited unexpectedly with exit code 1"
+        ));
+        assert!(looks_like_recoverable_machine_init_start_error(
+            "time=\"2026-03-05T00:23:28-06:00\" level=warning msg=\"detected port conflict on machine ssh port [49401], reassigning\"\nmachine init complete\nstarting machine \"ctx\""
+        ));
+        assert!(!looks_like_recoverable_machine_init_start_error(
+            "error: failed to pull machine image: permission denied"
+        ));
+    }
+
+    #[test]
     fn podman_machine_temp_state_paths_match_expected_names() {
-        let paths = podman_machine_temp_state_paths("ctx");
+        let data_root = tempfile::tempdir().expect("tempdir");
+        let paths = podman_machine_temp_state_paths(data_root.path(), "ctx");
         let rendered: Vec<String> = paths
             .into_iter()
             .map(|p| p.to_string_lossy().to_string())
             .collect();
+        let expected_tmp_prefix = podman_temp_root(data_root.path())
+            .join("podman")
+            .to_string_lossy()
+            .to_string();
+        assert!(rendered.iter().any(|p| p.starts_with(&expected_tmp_prefix)));
         assert!(rendered.iter().any(|p| p.ends_with("podman/gvproxy.pid")));
         assert!(rendered.iter().any(|p| p.ends_with("podman/ctx-api.sock")));
         assert!(rendered
             .iter()
             .any(|p| p.ends_with("podman/ctx-gvproxy.sock")));
         assert!(rendered.iter().any(|p| p.ends_with("podman/ctx.sock")));
+        assert!(rendered
+            .iter()
+            .any(|p| p.ends_with("home/.podman/ctx-api.sock")));
+        assert!(rendered
+            .iter()
+            .any(|p| p.ends_with("home/.podman/ctx-gvproxy.sock")));
+    }
+
+    #[tokio::test]
+    async fn podman_machine_singleflight_lock_reuses_lock_for_same_machine() {
+        let first = podman_machine_singleflight_lock("ctx-machine-a");
+        let second = podman_machine_singleflight_lock("ctx-machine-a");
+        assert!(Arc::ptr_eq(&first, &second));
+
+        let guard = first.lock().await;
+        assert!(second.try_lock().is_err());
+        drop(guard);
+        assert!(second.try_lock().is_ok());
+    }
+
+    #[tokio::test]
+    async fn podman_machine_singleflight_lock_isolated_by_machine_name() {
+        let first = podman_machine_singleflight_lock("ctx-machine-b");
+        let second = podman_machine_singleflight_lock("ctx-machine-c");
+        assert!(!Arc::ptr_eq(&first, &second));
+
+        let _guard = first.lock().await;
+        assert!(second.try_lock().is_ok());
+    }
+
+    #[test]
+    fn transparent_proxy_policy_maps_llm_only_to_explicit_allowlist_entries() {
+        let settings = ContainerExecutionSettings::default();
+        let (mode, allowlist) = transparent_proxy_policy(&settings);
+        assert_eq!(mode, ContainerNetworkMode::Allowlist);
+        assert!(allowlist.iter().any(|entry| entry == "openrouter.ai"));
+        assert!(allowlist.iter().any(|entry| entry == "api.openai.com"));
+    }
+
+    #[test]
+    fn transparent_proxy_policy_preserves_custom_allowlist_mode() {
+        let mut settings = ContainerExecutionSettings::default();
+        settings.network_mode = ContainerNetworkMode::Allowlist;
+        settings.allowlist = vec!["example.com".to_string(), "api.example.com".to_string()];
+        let (mode, allowlist) = transparent_proxy_policy(&settings);
+        assert_eq!(mode, ContainerNetworkMode::Allowlist);
+        assert_eq!(allowlist, settings.allowlist);
     }
 
     #[test]

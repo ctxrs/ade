@@ -112,6 +112,23 @@ pub(crate) async fn provider_probe_env_for_workspace_runtime(
     for (key, value) in runtime_plan.env_overrides {
         env.insert(key, value);
     }
+
+    // Mirror scheduler behavior for Codex endpoint sources in container mode:
+    // ensure CODEX_HOME points at container-accessible runtime root, not host endpoint-home paths.
+    if provider_id == "codex" && source.source_kind == HarnessSourceKind::Endpoint {
+        if let Some(root) = env.get("CTX_DATA_ROOT").cloned() {
+            provider_accounts::ensure_codex_endpoint_runtime_home_from_env(
+                std::path::Path::new(&root),
+                &mut env,
+            )
+            .await
+            .map_err(|err| {
+                logs::redact_sensitive(&format!(
+                    "probe codex endpoint runtime-home preparation failed: {err:#}"
+                ))
+            })?;
+        }
+    }
     Ok((source, env))
 }
 

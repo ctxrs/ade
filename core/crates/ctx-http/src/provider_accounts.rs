@@ -541,6 +541,69 @@ pub fn codex_runtime_home(data_root: &Path) -> PathBuf {
     data_root.join("providers").join("codex").join("home")
 }
 
+async fn codex_endpoint_api_key_from_provider_env(
+    provider_env: &HashMap<String, String>,
+) -> Result<String> {
+    if let Some(api_key) = provider_env.get("OPENAI_API_KEY") {
+        let trimmed = api_key.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+    let endpoint_home = provider_env
+        .get("CODEX_HOME")
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            anyhow!(
+                "missing OPENAI_API_KEY and CODEX_HOME while preparing codex endpoint runtime home"
+            )
+        })?;
+    let auth_path = Path::new(endpoint_home).join("auth.json");
+    let payload = tokio::fs::read_to_string(&auth_path)
+        .await
+        .with_context(|| format!("reading endpoint auth from {}", auth_path.display()))?;
+    let parsed: serde_json::Value = serde_json::from_str(&payload)
+        .with_context(|| format!("parsing endpoint auth JSON at {}", auth_path.display()))?;
+    let api_key = parsed
+        .get("OPENAI_API_KEY")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            anyhow!(
+                "endpoint auth at {} has no OPENAI_API_KEY",
+                auth_path.display()
+            )
+        })?;
+    Ok(api_key.to_string())
+}
+
+pub async fn ensure_codex_endpoint_runtime_home_from_env(
+    runtime_root: &Path,
+    provider_env: &mut HashMap<String, String>,
+) -> Result<()> {
+    let api_key = codex_endpoint_api_key_from_provider_env(provider_env).await?;
+    let codex_home = codex_runtime_home(runtime_root);
+    tokio::fs::create_dir_all(&codex_home)
+        .await
+        .context("creating CODEX_HOME for endpoint runtime")?;
+    let auth_payload = serde_json::to_vec_pretty(&serde_json::json!({
+        "OPENAI_API_KEY": api_key,
+    }))
+    .context("serializing endpoint auth payload")?;
+    tokio::fs::write(codex_home.join("auth.json"), auth_payload)
+        .await
+        .context("writing endpoint CODEX_HOME auth.json")?;
+    provider_env.insert("OPENAI_API_KEY".to_string(), api_key);
+    provider_env.insert(
+        "CODEX_HOME".to_string(),
+        codex_home.to_string_lossy().to_string(),
+    );
+    Ok(())
+}
+
 fn codex_runtime_owner_path(data_root: &Path) -> PathBuf {
     codex_runtime_home(data_root).join(CODEX_RUNTIME_OWNER_FILE)
 }
@@ -3704,6 +3767,79 @@ mod tests {
         let home = env.get("CODEX_HOME").unwrap();
         assert_eq!(home, &codex_runtime_home(root).to_string_lossy());
         assert!(codex_runtime_home(root).exists());
+    }
+
+    #[tokio::test]
+    async fn ensure_codex_endpoint_runtime_home_from_env_sets_container_accessible_codex_home() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut env = HashMap::new();
+        env.insert("OPENAI_API_KEY".to_string(), "endpoint-key".to_string());
+        env.insert(
+            "CODEX_HOME".to_string(),
+            "/tmp/host/endpoint-homes/abc123".to_string(),
+        );
+
+        ensure_codex_endpoint_runtime_home_from_env(dir.path(), &mut env)
+            .await
+            .unwrap();
+
+        let codex_home = env.get("CODEX_HOME").cloned().unwrap_or_default();
+        assert_eq!(codex_home, codex_runtime_home(dir.path()).to_string_lossy());
+        let auth_path = Path::new(&codex_home).join("auth.json");
+        let auth = tokio::fs::read_to_string(auth_path).await.unwrap();
+        assert!(auth.contains("OPENAI_API_KEY"));
+        assert!(auth.contains("endpoint-key"));
+    }
+
+    #[tokio::test]
+    async fn ensure_codex_endpoint_runtime_home_from_env_uses_endpoint_home_auth_when_env_key_missing(
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let endpoint_home = dir
+            .path()
+            .join("providers")
+            .join("codex")
+            .join("endpoint-homes")
+            .join("ep-1");
+        tokio::fs::create_dir_all(&endpoint_home).await.unwrap();
+        tokio::fs::write(
+            endpoint_home.join("auth.json"),
+            br#"{"OPENAI_API_KEY":"endpoint-home-key"}"#,
+        )
+        .await
+        .unwrap();
+        let mut env = HashMap::new();
+        env.insert(
+            "CODEX_HOME".to_string(),
+            endpoint_home.to_string_lossy().to_string(),
+        );
+
+        ensure_codex_endpoint_runtime_home_from_env(dir.path(), &mut env)
+            .await
+            .unwrap();
+
+        let codex_home = env.get("CODEX_HOME").cloned().unwrap_or_default();
+        assert_eq!(codex_home, codex_runtime_home(dir.path()).to_string_lossy());
+        assert_eq!(
+            env.get("OPENAI_API_KEY").map(String::as_str),
+            Some("endpoint-home-key")
+        );
+        let auth = tokio::fs::read_to_string(Path::new(&codex_home).join("auth.json"))
+            .await
+            .unwrap();
+        assert!(auth.contains("endpoint-home-key"));
+    }
+
+    #[tokio::test]
+    async fn ensure_codex_endpoint_runtime_home_from_env_errors_without_env_key_or_endpoint_auth() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut env = HashMap::new();
+        let err = ensure_codex_endpoint_runtime_home_from_env(dir.path(), &mut env)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains(
+            "missing OPENAI_API_KEY and CODEX_HOME while preparing codex endpoint runtime home"
+        ));
     }
 
     #[tokio::test]

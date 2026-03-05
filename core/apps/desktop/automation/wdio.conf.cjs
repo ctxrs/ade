@@ -55,6 +55,12 @@ const SKIP_REMOTE_CTX_PROVISION = ["1", "true", "yes"].includes(
   String(process.env.CTX_AUTOMATION_SKIP_REMOTE_CTX_PROVISION || "0").trim().toLowerCase(),
 );
 const WDIO_LOG_LEVEL = String(process.env.CTX_AUTOMATION_WDIO_LOG_LEVEL || "info").trim() || "info";
+const INTERNAL_DAEMON_DATA_DIR_OVERRIDE = String(
+  process.env.CTX_AUTOMATION_INTERNAL_DAEMON_DATA_DIR || "",
+).trim();
+const PRESERVE_INTERNAL_DAEMON_DATA_DIR = ["1", "true", "yes"].includes(
+  String(process.env.CTX_AUTOMATION_PRESERVE_INTERNAL_DAEMON_DATA_DIR || "0").trim().toLowerCase(),
+);
 const parsePositiveInt = (raw, fallback) => {
   const n = Number.parseInt(String(raw ?? ""), 10);
   if (!Number.isFinite(n) || n <= 0) return fallback;
@@ -486,6 +492,11 @@ exports.config = {
   capabilities: [
     {
       maxInstances: 1,
+      timeouts: {
+        script: 180000,
+        pageLoad: 300000,
+        implicit: 0,
+      },
       "tauri:options": {
         application: APP_PATH,
       },
@@ -588,7 +599,12 @@ exports.config = {
       // Ensure we validate the real launcher path: the app must spawn/connect its own daemon.
       delete process.env.CTX_DESKTOP_DAEMON_URL;
       delete process.env.CTX_DESKTOP_DAEMON_TOKEN;
-      internalDaemonDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-desktop-e2e-app-daemon-"));
+      if (INTERNAL_DAEMON_DATA_DIR_OVERRIDE) {
+        internalDaemonDataDir = path.resolve(INTERNAL_DAEMON_DATA_DIR_OVERRIDE);
+        fs.mkdirSync(internalDaemonDataDir, { recursive: true });
+      } else {
+        internalDaemonDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-desktop-e2e-app-daemon-"));
+      }
       process.env.CTX_DESKTOP_DAEMON_DATA_DIR = internalDaemonDataDir;
     }
 
@@ -698,7 +714,8 @@ exports.config = {
     }
     if (internalDaemonDataDir) {
       try {
-        if (!preserveDaemonArtifacts) {
+        const keepInternalDir = preserveDaemonArtifacts || PRESERVE_INTERNAL_DAEMON_DATA_DIR || Boolean(INTERNAL_DAEMON_DATA_DIR_OVERRIDE);
+        if (!keepInternalDir) {
           fs.rmSync(internalDaemonDataDir, { recursive: true, force: true });
         } else {
           console.error(
@@ -708,7 +725,7 @@ exports.config = {
       } catch {
         // ignore
       }
-      if (!preserveDaemonArtifacts) {
+      if (!preserveDaemonArtifacts && !PRESERVE_INTERNAL_DAEMON_DATA_DIR && !INTERNAL_DAEMON_DATA_DIR_OVERRIDE) {
         internalDaemonDataDir = null;
       }
     }

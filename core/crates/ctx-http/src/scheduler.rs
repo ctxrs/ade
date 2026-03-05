@@ -655,22 +655,11 @@ async fn start_turn(
 
     if runtime_provider_id == "codex" && is_container && using_endpoint_source {
         if let Some(root) = runtime_plan.env_overrides.get("CTX_DATA_ROOT") {
-            if let Some(api_key) = provider_env.get("OPENAI_API_KEY").cloned() {
-                let codex_home = provider_accounts::codex_runtime_home(std::path::Path::new(root));
-                tokio::fs::create_dir_all(&codex_home).await.ok();
-                let auth_payload = serde_json::to_vec_pretty(&serde_json::json!({
-                    "OPENAI_API_KEY": api_key,
-                }))
-                .unwrap_or_default();
-                if !auth_payload.is_empty() {
-                    let auth_path = codex_home.join("auth.json");
-                    let _ = tokio::fs::write(&auth_path, auth_payload).await;
-                    provider_env.insert(
-                        "CODEX_HOME".to_string(),
-                        codex_home.to_string_lossy().to_string(),
-                    );
-                }
-            }
+            provider_accounts::ensure_codex_endpoint_runtime_home_from_env(
+                std::path::Path::new(root),
+                &mut provider_env,
+            )
+            .await?;
         }
     }
 
@@ -745,6 +734,26 @@ async fn start_turn(
                     )
                 }
             })?;
+        if is_container && using_endpoint_source {
+            let openai_api_key_present = provider_env
+                .get("OPENAI_API_KEY")
+                .is_some_and(|value| !value.trim().is_empty());
+            if !openai_api_key_present {
+                anyhow::bail!(
+                    "codex endpoint container runtime missing OPENAI_API_KEY after endpoint resolution"
+                );
+            }
+            if let Some(root) = runtime_plan.env_overrides.get("CTX_DATA_ROOT") {
+                let expected_home = provider_accounts::codex_runtime_home(Path::new(root));
+                if Path::new(&codex_home) != expected_home {
+                    anyhow::bail!(
+                        "codex endpoint container runtime must use CODEX_HOME={} but resolved {}",
+                        expected_home.display(),
+                        codex_home
+                    );
+                }
+            }
+        }
     }
 
     if let Ok(cfg) = installer::load_agent_server_config(&state.core.data_root).await {
@@ -755,6 +764,33 @@ async fn start_turn(
             &state.core.data_root,
         );
     }
+
+    let mut run_env_event = OpsEvent::new("info", "provider_run_env_ready");
+    run_env_event.session_id = Some(session.id.0.to_string());
+    run_env_event.worktree_id = Some(session.worktree_id.0.to_string());
+    run_env_event.run_id = Some(run_id.0.to_string());
+    run_env_event.turn_id = Some(turn_id.0.to_string());
+    run_env_event.provider_id = Some(session.provider_id.clone());
+    run_env_event.cwd = Some(workdir_str.clone());
+    run_env_event.worktree_root = Some(workdir_str.clone());
+    run_env_event.meta = Some(json!({
+        "model_id": session.model_id.clone(),
+        "env_target": env_target,
+        "runtime_provider_id": runtime_provider_id,
+        "source_kind": if using_endpoint_source { "endpoint" } else { "subscription" },
+        "is_container": is_container,
+        "has_openai_api_key": provider_env
+            .get("OPENAI_API_KEY")
+            .is_some_and(|value| !value.trim().is_empty()),
+        "has_codex_home": provider_env
+            .get("CODEX_HOME")
+            .is_some_and(|value| !value.trim().is_empty()),
+        "openai_base_url_host": provider_env
+            .get("OPENAI_BASE_URL")
+            .and_then(|value| url::Url::parse(value).ok())
+            .and_then(|parsed| parsed.host_str().map(|host| host.to_string())),
+    }));
+    state.telemetry.ops_events.emit(run_env_event);
 
     let prompt_config = workspace_config::load_agent_system_prompt_append(&store)
         .await
@@ -1523,6 +1559,12 @@ async fn start_turn(
                     if matches!(terminal_status, Some(SessionTurnStatus::Interrupted)) {
                         continue;
                     }
+                    let error_message = event
+                        .payload_json
+                        .get("message")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("provider runtime error")
+                        .to_string();
                     if !telemetry_emitted {
                         telemetry_emitted = true;
                         let duration_ms = run_started_at.elapsed().as_millis() as u64;
@@ -1566,6 +1608,22 @@ async fn start_turn(
                             ))
                             .await;
                     }
+                    let mut fail_event = OpsEvent::new("error", "provider_run_failed");
+                    fail_event.session_id = Some(session_id.0.to_string());
+                    fail_event.worktree_id = Some(worktree_id.0.to_string());
+                    fail_event.run_id = Some(run_id.0.to_string());
+                    fail_event.turn_id = Some(turn_id.0.to_string());
+                    fail_event.provider_id = Some(provider_id.clone());
+                    fail_event.cwd = Some(workdir_str.clone());
+                    fail_event.worktree_root = Some(workdir_str.clone());
+                    fail_event.meta = Some(json!({
+                        "model_id": model_id.clone(),
+                        "env_target": env_target.clone(),
+                        "error": error_message,
+                        "details": event.payload_json.get("details").cloned(),
+                        "kind": event.payload_json.get("kind").cloned(),
+                    }));
+                    state_for_events.telemetry.ops_events.emit(fail_event);
                     terminal_status = Some(SessionTurnStatus::Failed);
                     let _ = store
                         .update_session_turn_status(

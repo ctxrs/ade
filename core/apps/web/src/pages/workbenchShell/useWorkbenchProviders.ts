@@ -85,7 +85,6 @@ export const shouldHydrateProviderModels = (
   if (!MODEL_DISCOVERY_PROVIDER_IDS.has(providerId)) return false;
   if (!options) return false;
   if (options.has_active_auth !== true) return false;
-  if (options.source?.selected_source_kind === "endpoint") return false;
   return !hasProviderModels(options);
 };
 
@@ -181,7 +180,7 @@ export function useWorkbenchProviders({
       setProviderOptions({});
       return;
     }
-    loadProvidersBootstrap(workspaceId)
+    refreshProvidersBootstrap(workspaceId)
       .then((bootstrap) => {
         applyProvidersBootstrap(bootstrap);
       })

@@ -23,7 +23,7 @@ describe("shouldHydrateProviderModels", () => {
     expect(shouldHydrateProviderModels("claude-crp", baseOptions("claude-crp"))).toBe(true);
   });
 
-  it("does not request hydration for endpoint-selected sources", () => {
+  it("requests hydration for endpoint-selected sources when models are missing", () => {
     const options: ProviderOptions = {
       ...baseOptions("claude-crp"),
       source: {
@@ -33,7 +33,7 @@ describe("shouldHydrateProviderModels", () => {
         endpoints: [],
       },
     };
-    expect(shouldHydrateProviderModels("claude-crp", options)).toBe(false);
+    expect(shouldHydrateProviderModels("claude-crp", options)).toBe(true);
   });
 
   it("does not request hydration when models already exist", () => {
@@ -51,4 +51,3 @@ describe("shouldHydrateProviderModels", () => {
     expect(shouldHydrateProviderModels("gemini", baseOptions("gemini"))).toBe(false);
   });
 });
-

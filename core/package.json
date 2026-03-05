@@ -93,6 +93,7 @@
     "verify:e2e:load": "pnpm test:e2e:load && bash -lc 'scripts/run-rust-suite.sh load'",
     "verify:desktop-smoke": "bash -lc '../scripts/desktop_smoke_with_infisical.sh'",
     "verify:desktop:parity-provider-smoke": "CTX_AUTOMATION_SCENARIOS=${CTX_AUTOMATION_SCENARIOS:-local-codex-host-smoke,local-codex-smoke} bash -lc '../scripts/desktop_smoke_with_infisical.sh --spec automation/specs/workspace-wizard.spec.cjs --spec automation/specs/workbench-blank-debug.spec.cjs'",
+    "verify:desktop:break-matrix": "apps/desktop/scripts/run_macos_break_matrix.sh",
     "verify:anomaly": "bash -lc 'scripts/run-anomaly-suite.sh'",
     "verify:fuzz:regression": "bash -lc 'scripts/run-fuzz-regression.sh'",
     "verify:agent:fast": "bash -lc 'scripts/affected_tests.sh'",

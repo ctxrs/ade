@@ -399,6 +399,7 @@ pub struct ExecutionSetupCoordinator {
     perf_telemetry: PerfTelemetry,
     ops_events: OpsEvents,
     inner: Mutex<CoordinatorState>,
+    prewarm_lock: Mutex<()>,
 }
 
 impl ExecutionSetupCoordinator {
@@ -414,6 +415,7 @@ impl ExecutionSetupCoordinator {
             perf_telemetry,
             ops_events,
             inner: Mutex::new(CoordinatorState::default()),
+            prewarm_lock: Mutex::new(()),
         }
     }
 
@@ -593,12 +595,15 @@ impl ExecutionSetupCoordinator {
             };
             match attempt_result {
                 Ok(()) => break Ok(()),
-                Err(_err) if should_retry_machine_start_failure(&job, attempt, is_host_mode) => {
+                Err(err) if should_retry_machine_start_failure(&job, attempt, is_host_mode) => {
+                    let detail = format_error_chain(&err);
                     self.emit_log(
                         &job,
                         HarnessSetupPhase::MachineStartOrInit,
                         HarnessSetupLogLevel::Warn,
-                        "container runtime machine startup failed; retrying once",
+                        &format!(
+                            "container runtime machine startup failed; retrying once: {detail}"
+                        ),
                     );
                     tokio::time::sleep(std::time::Duration::from_millis(400)).await;
                 }
@@ -675,6 +680,7 @@ impl ExecutionSetupCoordinator {
             } else if !harness_runtime::container_runtime_available(&self.data_root) {
                 Err(anyhow::anyhow!("container runtime unavailable"))
             } else {
+                let _prewarm_guard = self.prewarm_lock.lock().await;
                 let prewarm_result = async {
                     if scope.includes_runtime() {
                         let image = harness_runtime::resolve_container_image(&settings.container);
@@ -703,12 +709,15 @@ impl ExecutionSetupCoordinator {
             };
             match attempt_result {
                 Ok(()) => break Ok(()),
-                Err(_err) if should_retry_machine_start_failure(&job, attempt, is_host_mode) => {
+                Err(err) if should_retry_machine_start_failure(&job, attempt, is_host_mode) => {
+                    let detail = format_error_chain(&err);
                     self.emit_log(
                         &job,
                         HarnessSetupPhase::MachineStartOrInit,
                         HarnessSetupLogLevel::Warn,
-                        "container runtime machine startup failed; retrying once",
+                        &format!(
+                            "container runtime machine startup failed; retrying once: {detail}"
+                        ),
                     );
                     tokio::time::sleep(std::time::Duration::from_millis(400)).await;
                 }
@@ -922,6 +931,7 @@ impl ExecutionSetupCoordinator {
             };
         }
 
+        let _prewarm_guard = self.prewarm_lock.lock().await;
         let gate = match self.compute_prewarm_gate(&image).await {
             Ok(gate) => gate,
             Err(err) => {
@@ -945,6 +955,26 @@ impl ExecutionSetupCoordinator {
                 return;
             }
         };
+
+        // Startup prewarm must not bootstrap a Podman machine in the background.
+        // If the engine is not already reachable, skip here and let explicit user-driven
+        // container launch perform machine init/start with foreground progress reporting.
+        if should_skip_startup_prewarm(gate.machine_ready) {
+            let snapshot = StartupPrewarmSnapshot {
+                state: StartupPrewarmState::Skipped,
+                target_image: image,
+                needs_prewarm: true,
+                machine_ready: false,
+                image_present: false,
+                image_ref_changed: gate.image_ref_changed,
+                bundled_image_digest_changed: gate.bundled_image_digest_changed,
+                last_attempt_at: Some(attempted_at),
+                last_success_at: None,
+                error: Some("container machine not ready; startup prewarm skipped".to_string()),
+            };
+            self.set_startup_snapshot(snapshot).await;
+            return;
+        }
 
         if !gate.needs_prewarm {
             let snapshot = StartupPrewarmSnapshot {
@@ -1011,7 +1041,9 @@ impl ExecutionSetupCoordinator {
 
     async fn compute_prewarm_gate(&self, image: &str) -> Result<PrewarmGate> {
         let metadata = read_prewarm_metadata(&self.data_root).await?;
-        let machine_ready = harness_runtime::podman_engine_ready(&self.data_root).await?;
+        let machine_ready = normalize_podman_engine_ready_for_gate(
+            harness_runtime::podman_engine_ready(&self.data_root).await,
+        )?;
         let image_present = if machine_ready {
             harness_runtime::container_image_present(&self.data_root, image).await?
         } else {
@@ -1177,6 +1209,28 @@ fn needs_prewarm(
     !machine_ready || !image_present || image_ref_changed || bundled_image_digest_changed
 }
 
+fn should_skip_startup_prewarm(machine_ready: bool) -> bool {
+    !machine_ready
+}
+
+fn normalize_podman_engine_ready_for_gate(result: anyhow::Result<bool>) -> anyhow::Result<bool> {
+    match result {
+        Ok(value) => Ok(value),
+        Err(err) => {
+            if err
+                .to_string()
+                .to_ascii_lowercase()
+                .contains("podman binary unavailable")
+            {
+                // Thin desktop bundles can start with no local podman binary yet; treat that as
+                // "not ready" so startup prewarm proceeds to managed runtime install.
+                return Ok(false);
+            }
+            Err(err)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1217,6 +1271,27 @@ mod tests {
         assert!(needs_prewarm(true, true, true, false));
         assert!(needs_prewarm(true, true, false, true));
         assert!(!needs_prewarm(true, true, false, false));
+    }
+
+    #[test]
+    fn startup_prewarm_skip_policy_requires_ready_machine() {
+        assert!(should_skip_startup_prewarm(false));
+        assert!(!should_skip_startup_prewarm(true));
+    }
+
+    #[test]
+    fn normalize_podman_engine_ready_for_gate_treats_missing_binary_as_not_ready() {
+        let value = normalize_podman_engine_ready_for_gate(Err(anyhow::anyhow!(
+            "podman binary unavailable"
+        )))
+        .expect("missing binary should map to not-ready");
+        assert!(!value);
+    }
+
+    #[test]
+    fn normalize_podman_engine_ready_for_gate_preserves_other_errors() {
+        let err = normalize_podman_engine_ready_for_gate(Err(anyhow::anyhow!("boom")));
+        assert!(err.is_err());
     }
 
     #[test]
