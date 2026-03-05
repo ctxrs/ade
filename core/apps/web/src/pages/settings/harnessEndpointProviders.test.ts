@@ -43,6 +43,13 @@ describe("harnessEndpointProviders", () => {
     expect(anthropic.base_url).toBe("https://api.anthropic.com/v1");
   });
 
+  it("uses the Cohere OpenAI-compatibility base URL", () => {
+    const cohere = getHarnessEndpointProviderPreset("cohere");
+
+    expect(cohere.base_url).toBe("https://api.cohere.com/compatibility/v1");
+    expect(cohere.recommended_api_shape).toBe("openai_responses");
+  });
+
   it("attaches provider logos for dropdown rendering", () => {
     const openai = getHarnessEndpointProviderPreset("openai");
     const other = getHarnessEndpointProviderPreset("other");

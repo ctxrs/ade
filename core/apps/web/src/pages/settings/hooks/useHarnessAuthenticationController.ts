@@ -242,6 +242,10 @@ export const toErrorObject = (error: unknown): Error => {
 
 const looksLikeClaudeSetupToken = (value: string): boolean => value.trim().startsWith("sk-ant-oat");
 const CLAUDE_POLLED_AUTH_URL_OPEN_GRACE_MS = 5000;
+export const CLAUDE_LOGIN_POLL_INTERVAL_MS = 1600;
+export const CLAUDE_LOGIN_COMPLETION_TIMEOUT_MS = 15 * 60 * 1000;
+export const CLAUDE_LOGIN_POLL_ATTEMPTS =
+  Math.ceil(CLAUDE_LOGIN_COMPLETION_TIMEOUT_MS / CLAUDE_LOGIN_POLL_INTERVAL_MS);
 const GEMINI_LOGIN_POLL_ATTEMPTS = 90;
 const GEMINI_LOGIN_POLL_INTERVAL_MS = 1600;
 const QWEN_LOGIN_POLL_ATTEMPTS = 90;
@@ -865,6 +869,11 @@ export function useHarnessAuthenticationController({
       const previousEndpointIds = new Set(
         (providerHarnessConfigRef.current[modal.provider_id]?.endpoints ?? []).map((endpoint) => endpoint.id),
       );
+      const previousSourceConfig = providerHarnessConfigRef.current[modal.provider_id];
+      const previousSourceKind = previousSourceConfig?.selected_source_kind ?? "subscription";
+      const previousEndpointId = previousSourceKind === "endpoint"
+        ? previousSourceConfig?.selected_endpoint_id ?? null
+        : null;
       const requestedEndpointId = modal.endpoint_id?.trim() || null;
       const next = await upsertProviderHarnessEndpoint(modal.provider_id, {
         endpoint_id: requestedEndpointId,
@@ -892,10 +901,17 @@ export function useHarnessAuthenticationController({
       if (workspaceId) {
         const verify = await verifyProviderForWorkspace(workspaceId, modal.provider_id);
         if (verify.status !== "ok") {
-          setProviderError(
-            verify.message?.trim()
-            || `Endpoint verification failed for ${modal.provider_id} (${verify.status}).`,
-          );
+          const verifyMessage = verify.message?.trim()
+            || `Endpoint verification failed for ${modal.provider_id} (${verify.status}).`;
+          try {
+            await onSelectProviderSource(modal.provider_id, previousSourceKind, previousEndpointId);
+          } catch (rollbackError) {
+            setProviderError(
+              `${verifyMessage} Failed to restore previous provider source: ${messageFromError(rollbackError)}`,
+            );
+            return;
+          }
+          setProviderError(verifyMessage);
           return;
         }
       }
@@ -937,10 +953,9 @@ export function useHarnessAuthenticationController({
     onAuthUrl?: (authUrl: string) => Promise<void>,
     opts?: { openedAuthUrl?: string | null },
   ): Promise<"success" | "failed" | "timeout"> => {
-    const attempts = 90;
     const openedAuthUrls = new Set<string>();
     takeNextClaudeAuthUrlToOpen(opts?.openedAuthUrl, openedAuthUrls);
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
+    for (let attempt = 0; attempt < CLAUDE_LOGIN_POLL_ATTEMPTS; attempt += 1) {
       try {
         const status = await getClaudeLogin(loginId);
         const authUrl = takeNextClaudeAuthUrlToOpen(status.auth_url, openedAuthUrls);
@@ -953,7 +968,7 @@ export function useHarnessAuthenticationController({
         // continue polling
       }
       await new Promise((resolve) => {
-        window.setTimeout(resolve, 1600);
+        window.setTimeout(resolve, CLAUDE_LOGIN_POLL_INTERVAL_MS);
       });
     }
     return "timeout";
@@ -1885,12 +1900,13 @@ export function useHarnessAuthenticationController({
     try {
       const next = await deleteAmpAccount(accountId);
       setAmpAccounts(next);
+      await refreshBootstrapAfterMutation();
     } catch (error) {
       setProviderError(messageFromError(error));
     } finally {
       setAmpAccountsBusy(false);
     }
-  }, []);
+  }, [refreshBootstrapAfterMutation]);
 
   const onAmpSetActive = useCallback(async (accountId: string | null) => {
     setAmpAccountsBusy(true);
@@ -1898,12 +1914,13 @@ export function useHarnessAuthenticationController({
     try {
       const next = await setAmpActiveAccount(accountId);
       setAmpAccounts(next);
+      await refreshBootstrapAfterMutation();
     } catch (error) {
       setProviderError(messageFromError(error));
     } finally {
       setAmpAccountsBusy(false);
     }
-  }, []);
+  }, [refreshBootstrapAfterMutation]);
 
   const onSelectHarnessAuthRow = useCallback(async (providerId: string, row: HarnessAuthRow) => {
     try {

@@ -139,7 +139,7 @@ const HARNESS_ENDPOINT_PROVIDER_PRESET_BASES = [
     base_url: "https://api.cloudflare.com/client/v4/accounts/{accountId}/ai/v1",
     recommended_api_shape: "openai_responses",
   },
-  { id: "cohere", label: "Cohere", base_url: "https://api.cohere.com/v2", recommended_api_shape: "openai_responses" },
+  { id: "cohere", label: "Cohere", base_url: "https://api.cohere.com/compatibility/v1", recommended_api_shape: "openai_responses" },
   { id: "crusoe", label: "Crusoe", base_url: "https://api.crusoe.ai/v1", recommended_api_shape: "openai_responses" },
   { id: "deepinfra", label: "DeepInfra", base_url: "https://api.deepinfra.com/v1/openai", recommended_api_shape: "openai_responses" },
   { id: "deepseek", label: "DeepSeek", base_url: "https://api.deepseek.com/beta", recommended_api_shape: "openai_responses" },

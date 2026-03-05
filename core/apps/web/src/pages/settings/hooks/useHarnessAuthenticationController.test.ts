@@ -1,5 +1,28 @@
-import { describe, expect, it } from "vitest";
+import { act, render, waitFor } from "@testing-library/react";
+import { createElement, useEffect } from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type {
+  AmpAccountsResponse,
+  HarnessProviderSourceConfig,
+  ProvidersBootstrapResponse,
+  ProviderAuthCheck,
+} from "../../../api/client";
 import {
+  deleteAmpAccount,
+  selectProviderHarnessSource,
+  setAmpActiveAccount,
+  upsertProviderHarnessEndpoint,
+  verifyProviderForWorkspace,
+} from "../../../api/client";
+import {
+  invalidateProvidersBootstrap,
+  loadProvidersBootstrap,
+  refreshProvidersBootstrap,
+} from "../../../state/providersBootstrapStore";
+import {
+  CLAUDE_LOGIN_COMPLETION_TIMEOUT_MS,
+  CLAUDE_LOGIN_POLL_ATTEMPTS,
+  CLAUDE_LOGIN_POLL_INTERVAL_MS,
   extractGithubDeviceCodeFromAuthUrl,
   resolveUpsertedEndpoint,
   resolveHarnessAuthModalInitialStage,
@@ -12,7 +35,166 @@ import {
   supportsHarnessSubscriptionAuth,
   takeNextClaudeAuthUrlToOpen,
   toErrorObject,
+  useHarnessAuthenticationController,
 } from "./useHarnessAuthenticationController";
+import type { HarnessAuthRow } from "../harnessAuthRows";
+
+vi.mock("../../../api/client", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../../../api/client")>();
+  return {
+    ...original,
+    deleteAmpAccount: vi.fn(),
+    selectProviderHarnessSource: vi.fn(),
+    setAmpActiveAccount: vi.fn(),
+    upsertProviderHarnessEndpoint: vi.fn(),
+    verifyProviderForWorkspace: vi.fn(),
+  };
+});
+
+vi.mock("../../../state/providersBootstrapStore", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../../../state/providersBootstrapStore")>();
+  return {
+    ...original,
+    invalidateProvidersBootstrap: vi.fn(),
+    loadProvidersBootstrap: vi.fn(),
+    refreshProvidersBootstrap: vi.fn(),
+  };
+});
+
+vi.mock("../../../state/providerInstallProgressStore", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../../../state/providerInstallProgressStore")>();
+  return {
+    ...original,
+    getProviderInstallProgressSnapshot: vi.fn(() => ({})),
+    subscribeProviderInstallProgress: vi.fn(() => () => {}),
+    upsertProviderInstallProgress: vi.fn(),
+  };
+});
+
+vi.mock("../../../utils/desktop", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../../../utils/desktop")>();
+  return {
+    ...original,
+    desktopStartCodexLoginRelay: vi.fn(),
+    isDesktopApp: vi.fn(() => false),
+    openExternalLink: vi.fn(),
+  };
+});
+
+type Controller = ReturnType<typeof useHarnessAuthenticationController>;
+
+const baseEndpoint = {
+  id: "ep-old",
+  provider_id: "codex",
+  name: "Primary",
+  base_url: "https://api.example.com/v1",
+  api_shape: "openai_responses" as const,
+  auth_type: "bearer",
+  model_override: null,
+  created_at: "2026-03-01T00:00:00Z",
+  updated_at: "2026-03-01T00:00:00Z",
+  last_verification_status: "unknown" as const,
+  last_verification_at: null,
+  last_error: null,
+  has_api_key: true,
+};
+
+const baseCodexConfig: HarnessProviderSourceConfig = {
+  provider_id: "codex",
+  selected_source_kind: "subscription",
+  selected_endpoint_id: null,
+  endpoints: [baseEndpoint],
+};
+
+const baseAmpAccounts: AmpAccountsResponse = {
+  active_account_id: "amp-1",
+  accounts: [
+    {
+      id: "amp-1",
+      label: "Amp One",
+      created_at: "2026-03-01T00:00:00Z",
+    },
+    {
+      id: "amp-2",
+      label: "Amp Two",
+      created_at: "2026-03-01T00:00:00Z",
+    },
+  ],
+};
+
+const makeBootstrap = (overrides?: Partial<ProvidersBootstrapResponse>): ProvidersBootstrapResponse => ({
+  providers: [],
+  provider_options: {},
+  provider_harness_config: {
+    codex: baseCodexConfig,
+  },
+  codex_accounts: {
+    active_account_id: null,
+    accounts: [],
+    logins: [],
+  },
+  claude_accounts: {
+    active_account_id: null,
+    accounts: [],
+  },
+  gemini_accounts: {
+    active_account_id: null,
+    accounts: [],
+  },
+  qwen_accounts: {
+    active_account_id: null,
+    accounts: [],
+  },
+  kimi_accounts: {
+    active_account_id: null,
+    accounts: [],
+  },
+  mistral_accounts: {
+    active_account_id: null,
+    accounts: [],
+  },
+  copilot_accounts: {
+    active_account_id: null,
+    accounts: [],
+  },
+  cursor_accounts: {
+    active_account_id: null,
+    accounts: [],
+  },
+  amp_accounts: baseAmpAccounts,
+  ...overrides,
+});
+
+function ControllerHarness({ onChange }: { onChange: (controller: Controller) => void }) {
+  const controller = useHarnessAuthenticationController({
+    workspaceId: "ws-test",
+    enabled: true,
+  });
+
+  useEffect(() => {
+    onChange(controller);
+  }, [controller, onChange]);
+
+  return null;
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(loadProvidersBootstrap).mockResolvedValue(makeBootstrap());
+  vi.mocked(refreshProvidersBootstrap).mockResolvedValue(makeBootstrap());
+});
+
+describe("Claude polling duration", () => {
+  it("matches the 15-minute backend login completion window", () => {
+    expect(CLAUDE_LOGIN_POLL_ATTEMPTS).toBeGreaterThan(90);
+    expect(CLAUDE_LOGIN_POLL_ATTEMPTS * CLAUDE_LOGIN_POLL_INTERVAL_MS).toBeGreaterThanOrEqual(
+      CLAUDE_LOGIN_COMPLETION_TIMEOUT_MS,
+    );
+    expect(CLAUDE_LOGIN_POLL_ATTEMPTS * CLAUDE_LOGIN_POLL_INTERVAL_MS).toBeLessThan(
+      CLAUDE_LOGIN_COMPLETION_TIMEOUT_MS + CLAUDE_LOGIN_POLL_INTERVAL_MS,
+    );
+  });
+});
 
 describe("takeNextClaudeAuthUrlToOpen", () => {
   it("normalizes and deduplicates urls", () => {
@@ -285,5 +467,125 @@ describe("resolveHarnessAuthModalInitialStage", () => {
     expect(resolveHarnessAuthModalInitialStage("codex")).toBe("choose");
     expect(resolveHarnessAuthModalInitialStage("claude-crp")).toBe("choose");
     expect(resolveHarnessAuthModalInitialStage("cursor")).toBe("choose");
+  });
+});
+
+describe("useHarnessAuthenticationController", () => {
+  it("restores the previous provider source when endpoint verification fails", async () => {
+    let controller: Controller | null = null;
+    const freshEndpoint = {
+      ...baseEndpoint,
+      id: "ep-new",
+      name: "Secondary",
+      updated_at: "2026-03-02T00:00:00Z",
+    };
+    const afterUpsert: HarnessProviderSourceConfig = {
+      ...baseCodexConfig,
+      endpoints: [...baseCodexConfig.endpoints, freshEndpoint],
+    };
+    const selectedEndpointConfig: HarnessProviderSourceConfig = {
+      ...afterUpsert,
+      selected_source_kind: "endpoint",
+      selected_endpoint_id: freshEndpoint.id,
+    };
+    const verifyFailure: ProviderAuthCheck = {
+      provider_id: "codex",
+      workspace_id: "ws-test",
+      status: "failed",
+      message: "bad endpoint",
+    };
+
+    vi.mocked(upsertProviderHarnessEndpoint).mockResolvedValue(afterUpsert);
+    vi.mocked(selectProviderHarnessSource)
+      .mockResolvedValueOnce(selectedEndpointConfig)
+      .mockResolvedValueOnce(baseCodexConfig);
+    vi.mocked(refreshProvidersBootstrap)
+      .mockResolvedValueOnce(makeBootstrap({
+        provider_harness_config: {
+          codex: selectedEndpointConfig,
+        },
+      }))
+      .mockResolvedValueOnce(makeBootstrap());
+    vi.mocked(verifyProviderForWorkspace).mockResolvedValue(verifyFailure);
+
+    render(createElement(ControllerHarness, {
+      onChange: (next) => {
+        controller = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(controller).not.toBeNull();
+      expect(vi.mocked(loadProvidersBootstrap)).toHaveBeenCalledWith("ws-test");
+    });
+
+    await act(async () => {
+      controller?.openHarnessAuthModal("codex");
+    });
+    await act(async () => {
+      controller?.patchHarnessAuthModal({
+        stage: "api_key",
+        api_key: "sk-test",
+      });
+    });
+    await act(async () => {
+      await controller?.submitHarnessApiKeyModal();
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(selectProviderHarnessSource)).toHaveBeenNthCalledWith(1, "codex", "endpoint", "ep-new");
+      expect(vi.mocked(selectProviderHarnessSource)).toHaveBeenNthCalledWith(2, "codex", "subscription", null);
+      expect(controller?.providerError).toBe("bad endpoint");
+    });
+  });
+
+  it("refreshes providers bootstrap after Amp account mutations", async () => {
+    let controller: Controller | null = null;
+    const ampRow: HarnessAuthRow = {
+      key: "amp:amp-2",
+      kind: "subscription",
+      label: "Amp Two",
+      active: false,
+      selectable: true,
+      account_id: "amp-2",
+    };
+
+    vi.mocked(deleteAmpAccount).mockResolvedValue({
+      active_account_id: "amp-2",
+      accounts: [baseAmpAccounts.accounts[1]!],
+    });
+    vi.mocked(setAmpActiveAccount).mockResolvedValue({
+      active_account_id: "amp-2",
+      accounts: baseAmpAccounts.accounts,
+    });
+
+    render(createElement(ControllerHarness, {
+      onChange: (next) => {
+        controller = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(controller).not.toBeNull();
+    });
+
+    await act(async () => {
+      await controller?.onAmpDelete("amp-1");
+    });
+    await waitFor(() => {
+      expect(vi.mocked(refreshProvidersBootstrap)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(invalidateProvidersBootstrap)).toHaveBeenCalledTimes(1);
+    });
+    const refreshCallsAfterDelete = vi.mocked(refreshProvidersBootstrap).mock.calls.length;
+    const invalidateCallsAfterDelete = vi.mocked(invalidateProvidersBootstrap).mock.calls.length;
+
+    await act(async () => {
+      await controller?.onSelectHarnessAuthRow("amp", ampRow);
+    });
+    await waitFor(() => {
+      expect(vi.mocked(setAmpActiveAccount)).toHaveBeenCalledWith("amp-2");
+      expect(vi.mocked(refreshProvidersBootstrap).mock.calls.length).toBeGreaterThan(refreshCallsAfterDelete);
+      expect(vi.mocked(invalidateProvidersBootstrap).mock.calls.length).toBeGreaterThan(invalidateCallsAfterDelete);
+    });
   });
 });
