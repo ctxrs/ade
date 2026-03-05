@@ -2834,6 +2834,43 @@ async fn amp_home_has_persisted_auth(data_root: &Path) -> bool {
         .any(|(key, token)| key.starts_with("apiKey@") && !token.is_null())
 }
 
+async fn sync_amp_runtime_auth_to_runtime_root(data_root: &Path, runtime_root: &Path) -> Result<()> {
+    let source = amp_secrets_path(data_root);
+    let target = amp_secrets_path(runtime_root);
+    match tokio::fs::read(&source).await {
+        Ok(bytes) if !bytes.is_empty() => write_secure_file_atomic(&target, &bytes)
+            .await
+            .with_context(|| format!("writing projected amp auth to {}", target.display()))?,
+        Ok(_) => {
+            match tokio::fs::remove_file(&target).await {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => {
+                    return Err(err).with_context(|| {
+                        format!("removing projected amp auth at {}", target.display())
+                    });
+                }
+            }
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            match tokio::fs::remove_file(&target).await {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => {
+                    return Err(err).with_context(|| {
+                        format!("removing projected amp auth at {}", target.display())
+                    });
+                }
+            }
+        }
+        Err(err) => {
+            return Err(err)
+                .with_context(|| format!("reading amp auth from {}", source.display()));
+        }
+    }
+    Ok(())
+}
+
 pub async fn ensure_amp_registry_from_runtime_auth(data_root: &Path) -> Result<AmpAccountRegistry> {
     let registry = load_amp_registry(data_root).await;
     if !registry.accounts.is_empty() && registry.active_account_id.is_some() {
@@ -3560,7 +3597,7 @@ pub async fn subscription_env_for_active_account_with_runtime_root(
             Ok(cursor_env_for_account(runtime_root, active, &token))
         }
         "amp" => {
-            let registry = load_amp_registry(data_root).await;
+            let registry = ensure_amp_registry_from_runtime_auth(data_root).await?;
             let Some(active) = registry
                 .active_account_id
                 .as_deref()
@@ -3573,6 +3610,7 @@ pub async fn subscription_env_for_active_account_with_runtime_root(
                 return Ok(HashMap::new());
             }
             let home = ensure_amp_runtime_home(runtime_root).await?;
+            sync_amp_runtime_auth_to_runtime_root(data_root, runtime_root).await?;
             Ok(amp_env_for_home(&home))
         }
         _ => Ok(HashMap::new()),
@@ -4892,6 +4930,37 @@ mod tests {
         assert_eq!(registry.accounts.len(), 1);
         assert!(registry.active_account_id.is_some());
         assert_eq!(registry.accounts[0].label, "Amp Imported Session");
+    }
+
+    #[tokio::test]
+    async fn amp_runtime_root_projects_persisted_auth_and_bootstraps_registry() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let runtime_root = root
+            .join("containers")
+            .join("workspaces")
+            .join("workspace-amp")
+            .join("data");
+        let source_secret = amp_secrets_path(root);
+        tokio::fs::create_dir_all(source_secret.parent().unwrap())
+            .await
+            .unwrap();
+        let source_payload = br#"{"apiKey@https://ampcode.com/":"runtime-token"}"#;
+        tokio::fs::write(&source_secret, source_payload).await.unwrap();
+
+        let env = subscription_env_for_active_account_with_runtime_root(root, &runtime_root, "amp")
+            .await
+            .unwrap();
+        let home = PathBuf::from(env.get("HOME").expect("HOME should be set"));
+        assert!(home.starts_with(&runtime_root));
+
+        let registry = load_amp_registry(root).await;
+        assert_eq!(registry.accounts.len(), 1);
+        assert!(registry.active_account_id.is_some());
+
+        let projected_secret = amp_secrets_path(&runtime_root);
+        let projected_payload = tokio::fs::read(&projected_secret).await.unwrap();
+        assert_eq!(projected_payload, source_payload);
     }
 
     #[tokio::test]
