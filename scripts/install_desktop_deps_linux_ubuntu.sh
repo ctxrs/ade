@@ -66,6 +66,7 @@ packages=(
   build-essential
   pkg-config
   curl
+  sshpass
   file
   xdg-utils
   desktop-file-utils

@@ -7,6 +7,7 @@ const {
   runWizardScenario,
   getWorkspace,
   assertNoDaemonOverlayFor,
+  runCodexFirstTurnApiSmoke,
   ensureRemoteTarget,
   ssh,
   REMOTE_HOST,
@@ -14,8 +15,12 @@ const {
   REMOTE_PORT,
   REMOTE_DATA_DIR_RAW,
 } = require("./helpers/workspace_wizard_flow.cjs");
+const { ensureCodexOpenRouterWorkspaceReady } = require("./helpers/provider_runtime.cjs");
 
 const reportPath = process.env.CTX_REMOTE_CONTAINER_CONTRACT_REPORT || path.join("/tmp", "ctx-remote-container-contract.json");
+const REQUIRE_FIRST_TURN_SUCCESS = ["1", "true", "yes"].includes(
+  String(process.env.CTX_AUTOMATION_REMOTE_REQUIRE_FIRST_TURN_SUCCESS || "0").trim().toLowerCase(),
+);
 const scenarioFilter = new Set(
   String(process.env.CTX_AUTOMATION_SCENARIOS || "")
     .split(",")
@@ -130,8 +135,39 @@ describe("remote container contract (env-gated desktop e2e)", () => {
 
     await assertNoDaemonOverlayFor(20_000);
 
+    let firstTurn = { attempted: false };
+    try {
+      const provider = await ensureCodexOpenRouterWorkspaceReady(workspaceId, {
+        installTarget: "container",
+        endpointName: `remote-container-openrouter-${runId}`,
+      });
+      const turn = await runCodexFirstTurnApiSmoke(workspaceId, {
+        providerId: provider.providerId,
+        modelId: provider.modelId,
+      }, 180000);
+      firstTurn = {
+        attempted: true,
+        status: "success",
+        session_id: turn?.sessionId || null,
+        assistant_preview: String(turn?.assistantMessage || "").slice(0, 200),
+        provider,
+      };
+    } catch (error) {
+      firstTurn = {
+        attempted: true,
+        status: "failed",
+        error: String(error),
+      };
+      if (REQUIRE_FIRST_TURN_SUCCESS) {
+        report.first_turn = firstTurn;
+        writeReport(report);
+        throw error;
+      }
+    }
+
     report.workspace_id = workspaceId;
     report.root_path = rootPath;
+    report.first_turn = firstTurn;
     writeReport(report);
   });
 });

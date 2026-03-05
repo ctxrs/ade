@@ -1,7 +1,7 @@
 use super::*;
 use sha2::Digest;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub(super) struct SshConnectReq {
     host: String,
     #[serde(default)]
@@ -18,6 +18,22 @@ pub(super) struct SshConnectReq {
 
 const fn default_true() -> bool {
     true
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct DesktopSshConnectPollReq {
+    job_id: String,
+    #[serde(default)]
+    consume: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct DesktopSshConnectJobStatus {
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    info: Option<DesktopConnectionInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -279,13 +295,27 @@ pub(super) async fn desktop_get_git_branch(
     .map_err(|e| format!("git branch lookup failed: {e}"))?
 }
 
-#[tauri::command]
-pub(super) async fn desktop_connect_ssh(
+fn ssh_connect_jobs() -> &'static std::sync::Mutex<HashMap<String, DesktopSshConnectJobStatus>> {
+    static SSH_CONNECT_JOBS: std::sync::OnceLock<
+        std::sync::Mutex<HashMap<String, DesktopSshConnectJobStatus>>,
+    > = std::sync::OnceLock::new();
+    SSH_CONNECT_JOBS.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+fn next_ssh_connect_job_id() -> String {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("ssh-connect-{seq}")
+}
+
+async fn desktop_connect_ssh_inner(
     app: tauri::AppHandle,
-    state: tauri::State<'_, ConnectionManager>,
     req: SshConnectReq,
 ) -> Result<DesktopConnectionInfo, String> {
-    state.disconnect();
+    {
+        let state = app.state::<ConnectionManager>();
+        state.disconnect();
+    }
 
     let host = req.host.trim().to_string();
     if host.is_empty() {
@@ -294,11 +324,12 @@ pub(super) async fn desktop_connect_ssh(
     let remote_port = req.remote_port.unwrap_or(4399);
 
     let user = req.user.clone();
+    let remote_data_dir = req.remote_data_dir.clone();
     let password_once = normalize_optional_text(req.password_once.as_deref());
     let host_for_connect = host.clone();
     let user_for_connect = user.clone();
     let password_once_for_connect = password_once.clone();
-    let remote_data_dir_for_connect = req.remote_data_dir.clone();
+    let remote_data_dir_for_connect = remote_data_dir.clone();
     let app_for_connect = app.clone();
     let remote_ctx_bin = MANAGED_REMOTE_CTX_BIN.to_string();
     let remote_ctx_bin_for_connect = remote_ctx_bin.clone();
@@ -403,17 +434,90 @@ pub(super) async fn desktop_connect_ssh(
         .map_err(|e| format!("failed to reach remote daemon: {e}"))?
         .map_err(|e| format!("failed to reach remote daemon: {e:#}"))?;
 
+    let state = app.state::<ConnectionManager>();
     state.set_ssh(
         base_url,
         Some(token),
         tunnel,
         host,
-        req.user.clone(),
+        user,
         remote_port,
-        req.remote_data_dir.clone(),
+        remote_data_dir,
         effective_remote_ctx_bin,
     );
     Ok(state.info())
+}
+
+#[tauri::command]
+pub(super) async fn desktop_connect_ssh(
+    app: tauri::AppHandle,
+    req: SshConnectReq,
+) -> Result<DesktopConnectionInfo, String> {
+    desktop_connect_ssh_inner(app, req).await
+}
+
+#[tauri::command]
+pub(super) fn desktop_connect_ssh_begin(
+    app: tauri::AppHandle,
+    req: SshConnectReq,
+) -> Result<String, String> {
+    let job_id = next_ssh_connect_job_id();
+    {
+        let mut jobs = ssh_connect_jobs()
+            .lock()
+            .map_err(|err| format!("ssh connect jobs lock poisoned: {err}"))?;
+        jobs.insert(
+            job_id.clone(),
+            DesktopSshConnectJobStatus {
+                status: "pending".to_string(),
+                info: None,
+                error: None,
+            },
+        );
+    }
+
+    let app_for_job = app.clone();
+    let job_id_for_task = job_id.clone();
+    tauri::async_runtime::spawn(async move {
+        let status = match desktop_connect_ssh_inner(app_for_job, req).await {
+            Ok(info) => DesktopSshConnectJobStatus {
+                status: "succeeded".to_string(),
+                info: Some(info),
+                error: None,
+            },
+            Err(err) => DesktopSshConnectJobStatus {
+                status: "failed".to_string(),
+                info: None,
+                error: Some(err),
+            },
+        };
+        if let Ok(mut jobs) = ssh_connect_jobs().lock() {
+            jobs.insert(job_id_for_task, status);
+        }
+    });
+
+    Ok(job_id)
+}
+
+#[tauri::command]
+pub(super) fn desktop_connect_ssh_poll(
+    req: DesktopSshConnectPollReq,
+) -> Result<DesktopSshConnectJobStatus, String> {
+    let mut jobs = ssh_connect_jobs()
+        .lock()
+        .map_err(|err| format!("ssh connect jobs lock poisoned: {err}"))?;
+    let id = req.job_id.trim();
+    if id.is_empty() {
+        return Err("job_id is required".to_string());
+    }
+    let snapshot = jobs
+        .get(id)
+        .cloned()
+        .ok_or_else(|| format!("unknown ssh connect job id: {id}"))?;
+    if req.consume && snapshot.status != "pending" {
+        jobs.remove(id);
+    }
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -659,6 +763,13 @@ fn new_ssh_command() -> Command {
     cmd
 }
 
+fn ssh_target(host: &str, user: Option<&str>) -> String {
+    match user {
+        Some(u) if !u.trim().is_empty() => format!("{}@{}", u.trim(), host),
+        _ => host.to_string(),
+    }
+}
+
 fn looks_like_ssh_auth_failure(message: &str) -> bool {
     let lowered = message.to_ascii_lowercase();
     lowered.contains("permission denied")
@@ -676,12 +787,20 @@ fn probe_remote_linux_platform_with_optional_password(
         Ok(platform) => Ok(platform),
         Err(err) => {
             let Some(password_once) = password_once else {
-                return Err(err);
+                return Err(err.context("password_once not provided for platform probe retry"));
             };
-            if !looks_like_ssh_auth_failure(&err.to_string()) {
-                return Err(err);
+            let err_text = err.to_string();
+            if err_text.contains(WINDOWS_REMOTE_UNSUPPORTED_MSG) {
+                return Err(err.context("platform probe failed on unsupported windows host"));
             }
-            bootstrap_ssh_key_auth_with_password(host, user, password_once)?;
+            let probe_kind = if looks_like_ssh_auth_failure(&err_text) {
+                "auth"
+            } else {
+                "probe"
+            };
+            bootstrap_ssh_key_auth_with_password(host, user, password_once).with_context(|| {
+                format!("after initial {probe_kind} SSH probe failed: {err_text}")
+            })?;
             probe_remote_linux_platform(host, user)
         }
     }
@@ -692,7 +811,7 @@ fn bootstrap_ssh_key_auth_with_password(
     user: Option<&str>,
     password_once: &str,
 ) -> Result<()> {
-    let public_key = ensure_default_ssh_public_key()?;
+    let public_key = ensure_ssh_identity_public_key(host, user)?;
     // Stream the key through stdin to avoid brittle shell quoting for key payloads.
     let install_cmd = ssh_authorized_keys_install_command();
     let key_payload = format!("{public_key}\n");
@@ -726,84 +845,185 @@ key=\"$(cat)\"; \
 grep -qxF \"$key\" \"$HOME/.ssh/authorized_keys\" || printf '%s\\n' \"$key\" >> \"$HOME/.ssh/authorized_keys\""
 }
 
-fn ensure_default_ssh_public_key() -> Result<String> {
-    let ssh_dir = expand_tilde("~/.ssh")
-        .ok_or_else(|| anyhow!("unable to resolve ~/.ssh for SSH password bootstrap"))?;
-    std::fs::create_dir_all(&ssh_dir).context("creating local ~/.ssh directory")?;
+fn parse_ssh_identity_files_from_expanded_config(stdout: &str) -> Vec<PathBuf> {
+    let mut identity_files = Vec::new();
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let mut parts = trimmed.split_whitespace();
+        let key = parts.next().unwrap_or("");
+        if !key.eq_ignore_ascii_case("identityfile") {
+            continue;
+        }
+        let value = parts.collect::<Vec<_>>().join(" ");
+        let Some(path) = normalized_ssh_identity_file(&value) else {
+            continue;
+        };
+        identity_files.push(path);
+    }
+    identity_files
+}
+
+fn normalized_ssh_identity_file(value: &str) -> Option<PathBuf> {
+    let trimmed = value.trim().trim_matches(|c| c == '"' || c == '\'');
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.eq_ignore_ascii_case("none") {
+        return None;
+    }
+    let normalized = trimmed.replace("\\ ", " ");
+    if let Some(expanded) = expand_tilde(&normalized) {
+        return Some(expanded);
+    }
+    Some(PathBuf::from(normalized))
+}
+
+fn resolve_ssh_primary_identity_file(host: &str, user: Option<&str>) -> Result<PathBuf> {
+    let target = ssh_target(host, user);
+    let output = new_ssh_command()
+        .arg("-G")
+        .arg(&target)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .with_context(|| format!("resolving SSH config for target {target}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stderr.is_empty() {
+            anyhow::bail!("ssh -G failed for target {target}");
+        }
+        anyhow::bail!("ssh -G failed for target {target}: {stderr}");
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let identity_files = parse_ssh_identity_files_from_expanded_config(&stdout);
+    identity_files
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow!("ssh -G reported no identityfile entries for target {target}"))
+}
+
+fn private_key_path_for_identity(identity_file: &Path) -> PathBuf {
+    let value = identity_file.to_string_lossy();
+    if value.ends_with(".pub") {
+        return PathBuf::from(value.trim_end_matches(".pub"));
+    }
+    identity_file.to_path_buf()
+}
+
+fn public_key_path_for_private_key(private_key_path: &Path) -> PathBuf {
+    let mut value = private_key_path.as_os_str().to_os_string();
+    value.push(".pub");
+    PathBuf::from(value)
+}
+
+fn read_ssh_public_key(path: &Path) -> Result<String> {
+    let public_key =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let trimmed = public_key.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("local SSH public key is empty at {}", path.display());
+    }
+    Ok(trimmed.to_string())
+}
+
+fn ensure_ssh_identity_public_key(host: &str, user: Option<&str>) -> Result<String> {
+    let identity_file = resolve_ssh_primary_identity_file(host, user)?;
+    let private_key_path = private_key_path_for_identity(&identity_file);
+    let public_key_path = public_key_path_for_private_key(&private_key_path);
+    let parent = private_key_path
+        .parent()
+        .ok_or_else(|| anyhow!("invalid SSH identity path: {}", private_key_path.display()))?;
+    std::fs::create_dir_all(parent)
+        .with_context(|| format!("creating SSH identity directory {}", parent.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&ssh_dir, std::fs::Permissions::from_mode(0o700))
-            .context("setting local ~/.ssh permissions")?;
+        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
+            .with_context(|| format!("setting SSH identity directory mode {}", parent.display()))?;
     }
 
-    let private_key_path = ssh_dir.join("id_ed25519");
-    let public_key_path = ssh_dir.join("id_ed25519.pub");
-    if !public_key_path.exists() {
-        if private_key_path.exists() {
-            let derive_output = Command::new("ssh-keygen")
-                .arg("-y")
-                .arg("-f")
-                .arg(&private_key_path)
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .output()
-                .context("deriving public key from existing ~/.ssh/id_ed25519")?;
-            if !derive_output.status.success() {
-                let stderr = String::from_utf8_lossy(&derive_output.stderr)
-                    .trim()
-                    .to_string();
-                if stderr.is_empty() {
-                    anyhow::bail!("unable to derive ~/.ssh/id_ed25519.pub");
-                }
-                anyhow::bail!("unable to derive ~/.ssh/id_ed25519.pub: {stderr}");
-            }
-            let derived = String::from_utf8_lossy(&derive_output.stdout)
+    if public_key_path.exists() {
+        return read_ssh_public_key(&public_key_path);
+    }
+
+    if private_key_path.exists() {
+        let derive_output = Command::new("ssh-keygen")
+            .arg("-y")
+            .arg("-f")
+            .arg(&private_key_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .with_context(|| {
+                format!(
+                    "deriving public key from existing {}",
+                    private_key_path.display()
+                )
+            })?;
+        if !derive_output.status.success() {
+            let stderr = String::from_utf8_lossy(&derive_output.stderr)
                 .trim()
                 .to_string();
-            if derived.is_empty() {
-                anyhow::bail!("derived ~/.ssh/id_ed25519.pub is empty");
+            if stderr.is_empty() {
+                anyhow::bail!(
+                    "unable to derive SSH public key for {}",
+                    private_key_path.display()
+                );
             }
-            std::fs::write(&public_key_path, format!("{derived}\n"))
-                .context("writing ~/.ssh/id_ed25519.pub")?;
-        } else {
-            let generate_output = Command::new("ssh-keygen")
-                .arg("-t")
-                .arg("ed25519")
-                .arg("-N")
-                .arg("")
-                .arg("-f")
-                .arg(&private_key_path)
-                .arg("-C")
-                .arg("ctx-desktop")
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .output()
-                .context("generating ~/.ssh/id_ed25519 for SSH password bootstrap")?;
-            if !generate_output.status.success() {
-                let stderr = String::from_utf8_lossy(&generate_output.stderr)
-                    .trim()
-                    .to_string();
-                if stderr.is_empty() {
-                    anyhow::bail!("unable to generate ~/.ssh/id_ed25519");
-                }
-                anyhow::bail!("unable to generate ~/.ssh/id_ed25519: {stderr}");
-            }
+            anyhow::bail!(
+                "unable to derive SSH public key for {}: {stderr}",
+                private_key_path.display()
+            );
         }
+        let derived = String::from_utf8_lossy(&derive_output.stdout)
+            .trim()
+            .to_string();
+        if derived.is_empty() {
+            anyhow::bail!(
+                "derived SSH public key is empty for {}",
+                private_key_path.display()
+            );
+        }
+        std::fs::write(&public_key_path, format!("{derived}\n"))
+            .with_context(|| format!("writing {}", public_key_path.display()))?;
+        return Ok(derived);
     }
 
-    let public_key = std::fs::read_to_string(&public_key_path)
-        .with_context(|| format!("reading {}", public_key_path.display()))?;
-    let trimmed = public_key.trim();
-    if trimmed.is_empty() {
+    let generate_output = Command::new("ssh-keygen")
+        .arg("-t")
+        .arg("ed25519")
+        .arg("-N")
+        .arg("")
+        .arg("-f")
+        .arg(&private_key_path)
+        .arg("-C")
+        .arg("ctx-desktop")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .with_context(|| format!("generating SSH identity {}", private_key_path.display()))?;
+    if !generate_output.status.success() {
+        let stderr = String::from_utf8_lossy(&generate_output.stderr)
+            .trim()
+            .to_string();
+        if stderr.is_empty() {
+            anyhow::bail!(
+                "unable to generate SSH identity {}",
+                private_key_path.display()
+            );
+        }
         anyhow::bail!(
-            "local SSH public key is empty at {}",
-            public_key_path.display()
+            "unable to generate SSH identity {}: {stderr}",
+            private_key_path.display()
         );
     }
-    Ok(trimmed.to_string())
+    read_ssh_public_key(&public_key_path)
 }
 
 fn write_ssh_askpass_script() -> Result<PathBuf> {
@@ -829,10 +1049,7 @@ fn run_ssh_shell_with_password_once(
     cmd: &str,
     stdin_payload: Option<&[u8]>,
 ) -> Result<std::process::Output> {
-    let target = match user {
-        Some(u) if !u.trim().is_empty() => format!("{}@{}", u.trim(), host),
-        _ => host.to_string(),
-    };
+    let target = ssh_target(host, user);
     let remote_cmd = format!("sh -lc {}", shell_escape(cmd));
     let askpass_script = write_ssh_askpass_script()?;
     let mut command = new_ssh_command();
@@ -1023,10 +1240,7 @@ fn looks_like_windows_shell_error(raw: &str) -> bool {
 }
 
 fn probe_remote_linux_platform(host: &str, user: Option<&str>) -> Result<RemoteLinuxPlatform> {
-    let target = match user {
-        Some(u) if !u.trim().is_empty() => format!("{}@{}", u.trim(), host),
-        _ => host.to_string(),
-    };
+    let target = ssh_target(host, user);
 
     let probe_cmd = format!(
         "printf '{}%s\\n' \"$(uname -s 2>/dev/null || true)\"; printf '{}%s\\n' \"$(uname -m 2>/dev/null || true)\"",
@@ -1933,6 +2147,43 @@ mod remote_path_validation_tests {
         );
         assert_eq!(normalized_ssh_config_override(Some("   ")), None);
         assert_eq!(normalized_ssh_config_override(None), None);
+    }
+
+    #[test]
+    fn ssh_identity_file_parser_extracts_and_normalizes_paths() {
+        let expanded = "host fixture\nidentityfile ~/.ssh/fixture_key\nidentityfile /tmp/ctx\\ fixture/id_ed25519\n";
+        let identities = parse_ssh_identity_files_from_expanded_config(expanded);
+        assert_eq!(identities.len(), 2, "unexpected identities: {identities:?}");
+        assert_eq!(
+            identities[0],
+            expand_tilde("~/.ssh/fixture_key").expect("home expansion should succeed")
+        );
+        assert_eq!(identities[1], PathBuf::from("/tmp/ctx fixture/id_ed25519"));
+    }
+
+    #[test]
+    fn ssh_identity_file_parser_skips_none_entries() {
+        let expanded = "host fixture\nidentityfile none\nidentityfile ~/.ssh/fixture_key\n";
+        let identities = parse_ssh_identity_files_from_expanded_config(expanded);
+        assert_eq!(identities.len(), 1, "unexpected identities: {identities:?}");
+        assert_eq!(
+            identities[0],
+            expand_tilde("~/.ssh/fixture_key").expect("home expansion should succeed")
+        );
+    }
+
+    #[test]
+    fn ssh_identity_path_helpers_strip_and_append_pub_suffix() {
+        let public_identity = PathBuf::from("/tmp/ctx-fixture/id_ed25519.pub");
+        let private_identity = private_key_path_for_identity(&public_identity);
+        assert_eq!(
+            private_identity,
+            PathBuf::from("/tmp/ctx-fixture/id_ed25519")
+        );
+        assert_eq!(
+            public_key_path_for_private_key(&private_identity),
+            public_identity
+        );
     }
 
     #[test]

@@ -1,5 +1,6 @@
 const path = require("path");
 const fs = require("fs");
+const crypto = require("crypto");
 const { spawnSync, spawn } = require("child_process");
 const os = require("os");
 
@@ -62,6 +63,10 @@ const DEFAULT_DRIVER_PORT = process.platform === "darwin"
 const TAURI_DRIVER_PORT = parsePort(process.env.TAURI_DRIVER_PORT, DEFAULT_DRIVER_PORT);
 const TEST_BACKEND_PORT = parsePort(process.env.TAURI_TEST_BACKEND_PORT, 3000);
 const MACOS_CN_BACKEND_PORT = parsePort(process.env.CTX_AUTOMATION_CN_BACKEND_PORT, 3000);
+if (!String(process.env.TAURI_DRIVER_PORT || "").trim()) {
+  // WDIO forks workers that reload this config; pin the chosen dynamic port for all children.
+  process.env.TAURI_DRIVER_PORT = String(TAURI_DRIVER_PORT);
+}
 
 const CTX_BIN = process.env.CTX_AUTOMATION_CTX_BIN ||
   path.resolve(ROOT, "src-tauri/bin/ctx");
@@ -81,6 +86,9 @@ const SKIP_APP_BUILD = ["1", "true", "yes"].includes(
 const REMOTE_CTX_BIN = String(process.env.CTX_AUTOMATION_REMOTE_CTX_BIN || "").trim();
 const REMOTE_SSH_KEY_PATH = String(
   process.env.CTX_AUTOMATION_REMOTE_SSH_KEY_PATH || process.env.CTX_UPDATER_E2E_SSH_KEY_PATH || "",
+).trim();
+const REMOTE_SSH_CONFIG_PATH = String(
+  process.env.CTX_DESKTOP_SSH_CONFIG_PATH || process.env.CTX_AUTOMATION_REMOTE_FIXTURE_SSH_CONFIG || "",
 ).trim();
 const SKIP_REMOTE_CTX_PROVISION = ["1", "true", "yes"].includes(
   String(process.env.CTX_AUTOMATION_SKIP_REMOTE_CTX_PROVISION || "0").trim().toLowerCase(),
@@ -161,6 +169,14 @@ const CN_BACKEND_STATE_DIR = String(
 const CN_BACKEND_LOCK_FILE = path.join(CN_BACKEND_STATE_DIR, "backend.lock");
 const CN_BACKEND_STATE_FILE = path.join(CN_BACKEND_STATE_DIR, "backend.json");
 const CN_BACKEND_LEASES_DIR = path.join(CN_BACKEND_STATE_DIR, "leases");
+const SHARED_CN_BACKEND_ENV_PREFIXES = [
+  "CTX_DESKTOP_",
+  "CTX_AUTOMATION_REMOTE_",
+];
+const SHARED_CN_BACKEND_ENV_KEYS = new Set([
+  "CTX_BUNDLE_DIR",
+  "CTX_SEED_CODEX_AUTH_FROM_HOST",
+]);
 const ALLOW_STALE_HELPER_SWEEP = ["1", "true", "yes"].includes(
   String(process.env.CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP || "0").trim().toLowerCase(),
 );
@@ -330,8 +346,19 @@ const resolveSshTarget = ({ host, user }) => {
 
 const runSshCommand = ({ host, user, password, command }) => {
   const target = resolveSshTarget({ host, user });
+  const sshConfigArgs = REMOTE_SSH_CONFIG_PATH
+    ? ["-F", REMOTE_SSH_CONFIG_PATH]
+    : [];
+  const sshIdentityArgs = REMOTE_SSH_KEY_PATH
+    ? ["-i", REMOTE_SSH_KEY_PATH, "-o", "IdentitiesOnly=yes"]
+    : [];
+  const sshDefaultConfigArgs = (!REMOTE_SSH_CONFIG_PATH && REMOTE_SSH_KEY_PATH)
+    ? ["-F", "/dev/null"]
+    : [];
   const sshArgs = [
-    ...(REMOTE_SSH_KEY_PATH ? ["-F", "/dev/null", "-i", REMOTE_SSH_KEY_PATH, "-o", "IdentitiesOnly=yes"] : []),
+    ...sshConfigArgs,
+    ...sshDefaultConfigArgs,
+    ...sshIdentityArgs,
     "-o", "StrictHostKeyChecking=no",
     "-o", "ConnectTimeout=15",
     "-o", "ServerAliveInterval=15",
@@ -350,8 +377,19 @@ const runSshCommand = ({ host, user, password, command }) => {
 
 const runScpCommand = ({ host, user, password, localPath, remotePath }) => {
   const target = resolveSshTarget({ host, user });
+  const scpConfigArgs = REMOTE_SSH_CONFIG_PATH
+    ? ["-F", REMOTE_SSH_CONFIG_PATH]
+    : [];
+  const scpIdentityArgs = REMOTE_SSH_KEY_PATH
+    ? ["-i", REMOTE_SSH_KEY_PATH, "-o", "IdentitiesOnly=yes"]
+    : [];
+  const scpDefaultConfigArgs = (!REMOTE_SSH_CONFIG_PATH && REMOTE_SSH_KEY_PATH)
+    ? ["-F", "/dev/null"]
+    : [];
   const scpArgs = [
-    ...(REMOTE_SSH_KEY_PATH ? ["-F", "/dev/null", "-i", REMOTE_SSH_KEY_PATH, "-o", "IdentitiesOnly=yes"] : []),
+    ...scpConfigArgs,
+    ...scpDefaultConfigArgs,
+    ...scpIdentityArgs,
     "-o", "StrictHostKeyChecking=no",
     "-o", "ConnectTimeout=15",
     "-o", "ServerAliveInterval=15",
@@ -852,19 +890,61 @@ const spawnCnBackendProcess = (host, port, { detached = false } = {}) => {
   return proc;
 };
 
+const collectSharedCnBackendLaunchEnv = () => {
+  const payload = {};
+  for (const key of Object.keys(process.env).sort()) {
+    const value = String(process.env[key] || "");
+    if (!value) continue;
+    if (
+      SHARED_CN_BACKEND_ENV_KEYS.has(key)
+      || SHARED_CN_BACKEND_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))
+    ) {
+      payload[key] = value;
+    }
+  }
+  return payload;
+};
+
+const computeSharedCnBackendLaunchEnvSignature = (payload) => {
+  if (!payload || Object.keys(payload).length === 0) return null;
+  return crypto
+    .createHash("sha256")
+    .update(JSON.stringify(payload))
+    .digest("hex");
+};
+
+const stopSharedCnBackendProcess = async (pid) => {
+  const n = parsePid(pid);
+  if (!n || !isProcessAlive(n)) return;
+  try {
+    process.kill(n, "SIGTERM");
+  } catch {
+    // ignore
+  }
+  await sleep(500);
+  if (!isProcessAlive(n)) return;
+  try {
+    process.kill(n, "SIGKILL");
+  } catch {
+    // ignore
+  }
+};
+
 const acquireSharedCnBackendLease = async (host, port) => {
   const leaseId = createCnLeaseId();
   const leaseFile = cnLeasePath(leaseId);
   let startedByThisRun = false;
   let startedPid = null;
+  const launchEnvPayload = collectSharedCnBackendLaunchEnv();
+  const launchEnvSignature = computeSharedCnBackendLaunchEnvSignature(launchEnvPayload);
 
   await withCnBackendLock(async () => {
     fs.mkdirSync(CN_BACKEND_LEASES_DIR, { recursive: true });
     const activeLeases = cleanupStaleCnLeases();
-    const existingState = readCnBackendState() || {};
-    const existingPid = parsePid(existingState.pid);
-    const existingPidAlive = existingPid ? isProcessAlive(existingPid) : false;
-    const portOpen = await isTcpPortOpen(host, port);
+    let existingState = readCnBackendState() || {};
+    let existingPid = parsePid(existingState.pid);
+    let existingPidAlive = existingPid ? isProcessAlive(existingPid) : false;
+    let portOpen = await isTcpPortOpen(host, port);
     writeJsonFileAtomic(leaseFile, {
       leaseId,
       pid: process.pid,
@@ -873,6 +953,38 @@ const acquireSharedCnBackendLease = async (host, port) => {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
+
+    const existingSignatureTrusted = existingState.launchEnvSignatureSource === "spawn";
+    const launchEnvNeedsRestart = Boolean(launchEnvSignature) && (
+      !existingSignatureTrusted
+      || (
+        String(existingState.launchEnvSignature || "") !== ""
+        && existingState.launchEnvSignature !== launchEnvSignature
+      )
+    );
+    if (launchEnvNeedsRestart) {
+      if (activeLeases.length > 0) {
+        throw new Error(
+          `[wdio] shared CN backend launch environment changed while ${activeLeases.length} other lease(s) are active; cannot safely reuse backend`,
+        );
+      }
+      if (backendProcess && cnBackendOwnedBySharedManager) {
+        try {
+          backendProcess.kill();
+        } catch {
+          // ignore
+        }
+        backendProcess = null;
+      } else if (existingPidAlive) {
+        await stopSharedCnBackendProcess(existingPid);
+      }
+      removeFileIfExists(CN_BACKEND_STATE_FILE);
+      existingState = {};
+      existingPid = null;
+      existingPidAlive = false;
+      portOpen = false;
+      console.error(`[wdio] restarting shared test-runner-backend for updated launch environment`);
+    }
 
     if (portOpen || existingPidAlive) {
       writeCnBackendState({
@@ -895,6 +1007,8 @@ const acquireSharedCnBackendLease = async (host, port) => {
       pid: startedPid,
       startedByPid: process.pid,
       startedByLeaseId: leaseId,
+      launchEnvSignature,
+      launchEnvSignatureSource: "spawn",
       startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });

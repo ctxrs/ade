@@ -97,6 +97,8 @@ fn main() {
             desktop_connect_local,
             desktop_restart_local_daemon,
             desktop_connect_ssh,
+            desktop_connect_ssh_begin,
+            desktop_connect_ssh_poll,
             desktop_update_remote_daemon,
             desktop_kickoff_remote_prewarm,
             desktop_list_ssh_hosts,

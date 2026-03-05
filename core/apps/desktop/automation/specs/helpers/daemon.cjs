@@ -144,15 +144,15 @@ const shouldRetryDaemonHttpError = (error) => {
 };
 
 const daemonJson = async (method, apiPath, body) => {
+  let connection = await getCachedDesktopConnection();
   let lastError = null;
   for (let attempt = 1; attempt <= DAEMON_JSON_RETRY_ATTEMPTS; attempt += 1) {
     try {
-      const connection = await getCachedDesktopConnection();
       const resp = await daemonHttpJson(connection, method, apiPath, body);
       if (Number(resp.status) === 401 || Number(resp.status) === 403) {
         cachedConnection = null;
-        const refreshedConnection = await getCachedDesktopConnection();
-        return await daemonHttpJson(refreshedConnection, method, apiPath, body);
+        connection = await getCachedDesktopConnection();
+        return await daemonHttpJson(connection, method, apiPath, body);
       }
       if (attempt > 1) {
         cachedConnection = connection;
@@ -160,12 +160,21 @@ const daemonJson = async (method, apiPath, body) => {
       return resp;
     } catch (error) {
       lastError = error;
-      cachedConnection = null;
+      const retryableTransport =
+        shouldRetryWebdriverTransportError(error) || shouldRetryDaemonHttpError(error);
       if (
         attempt >= DAEMON_JSON_RETRY_ATTEMPTS
-        || (!shouldRetryWebdriverTransportError(error) && !shouldRetryDaemonHttpError(error))
+        || !retryableTransport
       ) {
         throw error;
+      }
+      // SSH reconnects can change desktop_get_connection.base_url (new tunnel/port).
+      // On transport errors, refresh cached connection before retrying.
+      cachedConnection = null;
+      try {
+        connection = await getCachedDesktopConnection();
+      } catch {
+        // best-effort; backoff/retry will surface the original transport error if still broken
       }
       const backoff = DAEMON_JSON_RETRY_BASE_DELAY_MS * attempt;
       await waitMs(backoff);

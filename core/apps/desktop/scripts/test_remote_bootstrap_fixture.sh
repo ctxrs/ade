@@ -5,6 +5,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")"/../../../.. && pwd)"
 FIXTURE_SCRIPT="${ROOT}/core/apps/desktop/scripts/remote_ssh_fixture.sh"
 
 RUNTIME="auto"
+AUTH_MODE="${CTX_AUTOMATION_REMOTE_FIXTURE_AUTH_MODE:-key}"
+FIXTURE_PASSWORD="${CTX_AUTOMATION_REMOTE_FIXTURE_PASSWORD:-}"
+AUTH_TEST_MODE="${CTX_AUTOMATION_REMOTE_AUTH_TEST_MODE:-}"
 KEEP_ALIVE=0
 LOG_DIR=""
 STATE_FILE="${CTX_AUTOMATION_REMOTE_FIXTURE_STATE_FILE:-}"
@@ -13,7 +16,7 @@ PASSTHROUGH_ARGS=()
 usage() {
   cat <<'USAGE' >&2
 usage:
-  test_remote_bootstrap_fixture.sh [--runtime auto|docker|podman] [--log-dir PATH] [--keep-alive] [--state-file PATH] [-- ...wdio args]
+  test_remote_bootstrap_fixture.sh [--runtime auto|docker|podman] [--auth-mode key|password] [--password VALUE] [--test-mode key|password_once|wrong_password] [--log-dir PATH] [--keep-alive] [--state-file PATH] [-- ...wdio args]
 USAGE
 }
 
@@ -21,6 +24,18 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --runtime)
       RUNTIME="${2:-}"
+      shift 2
+      ;;
+    --auth-mode)
+      AUTH_MODE="${2:-}"
+      shift 2
+      ;;
+    --password)
+      FIXTURE_PASSWORD="${2:-}"
+      shift 2
+      ;;
+    --test-mode)
+      AUTH_TEST_MODE="${2:-}"
       shift 2
       ;;
     --log-dir)
@@ -69,6 +84,10 @@ cleanup() {
 trap cleanup EXIT
 
 START_CMD=("${FIXTURE_SCRIPT}" start --runtime "${RUNTIME}" --state-file "${STATE_FILE}")
+START_CMD+=(--auth-mode "${AUTH_MODE}")
+if [[ -n "${FIXTURE_PASSWORD}" ]]; then
+  START_CMD+=(--password "${FIXTURE_PASSWORD}")
+fi
 if [[ -n "${LOG_DIR}" ]]; then
   START_CMD+=(--log-dir "${LOG_DIR}")
 fi
@@ -81,7 +100,16 @@ export CTX_DESKTOP_SSH_CONFIG_PATH="${CTX_AUTOMATION_REMOTE_FIXTURE_SSH_CONFIG}"
 export CTX_AUTOMATION_SSH_NO_START_REMOTE="${CTX_AUTOMATION_SSH_NO_START_REMOTE:-0}"
 export CTX_AUTOMATION_SKIP_REMOTE_CTX_PROVISION="${CTX_AUTOMATION_SKIP_REMOTE_CTX_PROVISION:-1}"
 export CTX_AUTOMATION_USE_EXTERNAL_DAEMON="${CTX_AUTOMATION_USE_EXTERNAL_DAEMON:-0}"
-export CTX_AUTOMATION_REMOTE_PASSWORD=""
+# Reusing an older automation app instance can leak a stale SSH config path into this suite.
+export CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP="${CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP:-1}"
+if [[ -z "${AUTH_TEST_MODE}" ]]; then
+  if [[ "${AUTH_MODE}" == "password" ]]; then
+    AUTH_TEST_MODE="password_once"
+  else
+    AUTH_TEST_MODE="key"
+  fi
+fi
+export CTX_AUTOMATION_REMOTE_AUTH_TEST_MODE="${AUTH_TEST_MODE}"
 
 if [[ "${KEEP_ALIVE}" == "1" ]]; then
   echo "fixture kept alive; state file: ${STATE_FILE}" >&2

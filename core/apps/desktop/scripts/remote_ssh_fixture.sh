@@ -7,7 +7,7 @@ FIXTURE_DIR="${SCRIPT_DIR}/remote-fixture"
 usage() {
   cat <<'USAGE' >&2
 usage:
-  remote_ssh_fixture.sh start [--runtime auto|docker|podman] [--state-file PATH] [--log-dir PATH] [--user NAME]
+  remote_ssh_fixture.sh start [--runtime auto|docker|podman] [--auth-mode key|password] [--password VALUE] [--state-file PATH] [--log-dir PATH] [--user NAME]
   remote_ssh_fixture.sh stop [--state-file PATH]
   remote_ssh_fixture.sh print-env [--state-file PATH]
 
@@ -104,6 +104,9 @@ pick_runtime() {
 
 parse_flags() {
   RUNTIME="${CTX_AUTOMATION_REMOTE_FIXTURE_RUNTIME:-auto}"
+  AUTH_MODE="${CTX_AUTOMATION_REMOTE_FIXTURE_AUTH_MODE:-key}"
+  FIXTURE_PASSWORD="${CTX_AUTOMATION_REMOTE_FIXTURE_PASSWORD:-}"
+  PRESEED_KEY="${CTX_AUTOMATION_REMOTE_FIXTURE_PRESEED_KEY:-}"
   STATE_FILE="${CTX_AUTOMATION_REMOTE_FIXTURE_STATE_FILE:-}"
   LOG_DIR="${CTX_AUTOMATION_REMOTE_FIXTURE_LOG_DIR:-}"
   FIXTURE_USER="${CTX_AUTOMATION_REMOTE_FIXTURE_USER:-ctxfixture}"
@@ -114,6 +117,14 @@ parse_flags() {
     case "$1" in
       --runtime)
         RUNTIME="${2:-}"
+        shift 2
+        ;;
+      --auth-mode)
+        AUTH_MODE="${2:-}"
+        shift 2
+        ;;
+      --password)
+        FIXTURE_PASSWORD="${2:-}"
         shift 2
         ;;
       --state-file)
@@ -156,11 +167,14 @@ container_port() {
 }
 
 render_exports_from_loaded_state() {
-  quote_export CTX_AUTOMATION_REMOTE_HOST "${FIXTURE_HOST_ALIAS}"
+  quote_export CTX_AUTOMATION_REMOTE_HOST "127.0.0.1"
+  quote_export CTX_AUTOMATION_REMOTE_FIXTURE_HOST_ALIAS "${FIXTURE_HOST_ALIAS}"
   quote_export CTX_AUTOMATION_REMOTE_USER "${FIXTURE_USER}"
   quote_export CTX_AUTOMATION_REMOTE_PORT "${FIXTURE_DAEMON_PORT}"
   quote_export CTX_AUTOMATION_REMOTE_DATA_DIR "${FIXTURE_REMOTE_DATA_DIR}"
-  quote_export CTX_AUTOMATION_REMOTE_PASSWORD ""
+  quote_export CTX_AUTOMATION_REMOTE_PASSWORD "${FIXTURE_PASSWORD}"
+  quote_export CTX_AUTOMATION_REMOTE_PASSWORD_ACTUAL "${FIXTURE_PASSWORD}"
+  quote_export CTX_AUTOMATION_REMOTE_AUTH_MODE "${FIXTURE_AUTH_MODE}"
   quote_export CTX_AUTOMATION_REMOTE_SSH_KEY_PATH "${FIXTURE_KEY_PATH}"
   quote_export CTX_UPDATER_E2E_SSH_KEY_PATH "${FIXTURE_KEY_PATH}"
   quote_export CTX_AUTOMATION_REMOTE_FIXTURE_HOME "${FIXTURE_SSH_HOME}"
@@ -175,14 +189,27 @@ render_exports_from_loaded_state() {
 wait_for_ssh_ready() {
   local config_path="$1"
   local alias="$2"
-  local attempts="${3:-60}"
+  local auth_mode="$3"
+  local password="$4"
+  local attempts="${5:-60}"
   local i
   for ((i = 1; i <= attempts; i += 1)); do
-    if ssh -F "${config_path}" \
-      -o BatchMode=yes \
-      -o ConnectTimeout=2 \
-      "${alias}" "echo ready" >/dev/null 2>&1; then
-      return 0
+    if [[ "${auth_mode}" == "password" ]]; then
+      if SSHPASS="${password}" sshpass -e ssh -F "${config_path}" \
+        -o BatchMode=no \
+        -o PreferredAuthentications=password,keyboard-interactive \
+        -o NumberOfPasswordPrompts=1 \
+        -o ConnectTimeout=2 \
+        "${alias}" "echo ready" >/dev/null 2>&1; then
+        return 0
+      fi
+    else
+      if ssh -F "${config_path}" \
+        -o BatchMode=yes \
+        -o ConnectTimeout=2 \
+        "${alias}" "echo ready" >/dev/null 2>&1; then
+        return 0
+      fi
     fi
     sleep 1
   done
@@ -193,6 +220,29 @@ start_fixture() {
   ensure_exists ssh
   ensure_exists ssh-keygen
   ensure_exists mktemp
+
+  case "${AUTH_MODE}" in
+    key|password)
+      ;;
+    *)
+      die "unsupported --auth-mode: ${AUTH_MODE} (expected key or password)"
+      ;;
+  esac
+  if [[ "${AUTH_MODE}" == "password" ]]; then
+    ensure_exists sshpass
+    if [[ -z "${FIXTURE_PASSWORD}" ]]; then
+      FIXTURE_PASSWORD="ctx-fixture-${RANDOM}-${RANDOM}-Pw!"
+    fi
+  else
+    FIXTURE_PASSWORD=""
+  fi
+  if [[ -z "${PRESEED_KEY}" ]]; then
+    if [[ "${AUTH_MODE}" == "key" ]]; then
+      PRESEED_KEY="1"
+    else
+      PRESEED_KEY="0"
+    fi
+  fi
 
   local runtime
   runtime="$(pick_runtime "${RUNTIME}")"
@@ -241,6 +291,12 @@ start_fixture() {
 
   ssh-keygen -q -t ed25519 -N "" -f "${key_path}" >/dev/null
   cp "${key_pub_path}" "${authorized_keys}"
+  local authorized_keys_b64
+  authorized_keys_b64="$(base64 <"${authorized_keys}" | tr -d '\r\n')"
+  local fixture_authorized_keys_b64=""
+  if [[ "${PRESEED_KEY}" == "1" || "${PRESEED_KEY}" == "true" || "${PRESEED_KEY}" == "yes" ]]; then
+    fixture_authorized_keys_b64="${authorized_keys_b64}"
+  fi
 
   mkdir -p "${ssh_dir}"
   chmod 700 "${ssh_dir}"
@@ -256,8 +312,9 @@ start_fixture() {
     -p 127.0.0.1::22 \
     -e "CTX_FIXTURE_USER=${FIXTURE_USER}" \
     -e "CTX_FIXTURE_HOME=/home/${FIXTURE_USER}" \
-    -e "CTX_FIXTURE_AUTHORIZED_KEYS=/run/ctx-fixture/authorized_keys" \
-    -v "${authorized_keys}:/run/ctx-fixture/authorized_keys:ro" \
+    -e "CTX_FIXTURE_AUTH_MODE=${AUTH_MODE}" \
+    -e "CTX_FIXTURE_PASSWORD=${FIXTURE_PASSWORD}" \
+    -e "CTX_FIXTURE_AUTHORIZED_KEYS_B64=${fixture_authorized_keys_b64}" \
     "${IMAGE_TAG}")"
 
   local host_ssh_port
@@ -274,15 +331,30 @@ Host ${host_alias}
   BatchMode yes
   StrictHostKeyChecking no
   UserKnownHostsFile /dev/null
+Host 127.0.0.1
+  Port ${host_ssh_port}
+  User ${FIXTURE_USER}
+  IdentityFile ${key_path}
+  IdentitiesOnly yes
+  BatchMode yes
+  StrictHostKeyChecking no
+  UserKnownHostsFile /dev/null
 EOF
   chmod 600 "${ssh_config}"
 
-  if ! wait_for_ssh_ready "${ssh_config}" "${host_alias}" 60; then
+  if ! wait_for_ssh_ready "${ssh_config}" "${host_alias}" "${AUTH_MODE}" "${FIXTURE_PASSWORD}" 60; then
     "${runtime}" logs "${container_id}" >"${log_dir}/container.log" 2>&1 || true
     die "fixture ssh endpoint did not become ready (see ${log_dir}/container.log)"
   fi
 
-  ssh -F "${ssh_config}" "${host_alias}" "mkdir -p '${remote_data_dir}'" >/dev/null 2>&1
+  if [[ "${AUTH_MODE}" == "password" ]]; then
+    SSHPASS="${FIXTURE_PASSWORD}" sshpass -e ssh -F "${ssh_config}" \
+      -o BatchMode=no \
+      -o PreferredAuthentications=password,keyboard-interactive \
+      "${host_alias}" "mkdir -p '${remote_data_dir}'" >/dev/null 2>&1
+  else
+    ssh -F "${ssh_config}" "${host_alias}" "mkdir -p '${remote_data_dir}'" >/dev/null 2>&1
+  fi
 
   : >"${STATE_FILE}"
   save_state_var FIXTURE_RUNTIME "${runtime}"
@@ -295,6 +367,8 @@ EOF
   save_state_var FIXTURE_HOST_PORT "${host_ssh_port}"
   save_state_var FIXTURE_DAEMON_PORT "${DAEMON_PORT}"
   save_state_var FIXTURE_REMOTE_DATA_DIR "${remote_data_dir}"
+  save_state_var FIXTURE_AUTH_MODE "${AUTH_MODE}"
+  save_state_var FIXTURE_PASSWORD "${FIXTURE_PASSWORD}"
   save_state_var FIXTURE_SSH_HOME "${ssh_home}"
   save_state_var FIXTURE_SSH_CONFIG "${ssh_config}"
   save_state_var FIXTURE_LOG_DIR "${log_dir}"

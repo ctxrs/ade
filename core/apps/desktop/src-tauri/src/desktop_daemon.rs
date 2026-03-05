@@ -278,7 +278,9 @@ pub(super) async fn desktop_daemon_request(
         // before explicitly calling `desktop_connect_local`. Auto-connect here to avoid spurious
         // "daemon unavailable" overlays on cold start.
         ensure_local_connection(&app, manager).map_err(|err| format!("{err:#}"))?;
-        manager.daemon_request(req).map_err(|err| format!("{err:#}"))
+        manager
+            .daemon_request(req)
+            .map_err(|err| format!("{err:#}"))
     })
     .await
     .map_err(|e| format!("daemon request failed: {e}"))?
@@ -1598,7 +1600,9 @@ pub(super) fn ensure_remote_ctx_harness_image(
     if !podman_out.status.success() {
         return Ok(());
     }
-    let podman_bin = String::from_utf8_lossy(&podman_out.stdout).trim().to_string();
+    let podman_bin = String::from_utf8_lossy(&podman_out.stdout)
+        .trim()
+        .to_string();
     if podman_bin.is_empty() {
         return Ok(());
     }
@@ -1714,7 +1718,7 @@ pub(super) fn ensure_remote_ctx_harness_image(
 }
 
 fn daemon_health(base_url: &str) -> Result<DaemonHealthSummary> {
-    daemon_health_with_timeout(base_url, Duration::from_secs(5))
+    daemon_health_with_timeout(base_url, daemon_health_timeout())
 }
 
 fn daemon_health_with_timeout(base_url: &str, timeout: Duration) -> Result<DaemonHealthSummary> {
@@ -1727,6 +1731,16 @@ fn daemon_health_with_timeout(base_url: &str, timeout: Duration) -> Result<Daemo
     let res = res.error_for_status().context("health status")?;
     res.json::<DaemonHealthSummary>()
         .context("parsing /api/health response")
+}
+
+fn daemon_health_timeout() -> Duration {
+    const DEFAULT_MS: u64 = 5000;
+    const MIN_MS: u64 = 100;
+    const MAX_MS: u64 = 30000;
+    let raw = std::env::var("CTX_DESKTOP_DAEMON_HEALTH_TIMEOUT_MS").unwrap_or_default();
+    let parsed = raw.trim().parse::<u64>().ok().unwrap_or(DEFAULT_MS);
+    let bounded = parsed.clamp(MIN_MS, MAX_MS);
+    Duration::from_millis(bounded)
 }
 
 fn normalize_path_for_compare(path: &Path) -> PathBuf {

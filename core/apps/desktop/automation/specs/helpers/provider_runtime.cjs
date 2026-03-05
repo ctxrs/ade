@@ -1,5 +1,8 @@
 const { daemonJson } = require("./daemon.cjs");
 
+const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+const DEFAULT_CODEX_OPENROUTER_MODEL_OVERRIDE = "openai/gpt-5.2-codex";
+
 const asRecord = (value) => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return value;
@@ -177,6 +180,56 @@ const resolveWorkspaceProviderModelId = async (
   throw new Error(`models list not populated for ${providerId} in workspace ${workspaceId}`);
 };
 
+const readOpenRouterEnv = () => {
+  const apiKey = String(process.env.OPENROUTER_API_KEY || "").trim();
+  const baseUrl = String(process.env.OPENROUTER_BASE_URL || "").trim() || DEFAULT_OPENROUTER_BASE_URL;
+  const modelOverride = String(process.env.CTX_E2E_OPENROUTER_MODEL_OVERRIDE || "").trim()
+    || DEFAULT_CODEX_OPENROUTER_MODEL_OVERRIDE;
+  return { apiKey, baseUrl, modelOverride };
+};
+
+const ensureCodexOpenRouterWorkspaceReady = async (
+  workspaceId,
+  {
+    installTarget = "host",
+    providerId = "codex",
+    endpointName = "",
+    timeoutMs = 90_000,
+    pollMs = 3_000,
+  } = {},
+) => {
+  const { apiKey, baseUrl, modelOverride } = readOpenRouterEnv();
+  if (!apiKey) {
+    throw new Error("OPENROUTER_API_KEY is required to configure Codex endpoint auth for remote first-turn validation");
+  }
+
+  const status = await getProviderStatus(providerId);
+  if (!status.installed) {
+    await installProviderAndWait(providerId, installTarget);
+  }
+
+  const endpointId = await configureOpenRouterEndpoint({
+    providerId,
+    baseUrl,
+    apiKey,
+    modelOverride,
+    endpointName,
+  });
+  await verifyProviderForWorkspace(workspaceId, providerId);
+  const modelId = await resolveWorkspaceProviderModelId(workspaceId, providerId, {
+    timeoutMs,
+    pollMs,
+  });
+
+  return {
+    providerId,
+    endpointId,
+    modelId,
+    baseUrl,
+    modelOverride,
+  };
+};
+
 module.exports = {
   asRecord,
   asArray,
@@ -189,4 +242,6 @@ module.exports = {
   refreshEndpointModels,
   verifyProviderForWorkspace,
   resolveWorkspaceProviderModelId,
+  readOpenRouterEnv,
+  ensureCodexOpenRouterWorkspaceReady,
 };

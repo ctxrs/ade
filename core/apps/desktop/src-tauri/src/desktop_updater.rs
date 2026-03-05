@@ -13,7 +13,8 @@ const RESTART_MARKER_FILENAME: &str = "desktop_update_restart_required.json";
 const STAGED_UPDATE_META_FILENAME: &str = "desktop_update_staged.v1.json";
 const STAGED_UPDATE_BYTES_FILENAME: &str = "desktop_update_staged.v1.bin";
 const LAST_ATTEMPT_FILENAME: &str = "desktop_update_attempt_last.v1.json";
-const RESTART_READY_MESSAGE: &str = "Update takes ~1 second and preserves data. Active agents will be paused.";
+const RESTART_READY_MESSAGE: &str =
+    "Update takes ~1 second and preserves data. Active agents will be paused.";
 static STAGING_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
