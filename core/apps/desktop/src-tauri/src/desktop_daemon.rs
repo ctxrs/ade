@@ -2031,6 +2031,13 @@ fn dev_bin(name: &str) -> Option<PathBuf> {
             return Some(candidate);
         }
     }
+    // Desktop prep syncs host binaries into src-tauri/bin; prefer this before generic core/target.
+    let synced_bin = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("bin")
+        .join(format!("{name}{bin_ext}"));
+    if synced_bin.exists() && path_matches_current_platform_binary(&synced_bin) {
+        return Some(synced_bin);
+    }
 
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()

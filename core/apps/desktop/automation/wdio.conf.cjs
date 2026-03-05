@@ -5,12 +5,14 @@ const os = require("os");
 
 const { waitTestRunnerBackendReady } = require("@crabnebula/test-runner-backend");
 const { waitTauriDriverReady } = require("@crabnebula/tauri-driver");
+const TEST_RUNNER_BACKEND_CLI = require.resolve("@crabnebula/test-runner-backend/cli.js");
+const TAURI_DRIVER_CLI = require.resolve("@crabnebula/tauri-driver/cli.js");
 
 const ROOT = path.resolve(__dirname, "..");
 const CORE_ROOT = path.resolve(ROOT, "..", "..");
 const defaultAppPath = (() => {
   if (process.platform === "darwin") {
-    return path.resolve(ROOT, "src-tauri/target/debug/bundle/macos/ctx.app");
+    return path.resolve(ROOT, "src-tauri/target/debug/bundle/macos/ctx.app/Contents/MacOS/ctx");
   }
   if (process.platform === "linux") {
     return path.resolve(ROOT, "src-tauri/target/debug/ctx");
@@ -29,8 +31,37 @@ const WORKSPACE_PATH = [
   CORE_ROOT,
 ].find((candidate) => candidate && fs.existsSync(candidate));
 
-const TAURI_DRIVER_PORT = Number(process.env.TAURI_DRIVER_PORT || 4444);
-const TEST_BACKEND_PORT = Number(process.env.TAURI_TEST_BACKEND_PORT || 3000);
+const parsePort = (raw, fallback) => {
+  const n = Number.parseInt(String(raw ?? ""), 10);
+  if (!Number.isFinite(n) || n <= 0 || n > 65535) return fallback;
+  return n;
+};
+
+const pickUnusedPortSync = (fallback) => {
+  const script = [
+    "const net = require('node:net');",
+    "const s = net.createServer();",
+    "s.on('error', () => process.exit(2));",
+    "s.listen(0, '127.0.0.1', () => {",
+    "  const addr = s.address();",
+    "  const p = addr && typeof addr === 'object' ? addr.port : 0;",
+    "  s.close(() => {",
+    "    if (!p) process.exit(3);",
+    "    process.stdout.write(String(p));",
+    "  });",
+    "});",
+  ].join("\n");
+  const out = spawnSync(process.execPath, ["-e", script], { encoding: "utf8" });
+  if (out.status !== 0) return fallback;
+  return parsePort(String(out.stdout || "").trim(), fallback);
+};
+
+const DEFAULT_DRIVER_PORT = process.platform === "darwin"
+  ? pickUnusedPortSync(4444)
+  : 4444;
+const TAURI_DRIVER_PORT = parsePort(process.env.TAURI_DRIVER_PORT, DEFAULT_DRIVER_PORT);
+const TEST_BACKEND_PORT = parsePort(process.env.TAURI_TEST_BACKEND_PORT, 3000);
+const MACOS_CN_BACKEND_PORT = parsePort(process.env.CTX_AUTOMATION_CN_BACKEND_PORT, 3000);
 
 const CTX_BIN = process.env.CTX_AUTOMATION_CTX_BIN ||
   path.resolve(ROOT, "src-tauri/bin/ctx");
@@ -66,7 +97,26 @@ const parsePositiveInt = (raw, fallback) => {
   if (!Number.isFinite(n) || n <= 0) return fallback;
   return n;
 };
-const MOCHA_TIMEOUT_MS = parsePositiveInt(process.env.CTX_AUTOMATION_MOCHA_TIMEOUT_MS || "300000", 300000);
+const resolveMochaTimeoutMs = () => parsePositiveInt(
+  process.env.CTX_AUTOMATION_MOCHA_TIMEOUT_MS
+    || process.env.CTX_AUTOMATION_CASE_TIMEOUT_MS
+    || "1200000",
+  1200000,
+);
+const MOCHA_TIMEOUT_MS = resolveMochaTimeoutMs();
+const CN_PORT_WAIT_MS = parsePositiveInt(process.env.CTX_AUTOMATION_CN_PORT_WAIT_MS || "120000", 120000);
+const CN_BACKEND_LOCK_TIMEOUT_MS = parsePositiveInt(
+  process.env.CTX_AUTOMATION_CN_BACKEND_LOCK_TIMEOUT_MS || "30000",
+  30000,
+);
+const CN_BACKEND_LOCK_POLL_MS = parsePositiveInt(
+  process.env.CTX_AUTOMATION_CN_BACKEND_LOCK_POLL_MS || "125",
+  125,
+);
+const CN_BACKEND_LOCK_STALE_MS = parsePositiveInt(
+  process.env.CTX_AUTOMATION_CN_BACKEND_LOCK_STALE_MS || "120000",
+  120000,
+);
 const SCENARIO_FILTER = String(process.env.CTX_AUTOMATION_SCENARIOS || "")
   .split(",")
   .map((token) => token.trim().toLowerCase())
@@ -86,12 +136,73 @@ const CONTAINER_SCENARIO_TOKENS = new Set([
 ]);
 const RUNS_CONTAINER_SCENARIOS = SCENARIO_FILTER.length === 0
   || SCENARIO_FILTER.some((token) => CONTAINER_SCENARIO_TOKENS.has(token));
+const ALLOW_CN_PORT_REUSE = ["1", "true", "yes"].includes(
+  String(process.env.CTX_AUTOMATION_CN_ALLOW_PORT_REUSE || "0").trim().toLowerCase(),
+);
+const SHARED_CN_BACKEND = ["0", "false", "no"].includes(
+  String(process.env.CTX_AUTOMATION_CN_SHARED_BACKEND || "1").trim().toLowerCase(),
+) ? false : process.platform === "darwin";
+const STOP_SHARED_CN_BACKEND_WHEN_IDLE = ["1", "true", "yes"].includes(
+  String(process.env.CTX_AUTOMATION_CN_STOP_SHARED_BACKEND_WHEN_IDLE || "0").trim().toLowerCase(),
+);
+const defaultCnBackendStateDir = (() => {
+  if (process.platform === "darwin") {
+    return path.join(os.homedir(), "Library", "Caches", "ctx-cn-backend");
+  }
+  if (process.platform === "win32") {
+    const base = String(process.env.LOCALAPPDATA || os.tmpdir()).trim();
+    return path.join(base, "ctx-cn-backend");
+  }
+  return path.join(os.homedir(), ".cache", "ctx-cn-backend");
+})();
+const CN_BACKEND_STATE_DIR = String(
+  process.env.CTX_AUTOMATION_CN_BACKEND_STATE_DIR || defaultCnBackendStateDir,
+).trim();
+const CN_BACKEND_LOCK_FILE = path.join(CN_BACKEND_STATE_DIR, "backend.lock");
+const CN_BACKEND_STATE_FILE = path.join(CN_BACKEND_STATE_DIR, "backend.json");
+const CN_BACKEND_LEASES_DIR = path.join(CN_BACKEND_STATE_DIR, "leases");
+const ALLOW_STALE_HELPER_SWEEP = ["1", "true", "yes"].includes(
+  String(process.env.CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP || "0").trim().toLowerCase(),
+);
+const ALLOW_PREP_APP_PROCESS_SWEEP = ["1", "true", "yes"].includes(
+  String(process.env.CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP || "0").trim().toLowerCase(),
+);
 
 let daemonProcess = null;
 let daemonDataDir = null;
 let daemonPort = null;
 let daemonLogPath = null;
 let internalDaemonDataDir = null;
+let activeTestBackendPort = TEST_BACKEND_PORT;
+let activeTauriDriverPort = TAURI_DRIVER_PORT;
+let cnBackendLeaseId = null;
+let cnBackendOwnedBySharedManager = false;
+
+const resolveMacAppBundleDir = (appPath) => {
+  const normalized = path.resolve(appPath);
+  if (normalized.endsWith(".app")) return normalized;
+  const marker = `${path.sep}.app${path.sep}`;
+  const idx = normalized.indexOf(marker);
+  if (idx === -1) return null;
+  return normalized.slice(0, idx + marker.length - 1);
+};
+
+const resolveAppExecutablePath = (appPath) => {
+  if (!fs.existsSync(appPath)) return appPath;
+  const stat = fs.statSync(appPath);
+  if (stat.isDirectory()) {
+    return path.resolve(appPath, "Contents", "MacOS", "ctx");
+  }
+  return appPath;
+};
+
+const resolveAppResourcesBinPrefix = (appPath) => {
+  const bundleDir = process.platform === "darwin" ? resolveMacAppBundleDir(appPath) : null;
+  if (bundleDir) {
+    return path.resolve(bundleDir, "Contents", "Resources", "bin");
+  }
+  return path.resolve(path.dirname(appPath), "bin");
+};
 
 const killProcesses = (matcher) => {
   const out = spawnSync("ps", ["-Ao", "pid=,command="], { encoding: "utf8" });
@@ -112,13 +223,8 @@ const killProcesses = (matcher) => {
 
 const killExistingAppProcesses = () => {
   if (!fs.existsSync(APP_PATH)) return;
-  const appPathStat = fs.statSync(APP_PATH);
-  const appBin = appPathStat.isDirectory()
-    ? path.resolve(APP_PATH, "Contents", "MacOS", "ctx")
-    : APP_PATH;
-  const appResBinPrefix = appPathStat.isDirectory()
-    ? path.resolve(APP_PATH, "Contents", "Resources", "bin")
-    : path.resolve(path.dirname(APP_PATH), "bin");
+  const appBin = resolveAppExecutablePath(APP_PATH);
+  const appResBinPrefix = resolveAppResourcesBinPrefix(APP_PATH);
   const out = spawnSync("ps", ["-Ao", "pid=,command="], { encoding: "utf8" });
   if (out.status !== 0) return;
   const lines = String(out.stdout || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
@@ -147,11 +253,10 @@ const ensureAppExecutable = () => {
   if (!fs.existsSync(APP_PATH)) {
     throw new Error(`desktop app path not found: ${APP_PATH}`);
   }
-  const appPathStat = fs.statSync(APP_PATH);
-  if (process.platform !== "darwin" || !appPathStat.isDirectory()) return;
-  const appBin = path.resolve(APP_PATH, "Contents", "MacOS", "ctx");
+  if (process.platform !== "darwin") return;
+  const appBin = resolveAppExecutablePath(APP_PATH);
   if (!fs.existsSync(appBin)) {
-    throw new Error(`desktop app binary missing: ${appBin}`);
+    throw new Error(`desktop app binary missing or not built: ${appBin}`);
   }
   const mode = fs.statSync(appBin).mode & 0o777;
   if ((mode & 0o111) === 0) {
@@ -163,12 +268,22 @@ const ensureAppExecutable = () => {
 };
 
 const killStaleAutomationHelpers = () => {
-  // Clear stale tauri-driver/backend processes from previous crashed runs.
+  // WebKit webdriver helpers can survive backend shutdown and keep pipes open.
   killProcesses((_pid, cmd) =>
-    /\btauri-driver\b/.test(cmd) ||
-    /\btest-runner-backend\b/.test(cmd) ||
-    /\bWebKitWebDriver\b/.test(cmd),
+    /\bWebKitWebDriver\b/.test(cmd) ||
+    /\bwkwebdriver\b/.test(cmd),
   );
+};
+
+const ensureDesktopDevBinDir = () => {
+  const configured = String(process.env.CTX_DESKTOP_DEV_BIN_DIR || "").trim();
+  if (configured) return;
+  const defaultBinName = process.platform === "win32" ? "ctx.exe" : "ctx";
+  const candidateDir = path.resolve(path.dirname(CTX_BIN));
+  const candidateBin = path.join(candidateDir, defaultBinName);
+  if (!fs.existsSync(candidateBin)) return;
+  process.env.CTX_DESKTOP_DEV_BIN_DIR = candidateDir;
+  console.error(`[wdio] CTX_DESKTOP_DEV_BIN_DIR=${candidateDir}`);
 };
 
 const stopSystemdScope = (scopeName) => {
@@ -467,6 +582,8 @@ let backendProcess = null;
 let driverProcess = null;
 let backendLogFd = null;
 let driverLogFd = null;
+let backendCliAliasDir = null;
+let driverCliAliasDir = null;
 
 const attachProcessDiagnostics = (name, proc) => {
   if (!proc) return;
@@ -476,6 +593,431 @@ const attachProcessDiagnostics = (name, proc) => {
   proc.on("exit", (code, signal) => {
     console.error(`[wdio] ${name} exited (code=${code ?? "null"}, signal=${signal ?? "null"})`);
   });
+};
+
+const waitForProcessReady = async ({ proc, name, readyPromise, detail = "" }) => {
+  if (!proc) {
+    throw new Error(`${name} process missing before readiness check`);
+  }
+  let onExit = null;
+  const exitedBeforeReady = new Promise((_, reject) => {
+    onExit = (code, signal) => {
+      const suffix = detail ? ` ${detail}` : "";
+      reject(new Error(
+        `${name} exited before ready (code=${code ?? "null"}, signal=${signal ?? "null"}).${suffix}`,
+      ));
+    };
+    proc.once("exit", onExit);
+  });
+  try {
+    await Promise.race([readyPromise, exitedBeforeReady]);
+  } finally {
+    if (onExit) {
+      proc.off("exit", onExit);
+    }
+  }
+};
+
+const isTcpPortOpen = (host, port, timeoutMs = 250) =>
+  new Promise((resolve) => {
+    const net = require("net");
+    const socket = net.createConnection({ host, port });
+    let settled = false;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      try {
+        socket.destroy();
+      } catch {
+        // ignore
+      }
+      resolve(ok);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once("connect", () => finish(true));
+    socket.once("timeout", () => finish(false));
+    socket.once("error", () => finish(false));
+  });
+
+const waitForTcpPortClosed = async (host, port, timeoutMs, pollMs = 500) => {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const isOpen = await isTcpPortOpen(host, port);
+    if (!isOpen) return true;
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  return !(await isTcpPortOpen(host, port));
+};
+
+const createCliAlias = (targetCliPath, aliasName) => {
+  const aliasDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-cn-cli-"));
+  const cliPath = path.join(aliasDir, aliasName);
+  fs.symlinkSync(targetCliPath, cliPath);
+  return { aliasDir, cliPath };
+};
+
+const canonicalPath = (p) => {
+  const raw = String(p || "").trim();
+  if (!raw) return raw;
+  try {
+    if (typeof fs.realpathSync.native === "function") {
+      return fs.realpathSync.native(raw);
+    }
+    return fs.realpathSync(raw);
+  } catch {
+    return raw;
+  }
+};
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const parsePid = (raw) => {
+  const n = Number.parseInt(String(raw ?? ""), 10);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
+};
+
+const isProcessAlive = (pid) => {
+  const n = parsePid(pid);
+  if (!n) return false;
+  try {
+    process.kill(n, 0);
+    return true;
+  } catch (err) {
+    return Boolean(err && err.code === "EPERM");
+  }
+};
+
+const readJsonFile = (filePath) => {
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+};
+
+const writeJsonFileAtomic = (filePath, value) => {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tmpPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  fs.renameSync(tmpPath, filePath);
+};
+
+const removeFileIfExists = (filePath) => {
+  try {
+    fs.rmSync(filePath, { force: true });
+  } catch {
+    // ignore
+  }
+};
+
+const withFileLock = async (lockPath, timeoutMs, fn) => {
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    let lockFd = null;
+    try {
+      lockFd = fs.openSync(
+        lockPath,
+        fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY,
+        0o600,
+      );
+      fs.writeFileSync(
+        lockFd,
+        `${JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() })}\n`,
+        "utf8",
+      );
+      try {
+        return await fn();
+      } finally {
+        try {
+          fs.closeSync(lockFd);
+        } catch {
+          // ignore
+        }
+        removeFileIfExists(lockPath);
+      }
+    } catch (err) {
+      if (lockFd !== null) {
+        try {
+          fs.closeSync(lockFd);
+        } catch {
+          // ignore
+        }
+      }
+      if (!err || err.code !== "EEXIST") throw err;
+
+      let staleLock = false;
+      try {
+        const lockStat = fs.statSync(lockPath);
+        staleLock = (Date.now() - Number(lockStat.mtimeMs || 0)) > CN_BACKEND_LOCK_STALE_MS;
+      } catch {
+        staleLock = true;
+      }
+      if (!staleLock) {
+        const lockInfo = readJsonFile(lockPath);
+        if (lockInfo && !isProcessAlive(lockInfo.pid)) {
+          staleLock = true;
+        }
+      }
+      if (staleLock) {
+        removeFileIfExists(lockPath);
+        continue;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `[wdio] timed out acquiring lock ${lockPath} after ${timeoutMs}ms`,
+        );
+      }
+      await sleep(CN_BACKEND_LOCK_POLL_MS);
+    }
+  }
+};
+
+const withCnBackendLock = async (fn) =>
+  withFileLock(CN_BACKEND_LOCK_FILE, CN_BACKEND_LOCK_TIMEOUT_MS, fn);
+
+const cnLeasePath = (leaseId) => path.join(CN_BACKEND_LEASES_DIR, `${leaseId}.json`);
+
+const listCnLeasePaths = () => {
+  if (!fs.existsSync(CN_BACKEND_LEASES_DIR)) return [];
+  return fs
+    .readdirSync(CN_BACKEND_LEASES_DIR)
+    .filter((name) => name.endsWith(".json"))
+    .map((name) => path.join(CN_BACKEND_LEASES_DIR, name));
+};
+
+const cleanupStaleCnLeases = () => {
+  fs.mkdirSync(CN_BACKEND_LEASES_DIR, { recursive: true });
+  const active = [];
+  for (const leasePath of listCnLeasePaths()) {
+    const lease = readJsonFile(leasePath);
+    if (!lease) {
+      removeFileIfExists(leasePath);
+      continue;
+    }
+    const leasePid = parsePid(lease.pid);
+    const leasePidAlive = leasePid ? isProcessAlive(leasePid) : false;
+    const leaseId = String(lease.leaseId || path.basename(leasePath, ".json")).trim();
+    if (!leasePid || !leaseId || !leasePidAlive) {
+      removeFileIfExists(leasePath);
+      continue;
+    }
+    active.push({ leaseId, pid: leasePid });
+  }
+  return active;
+};
+
+const readCnBackendState = () => {
+  const state = readJsonFile(CN_BACKEND_STATE_FILE);
+  return state && typeof state === "object" ? state : null;
+};
+
+const writeCnBackendState = (state) => {
+  writeJsonFileAtomic(CN_BACKEND_STATE_FILE, state);
+};
+
+const createCnLeaseId = () =>
+  `${process.pid}-${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 10)}`;
+
+const openBackendStdio = ({ detached = false } = {}) => {
+  const backendLogPath = String(process.env.CTX_AUTOMATION_CN_BACKEND_LOG || "").trim();
+  if (!backendLogPath) {
+    return detached ? ["ignore", "ignore", "ignore"] : "inherit";
+  }
+  fs.mkdirSync(path.dirname(backendLogPath), { recursive: true });
+  backendLogFd = fs.openSync(backendLogPath, "a");
+  return ["ignore", backendLogFd, backendLogFd];
+};
+
+const spawnCnBackendProcess = (host, port, { detached = false } = {}) => {
+  const backendAlias = createCliAlias(TEST_RUNNER_BACKEND_CLI, "ctx-cnb-cli");
+  backendCliAliasDir = backendAlias.aliasDir;
+  const stdio = openBackendStdio({ detached });
+  const proc = spawn(
+    process.execPath,
+    [backendAlias.cliPath, "--host", host, "--port", String(port)],
+    {
+      stdio,
+      cwd: ROOT,
+      detached,
+      env: {
+        ...process.env,
+        TEST_RUNNER_BACKEND_PORT: String(port),
+      },
+    },
+  );
+  attachProcessDiagnostics("test-runner-backend", proc);
+  return proc;
+};
+
+const acquireSharedCnBackendLease = async (host, port) => {
+  const leaseId = createCnLeaseId();
+  const leaseFile = cnLeasePath(leaseId);
+  let startedByThisRun = false;
+  let startedPid = null;
+
+  await withCnBackendLock(async () => {
+    fs.mkdirSync(CN_BACKEND_LEASES_DIR, { recursive: true });
+    const activeLeases = cleanupStaleCnLeases();
+    const existingState = readCnBackendState() || {};
+    const existingPid = parsePid(existingState.pid);
+    const existingPidAlive = existingPid ? isProcessAlive(existingPid) : false;
+    const portOpen = await isTcpPortOpen(host, port);
+    writeJsonFileAtomic(leaseFile, {
+      leaseId,
+      pid: process.pid,
+      host,
+      port,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    if (portOpen || existingPidAlive) {
+      writeCnBackendState({
+        ...existingState,
+        host,
+        port,
+        pid: existingPidAlive ? existingPid : existingState.pid || null,
+        updatedAt: new Date().toISOString(),
+      });
+      return;
+    }
+
+    backendProcess = spawnCnBackendProcess(host, port, { detached: true });
+    cnBackendOwnedBySharedManager = true;
+    startedByThisRun = true;
+    startedPid = parsePid(backendProcess.pid);
+    writeCnBackendState({
+      host,
+      port,
+      pid: startedPid,
+      startedByPid: process.pid,
+      startedByLeaseId: leaseId,
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    console.error(
+      `[wdio] starting shared test-runner-backend on ${host}:${port} (activeLeases=${activeLeases.length})`,
+    );
+  });
+
+  try {
+    if (startedByThisRun) {
+      await waitForProcessReady({
+        proc: backendProcess,
+        name: "test-runner-backend",
+        readyPromise: waitTestRunnerBackendReady(host, port),
+        detail: `Shared backend startup for ${host}:${port} failed before readiness.`,
+      });
+      console.error(`[wdio] shared test-runner-backend ready at ${host}:${port}`);
+    } else {
+      await waitTestRunnerBackendReady(host, port);
+      console.error(`[wdio] reusing shared test-runner-backend at ${host}:${port}`);
+    }
+    cnBackendLeaseId = leaseId;
+    return;
+  } catch (err) {
+    const backendReady = await isTcpPortOpen(host, port);
+    if (backendReady) {
+      await waitTestRunnerBackendReady(host, port);
+      console.error(`[wdio] shared backend race recovered at ${host}:${port}`);
+      cnBackendLeaseId = leaseId;
+      return;
+    }
+    await withCnBackendLock(async () => {
+      removeFileIfExists(leaseFile);
+      const state = readCnBackendState();
+      const statePid = parsePid(state && state.pid);
+      if (startedByThisRun && startedPid && statePid && statePid === startedPid) {
+        removeFileIfExists(CN_BACKEND_STATE_FILE);
+      }
+    });
+    throw err;
+  }
+};
+
+const releaseSharedCnBackendLease = async (host, port) => {
+  const leaseId = cnBackendLeaseId;
+  if (!leaseId) return;
+  cnBackendLeaseId = null;
+  const leaseFile = cnLeasePath(leaseId);
+
+  await withCnBackendLock(async () => {
+    removeFileIfExists(leaseFile);
+    const activeLeases = cleanupStaleCnLeases();
+    if (activeLeases.length > 0) {
+      console.error(
+        `[wdio] released shared CN backend lease ${leaseId}; remainingLeases=${activeLeases.length}`,
+      );
+      return;
+    }
+
+    if (!STOP_SHARED_CN_BACKEND_WHEN_IDLE) {
+      console.error(
+        `[wdio] released shared CN backend lease ${leaseId}; backend remains running on ${host}:${port}`,
+      );
+      return;
+    }
+
+    const state = readCnBackendState();
+    const statePid = parsePid(state && state.pid);
+    if (backendProcess && cnBackendOwnedBySharedManager) {
+      try {
+        backendProcess.kill();
+      } catch {
+        // ignore
+      }
+      backendProcess = null;
+    } else if (statePid && isProcessAlive(statePid)) {
+      try {
+        process.kill(statePid, "SIGTERM");
+      } catch {
+        // ignore
+      }
+      await sleep(500);
+      if (isProcessAlive(statePid)) {
+        try {
+          process.kill(statePid, "SIGKILL");
+        } catch {
+          // ignore
+        }
+      }
+    }
+    removeFileIfExists(CN_BACKEND_STATE_FILE);
+    console.error(`[wdio] stopped shared test-runner-backend after final lease release (${host}:${port})`);
+  });
+  if (backendProcess && cnBackendOwnedBySharedManager) {
+    try {
+      backendProcess.unref();
+    } catch {
+      // ignore
+    }
+    backendProcess = null;
+  }
+  cnBackendOwnedBySharedManager = false;
+};
+
+const cnSharedBackendTestHooks = {
+  getPaths: () => ({
+    stateDir: CN_BACKEND_STATE_DIR,
+    lockFile: CN_BACKEND_LOCK_FILE,
+    stateFile: CN_BACKEND_STATE_FILE,
+    leasesDir: CN_BACKEND_LEASES_DIR,
+  }),
+  createLeaseId: createCnLeaseId,
+  leasePath: cnLeasePath,
+  withLock: withCnBackendLock,
+  cleanupStaleLeases: cleanupStaleCnLeases,
+  readState: readCnBackendState,
+  writeState: writeCnBackendState,
+  writeJsonFileAtomic,
+  removeFileIfExists,
+  releaseSharedCnBackendLease,
+  setCurrentLeaseId: (leaseId) => {
+    cnBackendLeaseId = leaseId;
+  },
 };
 
 exports.config = {
@@ -502,7 +1044,7 @@ exports.config = {
       },
     },
   ],
-  port: TAURI_DRIVER_PORT,
+  port: activeTauriDriverPort,
   path: "/",
   automationProtocol: "webdriver",
   beforeSession: () => {
@@ -510,21 +1052,28 @@ exports.config = {
   },
   onPrepare: async () => {
     // Debug breadcrumb for remote-start behavior in automation logs.
+    const isDarwin = process.platform === "darwin";
     console.error(
       `[wdio] CTX_AUTOMATION_SSH_NO_START_REMOTE=${String(process.env.CTX_AUTOMATION_SSH_NO_START_REMOTE || "<unset>")} SSH_NO_START_REMOTE=${String(SSH_NO_START_REMOTE)}`,
     );
-    const isDarwin = process.platform === "darwin";
+    console.error(`[wdio] app path=${APP_PATH}`);
+    activeTauriDriverPort = TAURI_DRIVER_PORT;
+    console.error(
+      `[wdio] ports driver(requested)=${String(TAURI_DRIVER_PORT)} driver(effective)=${String(activeTauriDriverPort)} backend(requested)=${String(TEST_BACKEND_PORT)}`,
+    );
     if (isDarwin && !process.env.CN_API_KEY) {
       throw new Error(
         "CN_API_KEY is required for CrabNebula WebDriver on macOS. " +
           "Load it from Infisical in core/ (core/.infisical.json), or run `pnpm -C core verify:desktop-smoke` which loads Infisical by default.",
       );
     }
-    // Ensure we don't hit the single-instance path (which can forward to a stale app instance
-    // without the automation plugin enabled).
-    ensureAppExecutable();
-    killExistingAppProcesses();
-    killStaleAutomationHelpers();
+    if (ALLOW_PREP_APP_PROCESS_SWEEP) {
+      // Automation builds disable single-instance mode; only use global app sweeps when explicitly requested.
+      killExistingAppProcesses();
+    }
+    if (ALLOW_STALE_HELPER_SWEEP && !(isDarwin && SHARED_CN_BACKEND)) {
+      killStaleAutomationHelpers();
+    }
     stopStaleSystemdScope();
 
     // Container-mode provider smoke needs a fully-bundled release-style resource set
@@ -543,6 +1092,8 @@ exports.config = {
     if (!process.env.CTX_BUNDLE_DIR) {
       process.env.CTX_BUNDLE_DIR = BUNDLES_DIR;
     }
+    // Debug desktop binaries resolve local daemon executables from this directory.
+    ensureDesktopDevBinDir();
     if (RUNS_CONTAINER_SCENARIOS) {
       ensureBundledContainerAssets();
     }
@@ -602,54 +1153,91 @@ exports.config = {
       if (INTERNAL_DAEMON_DATA_DIR_OVERRIDE) {
         internalDaemonDataDir = path.resolve(INTERNAL_DAEMON_DATA_DIR_OVERRIDE);
         fs.mkdirSync(internalDaemonDataDir, { recursive: true });
+        internalDaemonDataDir = canonicalPath(internalDaemonDataDir);
       } else {
         internalDaemonDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-desktop-e2e-app-daemon-"));
+        internalDaemonDataDir = canonicalPath(internalDaemonDataDir);
       }
       process.env.CTX_DESKTOP_DAEMON_DATA_DIR = internalDaemonDataDir;
     }
 
     buildAppIfMissing();
+    // Validate executable/bundle after optional build so clean machines can self-bootstrap.
+    ensureAppExecutable();
 
     if (isDarwin) {
-      const backendLogPath = String(process.env.CTX_AUTOMATION_CN_BACKEND_LOG || "").trim();
-      let backendStdio = "inherit";
-      if (backendLogPath) {
-        fs.mkdirSync(path.dirname(backendLogPath), { recursive: true });
-        backendLogFd = fs.openSync(backendLogPath, "a");
-        backendStdio = ["ignore", backendLogFd, backendLogFd];
+      activeTestBackendPort = MACOS_CN_BACKEND_PORT;
+      if (TEST_BACKEND_PORT !== MACOS_CN_BACKEND_PORT) {
+        console.error(
+          `[wdio] macOS backend currently binds ${MACOS_CN_BACKEND_PORT}; ignoring requested TAURI_TEST_BACKEND_PORT=${TEST_BACKEND_PORT}`,
+        );
       }
-      backendProcess = spawn(
-        "pnpm",
-        ["exec", "test-runner-backend", "--host", "127.0.0.1", "--port", String(TEST_BACKEND_PORT)],
-        {
-          stdio: backendStdio,
-          cwd: ROOT,
-          env: {
-            ...process.env,
-            TEST_RUNNER_BACKEND_PORT: String(TEST_BACKEND_PORT),
-          },
-        },
-      );
-      attachProcessDiagnostics("test-runner-backend", backendProcess);
-      await waitTestRunnerBackendReady("127.0.0.1", TEST_BACKEND_PORT);
+      const backendHost = "127.0.0.1";
+      if (SHARED_CN_BACKEND) {
+        await acquireSharedCnBackendLease(backendHost, activeTestBackendPort);
+      } else {
+        let backendAlreadyRunning = await isTcpPortOpen(backendHost, activeTestBackendPort);
+        if (backendAlreadyRunning) {
+          if (!ALLOW_CN_PORT_REUSE && CN_PORT_WAIT_MS > 0) {
+            console.error(
+              `[wdio] waiting for CrabNebula backend port ${activeTestBackendPort} to become free (timeout=${CN_PORT_WAIT_MS}ms)`,
+            );
+            await waitForTcpPortClosed(backendHost, activeTestBackendPort, CN_PORT_WAIT_MS);
+            backendAlreadyRunning = await isTcpPortOpen(backendHost, activeTestBackendPort);
+          }
+          if (backendAlreadyRunning && !ALLOW_CN_PORT_REUSE) {
+            throw new Error(
+              `CrabNebula backend port ${activeTestBackendPort} is already in use at ${backendHost}. ` +
+                "Refusing to reuse an existing backend by default to avoid cross-run contamination. " +
+                "Ensure no other desktop automation run is active, or set CTX_AUTOMATION_CN_ALLOW_PORT_REUSE=1.",
+            );
+          }
+          if (backendAlreadyRunning) {
+            console.error(
+              `[wdio] reusing existing test-runner-backend at ${backendHost}:${activeTestBackendPort}`,
+            );
+            await waitTestRunnerBackendReady(backendHost, activeTestBackendPort);
+          }
+        }
+        if (!backendAlreadyRunning) {
+          backendProcess = spawnCnBackendProcess(backendHost, activeTestBackendPort);
+          await waitForProcessReady({
+            proc: backendProcess,
+            name: "test-runner-backend",
+            readyPromise: waitTestRunnerBackendReady(backendHost, activeTestBackendPort),
+            detail: `On macOS the backend may contend on port ${activeTestBackendPort}; ensure no other desktop automation run is active.`,
+          });
+        }
+      }
     }
 
     const driverEnv = {
       ...process.env,
-      TAURI_DRIVER_PORT: String(TAURI_DRIVER_PORT),
+      TAURI_DRIVER_PORT: String(activeTauriDriverPort),
     };
     if (isDarwin) {
       // On macOS, tauri-driver talks to CrabNebula's local backend.
-      driverEnv.REMOTE_WEBDRIVER_URL = `http://127.0.0.1:${TEST_BACKEND_PORT}`;
+      driverEnv.REMOTE_WEBDRIVER_URL = `http://127.0.0.1:${activeTestBackendPort}`;
     } else {
       // On Linux/Windows, tauri-driver drives platform WebDriver locally.
       delete driverEnv.REMOTE_WEBDRIVER_URL;
     }
-    const useXvfbForDriver = process.platform === "linux" && !process.env.DISPLAY;
-    const driverCmd = useXvfbForDriver ? "xvfb-run" : "pnpm";
-    const driverArgs = useXvfbForDriver
-      ? ["-a", "pnpm", "exec", "tauri-driver"]
-      : ["exec", "tauri-driver"];
+    let driverCmd = "";
+    let driverArgs = [];
+    if (isDarwin) {
+      // Use a neutral CLI alias so shared-host kill sweeps targeting
+      // "tauri-driver" command names do not terminate this run.
+      const driverAlias = createCliAlias(TAURI_DRIVER_CLI, "ctx-tdrv-cli");
+      driverCliAliasDir = driverAlias.aliasDir;
+      driverCmd = process.execPath;
+      driverArgs = [driverAlias.cliPath, "--port", String(activeTauriDriverPort)];
+    } else {
+      const useXvfbForDriver = process.platform === "linux" && !process.env.DISPLAY;
+      driverCmd = useXvfbForDriver ? "xvfb-run" : "pnpm";
+      driverArgs = useXvfbForDriver
+        ? ["-a", "pnpm", "exec", "tauri-driver"]
+        : ["exec", "tauri-driver"];
+    }
     const driverLogPath = String(process.env.CTX_AUTOMATION_CN_DRIVER_LOG || "").trim();
     let driverStdio = "inherit";
     if (driverLogPath) {
@@ -657,25 +1245,66 @@ exports.config = {
       driverLogFd = fs.openSync(driverLogPath, "a");
       driverStdio = ["ignore", driverLogFd, driverLogFd];
     }
-    driverProcess = spawn(driverCmd, driverArgs, {
-      stdio: driverStdio,
-      cwd: ROOT,
-      env: driverEnv,
-    });
-    attachProcessDiagnostics("tauri-driver", driverProcess);
-    await waitTauriDriverReady();
+    const driverHost = "127.0.0.1";
+    let driverAlreadyRunning = await isTcpPortOpen(driverHost, activeTauriDriverPort);
+    if (driverAlreadyRunning) {
+      if (!ALLOW_CN_PORT_REUSE && CN_PORT_WAIT_MS > 0) {
+        console.error(
+          `[wdio] waiting for tauri-driver port ${activeTauriDriverPort} to become free (timeout=${CN_PORT_WAIT_MS}ms)`,
+        );
+        await waitForTcpPortClosed(driverHost, activeTauriDriverPort, CN_PORT_WAIT_MS);
+        driverAlreadyRunning = await isTcpPortOpen(driverHost, activeTauriDriverPort);
+      }
+      if (driverAlreadyRunning && !ALLOW_CN_PORT_REUSE) {
+        throw new Error(
+          `tauri-driver port ${activeTauriDriverPort} is already in use at ${driverHost}. ` +
+            "Refusing to reuse an existing driver by default to avoid cross-run contamination. " +
+            "Ensure no other desktop automation run is active, or set CTX_AUTOMATION_CN_ALLOW_PORT_REUSE=1.",
+        );
+      }
+      if (driverAlreadyRunning) {
+        console.error(
+          `[wdio] reusing existing tauri-driver at ${driverHost}:${activeTauriDriverPort}`,
+        );
+        await waitTauriDriverReady(driverHost, activeTauriDriverPort);
+      }
+    }
+    if (!driverAlreadyRunning) {
+      driverProcess = spawn(driverCmd, driverArgs, {
+        stdio: driverStdio,
+        cwd: ROOT,
+        env: driverEnv,
+      });
+      attachProcessDiagnostics("tauri-driver", driverProcess);
+      await waitForProcessReady({
+        proc: driverProcess,
+        name: "tauri-driver",
+        readyPromise: waitTauriDriverReady(driverHost, activeTauriDriverPort),
+        detail: `Requested TAURI_DRIVER_PORT=${String(TAURI_DRIVER_PORT)} effective=${String(activeTauriDriverPort)}.`,
+      });
+    }
   },
-  onComplete: (exitCode) => {
+  onComplete: async (exitCode) => {
     const runFailed = Number(exitCode || 0) !== 0;
     const preserveDaemonArtifacts = runFailed;
-    killExistingAppProcesses();
+    const usesSharedCnBackend = process.platform === "darwin" && SHARED_CN_BACKEND;
     if (driverProcess) {
       driverProcess.kill();
       driverProcess = null;
     }
-    if (backendProcess) {
+    if (usesSharedCnBackend) {
+      try {
+        await releaseSharedCnBackendLease("127.0.0.1", activeTestBackendPort);
+      } catch (err) {
+        console.error(`[wdio] failed to release shared CN backend lease: ${String(err)}`);
+      }
+    } else if (backendProcess) {
       backendProcess.kill();
       backendProcess = null;
+    }
+    if (ALLOW_STALE_HELPER_SWEEP && !usesSharedCnBackend) {
+      // WebKit's webdriver helper can survive backend shutdown and keep stdio pipes open.
+      killStaleAutomationHelpers();
     }
     if (backendLogFd !== null) {
       try {
@@ -692,6 +1321,22 @@ exports.config = {
         // ignore
       }
       driverLogFd = null;
+    }
+    if (backendCliAliasDir) {
+      try {
+        fs.rmSync(backendCliAliasDir, { recursive: true, force: true });
+      } catch {
+        // ignore
+      }
+      backendCliAliasDir = null;
+    }
+    if (driverCliAliasDir) {
+      try {
+        fs.rmSync(driverCliAliasDir, { recursive: true, force: true });
+      } catch {
+        // ignore
+      }
+      driverCliAliasDir = null;
     }
     if (daemonProcess) {
       daemonProcess.kill();
@@ -730,4 +1375,9 @@ exports.config = {
       }
     }
   },
+};
+
+exports.__cnSharedBackendTestHooks = cnSharedBackendTestHooks;
+exports.__desktopAutomationConfigTestHooks = {
+  resolveMochaTimeoutMs,
 };

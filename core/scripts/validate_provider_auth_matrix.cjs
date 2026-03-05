@@ -1,0 +1,393 @@
+#!/usr/bin/env node
+
+const fs = require("node:fs");
+const path = require("node:path");
+
+const coreRoot = path.resolve(__dirname, "..");
+const defaultManifestPath = path.join(
+  coreRoot,
+  "apps",
+  "desktop",
+  "automation",
+  "fixtures",
+  "provider_auth_matrix.json",
+);
+const defaultReportPath = path.join(
+  coreRoot,
+  "apps",
+  "desktop",
+  "automation",
+  "docs",
+  "provider_auth_matrix.md",
+);
+
+const SUPPORT_VALUES = new Set(["supported", "deferred", "unsupported"]);
+const LANE_VALUES = new Set(["required", "nightly", "none"]);
+const RUNNER_KINDS = new Set(["desktop_wdio", "web_playwright", "none"]);
+
+const resolveInputPath = (raw, { fallbackPath = "", mustExist = false } = {}) => {
+  const value = String(raw || "").trim();
+  if (!value) return fallbackPath;
+  if (path.isAbsolute(value)) return value;
+  const fromCwd = path.resolve(process.cwd(), value);
+  if (!mustExist || fs.existsSync(fromCwd)) return fromCwd;
+  return path.resolve(coreRoot, value);
+};
+
+const parseArgs = (argv) => {
+  const opts = {
+    manifestPath: defaultManifestPath,
+    reportPath: "",
+    checkReport: false,
+    checkReportPath: defaultReportPath,
+  };
+
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === "--manifest") {
+      opts.manifestPath = resolveInputPath(argv[i + 1], { fallbackPath: defaultManifestPath, mustExist: true });
+      i += 1;
+      continue;
+    }
+    if (arg === "--report") {
+      opts.reportPath = resolveInputPath(argv[i + 1], { mustExist: false });
+      i += 1;
+      continue;
+    }
+    if (arg === "--check-report") {
+      opts.checkReport = true;
+      const next = argv[i + 1];
+      if (next && !next.startsWith("-")) {
+        opts.checkReportPath = resolveInputPath(next, { fallbackPath: defaultReportPath, mustExist: false });
+        i += 1;
+      } else if (opts.reportPath) {
+        opts.checkReportPath = opts.reportPath;
+      }
+      continue;
+    }
+    if (arg === "--help" || arg === "-h") {
+      opts.help = true;
+      continue;
+    }
+    throw new Error(`unsupported argument: ${arg}`);
+  }
+
+  if (!opts.checkReportPath && opts.reportPath) {
+    opts.checkReportPath = opts.reportPath;
+  }
+
+  return opts;
+};
+
+const asArray = (value) => (Array.isArray(value) ? value : []);
+const asRecord = (value) =>
+  value && typeof value === "object" && !Array.isArray(value) ? value : {};
+const readString = (value) => (typeof value === "string" ? value : "");
+
+const readJson = (filePath) => JSON.parse(fs.readFileSync(filePath, "utf8"));
+
+const ensureUniqueIds = (items, label, errors) => {
+  const seen = new Set();
+  for (const item of items) {
+    const id = readString(item.id).trim();
+    if (!id) {
+      errors.push(`${label} entry missing id`);
+      continue;
+    }
+    if (seen.has(id)) {
+      errors.push(`${label} has duplicate id: ${id}`);
+      continue;
+    }
+    seen.add(id);
+  }
+  return seen;
+};
+
+const validateManifest = (manifest) => {
+  const errors = [];
+  const warnings = [];
+
+  const providers = asArray(manifest.providers).map(asRecord);
+  const authModes = asArray(manifest.auth_modes).map(asRecord);
+  const envTargets = asArray(manifest.env_targets).map(asRecord);
+  const cells = asArray(manifest.cells).map(asRecord);
+  const assertionDefs = asRecord(manifest.assertion_definitions);
+  const assertionIds = new Set(Object.keys(assertionDefs));
+
+  if (manifest.schema_version !== 1) {
+    errors.push(`schema_version must be 1 (got ${JSON.stringify(manifest.schema_version)})`);
+  }
+  if (!readString(manifest.generated_at).trim()) {
+    errors.push("generated_at is required");
+  }
+  if (!readString(manifest.summary).trim()) {
+    warnings.push("summary is empty");
+  }
+  if (providers.length === 0) errors.push("providers must be non-empty");
+  if (authModes.length === 0) errors.push("auth_modes must be non-empty");
+  if (envTargets.length === 0) errors.push("env_targets must be non-empty");
+  if (cells.length === 0) errors.push("cells must be non-empty");
+  if (assertionIds.size === 0) errors.push("assertion_definitions must be non-empty");
+
+  const providerIdSet = ensureUniqueIds(providers, "providers", errors);
+  const authModeSet = ensureUniqueIds(authModes, "auth_modes", errors);
+  const envTargetSet = ensureUniqueIds(envTargets, "env_targets", errors);
+
+  const expectedIds = new Set();
+  for (const providerId of providerIdSet) {
+    for (const authMode of authModeSet) {
+      for (const envTarget of envTargetSet) {
+        expectedIds.add(`${providerId}.${authMode}.${envTarget}`);
+      }
+    }
+  }
+
+  const seenCellIds = new Set();
+  const laneCounts = { required: 0, nightly: 0, none: 0 };
+  const supportCounts = { supported: 0, deferred: 0, unsupported: 0 };
+  const providerCounts = new Map();
+
+  for (const cell of cells) {
+    const id = readString(cell.id).trim();
+    if (!id) {
+      errors.push("cell missing id");
+      continue;
+    }
+    if (seenCellIds.has(id)) {
+      errors.push(`duplicate cell id: ${id}`);
+      continue;
+    }
+    seenCellIds.add(id);
+
+    const providerId = readString(cell.provider_id).trim();
+    const authMode = readString(cell.auth_mode).trim();
+    const envTarget = readString(cell.env_target).trim();
+    const support = readString(cell.support).trim();
+    const lane = readString(cell.lane).trim();
+    const owner = readString(cell.owner).trim();
+    const skipReason = readString(cell.skip_reason).trim();
+    const runner = asRecord(cell.runner);
+    const runnerKind = readString(runner.kind).trim();
+    const requiredAssertions = asArray(cell.required_assertions).map((entry) => readString(entry).trim()).filter(Boolean);
+    const prerequisites = asArray(cell.prerequisites).map((entry) => readString(entry).trim()).filter(Boolean);
+
+    if (!providerIdSet.has(providerId)) errors.push(`cell ${id} has unknown provider_id '${providerId}'`);
+    if (!authModeSet.has(authMode)) errors.push(`cell ${id} has unknown auth_mode '${authMode}'`);
+    if (!envTargetSet.has(envTarget)) errors.push(`cell ${id} has unknown env_target '${envTarget}'`);
+
+    if (!SUPPORT_VALUES.has(support)) errors.push(`cell ${id} has invalid support '${support}'`);
+    if (!LANE_VALUES.has(lane)) errors.push(`cell ${id} has invalid lane '${lane}'`);
+    if (!owner) warnings.push(`cell ${id} missing owner`);
+    if (!RUNNER_KINDS.has(runnerKind)) errors.push(`cell ${id} has invalid runner.kind '${runnerKind}'`);
+
+    if (support === "supported" && lane === "none") {
+      errors.push(`cell ${id} is supported but lane=none`);
+    }
+    if (support !== "supported" && !skipReason) {
+      errors.push(`cell ${id} must include skip_reason when support != supported`);
+    }
+    if (support === "supported" && skipReason) {
+      errors.push(`cell ${id} should not include skip_reason when support=supported`);
+    }
+    if (lane === "required" && support !== "supported") {
+      errors.push(`cell ${id} lane=required requires support=supported`);
+    }
+
+    if (requiredAssertions.length === 0) {
+      errors.push(`cell ${id} required_assertions must be non-empty`);
+    }
+    for (const assertionId of requiredAssertions) {
+      if (!assertionIds.has(assertionId)) {
+        errors.push(`cell ${id} references unknown assertion '${assertionId}'`);
+      }
+    }
+    if (support === "unsupported" && !requiredAssertions.includes("unsupported_contract")) {
+      errors.push(`cell ${id} support=unsupported must include 'unsupported_contract' assertion`);
+    }
+
+    if (support === "supported" && runnerKind === "none") {
+      errors.push(`cell ${id} support=supported requires a concrete runner`);
+    }
+    if (runnerKind === "desktop_wdio" && !readString(runner.spec).trim()) {
+      errors.push(`cell ${id} desktop_wdio runner requires spec`);
+    }
+    if (runnerKind === "desktop_wdio" && !readString(runner.scenarios).trim()) {
+      errors.push(`cell ${id} desktop_wdio runner requires scenarios`);
+    }
+    if (runnerKind === "web_playwright" && !readString(runner.spec).trim()) {
+      errors.push(`cell ${id} web_playwright runner requires spec`);
+    }
+    for (const key of prerequisites) {
+      if (!/^[A-Z0-9_]+$/.test(key)) {
+        errors.push(`cell ${id} has invalid prerequisite env var '${key}'`);
+      }
+    }
+
+    if (supportCounts[support] !== undefined) supportCounts[support] += 1;
+    if (laneCounts[lane] !== undefined) laneCounts[lane] += 1;
+    const existingProviderCounts = providerCounts.get(providerId) || {
+      supported: 0,
+      deferred: 0,
+      unsupported: 0,
+    };
+    if (existingProviderCounts[support] !== undefined) {
+      existingProviderCounts[support] += 1;
+    }
+    providerCounts.set(providerId, existingProviderCounts);
+  }
+
+  for (const expectedId of expectedIds) {
+    if (!seenCellIds.has(expectedId)) {
+      errors.push(`missing matrix cell: ${expectedId}`);
+    }
+  }
+  for (const id of seenCellIds) {
+    if (!expectedIds.has(id)) {
+      errors.push(`unexpected extra matrix cell: ${id}`);
+    }
+  }
+
+  return {
+    errors,
+    warnings,
+    summary: {
+      providers: providerIdSet.size,
+      auth_modes: authModeSet.size,
+      env_targets: envTargetSet.size,
+      expected_cells: expectedIds.size,
+      actual_cells: seenCellIds.size,
+      support_counts: supportCounts,
+      lane_counts: laneCounts,
+      provider_counts: Object.fromEntries(
+        [...providerCounts.entries()].sort(([a], [b]) => a.localeCompare(b)),
+      ),
+    },
+  };
+};
+
+const buildReport = (manifest, validationSummary) => {
+  const cells = asArray(manifest.cells).map(asRecord).sort((a, b) => readString(a.id).localeCompare(readString(b.id)));
+  const requiredCells = cells.filter((cell) => readString(cell.lane) === "required");
+  const summary = validationSummary.summary;
+
+  const lines = [];
+  lines.push("# Provider Auth Matrix");
+  lines.push("");
+  lines.push("Generated from `core/apps/desktop/automation/fixtures/provider_auth_matrix.json`.");
+  lines.push("");
+  lines.push(`- Generated at: ${readString(manifest.generated_at)}`);
+  lines.push(`- Providers: ${summary.providers}`);
+  lines.push(`- Auth modes: ${summary.auth_modes}`);
+  lines.push(`- Env targets: ${summary.env_targets}`);
+  lines.push(`- Cells: ${summary.actual_cells}`);
+  lines.push("");
+  lines.push("## Support Counts");
+  lines.push("");
+  lines.push(`- supported: ${summary.support_counts.supported}`);
+  lines.push(`- deferred: ${summary.support_counts.deferred}`);
+  lines.push(`- unsupported: ${summary.support_counts.unsupported}`);
+  lines.push("");
+  lines.push("## Lane Counts");
+  lines.push("");
+  lines.push(`- required: ${summary.lane_counts.required}`);
+  lines.push(`- nightly: ${summary.lane_counts.nightly}`);
+  lines.push(`- none: ${summary.lane_counts.none}`);
+  lines.push("");
+  lines.push("## Required Lane Cells");
+  lines.push("");
+  lines.push("| cell_id | provider | auth_mode | env_target | runner | prerequisites |");
+  lines.push("| --- | --- | --- | --- | --- | --- |");
+  for (const cell of requiredCells) {
+    const runner = asRecord(cell.runner);
+    const prereq = asArray(cell.prerequisites).map((entry) => readString(entry)).filter(Boolean).join(", ");
+    lines.push(
+      `| ${readString(cell.id)} | ${readString(cell.provider_id)} | ${readString(cell.auth_mode)} | ${readString(cell.env_target)} | ${readString(runner.kind)} | ${prereq || "-"} |`,
+    );
+  }
+  if (requiredCells.length === 0) {
+    lines.push("| _none_ | - | - | - | - | - |");
+  }
+  lines.push("");
+  lines.push("## Provider Coverage Summary");
+  lines.push("");
+  lines.push("| provider | supported | deferred | unsupported |");
+  lines.push("| --- | ---: | ---: | ---: |");
+  for (const [providerId, counts] of Object.entries(summary.provider_counts)) {
+    lines.push(
+      `| ${providerId} | ${counts.supported} | ${counts.deferred} | ${counts.unsupported} |`,
+    );
+  }
+  lines.push("");
+  lines.push("## Notes");
+  lines.push("");
+  lines.push("- `supported` means the cell currently has automated execution coverage.");
+  lines.push("- `deferred` means provider/auth behavior is expected, but automated coverage is still a known gap.");
+  lines.push("- `unsupported` means the provider/auth combination is intentionally out of supported product behavior.");
+  lines.push("");
+
+  return `${lines.join("\n")}\n`;
+};
+
+const printHelp = () => {
+  console.log([
+    "Usage: node core/scripts/validate_provider_auth_matrix.cjs [options]",
+    "",
+    "Options:",
+    "  --manifest <path>       Matrix manifest JSON path",
+    "  --report <path>         Write generated markdown report",
+    "  --check-report [path]   Verify report file content is up-to-date",
+    "  --help                  Show help",
+  ].join("\n"));
+};
+
+const main = () => {
+  const opts = parseArgs(process.argv.slice(2));
+  if (opts.help) {
+    printHelp();
+    return;
+  }
+
+  const manifest = readJson(opts.manifestPath);
+  const validation = validateManifest(manifest);
+
+  const reportBody = buildReport(manifest, validation);
+  if (opts.reportPath) {
+    fs.mkdirSync(path.dirname(opts.reportPath), { recursive: true });
+    fs.writeFileSync(opts.reportPath, reportBody, "utf8");
+    console.log(`wrote report: ${opts.reportPath}`);
+  }
+
+  if (opts.checkReport) {
+    if (!fs.existsSync(opts.checkReportPath)) {
+      validation.errors.push(`report file not found for --check-report: ${opts.checkReportPath}`);
+    } else {
+      const existing = fs.readFileSync(opts.checkReportPath, "utf8");
+      if (existing !== reportBody) {
+        validation.errors.push(
+          `report out of date: ${opts.checkReportPath} (run with --report ${opts.checkReportPath})`,
+        );
+      }
+    }
+  }
+
+  console.log(`providers=${validation.summary.providers}`);
+  console.log(`auth_modes=${validation.summary.auth_modes}`);
+  console.log(`env_targets=${validation.summary.env_targets}`);
+  console.log(`cells=${validation.summary.actual_cells}/${validation.summary.expected_cells}`);
+  console.log(`support_counts=${JSON.stringify(validation.summary.support_counts)}`);
+  console.log(`lane_counts=${JSON.stringify(validation.summary.lane_counts)}`);
+
+  for (const warning of validation.warnings) {
+    console.warn(`warn: ${warning}`);
+  }
+  if (validation.errors.length > 0) {
+    for (const error of validation.errors) {
+      console.error(`error: ${error}`);
+    }
+    process.exit(1);
+  }
+
+  console.log("ok: provider auth matrix manifest validation passed");
+};
+
+main();

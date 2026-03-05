@@ -5,6 +5,7 @@ const DAEMON_HTTP_TIMEOUT_MS = Number.parseInt(
   10,
 ) || 60000;
 let cachedConnection = null;
+const waitMs = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 
 const shouldRetryWebdriverTransportError = (error) => {
   const text = String(error || "");
@@ -82,6 +83,12 @@ const getCachedDesktopConnection = async () => {
 const daemonHttpJson = async (connection, method, apiPath, body) => {
   const base = String(connection.base_url || "");
   const token = String(connection.token || "");
+  if (!base || !token) {
+    throw new Error(`daemon connection missing base_url/token: ${JSON.stringify(connection || null)}`);
+  }
+  if (typeof fetch !== "function") {
+    throw new Error("global fetch is not available in this Node runtime");
+  }
   const url = new URL(apiPath, base).toString();
   const headers = {
     authorization: `Bearer ${token}`,
@@ -124,11 +131,10 @@ const shouldRetryDaemonHttpError = (error) => {
 };
 
 const daemonJson = async (method, apiPath, body) => {
-  const connection = await getCachedDesktopConnection();
-
   let lastError = null;
   for (let attempt = 1; attempt <= DAEMON_JSON_RETRY_ATTEMPTS; attempt += 1) {
     try {
+      const connection = await getCachedDesktopConnection();
       const resp = await daemonHttpJson(connection, method, apiPath, body);
       if (Number(resp.status) === 401 || Number(resp.status) === 403) {
         cachedConnection = await getDesktopConnection();
@@ -144,7 +150,7 @@ const daemonJson = async (method, apiPath, body) => {
         throw error;
       }
       const backoff = DAEMON_JSON_RETRY_BASE_DELAY_MS * attempt;
-      await browser.pause(backoff);
+      await waitMs(backoff);
     }
   }
 
@@ -177,7 +183,7 @@ const sampleDaemonHealth = async ({ durationMs, intervalMs = 1000 }) => {
   const samples = [];
   while (Date.now() - started < durationMs) {
     samples.push(await checkDaemonHealth());
-    await browser.pause(intervalMs);
+    await waitMs(intervalMs);
   }
   return {
     duration_ms: durationMs,

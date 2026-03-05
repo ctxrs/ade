@@ -41,6 +41,7 @@ yarn-error.log*
 # Playwright
 playwright-report/
 test-results/
+/core/apps/desktop/automation/artifacts/
 
 # Env / secrets
 .env

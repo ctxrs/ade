@@ -150,6 +150,7 @@ const verifyProviderForWorkspace = async (workspaceId, providerId) => {
     const detail = normalizeErrorMessage(firstText(payload.message, JSON.stringify(payload)));
     throw new Error(`provider verify failed (status=${status}): ${detail}`);
   }
+  return payload;
 };
 
 const resolveWorkspaceProviderModelId = async (
