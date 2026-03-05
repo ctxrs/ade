@@ -143,6 +143,18 @@ enum RemoteCtxBootstrapPlan {
     InstallManaged,
 }
 
+enum RemoteSshBootstrapOutcome {
+    Connected {
+        base_url: String,
+        token: String,
+        tunnel: Child,
+        effective_remote_ctx_bin: Option<String>,
+    },
+    NeedsBootstrap {
+        remote_platform: RemoteLinuxPlatform,
+    },
+}
+
 fn plan_remote_ctx_bootstrap(managed_exists: bool) -> RemoteCtxBootstrapPlan {
     if managed_exists {
         return RemoteCtxBootstrapPlan::UseManaged;
@@ -334,8 +346,9 @@ async fn desktop_connect_ssh_inner(
     let remote_ctx_bin = MANAGED_REMOTE_CTX_BIN.to_string();
     let remote_ctx_bin_for_connect = remote_ctx_bin.clone();
     let start_remote = req.start_remote;
-    let (base_url, token, tunnel, effective_remote_ctx_bin) =
-        tauri::async_runtime::spawn_blocking(move || {
+    let remote_bootstrap_channel =
+        normalize_update_channel(std::env::var("CTX_DESKTOP_CHANNEL").ok().as_deref())?;
+    let connect_attempt = tauri::async_runtime::spawn_blocking(move || {
         let remote_platform = probe_remote_linux_platform_with_optional_password(
             &host_for_connect,
             user_for_connect.as_deref(),
@@ -346,64 +359,21 @@ async fn desktop_connect_ssh_inner(
 
         // Prefer connecting to an already-running daemon. This avoids restarting/touching
         // the remote daemon when users (or tests) already have it running on the target port.
-        let mut local_port = pick_unused_local_port()?;
+        let local_port = pick_unused_local_port()?;
         let (mut tunnel, tunnel_stderr) =
             start_ssh_tunnel(&host_for_connect, user_for_connect.as_deref(), local_port, remote_port)?;
-        let mut base_url = format!("http://127.0.0.1:{local_port}");
+        let base_url = format!("http://127.0.0.1:{local_port}");
 
-        let mut health = if start_remote && !no_start_remote {
+        let health = if start_remote && !no_start_remote {
             probe_daemon_health_quick_for_bootstrap(&base_url, &mut tunnel, &tunnel_stderr)
         } else {
             probe_daemon_health_with_retry(&base_url, local_port, &mut tunnel, &tunnel_stderr)
         };
         if health.is_err() && start_remote && !no_start_remote {
             let _ = try_kill_child(tunnel);
-            // Bootstrap contract:
-            // 1) use managed binary when present,
-            // 2) otherwise download/install managed binary for this release channel.
-            let managed_exists = remote_ctx_bin_exists_over_ssh(
-                &host_for_connect,
-                user_for_connect.as_deref(),
-                &remote_ctx_bin_for_connect,
-            )?;
-            let remote_start_ctx_bin = match plan_remote_ctx_bootstrap(managed_exists) {
-                RemoteCtxBootstrapPlan::UseManaged => remote_ctx_bin_for_connect.clone(),
-                RemoteCtxBootstrapPlan::InstallManaged => {
-                    install_remote_daemon_over_ssh(
-                        &app_for_connect,
-                        &host_for_connect,
-                        user_for_connect.as_deref(),
-                        remote_platform,
-                        &remote_ctx_bin_for_connect,
-                    )
-                    .map_err(|install_err| install_err.context(REMOTE_BOOTSTRAP_CAPABILITY_MSG))?;
-                    remote_ctx_bin_for_connect.clone()
-                }
-            };
-            start_remote_daemon_over_ssh(
-                &host_for_connect,
-                user_for_connect.as_deref(),
-                remote_port,
-                remote_data_dir_for_connect.as_deref(),
-                &remote_start_ctx_bin,
-            )?;
-            effective_remote_ctx_bin = Some(remote_start_ctx_bin);
-
-            local_port = pick_unused_local_port()?;
-            let (mut tunnel2, tunnel_stderr2) =
-                start_ssh_tunnel(&host_for_connect, user_for_connect.as_deref(), local_port, remote_port)?;
-            base_url = format!("http://127.0.0.1:{local_port}");
-            health = probe_daemon_health_with_retry(
-                &base_url,
-                local_port,
-                &mut tunnel2,
-                &tunnel_stderr2,
+            return Ok::<RemoteSshBootstrapOutcome, anyhow::Error>(
+                RemoteSshBootstrapOutcome::NeedsBootstrap { remote_platform },
             );
-            if let Err(e) = health {
-                let _ = try_kill_child(tunnel2);
-                return Err(e);
-            }
-            tunnel = tunnel2;
         } else if let Err(e) = health {
             let _ = try_kill_child(tunnel);
             return Err(anyhow!(
@@ -428,11 +398,103 @@ async fn desktop_connect_ssh_inner(
             user_for_connect.as_deref(),
             remote_data_dir_for_connect.as_deref(),
         )?;
-        Ok((base_url, auth.token, tunnel, effective_remote_ctx_bin))
+        Ok(RemoteSshBootstrapOutcome::Connected {
+            base_url,
+            token: auth.token,
+            tunnel,
+            effective_remote_ctx_bin,
+        })
     })
         .await
         .map_err(|e| format!("failed to reach remote daemon: {e}"))?
         .map_err(|e| format!("failed to reach remote daemon: {e:#}"))?;
+
+    let (base_url, token, tunnel, effective_remote_ctx_bin) = match connect_attempt {
+        RemoteSshBootstrapOutcome::Connected {
+            base_url,
+            token,
+            tunnel,
+            effective_remote_ctx_bin,
+        } => (base_url, token, tunnel, effective_remote_ctx_bin),
+        RemoteSshBootstrapOutcome::NeedsBootstrap { remote_platform } => {
+            desktop_updater::ensure_desktop_app_current_for_remote_bootstrap(
+                &app,
+                &remote_bootstrap_channel,
+            )
+            .await?;
+
+            let host_for_bootstrap = host.clone();
+            let user_for_bootstrap = user.clone();
+            let remote_data_dir_for_bootstrap = remote_data_dir.clone();
+            let remote_ctx_bin_for_bootstrap = remote_ctx_bin.clone();
+            let app_for_bootstrap = app_for_connect.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                // Bootstrap contract:
+                // 1) use managed binary when present,
+                // 2) otherwise download/install managed binary for this release channel.
+                let managed_exists = remote_ctx_bin_exists_over_ssh(
+                    &host_for_bootstrap,
+                    user_for_bootstrap.as_deref(),
+                    &remote_ctx_bin_for_bootstrap,
+                )?;
+                let remote_start_ctx_bin = match plan_remote_ctx_bootstrap(managed_exists) {
+                    RemoteCtxBootstrapPlan::UseManaged => remote_ctx_bin_for_bootstrap.clone(),
+                    RemoteCtxBootstrapPlan::InstallManaged => {
+                        install_remote_daemon_over_ssh(
+                            &app_for_bootstrap,
+                            &host_for_bootstrap,
+                            user_for_bootstrap.as_deref(),
+                            remote_platform,
+                            &remote_ctx_bin_for_bootstrap,
+                        )
+                        .map_err(|install_err| {
+                            install_err.context(REMOTE_BOOTSTRAP_CAPABILITY_MSG)
+                        })?;
+                        remote_ctx_bin_for_bootstrap.clone()
+                    }
+                };
+                start_remote_daemon_over_ssh(
+                    &host_for_bootstrap,
+                    user_for_bootstrap.as_deref(),
+                    remote_port,
+                    remote_data_dir_for_bootstrap.as_deref(),
+                    &remote_start_ctx_bin,
+                )?;
+
+                let local_port = pick_unused_local_port()?;
+                let (mut tunnel, tunnel_stderr) = start_ssh_tunnel(
+                    &host_for_bootstrap,
+                    user_for_bootstrap.as_deref(),
+                    local_port,
+                    remote_port,
+                )?;
+                let base_url = format!("http://127.0.0.1:{local_port}");
+                if let Err(err) = probe_daemon_health_with_retry(
+                    &base_url,
+                    local_port,
+                    &mut tunnel,
+                    &tunnel_stderr,
+                ) {
+                    let _ = try_kill_child(tunnel);
+                    return Err(err);
+                }
+                let auth = read_remote_daemon_auth_with_retry(
+                    &host_for_bootstrap,
+                    user_for_bootstrap.as_deref(),
+                    remote_data_dir_for_bootstrap.as_deref(),
+                )?;
+                Ok::<(String, String, Child, Option<String>), anyhow::Error>((
+                    base_url,
+                    auth.token,
+                    tunnel,
+                    Some(remote_start_ctx_bin),
+                ))
+            })
+            .await
+            .map_err(|e| format!("failed to reach remote daemon: {e}"))?
+            .map_err(|e| format!("failed to reach remote daemon: {e:#}"))?
+        }
+    };
 
     let state = app.state::<ConnectionManager>();
     state.set_ssh(

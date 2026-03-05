@@ -15,6 +15,10 @@ const STAGED_UPDATE_BYTES_FILENAME: &str = "desktop_update_staged.v1.bin";
 const LAST_ATTEMPT_FILENAME: &str = "desktop_update_attempt_last.v1.json";
 const RESTART_READY_MESSAGE: &str =
     "Update takes ~1 second and preserves data. Active agents will be paused.";
+const REMOTE_BOOTSTRAP_UPDATE_REQUIRED_PREFIX: &str =
+    "Desktop app update required before remote bootstrap.";
+const REMOTE_BOOTSTRAP_FRESHNESS_UNVERIFIED_PREFIX: &str =
+    "Desktop app freshness could not be verified before remote bootstrap.";
 static STAGING_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -428,6 +432,58 @@ pub(super) fn desktop_restart_app(app: tauri::AppHandle) -> Result<DesktopAppRes
         requested: true,
         message: "Restart requested.".to_string(),
     })
+}
+
+pub(super) async fn ensure_desktop_app_current_for_remote_bootstrap(
+    app: &tauri::AppHandle,
+    channel: &str,
+) -> Result<(), String> {
+    let state = resolve_desktop_update_state(app, channel).await.map_err(|err| {
+        format!(
+            "{REMOTE_BOOTSTRAP_FRESHNESS_UNVERIFIED_PREFIX} {err} Update the desktop app, then try again."
+        )
+    })?;
+    validate_remote_bootstrap_desktop_freshness(&state, channel)
+}
+
+fn validate_remote_bootstrap_desktop_freshness(
+    state: &DesktopAppUpdateStateResp,
+    channel: &str,
+) -> Result<(), String> {
+    if !state.configured {
+        let detail = state
+            .last_error
+            .as_deref()
+            .and_then(normalize_nonempty)
+            .or_else(|| state.message.as_deref().and_then(normalize_nonempty))
+            .unwrap_or_else(|| {
+                "Native updater is not configured for this desktop build.".to_string()
+            });
+        return Err(format!(
+            "{REMOTE_BOOTSTRAP_FRESHNESS_UNVERIFIED_PREFIX} {detail} Install or update the desktop app for channel `{channel}`, then try again."
+        ));
+    }
+
+    if state.restart_required {
+        let target = state
+            .latest_version
+            .as_deref()
+            .and_then(normalize_nonempty)
+            .unwrap_or_else(|| "the staged update".to_string());
+        return Err(format!(
+            "{REMOTE_BOOTSTRAP_UPDATE_REQUIRED_PREFIX} Restart ctx to finish applying desktop version `{target}`, then try again."
+        ));
+    }
+
+    let latest = state.latest_version.as_deref().and_then(normalize_nonempty);
+    if let Some(latest) = latest {
+        return Err(format!(
+            "{REMOTE_BOOTSTRAP_UPDATE_REQUIRED_PREFIX} Current desktop version `{}` is stale for channel `{channel}`; latest is `{latest}`. Use the desktop updater banner, then try again.",
+            state.current_version
+        ));
+    }
+
+    Ok(())
 }
 
 async fn resolve_desktop_update_state(
@@ -1534,5 +1590,62 @@ mod tests {
         assert_eq!(decoded.target_version.as_deref(), Some("0.4.10"));
         assert_eq!(decoded.stages.len(), 1);
         assert_eq!(decoded.stages[0].stage, "download");
+    }
+
+    fn freshness_state() -> DesktopAppUpdateStateResp {
+        DesktopAppUpdateStateResp {
+            configured: true,
+            available: false,
+            restart_required: false,
+            phase: DesktopAppUpdatePhase::Idle.as_str().to_string(),
+            staged: false,
+            current_version: "1.2.3".to_string(),
+            latest_version: None,
+            target: "macos-arm64".to_string(),
+            endpoint: "https://example.test/releases/stable/latest-tauri.json".to_string(),
+            message: None,
+            last_attempt_id: None,
+            last_error: None,
+        }
+    }
+
+    #[test]
+    fn remote_bootstrap_freshness_allows_current_desktop() {
+        let state = freshness_state();
+        let result = validate_remote_bootstrap_desktop_freshness(&state, "stable");
+        assert!(
+            result.is_ok(),
+            "current desktop should pass remote bootstrap freshness gate: {result:?}"
+        );
+    }
+
+    #[test]
+    fn remote_bootstrap_freshness_rejects_stale_desktop() {
+        let mut state = freshness_state();
+        state.latest_version = Some("1.2.4".to_string());
+        state.phase = DesktopAppUpdatePhase::Staging.as_str().to_string();
+        let err = validate_remote_bootstrap_desktop_freshness(&state, "stable")
+            .expect_err("stale desktop should be rejected");
+        assert!(
+            err.contains(REMOTE_BOOTSTRAP_UPDATE_REQUIRED_PREFIX),
+            "expected stale prefix in error: {err}"
+        );
+        assert!(
+            err.contains("1.2.3") && err.contains("1.2.4"),
+            "expected current/latest versions in error: {err}"
+        );
+    }
+
+    #[test]
+    fn remote_bootstrap_freshness_rejects_unverified_desktop() {
+        let mut state = freshness_state();
+        state.configured = false;
+        state.message = Some("Native updater is not configured.".to_string());
+        let err = validate_remote_bootstrap_desktop_freshness(&state, "stable")
+            .expect_err("unverified desktop freshness should be rejected");
+        assert!(
+            err.contains(REMOTE_BOOTSTRAP_FRESHNESS_UNVERIFIED_PREFIX),
+            "expected unverified prefix in error: {err}"
+        );
     }
 }
