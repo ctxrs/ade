@@ -51,6 +51,7 @@ import {
 } from "./utils/desktopMenuCommands";
 import {
   WORKBENCH_TASK_IDLE_EVENT,
+  writeUpdaterRefreshBroadcast,
   type WorkbenchTaskIdleDetail,
 } from "./utils/updaterEvents";
 
@@ -267,6 +268,7 @@ function DesktopMenuBridge() {
           return;
         case "help.check-for-updates":
           window.dispatchEvent(new Event(REQUEST_UPDATE_CHECK_EVENT));
+          writeUpdaterRefreshBroadcast("menu-check-for-updates");
           void refreshUpdateCheck({ force: true }).catch(() => {});
           void desktopCheckAppUpdate("stable").catch(() => {});
           emitMenuTrace({

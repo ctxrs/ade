@@ -10,6 +10,10 @@ import {
 } from "../utils/desktop";
 import { readCachedUpdateCheck, refreshUpdateCheck } from "../utils/updateNotice";
 import { REQUEST_UPDATE_CHECK_EVENT } from "../utils/desktopMenuCommands";
+import {
+  UPDATER_REFRESH_BROADCAST_STORAGE_KEY,
+  writeUpdaterRefreshBroadcast,
+} from "../utils/updaterEvents";
 
 const PROMPT_SNOOZE_STORAGE_KEY = "ctx_update_prompt_next_allowed_at_v1";
 const IDLE_UPDATE_VERSION_STORAGE_KEY = "ctx_update_prompt_idle_versions_v1";
@@ -353,6 +357,7 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
   const launchAutoAppliedVersionRef = useRef<string>("");
   const applyInFlightRef = useRef(false);
   const updateInfoRef = useRef<UpdateCheck | null>(updateInfo);
+  const nativeStateSignatureRef = useRef<string>("");
   const autoApplyOnLaunchEnabled = shouldAutoApplyOnLaunch();
 
   useEffect(() => {
@@ -405,6 +410,7 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
   const dismissForLater = useCallback(() => {
     if (!latestKnownVersion) return;
     snoozeVersionPrompt(latestKnownVersion);
+    writeUpdaterRefreshBroadcast("dismiss-for-later");
   }, [latestKnownVersion, snoozeVersionPrompt]);
 
   const clearVersionFlags = useCallback((version: string) => {
@@ -467,6 +473,18 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
           const native = await desktopGetAppUpdateState("stable");
           setDesktopNativeState(native);
           const latestVersion = normalizeOptionalString(native.latest_version) || null;
+          const nativeSignature = [
+            normalizeOptionalString(native.current_version),
+            normalizeOptionalString(native.latest_version),
+            normalizeOptionalString(native.phase).toLowerCase(),
+            native.restart_required ? "1" : "0",
+            native.available ? "1" : "0",
+            native.staged ? "1" : "0",
+          ].join("|");
+          if (nativeSignature !== nativeStateSignatureRef.current) {
+            nativeStateSignatureRef.current = nativeSignature;
+            writeUpdaterRefreshBroadcast("native-state-change");
+          }
           info = {
             channel: "stable",
             base_url: deriveBaseUrlFromEndpoint(native.endpoint),
@@ -565,6 +583,7 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
           type: "restart_required",
           message: message || RESTART_READY_MESSAGE,
         });
+        writeUpdaterRefreshBroadcast("apply-needs-restart");
       };
       applyInFlightRef.current = true;
       dispatchUi({ type: "apply_started" });
@@ -580,6 +599,7 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
             clearRestartRequiredVersionState();
             await refresh(true);
             dispatchUi({ type: "apply_completed" });
+            writeUpdaterRefreshBroadcast("apply-complete");
             return true;
           }
           dispatchUi({ type: "apply_failed", message: resp.message || "Update did not apply." });
@@ -667,6 +687,27 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
     window.addEventListener(REQUEST_UPDATE_CHECK_EVENT, onRequestUpdateCheck as EventListener);
     return () => {
       window.removeEventListener(REQUEST_UPDATE_CHECK_EVENT, onRequestUpdateCheck as EventListener);
+    };
+  }, [refresh]);
+
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.storageArea !== window.localStorage) return;
+      if (event.key === UPDATER_REFRESH_BROADCAST_STORAGE_KEY) {
+        void refresh(true);
+        return;
+      }
+      if (event.key === PROMPT_SNOOZE_STORAGE_KEY) {
+        setPromptSnoozeByVersion(readPromptSnoozeByVersion());
+        return;
+      }
+      if (event.key === IDLE_UPDATE_VERSION_STORAGE_KEY) {
+        setIdleUpdateVersions(readIdleUpdateVersions());
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener("storage", onStorage);
     };
   }, [refresh]);
 
@@ -770,6 +811,7 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
       if (!restartRequired) {
         snoozeVersionPrompt(version);
       }
+      writeUpdaterRefreshBroadcast("schedule-next-idle");
     }
   }, [latestKnownVersion, restartRequired, snoozeVersionPrompt]);
 

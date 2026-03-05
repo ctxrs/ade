@@ -6,6 +6,7 @@ e2e/providers-bundled-v1.spec.ts
 e2e/settings-resource-utilization.spec.ts
 e2e/updater-desktop-mismatch-confirmation.spec.ts
 e2e/updater-diagnostics-failure-safety.spec.ts
+e2e/updater-global-semantics.spec.ts
 e2e/updater-workbench-auto-apply.spec.ts
 e2e/terminal-link-hover.spec.ts
 e2e/terminal-scroll-after-reopen.spec.ts
