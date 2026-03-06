@@ -1241,7 +1241,11 @@ exports.config = {
 
     // Launch the app directly into the wizard route to reduce test flakiness.
     process.env.CTX_DESKTOP_START_PATH = "/workspace-setup";
-    process.env.CTX_SEED_CODEX_AUTH_FROM_HOST = process.env.CTX_SEED_CODEX_AUTH_FROM_HOST || "1";
+    const codexOauthFlowEnabled = ["1", "true", "yes"].includes(
+      String(process.env.CTX_AUTOMATION_CODEX_OAUTH_ENABLE || "").trim().toLowerCase(),
+    );
+    process.env.CTX_SEED_CODEX_AUTH_FROM_HOST = process.env.CTX_SEED_CODEX_AUTH_FROM_HOST
+      || (codexOauthFlowEnabled ? "0" : "1");
     // Safety default: don't start/restart remote daemons unless explicitly enabled.
     if (SSH_NO_START_REMOTE) {
       process.env.CTX_DESKTOP_SSH_NO_START_REMOTE = "1";

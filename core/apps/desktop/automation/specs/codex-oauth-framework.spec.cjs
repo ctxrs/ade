@@ -11,8 +11,11 @@ const {
   runProviderFirstTurnApiSmoke,
 } = require("./helpers/workspace_wizard_flow.cjs");
 const {
+  getProviderStatus,
+  installProviderAndWait,
   verifyProviderForWorkspace,
   resolveWorkspaceProviderModelId,
+  selectSubscriptionSource,
 } = require("./helpers/provider_runtime.cjs");
 const {
   completeCodexOauthWithBrowserCredentials,
@@ -20,6 +23,7 @@ const {
 
 const DEFAULT_CASE_TIMEOUT_MS = 20 * 60_000;
 const DEFAULT_LOGIN_TIMEOUT_MS = 15 * 60_000;
+const DEFAULT_MODEL_POPULATION_TIMEOUT_MS = 20_000;
 
 const parsePositiveInt = (raw, fallback) => {
   const parsed = Number.parseInt(String(raw || ""), 10);
@@ -30,6 +34,52 @@ const parsePositiveInt = (raw, fallback) => {
 const waitMs = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 
 const normalizeText = (value) => String(value || "").trim();
+
+const readWorkspaceProviderOptions = async (workspaceId, providerId) => {
+  const response = await daemonJson(
+    "GET",
+    `/api/workspaces/${workspaceId}/providers/${encodeURIComponent(providerId)}/options`,
+  );
+  if (response.status !== 200) {
+    throw new Error(
+      `provider options read failed (${response.status}): ${JSON.stringify(response.payload || null)}`,
+    );
+  }
+  return response.payload || {};
+};
+
+const clearCodexActiveAccount = async () => {
+  const response = await daemonJson("PUT", "/api/providers/codex/active-account", {
+    account_id: null,
+  });
+  if (response.status !== 200) {
+    throw new Error(
+      `clear codex active account failed (${response.status}): ${JSON.stringify(response.payload || null)}`,
+    );
+  }
+};
+
+const seedUnauthenticatedCodexOptionsCache = async (workspaceId) => {
+  await selectSubscriptionSource("codex");
+  await clearCodexActiveAccount();
+  const payload = await readWorkspaceProviderOptions(workspaceId, "codex");
+  const models = payload?.models && typeof payload.models === "object" ? payload.models : {};
+  const currentModelId = normalizeText(models.current_model_id || models.currentModelId);
+  const modelCount = Array.isArray(models.models) ? models.models.length : 0;
+  if (currentModelId || modelCount > 0) {
+    throw new Error(
+      `expected empty Codex model options before OAuth login, got ${JSON.stringify(payload)}`,
+    );
+  }
+  return payload;
+};
+
+const ensureCodexProviderInstalled = async () => {
+  const status = await getProviderStatus("codex", "host");
+  if (status.installed) return status;
+  await installProviderAndWait("codex", "host");
+  return await getProviderStatus("codex", "host");
+};
 
 const writeSkipReport = (reportPath, reason) => {
   if (!reportPath) return;
@@ -136,10 +186,21 @@ describe("codex oauth harness framework (desktop e2e)", () => {
       process.env.CTX_AUTOMATION_CODEX_OAUTH_TIMEOUT_MS || "",
       DEFAULT_LOGIN_TIMEOUT_MS,
     );
+    const modelPopulationTimeoutMs = parsePositiveInt(
+      process.env.CTX_AUTOMATION_CODEX_MODEL_POPULATION_TIMEOUT_MS || "",
+      DEFAULT_MODEL_POPULATION_TIMEOUT_MS,
+    );
 
     let workspaceId = "";
     try {
       await assertConnectedLocalAndListening();
+      const workspace = await createWorkspaceAndLaunchExecution({
+        baseDir: localBase,
+        name: `codex-oauth-framework-${runId}`,
+      });
+      workspaceId = workspace.workspaceId;
+      await seedUnauthenticatedCodexOptionsCache(workspace.workspaceId);
+
       const oauthLogin = await completeCodexOauthWithBrowserCredentials({
         label: normalizeText(process.env.CTX_AUTOMATION_CODEX_OAUTH_LABEL) || `codex-oauth-${runId}`,
         email: normalizeText(process.env.CTX_E2E_CODEX_OAUTH_EMAIL),
@@ -155,16 +216,11 @@ describe("codex oauth harness framework (desktop e2e)", () => {
         this.skip();
       }
 
-      const workspace = await createWorkspaceAndLaunchExecution({
-        baseDir: localBase,
-        name: `codex-oauth-framework-${runId}`,
-      });
-      workspaceId = workspace.workspaceId;
-
+      await ensureCodexProviderInstalled();
       await verifyProviderForWorkspace(workspace.workspaceId, "codex");
       const modelId = await resolveWorkspaceProviderModelId(workspace.workspaceId, "codex", {
-        timeoutMs: 90_000,
-        pollMs: 3000,
+        timeoutMs: modelPopulationTimeoutMs,
+        pollMs: 2000,
       });
       await runProviderFirstTurnApiSmoke(
         workspace.workspaceId,
@@ -176,6 +232,11 @@ describe("codex oauth harness framework (desktop e2e)", () => {
         240_000,
       );
     } finally {
+      try {
+        await clearCodexActiveAccount();
+      } catch {
+        // ignore cleanup failures
+      }
       if (workspaceId) {
         await daemonJson("DELETE", `/api/workspaces/${workspaceId}`);
       }

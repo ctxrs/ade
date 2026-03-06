@@ -889,6 +889,7 @@ async fn amp_accounts_response(state: &Arc<AppState>) -> anyhow::Result<AmpAccou
 }
 
 async fn restart_provider_for_auth_change(state: &Arc<AppState>, provider_id: &str, reason: &str) {
+    invalidate_provider_probe_caches(state, provider_id).await;
     let adapters = {
         let map = state.providers.adapters.lock().await;
         [provider_id]
@@ -6014,6 +6015,14 @@ pub(super) async fn dev_restart_providers(
 mod tests {
     use super::*;
     use chrono::Utc;
+    use ctx_providers::adapters::{
+        ProviderAdapter, ProviderHealth, ProviderProcessInfo, ProviderRestartMode, ProviderStatus,
+        RunHandle, TurnInput,
+    };
+    use ctx_store::StoreManager;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     fn test_endpoint(id: &str) -> harness_sources::HarnessEndpointRecord {
         harness_sources::HarnessEndpointRecord {
@@ -6779,5 +6788,109 @@ ZXY987654321
             ctx_providers::adapters::ProviderHealth::Missing
         ));
         assert!(!should_skip_install_for_healthy_provider(&status));
+    }
+
+    #[derive(Default)]
+    struct RestartTrackingAdapter {
+        restart_calls: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl ProviderAdapter for RestartTrackingAdapter {
+        async fn inspect(&self) -> anyhow::Result<ProviderStatus> {
+            Ok(ProviderStatus {
+                provider_id: "codex".to_string(),
+                installed: true,
+                detected_path: None,
+                version: Some("test".to_string()),
+                capabilities: None,
+                health: ProviderHealth::Ok,
+                diagnostics: Vec::new(),
+                details: HashMap::new(),
+            })
+        }
+
+        async fn run(
+            &self,
+            _input: TurnInput,
+            _workdir: PathBuf,
+            _env: HashMap<String, String>,
+            _event_sink: tokio::sync::mpsc::Sender<ctx_providers::events::NormalizedEvent>,
+        ) -> anyhow::Result<RunHandle> {
+            anyhow::bail!("run not used in this test")
+        }
+
+        async fn cancel(&self, _handle: RunHandle) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn list_processes(&self) -> Vec<ProviderProcessInfo> {
+            Vec::new()
+        }
+
+        async fn restart(&self, _reason: &str, _mode: ProviderRestartMode) -> anyhow::Result<()> {
+            self.restart_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn restart_provider_for_auth_change_invalidates_only_matching_provider_probe_caches() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let stores = StoreManager::open(temp.path()).await.expect("open stores");
+        let adapter = Arc::new(RestartTrackingAdapter::default());
+        let state = Arc::new(AppState::new(
+            temp.path().to_path_buf(),
+            stores,
+            HashMap::from([(
+                "codex".to_string(),
+                adapter.clone() as Arc<dyn ProviderAdapter>,
+            )]),
+            "http://127.0.0.1:4310".to_string(),
+            None,
+        ));
+
+        state.providers.options_cache.lock().await.insert(
+            "ws-a/codex".to_string(),
+            crate::daemon::CachedProviderOptions {
+                cached_at: std::time::Instant::now(),
+                value: serde_json::json!({ "provider_id": "codex", "probe_ok": false }),
+            },
+        );
+        state.providers.options_cache.lock().await.insert(
+            "ws-b/claude-crp".to_string(),
+            crate::daemon::CachedProviderOptions {
+                cached_at: std::time::Instant::now(),
+                value: serde_json::json!({ "provider_id": "claude-crp", "probe_ok": true }),
+            },
+        );
+        state.providers.verify_cache.lock().await.insert(
+            "ws-a/codex".to_string(),
+            crate::daemon::CachedProviderVerify {
+                cached_at: std::time::Instant::now(),
+                value: serde_json::json!({ "status": "error" }),
+            },
+        );
+        state.providers.verify_cache.lock().await.insert(
+            "ws-b/claude-crp".to_string(),
+            crate::daemon::CachedProviderVerify {
+                cached_at: std::time::Instant::now(),
+                value: serde_json::json!({ "status": "ok" }),
+            },
+        );
+
+        restart_provider_for_auth_change(&state, "codex", "test auth updated").await;
+
+        let options_cache = state.providers.options_cache.lock().await;
+        assert!(!options_cache.contains_key("ws-a/codex"));
+        assert!(options_cache.contains_key("ws-b/claude-crp"));
+        drop(options_cache);
+
+        let verify_cache = state.providers.verify_cache.lock().await;
+        assert!(!verify_cache.contains_key("ws-a/codex"));
+        assert!(verify_cache.contains_key("ws-b/claude-crp"));
+        drop(verify_cache);
+
+        assert_eq!(adapter.restart_calls.load(Ordering::SeqCst), 1);
     }
 }
