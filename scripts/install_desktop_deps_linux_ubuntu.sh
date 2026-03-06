@@ -98,6 +98,11 @@ libsoup_pkg="$(choose_first_available_pkg libsoup-3.0-dev)" || {
   exit 3
 }
 
+webkit_driver_pkg="$(choose_first_available_pkg webkit2gtk-driver)" || {
+  echo "error: could not find webkit2gtk-driver (required to provide WebKitWebDriver for tauri-driver Linux automation)." >&2
+  exit 3
+}
+
 appindicator_pkg="$(choose_first_available_pkg libayatana-appindicator3-dev libappindicator3-dev)" || {
   echo "error: could not find an appindicator dev package (tried libayatana-appindicator3-dev, libappindicator3-dev)." >&2
   exit 3
@@ -106,6 +111,7 @@ appindicator_pkg="$(choose_first_available_pkg libayatana-appindicator3-dev liba
 "${SUDO[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
   "${packages[@]}" \
   "$webkit_pkg" \
+  "$webkit_driver_pkg" \
   "$libsoup_pkg" \
   "$appindicator_pkg"
 
@@ -135,6 +141,13 @@ for cmd in desktop-file-validate mksquashfs zsyncmake patchelf appstreamcli gtk-
     exit 2
   fi
 done
+
+if command -v WebKitWebDriver >/dev/null 2>&1; then
+  echo "- WebKitWebDriver: OK ($(command -v WebKitWebDriver))"
+else
+  echo "- WebKitWebDriver: MISSING (install webkit2gtk-driver)" >&2
+  exit 2
+fi
 
 echo
 echo "${BOLD}Next steps${RESET}"
