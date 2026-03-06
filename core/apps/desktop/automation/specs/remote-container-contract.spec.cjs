@@ -1,61 +1,164 @@
-const fs = require("fs");
-const path = require("path");
+const fs = require("node:fs");
+const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 
 const { waitForTauri } = require("./helpers/tauri.cjs");
+const { safeDaemonJson } = require("./helpers/daemon.cjs");
 const {
   mkTempDir,
   runWizardScenario,
   getWorkspace,
   assertNoDaemonOverlayFor,
   runCodexFirstTurnApiSmoke,
-  ensureRemoteTarget,
-  ssh,
-  REMOTE_HOST,
-  REMOTE_WIZARD_HOST_INPUT,
-  REMOTE_PORT,
-  REMOTE_DATA_DIR_RAW,
+  collectWorkspaceRouteDiagnostics,
 } = require("./helpers/workspace_wizard_flow.cjs");
 const { ensureCodexOpenRouterWorkspaceReady } = require("./helpers/provider_runtime.cjs");
+const {
+  createRemoteContractRecorder,
+  parseBoolean,
+  resolveRemoteFixtureEnv,
+} = require("../helpers/remote_fixture_contract.cjs");
 
-const reportPath = process.env.CTX_REMOTE_CONTAINER_CONTRACT_REPORT || path.join("/tmp", "ctx-remote-container-contract.json");
-const REQUIRE_FIRST_TURN_SUCCESS = ["1", "true", "yes"].includes(
-  String(process.env.CTX_AUTOMATION_REMOTE_REQUIRE_FIRST_TURN_SUCCESS || "0").trim().toLowerCase(),
-);
+const reportPath = String(
+  process.env.CTX_REMOTE_CONTAINER_CONTRACT_REPORT || path.join("/tmp", "ctx-remote-container-contract.json"),
+).trim();
+const REQUIRE_FIRST_TURN_SUCCESS = parseBoolean(process.env.CTX_AUTOMATION_REMOTE_REQUIRE_FIRST_TURN_SUCCESS || "0");
+const fixture = resolveRemoteFixtureEnv({ lane: "container" });
 const scenarioFilter = new Set(
   String(process.env.CTX_AUTOMATION_SCENARIOS || "")
     .split(",")
-    .map((s) => s.trim().toLowerCase())
+    .map((entry) => entry.trim().toLowerCase())
     .filter(Boolean),
 );
 
 const scenarioEnabled = (name, tags = []) => {
   if (scenarioFilter.size === 0) return true;
-  return [name, ...tags].some((t) => scenarioFilter.has(String(t).trim().toLowerCase()));
+  return [name, ...tags].some((entry) => scenarioFilter.has(String(entry).trim().toLowerCase()));
 };
 
-const writeReport = (payload) => {
+let contractRecorder = null;
+
+const sshBaseArgs = ({ useKey = true } = {}) => {
+  const args = [
+    "-o",
+    "StrictHostKeyChecking=no",
+    "-o",
+    "UserKnownHostsFile=/dev/null",
+    "-o",
+    "ConnectTimeout=10",
+  ];
+  if (fixture.sshConfigPath) {
+    args.unshift(fixture.sshConfigPath);
+    args.unshift("-F");
+  }
+  if (fixture.sshPort > 0) {
+    args.push("-p", String(fixture.sshPort));
+  }
+  if (useKey && fixture.sshKeyPath) {
+    args.unshift("IdentitiesOnly=yes");
+    args.unshift("-o");
+    args.unshift(fixture.sshKeyPath);
+    args.unshift("-i");
+  }
+  return args;
+};
+
+const remoteSsh = (command, { auth = "key", label = "ssh" } = {}) => {
+  const usePassword = auth === "password";
+  const args = sshBaseArgs({ useKey: !usePassword });
+  let binary = "ssh";
+  let finalArgs;
+  let env = process.env;
+
+  if (usePassword) {
+    const password = String(fixture.passwordActual || fixture.password || "").trim();
+    if (!password) {
+      throw new Error("password auth requested but remote container fixture password is not set");
+    }
+    binary = "sshpass";
+    finalArgs = [
+      "-e",
+      "ssh",
+      ...args,
+      "-o",
+      "BatchMode=no",
+      "-o",
+      "PreferredAuthentications=password,keyboard-interactive",
+      "-o",
+      "NumberOfPasswordPrompts=1",
+      fixture.target,
+      command,
+    ];
+    env = { ...process.env, SSHPASS: password };
+  } else {
+    finalArgs = [...args, "-o", "BatchMode=yes", fixture.target, command];
+  }
+
+  const result = spawnSync(binary, finalArgs, {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    env,
+  });
+  contractRecorder?.recordSshTranscript(label, {
+    auth,
+    binary,
+    args: finalArgs,
+    command,
+    target: fixture.target,
+    exit_code: result.status ?? null,
+    signal: result.signal ?? null,
+    ok: result.status === 0,
+    stdout: String(result.stdout || "").trim(),
+    stderr: String(result.stderr || "").trim(),
+  });
+  if (result.status !== 0) {
+    const stderr = String(result.stderr || "").trim();
+    const stdout = String(result.stdout || "").trim();
+    const detail = [
+      `command failed: ${binary} ${finalArgs.join(" ")}`,
+      stderr ? `stderr: ${stderr}` : null,
+      stdout ? `stdout: ${stdout}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    throw new Error(detail);
+  }
+  return String(result.stdout || "").trim();
+};
+
+const collectFailureArtifacts = async (stage) => {
+  if (!contractRecorder) return;
+
+  contractRecorder.recordArtifact(`${stage}_workspace_route`, await collectWorkspaceRouteDiagnostics());
+  contractRecorder.recordArtifact(`${stage}_daemon_health`, await safeDaemonJson("GET", "/api/health"));
+  contractRecorder.recordArtifact(`${stage}_daemon_diagnostics`, await safeDaemonJson("GET", "/api/diagnostics"));
+
+  if (!fixture.target || !fixture.dataDir) return;
+
+  const remoteLogFile = `${fixture.dataDir.replace(/\/+$/, "")}/logs/daemon.log`;
+  const tailCmd = `if [ -f ${JSON.stringify(remoteLogFile)} ]; then tail -n 200 ${JSON.stringify(remoteLogFile)}; else echo "__CTX_MISSING__ ${remoteLogFile}"; fi`;
   try {
-    fs.mkdirSync(path.dirname(reportPath), { recursive: true });
-    fs.writeFileSync(reportPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-  } catch {
-    // best effort only
+    const tail = remoteSsh(`sh -lc ${JSON.stringify(tailCmd)}`, {
+      auth: fixture.authMode === "password" ? "password" : "key",
+      label: `${stage}-remote-daemon-log-tail`,
+    });
+    contractRecorder.recordArtifact(`${stage}_remote_daemon_log_tail`, {
+      log_file: remoteLogFile,
+      tail,
+    });
+  } catch (error) {
+    contractRecorder.recordArtifact(`${stage}_remote_daemon_log_tail`, {
+      log_file: remoteLogFile,
+      error: String(error),
+    });
   }
 };
 
 describe("remote container contract (env-gated desktop e2e)", () => {
   const runId = `${Date.now()}`;
   const localBase = mkTempDir(`ctx-remote-container-contract-${runId}-`);
-  let remoteTarget = "";
-  let remoteBase = "";
-  let remoteDataDir = "";
-
-  before(async () => {
-    await browser.url(`tauri://localhost/workspace-setup?remoteContainerContract=${Date.now()}`);
-    await waitForTauri();
-    remoteTarget = ensureRemoteTarget() || "";
-    remoteBase = `/tmp/ctx-remote-contract-${runId}`;
-    remoteDataDir = String(REMOTE_DATA_DIR_RAW || "").trim() || `${remoteBase}/daemon`;
-  });
+  const remoteBase = `/tmp/ctx-remote-contract-${runId}`;
+  const remoteDataDir = fixture.dataDir || `${remoteBase}/daemon`;
 
   after(async () => {
     try {
@@ -63,111 +166,182 @@ describe("remote container contract (env-gated desktop e2e)", () => {
     } catch {
       // ignore cleanup failures
     }
-    if (remoteTarget) {
-      try {
-        ssh(remoteTarget, `set -euo pipefail; rm -rf ${JSON.stringify(remoteBase)}`);
-      } catch {
-        // ignore cleanup failures
-      }
+
+    if (!fixture.ready || !fixture.target) return;
+
+    try {
+      remoteSsh(`set -euo pipefail; rm -rf ${JSON.stringify(remoteBase)}`, {
+        auth: fixture.authMode === "password" ? "password" : "key",
+        label: "suite-cleanup",
+      });
+    } catch {
+      // ignore cleanup failures
     }
   });
 
   it("creates remote disk-isolated container workspace when remote env is present", async function () {
     this.timeout(12 * 60_000);
-    if (!scenarioEnabled("remote-new-disk-isolated", ["remote", "remote-container", "disk-isolated"])) this.skip();
-    const report = {
-      reportPath,
-      skipped: false,
-      skip_reason: null,
-      remote_host: REMOTE_HOST || null,
-      remote_target: remoteTarget || null,
-    };
 
-    if (!REMOTE_HOST || !remoteTarget) {
-      report.skipped = true;
-      report.skip_reason = "missing remote env (CTX_AUTOMATION_REMOTE_HOST)";
-      writeReport(report);
-      this.skip();
-    }
-
-    let podmanPresent = false;
-    try {
-      const podmanProbe = ssh(
-        remoteTarget,
-        "if command -v podman >/dev/null 2>&1; then echo yes; else echo no; fi",
-      ).trim();
-      podmanPresent = podmanProbe === "yes";
-    } catch (error) {
-      report.skipped = true;
-      report.skip_reason = `remote podman probe failed: ${String(error)}`;
-      writeReport(report);
-      this.skip();
-    }
-
-    if (!podmanPresent) {
-      report.skipped = true;
-      report.skip_reason = "remote podman unavailable";
-      writeReport(report);
-      this.skip();
-    }
-
-    ssh(remoteTarget, `set -euo pipefail; rm -rf ${JSON.stringify(remoteBase)}; mkdir -p ${JSON.stringify(remoteBase)}`);
-    const remoteDest = `${remoteBase}/new-disk-isolated`;
-
-    const workspaceId = await runWizardScenario({
-      location: "remote",
-      remoteHost: REMOTE_WIZARD_HOST_INPUT || REMOTE_HOST,
-      remotePort: REMOTE_PORT,
-      remoteDataDir,
-      container: "disk-isolated",
-      network: "full",
-      harnessDownloads: "skip",
-      source: { kind: "new", destPath: remoteDest, workspaceName: "remote-contract" },
-      setupHook: "",
-      mergeQueue: { kind: "skip" },
+    contractRecorder = createRemoteContractRecorder({
+      outputPath: reportPath,
+      suite: "remote container contract",
+      lane: "container",
+      fixture,
+      secretValues: [fixture.password, fixture.passwordActual, process.env.OPENROUTER_API_KEY],
     });
 
-    const ws = await getWorkspace(workspaceId);
-    const rootPath = String(ws.root_path || "");
-    if (!rootPath.startsWith(remoteBase)) {
-      throw new Error(`expected remote root under ${remoteBase}, got ${rootPath}`);
-    }
+    let finalized = false;
+    const finalizeReport = (payload) => {
+      if (finalized) return null;
+      finalized = true;
+      return contractRecorder.finalize(payload);
+    };
 
-    await assertNoDaemonOverlayFor(20_000);
-
+    let workspaceId = "";
+    let rootPath = "";
+    let provider = null;
     let firstTurn = { attempted: false };
-    try {
-      const provider = await ensureCodexOpenRouterWorkspaceReady(workspaceId, {
-        installTarget: "container",
-        endpointName: `remote-container-openrouter-${runId}`,
-      });
-      const turn = await runCodexFirstTurnApiSmoke(workspaceId, {
-        providerId: provider.providerId,
-        modelId: provider.modelId,
-      }, 180000);
-      firstTurn = {
-        attempted: true,
-        status: "success",
-        session_id: turn?.sessionId || null,
-        assistant_preview: String(turn?.assistantMessage || "").slice(0, 200),
-        provider,
-      };
-    } catch (error) {
-      firstTurn = {
-        attempted: true,
-        status: "failed",
-        error: String(error),
-      };
-      if (REQUIRE_FIRST_TURN_SUCCESS) {
-        report.first_turn = firstTurn;
-        writeReport(report);
-        throw error;
-      }
+    let finalResult = "passed";
+    let finalReason = "remote container contract validated";
+    let finalError = "";
+
+    contractRecorder.recordArtifact("fixture_preflight", {
+      report_path: reportPath,
+      require_first_turn_success: REQUIRE_FIRST_TURN_SUCCESS,
+      scenario_filter: Array.from(scenarioFilter.values()),
+      fixture,
+    });
+
+    if (!scenarioEnabled("remote-new-disk-isolated", ["remote", "remote-container", "disk-isolated"])) {
+      const detail = "scenario filter excluded remote-new-disk-isolated";
+      contractRecorder.recordAssertion("scenario_filter", "skip", detail);
+      finalizeReport({ result: "skipped", reason: detail });
+      this.skip();
     }
 
-    report.workspace_id = workspaceId;
-    report.root_path = rootPath;
-    report.first_turn = firstTurn;
-    writeReport(report);
+    if (!fixture.ready) {
+      const detail = fixture.preflightMessage;
+      if (fixture.strictRequired) {
+        contractRecorder.recordAssertion("fixture_preflight", "fail", detail);
+        finalizeReport({ result: "failed", reason: detail, error: detail });
+        throw new Error(detail);
+      }
+      contractRecorder.recordAssertion("fixture_preflight", "skip", detail);
+      finalizeReport({ result: "skipped", reason: detail });
+      this.skip();
+    }
+
+    try {
+      contractRecorder.recordAssertion("fixture_preflight", "pass", "resolved remote container fixture contract");
+
+      await browser.url(`tauri://localhost/workspace-setup?remoteContainerContract=${Date.now()}`);
+      await waitForTauri();
+
+      const podmanProbe = remoteSsh(
+        "if command -v podman >/dev/null 2>&1; then echo yes; else echo no; fi",
+        {
+          auth: fixture.authMode === "password" ? "password" : "key",
+          label: "podman-probe",
+        },
+      ).trim();
+      contractRecorder.recordArtifact("podman_probe", { result: podmanProbe });
+      if (podmanProbe !== "yes") {
+        const detail = "remote podman unavailable";
+        contractRecorder.recordAssertion("podman_probe", "skip", detail);
+        finalizeReport({ result: "skipped", reason: detail });
+        this.skip();
+      }
+      contractRecorder.recordAssertion("podman_probe", "pass", "remote podman available");
+
+      remoteSsh(
+        `set -euo pipefail; rm -rf ${JSON.stringify(remoteBase)}; mkdir -p ${JSON.stringify(remoteBase)}`,
+        {
+          auth: fixture.authMode === "password" ? "password" : "key",
+          label: "remote-base-prepare",
+        },
+      );
+
+      const remoteDest = `${remoteBase}/new-disk-isolated`;
+      workspaceId = await runWizardScenario({
+        location: "remote",
+        remoteHost: fixture.wizardHostInput,
+        remotePort: fixture.port,
+        remoteDataDir,
+        container: "disk-isolated",
+        network: "full",
+        harnessDownloads: "skip",
+        source: { kind: "new", destPath: remoteDest, workspaceName: "remote-contract" },
+        setupHook: "",
+        mergeQueue: { kind: "skip" },
+      });
+
+      const workspace = await getWorkspace(workspaceId);
+      rootPath = String(workspace.root_path || "");
+      contractRecorder.recordArtifact("workspace", workspace);
+      if (!rootPath.startsWith(remoteBase)) {
+        throw new Error(`expected remote root under ${remoteBase}, got ${rootPath}`);
+      }
+
+      await assertNoDaemonOverlayFor(20_000);
+      contractRecorder.recordAssertion("workspace_launch", "pass", "remote workspace launched without daemon overlay");
+
+      try {
+        provider = await ensureCodexOpenRouterWorkspaceReady(workspaceId, {
+          installTarget: "container",
+          endpointName: `remote-container-openrouter-${runId}`,
+        });
+        contractRecorder.recordArtifact("provider_verify_payload", provider.verifyPayload || null);
+        const turn = await runCodexFirstTurnApiSmoke(
+          workspaceId,
+          {
+            providerId: provider.providerId,
+            modelId: provider.modelId,
+          },
+          180000,
+        );
+        firstTurn = {
+          attempted: true,
+          status: "success",
+          session_id: turn?.sessionId || null,
+          assistant_preview: String(turn?.assistantMessage || "").slice(0, 200),
+          provider,
+        };
+      } catch (error) {
+        firstTurn = {
+          attempted: true,
+          status: "failed",
+          error: String(error),
+        };
+        if (REQUIRE_FIRST_TURN_SUCCESS) {
+          throw error;
+        }
+      }
+
+      contractRecorder.recordArtifact("first_turn", firstTurn);
+      contractRecorder.recordAssertion(
+        "first_turn",
+        firstTurn.status === "success" ? "pass" : "warn",
+        firstTurn.status === "success" ? "remote container first turn succeeded" : JSON.stringify(firstTurn),
+      );
+    } catch (error) {
+      finalResult = "failed";
+      finalReason = "remote container contract failed";
+      finalError = String(error);
+      contractRecorder.recordAssertion("contract", "fail", finalError);
+      await collectFailureArtifacts("failure");
+      throw error;
+    } finally {
+      finalizeReport({
+        result: finalResult,
+        reason: finalReason,
+        error: finalError,
+        extras: {
+          workspace_id: workspaceId || null,
+          root_path: rootPath || null,
+          provider_config: provider,
+          first_turn: firstTurn,
+        },
+      });
+    }
   });
 });

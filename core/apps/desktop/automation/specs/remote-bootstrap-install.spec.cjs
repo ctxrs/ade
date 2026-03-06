@@ -1,43 +1,36 @@
-const fs = require("fs");
-const path = require("path");
-const { execFileSync } = require("child_process");
+const fs = require("node:fs");
+const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 
 const { waitForTauri } = require("./helpers/tauri.cjs");
-const { daemonJson } = require("./helpers/daemon.cjs");
+const { daemonJson, safeDaemonJson } = require("./helpers/daemon.cjs");
 const { ensureCodexOpenRouterWorkspaceReady } = require("./helpers/provider_runtime.cjs");
+const {
+  createRemoteContractRecorder,
+  parseBoolean,
+  resolveRemoteFixtureEnv,
+} = require("../helpers/remote_fixture_contract.cjs");
 
-const REMOTE_HOST = String(process.env.CTX_AUTOMATION_REMOTE_HOST || "").trim();
-const REMOTE_USER = String(process.env.CTX_AUTOMATION_REMOTE_USER || "root").trim() || "root";
-const REMOTE_PORT = Number.parseInt(String(process.env.CTX_AUTOMATION_REMOTE_PORT || "44099"), 10) || 44099;
-const REMOTE_DATA_DIR = String(process.env.CTX_AUTOMATION_REMOTE_DATA_DIR || "").trim();
 const REMOTE_CTX_BIN = "$HOME/.ctx/bin/ctx";
-const SSH_KEY_PATH = String(
-  process.env.CTX_AUTOMATION_REMOTE_SSH_KEY_PATH || process.env.CTX_UPDATER_E2E_SSH_KEY_PATH || "",
-).trim();
-const SSH_CONFIG_PATH = String(process.env.CTX_AUTOMATION_REMOTE_FIXTURE_SSH_CONFIG || "").trim();
-const SSH_PORT = Number.parseInt(String(process.env.CTX_AUTOMATION_REMOTE_SSH_PORT || "0"), 10) || 0;
-const REMOTE_PASSWORD_ACTUAL = String(
-  process.env.CTX_AUTOMATION_REMOTE_PASSWORD_ACTUAL || process.env.CTX_AUTOMATION_REMOTE_PASSWORD || "",
-).trim();
 const AUTH_TEST_MODE = String(process.env.CTX_AUTOMATION_REMOTE_AUTH_TEST_MODE || "key").trim().toLowerCase();
-const EXPECT_CONNECT_FAILURE = ["1", "true", "yes"].includes(
-  String(process.env.CTX_AUTOMATION_REMOTE_EXPECT_CONNECT_FAILURE || "0").trim().toLowerCase(),
-);
+const EXPECT_CONNECT_FAILURE = parseBoolean(process.env.CTX_AUTOMATION_REMOTE_EXPECT_CONNECT_FAILURE || "0");
 const WRONG_PASSWORD = String(process.env.CTX_AUTOMATION_REMOTE_WRONG_PASSWORD || "definitely-wrong-password").trim();
 const FIRST_TURN_REPORT_PATH = String(process.env.CTX_REMOTE_BOOTSTRAP_FIRST_TURN_REPORT || "").trim();
-const REQUIRE_FIRST_TURN_SUCCESS = ["1", "true", "yes"].includes(
-  String(process.env.CTX_AUTOMATION_REMOTE_REQUIRE_FIRST_TURN_SUCCESS || "0").trim().toLowerCase(),
-);
-const SKIP_MANAGED_BINARY_RESET = ["1", "true", "yes"].includes(
-  String(process.env.CTX_AUTOMATION_REMOTE_SKIP_MANAGED_BINARY_RESET || "0").trim().toLowerCase(),
-);
+const CONTRACT_REPORT_PATH = String(
+  process.env.CTX_REMOTE_BOOTSTRAP_CONTRACT_REPORT || path.join("/tmp", "ctx-remote-bootstrap-contract.json"),
+).trim();
+const REQUIRE_FIRST_TURN_SUCCESS = parseBoolean(process.env.CTX_AUTOMATION_REMOTE_REQUIRE_FIRST_TURN_SUCCESS || "0");
+const SKIP_MANAGED_BINARY_RESET = parseBoolean(process.env.CTX_AUTOMATION_REMOTE_SKIP_MANAGED_BINARY_RESET || "0");
+const fixture = resolveRemoteFixtureEnv({ lane: "host" });
+
+let contractRecorder = null;
 
 const tauriInvoke = async (command, args) => {
   try {
     const result = await browser.executeAsync(({ cmd, payload }, done) => {
-      const tauriInvoke = window.__TAURI__?.core?.invoke;
-      const internalsInvoke = window.__TAURI_INTERNALS__?.invoke;
-      const invoke = internalsInvoke || tauriInvoke;
+      const tauriCoreInvoke = window.__TAURI__?.core?.invoke;
+      const tauriInternalsInvoke = window.__TAURI_INTERNALS__?.invoke;
+      const invoke = tauriInternalsInvoke || tauriCoreInvoke;
       if (!invoke) {
         done({ error: "Tauri invoke API not available" });
         return;
@@ -57,7 +50,6 @@ const connectSshWithPolling = async (req, timeoutMs = 240000) => {
   const begin = await tauriInvoke("desktop_connect_ssh_begin", { req });
   if (begin.error) {
     const detail = String(begin.error || "").toLowerCase();
-    // Backward compatibility with older desktop builds that only expose desktop_connect_ssh.
     if (detail.includes("desktop_connect_ssh_begin") || detail.includes("unknown command")) {
       return tauriInvoke("desktop_connect_ssh", { req });
     }
@@ -88,8 +80,7 @@ const connectSshWithPolling = async (req, timeoutMs = 240000) => {
     }
     if (status === "failed") {
       await tauriInvoke("desktop_connect_ssh_poll", { req: { job_id: jobId, consume: true } });
-      const detail = String(snapshot.error || "desktop_connect_ssh failed");
-      return { error: detail };
+      return { error: String(snapshot.error || "desktop_connect_ssh failed") };
     }
     await browser.pause(500);
   }
@@ -109,115 +100,137 @@ const sshBaseArgs = ({ useKey = true } = {}) => {
     "-o",
     "ConnectTimeout=10",
   ];
-  if (SSH_CONFIG_PATH) {
-    args.unshift(SSH_CONFIG_PATH);
+  if (fixture.sshConfigPath) {
+    args.unshift(fixture.sshConfigPath);
     args.unshift("-F");
   } else {
     args.unshift("/dev/null");
     args.unshift("-F");
   }
-  if (SSH_PORT > 0) {
-    args.push("-p", String(SSH_PORT));
+  if (fixture.sshPort > 0) {
+    args.push("-p", String(fixture.sshPort));
   }
-  if (useKey && SSH_KEY_PATH) {
+  if (useKey && fixture.sshKeyPath) {
     args.unshift("IdentitiesOnly=yes");
     args.unshift("-o");
-    args.unshift(SSH_KEY_PATH);
+    args.unshift(fixture.sshKeyPath);
     args.unshift("-i");
   }
   return args;
 };
 
-const remoteSsh = (command, { auth = "key", passwordOverride = "" } = {}) => {
-  const target = `${REMOTE_USER}@${REMOTE_HOST}`;
+const remoteSsh = (command, { auth = "key", passwordOverride = "", label = "ssh" } = {}) => {
   const usePassword = auth === "password";
   const args = sshBaseArgs({ useKey: !usePassword });
+  let binary = "ssh";
+  let finalArgs;
+  let env = process.env;
+
   if (usePassword) {
-    const pass = String(passwordOverride || REMOTE_PASSWORD_ACTUAL || "").trim();
-    if (!pass) {
+    const password = String(passwordOverride || fixture.passwordActual || "").trim();
+    if (!password) {
       throw new Error("password auth requested but fixture password is not set");
     }
-    return String(
-      execFileSync(
-        "sshpass",
-        [
-          "-e",
-          "ssh",
-          ...args,
-          "-o",
-          "BatchMode=no",
-          "-o",
-          "PreferredAuthentications=password,keyboard-interactive",
-          "-o",
-          "NumberOfPasswordPrompts=1",
-          target,
-          command,
-        ],
-        {
-          encoding: "utf8",
-          stdio: ["ignore", "pipe", "pipe"],
-          env: { ...process.env, SSHPASS: pass },
-        },
-      ) || "",
-    ).trim();
+    binary = "sshpass";
+    finalArgs = [
+      "-e",
+      "ssh",
+      ...args,
+      "-o",
+      "BatchMode=no",
+      "-o",
+      "PreferredAuthentications=password,keyboard-interactive",
+      "-o",
+      "NumberOfPasswordPrompts=1",
+      fixture.target,
+      command,
+    ];
+    env = { ...process.env, SSHPASS: password };
+  } else {
+    finalArgs = [...args, "-o", "BatchMode=yes", fixture.target, command];
   }
-  return String(execFileSync("ssh", [...args, "-o", "BatchMode=yes", target, command], {
+
+  const result = spawnSync(binary, finalArgs, {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
-  }) || "").trim();
+    env,
+  });
+  contractRecorder?.recordSshTranscript(label, {
+    auth,
+    binary,
+    args: finalArgs,
+    command,
+    target: fixture.target,
+    exit_code: result.status ?? null,
+    signal: result.signal ?? null,
+    ok: result.status === 0,
+    stdout: String(result.stdout || "").trim(),
+    stderr: String(result.stderr || "").trim(),
+  });
+  if (result.status !== 0) {
+    const stderr = String(result.stderr || "").trim();
+    const stdout = String(result.stdout || "").trim();
+    const details = [
+      `command failed: ${binary} ${finalArgs.join(" ")}`,
+      stderr ? `stderr: ${stderr}` : null,
+      stdout ? `stdout: ${stdout}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    throw new Error(details);
+  }
+  return String(result.stdout || "").trim();
 };
 
 const diagnosticsAuthMode = () => {
   if (AUTH_TEST_MODE === "password_once" || AUTH_TEST_MODE === "wrong_password") return "password";
+  if (fixture.authMode === "password") return "password";
   return "key";
 };
 
 const managedState = () => {
   const cmd = `if [ -x ${REMOTE_CTX_BIN} ]; then echo present; else echo missing; fi`;
-  return remoteSsh(`sh -lc ${JSON.stringify(cmd)}`, { auth: diagnosticsAuthMode() });
+  return remoteSsh(`sh -lc ${JSON.stringify(cmd)}`, { auth: diagnosticsAuthMode(), label: "managed-state" });
 };
 
 const removeManagedBinary = () => {
   const cmd = `rm -f ${REMOTE_CTX_BIN}`;
-  remoteSsh(`sh -lc ${JSON.stringify(cmd)}`, { auth: diagnosticsAuthMode() });
+  remoteSsh(`sh -lc ${JSON.stringify(cmd)}`, { auth: diagnosticsAuthMode(), label: "managed-binary-reset" });
 };
 
 const stopRemoteDaemon = () => {
   const cmd = "if command -v pkill >/dev/null 2>&1; then pkill -x ctx >/dev/null 2>&1 || true; fi; true";
-  remoteSsh(`sh -lc ${JSON.stringify(cmd)}`, { auth: diagnosticsAuthMode() });
+  remoteSsh(`sh -lc ${JSON.stringify(cmd)}`, { auth: diagnosticsAuthMode(), label: "remote-daemon-stop" });
 };
 
 const ensureRemoteWorkspaceRepo = () => {
   const remoteRoot = `/tmp/ctx-remote-bootstrap-contract-${Date.now()}-${Math.trunc(Math.random() * 100000)}`;
   const setupCmd = [
-    `set -euo pipefail`,
+    "set -euo pipefail",
     `mkdir -p ${JSON.stringify(remoteRoot)}`,
     `cd ${JSON.stringify(remoteRoot)}`,
-    `if [ ! -d .git ]; then git init >/dev/null 2>&1; fi`,
-    `if [ ! -f README.md ]; then printf '%s\n' '# remote bootstrap contract' > README.md; fi`,
-    `if ! git rev-parse --verify HEAD >/dev/null 2>&1; then git add README.md && git -c user.name='ctx fixture' -c user.email='ctx-fixture@example.invalid' commit -m 'bootstrap fixture repo' >/dev/null 2>&1; fi`,
+    "if [ ! -d .git ]; then git init >/dev/null 2>&1; fi",
+    "if [ ! -f README.md ]; then printf '%s\\n' '# remote bootstrap contract' > README.md; fi",
+    "if ! git rev-parse --verify HEAD >/dev/null 2>&1; then git add README.md && git -c user.name='ctx fixture' -c user.email='ctx-fixture@example.invalid' commit -m 'bootstrap fixture repo' >/dev/null 2>&1; fi",
   ].join("; ");
-  remoteSsh(`bash -lc ${JSON.stringify(setupCmd)}`, { auth: diagnosticsAuthMode() });
+  remoteSsh(`bash -lc ${JSON.stringify(setupCmd)}`, { auth: diagnosticsAuthMode(), label: "workspace-repo-setup" });
   return remoteRoot;
 };
 
 const connectReq = () => {
   const req = {
-    host: REMOTE_HOST,
-    user: REMOTE_USER,
-    remote_port: REMOTE_PORT,
+    host: fixture.host,
+    user: fixture.user,
+    remote_port: fixture.port,
     start_remote: true,
-    remote_data_dir: REMOTE_DATA_DIR || undefined,
+    remote_data_dir: fixture.dataDir || undefined,
   };
   if (AUTH_TEST_MODE === "password_once") {
-    req.password_once = REMOTE_PASSWORD_ACTUAL;
+    req.password_once = fixture.passwordActual;
   } else if (AUTH_TEST_MODE === "wrong_password") {
     req.password_once = WRONG_PASSWORD;
-  } else {
-    const authMode = String(process.env.CTX_AUTOMATION_REMOTE_AUTH_MODE || "").trim().toLowerCase();
-    if (authMode === "password" && !EXPECT_CONNECT_FAILURE && REMOTE_PASSWORD_ACTUAL) {
-      req.password_once = REMOTE_PASSWORD_ACTUAL;
-    }
+  } else if (fixture.authMode === "password" && !EXPECT_CONNECT_FAILURE && fixture.passwordActual) {
+    req.password_once = fixture.passwordActual;
   }
   return req;
 };
@@ -227,6 +240,7 @@ const assertRemoteHealth = async (stage) => {
   if (health.status !== 200) {
     throw new Error(`${stage}: expected /api/health 200, got ${health.status} payload=${JSON.stringify(health.payload || null)}`);
   }
+  return health.payload || null;
 };
 
 const assertWorkspaceLaunch = async () => {
@@ -248,7 +262,12 @@ const assertWorkspaceLaunch = async () => {
   if (rootPath !== remoteRoot) {
     throw new Error(`workspace root mismatch: expected ${remoteRoot}, got ${rootPath}`);
   }
-  return { workspaceId, remoteRoot };
+  return {
+    workspaceId,
+    remoteRoot,
+    createResponse: create.payload || null,
+    readResponse: read.payload || null,
+  };
 };
 
 const writeFirstTurnReport = (payload) => {
@@ -301,7 +320,12 @@ const runFirstTurnOutcome = async (
     attachments: [],
   });
   if (postResp.status !== 200) {
-    return { status: "failed", stage: "message_post", detail: JSON.stringify(postResp.payload || null), session_id: sessionId };
+    return {
+      status: "failed",
+      stage: "message_post",
+      detail: JSON.stringify(postResp.payload || null),
+      session_id: sessionId,
+    };
   }
 
   const startedAt = Date.now();
@@ -310,8 +334,8 @@ const runFirstTurnOutcome = async (
     if (history.status === 200 && history.payload) {
       const messages = Array.isArray(history.payload.messages) ? history.payload.messages : [];
       const assistantMessage = messages
-        .filter((m) => String(m?.role || "").toLowerCase() === "assistant")
-        .map((m) => String(m?.content || "").trim())
+        .filter((message) => String(message?.role || "").toLowerCase() === "assistant")
+        .map((message) => String(message?.content || "").trim())
         .find((content) => content.length > 0) || "";
       if (assistantMessage) {
         return {
@@ -339,138 +363,261 @@ const runFirstTurnOutcome = async (
   return { status: "timed_out", stage: "turn", session_id: null, detail: "no assistant output before timeout" };
 };
 
+const collectFailureArtifacts = async (stage) => {
+  if (!contractRecorder) return;
+
+  contractRecorder.recordArtifact(`${stage}_desktop_connection`, await tauriInvoke("desktop_get_connection", {}));
+  contractRecorder.recordArtifact(`${stage}_daemon_health`, await safeDaemonJson("GET", "/api/health"));
+  contractRecorder.recordArtifact(`${stage}_daemon_diagnostics`, await safeDaemonJson("GET", "/api/diagnostics"));
+
+  if (!fixture.target || !fixture.dataDir) return;
+
+  const remoteLogFile = `${fixture.dataDir.replace(/\/+$/, "")}/logs/daemon.log`;
+  const tailCmd = `if [ -f ${JSON.stringify(remoteLogFile)} ]; then tail -n 200 ${JSON.stringify(remoteLogFile)}; else echo "__CTX_MISSING__ ${remoteLogFile}"; fi`;
+  try {
+    const tail = remoteSsh(`sh -lc ${JSON.stringify(tailCmd)}`, {
+      auth: diagnosticsAuthMode(),
+      label: `${stage}-remote-daemon-log-tail`,
+    });
+    contractRecorder.recordArtifact(`${stage}_remote_daemon_log_tail`, {
+      log_file: remoteLogFile,
+      tail,
+    });
+  } catch (error) {
+    contractRecorder.recordArtifact(`${stage}_remote_daemon_log_tail`, {
+      log_file: remoteLogFile,
+      error: String(error),
+    });
+  }
+};
+
 describe("remote bootstrap install e2e", () => {
-  before(function () {
-    if (!REMOTE_HOST) {
-      this.skip();
-    }
-  });
+  it("connects over SSH and validates managed remote daemon bootstrap contracts", async function () {
+    this.timeout(12 * 60_000);
 
-  it("connects over SSH and validates managed remote daemon bootstrap contracts", async () => {
-    await browser.url("tauri://localhost/workspaces");
-    await waitForTauri();
+    contractRecorder = createRemoteContractRecorder({
+      outputPath: CONTRACT_REPORT_PATH,
+      suite: "remote bootstrap install e2e",
+      lane: "host",
+      fixture,
+      secretValues: [fixture.password, fixture.passwordActual, process.env.OPENROUTER_API_KEY],
+    });
 
-    if (!SKIP_MANAGED_BINARY_RESET) {
-      removeManagedBinary();
-      const beforeState = managedState();
-      if (beforeState !== "missing") {
-        throw new Error(`expected managed binary to be missing before connect, got '${beforeState}'`);
-      }
-    }
+    let finalized = false;
+    const finalizeReport = (payload) => {
+      if (finalized) return null;
+      finalized = true;
+      return contractRecorder.finalize(payload);
+    };
 
-    const req = connectReq();
-    const connectResp = await connectSshWithPolling(req);
-
-    if (EXPECT_CONNECT_FAILURE || AUTH_TEST_MODE === "wrong_password") {
-      if (!connectResp.error) {
-        throw new Error(`expected connect failure for wrong-password mode, got success: ${JSON.stringify(connectResp.value || null)}`);
-      }
-      const detail = String(connectResp.error || "");
-      if (!/password-once ssh bootstrap failed|permission denied|failed to reach remote daemon/i.test(detail)) {
-        throw new Error(`expected password auth failure detail, got: ${detail}`);
-      }
-      return;
-    }
-
-    if (connectResp.error) {
-      throw new Error(`desktop_connect_ssh failed: ${connectResp.error}`);
-    }
-
-    const connectionResp = await tauriInvoke("desktop_get_connection", {});
-    if (connectionResp.error) {
-      throw new Error(`desktop_get_connection failed: ${connectionResp.error}`);
-    }
-    const kind = String(connectionResp.value?.kind || "").toLowerCase();
-    if (kind !== "ssh") {
-      throw new Error(`expected ssh connection after bootstrap, got ${JSON.stringify(connectionResp.value)}`);
-    }
-
-    const afterState = managedState();
-    if (afterState !== "present") {
-      throw new Error(`expected managed binary at ${REMOTE_CTX_BIN}, got '${afterState}'`);
-    }
-
-    const helpCmd = `if [ -x ${REMOTE_CTX_BIN} ]; then ${REMOTE_CTX_BIN} --help; else echo missing; fi`;
-    const helpOutput = remoteSsh(`sh -lc ${JSON.stringify(helpCmd)}`, { auth: diagnosticsAuthMode() });
-    if (!helpOutput || helpOutput === "missing" || !helpOutput.includes("Usage: ctx")) {
-      throw new Error(`expected installed managed binary to execute and print usage, got '${helpOutput}'`);
-    }
-
-    await assertRemoteHealth("post-bootstrap");
-    const launch = await assertWorkspaceLaunch();
-
+    let workspaceLaunch = null;
     let firstTurnProvider = null;
     let firstTurn = null;
-    try {
-      firstTurnProvider = await ensureCodexOpenRouterWorkspaceReady(launch.workspaceId, {
-        installTarget: "host",
-        endpointName: `remote-bootstrap-openrouter-${Date.now()}`,
-      });
-    } catch (error) {
-      if (REQUIRE_FIRST_TURN_SUCCESS) {
-        throw new Error(`failed to configure remote first-turn provider auth: ${String(error)}`);
+    let finalResult = "passed";
+    let finalReason = "remote bootstrap contract validated";
+    let finalError = "";
+
+    contractRecorder.recordArtifact("fixture_preflight", {
+      auth_test_mode: AUTH_TEST_MODE,
+      expect_connect_failure: EXPECT_CONNECT_FAILURE,
+      require_first_turn_success: REQUIRE_FIRST_TURN_SUCCESS,
+      skip_managed_binary_reset: SKIP_MANAGED_BINARY_RESET,
+      contract_report_path: CONTRACT_REPORT_PATH,
+      first_turn_report_path: FIRST_TURN_REPORT_PATH || null,
+      fixture,
+    });
+
+    if (!fixture.ready) {
+      const detail = fixture.preflightMessage;
+      if (fixture.strictRequired) {
+        contractRecorder.recordAssertion("fixture_preflight", "fail", detail);
+        finalizeReport({ result: "failed", reason: detail, error: detail });
+        throw new Error(detail);
       }
-      firstTurn = {
-        status: "failed",
-        stage: "provider_setup",
-        detail: String(error),
-      };
+      contractRecorder.recordAssertion("fixture_preflight", "skip", detail);
+      finalizeReport({ result: "skipped", reason: detail });
+      writeFirstTurnReport({
+        result: "skipped",
+        reason: detail,
+        fixture,
+      });
+      this.skip();
     }
 
-    if (!firstTurn) {
-      firstTurn = await runFirstTurnOutcome(
-        launch.workspaceId,
-        {
-          providerId: firstTurnProvider?.providerId || "codex",
-          modelId: firstTurnProvider?.modelId || "default",
-        },
+    try {
+      contractRecorder.recordAssertion("fixture_preflight", "pass", "resolved remote fixture contract");
+
+      await browser.url("tauri://localhost/workspaces");
+      await waitForTauri();
+
+      if (!SKIP_MANAGED_BINARY_RESET) {
+        removeManagedBinary();
+        const beforeState = managedState();
+        contractRecorder.recordArtifact("managed_binary_state_before_connect", { state: beforeState });
+        if (beforeState !== "missing") {
+          throw new Error(`expected managed binary to be missing before connect, got '${beforeState}'`);
+        }
+      }
+
+      const req = connectReq();
+      contractRecorder.recordArtifact("connect_request", req);
+      const connectResp = await connectSshWithPolling(req);
+      contractRecorder.recordArtifact("connect_response", connectResp);
+
+      if (EXPECT_CONNECT_FAILURE || AUTH_TEST_MODE === "wrong_password") {
+        if (!connectResp.error) {
+          throw new Error(`expected connect failure for wrong-password mode, got success: ${JSON.stringify(connectResp.value || null)}`);
+        }
+        const detail = String(connectResp.error || "");
+        if (!/password-once ssh bootstrap failed|permission denied|failed to reach remote daemon/i.test(detail)) {
+          throw new Error(`expected password auth failure detail, got: ${detail}`);
+        }
+        contractRecorder.recordAssertion("expected_connect_failure", "pass", detail);
+        finalReason = "expected connect failure observed";
+        return;
+      }
+
+      if (connectResp.error) {
+        throw new Error(`desktop_connect_ssh failed: ${connectResp.error}`);
+      }
+      contractRecorder.recordAssertion("ssh_connect", "pass", "desktop_connect_ssh succeeded");
+
+      const connectionResp = await tauriInvoke("desktop_get_connection", {});
+      contractRecorder.recordArtifact("desktop_connection_after_connect", connectionResp);
+      if (connectionResp.error) {
+        throw new Error(`desktop_get_connection failed: ${connectionResp.error}`);
+      }
+      const kind = String(connectionResp.value?.kind || "").toLowerCase();
+      if (kind !== "ssh") {
+        throw new Error(`expected ssh connection after bootstrap, got ${JSON.stringify(connectionResp.value)}`);
+      }
+
+      const afterState = managedState();
+      contractRecorder.recordArtifact("managed_binary_state_after_connect", { state: afterState });
+      if (afterState !== "present") {
+        throw new Error(`expected managed binary at ${REMOTE_CTX_BIN}, got '${afterState}'`);
+      }
+
+      const helpCmd = `if [ -x ${REMOTE_CTX_BIN} ]; then ${REMOTE_CTX_BIN} --help; else echo missing; fi`;
+      const helpOutput = remoteSsh(`sh -lc ${JSON.stringify(helpCmd)}`, {
+        auth: diagnosticsAuthMode(),
+        label: "managed-binary-help",
+      });
+      contractRecorder.recordArtifact("managed_binary_help_output", helpOutput);
+      if (!helpOutput || helpOutput === "missing" || !helpOutput.includes("Usage: ctx")) {
+        throw new Error(`expected installed managed binary to execute and print usage, got '${helpOutput}'`);
+      }
+
+      contractRecorder.recordArtifact("daemon_health_post_bootstrap", await assertRemoteHealth("post-bootstrap"));
+      workspaceLaunch = await assertWorkspaceLaunch();
+      contractRecorder.recordAssertion("workspace_launch", "pass", "remote workspace launch contract succeeded");
+      contractRecorder.recordArtifact("workspace_launch", workspaceLaunch);
+
+      try {
+        firstTurnProvider = await ensureCodexOpenRouterWorkspaceReady(workspaceLaunch.workspaceId, {
+          installTarget: "host",
+          endpointName: `remote-bootstrap-openrouter-${Date.now()}`,
+        });
+        contractRecorder.recordArtifact("provider_verify_payload", firstTurnProvider.verifyPayload || null);
+      } catch (error) {
+        if (REQUIRE_FIRST_TURN_SUCCESS) {
+          throw new Error(`failed to configure remote first-turn provider auth: ${String(error)}`);
+        }
+        firstTurn = {
+          status: "failed",
+          stage: "provider_setup",
+          detail: String(error),
+        };
+        contractRecorder.recordAssertion("provider_setup", "warn", String(error));
+      }
+
+      if (!firstTurn) {
+        firstTurn = await runFirstTurnOutcome(
+          workspaceLaunch.workspaceId,
+          {
+            providerId: firstTurnProvider?.providerId || "codex",
+            modelId: firstTurnProvider?.modelId || "default",
+          },
+        );
+      }
+      contractRecorder.recordArtifact("first_turn", firstTurn);
+      contractRecorder.recordAssertion(
+        "first_turn",
+        firstTurn.status === "success" ? "pass" : "warn",
+        firstTurn.status === "success" ? "first turn succeeded" : JSON.stringify(firstTurn),
       );
-    }
-    writeFirstTurnReport({
-      workspace_id: launch.workspaceId,
-      workspace_root: launch.remoteRoot,
-      auth_mode: AUTH_TEST_MODE,
-      provider_config: firstTurnProvider,
-      first_turn: firstTurn,
-    });
-    if (REQUIRE_FIRST_TURN_SUCCESS && firstTurn.status !== "success") {
-      throw new Error(`expected first turn success, got ${JSON.stringify(firstTurn)}`);
-    }
 
-    // Reconnect path: disconnect and reconnect without password_once. This must work
-    // for both key mode and password-once mode after key bootstrap completes.
-    const disconnectResp = await tauriInvoke("desktop_disconnect", {});
-    if (disconnectResp.error) {
-      throw new Error(`desktop_disconnect failed: ${disconnectResp.error}`);
-    }
-    const reconnectResp = await connectSshWithPolling({
-      host: REMOTE_HOST,
-      user: REMOTE_USER,
-      remote_port: REMOTE_PORT,
-      start_remote: true,
-      remote_data_dir: REMOTE_DATA_DIR || undefined,
-    });
-    if (reconnectResp.error) {
-      throw new Error(`desktop reconnect failed: ${reconnectResp.error}`);
-    }
-    await assertRemoteHealth("post-reconnect");
+      writeFirstTurnReport({
+        workspace_id: workspaceLaunch.workspaceId,
+        workspace_root: workspaceLaunch.remoteRoot,
+        auth_mode: AUTH_TEST_MODE,
+        provider_config: firstTurnProvider,
+        first_turn: firstTurn,
+      });
+      if (REQUIRE_FIRST_TURN_SUCCESS && firstTurn.status !== "success") {
+        throw new Error(`expected first turn success, got ${JSON.stringify(firstTurn)}`);
+      }
 
-    // Restart path: kill remote daemon process and verify desktop reconnect can restart it.
-    stopRemoteDaemon();
-    const disconnectResp2 = await tauriInvoke("desktop_disconnect", {});
-    if (disconnectResp2.error) {
-      throw new Error(`desktop_disconnect before restart check failed: ${disconnectResp2.error}`);
+      const disconnectResp = await tauriInvoke("desktop_disconnect", {});
+      if (disconnectResp.error) {
+        throw new Error(`desktop_disconnect failed: ${disconnectResp.error}`);
+      }
+      const reconnectResp = await connectSshWithPolling({
+        host: fixture.host,
+        user: fixture.user,
+        remote_port: fixture.port,
+        start_remote: true,
+        remote_data_dir: fixture.dataDir || undefined,
+      });
+      contractRecorder.recordArtifact("reconnect_response", reconnectResp);
+      if (reconnectResp.error) {
+        throw new Error(`desktop reconnect failed: ${reconnectResp.error}`);
+      }
+      contractRecorder.recordArtifact("daemon_health_post_reconnect", await assertRemoteHealth("post-reconnect"));
+
+      stopRemoteDaemon();
+      const disconnectResp2 = await tauriInvoke("desktop_disconnect", {});
+      if (disconnectResp2.error) {
+        throw new Error(`desktop_disconnect before restart check failed: ${disconnectResp2.error}`);
+      }
+      const restartResp = await connectSshWithPolling({
+        host: fixture.host,
+        user: fixture.user,
+        remote_port: fixture.port,
+        start_remote: true,
+        remote_data_dir: fixture.dataDir || undefined,
+      });
+      contractRecorder.recordArtifact("restart_response", restartResp);
+      if (restartResp.error) {
+        throw new Error(`desktop reconnect after remote daemon stop failed: ${restartResp.error}`);
+      }
+      contractRecorder.recordArtifact(
+        "daemon_health_post_remote_restart",
+        await assertRemoteHealth("post-remote-daemon-restart"),
+      );
+      contractRecorder.recordAssertion("remote_restart", "pass", "desktop reconnect restarted the remote daemon");
+    } catch (error) {
+      finalResult = "failed";
+      finalError = String(error);
+      finalReason = "remote bootstrap contract failed";
+      contractRecorder.recordAssertion("contract", "fail", finalError);
+      await collectFailureArtifacts("failure");
+      throw error;
+    } finally {
+      finalizeReport({
+        result: finalResult,
+        reason: finalReason,
+        error: finalError,
+        extras: {
+          auth_test_mode: AUTH_TEST_MODE,
+          expect_connect_failure: EXPECT_CONNECT_FAILURE,
+          require_first_turn_success: REQUIRE_FIRST_TURN_SUCCESS,
+          first_turn_report_path: FIRST_TURN_REPORT_PATH || null,
+          workspace_launch: workspaceLaunch,
+          provider_config: firstTurnProvider,
+          first_turn: firstTurn,
+        },
+      });
     }
-    const restartResp = await connectSshWithPolling({
-      host: REMOTE_HOST,
-      user: REMOTE_USER,
-      remote_port: REMOTE_PORT,
-      start_remote: true,
-      remote_data_dir: REMOTE_DATA_DIR || undefined,
-    });
-    if (restartResp.error) {
-      throw new Error(`desktop reconnect after remote daemon stop failed: ${restartResp.error}`);
-    }
-    await assertRemoteHealth("post-remote-daemon-restart");
   });
 });

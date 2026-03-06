@@ -238,7 +238,7 @@ const ensureCodexOpenRouterWorkspaceReady = async (
     modelOverride,
     endpointName,
   });
-  await verifyProviderForWorkspace(workspaceId, providerId);
+  const verifyPayload = await verifyProviderForWorkspace(workspaceId, providerId);
   const modelId = await resolveWorkspaceProviderModelId(workspaceId, providerId, {
     timeoutMs,
     pollMs,
@@ -250,6 +250,7 @@ const ensureCodexOpenRouterWorkspaceReady = async (
     modelId,
     baseUrl,
     modelOverride,
+    verifyPayload,
   };
 };
 
