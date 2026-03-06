@@ -125,6 +125,25 @@
       ]
     },
     {
+      "id": "BRK-008",
+      "title": "container workspace fails to recover after podman machine restart",
+      "spec": "automation/specs/container-lifecycle-resume.spec.cjs",
+      "scenarios": "local-runtime-resume",
+      "preconditions": [
+        "OPENROUTER_API_KEY set",
+        "container workspace created and first turn already succeeded",
+        "podman machine lifecycle supported"
+      ],
+      "trigger": "stop and restart the daemon-owned podman machine, reopen the existing workspace, then run the next first-turn smoke",
+      "expected_failure_signal": "reopened workspace shows daemon overlay OR post-restart first turn fails without lifecycle diagnostics",
+      "required_logs": [
+        "wdio.log",
+        "test-runner-backend.log",
+        "tauri-driver.log",
+        "container-lifecycle-resume.json"
+      ]
+    },
+    {
       "id": "BRK-009",
       "title": "remote container contract (env-gated)",
       "spec": "automation/specs/remote-container-contract.spec.cjs",
@@ -156,6 +175,25 @@
         "wdio.log",
         "provider-health.json",
         "recovery-summary.json"
+      ]
+    },
+    {
+      "id": "BRK-011",
+      "title": "container workspace fails to recover after local daemon + desktop restart",
+      "spec": "automation/specs/container-lifecycle-resume.spec.cjs",
+      "scenarios": "local-app-daemon-resume",
+      "preconditions": [
+        "OPENROUTER_API_KEY set",
+        "container workspace created and first turn already succeeded",
+        "desktop automation restart hooks enabled"
+      ],
+      "trigger": "restart the local daemon and desktop app, reopen the existing workspace, then run the next first-turn smoke",
+      "expected_failure_signal": "daemon unavailable overlay appears after restart OR reopened workspace cannot complete the next first turn with captured diagnostics",
+      "required_logs": [
+        "wdio.log",
+        "test-runner-backend.log",
+        "tauri-driver.log",
+        "container-lifecycle-resume.json"
       ]
     }
   ]
