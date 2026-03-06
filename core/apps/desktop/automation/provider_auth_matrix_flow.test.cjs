@@ -8,25 +8,26 @@ const { resolveSubscriptionAuthPlan } = require("./specs/helpers/provider_auth_m
 
 const mkTempDir = (prefix) => fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 
-test("codex plan skips when no host auth file is available", () => {
-  const homeDir = mkTempDir("ctx-provider-auth-codex-missing-");
-  const result = resolveSubscriptionAuthPlan("codex", {}, { homeDir });
+test("codex plan skips when OAuth browser credentials are missing", () => {
+  const result = resolveSubscriptionAuthPlan("codex", {});
   assert.equal(result.status, "skip");
-  assert.match(result.reason, /codex host auth file not found/i);
+  assert.match(result.reason, /CTX_E2E_CODEX_OAUTH_EMAIL/i);
 });
 
-test("codex plan uses explicit host auth path when provided", () => {
-  const dir = mkTempDir("ctx-provider-auth-codex-path-");
-  const authPath = path.join(dir, "auth.json");
-  fs.writeFileSync(authPath, '{"OPENAI_API_KEY":"token"}', "utf8");
+test("codex plan resolves browser-backed OAuth inputs from env", () => {
   const result = resolveSubscriptionAuthPlan(
     "codex",
-    { CTX_CODEX_HOST_AUTH_PATH: authPath },
-    { homeDir: dir },
+    {
+      CTX_E2E_CODEX_OAUTH_EMAIL: "user@example.com",
+      CTX_E2E_CODEX_OAUTH_PASSWORD: "super-secret-password",
+      CTX_E2E_CODEX_OAUTH_TOTP_SECRET: "JBSWY3DPEHPK3PXP",
+    },
   );
   assert.equal(result.status, "ready");
-  assert.equal(result.plan.strategy, "codex_host_import");
-  assert.equal(result.plan.hostAuthPath, authPath);
+  assert.equal(result.plan.strategy, "codex_oauth_browser");
+  assert.equal(result.plan.email, "user@example.com");
+  assert.equal(result.plan.password, "super-secret-password");
+  assert.equal(result.plan.totpSecret, "JBSWY3DPEHPK3PXP");
 });
 
 test("cursor plan resolves managed upsert inputs from env", () => {

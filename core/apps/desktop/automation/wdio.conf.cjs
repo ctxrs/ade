@@ -93,7 +93,34 @@ const REMOTE_SSH_CONFIG_PATH = String(
 const SKIP_REMOTE_CTX_PROVISION = ["1", "true", "yes"].includes(
   String(process.env.CTX_AUTOMATION_SKIP_REMOTE_CTX_PROVISION || "0").trim().toLowerCase(),
 );
-const WDIO_LOG_LEVEL = String(process.env.CTX_AUTOMATION_WDIO_LOG_LEVEL || "info").trim() || "info";
+const requestedWdioLogLevel = String(process.env.CTX_AUTOMATION_WDIO_LOG_LEVEL || "info").trim() || "info";
+const REAL_AUTH_LOG_LEVEL_ENV_NAMES = Object.freeze([
+  "CTX_E2E_CODEX_OAUTH_EMAIL",
+  "CTX_E2E_CODEX_OAUTH_PASSWORD",
+  "CTX_E2E_CODEX_OAUTH_TOTP_SECRET",
+  "CTX_E2E_CURSOR_OAUTH_EMAIL",
+  "CTX_E2E_CURSOR_OAUTH_PASSWORD",
+  "CTX_E2E_CURSOR_EMAIL",
+  "CTX_E2E_CURSOR_API_KEY",
+]);
+const WDIO_LOG_LEVEL_RANK = Object.freeze({
+  trace: 0,
+  debug: 1,
+  info: 2,
+  warn: 3,
+  error: 4,
+  silent: 5,
+});
+const HAS_REAL_AUTH_ENV = REAL_AUTH_LOG_LEVEL_ENV_NAMES.some((name) => String(process.env[name] || "").trim().length > 0);
+const WDIO_LOG_LEVEL = (() => {
+  const requestedRank = Object.prototype.hasOwnProperty.call(WDIO_LOG_LEVEL_RANK, requestedWdioLogLevel)
+    ? WDIO_LOG_LEVEL_RANK[requestedWdioLogLevel]
+    : WDIO_LOG_LEVEL_RANK.info;
+  if (HAS_REAL_AUTH_ENV && requestedRank < WDIO_LOG_LEVEL_RANK.warn) {
+    return "warn";
+  }
+  return requestedWdioLogLevel;
+})();
 const INTERNAL_DAEMON_DATA_DIR_OVERRIDE = String(
   process.env.CTX_AUTOMATION_INTERNAL_DAEMON_DATA_DIR || "",
 ).trim();

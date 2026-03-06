@@ -8,13 +8,14 @@ const {
   initGitRepo,
   scenarioEnabled,
   assertConnectedLocalAndListening,
+  runProviderFirstTurnApiSmoke,
 } = require("./helpers/workspace_wizard_flow.cjs");
 const {
   verifyProviderForWorkspace,
   resolveWorkspaceProviderModelId,
 } = require("./helpers/provider_runtime.cjs");
 const {
-  createProviderOAuthHarness,
+  completeCodexOauthWithBrowserCredentials,
 } = require("./helpers/provider_oauth_flow.cjs");
 
 const DEFAULT_CASE_TIMEOUT_MS = 20 * 60_000;
@@ -39,26 +40,6 @@ const writeSkipReport = (reportPath, reason) => {
     reason: normalizeText(reason),
     completed_at: new Date().toISOString(),
   }, null, 2)}\n`, "utf8");
-};
-
-const startCodexDesktopRelay = async ({ loginId, callbackUrl, completionToken }) => {
-  const result = await browser.execute(async (req) => {
-    const invoke = window.__TAURI__?.core?.invoke;
-    if (!invoke) return { ok: false, error: "Tauri invoke not available" };
-    try {
-      const accepted = await invoke("desktop_start_codex_login_relay", { req });
-      return { ok: Boolean(accepted) };
-    } catch (error) {
-      return { ok: false, error: String(error) };
-    }
-  }, {
-    login_id: loginId,
-    callback_url: callbackUrl,
-    completion_token: completionToken,
-  });
-  if (!result || result.ok !== true) {
-    throw new Error(normalizeText(result?.error) || "failed to start codex desktop relay");
-  }
 };
 
 const createWorkspaceAndLaunchExecution = async ({ baseDir, name }) => {
@@ -151,42 +132,24 @@ describe("codex oauth harness framework (desktop e2e)", () => {
       this.skip();
     }
 
-    const oauthHarness = createProviderOAuthHarness({
-      outputPath: reportPath,
-      pollMs: 1000,
-      timeoutMs: parsePositiveInt(process.env.CTX_AUTOMATION_CODEX_OAUTH_TIMEOUT_MS || "", DEFAULT_LOGIN_TIMEOUT_MS),
-      urlFallbackGraceMs: 2000,
-    });
+    const oauthTimeoutMs = parsePositiveInt(
+      process.env.CTX_AUTOMATION_CODEX_OAUTH_TIMEOUT_MS || "",
+      DEFAULT_LOGIN_TIMEOUT_MS,
+    );
 
     let workspaceId = "";
     try {
       await assertConnectedLocalAndListening();
-
-      const login = await oauthHarness.startProviderLogin(
-        "codex",
-        normalizeText(process.env.CTX_AUTOMATION_CODEX_OAUTH_LABEL) || `codex-oauth-${runId}`,
-      );
-
-      if (login.expectedCallbackUrl && login.completionToken) {
-        await startCodexDesktopRelay({
-          loginId: login.loginId,
-          callbackUrl: login.expectedCallbackUrl,
-          completionToken: login.completionToken,
-        });
-      }
-
-      const authUrl = await oauthHarness.awaitLoginUrl(login.loginId, 20_000);
-      await oauthHarness.openAuthUrl(authUrl.authUrl);
-
-      const terminal = await oauthHarness.awaitLoginTerminal(
-        login.loginId,
-        parsePositiveInt(process.env.CTX_AUTOMATION_CODEX_OAUTH_TIMEOUT_MS || "", DEFAULT_LOGIN_TIMEOUT_MS),
-      );
-      if (terminal.status !== "success") {
-        throw new Error(`codex oauth login did not succeed: ${JSON.stringify(terminal.redactedPayload || terminal)}`);
-      }
-
-      await oauthHarness.assertAccountActivated("codex");
+      await completeCodexOauthWithBrowserCredentials({
+        label: normalizeText(process.env.CTX_AUTOMATION_CODEX_OAUTH_LABEL) || `codex-oauth-${runId}`,
+        email: normalizeText(process.env.CTX_E2E_CODEX_OAUTH_EMAIL),
+        password: process.env.CTX_E2E_CODEX_OAUTH_PASSWORD || "",
+        totpSecret: process.env.CTX_E2E_CODEX_OAUTH_TOTP_SECRET || "",
+        outputPath: reportPath,
+        pollMs: 1000,
+        timeoutMs: oauthTimeoutMs,
+        urlFallbackGraceMs: 2000,
+      });
 
       const workspace = await createWorkspaceAndLaunchExecution({
         baseDir: localBase,
@@ -195,10 +158,19 @@ describe("codex oauth harness framework (desktop e2e)", () => {
       workspaceId = workspace.workspaceId;
 
       await verifyProviderForWorkspace(workspace.workspaceId, "codex");
-      await resolveWorkspaceProviderModelId(workspace.workspaceId, "codex", {
+      const modelId = await resolveWorkspaceProviderModelId(workspace.workspaceId, "codex", {
         timeoutMs: 90_000,
         pollMs: 3000,
       });
+      await runProviderFirstTurnApiSmoke(
+        workspace.workspaceId,
+        {
+          providerId: "codex",
+          modelId,
+          prompt: `codex-oauth-framework-${Date.now()}: reply with exactly pong`,
+        },
+        240_000,
+      );
     } finally {
       if (workspaceId) {
         await daemonJson("DELETE", `/api/workspaces/${workspaceId}`);

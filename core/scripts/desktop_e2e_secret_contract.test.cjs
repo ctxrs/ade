@@ -23,6 +23,8 @@ test("contract report writes and then validates cleanly", () => {
 
   const report = fs.readFileSync(reportPath, "utf8");
   assert.match(report, /provider-auth-matrix-required/);
+  assert.match(report, /CTX_E2E_CODEX_OAUTH_EMAIL/);
+  assert.match(report, /CTX_E2E_CODEX_OAUTH_PASSWORD/);
   assert.match(report, /mac-webdriver-quick-smoke/);
 
   const checkResult = run(["--check-report", reportPath]);

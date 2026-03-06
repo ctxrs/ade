@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-03-05",
+  "generated_at": "2026-03-06",
   "summary": "Provider auth matrix contract for desktop/web e2e lane coverage. Support=covered now, deferred=known coverage gap, unsupported=explicitly out of product auth support.",
   "providers": [
     {
@@ -115,7 +115,7 @@
       "provider_id": "codex",
       "auth_mode": "subscription_oauth",
       "env_target": "local_host",
-      "support": "deferred",
+      "support": "supported",
       "lane": "nightly",
       "required_assertions": [
         "probe_success",
@@ -123,20 +123,24 @@
         "first_turn_success"
       ],
       "owner": "provider-codex",
-      "prerequisites": [],
+      "prerequisites": [
+        "CTX_E2E_CODEX_OAUTH_EMAIL",
+        "CTX_E2E_CODEX_OAUTH_PASSWORD",
+        "CTX_E2E_CODEX_OAUTH_TOTP_SECRET"
+      ],
       "runner": {
         "kind": "desktop_wdio",
         "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
         "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "credential_backed_validation_pending"
+      "skip_reason": null
     },
     {
       "id": "codex.subscription_oauth.local_container",
       "provider_id": "codex",
       "auth_mode": "subscription_oauth",
       "env_target": "local_container",
-      "support": "deferred",
+      "support": "supported",
       "lane": "nightly",
       "required_assertions": [
         "probe_success",
@@ -144,13 +148,17 @@
         "first_turn_success"
       ],
       "owner": "provider-codex",
-      "prerequisites": [],
+      "prerequisites": [
+        "CTX_E2E_CODEX_OAUTH_EMAIL",
+        "CTX_E2E_CODEX_OAUTH_PASSWORD",
+        "CTX_E2E_CODEX_OAUTH_TOTP_SECRET"
+      ],
       "runner": {
         "kind": "desktop_wdio",
         "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
         "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "credential_backed_validation_pending"
+      "skip_reason": null
     },
     {
       "id": "codex.subscription_oauth.remote_host",
@@ -1091,7 +1099,7 @@
       "provider_id": "cursor",
       "auth_mode": "subscription_oauth",
       "env_target": "local_host",
-      "support": "deferred",
+      "support": "supported",
       "lane": "nightly",
       "required_assertions": [
         "probe_success",
@@ -1099,20 +1107,22 @@
         "first_turn_success"
       ],
       "owner": "provider-cursor",
-      "prerequisites": [],
+      "prerequisites": [
+        "CTX_E2E_CURSOR_API_KEY"
+      ],
       "runner": {
         "kind": "desktop_wdio",
         "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
         "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "credential_backed_validation_pending"
+      "skip_reason": null
     },
     {
       "id": "cursor.subscription_oauth.local_container",
       "provider_id": "cursor",
       "auth_mode": "subscription_oauth",
       "env_target": "local_container",
-      "support": "deferred",
+      "support": "supported",
       "lane": "nightly",
       "required_assertions": [
         "probe_success",
@@ -1120,13 +1130,15 @@
         "first_turn_success"
       ],
       "owner": "provider-cursor",
-      "prerequisites": [],
+      "prerequisites": [
+        "CTX_E2E_CURSOR_API_KEY"
+      ],
       "runner": {
         "kind": "desktop_wdio",
         "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
         "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "credential_backed_validation_pending"
+      "skip_reason": null
     },
     {
       "id": "cursor.subscription_oauth.remote_host",

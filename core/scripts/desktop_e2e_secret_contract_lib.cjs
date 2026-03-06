@@ -94,6 +94,40 @@ const envSpecs = {
       `defaults to ${defaultOpenRouterBaseUrl}`,
     ],
   },
+  CTX_E2E_CODEX_OAUTH_EMAIL: {
+    kind: "config",
+    description: "Codex OAuth account email for real browser-backed subscription login coverage.",
+    validation: [
+      "trimmed, non-empty email address",
+      "must contain @",
+      "must not contain whitespace",
+    ],
+    format: "email",
+  },
+  CTX_E2E_CODEX_OAUTH_PASSWORD: {
+    kind: "secret",
+    description: "Codex OAuth account password for real browser-backed subscription login coverage.",
+    validation: [
+      "trimmed, non-empty secret value",
+      "must not be a placeholder example",
+      "minimum length 8",
+    ],
+    minLength: 8,
+    allowWhitespace: true,
+  },
+  CTX_E2E_CODEX_OAUTH_TOTP_SECRET: {
+    kind: "secret",
+    description: "Codex OAuth authenticator secret used to generate TOTP codes during real login coverage.",
+    validation: [
+      "trimmed, non-empty secret value",
+      "must not be a placeholder example",
+      "must decode as base32 after removing spaces, hyphens, and = padding",
+      "minimum normalized length 16",
+    ],
+    minLength: 16,
+    allowWhitespace: true,
+    format: "base32",
+  },
   CTX_E2E_CURSOR_API_KEY: {
     kind: "secret",
     description: "Cursor provider API key for real provider-api-auth Playwright coverage.",
@@ -104,6 +138,16 @@ const envSpecs = {
       "minimum length 10",
     ],
     minLength: 10,
+  },
+  CTX_E2E_CURSOR_EMAIL: {
+    kind: "config",
+    description: "Cursor account email attached to managed subscription auth upserts.",
+    validation: [
+      "trimmed, non-empty email address when provided",
+      "must contain @",
+      "must not contain whitespace",
+    ],
+    format: "email",
   },
   CTX_E2E_GEMINI_API_KEY: {
     kind: "secret",
@@ -185,7 +229,7 @@ const validateSecretValue = (envName, value) => {
   if (trimmed !== value) {
     errors.push("must not include leading or trailing whitespace");
   }
-  if (/\s/.test(trimmed)) {
+  if (!spec?.allowWhitespace && /\s/.test(trimmed)) {
     errors.push("must not contain whitespace");
   }
   if (secretPlaceholderValues.has(trimmed.toLowerCase())) {
@@ -195,20 +239,39 @@ const validateSecretValue = (envName, value) => {
   if (minLength > 0 && trimmed.length < minLength) {
     errors.push(`must be at least ${minLength} characters`);
   }
+  if (spec?.format === "base32") {
+    const normalized = trimmed.toUpperCase().replace(/[\s=-]+/g, "");
+    if (!normalized) {
+      errors.push("must decode as base32 after removing separators");
+    } else if (!/^[A-Z2-7]+$/.test(normalized)) {
+      errors.push("must decode as base32 after removing separators");
+    } else if (normalized.length < minLength) {
+      errors.push(`must be at least ${minLength} characters after removing separators`);
+    }
+  }
   return errors;
 };
 
 const validateConfigValue = (envName, value) => {
-  if (envName !== "OPENROUTER_BASE_URL") return [];
   const trimmed = normalizeText(value);
-  if (!trimmed) return [];
-  try {
-    const parsed = new URL(trimmed);
-    if (parsed.protocol !== "https:") {
-      return ["must use https"];
+  if (envName === "OPENROUTER_BASE_URL") {
+    if (!trimmed) return [];
+    try {
+      const parsed = new URL(trimmed);
+      if (parsed.protocol !== "https:") {
+        return ["must use https"];
+      }
+    } catch {
+      return ["must be a valid URL"];
     }
-  } catch {
-    return ["must be a valid URL"];
+    return [];
+  }
+  if (envSpecs[envName]?.format === "email") {
+    if (!trimmed) return ["is empty"];
+    if (trimmed !== value) return ["must not include leading or trailing whitespace"];
+    if (/\s/.test(trimmed)) return ["must not contain whitespace"];
+    if (!trimmed.includes("@")) return ["must contain @"];
+    return [];
   }
   return [];
 };
@@ -374,6 +437,13 @@ const resolveBreakMatrixDynamic = ({ caseIds = [] }) => {
 
 const uniq = (values) => Array.from(new Set(values.filter(Boolean)));
 
+const collectSecretEnvNames = (requirements) =>
+  uniq(
+    (Array.isArray(requirements) ? requirements : [])
+      .map((requirement) => normalizeText(requirement?.envName))
+      .filter((envName) => envSpecs[envName]?.kind === "secret"),
+  );
+
 const resolveSuiteContract = (suiteId, options = {}) => {
   const platform = normalizeText(options.platform || process.platform);
   const env = options.env || process.env;
@@ -421,9 +491,7 @@ const resolveSuiteContract = (suiteId, options = {}) => {
         requirements,
         optionalRequirements,
         artifactRoots: ["core/apps/desktop/automation/artifacts/provider-auth-matrix/"],
-        redactionEnvNames: lane === "required"
-          ? ["CN_API_KEY", "OPENROUTER_API_KEY"]
-          : ["CN_API_KEY", "OPENROUTER_API_KEY"],
+        redactionEnvNames: collectSecretEnvNames([...requirements, ...optionalRequirements]),
         metadata: {
           lane,
           selectedCellIds: dynamic.selectedCellIds,
@@ -540,7 +608,7 @@ const resolveSuiteContract = (suiteId, options = {}) => {
         requirements,
         optionalRequirements,
         artifactRoots: ["core/apps/desktop/automation/artifacts/macos-break-matrix/"],
-        redactionEnvNames: ["CN_API_KEY", "OPENROUTER_API_KEY"],
+        redactionEnvNames: collectSecretEnvNames([...requirements, ...optionalRequirements]),
         metadata: {
           selectedCaseIds: dynamic.selectedCaseIds,
         },

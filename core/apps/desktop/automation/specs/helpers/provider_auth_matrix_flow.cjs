@@ -1,11 +1,12 @@
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 
 const { daemonJson } = require("./daemon.cjs");
 const { selectSubscriptionSource } = require("./provider_runtime.cjs");
+const { completeCodexOauthWithBrowserCredentials } = require("./provider_oauth_flow.cjs");
 
 const trimText = (value) => String(value || "").trim();
+const DEFAULT_CODEX_OAUTH_TIMEOUT_MS = 15 * 60_000;
 
 const normalizeProviderLabel = (providerId) => {
   const normalized = trimText(providerId);
@@ -30,12 +31,12 @@ const readOptionalFile = (filePath, label) => {
   };
 };
 
-const readRequiredText = ({ rawEnv, pathEnv, label, env = process.env }) => {
+const readRequiredText = ({ rawEnv, pathEnv, label, env = process.env, preserveWhitespace = false }) => {
   const raw = Object.prototype.hasOwnProperty.call(env, rawEnv) ? String(env[rawEnv] || "") : "";
   if (trimText(raw)) {
     return {
       ok: true,
-      value: raw.trim(),
+      value: preserveWhitespace ? raw : raw.trim(),
       source: "env",
       source_ref: rawEnv,
     };
@@ -46,7 +47,7 @@ const readRequiredText = ({ rawEnv, pathEnv, label, env = process.env }) => {
     if (!file.ok) return file;
     return {
       ok: true,
-      value: trimText(file.value),
+      value: preserveWhitespace ? String(file.value || "") : trimText(file.value),
       source: "file",
       source_ref: file.path,
     };
@@ -108,33 +109,55 @@ const readSeedDirectory = ({ envName, label, env = process.env }) => {
   };
 };
 
-const resolveCodexSource = ({ env = process.env, homeDir = os.homedir() }) => {
-  const explicitPath = trimText(env.CTX_CODEX_HOST_AUTH_PATH);
-  const authPath = explicitPath || path.join(homeDir, ".codex", "auth.json");
-  if (!fs.existsSync(authPath)) {
-    return {
-      status: "skip",
-      reason: explicitPath
-        ? `codex host auth file not found at ${authPath}`
-        : `codex host auth file not found at ${authPath}; sign into Codex locally or set CTX_CODEX_HOST_AUTH_PATH`,
-    };
-  }
+const resolveCodexSource = ({ env = process.env }) => {
+  const email = readRequiredText({
+    rawEnv: "CTX_E2E_CODEX_OAUTH_EMAIL",
+    pathEnv: "CTX_E2E_CODEX_OAUTH_EMAIL_PATH",
+    label: "Codex OAuth email",
+    env,
+  });
+  if (!email.ok) return { status: "skip", reason: email.reason };
+
+  const password = readRequiredText({
+    rawEnv: "CTX_E2E_CODEX_OAUTH_PASSWORD",
+    pathEnv: "CTX_E2E_CODEX_OAUTH_PASSWORD_PATH",
+    label: "Codex OAuth password",
+    env,
+    preserveWhitespace: true,
+  });
+  if (!password.ok) return { status: "skip", reason: password.reason };
+
+  const totpSecret = readRequiredText({
+    rawEnv: "CTX_E2E_CODEX_OAUTH_TOTP_SECRET",
+    pathEnv: "CTX_E2E_CODEX_OAUTH_TOTP_SECRET_PATH",
+    label: "Codex OAuth TOTP secret",
+    env,
+  });
+  if (!totpSecret.ok) return { status: "skip", reason: totpSecret.reason };
+
   return {
     status: "ready",
     plan: {
       providerId: "codex",
-      strategy: "codex_host_import",
-      hostAuthPath: authPath,
-      label: `Codex Matrix ${Date.now()}`,
+      strategy: "codex_oauth_browser",
+      label: trimText(env.CTX_E2E_CODEX_OAUTH_LABEL) || `Codex Matrix ${Date.now()}`,
+      email: email.value,
+      password: password.value,
+      totpSecret: totpSecret.value,
+      sources: {
+        email: email.source_ref,
+        password: password.source_ref,
+        totp_secret: totpSecret.source_ref,
+      },
     },
   };
 };
 
-const resolveSubscriptionAuthPlan = (providerId, env = process.env, options = {}) => {
+const resolveSubscriptionAuthPlan = (providerId, env = process.env) => {
   const providerLabel = normalizeProviderLabel(providerId);
   switch (providerId) {
     case "codex":
-      return resolveCodexSource({ env, homeDir: options.homeDir || os.homedir() });
+      return resolveCodexSource({ env });
     case "claude-crp": {
       const setupToken = readRequiredText({
         rawEnv: "CTX_E2E_CLAUDE_SETUP_TOKEN",
@@ -478,18 +501,16 @@ const prepareSubscriptionAuth = async ({ providerId, envTarget }) => {
     };
   }
 
-  if (plan.strategy === "codex_host_import") {
-    const probe = await getJson("/api/providers/codex/import/host");
-    artifacts.codex_import_probe = probe;
-    if (probe.available !== true) {
-      return {
-        status: "skip",
-        reason: trimText(probe.error) || "codex host import probe reported no usable auth candidate",
-        artifacts,
-      };
-    }
-    artifacts.account_response = await postJson("/api/providers/codex/import/host", {
+  if (plan.strategy === "codex_oauth_browser") {
+    artifacts.oauth_login = await completeCodexOauthWithBrowserCredentials({
       label: plan.label,
+      email: plan.email,
+      password: plan.password,
+      totpSecret: plan.totpSecret,
+      timeoutMs: Number.parseInt(
+        String(process.env.CTX_AUTOMATION_CODEX_OAUTH_TIMEOUT_MS || `${DEFAULT_CODEX_OAUTH_TIMEOUT_MS}`),
+        10,
+      ) || DEFAULT_CODEX_OAUTH_TIMEOUT_MS,
     });
   } else if (plan.strategy === "stage_amp_home" || plan.strategy === "stage_amp_secrets") {
     const dataRoot = ensureLocalDaemonDataDir();

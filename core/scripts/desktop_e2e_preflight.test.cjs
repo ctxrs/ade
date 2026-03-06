@@ -47,6 +47,26 @@ test("allow-missing is an explicit local opt out", () => {
   assert.match(result.stderr, /allow-missing enabled/i);
 });
 
+test("preflight resolves codex oauth credentials from selected nightly matrix cells", () => {
+  const result = run([
+    "--suite",
+    "provider-auth-matrix-nightly",
+    "--platform",
+    "darwin",
+    "--cell",
+    "codex.subscription_oauth.local_host",
+  ], {
+    CN_API_KEY: "cn_secret_value_12345",
+    CTX_E2E_CODEX_OAUTH_EMAIL: "user@example.com",
+    CTX_E2E_CODEX_OAUTH_PASSWORD: "",
+    CTX_E2E_CODEX_OAUTH_TOTP_SECRET: "JBSWY3DPEHPK3PXP",
+  });
+
+  assert.notEqual(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
+  assert.match(result.stderr, /CTX_E2E_CODEX_OAUTH_PASSWORD/);
+  assert.match(result.stderr, /preflight failed/i);
+});
+
 test("preflight accepts OpenRouter key from title_generation settings fallback", () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-desktop-e2e-settings-"));
   const dataRoot = path.join(tempDir, "ctx-data");

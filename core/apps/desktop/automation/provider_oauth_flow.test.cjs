@@ -36,6 +36,19 @@ test("sanitizeAuthUrl strips query and fragment data", () => {
   });
 });
 
+test("createTotpCode follows RFC6238 SHA-1 vectors", () => {
+  const { createTotpCode, decodeBase32Secret, normalizeBase32Secret } = loadHelper();
+  assert.equal(normalizeBase32Secret("GEZD GNBV-GY3TQOJQ===="), "GEZDGNBVGY3TQOJQ");
+  assert.equal(decodeBase32Secret("MZXW6===").toString("utf8"), "foo");
+  assert.equal(
+    createTotpCode("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", {
+      timestampMs: 59_000,
+      digits: 8,
+    }),
+    "94287082",
+  );
+});
+
 test("normalizeLoginStartPayload and redactPayload normalize codex login responses", () => {
   const { PROVIDER_OAUTH_DESCRIPTORS, normalizeLoginStartPayload, redactPayload } = loadHelper();
   const descriptor = PROVIDER_OAUTH_DESCRIPTORS.codex;
@@ -205,4 +218,64 @@ test("provider oauth harness records redacted artifacts through terminal success
     JSON.stringify(artifact).includes("completion-token-secret") === false,
     "artifacts should not contain raw completion tokens",
   );
+});
+
+test("fillBrowserAuthField prefers webdriver element interactions for email entry", async () => {
+  let executeCalled = false;
+  const setValues = [];
+  const emailElement = {
+    elementId: "email-1",
+    isDisplayed: async () => true,
+    scrollIntoView: async () => {},
+    click: async () => {},
+    clearValue: async () => {},
+    setValue: async (value) => {
+      setValues.push(value);
+    },
+    getAttribute: async () => "",
+  };
+  global.browser = {
+    $$: async (selector) => (selector === "input[type='email']" ? [emailElement] : []),
+    execute: async () => {
+      executeCalled = true;
+      throw new Error("webdriver execute fallback should not be used");
+    },
+  };
+
+  const { fillBrowserAuthField } = loadHelper();
+  const result = await fillBrowserAuthField("email", "user@example.com");
+
+  assert.deepEqual(result, { ok: true, filled: 1, mode: "webdriver" });
+  assert.deepEqual(setValues, ["user@example.com"]);
+  assert.equal(executeCalled, false);
+});
+
+test("submitVisibleAuthStep prefers webdriver button clicks before DOM-execute fallback", async () => {
+  let clicked = false;
+  let executeCalled = false;
+  const continueButton = {
+    elementId: "button-1",
+    isDisplayed: async () => true,
+    scrollIntoView: async () => {},
+    click: async () => {
+      clicked = true;
+    },
+    getText: async () => "Continue",
+    getAttribute: async () => "",
+  };
+  global.browser = {
+    $$: async (selector) => (selector === "button[type='submit']" ? [continueButton] : []),
+    execute: async () => {
+      executeCalled = true;
+      throw new Error("webdriver execute fallback should not be used");
+    },
+  };
+
+  const { submitVisibleAuthStep } = loadHelper();
+  const result = await submitVisibleAuthStep(["continue"]);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.strategy, "webdriver-button");
+  assert.equal(clicked, true);
+  assert.equal(executeCalled, false);
 });

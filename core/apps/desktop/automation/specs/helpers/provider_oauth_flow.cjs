@@ -1,3 +1,4 @@
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -6,6 +7,10 @@ const { daemonJson } = require("./daemon.cjs");
 const DEFAULT_POLL_MS = 750;
 const DEFAULT_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_URL_FALLBACK_GRACE_MS = 1200;
+const OPENAI_AUTH_TEXT_SNIPPET_LIMIT = 4000;
+const TOTP_PERIOD_SECONDS = 30;
+const TOTP_DIGITS = 6;
+const BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
 const PROVIDER_OAUTH_DESCRIPTORS = Object.freeze({
   codex: {
@@ -98,6 +103,661 @@ const sanitizeAuthUrl = (raw) => {
         }
       : null;
   }
+};
+
+const normalizeBase32Secret = (raw) =>
+  readString(raw)
+    .toUpperCase()
+    .replace(/[\s=-]+/g, "");
+
+const decodeBase32Secret = (raw) => {
+  const normalized = normalizeBase32Secret(raw);
+  if (!normalized) {
+    throw new Error("TOTP secret is required");
+  }
+
+  let bits = 0;
+  let value = 0;
+  const bytes = [];
+  for (const ch of normalized) {
+    const index = BASE32_ALPHABET.indexOf(ch);
+    if (index < 0) {
+      throw new Error(`invalid base32 character '${ch}' in TOTP secret`);
+    }
+    value = (value << 5) | index;
+    bits += 5;
+    if (bits >= 8) {
+      bits -= 8;
+      bytes.push((value >>> bits) & 0xff);
+    }
+  }
+  return Buffer.from(bytes);
+};
+
+const createTotpCode = (secret, { timestampMs = Date.now(), periodSeconds = TOTP_PERIOD_SECONDS, digits = TOTP_DIGITS } = {}) => {
+  const key = decodeBase32Secret(secret);
+  const counter = Math.floor(timestampMs / 1000 / periodSeconds);
+  const counterBuffer = Buffer.alloc(8);
+  counterBuffer.writeUInt32BE(Math.floor(counter / 0x100000000), 0);
+  counterBuffer.writeUInt32BE(counter >>> 0, 4);
+  const digest = crypto.createHmac("sha1", key).update(counterBuffer).digest();
+  const offset = digest[digest.length - 1] & 0x0f;
+  const binary = (
+    ((digest[offset] & 0x7f) << 24)
+    | ((digest[offset + 1] & 0xff) << 16)
+    | ((digest[offset + 2] & 0xff) << 8)
+    | (digest[offset + 3] & 0xff)
+  );
+  return String(binary % (10 ** digits)).padStart(digits, "0");
+};
+
+const hasBrowserUrl = () => Boolean(global.browser && typeof global.browser.url === "function");
+const hasBrowserKeys = () => Boolean(global.browser && typeof global.browser.keys === "function");
+const hasBrowserQuery = () => Boolean(global.browser && typeof global.browser.$$ === "function");
+const hasBrowserExecute = () => Boolean(global.browser && typeof global.browser.execute === "function");
+let browserQuerySupported = true;
+
+const normalizeUiText = (value) => String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
+
+const AUTH_INPUT_SELECTOR_GROUPS = Object.freeze({
+  email: [
+    "input[type='email']",
+    "input[name='email']",
+    "input[autocomplete='email']",
+    "input[name*='email' i]",
+    "input[aria-label*='email' i]",
+    "input[placeholder*='email' i]",
+  ],
+  password: [
+    "input[type='password']",
+    "input[autocomplete='current-password']",
+    "input[autocomplete='password']",
+    "input[name*='password' i]",
+    "input[aria-label*='password' i]",
+  ],
+  otp: [
+    "input[autocomplete='one-time-code']",
+    "input[inputmode='numeric']",
+    "input[name*='otp' i]",
+    "input[name*='code' i]",
+    "input[aria-label*='authenticator' i]",
+    "input[aria-label*='verification' i]",
+    "input[aria-label*='code' i]",
+  ],
+});
+
+const AUTH_BUTTON_SELECTORS = Object.freeze([
+  "button[type='submit']",
+  "button",
+  "input[type='submit']",
+  "[role='button']",
+  "a",
+]);
+
+const elementKey = (element) =>
+  readString(element?.elementId || element?.ELEMENT || element?.["element-6066-11e4-a52e-4f735466cecf"]);
+
+const collectVisibleBrowserElements = async (selectors) => {
+  if (!browserQuerySupported || !hasBrowserQuery()) return [];
+
+  const visible = [];
+  const seen = new Set();
+  const selectorList = Array.isArray(selectors) ? selectors : [selectors];
+  for (const selector of selectorList) {
+    let candidates = [];
+    try {
+      candidates = await browser.$$(selector);
+    } catch {
+      browserQuerySupported = false;
+      return [];
+    }
+    for (const candidate of candidates) {
+      try {
+        if (typeof candidate?.isDisplayed === "function" && !(await candidate.isDisplayed())) {
+          continue;
+        }
+        const key = elementKey(candidate);
+        if (key && seen.has(key)) continue;
+        if (key) seen.add(key);
+        visible.push(candidate);
+      } catch {
+        // Ignore stale or unsupported element handles.
+      }
+    }
+    if (visible.length > 0) {
+      return visible;
+    }
+  }
+  return visible;
+};
+
+const readBrowserElementText = async (element) => {
+  const values = [];
+  try {
+    if (typeof element?.getText === "function") {
+      values.push(await element.getText());
+    }
+  } catch {
+    // ignore
+  }
+  for (const attribute of ["value", "aria-label", "title", "name"]) {
+    try {
+      if (typeof element?.getAttribute === "function") {
+        values.push(await element.getAttribute(attribute));
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return normalizeUiText(values.filter(Boolean).join(" "));
+};
+
+const focusBrowserElement = async (element) => {
+  if (!element) return;
+  try {
+    if (typeof element.scrollIntoView === "function") {
+      await element.scrollIntoView();
+    }
+  } catch {
+    // ignore
+  }
+  if (typeof element.click === "function") {
+    await element.click();
+  }
+};
+
+const setBrowserElementValue = async (element, value) => {
+  if (!element) return false;
+  await focusBrowserElement(element);
+  if (typeof element.clearValue === "function") {
+    try {
+      await element.clearValue();
+    } catch {
+      // Some password/code fields do not support clearValue consistently.
+    }
+  }
+  if (typeof element.setValue === "function") {
+    await element.setValue(String(value || ""));
+    return true;
+  }
+  if (hasBrowserKeys()) {
+    await browser.keys(String(value || ""));
+    return true;
+  }
+  return false;
+};
+
+const navigateBrowserToUrl = async (href) => {
+  const target = readString(href);
+  if (!target) {
+    throw new Error("auth URL is required to navigate browser");
+  }
+  if (hasBrowserUrl()) {
+    await browser.url(target);
+    return;
+  }
+  if (!hasBrowserExecute()) {
+    throw new Error("browser.url or browser.execute is required to navigate auth URL");
+  }
+  await browser.execute((authUrl) => {
+    window.location.assign(authUrl);
+  }, target);
+};
+
+const readVisibleDomState = async () => {
+  if (!hasBrowserExecute()) {
+    throw new Error("browser.execute is required to inspect auth page state");
+  }
+  return await browser.execute((textLimit) => {
+    const normalize = (value) => String(value || "").replace(/\s+/g, " ").trim();
+    const isVisible = (element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      const style = window.getComputedStyle(element);
+      if (!style || style.visibility === "hidden" || style.display === "none") return false;
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
+    const labelTextFor = (element) => {
+      const texts = [];
+      if (element instanceof HTMLElement) {
+        if (typeof element.getAttribute === "function") {
+          texts.push(element.getAttribute("aria-label"));
+          const labelledBy = element.getAttribute("aria-labelledby");
+          if (labelledBy) {
+            for (const id of labelledBy.split(/\s+/g)) {
+              const labelEl = document.getElementById(id);
+              if (labelEl) texts.push(labelEl.textContent);
+            }
+          }
+          const placeholder = element.getAttribute("placeholder");
+          if (placeholder) texts.push(placeholder);
+        }
+        if ("labels" in element && Array.isArray(Array.from(element.labels || []))) {
+          for (const label of Array.from(element.labels || [])) {
+            texts.push(label.textContent);
+          }
+        }
+        const parentLabel = element.closest("label");
+        if (parentLabel) texts.push(parentLabel.textContent);
+      }
+      return normalize(texts.filter(Boolean).join(" "));
+    };
+    const inputMetadata = Array.from(document.querySelectorAll("input, textarea"))
+      .filter((element) => isVisible(element))
+      .map((element) => ({
+        tag: element.tagName.toLowerCase(),
+        type: normalize(element.getAttribute("type") || "").toLowerCase(),
+        name: normalize(element.getAttribute("name") || "").toLowerCase(),
+        autocomplete: normalize(element.getAttribute("autocomplete") || "").toLowerCase(),
+        inputmode: normalize(element.getAttribute("inputmode") || "").toLowerCase(),
+        label: labelTextFor(element),
+        maxLength: Number(element.maxLength || 0),
+      }));
+    const buttonTexts = Array.from(document.querySelectorAll("button, [role='button'], input[type='submit'], a"))
+      .filter((element) => isVisible(element))
+      .map((element) => normalize(element.textContent || element.getAttribute("value") || element.getAttribute("aria-label")))
+      .filter(Boolean);
+    const bodyText = normalize(document.body?.innerText || "").slice(0, Math.max(0, Number(textLimit) || 0));
+    return {
+      url: String(window.location.href || ""),
+      title: normalize(document.title || ""),
+      bodyText,
+      inputs: inputMetadata,
+      buttons: buttonTexts,
+    };
+  }, OPENAI_AUTH_TEXT_SNIPPET_LIMIT);
+};
+
+const stateMentions = (state, pattern) => {
+  const regex = pattern instanceof RegExp ? pattern : new RegExp(String(pattern || ""), "i");
+  return regex.test(readString(state?.title))
+    || regex.test(readString(state?.bodyText))
+    || (Array.isArray(state?.buttons) && state.buttons.some((value) => regex.test(readString(value))));
+};
+
+const callbackReached = (state, expectedCallbackUrl) => {
+  const current = sanitizeAuthUrl(state?.url);
+  const expected = sanitizeAuthUrl(expectedCallbackUrl);
+  if (!current || !expected) return false;
+  return current.scheme === expected.scheme && current.host === expected.host && current.path === expected.path;
+};
+
+const fillBrowserAuthField = async (fieldKind, value) => {
+  const selectors = AUTH_INPUT_SELECTOR_GROUPS[fieldKind] || [];
+  const rawValue = String(value || "");
+  if (selectors.length > 0) {
+    const elements = await collectVisibleBrowserElements(selectors);
+    if (elements.length > 0) {
+      if (fieldKind === "otp") {
+        const digitInputs = [];
+        for (const element of elements) {
+          try {
+            const maxLength = Number.parseInt(String(await element.getAttribute("maxlength") || ""), 10);
+            if (maxLength === 1) {
+              digitInputs.push(element);
+            }
+          } catch {
+            // ignore attribute read failures
+          }
+        }
+        if (digitInputs.length >= rawValue.length) {
+          for (let index = 0; index < rawValue.length; index += 1) {
+            const ok = await setBrowserElementValue(digitInputs[index], rawValue.charAt(index));
+            if (!ok) {
+              return { ok: false, reason: "webdriver split otp entry unsupported" };
+            }
+          }
+          return { ok: true, filled: rawValue.length, mode: "webdriver-split" };
+        }
+      }
+
+      const ok = await setBrowserElementValue(elements[0], rawValue);
+      if (ok) {
+        return { ok: true, filled: 1, mode: "webdriver" };
+      }
+    }
+  }
+
+  if (!hasBrowserExecute()) {
+    throw new Error("browser element queries or browser.execute are required to fill auth fields");
+  }
+  return await browser.execute((kind, rawValue) => {
+    const normalize = (entry) => String(entry || "").replace(/\s+/g, " ").trim().toLowerCase();
+    const isVisible = (element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      const style = window.getComputedStyle(element);
+      if (!style || style.visibility === "hidden" || style.display === "none") return false;
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
+    const typeText = (element, nextValue) => {
+      const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+      element.focus();
+      if (typeof element.select === "function") {
+        try {
+          element.select();
+        } catch {
+          // ignore
+        }
+      }
+      if (setter) {
+        setter.call(element, "");
+      } else {
+        element.value = "";
+      }
+      try {
+        element.dispatchEvent(new InputEvent("input", {
+          bubbles: true,
+          inputType: "deleteContentBackward",
+          data: null,
+        }));
+      } catch {
+        element.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      for (const ch of String(nextValue || "")) {
+        element.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: ch }));
+        element.dispatchEvent(new KeyboardEvent("keypress", { bubbles: true, key: ch }));
+        const currentValue = `${element.value || ""}${ch}`;
+        if (setter) {
+          setter.call(element, currentValue);
+        } else {
+          element.value = currentValue;
+        }
+        try {
+          element.dispatchEvent(new InputEvent("beforeinput", {
+            bubbles: true,
+            inputType: "insertText",
+            data: ch,
+          }));
+          element.dispatchEvent(new InputEvent("input", {
+            bubbles: true,
+            inputType: "insertText",
+            data: ch,
+          }));
+        } catch {
+          element.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        element.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: ch }));
+      }
+      element.dispatchEvent(new Event("change", { bubbles: true }));
+      if (typeof element.blur === "function") {
+        element.blur();
+      }
+    };
+    const getLabel = (element) => {
+      const chunks = [];
+      if (typeof element.getAttribute === "function") {
+        chunks.push(element.getAttribute("aria-label"));
+        chunks.push(element.getAttribute("placeholder"));
+      }
+      if ("labels" in element) {
+        for (const label of Array.from(element.labels || [])) {
+          chunks.push(label.textContent);
+        }
+      }
+      const parentLabel = element.closest("label");
+      if (parentLabel) chunks.push(parentLabel.textContent);
+      return normalize(chunks.filter(Boolean).join(" "));
+    };
+    const candidates = Array.from(document.querySelectorAll("input, textarea")).filter((element) => isVisible(element));
+    const matches = candidates.filter((element) => {
+      const type = normalize(element.getAttribute("type"));
+      const name = normalize(element.getAttribute("name"));
+      const autocomplete = normalize(element.getAttribute("autocomplete"));
+      const inputmode = normalize(element.getAttribute("inputmode"));
+      const label = getLabel(element);
+      if (kind === "email") {
+        return type === "email" || autocomplete === "email" || name.includes("email") || label.includes("email");
+      }
+      if (kind === "password") {
+        return type === "password" || autocomplete.includes("password") || label.includes("password");
+      }
+      if (kind === "otp") {
+        return autocomplete === "one-time-code"
+          || inputmode === "numeric"
+          || name.includes("otp")
+          || name.includes("code")
+          || label.includes("code")
+          || label.includes("authenticator")
+          || label.includes("verification");
+      }
+      return false;
+    });
+
+    if (kind === "otp") {
+      const digitInputs = matches.filter((element) => Number(element.maxLength || 0) === 1);
+      if (digitInputs.length >= String(rawValue).length) {
+        for (let index = 0; index < String(rawValue).length; index += 1) {
+          const element = digitInputs[index];
+          const value = String(rawValue).charAt(index);
+          typeText(element, value);
+        }
+        return { ok: true, filled: digitInputs.length, mode: "split" };
+      }
+    }
+
+    const target = matches[0] || null;
+    if (!target) return { ok: false, reason: `no visible ${kind} input` };
+    typeText(target, rawValue);
+    return { ok: true, filled: 1, mode: "single" };
+  }, fieldKind, String(value || ""));
+};
+
+const submitVisibleAuthStep = async (preferredButtonTexts = []) => {
+  const wants = Array.isArray(preferredButtonTexts)
+    ? preferredButtonTexts.map((entry) => normalizeUiText(entry)).filter(Boolean)
+    : [];
+  const buttons = await collectVisibleBrowserElements(AUTH_BUTTON_SELECTORS);
+  if (buttons.length > 0) {
+    const entries = [];
+    for (const button of buttons) {
+      entries.push({
+        button,
+        text: await readBrowserElementText(button),
+      });
+    }
+    const matched = entries.find((entry) => wants.some((want) => entry.text.includes(want)))
+      || entries.find((entry) => entry.text.includes("continue"))
+      || entries.find((entry) => entry.text.includes("next"))
+      || entries.find((entry) => entry.text.includes("verify"))
+      || entries.find((entry) => entry.text.includes("log in"))
+      || entries.find((entry) => entry.text.includes("login"))
+      || null;
+    if (matched) {
+      await focusBrowserElement(matched.button);
+      return { ok: true, strategy: "webdriver-button", text: matched.text };
+    }
+  }
+
+  if (!hasBrowserExecute()) {
+    if (hasBrowserKeys()) {
+      await browser.keys("Enter");
+      return { ok: true, strategy: "webdriver-keys" };
+    }
+    throw new Error("browser element queries, browser.keys, or browser.execute are required to submit auth steps");
+  }
+  const result = await browser.execute((preferredTexts) => {
+    const normalize = (value) => String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
+    const wants = Array.isArray(preferredTexts) ? preferredTexts.map((entry) => normalize(entry)).filter(Boolean) : [];
+    const isVisible = (element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      const style = window.getComputedStyle(element);
+      if (!style || style.visibility === "hidden" || style.display === "none") return false;
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
+
+    const candidates = Array.from(document.querySelectorAll("button, [role='button'], input[type='submit'], a"))
+      .filter((element) => isVisible(element))
+      .map((element) => ({
+        element,
+        text: normalize(element.textContent || element.getAttribute("value") || element.getAttribute("aria-label")),
+      }));
+    const matched = candidates.find((entry) => wants.some((want) => entry.text.includes(want)))
+      || candidates.find((entry) => entry.text.includes("continue"))
+      || candidates.find((entry) => entry.text.includes("next"))
+      || candidates.find((entry) => entry.text.includes("verify"))
+      || candidates.find((entry) => entry.text.includes("log in"))
+      || candidates.find((entry) => entry.text.includes("login"))
+      || null;
+    if (!matched) {
+      const focused = document.activeElement;
+      if (focused && focused instanceof HTMLElement) {
+        const form = focused.closest("form");
+        if (form && typeof form.requestSubmit === "function") {
+          form.requestSubmit();
+          return { ok: true, strategy: "form" };
+        }
+      }
+      return { ok: false, strategy: "none" };
+    }
+    if (matched.element instanceof HTMLElement) {
+      matched.element.focus();
+      for (const type of ["mousedown", "mouseup", "click"]) {
+        matched.element.dispatchEvent(new MouseEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+        }));
+      }
+    } else {
+      matched.element.click();
+    }
+    return { ok: true, strategy: "button", text: matched.text };
+  }, preferredButtonTexts);
+
+  if (!result?.ok && hasBrowserKeys()) {
+    await browser.keys("Enter");
+    return { ok: true, strategy: "keys" };
+  }
+  return result;
+};
+
+const startCodexDesktopRelay = async ({ loginId, callbackUrl, completionToken }) => {
+  if (!hasBrowserExecute()) {
+    throw new Error("browser.execute is required to start the codex desktop relay");
+  }
+  const result = await browser.execute(async (req) => {
+    const invoke = window.__TAURI__?.core?.invoke;
+    if (!invoke) return { ok: false, error: "Tauri invoke not available" };
+    try {
+      const accepted = await invoke("desktop_start_codex_login_relay", { req });
+      return { ok: Boolean(accepted) };
+    } catch (error) {
+      return { ok: false, error: String(error) };
+    }
+  }, {
+    login_id: loginId,
+    callback_url: callbackUrl,
+    completion_token: completionToken,
+  });
+  if (!result || result.ok !== true) {
+    throw new Error(readString(result?.error) || "failed to start codex desktop relay");
+  }
+};
+
+const driveCodexOpenAiLoginWithCredentials = async ({
+  authUrl,
+  expectedCallbackUrl = "",
+  email,
+  password,
+  totpSecret,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  pollMs = DEFAULT_POLL_MS,
+} = {}) => {
+  const normalizedEmail = readString(email);
+  const normalizedPassword = typeof password === "string" ? password : "";
+  const normalizedTotpSecret = readString(totpSecret);
+  if (!normalizedEmail) throw new Error("Codex OAuth email is required");
+  if (!normalizedPassword) throw new Error("Codex OAuth password is required");
+  if (!normalizedTotpSecret) throw new Error("Codex OAuth TOTP secret is required");
+
+  await navigateBrowserToUrl(authUrl);
+  const startedAtMs = Date.now();
+  let lastState = null;
+  let usedTotp = false;
+  while (Date.now() - startedAtMs <= timeoutMs) {
+    const state = await readVisibleDomState();
+    lastState = state;
+    if (callbackReached(state, expectedCallbackUrl) || stateMentions(state, /completing sign-in|login callback received/i)) {
+      return {
+        status: "callback_reached",
+        finalUrl: sanitizeAuthUrl(state.url),
+        usedTotp,
+      };
+    }
+
+    if (stateMentions(state, /incorrect|invalid|try again|wrong password|too many requests|blocked|unusual activity/i)) {
+      throw new Error(`OpenAI auth page reported an error: ${readString(state.bodyText).slice(0, 240)}`);
+    }
+    if (stateMentions(state, /captcha|verify you are human|just a moment/i)) {
+      throw new Error("OpenAI auth page requires an interactive anti-bot or captcha challenge");
+    }
+
+    const inputs = Array.isArray(state.inputs) ? state.inputs : [];
+    const hasEmailInput = inputs.some((entry) =>
+      entry.type === "email" || entry.autocomplete === "email" || entry.name.includes("email") || entry.label.includes("email"));
+    const hasPasswordInput = inputs.some((entry) =>
+      entry.type === "password" || entry.autocomplete.includes("password") || entry.label.includes("password"));
+    const hasOtpInput = inputs.some((entry) =>
+      entry.autocomplete === "one-time-code"
+      || entry.inputmode === "numeric"
+      || entry.name.includes("otp")
+      || entry.name.includes("code")
+      || entry.label.includes("code")
+      || entry.label.includes("authenticator")
+      || entry.label.includes("verification"));
+
+    if (!hasEmailInput && !hasPasswordInput && !hasOtpInput && stateMentions(state, /log in|login/i)) {
+      await submitVisibleAuthStep(["log in", "login"]);
+      await waitMs(pollMs);
+      continue;
+    }
+
+    if (hasEmailInput) {
+      const filled = await fillBrowserAuthField("email", normalizedEmail);
+      if (!filled?.ok) {
+        throw new Error(readString(filled?.reason) || "failed to fill Codex OAuth email");
+      }
+      await submitVisibleAuthStep(["continue with email", "continue", "next", "log in", "login"]);
+      await waitMs(pollMs);
+      continue;
+    }
+
+    if (hasPasswordInput) {
+      const filled = await fillBrowserAuthField("password", normalizedPassword);
+      if (!filled?.ok) {
+        throw new Error(readString(filled?.reason) || "failed to fill Codex OAuth password");
+      }
+      await submitVisibleAuthStep(["continue", "log in", "login", "next"]);
+      await waitMs(pollMs);
+      continue;
+    }
+
+    if (hasOtpInput) {
+      const code = createTotpCode(normalizedTotpSecret);
+      const filled = await fillBrowserAuthField("otp", code);
+      if (!filled?.ok) {
+        throw new Error(readString(filled?.reason) || "failed to fill Codex OAuth authenticator code");
+      }
+      usedTotp = true;
+      await submitVisibleAuthStep(["continue", "verify", "submit", "log in", "login"]);
+      await waitMs(pollMs);
+      continue;
+    }
+
+    await waitMs(pollMs);
+  }
+
+  const summary = {
+    finalUrl: sanitizeAuthUrl(lastState?.url),
+    title: readString(lastState?.title),
+    bodyText: readString(lastState?.bodyText).slice(0, 240),
+    inputs: Array.isArray(lastState?.inputs) ? lastState.inputs : [],
+    buttons: Array.isArray(lastState?.buttons) ? lastState.buttons : [],
+  };
+  throw new Error(`timed out driving Codex OAuth browser flow: ${JSON.stringify(summary)}`);
 };
 
 const secretKeyPattern = /(completion_token|callback_code|api_?key|secret|password|token|oauth_creds_json|google_accounts_json|credentials_json)/i;
@@ -240,8 +900,6 @@ const chooseObservedAuthUrl = ({ probeEvents, fallbackAuthUrl }) => {
       }
     : null;
 };
-
-const hasBrowserExecute = () => Boolean(global.browser && typeof global.browser.execute === "function");
 
 const installDesktopOpenExternalProbe = async () => {
   if (!hasBrowserExecute()) return { installed: false, reason: "browser.execute unavailable" };
@@ -752,14 +1410,72 @@ const createProviderOAuthHarness = ({
   };
 };
 
+const completeCodexOauthWithBrowserCredentials = async ({
+  label = "",
+  email,
+  password,
+  totpSecret,
+  outputPath = "",
+  pollMs = DEFAULT_POLL_MS,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  urlFallbackGraceMs = DEFAULT_URL_FALLBACK_GRACE_MS,
+} = {}) => {
+  const harness = createProviderOAuthHarness({
+    outputPath,
+    pollMs,
+    timeoutMs,
+    urlFallbackGraceMs,
+  });
+  const login = await harness.startProviderLogin("codex", label);
+  if (login.expectedCallbackUrl && login.completionToken) {
+    await startCodexDesktopRelay({
+      loginId: login.loginId,
+      callbackUrl: login.expectedCallbackUrl,
+      completionToken: login.completionToken,
+    });
+  }
+
+  const authUrl = await harness.awaitLoginUrl(login.loginId, timeoutMs);
+  const browserFlow = await driveCodexOpenAiLoginWithCredentials({
+    authUrl: authUrl.authUrl,
+    expectedCallbackUrl: login.expectedCallbackUrl,
+    email,
+    password,
+    totpSecret,
+    timeoutMs,
+    pollMs,
+  });
+  const terminal = await harness.awaitLoginTerminal(login.loginId, timeoutMs);
+  if (terminal.status !== "success") {
+    throw new Error(`codex oauth login did not succeed: ${JSON.stringify(terminal.redactedPayload || terminal)}`);
+  }
+  const activeAccount = await harness.assertAccountActivated("codex");
+  return {
+    providerId: "codex",
+    loginId: login.loginId,
+    authUrl: authUrl.sanitizedAuthUrl,
+    browserFlow,
+    terminal: terminal.redactedPayload || redactPayload(terminal),
+    activeAccount,
+  };
+};
+
 module.exports = {
   PROVIDER_OAUTH_DESCRIPTORS,
   sanitizeAuthUrl,
+  normalizeBase32Secret,
+  decodeBase32Secret,
+  createTotpCode,
   redactPayload,
+  fillBrowserAuthField,
+  submitVisibleAuthStep,
+  startCodexDesktopRelay,
+  driveCodexOpenAiLoginWithCredentials,
   normalizeLoginStartPayload,
   normalizeLoginStatusPayload,
   normalizeAccountsPayload,
   isTerminalStatus,
   chooseObservedAuthUrl,
   createProviderOAuthHarness,
+  completeCodexOauthWithBrowserCredentials,
 };

@@ -819,9 +819,6 @@ const runCodexFirstTurnApiSmoke = async (workspaceId, options = {}, timeoutMs = 
   );
 };
 
-const runProviderFirstTurnApiSmoke = async (workspaceId, options = {}, timeoutMs = 240000) =>
-  await runCodexFirstTurnApiSmoke(workspaceId, options, timeoutMs);
-
 const getWorkspace = async (id) => {
   const resp = await daemonJson("GET", `/api/workspaces/${id}`);
   if (resp.status !== 200) throw new Error(`GET /api/workspaces/${id} failed (${resp.status})`);
