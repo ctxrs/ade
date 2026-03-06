@@ -174,12 +174,16 @@ run_lane() {
     lane_exit=0
     reason="dry-run"
   else
+    touch "${wdio_log}"
     set +e
     (
       cd "${ROOT}"
       "${cmd[@]}"
-    ) 2>&1 | tee "${wdio_log}"
-    local cmd_exit="${PIPESTATUS[0]}"
+    ) >"${wdio_log}" 2>&1 &
+    local cmd_pid="$!"
+    tail -n +1 -f --pid="${cmd_pid}" "${wdio_log}" || true
+    wait "${cmd_pid}"
+    local cmd_exit="$?"
     set -e
 
     if [[ -f "${report_path}" ]]; then
