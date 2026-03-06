@@ -146,6 +146,7 @@ ensure_endpoint_ui_bundles() {
   local bundle_build_local_adapters="${CTX_E2E_ENDPOINT_BUNDLE_BUILD_LOCAL_ADAPTERS:-1}"
   local append_local_adapters="${CTX_E2E_ENDPOINT_BUNDLE_APPEND_LOCAL_ADAPTERS:-auto}"
   local append_build_local_adapters="${CTX_E2E_ENDPOINT_BUNDLE_APPEND_BUILD_LOCAL_ADAPTERS:-0}"
+  local bundle_append_linux_targets="${CTX_E2E_ENDPOINT_APPEND_LINUX_TARGETS:-1}"
   local bundle_podman="${CTX_E2E_ENDPOINT_BUNDLE_PODMAN:-}"
   if [[ -z "${bundle_podman}" && "${OSTYPE:-}" == darwin* ]]; then
     bundle_podman="1"
@@ -190,7 +191,7 @@ ensure_endpoint_ui_bundles() {
   CARGO_HOME="${cargo_home_dir}" \
   "${bundle_script}" >/dev/null
 
-  if [[ "${OSTYPE:-}" == darwin* ]]; then
+  if [[ "${OSTYPE:-}" == darwin* && "${bundle_append_linux_targets}" != "0" ]]; then
     local linux_arch="x86_64"
     local append_providers="${first_pass_providers}"
     local codex_append_fallback_arch=""
@@ -504,6 +505,12 @@ case "${suite}" in
     fi
 
     export CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS="${CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-${CTX_E2E_PROVIDER_AUTH_BUNDLE_PROVIDERS:-acp-crp-bridge,cursor,gemini}}"
+    # Provider API-key auth coverage does not require harness image bundling.
+    # Keep this lane independent of Docker buildx health by default.
+    export CTX_E2E_ENDPOINT_BUNDLE_HARNESS_IMAGE="${CTX_E2E_ENDPOINT_BUNDLE_HARNESS_IMAGE:-0}"
+    # Provider API-key auth checks execute in host-mode web e2e and don't need
+    # linux target append/payloads.
+    export CTX_E2E_ENDPOINT_APPEND_LINUX_TARGETS="${CTX_E2E_ENDPOINT_APPEND_LINUX_TARGETS:-0}"
     ensure_endpoint_ui_bundles
 
     (

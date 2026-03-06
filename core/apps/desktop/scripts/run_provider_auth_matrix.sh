@@ -270,14 +270,20 @@ is_selected_row() {
   if ! is_selected_cell "${id}"; then
     return 1
   fi
-  if ! matches_requested_value "${provider_id}" "${REQUESTED_PROVIDERS[@]}"; then
-    return 1
+  if [[ "${#REQUESTED_PROVIDERS[@]}" -gt 0 ]]; then
+    if ! matches_requested_value "${provider_id}" "${REQUESTED_PROVIDERS[@]}"; then
+      return 1
+    fi
   fi
-  if ! matches_requested_value "${auth_mode}" "${REQUESTED_AUTH_MODES[@]}"; then
-    return 1
+  if [[ "${#REQUESTED_AUTH_MODES[@]}" -gt 0 ]]; then
+    if ! matches_requested_value "${auth_mode}" "${REQUESTED_AUTH_MODES[@]}"; then
+      return 1
+    fi
   fi
-  if ! matches_requested_value "${env_target}" "${REQUESTED_ENV_TARGETS[@]}"; then
-    return 1
+  if [[ "${#REQUESTED_ENV_TARGETS[@]}" -gt 0 ]]; then
+    if ! matches_requested_value "${env_target}" "${REQUESTED_ENV_TARGETS[@]}"; then
+      return 1
+    fi
   fi
   return 0
 }
@@ -428,6 +434,15 @@ for (const [k, v] of Object.entries(extra)) {
   is_retryable_failure() {
     local log_path="$1"
     if [[ ! -f "${log_path}" ]]; then
+      return 1
+    fi
+    # OAuth provider-side credential/verification failures are deterministic and
+    # should not consume retry budget.
+    if rg -q \
+      -e 'OpenAI auth page reported an error: Check your inbox' \
+      -e 'Code Incorrect code' \
+      -e 'codex oauth login did not succeed' \
+      "${log_path}"; then
       return 1
     fi
     rg -q \

@@ -13,7 +13,7 @@ const ROOT = path.resolve(__dirname, "..");
 const CORE_ROOT = path.resolve(ROOT, "..", "..");
 const defaultAppPath = (() => {
   if (process.platform === "darwin") {
-    return path.resolve(ROOT, "src-tauri/target/debug/bundle/macos/ctx.app/Contents/MacOS/ctx");
+    return path.resolve(ROOT, "src-tauri/target/debug/bundle/macos/ctx.app");
   }
   if (process.platform === "linux") {
     return path.resolve(ROOT, "src-tauri/target/debug/ctx");
