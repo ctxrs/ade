@@ -58,6 +58,49 @@ const CLAUDE_UNSUPPORTED_COMMANDS = new Set<string>([
   "vim",
 ]);
 
+const CODEX_REDUNDANT_COMMANDS = new Set<string>([
+  "approvals",
+  "clear",
+  "copy",
+  "diff",
+  "exit",
+  "mention",
+  "model",
+  "new",
+  "permissions",
+  "quit",
+  "resume",
+  "status",
+]);
+
+const CODEX_UNSUPPORTED_COMMANDS = new Set<string>([
+  "agent",
+  "apps",
+  "clean",
+  "collab",
+  "debug-config",
+  "debug-m-drop",
+  "debug-m-update",
+  "experimental",
+  "feedback",
+  "fork",
+  "init",
+  "logout",
+  "mcp",
+  "personality",
+  "plan",
+  "ps",
+  "realtime",
+  "rename",
+  "rollout",
+  "sandbox-add-read-dir",
+  "setup-default-sandbox",
+  "skills",
+  "statusline",
+  "test-approval",
+  "theme",
+]);
+
 const asRecord = (value: unknown): Record<string, unknown> | null => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -84,6 +127,14 @@ const isCtxSupportedClaudeProtocolCommand = (name: string): boolean => {
   return !CLAUDE_REDUNDANT_COMMANDS.has(key) && !CLAUDE_UNSUPPORTED_COMMANDS.has(key);
 };
 
+const isCtxSupportedCodexProtocolCommand = (name: string): boolean => {
+  const normalized = normalizeSlashCommandName(name);
+  if (!normalized) return false;
+  const key = normalized.toLowerCase();
+  if (key.startsWith("prompts:")) return false;
+  return !CODEX_REDUNDANT_COMMANDS.has(key) && !CODEX_UNSUPPORTED_COMMANDS.has(key);
+};
+
 const readCommandDescriptor = (value: unknown): SlashCommandDescriptor | null => {
   const record = asRecord(value);
   if (!record) return null;
@@ -104,12 +155,14 @@ export function deriveProtocolSlashCommands(meta: {
   const out: SlashCommandDescriptor[] = [];
   const seen = new Set<string>();
   const filterClaude = meta.providerId === "claude-crp";
+  const filterCodex = meta.providerId === "codex";
 
   const add = (command: SlashCommandDescriptor | null) => {
     if (!command) return;
     const key = command.name.trim().toLowerCase();
     if (!key || seen.has(key)) return;
     if (filterClaude && !isCtxSupportedClaudeProtocolCommand(key)) return;
+    if (filterCodex && !isCtxSupportedCodexProtocolCommand(key)) return;
     seen.add(key);
     out.push(command);
   };

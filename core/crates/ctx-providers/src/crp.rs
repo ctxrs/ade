@@ -1116,6 +1116,13 @@ fn parse_native_crp_slash_command_for_provider(
 }
 
 #[derive(Debug, PartialEq, Eq)]
+enum CodexSlashCommandPolicy {
+    Supported,
+    Redundant(&'static str),
+    Unsupported(&'static str),
+}
+
+#[derive(Debug, PartialEq, Eq)]
 enum ClaudeSlashCommandPolicy {
     Supported,
     Redundant(&'static str),
@@ -1135,9 +1142,65 @@ fn extract_slash_command_name(content: &str) -> Option<String> {
     Some(normalized)
 }
 
+fn classify_codex_slash_command(name: &str) -> CodexSlashCommandPolicy {
+    if name.starts_with("prompts:") {
+        return CodexSlashCommandPolicy::Unsupported(
+            "Codex custom prompt slash commands are not wired through ctx today.",
+        );
+    }
+
+    match name {
+        "compact" | "review" => CodexSlashCommandPolicy::Supported,
+        "approvals"
+        | "clear"
+        | "copy"
+        | "diff"
+        | "exit"
+        | "mention"
+        | "model"
+        | "new"
+        | "permissions"
+        | "quit"
+        | "resume"
+        | "status" => CodexSlashCommandPolicy::Redundant(
+            "ctx handles this workflow outside Codex slash commands.",
+        ),
+        "agent"
+        | "apps"
+        | "clean"
+        | "collab"
+        | "debug-config"
+        | "debug-m-drop"
+        | "debug-m-update"
+        | "experimental"
+        | "feedback"
+        | "fork"
+        | "init"
+        | "logout"
+        | "mcp"
+        | "personality"
+        | "plan"
+        | "ps"
+        | "realtime"
+        | "rename"
+        | "rollout"
+        | "sandbox-add-read-dir"
+        | "setup-default-sandbox"
+        | "skills"
+        | "statusline"
+        | "test-approval"
+        | "theme" => CodexSlashCommandPolicy::Unsupported(
+            "Codex exposes this command in its TUI, but ctx cannot wire it through the CRP integration today.",
+        ),
+        _ => CodexSlashCommandPolicy::Supported,
+    }
+}
+
 fn classify_claude_slash_command(name: &str) -> ClaudeSlashCommandPolicy {
     if name.starts_with("mcp__") {
-        return ClaudeSlashCommandPolicy::Unsupported("MCP prompt commands are intentionally out of scope in ctx right now.");
+        return ClaudeSlashCommandPolicy::Unsupported(
+            "MCP prompt commands are intentionally out of scope in ctx right now.",
+        );
     }
 
     match name {
@@ -1201,24 +1264,30 @@ fn classify_claude_slash_command(name: &str) -> ClaudeSlashCommandPolicy {
     }
 }
 
-fn validate_provider_slash_command_support(
-    provider_id: &str,
-    content: &str,
-) -> Result<()> {
-    if provider_id != "claude-crp" {
-        return Ok(());
-    }
+fn validate_provider_slash_command_support(provider_id: &str, content: &str) -> Result<()> {
     let Some(name) = extract_slash_command_name(content) else {
         return Ok(());
     };
-    match classify_claude_slash_command(&name) {
-        ClaudeSlashCommandPolicy::Supported => Ok(()),
-        ClaudeSlashCommandPolicy::Redundant(reason) => Err(anyhow!(
-            "Claude command `/{name}` is intentionally not supported in ctx: {reason}"
-        )),
-        ClaudeSlashCommandPolicy::Unsupported(reason) => Err(anyhow!(
-            "Claude command `/{name}` is not supported in ctx today: {reason}"
-        )),
+    match provider_id {
+        "codex" => match classify_codex_slash_command(&name) {
+            CodexSlashCommandPolicy::Supported => Ok(()),
+            CodexSlashCommandPolicy::Redundant(reason) => Err(anyhow!(
+                "Codex command `/{name}` is intentionally not supported in ctx: {reason}"
+            )),
+            CodexSlashCommandPolicy::Unsupported(reason) => Err(anyhow!(
+                "Codex command `/{name}` is not supported in ctx today: {reason}"
+            )),
+        },
+        "claude-crp" => match classify_claude_slash_command(&name) {
+            ClaudeSlashCommandPolicy::Supported => Ok(()),
+            ClaudeSlashCommandPolicy::Redundant(reason) => Err(anyhow!(
+                "Claude command `/{name}` is intentionally not supported in ctx: {reason}"
+            )),
+            ClaudeSlashCommandPolicy::Unsupported(reason) => Err(anyhow!(
+                "Claude command `/{name}` is not supported in ctx today: {reason}"
+            )),
+        },
+        _ => Ok(()),
     }
 }
 
@@ -3081,6 +3150,30 @@ mod tests {
     }
 
     #[test]
+    fn codex_command_policy_blocks_redundant_and_unsupported_commands() {
+        assert_eq!(
+            classify_codex_slash_command("compact"),
+            CodexSlashCommandPolicy::Supported
+        );
+        assert_eq!(
+            classify_codex_slash_command("status"),
+            CodexSlashCommandPolicy::Redundant(
+                "ctx handles this workflow outside Codex slash commands."
+            )
+        );
+        assert_eq!(
+            classify_codex_slash_command("prompts:shipit"),
+            CodexSlashCommandPolicy::Unsupported(
+                "Codex custom prompt slash commands are not wired through ctx today."
+            )
+        );
+        assert!(validate_provider_slash_command_support("codex", "/compact").is_ok());
+        assert!(validate_provider_slash_command_support("codex", "/undo").is_ok());
+        assert!(validate_provider_slash_command_support("codex", "/status").is_err());
+        assert!(validate_provider_slash_command_support("codex", "/prompts:shipit").is_err());
+    }
+
+    #[test]
     fn claude_command_policy_blocks_redundant_and_unsupported_commands() {
         assert_eq!(
             classify_claude_slash_command("compact"),
@@ -3103,7 +3196,6 @@ mod tests {
         assert!(
             validate_provider_slash_command_support("claude-crp", "/mcp__docs__search").is_err()
         );
-        assert!(validate_provider_slash_command_support("codex", "/clear").is_ok());
     }
 
     #[test]
@@ -3158,20 +3250,17 @@ mod tests {
         );
 
         assert_eq!(mapped.events.len(), 1);
-        assert!(matches!(mapped.events[0].event_type, SessionEventType::Init));
+        assert!(matches!(
+            mapped.events[0].event_type,
+            SessionEventType::Init
+        ));
         let payload = &mapped.events[0].payload_json;
-        assert_eq!(
-            payload.get("session_id"),
-            Some(&json!("session-1"))
-        );
+        assert_eq!(payload.get("session_id"), Some(&json!("session-1")));
         assert_eq!(
             payload.get("provider_session_id"),
             Some(&json!("provider-session-1"))
         );
-        assert_eq!(
-            payload.pointer("/commands/0/name"),
-            Some(&json!("compact"))
-        );
+        assert_eq!(payload.pointer("/commands/0/name"), Some(&json!("compact")));
         assert_eq!(
             payload.pointer("/commands/0/description"),
             Some(&json!("Summarize conversation to save context"))
@@ -3518,8 +3607,8 @@ mod tests {
     #[test]
     fn rewrite_container_args_for_linux_rejects_invalid_shell_command() {
         let args = vec!["--acp-command".to_string(), "\"unterminated".to_string()];
-        let err =
-            rewrite_container_args_for_linux(&args, &HashMap::new()).expect_err("expected parse error");
+        let err = rewrite_container_args_for_linux(&args, &HashMap::new())
+            .expect_err("expected parse error");
         assert!(err
             .to_string()
             .contains("invalid shell command in --acp-command"));

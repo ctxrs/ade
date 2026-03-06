@@ -126,6 +126,15 @@ pub struct CrpModelInfo {
     pub name: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CrpCommandInfo {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub argument_hint: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct CrpEventEnvelope {
     pub v: u32,
@@ -149,6 +158,10 @@ pub enum CrpEvent {
     SessionOpened {
         session_id: String,
         provider_session_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        commands: Option<Vec<CrpCommandInfo>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        slash_commands: Option<Vec<String>>,
     },
     #[serde(rename = "session.gap")]
     SessionGap {
@@ -431,5 +444,28 @@ mod tests {
         let value = serde_json::to_value(trace_final).unwrap();
         let kind = value.get("type").and_then(|value| value.as_str());
         assert_eq!(kind, Some("reasoning.trace.final"));
+    }
+
+    #[test]
+    fn session_opened_serializes_command_metadata() {
+        let event = CrpEvent::SessionOpened {
+            session_id: "session".to_string(),
+            provider_session_id: Some("provider-session".to_string()),
+            commands: Some(vec![CrpCommandInfo {
+                name: "compact".to_string(),
+                description: Some("Summarize conversation".to_string()),
+                argument_hint: None,
+            }]),
+            slash_commands: Some(vec!["compact".to_string()]),
+        };
+        let value = serde_json::to_value(event).unwrap();
+        assert_eq!(
+            value.pointer("/commands/0/name"),
+            Some(&serde_json::Value::String("compact".to_string()))
+        );
+        assert_eq!(
+            value.get("slash_commands"),
+            Some(&serde_json::json!(["compact"]))
+        );
     }
 }

@@ -51,4 +51,22 @@ describe("deriveProtocolSlashCommands", () => {
       { name: "review" },
     ]);
   });
+
+  it("filters Codex commands down to the subset ctx actually supports", () => {
+    const commands = deriveProtocolSlashCommands({
+      providerId: "codex",
+      commands: [
+        { name: "/compact", description: "Summarize conversation" },
+        { name: "/status" },
+        { name: "/plan" },
+        { name: "/prompts:shipit" },
+      ],
+      slashCommands: ["/review", "/copy", "/prompts:cleanup"],
+    });
+
+    expect(commands).toEqual([
+      { name: "compact", description: "Summarize conversation" },
+      { name: "review" },
+    ]);
+  });
 });

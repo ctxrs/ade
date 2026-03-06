@@ -5,6 +5,7 @@ mod protocol;
 use crate::protocol::CrpChannel;
 use crate::protocol::CrpCommand;
 use crate::protocol::CrpCommandEnvelope;
+use crate::protocol::CrpCommandInfo;
 use crate::protocol::CrpEvent;
 use crate::protocol::CrpEventEnvelope;
 use crate::protocol::CrpMcpServerConfig;
@@ -19,7 +20,6 @@ use base64::Engine;
 use clap::Parser;
 use codex_arg0::Arg0DispatchPaths;
 use codex_arg0::arg0_dispatch_or_else;
-use codex_utils_cli::CliConfigOverrides;
 use codex_core::ARCHIVED_SESSIONS_SUBDIR;
 use codex_core::AuthManager;
 use codex_core::CodexThread;
@@ -35,9 +35,21 @@ use codex_core::ToolPayload;
 use codex_core::auth::enforce_login_restrictions;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
+use codex_core::custom_prompts::discover_prompts_in_excluding;
 use codex_core::default_client::set_default_originator;
 use codex_core::find_thread_path_by_id_str;
+use codex_protocol::ThreadId;
+use codex_protocol::custom_prompts::CustomPrompt;
+use codex_protocol::custom_prompts::PROMPTS_CMD_PREFIX;
+use codex_protocol::items::AgentMessageContent;
+use codex_protocol::items::AgentMessageItem;
+use codex_protocol::items::TurnItem;
+use codex_protocol::mcp::CallToolResult;
+use codex_protocol::openai_models::ModelPreset;
+use codex_protocol::openai_models::ReasoningEffort;
+use codex_protocol::parse_command::ParsedCommand;
 use codex_protocol::protocol::AskForApproval;
+use codex_protocol::protocol::CodexErrorInfo;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ExecCommandSource;
@@ -47,19 +59,13 @@ use codex_protocol::protocol::Op;
 use codex_protocol::protocol::ReviewRequest;
 use codex_protocol::protocol::ReviewTarget;
 use codex_protocol::protocol::SandboxPolicy;
+use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::Submission;
 use codex_protocol::protocol::TurnAbortReason;
-use codex_protocol::ThreadId;
-use codex_protocol::items::AgentMessageContent;
-use codex_protocol::items::AgentMessageItem;
-use codex_protocol::items::TurnItem;
-use codex_protocol::mcp::CallToolResult;
-use codex_protocol::openai_models::ModelPreset;
-use codex_protocol::openai_models::ReasoningEffort;
-use codex_protocol::parse_command::ParsedCommand;
-use codex_protocol::protocol::CodexErrorInfo;
-use codex_protocol::protocol::SessionSource;
+use codex_protocol::slash_commands::SlashCommand;
+use codex_protocol::slash_commands::built_in_slash_commands;
 use codex_protocol::user_input::UserInput;
+use codex_utils_cli::CliConfigOverrides;
 use serde_json::json;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -266,6 +272,8 @@ struct SessionState {
     default_summary: codex_protocol::config_types::ReasoningSummary,
     default_approval_policy: AskForApproval,
     default_sandbox_policy: SandboxPolicy,
+    opened_commands: Vec<CrpCommandInfo>,
+    opened_slash_commands: Vec<String>,
 }
 
 struct TurnState {
@@ -528,6 +536,7 @@ mod replay_golden_tests {
 
         let mut seq: u64 = 0;
         let mut out = Vec::new();
+        let opened_commands = build_builtin_command_infos();
 
         // Seed a SessionOpened event so snapshots are self-contained (mirrors offline replay mode).
         seq += 1;
@@ -538,6 +547,8 @@ mod replay_golden_tests {
             event: CrpEvent::SessionOpened {
                 session_id: "replay_session".to_string(),
                 provider_session_id: None,
+                commands: Some(opened_commands.clone()),
+                slash_commands: Some(command_names(&opened_commands)),
             },
         };
         out.push(serde_json::to_value(&opened).unwrap());
@@ -569,13 +580,13 @@ mod replay_golden_tests {
     }
 
     fn assert_fixture(input: &str, expected: &str) {
-        let got = replay_fixture(input).unwrap_or_else(|e| {
+        let mut got = replay_fixture(input).unwrap_or_else(|e| {
             panic!("failed replaying fixture {input}: {e}");
         });
         let expected_path = testdata_path(expected);
         let expected_contents = fs::read_to_string(&expected_path)
             .unwrap_or_else(|e| panic!("failed to read {}: {e}", expected_path.display()));
-        let expected_values: Vec<serde_json::Value> = expected_contents
+        let mut expected_values: Vec<serde_json::Value> = expected_contents
             .lines()
             .filter_map(|l| {
                 let t = l.trim();
@@ -587,7 +598,21 @@ mod replay_golden_tests {
             })
             .collect();
 
+        normalize_session_opened_command_metadata(&mut got);
+        normalize_session_opened_command_metadata(&mut expected_values);
         assert_eq!(got, expected_values);
+    }
+
+    fn normalize_session_opened_command_metadata(values: &mut [serde_json::Value]) {
+        for value in values {
+            if value.get("type").and_then(serde_json::Value::as_str) != Some("session.opened") {
+                continue;
+            }
+            if let Some(object) = value.as_object_mut() {
+                object.remove("commands");
+                object.remove("slash_commands");
+            }
+        }
     }
 
     #[test]
@@ -615,6 +640,20 @@ mod replay_golden_tests {
     }
 
     #[test]
+    fn replay_seeded_session_opened_includes_builtin_command_metadata() {
+        let values = replay_fixture_from_str("").expect("replay should succeed");
+        let opened = values.first().expect("missing seeded session.opened");
+        assert_eq!(
+            opened.pointer("/commands/0/name"),
+            Some(&serde_json::json!("model"))
+        );
+        assert_eq!(
+            opened.pointer("/slash_commands/0"),
+            Some(&serde_json::json!("model"))
+        );
+    }
+
+    #[test]
     fn replay_fixture_fails_when_task_complete_is_missing_turn_id() {
         let input = r#"{"event":{"id":"fixture-turn-1","msg":{"last_agent_message":"done","type":"task_complete"}},"i":1}"#;
         let err = replay_fixture_from_str(input)
@@ -622,7 +661,10 @@ mod replay_golden_tests {
         let msg = err.to_string();
         assert!(msg.contains("line 1"), "{msg}");
         assert!(msg.contains("task_complete"), "{msg}");
-        assert!(msg.contains("turn_id") || msg.contains("missing field"), "{msg}");
+        assert!(
+            msg.contains("turn_id") || msg.contains("missing field"),
+            "{msg}"
+        );
     }
 }
 
@@ -927,6 +969,7 @@ async fn run_replay_codex_events(
 
     // Seed a SessionOpened event so the output is self-contained.
     let mut seq: u64 = 0;
+    let opened_commands = build_builtin_command_infos();
     seq += 1;
     let opened = CrpEventEnvelope {
         v: 1,
@@ -935,6 +978,8 @@ async fn run_replay_codex_events(
         event: CrpEvent::SessionOpened {
             session_id: "replay_session".to_string(),
             provider_session_id: None,
+            commands: Some(opened_commands.clone()),
+            slash_commands: Some(command_names(&opened_commands)),
         },
     };
     out.write_all(serde_json::to_vec(&opened)?.as_slice())
@@ -1066,6 +1111,8 @@ async fn handle_command(
                 .send_control(CrpEvent::SessionOpened {
                     session_id: session_id.clone(),
                     provider_session_id: Some(provider_session_id),
+                    commands: Some(state.opened_commands.clone()),
+                    slash_commands: Some(state.opened_slash_commands.clone()),
                 })
                 .is_err()
             {
@@ -1301,8 +1348,7 @@ async fn handle_command(
                 mcp_servers: None,
             });
 
-            let config =
-                load_config_from_crp(config, cli_kv_overrides, arg0_paths.clone()).await?;
+            let config = load_config_from_crp(config, cli_kv_overrides, arg0_paths.clone()).await?;
             let auth_manager = AuthManager::shared(
                 config.codex_home.clone(),
                 true,
@@ -1506,6 +1552,8 @@ async fn open_session(
     } else {
         thread_manager.start_thread(config.clone()).await?
     };
+    let opened_commands = build_session_command_infos(&config).await;
+    let opened_slash_commands = command_names(&opened_commands);
 
     Ok(SessionState {
         tracker: TurnTracker::new(String::new()),
@@ -1517,6 +1565,8 @@ async fn open_session(
         default_summary: config.model_reasoning_summary,
         default_approval_policy: config.permissions.approval_policy.value(),
         default_sandbox_policy: config.permissions.sandbox_policy.get().clone(),
+        opened_commands,
+        opened_slash_commands,
     })
 }
 
@@ -1565,6 +1615,67 @@ async fn find_rollout_path_in_dir(root: &PathBuf, id: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+fn built_in_command_argument_hint(command: SlashCommand) -> Option<&'static str> {
+    match command {
+        SlashCommand::Review => Some("<instructions>"),
+        SlashCommand::Rename => Some("<title>"),
+        SlashCommand::Plan => Some("<prompt>"),
+        SlashCommand::SandboxReadRoot => Some("<absolute_path>"),
+        _ => None,
+    }
+}
+
+fn build_builtin_command_infos() -> Vec<CrpCommandInfo> {
+    built_in_slash_commands()
+        .into_iter()
+        .map(|(name, command)| CrpCommandInfo {
+            name: name.to_string(),
+            description: Some(command.description().to_string()),
+            argument_hint: built_in_command_argument_hint(command).map(str::to_string),
+        })
+        .collect()
+}
+
+async fn build_session_command_infos(config: &Config) -> Vec<CrpCommandInfo> {
+    let mut commands = build_builtin_command_infos();
+    let mut exclude = commands
+        .iter()
+        .map(|command| command.name.clone())
+        .collect::<HashSet<_>>();
+    let prompts_dir = config.codex_home.join("prompts");
+    let prompts = discover_prompts_in_excluding(&prompts_dir, &exclude).await;
+    commands.extend(build_prompt_command_infos(prompts, &mut exclude));
+    commands
+}
+
+fn command_names(commands: &[CrpCommandInfo]) -> Vec<String> {
+    commands
+        .iter()
+        .map(|command| command.name.clone())
+        .collect()
+}
+
+fn build_prompt_command_infos(
+    prompts: Vec<CustomPrompt>,
+    exclude: &mut HashSet<String>,
+) -> Vec<CrpCommandInfo> {
+    let mut commands = Vec::new();
+    for prompt in prompts {
+        let name = format!("{PROMPTS_CMD_PREFIX}:{}", prompt.name);
+        if !exclude.insert(name.clone()) {
+            continue;
+        }
+        commands.push(CrpCommandInfo {
+            name,
+            description: prompt
+                .description
+                .or_else(|| Some("send saved prompt".to_string())),
+            argument_hint: prompt.argument_hint,
+        });
+    }
+    commands
 }
 
 fn build_crp_model_infos(presets: &[ModelPreset]) -> Vec<CrpModelInfo> {
@@ -3003,19 +3114,19 @@ fn agent_message_text(item: &AgentMessageItem) -> String {
 mod tests {
     use super::*;
     use base64::Engine;
+    use codex_protocol::items::ReasoningItem;
+    use codex_protocol::parse_command::ParsedCommand;
     use codex_protocol::protocol::AgentMessageContentDeltaEvent;
     use codex_protocol::protocol::ExecCommandBeginEvent;
     use codex_protocol::protocol::ExecCommandEndEvent;
-    use codex_protocol::protocol::ExecCommandStatus;
     use codex_protocol::protocol::ExecCommandOutputDeltaEvent;
     use codex_protocol::protocol::ExecCommandSource;
+    use codex_protocol::protocol::ExecCommandStatus;
     use codex_protocol::protocol::ItemCompletedEvent;
     use codex_protocol::protocol::ReasoningContentDeltaEvent;
     use codex_protocol::protocol::ReasoningRawContentDeltaEvent;
     use codex_protocol::protocol::TurnCompleteEvent;
     use codex_protocol::protocol::TurnStartedEvent;
-    use codex_protocol::items::ReasoningItem;
-    use codex_protocol::parse_command::ParsedCommand;
     use pretty_assertions::assert_eq;
     use std::path::PathBuf;
 
@@ -3314,6 +3425,67 @@ mod tests {
             }
             other => panic!("expected session.gap event, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn builtin_command_infos_include_review_hint() {
+        let commands = build_builtin_command_infos();
+        let review = commands
+            .iter()
+            .find(|command| command.name == "review")
+            .expect("missing review command");
+        assert_eq!(
+            review.description.as_deref(),
+            Some("review my current changes and find issues")
+        );
+        assert_eq!(review.argument_hint.as_deref(), Some("<instructions>"));
+    }
+
+    #[test]
+    fn prompt_command_infos_preserve_metadata_and_skip_collisions() {
+        let mut exclude = HashSet::from(["prompts:init".to_string()]);
+        let commands = build_prompt_command_infos(
+            vec![
+                CustomPrompt {
+                    name: "init".to_string(),
+                    path: PathBuf::from("/tmp/init.md"),
+                    content: "ignored".to_string(),
+                    description: Some("ignored".to_string()),
+                    argument_hint: None,
+                },
+                CustomPrompt {
+                    name: "shipit".to_string(),
+                    path: PathBuf::from("/tmp/shipit.md"),
+                    content: "ship it".to_string(),
+                    description: Some("Create release notes".to_string()),
+                    argument_hint: Some("<version>".to_string()),
+                },
+                CustomPrompt {
+                    name: "cleanup".to_string(),
+                    path: PathBuf::from("/tmp/cleanup.md"),
+                    content: "cleanup".to_string(),
+                    description: None,
+                    argument_hint: None,
+                },
+            ],
+            &mut exclude,
+        );
+
+        assert_eq!(
+            commands,
+            vec![
+                CrpCommandInfo {
+                    name: "prompts:shipit".to_string(),
+                    description: Some("Create release notes".to_string()),
+                    argument_hint: Some("<version>".to_string()),
+                },
+                CrpCommandInfo {
+                    name: "prompts:cleanup".to_string(),
+                    description: Some("send saved prompt".to_string()),
+                    argument_hint: None,
+                }
+            ]
+        );
     }
 
     fn event_kind(event: &CrpEvent) -> &'static str {
