@@ -18,8 +18,10 @@ use crate::config_types::CollaborationMode;
 use crate::config_types::ModeKind;
 use crate::config_types::Personality;
 use crate::config_types::ReasoningSummary as ReasoningSummaryConfig;
+use crate::config_types::ServiceTier;
 use crate::config_types::WindowsSandboxLevel;
 use crate::custom_prompts::CustomPrompt;
+use crate::dynamic_tools::DynamicToolCallOutputContentItem;
 use crate::dynamic_tools::DynamicToolCallRequest;
 use crate::dynamic_tools::DynamicToolResponse;
 use crate::dynamic_tools::DynamicToolSpec;
@@ -40,7 +42,6 @@ use crate::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use crate::parse_command::ParsedCommand;
 use crate::plan_tool::UpdatePlanArgs;
 use crate::request_user_input::RequestUserInputResponse;
-use crate::skill_approval::SkillApprovalResponse;
 use crate::user_input::UserInput;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use schemars::JsonSchema;
@@ -61,7 +62,6 @@ pub use crate::approvals::NetworkApprovalProtocol;
 pub use crate::approvals::NetworkPolicyAmendment;
 pub use crate::approvals::NetworkPolicyRuleAction;
 pub use crate::request_user_input::RequestUserInputEvent;
-pub use crate::skill_approval::SkillRequestApprovalEvent;
 
 /// Open/close tags for special user-input blocks. Used across crates to avoid
 /// duplicated hardcoded strings.
@@ -71,6 +71,8 @@ pub const ENVIRONMENT_CONTEXT_OPEN_TAG: &str = "<environment_context>";
 pub const ENVIRONMENT_CONTEXT_CLOSE_TAG: &str = "</environment_context>";
 pub const COLLABORATION_MODE_OPEN_TAG: &str = "<collaboration_mode>";
 pub const COLLABORATION_MODE_CLOSE_TAG: &str = "</collaboration_mode>";
+pub const REALTIME_CONVERSATION_OPEN_TAG: &str = "<realtime_conversation>";
+pub const REALTIME_CONVERSATION_CLOSE_TAG: &str = "</realtime_conversation>";
 pub const USER_MESSAGE_BEGIN: &str = "## My request for Codex:";
 
 /// Submission Queue Entry - requests from user
@@ -80,6 +82,19 @@ pub struct Submission {
     pub id: String,
     /// Payload
     pub op: Op,
+    /// Optional W3C trace carrier propagated across async submission handoffs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace: Option<W3cTraceContext>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+pub struct W3cTraceContext {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub traceparent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub tracestate: Option<String>,
 }
 
 /// Config payload for refreshing MCP servers.
@@ -106,11 +121,31 @@ pub struct RealtimeAudioFrame {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+pub struct RealtimeHandoffMessage {
+    pub role: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+pub struct RealtimeHandoffRequested {
+    pub handoff_id: String,
+    pub item_id: String,
+    pub input_transcript: String,
+    pub messages: Vec<RealtimeHandoffMessage>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
 pub enum RealtimeEvent {
-    SessionCreated { session_id: String },
-    SessionUpdated { backend_prompt: Option<String> },
+    SessionUpdated {
+        session_id: String,
+        instructions: Option<String>,
+    },
     AudioOut(RealtimeAudioFrame),
     ConversationItemAdded(Value),
+    ConversationItemDone {
+        item_id: String,
+    },
+    HandoffRequested(RealtimeHandoffRequested),
     Error(String),
 }
 
@@ -186,7 +221,20 @@ pub enum Op {
         effort: Option<ReasoningEffortConfig>,
 
         /// Will only be honored if the model is configured to use reasoning.
-        summary: ReasoningSummaryConfig,
+        ///
+        /// When omitted, the session keeps the current setting (which allows core to
+        /// fall back to the selected model's default on new sessions).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        summary: Option<ReasoningSummaryConfig>,
+
+        /// Optional service tier override for this turn.
+        ///
+        /// Use `Some(Some(_))` to set a specific tier for this turn, `Some(None)` to
+        /// explicitly clear the tier for this turn, or `None` to keep the existing
+        /// session preference.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        service_tier: Option<Option<ServiceTier>>,
+
         // The JSON schema to use for the final assistant message
         final_output_json_schema: Option<Value>,
 
@@ -239,6 +287,13 @@ pub enum Op {
         #[serde(skip_serializing_if = "Option::is_none")]
         summary: Option<ReasoningSummaryConfig>,
 
+        /// Updated service tier preference for future turns.
+        ///
+        /// Use `Some(Some(_))` to set a specific tier, `Some(None)` to clear the
+        /// preference, or `None` to leave the existing value unchanged.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        service_tier: Option<Option<ServiceTier>>,
+
         /// EXPERIMENTAL - set a pre-set collaboration mode.
         /// Takes precedence over model, effort, and developer instructions if set.
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -276,6 +331,9 @@ pub enum Op {
         request_id: RequestId,
         /// User's decision for the request.
         decision: ElicitationAction,
+        /// Structured user input supplied for accepted elicitations.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        content: Option<Value>,
     },
 
     /// Resolve a request_user_input tool call.
@@ -293,14 +351,6 @@ pub enum Op {
         id: String,
         /// Tool output payload.
         response: DynamicToolResponse,
-    },
-
-    /// Resolve a skill approval request.
-    SkillApproval {
-        /// Item id for the in-flight request.
-        id: String,
-        /// User decision.
-        response: SkillApprovalResponse,
     },
 
     /// Append an entry to the persistent cross-session message history.
@@ -579,6 +629,11 @@ pub enum SandboxPolicy {
             skip_serializing_if = "ReadOnlyAccess::has_full_disk_read_access"
         )]
         access: ReadOnlyAccess,
+
+        /// When set to `true`, outbound network access is allowed. `false` by
+        /// default.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        network_access: bool,
     },
 
     /// Indicates the process is already in an external sandbox. Allows full
@@ -668,6 +723,7 @@ impl SandboxPolicy {
     pub fn new_read_only_policy() -> Self {
         SandboxPolicy::ReadOnly {
             access: ReadOnlyAccess::FullAccess,
+            network_access: false,
         }
     }
 
@@ -688,7 +744,7 @@ impl SandboxPolicy {
         match self {
             SandboxPolicy::DangerFullAccess => true,
             SandboxPolicy::ExternalSandbox { .. } => true,
-            SandboxPolicy::ReadOnly { access } => access.has_full_disk_read_access(),
+            SandboxPolicy::ReadOnly { access, .. } => access.has_full_disk_read_access(),
             SandboxPolicy::WorkspaceWrite {
                 read_only_access, ..
             } => read_only_access.has_full_disk_read_access(),
@@ -708,7 +764,7 @@ impl SandboxPolicy {
         match self {
             SandboxPolicy::DangerFullAccess => true,
             SandboxPolicy::ExternalSandbox { network_access } => network_access.is_enabled(),
-            SandboxPolicy::ReadOnly { .. } => false,
+            SandboxPolicy::ReadOnly { network_access, .. } => *network_access,
             SandboxPolicy::WorkspaceWrite { network_access, .. } => *network_access,
         }
     }
@@ -719,7 +775,7 @@ impl SandboxPolicy {
             return false;
         }
         match self {
-            SandboxPolicy::ReadOnly { access } => access.include_platform_defaults(),
+            SandboxPolicy::ReadOnly { access, .. } => access.include_platform_defaults(),
             SandboxPolicy::WorkspaceWrite {
                 read_only_access, ..
             } => read_only_access.include_platform_defaults(),
@@ -735,7 +791,7 @@ impl SandboxPolicy {
     pub fn get_readable_roots_with_cwd(&self, cwd: &Path) -> Vec<AbsolutePathBuf> {
         let mut roots = match self {
             SandboxPolicy::DangerFullAccess | SandboxPolicy::ExternalSandbox { .. } => Vec::new(),
-            SandboxPolicy::ReadOnly { access } => access.get_readable_roots_with_cwd(cwd),
+            SandboxPolicy::ReadOnly { access, .. } => access.get_readable_roots_with_cwd(cwd),
             SandboxPolicy::WorkspaceWrite {
                 read_only_access, ..
             } => {
@@ -1033,6 +1089,10 @@ pub enum EventMsg {
 
     WebSearchEnd(WebSearchEndEvent),
 
+    ImageGenerationBegin(ImageGenerationBeginEvent),
+
+    ImageGenerationEnd(ImageGenerationEndEvent),
+
     /// Notification that the server is about to execute a command.
     ExecCommandBegin(ExecCommandBeginEvent),
 
@@ -1053,7 +1113,7 @@ pub enum EventMsg {
 
     DynamicToolCallRequest(DynamicToolCallRequest),
 
-    SkillRequestApproval(SkillRequestApprovalEvent),
+    DynamicToolCallResponse(DynamicToolCallResponseEvent),
 
     ElicitationRequest(ElicitationRequestEvent),
 
@@ -1314,6 +1374,11 @@ impl HasLegacyEvent for ItemStartedEvent {
             TurnItem::WebSearch(item) => vec![EventMsg::WebSearchBegin(WebSearchBeginEvent {
                 call_id: item.id.clone(),
             })],
+            TurnItem::ImageGeneration(item) => {
+                vec![EventMsg::ImageGenerationBegin(ImageGenerationBeginEvent {
+                    call_id: item.id.clone(),
+                })]
+            }
             _ => Vec::new(),
         }
     }
@@ -1781,6 +1846,27 @@ pub struct McpToolCallEndEvent {
     pub result: Result<CallToolResult, String>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS, PartialEq)]
+pub struct DynamicToolCallResponseEvent {
+    /// Identifier for the corresponding DynamicToolCallRequest.
+    pub call_id: String,
+    /// Turn ID that this dynamic tool call belongs to.
+    pub turn_id: String,
+    /// Dynamic tool name.
+    pub tool: String,
+    /// Dynamic tool call arguments.
+    pub arguments: serde_json::Value,
+    /// Dynamic tool response content items.
+    pub content_items: Vec<DynamicToolCallOutputContentItem>,
+    /// Whether the tool call succeeded.
+    pub success: bool,
+    /// Optional error text when the tool call failed before producing a response.
+    pub error: Option<String>,
+    /// The duration of the dynamic tool call.
+    #[ts(type = "string")]
+    pub duration: Duration,
+}
+
 impl McpToolCallEndEvent {
     pub fn is_success(&self) -> bool {
         match &self.result {
@@ -1800,6 +1886,21 @@ pub struct WebSearchEndEvent {
     pub call_id: String,
     pub query: String,
     pub action: WebSearchAction,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
+pub struct ImageGenerationBeginEvent {
+    pub call_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
+pub struct ImageGenerationEndEvent {
+    pub call_id: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub revised_prompt: Option<String>,
+    pub result: String,
 }
 
 // Conversation kept for backward compatibility.
@@ -1976,7 +2077,7 @@ impl SessionSource {
                 agent_nickname.clone()
             }
             SessionSource::SubAgent(SubAgentSource::MemoryConsolidation) => {
-                Some("morpheus".to_string())
+                Some("Morpheus".to_string())
             }
             _ => None,
         }
@@ -2042,6 +2143,8 @@ pub struct SessionMeta {
     pub base_instructions: Option<BaseInstructions>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dynamic_tools: Option<Vec<DynamicToolSpec>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_mode: Option<String>,
 }
 
 impl Default for SessionMeta {
@@ -2059,6 +2162,7 @@ impl Default for SessionMeta {
             model_provider: None,
             base_instructions: None,
             dynamic_tools: None,
+            memory_mode: None,
         }
     }
 }
@@ -2108,15 +2212,19 @@ pub struct TurnContextNetworkItem {
     pub denied_domains: Vec<String>,
 }
 
-/// Persist only when the same turn also persists the corresponding
-/// model-visible context updates (diffs or full reinjection), so
-/// resume/fork does not use a `reference_context_item` whose context
-/// was never actually visible to the model.
+/// Persist once per real user turn after computing that turn's model-visible
+/// context updates, and again after mid-turn compaction when replacement
+/// history re-establishes full context, so resume/fork replay can recover the
+/// latest durable baseline.
 #[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, TS)]
 pub struct TurnContextItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_id: Option<String>,
     pub cwd: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_date: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
     pub approval_policy: AskForApproval,
     pub sandbox_policy: SandboxPolicy,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2126,6 +2234,8 @@ pub struct TurnContextItem {
     pub personality: Option<Personality>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collaboration_mode: Option<CollaborationMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub realtime_active: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effort: Option<ReasoningEffortConfig>,
     pub summary: ReasoningSummaryConfig,
@@ -2709,6 +2819,9 @@ pub struct SessionConfiguredEvent {
 
     pub model_provider_id: String,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<ServiceTier>,
+
     /// When to escalate for approval for execution
     pub approval_policy: AskForApproval,
 
@@ -2765,8 +2878,8 @@ pub enum ReviewDecision {
         proposed_execpolicy_amendment: ExecPolicyAmendment,
     },
 
-    /// User has approved this command and wants to automatically approve any
-    /// future identical instances (`command` and `cwd` match exactly) for the
+    /// User has approved this request and wants future prompts in the same
+    /// session-scoped approval cache to be automatically approved for the
     /// remainder of the session.
     ApprovedForSession,
 
@@ -3029,6 +3142,7 @@ pub struct CollabResumeEndEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::items::ImageGenerationItem;
     use crate::items::UserMessageItem;
     use crate::items::WebSearchItem;
     use anyhow::Result;
@@ -3048,6 +3162,18 @@ mod tests {
             network_access: NetworkAccess::Enabled,
         };
         assert!(enabled.has_full_disk_write_access());
+        assert!(enabled.has_full_network_access());
+    }
+
+    #[test]
+    fn read_only_reports_network_access_flags() {
+        let restricted = SandboxPolicy::new_read_only_policy();
+        assert!(!restricted.has_full_network_access());
+
+        let enabled = SandboxPolicy::ReadOnly {
+            access: ReadOnlyAccess::FullAccess,
+            network_access: true,
+        };
         assert!(enabled.has_full_network_access());
     }
 
@@ -3135,6 +3261,53 @@ mod tests {
         };
 
         assert!(event.as_legacy_events(false).is_empty());
+    }
+
+    #[test]
+    fn item_started_event_from_image_generation_emits_begin_event() {
+        let event = ItemStartedEvent {
+            thread_id: ThreadId::new(),
+            turn_id: "turn-1".into(),
+            item: TurnItem::ImageGeneration(ImageGenerationItem {
+                id: "ig-1".into(),
+                status: "in_progress".into(),
+                revised_prompt: None,
+                result: String::new(),
+            }),
+        };
+
+        let legacy_events = event.as_legacy_events(false);
+        assert_eq!(legacy_events.len(), 1);
+        match &legacy_events[0] {
+            EventMsg::ImageGenerationBegin(event) => assert_eq!(event.call_id, "ig-1"),
+            _ => panic!("expected ImageGenerationBegin event"),
+        }
+    }
+
+    #[test]
+    fn item_completed_event_from_image_generation_emits_end_event() {
+        let event = ItemCompletedEvent {
+            thread_id: ThreadId::new(),
+            turn_id: "turn-1".into(),
+            item: TurnItem::ImageGeneration(ImageGenerationItem {
+                id: "ig-1".into(),
+                status: "completed".into(),
+                revised_prompt: Some("A tiny blue square".into()),
+                result: "Zm9v".into(),
+            }),
+        };
+
+        let legacy_events = event.as_legacy_events(false);
+        assert_eq!(legacy_events.len(), 1);
+        match &legacy_events[0] {
+            EventMsg::ImageGenerationEnd(event) => {
+                assert_eq!(event.call_id, "ig-1");
+                assert_eq!(event.status, "completed");
+                assert_eq!(event.revised_prompt.as_deref(), Some("A tiny blue square"));
+                assert_eq!(event.result, "Zm9v");
+            }
+            _ => panic!("expected ImageGenerationEnd event"),
+        }
     }
 
     #[test]
@@ -3345,6 +3518,8 @@ mod tests {
         let item = TurnContextItem {
             turn_id: None,
             cwd: PathBuf::from("/tmp"),
+            current_date: None,
+            timezone: None,
             approval_policy: AskForApproval::Never,
             sandbox_policy: SandboxPolicy::DangerFullAccess,
             network: Some(TurnContextNetworkItem {
@@ -3354,6 +3529,7 @@ mod tests {
             model: "gpt-5".to_string(),
             personality: None,
             collaboration_mode: None,
+            realtime_active: None,
             effort: None,
             summary: ReasoningSummaryConfig::Auto,
             user_instructions: None,
@@ -3387,6 +3563,7 @@ mod tests {
                 thread_name: None,
                 model: "codex-mini-latest".to_string(),
                 model_provider_id: "openai".to_string(),
+                service_tier: None,
                 approval_policy: AskForApproval::Never,
                 sandbox_policy: SandboxPolicy::new_read_only_policy(),
                 cwd: PathBuf::from("/home/user/project"),

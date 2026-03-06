@@ -130,7 +130,7 @@
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned workspace adapter source (harness-adapters/example-acp/package.json)",
-          "upstream_version": "0.1.0-20260226004329-g07a9845"
+          "upstream_version": "0.1.0-20260306161815-g5bb1a51"
         }
       ]
     },
@@ -158,7 +158,7 @@
       },
       "releases": [
         {
-          "version": "0.17.0",
+          "version": "0.18.1",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned Auggie CLI ACP bundle release"
@@ -175,7 +175,7 @@
       },
       "managed_install": {
         "kind": "archive",
-        "version": "1.27.0",
+        "version": "1.29.0",
         "args": [],
         "targets": {
           "darwin-aarch64": {
@@ -212,7 +212,7 @@
       },
       "releases": [
         {
-          "version": "1.27.0",
+          "version": "1.29.0",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned Docker cagent release"
@@ -239,7 +239,7 @@
       },
       "releases": [
         {
-          "version": "2.1.59",
+          "version": "2.1.70",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned Anthropic Claude Code CLI bundle release"
@@ -308,8 +308,8 @@
           "version": "0.2.7-ctx.1",
           "status": "supported",
           "context_min": "0.1.0",
-          "notes": "Pinned managed archive artifacts (Supabase provider-deps channel)",
-          "upstream_version": "0.2.7"
+          "notes": "Pinned workspace adapter source (external-harnesses/claude-crp/package.json)",
+          "upstream_version": "0.2.70"
         }
       ]
     },
@@ -337,7 +337,7 @@
       },
       "releases": [
         {
-          "version": "2.5.0",
+          "version": "2.6.1",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned Cline CLI ACP bundle release"
@@ -447,7 +447,7 @@
       },
       "releases": [
         {
-          "version": "0.0.418",
+          "version": "0.0.423",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned GitHub Copilot CLI ACP bundle release"
@@ -675,7 +675,7 @@
       },
       "releases": [
         {
-          "version": "0.30.0",
+          "version": "0.32.1",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned Gemini CLI ACP bundle release (bundle-only in ctx runtime)"
@@ -745,7 +745,7 @@
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned workspace adapter source (harness-adapters/openhands-acp/package.json)",
-          "upstream_version": "1.25.1"
+          "upstream_version": "1.27.1"
         }
       ]
     },
@@ -762,7 +762,7 @@
       "managed_install": {
         "kind": "python",
         "package": "kimi-cli",
-        "version": "1.14.0",
+        "version": "1.17.0",
         "entrypoint": "kimi",
         "args": [
           "--acp"
@@ -776,7 +776,7 @@
       },
       "releases": [
         {
-          "version": "1.14.0",
+          "version": "1.17.0",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned Kimi CLI ACP bundle release"
@@ -794,7 +794,7 @@
       "managed_install": {
         "kind": "python",
         "package": "mistral-vibe",
-        "version": "2.2.1",
+        "version": "2.3.0",
         "entrypoint": "vibe-acp",
         "args": []
       },
@@ -806,7 +806,7 @@
       },
       "releases": [
         {
-          "version": "2.2.1",
+          "version": "2.3.0",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned Mistral Vibe ACP bundle release"
@@ -825,31 +825,31 @@
       },
       "managed_install": {
         "kind": "archive",
-        "version": "1.2.14",
+        "version": "1.2.20",
         "args": [
           "acp"
         ],
         "targets": {
           "darwin-aarch64": {
-            "url": "https://github.com/anomalyco/opencode/releases/download/v1.2.14/opencode-darwin-arm64.zip",
+            "url": "https://github.com/anomalyco/opencode/releases/download/v1.2.20/opencode-darwin-arm64.zip",
             "sha256": "6139f02aa2f96843939c60a68274b2d58530225c8a8c73420c71dd167923806f",
             "archive": "zip",
             "bin_path": "opencode"
           },
           "darwin-x86_64": {
-            "url": "https://github.com/anomalyco/opencode/releases/download/v1.2.14/opencode-darwin-x64.zip",
+            "url": "https://github.com/anomalyco/opencode/releases/download/v1.2.20/opencode-darwin-x64.zip",
             "sha256": "d0136bf89bef1361c4c33e577a73884c4dc9d58d5ffba47cb6c24b29fb05c119",
             "archive": "zip",
             "bin_path": "opencode"
           },
           "linux-aarch64": {
-            "url": "https://github.com/anomalyco/opencode/releases/download/v1.2.14/opencode-linux-arm64.tar.gz",
+            "url": "https://github.com/anomalyco/opencode/releases/download/v1.2.20/opencode-linux-arm64.tar.gz",
             "sha256": "aeea8d4160e2f8e9190a92ed69b81d4a70d5cc8b610570ff0d781dad88877282",
             "archive": "tar_gz",
             "bin_path": "opencode"
           },
           "linux-x86_64": {
-            "url": "https://github.com/anomalyco/opencode/releases/download/v1.2.14/opencode-linux-x64-baseline.tar.gz",
+            "url": "https://github.com/anomalyco/opencode/releases/download/v1.2.20/opencode-linux-x64-baseline.tar.gz",
             "sha256": "e16183c3338c41af048a4c76c9e70e89e1c9a7340a3d72b687c36e9afd6db21f",
             "archive": "tar_gz",
             "bin_path": "opencode"
@@ -864,7 +864,7 @@
       },
       "releases": [
         {
-          "version": "1.2.14",
+          "version": "1.2.20",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned OpenCode CLI ACP bundle release"
@@ -1001,7 +1001,7 @@
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned workspace adapter source (harness-adapters/pi-acp/package.json)",
-          "upstream_version": "0.55.1"
+          "upstream_version": "0.56.3"
         }
       ]
     },
@@ -1029,7 +1029,7 @@
       },
       "releases": [
         {
-          "version": "0.10.6",
+          "version": "0.11.1",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned Qwen Code CLI ACP bundle release"

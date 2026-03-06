@@ -6,6 +6,7 @@ use crate::config::AgentRoleConfig;
 use crate::features::Feature;
 use crate::features::Features;
 use crate::mcp_connection_manager::ToolInfo;
+use crate::models_manager::collaboration_mode_presets::CollaborationModesConfig;
 use crate::tools::handlers::PLAN_TOOL;
 use crate::tools::handlers::SEARCH_TOOL_BM25_DEFAULT_LIMIT;
 use crate::tools::handlers::SEARCH_TOOL_BM25_TOOL_NAME;
@@ -22,7 +23,9 @@ use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::models::VIEW_IMAGE_TOOL_NAME;
 use codex_protocol::openai_models::ApplyPatchToolType;
 use codex_protocol::openai_models::ConfigShellToolType;
+use codex_protocol::openai_models::InputModality;
 use codex_protocol::openai_models::ModelInfo;
+use codex_protocol::openai_models::WebSearchToolType;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
 use serde::Deserialize;
@@ -34,10 +37,16 @@ use std::collections::HashMap;
 
 const SEARCH_TOOL_BM25_DESCRIPTION_TEMPLATE: &str =
     include_str!("../../templates/search_tool/tool_description.md");
-
+const WEB_SEARCH_CONTENT_TYPES: [&str; 2] = ["text", "image"];
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum ShellCommandBackendConfig {
     Classic,
+    ZshFork,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum UnifiedExecBackendConfig {
+    Direct,
     ZshFork,
 }
 
@@ -45,16 +54,21 @@ pub enum ShellCommandBackendConfig {
 pub(crate) struct ToolsConfig {
     pub shell_type: ConfigShellToolType,
     shell_command_backend: ShellCommandBackendConfig,
+    pub unified_exec_backend: UnifiedExecBackendConfig,
     pub allow_login_shell: bool,
     pub apply_patch_tool_type: Option<ApplyPatchToolType>,
     pub web_search_mode: Option<WebSearchMode>,
+    pub web_search_tool_type: WebSearchToolType,
+    pub image_gen_tool: bool,
     pub agent_roles: BTreeMap<String, AgentRoleConfig>,
     pub search_tool: bool,
     pub request_permission_enabled: bool,
     pub js_repl_enabled: bool,
     pub js_repl_tools_only: bool,
     pub collab_tools: bool,
-    pub collaboration_modes_tools: bool,
+    pub artifact_tools: bool,
+    pub request_user_input: bool,
+    pub default_mode_request_user_input: bool,
     pub experimental_supported_tools: Vec<String>,
     pub agent_jobs_tools: bool,
     pub agent_jobs_worker_tools: bool,
@@ -80,8 +94,14 @@ impl ToolsConfig {
         let include_js_repl_tools_only =
             include_js_repl && features.enabled(Feature::JsReplToolsOnly);
         let include_collab_tools = features.enabled(Feature::Collab);
-        let include_collaboration_modes_tools = features.enabled(Feature::CollaborationModes);
+        let include_request_user_input = !matches!(session_source, SessionSource::SubAgent(_));
+        let include_default_mode_request_user_input =
+            include_request_user_input && features.enabled(Feature::DefaultModeRequestUserInput);
         let include_search_tool = features.enabled(Feature::Apps);
+        let include_artifact_tools =
+            features.enabled(Feature::Artifact) && codex_artifacts::can_manage_artifact_runtime();
+        let include_image_gen_tool =
+            features.enabled(Feature::ImageGeneration) && supports_image_generation(model_info);
         let include_agent_jobs = include_collab_tools && features.enabled(Feature::Sqlite);
         let request_permission_enabled = features.enabled(Feature::RequestPermissions);
         let shell_command_backend =
@@ -89,6 +109,12 @@ impl ToolsConfig {
                 ShellCommandBackendConfig::ZshFork
             } else {
                 ShellCommandBackendConfig::Classic
+            };
+        let unified_exec_backend =
+            if features.enabled(Feature::ShellTool) && features.enabled(Feature::ShellZshFork) {
+                UnifiedExecBackendConfig::ZshFork
+            } else {
+                UnifiedExecBackendConfig::Direct
             };
 
         let shell_type = if !features.enabled(Feature::ShellTool) {
@@ -128,16 +154,21 @@ impl ToolsConfig {
         Self {
             shell_type,
             shell_command_backend,
+            unified_exec_backend,
             allow_login_shell: true,
             apply_patch_tool_type,
             web_search_mode: *web_search_mode,
+            web_search_tool_type: model_info.web_search_tool_type,
+            image_gen_tool: include_image_gen_tool,
             agent_roles: BTreeMap::new(),
             search_tool: include_search_tool,
             request_permission_enabled,
             js_repl_enabled: include_js_repl,
             js_repl_tools_only: include_js_repl_tools_only,
             collab_tools: include_collab_tools,
-            collaboration_modes_tools: include_collaboration_modes_tools,
+            artifact_tools: include_artifact_tools,
+            request_user_input: include_request_user_input,
+            default_mode_request_user_input: include_default_mode_request_user_input,
             experimental_supported_tools: model_info.experimental_supported_tools.clone(),
             agent_jobs_tools: include_agent_jobs,
             agent_jobs_worker_tools,
@@ -153,6 +184,10 @@ impl ToolsConfig {
         self.allow_login_shell = allow_login_shell;
         self
     }
+}
+
+fn supports_image_generation(model_info: &ModelInfo) -> bool {
+    model_info.input_modalities.contains(&InputModality::Image)
 }
 
 /// Generic JSON‑Schema subset needed for our tool definitions
@@ -631,13 +666,50 @@ fn create_spawn_agent_tool(config: &ToolsConfig) -> ToolSpec {
                 )),
             },
         ),
+        (
+            "fork_context".to_string(),
+            JsonSchema::Boolean {
+                description: Some(
+                    "When true, fork the current thread history into the new agent before sending the initial prompt. This must be used when you want the new agent to have exactly the same context as you."
+                        .to_string(),
+                ),
+            },
+        ),
     ]);
 
     ToolSpec::Function(ResponsesApiTool {
         name: "spawn_agent".to_string(),
-        description:
-            "Spawn a sub-agent for a well-scoped task. Returns the agent id (and user-facing nickname when available) to use to communicate with this agent."
-                .to_string(),
+        description: r#"Spawn a sub-agent for a well-scoped task. Returns the agent id (and user-facing nickname when available) to use to communicate with this agent. This spawn_agent tool provides you access to smaller but more efficient sub-agents. A mini model can solve many tasks faster than the main model. You should follow the rules and guidelines below to use this tool.
+
+### When to delegate vs. do the subtask yourself
+- First, quickly analyze the overall user task and form a succinct high-level plan. Identify which tasks are immediate blockers on the critical path, and which tasks are sidecar tasks that are needed but can run in parallel without blocking the next local step. As part of that plan, explicitly decide what immediate task you should do locally right now. Do this planning step before delegating to agents so you do not hand off the immediate blocking task to a submodel and then waste time waiting on it.
+- Use the smaller subagent when a subtask is easy enough for it to handle and can run in parallel with your local work. Prefer delegating concrete, bounded sidecar tasks that materially advance the main task without blocking your immediate next local step.
+- Do not delegate urgent blocking work when your immediate next step depends on that result. If the very next action is blocked on that task, the main rollout should usually do it locally to keep the critical path moving.
+- Keep work local when the subtask is too difficult to delegate well and when it is tightly coupled, urgent, or likely to block your immediate next step.
+
+### Designing delegated subtasks
+- Subtasks must be concrete, well-defined, and self-contained.
+- Delegated subtasks must materially advance the main task.
+- Do not duplicate work between the main rollout and delegated subtasks.
+- Avoid issuing multiple delegate calls on the same unresolved thread unless the new delegated task is genuinely different and necessary.
+- Narrow the delegated ask to the concrete output you need next.
+- For coding tasks, prefer delegating concrete code-change worker subtasks over read-only explorer analysis when the subagent can make a bounded patch in a clear write scope.
+- When delegating coding work, instruct the submodel to edit files directly in its forked workspace and list the file paths it changed in the final answer.
+- For code-edit subtasks, decompose work so each delegated task has a disjoint write set.
+
+### After you delegate
+- Call wait very sparingly. Only call wait when you need the result immediately for the next critical-path step and you are blocked until it returns.
+- Do not redo delegated subagent tasks yourself; focus on integrating results or tackling non-overlapping work.
+- While the subagent is running in the background, do meaningful non-overlapping work immediately.
+- Do not repeatedly wait by reflex.
+- When a delegated coding task returns, quickly review the uploaded changes, then integrate or refine them.
+
+### Parallel delegation patterns
+- Run multiple independent information-seeking subtasks in parallel when you have distinct questions that can be answered independently.
+- Split implementation into disjoint codebase slices and spawn multiple agents for them in parallel when the write scopes do not overlap.
+- Delegate verification only when it can run in parallel with ongoing implementation and is likely to catch a concrete risk before final integration.
+- The key is to find opportunities to spawn multiple independent subtasks in parallel within the same round, while ensuring each subtask is well-defined, self-contained, and materially advances the main task."#
+            .to_string(),
         strict: false,
         parameters: JsonSchema::Object {
             properties,
@@ -803,9 +875,8 @@ fn create_send_input_tool() -> ToolSpec {
 
     ToolSpec::Function(ResponsesApiTool {
         name: "send_input".to_string(),
-        description:
-            "Send a message to an existing agent. Use interrupt=true to redirect work immediately."
-                .to_string(),
+        description: "Send a message to an existing agent. Use interrupt=true to redirect work immediately. You should reuse the agent by send_input if you believe your assigned task is highly dependent on the context of a previous task."
+            .to_string(),
         strict: false,
         parameters: JsonSchema::Object {
             properties,
@@ -861,7 +932,7 @@ fn create_wait_tool() -> ToolSpec {
 
     ToolSpec::Function(ResponsesApiTool {
         name: "wait".to_string(),
-        description: "Wait for agents to reach a final status. Completed statuses may include the agent's final message. Returns empty status when timed out. Once the agent reaches his final status, a notification message will be received containing the same completed status."
+        description: "Wait for agents to reach a final status. Completed statuses may include the agent's final message. Returns empty status when timed out. Once the agent reaches a final status, a notification message will be received containing the same completed status."
             .to_string(),
         strict: false,
         parameters: JsonSchema::Object {
@@ -872,7 +943,9 @@ fn create_wait_tool() -> ToolSpec {
     })
 }
 
-fn create_request_user_input_tool() -> ToolSpec {
+fn create_request_user_input_tool(
+    collaboration_modes_config: CollaborationModesConfig,
+) -> ToolSpec {
     let mut option_props = BTreeMap::new();
     option_props.insert(
         "label".to_string(),
@@ -943,7 +1016,9 @@ fn create_request_user_input_tool() -> ToolSpec {
 
     ToolSpec::Function(ResponsesApiTool {
         name: "request_user_input".to_string(),
-        description: request_user_input_tool_description(),
+        description: request_user_input_tool_description(
+            collaboration_modes_config.default_mode_request_user_input,
+        ),
         strict: false,
         parameters: JsonSchema::Object {
             properties,
@@ -1314,6 +1389,33 @@ JS_SOURCE: /(?:\s*)(?:[^\s{\"`]|`[^`]|``[^`])[\s\S]*/
     })
 }
 
+fn create_artifacts_tool() -> ToolSpec {
+    const ARTIFACTS_FREEFORM_GRAMMAR: &str = r#"
+start: pragma_source | plain_source
+
+pragma_source: PRAGMA_LINE NEWLINE js_source
+plain_source: PLAIN_JS_SOURCE
+
+js_source: JS_SOURCE
+
+PRAGMA_LINE: /[ \t]*\/\/ codex-artifacts:[^\r\n]*/ | /[ \t]*\/\/ codex-artifact-tool:[^\r\n]*/
+NEWLINE: /\r?\n/
+PLAIN_JS_SOURCE: /(?:\s*)(?:[^\s{\"`]|`[^`]|``[^`])[\s\S]*/
+JS_SOURCE: /(?:\s*)(?:[^\s{\"`]|`[^`]|``[^`])[\s\S]*/
+"#;
+
+    ToolSpec::Freeform(FreeformTool {
+        name: "artifacts".to_string(),
+        description: "Runs raw JavaScript against the preinstalled Codex @oai/artifact-tool runtime for creating presentations or spreadsheets. This is plain JavaScript executed by a local Node-compatible runtime with top-level await, not TypeScript: do not use type annotations, `interface`, `type`, or `import type`. Author code the same way you would for `import { Presentation, Workbook, PresentationFile, SpreadsheetFile, FileBlob, ... } from \"@oai/artifact-tool\"`, but omit that import line because the package surface is already preloaded. Named exports are available directly on `globalThis`, and the full module is available as `globalThis.artifactTool` (also aliased as `globalThis.artifacts` and `globalThis.codexArtifacts`). Node built-ins such as `node:fs/promises` may still be imported when needed for saving preview bytes. This is a freeform tool: send raw JavaScript source text, optionally with a first-line pragma like `// codex-artifacts: timeout_ms=15000` or `// codex-artifact-tool: timeout_ms=15000`; do not send JSON/quotes/markdown fences."
+            .to_string(),
+        format: FreeformToolFormat {
+            r#type: "grammar".to_string(),
+            syntax: "lark".to_string(),
+            definition: ARTIFACTS_FREEFORM_GRAMMAR.to_string(),
+        },
+    })
+}
+
 fn create_js_repl_reset_tool() -> ToolSpec {
     ToolSpec::Function(ResponsesApiTool {
         name: "js_repl_reset".to_string(),
@@ -1634,6 +1736,7 @@ pub(crate) fn build_specs(
     dynamic_tools: &[DynamicToolSpec],
 ) -> ToolRegistryBuilder {
     use crate::tools::handlers::ApplyPatchHandler;
+    use crate::tools::handlers::ArtifactsHandler;
     use crate::tools::handlers::DynamicToolHandler;
     use crate::tools::handlers::GrepFilesHandler;
     use crate::tools::handlers::JsReplHandler;
@@ -1664,10 +1767,13 @@ pub(crate) fn build_specs(
     let mcp_handler = Arc::new(McpHandler);
     let mcp_resource_handler = Arc::new(McpResourceHandler);
     let shell_command_handler = Arc::new(ShellCommandHandler::from(config.shell_command_backend));
-    let request_user_input_handler = Arc::new(RequestUserInputHandler);
+    let request_user_input_handler = Arc::new(RequestUserInputHandler {
+        default_mode_request_user_input: config.default_mode_request_user_input,
+    });
     let search_tool_handler = Arc::new(SearchToolBm25Handler);
     let js_repl_handler = Arc::new(JsReplHandler);
     let js_repl_reset_handler = Arc::new(JsReplResetHandler);
+    let artifacts_handler = Arc::new(ArtifactsHandler);
     let request_permission_enabled = config.request_permission_enabled;
 
     match &config.shell_type {
@@ -1727,8 +1833,10 @@ pub(crate) fn build_specs(
         builder.register_handler("js_repl_reset", js_repl_reset_handler);
     }
 
-    if config.collaboration_modes_tools {
-        builder.push_spec(create_request_user_input_tool());
+    if config.request_user_input {
+        builder.push_spec(create_request_user_input_tool(CollaborationModesConfig {
+            default_mode_request_user_input: config.default_mode_request_user_input,
+        }));
         builder.register_handler("request_user_input", request_user_input_handler);
     }
 
@@ -1788,22 +1896,40 @@ pub(crate) fn build_specs(
         builder.register_handler("test_sync_tool", test_sync_handler);
     }
 
-    match config.web_search_mode {
-        Some(WebSearchMode::Cached) => {
-            builder.push_spec(ToolSpec::WebSearch {
-                external_web_access: Some(false),
-            });
-        }
-        Some(WebSearchMode::Live) => {
-            builder.push_spec(ToolSpec::WebSearch {
-                external_web_access: Some(true),
-            });
-        }
-        Some(WebSearchMode::Disabled) | None => {}
+    let external_web_access = match config.web_search_mode {
+        Some(WebSearchMode::Cached) => Some(false),
+        Some(WebSearchMode::Live) => Some(true),
+        Some(WebSearchMode::Disabled) | None => None,
+    };
+
+    if let Some(external_web_access) = external_web_access {
+        let search_content_types = match config.web_search_tool_type {
+            WebSearchToolType::Text => None,
+            WebSearchToolType::TextAndImage => Some(
+                WEB_SEARCH_CONTENT_TYPES
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+            ),
+        };
+
+        builder.push_spec(ToolSpec::WebSearch {
+            external_web_access: Some(external_web_access),
+            search_content_types,
+        });
+    }
+
+    if config.image_gen_tool {
+        builder.push_spec(ToolSpec::ImageGeneration {});
     }
 
     builder.push_spec_with_parallel_support(create_view_image_tool(), true);
     builder.register_handler("view_image", view_image_handler);
+
+    if config.artifact_tools {
+        builder.push_spec(create_artifacts_tool());
+        builder.register_handler("artifacts", artifacts_handler);
+    }
 
     if config.collab_tools {
         let multi_agent_handler = Arc::new(MultiAgentHandler);
@@ -1873,6 +1999,7 @@ mod tests {
     use crate::models_manager::manager::ModelsManager;
     use crate::models_manager::model_info::with_config_overrides;
     use crate::tools::registry::ConfiguredToolSpec;
+    use codex_protocol::openai_models::InputModality;
     use codex_protocol::openai_models::ModelInfo;
     use codex_protocol::openai_models::ModelsResponse;
     use pretty_assertions::assert_eq;
@@ -1925,6 +2052,7 @@ mod tests {
         match tool {
             ToolSpec::Function(ResponsesApiTool { name, .. }) => name,
             ToolSpec::LocalShell {} => "local_shell",
+            ToolSpec::ImageGeneration {} => "image_generation",
             ToolSpec::WebSearch { .. } => "web_search",
             ToolSpec::Freeform(FreeformTool { name, .. }) => name,
         }
@@ -1950,6 +2078,17 @@ mod tests {
                 "expected tool {expected} to be present; had: {names:?}"
             );
         }
+    }
+
+    fn assert_lacks_tool_name(tools: &[ConfiguredToolSpec], expected_absent: &str) {
+        let names = tools
+            .iter()
+            .map(|tool| tool_name(&tool.spec))
+            .collect::<Vec<_>>();
+        assert!(
+            !names.contains(&expected_absent),
+            "expected tool {expected_absent} to be absent; had: {names:?}"
+        );
     }
 
     fn shell_tool_name(config: &ToolsConfig) -> Option<&'static str> {
@@ -2003,7 +2142,10 @@ mod tests {
             ToolSpec::Function(ResponsesApiTool { parameters, .. }) => {
                 strip_descriptions_schema(parameters);
             }
-            ToolSpec::Freeform(_) | ToolSpec::LocalShell {} | ToolSpec::WebSearch { .. } => {}
+            ToolSpec::Freeform(_)
+            | ToolSpec::LocalShell {}
+            | ToolSpec::ImageGeneration {}
+            | ToolSpec::WebSearch { .. } => {}
         }
     }
 
@@ -2024,7 +2166,6 @@ mod tests {
         let model_info = model_info_from_models_json("gpt-5-codex");
         let mut features = Features::with_defaults();
         features.enable(Feature::UnifiedExec);
-        features.enable(Feature::CollaborationModes);
         let config = ToolsConfig::new(&ToolsConfigParams {
             model_info: &model_info,
             features: &features,
@@ -2055,10 +2196,11 @@ mod tests {
             create_exec_command_tool(true, false),
             create_write_stdin_tool(),
             PLAN_TOOL.clone(),
-            create_request_user_input_tool(),
+            create_request_user_input_tool(CollaborationModesConfig::default()),
             create_apply_patch_freeform_tool(),
             ToolSpec::WebSearch {
                 external_web_access: Some(true),
+                search_content_types: None,
             },
             create_view_image_tool(),
         ] {
@@ -2087,8 +2229,6 @@ mod tests {
             ModelsManager::construct_model_info_offline_for_tests("gpt-5-codex", &config);
         let mut features = Features::with_defaults();
         features.enable(Feature::Collab);
-        features.enable(Feature::CollaborationModes);
-        features.enable(Feature::Sqlite);
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
             model_info: &model_info,
             features: &features,
@@ -2109,13 +2249,31 @@ mod tests {
     }
 
     #[test]
+    fn test_build_specs_artifact_tool_enabled() {
+        let mut config = test_config();
+        let runtime_root = tempfile::TempDir::new().expect("create temp codex home");
+        config.codex_home = runtime_root.path().to_path_buf();
+        let model_info =
+            ModelsManager::construct_model_info_offline_for_tests("gpt-5-codex", &config);
+        let mut features = Features::with_defaults();
+        features.enable(Feature::Artifact);
+        let tools_config = ToolsConfig::new(&ToolsConfigParams {
+            model_info: &model_info,
+            features: &features,
+            web_search_mode: Some(WebSearchMode::Cached),
+            session_source: SessionSource::Cli,
+        });
+        let (tools, _) = build_specs(&tools_config, None, None, &[]).build();
+        assert_contains_tool_names(&tools, &["artifacts"]);
+    }
+
+    #[test]
     fn test_build_specs_agent_job_worker_tools_enabled() {
         let config = test_config();
         let model_info =
             ModelsManager::construct_model_info_offline_for_tests("gpt-5-codex", &config);
         let mut features = Features::with_defaults();
         features.enable(Feature::Collab);
-        features.enable(Feature::CollaborationModes);
         features.enable(Feature::Sqlite);
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
             model_info: &model_info,
@@ -2138,15 +2296,15 @@ mod tests {
                 "report_agent_job_result",
             ],
         );
+        assert_lacks_tool_name(&tools, "request_user_input");
     }
 
     #[test]
-    fn request_user_input_requires_collaboration_modes_feature() {
+    fn request_user_input_description_reflects_default_mode_feature_flag() {
         let config = test_config();
         let model_info =
             ModelsManager::construct_model_info_offline_for_tests("gpt-5-codex", &config);
         let mut features = Features::with_defaults();
-        features.disable(Feature::CollaborationModes);
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
             model_info: &model_info,
             features: &features,
@@ -2154,12 +2312,13 @@ mod tests {
             session_source: SessionSource::Cli,
         });
         let (tools, _) = build_specs(&tools_config, None, None, &[]).build();
-        assert!(
-            !tools.iter().any(|t| t.spec.name() == "request_user_input"),
-            "request_user_input should be disabled when collaboration_modes feature is off"
+        let request_user_input_tool = find_tool(&tools, "request_user_input");
+        assert_eq!(
+            request_user_input_tool.spec,
+            create_request_user_input_tool(CollaborationModesConfig::default())
         );
 
-        features.enable(Feature::CollaborationModes);
+        features.enable(Feature::DefaultModeRequestUserInput);
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
             model_info: &model_info,
             features: &features,
@@ -2167,7 +2326,13 @@ mod tests {
             session_source: SessionSource::Cli,
         });
         let (tools, _) = build_specs(&tools_config, None, None, &[]).build();
-        assert_contains_tool_names(&tools, &["request_user_input"]);
+        let request_user_input_tool = find_tool(&tools, "request_user_input");
+        assert_eq!(
+            request_user_input_tool.spec,
+            create_request_user_input_tool(CollaborationModesConfig {
+                default_mode_request_user_input: true,
+            })
+        );
     }
 
     #[test]
@@ -2234,6 +2399,56 @@ mod tests {
     }
 
     #[test]
+    fn image_generation_tools_require_feature_and_supported_model() {
+        let config = test_config();
+        let mut supported_model_info =
+            ModelsManager::construct_model_info_offline_for_tests("gpt-5.2", &config);
+        supported_model_info.slug = "custom/gpt-5.2-variant".to_string();
+        let mut unsupported_model_info = supported_model_info.clone();
+        unsupported_model_info.input_modalities = vec![InputModality::Text];
+        let default_features = Features::with_defaults();
+        let mut image_generation_features = default_features.clone();
+        image_generation_features.enable(Feature::ImageGeneration);
+
+        let default_tools_config = ToolsConfig::new(&ToolsConfigParams {
+            model_info: &supported_model_info,
+            features: &default_features,
+            web_search_mode: Some(WebSearchMode::Cached),
+            session_source: SessionSource::Cli,
+        });
+        let (default_tools, _) = build_specs(&default_tools_config, None, None, &[]).build();
+        assert!(
+            !default_tools
+                .iter()
+                .any(|tool| tool.spec.name() == "image_generation"),
+            "image_generation should be disabled by default"
+        );
+
+        let supported_tools_config = ToolsConfig::new(&ToolsConfigParams {
+            model_info: &supported_model_info,
+            features: &image_generation_features,
+            web_search_mode: Some(WebSearchMode::Cached),
+            session_source: SessionSource::Cli,
+        });
+        let (supported_tools, _) = build_specs(&supported_tools_config, None, None, &[]).build();
+        assert_contains_tool_names(&supported_tools, &["image_generation"]);
+
+        let tools_config = ToolsConfig::new(&ToolsConfigParams {
+            model_info: &unsupported_model_info,
+            features: &image_generation_features,
+            web_search_mode: Some(WebSearchMode::Cached),
+            session_source: SessionSource::Cli,
+        });
+        let (tools, _) = build_specs(&tools_config, None, None, &[]).build();
+        assert!(
+            !tools
+                .iter()
+                .any(|tool| tool.spec.name() == "image_generation"),
+            "image_generation should be disabled for unsupported models"
+        );
+    }
+
+    #[test]
     fn js_repl_freeform_grammar_blocks_common_non_js_prefixes() {
         let ToolSpec::Freeform(FreeformTool { format, .. }) = create_js_repl_tool() else {
             panic!("js_repl should use a freeform tool spec");
@@ -2254,6 +2469,7 @@ mod tests {
         web_search_mode: Option<WebSearchMode>,
         expected_tools: &[&str],
     ) {
+        let _config = test_config();
         let model_info = model_info_from_models_json(model_slug);
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
             model_info: &model_info,
@@ -2302,6 +2518,7 @@ mod tests {
             tool.spec,
             ToolSpec::WebSearch {
                 external_web_access: Some(false),
+                search_content_types: None,
             }
         );
     }
@@ -2326,6 +2543,38 @@ mod tests {
             tool.spec,
             ToolSpec::WebSearch {
                 external_web_access: Some(true),
+                search_content_types: None,
+            }
+        );
+    }
+
+    #[test]
+    fn web_search_tool_type_text_and_image_sets_search_content_types() {
+        let config = test_config();
+        let mut model_info =
+            ModelsManager::construct_model_info_offline_for_tests("gpt-5-codex", &config);
+        model_info.web_search_tool_type = WebSearchToolType::TextAndImage;
+        let features = Features::with_defaults();
+
+        let tools_config = ToolsConfig::new(&ToolsConfigParams {
+            model_info: &model_info,
+            features: &features,
+            web_search_mode: Some(WebSearchMode::Live),
+            session_source: SessionSource::Cli,
+        });
+        let (tools, _) = build_specs(&tools_config, None, None, &[]).build();
+
+        let tool = find_tool(&tools, "web_search");
+        assert_eq!(
+            tool.spec,
+            ToolSpec::WebSearch {
+                external_web_access: Some(true),
+                search_content_types: Some(
+                    WEB_SEARCH_CONTENT_TYPES
+                        .into_iter()
+                        .map(str::to_string)
+                        .collect()
+                ),
             }
         );
     }
@@ -2335,8 +2584,7 @@ mod tests {
         let config = test_config();
         let model_info =
             ModelsManager::construct_model_info_offline_for_tests("gpt-5-codex", &config);
-        let mut features = Features::with_defaults();
-        features.enable(Feature::CollaborationModes);
+        let features = Features::with_defaults();
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
             model_info: &model_info,
             features: &features,
@@ -2359,8 +2607,7 @@ mod tests {
         let config = test_config();
         let model_info =
             ModelsManager::construct_model_info_offline_for_tests("gpt-5-codex", &config);
-        let mut features = Features::with_defaults();
-        features.enable(Feature::CollaborationModes);
+        let features = Features::with_defaults();
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
             model_info: &model_info,
             features: &features,
@@ -2381,8 +2628,7 @@ mod tests {
 
     #[test]
     fn test_build_specs_gpt5_codex_default() {
-        let mut features = Features::with_defaults();
-        features.enable(Feature::CollaborationModes);
+        let features = Features::with_defaults();
         assert_default_model_tools(
             "gpt-5-codex",
             &features,
@@ -2400,8 +2646,7 @@ mod tests {
 
     #[test]
     fn test_build_specs_gpt51_codex_default() {
-        let mut features = Features::with_defaults();
-        features.enable(Feature::CollaborationModes);
+        let features = Features::with_defaults();
         assert_default_model_tools(
             "gpt-5.1-codex",
             &features,
@@ -2421,7 +2666,6 @@ mod tests {
     fn test_build_specs_gpt5_codex_unified_exec_web_search() {
         let mut features = Features::with_defaults();
         features.enable(Feature::UnifiedExec);
-        features.enable(Feature::CollaborationModes);
         assert_model_tools(
             "gpt-5-codex",
             &features,
@@ -2442,7 +2686,6 @@ mod tests {
     fn test_build_specs_gpt51_codex_unified_exec_web_search() {
         let mut features = Features::with_defaults();
         features.enable(Feature::UnifiedExec);
-        features.enable(Feature::CollaborationModes);
         assert_model_tools(
             "gpt-5.1-codex",
             &features,
@@ -2461,8 +2704,7 @@ mod tests {
 
     #[test]
     fn test_gpt_5_1_codex_max_defaults() {
-        let mut features = Features::with_defaults();
-        features.enable(Feature::CollaborationModes);
+        let features = Features::with_defaults();
         assert_default_model_tools(
             "gpt-5.1-codex-max",
             &features,
@@ -2480,8 +2722,7 @@ mod tests {
 
     #[test]
     fn test_codex_5_1_mini_defaults() {
-        let mut features = Features::with_defaults();
-        features.enable(Feature::CollaborationModes);
+        let features = Features::with_defaults();
         assert_default_model_tools(
             "gpt-5.1-codex-mini",
             &features,
@@ -2499,8 +2740,7 @@ mod tests {
 
     #[test]
     fn test_gpt_5_defaults() {
-        let mut features = Features::with_defaults();
-        features.enable(Feature::CollaborationModes);
+        let features = Features::with_defaults();
         assert_default_model_tools(
             "gpt-5",
             &features,
@@ -2517,8 +2757,7 @@ mod tests {
 
     #[test]
     fn test_gpt_5_1_defaults() {
-        let mut features = Features::with_defaults();
-        features.enable(Feature::CollaborationModes);
+        let features = Features::with_defaults();
         assert_default_model_tools(
             "gpt-5.1",
             &features,
@@ -2538,7 +2777,6 @@ mod tests {
     fn test_gpt_5_1_codex_max_unified_exec_web_search() {
         let mut features = Features::with_defaults();
         features.enable(Feature::UnifiedExec);
-        features.enable(Feature::CollaborationModes);
         assert_model_tools(
             "gpt-5.1-codex-max",
             &features,
@@ -2597,6 +2835,10 @@ mod tests {
             tools_config.shell_command_backend,
             ShellCommandBackendConfig::ZshFork
         );
+        assert_eq!(
+            tools_config.unified_exec_backend,
+            UnifiedExecBackendConfig::ZshFork
+        );
     }
 
     #[test]
@@ -2624,6 +2866,7 @@ mod tests {
 
     #[test]
     fn test_test_model_info_includes_sync_tool() {
+        let _config = test_config();
         let mut model_info = model_info_from_models_json("gpt-5-codex");
         model_info.experimental_supported_tools = vec![
             "test_sync_tool".to_string(),

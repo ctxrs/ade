@@ -8,6 +8,7 @@ use crate::default_client::build_reqwest_client;
 use crate::error::CodexErr;
 use crate::error::Result as CoreResult;
 use crate::model_provider_info::ModelProviderInfo;
+use crate::models_manager::collaboration_mode_presets::CollaborationModesConfig;
 use crate::models_manager::collaboration_mode_presets::builtin_collaboration_mode_presets;
 use crate::models_manager::model_info;
 use codex_api::ModelsClient;
@@ -55,6 +56,7 @@ enum CatalogMode {
 pub struct ModelsManager {
     remote_models: RwLock<Vec<ModelInfo>>,
     catalog_mode: CatalogMode,
+    collaboration_modes_config: CollaborationModesConfig,
     auth_manager: Arc<AuthManager>,
     etag: RwLock<Option<String>>,
     cache_manager: ModelsCacheManager,
@@ -71,6 +73,7 @@ impl ModelsManager {
         codex_home: PathBuf,
         auth_manager: Arc<AuthManager>,
         model_catalog: Option<ModelsResponse>,
+        collaboration_modes_config: CollaborationModesConfig,
     ) -> Self {
         let cache_path = codex_home.join(MODEL_CACHE_FILE);
         let cache_manager = ModelsCacheManager::new(cache_path, DEFAULT_MODEL_CACHE_TTL);
@@ -88,6 +91,7 @@ impl ModelsManager {
         Self {
             remote_models: RwLock::new(remote_models),
             catalog_mode,
+            collaboration_modes_config,
             auth_manager,
             etag: RwLock::new(None),
             cache_manager,
@@ -110,7 +114,14 @@ impl ModelsManager {
     ///
     /// Returns a static set of presets seeded with the configured model.
     pub fn list_collaboration_modes(&self) -> Vec<CollaborationModeMask> {
-        builtin_collaboration_mode_presets()
+        self.list_collaboration_modes_for_config(self.collaboration_modes_config)
+    }
+
+    pub fn list_collaboration_modes_for_config(
+        &self,
+        collaboration_modes_config: CollaborationModesConfig,
+    ) -> Vec<CollaborationModeMask> {
+        builtin_collaboration_mode_presets(collaboration_modes_config)
     }
 
     /// Attempt to list models without blocking, using the current cached state.
@@ -378,6 +389,7 @@ impl ModelsManager {
                     .unwrap_or_else(|err| panic!("failed to load bundled models.json: {err}")),
             ),
             catalog_mode: CatalogMode::Default,
+            collaboration_modes_config: CollaborationModesConfig::default(),
             auth_manager,
             etag: RwLock::new(None),
             cache_manager,
@@ -459,6 +471,7 @@ mod tests {
             "apply_patch_tool_type": null,
             "truncation_policy": {"mode": "bytes", "limit": 10_000},
             "supports_parallel_tool_calls": false,
+            "supports_image_detail_original": false,
             "context_window": 272_000,
             "experimental_supported_tools": [],
         }))
@@ -504,7 +517,12 @@ mod tests {
             .expect("load default test config");
         let auth_manager =
             AuthManager::from_auth_for_testing(CodexAuth::from_api_key("Test API Key"));
-        let manager = ModelsManager::new(codex_home.path().to_path_buf(), auth_manager, None);
+        let manager = ModelsManager::new(
+            codex_home.path().to_path_buf(),
+            auth_manager,
+            None,
+            CollaborationModesConfig::default(),
+        );
         let known_slug = manager
             .get_remote_models()
             .await
@@ -532,6 +550,8 @@ mod tests {
             .build()
             .await
             .expect("load default test config");
+        let mut overlay = remote_model("gpt-overlay", "Overlay", 0);
+        overlay.supports_image_detail_original = true;
 
         let auth_manager =
             AuthManager::from_auth_for_testing(CodexAuth::from_api_key("Test API Key"));
@@ -539,8 +559,9 @@ mod tests {
             codex_home.path().to_path_buf(),
             auth_manager,
             Some(ModelsResponse {
-                models: vec![remote_model("gpt-overlay", "Overlay", 0)],
+                models: vec![overlay],
             }),
+            CollaborationModesConfig::default(),
         );
 
         let model_info = manager
@@ -550,6 +571,7 @@ mod tests {
         assert_eq!(model_info.slug, "gpt-overlay-experiment");
         assert_eq!(model_info.display_name, "Overlay");
         assert_eq!(model_info.context_window, Some(272_000));
+        assert!(model_info.supports_image_detail_original);
         assert!(!model_info.supports_parallel_tool_calls);
         assert!(!model_info.used_fallback_model_metadata);
     }
@@ -562,21 +584,24 @@ mod tests {
             .build()
             .await
             .expect("load default test config");
+        let mut remote = remote_model("gpt-image", "Image", 0);
+        remote.supports_image_detail_original = true;
         let auth_manager =
             AuthManager::from_auth_for_testing(CodexAuth::from_api_key("Test API Key"));
-        let manager = ModelsManager::new(codex_home.path().to_path_buf(), auth_manager, None);
-        let known_slug = manager
-            .get_remote_models()
-            .await
-            .first()
-            .expect("bundled models should include at least one model")
-            .slug
-            .clone();
-        let namespaced_model = format!("custom/{known_slug}");
+        let manager = ModelsManager::new(
+            codex_home.path().to_path_buf(),
+            auth_manager,
+            Some(ModelsResponse {
+                models: vec![remote],
+            }),
+            CollaborationModesConfig::default(),
+        );
+        let namespaced_model = "custom/gpt-image".to_string();
 
         let model_info = manager.get_model_info(&namespaced_model, &config).await;
 
         assert_eq!(model_info.slug, namespaced_model);
+        assert!(model_info.supports_image_detail_original);
         assert!(!model_info.used_fallback_model_metadata);
     }
 
@@ -590,7 +615,12 @@ mod tests {
             .expect("load default test config");
         let auth_manager =
             AuthManager::from_auth_for_testing(CodexAuth::from_api_key("Test API Key"));
-        let manager = ModelsManager::new(codex_home.path().to_path_buf(), auth_manager, None);
+        let manager = ModelsManager::new(
+            codex_home.path().to_path_buf(),
+            auth_manager,
+            None,
+            CollaborationModesConfig::default(),
+        );
         let known_slug = manager
             .get_remote_models()
             .await

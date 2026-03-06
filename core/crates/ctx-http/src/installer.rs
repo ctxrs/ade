@@ -37,7 +37,7 @@ pub use config::{
 
 const NODE_VERSION: &str = "24.14.0";
 const PYTHON_VERSION: &str = "3.13.12";
-const PYTHON_BUILD_TAG: &str = "20260211";
+const PYTHON_BUILD_TAG: &str = "20260303";
 
 const TYPESCRIPT_LS_VERSION: &str = "5.1.3";
 const TYPESCRIPT_VERSION: &str = "5.9.3";

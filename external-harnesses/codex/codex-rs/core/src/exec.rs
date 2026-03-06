@@ -62,7 +62,6 @@ pub(crate) const MAX_EXEC_OUTPUT_DELTAS_PER_CALL: usize = 10_000;
 #[derive(Debug)]
 pub struct ExecParams {
     pub command: Vec<String>,
-    pub original_command: String,
     pub cwd: PathBuf,
     pub expiration: ExecExpiration,
     pub env: HashMap<String, String>,
@@ -181,7 +180,6 @@ pub async fn process_exec_tool_call(
 
     let ExecParams {
         command,
-        original_command: _,
         cwd,
         mut env,
         expiration,
@@ -221,6 +219,8 @@ pub async fn process_exec_tool_call(
             enforce_managed_network,
             network: network.as_ref(),
             sandbox_policy_cwd: sandbox_cwd,
+            #[cfg(target_os = "macos")]
+            macos_seatbelt_profile_extensions: None,
             codex_linux_sandbox_exe: codex_linux_sandbox_exe.as_ref(),
             use_linux_sandbox_bwrap,
             windows_sandbox_level,
@@ -231,10 +231,11 @@ pub async fn process_exec_tool_call(
     crate::sandboxing::execute_env(exec_req, stdout_stream).await
 }
 
-pub(crate) async fn execute_exec_env(
-    env: ExecRequest,
+pub(crate) async fn execute_exec_request(
+    exec_request: ExecRequest,
     sandbox_policy: &SandboxPolicy,
     stdout_stream: Option<StdoutStream>,
+    after_spawn: Option<Box<dyn FnOnce() + Send>>,
 ) -> Result<ExecToolCallOutput> {
     let ExecRequest {
         command,
@@ -248,11 +249,9 @@ pub(crate) async fn execute_exec_env(
         sandbox_policy: _sandbox_policy_from_env,
         justification,
         arg0,
-    } = env;
+    } = exec_request;
 
     let params = ExecParams {
-        original_command: shlex::try_join(command.iter().map(String::as_str))
-            .unwrap_or_else(|_| command.join(" ")),
         command,
         cwd,
         expiration,
@@ -265,7 +264,7 @@ pub(crate) async fn execute_exec_env(
     };
 
     let start = Instant::now();
-    let raw_output_result = exec(params, sandbox, sandbox_policy, stdout_stream).await;
+    let raw_output_result = exec(params, sandbox, sandbox_policy, stdout_stream, after_spawn).await;
     let duration = start.elapsed();
     finalize_exec_result(raw_output_result, sandbox, duration)
 }
@@ -523,9 +522,6 @@ pub(crate) mod errors {
                 SandboxTransformError::SeatbeltUnavailable => CodexErr::UnsupportedOperation(
                     "seatbelt sandbox is only available on macOS".to_string(),
                 ),
-                SandboxTransformError::InvalidAdditionalPermissionsPath(path) => {
-                    CodexErr::InvalidRequest(format!("invalid additional_permissions path: {path}"))
-                }
             }
         }
     }
@@ -698,6 +694,7 @@ async fn exec(
     sandbox: SandboxType,
     sandbox_policy: &SandboxPolicy,
     stdout_stream: Option<StdoutStream>,
+    after_spawn: Option<Box<dyn FnOnce() + Send>>,
 ) -> Result<RawExecToolCallOutput> {
     #[cfg(target_os = "windows")]
     if sandbox == SandboxType::WindowsRestrictedToken
@@ -743,6 +740,9 @@ async fn exec(
         env,
     })
     .await?;
+    if let Some(after_spawn) = after_spawn {
+        after_spawn();
+    }
     consume_truncated_output(child, expiration, stdout_stream).await
 }
 
@@ -1125,8 +1125,6 @@ mod tests {
         ];
         let env: HashMap<String, String> = std::env::vars().collect();
         let params = ExecParams {
-            original_command: shlex::try_join(command.iter().map(String::as_str))
-                .unwrap_or_else(|_| command.join(" ")),
             command,
             cwd: std::env::current_dir()?,
             expiration: 500.into(),
@@ -1142,6 +1140,7 @@ mod tests {
             params,
             SandboxType::None,
             &SandboxPolicy::new_read_only_policy(),
+            None,
             None,
         )
         .await?;
@@ -1180,8 +1179,6 @@ mod tests {
         let cancel_token = CancellationToken::new();
         let cancel_tx = cancel_token.clone();
         let params = ExecParams {
-            original_command: shlex::try_join(command.iter().map(String::as_str))
-                .unwrap_or_else(|_| command.join(" ")),
             command,
             cwd: cwd.clone(),
             expiration: ExecExpiration::Cancellation(cancel_token),

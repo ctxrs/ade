@@ -38,7 +38,9 @@ use codex_core::config::ConfigOverrides;
 use codex_core::custom_prompts::discover_prompts_in_excluding;
 use codex_core::default_client::set_default_originator;
 use codex_core::find_thread_path_by_id_str;
+use codex_core::models_manager::collaboration_mode_presets::CollaborationModesConfig;
 use codex_protocol::ThreadId;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::custom_prompts::CustomPrompt;
 use codex_protocol::custom_prompts::PROMPTS_CMD_PREFIX;
 use codex_protocol::items::AgentMessageContent;
@@ -269,7 +271,8 @@ struct SessionState {
     default_cwd: PathBuf,
     default_model: String,
     default_effort: Option<ReasoningEffort>,
-    default_summary: codex_protocol::config_types::ReasoningSummary,
+    default_summary: Option<codex_protocol::config_types::ReasoningSummary>,
+    default_service_tier: Option<ServiceTier>,
     default_approval_policy: AskForApproval,
     default_sandbox_policy: SandboxPolicy,
     opened_commands: Vec<CrpCommandInfo>,
@@ -1188,6 +1191,7 @@ async fn handle_command(
                 model,
                 effort,
                 summary: session_state.default_summary,
+                service_tier: session_state.default_service_tier.map(Some),
                 final_output_json_schema: None,
                 collaboration_mode: None,
                 personality: None,
@@ -1199,6 +1203,7 @@ async fn handle_command(
                     .submit_with_id(Submission {
                         id: turn_id.clone(),
                         op,
+                        trace: None,
                     })
                     .await?;
                 turn_id
@@ -1234,6 +1239,7 @@ async fn handle_command(
                     .submit_with_id(Submission {
                         id: turn_id.clone(),
                         op,
+                        trace: None,
                     })
                     .await?;
                 turn_id
@@ -1269,6 +1275,7 @@ async fn handle_command(
                     .submit_with_id(Submission {
                         id: turn_id.clone(),
                         op,
+                        trace: None,
                     })
                     .await?;
                 turn_id
@@ -1322,6 +1329,7 @@ async fn handle_command(
                     .submit_with_id(Submission {
                         id: turn_id.clone(),
                         op,
+                        trace: None,
                     })
                     .await?;
                 turn_id
@@ -1359,6 +1367,7 @@ async fn handle_command(
                 auth_manager,
                 SessionSource::Exec,
                 config.model_catalog.clone(),
+                collaboration_modes_config(&config),
             );
             let presets = thread_manager
                 .list_models(codex_core::models_manager::manager::RefreshStrategy::OnlineIfUncached)
@@ -1424,6 +1433,7 @@ async fn load_config_from_crp(
         sandbox_mode: session_config.sandbox_mode,
         cwd: session_config.cwd,
         model_provider: session_config.model_provider,
+        service_tier: None,
         codex_linux_sandbox_exe: arg0_paths.codex_linux_sandbox_exe,
         main_execve_wrapper_exe: arg0_paths.main_execve_wrapper_exe,
         js_repl_node_path: None,
@@ -1499,6 +1509,7 @@ async fn open_session(
         Arc::clone(&auth_manager),
         SessionSource::Exec,
         config.model_catalog.clone(),
+        collaboration_modes_config(&config),
     );
     let default_model = thread_manager
         .get_models_manager()
@@ -1563,11 +1574,20 @@ async fn open_session(
         default_model,
         default_effort: config.model_reasoning_effort,
         default_summary: config.model_reasoning_summary,
+        default_service_tier: config.service_tier,
         default_approval_policy: config.permissions.approval_policy.value(),
         default_sandbox_policy: config.permissions.sandbox_policy.get().clone(),
         opened_commands,
         opened_slash_commands,
     })
+}
+
+fn collaboration_modes_config(config: &Config) -> CollaborationModesConfig {
+    CollaborationModesConfig {
+        default_mode_request_user_input: config
+            .features
+            .enabled(codex_core::features::Feature::DefaultModeRequestUserInput),
+    }
 }
 
 async fn find_rollout_path_fallback(codex_home: &PathBuf, id: &str) -> Option<PathBuf> {

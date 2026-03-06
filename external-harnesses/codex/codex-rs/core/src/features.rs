@@ -119,6 +119,8 @@ pub enum Feature {
     MemoryTool,
     /// Append additional AGENTS.md guidance to user instructions.
     ChildAgentsMd,
+    /// Allow `detail: "original"` image outputs on supported models.
+    ImageDetailOriginal,
     /// Enforce UTF8 output in Powershell.
     PowershellUtf8,
     /// Compress request bodies (zstd) when sending streaming requests to codex-backend.
@@ -127,21 +129,30 @@ pub enum Feature {
     Collab,
     /// Enable apps.
     Apps,
+    /// Enable plugins.
+    Plugins,
+    /// Allow the model to invoke the built-in image generation tool.
+    ImageGeneration,
     /// Route apps MCP calls through the configured gateway.
     AppsMcpGateway,
     /// Allow prompting and installing missing MCP dependencies.
     SkillMcpDependencyInstall,
     /// Prompt for missing skill env var dependencies.
     SkillEnvVarDependencyPrompt,
-    /// Emit skill approval test prompts/events.
-    SkillApproval,
     /// Steer feature flag - when enabled, Enter submits immediately instead of queuing.
+    /// Kept for config backward compatibility; behavior is always steer-enabled.
     Steer,
+    /// Allow request_user_input in Default collaboration mode.
+    DefaultModeRequestUserInput,
     /// Enable collaboration modes (Plan, Default).
     /// Kept for config backward compatibility; behavior is always collaboration-modes-enabled.
     CollaborationModes,
     /// Enable personality selection in the TUI.
     Personality,
+    /// Enable native artifact tools.
+    Artifact,
+    /// Enable Fast mode selection in the TUI and request layer.
+    FastMode,
     /// Enable voice transcription in the TUI composer.
     VoiceTranscription,
     /// Enable experimental realtime voice conversation mode in the TUI.
@@ -234,6 +245,14 @@ impl Features {
     pub fn disable(&mut self, f: Feature) -> &mut Self {
         self.enabled.remove(&f);
         self
+    }
+
+    pub fn set_enabled(&mut self, f: Feature, enabled: bool) -> &mut Self {
+        if enabled {
+            self.enable(f)
+        } else {
+            self.disable(f)
+        }
     }
 
     pub fn record_legacy_usage_force(&mut self, alias: &str, feature: Feature) {
@@ -344,16 +363,20 @@ impl Features {
         }
 
         overrides.apply(&mut features);
-        if features.enabled(Feature::JsReplToolsOnly) && !features.enabled(Feature::JsRepl) {
-            tracing::warn!("js_repl_tools_only requires js_repl; disabling js_repl_tools_only");
-            features.disable(Feature::JsReplToolsOnly);
-        }
+        features.normalize_dependencies();
 
         features
     }
 
     pub fn enabled_features(&self) -> Vec<Feature> {
         self.enabled.iter().copied().collect()
+    }
+
+    pub(crate) fn normalize_dependencies(&mut self) {
+        if self.enabled(Feature::JsReplToolsOnly) && !self.enabled(Feature::JsRepl) {
+            tracing::warn!("js_repl_tools_only requires js_repl; disabling js_repl_tools_only");
+            self.disable(Feature::JsReplToolsOnly);
+        }
     }
 }
 
@@ -395,13 +418,20 @@ fn web_search_details() -> &'static str {
 }
 
 /// Keys accepted in `[features]` tables.
-fn feature_for_key(key: &str) -> Option<Feature> {
+pub(crate) fn feature_for_key(key: &str) -> Option<Feature> {
     for spec in FEATURES {
         if spec.key == key {
             return Some(spec.id);
         }
     }
     legacy::feature_for_key(key)
+}
+
+pub(crate) fn canonical_feature_for_key(key: &str) -> Option<Feature> {
+    FEATURES
+        .iter()
+        .find(|spec| spec.key == key)
+        .map(|spec| spec.id)
 }
 
 /// Returns `true` if the provided string matches a known feature toggle key.
@@ -460,7 +490,11 @@ pub const FEATURES: &[FeatureSpec] = &[
     FeatureSpec {
         id: Feature::JsRepl,
         key: "js_repl",
-        stage: Stage::UnderDevelopment,
+        stage: Stage::Experimental {
+            name: "JavaScript REPL",
+            menu_description: "Enable a persistent Node-backed JavaScript REPL for interactive website debugging and other inline JavaScript execution capabilities. Requires Node >= v22.22.0 installed.",
+            announcement: "NEW: JavaScript REPL is now available in /experimental. Enable it, then start a new chat or restart Codex to use it.",
+        },
         default_enabled: false,
     },
     FeatureSpec {
@@ -515,6 +549,12 @@ pub const FEATURES: &[FeatureSpec] = &[
     FeatureSpec {
         id: Feature::ChildAgentsMd,
         key: "child_agents_md",
+        stage: Stage::UnderDevelopment,
+        default_enabled: false,
+    },
+    FeatureSpec {
+        id: Feature::ImageDetailOriginal,
+        key: "image_detail_original",
         stage: Stage::UnderDevelopment,
         default_enabled: false,
     },
@@ -606,6 +646,18 @@ pub const FEATURES: &[FeatureSpec] = &[
         default_enabled: false,
     },
     FeatureSpec {
+        id: Feature::Plugins,
+        key: "plugins",
+        stage: Stage::UnderDevelopment,
+        default_enabled: false,
+    },
+    FeatureSpec {
+        id: Feature::ImageGeneration,
+        key: "image_generation",
+        stage: Stage::UnderDevelopment,
+        default_enabled: false,
+    },
+    FeatureSpec {
         id: Feature::AppsMcpGateway,
         key: "apps_mcp_gateway",
         stage: Stage::UnderDevelopment,
@@ -624,16 +676,16 @@ pub const FEATURES: &[FeatureSpec] = &[
         default_enabled: false,
     },
     FeatureSpec {
-        id: Feature::SkillApproval,
-        key: "skill_approval",
-        stage: Stage::UnderDevelopment,
-        default_enabled: false,
-    },
-    FeatureSpec {
         id: Feature::Steer,
         key: "steer",
-        stage: Stage::Stable,
+        stage: Stage::Removed,
         default_enabled: true,
+    },
+    FeatureSpec {
+        id: Feature::DefaultModeRequestUserInput,
+        key: "default_mode_request_user_input",
+        stage: Stage::UnderDevelopment,
+        default_enabled: false,
     },
     FeatureSpec {
         id: Feature::CollaborationModes,
@@ -644,6 +696,18 @@ pub const FEATURES: &[FeatureSpec] = &[
     FeatureSpec {
         id: Feature::Personality,
         key: "personality",
+        stage: Stage::Stable,
+        default_enabled: true,
+    },
+    FeatureSpec {
+        id: Feature::Artifact,
+        key: "artifact",
+        stage: Stage::UnderDevelopment,
+        default_enabled: false,
+    },
+    FeatureSpec {
+        id: Feature::FastMode,
+        key: "fast_mode",
         stage: Stage::Stable,
         default_enabled: true,
     },
@@ -793,6 +857,29 @@ mod tests {
             Stage::UnderDevelopment
         );
         assert_eq!(Feature::UseLinuxSandboxBwrap.default_enabled(), false);
+    }
+
+    #[test]
+    fn js_repl_is_experimental_and_user_toggleable() {
+        let spec = Feature::JsRepl.info();
+        let stage = spec.stage;
+        let expected_node_version = include_str!("../../node-version.txt").trim_end();
+
+        assert!(matches!(stage, Stage::Experimental { .. }));
+        assert_eq!(stage.experimental_menu_name(), Some("JavaScript REPL"));
+        assert_eq!(
+            stage.experimental_menu_description().map(str::to_owned),
+            Some(format!(
+                "Enable a persistent Node-backed JavaScript REPL for interactive website debugging and other inline JavaScript execution capabilities. Requires Node >= v{expected_node_version} installed."
+            ))
+        );
+        assert_eq!(Feature::JsRepl.default_enabled(), false);
+    }
+
+    #[test]
+    fn image_generation_is_under_development() {
+        assert_eq!(Feature::ImageGeneration.stage(), Stage::UnderDevelopment);
+        assert_eq!(Feature::ImageGeneration.default_enabled(), false);
     }
 
     #[test]

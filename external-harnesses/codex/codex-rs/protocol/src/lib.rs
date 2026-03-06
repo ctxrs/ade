@@ -15,6 +15,5 @@ pub mod parse_command;
 pub mod plan_tool;
 pub mod protocol;
 pub mod request_user_input;
-pub mod skill_approval;
 pub mod slash_commands;
 pub mod user_input;
