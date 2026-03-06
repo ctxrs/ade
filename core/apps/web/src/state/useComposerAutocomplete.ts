@@ -12,6 +12,7 @@ import type { ComposerAutocompleteItem } from "../components/ComposerAutocomplet
 export type SlashCommandDescriptor = {
   name: string;
   description?: string;
+  argumentHint?: string;
 };
 
 export function useComposerAutocomplete({

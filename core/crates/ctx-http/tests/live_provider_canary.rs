@@ -186,13 +186,21 @@ async fn live_provider_canary_turn_invariants() {
     let store = state.store_for_session(session.id).await.unwrap();
     let events = store.list_session_events(session.id).await.unwrap();
 
-    let assistant_finals = events
+    let assistant_messages: Vec<String> = events
         .iter()
-        .filter(|e| matches!(e.event_type, SessionEventType::AssistantComplete))
-        .count();
+        .filter(|e| matches!(e.event_type, SessionEventType::AssistantMessageInserted))
+        .filter_map(|e| {
+            e.payload_json
+                .get("content")
+                .and_then(Value::as_str)
+                .map(|s| s.to_string())
+        })
+        .collect();
     assert!(
-        assistant_finals >= 1,
-        "expected at least 1 AssistantComplete; saw {assistant_finals}: {events:#?}"
+        assistant_messages
+            .iter()
+            .any(|message| message.contains("CLAUDE_ENDPOINT_E2E_OK")),
+        "expected assistant message containing CLAUDE_ENDPOINT_E2E_OK; saw {assistant_messages:#?} in events {events:#?}"
     );
 }
 
@@ -376,13 +384,21 @@ async fn live_claude_endpoint_profile_api_key_round_trip() {
 
     let store = state.store_for_session(session.id).await.unwrap();
     let events = store.list_session_events(session.id).await.unwrap();
-    let assistant_finals = events
+    let assistant_messages: Vec<String> = events
         .iter()
-        .filter(|e| matches!(e.event_type, SessionEventType::AssistantComplete))
-        .count();
+        .filter(|e| matches!(e.event_type, SessionEventType::AssistantMessageInserted))
+        .filter_map(|e| {
+            e.payload_json
+                .get("content")
+                .and_then(Value::as_str)
+                .map(|s| s.to_string())
+        })
+        .collect();
     assert!(
-        assistant_finals >= 1,
-        "expected at least 1 AssistantComplete; saw {assistant_finals}: {events:#?}"
+        assistant_messages
+            .iter()
+            .any(|message| message.contains("CLAUDE_ENDPOINT_E2E_OK")),
+        "expected assistant message containing CLAUDE_ENDPOINT_E2E_OK; saw {assistant_messages:#?} in events {events:#?}"
     );
 }
 

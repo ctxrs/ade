@@ -2048,18 +2048,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     return () => window.cancelAnimationFrame(id);
   }, [terminalOpen]);
 
-  const slashCommands = useMemo<SlashCommandDescriptor[]>(() => {
-    // New sessions don't have ACP "available_commands_update" yet, so use a safe fallback.
-    return [
-      { name: "review", description: "Review my current changes and find issues" },
-      { name: "review-branch", description: "Review a branch" },
-      { name: "review-commit", description: "Review a commit" },
-      { name: "init", description: "Create an AGENTS.md file" },
-      { name: "compact", description: "Summarize conversation to save context" },
-      { name: "logout", description: "Log out" },
-      { name: "help", description: "Show help" },
-    ];
-  }, []);
+  const slashCommands = useMemo<SlashCommandDescriptor[]>(() => [], []);
 
   const startBlockedReason = useMemo(() => {
     if (draftPrompt.trim().length === 0) return "Enter a prompt to start.";

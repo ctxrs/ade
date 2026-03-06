@@ -50,6 +50,8 @@ export type SessionReplicaData = {
     models?: unknown;
     modes?: unknown;
     currentModelId?: string;
+    commands?: unknown;
+    slashCommands?: unknown;
   };
   turns?: SessionTurn[];
   messages?: Message[];

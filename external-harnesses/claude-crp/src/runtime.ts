@@ -5,7 +5,14 @@ import { pathToFileURL } from "node:url";
 import * as path from "node:path";
 import * as os from "node:os";
 import * as fs from "node:fs";
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import {
+  query,
+  type Query,
+  type SlashCommand,
+  type ModelInfo,
+  type AgentInfo,
+  type AccountInfo
+} from "@anthropic-ai/claude-agent-sdk";
 import { translateClaudeEventsToCrp } from "./translate.js";
 
 const MAX_TOOL_INPUT_BYTES = 64 * 1024;
@@ -27,6 +34,7 @@ type CrpCommandEnvelope = {
 
 type SessionState = {
   sessionId: string;
+  providerSessionId: string;
   defaultModel?: string;
   defaultCwd?: string;
   activeTurn: TurnState | null;
@@ -43,14 +51,13 @@ type TurnState = {
   interrupted: boolean;
   endRecordAdded: boolean;
   abortController: AbortController;
-  query?: {
-    next: () => Promise<{ value?: unknown; done: boolean }>;
-    interrupt?: () => Promise<void>;
-  };
+  query?: Query;
   done?: Promise<void>;
 };
 
 let globalSeq = 0;
+
+type RuntimeInitializationResult = Awaited<ReturnType<Query["initializationResult"]>>;
 
 function getPackageVersion(): string {
   try {
@@ -68,6 +75,129 @@ function getPackageVersion(): string {
 
 function shouldPrintVersion(): boolean {
   return process.argv.includes("--version") || process.argv.includes("-v");
+}
+
+function asNonEmptyTrimmedString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function readStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const list = value
+    .map((entry) => asNonEmptyTrimmedString(entry))
+    .filter((entry): entry is string => Boolean(entry));
+  return list.length > 0 ? list : undefined;
+}
+
+function readJsonArray(value: unknown): Array<Record<string, unknown>> | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const list = value.filter(
+    (entry): entry is Record<string, unknown> =>
+      Boolean(entry) && typeof entry === "object" && !Array.isArray(entry)
+  );
+  return list.length > 0 ? list : undefined;
+}
+
+function mapSlashCommand(command: SlashCommand): Record<string, unknown> {
+  const out: Record<string, unknown> = { name: command.name };
+  const description = asNonEmptyTrimmedString(command.description);
+  const argumentHint = asNonEmptyTrimmedString(command.argumentHint);
+  if (description) out.description = description;
+  if (argumentHint) out.argument_hint = argumentHint;
+  return out;
+}
+
+function mapModelInfo(model: ModelInfo): Record<string, unknown> {
+  const out: Record<string, unknown> = { id: model.id };
+  const name = asNonEmptyTrimmedString(model.name);
+  const description = asNonEmptyTrimmedString(model.description);
+  if (name) out.name = name;
+  if (description) out.description = description;
+  return out;
+}
+
+function mapAgentInfo(agent: AgentInfo): Record<string, unknown> {
+  const out: Record<string, unknown> = { name: agent.name };
+  const description = asNonEmptyTrimmedString(agent.description);
+  const model = asNonEmptyTrimmedString(agent.model);
+  if (description) out.description = description;
+  if (model) out.model = model;
+  return out;
+}
+
+function mapAccountInfo(account: AccountInfo | null | undefined): Record<string, unknown> | undefined {
+  if (!account) return undefined;
+  const out: Record<string, unknown> = {};
+  const email = asNonEmptyTrimmedString(account.email);
+  const organization = asNonEmptyTrimmedString(account.organization);
+  const subscriptionType = asNonEmptyTrimmedString(account.subscriptionType);
+  const tokenSource = asNonEmptyTrimmedString(account.tokenSource);
+  const apiKeySource = asNonEmptyTrimmedString(account.apiKeySource);
+  if (email) out.email = email;
+  if (organization) out.organization = organization;
+  if (subscriptionType) out.subscription_type = subscriptionType;
+  if (tokenSource) out.token_source = tokenSource;
+  if (apiKeySource) out.api_key_source = apiKeySource;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+export function buildSessionOpenedMetadataEnvelope(params: {
+  sessionId: string;
+  providerSessionId?: string;
+  initializationResult?: RuntimeInitializationResult | null;
+  systemInit?: Record<string, unknown> | null;
+}): Record<string, unknown> {
+  const envelope: Record<string, unknown> = {
+    channel: "control",
+    type: "session.opened",
+    session_id: params.sessionId,
+    provider_session_id: params.providerSessionId ?? params.sessionId
+  };
+
+  const initializationResult = params.initializationResult ?? null;
+  if (initializationResult) {
+    if (Array.isArray(initializationResult.commands) && initializationResult.commands.length > 0) {
+      envelope.commands = initializationResult.commands.map((command) => mapSlashCommand(command));
+    }
+    if (Array.isArray(initializationResult.models) && initializationResult.models.length > 0) {
+      envelope.models = initializationResult.models.map((model) => mapModelInfo(model));
+    }
+    if (Array.isArray(initializationResult.agents) && initializationResult.agents.length > 0) {
+      envelope.agents = initializationResult.agents.map((agent) => mapAgentInfo(agent));
+    }
+    const outputStyle = asNonEmptyTrimmedString(initializationResult.output_style);
+    if (outputStyle) envelope.output_style = outputStyle;
+    const availableOutputStyles = readStringArray(initializationResult.available_output_styles);
+    if (availableOutputStyles) envelope.available_output_styles = availableOutputStyles;
+    const account = mapAccountInfo(initializationResult.account);
+    if (account) envelope.account = account;
+    const fastModeState = asNonEmptyTrimmedString(initializationResult.fast_mode_state);
+    if (fastModeState) envelope.fast_mode_state = fastModeState;
+  }
+
+  const systemInit = params.systemInit ?? null;
+  if (systemInit) {
+    const slashCommands = readStringArray(systemInit.slash_commands);
+    if (slashCommands) envelope.slash_commands = slashCommands;
+    const skills = readStringArray(systemInit.skills);
+    if (skills) envelope.skills = skills;
+    const tools = readStringArray(systemInit.tools);
+    if (tools) envelope.tools = tools;
+    const plugins = readJsonArray(systemInit.plugins);
+    if (plugins) envelope.plugins = plugins;
+    const mcpServers = Array.isArray(systemInit.mcp_servers) ? systemInit.mcp_servers : undefined;
+    if (mcpServers && mcpServers.length > 0) {
+      envelope.mcp_servers = mcpServers;
+    }
+    const currentModelId = asNonEmptyTrimmedString(systemInit.model);
+    if (currentModelId) envelope.current_model_id = currentModelId;
+    const permissionMode = asNonEmptyTrimmedString(systemInit.permissionMode);
+    if (permissionMode) envelope.permission_mode = permissionMode;
+  }
+
+  return envelope;
 }
 
 async function writeEnvelope(envelope: Record<string, unknown>): Promise<void> {
@@ -157,6 +287,10 @@ async function openSession(command: CrpCommand, state: { session: SessionState |
     typeof command.session_id === "string" && command.session_id
       ? command.session_id
       : randomUUID();
+  const providerSessionId =
+    typeof command.provider_session_id === "string" && command.provider_session_id
+      ? command.provider_session_id
+      : sessionId;
   const config = (command.config && typeof command.config === "object"
     ? command.config
     : {}) as Record<string, unknown>;
@@ -168,6 +302,7 @@ async function openSession(command: CrpCommand, state: { session: SessionState |
 
   state.session = {
     sessionId,
+    providerSessionId,
     defaultModel,
     defaultCwd,
     activeTurn: null
@@ -177,7 +312,7 @@ async function openSession(command: CrpCommand, state: { session: SessionState |
     channel: "control",
     type: "session.opened",
     session_id: sessionId,
-    provider_session_id: sessionId
+    provider_session_id: providerSessionId
   });
 }
 
@@ -300,11 +435,19 @@ async function requestCancel(turn: TurnState): Promise<void> {
   }
 }
 
-async function runTurn(turn: TurnState, prompt: string): Promise<void> {
+async function runTurn(session: SessionState, turn: TurnState, prompt: string): Promise<void> {
   const options = buildQueryOptions(turn);
   const q = query({ prompt, options });
   turn.query = q;
+  let initializationResult: RuntimeInitializationResult | null = null;
   let failureMessage: string | null = null;
+  let initializationEmitted = false;
+
+  try {
+    initializationResult = await q.initializationResult();
+  } catch (err) {
+    warn(`initializationResult failed for ${turn.turnId}: ${err}`);
+  }
 
   const ensureResultRecord = () => {
     let existingResult: Record<string, unknown> | null = null;
@@ -356,6 +499,25 @@ async function runTurn(turn: TurnState, prompt: string): Promise<void> {
     while (true) {
       const { value, done } = await q.next();
       if (value != null) {
+        const maybeSystemInit =
+          !initializationEmitted &&
+          typeof value === "object" &&
+          value !== null &&
+          (value as { type?: unknown }).type === "system" &&
+          (value as { subtype?: unknown }).subtype === "init"
+            ? (value as Record<string, unknown>)
+            : null;
+        if (maybeSystemInit) {
+          await writeEnvelope(
+            buildSessionOpenedMetadataEnvelope({
+              sessionId: session.sessionId,
+              providerSessionId: session.providerSessionId,
+              initializationResult,
+              systemInit: maybeSystemInit
+            })
+          );
+          initializationEmitted = true;
+        }
         const isResultEvent =
           typeof value === "object" && (value as { type?: unknown }).type === "result";
         turn.records.push({ record: "event", event: value });
@@ -382,6 +544,15 @@ async function runTurn(turn: TurnState, prompt: string): Promise<void> {
   if (!turn.endRecordAdded) {
     turn.records.push({ record: "end", interrupted: turn.interrupted });
     turn.endRecordAdded = true;
+  }
+  if (!initializationEmitted && initializationResult) {
+    await writeEnvelope(
+      buildSessionOpenedMetadataEnvelope({
+        sessionId: session.sessionId,
+        providerSessionId: session.providerSessionId,
+        initializationResult
+      })
+    );
   }
   await emitTranslated(turn);
 }
@@ -441,7 +612,7 @@ async function startTurn(command: CrpCommand, state: { session: SessionState | n
   };
 
   session.activeTurn = turn;
-  turn.done = runTurn(turn, prompt)
+  turn.done = runTurn(session, turn, prompt)
     .catch((err) => warn(`turn ${turnId} failed: ${err}`))
     .finally(() => {
       if (session.activeTurn === turn) session.activeTurn = null;

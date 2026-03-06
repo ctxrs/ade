@@ -190,6 +190,8 @@ export type PersistedSessionAcpMetaV1 = {
   models?: unknown;
   modes?: unknown;
   currentModelId?: string;
+  commands?: unknown;
+  slashCommands?: unknown;
   updatedAtMs: number;
 };
 

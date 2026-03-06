@@ -10,6 +10,9 @@ Contract:
 
 Supported input event shapes (fixtures):
 - system:init
+- system:status
+- system:compact_boundary
+- system:local_command_output
 - stream_event: message_start, content_block_start, content_block_delta, content_block_stop,
   message_delta, message_stop
 - assistant (final message)
@@ -24,6 +27,7 @@ CRP output events (control plane unless noted):
 - tool.completed
 - turn.completed
 - session.notice (model.mismatch)
+- session.notice (context.compacted / context.compacting)
 
 Ordering invariants:
 - turn.started emitted once per translation before any message/tool events.
@@ -225,6 +229,55 @@ export function translateClaudeEventsToCrp(records, opts = {}) {
     if (ev.type === "system" && ev.subtype === "init") {
       if (!actualModel && ev.model) actualModel = ev.model;
       maybeEmitModelMismatch();
+      continue;
+    }
+
+    if (ev.type === "system" && ev.subtype === "status") {
+      if (ev.status === "compacting") {
+        ensureTurnStarted();
+        emit("control", {
+          type: "session.notice",
+          session_id: sessionId,
+          turn_id: turnId,
+          code: "context.compacting",
+          severity: "info",
+          message: "Compacting conversation context.",
+          transient: true
+        });
+      }
+      continue;
+    }
+
+    if (ev.type === "system" && ev.subtype === "compact_boundary") {
+      ensureTurnStarted();
+      emit("control", {
+        type: "session.notice",
+        session_id: sessionId,
+        turn_id: turnId,
+        code: "context.compacted",
+        severity: "info",
+        message: "Context compacted. Earlier turns were summarized.",
+        details: ev.compact_metadata ? { compact_metadata: ev.compact_metadata } : undefined
+      });
+      continue;
+    }
+
+    if (ev.type === "system" && ev.subtype === "local_command_output") {
+      const content = typeof ev.content === "string" ? ev.content : "";
+      if (!content) continue;
+      ensureTurnStarted();
+      const messageId =
+        typeof ev.uuid === "string" && ev.uuid ? ev.uuid : `local_command_${seq}`;
+      if (finalMessageIds.has(messageId)) continue;
+      emit("control", {
+        type: "message.final",
+        session_id: sessionId,
+        run_id: runId,
+        turn_id: turnId,
+        message_id: messageId,
+        content
+      });
+      finalMessageIds.add(messageId);
       continue;
     }
 

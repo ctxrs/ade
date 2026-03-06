@@ -114,6 +114,8 @@ export type SessionCacheEntry = {
   acpModels?: unknown;
   acpModes?: unknown;
   acpCurrentModelId?: string;
+  acpCommands?: unknown;
+  acpSlashCommands?: unknown;
   turns: SessionTurn[];
   turnToolsByTurnId: Record<string, SessionTurnTool[]>;
   turnToolsLoading: string[];
@@ -164,6 +166,8 @@ type AcpMeta = {
   models?: unknown;
   modes?: unknown;
   currentModelId?: string;
+  commands?: unknown;
+  slashCommands?: unknown;
 };
 
 const readAcpCurrentModelId = (models: unknown): string | undefined => {
@@ -190,11 +194,17 @@ const extractAcpMetaFromEvent = (event: SessionEvent): AcpMeta | null => {
   if (!payload) return null;
   const models = payload.models ?? undefined;
   const modes = payload.modes ?? undefined;
-  if (!models && !modes) return null;
+  const commands = payload.commands ?? undefined;
+  const slashCommands = payload.slashCommands ?? payload.slash_commands ?? undefined;
+  const currentModelId =
+    pickFirstString(payload.currentModelId, payload.current_model_id) ?? readAcpCurrentModelId(models);
+  if (!models && !modes && !commands && !slashCommands && !currentModelId) return null;
   return {
     models,
     modes,
-    currentModelId: readAcpCurrentModelId(models),
+    currentModelId,
+    commands,
+    slashCommands,
   };
 };
 
@@ -598,6 +608,8 @@ export class SessionSupervisor {
         acpModels: e.acpModels,
         acpModes: e.acpModes,
         acpCurrentModelId: e.acpCurrentModelId,
+        acpCommands: e.acpCommands,
+        acpSlashCommands: e.acpSlashCommands,
         turns: e.turns,
         turnToolsByTurnId: e.turnToolsByTurnId,
         turnToolsLoading: [...e.turnToolsLoadingSet],
@@ -691,15 +703,13 @@ export class SessionSupervisor {
       }
       if (data.events && data.events.length > 0) {
         this.mergeEvents(entry, data.events, { notify: patch.op !== "replace" });
+        this.applyAcpMetaFromEvents(entry, data.events);
       }
       if (data.toolSummaries && data.toolSummaries.length > 0) {
         this.applyToolSummaries(entry, data.toolSummaries);
       }
       if (data.acpMeta) {
-        entry.acpModels = data.acpMeta.models ?? entry.acpModels;
-        entry.acpModes = data.acpMeta.modes ?? entry.acpModes;
-        entry.acpCurrentModelId = data.acpMeta.currentModelId ?? entry.acpCurrentModelId;
-        entry.acpMetaUpdatedAtMs = Date.now();
+        this.applyAcpMeta(entry, data.acpMeta, { persist: false });
       }
       if (data.gitStatusSummary !== undefined) {
         entry.gitStatusSummary = data.gitStatusSummary ?? null;
@@ -810,6 +820,8 @@ export class SessionSupervisor {
       acpModels: undefined,
       acpModes: undefined,
       acpCurrentModelId: undefined,
+      acpCommands: undefined,
+      acpSlashCommands: undefined,
       turns: [],
       turnToolsByTurnId: {},
       turnToolsLoading: [],
@@ -876,20 +888,31 @@ export class SessionSupervisor {
     const nextModes = meta.modes ?? entry.acpModes;
     const nextCurrent =
       meta.currentModelId ?? readAcpCurrentModelId(nextModels) ?? entry.acpCurrentModelId;
+    const nextCommands = meta.commands ?? entry.acpCommands;
+    const nextSlashCommands = meta.slashCommands ?? entry.acpSlashCommands;
     const modelsChanged = JSON.stringify(nextModels ?? null) !== JSON.stringify(entry.acpModels ?? null);
     const modesChanged = JSON.stringify(nextModes ?? null) !== JSON.stringify(entry.acpModes ?? null);
     const currentChanged = nextCurrent !== entry.acpCurrentModelId;
-    if (!modelsChanged && !modesChanged && !currentChanged) return false;
+    const commandsChanged = JSON.stringify(nextCommands ?? null) !== JSON.stringify(entry.acpCommands ?? null);
+    const slashCommandsChanged =
+      JSON.stringify(nextSlashCommands ?? null) !== JSON.stringify(entry.acpSlashCommands ?? null);
+    if (!modelsChanged && !modesChanged && !currentChanged && !commandsChanged && !slashCommandsChanged) {
+      return false;
+    }
 
     entry.acpModels = nextModels;
     entry.acpModes = nextModes;
     entry.acpCurrentModelId = nextCurrent;
+    entry.acpCommands = nextCommands;
+    entry.acpSlashCommands = nextSlashCommands;
     entry.acpMetaUpdatedAtMs = Date.now();
-    if (opts?.persist !== false && (nextModels || nextModes || nextCurrent)) {
+    if (opts?.persist !== false && (nextModels || nextModes || nextCurrent || nextCommands || nextSlashCommands)) {
       saveSessionAcpMetaV1(entry.sessionId, {
         models: nextModels,
         modes: nextModes,
         currentModelId: nextCurrent,
+        commands: nextCommands,
+        slashCommands: nextSlashCommands,
       }).catch(() => {});
     }
     return true;
@@ -1063,6 +1086,8 @@ export class SessionSupervisor {
             models: cachedMeta.models,
             modes: cachedMeta.modes,
             currentModelId: cachedMeta.currentModelId,
+            commands: cachedMeta.commands,
+            slashCommands: cachedMeta.slashCommands,
           },
           { persist: false },
         );

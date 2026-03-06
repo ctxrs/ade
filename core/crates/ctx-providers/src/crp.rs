@@ -791,7 +791,11 @@ impl CrpSessionPool {
                 })
                 .await?;
         }
-        match parse_crp_slash_command(&req.input.content) {
+        validate_provider_slash_command_support(&self.agent.provider_id, &req.input.content)?;
+        match parse_native_crp_slash_command_for_provider(
+            &self.agent.provider_id,
+            &req.input.content,
+        ) {
             Some(CrpSlashCommand::Compact) => {
                 session
                     .process
@@ -1061,6 +1065,7 @@ struct CrpPromptRequest {
     cancel_rx: oneshot::Receiver<()>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 enum CrpSlashCommand {
     Compact,
     Undo,
@@ -1098,6 +1103,123 @@ fn parse_crp_slash_command(content: &str) -> Option<CrpSlashCommand> {
         return Some(CrpSlashCommand::Review { instructions });
     }
     None
+}
+
+fn parse_native_crp_slash_command_for_provider(
+    provider_id: &str,
+    content: &str,
+) -> Option<CrpSlashCommand> {
+    if provider_id != "codex" {
+        return None;
+    }
+    parse_crp_slash_command(content)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ClaudeSlashCommandPolicy {
+    Supported,
+    Redundant(&'static str),
+    Unsupported(&'static str),
+}
+
+fn extract_slash_command_name(content: &str) -> Option<String> {
+    let trimmed = content.trim_start();
+    if !trimmed.starts_with('/') {
+        return None;
+    }
+    let token = trimmed.split_whitespace().next()?;
+    let normalized = token.trim_start_matches('/').trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return None;
+    }
+    Some(normalized)
+}
+
+fn classify_claude_slash_command(name: &str) -> ClaudeSlashCommandPolicy {
+    if name.starts_with("mcp__") {
+        return ClaudeSlashCommandPolicy::Unsupported("MCP prompt commands are intentionally out of scope in ctx right now.");
+    }
+
+    match name {
+        "allowed-tools"
+        | "clear"
+        | "config"
+        | "continue"
+        | "diff"
+        | "exit"
+        | "login"
+        | "logout"
+        | "model"
+        | "new"
+        | "permissions"
+        | "quit"
+        | "rename"
+        | "reset"
+        | "resume"
+        | "sandbox"
+        | "settings"
+        | "status"
+        | "tasks" => {
+            ClaudeSlashCommandPolicy::Redundant("ctx handles this workflow outside Claude slash commands.")
+        }
+        "add-dir"
+        | "agents"
+        | "android"
+        | "app"
+        | "checkpoint"
+        | "chrome"
+        | "copy"
+        | "desktop"
+        | "export"
+        | "extra-usage"
+        | "fork"
+        | "hooks"
+        | "ide"
+        | "install-github-app"
+        | "install-slack-app"
+        | "ios"
+        | "keybindings"
+        | "mcp"
+        | "mobile"
+        | "passes"
+        | "plugin"
+        | "privacy-settings"
+        | "rc"
+        | "reload-plugins"
+        | "remote-control"
+        | "remote-env"
+        | "rewind"
+        | "statusline"
+        | "stickers"
+        | "terminal-setup"
+        | "theme"
+        | "upgrade"
+        | "vim" => ClaudeSlashCommandPolicy::Unsupported(
+            "Claude Code exposes this command in TUI/native integrations, but ctx cannot wire it through the Claude Agent SDK path today.",
+        ),
+        _ => ClaudeSlashCommandPolicy::Supported,
+    }
+}
+
+fn validate_provider_slash_command_support(
+    provider_id: &str,
+    content: &str,
+) -> Result<()> {
+    if provider_id != "claude-crp" {
+        return Ok(());
+    }
+    let Some(name) = extract_slash_command_name(content) else {
+        return Ok(());
+    };
+    match classify_claude_slash_command(&name) {
+        ClaudeSlashCommandPolicy::Supported => Ok(()),
+        ClaudeSlashCommandPolicy::Redundant(reason) => Err(anyhow!(
+            "Claude command `/{name}` is intentionally not supported in ctx: {reason}"
+        )),
+        ClaudeSlashCommandPolicy::Unsupported(reason) => Err(anyhow!(
+            "Claude command `/{name}` is not supported in ctx today: {reason}"
+        )),
+    }
 }
 
 struct CrpProcess {
@@ -1632,6 +1754,34 @@ enum CrpEvent {
     SessionOpened {
         session_id: String,
         provider_session_id: Option<String>,
+        #[serde(default)]
+        commands: Option<Value>,
+        #[serde(default)]
+        slash_commands: Option<Vec<String>>,
+        #[serde(default)]
+        models: Option<Value>,
+        #[serde(default)]
+        current_model_id: Option<String>,
+        #[serde(default)]
+        agents: Option<Value>,
+        #[serde(default)]
+        output_style: Option<String>,
+        #[serde(default)]
+        available_output_styles: Option<Vec<String>>,
+        #[serde(default)]
+        skills: Option<Vec<String>>,
+        #[serde(default)]
+        plugins: Option<Value>,
+        #[serde(default)]
+        tools: Option<Vec<String>>,
+        #[serde(default)]
+        permission_mode: Option<String>,
+        #[serde(default)]
+        mcp_servers: Option<Value>,
+        #[serde(default)]
+        account: Option<Value>,
+        #[serde(default)]
+        fast_mode_state: Option<String>,
     },
     #[serde(rename = "turn.started")]
     TurnStarted { session_id: String, turn_id: String },
@@ -1810,16 +1960,82 @@ fn map_crp_event(
         CrpEvent::SessionOpened {
             session_id,
             provider_session_id,
-        } => MappedCrpEvent {
-            events: vec![NormalizedEvent {
-                event_type: SessionEventType::Init,
-                payload_json: json!({
-                    "session_id": session_id,
-                    "provider_session_id": provider_session_id,
-                }),
-            }],
-            done: false,
-        },
+            commands,
+            slash_commands,
+            models,
+            current_model_id,
+            agents,
+            output_style,
+            available_output_styles,
+            skills,
+            plugins,
+            tools,
+            permission_mode,
+            mcp_servers,
+            account,
+            fast_mode_state,
+        } => {
+            let mut payload = serde_json::Map::new();
+            payload.insert("session_id".to_string(), json!(session_id));
+            if let Some(provider_session_id) = provider_session_id {
+                payload.insert(
+                    "provider_session_id".to_string(),
+                    json!(provider_session_id),
+                );
+            }
+            if let Some(commands) = commands {
+                payload.insert("commands".to_string(), commands);
+            }
+            if let Some(slash_commands) = slash_commands {
+                payload.insert("slash_commands".to_string(), json!(slash_commands));
+            }
+            if let Some(models) = models {
+                payload.insert("models".to_string(), models);
+            }
+            if let Some(current_model_id) = current_model_id {
+                payload.insert("current_model_id".to_string(), json!(current_model_id));
+            }
+            if let Some(agents) = agents {
+                payload.insert("agents".to_string(), agents);
+            }
+            if let Some(output_style) = output_style {
+                payload.insert("output_style".to_string(), json!(output_style));
+            }
+            if let Some(available_output_styles) = available_output_styles {
+                payload.insert(
+                    "available_output_styles".to_string(),
+                    json!(available_output_styles),
+                );
+            }
+            if let Some(skills) = skills {
+                payload.insert("skills".to_string(), json!(skills));
+            }
+            if let Some(plugins) = plugins {
+                payload.insert("plugins".to_string(), plugins);
+            }
+            if let Some(tools) = tools {
+                payload.insert("tools".to_string(), json!(tools));
+            }
+            if let Some(permission_mode) = permission_mode {
+                payload.insert("permission_mode".to_string(), json!(permission_mode));
+            }
+            if let Some(mcp_servers) = mcp_servers {
+                payload.insert("mcp_servers".to_string(), mcp_servers);
+            }
+            if let Some(account) = account {
+                payload.insert("account".to_string(), account);
+            }
+            if let Some(fast_mode_state) = fast_mode_state {
+                payload.insert("fast_mode_state".to_string(), json!(fast_mode_state));
+            }
+            MappedCrpEvent {
+                events: vec![NormalizedEvent {
+                    event_type: SessionEventType::Init,
+                    payload_json: Value::Object(payload),
+                }],
+                done: false,
+            }
+        }
         // The scheduler already emits the canonical turn lifecycle events. Treat harness-emitted
         // `turn.started` as internal signal only to avoid duplicating `turn_started` rows with a
         // mismatched payload shape.
@@ -2840,6 +3056,139 @@ mod tests {
         let payload = &completed.events[0].payload_json;
         assert_eq!(payload.get("input_preview"), Some(&started_preview));
         assert_eq!(payload.get("rawInput"), Some(&started_preview));
+    }
+
+    #[test]
+    fn native_crp_slash_commands_are_codex_only() {
+        assert_eq!(
+            parse_native_crp_slash_command_for_provider("codex", "/compact"),
+            Some(CrpSlashCommand::Compact)
+        );
+        assert_eq!(
+            parse_native_crp_slash_command_for_provider("codex", "/review focus on security"),
+            Some(CrpSlashCommand::Review {
+                instructions: Some("focus on security".to_string())
+            })
+        );
+        assert_eq!(
+            parse_native_crp_slash_command_for_provider("claude-crp", "/compact"),
+            None
+        );
+        assert_eq!(
+            parse_native_crp_slash_command_for_provider("claude-crp", "/review focus on security"),
+            None
+        );
+    }
+
+    #[test]
+    fn claude_command_policy_blocks_redundant_and_unsupported_commands() {
+        assert_eq!(
+            classify_claude_slash_command("compact"),
+            ClaudeSlashCommandPolicy::Supported
+        );
+        assert_eq!(
+            classify_claude_slash_command("clear"),
+            ClaudeSlashCommandPolicy::Redundant(
+                "ctx handles this workflow outside Claude slash commands."
+            )
+        );
+        assert_eq!(
+            classify_claude_slash_command("mcp__docs__search"),
+            ClaudeSlashCommandPolicy::Unsupported(
+                "MCP prompt commands are intentionally out of scope in ctx right now."
+            )
+        );
+        assert!(validate_provider_slash_command_support("claude-crp", "/compact").is_ok());
+        assert!(validate_provider_slash_command_support("claude-crp", "/clear").is_err());
+        assert!(
+            validate_provider_slash_command_support("claude-crp", "/mcp__docs__search").is_err()
+        );
+        assert!(validate_provider_slash_command_support("codex", "/clear").is_ok());
+    }
+
+    #[test]
+    fn session_opened_preserves_claude_supported_command_metadata() {
+        let mut tool_output_cache: HashMap<String, String> = HashMap::new();
+        let mut tool_input_cache: HashMap<String, CachedToolInput> = HashMap::new();
+
+        let mapped = map_crp_event(
+            CrpEvent::SessionOpened {
+                session_id: "session-1".to_string(),
+                provider_session_id: Some("provider-session-1".to_string()),
+                commands: Some(json!([
+                    {
+                        "name": "compact",
+                        "description": "Summarize conversation to save context",
+                        "argument_hint": "<focus>"
+                    }
+                ])),
+                slash_commands: Some(vec!["compact".to_string(), "review".to_string()]),
+                models: Some(json!([
+                    {
+                        "id": "sonnet",
+                        "name": "Sonnet"
+                    }
+                ])),
+                current_model_id: Some("sonnet".to_string()),
+                agents: Some(json!([
+                    {
+                        "name": "Explore",
+                        "description": "Research the repo"
+                    }
+                ])),
+                output_style: Some("default".to_string()),
+                available_output_styles: Some(vec!["default".to_string(), "brief".to_string()]),
+                skills: Some(vec!["simplify".to_string()]),
+                plugins: Some(json!([
+                    {
+                        "name": "plugin-a",
+                        "path": "/tmp/plugin-a"
+                    }
+                ])),
+                tools: Some(vec!["Read".to_string(), "Write".to_string()]),
+                permission_mode: Some("default".to_string()),
+                mcp_servers: Some(json!([{ "name": "github", "status": "connected" }])),
+                account: Some(json!({ "email": "dev@example.com" })),
+                fast_mode_state: Some("off".to_string()),
+            },
+            CrpChannel::Control,
+            1,
+            &mut tool_output_cache,
+            &mut tool_input_cache,
+        );
+
+        assert_eq!(mapped.events.len(), 1);
+        assert!(matches!(mapped.events[0].event_type, SessionEventType::Init));
+        let payload = &mapped.events[0].payload_json;
+        assert_eq!(
+            payload.get("session_id"),
+            Some(&json!("session-1"))
+        );
+        assert_eq!(
+            payload.get("provider_session_id"),
+            Some(&json!("provider-session-1"))
+        );
+        assert_eq!(
+            payload.pointer("/commands/0/name"),
+            Some(&json!("compact"))
+        );
+        assert_eq!(
+            payload.pointer("/commands/0/description"),
+            Some(&json!("Summarize conversation to save context"))
+        );
+        assert_eq!(
+            payload.get("slash_commands"),
+            Some(&json!(["compact", "review"]))
+        );
+        assert_eq!(payload.get("current_model_id"), Some(&json!("sonnet")));
+        assert_eq!(payload.get("output_style"), Some(&json!("default")));
+        assert_eq!(
+            payload.get("available_output_styles"),
+            Some(&json!(["default", "brief"]))
+        );
+        assert_eq!(payload.get("skills"), Some(&json!(["simplify"])));
+        assert_eq!(payload.get("permission_mode"), Some(&json!("default")));
+        assert_eq!(payload.get("fast_mode_state"), Some(&json!("off")));
     }
 
     #[test]

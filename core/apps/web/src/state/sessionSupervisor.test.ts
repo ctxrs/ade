@@ -156,6 +156,64 @@ describe("SessionSupervisor", () => {
     expect(entry?.queue.length).toBe(1);
   });
 
+  it("hydrates protocol-derived slash command metadata from archived init events", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-slash-meta";
+    const now = new Date().toISOString();
+    getSessionSnapshotMock.mockResolvedValue({
+      summary: {
+        session: mkSession(sessionId),
+      },
+    });
+    getSessionHeadMock.mockResolvedValue({
+      session: mkSession(sessionId),
+      turns: [] as SessionTurn[],
+      events: [
+        {
+          seq: 1,
+          id: "init-1",
+          session_id: sessionId,
+          event_type: "init",
+          payload_json: {
+            commands: [
+              {
+                name: "compact",
+                description: "Summarize conversation to save context",
+                argument_hint: "<focus>",
+              },
+            ],
+            slash_commands: ["compact", "review"],
+          },
+          created_at: now,
+        },
+      ] as SessionEvent[],
+      messages: [] as Message[],
+      last_event_seq: 1,
+      has_more_turns: false,
+      has_more_history: false,
+      history_cursor: null,
+    });
+
+    const sup = new SessionSupervisor();
+    sup.openSession(sessionId, { mode: "archived" });
+
+    await waitForCondition(() => {
+      const entry = sup.getSnapshot().sessions[sessionId];
+      return Array.isArray(entry?.acpCommands) && Array.isArray(entry?.acpSlashCommands);
+    });
+
+    const entry = sup.getSnapshot().sessions[sessionId];
+    expect(entry?.acpCommands).toEqual([
+      {
+        name: "compact",
+        description: "Summarize conversation to save context",
+        argument_hint: "<focus>",
+      },
+    ]);
+    expect(entry?.acpSlashCommands).toEqual(["compact", "review"]);
+  });
+
   it("applies session head deltas from workspace stream", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 

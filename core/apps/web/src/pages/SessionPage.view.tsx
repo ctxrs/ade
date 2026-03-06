@@ -51,6 +51,7 @@ import { useFeatureGate } from "../utils/analytics";
 import { useDictationController } from "../utils/useDictationController";
 import { useWorkbenchStore } from "../workbench/store";
 import { buildModelsFromProviderOptions } from "../components/workbenchComposer/WorkbenchComposer.utils";
+import { deriveProtocolSlashCommands } from "../utils/protocolSlashCommands";
 import { VIRTUOSO_MESSAGE_LIST_LICENSE_KEY } from "../config/licenses";
 import { randomUuid } from "../utils/randomUuid";
 import {
@@ -1149,30 +1150,15 @@ export function SessionView({
     }
   };
 
-  const fallbackSlashCommands = useMemo<SlashCommandDescriptor[]>(() => {
-    const provider = session?.provider_id;
-    if (provider === "codex") {
-      return [
-        { name: "review", description: "Review my current changes and find issues" },
-        { name: "review-branch", description: "Review a branch" },
-        { name: "review-commit", description: "Review a commit" },
-        { name: "init", description: "Create an AGENTS.md file" },
-        { name: "compact", description: "Summarize conversation to save context" },
-        { name: "logout", description: "Log out" },
-      ];
-    }
-    if (provider === "claude" || provider === "claude-crp") {
-      return [
-        { name: "login", description: "Log in" },
-        { name: "logout", description: "Log out" },
-        { name: "compact", description: "Summarize conversation to save context" },
-        { name: "help", description: "Show help" },
-      ];
-    }
-    return [{ name: "compact", description: "Summarize conversation to save context" }];
-  }, [session?.provider_id]);
-
-  const slashCommands = fallbackSlashCommands;
+  const slashCommands = useMemo<SlashCommandDescriptor[]>(
+    () =>
+      deriveProtocolSlashCommands({
+        providerId: entry?.session?.provider_id,
+        commands: entry?.acpCommands,
+        slashCommands: entry?.acpSlashCommands,
+      }),
+    [entry?.acpCommands, entry?.acpSlashCommands, entry?.session?.provider_id],
+  );
 
   const virtuosoStyle = useMemo(() => ({ flex: 1, minHeight: 0 } as const), []);
   // Note: we intentionally do not overscan (`increaseViewportBy`) for the session thread.
