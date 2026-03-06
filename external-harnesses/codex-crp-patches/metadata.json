@@ -1,6 +1,6 @@
 {
   "upstream_repo": "openai/codex",
-  "upstream_release_tag": "rust-v0.105.0",
-  "upstream_commit_sha": "a7eda6a29b3ee25549f385197ff109508dc49a90",
+  "upstream_release_tag": "rust-v0.111.0",
+  "upstream_commit_sha": "8c75cd9afcd405d134530e53c78e5e0e4e5312a3",
   "description": "Ctx Codex patch series applied on top of upstream release snapshots"
 }

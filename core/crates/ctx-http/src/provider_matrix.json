@@ -130,7 +130,7 @@
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned workspace adapter source (harness-adapters/example-acp/package.json)",
-          "upstream_version": "0.1.0-20260306161815-g5bb1a51"
+          "upstream_version": "0.1.0-20260306201404-gde51277"
         }
       ]
     },
@@ -354,30 +354,30 @@
       },
       "managed_install": {
         "kind": "archive",
-        "version": "0.0.0-ctx.4",
+        "version": "0.0.0-ctx.5",
         "args": [],
         "targets": {
           "darwin-aarch64": {
-            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.0.0-ctx.4/codex-crp-0.0.0-ctx.4-aarch64-apple-darwin.tar.gz",
-            "sha256": "1292272f3aead797ba2fc6bc7d7e054bafe27bd94c15c6868ea64d4dc01b212d",
+            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.0.0-ctx.5/codex-crp-0.0.0-ctx.5-aarch64-apple-darwin.tar.gz",
+            "sha256": "eb9329adab62e54430032d5eb075dd8fc2ede49e0ee5de0c16085e46839a85b1",
             "archive": "tar_gz",
             "bin_path": "codex-crp"
           },
           "darwin-x86_64": {
-            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.0.0-ctx.4/codex-crp-0.0.0-ctx.4-x86_64-apple-darwin.tar.gz",
-            "sha256": "ea573ef8fc3885490ae439e01007fe59fafd01f9a765450417fb9c6054d15dd7",
+            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.0.0-ctx.5/codex-crp-0.0.0-ctx.5-x86_64-apple-darwin.tar.gz",
+            "sha256": "38828ff8317923d1f0516d9a98933ee824e2b5a2e63d4721ca2ff726b8444cc5",
             "archive": "tar_gz",
             "bin_path": "codex-crp"
           },
           "linux-aarch64": {
-            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.0.0-ctx.4/codex-crp-0.0.0-ctx.4-aarch64-unknown-linux-gnu.tar.gz",
-            "sha256": "aaf71ad8533814f3c8eca793f76649a2439da1226d160f3f4754eae0a5549575",
+            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.0.0-ctx.5/codex-crp-0.0.0-ctx.5-aarch64-unknown-linux-gnu.tar.gz",
+            "sha256": "366cce0f042c23e3cbbf981cfcc3ff048781d591786a1de53c94c6c1d917e93c",
             "archive": "tar_gz",
             "bin_path": "codex-crp"
           },
           "linux-x86_64": {
-            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.0.0-ctx.4/codex-crp-0.0.0-ctx.4-x86_64-unknown-linux-gnu.tar.gz",
-            "sha256": "12b73200a73263eb7abae9bf225a541063fadeacc0fed3a543212d41b7a70869",
+            "url": "https://github.com/ctxrs/codex-crp/releases/download/v0.0.0-ctx.5/codex-crp-0.0.0-ctx.5-x86_64-unknown-linux-gnu.tar.gz",
+            "sha256": "3197299d045bf2c1f8e5fb9195fe1f500281ccf51d2306c7dc591c222c69ff4a",
             "archive": "tar_gz",
             "bin_path": "codex-crp"
           }
@@ -391,18 +391,18 @@
       },
       "releases": [
         {
-          "version": "0.0.0-ctx.4",
-          "upstream_version": "0.105.0",
+          "version": "0.0.0-ctx.5",
+          "upstream_version": "0.111.0",
           "provenance": {
             "upstream_repo": "openai/codex",
-            "upstream_release_tag": "rust-v0.105.0",
-            "upstream_commit_sha": "a7eda6a29b3ee25549f385197ff109508dc49a90",
+            "upstream_release_tag": "rust-v0.111.0",
+            "upstream_commit_sha": "8c75cd9afcd405d134530e53c78e5e0e4e5312a3",
             "ctx_repo": "ctxrs/codex-crp",
-            "ctx_release_tag": "v0.0.0-ctx.4"
+            "ctx_release_tag": "v0.0.0-ctx.5"
           },
           "status": "supported",
           "context_min": "0.1.0",
-          "notes": "Release-only intake from openai/codex rust-v0.105.0"
+          "notes": "Release-only intake from openai/codex rust-v0.111.0"
         },
         {
           "version": "0.0.0-ctx.2",
@@ -447,7 +447,7 @@
       },
       "releases": [
         {
-          "version": "0.0.423",
+          "version": "1.0.0",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned GitHub Copilot CLI ACP bundle release"
@@ -745,7 +745,7 @@
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned workspace adapter source (harness-adapters/openhands-acp/package.json)",
-          "upstream_version": "1.27.1"
+          "upstream_version": "1.27.2"
         }
       ]
     },
