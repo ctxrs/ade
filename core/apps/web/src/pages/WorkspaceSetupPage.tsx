@@ -91,12 +91,20 @@ import {
   type SshRecent,
 } from "./workspaceSetup/remoteProfiles";
 import {
-  clampStepKey,
   isCurrentFlowRunToken,
   nextFlowRunToken,
-  stepKeyOffset,
   type FlowRunToken,
 } from "./workspaceSetup/flowController";
+import {
+  buildWizardStepPath,
+  nextAfterAuthImport,
+  nextAfterHarnessDownloads,
+  nextBoundaryStep,
+  resolveWizardCurrentStepKey,
+  stepKeyOffset,
+  type WizardRoutePlan,
+  type WizardStepKey,
+} from "./workspaceSetup/wizardFlow";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
 import {
   computeInstallPct,
@@ -124,7 +132,7 @@ type WizardOption = {
 };
 
 type WizardStep = {
-  key: string;
+  key: WizardStepKey;
   title: string;
   note: string;
   options?: WizardOption[];
@@ -175,7 +183,7 @@ const looksLikeSshAuthFailure = (message: string): boolean => {
 
 export default function WorkspaceSetupPage() {
   const navigate = useNavigate();
-  const [currentStepKey, setCurrentStepKey] = useState("location");
+  const [currentStepKey, setCurrentStepKey] = useState<WizardStepKey>("location");
   const [selections, setSelections] = useState<Record<string, string>>({});
   const [sshHosts, setSshHosts] = useState<DesktopSshHost[]>([]);
   const [sshRecents, setSshRecents] = useState<SshRecent[]>(() => loadSshRecents());
@@ -184,7 +192,6 @@ export default function WorkspaceSetupPage() {
   const [remotePasswordPromptVisible, setRemotePasswordPromptVisible] = useState(false);
   const [remoteStatus, setRemoteStatus] = useState<"idle" | "connecting" | "connected" | "error">("idle");
   const [remoteError, setRemoteError] = useState<string | null>(null);
-  const [localLocationBusy, setLocalLocationBusy] = useState(false);
   const [remotePortInput, setRemotePortInput] = useState("4399");
   const [remoteDataDirInput, setRemoteDataDirInput] = useState("");
   const [remoteProfiles, setRemoteProfiles] = useState<RemoteProfile[]>(() => loadRemoteProfiles());
@@ -255,6 +262,8 @@ export default function WorkspaceSetupPage() {
   const [titlingPersistedTargetKey, setTitlingPersistedTargetKey] = useState<string | null>(null);
   const [titlingPersistedHash, setTitlingPersistedHash] = useState<string | null>(null);
   const [titlingExistingSettings, setTitlingExistingSettings] = useState<TitleGenerationSettings | null>(null);
+  const [routePlan, setRoutePlan] = useState<WizardRoutePlan | null>(null);
+  const [routePlanningBusy, setRoutePlanningBusy] = useState(false);
   const importInitResolveRef = useRef<((confirmed: boolean) => void) | null>(null);
   const remoteProfileAutoAppliedKeyRef = useRef<string | null>(null);
   const titlingInstallPollRef = useRef<number | null>(null);
@@ -269,10 +278,8 @@ export default function WorkspaceSetupPage() {
   const harnessInstallScanKeyRef = useRef<string | null>(null);
   const harnessInstallScanRunRef = useRef<FlowRunToken | null>(null);
   const containerPrewarmInFlightRef = useRef<Record<string, true>>({});
-  const pendingLocalLocationAdvanceRef = useRef(false);
-  const locationAdvanceRunRef = useRef<FlowRunToken | null>(null);
-  const authImportHandledTargetKeyRef = useRef<string | null>(null);
-  const currentStepKeyRef = useRef<string>("location");
+  const routePlanRunRef = useRef<FlowRunToken | null>(null);
+  const currentStepKeyRef = useRef<WizardStepKey>("location");
   const previousStepIndexRef = useRef(0);
   const wizardStartedRef = useRef(false);
   const wizardCompletedRef = useRef(false);
@@ -304,14 +311,22 @@ export default function WorkspaceSetupPage() {
   }, []);
 
   const containerMode = selections.container;
-  const authImportStepVisible = Boolean(selections.location) && authImportCandidates.length > 0;
-  const harnessInstallStepVisible = Boolean(selections.location)
-    && harnessInstallCandidates.some((candidate) => candidate.installSupported && !(candidate.installed && candidate.healthy));
-  const titlingStepVisible = Boolean(selections.location) && titlingProbeDone && titlingStepRequired;
+  const authImportStepVisible = Boolean(routePlan?.includeAuthImport);
+  const harnessInstallStepVisible = Boolean(routePlan?.includeHarnessDownloads);
+  const titlingStepVisible = Boolean(routePlan?.includeTitling);
+
+  const stepKeys = useMemo<WizardStepKey[]>(
+    () => buildWizardStepPath({
+      containerSelection: containerMode,
+      routePlan,
+      currentStepKey,
+    }),
+    [containerMode, currentStepKey, routePlan],
+  );
 
   const steps = useMemo<WizardStep[]>(() => {
-    const out: WizardStep[] = [
-      {
+    const stepMap: Record<WizardStepKey, WizardStep> = {
+      "location": {
         key: "location",
         title: "Location",
         note: "Where will this workspace run?",
@@ -320,10 +335,7 @@ export default function WorkspaceSetupPage() {
           { id: "remote", title: "Remote", desc: "Agents run on your existing dev box (remote IDE experience)." },
         ],
       },
-    ];
-
-    out.push(
-      {
+      "container": {
         key: "container",
         title: "Agent Sandbox Isolation",
         note: "Choose the containerization strategy for your agents in this workspace.",
@@ -347,31 +359,22 @@ export default function WorkspaceSetupPage() {
           },
         ],
       },
-      {
+      "harness-downloads": {
         key: "harness-downloads",
         title: "Harness Downloads",
         note: "Choose which harness providers to download now.",
       },
-    );
-
-    if (authImportStepVisible) {
-      out.push({
+      "auth-import": {
         key: "auth-import",
         title: "Import Existing Auth",
         note: "Import existing provider credentials or add them later.",
-      });
-    }
-
-    if (titlingStepVisible) {
-      out.push({
+      },
+      "session-titling": {
         key: "session-titling",
         title: "Task Titling",
         note: "Choose an LLM source for generating task titles.",
-      });
-    }
-
-    out.push(
-      {
+      },
+      "source": {
         key: "source",
         title: "Source",
         note: "How should we create the workspace?",
@@ -381,15 +384,7 @@ export default function WorkspaceSetupPage() {
           { id: "new", title: "New empty", desc: "Initialize a new git repo." },
         ],
       },
-    );
-
-    if (!harnessInstallStepVisible) {
-      const idx = out.findIndex((entry) => entry.key === "harness-downloads");
-      if (idx >= 0) out.splice(idx, 1);
-    }
-
-    if (containerMode !== "no-container") {
-      out.push({
+      "network": {
         key: "network",
         title: "Network Policy",
         note: "Restrict or permit agent network access (container mode only).",
@@ -410,11 +405,8 @@ export default function WorkspaceSetupPage() {
             desc: "Unrestricted outbound. Only use if you understand prompt-injection / data exfil risks.",
           },
         ],
-      });
-    }
-
-    out.push(
-      {
+      },
+      "setup": {
         key: "setup",
         title: "Worktree Setup Hook",
         note: "Choose a single shell command to run on new worktree creation (e.g., install dependencies).",
@@ -429,7 +421,7 @@ export default function WorkspaceSetupPage() {
           'Example prompt: "You are in a freshly created git worktree in this project. Is there any setup that ought to have occurred? If so, is there a single setup command we can run as a worktree setup hook?"',
         ].join("\n"),
       },
-      {
+      "merge-queue": {
         key: "merge-queue",
         title: "Merge Queue",
         note: "Branch to work from, plus an optional verification command.",
@@ -443,24 +435,25 @@ export default function WorkspaceSetupPage() {
           "Advanced settings let you automatically push to a remote after a successful local merge.",
         ].join("\n"),
       },
-      {
+      "confirm": {
         key: "confirm",
         title: "Confirm and create",
         note: "Review your choices before provisioning.",
       },
-    );
+    };
 
-    return out;
-  }, [containerMode, authImportStepVisible, harnessInstallStepVisible, titlingStepVisible]);
+    return stepKeys.map((key) => stepMap[key]);
+  }, [stepKeys]);
 
-  const stepKeys = useMemo<string[]>(
-    () => steps.map((wizardStep) => wizardStep.key),
-    [steps],
+  const resolvedCurrentStepKey = useMemo<WizardStepKey>(
+    () => resolveWizardCurrentStepKey(stepKeys, currentStepKey, previousStepIndexRef.current),
+    [currentStepKey, stepKeys],
   );
 
   useEffect(() => {
-    setCurrentStepKey((key) => clampStepKey(stepKeys, key, previousStepIndexRef.current));
-  }, [stepKeys]);
+    if (resolvedCurrentStepKey === currentStepKey) return;
+    setCurrentStepKey(resolvedCurrentStepKey);
+  }, [currentStepKey, resolvedCurrentStepKey]);
   useEffect(() => {
     if (!creating || !launchSnapshot || launchSnapshot.state !== "running") return;
     const handle = window.setInterval(() => setLaunchTick((value) => value + 1), 1000);
@@ -489,16 +482,19 @@ export default function WorkspaceSetupPage() {
     updateHarnessDownloadsScrollState,
   ]);
 
-  const stepIndex = Math.max(0, stepKeys.indexOf(currentStepKey));
+  const stepIndex = Math.max(0, stepKeys.indexOf(resolvedCurrentStepKey));
   const step = steps[stepIndex];
   const infoStep = openInfoKey ? steps.find((s) => s.key === openInfoKey) : null;
   const isFirst = stepIndex === 0;
   const isLast = stepIndex === steps.length - 1;
-  const goToStepKey = useCallback((key: string) => {
+  const goToStepKey = useCallback((key: WizardStepKey) => {
     setCurrentStepKey(key);
   }, []);
   const goRelativeStep = useCallback((delta: number) => {
-    setCurrentStepKey((current) => stepKeyOffset(stepKeys, current, delta));
+    setCurrentStepKey((current) => {
+      const resolved = resolveWizardCurrentStepKey(stepKeys, current, previousStepIndexRef.current);
+      return stepKeyOffset(stepKeys, resolved, delta);
+    });
   }, [stepKeys]);
   useEffect(() => {
     previousStepIndexRef.current = stepIndex;
@@ -594,7 +590,7 @@ export default function WorkspaceSetupPage() {
       && remoteStatus !== "connecting"
       && parsedRemotePort !== null
     ))
-    && !(step.key === "location" && selections.location === "local" && localLocationBusy)
+    && !(step.key === "container" && routePlanningBusy)
     && hasSourceStepInputs
     && hasTargetBranch
     && hasAllowlist
@@ -625,7 +621,7 @@ export default function WorkspaceSetupPage() {
     : creating
       ? "Creating…"
       : "Create workspace";
-  const nextButtonLabel = step.key === "location" && selections.location === "local" && localLocationBusy
+  const nextButtonLabel = step.key === "container" && routePlanningBusy
     ? "Working..."
     : step.key === "harness-downloads"
       ? (harnessInstallBusy ? "Downloading..." : (harnessSelectedCount > 0 ? "Download selected" : "Continue"))
@@ -734,12 +730,15 @@ export default function WorkspaceSetupPage() {
     }
   };
 
-  const mapHarnessInstallCandidate = (provider: ProviderStatus): HarnessInstallProviderRow | null => {
+  const mapHarnessInstallCandidate = (
+    provider: ProviderStatus,
+    fallbackInstallTarget: InstallTarget = selectedHarnessInstallTarget,
+  ): HarnessInstallProviderRow | null => {
     if (provider.details?.ui_hidden === "true") return null;
     const installSupported = provider.details?.install_supported === "true";
     if (!installSupported) return null;
     const harness = harnessByProviderId.get(provider.provider_id);
-    const installTarget = parseInstallTarget(provider.details?.install_target) ?? selectedHarnessInstallTarget;
+    const installTarget = parseInstallTarget(provider.details?.install_target) ?? fallbackInstallTarget;
     return {
       providerId: provider.provider_id,
       label: harness?.label ?? provider.provider_id,
@@ -1176,15 +1175,19 @@ export default function WorkspaceSetupPage() {
     parsedRemote?.user,
   ]);
 
-  const scanHarnessInstallCandidatesForTarget = useCallback(async (target: "local" | "remote"): Promise<HarnessInstallProviderRow[]> => {
+  const scanHarnessInstallCandidatesForTarget = useCallback(async (
+    target: "local" | "remote",
+    containerSelectionOverride?: string,
+  ): Promise<HarnessInstallProviderRow[]> => {
     if (!isDesktopApp()) return [];
     if (target === "remote") {
       if (!parsedRemote?.host) return [];
       if (remoteStatusRef.current !== "connected") return [];
     }
 
+    const containerSelection = containerSelectionOverride ?? selections.container;
     const installTarget: InstallTarget =
-      selections.container && selections.container !== "no-container" ? "container" : "host";
+      containerSelection && containerSelection !== "no-container" ? "container" : "host";
     const scanKey = target === "local"
       ? `local|@|${installTarget}`
       : `remote|${parsedRemote?.user ?? ""}@${parsedRemote?.host ?? ""}|${installTarget}`;
@@ -1208,7 +1211,7 @@ export default function WorkspaceSetupPage() {
         const providers = await listProviders(installTarget);
         if (!isCurrentFlowRunToken(harnessInstallScanRunRef.current, scanRun)) return [];
         const rows = providers
-          .map((provider) => mapHarnessInstallCandidate(provider))
+          .map((provider) => mapHarnessInstallCandidate(provider, installTarget))
           .filter((row): row is HarnessInstallProviderRow => row !== null)
           .sort((a, b) => a.label.localeCompare(b.label));
         setHarnessInstallCandidates(rows);
@@ -1257,14 +1260,71 @@ export default function WorkspaceSetupPage() {
     selections.container,
   ]);
 
+  const invalidateRoutePlan = useCallback(() => {
+    setRoutePlan(null);
+    setRoutePlanningBusy(false);
+    routePlanRunRef.current = nextFlowRunToken(routePlanRunRef.current?.runId ?? 0, "reset");
+  }, []);
+
+  const ensureRoutePlanForSelection = useCallback(async (
+    containerSelectionOverride?: string,
+  ): Promise<WizardRoutePlan | null> => {
+    const location = selections.location;
+    if (location !== "local" && location !== "remote") return null;
+    const targetKey = selectedDaemonTargetKeyRef.current ?? (location === "local" ? "local" : null);
+    const containerSelection = (containerSelectionOverride ?? selections.container ?? "").trim();
+    if (!targetKey || !containerSelection) return null;
+
+    const routeKey = `${targetKey}|${containerSelection}`;
+    if (routePlan?.targetKey === routeKey) {
+      return routePlan;
+    }
+
+    const run = nextFlowRunToken(routePlanRunRef.current?.runId ?? 0, routeKey);
+    routePlanRunRef.current = run;
+    setRoutePlanningBusy(true);
+    try {
+      const [authCandidates, titlingRequired, harnessRows] = await Promise.all([
+        scanAuthImportCandidatesForTarget(location),
+        ensureTitlingProbeForCurrentTarget(),
+        scanHarnessInstallCandidatesForTarget(location, containerSelection),
+      ]);
+
+      if (!isCurrentFlowRunToken(routePlanRunRef.current, run)) return null;
+
+      const nextPlan: WizardRoutePlan = {
+        targetKey: routeKey,
+        containerSelection,
+        includeHarnessDownloads: harnessRows.some(
+          (candidate) => candidate.installSupported && !(candidate.installed && candidate.healthy),
+        ),
+        includeAuthImport: authCandidates.length > 0,
+        includeTitling: titlingRequired === true,
+      };
+      setRoutePlan(nextPlan);
+      return nextPlan;
+    } finally {
+      if (isCurrentFlowRunToken(routePlanRunRef.current, run)) {
+        setRoutePlanningBusy(false);
+      }
+    }
+  }, [
+    ensureTitlingProbeForCurrentTarget,
+    routePlan,
+    scanAuthImportCandidatesForTarget,
+    scanHarnessInstallCandidatesForTarget,
+    selections.container,
+    selections.location,
+  ]);
+
   const shouldAutoAdvance = (stepKey: string, optionId: string): boolean => {
     if (stepKey === "location") return false;
-    if (stepKey === "container") return true;
+    if (stepKey === "container") return false;
     if (stepKey === "network") return optionId !== "allowlist";
     return false;
   };
 
-  const nextStepAfterLocation = (): string => "container";
+  const nextStepAfterLocation = (): WizardStepKey => "container";
 
   const onSelect = (stepKey: string, optionId: string) => {
     setCreateError(null);
@@ -1283,39 +1343,36 @@ export default function WorkspaceSetupPage() {
       setImportRepoNote(null);
     }
     if (stepKey === "location") {
+      invalidateRoutePlan();
+      authImportScanPromiseRef.current = null;
+      authImportScanKeyRef.current = null;
+      authImportScanRunRef.current = null;
+      setAuthImportBusy(false);
+      setAuthImportScannedKey(null);
+      setAuthImportCandidates([]);
+      setAuthImportSelected({});
+      setAuthImportError(null);
       setHarnessInstallScannedKey(null);
       clearHarnessInstallPoll();
       setHarnessInstallCandidates([]);
       setHarnessInstallSelected({});
       setHarnessInstallRows({});
       setHarnessInstallError(null);
-      // Keep local prefetch snapshot so local click can advance without step-topology churn.
-      if (optionId === "remote") {
-        setLocalLocationBusy(false);
-        pendingLocalLocationAdvanceRef.current = false;
-        const nextRun = nextFlowRunToken(locationAdvanceRunRef.current?.runId ?? 0, "local");
-        locationAdvanceRunRef.current = nextRun;
-        authImportScanPromiseRef.current = null;
-        authImportScanKeyRef.current = null;
-        authImportScanRunRef.current = null;
-        setAuthImportBusy(false);
-        setAuthImportScannedKey(null);
-        setAuthImportCandidates([]);
-        setAuthImportSelected({});
-        setAuthImportError(null);
-        clearHarnessInstallPoll();
-        harnessInstallScanPromiseRef.current = null;
-        harnessInstallScanKeyRef.current = null;
-        harnessInstallScanRunRef.current = null;
-        setHarnessInstallBusy(false);
-        setHarnessInstallScannedKey(null);
-        setHarnessInstallCandidates([]);
-        setHarnessInstallSelected({});
-        setHarnessInstallRows({});
-        setHarnessInstallError(null);
-      }
+      clearHarnessInstallPoll();
+      harnessInstallScanPromiseRef.current = null;
+      harnessInstallScanKeyRef.current = null;
+      harnessInstallScanRunRef.current = null;
+      setHarnessInstallBusy(false);
+      setHarnessInstallScannedKey(null);
+      setHarnessInstallCandidates([]);
+      setHarnessInstallSelected({});
+      setHarnessInstallRows({});
+      setHarnessInstallError(null);
       invalidateTitlingPersisted();
       setTitlingProbeError(null);
+    }
+    if (stepKey === "container") {
+      invalidateRoutePlan();
     }
     if (stepKey === "container" && optionId === "no-container") {
       setNetworkAllowlist("");
@@ -1341,9 +1398,16 @@ export default function WorkspaceSetupPage() {
   const onSelectOption = (stepKey: string, optionId: string) => {
     onSelect(stepKey, optionId);
     if (stepKey === "location" && optionId === "local") {
-      pendingLocalLocationAdvanceRef.current = true;
-      const nextRun = nextFlowRunToken(locationAdvanceRunRef.current?.runId ?? 0, "local");
-      locationAdvanceRunRef.current = nextRun;
+      goToStepKey(nextStepAfterLocation());
+      return;
+    }
+    if (stepKey === "container") {
+      void (async () => {
+        const plan = await ensureRoutePlanForSelection(optionId);
+        if (!plan) return;
+        if (currentStepKeyRef.current !== "container") return;
+        goToStepKey(nextBoundaryStep(plan));
+      })();
       return;
     }
     if (shouldAutoAdvance(stepKey, optionId)) {
@@ -1520,37 +1584,6 @@ export default function WorkspaceSetupPage() {
   }, []);
 
   useEffect(() => {
-    if (!pendingLocalLocationAdvanceRef.current) return;
-    if (step.key !== "location") return;
-    if (selections.location !== "local") return;
-
-    const run = nextFlowRunToken(locationAdvanceRunRef.current?.runId ?? 0, "local");
-    locationAdvanceRunRef.current = run;
-    pendingLocalLocationAdvanceRef.current = false;
-    setLocalLocationBusy(true);
-    void (async () => {
-      try {
-        void scanAuthImportCandidatesForTarget("local").catch(() => {});
-        void ensureTitlingProbeForCurrentTarget().catch(() => {});
-        if (!isCurrentFlowRunToken(locationAdvanceRunRef.current, run)) return;
-        if (selectedDaemonTargetKeyRef.current !== "local") return;
-        if (currentStepKeyRef.current !== "location") return;
-        goToStepKey(nextStepAfterLocation());
-      } finally {
-        if (isCurrentFlowRunToken(locationAdvanceRunRef.current, run)) {
-          setLocalLocationBusy(false);
-        }
-      }
-    })();
-  }, [
-    ensureTitlingProbeForCurrentTarget,
-    goToStepKey,
-    scanAuthImportCandidatesForTarget,
-    selections.location,
-    step.key,
-  ]);
-
-  useEffect(() => {
     if (!isDesktopApp()) return;
     if (step.key !== "location") return;
     if (selections.location) return;
@@ -1559,55 +1592,6 @@ export default function WorkspaceSetupPage() {
     scanAuthImportCandidatesForTarget,
     selections.location,
     step.key,
-  ]);
-
-  useEffect(() => {
-    const targetKey = selectedDaemonTargetKey;
-    if (!targetKey) {
-      authImportHandledTargetKeyRef.current = null;
-      return;
-    }
-    if (
-      authImportHandledTargetKeyRef.current
-      && authImportHandledTargetKeyRef.current !== targetKey
-    ) {
-      authImportHandledTargetKeyRef.current = null;
-    }
-  }, [selectedDaemonTargetKey]);
-
-  useEffect(() => {
-    if (!authImportStepVisible) return;
-    const targetKey = selectedDaemonTargetKey;
-    if (!targetKey) return;
-    if (authImportHandledTargetKeyRef.current === targetKey) return;
-    const currentKey = currentStepKeyRef.current;
-    if (currentKey === "location" || currentKey === "container" || currentKey === "harness-downloads" || currentKey === "auth-import") {
-      return;
-    }
-    goToStepKey("auth-import");
-  }, [authImportStepVisible, goToStepKey, selectedDaemonTargetKey]);
-
-  useEffect(() => {
-    if (!titlingStepVisible) return;
-    if (titlingSelectionComplete) return;
-    const targetKey = selectedDaemonTargetKey;
-    if (!targetKey) return;
-    const currentKey = currentStepKeyRef.current;
-    if (
-      currentKey === "location"
-      || currentKey === "container"
-      || currentKey === "harness-downloads"
-      || currentKey === "auth-import"
-      || currentKey === "session-titling"
-    ) {
-      return;
-    }
-    goToStepKey("session-titling");
-  }, [
-    goToStepKey,
-    selectedDaemonTargetKey,
-    titlingSelectionComplete,
-    titlingStepVisible,
   ]);
 
   useEffect(() => {
@@ -1633,6 +1617,20 @@ export default function WorkspaceSetupPage() {
     scanHarnessInstallCandidatesForTarget,
     selections.location,
     selectedDaemonTargetKey,
+  ]);
+
+  useEffect(() => {
+    if (!routePlan) return;
+    const activeTargetKey = selectedDaemonTargetKey
+      ? `${selectedDaemonTargetKey}|${(selections.container ?? "").trim()}`
+      : null;
+    if (activeTargetKey === routePlan.targetKey) return;
+    invalidateRoutePlan();
+  }, [
+    invalidateRoutePlan,
+    routePlan,
+    selectedDaemonTargetKey,
+    selections.container,
   ]);
 
   useEffect(() => {
@@ -2013,12 +2011,12 @@ export default function WorkspaceSetupPage() {
     }
     const titlingRequired = await ensureTitlingProbeForCurrentTarget();
     if (currentStepKeyRef.current !== "auth-import") return;
-    authImportHandledTargetKeyRef.current = selectedDaemonTargetKeyRef.current;
-    if (titlingRequired === true) {
+    if (titlingRequired === true && routePlan?.includeTitling !== true) {
+      setRoutePlan((prev) => prev ? { ...prev, includeTitling: true } : prev);
       goToStepKey("session-titling");
       return;
     }
-    goToStepKey("source");
+    goToStepKey(nextAfterAuthImport(routePlan));
   };
 
   const advanceFromHarnessDownloadsStep = async (
@@ -2039,7 +2037,7 @@ export default function WorkspaceSetupPage() {
       });
     if (selectedRows.length === 0) {
       if (currentStepKeyRef.current !== "harness-downloads") return;
-      goRelativeStep(1);
+      goToStepKey(nextAfterHarnessDownloads(routePlan));
       return;
     }
 
@@ -2110,7 +2108,7 @@ export default function WorkspaceSetupPage() {
       }
 
       if (currentStepKeyRef.current !== "harness-downloads") return;
-      goRelativeStep(1);
+      goToStepKey(nextAfterHarnessDownloads(routePlan));
     } catch (error) {
       setHarnessInstallError(messageFromError(error));
     } finally {
@@ -2120,13 +2118,6 @@ export default function WorkspaceSetupPage() {
 
   const onNext = async () => {
     if (step.key === "location") {
-      if (selections.location === "local") {
-        // If local auto-advance is in flight, manual Next takes ownership so only one
-        // continuation can commit the location->next-step transition.
-        pendingLocalLocationAdvanceRef.current = false;
-        const nextRun = nextFlowRunToken(locationAdvanceRunRef.current?.runId ?? 0, "local");
-        locationAdvanceRunRef.current = nextRun;
-      }
       if (selections.location === "remote") {
         if (!parsedRemote) return;
         if (!isDesktopApp()) {
@@ -2177,21 +2168,15 @@ export default function WorkspaceSetupPage() {
           }
         }
       }
-
-      if (selections.location === "local") {
-        setLocalLocationBusy(true);
-        try {
-          void scanAuthImportCandidatesForTarget("local").catch(() => {});
-          void ensureTitlingProbeForCurrentTarget().catch(() => {});
-        } finally {
-          setLocalLocationBusy(false);
-        }
-      } else if (selections.location === "remote") {
-        void scanAuthImportCandidatesForTarget("remote").catch(() => {});
-        void ensureTitlingProbeForCurrentTarget().catch(() => {});
-      }
       if (currentStepKeyRef.current !== "location") return;
       goToStepKey(nextStepAfterLocation());
+      return;
+    }
+    if (step.key === "container") {
+      const plan = await ensureRoutePlanForSelection();
+      if (!plan) return;
+      if (currentStepKeyRef.current !== "container") return;
+      goToStepKey(nextBoundaryStep(plan));
       return;
     }
     if (step.key === "auth-import") {
@@ -2979,11 +2964,6 @@ export default function WorkspaceSetupPage() {
                     {remoteStatus === "error" && remoteError && (
                       <div className="wizard-error">{remoteError}</div>
                     )}
-                  </div>
-                )}
-                {step.key === "location" && selections.location === "local" && localLocationBusy && (
-                  <div className="wizard-note" data-testid="wizard-location-local-progress">
-                    Preparing local daemon and checking setup...
                   </div>
                 )}
                 {step.key === "auth-import" && (

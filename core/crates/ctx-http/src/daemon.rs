@@ -1250,12 +1250,10 @@ mod tests {
         assert_eq!(resolved.args[0], "--log-level");
         assert_eq!(resolved.args[1], "debug");
         assert_eq!(resolved.args[2], "--acp-command");
-        assert!(
-            resolved
-                .args
-                .get(3)
-                .is_some_and(|arg| arg.ends_with("/cursor-agent --experimental-acp"))
-        );
+        assert!(resolved
+            .args
+            .get(3)
+            .is_some_and(|arg| arg.ends_with("/cursor-agent --experimental-acp")));
         assert_eq!(
             resolved.dependencies,
             vec!["bridge-dep".to_string(), "cursor-dep".to_string()]

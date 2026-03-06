@@ -87,16 +87,13 @@ async fn finalize_workspace_probe_env(
     // ensure CODEX_HOME points at container-accessible runtime root, not host endpoint-home paths.
     if provider_id == "codex" && source.source_kind == HarnessSourceKind::Endpoint {
         if let Some(root) = env.get("CTX_DATA_ROOT").cloned() {
-            provider_accounts::ensure_codex_endpoint_runtime_home_from_env(
-                Path::new(&root),
-                env,
-            )
-            .await
-            .map_err(|err| {
-                logs::redact_sensitive(&format!(
-                    "probe codex endpoint runtime-home preparation failed: {err:#}"
-                ))
-            })?;
+            provider_accounts::ensure_codex_endpoint_runtime_home_from_env(Path::new(&root), env)
+                .await
+                .map_err(|err| {
+                    logs::redact_sensitive(&format!(
+                        "probe codex endpoint runtime-home preparation failed: {err:#}"
+                    ))
+                })?;
         }
     }
 
@@ -246,8 +243,15 @@ mod tests {
             .await
             .expect("finalize probe env");
 
-        let home = runtime_root.path().join("providers").join("opencode").join("home");
-        assert_eq!(env.get("HOME").map(String::as_str), Some(home.to_string_lossy().as_ref()));
+        let home = runtime_root
+            .path()
+            .join("providers")
+            .join("opencode")
+            .join("home");
+        assert_eq!(
+            env.get("HOME").map(String::as_str),
+            Some(home.to_string_lossy().as_ref())
+        );
         assert_eq!(
             env.get("XDG_CONFIG_HOME").map(String::as_str),
             Some(home.join(".config").to_string_lossy().as_ref())

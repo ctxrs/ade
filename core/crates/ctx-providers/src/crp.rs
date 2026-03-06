@@ -1816,6 +1816,9 @@ enum CrpChannel {
 }
 
 #[allow(dead_code)]
+// EXCEPTION: session.opened carries provider-specific metadata blobs; boxing this
+// protocol parser enum right before release would add churn without product value.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "type")]
 enum CrpEvent {

@@ -9,8 +9,12 @@ import {
 } from "../_shared/billing.ts";
 import { getStripe } from "../_shared/stripe.ts";
 
+function toArrayBuffer(data: Uint8Array): ArrayBuffer {
+  return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+}
+
 async function sha256Hex(data: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", data);
+  const digest = await crypto.subtle.digest("SHA-256", toArrayBuffer(data));
   return Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
@@ -19,12 +23,12 @@ async function sha256Hex(data: Uint8Array): Promise<string> {
 async function hmacSha256Hex(key: Uint8Array, msg: Uint8Array): Promise<string> {
   const cryptoKey = await crypto.subtle.importKey(
     "raw",
-    key,
+    toArrayBuffer(key),
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign"],
   );
-  const sig = await crypto.subtle.sign("HMAC", cryptoKey, msg);
+  const sig = await crypto.subtle.sign("HMAC", cryptoKey, toArrayBuffer(msg));
   return Array.from(new Uint8Array(sig))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");

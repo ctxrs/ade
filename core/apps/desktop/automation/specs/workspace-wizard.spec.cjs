@@ -46,6 +46,7 @@ const REMOTE_DATA_DIR_RAW = process.env.CTX_AUTOMATION_REMOTE_DATA_DIR || "";
 const SSH_NO_START_REMOTE = !["0", "false", "no"].includes(
   String(process.env.CTX_AUTOMATION_SSH_NO_START_REMOTE || "1").trim().toLowerCase(),
 );
+const CONTAINER_WORKSPACE_TIMEOUT_MS = 480000;
 
 const run = (cmd, args, opts = {}) => {
   const res = spawnSync(cmd, args, { encoding: "utf8", ...opts });
@@ -151,6 +152,67 @@ const waitForStep = async (key, timeoutMs = 30000) => {
     timeout: timeoutMs,
     timeoutMsg: `expected step '${key}', got '${last || "unknown"}'`,
   });
+};
+
+const startWizardStepTrace = async () => {
+  await browser.execute(() => {
+    const read = () => {
+      const root = document.querySelector('[data-testid="workspace-setup"]');
+      const step = root ? String(root.getAttribute("data-step-key") || "") : "";
+      return {
+        step,
+        pathname: String(window.location.pathname || ""),
+      };
+    };
+    const trace = [read()];
+    const record = () => {
+      const next = read();
+      const prev = trace[trace.length - 1];
+      if (!prev || prev.step !== next.step || prev.pathname !== next.pathname) {
+        trace.push(next);
+      }
+    };
+    if (window.__ctxWizardTraceStop) {
+      try { window.__ctxWizardTraceStop(); } catch { /* ignore */ }
+    }
+    const intervalId = window.setInterval(record, 50);
+    window.__ctxWizardTrace = trace;
+    window.__ctxWizardTraceStop = () => {
+      window.clearInterval(intervalId);
+    };
+  });
+};
+
+const readWizardStepTrace = async () => {
+  return await browser.execute(() => {
+    const raw = Array.isArray(window.__ctxWizardTrace) ? window.__ctxWizardTrace : [];
+    return raw.map((entry) => ({
+      step: String(entry?.step || ""),
+      pathname: String(entry?.pathname || ""),
+    }));
+  });
+};
+
+const stopWizardStepTrace = async () => {
+  await browser.execute(() => {
+    if (window.__ctxWizardTraceStop) {
+      try { window.__ctxWizardTraceStop(); } catch { /* ignore */ }
+    }
+  });
+};
+
+const assertNoLocationRegression = (trace) => {
+  let leftLocation = false;
+  for (const entry of trace) {
+    const step = String(entry?.step || "");
+    if (step && step !== "location") {
+      leftLocation = true;
+      continue;
+    }
+    if (leftLocation && step === "location") {
+      throw new Error(`wizard regressed to location after advancing: ${JSON.stringify(trace)}`);
+    }
+  }
 };
 
 const waitForSourceExitOrWorkspaceRoute = async (timeoutMs = 30000) => {
@@ -661,10 +723,27 @@ const clickTitlingSkip = async () => {
   await clickTestId("wizard-titling-skip");
 };
 
-const ensureReadyForSourceSelection = async ({ location, container }, timeoutMs = 60000) => {
+const clickHarnessSkip = async () => {
+  await waitForTestId("wizard-harness-skip");
+  await clickTestId("wizard-harness-skip");
+};
+
+const ensureReadyForSourceSelection = async (
+  {
+    location,
+    container,
+    downloadHarnesses = false,
+    forbidLocationRegression = false,
+    locationProgress = { leftLocation: false },
+  },
+  timeoutMs = 60000,
+) => {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     const key = await currentStepKey();
+    if (key && key !== "location") {
+      locationProgress.leftLocation = true;
+    }
     if (key === "source") return;
     if (key === "auth-import") {
       await clickAuthImportSkip();
@@ -697,6 +776,11 @@ const ensureReadyForSourceSelection = async ({ location, container }, timeoutMs 
       continue;
     }
     if (key === "harness-downloads") {
+      if (!downloadHarnesses) {
+        await clickHarnessSkip();
+        await browser.pause(100);
+        continue;
+      }
       const next = await clickNextIfEnabled();
       if (next.clicked) {
         await browser.pause(100);
@@ -707,6 +791,9 @@ const ensureReadyForSourceSelection = async ({ location, container }, timeoutMs 
       continue;
     }
     if (key === "location") {
+      if (forbidLocationRegression && locationProgress.leftLocation) {
+        throw new Error("wizard regressed to location after advancing");
+      }
       if (!location) throw new Error("location step reached but scenario.location is missing");
       await clickOption("location", location);
       await browser.pause(100);
@@ -729,7 +816,13 @@ const ensureReadyForSourceSelection = async ({ location, container }, timeoutMs 
 };
 
 const selectSourceOptionWithRetry = async (
-  { location, container, sourceKind },
+  {
+    location,
+    container,
+    sourceKind,
+    downloadHarnesses = false,
+    forbidLocationRegression = false,
+  },
   attempts = 6,
 ) => {
   const sourceSelectionReady = async () => {
@@ -751,8 +844,15 @@ const selectSourceOptionWithRetry = async (
   };
 
   let lastError = null;
+  const locationProgress = { leftLocation: false };
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    await ensureReadyForSourceSelection({ location, container });
+    await ensureReadyForSourceSelection({
+      location,
+      container,
+      downloadHarnesses,
+      forbidLocationRegression,
+      locationProgress,
+    });
     try {
       await clickOption("source", sourceKind);
       if (await sourceSelectionReady()) return;
@@ -941,6 +1041,7 @@ const runWizardScenario = async (scenario) => {
   }
 
   await waitForStep("location", 90000);
+  await startWizardStepTrace();
   await clickOption("location", scenario.location);
 
   if (scenario.location === "remote") {
@@ -993,6 +1094,8 @@ const runWizardScenario = async (scenario) => {
     location: scenario.location,
     container: scenario.container,
     sourceKind: scenario.source.kind,
+    downloadHarnesses: Boolean(scenario.downloadHarnesses),
+    forbidLocationRegression: true,
   });
 
   const sourcePathVisible = await browser.execute(
@@ -1162,13 +1265,16 @@ const runWizardScenario = async (scenario) => {
 
   await waitForStep("confirm");
   await clickCreate(
-    scenario.container && scenario.container !== "no-container" ? 300000 : 30000,
+    scenario.container && scenario.container !== "no-container" ? CONTAINER_WORKSPACE_TIMEOUT_MS : 30000,
   );
 
   const workspaceRouteTimeoutMs = scenario.location === "remote"
-    ? 180000
-    : (scenario.container && scenario.container !== "no-container" ? 300000 : 120000);
+    ? (scenario.container && scenario.container !== "no-container" ? CONTAINER_WORKSPACE_TIMEOUT_MS : 180000)
+    : (scenario.container && scenario.container !== "no-container" ? CONTAINER_WORKSPACE_TIMEOUT_MS : 120000);
   const id = await waitForWorkspaceRoute(workspaceRouteTimeoutMs);
+  const trace = await readWizardStepTrace();
+  await stopWizardStepTrace();
+  assertNoLocationRegression(trace);
   // The workbench must never render the "daemon unavailable" overlay on first navigation.
   // If connect_local returns before the daemon is reachable, this can flash briefly.
   await assertNoDaemonOverlayFor(2000);
@@ -1298,6 +1404,7 @@ describe("launcher workspace wizard (e2e)", () => {
 
   it("local clone works end-to-end (merge queue enabled)", async function () {
     if (!scenarioEnabled("local-clone-disk-isolated", ["local", "container", "disk-isolated"])) this.skip();
+    this.timeout(600000);
     const destParent = path.join(localBase, "clone-dest");
     fs.mkdirSync(destParent, { recursive: true });
     const destPath = `${destParent}/`; // trailing slash -> derive repo name
@@ -1332,6 +1439,7 @@ describe("launcher workspace wizard (e2e)", () => {
 
   it("local new empty works end-to-end", async function () {
     if (!scenarioEnabled("local-new-host-mounted", ["local", "container", "host-mounted"])) this.skip();
+    this.timeout(600000);
     const dest = path.join(localBase, "new-host-mounted");
     const id = await runWizardScenario({
       location: "local",
@@ -1361,6 +1469,7 @@ describe("launcher workspace wizard (e2e)", () => {
 
   it("local disk-isolated container works end-to-end", async function () {
     if (!scenarioEnabled("local-new-disk-isolated", ["local", "container", "disk-isolated"])) this.skip();
+    this.timeout(600000);
     const dest = path.join(localBase, "new-disk-isolated");
     const id = await runWizardScenario({
       location: "local",
@@ -1395,6 +1504,7 @@ describe("launcher workspace wizard (e2e)", () => {
       location: "local",
       container: "host-mounted",
       network: "providers",
+      downloadHarnesses: true,
       source: { kind: "new", destPath: dest, workspaceName: "codex-smoke" },
       setupHook: "",
       mergeQueue: { kind: "skip" },
@@ -1416,6 +1526,7 @@ describe("launcher workspace wizard (e2e)", () => {
     const id = await runWizardScenario({
       location: "local",
       container: "no-container",
+      downloadHarnesses: true,
       source: { kind: "new", destPath: dest, workspaceName: "codex-host-smoke" },
       setupHook: "",
       mergeQueue: { kind: "skip" },

@@ -1,6 +1,36 @@
-import { createClient } from "npm:@supabase/supabase-js@2.49.1";
+type BillingProfileRow = {
+  user_id?: string;
+  stripe_customer_id?: string;
+};
 
-type SupabaseClient = ReturnType<typeof createClient>;
+type BillingSubscriptionRow = {
+  stripe_last_event_created?: string;
+};
+
+type Awaitable<T> = PromiseLike<T>;
+
+type MaybeSingleQuery<T> = {
+  eq(column: string, value: string): {
+    maybeSingle(): Awaitable<{ data: T | null }>;
+  };
+};
+
+type UpsertQuery = {
+  upsert(values: unknown, options?: { onConflict?: string }): Awaitable<unknown>;
+};
+
+type BillingSupabaseClient = {
+  from(table: "billing_profile"): UpsertQuery & {
+    select(columns: string): MaybeSingleQuery<BillingProfileRow>;
+  };
+  from(table: "billing_subscription"): UpsertQuery & {
+    select(columns: string): MaybeSingleQuery<BillingSubscriptionRow>;
+  };
+};
+
+function asBillingSupabaseClient(value: unknown): BillingSupabaseClient {
+  return value as BillingSupabaseClient;
+}
 
 export type EventMeta = {
   id: string;
@@ -24,12 +54,13 @@ export function stripeId(obj: unknown): string {
 }
 
 export async function ensureBillingProfile(
-  supabase: SupabaseClient,
+  supabase: unknown,
   userId: string,
   stripeCustomerId: string,
 ) {
   if (!userId || !stripeCustomerId) return;
-  await supabase
+  const client = asBillingSupabaseClient(supabase);
+  await client
     .from("billing_profile")
     .upsert(
       { user_id: userId, stripe_customer_id: stripeCustomerId, updated_at: new Date().toISOString() },
@@ -38,12 +69,13 @@ export async function ensureBillingProfile(
 }
 
 export async function resolveUserIdForCustomer(
-  supabase: SupabaseClient,
+  supabase: unknown,
   stripeCustomerId: string,
   fallbackUserId?: string,
 ): Promise<string> {
   if (!stripeCustomerId) return "";
-  const { data: profile } = await supabase
+  const client = asBillingSupabaseClient(supabase);
+  const { data: profile } = await client
     .from("billing_profile")
     .select("user_id")
     .eq("stripe_customer_id", stripeCustomerId)
@@ -59,11 +91,12 @@ export async function resolveUserIdForCustomer(
 }
 
 export async function shouldUpdateEventMeta(
-  supabase: SupabaseClient,
+  supabase: unknown,
   stripeSubscriptionId: string,
   eventCreatedMs: number,
 ): Promise<boolean> {
-  const { data } = await supabase
+  const client = asBillingSupabaseClient(supabase);
+  const { data } = await client
     .from("billing_subscription")
     .select("stripe_last_event_created")
     .eq("stripe_subscription_id", stripeSubscriptionId)
@@ -76,7 +109,7 @@ export async function shouldUpdateEventMeta(
 }
 
 export async function syncSubscriptionFromStripe(
-  supabase: SupabaseClient,
+  supabase: unknown,
   stripe: any,
   stripeSubscriptionId: string,
   eventMeta?: EventMeta,
@@ -131,15 +164,17 @@ export async function syncSubscriptionFromStripe(
     }
   }
 
-  await supabase.from("billing_subscription").upsert(update, { onConflict: "user_id" });
+  const client = asBillingSupabaseClient(supabase);
+  await client.from("billing_subscription").upsert(update, { onConflict: "user_id" });
 }
 
 export async function setSubscriptionFreeLocal(
-  supabase: SupabaseClient,
+  supabase: unknown,
   userId: string,
 ) {
   if (!userId) return;
-  await supabase
+  const client = asBillingSupabaseClient(supabase);
+  await client
     .from("billing_subscription")
     .upsert(
       {

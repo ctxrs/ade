@@ -76,7 +76,9 @@ fn rewrite_container_path_list_for_linux(value: &str) -> Result<String> {
         return Ok(value.to_string());
     }
     let rewritten_paths = std::env::split_paths(OsStr::new(value))
-        .map(|entry| rewrite_bundled_path_for_linux(entry.to_string_lossy().as_ref()).map(PathBuf::from))
+        .map(|entry| {
+            rewrite_bundled_path_for_linux(entry.to_string_lossy().as_ref()).map(PathBuf::from)
+        })
         .collect::<Result<Vec<_>>>()?;
     let joined = std::env::join_paths(rewritten_paths)
         .context("joining rewritten PATH entries for linux container execution")?;
@@ -219,7 +221,10 @@ mod tests {
         );
         env.insert(
             "DROID_PATH".to_string(),
-            host_provider_dir.join("droid").to_string_lossy().to_string(),
+            host_provider_dir
+                .join("droid")
+                .to_string_lossy()
+                .to_string(),
         );
 
         let spec = ContainerExecSpec {
@@ -232,7 +237,10 @@ mod tests {
             &spec,
             Path::new("/workspace"),
             &env,
-            linux_provider_dir.join("droid-acp").to_string_lossy().as_ref(),
+            linux_provider_dir
+                .join("droid-acp")
+                .to_string_lossy()
+                .as_ref(),
             &[],
         )
         .expect("build command");
@@ -273,7 +281,10 @@ mod tests {
         fs::create_dir_all(&host_provider_dir).expect("mkdir host provider dir");
 
         let mut env = HashMap::new();
-        env.insert("PATH".to_string(), host_provider_dir.to_string_lossy().to_string());
+        env.insert(
+            "PATH".to_string(),
+            host_provider_dir.to_string_lossy().to_string(),
+        );
 
         let spec = ContainerExecSpec {
             container_id: "ctx-harness-1".to_string(),
@@ -281,14 +292,9 @@ mod tests {
             podman_path: None,
         };
 
-        let err = build_container_exec_command(
-            &spec,
-            Path::new("/workspace"),
-            &env,
-            "/bin/true",
-            &[],
-        )
-        .expect_err("expected missing linux bundle path error");
+        let err =
+            build_container_exec_command(&spec, Path::new("/workspace"), &env, "/bin/true", &[])
+                .expect_err("expected missing linux bundle path error");
 
         let err_text = format!("{err:#}");
         assert!(

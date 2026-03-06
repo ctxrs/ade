@@ -14,8 +14,7 @@ const DEFAULT_OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
 const CTX_PROVIDER_AUTH_IMPORT_HOME_ENV: &str = "CTX_PROVIDER_AUTH_IMPORT_HOME";
 const CTX_PROVIDER_AUTH_IMPORT_XDG_CONFIG_HOME_ENV: &str =
     "CTX_PROVIDER_AUTH_IMPORT_XDG_CONFIG_HOME";
-const CTX_PROVIDER_AUTH_IMPORT_XDG_DATA_HOME_ENV: &str =
-    "CTX_PROVIDER_AUTH_IMPORT_XDG_DATA_HOME";
+const CTX_PROVIDER_AUTH_IMPORT_XDG_DATA_HOME_ENV: &str = "CTX_PROVIDER_AUTH_IMPORT_XDG_DATA_HOME";
 const CTX_PROVIDER_AUTH_IMPORT_CODEX_HOME_ENV: &str = "CTX_PROVIDER_AUTH_IMPORT_CODEX_HOME";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -168,7 +167,7 @@ pub async fn save_imported_registry(
     Ok(())
 }
 
-fn sort_imported_profiles(profiles: &mut Vec<ProviderImportedAuthProfile>) {
+fn sort_imported_profiles(profiles: &mut [ProviderImportedAuthProfile]) {
     profiles.sort_by(|a, b| {
         a.provider_label
             .cmp(&b.provider_label)
@@ -188,7 +187,12 @@ async fn upsert_imported_profile_metadata(
         .candidate
         .fingerprint
         .clone()
-        .or_else(|| material.secret_bytes.as_ref().map(|bytes| sha256_hex(bytes)))
+        .or_else(|| {
+            material
+                .secret_bytes
+                .as_ref()
+                .map(|bytes| sha256_hex(bytes))
+        })
         .ok_or_else(|| anyhow::anyhow!("imported profile metadata requires secret fingerprint"))?;
     let label = material
         .label

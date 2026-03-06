@@ -120,6 +120,24 @@ const getWizardShell = (): HTMLElement => screen.getByTestId("workspace-setup");
 
 const wizardStepKey = (): string => getWizardShell().getAttribute("data-step-key") ?? "";
 
+const captureStepSequence = () => {
+  const seen = [wizardStepKey()];
+  const observer = new MutationObserver(() => {
+    const next = wizardStepKey();
+    if (seen[seen.length - 1] !== next) {
+      seen.push(next);
+    }
+  });
+  observer.observe(getWizardShell(), {
+    attributes: true,
+    attributeFilter: ["data-step-key"],
+  });
+  return {
+    seen,
+    disconnect: () => observer.disconnect(),
+  };
+};
+
 const selectLocalAndContinue = async () => {
   fireEvent.click(screen.getByTestId("wizard-option-location-local"));
   await waitFor(() => {
@@ -447,6 +465,58 @@ describe("WorkspaceSetupPage", () => {
       expect(wizardStepKey()).toBe("source");
       expect(getInstall).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("never regresses to location while late harness planning resolves", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue(configuredTitlingSettingsFixture() as never);
+    let resolveContainerProviders: ((value: unknown) => void) | null = null;
+    const pendingContainerProviders = new Promise((resolve) => {
+      resolveContainerProviders = resolve;
+    });
+    vi.mocked(listProviders)
+      .mockResolvedValueOnce([
+        providerStatusFixture({
+          provider_id: "codex",
+          installed: true,
+          health: "ok",
+          details: { install_supported: "true" },
+        }),
+      ] as never)
+      .mockImplementationOnce(() => pendingContainerProviders as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    const trace = captureStepSequence();
+
+    await selectLocalAndContinue();
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-option-container-disk-isolated"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+      expect(screen.getByTestId("wizard-next")).toBeDisabled();
+    });
+
+    await act(async () => {
+      resolveContainerProviders?.([
+        providerStatusFixture({
+          provider_id: "codex",
+          installed: false,
+          health: "error",
+          details: { install_supported: "true" },
+        }),
+      ]);
+    });
+
+    await waitFor(() => {
+      expect(["harness-downloads", "source"]).toContain(wizardStepKey());
+    });
+    trace.disconnect();
+    expect(trace.seen[0]).toBe("location");
+    expect(trace.seen.slice(1)).not.toContain("location");
   });
 
   it("keeps cancel enabled for active harness installs after scan completes", async () => {
@@ -1185,7 +1255,7 @@ describe("WorkspaceSetupPage", () => {
     expect(screen.getByTestId("wizard-titling-mode-local")).toBeInTheDocument();
   });
 
-  it("redirects back to session titling when async probe later marks titling as required", async () => {
+  it("holds on container until async titling planning resolves, then advances once", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(listProviderAuthImportCandidates).mockResolvedValue({ candidates: [] } as never);
     let resolveSettings: ((value: unknown) => void) | null = null;
@@ -1197,10 +1267,13 @@ describe("WorkspaceSetupPage", () => {
     renderPage();
     await screen.findByTestId("workspace-setup");
     await selectLocalAndContinue();
-    await advancePastContainerForHost();
-
     await waitFor(() => {
-      expect(wizardStepKey()).toBe("source");
+      expect(wizardStepKey()).toBe("container");
+    });
+    fireEvent.click(screen.getByTestId("wizard-option-container-no-container"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+      expect(screen.getByTestId("wizard-next")).toBeDisabled();
     });
 
     await act(async () => {
@@ -1460,22 +1533,15 @@ describe("WorkspaceSetupPage", () => {
 
     renderPage();
     await screen.findByTestId("workspace-setup");
+    await selectLocalAndContinue();
+    await advancePastContainerForHost();
 
-    fireEvent.click(screen.getByTestId("wizard-option-location-local"));
-    await waitFor(() => {
-      expect(wizardStepKey()).toBe("container");
-    });
-    fireEvent.click(screen.getByTestId("wizard-option-container-no-container"));
-    if (wizardStepKey() === "harness-downloads") {
-      fireEvent.click(screen.getByTestId("wizard-harness-skip"));
-    }
     if (wizardStepKey() === "auth-import") {
       fireEvent.click(screen.getByRole("button", { name: "Skip for now" }));
     }
     if (wizardStepKey() === "session-titling") {
       fireEvent.click(screen.getByTestId("wizard-titling-skip"));
     }
-    fireEvent.click(screen.getByTestId("wizard-next"));
 
     await waitFor(() => {
       expect(wizardStepKey()).toBe("source");

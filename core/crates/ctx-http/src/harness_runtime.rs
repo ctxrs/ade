@@ -1000,7 +1000,7 @@ impl HarnessRuntimeManager {
                     }
                 }
             };
-            let (proxy_mode, proxy_allowlist) = transparent_proxy_policy(&settings);
+            let (proxy_mode, proxy_allowlist) = transparent_proxy_policy(settings);
             let proxy_config = TransparentProxyConfig {
                 listen: format!("127.0.0.1:{TRANSPARENT_PROXY_PORT}"),
                 mode: proxy_mode,
@@ -2704,7 +2704,7 @@ async fn ensure_podman_machine_running_with_observer(
             Ok(out) => last_err = String::from_utf8_lossy(&out.stderr).trim().to_string(),
             Err(err) => last_err = err.to_string(),
         }
-        if readiness_poll_count % 20 == 0 {
+        if readiness_poll_count.is_multiple_of(20) {
             best_effort_start_machine_after_init(data_root, &machine_name, observer, &mut last_err)
                 .await?;
         }
@@ -2743,7 +2743,7 @@ async fn ensure_podman_machine_running_with_observer(
             Ok(out) => last_err = String::from_utf8_lossy(&out.stderr).trim().to_string(),
             Err(err) => last_err = err.to_string(),
         }
-        if recovery_poll_count % 20 == 0 {
+        if recovery_poll_count.is_multiple_of(20) {
             best_effort_start_machine_after_init(data_root, &machine_name, observer, &mut last_err)
                 .await?;
         }
@@ -2808,7 +2808,7 @@ async fn ensure_podman_machine_running_with_observer(
                     Ok(out) => last_err = String::from_utf8_lossy(&out.stderr).trim().to_string(),
                     Err(err) => last_err = err.to_string(),
                 }
-                if recreate_poll_count % 20 == 0 {
+                if recreate_poll_count.is_multiple_of(20) {
                     best_effort_start_machine_after_init(
                         data_root,
                         &machine_name,
@@ -2974,6 +2974,9 @@ fn should_use_keep_id_userns() -> bool {
 }
 
 #[cfg(test)]
+// EXCEPTION: these tests intentionally serialize env-var mutations with a sync lock
+// that spans async calls so process-global state cannot interleave across test cases.
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
@@ -3436,9 +3439,11 @@ mod tests {
 
     #[test]
     fn transparent_proxy_policy_preserves_custom_allowlist_mode() {
-        let mut settings = ContainerExecutionSettings::default();
-        settings.network_mode = ContainerNetworkMode::Allowlist;
-        settings.allowlist = vec!["example.com".to_string(), "api.example.com".to_string()];
+        let settings = ContainerExecutionSettings {
+            network_mode: ContainerNetworkMode::Allowlist,
+            allowlist: vec!["example.com".to_string(), "api.example.com".to_string()],
+            ..Default::default()
+        };
         let (mode, allowlist) = transparent_proxy_policy(&settings);
         assert_eq!(mode, ContainerNetworkMode::Allowlist);
         assert_eq!(allowlist, settings.allowlist);
