@@ -1649,6 +1649,19 @@ async fn qwen_login_start_and_status_success_persists_account() {
 }
 
 #[tokio::test]
+async fn qwen_subscription_accounts_crud_round_trip() {
+    assert_managed_subscription_crud(
+        "qwen",
+        json!({
+            "label": "Qwen Managed",
+            "oauth_creds_json": "{\"access_token\":\"a\",\"refresh_token\":\"b\"}",
+            "email": "dev@example.com"
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn mistral_login_start_and_status_success_persists_account() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
@@ -1697,6 +1710,30 @@ async fn mistral_login_start_and_status_success_persists_account() {
     assert_eq!(accounts.accounts.len(), 1);
     assert!(accounts.active_account_id.is_some());
     assert_eq!(accounts.accounts[0].label.as_deref(), Some("Mistral OAuth"));
+}
+
+#[tokio::test]
+async fn mistral_subscription_accounts_crud_round_trip() {
+    assert_managed_subscription_crud(
+        "mistral",
+        json!({
+            "label": "Mistral Managed",
+            "email": "dev@example.com"
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn amp_subscription_accounts_crud_round_trip() {
+    assert_managed_subscription_crud(
+        "amp",
+        json!({
+            "label": "Amp Managed",
+            "email": "dev@example.com"
+        }),
+    )
+    .await;
 }
 
 #[tokio::test]

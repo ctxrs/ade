@@ -710,7 +710,7 @@ const runCodexComposerSmoke = async (workspaceId, timeoutMs = 240000) => {
   }
 };
 
-const runCodexFirstTurnApiSmoke = async (
+const runProviderFirstTurnApiSmoke = async (
   workspaceId,
   {
     providerId = "codex",
@@ -720,8 +720,8 @@ const runCodexFirstTurnApiSmoke = async (
   timeoutMs = 240000,
 ) => {
   const taskResp = await daemonJson("POST", `/api/workspaces/${workspaceId}/tasks`, {
-    title: `codex-smoke-${Date.now()}`,
-    description: "Desktop automation smoke task",
+    title: `${providerId}-smoke-${Date.now()}`,
+    description: `Desktop automation smoke task for ${providerId}`,
     create_default_session: false,
   });
   if (taskResp.status !== 200) {
@@ -795,7 +795,7 @@ const runCodexFirstTurnApiSmoke = async (
             || "turn failed",
         ).trim();
         throw new Error(
-          `codex first turn failed (status=${latestStatus}, turn_id=${turnId || "unknown"}): ${errorMessage}`,
+          `${providerId} first turn failed (status=${latestStatus}, turn_id=${turnId || "unknown"}): ${errorMessage}`,
         );
       }
     }
@@ -803,7 +803,19 @@ const runCodexFirstTurnApiSmoke = async (
   }
 
   throw new Error(
-    `codex first turn timed out (session=${sessionId}); last_history=${JSON.stringify(lastHistory)}`,
+    `${providerId} first turn timed out (session=${sessionId}); last_history=${JSON.stringify(lastHistory)}`,
+  );
+};
+
+const runCodexFirstTurnApiSmoke = async (workspaceId, options = {}, timeoutMs = 240000) => {
+  return await runProviderFirstTurnApiSmoke(
+    workspaceId,
+    {
+      providerId: options.providerId || "codex",
+      modelId: options.modelId || "default",
+      prompt: options.prompt || "hello",
+    },
+    timeoutMs,
   );
 };
 
@@ -1546,6 +1558,7 @@ module.exports = {
   ensureCodexHarnessSelected,
   runCodexComposerSmoke,
   runCodexFirstTurnApiSmoke,
+  runProviderFirstTurnApiSmoke,
   getWorkspace,
   getWorkspaceHarnessContainer,
   createWorkspaceTerminal,

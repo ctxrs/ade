@@ -383,7 +383,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             "/api/providers/gemini/accounts/:id",
             delete(delete_gemini_account),
         )
-        .route("/api/providers/qwen/accounts", get(list_qwen_accounts))
+        .route(
+            "/api/providers/qwen/accounts",
+            get(list_qwen_accounts).post(upsert_qwen_account),
+        )
         .route(
             "/api/providers/qwen/accounts/login/start",
             post(start_qwen_login),
@@ -405,7 +408,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             post(start_amp_login),
         )
         .route("/api/providers/amp/accounts/login/:id", get(get_amp_login))
-        .route("/api/providers/amp/accounts", get(list_amp_accounts))
+        .route(
+            "/api/providers/amp/accounts",
+            get(list_amp_accounts).post(upsert_amp_account),
+        )
         .route(
             "/api/providers/amp/active-account",
             put(set_amp_active_account),
@@ -416,7 +422,7 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         )
         .route(
             "/api/providers/mistral/accounts",
-            get(list_mistral_accounts),
+            get(list_mistral_accounts).post(upsert_mistral_account),
         )
         .route(
             "/api/providers/mistral/accounts/login/start",

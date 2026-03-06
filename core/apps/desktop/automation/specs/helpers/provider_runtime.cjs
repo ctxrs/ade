@@ -123,14 +123,37 @@ const configureOpenRouterEndpoint = async ({
     throw new Error(`endpoint upsert returned no endpoint id: ${JSON.stringify(config)}`);
   }
 
-  const select = await daemonJson("POST", `/api/providers/${providerId}/harness_config/select`, {
-    source_kind: "endpoint",
-    endpoint_id: endpointId,
+  await selectHarnessSource({
+    providerId,
+    sourceKind: "endpoint",
+    endpointId,
   });
-  if (select.status !== 200) {
-    throw new Error(`endpoint select failed (${select.status}): ${normalizeErrorMessage(JSON.stringify(select.payload))}`);
-  }
   return endpointId;
+};
+
+const selectHarnessSource = async ({
+  providerId,
+  sourceKind,
+  endpointId = null,
+}) => {
+  const body = {
+    source_kind: String(sourceKind || "").trim(),
+  };
+  if (endpointId) body.endpoint_id = endpointId;
+  const select = await daemonJson("POST", `/api/providers/${providerId}/harness_config/select`, body);
+  if (select.status !== 200) {
+    throw new Error(
+      `harness source select failed (${select.status}): ${normalizeErrorMessage(JSON.stringify(select.payload))}`,
+    );
+  }
+  return asRecord(select.payload);
+};
+
+const selectSubscriptionSource = async (providerId) => {
+  return await selectHarnessSource({
+    providerId,
+    sourceKind: "subscription",
+  });
 };
 
 const refreshEndpointModels = async (providerId, endpointId) => {
@@ -239,6 +262,8 @@ module.exports = {
   getProviderStatus,
   installProviderAndWait,
   configureOpenRouterEndpoint,
+  selectHarnessSource,
+  selectSubscriptionSource,
   refreshEndpointModels,
   verifyProviderForWorkspace,
   resolveWorkspaceProviderModelId,

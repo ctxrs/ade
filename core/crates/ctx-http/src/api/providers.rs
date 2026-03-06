@@ -425,6 +425,14 @@ pub(super) struct QwenLoginStartReq {
     label: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub(super) struct QwenAccountUpsertReq {
+    label: Option<String>,
+    oauth_creds_json: String,
+    #[serde(default)]
+    email: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub(super) struct QwenLoginStartResp {
     login_id: String,
@@ -437,6 +445,13 @@ pub(super) struct AmpLoginStartReq {
     label: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub(super) struct AmpAccountUpsertReq {
+    label: Option<String>,
+    #[serde(default)]
+    email: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub(super) struct AmpLoginStartResp {
     login_id: String,
@@ -447,6 +462,13 @@ pub(super) struct AmpLoginStartResp {
 #[derive(Debug, Deserialize)]
 pub(super) struct MistralLoginStartReq {
     label: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct MistralAccountUpsertReq {
+    label: Option<String>,
+    #[serde(default)]
+    email: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1930,6 +1952,29 @@ pub(super) async fn get_qwen_login(
     Ok(Json(status))
 }
 
+pub(super) async fn upsert_qwen_account(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<QwenAccountUpsertReq>,
+) -> Result<Json<QwenAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    provider_accounts::add_qwen_account(
+        &state.core.data_root,
+        req.label,
+        req.oauth_creds_json,
+        req.email,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+    restart_qwen_providers_for_auth_change(&state, "qwen auth updated").await;
+    Ok(Json(qwen_accounts_response(&state).await))
+}
+
 fn amp_login_home(data_root: &StdPath, login_id: &str) -> PathBuf {
     data_root
         .join("providers")
@@ -2444,6 +2489,31 @@ pub(super) async fn list_amp_accounts(
     Ok(Json(response))
 }
 
+pub(super) async fn upsert_amp_account(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<AmpAccountUpsertReq>,
+) -> Result<Json<AmpAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    provider_accounts::upsert_amp_account(&state.core.data_root, req.label, req.email)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    restart_amp_providers_for_auth_change(&state, "amp auth updated").await;
+    Ok(Json(amp_accounts_response(&state).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: e.to_string(),
+            }),
+        )
+    })?))
+}
+
 pub(super) async fn set_amp_active_account(
     State(state): State<Arc<AppState>>,
     Json(req): Json<AmpActiveAccountReq>,
@@ -2718,6 +2788,24 @@ pub(super) async fn delete_kimi_account(
 pub(super) async fn list_mistral_accounts(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<MistralAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    Ok(Json(mistral_accounts_response(&state).await))
+}
+
+pub(super) async fn upsert_mistral_account(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<MistralAccountUpsertReq>,
+) -> Result<Json<MistralAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    provider_accounts::upsert_mistral_account(&state.core.data_root, req.label, req.email)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    restart_mistral_providers_for_auth_change(&state, "mistral auth updated").await;
     Ok(Json(mistral_accounts_response(&state).await))
 }
 

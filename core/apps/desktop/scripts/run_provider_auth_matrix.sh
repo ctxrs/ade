@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")"/../../../.. && pwd)"
-FIXTURE="${ROOT}/core/apps/desktop/automation/fixtures/provider_auth_matrix.json"
+FIXTURE="${CTX_PROVIDER_AUTH_MATRIX_FIXTURE:-${ROOT}/core/apps/desktop/automation/fixtures/provider_auth_matrix.json}"
 SMOKE_SCRIPT="${ROOT}/scripts/desktop_smoke_with_infisical.sh"
 
 if [[ ! -f "${FIXTURE}" ]]; then
@@ -13,24 +13,32 @@ fi
 usage() {
   cat <<'USAGE'
 Usage:
-  run_provider_auth_matrix.sh [--list] [--lane required|nightly|all] [--cell ID[,ID...]] [--artifacts-dir DIR] [--dry-run]
+  run_provider_auth_matrix.sh [--list] [--lane required|nightly|all] [--cell ID[,ID...]] [--provider ID[,ID...]] [--auth-mode ID[,ID...]] [--env-target ID[,ID...]] [--artifacts-dir DIR] [--dry-run] [--include-deferred]
 
 Options:
   --list                 Print selected matrix cell IDs and exit.
   --lane VALUE           Matrix lane to run (`required`, `nightly`, `all`). Default: required.
   --cell ID[,ID...]      Run only the given cell ID(s). Can be repeated.
+  --provider ID[,ID...]  Filter by provider_id. Can be repeated.
+  --auth-mode ID[,ID...] Filter by auth_mode. Can be repeated.
+  --env-target ID[,ID...] Filter by env_target. Can be repeated.
   --artifacts-dir DIR    Output root for cell artifacts.
   --dry-run              Print resolved commands without running them.
+  --include-deferred     Execute `support=deferred` cells that define a concrete runner.
 USAGE
 }
 
 LIST_ONLY=0
 DRY_RUN=0
+INCLUDE_DEFERRED=0
 LANE="required"
 ARTIFACTS_DIR=""
 RETRY_LIMIT_RAW="${CTX_PROVIDER_AUTH_MATRIX_RETRY_LIMIT:-2}"
 RETRY_DELAY_SECONDS_RAW="${CTX_PROVIDER_AUTH_MATRIX_RETRY_DELAY_SECONDS:-15}"
 declare -a REQUESTED_CELLS=()
+declare -a REQUESTED_PROVIDERS=()
+declare -a REQUESTED_AUTH_MODES=()
+declare -a REQUESTED_ENV_TARGETS=()
 
 if [[ ! "${RETRY_LIMIT_RAW}" =~ ^[0-9]+$ ]]; then
   echo "error: CTX_PROVIDER_AUTH_MATRIX_RETRY_LIMIT must be a non-negative integer (got '${RETRY_LIMIT_RAW}')" >&2
@@ -49,12 +57,19 @@ fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --)
+      shift
+      ;;
     --list)
       LIST_ONLY=1
       shift
       ;;
     --dry-run)
       DRY_RUN=1
+      shift
+      ;;
+    --include-deferred)
+      INCLUDE_DEFERRED=1
       shift
       ;;
     --lane)
@@ -82,6 +97,42 @@ while [[ $# -gt 0 ]]; do
       for c in "${CELLS[@]}"; do
         trimmed="$(printf "%s" "$c" | tr -d '[:space:]')"
         [[ -n "${trimmed}" ]] && REQUESTED_CELLS+=("${trimmed}")
+      done
+      shift 2
+      ;;
+    --provider)
+      if [[ $# -lt 2 ]]; then
+        echo "error: --provider requires a value" >&2
+        exit 1
+      fi
+      IFS=',' read -r -a PROVIDERS <<<"$2"
+      for p in "${PROVIDERS[@]}"; do
+        trimmed="$(printf "%s" "$p" | tr -d '[:space:]')"
+        [[ -n "${trimmed}" ]] && REQUESTED_PROVIDERS+=("${trimmed}")
+      done
+      shift 2
+      ;;
+    --auth-mode)
+      if [[ $# -lt 2 ]]; then
+        echo "error: --auth-mode requires a value" >&2
+        exit 1
+      fi
+      IFS=',' read -r -a AUTH_MODES <<<"$2"
+      for mode in "${AUTH_MODES[@]}"; do
+        trimmed="$(printf "%s" "$mode" | tr -d '[:space:]')"
+        [[ -n "${trimmed}" ]] && REQUESTED_AUTH_MODES+=("${trimmed}")
+      done
+      shift 2
+      ;;
+    --env-target)
+      if [[ $# -lt 2 ]]; then
+        echo "error: --env-target requires a value" >&2
+        exit 1
+      fi
+      IFS=',' read -r -a ENV_TARGETS <<<"$2"
+      for target in "${ENV_TARGETS[@]}"; do
+        trimmed="$(printf "%s" "$target" | tr -d '[:space:]')"
+        [[ -n "${trimmed}" ]] && REQUESTED_ENV_TARGETS+=("${trimmed}")
       done
       shift 2
       ;;
@@ -167,10 +218,46 @@ is_selected_cell() {
   return 1
 }
 
+matches_requested_value() {
+  local value="$1"
+  shift
+  local -a requested=("$@")
+  if [[ "${#requested[@]}" -eq 0 ]]; then
+    return 0
+  fi
+  local candidate=""
+  for candidate in "${requested[@]}"; do
+    if [[ "${candidate}" == "${value}" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+is_selected_row() {
+  local id="$1"
+  local provider_id="$2"
+  local auth_mode="$3"
+  local env_target="$4"
+  if ! is_selected_cell "${id}"; then
+    return 1
+  fi
+  if ! matches_requested_value "${provider_id}" "${REQUESTED_PROVIDERS[@]}"; then
+    return 1
+  fi
+  if ! matches_requested_value "${auth_mode}" "${REQUESTED_AUTH_MODES[@]}"; then
+    return 1
+  fi
+  if ! matches_requested_value "${env_target}" "${REQUESTED_ENV_TARGETS[@]}"; then
+    return 1
+  fi
+  return 0
+}
+
 if [[ "${LIST_ONLY}" -eq 1 ]]; then
   for line in "${CELL_LINES[@]}"; do
     IFS=$'\t' read -r id provider_id auth_mode env_target support lane runner_kind _ _ _ _ skip_reason <<<"${line}"
-    if ! is_selected_cell "${id}"; then
+    if ! is_selected_row "${id}" "${provider_id}" "${auth_mode}" "${env_target}"; then
       continue
     fi
     printf "%s\tprovider=%s\tauth=%s\tenv=%s\tsupport=%s\tlane=%s\trunner=%s\tskip=%s\n" \
@@ -210,9 +297,15 @@ fs.writeFileSync(process.argv[3], JSON.stringify(cell, null, 2) + "\n");
 ' "${FIXTURE}" "${id}" "${cell_dir}/cell.json"
 
   local effective_skip_reason="${skip_reason}"
-  if [[ "${support}" != "supported" ]]; then
+  local allow_execution=0
+  if [[ "${support}" == "supported" ]]; then
+    allow_execution=1
+  elif [[ "${support}" == "deferred" && "${INCLUDE_DEFERRED}" -eq 1 ]]; then
+    allow_execution=1
+  fi
+  if [[ "${allow_execution}" -ne 1 ]]; then
     printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
-      "${id}" "skip" "0" "${cell_dir}" "${provider_id}" "${auth_mode}" "${env_target}" "${lane}" "${support}" "${effective_skip_reason}" >>"${SUMMARY}"
+      "${id}" "skip" "0" "${cell_dir}" "${provider_id}" "${auth_mode}" "${env_target}" "${lane}" "${support}" "${support}:${effective_skip_reason}" >>"${SUMMARY}"
     return 0
   fi
 
@@ -380,6 +473,31 @@ for (const [k, v] of Object.entries(extra)) {
       exit_code=3
     fi
 
+    if [[ "${status}" == "pass" && -f "${report_path}" ]]; then
+      report_result="$(node -e '
+const fs = require("node:fs");
+const report = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+const normalize = (value) => String(value || "").replace(/\s+/g, " ").trim();
+process.stdout.write(`${normalize(report.result)}\t${normalize(report.reason)}\n`);
+' "${report_path}")"
+      IFS=$'\t' read -r report_status report_reason <<<"${report_result}"
+      case "${report_status}" in
+        pass)
+          ;;
+        skip)
+          status="skip"
+          reason="${report_reason:-report_skip}"
+          exit_code=0
+          ;;
+        *)
+          status="fail"
+          reason="${report_reason:-report_${report_status:-unknown}}"
+          exit_code="${exit_code:-4}"
+          [[ "${exit_code}" -eq 0 ]] && exit_code=4
+          ;;
+      esac
+    fi
+
     if [[ "${status}" == "pass" ]]; then
       if [[ "${attempt}" -gt 1 ]]; then
         reason="ok_after_${attempt}_attempts"
@@ -399,7 +517,7 @@ for (const [k, v] of Object.entries(extra)) {
   printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
     "${id}" "${status}" "${exit_code}" "${cell_dir}" "${provider_id}" "${auth_mode}" "${env_target}" "${lane}" "${support}" "${reason}" >>"${SUMMARY}"
 
-  [[ "${status}" == "pass" ]]
+  [[ "${status}" == "pass" || "${status}" == "skip" ]]
 }
 
 fail_count=0
@@ -409,7 +527,7 @@ for line in "${CELL_LINES[@]}"; do
   [[ "${spec}" == "__EMPTY__" ]] && spec=""
   [[ "${scenarios}" == "__EMPTY__" ]] && scenarios=""
   [[ "${skip_reason}" == "__EMPTY__" ]] && skip_reason=""
-  if ! is_selected_cell "${id}"; then
+  if ! is_selected_row "${id}" "${provider_id}" "${auth_mode}" "${env_target}"; then
     continue
   fi
   run_count=$((run_count + 1))

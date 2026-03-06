@@ -125,9 +125,11 @@
       "owner": "provider-codex",
       "prerequisites": [],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": "credential_backed_validation_pending"
     },
     {
       "id": "codex.subscription_oauth.local_container",
@@ -144,9 +146,11 @@
       "owner": "provider-codex",
       "prerequisites": [],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": "credential_backed_validation_pending"
     },
     {
       "id": "codex.subscription_oauth.remote_host",
@@ -453,9 +457,11 @@
       "owner": "provider-claude",
       "prerequisites": [],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": "credential_backed_validation_pending"
     },
     {
       "id": "claude-crp.subscription_oauth.local_container",
@@ -472,9 +478,11 @@
       "owner": "provider-claude",
       "prerequisites": [],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": "credential_backed_validation_pending"
     },
     {
       "id": "claude-crp.subscription_oauth.remote_host",
@@ -761,9 +769,11 @@
       "owner": "provider-gemini",
       "prerequisites": [],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": "credential_backed_validation_pending"
     },
     {
       "id": "gemini.subscription_oauth.local_container",
@@ -780,9 +790,11 @@
       "owner": "provider-gemini",
       "prerequisites": [],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": "credential_backed_validation_pending"
     },
     {
       "id": "gemini.subscription_oauth.remote_host",
@@ -1081,9 +1093,11 @@
       "owner": "provider-cursor",
       "prerequisites": [],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": "credential_backed_validation_pending"
     },
     {
       "id": "cursor.subscription_oauth.local_container",
@@ -1100,9 +1114,11 @@
       "owner": "provider-cursor",
       "prerequisites": [],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": "credential_backed_validation_pending"
     },
     {
       "id": "cursor.subscription_oauth.remote_host",
@@ -1389,9 +1405,11 @@
       "owner": "provider-qwen",
       "prerequisites": [],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": "credential_backed_validation_pending"
     },
     {
       "id": "qwen.subscription_oauth.local_container",
@@ -1408,9 +1426,11 @@
       "owner": "provider-qwen",
       "prerequisites": [],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": "credential_backed_validation_pending"
     },
     {
       "id": "qwen.subscription_oauth.remote_host",
@@ -1709,9 +1729,11 @@
       "owner": "provider-kimi",
       "prerequisites": [],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": "credential_backed_validation_pending"
     },
     {
       "id": "kimi.subscription_oauth.local_container",
@@ -1728,9 +1750,11 @@
       "owner": "provider-kimi",
       "prerequisites": [],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": "credential_backed_validation_pending"
     },
     {
       "id": "kimi.subscription_oauth.remote_host",
@@ -2017,9 +2041,11 @@
       "owner": "provider-mistral",
       "prerequisites": [],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": "credential_backed_validation_pending"
     },
     {
       "id": "mistral.subscription_oauth.local_container",
@@ -2036,9 +2062,11 @@
       "owner": "provider-mistral",
       "prerequisites": [],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": "credential_backed_validation_pending"
     },
     {
       "id": "mistral.subscription_oauth.remote_host",
@@ -2325,9 +2353,11 @@
       "owner": "provider-amp",
       "prerequisites": [],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": "credential_backed_validation_pending"
     },
     {
       "id": "amp.subscription_oauth.local_container",
@@ -2344,9 +2374,11 @@
       "owner": "provider-amp",
       "prerequisites": [],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": "credential_backed_validation_pending"
     },
     {
       "id": "amp.subscription_oauth.remote_host",
@@ -2645,9 +2677,11 @@
       "owner": "provider-copilot",
       "prerequisites": [],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": "credential_backed_validation_pending"
     },
     {
       "id": "copilot.subscription_oauth.local_container",
@@ -2664,9 +2698,11 @@
       "owner": "provider-copilot",
       "prerequisites": [],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": "credential_backed_validation_pending"
     },
     {
       "id": "copilot.subscription_oauth.remote_host",

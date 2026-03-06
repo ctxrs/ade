@@ -9,7 +9,7 @@ const {
   scenarioEnabled,
   assertConnectedLocalAndListening,
   assertLocalWorkspaceConfig,
-  runCodexFirstTurnApiSmoke,
+  runProviderFirstTurnApiSmoke,
 } = require("./helpers/workspace_wizard_flow.cjs");
 const {
   getProviderStatus,
@@ -22,6 +22,9 @@ const {
   createProviderAuthContractRecorder,
   normalizeText,
 } = require("./helpers/provider_auth_contract.cjs");
+const {
+  prepareSubscriptionAuth,
+} = require("./helpers/provider_auth_matrix_flow.cjs");
 
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const DEFAULT_MODEL_OVERRIDE = "openai/gpt-5.2-codex";
@@ -152,7 +155,7 @@ describe("provider auth matrix cell (desktop e2e)", () => {
 
   it(`executes provider auth matrix contract for ${cellId}`, async function () {
     this.timeout(parsePositiveInt(process.env.CTX_AUTOMATION_CASE_TIMEOUT_MS || "1200000", 1200000));
-    if (!scenarioEnabled("local-codex-smoke", ["local", "provider", "matrix"])) this.skip();
+    if (!scenarioEnabled("provider-auth-matrix", ["local", "provider", "matrix", providerId, authMode])) this.skip();
 
     const recorder = createProviderAuthContractRecorder({
       outputPath: reportPath,
@@ -198,38 +201,59 @@ describe("provider auth matrix cell (desktop e2e)", () => {
       }
       recorder.recordAssertion("install_success", "pass", "provider install completed");
 
-      const { apiKey, baseUrl, modelOverride } = openRouterEnv();
-      if (authMode === "endpoint_api_key" || authMode === "configure_later_then_connect") {
+      if (authMode === "subscription_oauth") {
+        currentAssertion = "subscription_auth_setup";
+        const authSetup = await prepareSubscriptionAuth({
+          providerId,
+          envTarget,
+        });
+        recorder.recordArtifact("subscription_auth_setup", authSetup.artifacts || null);
+        if (authSetup.status === "skip") {
+          recorder.recordAssertion("subscription_auth_setup", "skip", authSetup.reason || "subscription auth skipped");
+          recorder.finalize({
+            result: "skip",
+            reason: authSetup.reason || "subscription auth skipped",
+            extras: { workspace_id: workspace.workspaceId },
+          });
+          return;
+        }
+        recorder.recordAssertion(
+          "subscription_auth_setup",
+          "pass",
+          "managed subscription auth prepared for verify and first-turn validation",
+        );
+      } else if (authMode === "endpoint_api_key" || authMode === "configure_later_then_connect") {
+        const { apiKey, baseUrl, modelOverride } = openRouterEnv();
         if (!apiKey) {
           throw new Error("OPENROUTER_API_KEY is required for endpoint/configure-later matrix cells");
         }
+
+        currentAssertion = "configure_later_connect_success";
+        if (authMode === "configure_later_then_connect") {
+          const preOptions = await daemonJson(
+            "GET",
+            `/api/workspaces/${workspace.workspaceId}/providers/${providerId}/options`,
+          );
+          recorder.recordArtifact("provider_options_before_auth", preOptions.payload || null);
+        }
+
+        const endpointId = await configureOpenRouterEndpoint({
+          providerId,
+          baseUrl,
+          apiKey,
+          modelOverride,
+          endpointName: `${providerId}-matrix-${Date.now()}`,
+        });
+        recorder.recordArtifact("selected_endpoint_id", endpointId);
+        if (authMode === "configure_later_then_connect") {
+          recorder.recordAssertion(
+            "configure_later_connect_success",
+            "pass",
+            "auth configured after workspace creation and before verify/run",
+          );
+        }
       } else {
         throw new Error(`auth mode not implemented by this spec: ${authMode}`);
-      }
-
-      currentAssertion = "configure_later_connect_success";
-      if (authMode === "configure_later_then_connect") {
-        const preOptions = await daemonJson(
-          "GET",
-          `/api/workspaces/${workspace.workspaceId}/providers/${providerId}/options`,
-        );
-        recorder.recordArtifact("provider_options_before_auth", preOptions.payload || null);
-      }
-
-      const endpointId = await configureOpenRouterEndpoint({
-        providerId,
-        baseUrl,
-        apiKey,
-        modelOverride,
-        endpointName: `${providerId}-matrix-${Date.now()}`,
-      });
-      recorder.recordArtifact("selected_endpoint_id", endpointId);
-      if (authMode === "configure_later_then_connect") {
-        recorder.recordAssertion(
-          "configure_later_connect_success",
-          "pass",
-          "auth configured after workspace creation and before verify/run",
-        );
       }
 
       currentAssertion = "probe_success";
@@ -251,10 +275,7 @@ describe("provider auth matrix cell (desktop e2e)", () => {
       recorder.recordAssertion("model_list_population", "pass", `resolved model id '${modelId}'`);
 
       currentAssertion = "first_turn_success";
-      if (providerId !== "codex") {
-        throw new Error(`first-turn matrix smoke currently supports codex only (got provider_id=${providerId})`);
-      }
-      const turnResult = await runCodexFirstTurnApiSmoke(
+      const turnResult = await runProviderFirstTurnApiSmoke(
         workspace.workspaceId,
         {
           providerId,

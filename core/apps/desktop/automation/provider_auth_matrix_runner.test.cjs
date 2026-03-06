@@ -1,0 +1,88 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { spawnSync } = require("node:child_process");
+const test = require("node:test");
+
+const repoRoot = path.resolve(__dirname, "..", "..", "..", "..");
+const runnerPath = path.join(repoRoot, "core", "apps", "desktop", "scripts", "run_provider_auth_matrix.sh");
+
+const mkTempDir = (prefix) => fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+
+const writeFixture = (dir) => {
+  const fixturePath = path.join(dir, "provider_auth_matrix.json");
+  const fixture = {
+    schema_version: 1,
+    generated_at: "2026-03-05",
+    summary: "test fixture",
+    providers: [{ id: "gemini", owner: "provider-gemini" }],
+    auth_modes: [{ id: "subscription_oauth", description: "Managed subscription" }],
+    env_targets: [{ id: "local_host", description: "Local host" }],
+    assertion_definitions: {
+      probe_success: "ok",
+    },
+    cells: [
+      {
+        id: "gemini.subscription_oauth.local_host",
+        provider_id: "gemini",
+        auth_mode: "subscription_oauth",
+        env_target: "local_host",
+        support: "deferred",
+        lane: "nightly",
+        required_assertions: ["probe_success"],
+        owner: "provider-gemini",
+        prerequisites: [],
+        runner: {
+          kind: "desktop_wdio",
+          spec: "automation/specs/provider-auth-matrix-cell.spec.cjs",
+          scenarios: "provider,provider-auth-matrix",
+        },
+        skip_reason: "credential_backed_validation_pending",
+      },
+    ],
+  };
+  fs.writeFileSync(fixturePath, `${JSON.stringify(fixture, null, 2)}\n`, "utf8");
+  return fixturePath;
+};
+
+const runRunner = ({ includeDeferred, insertedSeparator = false }) => {
+  const tmp = mkTempDir("ctx-provider-matrix-runner-");
+  const artifactsDir = path.join(tmp, "artifacts");
+  const fixturePath = writeFixture(tmp);
+  const args = ["--lane", "nightly", "--dry-run", "--artifacts-dir", artifactsDir];
+  if (includeDeferred) args.push("--include-deferred");
+  if (insertedSeparator) args.push("--", "--dry-run");
+  const result = spawnSync("bash", [runnerPath, ...args], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      CTX_PROVIDER_AUTH_MATRIX_FIXTURE: fixturePath,
+    },
+  });
+  const summaryPath = path.join(artifactsDir, "summary.tsv");
+  const summary = fs.existsSync(summaryPath) ? fs.readFileSync(summaryPath, "utf8") : "";
+  return {
+    ...result,
+    summary,
+  };
+};
+
+test("runner skips deferred cells by default", () => {
+  const result = runRunner({ includeDeferred: false });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.summary, /\tskip\t0\t.*\tdeferred\tdeferred:credential_backed_validation_pending/);
+});
+
+test("runner dry-runs deferred cells when include-deferred is set", () => {
+  const result = runRunner({ includeDeferred: true });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.summary, /\tdry-run\t0\t.*\tdeferred\tdry-run/);
+});
+
+test("runner tolerates pnpm-style separator before forwarded flags", () => {
+  const result = runRunner({ includeDeferred: true, insertedSeparator: true });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.summary, /\tdry-run\t0\t.*\tdeferred\tdry-run/);
+});
