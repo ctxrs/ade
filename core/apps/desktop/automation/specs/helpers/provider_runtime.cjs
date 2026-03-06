@@ -1,5 +1,5 @@
 const { daemonJson } = require("./daemon.cjs");
-const { providerStatusPath } = require("../../../../test-support/provider_status_path.cjs");
+const { providerStatusPath } = require("../../../../../test-support/provider_status_path.cjs");
 
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const DEFAULT_CODEX_OPENROUTER_MODEL_OVERRIDE = "openai/gpt-5.2-codex";
