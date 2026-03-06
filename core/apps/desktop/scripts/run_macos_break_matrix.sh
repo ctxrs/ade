@@ -124,7 +124,7 @@ if [[ "${LIST_ONLY}" -eq 1 ]]; then
   exit 0
 fi
 
-run_preflight()
+run_preflight
 
 is_selected_case() {
   local id="$1"
