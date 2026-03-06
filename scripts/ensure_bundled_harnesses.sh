@@ -2073,6 +2073,178 @@ for provider in data.get("providers", []):
         print(line)
 PY
 
+provider_archive_dependency_rows() {
+  local provider_id="$1"
+  run_python - "$MATRIX_JSON" "$provider_id" "$target_key" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+provider_id = sys.argv[2]
+target = sys.argv[3]
+sep = "\x1f"
+
+data = json.loads(open(path, "r", encoding="utf-8").read())
+provider = next((entry for entry in data.get("providers", []) if entry.get("id") == provider_id), None)
+if provider is None:
+    raise SystemExit(0)
+
+missing = []
+for dependency in provider.get("dependencies") or []:
+    install = dependency.get("install") or {}
+    if install.get("kind") != "archive":
+        continue
+    dep_id = str(dependency.get("id") or "").strip()
+    target_entry = (install.get("targets") or {}).get(target)
+    if not target_entry:
+        missing.append(dep_id or "<unnamed>")
+        continue
+    print(
+        sep.join(
+            [
+                dep_id,
+                str(install.get("version") or "").strip(),
+                str(target_entry.get("url") or "").strip(),
+                str(target_entry.get("archive") or "").strip(),
+                str(target_entry.get("bin_path") or "").strip(),
+                str(target_entry.get("sha256") or "").strip(),
+            ]
+        )
+    )
+
+if missing:
+    print(
+        f"error: provider {provider_id} archive dependency missing target {target}: {', '.join(missing)}",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
+PY
+}
+
+provider_bundle_version_marker() {
+  local provider_id="$1"
+  local provider_version="$2"
+  run_python - "$MATRIX_JSON" "$provider_id" "$provider_version" "$target_key" <<'PY'
+import hashlib
+import json
+import sys
+
+path = sys.argv[1]
+provider_id = sys.argv[2]
+provider_version = sys.argv[3]
+target = sys.argv[4]
+
+data = json.loads(open(path, "r", encoding="utf-8").read())
+provider = next((entry for entry in data.get("providers", []) if entry.get("id") == provider_id), None)
+deps = []
+if provider is not None:
+    for dependency in provider.get("dependencies") or []:
+        install = dependency.get("install") or {}
+        if install.get("kind") != "archive":
+            continue
+        dep_id = str(dependency.get("id") or "").strip()
+        target_entry = (install.get("targets") or {}).get(target) or {}
+        deps.append(
+            {
+                "id": dep_id,
+                "version": str(install.get("version") or "").strip(),
+                "url": str(target_entry.get("url") or "").strip(),
+                "archive": str(target_entry.get("archive") or "").strip(),
+                "bin_path": str(target_entry.get("bin_path") or "").strip(),
+                "sha256": str(target_entry.get("sha256") or "").strip(),
+            }
+        )
+
+payload = {
+    "provider_id": provider_id,
+    "provider_version": provider_version,
+    "target": target,
+    "dependencies": deps,
+}
+encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+print(hashlib.sha256(encoded).hexdigest())
+PY
+}
+
+bundle_archive_dependency_into_provider_root() {
+  local provider_id="$1"
+  local dependency_id="$2"
+  local dependency_url="$3"
+  local dependency_archive="$4"
+  local dependency_bin_path="$5"
+  local provider_root="$6"
+
+  if [[ -z "$dependency_url" || -z "$dependency_archive" || -z "$dependency_bin_path" ]]; then
+    log "error: incomplete archive dependency metadata for $provider_id/$dependency_id"
+    exit 5
+  fi
+
+  local tmp_file
+  tmp_file="$(mktemp -p "$provider_root" "${dependency_id}.XXXXXX")"
+  fetch_file "$dependency_url" "$tmp_file"
+  case "$dependency_archive" in
+    none)
+      local dest="$provider_root/$dependency_bin_path"
+      mkdir -p "$(dirname "$dest")"
+      mv "$tmp_file" "$dest"
+      ;;
+    tar_gz)
+      require_cmd tar
+      tar -xzf "$tmp_file" -C "$provider_root"
+      rm -f "$tmp_file"
+      ;;
+    tar_bz2)
+      require_cmd tar
+      tar -xjf "$tmp_file" -C "$provider_root"
+      rm -f "$tmp_file"
+      ;;
+    zip)
+      require_cmd unzip
+      unzip -q "$tmp_file" -d "$provider_root"
+      rm -f "$tmp_file"
+      ;;
+    dmg)
+      if [[ "$os" != "macos" ]]; then
+        log "error: archive dependency '$dependency_id' for $provider_id requires macOS host tooling"
+        exit 5
+      fi
+      require_cmd hdiutil
+      local dmg_mount_dir
+      dmg_mount_dir="$(mktemp -d "/tmp/ctx-dmg-${provider_id}-${dependency_id}.XXXXXX")"
+      if ! hdiutil attach -nobrowse -readonly -mountpoint "$dmg_mount_dir" "$tmp_file" >/dev/null; then
+        rm -rf "$dmg_mount_dir" "$tmp_file"
+        log "error: failed to mount dmg for dependency $dependency_id ($provider_id)"
+        exit 5
+      fi
+      if ! copy_dmg_payload_without_external_symlinks "$dmg_mount_dir" "$provider_root"; then
+        hdiutil detach "$dmg_mount_dir" -force >/dev/null 2>&1 || true
+        rm -rf "$dmg_mount_dir" "$tmp_file"
+        log "error: failed to copy dmg payload for dependency $dependency_id ($provider_id)"
+        exit 5
+      fi
+      hdiutil detach "$dmg_mount_dir" -force >/dev/null 2>&1 || true
+      rm -rf "$dmg_mount_dir" "$tmp_file"
+      ;;
+    *)
+      log "error: unsupported archive dependency type '$dependency_archive' for $provider_id/$dependency_id"
+      exit 5
+      ;;
+  esac
+
+  local dependency_command_path="$provider_root/$dependency_bin_path"
+  if [[ ! -f "$dependency_command_path" ]]; then
+    dependency_command_path="$(resolve_unique_path "$provider_root" "$dependency_bin_path")"
+  fi
+  if [[ -z "$dependency_command_path" || ! -f "$dependency_command_path" ]]; then
+    log "error: bundled dependency binary missing for $provider_id/$dependency_id: $dependency_bin_path"
+    exit 5
+  fi
+  if [[ "$os" != "windows" ]]; then
+    chmod +x "$dependency_command_path" || true
+  fi
+  maybe_adhoc_codesign_macos_binary "$dependency_command_path"
+}
+
 local_providers_src="$(mktemp /tmp/ctx-bundle-local-providers.XXXXXX)"
 local_ids=()
 
@@ -2461,8 +2633,9 @@ PY
       if [[ -z "$version" || -z "$url" ]]; then
         continue
       fi
+      bundle_version_marker="$(provider_bundle_version_marker "$provider_id" "$version")"
       if [[ -f "$version_marker" ]]; then
-        if [[ "$(cat "$version_marker" 2>/dev/null || true)" != "$version" ]]; then
+        if [[ "$(cat "$version_marker" 2>/dev/null || true)" != "$bundle_version_marker" ]]; then
           rm -rf "$provider_root"
         fi
       fi
@@ -2518,7 +2691,19 @@ PY
             exit 5
             ;;
         esac
-        echo "$version" > "$version_marker"
+        while IFS=$'\x1f' read -r dependency_id dependency_version dependency_url dependency_archive dependency_bin_path dependency_sha256; do
+          if [[ -z "$dependency_id" ]]; then
+            continue
+          fi
+          bundle_archive_dependency_into_provider_root \
+            "$provider_id" \
+            "$dependency_id" \
+            "$dependency_url" \
+            "$dependency_archive" \
+            "$dependency_bin_path" \
+            "$provider_root"
+        done < <(provider_archive_dependency_rows "$provider_id")
+        echo "$bundle_version_marker" > "$version_marker"
       fi
       command_path="$provider_root/$bin_path"
       if [[ ! -f "$command_path" ]]; then

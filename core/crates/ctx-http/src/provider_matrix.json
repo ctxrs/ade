@@ -532,6 +532,110 @@
           }
         }
       },
+      "dependencies": [
+        {
+          "id": "droid-cli",
+          "install": {
+            "kind": "archive",
+            "version": "0.69.0",
+            "targets": {
+              "darwin-aarch64": {
+                "url": "https://downloads.factory.ai/factory-cli/releases/0.69.0/darwin/arm64/droid",
+                "archive": "none",
+                "bin_path": "droid",
+                "sha256": "9a68b512a691992dca1c179300e09ca69cfa54da008f1146d56f59f5a5c220c3",
+                "size_bytes": 97296992
+              },
+              "darwin-x86_64": {
+                "url": "https://downloads.factory.ai/factory-cli/releases/0.69.0/darwin/x64-baseline/droid",
+                "archive": "none",
+                "bin_path": "droid",
+                "sha256": "9ec7b1377dc4a7e5d9faf681a4d5b053254579daf498750d950308148980c397",
+                "size_bytes": 103169392
+              },
+              "linux-aarch64": {
+                "url": "https://downloads.factory.ai/factory-cli/releases/0.69.0/linux/arm64/droid",
+                "archive": "none",
+                "bin_path": "droid",
+                "sha256": "d485609bc89fa2aae1be21b5dcd530ca5c6e404f22b4f6b292b0e7b93281d15c",
+                "size_bytes": 138027480
+              },
+              "linux-x86_64": {
+                "url": "https://downloads.factory.ai/factory-cli/releases/0.69.0/linux/x64-baseline/droid",
+                "archive": "none",
+                "bin_path": "droid",
+                "sha256": "b5f4709f9b48b4484f8199655d1e45c74271a56f72423a1ddf1fa5b0e97762e6",
+                "size_bytes": 141440762
+              },
+              "macos-aarch64": {
+                "url": "https://downloads.factory.ai/factory-cli/releases/0.69.0/darwin/arm64/droid",
+                "archive": "none",
+                "bin_path": "droid",
+                "sha256": "9a68b512a691992dca1c179300e09ca69cfa54da008f1146d56f59f5a5c220c3",
+                "size_bytes": 97296992
+              },
+              "macos-x86_64": {
+                "url": "https://downloads.factory.ai/factory-cli/releases/0.69.0/darwin/x64-baseline/droid",
+                "archive": "none",
+                "bin_path": "droid",
+                "sha256": "9ec7b1377dc4a7e5d9faf681a4d5b053254579daf498750d950308148980c397",
+                "size_bytes": 103169392
+              }
+            }
+          }
+        },
+        {
+          "id": "droid-rg",
+          "install": {
+            "kind": "archive",
+            "version": "0.0.0-factory",
+            "targets": {
+              "darwin-aarch64": {
+                "url": "https://downloads.factory.ai/ripgrep/darwin/arm64/rg",
+                "archive": "none",
+                "bin_path": "rg",
+                "sha256": "273e8c650a42beec1284910e1825b61a3e7af7c0ce1fcec137fe1d6cc71defb7",
+                "size_bytes": 3564432
+              },
+              "darwin-x86_64": {
+                "url": "https://downloads.factory.ai/ripgrep/darwin/x64/rg",
+                "archive": "none",
+                "bin_path": "rg",
+                "sha256": "6e4a0fc9e03efeca6aa0e1543babb2b433738594679f771d5a471f187e70eea6",
+                "size_bytes": 4319840
+              },
+              "linux-aarch64": {
+                "url": "https://downloads.factory.ai/ripgrep/linux/arm64/rg",
+                "archive": "none",
+                "bin_path": "rg",
+                "sha256": "26ce6cceb17ac710ee7253c49ea825c618d4f9e49a135d52b4edce336c40f620",
+                "size_bytes": 4105928
+              },
+              "linux-x86_64": {
+                "url": "https://downloads.factory.ai/ripgrep/linux/x64/rg",
+                "archive": "none",
+                "bin_path": "rg",
+                "sha256": "be2476c976342b9216611b4a84c1bc2ec6488ec5c791ea019a132727644ef19c",
+                "size_bytes": 5287640
+              },
+              "macos-aarch64": {
+                "url": "https://downloads.factory.ai/ripgrep/darwin/arm64/rg",
+                "archive": "none",
+                "bin_path": "rg",
+                "sha256": "273e8c650a42beec1284910e1825b61a3e7af7c0ce1fcec137fe1d6cc71defb7",
+                "size_bytes": 3564432
+              },
+              "macos-x86_64": {
+                "url": "https://downloads.factory.ai/ripgrep/darwin/x64/rg",
+                "archive": "none",
+                "bin_path": "rg",
+                "sha256": "6e4a0fc9e03efeca6aa0e1543babb2b433738594679f771d5a471f187e70eea6",
+                "size_bytes": 4319840
+              }
+            }
+          }
+        }
+      ],
       "version_probe": {
         "kind": "command",
         "args": [

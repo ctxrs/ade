@@ -4434,23 +4434,15 @@ fn selected_endpoint_record_from_harness_config(
         .cloned()
 }
 
-fn droid_model_id_for_endpoint_model_override(model_override: Option<&str>) -> Option<String> {
-    let model = model_override?.trim();
-    if model.is_empty() {
-        return None;
-    }
-    if model.starts_with("custom:") {
-        return Some(model.to_string());
-    }
-    Some(format!("custom:{model}"))
-}
-
 fn endpoint_current_model_id(
     provider_id: &str,
     endpoint: &harness_sources::HarnessEndpointRecord,
 ) -> Option<String> {
     if provider_id == "droid" {
-        return droid_model_id_for_endpoint_model_override(endpoint.model_override.as_deref());
+        return harness_sources::droid_cli_model_id_for_endpoint_model(
+            endpoint.model_override.as_deref(),
+            endpoint.base_url.as_deref(),
+        );
     }
     endpoint
         .model_override
@@ -6286,9 +6278,10 @@ ZXY987654321
     }
 
     #[test]
-    fn endpoint_models_payload_prefixes_droid_model_override_with_custom_namespace() {
+    fn endpoint_models_payload_uses_droid_custom_model_selector() {
         let now = Utc::now();
         let mut endpoint = test_endpoint("ep-1");
+        endpoint.base_url = Some("https://openrouter.ai/api/v1".to_string());
         endpoint.model_override = Some("openai/gpt-5.2".to_string());
 
         let payload = endpoint_models_payload("droid", &endpoint, now);
@@ -6296,7 +6289,7 @@ ZXY987654321
             payload
                 .pointer("/current_model_id")
                 .and_then(serde_json::Value::as_str),
-            Some("custom:openai/gpt-5.2")
+            Some("custom:openai/gpt-5.2-[openrouter]-0")
         );
     }
 

@@ -129,3 +129,21 @@ test("linux arm preflight can enforce size_bytes strictly", () => {
   assert.ok(report.summary.errors_total > 0);
   assert.ok(report.errors.some((entry) => entry.includes("size_bytes")));
 });
+
+test("linux arm preflight validates linux-arm archive dependencies", () => {
+  const providerMatrix = structuredClone(baseProviderMatrix);
+  providerMatrix.providers[0].dependencies = [
+    {
+      id: "droid-cli",
+      install: {
+        kind: "archive",
+        version: "0.69.0",
+        targets: {},
+      },
+    },
+  ];
+  const report = run({ providerMatrix });
+  assert.ok(report.summary.errors_total > 0);
+  assert.ok(report.errors.some((entry) => entry.includes("dependency droid-cli")));
+  assert.ok(report.errors.some((entry) => entry.includes("linux-aarch64")));
+});

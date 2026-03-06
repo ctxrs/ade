@@ -144,6 +144,43 @@ const runtimeComponentForLinuxArm = (runtimeLock, kind, id) => {
   ) || null;
 };
 
+const validateArchiveTargetForLinuxArm = ({
+  targetEntry,
+  label,
+  errors,
+  warnings,
+  strictSizeBytes,
+}) => {
+  if (!targetEntry || typeof targetEntry !== "object") {
+    errors.push(`missing ${label} target ${LINUX_ARCH_TARGET_KEY}`);
+    return;
+  }
+
+  const url = normalizeText(targetEntry.url);
+  const archive = normalizeText(targetEntry.archive);
+  const binPath = normalizeText(targetEntry.bin_path);
+  const sha256 = normalizeText(targetEntry.sha256);
+  const sizeBytes = Number(targetEntry.size_bytes);
+
+  if (!url) errors.push(`${label} target missing url`);
+  if (!archive) errors.push(`${label} target missing archive type`);
+  if (!binPath) errors.push(`${label} target missing bin_path`);
+  if (binPath.endsWith(".exe")) errors.push(`${label} target bin_path points to Windows executable`);
+  if (!isSha256(sha256)) errors.push(`${label} target sha256 missing/invalid`);
+  if (url && uriHasArchMismatch(url)) errors.push(`${label} target url suggests non-arm64 artifact: ${url}`);
+  if (url && !uriLooksLinuxArm(url)) {
+    warnings.push(`${label} target url does not explicitly include linux arm token: ${url}`);
+  }
+  if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) {
+    const msg = `${label} target missing/invalid size_bytes`;
+    if (strictSizeBytes) {
+      errors.push(msg);
+    } else {
+      warnings.push(msg);
+    }
+  }
+};
+
 const validateProviderEntry = ({ providerId, providerMatrixById, runtimeLock, strictSizeBytes }) => {
   const errors = [];
   const warnings = [];
@@ -173,34 +210,35 @@ const validateProviderEntry = ({ providerId, providerMatrixById, runtimeLock, st
     const targets = managedInstall.targets && typeof managedInstall.targets === "object"
       ? managedInstall.targets
       : {};
-    const linuxArmTarget = targets[LINUX_ARCH_TARGET_KEY];
-    if (!linuxArmTarget || typeof linuxArmTarget !== "object") {
-      errors.push(`missing managed_install target ${LINUX_ARCH_TARGET_KEY}`);
-    } else {
-      const url = normalizeText(linuxArmTarget.url);
-      const archive = normalizeText(linuxArmTarget.archive);
-      const binPath = normalizeText(linuxArmTarget.bin_path);
-      const sha256 = normalizeText(linuxArmTarget.sha256);
-      const sizeBytes = Number(linuxArmTarget.size_bytes);
+    validateArchiveTargetForLinuxArm({
+      targetEntry: targets[LINUX_ARCH_TARGET_KEY],
+      label: "managed_install",
+      errors,
+      warnings,
+      strictSizeBytes,
+    });
+  }
 
-      if (!url) errors.push("linux-aarch64 target missing url");
-      if (!archive) errors.push("linux-aarch64 target missing archive type");
-      if (!binPath) errors.push("linux-aarch64 target missing bin_path");
-      if (binPath.endsWith(".exe")) errors.push("linux-aarch64 target bin_path points to Windows executable");
-      if (!isSha256(sha256)) errors.push("linux-aarch64 target sha256 missing/invalid");
-      if (url && uriHasArchMismatch(url)) errors.push(`linux-aarch64 target url suggests non-arm64 artifact: ${url}`);
-      if (url && !uriLooksLinuxArm(url)) {
-        warnings.push(`linux-aarch64 target url does not explicitly include linux arm token: ${url}`);
-      }
-      if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) {
-        const msg = "linux-aarch64 target missing/invalid size_bytes";
-        if (strictSizeBytes) {
-          errors.push(msg);
-        } else {
-          warnings.push(msg);
-        }
-      }
+  const dependencies = Array.isArray(entry.dependencies) ? entry.dependencies : [];
+  for (const dependency of dependencies) {
+    const dependencyId = normalizeText(dependency?.id);
+    const install = dependency?.install && typeof dependency.install === "object"
+      ? dependency.install
+      : null;
+    const kind = normalizeText(install?.kind).toLowerCase();
+    if (kind !== "archive") {
+      continue;
     }
+    const targets = install.targets && typeof install.targets === "object"
+      ? install.targets
+      : {};
+    validateArchiveTargetForLinuxArm({
+      targetEntry: targets[LINUX_ARCH_TARGET_KEY],
+      label: `dependency ${dependencyId || "<unnamed>"}`,
+      errors,
+      warnings,
+      strictSizeBytes,
+    });
   }
 
   const providerComponent = providerComponentForLinuxArm(runtimeLock, providerId);

@@ -164,7 +164,7 @@ fn resolve_runtime_linux_path_from_manifest(path: &str) -> Option<String> {
     None
 }
 
-fn rewrite_bundled_path_for_linux(path: &str) -> Result<String> {
+pub(crate) fn rewrite_bundled_path_for_linux(path: &str) -> Result<String> {
     match bundled_linux_candidate(path) {
         BundledLinuxRewrite::NotBundledPath | BundledLinuxRewrite::AlreadyLinux => {
             Ok(path.to_string())
@@ -1247,7 +1247,7 @@ impl CrpProcess {
         let mut cmd = if let Some(spec) = container_exec_spec(env) {
             let (container_command, container_args) =
                 rewrite_container_command_for_linux(&agent.command, &agent.args, env)?;
-            build_container_exec_command(&spec, workdir, env, &container_command, &container_args)
+            build_container_exec_command(&spec, workdir, env, &container_command, &container_args)?
         } else {
             let mut cmd = Command::new(&agent.command);
             cmd.args(&agent.args);
@@ -2727,7 +2727,7 @@ pub async fn probe_crp_models(
     let mut cmd = if let Some(spec) = container_spec {
         let (container_command, container_args) =
             rewrite_container_command_for_linux(&command, &args, &env)?;
-        build_container_exec_command(&spec, &workdir, &env, &container_command, &container_args)
+        build_container_exec_command(&spec, &workdir, &env, &container_command, &container_args)?
     } else {
         let mut cmd = Command::new(&command);
         cmd.args(&args);
@@ -2832,7 +2832,7 @@ pub async fn probe_crp_runtime_launch(
     let mut cmd = if let Some(spec) = container_spec {
         let (container_command, container_args) =
             rewrite_container_command_for_linux(&command, &args, &env)?;
-        build_container_exec_command(&spec, &workdir, &env, &container_command, &container_args)
+        build_container_exec_command(&spec, &workdir, &env, &container_command, &container_args)?
     } else {
         let mut cmd = Command::new(&command);
         cmd.args(&args);

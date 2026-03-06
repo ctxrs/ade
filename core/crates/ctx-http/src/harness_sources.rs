@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
+use directories::BaseDirs;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -25,6 +26,7 @@ const PROVIDER_COPILOT: &str = "copilot";
 const PROVIDER_AUGGIE: &str = "auggie";
 const PROVIDER_PI: &str = "pi";
 const PROVIDER_CURSOR: &str = "cursor";
+const CTX_DROID_HOST_AUTH_PATH_ENV: &str = "CTX_DROID_HOST_AUTH_PATH";
 
 const CODEX_AUTH_TYPE_BEARER: &str = "bearer";
 const CLAUDE_AUTH_TYPE_API_KEY: &str = "api_key";
@@ -1529,8 +1531,81 @@ fn droid_backend_model_id(model_id: &str) -> Option<String> {
     droid_custom_model_name(model_id)
 }
 
-fn droid_cli_model_id_from_model(model_id: &str) -> Option<String> {
-    droid_custom_model_name(model_id).map(|name| format!("custom:{name}"))
+fn droid_custom_model_display_name(model_id: &str, base_url: &str) -> Option<String> {
+    let backend_model_id = droid_backend_model_id(model_id)?;
+    let namespace = infer_endpoint_model_provider_namespace(base_url)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "endpoint".to_string());
+    Some(format!("{backend_model_id} [{namespace}]"))
+}
+
+fn droid_cli_model_id_from_display_name(display_name: &str) -> Option<String> {
+    let trimmed = display_name.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "custom:{}-0",
+        trimmed.split_whitespace().collect::<Vec<_>>().join("-")
+    ))
+}
+
+pub(crate) fn droid_cli_model_id_for_endpoint_model(
+    model_id: Option<&str>,
+    base_url: Option<&str>,
+) -> Option<String> {
+    let model_id = model_id?;
+    let base_url = base_url?;
+    let display_name = droid_custom_model_display_name(model_id, base_url)?;
+    droid_cli_model_id_from_display_name(&display_name)
+}
+
+fn droid_host_auth_path() -> Result<PathBuf> {
+    if let Some(path) = std::env::var(CTX_DROID_HOST_AUTH_PATH_ENV)
+        .ok()
+        .map(|raw| raw.trim().to_string())
+        .filter(|raw| !raw.is_empty())
+    {
+        return Ok(PathBuf::from(path));
+    }
+    let base = BaseDirs::new().ok_or_else(|| anyhow::anyhow!("missing home dir"))?;
+    Ok(base.home_dir().join(".factory").join("auth.encrypted"))
+}
+
+async fn seed_droid_auth_from_host_path(droid_home: &Path, host_auth_path: &Path) -> Result<bool> {
+    if !host_auth_path.exists() {
+        return Ok(false);
+    }
+    let bytes = tokio::fs::read(host_auth_path).await?;
+    if bytes.is_empty() {
+        anyhow::bail!(
+            "host droid auth file is empty: {}",
+            host_auth_path.display()
+        );
+    }
+
+    let droid_config = droid_home.join(".factory");
+    tokio::fs::create_dir_all(&droid_config).await?;
+    let dest = droid_config.join("auth.encrypted");
+    let should_write = match tokio::fs::read(&dest).await {
+        Ok(existing) => existing != bytes,
+        Err(_) => true,
+    };
+    if should_write {
+        tokio::fs::write(&dest, &bytes).await?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = tokio::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o600)).await;
+        }
+    }
+
+    Ok(should_write)
+}
+
+async fn maybe_seed_droid_auth_from_host(droid_home: &Path) -> Result<bool> {
+    let host_auth_path = droid_host_auth_path()?;
+    seed_droid_auth_from_host_path(droid_home, &host_auth_path).await
 }
 
 async fn prepare_droid_home_with_endpoint_settings(
@@ -1539,7 +1614,7 @@ async fn prepare_droid_home_with_endpoint_settings(
     api_key: &str,
     model_id: &str,
 ) -> Result<Option<String>> {
-    let Some(custom_model_name) = droid_custom_model_name(model_id) else {
+    let Some(display_name) = droid_custom_model_display_name(model_id, base_url) else {
         return Ok(None);
     };
     let Some(backend_model_id) = droid_backend_model_id(model_id) else {
@@ -1550,14 +1625,13 @@ async fn prepare_droid_home_with_endpoint_settings(
     let payload = serde_json::to_vec_pretty(&serde_json::json!({
         "customModels": [
             {
-                "name": custom_model_name,
+                "model": backend_model_id,
+                "displayName": display_name,
                 "provider": "generic-chat-completion-api",
-                "model_name": backend_model_id,
-                "base_url": base_url,
-                "api_key": api_key,
+                "baseUrl": base_url,
+                "apiKey": api_key,
             }
-        ],
-        "model": "custom-model",
+        ]
     }))?;
     let settings_path = droid_config.join("settings.json");
     tokio::fs::write(&settings_path, payload).await?;
@@ -1567,7 +1641,8 @@ async fn prepare_droid_home_with_endpoint_settings(
         let _ = tokio::fs::set_permissions(&settings_path, std::fs::Permissions::from_mode(0o600))
             .await;
     }
-    Ok(droid_cli_model_id_from_model(model_id))
+    let _ = maybe_seed_droid_auth_from_host(droid_home).await?;
+    Ok(droid_cli_model_id_from_display_name(&display_name))
 }
 
 fn provider_store<'a>(
@@ -1824,9 +1899,14 @@ async fn resolve_internal(
             )
             .await?;
             env.insert("HOME".to_string(), droid_home.to_string_lossy().to_string());
-            env.insert("FACTORY_API_KEY".to_string(), api_key.clone());
             env.insert("OPENAI_API_KEY".to_string(), api_key);
             env.insert("OPENAI_BASE_URL".to_string(), base_url);
+            if let Ok(factory_api_key) = std::env::var("FACTORY_API_KEY") {
+                let trimmed = factory_api_key.trim();
+                if !trimmed.is_empty() {
+                    env.insert("FACTORY_API_KEY".to_string(), trimmed.to_string());
+                }
+            }
             if let Some(model) = droid_default_model {
                 env.insert("DROID_DEFAULT_MODEL".to_string(), model);
             }
@@ -2696,7 +2776,6 @@ mod tests {
             (
                 PROVIDER_DROID,
                 &[
-                    "FACTORY_API_KEY",
                     "HOME",
                     "OPENAI_API_KEY",
                     "OPENAI_BASE_URL",
@@ -2810,12 +2889,35 @@ mod tests {
             .await
             .expect("read droid settings");
         assert!(settings.contains("\"provider\": \"generic-chat-completion-api\""));
-        assert!(settings.contains("\"base_url\": \"https://openrouter.ai/api/v1\""));
-        assert!(settings.contains("\"model_name\": \"openai/gpt-5.2-codex\""));
+        assert!(settings.contains("\"baseUrl\": \"https://openrouter.ai/api/v1\""));
+        assert!(settings.contains("\"model\": \"openai/gpt-5.2-codex\""));
+        assert!(settings.contains("\"displayName\": \"openai/gpt-5.2-codex [openrouter]\""));
+        assert!(!resolved.env.contains_key("FACTORY_API_KEY"));
         assert_eq!(
             resolved.env.get("DROID_DEFAULT_MODEL"),
-            Some(&"custom:openai/gpt-5.2-codex".to_string())
+            Some(&"custom:openai/gpt-5.2-codex-[openrouter]-0".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn seed_droid_auth_from_host_path_copies_auth_encrypted_into_endpoint_home() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let host = tempfile::tempdir().expect("tempdir");
+        let host_auth_path = host.path().join("auth.encrypted");
+        tokio::fs::write(&host_auth_path, b"seeded-droid-auth")
+            .await
+            .expect("write host auth");
+
+        let endpoint_home = droid_endpoint_home(root.path(), "ep-1");
+        let changed = seed_droid_auth_from_host_path(&endpoint_home, &host_auth_path)
+            .await
+            .expect("seed auth");
+
+        assert!(changed);
+        let copied = tokio::fs::read(endpoint_home.join(".factory").join("auth.encrypted"))
+            .await
+            .expect("read copied auth");
+        assert_eq!(copied, b"seeded-droid-auth");
     }
 
     #[tokio::test]
