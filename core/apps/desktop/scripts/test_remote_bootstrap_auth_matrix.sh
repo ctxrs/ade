@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")"/../../../.. && pwd)"
-WRAPPER="${ROOT}/core/apps/desktop/scripts/test_remote_bootstrap_fixture.sh"
+WRAPPER="${CTX_REMOTE_BOOTSTRAP_FIXTURE_WRAPPER:-${ROOT}/core/apps/desktop/scripts/test_remote_bootstrap_fixture.sh}"
 
 RUNTIME="${CTX_AUTOMATION_REMOTE_FIXTURE_RUNTIME:-auto}"
 CASES_CSV="${CTX_AUTOMATION_REMOTE_AUTH_CASES:-key,password_once,wrong_password}"
@@ -61,6 +61,29 @@ if [[ -z "${LOG_DIR}" ]]; then
 else
   mkdir -p "${LOG_DIR}"
 fi
+
+status=0
+summary_file="${LOG_DIR}/remote-bootstrap-auth-matrix-summary.txt"
+
+write_summary() {
+  {
+    echo "remote_bootstrap_auth_matrix"
+    echo "runtime=${RUNTIME}"
+    echo "cases=${CASES_CSV}"
+    echo "status=${status}"
+    IFS=',' read -r -a CASES_FOR_SUMMARY <<<"${CASES_CSV}"
+    for raw_case in "${CASES_FOR_SUMMARY[@]}"; do
+      case_name="$(printf '%s' "${raw_case}" | xargs)"
+      [[ -z "${case_name}" ]] && continue
+      if [[ -f "${LOG_DIR}/${case_name}/summary.env" ]]; then
+        echo "--- ${case_name} ---"
+        cat "${LOG_DIR}/${case_name}/summary.env"
+      fi
+    done
+  } >"${summary_file}"
+}
+
+trap write_summary EXIT
 
 classify_failure() {
   local log_file="$1"
@@ -179,33 +202,16 @@ if [[ ${#CASES[@]} -eq 0 ]]; then
   exit 2
 fi
 
-status=0
 for raw_case in "${CASES[@]}"; do
   case_name="$(printf '%s' "${raw_case}" | xargs)"
   [[ -z "${case_name}" ]] && continue
-  run_case "${case_name}"
-  rc=$?
+  rc=0
+  run_case "${case_name}" || rc=$?
   if [[ ${rc} -ne 0 ]]; then
     status=${rc}
     break
   fi
 done
-
-summary_file="${LOG_DIR}/remote-bootstrap-auth-matrix-summary.txt"
-{
-  echo "remote_bootstrap_auth_matrix"
-  echo "runtime=${RUNTIME}"
-  echo "cases=${CASES_CSV}"
-  echo "status=${status}"
-  for raw_case in "${CASES[@]}"; do
-    case_name="$(printf '%s' "${raw_case}" | xargs)"
-    [[ -z "${case_name}" ]] && continue
-    if [[ -f "${LOG_DIR}/${case_name}/summary.env" ]]; then
-      echo "--- ${case_name} ---"
-      cat "${LOG_DIR}/${case_name}/summary.env"
-    fi
-  done
-} >"${summary_file}"
 
 echo "[remote-bootstrap-matrix] summary: ${summary_file}" >&2
 exit ${status}

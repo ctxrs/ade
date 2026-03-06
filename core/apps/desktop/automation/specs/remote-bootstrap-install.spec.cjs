@@ -5,6 +5,7 @@ const { spawnSync } = require("node:child_process");
 const { waitForTauri } = require("./helpers/tauri.cjs");
 const { daemonJson, safeDaemonJson } = require("./helpers/daemon.cjs");
 const { ensureCodexOpenRouterWorkspaceReady } = require("./helpers/provider_runtime.cjs");
+const { runDeterministicFirstTurnOutcome } = require("./helpers/first_turn_contract.cjs");
 const {
   createRemoteContractRecorder,
   parseBoolean,
@@ -280,89 +281,6 @@ const writeFirstTurnReport = (payload) => {
   }
 };
 
-const runFirstTurnOutcome = async (
-  workspaceId,
-  {
-    providerId = "codex",
-    modelId = "default",
-  } = {},
-  timeoutMs = 180000,
-) => {
-  const taskResp = await daemonJson("POST", `/api/workspaces/${workspaceId}/tasks`, {
-    title: `remote-bootstrap-first-turn-${Date.now()}`,
-    description: "Remote bootstrap first-turn contract",
-    create_default_session: false,
-  });
-  if (taskResp.status !== 200) {
-    return { status: "failed", stage: "task_create", detail: JSON.stringify(taskResp.payload || null) };
-  }
-  const taskId = String(taskResp.payload?.id || "").trim();
-  if (!taskId) {
-    return { status: "failed", stage: "task_create", detail: "missing task id" };
-  }
-
-  const sessionResp = await daemonJson("POST", `/api/tasks/${taskId}/sessions`, {
-    provider_id: providerId,
-    model_id: modelId,
-    env_target: "worktree",
-  });
-  if (sessionResp.status !== 200) {
-    return { status: "failed", stage: "session_create", detail: JSON.stringify(sessionResp.payload || null) };
-  }
-  const sessionId = String(sessionResp.payload?.id || "").trim();
-  if (!sessionId) {
-    return { status: "failed", stage: "session_create", detail: "missing session id" };
-  }
-
-  const postResp = await daemonJson("POST", `/api/sessions/${sessionId}/messages`, {
-    content: "hello",
-    delivery: "immediate",
-    attachments: [],
-  });
-  if (postResp.status !== 200) {
-    return {
-      status: "failed",
-      stage: "message_post",
-      detail: JSON.stringify(postResp.payload || null),
-      session_id: sessionId,
-    };
-  }
-
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    const history = await daemonJson("GET", `/api/sessions/${sessionId}/history?limit=200`);
-    if (history.status === 200 && history.payload) {
-      const messages = Array.isArray(history.payload.messages) ? history.payload.messages : [];
-      const assistantMessage = messages
-        .filter((message) => String(message?.role || "").toLowerCase() === "assistant")
-        .map((message) => String(message?.content || "").trim())
-        .find((content) => content.length > 0) || "";
-      if (assistantMessage) {
-        return {
-          status: "success",
-          session_id: sessionId,
-          assistant_preview: assistantMessage.slice(0, 200),
-        };
-      }
-
-      const turns = Array.isArray(history.payload.turns) ? history.payload.turns : [];
-      const latestTurn = turns.length ? turns[turns.length - 1] : null;
-      const latestStatus = String(latestTurn?.status || "").trim().toLowerCase();
-      if (latestStatus === "failed" || latestStatus === "cancelled") {
-        return {
-          status: "failed",
-          stage: "turn",
-          turn_status: latestStatus,
-          session_id: sessionId,
-          detail: String(latestTurn?.error || latestTurn?.error_message || "turn failed"),
-        };
-      }
-    }
-    await browser.pause(500);
-  }
-  return { status: "timed_out", stage: "turn", session_id: null, detail: "no assistant output before timeout" };
-};
-
 const collectFailureArtifacts = async (stage) => {
   if (!contractRecorder) return;
 
@@ -532,11 +450,13 @@ describe("remote bootstrap install e2e", () => {
       }
 
       if (!firstTurn) {
-        firstTurn = await runFirstTurnOutcome(
+        firstTurn = await runDeterministicFirstTurnOutcome(
           workspaceLaunch.workspaceId,
           {
             providerId: firstTurnProvider?.providerId || "codex",
             modelId: firstTurnProvider?.modelId || "default",
+            prompt: "hello",
+            timeoutMs: 180000,
           },
         );
       }

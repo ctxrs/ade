@@ -9,10 +9,10 @@ const {
   runWizardScenario,
   getWorkspace,
   assertNoDaemonOverlayFor,
-  runCodexFirstTurnApiSmoke,
   collectWorkspaceRouteDiagnostics,
 } = require("./helpers/workspace_wizard_flow.cjs");
 const { ensureCodexOpenRouterWorkspaceReady } = require("./helpers/provider_runtime.cjs");
+const { runDeterministicFirstTurnOutcome } = require("./helpers/first_turn_contract.cjs");
 const {
   createRemoteContractRecorder,
   parseBoolean,
@@ -291,23 +291,23 @@ describe("remote container contract (env-gated desktop e2e)", () => {
           endpointName: `remote-container-openrouter-${runId}`,
         });
         contractRecorder.recordArtifact("provider_verify_payload", provider.verifyPayload || null);
-        const turn = await runCodexFirstTurnApiSmoke(
+        firstTurn = await runDeterministicFirstTurnOutcome(
           workspaceId,
           {
             providerId: provider.providerId,
             modelId: provider.modelId,
+            prompt: "hello",
+            timeoutMs: 180000,
           },
-          180000,
         );
-        firstTurn = {
-          attempted: true,
-          status: "success",
-          session_id: turn?.sessionId || null,
-          assistant_preview: String(turn?.assistantMessage || "").slice(0, 200),
-          provider,
-        };
+        firstTurn = { attempted: true, ...firstTurn, provider };
+        if (REQUIRE_FIRST_TURN_SUCCESS && firstTurn.status !== "success") {
+          const failure = new Error(`expected first turn success, got ${JSON.stringify(firstTurn)}`);
+          failure.firstTurnOutcome = firstTurn;
+          throw failure;
+        }
       } catch (error) {
-        firstTurn = {
+        firstTurn = error?.firstTurnOutcome || {
           attempted: true,
           status: "failed",
           error: String(error),
