@@ -140,7 +140,7 @@ describe("codex oauth harness framework (desktop e2e)", () => {
     let workspaceId = "";
     try {
       await assertConnectedLocalAndListening();
-      await completeCodexOauthWithBrowserCredentials({
+      const oauthLogin = await completeCodexOauthWithBrowserCredentials({
         label: normalizeText(process.env.CTX_AUTOMATION_CODEX_OAUTH_LABEL) || `codex-oauth-${runId}`,
         email: normalizeText(process.env.CTX_E2E_CODEX_OAUTH_EMAIL),
         password: process.env.CTX_E2E_CODEX_OAUTH_PASSWORD || "",
@@ -150,6 +150,10 @@ describe("codex oauth harness framework (desktop e2e)", () => {
         timeoutMs: oauthTimeoutMs,
         urlFallbackGraceMs: 2000,
       });
+      if (oauthLogin?.status === "blocked") {
+        console.error(`[skip] ${oauthLogin.browserFlow?.message || "codex oauth blocked"}`);
+        this.skip();
+      }
 
       const workspace = await createWorkspaceAndLaunchExecution({
         baseDir: localBase,

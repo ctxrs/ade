@@ -512,6 +512,14 @@ const prepareSubscriptionAuth = async ({ providerId, envTarget }) => {
         10,
       ) || DEFAULT_CODEX_OAUTH_TIMEOUT_MS,
     });
+    if (artifacts.oauth_login?.status === "blocked") {
+      const blockedReason = trimText(artifacts.oauth_login.browserFlow?.blocked_reason) || "blocked";
+      return {
+        status: "skip",
+        reason: `codex oauth blocked: ${blockedReason}`,
+        artifacts,
+      };
+    }
   } else if (plan.strategy === "stage_amp_home" || plan.strategy === "stage_amp_secrets") {
     const dataRoot = ensureLocalDaemonDataDir();
     artifacts.runtime_stage = stageAmpRuntimeAuth(plan, dataRoot);

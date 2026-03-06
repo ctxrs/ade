@@ -194,6 +194,30 @@ const AUTH_BUTTON_SELECTORS = Object.freeze([
   "a",
 ]);
 
+const OPENAI_EMAIL_CHALLENGE_PATTERNS = Object.freeze([
+  /check your inbox/i,
+  /check your email/i,
+  /enter (?:the )?code we sent/i,
+  /we sent (?:a )?code to/i,
+  /use the code from your email/i,
+  /email verification code/i,
+]);
+
+const OPENAI_AUTHENTICATOR_PATTERNS = Object.freeze([
+  /authenticator/i,
+  /authentication app/i,
+  /auth app/i,
+  /two-factor/i,
+  /\b2fa\b/i,
+]);
+
+const OPENAI_GENERIC_CODE_CHALLENGE_PATTERNS = Object.freeze([
+  /verification code/i,
+  /enter (?:the )?code/i,
+  /\b6-digit code\b/i,
+  /confirm it'?s you/i,
+]);
+
 const elementKey = (element) =>
   readString(element?.elementId || element?.ELEMENT || element?.["element-6066-11e4-a52e-4f735466cecf"]);
 
@@ -380,6 +404,91 @@ const callbackReached = (state, expectedCallbackUrl) => {
   const expected = sanitizeAuthUrl(expectedCallbackUrl);
   if (!current || !expected) return false;
   return current.scheme === expected.scheme && current.host === expected.host && current.path === expected.path;
+};
+
+const summarizeAuthState = (state) => ({
+  url: sanitizeAuthUrl(state?.url),
+  title: readString(state?.title),
+  inputs: asArray(state?.inputs).map((entry) => ({
+    tag: readString(entry?.tag),
+    type: readString(entry?.type),
+    name: readString(entry?.name),
+    autocomplete: readString(entry?.autocomplete),
+    inputmode: readString(entry?.inputmode),
+    label: readString(entry?.label),
+    maxLength: Number(entry?.maxLength || 0),
+  })),
+  buttons: asArray(state?.buttons).map((entry) => readString(entry)).filter(Boolean).slice(0, 12),
+});
+
+const collectAuthStateText = (state) => normalizeUiText([
+  readString(state?.title),
+  readString(state?.bodyText),
+  ...asArray(state?.buttons).map((entry) => readString(entry)),
+  ...asArray(state?.inputs).map((entry) => [
+    readString(entry?.type),
+    readString(entry?.name),
+    readString(entry?.autocomplete),
+    readString(entry?.inputmode),
+    readString(entry?.label),
+  ].join(" ")),
+].join(" "));
+
+const matchStatePatterns = (text, patterns) => patterns.filter((pattern) => pattern.test(text));
+
+const createProviderOAuthBlockedError = ({ stage, blockedReason, message, challenge = null }) => {
+  const error = createProviderOAuthError(stage, message, challenge ? { challenge } : {});
+  error.name = "ProviderOAuthBlockedError";
+  error.blocked = true;
+  error.blockedReason = readString(blockedReason) || "blocked";
+  return error;
+};
+
+const isProviderOAuthBlockedError = (error) => Boolean(error?.blocked === true || error?.name === "ProviderOAuthBlockedError");
+
+const classifyCodexOpenAiChallenge = ({ state, hasOtpInput = false } = {}) => {
+  const text = collectAuthStateText(state);
+  if (!text) return null;
+
+  if (/captcha|verify you are human|just a moment/i.test(text)) {
+    return {
+      kind: "interactive_challenge_required",
+      message: "OpenAI auth page requires an interactive anti-bot or captcha challenge",
+      state: summarizeAuthState(state),
+      matched_signals: ["captcha_or_human_verification"],
+    };
+  }
+
+  const emailMatches = matchStatePatterns(text, OPENAI_EMAIL_CHALLENGE_PATTERNS);
+  if (emailMatches.length > 0) {
+    return {
+      kind: "email_challenge_required",
+      message: "OpenAI auth requires an email verification code challenge that automation cannot satisfy deterministically",
+      state: summarizeAuthState(state),
+      matched_signals: emailMatches.map((pattern) => String(pattern)),
+    };
+  }
+
+  if (!hasOtpInput) {
+    return null;
+  }
+
+  const authenticatorMatches = matchStatePatterns(text, OPENAI_AUTHENTICATOR_PATTERNS);
+  if (authenticatorMatches.length > 0) {
+    return null;
+  }
+
+  const genericMatches = matchStatePatterns(text, OPENAI_GENERIC_CODE_CHALLENGE_PATTERNS);
+  if (genericMatches.length === 0) {
+    return null;
+  }
+
+  return {
+    kind: "verification_code_challenge_required",
+    message: "OpenAI auth requires an out-of-band verification code challenge that automation cannot satisfy deterministically",
+    state: summarizeAuthState(state),
+    matched_signals: genericMatches.map((pattern) => String(pattern)),
+  };
 };
 
 const fillBrowserAuthField = async (fieldKind, value) => {
@@ -688,13 +797,6 @@ const driveCodexOpenAiLoginWithCredentials = async ({
       };
     }
 
-    if (stateMentions(state, /incorrect|invalid|try again|wrong password|too many requests|blocked|unusual activity/i)) {
-      throw new Error(`OpenAI auth page reported an error: ${readString(state.bodyText).slice(0, 240)}`);
-    }
-    if (stateMentions(state, /captcha|verify you are human|just a moment/i)) {
-      throw new Error("OpenAI auth page requires an interactive anti-bot or captcha challenge");
-    }
-
     const inputs = Array.isArray(state.inputs) ? state.inputs : [];
     const hasEmailInput = inputs.some((entry) =>
       entry.type === "email" || entry.autocomplete === "email" || entry.name.includes("email") || entry.label.includes("email"));
@@ -708,6 +810,20 @@ const driveCodexOpenAiLoginWithCredentials = async ({
       || entry.label.includes("code")
       || entry.label.includes("authenticator")
       || entry.label.includes("verification"));
+
+    const blockedChallenge = classifyCodexOpenAiChallenge({ state, hasOtpInput });
+    if (blockedChallenge) {
+      throw createProviderOAuthBlockedError({
+        stage: "drive_codex_openai_login",
+        blockedReason: blockedChallenge.kind,
+        message: blockedChallenge.message,
+        challenge: blockedChallenge,
+      });
+    }
+
+    if (stateMentions(state, /incorrect|invalid|try again|wrong password|too many requests|blocked|unusual activity/i)) {
+      throw new Error(`OpenAI auth page reported an error: ${readString(state.bodyText).slice(0, 240)}`);
+    }
 
     if (!hasEmailInput && !hasPasswordInput && !hasOtpInput && stateMentions(state, /log in|login/i)) {
       await submitVisibleAuthStep(["log in", "login"]);
@@ -1402,11 +1518,16 @@ const createProviderOAuthHarness = ({
     startProviderLogin,
     awaitLoginUrl,
     awaitLoginTerminal,
+    readLoginStatus: async (loginId) => {
+      const session = getSession(loginId);
+      return await fetchStatus(session);
+    },
     assertAccountActivated,
     openAuthUrl,
     installDesktopOpenExternalProbe,
     readDesktopOpenExternalProbe,
     resetDesktopOpenExternalProbe,
+    recordStage,
   };
 };
 
@@ -1436,21 +1557,70 @@ const completeCodexOauthWithBrowserCredentials = async ({
   }
 
   const authUrl = await harness.awaitLoginUrl(login.loginId, timeoutMs);
-  const browserFlow = await driveCodexOpenAiLoginWithCredentials({
-    authUrl: authUrl.authUrl,
-    expectedCallbackUrl: login.expectedCallbackUrl,
-    email,
-    password,
-    totpSecret,
-    timeoutMs,
-    pollMs,
-  });
+  let browserFlow;
+  try {
+    browserFlow = await driveCodexOpenAiLoginWithCredentials({
+      authUrl: authUrl.authUrl,
+      expectedCallbackUrl: login.expectedCallbackUrl,
+      email,
+      password,
+      totpSecret,
+      timeoutMs,
+      pollMs,
+    });
+  } catch (error) {
+    if (!isProviderOAuthBlockedError(error)) {
+      throw error;
+    }
+
+    let loginStatus = null;
+    try {
+      const status = await harness.readLoginStatus(login.loginId);
+      loginStatus = status.redactedPayload || redactPayload(status);
+    } catch (statusError) {
+      loginStatus = {
+        status: "unavailable",
+        error: String(statusError),
+      };
+    }
+
+    harness.recordStage(
+      "codex_browser_flow_blocked",
+      error.message,
+      {
+        blocked_reason: error.blockedReason,
+        challenge: error.challenge || null,
+      },
+      { provider_id: "codex", login_id: login.loginId },
+    );
+    return {
+      status: "blocked",
+      providerId: "codex",
+      loginId: login.loginId,
+      authUrl: authUrl.sanitizedAuthUrl,
+      browserFlow: {
+        status: "blocked",
+        blocked_reason: error.blockedReason,
+        message: error.message,
+        challenge: error.challenge || null,
+      },
+      loginStatus,
+    };
+  }
+
+  harness.recordStage(
+    "codex_browser_flow_callback_reached",
+    "codex browser flow reached callback",
+    browserFlow,
+    { provider_id: "codex", login_id: login.loginId },
+  );
   const terminal = await harness.awaitLoginTerminal(login.loginId, timeoutMs);
   if (terminal.status !== "success") {
     throw new Error(`codex oauth login did not succeed: ${JSON.stringify(terminal.redactedPayload || terminal)}`);
   }
   const activeAccount = await harness.assertAccountActivated("codex");
   return {
+    status: "success",
     providerId: "codex",
     loginId: login.loginId,
     authUrl: authUrl.sanitizedAuthUrl,
@@ -1478,4 +1648,5 @@ module.exports = {
   chooseObservedAuthUrl,
   createProviderOAuthHarness,
   completeCodexOauthWithBrowserCredentials,
+  isProviderOAuthBlockedError,
 };

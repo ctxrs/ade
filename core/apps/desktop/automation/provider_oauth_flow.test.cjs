@@ -279,3 +279,50 @@ test("submitVisibleAuthStep prefers webdriver button clicks before DOM-execute f
   assert.equal(clicked, true);
   assert.equal(executeCalled, false);
 });
+
+test("driveCodexOpenAiLoginWithCredentials classifies inbox code prompts as blocked email challenges", async () => {
+  let navigatedUrl = "";
+  global.browser = {
+    url: async (href) => {
+      navigatedUrl = href;
+    },
+    execute: async () => ({
+      url: "https://chat.openai.com/challenge",
+      title: "Check your inbox",
+      bodyText: "Check your inbox. Enter the code we sent to continue.",
+      inputs: [
+        {
+          tag: "input",
+          type: "text",
+          name: "code",
+          autocomplete: "one-time-code",
+          inputmode: "numeric",
+          label: "Verification code",
+          maxLength: 6,
+        },
+      ],
+      buttons: ["Continue"],
+    }),
+  };
+
+  const { driveCodexOpenAiLoginWithCredentials } = loadHelper();
+  await assert.rejects(
+    () => driveCodexOpenAiLoginWithCredentials({
+      authUrl: "https://chat.openai.com/oauth/authorize?state=secret",
+      email: "user@example.com",
+      password: "super-secret-password",
+      totpSecret: "JBSWY3DPEHPK3PXP",
+      timeoutMs: 100,
+      pollMs: 0,
+    }),
+    (error) => {
+      assert.equal(error.name, "ProviderOAuthBlockedError");
+      assert.equal(error.blockedReason, "email_challenge_required");
+      assert.match(error.message, /email verification code challenge/i);
+      assert.equal(error.challenge?.kind, "email_challenge_required");
+      assert.equal(error.challenge?.state?.title, "Check your inbox");
+      return true;
+    },
+  );
+  assert.equal(navigatedUrl, "https://chat.openai.com/oauth/authorize?state=secret");
+});
