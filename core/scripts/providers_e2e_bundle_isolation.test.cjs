@@ -60,6 +60,23 @@ test("linux-arm lanes bundle acp-crp-bridge via managed provider artifacts", () 
   );
 });
 
+test("linux-arm lanes rely on host podman instead of demanding a bundled podman archive", () => {
+  const script = fs.readFileSync(scriptPath, "utf8");
+
+  assert.match(
+    script,
+    /runtime lock only vendors Podman artifacts for/,
+  );
+  assert.match(
+    script,
+    /macOS remote clients/,
+  );
+  assert.match(
+    script,
+    /CTX_E2E_ENDPOINT_BUNDLE_PODMAN="\$\{CTX_E2E_ENDPOINT_BUNDLE_PODMAN:-0\}"/,
+  );
+});
+
 test("endpoint bundle defaults use a home-shareable cache root", () => {
   const script = fs.readFileSync(scriptPath, "utf8");
 

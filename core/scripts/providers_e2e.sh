@@ -389,7 +389,11 @@ run_linux_arm_runtime_install_lane() {
   # Keep the legacy local/source bridge path off here. ACP bridge must arrive via the same
   # managed archive bundling path as the other lane providers.
   export CTX_E2E_ENDPOINT_BUNDLE_INCLUDE_BRIDGE="${CTX_E2E_ENDPOINT_BUNDLE_INCLUDE_BRIDGE:-0}"
-  export CTX_E2E_ENDPOINT_BUNDLE_PODMAN="${CTX_E2E_ENDPOINT_BUNDLE_PODMAN:-1}"
+  # Native Linux reliability lanes should exercise bundled provider resolution, but
+  # use the host Podman install. The runtime lock only vendors Podman artifacts for
+  # macOS remote clients, so forcing bundled Podman on Linux makes the lane demand
+  # an archive that does not exist.
+  export CTX_E2E_ENDPOINT_BUNDLE_PODMAN="${CTX_E2E_ENDPOINT_BUNDLE_PODMAN:-0}"
   export CTX_E2E_ENDPOINT_BUNDLE_LOCAL_ADAPTERS="${CTX_E2E_ENDPOINT_BUNDLE_LOCAL_ADAPTERS:-off}"
   export CTX_E2E_ENDPOINT_BUNDLE_BUILD_LOCAL_ADAPTERS="${CTX_E2E_ENDPOINT_BUNDLE_BUILD_LOCAL_ADAPTERS:-0}"
   export CTX_E2E_ENDPOINT_BUNDLE_APPEND_LOCAL_ADAPTERS="${CTX_E2E_ENDPOINT_BUNDLE_APPEND_LOCAL_ADAPTERS:-off}"
