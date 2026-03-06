@@ -832,25 +832,25 @@
         "targets": {
           "darwin-aarch64": {
             "url": "https://github.com/anomalyco/opencode/releases/download/v1.2.20/opencode-darwin-arm64.zip",
-            "sha256": "6139f02aa2f96843939c60a68274b2d58530225c8a8c73420c71dd167923806f",
+            "sha256": "20386056bffdc4ec52155fb107fb470d47297f86dc405f993992596dc3eb4a81",
             "archive": "zip",
             "bin_path": "opencode"
           },
           "darwin-x86_64": {
             "url": "https://github.com/anomalyco/opencode/releases/download/v1.2.20/opencode-darwin-x64.zip",
-            "sha256": "d0136bf89bef1361c4c33e577a73884c4dc9d58d5ffba47cb6c24b29fb05c119",
+            "sha256": "51b1ddcb01dc1441217a6cf6730e09635ecbc38865a8fd2abf721ddf7d3b0dc0",
             "archive": "zip",
             "bin_path": "opencode"
           },
           "linux-aarch64": {
             "url": "https://github.com/anomalyco/opencode/releases/download/v1.2.20/opencode-linux-arm64.tar.gz",
-            "sha256": "aeea8d4160e2f8e9190a92ed69b81d4a70d5cc8b610570ff0d781dad88877282",
+            "sha256": "a0813a706c8865cf61b2ec152f116af09519bff703c774ab16b4a667b154d683",
             "archive": "tar_gz",
             "bin_path": "opencode"
           },
           "linux-x86_64": {
             "url": "https://github.com/anomalyco/opencode/releases/download/v1.2.20/opencode-linux-x64-baseline.tar.gz",
-            "sha256": "e16183c3338c41af048a4c76c9e70e89e1c9a7340a3d72b687c36e9afd6db21f",
+            "sha256": "fc14d43f33555f5c648b0649c4248d4e74eae1d5d0e784f8dec83b97313e4c35",
             "archive": "tar_gz",
             "bin_path": "opencode"
           }
