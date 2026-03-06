@@ -3,37 +3,24 @@ import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
-import type { APIRequestContext, Locator, Page } from "playwright/test";
+import type { Locator, Page } from "playwright/test";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
+import {
+  ensureProviderInstalledAndHealthy,
+  resolveWorkspaceProviderModelId,
+  verifyProviderForWorkspace,
+  waitForTerminalState,
+} from "../src/testing/providerRuntime";
 
-type TerminalState = {
-  done: boolean;
-  terminalStatus: string | null;
-  assistantMessages: number;
-  errorMessage: string | null;
-};
-
-const TERMINAL_TURN_STATUSES = new Set(["completed", "failed", "interrupted"]);
 const REQUEST_TIMEOUT_MS = 60_000;
+const INSTALL_TARGET = "host";
 
 const asRecord = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
 };
 
-const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
-
 const readString = (value: unknown): string => (typeof value === "string" ? value : "");
-
-const firstText = (...values: unknown[]): string => {
-  for (const value of values) {
-    const text = readString(value).trim();
-    if (text) return text;
-  }
-  return "";
-};
-
-const normalizeErrorMessage = (raw: string): string => raw.replace(/\s+/g, " ").trim();
 
 async function openHarnessMenu(page: Page): Promise<Locator> {
   const harnessButton = page
@@ -48,28 +35,6 @@ async function openHarnessMenu(page: Page): Promise<Locator> {
     await expect(menu).toBeVisible({ timeout: 10_000 });
   }
   return menu;
-}
-
-async function ensureGeminiProviderReady(request: APIRequestContext): Promise<{ ok: true } | { ok: false; reason: string }> {
-  const providersResp = await request.get("/api/providers", { timeout: REQUEST_TIMEOUT_MS });
-  if (!providersResp.ok()) {
-    return { ok: false, reason: `failed to read providers (${providersResp.status()})` };
-  }
-  const providers = asArray(await providersResp.json()).map((entry) => asRecord(entry));
-  const gemini = providers.find((entry) => readString(entry.provider_id) === "gemini");
-  if (!gemini) {
-    return { ok: false, reason: "gemini provider not listed by /api/providers" };
-  }
-  if (gemini.installed !== true || readString(gemini.health) !== "ok") {
-    const diagnostics = asArray(gemini.diagnostics)
-      .map((entry) => readString(entry).trim())
-      .filter((entry) => entry.length > 0);
-    return {
-      ok: false,
-      reason: diagnostics[0] ?? `gemini provider unavailable (installed=${String(gemini.installed)}, health=${readString(gemini.health) || "unknown"})`,
-    };
-  }
-  return { ok: true };
 }
 
 async function configureGeminiApiKeyViaModal(page: Page, apiKey: string): Promise<void> {
@@ -139,121 +104,6 @@ async function configureGeminiApiKeyViaModal(page: Page, apiKey: string): Promis
   console.warn("[gemini-provider-api-key-real] modal closed");
 }
 
-async function verifyGeminiProviderForWorkspace(opts: {
-  request: APIRequestContext;
-  workspaceId: string;
-}): Promise<{ ok: true } | { ok: false; reason: string }> {
-  const { request, workspaceId } = opts;
-  const resp = await request.post(`/api/workspaces/${workspaceId}/providers/gemini/verify`, {
-    data: {},
-    timeout: 30_000,
-  });
-  if (!resp.ok()) {
-    const payload = asRecord(await resp.json().catch(() => ({})));
-    return {
-      ok: false,
-      reason: normalizeErrorMessage(
-        firstText(payload.error, payload.message, `verify request failed (${resp.status()})`) || "verify request failed",
-      ),
-    };
-  }
-  const payload = asRecord(await resp.json());
-  const status = firstText(payload.status).toLowerCase();
-  if (status !== "ok") {
-    return {
-      ok: false,
-      reason: normalizeErrorMessage(firstText(payload.message, `verify status=${status}`)),
-    };
-  }
-  return { ok: true };
-}
-
-async function resolveGeminiModelId(opts: {
-  request: APIRequestContext;
-  workspaceId: string;
-}): Promise<{ ok: true; modelId: string } | { ok: false; reason: string }> {
-  const { request, workspaceId } = opts;
-  const optionsResp = await request.get(`/api/workspaces/${workspaceId}/providers/gemini/options`, {
-    timeout: REQUEST_TIMEOUT_MS,
-  });
-  if (!optionsResp.ok()) {
-    return { ok: false, reason: `failed to read gemini options (${optionsResp.status()})` };
-  }
-  const options = asRecord(await optionsResp.json());
-  const models = asRecord(options.models);
-  const currentModelId = firstText(models.current_model_id, models.currentModelId);
-  if (currentModelId) {
-    return { ok: true, modelId: currentModelId };
-  }
-
-  const firstModelId = asArray(models.models)
-    .map((entry) => asRecord(entry))
-    .map((entry) => firstText(entry.id, entry.model_id, entry.modelId, entry.name))
-    .find((entry) => entry.length > 0);
-  if (!firstModelId) {
-    return { ok: false, reason: "gemini options did not return a model id" };
-  }
-  return { ok: true, modelId: firstModelId };
-}
-
-function toTerminalState(snapshot: Record<string, unknown>): TerminalState {
-  const head = asRecord(snapshot.head);
-  const activity = asRecord(head.activity);
-  const turns = asArray(head.turns).map((entry) => asRecord(entry));
-  const messages = asArray(head.messages).map((entry) => asRecord(entry));
-
-  const lastTurn = turns.length > 0 ? turns[turns.length - 1] : {};
-  const terminalStatus = firstText(lastTurn.status, activity.last_turn_status).toLowerCase() || null;
-  const assistantMessages = messages.filter((message) => {
-    if (readString(message.role) !== "assistant") return false;
-    return readString(message.content).trim().length > 0;
-  }).length;
-
-  const done = terminalStatus
-    ? TERMINAL_TURN_STATUSES.has(terminalStatus)
-    : (activity.is_working !== true && assistantMessages > 0);
-
-  const errorMessage = terminalStatus === "failed" || terminalStatus === "interrupted"
-    ? normalizeErrorMessage(firstText(lastTurn.status, "gemini run failed"))
-    : null;
-
-  return {
-    done,
-    terminalStatus,
-    assistantMessages,
-    errorMessage,
-  };
-}
-
-async function waitForTerminalState(opts: {
-  request: APIRequestContext;
-  sessionId: string;
-}): Promise<TerminalState> {
-  const { request, sessionId } = opts;
-  let resolved: TerminalState | null = null;
-
-  await expect
-    .poll(
-      async () => {
-        const resp = await request.get(`/api/sessions/${sessionId}/head?include_events=1&limit=80`, {
-          timeout: REQUEST_TIMEOUT_MS,
-        });
-        if (!resp.ok()) return "";
-        const state = toTerminalState({ head: asRecord(await resp.json()) });
-        if (!state.done) return "";
-        resolved = state;
-        return "done";
-      },
-      { timeout: 180_000, intervals: [1_000, 2_000, 3_000] },
-    )
-    .toBe("done");
-
-  if (!resolved) {
-    throw new Error(`gemini session ${sessionId} did not reach terminal state`);
-  }
-  return resolved;
-}
-
 test("workbench: gemini provider API key auth can run a real task", async ({ page, request }) => {
   test.setTimeout(10 * 60_000);
 
@@ -266,10 +116,14 @@ test("workbench: gemini provider API key auth can run a real task", async ({ pag
     test.skip(true, "missing CTX_E2E_GEMINI_API_KEY");
   }
 
-  const providerReady = await ensureGeminiProviderReady(request);
-  expect(providerReady.ok, providerReady.ok ? undefined : providerReady.reason).toBe(true);
-  if (!providerReady.ok) return;
-  console.warn("[gemini-provider-api-key-real] provider ready");
+  const providerStatus = await ensureProviderInstalledAndHealthy(request, "gemini", INSTALL_TARGET, {
+    timeoutMs: 10 * 60_000,
+    pollMs: 2_000,
+    requestTimeoutMs: REQUEST_TIMEOUT_MS,
+  });
+  console.warn(
+    `[gemini-provider-api-key-real] provider ready: target=${providerStatus.details.install_target || INSTALL_TARGET} health=${providerStatus.health}`,
+  );
 
   const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-gemini-"));
   execSync("git init -b main", { cwd: repo });
@@ -290,18 +144,18 @@ test("workbench: gemini provider API key auth can run a real task", async ({ pag
   await configureGeminiApiKeyViaModal(page, geminiApiKey);
   console.warn("[gemini-provider-api-key-real] api key submitted");
 
-  const verify = await verifyGeminiProviderForWorkspace({ request, workspaceId });
-  if (!verify.ok) {
-    console.warn(`[gemini-provider-api-key-real] verify warning: ${verify.reason}`);
-  }
+  await verifyProviderForWorkspace(request, workspaceId, "gemini", {
+    timeoutMs: 90_000,
+    pollMs: 3_000,
+    requestTimeoutMs: REQUEST_TIMEOUT_MS,
+  });
   console.warn("[gemini-provider-api-key-real] verify step done");
 
-  const modelSelection = await resolveGeminiModelId({ request, workspaceId });
-  const modelId = modelSelection.ok ? modelSelection.modelId : "gemini-2.5-flash";
-  if (!modelSelection.ok) {
-    console.warn(`[gemini-provider-api-key-real] model discovery warning: ${modelSelection.reason}`);
-    console.warn(`[gemini-provider-api-key-real] using fallback model id: ${modelId}`);
-  }
+  const modelId = await resolveWorkspaceProviderModelId(request, workspaceId, "gemini", {
+    timeoutMs: 90_000,
+    pollMs: 3_000,
+    requestTimeoutMs: REQUEST_TIMEOUT_MS,
+  });
   console.warn(`[gemini-provider-api-key-real] using model: ${modelId}`);
 
   const promptMarker = `gemini-provider-auth-${Date.now()}`;
@@ -342,7 +196,11 @@ test("workbench: gemini provider API key auth can run a real task", async ({ pag
   expect(messageResp.ok(), `message send failed (${messageResp.status()})`).toBe(true);
   console.warn("[gemini-provider-api-key-real] prompt sent");
 
-  const terminal = await waitForTerminalState({ request, sessionId });
+  const terminal = await waitForTerminalState(request, sessionId, {
+    timeoutMs: 180_000,
+    pollMs: 3_000,
+    requestTimeoutMs: REQUEST_TIMEOUT_MS,
+  });
   console.warn(`[gemini-provider-api-key-real] terminal status: ${terminal.terminalStatus ?? "unknown"}`);
   expect(terminal.terminalStatus, terminal.errorMessage ?? "gemini run did not complete").toBe("completed");
   expect(terminal.assistantMessages).toBeGreaterThan(0);
