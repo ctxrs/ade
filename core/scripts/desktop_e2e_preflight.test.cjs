@@ -121,3 +121,19 @@ test("desktop-remote-real-ci passes with required AWS credentials present", () =
   assert.equal(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
   assert.match(result.stdout, /preflight passed/i);
 });
+
+test("desktop-remote-real-ci local provider passes without cloud credentials", () => {
+  const result = run([
+    "--suite",
+    "desktop-remote-real-ci",
+  ], {
+    CTX_UPDATER_E2E_CLOUD_PROVIDER: "local",
+    AWS_ACCESS_KEY_ID: "",
+    AWS_SECRET_ACCESS_KEY: "",
+    AWS_REGION: "",
+    HETZNER_API_TOKEN: "",
+  });
+
+  assert.equal(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
+  assert.match(result.stdout, /preflight passed/i);
+});

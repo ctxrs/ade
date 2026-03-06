@@ -693,15 +693,19 @@ const resolveSuiteContract = (suiteId, options = {}) => {
       {
         const remoteProvider = normalizeText(env.CTX_UPDATER_E2E_CLOUD_PROVIDER || "aws").toLowerCase();
         const usingAws = remoteProvider === "aws";
+        const usingHetzner = remoteProvider === "hetzner";
+        const usingLocal = remoteProvider === "local";
         const requirements = usingAws
           ? [
             buildRequirement("AWS_ACCESS_KEY_ID"),
             buildRequirement("AWS_SECRET_ACCESS_KEY"),
             buildRequirement("AWS_REGION"),
           ]
-          : [
-            buildRequirement("HETZNER_API_TOKEN"),
-          ];
+          : usingHetzner
+            ? [
+              buildRequirement("HETZNER_API_TOKEN"),
+            ]
+            : [];
         const optionalRequirements = usingAws
           ? [
             buildRequirement("AWS_SESSION_TOKEN", {
@@ -723,7 +727,11 @@ const resolveSuiteContract = (suiteId, options = {}) => {
           notes: [
             usingAws
               ? "AWS mode validates access key + secret + region; optional session token is accepted."
-              : "Hetzner mode validates HETZNER_API_TOKEN.",
+              : usingHetzner
+                ? "Hetzner mode validates HETZNER_API_TOKEN."
+                : usingLocal
+                  ? "Local mode uses Docker SSH fixtures and does not require cloud credentials."
+                  : "Unknown provider; no cloud-specific preflight requirements were resolved.",
           ],
           env,
           platform,
