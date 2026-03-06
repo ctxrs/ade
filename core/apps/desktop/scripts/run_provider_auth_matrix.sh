@@ -364,6 +364,17 @@ process.stdout.write(missing.join(","));
     "CTX_PROVIDER_AUTH_MATRIX_REPORT=${report_path}"
   )
 
+  if [[ "${auth_mode}" == "auth_import" ]]; then
+    local import_root="${cell_dir}/auth-import-host"
+    mkdir -p "${import_root}"
+    env_kv+=(
+      "CTX_PROVIDER_AUTH_IMPORT_HOME=${import_root}/home"
+      "CTX_PROVIDER_AUTH_IMPORT_XDG_CONFIG_HOME=${import_root}/xdg-config"
+      "CTX_PROVIDER_AUTH_IMPORT_XDG_DATA_HOME=${import_root}/xdg-data"
+      "CTX_PROVIDER_AUTH_IMPORT_CODEX_HOME=${import_root}/codex-home"
+    )
+  fi
+
   if [[ "${runner_kind}" == "desktop_wdio" ]]; then
     local tauri_driver_port=""
     tauri_driver_port="$(node -e '

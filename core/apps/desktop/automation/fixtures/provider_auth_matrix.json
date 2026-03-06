@@ -299,7 +299,7 @@
       "provider_id": "codex",
       "auth_mode": "auth_import",
       "env_target": "local_container",
-      "support": "deferred",
+      "support": "supported",
       "lane": "nightly",
       "required_assertions": [
         "auth_import_success",
@@ -308,11 +308,15 @@
         "first_turn_success"
       ],
       "owner": "provider-codex",
-      "prerequisites": [],
+      "prerequisites": [
+        "CTX_E2E_AUTH_IMPORT_CODEX_AUTH_JSON_B64"
+      ],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-import-matrix-cell.spec.cjs",
+        "scenarios": "provider-auth-import"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": null
     },
     {
       "id": "codex.auth_import.remote_host",
@@ -939,7 +943,7 @@
       "provider_id": "gemini",
       "auth_mode": "auth_import",
       "env_target": "local_container",
-      "support": "deferred",
+      "support": "supported",
       "lane": "nightly",
       "required_assertions": [
         "auth_import_success",
@@ -948,11 +952,15 @@
         "first_turn_success"
       ],
       "owner": "provider-gemini",
-      "prerequisites": [],
+      "prerequisites": [
+        "CTX_E2E_AUTH_IMPORT_GEMINI_ENV_B64"
+      ],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-import-matrix-cell.spec.cjs",
+        "scenarios": "provider-auth-import"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": null
     },
     {
       "id": "gemini.auth_import.remote_host",
@@ -1575,7 +1583,7 @@
       "provider_id": "qwen",
       "auth_mode": "auth_import",
       "env_target": "local_container",
-      "support": "deferred",
+      "support": "supported",
       "lane": "nightly",
       "required_assertions": [
         "auth_import_success",
@@ -1584,11 +1592,15 @@
         "first_turn_success"
       ],
       "owner": "provider-qwen",
-      "prerequisites": [],
+      "prerequisites": [
+        "CTX_E2E_AUTH_IMPORT_QWEN_ENV_B64"
+      ],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-import-matrix-cell.spec.cjs",
+        "scenarios": "provider-auth-import"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": null
     },
     {
       "id": "qwen.auth_import.remote_host",
@@ -2523,7 +2535,7 @@
       "provider_id": "amp",
       "auth_mode": "auth_import",
       "env_target": "local_container",
-      "support": "deferred",
+      "support": "supported",
       "lane": "nightly",
       "required_assertions": [
         "auth_import_success",
@@ -2532,11 +2544,15 @@
         "first_turn_success"
       ],
       "owner": "provider-amp",
-      "prerequisites": [],
+      "prerequisites": [
+        "CTX_E2E_AUTH_IMPORT_AMP_AUTH_JSON_B64"
+      ],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-import-matrix-cell.spec.cjs",
+        "scenarios": "provider-auth-import"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": null
     },
     {
       "id": "amp.auth_import.remote_host",
@@ -3435,68 +3451,84 @@
       "provider_id": "opencode",
       "auth_mode": "auth_import",
       "env_target": "local_host",
-      "support": "unsupported",
-      "lane": "none",
+      "support": "deferred",
+      "lane": "nightly",
       "required_assertions": [
-        "unsupported_contract"
+        "auth_import_success",
+        "probe_success",
+        "model_list_population",
+        "first_turn_success"
       ],
       "owner": "provider-opencode",
       "prerequisites": [],
       "runner": {
         "kind": "none"
       },
-      "skip_reason": "provider_auth_mode_not_supported"
+      "skip_reason": "coverage_not_implemented_yet"
     },
     {
       "id": "opencode.auth_import.local_container",
       "provider_id": "opencode",
       "auth_mode": "auth_import",
       "env_target": "local_container",
-      "support": "unsupported",
-      "lane": "none",
+      "support": "supported",
+      "lane": "nightly",
       "required_assertions": [
-        "unsupported_contract"
+        "auth_import_success",
+        "probe_success",
+        "model_list_population",
+        "first_turn_success"
       ],
       "owner": "provider-opencode",
-      "prerequisites": [],
+      "prerequisites": [
+        "CTX_E2E_AUTH_IMPORT_OPENCODE_AUTH_JSON_B64"
+      ],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-import-matrix-cell.spec.cjs",
+        "scenarios": "provider-auth-import"
       },
-      "skip_reason": "provider_auth_mode_not_supported"
+      "skip_reason": null
     },
     {
       "id": "opencode.auth_import.remote_host",
       "provider_id": "opencode",
       "auth_mode": "auth_import",
       "env_target": "remote_host",
-      "support": "unsupported",
-      "lane": "none",
+      "support": "deferred",
+      "lane": "nightly",
       "required_assertions": [
-        "unsupported_contract"
+        "auth_import_success",
+        "probe_success",
+        "model_list_population",
+        "first_turn_success"
       ],
       "owner": "provider-opencode",
       "prerequisites": [],
       "runner": {
         "kind": "none"
       },
-      "skip_reason": "provider_auth_mode_not_supported"
+      "skip_reason": "coverage_not_implemented_yet"
     },
     {
       "id": "opencode.auth_import.remote_container",
       "provider_id": "opencode",
       "auth_mode": "auth_import",
       "env_target": "remote_container",
-      "support": "unsupported",
-      "lane": "none",
+      "support": "deferred",
+      "lane": "nightly",
       "required_assertions": [
-        "unsupported_contract"
+        "auth_import_success",
+        "probe_success",
+        "model_list_population",
+        "first_turn_success"
       ],
       "owner": "provider-opencode",
       "prerequisites": [],
       "runner": {
         "kind": "none"
       },
-      "skip_reason": "provider_auth_mode_not_supported"
+      "skip_reason": "coverage_not_implemented_yet"
     },
     {
       "id": "opencode.configure_later_then_connect.local_host",

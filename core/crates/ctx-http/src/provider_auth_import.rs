@@ -11,6 +11,12 @@ use crate::harness_sources;
 use crate::provider_accounts;
 
 const DEFAULT_OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
+const CTX_PROVIDER_AUTH_IMPORT_HOME_ENV: &str = "CTX_PROVIDER_AUTH_IMPORT_HOME";
+const CTX_PROVIDER_AUTH_IMPORT_XDG_CONFIG_HOME_ENV: &str =
+    "CTX_PROVIDER_AUTH_IMPORT_XDG_CONFIG_HOME";
+const CTX_PROVIDER_AUTH_IMPORT_XDG_DATA_HOME_ENV: &str =
+    "CTX_PROVIDER_AUTH_IMPORT_XDG_DATA_HOME";
+const CTX_PROVIDER_AUTH_IMPORT_CODEX_HOME_ENV: &str = "CTX_PROVIDER_AUTH_IMPORT_CODEX_HOME";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderAuthImportCandidate {
@@ -162,6 +168,83 @@ pub async fn save_imported_registry(
     Ok(())
 }
 
+fn sort_imported_profiles(profiles: &mut Vec<ProviderImportedAuthProfile>) {
+    profiles.sort_by(|a, b| {
+        a.provider_label
+            .cmp(&b.provider_label)
+            .then_with(|| a.label.cmp(&b.label))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+}
+
+async fn upsert_imported_profile_metadata(
+    data_root: &Path,
+    material: &CandidateMaterial,
+    profile_id: &str,
+    endpoint: Option<String>,
+    auth_type: Option<String>,
+) -> Result<()> {
+    let fingerprint = material
+        .candidate
+        .fingerprint
+        .clone()
+        .or_else(|| material.secret_bytes.as_ref().map(|bytes| sha256_hex(bytes)))
+        .ok_or_else(|| anyhow::anyhow!("imported profile metadata requires secret fingerprint"))?;
+    let label = material
+        .label
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| {
+            format!(
+                "Imported {} profile",
+                material.candidate.provider_label.as_str()
+            )
+        });
+    let now = Utc::now();
+    let mut registry = load_imported_registry(data_root).await;
+
+    if let Some(existing) = registry
+        .profiles
+        .iter_mut()
+        .find(|profile| profile.id == profile_id)
+    {
+        let imported_at = existing.imported_at;
+        *existing = ProviderImportedAuthProfile {
+            id: profile_id.to_string(),
+            provider_id: material.candidate.provider_id.clone(),
+            provider_label: material.candidate.provider_label.clone(),
+            label,
+            account_identity: material.candidate.account_identity.clone(),
+            endpoint: endpoint.or_else(|| material.candidate.endpoint.clone()),
+            auth_type: auth_type.or_else(|| material.candidate.auth_type.clone()),
+            source_path: material.candidate.path.clone(),
+            source_kind: material.candidate.kind.clone(),
+            secret_fingerprint: fingerprint,
+            imported_at,
+            updated_at: now,
+        };
+    } else {
+        registry.profiles.push(ProviderImportedAuthProfile {
+            id: profile_id.to_string(),
+            provider_id: material.candidate.provider_id.clone(),
+            provider_label: material.candidate.provider_label.clone(),
+            label,
+            account_identity: material.candidate.account_identity.clone(),
+            endpoint: endpoint.or_else(|| material.candidate.endpoint.clone()),
+            auth_type: auth_type.or_else(|| material.candidate.auth_type.clone()),
+            source_path: material.candidate.path.clone(),
+            source_kind: material.candidate.kind.clone(),
+            secret_fingerprint: fingerprint,
+            imported_at: now,
+            updated_at: now,
+        });
+    }
+
+    sort_imported_profiles(&mut registry.profiles);
+    save_imported_registry(data_root, &registry).await?;
+    Ok(())
+}
+
 async fn legacy_migration_marker_exists(data_root: &Path) -> bool {
     tokio::fs::metadata(legacy_migration_marker_path(data_root))
         .await
@@ -181,26 +264,26 @@ async fn write_legacy_migration_marker(data_root: &Path) -> Result<()> {
     Ok(())
 }
 
+fn optional_path_env(name: &str) -> Option<PathBuf> {
+    std::env::var(name)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+}
+
 fn host_roots() -> Result<HostRoots> {
     let base = directories::BaseDirs::new().context("missing home directory")?;
-    let home = base.home_dir().to_path_buf();
-    let xdg_config = std::env::var("XDG_CONFIG_HOME")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
+    let home = optional_path_env(CTX_PROVIDER_AUTH_IMPORT_HOME_ENV)
+        .unwrap_or_else(|| base.home_dir().to_path_buf());
+    let xdg_config = optional_path_env(CTX_PROVIDER_AUTH_IMPORT_XDG_CONFIG_HOME_ENV)
+        .or_else(|| optional_path_env("XDG_CONFIG_HOME"))
         .unwrap_or_else(|| home.join(".config"));
-    let xdg_data = std::env::var("XDG_DATA_HOME")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
+    let xdg_data = optional_path_env(CTX_PROVIDER_AUTH_IMPORT_XDG_DATA_HOME_ENV)
+        .or_else(|| optional_path_env("XDG_DATA_HOME"))
         .unwrap_or_else(|| home.join(".local").join("share"));
-    let codex_home = std::env::var("CODEX_HOME")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
+    let codex_home = optional_path_env(CTX_PROVIDER_AUTH_IMPORT_CODEX_HOME_ENV)
+        .or_else(|| optional_path_env("CODEX_HOME"))
         .unwrap_or_else(|| home.join(".codex"));
     Ok(HostRoots {
         home,
@@ -705,6 +788,14 @@ async fn import_codex_candidate(
                 sha256_hex(&existing) == imported_fingerprint
             };
             if matches_auth {
+                upsert_imported_profile_metadata(
+                    data_root,
+                    material,
+                    &account.id,
+                    None,
+                    Some(account.kind.clone()),
+                )
+                .await?;
                 return Ok(ProviderAuthImportResult {
                     candidate_id: material.candidate.id.clone(),
                     provider_id: "codex".to_string(),
@@ -764,7 +855,7 @@ async fn import_codex_candidate(
     let entry = provider_accounts::CodexAccountEntry {
         id: account_id.clone(),
         label,
-        kind,
+        kind: kind.clone(),
         email: None,
         plan_type: None,
         created_at: Utc::now(),
@@ -788,6 +879,8 @@ async fn import_codex_candidate(
         None,
     )
     .await?;
+    upsert_imported_profile_metadata(data_root, material, &account_id, None, Some(kind.clone()))
+        .await?;
 
     Ok(ProviderAuthImportResult {
         candidate_id: material.candidate.id.clone(),
@@ -1036,6 +1129,14 @@ async fn import_endpoint_candidate(
                 Some(found.endpoint_id.clone()),
             )
             .await?;
+            upsert_imported_profile_metadata(
+                data_root,
+                material,
+                &found.endpoint_id,
+                base_url.clone(),
+                auth_type.clone(),
+            )
+            .await?;
             return Ok(import_result(
                 material,
                 "already_imported",
@@ -1067,6 +1168,14 @@ async fn import_endpoint_candidate(
         provider_id,
         harness_sources::HarnessSourceKind::Endpoint,
         Some(endpoint.id.clone()),
+    )
+    .await?;
+    upsert_imported_profile_metadata(
+        data_root,
+        material,
+        &endpoint.id,
+        endpoint.base_url.clone(),
+        Some(endpoint.auth_type.clone()),
     )
     .await?;
 
@@ -1147,6 +1256,16 @@ async fn import_gemini_auth_file_candidate(
     let imported = registry.accounts.len() > before_len;
     if imported {
         set_subscription_source_if_supported(data_root, "gemini").await?;
+    }
+    if let Some(profile_id) = registry.active_account_id.clone() {
+        upsert_imported_profile_metadata(
+            data_root,
+            material,
+            &profile_id,
+            None,
+            Some("subscription".to_string()),
+        )
+        .await?;
     }
     Ok(import_result(
         material,
@@ -1434,6 +1553,35 @@ mod tests {
     use super::*;
     use base64::Engine;
 
+    static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    async fn lock_env() -> tokio::sync::MutexGuard<'static, ()> {
+        ENV_LOCK.lock().await
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        prev: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let prev = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(value) = self.prev.as_deref() {
+                std::env::set_var(self.key, value);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
     async fn write_legacy_secret_material(
         data_root: &Path,
         profile_id: &str,
@@ -1461,6 +1609,35 @@ mod tests {
             xdg_data: base.join("home").join(".local").join("share"),
             codex_home: base.join("home").join(".codex"),
         }
+    }
+
+    #[tokio::test]
+    async fn host_roots_honors_auth_import_override_envs() {
+        let _env_lock = lock_env().await;
+        let dir = tempfile::tempdir().unwrap();
+        let override_root = dir.path().join("override");
+        let _home = EnvGuard::set(
+            CTX_PROVIDER_AUTH_IMPORT_HOME_ENV,
+            override_root.join("home").to_string_lossy().as_ref(),
+        );
+        let _config = EnvGuard::set(
+            CTX_PROVIDER_AUTH_IMPORT_XDG_CONFIG_HOME_ENV,
+            override_root.join("config").to_string_lossy().as_ref(),
+        );
+        let _data = EnvGuard::set(
+            CTX_PROVIDER_AUTH_IMPORT_XDG_DATA_HOME_ENV,
+            override_root.join("data").to_string_lossy().as_ref(),
+        );
+        let _codex = EnvGuard::set(
+            CTX_PROVIDER_AUTH_IMPORT_CODEX_HOME_ENV,
+            override_root.join("codex").to_string_lossy().as_ref(),
+        );
+
+        let roots = host_roots().unwrap();
+        assert_eq!(roots.home, override_root.join("home"));
+        assert_eq!(roots.xdg_config, override_root.join("config"));
+        assert_eq!(roots.xdg_data, override_root.join("data"));
+        assert_eq!(roots.codex_home, override_root.join("codex"));
     }
 
     #[test]
@@ -1633,6 +1810,10 @@ mod tests {
         let result = import_codex_candidate(root, &material).await.unwrap();
         assert_eq!(result.status, "already_imported");
         assert_eq!(result.profile_id.as_deref(), Some(account_id));
+        let profiles = list_provider_auth_profiles(root).await.unwrap();
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].id, account_id);
+        assert_eq!(profiles[0].provider_id, "codex");
     }
 
     #[test]
@@ -1684,6 +1865,10 @@ mod tests {
         let registry = provider_accounts::load_gemini_registry(root).await;
         assert_eq!(registry.accounts.len(), 1);
         assert_eq!(registry.active_account_id, result.profile_id);
+        let profiles = list_provider_auth_profiles(root).await.unwrap();
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].provider_id, "gemini");
+        assert_eq!(profiles[0].id, registry.active_account_id.unwrap());
     }
 
     #[tokio::test]
@@ -1921,6 +2106,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(config.endpoints.len(), 1);
+        let profiles = list_provider_auth_profiles(root).await.unwrap();
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].provider_id, "qwen");
+        assert_eq!(profiles[0].id, first.profile_id.clone().unwrap());
 
         let updated_material = CandidateMaterial {
             secret_bytes: Some(
@@ -1936,6 +2125,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(config.endpoints.len(), 1);
+        let profiles = list_provider_auth_profiles(root).await.unwrap();
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].id, updated.profile_id.unwrap());
     }
 
     #[tokio::test]
