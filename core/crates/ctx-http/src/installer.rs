@@ -173,6 +173,30 @@ fn dependency_target_compatible_with_context(
     }
 }
 
+fn prepend_bundled_seed_node_bin_dir(
+    bin_dirs: &mut Vec<PathBuf>,
+    runtime_cmd: &ProviderRuntimeCommand,
+    bundled_node_runtime: Option<bundled_assets::BundledRuntimePaths>,
+) {
+    if runtime_cmd.source != ProviderRuntimeCommandSource::BundledSeed {
+        return;
+    }
+    let runtime_cmd_path = Path::new(&runtime_cmd.command_abs_path);
+    if !archive_bin_requires_node_runtime(&runtime_cmd.command_abs_path, runtime_cmd_path) {
+        return;
+    }
+    let Some(node_bin_dir) = bundled_node_runtime
+        .as_ref()
+        .and_then(|runtime| runtime.bin.parent())
+        .map(Path::to_path_buf)
+    else {
+        return;
+    };
+    if !bin_dirs.contains(&node_bin_dir) {
+        bin_dirs.push(node_bin_dir);
+    }
+}
+
 pub(crate) fn prepend_runtime_bin_dirs_to_provider_path(
     provider_env: &mut HashMap<String, String>,
     cfg: &AgentServerConfigFile,
@@ -207,6 +231,11 @@ pub(crate) fn prepend_runtime_bin_dirs_to_provider_path(
                 }
             }
         }
+        prepend_bundled_seed_node_bin_dir(
+            &mut bin_dirs,
+            &runtime_cmd,
+            bundled_assets::bundled_node_runtime(),
+        );
     }
     if bin_dirs.is_empty() {
         return;
@@ -336,8 +365,9 @@ pub(crate) fn apply_install_target_status(
                 "provider managed install target is '{managed_target}', requested '{requested_target}'"
             ),
         );
-        let diagnostic =
-            format!("provider is installed for target '{managed_target}', not '{requested_target}'");
+        let diagnostic = format!(
+            "provider is installed for target '{managed_target}', not '{requested_target}'"
+        );
         if !status.diagnostics.iter().any(|msg| msg == &diagnostic) {
             status.diagnostics.insert(0, diagnostic);
         }
@@ -351,7 +381,9 @@ pub(crate) fn apply_install_target_status(
         status.installed = false;
         status.health = ctx_providers::adapters::ProviderHealth::Missing;
         status.details.remove("target_mismatch");
-        status.details.insert("target_unverified".to_string(), "true".to_string());
+        status
+            .details
+            .insert("target_unverified".to_string(), "true".to_string());
         status.details.insert(
             "target_mismatch_reason".to_string(),
             format!(
@@ -4576,6 +4608,46 @@ mod tests {
 
         assert_eq!(runtime.command, "/tmp/codex-crp");
         assert_eq!(runtime.args, vec!["--stdio".to_string()]);
+    }
+
+    #[test]
+    fn bundled_seed_js_runtime_prepends_bundled_node_bin_dir() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let script = temp
+            .path()
+            .join("providers/goose/macos/aarch64/goose-acp.js");
+        std::fs::create_dir_all(script.parent().expect("parent")).expect("mkdir script");
+        std::fs::write(&script, b"#!/usr/bin/env node\n").expect("write script");
+
+        let node_bin = temp
+            .path()
+            .join("runtimes/node/macos/aarch64/node-v1/bin/node");
+        std::fs::create_dir_all(node_bin.parent().expect("parent")).expect("mkdir node");
+        std::fs::write(&node_bin, b"ok").expect("write node");
+
+        let runtime_cmd = ProviderRuntimeCommand {
+            provider_id: "goose".to_string(),
+            command_abs_path: script.to_string_lossy().to_string(),
+            args: Vec::new(),
+            dependencies: Vec::new(),
+            source: ProviderRuntimeCommandSource::BundledSeed,
+        };
+        let bundled_node = bundled_assets::BundledRuntimePaths {
+            root: node_bin
+                .parent()
+                .expect("bin dir")
+                .parent()
+                .expect("runtime root")
+                .to_path_buf(),
+            bin: node_bin.clone(),
+            npm_cli: None,
+            version: "1".to_string(),
+        };
+
+        let mut bin_dirs = vec![script.parent().expect("script dir").to_path_buf()];
+        prepend_bundled_seed_node_bin_dir(&mut bin_dirs, &runtime_cmd, Some(bundled_node));
+
+        assert!(bin_dirs.contains(&node_bin.parent().expect("node dir").to_path_buf()));
     }
 
     #[test]

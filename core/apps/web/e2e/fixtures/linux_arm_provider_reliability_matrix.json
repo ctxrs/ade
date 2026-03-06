@@ -32,10 +32,6 @@
       "openrouter_model_override": "openai/gpt-5.2-codex"
     },
     {
-      "provider_id": "droid",
-      "openrouter_model_override": "openai/gpt-5.2-codex"
-    },
-    {
       "provider_id": "openhands",
       "openrouter_model_override": "openai/gpt-5.2-codex"
     }
@@ -60,6 +56,10 @@
     {
       "provider_id": "amp",
       "reason": "requires dedicated partner-auth validation lane"
+    },
+    {
+      "provider_id": "droid",
+      "reason": "linux-arm bundled lane only ships droid-acp; the required droid CLI dependency is not yet modeled as a managed runtime artifact"
     },
     {
       "provider_id": "cagent",

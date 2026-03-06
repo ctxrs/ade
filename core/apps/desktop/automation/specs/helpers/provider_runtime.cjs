@@ -1,4 +1,5 @@
 const { daemonJson } = require("./daemon.cjs");
+const { providerStatusPath } = require("../../../../test-support/provider_status_path.cjs");
 
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const DEFAULT_CODEX_OPENROUTER_MODEL_OVERRIDE = "openai/gpt-5.2-codex";
@@ -36,18 +37,17 @@ const readStringMap = (value) => {
   return out;
 };
 
-const getProviderStatus = async (providerId) => {
-  const response = await daemonJson("GET", "/api/providers");
+const getProviderStatus = async (providerId, target = "host") => {
+  const response = await daemonJson("GET", providerStatusPath(providerId, target));
   if (response.status !== 200) {
     throw new Error(`failed to read providers (${response.status})`);
   }
-  const rows = asArray(response.payload).map((entry) => asRecord(entry));
-  const row = rows.find((entry) => readString(entry.provider_id) === providerId);
+  const row = asRecord(response.payload);
   if (!row) {
     return {
       installed: false,
       health: "missing",
-      diagnostics: ["provider not listed by /api/providers"],
+      diagnostics: [`provider not returned by ${providerStatusPath(providerId, target)}`],
       details: {},
     };
   }
@@ -203,7 +203,7 @@ const ensureCodexOpenRouterWorkspaceReady = async (
     throw new Error("OPENROUTER_API_KEY is required to configure Codex endpoint auth for remote first-turn validation");
   }
 
-  const status = await getProviderStatus(providerId);
+  const status = await getProviderStatus(providerId, installTarget);
   if (!status.installed) {
     await installProviderAndWait(providerId, installTarget);
   }

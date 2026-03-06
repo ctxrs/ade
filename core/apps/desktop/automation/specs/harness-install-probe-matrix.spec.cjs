@@ -99,7 +99,7 @@ describe("harness install/probe matrix (desktop e2e)", () => {
     });
 
     await installProviderAndWait(DEFAULT_PROVIDER_ID, "container");
-    const postInstall = await getProviderStatus(DEFAULT_PROVIDER_ID);
+    const postInstall = await getProviderStatus(DEFAULT_PROVIDER_ID, "container");
     diagnostics.cases.push({
       id: "fresh-install",
       status: postInstall.health,

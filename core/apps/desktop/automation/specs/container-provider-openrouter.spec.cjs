@@ -179,7 +179,7 @@ describe("container provider OpenRouter (desktop e2e)", () => {
 
     stageLog("install.start", DEFAULT_PROVIDER_ID);
     await installProviderAndWait(DEFAULT_PROVIDER_ID, "container");
-    const preStatus = await getProviderStatus(DEFAULT_PROVIDER_ID);
+    const preStatus = await getProviderStatus(DEFAULT_PROVIDER_ID, "container");
     stageLog("install.done", `installed=${preStatus.installed} health=${preStatus.health}`);
     if (!preStatus.installed) {
       throw new Error(`provider did not report installed after install: ${JSON.stringify(preStatus)}`);

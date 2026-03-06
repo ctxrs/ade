@@ -2,11 +2,18 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const repoRoot = path.resolve(__dirname, "..");
 const scriptPath = path.join(repoRoot, "scripts", "providers_e2e.sh");
+const bundleHarnessScriptPath = path.join(
+  repoRoot,
+  "..",
+  "scripts",
+  "ensure_bundled_harnesses.sh",
+);
 const canonicalBundleDir = path.join(
   repoRoot,
   "apps",
@@ -38,7 +45,7 @@ test("provider e2e refuses canonical desktop bundle dir mutation by default", ()
 });
 
 test("linux-arm lanes bundle acp-crp-bridge via managed provider artifacts", () => {
-  const script = require("node:fs").readFileSync(scriptPath, "utf8");
+  const script = fs.readFileSync(scriptPath, "utf8");
 
   assert.match(
     script,
@@ -52,4 +59,22 @@ test("linux-arm lanes bundle acp-crp-bridge via managed provider artifacts", () 
     script,
     /managed archive bundling path as the other lane providers/,
   );
+});
+
+test("endpoint bundle defaults use a home-shareable cache root", () => {
+  const script = fs.readFileSync(scriptPath, "utf8");
+
+  assert.match(script, /default_e2e_bundle_root\(\)/);
+  assert.match(script, /Library\/Caches\/ctx-e2e/);
+  assert.match(
+    script,
+    /bundle_dir="\$\{CTX_E2E_BUNDLE_DIR:-\$\{cache_root\}\/bundles-\$\{cache_key\}\}"/,
+  );
+});
+
+test("bundle harnesses treat archive js entrypoints as requiring node", () => {
+  const script = fs.readFileSync(bundleHarnessScriptPath, "utf8");
+
+  assert.match(script, /elif kind == "archive":/);
+  assert.match(script, /bin_path\.endswith\(\("\.js", "\.mjs", "\.cjs"\)\)/);
 });

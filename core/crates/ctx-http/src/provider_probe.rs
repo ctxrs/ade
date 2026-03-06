@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -77,6 +78,40 @@ fn synthetic_probe_worktree(workspace: &Workspace) -> Worktree {
     }
 }
 
+async fn finalize_workspace_probe_env(
+    source: &ResolvedHarnessSource,
+    provider_id: &str,
+    env: &mut HashMap<String, String>,
+) -> Result<(), String> {
+    // Mirror scheduler behavior for Codex endpoint sources in container mode:
+    // ensure CODEX_HOME points at container-accessible runtime root, not host endpoint-home paths.
+    if provider_id == "codex" && source.source_kind == HarnessSourceKind::Endpoint {
+        if let Some(root) = env.get("CTX_DATA_ROOT").cloned() {
+            provider_accounts::ensure_codex_endpoint_runtime_home_from_env(
+                Path::new(&root),
+                env,
+            )
+            .await
+            .map_err(|err| {
+                logs::redact_sensitive(&format!(
+                    "probe codex endpoint runtime-home preparation failed: {err:#}"
+                ))
+            })?;
+        }
+    }
+
+    if let Some(root) = env.get("CTX_DATA_ROOT").cloned() {
+        provider_accounts::ensure_provider_runtime_home_env(Path::new(&root), provider_id, env)
+            .await
+            .map_err(|err| {
+                logs::redact_sensitive(&format!(
+                    "probe provider runtime-home preparation failed: {err:#}"
+                ))
+            })?;
+    }
+    Ok(())
+}
+
 pub(crate) async fn provider_probe_env_for_workspace_runtime(
     state: &Arc<AppState>,
     workspace: &Workspace,
@@ -112,33 +147,21 @@ pub(crate) async fn provider_probe_env_for_workspace_runtime(
     for (key, value) in runtime_plan.env_overrides {
         env.insert(key, value);
     }
-
-    // Mirror scheduler behavior for Codex endpoint sources in container mode:
-    // ensure CODEX_HOME points at container-accessible runtime root, not host endpoint-home paths.
-    if provider_id == "codex" && source.source_kind == HarnessSourceKind::Endpoint {
-        if let Some(root) = env.get("CTX_DATA_ROOT").cloned() {
-            provider_accounts::ensure_codex_endpoint_runtime_home_from_env(
-                std::path::Path::new(&root),
-                &mut env,
-            )
-            .await
-            .map_err(|err| {
-                logs::redact_sensitive(&format!(
-                    "probe codex endpoint runtime-home preparation failed: {err:#}"
-                ))
-            })?;
-        }
-    }
+    finalize_workspace_probe_env(&source, provider_id, &mut env).await?;
     Ok((source, env))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{select_probe_worktree, synthetic_probe_worktree};
+    use super::{finalize_workspace_probe_env, select_probe_worktree, synthetic_probe_worktree};
+    use std::collections::HashMap;
+
     use chrono::Utc;
     use ctx_core::ids::{WorkspaceId, WorktreeId};
     use ctx_core::models::{Workspace, Worktree};
     use uuid::Uuid;
+
+    use crate::harness_sources::{HarnessSourceKind, ResolvedHarnessSource};
 
     fn sample_workspace(root_path: &str) -> Workspace {
         Workspace {
@@ -204,5 +227,42 @@ mod tests {
         let synthetic = synthetic_probe_worktree(&workspace);
         assert_eq!(synthetic.workspace_id, workspace.id);
         assert_eq!(synthetic.root_path, workspace.root_path);
+    }
+
+    #[tokio::test]
+    async fn finalize_workspace_probe_env_sets_home_and_xdg_dirs_for_container_probe() {
+        let runtime_root = tempfile::tempdir().expect("tempdir");
+        let source = ResolvedHarnessSource {
+            source_kind: HarnessSourceKind::Endpoint,
+            endpoint: None,
+            env: HashMap::new(),
+        };
+        let mut env = HashMap::from([(
+            "CTX_DATA_ROOT".to_string(),
+            runtime_root.path().to_string_lossy().to_string(),
+        )]);
+
+        finalize_workspace_probe_env(&source, "opencode", &mut env)
+            .await
+            .expect("finalize probe env");
+
+        let home = runtime_root.path().join("providers").join("opencode").join("home");
+        assert_eq!(env.get("HOME").map(String::as_str), Some(home.to_string_lossy().as_ref()));
+        assert_eq!(
+            env.get("XDG_CONFIG_HOME").map(String::as_str),
+            Some(home.join(".config").to_string_lossy().as_ref())
+        );
+        assert_eq!(
+            env.get("XDG_CACHE_HOME").map(String::as_str),
+            Some(home.join(".cache").to_string_lossy().as_ref())
+        );
+        assert_eq!(
+            env.get("XDG_DATA_HOME").map(String::as_str),
+            Some(home.join(".local/share").to_string_lossy().as_ref())
+        );
+        assert_eq!(
+            env.get("XDG_STATE_HOME").map(String::as_str),
+            Some(home.join(".local/state").to_string_lossy().as_ref())
+        );
     }
 }

@@ -74,6 +74,11 @@ const firstText = (...values: unknown[]): string => {
 
 const normalizeErrorMessage = (raw: string): string => raw.replace(/\s+/g, " ").trim();
 
+const providerStatusPath = (providerId: string, target: InstallTarget): string => {
+  const resolvedTarget = target === "container" ? "container" : "host";
+  return `/api/providers/${encodeURIComponent(providerId)}?target=${resolvedTarget}`;
+};
+
 const readStringMap = (value: unknown): Record<string, string> => {
   const out: Record<string, string> = {};
   for (const [key, rawValue] of Object.entries(asRecord(value))) {
@@ -172,16 +177,19 @@ const initRepo = (): string => {
   return repo;
 };
 
-async function getProviderStatus(request: APIRequestContext, providerId: string): Promise<ProviderStatus> {
-  const response = await request.get("/api/providers");
+async function getProviderStatus(
+  request: APIRequestContext,
+  providerId: string,
+  target: InstallTarget,
+): Promise<ProviderStatus> {
+  const response = await request.get(providerStatusPath(providerId, target));
   expect(response.ok(), `failed to read providers (${response.status()})`).toBeTruthy();
-  const rows = asArray(await response.json()).map((entry) => asRecord(entry));
-  const row = rows.find((entry) => readString(entry.provider_id) === providerId);
+  const row = asRecord(await response.json());
   if (!row) {
     return {
       installed: false,
       health: "missing",
-      diagnostics: ["provider not listed by /api/providers"],
+      diagnostics: [`provider not returned by ${providerStatusPath(providerId, target)}`],
       details: {},
     };
   }
@@ -547,7 +555,7 @@ async function runProvider(
   let modelId: string | null = null;
 
   try {
-    const providerBefore = await getProviderStatus(request, providerId);
+    const providerBefore = await getProviderStatus(request, providerId, installTarget);
     console.log(`runtime install smoke: provider=${providerId} before installed=${providerBefore.installed} health=${providerBefore.health}`);
 
     stage = "install";
@@ -555,7 +563,7 @@ async function runProvider(
     console.log(`runtime install smoke: provider=${providerId} install_id=${installId} completed`);
 
     stage = "status_after_install";
-    const providerAfter = await getProviderStatus(request, providerId);
+    const providerAfter = await getProviderStatus(request, providerId, installTarget);
     if (!providerAfter.installed || providerAfter.health !== "ok") {
       const detail = normalizeErrorMessage(firstText(providerAfter.diagnostics[0], `installed=${providerAfter.installed} health=${providerAfter.health}`));
       throw createStageError(stage, `provider unhealthy after install: ${detail}`);

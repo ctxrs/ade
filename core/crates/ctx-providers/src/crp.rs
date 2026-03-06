@@ -60,7 +60,12 @@ fn bundled_linux_candidate_for_marker(path: &str, marker: &str) -> BundledLinuxR
     };
     let prefix = &trimmed[..idx];
     let bundles_segment = format!("{sep}bundles");
-    if prefix != "bundles" && !prefix.ends_with(&bundles_segment) {
+    let prefix_path = Path::new(prefix);
+    let looks_like_bundle_root = prefix == "bundles"
+        || prefix.ends_with(&bundles_segment)
+        || prefix_path.join("manifest.json").is_file()
+        || prefix_path.join("runtime_lock.v2.json").is_file();
+    if !looks_like_bundle_root {
         return BundledLinuxRewrite::NotBundledPath;
     }
     let rest = &trimmed[idx + needle.len()..];
@@ -107,10 +112,12 @@ struct BundledManifestForRuntimeRewrite {
 
 fn bundles_root_for_path(path: &Path) -> Option<PathBuf> {
     path.ancestors().find_map(|ancestor| {
-        if ancestor
+        let looks_like_bundle_root = ancestor
             .file_name()
             .is_some_and(|name| name == std::ffi::OsStr::new("bundles"))
-        {
+            || ancestor.join("manifest.json").is_file()
+            || ancestor.join("runtime_lock.v2.json").is_file();
+        if looks_like_bundle_root {
             Some(ancestor.to_path_buf())
         } else {
             None
@@ -178,7 +185,10 @@ fn rewrite_bundled_path_for_linux(path: &str) -> Result<String> {
     }
 }
 
-fn rewrite_bundled_paths_in_shell_command(raw: &str) -> Result<String> {
+fn rewrite_bundled_paths_in_shell_command(
+    raw: &str,
+    env: &HashMap<String, String>,
+) -> Result<String> {
     let tokens = shlex::split(raw).ok_or_else(|| {
         anyhow::anyhow!("invalid shell command in --acp-command: unmatched quote")
     })?;
@@ -191,11 +201,26 @@ fn rewrite_bundled_paths_in_shell_command(raw: &str) -> Result<String> {
         rewritten.push(rewrite_bundled_path_for_linux(&token)?);
     }
 
+    let first_is_js_entrypoint = rewritten
+        .first()
+        .and_then(|command| std::path::Path::new(command).extension())
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("js"));
+    if first_is_js_entrypoint {
+        let node = resolve_node_binary_from_env(env)
+            .ok_or_else(|| anyhow::anyhow!("could not resolve node binary for JS ACP command"))?;
+        let rewritten_node = rewrite_bundled_path_for_linux(&node)?;
+        rewritten.insert(0, rewritten_node);
+    }
+
     shlex::try_join(rewritten.iter().map(String::as_str))
         .map_err(|err| anyhow::anyhow!("failed to quote --acp-command after rewrite: {err}"))
 }
 
-fn rewrite_container_args_for_linux(args: &[String]) -> Result<Vec<String>> {
+fn rewrite_container_args_for_linux(
+    args: &[String],
+    env: &HashMap<String, String>,
+) -> Result<Vec<String>> {
     let mut out = Vec::with_capacity(args.len());
     let mut idx = 0;
     while idx < args.len() {
@@ -203,7 +228,7 @@ fn rewrite_container_args_for_linux(args: &[String]) -> Result<Vec<String>> {
         if arg == "--acp-command" {
             out.push(arg.clone());
             if let Some(acp_command) = args.get(idx + 1) {
-                out.push(rewrite_bundled_paths_in_shell_command(acp_command)?);
+                out.push(rewrite_bundled_paths_in_shell_command(acp_command, env)?);
                 idx += 2;
                 continue;
             }
@@ -243,7 +268,7 @@ fn rewrite_container_command_for_linux(
     env: &HashMap<String, String>,
 ) -> Result<(String, Vec<String>)> {
     let rewritten_command = rewrite_bundled_path_for_linux(command)?;
-    let rewritten_args = rewrite_container_args_for_linux(args)?;
+    let rewritten_args = rewrite_container_args_for_linux(args, env)?;
     let is_js_entrypoint = std::path::Path::new(&rewritten_command)
         .extension()
         .and_then(|ext| ext.to_str())
@@ -2835,6 +2860,23 @@ mod tests {
     }
 
     #[test]
+    fn rewrite_bundled_path_for_linux_rewrites_e2e_bundle_provider_paths() {
+        let tmp = tempfile::Builder::new()
+            .prefix("ctx-e2e-bundles-runtime-probe-")
+            .tempdir()
+            .expect("tempdir");
+        let host = tmp.path().join("providers/codex/macos/aarch64/codex-crp");
+        let linux = tmp.path().join("providers/codex/linux/aarch64/codex-crp");
+        fs::create_dir_all(linux.parent().expect("parent")).expect("mkdir");
+        fs::write(&linux, b"ok").expect("write linux");
+        fs::write(tmp.path().join("manifest.json"), "{}").expect("write manifest");
+
+        let rewritten = rewrite_bundled_path_for_linux(host.to_string_lossy().as_ref())
+            .expect("rewrite should succeed");
+        assert_eq!(rewritten, linux.to_string_lossy());
+    }
+
+    #[test]
     fn rewrite_bundled_path_for_linux_rewrites_runtime_flavor_directory() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let host = tmp
@@ -2846,6 +2888,44 @@ mod tests {
         fs::create_dir_all(linux.parent().expect("parent")).expect("mkdir");
         fs::write(&linux, b"ok").expect("write");
         let manifest_path = tmp.path().join("bundles/manifest.json");
+        fs::write(
+            &manifest_path,
+            serde_json::json!({
+                "version": 1,
+                "providers": [],
+                "runtimes": [
+                    {
+                        "id": "node",
+                        "os": "linux",
+                        "arch": "aarch64",
+                        "root": "runtimes/node/linux/aarch64/node-v24.12.0-linux-arm64",
+                        "bin": "bin/node"
+                    }
+                ],
+                "images": [],
+                "daemons": []
+            })
+            .to_string(),
+        )
+        .expect("write manifest");
+
+        let rewritten = rewrite_bundled_path_for_linux(host.to_string_lossy().as_ref())
+            .expect("rewrite should succeed");
+        assert_eq!(rewritten, linux.to_string_lossy());
+    }
+
+    #[test]
+    fn rewrite_bundled_path_for_linux_rewrites_runtime_flavor_directory_for_e2e_bundle_root() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let host = tmp
+            .path()
+            .join("runtimes/node/macos/aarch64/node-v24.12.0-darwin-arm64/bin/node");
+        let linux = tmp
+            .path()
+            .join("runtimes/node/linux/aarch64/node-v24.12.0-linux-arm64/bin/node");
+        fs::create_dir_all(linux.parent().expect("parent")).expect("mkdir");
+        fs::write(&linux, b"ok").expect("write");
+        let manifest_path = tmp.path().join("manifest.json");
         fs::write(
             &manifest_path,
             serde_json::json!({
@@ -2888,21 +2968,34 @@ mod tests {
             .path()
             .join("bundles/runtimes/node/linux/aarch64/node-v1/bin/node");
         fs::create_dir_all(linux_provider.parent().expect("parent")).expect("mkdir");
+        fs::create_dir_all(host_node.parent().expect("parent")).expect("mkdir host node");
         fs::create_dir_all(linux_node.parent().expect("parent")).expect("mkdir");
         fs::write(&linux_provider, b"ok").expect("write");
+        fs::write(&host_node, b"ok").expect("write host node");
         fs::write(&linux_node, b"ok").expect("write");
 
-        let raw_acp = format!(
-            "{} {} --foo",
-            host_provider.to_string_lossy(),
-            host_node.to_string_lossy()
-        );
+        let raw_acp = format!("{} --foo", host_provider.to_string_lossy());
         let args = vec!["--acp-command".to_string(), raw_acp];
-        let rewritten = rewrite_container_args_for_linux(&args).expect("rewrite args");
+        let mut env = HashMap::new();
+        env.insert(
+            "PATH".to_string(),
+            host_node
+                .parent()
+                .expect("node dir")
+                .to_string_lossy()
+                .to_string(),
+        );
+        let rewritten = rewrite_container_args_for_linux(&args, &env).expect("rewrite args");
         assert_eq!(rewritten.len(), 2);
-        let payload = &rewritten[1];
-        assert!(payload.contains(linux_provider.to_string_lossy().as_ref()));
-        assert!(payload.contains(linux_node.to_string_lossy().as_ref()));
+        let parsed = shlex::split(&rewritten[1]).expect("parse rewritten command");
+        assert_eq!(
+            parsed,
+            vec![
+                linux_node.to_string_lossy().to_string(),
+                linux_provider.to_string_lossy().to_string(),
+                "--foo".to_string(),
+            ]
+        );
     }
 
     #[test]
@@ -2924,14 +3017,15 @@ mod tests {
             .path()
             .join("bundles/runtimes/node/linux/aarch64/node-v1/bin/node");
         fs::create_dir_all(linux_provider.parent().expect("parent")).expect("mkdir");
+        fs::create_dir_all(host_node.parent().expect("parent")).expect("mkdir host node");
         fs::create_dir_all(linux_node.parent().expect("parent")).expect("mkdir");
         fs::write(&linux_provider, b"ok").expect("write");
+        fs::write(&host_node, b"ok").expect("write host node");
         fs::write(&linux_node, b"ok").expect("write");
 
         let raw_acp = shlex::try_join(
             [
                 host_provider.to_string_lossy().to_string(),
-                host_node.to_string_lossy().to_string(),
                 "--flag".to_string(),
             ]
             .iter()
@@ -2939,14 +3033,76 @@ mod tests {
         )
         .expect("quote acp command");
         let args = vec!["--acp-command".to_string(), raw_acp];
-        let rewritten = rewrite_container_args_for_linux(&args).expect("rewrite args");
+        let mut env = HashMap::new();
+        env.insert(
+            "PATH".to_string(),
+            host_node
+                .parent()
+                .expect("node dir")
+                .to_string_lossy()
+                .to_string(),
+        );
+        let rewritten = rewrite_container_args_for_linux(&args, &env).expect("rewrite args");
         assert_eq!(rewritten.len(), 2);
         let parsed = shlex::split(&rewritten[1]).expect("parse rewritten command");
         assert_eq!(
             parsed,
             vec![
-                linux_provider.to_string_lossy().to_string(),
                 linux_node.to_string_lossy().to_string(),
+                linux_provider.to_string_lossy().to_string(),
+                "--flag".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn rewrite_container_args_for_linux_keeps_explicit_node_binary_for_acp_command() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let host_provider = tmp
+            .path()
+            .join("bundles/providers/goose/macos/aarch64/goose-acp.js");
+        let linux_provider = tmp
+            .path()
+            .join("bundles/providers/goose/linux/aarch64/goose-acp.js");
+        let host_node = tmp
+            .path()
+            .join("bundles/runtimes/node/macos/aarch64/node-v1/bin/node");
+        let linux_node = tmp
+            .path()
+            .join("bundles/runtimes/node/linux/aarch64/node-v1/bin/node");
+        fs::create_dir_all(linux_provider.parent().expect("parent")).expect("mkdir");
+        fs::create_dir_all(linux_node.parent().expect("parent")).expect("mkdir");
+        fs::write(&linux_provider, b"ok").expect("write provider");
+        fs::write(&linux_node, b"ok").expect("write node");
+
+        let raw_acp = shlex::try_join(
+            [
+                host_node.to_string_lossy().to_string(),
+                host_provider.to_string_lossy().to_string(),
+                "--flag".to_string(),
+            ]
+            .iter()
+            .map(String::as_str),
+        )
+        .expect("quote acp command");
+        let args = vec!["--acp-command".to_string(), raw_acp];
+        let mut env = HashMap::new();
+        env.insert(
+            "PATH".to_string(),
+            linux_node
+                .parent()
+                .expect("node dir")
+                .to_string_lossy()
+                .to_string(),
+        );
+
+        let rewritten = rewrite_container_args_for_linux(&args, &env).expect("rewrite args");
+        let parsed = shlex::split(&rewritten[1]).expect("parse rewritten command");
+        assert_eq!(
+            parsed,
+            vec![
+                linux_node.to_string_lossy().to_string(),
+                linux_provider.to_string_lossy().to_string(),
                 "--flag".to_string(),
             ]
         );
@@ -3013,7 +3169,8 @@ mod tests {
     #[test]
     fn rewrite_container_args_for_linux_rejects_invalid_shell_command() {
         let args = vec!["--acp-command".to_string(), "\"unterminated".to_string()];
-        let err = rewrite_container_args_for_linux(&args).expect_err("expected parse error");
+        let err =
+            rewrite_container_args_for_linux(&args, &HashMap::new()).expect_err("expected parse error");
         assert!(err
             .to_string()
             .contains("invalid shell command in --acp-command"));

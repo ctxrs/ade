@@ -6370,15 +6370,11 @@ ZXY987654321
 
     #[test]
     fn endpoint_catalog_runtime_probe_failure_preserves_endpoint_status() {
-        let (
-            status,
-            auth_required,
-            message,
-            endpoint_status,
-        ) = endpoint_catalog_runtime_probe_failure(
-            "connection refused while launching bundled runtime".to_string(),
-            HarnessEndpointVerificationStatus::Valid,
-        );
+        let (status, auth_required, message, endpoint_status) =
+            endpoint_catalog_runtime_probe_failure(
+                "connection refused while launching bundled runtime".to_string(),
+                HarnessEndpointVerificationStatus::Valid,
+            );
         assert_eq!(status, "network_error");
         assert_eq!(auth_required, Some(false));
         assert!(message

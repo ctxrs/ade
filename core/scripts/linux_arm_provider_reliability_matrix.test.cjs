@@ -29,6 +29,17 @@ test("loadMatrix validates default fixture and exposes critical/nightly ids", ()
   }
 });
 
+test("default fixture defers droid until its managed runtime dependency exists", () => {
+  const { matrix } = loadMatrix();
+  const nightly = providerIdsForLane(matrix, "nightly");
+  const deferred = matrix.deferred_providers || [];
+  const droid = deferred.find((row) => row.provider_id === "droid");
+
+  assert.ok(!nightly.includes("droid"));
+  assert.ok(droid, "expected droid to be deferred");
+  assert.match(droid.reason, /managed runtime artifact/i);
+});
+
 test("validateMatrix rejects duplicate provider ids", () => {
   const fixture = {
     version: 1,

@@ -211,6 +211,16 @@ fn runtime_command_candidate(
     Ok(None)
 }
 
+fn preserve_raw_bundle_command_path(path: &Path) -> Option<PathBuf> {
+    let raw_bundle_dir = std::env::var("CTX_BUNDLE_DIR").ok()?;
+    let raw_bundle_dir = PathBuf::from(raw_bundle_dir.trim());
+    if raw_bundle_dir.as_os_str().is_empty() || !raw_bundle_dir.is_absolute() {
+        return None;
+    }
+    path.starts_with(&raw_bundle_dir)
+        .then(|| path.to_path_buf())
+}
+
 pub fn resolve_runtime_provider_command(
     cfg: &AgentServerConfigFile,
     provider_id: &str,
@@ -244,8 +254,8 @@ pub fn resolve_runtime_provider_command(
             raw
         );
     }
-    let command_abs_path = std::fs::canonicalize(path)
-        .unwrap_or_else(|_| path.to_path_buf())
+    let command_abs_path = preserve_raw_bundle_command_path(path)
+        .unwrap_or_else(|| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()))
         .to_string_lossy()
         .to_string();
 
@@ -479,6 +489,56 @@ mod tests {
         let _strict = EnvVarGuard::unset("CTX_E2E_BUNDLED_ONLY");
         let _providers = EnvVarGuard::unset("CTX_E2E_BUNDLED_ONLY_PROVIDERS");
         assert!(!bundled_only_mode_applies_to_provider("codex"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_runtime_provider_command_preserves_raw_bundle_symlink_paths() {
+        use std::os::unix::fs::symlink;
+
+        let _guard = env_lock().lock().expect("lock env");
+        let temp = tempdir().expect("tempdir");
+        let bundle_target = temp.path().join("bundle-target");
+        let bundle_link = temp.path().join("bundle-link");
+        let target_command = bundle_target.join("providers/codex/macos/aarch64/codex-crp");
+        let raw_command = bundle_link.join("providers/codex/macos/aarch64/codex-crp");
+        std::fs::create_dir_all(target_command.parent().expect("parent")).expect("mkdir");
+        std::fs::write(&target_command, b"ok").expect("write command");
+        symlink(&bundle_target, &bundle_link).expect("symlink bundle");
+
+        let _bundle_dir = EnvVarGuard::set("CTX_BUNDLE_DIR", &bundle_link.to_string_lossy());
+        let _strict = EnvVarGuard::unset("CTX_E2E_BUNDLED_ONLY");
+        let _providers = EnvVarGuard::unset("CTX_E2E_BUNDLED_ONLY_PROVIDERS");
+
+        let mut cfg = AgentServerConfigFile::default();
+        cfg.providers.insert(
+            "codex".to_string(),
+            AgentServerCommand {
+                command: raw_command.to_string_lossy().to_string(),
+                args: Vec::new(),
+                dependencies: Vec::new(),
+                managed: Some(ManagedInstallMetadata {
+                    package: Some("@openai/codex".to_string()),
+                    version: Some("1.0.0".to_string()),
+                    target: Some(InstallTarget::Container),
+                    install_dir_rel: None,
+                    bin_dir_rel: None,
+                    last_success_at: None,
+                    last_error: None,
+                }),
+            },
+        );
+
+        let resolved = resolve_runtime_provider_command(&cfg, "codex")
+            .expect("resolve runtime command")
+            .expect("runtime command");
+        assert_eq!(resolved.command_abs_path, raw_command.to_string_lossy());
+        assert_ne!(
+            std::fs::canonicalize(&raw_command)
+                .expect("canonicalize raw command")
+                .to_string_lossy(),
+            resolved.command_abs_path
+        );
     }
 
     #[test]

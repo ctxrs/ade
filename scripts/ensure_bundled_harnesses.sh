@@ -1792,6 +1792,13 @@ for provider in data.get("providers", []):
     kind = managed.get("kind")
     if kind == "npm":
         needs_node = True
+    elif kind == "archive":
+        targets = managed.get("targets") or {}
+        for target in targets.values():
+            bin_path = ((target or {}).get("bin_path") or "").lower()
+            if bin_path.endswith((".js", ".mjs", ".cjs")):
+                needs_node = True
+                break
     elif kind == "python":
         needs_python = True
 

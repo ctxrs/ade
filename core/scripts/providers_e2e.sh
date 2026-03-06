@@ -88,6 +88,22 @@ process.exit(0);
 ' "$matrix_path" "$provider_id" "$target_key"
 }
 
+default_e2e_bundle_root() {
+  if [[ -n "${CTX_E2E_BUNDLE_ROOT:-}" ]]; then
+    printf '%s' "${CTX_E2E_BUNDLE_ROOT}"
+    return
+  fi
+  if [[ "${OSTYPE:-}" == darwin* ]]; then
+    printf '%s' "${HOME}/Library/Caches/ctx-e2e"
+    return
+  fi
+  if [[ -n "${XDG_CACHE_HOME:-}" ]]; then
+    printf '%s' "${XDG_CACHE_HOME}/ctx-e2e"
+    return
+  fi
+  printf '%s' "${HOME}/.cache/ctx-e2e"
+}
+
 ensure_endpoint_ui_bundles() {
   if [[ ! -x "${bundle_script}" ]]; then
     echo "missing bundle script: ${bundle_script}" >&2
@@ -95,8 +111,13 @@ ensure_endpoint_ui_bundles() {
   fi
 
   local cache_key="${CTX_E2E_CACHE_KEY:-endpoint-ui}"
+  local cache_root
+  cache_root="$(default_e2e_bundle_root)"
+  mkdir -p "${cache_root}"
   local canonical_bundle_dir="${repo_root}/apps/desktop/src-tauri/bundles"
-  local bundle_dir="${CTX_E2E_BUNDLE_DIR:-/tmp/ctx-e2e-bundles-${cache_key}}"
+  # Keep fresh E2E bundle dirs under a home/cache root so Podman-machine container
+  # mounts can see them during bundled-only container validation on macOS hosts.
+  local bundle_dir="${CTX_E2E_BUNDLE_DIR:-${cache_root}/bundles-${cache_key}}"
   local first_pass_providers="${CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-acp-crp-bridge,codex,gemini,qwen,opencode,mistral,goose,droid,kimi,openhands}"
   local matrix_json="${CTX_BUNDLE_MATRIX_JSON:-${repo_root}/crates/ctx-http/src/provider_matrix.json}"
   local canonical_runtime_lock="${repo_root}/apps/desktop/src-tauri/bundles/runtime_lock.v2.json"

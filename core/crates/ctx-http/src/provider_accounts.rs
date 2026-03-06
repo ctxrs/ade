@@ -2900,24 +2900,25 @@ async fn amp_home_has_persisted_auth(data_root: &Path) -> bool {
         .any(|(key, token)| key.starts_with("apiKey@") && !token.is_null())
 }
 
-async fn sync_amp_runtime_auth_to_runtime_root(data_root: &Path, runtime_root: &Path) -> Result<()> {
+async fn sync_amp_runtime_auth_to_runtime_root(
+    data_root: &Path,
+    runtime_root: &Path,
+) -> Result<()> {
     let source = amp_secrets_path(data_root);
     let target = amp_secrets_path(runtime_root);
     match tokio::fs::read(&source).await {
         Ok(bytes) if !bytes.is_empty() => write_secure_file_atomic(&target, &bytes)
             .await
             .with_context(|| format!("writing projected amp auth to {}", target.display()))?,
-        Ok(_) => {
-            match tokio::fs::remove_file(&target).await {
-                Ok(()) => {}
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                Err(err) => {
-                    return Err(err).with_context(|| {
-                        format!("removing projected amp auth at {}", target.display())
-                    });
-                }
+        Ok(_) => match tokio::fs::remove_file(&target).await {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => {
+                return Err(err).with_context(|| {
+                    format!("removing projected amp auth at {}", target.display())
+                });
             }
-        }
+        },
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             match tokio::fs::remove_file(&target).await {
                 Ok(()) => {}
@@ -2930,8 +2931,7 @@ async fn sync_amp_runtime_auth_to_runtime_root(data_root: &Path, runtime_root: &
             }
         }
         Err(err) => {
-            return Err(err)
-                .with_context(|| format!("reading amp auth from {}", source.display()));
+            return Err(err).with_context(|| format!("reading amp auth from {}", source.display()));
         }
     }
     Ok(())
@@ -5064,7 +5064,9 @@ mod tests {
             .await
             .unwrap();
         let source_payload = br#"{"apiKey@https://ampcode.com/":"runtime-token"}"#;
-        tokio::fs::write(&source_secret, source_payload).await.unwrap();
+        tokio::fs::write(&source_secret, source_payload)
+            .await
+            .unwrap();
 
         let env = subscription_env_for_active_account_with_runtime_root(root, &runtime_root, "amp")
             .await
