@@ -21,7 +21,7 @@ use tokio::sync::{mpsc, oneshot};
 use url::Url;
 
 use super::errors::ApiErrorResp;
-use crate::daemon::{normalize_acp_provider_command, AppState};
+use crate::daemon::{is_acp_provider_id, runtime_probe_command_as_agent_command, AppState};
 use crate::execution_effective;
 use crate::harness_sources;
 use crate::harness_sources::{
@@ -4254,17 +4254,48 @@ fn classify_probe_error(
     HarnessEndpointVerificationStatus,
 ) {
     let lower = message.to_ascii_lowercase();
-    if lower.contains("401")
-        || lower.contains("403")
-        || lower.contains("unauthorized")
-        || lower.contains("auth")
-        || lower.contains("api key")
-        || lower.contains("token")
-    {
+    let auth_required = [
+        "401",
+        "403",
+        "unauthorized",
+        "forbidden",
+        "authentication required",
+        "auth required",
+        "auth_required",
+        "auth failed",
+        "auth_failed",
+        "auth error",
+        "auth_error",
+        "not authenticated",
+        "not logged in",
+        "login required",
+        "sign in",
+        "api key",
+        "missing token",
+        "invalid token",
+        "expired token",
+        "access token",
+        "bearer token",
+    ];
+    if auth_required.iter().any(|needle| lower.contains(needle)) {
         return (
             "auth_required",
             Some(true),
             HarnessEndpointVerificationStatus::Invalid,
+        );
+    }
+    let protocol_error = [
+        "invalid message",
+        "invalid acp",
+        "invalid crp",
+        "models.list response",
+        "models.list probe",
+    ];
+    if protocol_error.iter().any(|needle| lower.contains(needle)) {
+        return (
+            "error",
+            Some(false),
+            HarnessEndpointVerificationStatus::Error,
         );
     }
     if lower.contains("timeout")
@@ -4308,7 +4339,8 @@ async fn prepare_provider_runtime_probe(
     let cfg = installer::load_agent_server_config(&state.core.data_root)
         .await
         .unwrap_or_default();
-    let runtime_command = installer::resolve_runtime_provider_command(&cfg, provider_id)
+    let runtime_command =
+        runtime_probe_command_as_agent_command(&state.core.data_root, &cfg, provider_id)
         .map_err(|e| {
             PreparedProviderRuntimeProbeError::Route((
                 StatusCode::BAD_REQUEST,
@@ -4329,16 +4361,8 @@ async fn prepare_provider_runtime_probe(
                 })),
             ))
         })?;
-    let normalized_runtime = normalize_acp_provider_command(
-        &state.core.data_root,
-        provider_id,
-        installer::AgentServerCommand {
-            command: runtime_command.command_abs_path,
-            args: runtime_command.args,
-            dependencies: runtime_command.dependencies,
-            managed: None,
-        },
-    );
+    let command = runtime_command.command;
+    let args = runtime_command.args;
 
     let (source, mut env) =
         provider_probe::provider_probe_env_for_workspace_runtime(state, workspace, provider_id)
@@ -4350,6 +4374,14 @@ async fn prepare_provider_runtime_probe(
         provider_id,
         &state.core.data_root,
     );
+    if is_acp_provider_id(provider_id) {
+        installer::prepend_runtime_bin_dirs_to_provider_path(
+            &mut env,
+            &cfg,
+            "acp-crp-bridge",
+            &state.core.data_root,
+        );
+    }
 
     let selected_endpoint_id = if source.source_kind == HarnessSourceKind::Endpoint {
         source
@@ -4362,8 +4394,8 @@ async fn prepare_provider_runtime_probe(
     };
 
     Ok(PreparedProviderRuntimeProbe {
-        command: normalized_runtime.command,
-        args: normalized_runtime.args,
+        command,
+        args,
         env,
         selected_endpoint_id,
     })
@@ -4828,7 +4860,8 @@ pub(super) async fn get_provider_options(
         let cfg = installer::load_agent_server_config(&state.core.data_root)
             .await
             .unwrap_or_default();
-        let runtime_command = installer::resolve_runtime_provider_command(&cfg, &provider_id)
+        let runtime_command =
+            runtime_probe_command_as_agent_command(&state.core.data_root, &cfg, &provider_id)
             .map_err(|e| {
                 (
                     StatusCode::BAD_REQUEST,
@@ -4847,18 +4880,8 @@ pub(super) async fn get_provider_options(
                     ),
                 })),
             ))?;
-        let normalized_runtime = normalize_acp_provider_command(
-            &state.core.data_root,
-            &provider_id,
-            installer::AgentServerCommand {
-                command: runtime_command.command_abs_path,
-                args: runtime_command.args,
-                dependencies: runtime_command.dependencies,
-                managed: None,
-            },
-        );
-        let command = normalized_runtime.command;
-        let args = normalized_runtime.args;
+        let command = runtime_command.command;
+        let args = runtime_command.args;
 
         let probe = match provider_probe::provider_probe_env_for_workspace_runtime(
             &state,
@@ -4874,6 +4897,14 @@ pub(super) async fn get_provider_options(
                     &provider_id,
                     &state.core.data_root,
                 );
+                if is_acp_provider_id(&provider_id) {
+                    installer::prepend_runtime_bin_dirs_to_provider_path(
+                        &mut env,
+                        &cfg,
+                        "acp-crp-bridge",
+                        &state.core.data_root,
+                    );
+                }
                 probe_crp_models(
                     &provider_id,
                     command,
@@ -6176,6 +6207,24 @@ ZXY987654321
             "codex"
         ));
         assert!(!cache_key_matches_provider("not-a-key", "codex"));
+    }
+
+    #[test]
+    fn classify_probe_error_detects_auth_required_messages() {
+        let (status, auth_required, endpoint_status) =
+            classify_probe_error("401 unauthorized: missing api key");
+        assert_eq!(status, "auth_required");
+        assert_eq!(auth_required, Some(true));
+        assert_eq!(endpoint_status, HarnessEndpointVerificationStatus::Invalid);
+    }
+
+    #[test]
+    fn classify_probe_error_treats_models_list_protocol_failures_as_generic_errors() {
+        let message = "CRP models.list probe timed out after 10s; stderr_tail=Cursor CLI authenticated | Invalid message { type: 'models.list' }";
+        let (status, auth_required, endpoint_status) = classify_probe_error(message);
+        assert_eq!(status, "error");
+        assert_eq!(auth_required, Some(false));
+        assert_eq!(endpoint_status, HarnessEndpointVerificationStatus::Error);
     }
 
     #[test]

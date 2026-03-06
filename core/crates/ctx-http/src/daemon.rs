@@ -205,6 +205,34 @@ pub(crate) fn acp_bridge_adapter(
     Arc::new(Tier1CrpAdapter::from_raw(id, bridged.command, bridged.args))
 }
 
+pub(crate) fn runtime_probe_command_as_agent_command(
+    data_root: &Path,
+    cfg: &installer::AgentServerConfigFile,
+    provider_id: &str,
+) -> Result<Option<installer::AgentServerCommand>> {
+    let Some(runtime_cmd) = runtime_command_as_agent_command(cfg, provider_id)? else {
+        return Ok(None);
+    };
+    if !is_acp_provider_id(provider_id) {
+        return Ok(Some(runtime_cmd));
+    }
+
+    let bridge_cmd = runtime_command_as_agent_command(cfg, "acp-crp-bridge")?.ok_or_else(|| {
+        anyhow::anyhow!("runtime command is not configured for provider 'acp-crp-bridge'")
+    })?;
+    let normalized = normalize_acp_provider_command(data_root, provider_id, runtime_cmd);
+    let mut bridged = acp_bridge_command(&bridge_cmd, normalized.clone());
+    let mut dependencies = bridge_cmd.dependencies.clone();
+    for dependency in &normalized.dependencies {
+        if !dependencies.contains(dependency) {
+            dependencies.push(dependency.clone());
+        }
+    }
+    bridged.dependencies = dependencies;
+    bridged.managed = bridge_cmd.managed.clone();
+    Ok(Some(bridged))
+}
+
 fn escape_shell_arg(value: &str) -> String {
     if value.is_empty() {
         return "''".to_string();
@@ -1175,5 +1203,94 @@ mod tests {
             normalized.args,
             vec!["acp".to_string(), "--override-with-envs".to_string()]
         );
+    }
+
+    #[test]
+    fn runtime_probe_command_wraps_acp_provider_with_bridge() {
+        let temp = tempdir().unwrap();
+        let cursor_cmd = temp.path().join("cursor-agent");
+        let bridge_cmd = temp.path().join("acp-crp-bridge");
+        std::fs::write(&cursor_cmd, b"cursor").unwrap();
+        std::fs::write(&bridge_cmd, b"bridge").unwrap();
+        let cfg = installer::AgentServerConfigFile {
+            providers: HashMap::from([
+                (
+                    "cursor".to_string(),
+                    installer::AgentServerCommand {
+                        command: cursor_cmd.to_string_lossy().to_string(),
+                        args: vec!["--experimental-acp".to_string()],
+                        dependencies: vec!["cursor-dep".to_string()],
+                        managed: None,
+                    },
+                ),
+                (
+                    "acp-crp-bridge".to_string(),
+                    installer::AgentServerCommand {
+                        command: bridge_cmd.to_string_lossy().to_string(),
+                        args: vec!["--log-level".to_string(), "debug".to_string()],
+                        dependencies: vec!["bridge-dep".to_string()],
+                        managed: None,
+                    },
+                ),
+            ]),
+            managed_installs: HashMap::new(),
+        };
+
+        let resolved = runtime_probe_command_as_agent_command(temp.path(), &cfg, "cursor")
+            .expect("probe command")
+            .expect("runtime command");
+
+        assert_eq!(
+            PathBuf::from(&resolved.command)
+                .file_name()
+                .and_then(|name| name.to_str()),
+            Some("acp-crp-bridge")
+        );
+        assert_eq!(resolved.args.len(), 4);
+        assert_eq!(resolved.args[0], "--log-level");
+        assert_eq!(resolved.args[1], "debug");
+        assert_eq!(resolved.args[2], "--acp-command");
+        assert!(
+            resolved
+                .args
+                .get(3)
+                .is_some_and(|arg| arg.ends_with("/cursor-agent --experimental-acp"))
+        );
+        assert_eq!(
+            resolved.dependencies,
+            vec!["bridge-dep".to_string(), "cursor-dep".to_string()]
+        );
+    }
+
+    #[test]
+    fn runtime_probe_command_keeps_native_crp_provider_unwrapped() {
+        let temp = tempdir().unwrap();
+        let codex_cmd = temp.path().join("codex");
+        std::fs::write(&codex_cmd, b"codex").unwrap();
+        let cfg = installer::AgentServerConfigFile {
+            providers: HashMap::from([(
+                "codex".to_string(),
+                installer::AgentServerCommand {
+                    command: codex_cmd.to_string_lossy().to_string(),
+                    args: vec!["serve".to_string()],
+                    dependencies: vec!["codex-dep".to_string()],
+                    managed: None,
+                },
+            )]),
+            managed_installs: HashMap::new(),
+        };
+
+        let resolved = runtime_probe_command_as_agent_command(temp.path(), &cfg, "codex")
+            .expect("probe command")
+            .expect("runtime command");
+
+        assert_eq!(
+            PathBuf::from(&resolved.command)
+                .file_name()
+                .and_then(|name| name.to_str()),
+            Some("codex")
+        );
+        assert_eq!(resolved.args, vec!["serve".to_string()]);
+        assert_eq!(resolved.dependencies, vec!["codex-dep".to_string()]);
     }
 }
