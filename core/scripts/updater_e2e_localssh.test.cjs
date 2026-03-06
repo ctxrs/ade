@@ -71,3 +71,12 @@ test("localssh provider manages ssh key state", () => {
 
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
+
+test("localssh installer provisions git for remote bootstrap contract", () => {
+  const script = fs.readFileSync(scriptPath, "utf8");
+  assert.match(
+    script,
+    /apt-get install -y --no-install-recommends[^\n]*\bgit\b/,
+    "expected updater_e2e_localssh installer to include git",
+  );
+});
