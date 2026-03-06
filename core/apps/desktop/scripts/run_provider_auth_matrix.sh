@@ -3,8 +3,11 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")"/../../../.. && pwd)"
 FIXTURE="${CTX_PROVIDER_AUTH_MATRIX_FIXTURE:-${ROOT}/core/apps/desktop/automation/fixtures/provider_auth_matrix.json}"
-SMOKE_SCRIPT="${ROOT}/scripts/desktop_smoke_with_infisical.sh"
-PREFLIGHT_SCRIPT="${ROOT}/core/scripts/desktop_e2e_preflight.cjs"
+SMOKE_SCRIPT="${CTX_PROVIDER_AUTH_MATRIX_SMOKE_SCRIPT:-${ROOT}/scripts/desktop_smoke_with_infisical.sh}"
+PREFLIGHT_SCRIPT="${CTX_PROVIDER_AUTH_MATRIX_PREFLIGHT_SCRIPT:-${ROOT}/core/scripts/desktop_e2e_preflight.cjs}"
+INFISICAL_ENV="${INFISICAL_ENV:-dev}"
+INFISICAL_PROJECT_ID="${INFISICAL_PROJECT_ID:-}"
+INFISICAL_CONFIG_FILE="${CTX_PROVIDER_AUTH_MATRIX_INFISICAL_CONFIG_FILE:-${ROOT}/core/.infisical.json}"
 
 if [[ ! -f "${FIXTURE}" ]]; then
   echo "error: fixture not found: ${FIXTURE}" >&2
@@ -158,6 +161,9 @@ case "${LANE}" in
 esac
 
 run_preflight() {
+  if [[ "${LIST_ONLY}" -eq 1 ]]; then
+    return 0
+  fi
   local suite_id="$1"
   local -a cmd=(node "${PREFLIGHT_SCRIPT}" --suite "${suite_id}")
   if [[ "${#REQUESTED_CELLS[@]}" -gt 0 ]]; then
@@ -168,7 +174,26 @@ run_preflight() {
   if [[ "${CTX_DESKTOP_E2E_PREFLIGHT_ALLOW_MISSING:-0}" == "1" ]]; then
     cmd+=(--allow-missing)
   fi
-  "${cmd[@]}"
+  maybe_run_with_infisical "${cmd[@]}"
+}
+
+can_run_with_infisical() {
+  if [[ "${CTX_PROVIDER_AUTH_MATRIX_USE_INFISICAL:-1}" == "0" ]]; then
+    return 1
+  fi
+  if ! command -v infisical >/dev/null 2>&1; then
+    return 1
+  fi
+  [[ -f "${INFISICAL_CONFIG_FILE}" ]]
+}
+
+maybe_run_with_infisical() {
+  # An explicit project opts into Infisical; otherwise use supplied credentials.
+  if [[ -n "${INFISICAL_PROJECT_ID}" ]] && can_run_with_infisical; then
+    infisical run --env "${INFISICAL_ENV}" --projectId "${INFISICAL_PROJECT_ID}" -- "$@"
+    return
+  fi
+  "$@"
 }
 
 case "${LANE}" in
@@ -344,7 +369,7 @@ fs.writeFileSync(process.argv[3], JSON.stringify(cell, null, 2) + "\n");
   fi
 
   local missing_env=""
-  missing_env="$(node -e '
+  missing_env="$(maybe_run_with_infisical node -e '
 const prereq = JSON.parse(process.argv[1] || "[]");
 const missing = [];
 for (const key of prereq) {
@@ -499,15 +524,17 @@ for (const [k, v] of Object.entries(extra)) {
     if [[ "${runner_kind}" == "desktop_wdio" ]]; then
       (
         cd "${ROOT}"
-        env "${env_kv[@]}" \
-          CTX_AUTOMATION_SCENARIOS="${scenarios}" \
-          "${SMOKE_SCRIPT}" -- --spec "${spec}"
+        maybe_run_with_infisical \
+          env "${env_kv[@]}" \
+            CTX_AUTOMATION_SCENARIOS="${scenarios}" \
+            "${SMOKE_SCRIPT}" -- --spec "${spec}"
       ) 2>&1 | tee "${run_log}"
       exit_code="${PIPESTATUS[0]}"
     elif [[ "${runner_kind}" == "web_playwright" ]]; then
       (
         cd "${ROOT}/core"
-        env "${env_kv[@]}" pnpm -C apps/web exec playwright test -c playwright.config.ts "${spec}" --workers=1
+        maybe_run_with_infisical \
+          env "${env_kv[@]}" pnpm -C apps/web exec playwright test -c playwright.config.ts "${spec}" --workers=1
       ) 2>&1 | tee "${run_log}"
       exit_code="${PIPESTATUS[0]}"
     else

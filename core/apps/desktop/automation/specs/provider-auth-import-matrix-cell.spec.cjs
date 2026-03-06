@@ -200,8 +200,9 @@ describe("provider auth import matrix cell (desktop e2e)", () => {
       }
 
       currentAssertion = "install_success";
-      await installProviderAndWait(providerId, envTarget === "local_container" ? "container" : "host");
-      const providerStatus = await getProviderStatus(providerId);
+      const installTarget = envTarget === "local_container" ? "container" : "host";
+      await installProviderAndWait(providerId, installTarget);
+      const providerStatus = await getProviderStatus(providerId, installTarget);
       recorder.recordArtifact("provider_status_after_install", providerStatus);
       if (!providerStatus.installed) {
         throw new Error(`provider not installed after install flow: ${JSON.stringify(providerStatus)}`);

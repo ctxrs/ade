@@ -39,18 +39,18 @@ const readStringMap = (value) => {
 
 const getProviderStatus = async (providerId, target = "host") => {
   const response = await daemonJson("GET", providerStatusPath(providerId, target));
-  if (response.status !== 200) {
-    throw new Error(`failed to read providers (${response.status})`);
-  }
-  const row = asRecord(response.payload);
-  if (!row) {
+  if (response.status === 404) {
     return {
       installed: false,
-      health: "missing",
-      diagnostics: [`provider not returned by ${providerStatusPath(providerId, target)}`],
+      health: "unknown",
+      diagnostics: [`provider not found: ${providerId}`],
       details: {},
     };
   }
+  if (response.status !== 200) {
+    throw new Error(`failed to read provider '${providerId}' (${response.status})`);
+  }
+  const row = asRecord(response.payload);
   return {
     installed: row.installed === true,
     health: firstText(row.health, "unknown"),

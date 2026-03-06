@@ -23,6 +23,9 @@ const {
   normalizeText,
 } = require("./helpers/provider_auth_contract.cjs");
 const {
+  providerAuthMatrixScenarioTags,
+} = require("./helpers/provider_auth_matrix_scenarios.cjs");
+const {
   prepareSubscriptionAuth,
 } = require("./helpers/provider_auth_matrix_flow.cjs");
 
@@ -155,7 +158,15 @@ describe("provider auth matrix cell (desktop e2e)", () => {
 
   it(`executes provider auth matrix contract for ${cellId}`, async function () {
     this.timeout(parsePositiveInt(process.env.CTX_AUTOMATION_CASE_TIMEOUT_MS || "1200000", 1200000));
-    if (!scenarioEnabled("provider-auth-matrix", ["local", "provider", "matrix", providerId, authMode])) this.skip();
+    if (!scenarioEnabled(
+      "provider-auth-matrix",
+      providerAuthMatrixScenarioTags({
+        cellId,
+        providerId,
+        authMode,
+        envTarget,
+      }),
+    )) this.skip();
 
     const recorder = createProviderAuthContractRecorder({
       outputPath: reportPath,
@@ -193,8 +204,9 @@ describe("provider auth matrix cell (desktop e2e)", () => {
       }
 
       currentAssertion = "install_success";
-      await installProviderAndWait(providerId, envTarget === "local_container" ? "container" : "host");
-      const providerStatus = await getProviderStatus(providerId, envTarget === "local_container" ? "container" : "host");
+      const installTarget = envTarget === "local_container" ? "container" : "host";
+      await installProviderAndWait(providerId, installTarget);
+      const providerStatus = await getProviderStatus(providerId, installTarget);
       recorder.recordArtifact("provider_status_after_install", providerStatus);
       if (!providerStatus.installed) {
         throw new Error(`provider not installed after install flow: ${JSON.stringify(providerStatus)}`);
