@@ -160,6 +160,49 @@ const envSpecs = {
     ],
     minLength: 10,
   },
+  AWS_ACCESS_KEY_ID: {
+    kind: "secret",
+    description: "AWS access key ID used to provision real remote CI fixture hosts.",
+    validation: [
+      "trimmed, non-empty secret value",
+      "must not be a placeholder example",
+      "must not contain whitespace",
+      "minimum length 16",
+    ],
+    minLength: 16,
+  },
+  AWS_SECRET_ACCESS_KEY: {
+    kind: "secret",
+    description: "AWS secret access key paired with AWS_ACCESS_KEY_ID for remote CI fixture provisioning.",
+    validation: [
+      "trimmed, non-empty secret value",
+      "must not be a placeholder example",
+      "must not contain whitespace",
+      "minimum length 20",
+    ],
+    minLength: 20,
+  },
+  AWS_SESSION_TOKEN: {
+    kind: "secret",
+    description: "Optional AWS STS session token for temporary credentials in remote CI fixture provisioning.",
+    validation: [
+      "trimmed, non-empty secret value when provided",
+      "must not be a placeholder example",
+      "must not contain whitespace",
+      "minimum length 20",
+    ],
+    minLength: 20,
+  },
+  AWS_REGION: {
+    kind: "config",
+    description: "AWS region used for remote CI fixture provisioning.",
+    validation: [
+      "trimmed, non-empty region identifier",
+      "must match /^[a-z]{2}-[a-z]+-[0-9]+$/",
+      "must not contain whitespace",
+    ],
+    format: "aws_region",
+  },
   HETZNER_API_TOKEN: {
     kind: "secret",
     description: "Hetzner API token used to provision remote real-CI fixture VMs.",
@@ -271,6 +314,13 @@ const validateConfigValue = (envName, value) => {
     if (trimmed !== value) return ["must not include leading or trailing whitespace"];
     if (/\s/.test(trimmed)) return ["must not contain whitespace"];
     if (!trimmed.includes("@")) return ["must contain @"];
+    return [];
+  }
+  if (envSpecs[envName]?.format === "aws_region") {
+    if (!trimmed) return ["is empty"];
+    if (trimmed !== value) return ["must not include leading or trailing whitespace"];
+    if (/\s/.test(trimmed)) return ["must not contain whitespace"];
+    if (!/^[a-z]{2}-[a-z]+-[0-9]+$/.test(trimmed)) return ["must be a valid AWS region (for example us-east-1)"];
     return [];
   }
   return [];
@@ -640,21 +690,45 @@ const resolveSuiteContract = (suiteId, options = {}) => {
         platform,
       };
     case "desktop-remote-real-ci":
-      return {
-        id: normalizedId,
-        title: "Desktop remote real CI",
-        description: "Remote fixture lane that provisions live hosts before desktop remote coverage runs.",
-        requirements: [
-          buildRequirement("HETZNER_API_TOKEN"),
-        ],
-        optionalRequirements: [],
-        artifactRoots: [],
-        redactionEnvNames: ["HETZNER_API_TOKEN"],
-        metadata: {},
-        notes: [],
-        env,
-        platform,
-      };
+      {
+        const remoteProvider = normalizeText(env.CTX_UPDATER_E2E_CLOUD_PROVIDER || "aws").toLowerCase();
+        const usingAws = remoteProvider === "aws";
+        const requirements = usingAws
+          ? [
+            buildRequirement("AWS_ACCESS_KEY_ID"),
+            buildRequirement("AWS_SECRET_ACCESS_KEY"),
+            buildRequirement("AWS_REGION"),
+          ]
+          : [
+            buildRequirement("HETZNER_API_TOKEN"),
+          ];
+        const optionalRequirements = usingAws
+          ? [
+            buildRequirement("AWS_SESSION_TOKEN", {
+              required: false,
+            }),
+          ]
+          : [];
+        return {
+          id: normalizedId,
+          title: "Desktop remote real CI",
+          description: "Remote fixture lane that provisions live hosts before desktop remote coverage runs.",
+          requirements,
+          optionalRequirements,
+          artifactRoots: [],
+          redactionEnvNames: collectSecretEnvNames([...requirements, ...optionalRequirements]),
+          metadata: {
+            remoteProvider,
+          },
+          notes: [
+            usingAws
+              ? "AWS mode validates access key + secret + region; optional session token is accepted."
+              : "Hetzner mode validates HETZNER_API_TOKEN.",
+          ],
+          env,
+          platform,
+        };
+      }
     default:
       throw new Error(`unsupported suite id '${suiteId}'`);
   }

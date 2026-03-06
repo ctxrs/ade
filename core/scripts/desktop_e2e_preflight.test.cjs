@@ -89,3 +89,35 @@ test("preflight accepts OpenRouter key from title_generation settings fallback",
   assert.match(result.stdout, /present via settings:title_generation\.api_key/);
   assert.match(result.stdout, /preflight passed/i);
 });
+
+test("desktop-remote-real-ci fails when required AWS credentials are missing", () => {
+  const result = run([
+    "--suite",
+    "desktop-remote-real-ci",
+  ], {
+    CTX_UPDATER_E2E_CLOUD_PROVIDER: "aws",
+    AWS_ACCESS_KEY_ID: "",
+    AWS_SECRET_ACCESS_KEY: "",
+    AWS_REGION: "",
+  });
+
+  assert.notEqual(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
+  assert.match(result.stderr, /AWS_ACCESS_KEY_ID/);
+  assert.match(result.stderr, /AWS_SECRET_ACCESS_KEY/);
+  assert.match(result.stderr, /AWS_REGION/);
+});
+
+test("desktop-remote-real-ci passes with required AWS credentials present", () => {
+  const result = run([
+    "--suite",
+    "desktop-remote-real-ci",
+  ], {
+    CTX_UPDATER_E2E_CLOUD_PROVIDER: "aws",
+    AWS_ACCESS_KEY_ID: "AKIA1234567890EXAMPLE",
+    AWS_SECRET_ACCESS_KEY: "abcdefghijklmnopqrstuvwxyz0123456789ABCD",
+    AWS_REGION: "us-east-1",
+  });
+
+  assert.equal(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
+  assert.match(result.stdout, /preflight passed/i);
+});
