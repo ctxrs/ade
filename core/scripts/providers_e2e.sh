@@ -359,8 +359,16 @@ run_linux_arm_runtime_install_lane() {
   local smoke_report="${CTX_E2E_INSTALL_SMOKE_REPORT_PATH:-${lane_report_root}/${lane_key}-runtime-install-smoke-report.json}"
 
   local provider_csv="${CTX_E2E_INSTALL_SMOKE_PROVIDERS:-}"
+  local matrix_payload_json
+  matrix_payload_json="$(node "${repo_root}/scripts/linux_arm_provider_reliability_matrix.cjs" --lane "${lane_key}" --json)"
+  local default_provider_csv
+  default_provider_csv="$(node -e 'const payload = JSON.parse(process.argv[1]); const ids = Array.isArray(payload.provider_ids) ? payload.provider_ids : []; process.stdout.write(ids.join(","));' "${matrix_payload_json}")"
+  local expected_environment
+  expected_environment="$(node -e 'const payload = JSON.parse(process.argv[1]); process.stdout.write(String(payload.expected_environment || "").trim());' "${matrix_payload_json}")"
+  local expected_network_mode
+  expected_network_mode="$(node -e 'const payload = JSON.parse(process.argv[1]); process.stdout.write(String(payload.expected_network_mode || "").trim());' "${matrix_payload_json}")"
   if [[ -z "${provider_csv}" ]]; then
-    provider_csv="$(node "${repo_root}/scripts/linux_arm_provider_reliability_matrix.cjs" --lane "${lane_key}")"
+    provider_csv="${default_provider_csv}"
   fi
   if [[ -z "${provider_csv}" ]]; then
     echo "linux-arm provider matrix resolved empty provider list for lane ${lane_key}" >&2
@@ -403,8 +411,8 @@ run_linux_arm_runtime_install_lane() {
 
   export CTX_E2E_TIER="endpoint-ui"
   export CTX_E2E_INSTALL_SMOKE_PROVIDERS="${provider_csv}"
-  export CTX_E2E_INSTALL_SMOKE_ENVIRONMENT="${CTX_E2E_INSTALL_SMOKE_ENVIRONMENT:-container_host_mounted}"
-  export CTX_E2E_INSTALL_SMOKE_NETWORK_MODE="${CTX_E2E_INSTALL_SMOKE_NETWORK_MODE:-llm_only}"
+  export CTX_E2E_INSTALL_SMOKE_ENVIRONMENT="${CTX_E2E_INSTALL_SMOKE_ENVIRONMENT:-${expected_environment:-host}}"
+  export CTX_E2E_INSTALL_SMOKE_NETWORK_MODE="${CTX_E2E_INSTALL_SMOKE_NETWORK_MODE:-${expected_network_mode:-llm_only}}"
   export CTX_E2E_INSTALL_SMOKE_REPORT_PATH="${smoke_report}"
   export CTX_E2E_INSTALL_SMOKE_ALLOW_FAILURES="${allow_failures}"
   export CTX_PODMAN_MACHINE_PREFETCH="${CTX_PODMAN_MACHINE_PREFETCH:-1}"

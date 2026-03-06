@@ -75,6 +75,14 @@ test("linux-arm lanes rely on host podman instead of demanding a bundled podman 
     script,
     /CTX_E2E_ENDPOINT_BUNDLE_PODMAN="\$\{CTX_E2E_ENDPOINT_BUNDLE_PODMAN:-0\}"/,
   );
+  assert.match(
+    script,
+    /matrix_payload_json="\$\(node "\$\{repo_root\}\/scripts\/linux_arm_provider_reliability_matrix\.cjs" --lane "\$\{lane_key\}" --json\)"/,
+  );
+  assert.match(
+    script,
+    /CTX_E2E_INSTALL_SMOKE_ENVIRONMENT="\$\{CTX_E2E_INSTALL_SMOKE_ENVIRONMENT:-\$\{expected_environment:-host\}\}"/,
+  );
 });
 
 test("endpoint bundle defaults use a home-shareable cache root", () => {

@@ -24,6 +24,8 @@ test("loadMatrix validates default fixture and exposes critical/nightly ids", ()
 
   assert.ok(critical.length > 0);
   assert.ok(nightly.length >= critical.length);
+  assert.equal(matrix.expected_environment, "host");
+  assert.equal(matrix.expected_network_mode, "llm_only");
   for (const providerId of critical) {
     assert.ok(nightly.includes(providerId), `nightly missing critical provider ${providerId}`);
   }
