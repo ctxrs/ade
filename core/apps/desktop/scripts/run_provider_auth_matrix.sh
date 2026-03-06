@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")"/../../../.. && pwd)"
 FIXTURE="${CTX_PROVIDER_AUTH_MATRIX_FIXTURE:-${ROOT}/core/apps/desktop/automation/fixtures/provider_auth_matrix.json}"
 SMOKE_SCRIPT="${ROOT}/scripts/desktop_smoke_with_infisical.sh"
+PREFLIGHT_SCRIPT="${ROOT}/core/scripts/desktop_e2e_preflight.cjs"
 
 if [[ ! -f "${FIXTURE}" ]]; then
   echo "error: fixture not found: ${FIXTURE}" >&2
@@ -153,6 +154,33 @@ case "${LANE}" in
   *)
     echo "error: --lane must be one of required|nightly|all (got '${LANE}')" >&2
     exit 1
+    ;;
+esac
+
+run_preflight() {
+  local suite_id="$1"
+  local -a cmd=(node "${PREFLIGHT_SCRIPT}" --suite "${suite_id}")
+  if [[ "${#REQUESTED_CELLS[@]}" -gt 0 ]]; then
+    local cells_csv
+    cells_csv="$(IFS=,; echo "${REQUESTED_CELLS[*]}")"
+    cmd+=(--cell "${cells_csv}")
+  fi
+  if [[ "${CTX_DESKTOP_E2E_PREFLIGHT_ALLOW_MISSING:-0}" == "1" ]]; then
+    cmd+=(--allow-missing)
+  fi
+  "${cmd[@]}"
+}
+
+case "${LANE}" in
+  required)
+    run_preflight "provider-auth-matrix-required"
+    ;;
+  nightly)
+    run_preflight "provider-auth-matrix-nightly"
+    ;;
+  all)
+    run_preflight "provider-auth-matrix-required"
+    run_preflight "provider-auth-matrix-nightly"
     ;;
 esac
 

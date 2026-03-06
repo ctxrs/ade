@@ -12,6 +12,20 @@ repo_root="$(cd "${script_dir}/.." && pwd)"
 http_tests_dir="${repo_root}/crates/ctx-http/tests"
 providers_tests_dir="${repo_root}/crates/ctx-providers/tests"
 bundle_script="${repo_root}/../scripts/ensure_bundled_harnesses.sh"
+preflight_script="${repo_root}/scripts/desktop_e2e_preflight.cjs"
+
+run_preflight() {
+  local suite_id="$1"
+  shift || true
+  local -a cmd=(node "${preflight_script}" --suite "${suite_id}")
+  if [[ "${CTX_DESKTOP_E2E_PREFLIGHT_ALLOW_MISSING:-0}" == "1" ]]; then
+    cmd+=(--allow-missing)
+  fi
+  if (( $# > 0 )); then
+    cmd+=("$@")
+  fi
+  "${cmd[@]}"
+}
 
 openrouter_settings_present() {
   local data_root="${CTX_DATA_ROOT:-$HOME/.ctx}"
@@ -420,6 +434,7 @@ case "${suite}" in
     add_test "ctx-http" "harness_container_podman_e2e" "${http_tests_dir}/harness_container_podman_e2e.rs"
     ;;
   tokens)
+    run_preflight "providers-tokens"
     export CTX_E2E_TIER="tokens"
     if ! has_openrouter_creds; then
       if [[ -n "${CI:-}" ]]; then
@@ -432,6 +447,7 @@ case "${suite}" in
     add_test "ctx-http" "acp_crp_bridge_tokens_e2e" "${http_tests_dir}/acp_crp_bridge_tokens_e2e.rs"
     ;;
   endpoint-ui)
+    run_preflight "providers-endpoint-ui"
     export CTX_E2E_TIER="endpoint-ui"
     export OPENROUTER_BASE_URL="${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}"
 
@@ -466,6 +482,7 @@ case "${suite}" in
     exit 0
     ;;
   provider-api-auth)
+    run_preflight "providers-provider-api-auth"
     export CTX_E2E_TIER="provider-api-auth"
 
     missing_provider_auth_keys=()

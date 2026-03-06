@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")"/../../../.. && pwd)"
 FIXTURE="${ROOT}/core/apps/desktop/automation/fixtures/macos_break_matrix.json"
 SMOKE_SCRIPT="${ROOT}/scripts/desktop_smoke_with_infisical.sh"
+PREFLIGHT_SCRIPT="${ROOT}/core/scripts/desktop_e2e_preflight.cjs"
 
 if [[ ! -f "${FIXTURE}" ]]; then
   echo "error: fixture not found: ${FIXTURE}" >&2
@@ -79,6 +80,19 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+run_preflight() {
+  local -a cmd=(node "${PREFLIGHT_SCRIPT}" --suite "macos-break-matrix")
+  if [[ "${#REQUESTED_CASES[@]}" -gt 0 ]]; then
+    local cases_csv
+    cases_csv="$(IFS=,; echo "${REQUESTED_CASES[*]}")"
+    cmd+=(--case "${cases_csv}")
+  fi
+  if [[ "${CTX_DESKTOP_E2E_PREFLIGHT_ALLOW_MISSING:-0}" == "1" ]]; then
+    cmd+=(--allow-missing)
+  fi
+  "${cmd[@]}"
+}
+
 if [[ -z "${ARTIFACTS_DIR}" ]]; then
   RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
   ARTIFACTS_DIR="${ROOT}/core/apps/desktop/automation/artifacts/macos-break-matrix/${RUN_ID}"
@@ -109,6 +123,8 @@ if [[ "${LIST_ONLY}" -eq 1 ]]; then
   done
   exit 0
 fi
+
+run_preflight()
 
 is_selected_case() {
   local id="$1"
