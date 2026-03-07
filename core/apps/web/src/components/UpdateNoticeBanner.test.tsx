@@ -169,8 +169,8 @@ describe("UpdateNoticeBanner", () => {
     expect(window.localStorage.getItem(IDLE_UPDATE_VERSION_STORAGE_KEY)).toContain("1.2.3");
   });
 
-  it("auto-applies update on desktop launch even when legacy off-switch is set, and preserves restart-required state", async () => {
-    window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "0");
+  it("auto-applies staged desktop update on launch when the preference is enabled, and preserves restart-required state", async () => {
+    window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "1");
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(readCachedUpdateCheck).mockReturnValue(null);
     vi.mocked(refreshUpdateCheck).mockResolvedValue({
@@ -181,6 +181,8 @@ describe("UpdateNoticeBanner", () => {
       configured: true,
       available: true,
       restart_required: false,
+      phase: "staged_ready",
+      staged: true,
       current_version: "1.0.0",
       latest_version: "1.2.3",
       target: "macos-arm64",
@@ -214,6 +216,8 @@ describe("UpdateNoticeBanner", () => {
       configured: true,
       available: true,
       restart_required: false,
+      phase: "staged_ready",
+      staged: true,
       current_version: "0.4.1",
       latest_version: "0.4.3",
       target: "macos-arm64",
@@ -230,6 +234,36 @@ describe("UpdateNoticeBanner", () => {
     });
     expect(screen.getByTestId("update-available-snackbar")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Update Now" })).toBeEnabled();
+  });
+
+  it("keeps staged desktop updates silent when launch auto-apply is disabled", async () => {
+    window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "0");
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(readCachedUpdateCheck).mockReturnValue(null);
+    vi.mocked(refreshUpdateCheck).mockResolvedValue({
+      ...baseUpdate,
+      latest_version: "1.2.3",
+      update_available: true,
+    });
+    vi.mocked(desktopGetAppUpdateState).mockResolvedValue({
+      configured: true,
+      available: true,
+      restart_required: false,
+      phase: "staged_ready",
+      staged: true,
+      current_version: "1.0.0",
+      latest_version: "1.2.3",
+      target: "macos-arm64",
+      endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+      message: null,
+    });
+
+    renderBanner({ allTasksIdle: false });
+    await waitFor(() => {
+      expect(vi.mocked(desktopGetAppUpdateState)).toHaveBeenCalledTimes(1);
+    });
+    expect(vi.mocked(desktopApplyAppUpdate)).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("update-available-snackbar")).not.toBeInTheDocument();
   });
 
   it("keeps updater banner hidden when native check fails without prior state", async () => {

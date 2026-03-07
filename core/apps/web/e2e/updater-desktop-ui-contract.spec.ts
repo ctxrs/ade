@@ -14,6 +14,8 @@ type DesktopUpdateState = {
   configured: boolean;
   available: boolean;
   restart_required: boolean;
+  phase?: "idle" | "staging" | "staged_ready" | "restart_required" | "failed";
+  staged?: boolean;
   current_version: string;
   latest_version: string | null;
   target: string;
@@ -108,7 +110,9 @@ const installDesktopHarness = async (page: Page, config: HarnessConfig) => {
           state.updateState = {
             ...state.updateState,
             available: false,
+            staged: false,
             restart_required: true,
+            phase: "restart_required",
             latest_version: response.latest_version ?? state.updateState.latest_version,
           };
         } else if (response.applied || response.up_to_date) {
@@ -116,7 +120,9 @@ const installDesktopHarness = async (page: Page, config: HarnessConfig) => {
           state.updateState = {
             ...state.updateState,
             available: false,
+            staged: false,
             restart_required: false,
+            phase: "idle",
             current_version: nextVersion,
             latest_version: null,
           };
@@ -229,7 +235,7 @@ const installUpdatePolicyRoute = async (page: Page, updateAvailable = true) => {
   });
 };
 
-test("desktop updater remains silent while only available/staging", async ({ page }) => {
+test("desktop updater remains silent while staging", async ({ page }) => {
   await page.addInitScript((autoApplyKey: string, snoozeKey: string, idleKey: string, restartKey: string) => {
     localStorage.removeItem("ctx_update_check_v1");
     localStorage.removeItem(snoozeKey);
@@ -240,13 +246,15 @@ test("desktop updater remains silent while only available/staging", async ({ pag
   await installDesktopHarness(page, {
     updateState: {
       configured: true,
-      available: true,
+      available: false,
       restart_required: false,
+      phase: "staging",
+      staged: false,
       current_version: "0.4.7",
       latest_version: "0.4.8",
       target: "macos-arm64",
       endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
-      message: null,
+      message: "Downloading update in background.",
     },
     applyResponse: {
       applied: true,
@@ -276,6 +284,8 @@ test("desktop Update Now requests restart in restart-required state", async ({ p
       configured: true,
       available: false,
       restart_required: true,
+      phase: "restart_required",
+      staged: false,
       current_version: "0.4.7",
       latest_version: "0.4.8",
       target: "macos-arm64",
@@ -313,6 +323,8 @@ test("desktop Update on Next Idle schedules restart when restart is ready", asyn
       configured: true,
       available: false,
       restart_required: true,
+      phase: "restart_required",
+      staged: false,
       current_version: "0.4.7",
       latest_version: "0.4.8",
       target: "macos-arm64",
@@ -337,7 +349,7 @@ test("desktop Update on Next Idle schedules restart when restart is ready", asyn
   await expect(page.getByRole("button", { name: "Update Now" })).toBeVisible({ timeout: 20_000 });
 });
 
-test("desktop auto-apply on launch triggers update apply when available", async ({ page }) => {
+test("desktop auto-apply on launch triggers update apply when a staged update is ready", async ({ page }) => {
   await page.addInitScript((autoApplyKey: string, snoozeKey: string, idleKey: string, restartKey: string) => {
     localStorage.removeItem("ctx_update_check_v1");
     localStorage.removeItem(snoozeKey);
@@ -350,6 +362,8 @@ test("desktop auto-apply on launch triggers update apply when available", async 
       configured: true,
       available: true,
       restart_required: false,
+      phase: "staged_ready",
+      staged: true,
       current_version: "0.4.7",
       latest_version: "0.4.8",
       target: "macos-arm64",
