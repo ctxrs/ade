@@ -2724,7 +2724,8 @@ fn spawn_probe_output_tail_reader<R>(
     provider_id: String,
     stream_name: &'static str,
     tail_ref: Arc<Mutex<Vec<String>>>,
-) where
+) -> tokio::task::JoinHandle<()>
+where
     R: AsyncRead + Unpin + Send + 'static,
 {
     tokio::spawn(async move {
@@ -2747,7 +2748,7 @@ fn spawn_probe_output_tail_reader<R>(
             }
             tail.push(trimmed.to_string());
         }
-    });
+    })
 }
 
 async fn format_probe_output_tail(label: &str, tail: &Arc<Mutex<Vec<String>>>) -> String {
@@ -2819,7 +2820,7 @@ pub async fn probe_crp_models(
     let stderr = child.stderr.take().context("capturing CRP stderr")?;
 
     let stderr_tail: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    spawn_probe_output_tail_reader(
+    let _stderr_tail_task = spawn_probe_output_tail_reader(
         stderr,
         provider_id.to_string(),
         "stderr",
@@ -2923,14 +2924,14 @@ pub async fn probe_crp_runtime_launch(
     let stderr = child.stderr.take().context("capturing CRP stderr")?;
 
     let stdout_tail: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    spawn_probe_output_tail_reader(
+    let stdout_tail_task = spawn_probe_output_tail_reader(
         stdout,
         provider_id.to_string(),
         "stdout",
         Arc::clone(&stdout_tail),
     );
     let stderr_tail: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    spawn_probe_output_tail_reader(
+    let stderr_tail_task = spawn_probe_output_tail_reader(
         stderr,
         provider_id.to_string(),
         "stderr",
@@ -2943,6 +2944,8 @@ pub async fn probe_crp_runtime_launch(
             .try_wait()
             .with_context(|| format!("waiting for CRP runtime {provider_id} during launch probe"))?
         {
+            let _ = tokio::time::timeout(Duration::from_millis(200), stdout_tail_task).await;
+            let _ = tokio::time::timeout(Duration::from_millis(200), stderr_tail_task).await;
             let stdout_tail = format_probe_output_tail("stdout", &stdout_tail).await;
             let stderr_tail = format_probe_output_tail("stderr", &stderr_tail).await;
             anyhow::bail!(
