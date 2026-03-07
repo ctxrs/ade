@@ -1,6 +1,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -18,7 +19,7 @@ use ctx_core::models::{
 };
 
 use crate::container_fs::is_container_path;
-use crate::daemon::AppState;
+use crate::daemon::{AppState, AttachmentMaterializationTask};
 use crate::execution_effective;
 use crate::harness_runtime::{
     podman_command, workspace_container_name, CTX_CONTAINER_WORKSPACE_ROOT,
@@ -99,7 +100,8 @@ pub async fn sync_workspace_attachments(
             workspace.clone(),
             plan.id,
             plan.refresh,
-        );
+        )
+        .await;
     }
 
     Ok(out)
@@ -134,88 +136,137 @@ pub async fn delete_workspace_attachment(
     else {
         return Ok(false);
     };
+    cancel_attachment_materialization(state, target.id).await;
     cleanup_removed_attachment(state, &target).await?;
     store.delete_workspace_attachment(target.id).await?;
     Ok(true)
 }
 
-fn spawn_attachment_materialization(
+async fn spawn_attachment_materialization(
     state: Arc<AppState>,
     workspace: Workspace,
     attachment_id: WorkspaceAttachmentId,
     refresh: bool,
 ) {
-    tokio::spawn(async move {
-        let store = match state.store_for_workspace(workspace.id).await {
-            Ok(store) => store,
-            Err(err) => {
-                tracing::warn!("attachment sync store load failed: {err:#}");
-                return;
-            }
-        };
-        let attachment = match store.get_workspace_attachment(attachment_id).await {
-            Ok(Some(attachment)) => attachment,
-            Ok(None) => return,
-            Err(err) => {
-                tracing::warn!("attachment sync lookup failed: {err:#}");
-                return;
-            }
-        };
+    cancel_attachment_materialization(state.as_ref(), attachment_id).await;
+    let generation = state
+        .workspaces
+        .attachment_materialization_generation
+        .fetch_add(1, Ordering::SeqCst)
+        + 1;
+    let task_state = Arc::clone(&state);
+    let handle = tokio::spawn(async move {
+        run_attachment_materialization(Arc::clone(&task_state), workspace, attachment_id, refresh)
+            .await;
+        clear_attachment_materialization_task(task_state.as_ref(), attachment_id, generation).await;
+    });
+    let mut tasks = state.workspaces.attachment_materializations.lock().await;
+    tasks.insert(
+        attachment_id,
+        AttachmentMaterializationTask { generation, handle },
+    );
+}
 
-        let now = Utc::now();
-        if let Err(err) = store
-            .update_workspace_attachment_status(
-                attachment_id,
-                WorkspaceAttachmentStatus::Syncing,
-                None,
-                None,
-                now,
-            )
-            .await
-        {
-            tracing::warn!("attachment sync status update failed: {err:#}");
+async fn cancel_attachment_materialization(state: &AppState, attachment_id: WorkspaceAttachmentId) {
+    let existing = {
+        let mut tasks = state.workspaces.attachment_materializations.lock().await;
+        tasks.remove(&attachment_id)
+    };
+    if let Some(task) = existing {
+        task.handle.abort();
+        let _ = task.handle.await;
+    }
+}
+
+async fn clear_attachment_materialization_task(
+    state: &AppState,
+    attachment_id: WorkspaceAttachmentId,
+    generation: u64,
+) {
+    let mut tasks = state.workspaces.attachment_materializations.lock().await;
+    if tasks
+        .get(&attachment_id)
+        .is_some_and(|task| task.generation == generation)
+    {
+        tasks.remove(&attachment_id);
+    }
+}
+
+async fn run_attachment_materialization(
+    state: Arc<AppState>,
+    workspace: Workspace,
+    attachment_id: WorkspaceAttachmentId,
+    refresh: bool,
+) {
+    let store = match state.store_for_workspace(workspace.id).await {
+        Ok(store) => store,
+        Err(err) => {
+            tracing::warn!("attachment sync store load failed: {err:#}");
             return;
         }
+    };
+    let attachment = match store.get_workspace_attachment(attachment_id).await {
+        Ok(Some(attachment)) => attachment,
+        Ok(None) => return,
+        Err(err) => {
+            tracing::warn!("attachment sync lookup failed: {err:#}");
+            return;
+        }
+    };
 
-        match materialize_attachment(&state, &workspace, &attachment, refresh).await {
-            Ok(_) => {
-                let now = Utc::now();
-                if let Err(err) = store
-                    .update_workspace_attachment_status(
-                        attachment_id,
-                        WorkspaceAttachmentStatus::Ready,
-                        Some(now),
-                        None,
-                        now,
-                    )
-                    .await
-                {
-                    tracing::warn!("attachment sync status update failed: {err:#}");
-                    return;
-                }
-                let _ = ensure_workspace_attachments_for_worktrees_with_attachments(
-                    &state,
-                    &workspace,
-                    &[attachment],
-                    false,
-                    false,
+    let now = Utc::now();
+    if let Err(err) = store
+        .update_workspace_attachment_status(
+            attachment_id,
+            WorkspaceAttachmentStatus::Syncing,
+            None,
+            None,
+            now,
+        )
+        .await
+    {
+        tracing::warn!("attachment sync status update failed: {err:#}");
+        return;
+    }
+
+    match materialize_attachment(&state, &workspace, &attachment, refresh).await {
+        Ok(_) => {
+            let now = Utc::now();
+            if let Err(err) = store
+                .update_workspace_attachment_status(
+                    attachment_id,
+                    WorkspaceAttachmentStatus::Ready,
+                    Some(now),
+                    None,
+                    now,
+                )
+                .await
+            {
+                tracing::warn!("attachment sync status update failed: {err:#}");
+                return;
+            }
+            let _ = ensure_workspace_attachments_for_worktrees_with_attachments(
+                &state,
+                &workspace,
+                &[attachment],
+                false,
+                false,
+            )
+            .await;
+        }
+        Err(err) => {
+            let now = Utc::now();
+            let _ = store
+                .update_workspace_attachment_status(
+                    attachment_id,
+                    WorkspaceAttachmentStatus::Error,
+                    None,
+                    Some(err.to_string()),
+                    now,
                 )
                 .await;
-            }
-            Err(err) => {
-                let now = Utc::now();
-                let _ = store
-                    .update_workspace_attachment_status(
-                        attachment_id,
-                        WorkspaceAttachmentStatus::Error,
-                        None,
-                        Some(err.to_string()),
-                        now,
-                    )
-                    .await;
-            }
         }
-    });
+    }
 }
 
 pub async fn ensure_worktree_attachment_mounts(
@@ -829,7 +880,11 @@ async fn materialize_reference_repo(
 
 async fn clone_reference_repo(source: &str, revision: Option<&str>, dest: &Path) -> Result<()> {
     let mut cmd = Command::new("git");
-    cmd.arg("clone").arg("--depth").arg("1").arg("--no-tags");
+    cmd.arg("clone")
+        .arg("--depth")
+        .arg("1")
+        .arg("--no-tags")
+        .kill_on_drop(true);
     if let Some(rev) = revision {
         if !looks_like_sha(rev) {
             cmd.arg("--branch").arg(rev);
@@ -846,7 +901,8 @@ async fn clone_reference_repo(source: &str, revision: Option<&str>, dest: &Path)
 
     if let Some(rev) = revision {
         if looks_like_sha(rev) {
-            let fetch = Command::new("git")
+            let mut fetch_cmd = Command::new("git");
+            fetch_cmd
                 .arg("-C")
                 .arg(dest)
                 .arg("fetch")
@@ -854,20 +910,22 @@ async fn clone_reference_repo(source: &str, revision: Option<&str>, dest: &Path)
                 .arg("1")
                 .arg("origin")
                 .arg(rev)
-                .output()
-                .await
-                .context("running git fetch")?;
+                .kill_on_drop(true);
+            let fetch = fetch_cmd.output().await.context("running git fetch")?;
             if !fetch.status.success() {
                 anyhow::bail!(
                     "git fetch failed: {}",
                     String::from_utf8_lossy(&fetch.stderr)
                 );
             }
-            let checkout = Command::new("git")
+            let mut checkout_cmd = Command::new("git");
+            checkout_cmd
                 .arg("-C")
                 .arg(dest)
                 .arg("checkout")
                 .arg(rev)
+                .kill_on_drop(true);
+            let checkout = checkout_cmd
                 .output()
                 .await
                 .context("running git checkout")?;
@@ -932,7 +990,8 @@ async fn run_doc_mirror_script(
     cmd.arg(dest)
         .current_dir(&workspace.root_path)
         .env("CTX_DOCS_OUTPUT_DIR", dest)
-        .env("CTX_DOCS_OUTPUT_DIR", dest);
+        .env("CTX_DOCS_OUTPUT_DIR", dest)
+        .kill_on_drop(true);
     let output = cmd.output().await.context("running doc mirror script")?;
     if !output.status.success() {
         anyhow::bail!(
@@ -981,7 +1040,8 @@ async fn run_doc_mirror_cli(
         .arg(temp.path())
         .arg("--out")
         .arg(dest)
-        .current_dir(&workspace.root_path);
+        .current_dir(&workspace.root_path)
+        .kill_on_drop(true);
     let output = cmd.output().await.context("running ctx-docs-mirror")?;
     if !output.status.success() {
         anyhow::bail!(

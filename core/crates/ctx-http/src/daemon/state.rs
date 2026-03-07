@@ -1,10 +1,12 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use tokio::sync::{broadcast, mpsc, watch, Mutex, Notify};
+use tokio::task::JoinHandle;
 
 use crate::buffers::BufferStore;
 use crate::edit_plans::{EditPlan, EditPlanId};
@@ -29,7 +31,7 @@ use crate::telemetry::Telemetry;
 use crate::terminals::TerminalManager;
 use crate::web_sessions::WebSessionManager;
 use crate::workspace_active_snapshot::WorkspaceActiveSnapshotHub;
-use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
+use ctx_core::ids::{SessionId, TaskId, WorkspaceAttachmentId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     Session, SessionEvent, SessionHeadSnapshot, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot,
     WorktreeVcsSnapshot,
@@ -85,6 +87,9 @@ pub struct WorkspaceRuntime {
         Mutex<HashMap<WorkspaceId, TimedEntry<WorkspaceActiveHeadCacheEntry>>>,
     pub(crate) worktree_bootstrap_gates:
         Mutex<HashMap<WorktreeId, TimedEntry<WorktreeBootstrapGate>>>,
+    pub(crate) attachment_materializations:
+        Mutex<HashMap<WorkspaceAttachmentId, AttachmentMaterializationTask>>,
+    pub(crate) attachment_materialization_generation: AtomicU64,
     pub edit_plans: Mutex<HashMap<EditPlanId, EditPlan>>,
 }
 
@@ -143,6 +148,11 @@ pub struct AppState {
 pub(crate) struct WorktreeBootstrapGate {
     pub(crate) wait_for_completion: bool,
     pub(crate) done_tx: watch::Sender<bool>,
+}
+
+pub(crate) struct AttachmentMaterializationTask {
+    pub(crate) generation: u64,
+    pub(crate) handle: JoinHandle<()>,
 }
 
 pub struct CachedProviderOptions {
@@ -422,6 +432,8 @@ impl AppState {
                 workspace_active_snapshot_cache: Mutex::new(HashMap::new()),
                 workspace_active_heads_cache: Mutex::new(HashMap::new()),
                 worktree_bootstrap_gates: Mutex::new(HashMap::new()),
+                attachment_materializations: Mutex::new(HashMap::new()),
+                attachment_materialization_generation: AtomicU64::new(0),
                 edit_plans: Mutex::new(edit_plans),
             },
             providers: ProviderRuntime {

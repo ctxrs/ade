@@ -1,5 +1,7 @@
 mod common;
 
+use std::time::Duration;
+
 use axum::http::{Method, StatusCode};
 use ctx_core::models::{
     AttachmentMode, AttachmentUpdatePolicy, WorkspaceAttachment, WorkspaceAttachmentKind,
@@ -159,4 +161,116 @@ async fn workspace_attachments_sync_heals_stale_pending_when_materialized_exists
     assert_eq!(synced.len(), 1);
     assert_eq!(synced[0].status, WorkspaceAttachmentStatus::Ready);
     assert!(synced[0].last_sync_at.is_some());
+}
+
+#[tokio::test]
+async fn deleting_workspace_attachment_cancels_inflight_materialization() {
+    let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
+    let script_path = repo
+        .path()
+        .join(".ctx")
+        .join("scripts")
+        .join("slow-docs.py");
+    tokio::fs::create_dir_all(script_path.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(
+        &script_path,
+        r#"
+import pathlib
+import sys
+import time
+
+dest = pathlib.Path(sys.argv[1])
+dest.mkdir(parents=True, exist_ok=True)
+marker = pathlib.Path(".ctx/doc-mirror-started")
+marker.parent.mkdir(parents=True, exist_ok=True)
+marker.write_text("started\n", encoding="utf-8")
+time.sleep(2.0)
+dest.mkdir(parents=True, exist_ok=True)
+(dest / "index.md").write_text("done\n", encoding="utf-8")
+"#,
+    )
+    .await
+    .unwrap();
+
+    let data_root = tempfile::tempdir().unwrap();
+    let stores = common::setup_store(data_root.path()).await;
+    let state = common::build_state(
+        data_root.path(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state);
+
+    let workspace = common::create_workspace(&app, repo.path(), "ws").await;
+    let started_marker = repo.path().join(".ctx").join("doc-mirror-started");
+    let mount_path = repo
+        .path()
+        .join(".ctx")
+        .join("attachments")
+        .join("docs")
+        .join("slow-docs");
+
+    let (create_status, created): (StatusCode, Vec<WorkspaceAttachment>) = common::json_request(
+        &app,
+        Method::POST,
+        format!("/api/workspaces/{}/attachments", workspace.id.0),
+        Some(json!({
+            "kind": "doc_mirror",
+            "name": "slow-docs",
+            "source": ".ctx/scripts/slow-docs.py"
+        })),
+    )
+    .await;
+    assert_eq!(create_status, StatusCode::OK);
+    let attachment = created
+        .into_iter()
+        .find(|entry| entry.name == "slow-docs")
+        .unwrap();
+    let materialized_root = data_root
+        .path()
+        .join("attachments")
+        .join("doc-mirrors")
+        .join(attachment.id.0.to_string());
+
+    let (sync_status, synced): (StatusCode, Vec<WorkspaceAttachment>) = common::json_request(
+        &app,
+        Method::POST,
+        format!("/api/workspaces/{}/attachments/sync", workspace.id.0),
+        Some(json!({ "refresh": true })),
+    )
+    .await;
+    assert_eq!(sync_status, StatusCode::OK);
+    assert_eq!(synced.len(), 1);
+
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if tokio::fs::metadata(&started_marker).await.is_ok() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("doc mirror script never started");
+
+    let (delete_status, remaining): (StatusCode, Vec<WorkspaceAttachment>) = common::json_request(
+        &app,
+        Method::DELETE,
+        format!("/api/workspaces/{}/attachments", workspace.id.0),
+        Some(json!({
+            "kind": "doc_mirror",
+            "name": "slow-docs"
+        })),
+    )
+    .await;
+    assert_eq!(delete_status, StatusCode::OK);
+    assert!(remaining.is_empty());
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    assert!(!materialized_root.exists());
+    assert!(!mount_path.exists());
 }

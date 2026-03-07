@@ -42,6 +42,7 @@ mod sessions;
 mod state;
 mod workspaces;
 
+pub(crate) use state::AttachmentMaterializationTask;
 pub use state::{
     AppState, CacheSweepConfig, CacheSweepStats, CachedFileCompletions, CachedProviderOptions,
     CachedProviderVerify, GitStatusSnapshotCacheEntry, SessionHeadCacheKey, TimedEntry,
