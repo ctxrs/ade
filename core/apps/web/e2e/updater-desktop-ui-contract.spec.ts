@@ -349,7 +349,7 @@ test("desktop Update on Next Idle schedules restart when restart is ready", asyn
   await expect(page.getByRole("button", { name: "Update Now" })).toBeVisible({ timeout: 20_000 });
 });
 
-test("desktop auto-apply on launch triggers update apply when a staged update is ready", async ({ page }) => {
+test("desktop auto-applies when a staged update is ready", async ({ page }) => {
   await page.addInitScript((autoApplyKey: string, snoozeKey: string, idleKey: string, restartKey: string) => {
     localStorage.removeItem("ctx_update_check_v1");
     localStorage.removeItem(snoozeKey);

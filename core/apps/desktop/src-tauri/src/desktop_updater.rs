@@ -4,9 +4,11 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri_plugin_updater::UpdaterExt;
+use tokio::sync::Mutex as AsyncMutex;
 use url::Url;
 
 const RESTART_MARKER_FILENAME: &str = "desktop_update_restart_required.json";
@@ -20,6 +22,7 @@ const REMOTE_BOOTSTRAP_UPDATE_REQUIRED_PREFIX: &str =
 const REMOTE_BOOTSTRAP_FRESHNESS_UNVERIFIED_PREFIX: &str =
     "Desktop app freshness could not be verified before remote bootstrap.";
 static STAGING_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+static APPLY_IN_PROGRESS: OnceLock<AsyncMutex<()>> = OnceLock::new();
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -279,6 +282,10 @@ pub(super) async fn desktop_apply_app_update(
     app: tauri::AppHandle,
     req: DesktopAppUpdateApplyReq,
 ) -> Result<DesktopAppUpdateApplyResp, String> {
+    let _apply_guard = APPLY_IN_PROGRESS
+        .get_or_init(|| AsyncMutex::new(()))
+        .lock()
+        .await;
     if !req.confirm {
         return Err("confirm required".to_string());
     }

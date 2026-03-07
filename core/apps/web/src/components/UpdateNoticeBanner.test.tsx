@@ -169,8 +169,7 @@ describe("UpdateNoticeBanner", () => {
     expect(window.localStorage.getItem(IDLE_UPDATE_VERSION_STORAGE_KEY)).toContain("1.2.3");
   });
 
-  it("auto-applies staged desktop update on launch when the preference is enabled, and preserves restart-required state", async () => {
-    window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "1");
+  it("auto-applies staged desktop update when detected, and preserves restart-required state", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(readCachedUpdateCheck).mockReturnValue(null);
     vi.mocked(refreshUpdateCheck).mockResolvedValue({
@@ -208,7 +207,6 @@ describe("UpdateNoticeBanner", () => {
   });
 
   it("falls back to native desktop updater check when daemon update check is unavailable", async () => {
-    window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "1");
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(readCachedUpdateCheck).mockReturnValue(null);
     vi.mocked(refreshUpdateCheck).mockResolvedValue(null);
@@ -236,7 +234,7 @@ describe("UpdateNoticeBanner", () => {
     expect(screen.getByRole("button", { name: "Update Now" })).toBeEnabled();
   });
 
-  it("keeps staged desktop updates silent when launch auto-apply is disabled", async () => {
+  it("auto-applies staged desktop updates even without the old launch preference flag", async () => {
     window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "0");
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(readCachedUpdateCheck).mockReturnValue(null);
@@ -262,8 +260,10 @@ describe("UpdateNoticeBanner", () => {
     await waitFor(() => {
       expect(vi.mocked(desktopGetAppUpdateState)).toHaveBeenCalledTimes(1);
     });
-    expect(vi.mocked(desktopApplyAppUpdate)).not.toHaveBeenCalled();
-    expect(screen.queryByTestId("update-available-snackbar")).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(vi.mocked(desktopApplyAppUpdate)).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.getByTestId("update-available-snackbar")).toBeInTheDocument();
   });
 
   it("keeps updater banner hidden when native check fails without prior state", async () => {
@@ -337,7 +337,6 @@ describe("UpdateNoticeBanner", () => {
   it("auto-applies once staging transitions to staged-ready on desktop", async () => {
     vi.useFakeTimers();
     try {
-      window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "1");
       vi.mocked(isDesktopApp).mockReturnValue(true);
       vi.mocked(readCachedUpdateCheck).mockReturnValue(null);
       vi.mocked(refreshUpdateCheck).mockResolvedValue({
@@ -466,8 +465,7 @@ describe("UpdateNoticeBanner", () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it("forces a real check and skips launch auto-apply while restart is pending", async () => {
-    window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "1");
+  it("forces a real check and skips desktop auto-apply while restart is pending", async () => {
     window.sessionStorage.setItem(RESTART_REQUIRED_VERSION_STORAGE_KEY, "2.0.0");
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(readCachedUpdateCheck).mockReturnValue({

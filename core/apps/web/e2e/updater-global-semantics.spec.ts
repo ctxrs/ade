@@ -455,7 +455,8 @@ test("global updater checks stay app-scoped across launcher, wizard, and workben
     const phases = diagnostics.snapshots.map((entry) => entry.state.phase);
     return phases.includes("staged_ready");
   }).toBeTruthy();
-  await expect(page.getByTestId("update-available-snackbar")).toHaveCount(0);
+  await expect.poll(async () => desktopCallCount(page, "desktop_apply_app_update")).toBeGreaterThan(0);
+  await expect(page.getByTestId("update-available-snackbar")).toBeVisible({ timeout: 20_000 });
 
   const diagnostics = await readHarnessDiagnostics(page);
   const outputPath = testInfo.outputPath("updater-global-visibility-diagnostics.json");
@@ -600,17 +601,6 @@ test("restart-required state converges across windows and idle scheduling stays 
     .toBeGreaterThan(restartBaselineCombined);
   await expect.poll(async () => desktopCallCount(page, "desktop_apply_app_update")).toBe(0);
   await expect.poll(async () => desktopCallCount(page2, "desktop_apply_app_update")).toBe(0);
-  await expect
-    .poll(
-      async () =>
-        String(
-          (await page2.evaluate((idleKey: string) => {
-            return localStorage.getItem(idleKey);
-          }, IDLE_UPDATE_VERSION_STORAGE_KEY)) ?? "",
-        ),
-      { timeout: 5_000 },
-    )
-    .not.toContain("0.5.1");
 
   const outputPath = testInfo.outputPath("updater-multi-window-diagnostics.json");
   writeFileSync(

@@ -17,7 +17,6 @@ import {
 
 const PROMPT_SNOOZE_STORAGE_KEY = "ctx_update_prompt_next_allowed_at_v1";
 const IDLE_UPDATE_VERSION_STORAGE_KEY = "ctx_update_prompt_idle_versions_v1";
-const AUTO_APPLY_ON_LAUNCH_STORAGE_KEY = "ctx_update_auto_apply_on_launch_v1";
 const RESTART_REQUIRED_VERSION_STORAGE_KEY = "ctx_update_restart_required_version_v1";
 const POLL_INTERVAL_MS = 60 * 60 * 1000;
 const PROMPT_SNOOZE_MS = 24 * 60 * 60 * 1000;
@@ -50,15 +49,6 @@ const writeVersionSet = (key: string, versions: Set<string>) => {
 
 const writeIdleUpdateVersions = (versions: Set<string>) =>
   writeVersionSet(IDLE_UPDATE_VERSION_STORAGE_KEY, versions);
-
-const readAutoApplyOnLaunchEnabled = (): boolean => {
-  if (typeof window === "undefined") return false;
-  try {
-    return String(window.localStorage.getItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY) ?? "").trim() === "1";
-  } catch {
-    return false;
-  }
-};
 
 const readRestartRequiredVersion = (): string => {
   if (typeof window === "undefined") return "";
@@ -127,7 +117,7 @@ type ParsedSemVer = {
   prerelease: string[];
 };
 
-type UpdateApplySource = "manual" | "launch_auto" | "idle" | "forced";
+type UpdateApplySource = "manual" | "desktop_auto" | "idle" | "forced";
 
 type NoticePhase = "ready" | "applying" | "restart_required";
 
@@ -353,7 +343,7 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
   const [idleUpdateVersions, setIdleUpdateVersions] = useState<Set<string>>(() => readIdleUpdateVersions());
   const [uiState, dispatchUi] = useReducer(noticeUiReducer, initialNoticeUiState);
   const [restartingApp, setRestartingApp] = useState(false);
-  const launchAutoAppliedVersionRef = useRef<string>("");
+  const [desktopRefreshGeneration, setDesktopRefreshGeneration] = useState(0);
   const applyInFlightRef = useRef(false);
   const updateInfoRef = useRef<UpdateCheck | null>(updateInfo);
   const nativeStateSignatureRef = useRef<string>("");
@@ -368,7 +358,6 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
   const nextPromptAtMs = latestKnownVersion ? Number(promptSnoozeByVersion[latestKnownVersion] ?? 0) : 0;
   const nowMs = Date.now();
   const desktopPhase = normalizeOptionalString(desktopNativeState?.phase).toLowerCase();
-  const launchAutoApplyEnabled = isDesktop && readAutoApplyOnLaunchEnabled();
   const desktopStagedReady = isDesktop && (
     desktopNativeState?.staged === true
     || desktopPhase === "staged_ready"
@@ -470,6 +459,7 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
         try {
           const native = await desktopGetAppUpdateState("stable");
           setDesktopNativeState(native);
+          setDesktopRefreshGeneration((prev) => prev + 1);
           const latestVersion = normalizeOptionalString(native.latest_version) || null;
           const nativeSignature = [
             normalizeOptionalString(native.current_version),
@@ -711,21 +701,18 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
 
   useEffect(() => {
     if (!isDesktop) return;
-    if (!launchAutoApplyEnabled) return;
     if (restartRequired) return;
     if (!desktopStagedReady) return;
     const version = latestKnownVersion;
     if (!version) return;
     if (isForcedUpdate(updateInfo)) return;
     if (readRestartRequiredVersion()) return;
-    if (launchAutoAppliedVersionRef.current === version) return;
-    launchAutoAppliedVersionRef.current = version;
-    void applyUpdateNow(version, "launch_auto");
+    void applyUpdateNow(version, "desktop_auto");
   }, [
     applyUpdateNow,
+    desktopRefreshGeneration,
     desktopStagedReady,
     isDesktop,
-    launchAutoApplyEnabled,
     latestKnownVersion,
     restartRequired,
     updateInfo,
