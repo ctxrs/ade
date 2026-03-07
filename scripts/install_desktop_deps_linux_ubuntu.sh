@@ -92,6 +92,35 @@ packages=(
   tk
 )
 
+if [[ "$print_selected_packages" != "1" ]]; then
+  SUDO=()
+  if [[ "$(id -u)" -ne 0 ]]; then
+    if ! command -v sudo >/dev/null 2>&1; then
+      echo "error: sudo not found and not running as root." >&2
+      exit 1
+    fi
+
+    if [[ -t 0 ]]; then
+      SUDO=("sudo")
+    else
+      if sudo -n true >/dev/null 2>&1; then
+        SUDO=("sudo" "-n")
+      else
+        cat >&2 <<'EOF'
+error: this shell is non-interactive and sudo requires a password.
+
+Run this script from an interactive terminal (so sudo can prompt), or run it as root.
+EOF
+        exit 1
+      fi
+    fi
+  fi
+
+  echo "${BOLD}Installing desktop (Tauri v2) Linux build dependencies (Ubuntu/Debian)${RESET}"
+
+  "${SUDO[@]}" apt-get update
+fi
+
 webkit_pkg="$(choose_first_available_pkg libwebkit2gtk-4.1-dev)" || {
   echo "error: could not find libwebkit2gtk-4.1-dev (required by current Tauri Linux stack)." >&2
   exit 3
@@ -130,33 +159,6 @@ if [[ "$print_selected_packages" == "1" ]]; then
   printf '%s\n' "${selected_packages[@]}"
   exit 0
 fi
-
-SUDO=()
-if [[ "$(id -u)" -ne 0 ]]; then
-  if ! command -v sudo >/dev/null 2>&1; then
-    echo "error: sudo not found and not running as root." >&2
-    exit 1
-  fi
-
-  if [[ -t 0 ]]; then
-    SUDO=("sudo")
-  else
-    if sudo -n true >/dev/null 2>&1; then
-      SUDO=("sudo" "-n")
-    else
-      cat >&2 <<'EOF'
-error: this shell is non-interactive and sudo requires a password.
-
-Run this script from an interactive terminal (so sudo can prompt), or run it as root.
-EOF
-      exit 1
-    fi
-  fi
-fi
-
-echo "${BOLD}Installing desktop (Tauri v2) Linux build dependencies (Ubuntu/Debian)${RESET}"
-
-"${SUDO[@]}" apt-get update
 
 "${SUDO[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
   "${selected_packages[@]}"
