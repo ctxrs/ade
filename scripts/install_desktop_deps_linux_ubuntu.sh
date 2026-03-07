@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+print_selected_packages=0
+case "${1:-}" in
+  -h|--help)
   cat <<'EOF'
 Usage: scripts/install_desktop_deps_linux_ubuntu.sh
 
 Installs system packages required to build the Tauri v2 desktop app on Ubuntu/Debian.
+
+Options:
+  --print-selected-packages  Resolve the package set and print it without running apt-get.
 
 This script intentionally does NOT install:
   - Rust toolchain (rustup/cargo)
@@ -13,17 +18,42 @@ This script intentionally does NOT install:
 
 EOF
   exit 0
-fi
+  ;;
+  --print-selected-packages)
+    print_selected_packages=1
+    ;;
+  "")
+    ;;
+  *)
+    echo "error: unknown argument: ${1}" >&2
+    exit 2
+    ;;
+esac
 
-if ! command -v apt-get >/dev/null 2>&1; then
+if [[ "$print_selected_packages" != "1" ]] && ! command -v apt-get >/dev/null 2>&1; then
   echo "error: apt-get not found; this script targets Ubuntu/Debian." >&2
   exit 1
 fi
 
+apt_package_available() {
+  local pkg="$1"
+  local available="${CTX_TEST_APT_CACHE_AVAILABLE_PACKAGES:-}"
+  if [[ -n "$available" ]]; then
+    local candidate
+    for candidate in $available; do
+      if [[ "$candidate" == "$pkg" ]]; then
+        return 0
+      fi
+    done
+    return 1
+  fi
+  apt-cache show "$pkg" >/dev/null 2>&1
+}
+
 choose_first_available_pkg() {
   local pkg
   for pkg in "$@"; do
-    if apt-cache show "$pkg" >/dev/null 2>&1; then
+    if apt_package_available "$pkg"; then
       printf '%s' "$pkg"
       return 0
     fi
@@ -37,29 +67,6 @@ if [[ -t 1 ]]; then
 else
   BOLD=""
   RESET=""
-fi
-
-SUDO=()
-if [[ "$(id -u)" -ne 0 ]]; then
-  if ! command -v sudo >/dev/null 2>&1; then
-    echo "error: sudo not found and not running as root." >&2
-    exit 1
-  fi
-
-  if [[ -t 0 ]]; then
-    SUDO=("sudo")
-  else
-    if sudo -n true >/dev/null 2>&1; then
-      SUDO=("sudo" "-n")
-    else
-      cat >&2 <<'EOF'
-error: this shell is non-interactive and sudo requires a password.
-
-Run this script from an interactive terminal (so sudo can prompt), or run it as root.
-EOF
-      exit 1
-    fi
-  fi
 fi
 
 packages=(
@@ -85,10 +92,6 @@ packages=(
   tk
 )
 
-echo "${BOLD}Installing desktop (Tauri v2) Linux build dependencies (Ubuntu/Debian)${RESET}"
-
-"${SUDO[@]}" apt-get update
-
 webkit_pkg="$(choose_first_available_pkg libwebkit2gtk-4.1-dev)" || {
   echo "error: could not find libwebkit2gtk-4.1-dev (required by current Tauri Linux stack)." >&2
   exit 3
@@ -109,12 +112,54 @@ appindicator_pkg="$(choose_first_available_pkg libayatana-appindicator3-dev liba
   exit 3
 }
 
-"${SUDO[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-  "${packages[@]}" \
-  "$webkit_pkg" \
-  "$webkit_driver_pkg" \
-  "$libsoup_pkg" \
+fuse_runtime_pkg="$(choose_first_available_pkg libfuse2t64 libfuse2)" || {
+  echo "error: could not find an AppImage FUSE runtime package (tried libfuse2t64, libfuse2)." >&2
+  exit 3
+}
+
+selected_packages=(
+  "${packages[@]}"
+  "$webkit_pkg"
+  "$webkit_driver_pkg"
+  "$libsoup_pkg"
   "$appindicator_pkg"
+  "$fuse_runtime_pkg"
+)
+
+if [[ "$print_selected_packages" == "1" ]]; then
+  printf '%s\n' "${selected_packages[@]}"
+  exit 0
+fi
+
+SUDO=()
+if [[ "$(id -u)" -ne 0 ]]; then
+  if ! command -v sudo >/dev/null 2>&1; then
+    echo "error: sudo not found and not running as root." >&2
+    exit 1
+  fi
+
+  if [[ -t 0 ]]; then
+    SUDO=("sudo")
+  else
+    if sudo -n true >/dev/null 2>&1; then
+      SUDO=("sudo" "-n")
+    else
+      cat >&2 <<'EOF'
+error: this shell is non-interactive and sudo requires a password.
+
+Run this script from an interactive terminal (so sudo can prompt), or run it as root.
+EOF
+      exit 1
+    fi
+  fi
+fi
+
+echo "${BOLD}Installing desktop (Tauri v2) Linux build dependencies (Ubuntu/Debian)${RESET}"
+
+"${SUDO[@]}" apt-get update
+
+"${SUDO[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+  "${selected_packages[@]}"
 
 echo
 echo "${BOLD}Sanity check (pkg-config)${RESET}"
@@ -147,6 +192,13 @@ if command -v WebKitWebDriver >/dev/null 2>&1; then
   echo "- WebKitWebDriver: OK ($(command -v WebKitWebDriver))"
 else
   echo "- WebKitWebDriver: MISSING (install webkit2gtk-driver)" >&2
+  exit 2
+fi
+
+if command -v ldconfig >/dev/null 2>&1 && ldconfig -p | grep -q 'libfuse\.so\.2'; then
+  echo "- libfuse.so.2: OK"
+else
+  echo "- libfuse.so.2: MISSING (install ${fuse_runtime_pkg})" >&2
   exit 2
 fi
 
