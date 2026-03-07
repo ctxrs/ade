@@ -173,6 +173,26 @@ type HarnessInstallRowState = {
   error?: string;
 };
 
+type HarnessInstallCandidateStatus =
+  | "installed"
+  | "running"
+  | "ready_to_start"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+function resolveHarnessInstallCandidateStatus(
+  candidate: HarnessInstallProviderRow,
+  installUi?: HarnessInstallRowState,
+): HarnessInstallCandidateStatus {
+  if (candidate.installed && candidate.healthy) return "installed";
+  if (installUi?.state === "running" || candidate.installRunning) return "running";
+  if (installUi?.state === "failed") return "failed";
+  if (installUi?.state === "cancelled") return "cancelled";
+  if (installUi?.state === "succeeded") return "succeeded";
+  return "ready_to_start";
+}
+
 const looksLikeSshAuthFailure = (message: string): boolean => {
   const lowered = message.toLowerCase();
   return lowered.includes("permission denied")
@@ -565,25 +585,48 @@ export default function WorkspaceSetupPage() {
         ? (titlingLocalStatus?.ready
           ? "Configured local (ready)"
           : "Configured local (install pending; fallback until ready)")
-        : titlingConfiguredReady
+      : titlingConfiguredReady
           ? (titlingExistingSettings?.mode === "local" ? "Configured local (ready)" : "Configured remote")
         : "Not configured";
-  const harnessMissingCount = harnessInstallCandidates.filter(
-    (candidate) => candidate.installSupported && !(candidate.installed && candidate.healthy),
-  ).length;
-  const harnessSelectedCount = harnessInstallCandidates.filter(
-    (candidate) =>
-      harnessInstallSelected[candidate.providerId]
-      && candidate.installSupported
-      && !(candidate.installed && candidate.healthy),
-  ).length;
-  const harnessSummaryValue = harnessMissingCount === 0
-    ? "All selected harnesses already installed"
-    : harnessSelectedCount > 0
-      ? `${harnessSelectedCount} selected for download`
-      : "Skipped for now";
   const selectedHarnessInstallTarget: InstallTarget =
     selections.container && selections.container !== "no-container" ? "container" : "host";
+  const harnessCandidateStatuses = harnessInstallCandidates.map((candidate) => {
+    const installUi = harnessInstallRows[candidate.providerId];
+    return {
+      candidate,
+      installUi,
+      status: resolveHarnessInstallCandidateStatus(candidate, installUi),
+    };
+  });
+  const harnessMissingCount = harnessCandidateStatuses.filter(
+    ({ candidate, status }) => candidate.installSupported && status !== "installed" && status !== "succeeded",
+  ).length;
+  const selectedHarnessStatuses = harnessCandidateStatuses.filter(
+    ({ candidate }) => harnessInstallSelected[candidate.providerId] && candidate.installSupported,
+  );
+  const selectedHarnessReadyToStartCount = selectedHarnessStatuses.filter(
+    ({ status }) => status === "ready_to_start",
+  ).length;
+  const selectedHarnessRunningCount = selectedHarnessStatuses.filter(
+    ({ status }) => status === "running",
+  ).length;
+  const selectedHarnessBlockedCount = selectedHarnessStatuses.filter(
+    ({ status }) => status === "failed" || status === "cancelled",
+  ).length;
+  const selectedHarnessCompletedCount = selectedHarnessStatuses.filter(
+    ({ status }) => status === "installed" || status === "succeeded",
+  ).length;
+  const harnessSummaryValue = harnessMissingCount === 0
+    ? "All detectable harnesses are ready"
+    : selectedHarnessRunningCount > 0
+      ? `${selectedHarnessRunningCount} selected download${selectedHarnessRunningCount === 1 ? "" : "s"} in progress`
+      : selectedHarnessBlockedCount > 0
+        ? `${selectedHarnessBlockedCount} selected download${selectedHarnessBlockedCount === 1 ? "" : "s"} need attention`
+        : selectedHarnessReadyToStartCount > 0
+          ? `${selectedHarnessReadyToStartCount} selected for download`
+          : selectedHarnessCompletedCount > 0
+            ? `${selectedHarnessCompletedCount} selected download${selectedHarnessCompletedCount === 1 ? "" : "s"} ready`
+            : "Skipped for now";
   const canAdvance = (!requiresSelection || hasSelection)
     && (!isRemoteStep || (
       hasRemoteHost
@@ -595,7 +638,14 @@ export default function WorkspaceSetupPage() {
     && hasTargetBranch
     && hasAllowlist
     && (step.key !== "auth-import" || !authImportBusy)
-    && (step.key !== "harness-downloads" || !harnessInstallBusy)
+    && (
+      step.key !== "harness-downloads"
+      || (
+        !harnessInstallBusy
+        && selectedHarnessRunningCount === 0
+        && selectedHarnessBlockedCount === 0
+      )
+    )
     && titlingStepCanAdvance
     ;
   const showLaunchPanel = Boolean(launchSnapshot) && (creating || launchSnapshot?.state === "error");
@@ -624,7 +674,17 @@ export default function WorkspaceSetupPage() {
   const nextButtonLabel = step.key === "container" && routePlanningBusy
     ? "Working..."
     : step.key === "harness-downloads"
-      ? (harnessInstallBusy ? "Downloading..." : (harnessSelectedCount > 0 ? "Download selected" : "Continue"))
+      ? (
+        harnessInstallBusy
+          ? "Working..."
+          : selectedHarnessRunningCount > 0
+            ? "Waiting for downloads..."
+            : selectedHarnessBlockedCount > 0
+              ? "Resolve downloads"
+              : selectedHarnessReadyToStartCount > 0
+                ? "Download selected"
+                : "Continue"
+      )
       : "Next";
 
   function applyConnection(info: DesktopConnectionInfo) {
@@ -1215,10 +1275,18 @@ export default function WorkspaceSetupPage() {
           .filter((row): row is HarnessInstallProviderRow => row !== null)
           .sort((a, b) => a.label.localeCompare(b.label));
         setHarnessInstallCandidates(rows);
-        setHarnessInstallSelected(
+        setHarnessInstallSelected((prev) =>
           Object.fromEntries(
-            rows.map((row) => [row.providerId, row.installSupported && !(row.installed && row.healthy)]),
-          ),
+            rows.map((row) => {
+              if (row.installed && row.healthy) {
+                return [row.providerId, false];
+              }
+              if (Object.prototype.hasOwnProperty.call(prev, row.providerId)) {
+                return [row.providerId, Boolean(prev[row.providerId])];
+              }
+              return [row.providerId, row.installSupported];
+            }),
+          )
         );
         const runningRows = rows.filter((row) => row.installRunning && row.installId);
         for (const row of runningRows) {
@@ -1612,6 +1680,7 @@ export default function WorkspaceSetupPage() {
     }
     void scanHarnessInstallCandidatesForTarget(selections.location).catch(() => {});
   }, [
+    harnessInstallScannedKey,
     parsedRemote?.host,
     remoteStatus,
     scanHarnessInstallCandidatesForTarget,
@@ -2029,15 +2098,31 @@ export default function WorkspaceSetupPage() {
     }
     const selectedRows = harnessInstallCandidates
       .filter((row) => selectionSnapshot[row.providerId])
-      .filter((row) => {
-        if (!row.installSupported) return false;
-        if (row.installed && row.healthy) return false;
-        const running = harnessInstallRows[row.providerId]?.state === "running" || row.installRunning;
-        return !running;
-      });
-    if (selectedRows.length === 0) {
+      .filter((row) => row.installSupported)
+      .map((row) => ({
+        row,
+        installUi: harnessInstallRows[row.providerId],
+        status: resolveHarnessInstallCandidateStatus(row, harnessInstallRows[row.providerId]),
+      }));
+    const startableRows = selectedRows
+      .filter(({ status }) => status === "ready_to_start")
+      .map(({ row }) => row);
+    const blockingRows = selectedRows.filter(
+      ({ status }) => status === "failed" || status === "cancelled",
+    );
+    const runningRows = selectedRows.filter(({ status }) => status === "running");
+
+    if (selectedRows.length === 0 || selectedRows.every(({ status }) => status === "installed" || status === "succeeded")) {
       if (currentStepKeyRef.current !== "harness-downloads") return;
       goToStepKey(nextAfterHarnessDownloads(routePlan));
+      return;
+    }
+    if (blockingRows.length > 0) {
+      setHarnessInstallError("Resolve failed or canceled downloads, or skip them for now before continuing.");
+      return;
+    }
+    if (runningRows.length > 0) {
+      setHarnessInstallError(null);
       return;
     }
 
@@ -2046,7 +2131,7 @@ export default function WorkspaceSetupPage() {
     try {
       await connectDaemonForImport();
       const startResults = await Promise.all(
-        selectedRows.map(async (row) => {
+        startableRows.map(async (row) => {
           try {
             const started = await installProvider(row.providerId, selectedHarnessInstallTarget);
             const installId = started.install_id;
@@ -2096,7 +2181,7 @@ export default function WorkspaceSetupPage() {
           return `${label}: ${result.error}`;
         });
       if (failures.length > 0) {
-        const prefix = failures.length === selectedRows.length
+        const prefix = failures.length === startableRows.length
           ? "Unable to start selected downloads."
           : "Some downloads failed to start.";
         setHarnessInstallError(`${prefix} ${failures.join(" ; ")}`);
@@ -2106,9 +2191,6 @@ export default function WorkspaceSetupPage() {
       if (!startedAny) {
         return;
       }
-
-      if (currentStepKeyRef.current !== "harness-downloads") return;
-      goToStepKey(nextAfterHarnessDownloads(routePlan));
     } catch (error) {
       setHarnessInstallError(messageFromError(error));
     } finally {
@@ -2363,6 +2445,12 @@ export default function WorkspaceSetupPage() {
       // This avoids landing on the workbench too early on cold start.
       await waitForDaemonReady(15000);
       const containerEnabled = selections.container !== "no-container";
+      if (selectedHarnessRunningCount > 0) {
+        throw new Error("Selected harness downloads are still running. Wait for them to finish or skip them before creating the workspace.");
+      }
+      if (selectedHarnessBlockedCount > 0 || selectedHarnessReadyToStartCount > 0) {
+        throw new Error("Resolve selected harness downloads before creating the workspace.");
+      }
 
       // Strict UX gate: if container mode is selected, ensure runtime+image readiness
       // before repository/workspace provisioning starts.
@@ -3042,6 +3130,16 @@ export default function WorkspaceSetupPage() {
                   <div className="wizard-input">
                     {harnessInstallBusy ? <div className="wizard-note">Checking/downloading harnesses…</div> : null}
                     {harnessInstallError ? <div className="wizard-error">{harnessInstallError}</div> : null}
+                    {!harnessInstallBusy && selectedHarnessRunningCount > 0 ? (
+                      <div className="wizard-note">
+                        Selected downloads are still running. Wait for them to finish, cancel them, or skip them for now before continuing.
+                      </div>
+                    ) : null}
+                    {!harnessInstallBusy && selectedHarnessBlockedCount > 0 ? (
+                      <div className="wizard-note">
+                        One or more selected downloads failed or were canceled. Clear them or skip for now before continuing.
+                      </div>
+                    ) : null}
                     {!harnessInstallBusy && !harnessInstallCandidates.length ? (
                       <div className="wizard-note">No downloadable harness providers detected on this daemon.</div>
                     ) : null}

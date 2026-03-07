@@ -572,6 +572,13 @@ impl ExecutionSetupCoordinator {
             job: Arc::clone(&job),
         };
         let is_host_mode = matches!(settings.mode, ExecutionMode::Host);
+        if !is_host_mode {
+            self.emit_phase(
+                &job,
+                HarnessSetupPhase::MachineCheck,
+                "checking container runtime",
+            );
+        }
         let mut attempt = 0usize;
         let run_result = loop {
             attempt += 1;
@@ -667,6 +674,13 @@ impl ExecutionSetupCoordinator {
             job: Arc::clone(&job),
         };
         let is_host_mode = matches!(settings.mode, ExecutionMode::Host);
+        if !is_host_mode {
+            self.emit_phase(
+                &job,
+                HarnessSetupPhase::MachineCheck,
+                "checking container runtime",
+            );
+        }
         let mut attempt = 0usize;
         let run_result = loop {
             attempt += 1;
@@ -680,7 +694,19 @@ impl ExecutionSetupCoordinator {
             } else if !harness_runtime::container_runtime_available(&self.data_root) {
                 Err(anyhow::anyhow!("container runtime unavailable"))
             } else {
+                self.emit_log(
+                    &job,
+                    HarnessSetupPhase::MachineCheck,
+                    HarnessSetupLogLevel::Info,
+                    "waiting for runtime prewarm slot",
+                );
                 let _prewarm_guard = self.prewarm_lock.lock().await;
+                self.emit_log(
+                    &job,
+                    HarnessSetupPhase::MachineCheck,
+                    HarnessSetupLogLevel::Info,
+                    "runtime prewarm slot acquired",
+                );
                 let prewarm_result = async {
                     if scope.includes_runtime() {
                         let image = harness_runtime::resolve_container_image(&settings.container);
@@ -1512,5 +1538,42 @@ mod tests {
             event,
             ExecutionLaunchStreamEvent::LaunchComplete { .. }
         ));
+    }
+
+    #[tokio::test]
+    async fn runtime_prewarm_emits_initial_log_before_runtime_work_completes() {
+        let data_dir = tempfile::tempdir().expect("tempdir");
+        let coordinator = test_coordinator(data_dir.path().to_path_buf());
+        let settings = ExecutionSettings {
+            mode: ExecutionMode::Container,
+            ..ExecutionSettings::default()
+        };
+
+        let snapshot = coordinator
+            .start_runtime_prewarm(settings, RuntimePrewarmScope::Runtime)
+            .await;
+        let observed = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let latest = coordinator
+                    .launch_status(&snapshot.job_id)
+                    .await
+                    .expect("missing launch job");
+                if !latest.logs.is_empty() {
+                    break latest;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("timed out waiting for initial launch log");
+
+        assert!(matches!(
+            observed.current_phase,
+            Some(HarnessSetupPhase::MachineCheck) | None
+        ));
+        assert!(observed.logs.iter().any(|line| {
+            line.phase == HarnessSetupPhase::MachineCheck
+                && line.message == "checking container runtime"
+        }));
     }
 }

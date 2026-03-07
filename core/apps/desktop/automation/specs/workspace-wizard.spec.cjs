@@ -728,18 +728,53 @@ const clickHarnessSkip = async () => {
   await clickTestId("wizard-harness-skip");
 };
 
+const syncHarnessSelections = async (providerIds) => {
+  if (!Array.isArray(providerIds) || providerIds.length === 0) return;
+  const selected = Array.from(new Set(providerIds.map((value) => String(value || "").trim()).filter(Boolean)));
+  if (selected.length === 0) return;
+  const result = await browser.execute((wanted) => {
+    const inputs = Array.from(document.querySelectorAll('[data-testid^="wizard-harness-checkbox-"]'));
+    const desired = new Set(wanted);
+    const seen = [];
+    for (const node of inputs) {
+      if (!(node instanceof HTMLInputElement) || node.type !== "checkbox") continue;
+      const testId = String(node.getAttribute("data-testid") || "");
+      const providerId = testId.replace(/^wizard-harness-checkbox-/, "");
+      if (!providerId) continue;
+      seen.push(providerId);
+      const wantChecked = desired.has(providerId);
+      if (!node.disabled && Boolean(node.checked) !== wantChecked) {
+        node.click();
+      }
+    }
+    return { seen };
+  }, selected);
+  if (!result || !Array.isArray(result.seen) || result.seen.length === 0) {
+    throw new Error("failed to read harness selection rows");
+  }
+  for (const providerId of selected) {
+    if (!result.seen.includes(providerId)) {
+      throw new Error(`expected harness row '${providerId}' to be present`);
+    }
+  }
+};
+
 const ensureReadyForSourceSelection = async (
   {
     location,
     container,
     downloadHarnesses = false,
+    selectedHarnessProviderIds = null,
     forbidLocationRegression = false,
     locationProgress = { leftLocation: false },
   },
-  timeoutMs = 60000,
+  timeoutMs,
 ) => {
+  const effectiveTimeoutMs = typeof timeoutMs === "number" && timeoutMs > 0
+    ? timeoutMs
+    : (downloadHarnesses ? 300000 : 60000);
   const started = Date.now();
-  while (Date.now() - started < timeoutMs) {
+  while (Date.now() - started < effectiveTimeoutMs) {
     const key = await currentStepKey();
     if (key && key !== "location") {
       locationProgress.leftLocation = true;
@@ -781,6 +816,9 @@ const ensureReadyForSourceSelection = async (
         await browser.pause(100);
         continue;
       }
+      if (Array.isArray(selectedHarnessProviderIds) && selectedHarnessProviderIds.length > 0) {
+        await syncHarnessSelections(selectedHarnessProviderIds);
+      }
       const next = await clickNextIfEnabled();
       if (next.clicked) {
         await browser.pause(100);
@@ -821,6 +859,7 @@ const selectSourceOptionWithRetry = async (
     container,
     sourceKind,
     downloadHarnesses = false,
+    selectedHarnessProviderIds = null,
     forbidLocationRegression = false,
   },
   attempts = 6,
@@ -850,6 +889,7 @@ const selectSourceOptionWithRetry = async (
       location,
       container,
       downloadHarnesses,
+      selectedHarnessProviderIds,
       forbidLocationRegression,
       locationProgress,
     });
@@ -937,6 +977,31 @@ const waitForWorkspaceRoute = async (timeoutMs = 120000) => {
   }
   const diag = await collectWorkspaceRouteDiagnostics();
   throw new Error(`did not navigate to /workspaces/:id; diag=${JSON.stringify(diag)}`);
+};
+
+const waitForLaunchLogsOrWorkspaceRoute = async (timeoutMs = 15000) => {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const state = await browser.execute(() => {
+      const pathname = window.location.pathname;
+      const root = document.querySelector('[data-testid="workspace-setup"]');
+      const step = root ? root.getAttribute("data-step-key") : null;
+      const lines = document.querySelectorAll(".wizard-launch-log-line").length;
+      const note = document.querySelector(".wizard-launch-log-body .wizard-note");
+      const noteText = note ? String(note.textContent || "").trim() : "";
+      return { pathname, step, lines, noteText };
+    });
+    const pathname = String(state?.pathname || "");
+    if (pathname.startsWith("/workspaces/")) {
+      return { kind: "workspace" };
+    }
+    if (state?.step === "confirm" && Number(state?.lines || 0) > 0) {
+      return { kind: "logs" };
+    }
+    await browser.pause(150);
+  }
+  const diag = await collectWorkspaceRouteDiagnostics();
+  throw new Error(`launch logs never appeared before workspace navigation; diag=${JSON.stringify(diag)}`);
 };
 
 const assertLocalWorkspaceConfig = async (workspaceId, expectations) => {
@@ -1095,6 +1160,9 @@ const runWizardScenario = async (scenario) => {
     container: scenario.container,
     sourceKind: scenario.source.kind,
     downloadHarnesses: Boolean(scenario.downloadHarnesses),
+    selectedHarnessProviderIds: Array.isArray(scenario.selectedHarnessProviderIds)
+      ? scenario.selectedHarnessProviderIds
+      : null,
     forbidLocationRegression: true,
   });
 
@@ -1267,6 +1335,9 @@ const runWizardScenario = async (scenario) => {
   await clickCreate(
     scenario.container && scenario.container !== "no-container" ? CONTAINER_WORKSPACE_TIMEOUT_MS : 30000,
   );
+  if (scenario.container && scenario.container !== "no-container") {
+    await waitForLaunchLogsOrWorkspaceRoute(15000);
+  }
 
   const workspaceRouteTimeoutMs = scenario.location === "remote"
     ? (scenario.container && scenario.container !== "no-container" ? CONTAINER_WORKSPACE_TIMEOUT_MS : 180000)
@@ -1475,6 +1546,8 @@ describe("launcher workspace wizard (e2e)", () => {
       location: "local",
       container: "disk-isolated",
       network: "full",
+      downloadHarnesses: true,
+      selectedHarnessProviderIds: ["codex"],
       source: { kind: "new", destPath: dest, workspaceName: "disk-isolated-ws" },
       setupHook: "",
       mergeQueue: { kind: "skip" },

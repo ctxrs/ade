@@ -215,6 +215,13 @@ pub(crate) struct ActiveTaskRefreshEntry {
 const DEFAULT_SESSION_CACHE_TTL_HOURS: u64 = 24;
 const DEFAULT_WORKSPACE_CACHE_TTL_DAYS: u64 = 7;
 const DEFAULT_CACHE_SWEEP_INTERVAL_SECS: u64 = 60 * 60;
+const INSTALL_TIMEOUT_GRACE_SECS: u64 = 90;
+const INSTALL_TIMEOUT_VENV_SECS: u64 = (5 * 60) + INSTALL_TIMEOUT_GRACE_SECS;
+const INSTALL_TIMEOUT_DOWNLOAD_SECS: u64 = (15 * 60) + INSTALL_TIMEOUT_GRACE_SECS;
+const INSTALL_TIMEOUT_PACKAGE_MANAGER_SECS: u64 = (12 * 60) + INSTALL_TIMEOUT_GRACE_SECS;
+const INSTALL_TIMEOUT_PREPARE_SECS: u64 = 5 * 60;
+const INSTALL_TIMEOUT_REGISTRY_SECS: u64 = 2 * 60;
+const INSTALL_TIMEOUT_DEFAULT_SECS: u64 = 20 * 60;
 
 #[derive(Clone, Copy, Debug)]
 pub struct CacheSweepConfig {
@@ -304,6 +311,104 @@ impl<T> TimedEntry<T> {
 }
 
 impl AppState {
+    fn install_running_timeout_for_stage(stage: &str) -> Duration {
+        match stage {
+            "download" | "node_download" | "python_download" | "model_download"
+            | "runtime_download" => Duration::from_secs(INSTALL_TIMEOUT_DOWNLOAD_SECS),
+            "npm_install" | "dependency_npm_install" | "pip_install" => {
+                Duration::from_secs(INSTALL_TIMEOUT_PACKAGE_MANAGER_SECS)
+            }
+            "venv" => Duration::from_secs(INSTALL_TIMEOUT_VENV_SECS),
+            "registry" | "registry_load" | "registry_save" => {
+                Duration::from_secs(INSTALL_TIMEOUT_REGISTRY_SECS)
+            }
+            "prepare" | "extract" | "node_extract" | "python_extract" | "runtime_extract" => {
+                Duration::from_secs(INSTALL_TIMEOUT_PREPARE_SECS)
+            }
+            _ => Duration::from_secs(INSTALL_TIMEOUT_DEFAULT_SECS),
+        }
+    }
+
+    fn format_install_timeout(duration: Duration) -> String {
+        let secs = duration.as_secs();
+        if secs >= 60 {
+            let mins = secs / 60;
+            let rem = secs % 60;
+            if rem == 0 {
+                format!("{mins}m")
+            } else {
+                format!("{mins}m {rem}s")
+            }
+        } else {
+            format!("{secs}s")
+        }
+    }
+
+    fn reconcile_stale_running_install_locked(
+        &self,
+        install_id: InstallId,
+        st: &mut InstallState,
+    ) -> bool {
+        if !matches!(st.state, InstallStateKind::Running) {
+            return false;
+        }
+        let now = chrono::Utc::now();
+        let last_event = st.events.back().cloned();
+        let stage = last_event
+            .as_ref()
+            .map(|event| event.stage.trim())
+            .filter(|stage| !stage.is_empty())
+            .unwrap_or("prepare");
+        let anchor = last_event.as_ref().map(|event| event.at).unwrap_or(st.started_at);
+        let Ok(inactive_for) = now.signed_duration_since(anchor).to_std() else {
+            return false;
+        };
+        let timeout_after = Self::install_running_timeout_for_stage(stage);
+        if inactive_for <= timeout_after {
+            return false;
+        }
+
+        let message = format!(
+            "Install timed out during {stage} after {} without progress. Retry the install.",
+            Self::format_install_timeout(inactive_for)
+        );
+        st.state = InstallStateKind::Failed;
+        st.finished_at = Some(now);
+        st.error = Some(message.clone());
+        st.error_code = Some(InstallErrorCode::Timeout);
+        let event = InstallProgressEvent {
+            install_id,
+            provider_id: st.provider_id.clone(),
+            target: st.target,
+            at: now,
+            stage: stage.to_string(),
+            message: message.clone(),
+            level: InstallEventLevel::Error,
+            bytes: None,
+            total_bytes: None,
+            attempt: None,
+            error_code: Some(InstallErrorCode::Timeout),
+        };
+        if st.events.len() >= 256 {
+            st.events.pop_front();
+        }
+        st.events.push_back(event.clone());
+        let _ = st.tx.send(event);
+
+        let mut ops_event = OpsEvent::new("warn", "provider_install_failed");
+        ops_event.provider_id = Some(st.provider_id.clone());
+        ops_event.meta = Some(serde_json::json!({
+            "install_id": install_id.to_string(),
+            "target": st.target.map(|value| value.as_str()),
+            "state": "failed",
+            "error": message,
+            "error_code": "timeout",
+            "ok": false,
+        }));
+        self.telemetry.ops_events.emit(ops_event);
+        true
+    }
+
     pub fn new(
         data_root: PathBuf,
         stores: StoreManager,
@@ -933,8 +1038,9 @@ impl AppState {
         provider_id: &str,
         target: Option<InstallTarget>,
     ) -> Option<InstallId> {
-        let map = self.providers.installs.lock().await;
-        map.iter().find_map(|(id, st)| {
+        let mut map = self.providers.installs.lock().await;
+        map.iter_mut().find_map(|(id, st)| {
+            let _ = self.reconcile_stale_running_install_locked(*id, st);
             if st.provider_id == provider_id
                 && st.target == target
                 && matches!(st.state, InstallStateKind::Running)
@@ -996,24 +1102,20 @@ impl AppState {
         &self,
         install_id: InstallId,
     ) -> Option<crate::installs::InstallInfo> {
-        self.providers
-            .installs
-            .lock()
-            .await
-            .get(&install_id)
-            .map(|s| s.info(install_id))
+        let mut map = self.providers.installs.lock().await;
+        let st = map.get_mut(&install_id)?;
+        let _ = self.reconcile_stale_running_install_locked(install_id, st);
+        Some(st.info(install_id))
     }
 
     pub async fn get_install_events(
         &self,
         install_id: InstallId,
     ) -> Option<Vec<InstallProgressEvent>> {
-        self.providers
-            .installs
-            .lock()
-            .await
-            .get(&install_id)
-            .map(|s| s.events.iter().cloned().collect())
+        let mut map = self.providers.installs.lock().await;
+        let st = map.get_mut(&install_id)?;
+        let _ = self.reconcile_stale_running_install_locked(install_id, st);
+        Some(st.events.iter().cloned().collect())
     }
 
     pub async fn emit_install_event(&self, install_id: InstallId, event: InstallProgressEvent) {
@@ -1157,5 +1259,103 @@ impl AppState {
         self.telemetry.ops_events.emit(ops_event);
 
         self.get_install_info(install_id).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn test_state(temp: &tempfile::TempDir) -> Arc<AppState> {
+        Arc::new(AppState::new(
+            temp.path().to_path_buf(),
+            StoreManager::open(temp.path()).await.expect("open stores"),
+            HashMap::new(),
+            "http://127.0.0.1:4310".to_string(),
+            None,
+        ))
+    }
+
+    #[tokio::test]
+    async fn find_running_install_reconciles_stale_running_venv_install() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = test_state(&temp).await;
+        let install_id = InstallId::new_v4();
+        let now = chrono::Utc::now();
+        let mut install = InstallState::new("mistral".to_string(), Some(InstallTarget::Container));
+        install.started_at = now - chrono::Duration::minutes(9);
+        install.events.push_back(InstallProgressEvent {
+            install_id,
+            provider_id: "mistral".to_string(),
+            target: Some(InstallTarget::Container),
+            at: now - chrono::Duration::minutes(8),
+            stage: "venv".to_string(),
+            message: "Creating virtualenv…".to_string(),
+            level: InstallEventLevel::Info,
+            bytes: None,
+            total_bytes: None,
+            attempt: None,
+            error_code: None,
+        });
+        state
+            .providers
+            .installs
+            .lock()
+            .await
+            .insert(install_id, install);
+
+        let running = state
+            .find_running_install("mistral", Some(InstallTarget::Container))
+            .await;
+        assert!(running.is_none());
+
+        let info = state
+            .get_install_info(install_id)
+            .await
+            .expect("missing install info");
+        assert!(matches!(info.state, InstallStateKind::Failed));
+        assert_eq!(info.error_code, Some(InstallErrorCode::Timeout));
+        assert!(
+            info.error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("timed out during venv")
+        );
+    }
+
+    #[tokio::test]
+    async fn get_install_info_preserves_recent_running_install() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = test_state(&temp).await;
+        let install_id = InstallId::new_v4();
+        let now = chrono::Utc::now();
+        let mut install = InstallState::new("codex".to_string(), Some(InstallTarget::Container));
+        install.started_at = now - chrono::Duration::minutes(1);
+        install.events.push_back(InstallProgressEvent {
+            install_id,
+            provider_id: "codex".to_string(),
+            target: Some(InstallTarget::Container),
+            at: now - chrono::Duration::seconds(30),
+            stage: "download".to_string(),
+            message: "downloading…".to_string(),
+            level: InstallEventLevel::Info,
+            bytes: Some(10),
+            total_bytes: Some(100),
+            attempt: None,
+            error_code: None,
+        });
+        state
+            .providers
+            .installs
+            .lock()
+            .await
+            .insert(install_id, install);
+
+        let info = state
+            .get_install_info(install_id)
+            .await
+            .expect("missing install info");
+        assert!(matches!(info.state, InstallStateKind::Running));
+        assert_eq!(info.error_code, None);
     }
 }

@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import WorkspaceSetupPage from "./WorkspaceSetupPage";
 import {
   buildExecutionLaunchWsUrl,
@@ -196,6 +196,10 @@ const configuredTitlingSettingsFixture = () => ({
 });
 
 describe("WorkspaceSetupPage", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     trackWizardStartedMock.mockReset();
@@ -379,34 +383,31 @@ describe("WorkspaceSetupPage", () => {
     });
   });
 
-  it("starts selected harness downloads and advances without waiting for completion", async () => {
+  it("starts selected harness downloads and stays on the step until they finish", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(getSettings).mockResolvedValue(configuredTitlingSettingsFixture() as never);
-    vi.mocked(listProviders)
-      .mockResolvedValueOnce([
+    let scanCount = 0;
+    vi.mocked(listProviders).mockImplementation(async () => {
+      scanCount += 1;
+      if (scanCount >= 3) {
+        return [
+          providerStatusFixture({
+            provider_id: "codex",
+            installed: true,
+            health: "ok",
+            details: { install_supported: "true" },
+          }),
+        ] as never;
+      }
+      return [
         providerStatusFixture({
           provider_id: "codex",
           installed: false,
           health: "error",
           details: { install_supported: "true" },
         }),
-      ] as never)
-      .mockResolvedValueOnce([
-        providerStatusFixture({
-          provider_id: "codex",
-          installed: false,
-          health: "error",
-          details: { install_supported: "true" },
-        }),
-      ] as never)
-      .mockResolvedValueOnce([
-        providerStatusFixture({
-          provider_id: "codex",
-          installed: true,
-          health: "ok",
-          details: { install_supported: "true" },
-        }),
-      ] as never);
+      ] as never;
+    });
     vi.mocked(installProvider).mockResolvedValue({
       provider_id: "codex",
       install_id: "install_codex",
@@ -462,10 +463,27 @@ describe("WorkspaceSetupPage", () => {
 
     await waitFor(() => {
       expect(installProvider).toHaveBeenCalledWith("codex", "container");
-      expect(wizardStepKey()).toBe("source");
-      expect(getInstall).toHaveBeenCalledTimes(1);
+      expect(wizardStepKey()).toBe("harness-downloads");
+      expect(screen.getByText(/Selected downloads are still running/i)).toBeInTheDocument();
+      expect(screen.getByTestId("wizard-next")).toBeDisabled();
     });
-  });
+
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 1000));
+    });
+
+    await waitFor(() => {
+      expect(scanCount).toBeGreaterThanOrEqual(3);
+      expect(screen.getByText(/Installed · container/i)).toBeInTheDocument();
+      expect(screen.getByTestId("wizard-next")).toBeEnabled();
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("source");
+    });
+  }, 15000);
 
   it("never regresses to location while late harness planning resolves", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
@@ -575,18 +593,29 @@ describe("WorkspaceSetupPage", () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(getSettings).mockResolvedValue(configuredTitlingSettingsFixture() as never);
     vi.mocked(getInstall).mockReset();
-    vi.mocked(listProviders).mockResolvedValue([
-      providerStatusFixture({
-        provider_id: "codex",
-        installed: false,
-        health: "error",
-        details: {
-          install_supported: "true",
-          install_running: "true",
-          install_id: "install_codex",
-        },
-      }),
-    ] as never);
+    vi.mocked(listProviders)
+      .mockResolvedValueOnce([
+        providerStatusFixture({
+          provider_id: "codex",
+          installed: false,
+          health: "error",
+          details: {
+            install_supported: "true",
+            install_running: "true",
+            install_id: "install_codex",
+          },
+        }),
+      ] as never)
+      .mockResolvedValueOnce([
+        providerStatusFixture({
+          provider_id: "codex",
+          installed: false,
+          health: "error",
+          details: {
+            install_supported: "true",
+          },
+        }),
+      ] as never);
     vi.mocked(getInstall).mockResolvedValue({
       install_id: "install_codex",
       provider_id: "codex",
@@ -613,6 +642,13 @@ describe("WorkspaceSetupPage", () => {
       expect(screen.getByText(/Not installed · container/i)).toBeInTheDocument();
     });
     expect(screen.getByTestId("wizard-harness-checkbox-codex")).toBeEnabled();
+    expect(screen.getByTestId("wizard-next")).toBeDisabled();
+    expect(screen.getByText(/failed or were canceled/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("wizard-harness-skip"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("source");
+    });
   });
 
   it("tracks wizard start, step viewed, and abandonment on unmount", async () => {
