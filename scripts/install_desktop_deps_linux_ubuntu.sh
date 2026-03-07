@@ -79,6 +79,7 @@ packages=(
   libgtk-3-dev
   librsvg2-dev
   libssl-dev
+  libcap-dev
   musl
   libc++1
   tk
@@ -117,7 +118,7 @@ appindicator_pkg="$(choose_first_available_pkg libayatana-appindicator3-dev liba
 
 echo
 echo "${BOLD}Sanity check (pkg-config)${RESET}"
-for pc in glib-2.0 gtk+-3.0 libsoup-3.0 javascriptcoregtk-4.1 webkit2gtk-4.1; do
+for pc in glib-2.0 gtk+-3.0 libsoup-3.0 javascriptcoregtk-4.1 webkit2gtk-4.1 libcap; do
   if pkg-config --exists "${pc}"; then
     echo "- ${pc}: OK"
   else
