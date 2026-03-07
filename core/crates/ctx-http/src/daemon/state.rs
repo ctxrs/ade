@@ -359,7 +359,10 @@ impl AppState {
             .map(|event| event.stage.trim())
             .filter(|stage| !stage.is_empty())
             .unwrap_or("prepare");
-        let anchor = last_event.as_ref().map(|event| event.at).unwrap_or(st.started_at);
+        let anchor = last_event
+            .as_ref()
+            .map(|event| event.at)
+            .unwrap_or(st.started_at);
         let Ok(inactive_for) = now.signed_duration_since(anchor).to_std() else {
             return false;
         };
@@ -1315,12 +1318,11 @@ mod tests {
             .expect("missing install info");
         assert!(matches!(info.state, InstallStateKind::Failed));
         assert_eq!(info.error_code, Some(InstallErrorCode::Timeout));
-        assert!(
-            info.error
-                .as_deref()
-                .unwrap_or_default()
-                .contains("timed out during venv")
-        );
+        assert!(info
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("timed out during venv"));
     }
 
     #[tokio::test]
