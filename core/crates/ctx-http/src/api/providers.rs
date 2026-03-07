@@ -21,7 +21,10 @@ use tokio::sync::{mpsc, oneshot};
 use url::Url;
 
 use super::errors::ApiErrorResp;
-use crate::daemon::{is_acp_provider_id, runtime_probe_command_as_agent_command, AppState};
+use crate::daemon::{
+    ensure_provider_adapter_for_target, ensure_provider_adapter_for_target_with_cfg,
+    is_acp_provider_id, runtime_probe_command_as_agent_command_for_target, AppState,
+};
 use crate::execution_effective;
 use crate::harness_sources;
 use crate::harness_sources::{
@@ -70,17 +73,16 @@ pub(super) async fn list_providers(
 ) -> Result<Json<Vec<ProviderStatus>>, StatusCode> {
     let target = installer::parse_install_target(query.target.as_deref())
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-    Ok(Json(providers_statuses_response(&state, target).await))
+    Ok(Json(
+        providers_statuses_response(&state, target, false).await,
+    ))
 }
 
 async fn providers_statuses_response(
     state: &Arc<AppState>,
     target: InstallTarget,
+    include_matrix_providers: bool,
 ) -> Vec<ProviderStatus> {
-    let map = state.providers.statuses.lock().await;
-    let mut out: Vec<ProviderStatus> = map.values().cloned().collect();
-    drop(map);
-
     let managed = installer::load_agent_server_config(&state.core.data_root)
         .await
         .unwrap_or_default();
@@ -89,10 +91,30 @@ async fn providers_statuses_response(
         &state.providers.matrix_cache,
     )
     .await;
+    let mut seen = HashSet::new();
+    let mut provider_ids = Vec::new();
+    {
+        let map = state.providers.statuses.lock().await;
+        for provider_id in map.keys() {
+            if seen.insert(provider_id.clone()) {
+                provider_ids.push(provider_id.clone());
+            }
+        }
+    }
+    if include_matrix_providers {
+        for entry in &matrix.providers {
+            if seen.insert(entry.id.clone()) {
+                provider_ids.push(entry.id.clone());
+            }
+        }
+    }
+    let mut out = Vec::with_capacity(provider_ids.len());
+    for provider_id in provider_ids {
+        out.push(provider_status_for_target(state, &managed, &matrix, &provider_id, target).await);
+    }
 
     let show_fake = std::env::var("CTX_SHOW_FAKE_PROVIDER").ok().as_deref() == Some("1");
     for status in out.iter_mut() {
-        apply_target_aware_provider_status(status, &managed, target);
         if status.provider_id == "fake" {
             status.details.insert(
                 "ui_hidden".into(),
@@ -136,13 +158,99 @@ async fn providers_statuses_response(
     out
 }
 
+fn inspect_error_status(provider_id: &str, err: anyhow::Error) -> ProviderStatus {
+    ProviderStatus {
+        provider_id: provider_id.to_string(),
+        installed: false,
+        detected_path: None,
+        version: None,
+        capabilities: None,
+        health: ctx_providers::adapters::ProviderHealth::Error,
+        diagnostics: vec![err.to_string()],
+        details: HashMap::new(),
+    }
+}
+
+async fn provider_status_for_target(
+    state: &Arc<AppState>,
+    managed: &installer::AgentServerConfigFile,
+    matrix: &crate::provider_matrix::ProviderMatrix,
+    provider_id: &str,
+    target: InstallTarget,
+) -> ProviderStatus {
+    let mut status = if matches!(target, InstallTarget::Host) {
+        state
+            .providers
+            .statuses
+            .lock()
+            .await
+            .get(provider_id)
+            .cloned()
+            .unwrap_or_else(|| ProviderStatus {
+                provider_id: provider_id.to_string(),
+                installed: false,
+                detected_path: None,
+                version: None,
+                capabilities: None,
+                health: ctx_providers::adapters::ProviderHealth::Missing,
+                diagnostics: vec![format!("provider not available: {provider_id}")],
+                details: HashMap::new(),
+            })
+    } else {
+        let adapter = ensure_provider_adapter_for_target_with_cfg(
+            state.as_ref(),
+            managed,
+            provider_id,
+            target,
+        )
+        .await;
+        match adapter.inspect().await {
+            Ok(status) => status,
+            Err(err) => inspect_error_status(provider_id, err),
+        }
+    };
+    status
+        .details
+        .insert("install_target".into(), target.as_str().to_string());
+    apply_target_aware_provider_status(&mut status, managed, target);
+    if let Some(entry) = crate::provider_matrix::get_entry(matrix, provider_id) {
+        crate::provider_matrix::apply_matrix_to_status(
+            &state.core.data_root,
+            managed,
+            entry,
+            &mut status,
+        )
+        .await;
+    }
+    status
+}
+
 fn apply_target_aware_provider_status(
     status: &mut ProviderStatus,
     managed: &installer::AgentServerConfigFile,
     target: InstallTarget,
 ) {
-    installer::apply_managed_install_details(status, managed);
+    installer::apply_managed_install_details_for_target(status, managed, Some(target));
     installer::apply_install_target_status(status, target);
+}
+
+async fn install_target_for_workspace(
+    state: &Arc<AppState>,
+    workspace_id: WorkspaceId,
+) -> InstallTarget {
+    match execution_effective::effective_execution_settings(state.as_ref(), workspace_id).await {
+        Ok(effective) if matches!(effective.mode, ExecutionMode::Container) => {
+            InstallTarget::Container
+        }
+        Ok(_) => InstallTarget::Host,
+        Err(error) => {
+            tracing::warn!(
+                "providers falling back to host install target for workspace {}: {error:#}",
+                workspace_id.0
+            );
+            InstallTarget::Host
+        }
+    }
 }
 
 pub(super) async fn get_provider(
@@ -153,14 +261,6 @@ pub(super) async fn get_provider(
     if id == "codex-crp" {
         return Err(invalid_provider_id_error("codex-crp", "codex"));
     }
-    let map = state.providers.statuses.lock().await;
-    let mut status = map.get(&id).cloned().ok_or((
-        StatusCode::NOT_FOUND,
-        Json(serde_json::json!({
-            "error": format!("provider not found: {id}")
-        })),
-    ))?;
-    drop(map);
     let target = installer::parse_install_target(query.target.as_deref()).map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
@@ -176,7 +276,19 @@ pub(super) async fn get_provider(
         &state.providers.matrix_cache,
     )
     .await;
-    apply_target_aware_provider_status(&mut status, &managed, target);
+    let known = {
+        let map = state.providers.statuses.lock().await;
+        map.contains_key(&id) || crate::provider_matrix::get_entry(&matrix, &id).is_some()
+    };
+    if !known {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": format!("provider not found: {id}")
+            })),
+        ));
+    }
+    let mut status = provider_status_for_target(&state, &managed, &matrix, &id, target).await;
     status.details.insert(
         "install_supported".into(),
         if installer::is_supported_managed_provider_for_target(&matrix, &status.provider_id, target)
@@ -186,9 +298,6 @@ pub(super) async fn get_provider(
             "false".into()
         },
     );
-    status
-        .details
-        .insert("install_target".into(), target.as_str().to_string());
     if let Some(bytes) =
         installer::managed_install_download_size_bytes(&matrix, &status.provider_id, target)
     {
@@ -890,7 +999,8 @@ async fn amp_accounts_response(state: &Arc<AppState>) -> anyhow::Result<AmpAccou
 
 async fn restart_provider_for_auth_change(state: &Arc<AppState>, provider_id: &str, reason: &str) {
     invalidate_provider_probe_caches(state, provider_id).await;
-    let adapters = {
+    let target_prefix = format!("{provider_id}@");
+    let mut adapters = {
         let map = state.providers.adapters.lock().await;
         [provider_id]
             .iter()
@@ -900,6 +1010,14 @@ async fn restart_provider_for_auth_change(state: &Arc<AppState>, provider_id: &s
             })
             .collect::<Vec<_>>()
     };
+    let target_adapters = {
+        let map = state.providers.target_adapters.lock().await;
+        map.iter()
+            .filter(|(id, _)| id.starts_with(&target_prefix))
+            .map(|(id, adapter)| (id.clone(), Arc::clone(adapter)))
+            .collect::<Vec<_>>()
+    };
+    adapters.extend(target_adapters);
     for (id, adapter) in adapters {
         if let Err(err) = adapter.restart(reason, ProviderRestartMode::Drain).await {
             tracing::warn!("failed to drain-restart {id} after auth change: {err}");
@@ -4235,26 +4353,9 @@ pub(super) async fn get_workspace_providers_bootstrap(
         ));
     }
 
-    let install_target = match execution_effective::effective_execution_settings(
-        state.as_ref(),
-        ws_id,
-    )
-    .await
-    {
-        Ok(effective) if matches!(effective.mode, ExecutionMode::Container) => {
-            InstallTarget::Container
-        }
-        Ok(_) => InstallTarget::Host,
-        Err(error) => {
-            tracing::warn!(
-                    "providers bootstrap falling back to host install target for workspace {}: {error:#}",
-                    ws_id.0
-                );
-            InstallTarget::Host
-        }
-    };
+    let install_target = install_target_for_workspace(&state, ws_id).await;
 
-    let providers = providers_statuses_response(&state, install_target).await;
+    let providers = providers_statuses_response(&state, install_target, true).await;
     let mut provider_options = HashMap::new();
     let mut provider_harness_config = HashMap::new();
     let ws_id_str = ws_id.0.to_string();
@@ -4425,31 +4526,36 @@ async fn prepare_provider_runtime_probe(
     provider_id: &str,
     selected_endpoint_id: Option<String>,
 ) -> Result<PreparedProviderRuntimeProbe, PreparedProviderRuntimeProbeError> {
+    let install_target = install_target_for_workspace(state, workspace.id).await;
     let cfg = installer::load_agent_server_config(&state.core.data_root)
         .await
         .unwrap_or_default();
-    let runtime_command =
-        runtime_probe_command_as_agent_command(&state.core.data_root, &cfg, provider_id)
-        .map_err(|e| {
-            PreparedProviderRuntimeProbeError::Route((
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": format!(
-                        "runtime_command_invalid: provider={provider_id} error={e}"
-                    ),
-                })),
-            ))
-        })?
-        .ok_or_else(|| {
-            PreparedProviderRuntimeProbeError::Route((
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": format!(
-                        "runtime_command_missing: provider={provider_id} (configure an absolute runtime command)"
-                    ),
-                })),
-            ))
-        })?;
+    let runtime_command = runtime_probe_command_as_agent_command_for_target(
+        &state.core.data_root,
+        &cfg,
+        provider_id,
+        Some(install_target),
+    )
+    .map_err(|e| {
+        PreparedProviderRuntimeProbeError::Route((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": format!(
+                    "runtime_command_invalid: provider={provider_id} error={e}"
+                ),
+            })),
+        ))
+    })?
+    .ok_or_else(|| {
+        PreparedProviderRuntimeProbeError::Route((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": format!(
+                    "runtime_command_missing: provider={provider_id} (configure an absolute runtime command)"
+                ),
+            })),
+        ))
+    })?;
     let command = runtime_command.command;
     let args = runtime_command.args;
 
@@ -4457,18 +4563,20 @@ async fn prepare_provider_runtime_probe(
         provider_probe::provider_probe_env_for_workspace_runtime(state, workspace, provider_id)
             .await
             .map_err(PreparedProviderRuntimeProbeError::Verify)?;
-    installer::prepend_runtime_bin_dirs_to_provider_path(
+    installer::prepend_runtime_bin_dirs_to_provider_path_for_target(
         &mut env,
         &cfg,
         provider_id,
         &state.core.data_root,
+        Some(install_target),
     );
     if is_acp_provider_id(provider_id) {
-        installer::prepend_runtime_bin_dirs_to_provider_path(
+        installer::prepend_runtime_bin_dirs_to_provider_path_for_target(
             &mut env,
             &cfg,
             "acp-crp-bridge",
             &state.core.data_root,
+            Some(install_target),
         );
     }
 
@@ -4946,29 +5054,34 @@ pub(super) async fn get_provider_options(
             return Ok(Json(out));
         }
 
+        let install_target = install_target_for_workspace(&state, ws.id).await;
         let cfg = installer::load_agent_server_config(&state.core.data_root)
             .await
             .unwrap_or_default();
-        let runtime_command =
-            runtime_probe_command_as_agent_command(&state.core.data_root, &cfg, &provider_id)
-            .map_err(|e| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({
-                        "error": format!(
-                            "runtime_command_invalid: provider={provider_id} error={e}"
-                        ),
-                    })),
-                )
-            })?
-            .ok_or((
+        let runtime_command = runtime_probe_command_as_agent_command_for_target(
+            &state.core.data_root,
+            &cfg,
+            &provider_id,
+            Some(install_target),
+        )
+        .map_err(|e| {
+            (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({
                     "error": format!(
-                        "runtime_command_missing: provider={provider_id} (configure an absolute runtime command)"
+                        "runtime_command_invalid: provider={provider_id} error={e}"
                     ),
                 })),
-            ))?;
+            )
+        })?
+        .ok_or((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": format!(
+                    "runtime_command_missing: provider={provider_id} (configure an absolute runtime command)"
+                ),
+            })),
+        ))?;
         let command = runtime_command.command;
         let args = runtime_command.args;
 
@@ -4980,18 +5093,20 @@ pub(super) async fn get_provider_options(
         .await
         {
             Ok((_source, mut env)) => {
-                installer::prepend_runtime_bin_dirs_to_provider_path(
+                installer::prepend_runtime_bin_dirs_to_provider_path_for_target(
                     &mut env,
                     &cfg,
                     &provider_id,
                     &state.core.data_root,
+                    Some(install_target),
                 );
                 if is_acp_provider_id(&provider_id) {
-                    installer::prepend_runtime_bin_dirs_to_provider_path(
+                    installer::prepend_runtime_bin_dirs_to_provider_path_for_target(
                         &mut env,
                         &cfg,
                         "acp-crp-bridge",
                         &state.core.data_root,
+                        Some(install_target),
                     );
                 }
                 probe_crp_models(
@@ -5558,16 +5673,9 @@ pub(super) async fn authenticate_provider_for_workspace(
         ));
     }
 
-    let adapter = {
-        let map = state.providers.adapters.lock().await;
-        map.get(&provider_id).cloned()
-    }
-    .ok_or((
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(serde_json::json!({
-            "error": "provider adapter not available",
-        })),
-    ))?;
+    let install_target = install_target_for_workspace(&state, workspace.id).await;
+    let adapter =
+        ensure_provider_adapter_for_target(state.as_ref(), &provider_id, install_target).await;
 
     let (event_tx, mut event_rx) = mpsc::channel(32);
     tokio::spawn(async move { while event_rx.recv().await.is_some() {} });
@@ -5746,12 +5854,9 @@ pub(super) async fn install_all_providers(
             continue;
         }
 
-        let status = state.providers.statuses.lock().await.get(id).cloned();
-        if let Some(mut st) = status {
-            apply_target_aware_provider_status(&mut st, &managed, target);
-            if should_skip_install_for_healthy_provider(&st) {
-                continue;
-            }
+        let st = provider_status_for_target(&state, &managed, &matrix, id, target).await;
+        if should_skip_install_for_healthy_provider(&st) {
+            continue;
         }
 
         let (install_id, started_new) = state.start_install(id.to_string(), Some(target)).await;
@@ -5975,10 +6080,18 @@ pub(super) async fn dev_restart_providers(
 
     let adapters = {
         let providers = state.providers.adapters.lock().await;
-        providers
+        let mut adapters = providers
             .iter()
             .map(|(id, adapter)| (id.clone(), Arc::clone(adapter)))
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+        drop(providers);
+        let target_adapters = state.providers.target_adapters.lock().await;
+        adapters.extend(
+            target_adapters
+                .iter()
+                .map(|(id, adapter)| (id.clone(), Arc::clone(adapter))),
+        );
+        adapters
     };
 
     let mut results = Vec::with_capacity(adapters.len());

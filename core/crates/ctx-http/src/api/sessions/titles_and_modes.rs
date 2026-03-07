@@ -213,12 +213,36 @@ pub(crate) async fn set_session_model(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
+    let worktree = store
+        .get_worktree(session.worktree_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let install_target = match crate::execution_effective::effective_execution_settings(
+        state.as_ref(),
+        worktree.workspace_id,
+    )
+    .await
+    {
+        Ok(effective) if matches!(effective.mode, crate::settings::ExecutionMode::Container) => {
+            crate::installs::InstallTarget::Container
+        }
+        Ok(_) => crate::installs::InstallTarget::Host,
+        Err(err) => {
+            tracing::warn!(
+                workspace_id = %worktree.workspace_id.0,
+                "set_session_model falling back to host runtime target: {err:#}",
+            );
+            crate::installs::InstallTarget::Host
+        }
+    };
 
-    let adapter = {
-        let map = state.providers.adapters.lock().await;
-        map.get(&session.provider_id).cloned()
-    }
-    .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let adapter = crate::daemon::ensure_provider_adapter_for_target(
+        state.as_ref(),
+        &session.provider_id,
+        install_target,
+    )
+    .await;
 
     adapter
         .set_session_model(session.id.0.to_string(), req.model_id.clone())
@@ -236,9 +260,8 @@ pub(crate) async fn set_session_model(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let worktree = store.get_worktree(updated.worktree_id).await.ok().flatten();
     Ok(Json(SessionWithEnv {
-        env_target: env_target_for_worktree(worktree.as_ref()),
+        env_target: env_target_for_worktree(Some(&worktree)),
         session: updated,
     }))
 }
@@ -264,12 +287,36 @@ pub(crate) async fn set_session_mode(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
+    let worktree = store
+        .get_worktree(session.worktree_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let install_target = match crate::execution_effective::effective_execution_settings(
+        state.as_ref(),
+        worktree.workspace_id,
+    )
+    .await
+    {
+        Ok(effective) if matches!(effective.mode, crate::settings::ExecutionMode::Container) => {
+            crate::installs::InstallTarget::Container
+        }
+        Ok(_) => crate::installs::InstallTarget::Host,
+        Err(err) => {
+            tracing::warn!(
+                workspace_id = %worktree.workspace_id.0,
+                "set_session_mode falling back to host runtime target: {err:#}",
+            );
+            crate::installs::InstallTarget::Host
+        }
+    };
 
-    let adapter = {
-        let map = state.providers.adapters.lock().await;
-        map.get(&session.provider_id).cloned()
-    }
-    .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let adapter = crate::daemon::ensure_provider_adapter_for_target(
+        state.as_ref(),
+        &session.provider_id,
+        install_target,
+    )
+    .await;
 
     adapter
         .set_session_mode(session.id.0.to_string(), req.mode_id.clone())

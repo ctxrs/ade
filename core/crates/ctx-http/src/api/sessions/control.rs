@@ -88,19 +88,6 @@ pub(crate) async fn authenticate_session(
             )
         })?;
 
-    let adapter = {
-        let map = state.providers.adapters.lock().await;
-        map.get(&session.provider_id).cloned()
-    }
-    .ok_or_else(|| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: "provider adapter not available".to_string(),
-            }),
-        )
-    })?;
-
     let worktree = store
         .get_worktree(session.worktree_id)
         .await
@@ -120,6 +107,30 @@ pub(crate) async fn authenticate_session(
                 }),
             )
         })?;
+    let install_target = match crate::execution_effective::effective_execution_settings(
+        state.as_ref(),
+        worktree.workspace_id,
+    )
+    .await
+    {
+        Ok(effective) if matches!(effective.mode, crate::settings::ExecutionMode::Container) => {
+            crate::installs::InstallTarget::Container
+        }
+        Ok(_) => crate::installs::InstallTarget::Host,
+        Err(err) => {
+            tracing::warn!(
+                workspace_id = %worktree.workspace_id.0,
+                "session authenticate falling back to host runtime target: {err:#}",
+            );
+            crate::installs::InstallTarget::Host
+        }
+    };
+    let adapter = crate::daemon::ensure_provider_adapter_for_target(
+        state.as_ref(),
+        &session.provider_id,
+        install_target,
+    )
+    .await;
 
     let workdir = PathBuf::from(worktree.root_path.clone());
 

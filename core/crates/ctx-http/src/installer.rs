@@ -27,12 +27,15 @@ use ctx_providers::crp::Tier1CrpAdapter;
 mod config;
 
 pub use config::{
-    agent_server_config_path, apply_managed_install_details, apply_managed_lsp_server_config,
+    agent_server_config_path, apply_managed_install_details,
+    apply_managed_install_details_for_target, apply_managed_lsp_server_config,
     apply_user_lsp_server_config, load_agent_server_config, load_lsp_server_config,
-    load_user_lsp_config, resolve_provider_command, resolve_runtime_provider_command,
-    save_agent_server_config, save_lsp_server_config, AgentServerCommand, AgentServerConfigFile,
-    LspServerConfigFile, ManagedInstallError, ManagedInstallMetadata, ProviderRuntimeCommand,
-    ProviderRuntimeCommandSource, UserLspConfigFile, UserLspServerSpec,
+    load_user_lsp_config, managed_install_metadata_for_target, managed_provider_command_for_target,
+    resolve_provider_command, resolve_runtime_provider_command,
+    resolve_runtime_provider_command_for_target, save_agent_server_config, save_lsp_server_config,
+    AgentServerCommand, AgentServerConfigFile, LspServerConfigFile, ManagedInstallError,
+    ManagedInstallMetadata, ProviderRuntimeCommand, ProviderRuntimeCommandSource,
+    UserLspConfigFile, UserLspServerSpec,
 };
 
 const NODE_VERSION: &str = "24.14.0";
@@ -197,15 +200,18 @@ fn prepend_bundled_seed_node_bin_dir(
     }
 }
 
-pub(crate) fn prepend_runtime_bin_dirs_to_provider_path(
+pub(crate) fn prepend_runtime_bin_dirs_to_provider_path_for_target(
     provider_env: &mut HashMap<String, String>,
     cfg: &AgentServerConfigFile,
     runtime_provider_id: &str,
     data_root: &Path,
+    requested_target: Option<InstallTarget>,
 ) {
     let mut bin_dirs: Vec<PathBuf> = Vec::new();
     let container_exec = provider_env.contains_key("CTX_HARNESS_CONTAINER_ID");
-    if let Ok(Some(runtime_cmd)) = resolve_runtime_provider_command(cfg, runtime_provider_id) {
+    if let Ok(Some(runtime_cmd)) =
+        resolve_runtime_provider_command_for_target(cfg, runtime_provider_id, requested_target)
+    {
         let runtime_cmd_path = Path::new(&runtime_cmd.command_abs_path);
         if let Some(parent) = runtime_cmd_path.parent() {
             let parent_dir = parent.to_path_buf();
@@ -252,6 +258,22 @@ pub(crate) fn prepend_runtime_bin_dirs_to_provider_path(
     if let Ok(joined) = std::env::join_paths(path_parts) {
         provider_env.insert("PATH".to_string(), joined.to_string_lossy().to_string());
     }
+}
+
+#[cfg(test)]
+pub(crate) fn prepend_runtime_bin_dirs_to_provider_path(
+    provider_env: &mut HashMap<String, String>,
+    cfg: &AgentServerConfigFile,
+    runtime_provider_id: &str,
+    data_root: &Path,
+) {
+    prepend_runtime_bin_dirs_to_provider_path_for_target(
+        provider_env,
+        cfg,
+        runtime_provider_id,
+        data_root,
+        None,
+    )
 }
 
 pub fn resolve_matrix_target_key(target: InstallTarget) -> Result<&'static str> {
@@ -2059,13 +2081,16 @@ async fn install_provider_impl(
             .await
             .unwrap_or_default();
         let bridge_cmd = if daemon::is_acp_provider_id(&provider_id) {
-            resolve_runtime_provider_command(&adapter_cfg, "acp-crp-bridge")?.map(|resolved| {
-                AgentServerCommand {
-                    command: resolved.command_abs_path,
-                    args: resolved.args,
-                    dependencies: resolved.dependencies,
-                    managed: None,
-                }
+            resolve_runtime_provider_command_for_target(
+                &adapter_cfg,
+                "acp-crp-bridge",
+                Some(target),
+            )?
+            .map(|resolved| AgentServerCommand {
+                command: resolved.command_abs_path,
+                args: resolved.args,
+                dependencies: resolved.dependencies,
+                managed: None,
             })
         } else {
             None
@@ -2086,9 +2111,15 @@ async fn install_provider_impl(
         );
 
         // Refresh the in-memory adapter so new Sessions use the managed install.
-        {
+        if matches!(target, InstallTarget::Host) {
             let mut map = state.providers.adapters.lock().await;
             map.insert(provider_id.clone(), adapter.clone());
+        } else {
+            let mut map = state.providers.target_adapters.lock().await;
+            map.insert(
+                format!("{provider_id}@{}", target.as_str()),
+                adapter.clone(),
+            );
         }
 
         stage = "refresh";
@@ -2102,12 +2133,28 @@ async fn install_provider_impl(
                 .insert(dependency_id.clone(), metadata.clone());
         }
         status_cfg
-            .managed_installs
-            .insert(provider_id.clone(), managed.meta.clone());
+            .managed_install_targets
+            .entry(provider_id.clone())
+            .or_default()
+            .insert(target.as_str().to_string(), managed.meta.clone());
+        status_cfg
+            .managed_provider_targets
+            .entry(provider_id.clone())
+            .or_default()
+            .insert(
+                target.as_str().to_string(),
+                AgentServerCommand {
+                    command: managed.command.clone(),
+                    args: managed.args.clone(),
+                    dependencies: dependency_ids.clone(),
+                    managed: Some(managed.meta.clone()),
+                },
+            );
+        status_cfg.providers.remove(&provider_id);
         let mut verified_status = ctx_providers::adapters::ProviderAdapter::inspect(adapter.as_ref())
             .await
             .context("inspecting provider after managed install")?;
-        apply_managed_install_details(&mut verified_status, &status_cfg);
+        apply_managed_install_details_for_target(&mut verified_status, &status_cfg, Some(target));
         apply_install_target_status(&mut verified_status, target);
         validate_post_install_status(&verified_status, &provider_id, target)?;
         refresh_provider_statuses_with_cfg(state, status_cfg).await?;
@@ -2134,17 +2181,23 @@ async fn install_provider_impl(
             cfg.managed_installs
                 .insert(dependency_id.clone(), metadata.clone());
         }
-        cfg.managed_installs
-            .insert(provider_id.clone(), managed.meta.clone());
-        cfg.providers.insert(
-            provider_id.clone(),
-            AgentServerCommand {
-                command: managed.command.clone(),
-                args: managed.args.clone(),
-                dependencies: dependency_ids.clone(),
-                managed: Some(managed.meta.clone()),
-            },
-        );
+        cfg.managed_install_targets
+            .entry(provider_id.clone())
+            .or_default()
+            .insert(target.as_str().to_string(), managed.meta.clone());
+        cfg.managed_provider_targets
+            .entry(provider_id.clone())
+            .or_default()
+            .insert(
+                target.as_str().to_string(),
+                AgentServerCommand {
+                    command: managed.command.clone(),
+                    args: managed.args.clone(),
+                    dependencies: dependency_ids.clone(),
+                    managed: Some(managed.meta.clone()),
+                },
+            );
+        cfg.providers.remove(&provider_id);
         save_agent_server_config(&state.core.data_root, &cfg)
             .await
             .context("saving managed install registry")?;

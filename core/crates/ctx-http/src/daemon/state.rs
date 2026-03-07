@@ -90,6 +90,7 @@ pub struct WorkspaceRuntime {
 
 pub struct ProviderRuntime {
     pub adapters: Mutex<HashMap<String, Arc<dyn ProviderAdapter>>>,
+    pub target_adapters: Mutex<HashMap<String, Arc<dyn ProviderAdapter>>>,
     pub statuses: Mutex<HashMap<String, ProviderStatus>>,
     pub matrix_cache: Mutex<crate::provider_matrix::ProviderMatrixCache>,
     pub options_cache: Mutex<HashMap<String, CachedProviderOptions>>,
@@ -425,6 +426,7 @@ impl AppState {
             },
             providers: ProviderRuntime {
                 adapters: Mutex::new(providers),
+                target_adapters: Mutex::new(HashMap::new()),
                 statuses: Mutex::new(HashMap::new()),
                 matrix_cache: Mutex::new(crate::provider_matrix::ProviderMatrixCache::default()),
                 options_cache: Mutex::new(HashMap::new()),

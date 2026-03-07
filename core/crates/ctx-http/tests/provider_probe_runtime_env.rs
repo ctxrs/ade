@@ -204,14 +204,14 @@ async fn provider_verify_probe_uses_managed_dependency_path() {
     let app = api::router(state.clone());
 
     let (runtime_cmd, dep_bin_rel) =
-        setup_runtime_command_with_managed_interpreter(data_dir.path(), "amp");
-    seed_runtime_and_status(&state, "amp", runtime_cmd, dep_bin_rel).await;
+        setup_runtime_command_with_managed_interpreter(data_dir.path(), "codex");
+    seed_runtime_and_status(&state, "codex", runtime_cmd, dep_bin_rel).await;
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (status, body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
         axum::http::Method::POST,
-        format!("/api/workspaces/{}/providers/amp/verify", ws.id.0),
+        format!("/api/workspaces/{}/providers/codex/verify", ws.id.0),
         Some(serde_json::json!({})),
     )
     .await;

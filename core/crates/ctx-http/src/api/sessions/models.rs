@@ -370,13 +370,35 @@ pub(super) async fn load_provider_model_catalog(
     let cfg = installer::load_agent_server_config(&state.core.data_root)
         .await
         .unwrap_or_default();
-    let runtime_command = installer::resolve_runtime_provider_command(&cfg, provider_id)
-        .map_err(|e| format!("runtime_command_invalid: provider={provider_id} error={e}"))?
-        .ok_or_else(|| {
-            format!(
-                "runtime_command_missing: provider={provider_id} (configure an absolute runtime command)"
-            )
-        })?;
+    let install_target = match crate::execution_effective::effective_execution_settings(
+        state.as_ref(),
+        workspace.id,
+    )
+    .await
+    {
+        Ok(effective) if matches!(effective.mode, crate::settings::ExecutionMode::Container) => {
+            crate::installs::InstallTarget::Container
+        }
+        Ok(_) => crate::installs::InstallTarget::Host,
+        Err(err) => {
+            tracing::warn!(
+                workspace_id = %workspace.id.0,
+                "provider options falling back to host runtime target: {err:#}",
+            );
+            crate::installs::InstallTarget::Host
+        }
+    };
+    let runtime_command = installer::resolve_runtime_provider_command_for_target(
+        &cfg,
+        provider_id,
+        Some(install_target),
+    )
+    .map_err(|e| format!("runtime_command_invalid: provider={provider_id} error={e}"))?
+    .ok_or_else(|| {
+        format!(
+            "runtime_command_missing: provider={provider_id} (configure an absolute runtime command)"
+        )
+    })?;
     let command = runtime_command.command_abs_path;
     let args = runtime_command.args;
 
@@ -397,11 +419,12 @@ pub(super) async fn load_provider_model_catalog(
             return Ok(None);
         }
     };
-    installer::prepend_runtime_bin_dirs_to_provider_path(
+    installer::prepend_runtime_bin_dirs_to_provider_path_for_target(
         &mut env,
         &cfg,
         provider_id,
         &state.core.data_root,
+        Some(install_target),
     );
 
     let probe = match probe_crp_models(

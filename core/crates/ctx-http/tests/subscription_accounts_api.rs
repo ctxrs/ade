@@ -849,6 +849,8 @@ echo "ZXY987654321"
     let mut cfg = AgentServerConfigFile {
         providers: HashMap::new(),
         managed_installs: HashMap::new(),
+        managed_provider_targets: HashMap::new(),
+        managed_install_targets: HashMap::new(),
     };
     cfg.providers.insert(
         "claude-cli".to_string(),
@@ -933,6 +935,8 @@ sleep 1
     let mut cfg = AgentServerConfigFile {
         providers: HashMap::new(),
         managed_installs: HashMap::new(),
+        managed_provider_targets: HashMap::new(),
+        managed_install_targets: HashMap::new(),
     };
     cfg.providers.insert(
         "claude-cli".to_string(),
@@ -993,6 +997,8 @@ exit 7
     let mut cfg = AgentServerConfigFile {
         providers: HashMap::new(),
         managed_installs: HashMap::new(),
+        managed_provider_targets: HashMap::new(),
+        managed_install_targets: HashMap::new(),
     };
     cfg.providers.insert(
         "claude-cli".to_string(),
@@ -1054,6 +1060,8 @@ exit 5
     let mut cfg = AgentServerConfigFile {
         providers: HashMap::new(),
         managed_installs: HashMap::new(),
+        managed_provider_targets: HashMap::new(),
+        managed_install_targets: HashMap::new(),
     };
     cfg.providers.insert(
         "claude-cli".to_string(),
@@ -1121,6 +1129,8 @@ echo "ZXY987654321"
     let mut cfg = AgentServerConfigFile {
         providers: HashMap::new(),
         managed_installs: HashMap::new(),
+        managed_provider_targets: HashMap::new(),
+        managed_install_targets: HashMap::new(),
     };
     cfg.providers.insert(
         "claude-cli".to_string(),
@@ -1201,6 +1211,8 @@ echo "Token omitted intentionally for test."
     let mut cfg = AgentServerConfigFile {
         providers: HashMap::new(),
         managed_installs: HashMap::new(),
+        managed_provider_targets: HashMap::new(),
+        managed_install_targets: HashMap::new(),
     };
     cfg.providers.insert(
         "claude-cli".to_string(),
@@ -1262,6 +1274,8 @@ sleep 30
     let mut cfg = AgentServerConfigFile {
         providers: HashMap::new(),
         managed_installs: HashMap::new(),
+        managed_provider_targets: HashMap::new(),
+        managed_install_targets: HashMap::new(),
     };
     cfg.providers.insert(
         "claude-cli".to_string(),
@@ -1356,6 +1370,8 @@ echo "{}"
     let mut cfg = AgentServerConfigFile {
         providers: HashMap::new(),
         managed_installs: HashMap::new(),
+        managed_provider_targets: HashMap::new(),
+        managed_install_targets: HashMap::new(),
     };
     cfg.providers.insert(
         "claude-cli".to_string(),

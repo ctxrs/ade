@@ -19,10 +19,11 @@ use ctx_providers::adapters::{ProviderAdapter, RunHandle, TurnInput};
 use ctx_providers::events::NormalizedEvent;
 use ctx_store::store::SessionTurnToolCountDeltas;
 
-use crate::daemon::AppState;
+use crate::daemon::{ensure_provider_adapter_for_target_with_cfg, AppState};
 use crate::harness_runtime::HarnessRuntimeKind;
 use crate::harness_sources::{self, HarnessSourceKind};
 use crate::installer;
+use crate::installs::InstallTarget;
 use crate::ops_events::OpsEvent;
 use crate::order_seq::{attach_order_seq, OrderSeqState};
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
@@ -646,12 +647,21 @@ async fn start_turn(
             runtime_provider_id.to_string(),
         );
     }
-    let adapter = {
-        let map = state.providers.adapters.lock().await;
-        map.get(runtime_provider_id)
-            .cloned()
-            .ok_or_else(|| anyhow!("provider not available: {}", runtime_provider_id))?
+    let install_target = if is_container {
+        InstallTarget::Container
+    } else {
+        InstallTarget::Host
     };
+    let adapter_cfg = installer::load_agent_server_config(&state.core.data_root)
+        .await
+        .unwrap_or_default();
+    let adapter = ensure_provider_adapter_for_target_with_cfg(
+        state,
+        &adapter_cfg,
+        runtime_provider_id,
+        install_target,
+    )
+    .await;
 
     if runtime_provider_id == "codex" && is_container && using_endpoint_source {
         if let Some(root) = runtime_plan.env_overrides.get("CTX_DATA_ROOT") {
@@ -767,14 +777,13 @@ async fn start_turn(
         }
     }
 
-    if let Ok(cfg) = installer::load_agent_server_config(&state.core.data_root).await {
-        installer::prepend_runtime_bin_dirs_to_provider_path(
-            &mut provider_env,
-            &cfg,
-            runtime_provider_id,
-            &state.core.data_root,
-        );
-    }
+    installer::prepend_runtime_bin_dirs_to_provider_path_for_target(
+        &mut provider_env,
+        &adapter_cfg,
+        runtime_provider_id,
+        &state.core.data_root,
+        Some(install_target),
+    );
 
     let mut run_env_event = OpsEvent::new("info", "provider_run_env_ready");
     run_env_event.session_id = Some(session.id.0.to_string());

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use ctx_lsp::LspManagerConfig;
 
+use super::expected_managed_dependency_version;
 use crate::bundled_assets;
 use crate::installs::{truncate_for_storage, InstallErrorCode, InstallTarget};
 
@@ -53,6 +54,10 @@ pub struct AgentServerConfigFile {
     pub providers: HashMap<String, AgentServerCommand>,
     #[serde(default)]
     pub managed_installs: HashMap<String, ManagedInstallMetadata>,
+    #[serde(default)]
+    pub managed_provider_targets: HashMap<String, HashMap<String, AgentServerCommand>>,
+    #[serde(default)]
+    pub managed_install_targets: HashMap<String, HashMap<String, ManagedInstallMetadata>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,16 +97,105 @@ pub struct LspServerConfigFile {
     pub managed_installs: HashMap<String, ManagedInstallMetadata>,
 }
 
-pub fn apply_managed_install_details(
+fn install_target_bucket_key(target: InstallTarget) -> &'static str {
+    target.as_str()
+}
+
+fn requested_target_or_host(target: Option<InstallTarget>) -> InstallTarget {
+    target.unwrap_or(InstallTarget::Host)
+}
+
+fn legacy_managed_metadata_matches_target(
+    meta: &ManagedInstallMetadata,
+    requested_target: Option<InstallTarget>,
+) -> bool {
+    meta.target.unwrap_or(InstallTarget::Host) == requested_target_or_host(requested_target)
+}
+
+fn managed_dependency_target_from_id(entry_id: &str) -> Option<InstallTarget> {
+    expected_managed_dependency_version(entry_id)?;
+    let suffix = entry_id
+        .trim()
+        .strip_prefix("runtime-node-")
+        .or_else(|| entry_id.trim().strip_prefix("runtime-python-"))?;
+    match suffix {
+        "host" => Some(InstallTarget::Host),
+        "container" => Some(InstallTarget::Container),
+        "linux-aarch64" => Some(InstallTarget::LinuxAarch64),
+        "linux-x86_64" => Some(InstallTarget::LinuxX8664),
+        _ => None,
+    }
+}
+
+fn infer_legacy_managed_target(entry_id: &str, target: Option<InstallTarget>) -> InstallTarget {
+    target
+        .or_else(|| managed_dependency_target_from_id(entry_id))
+        .unwrap_or(InstallTarget::Host)
+}
+
+fn target_bucket_lookup<'a, T>(
+    buckets: &'a HashMap<String, HashMap<String, T>>,
+    provider_id: &str,
+    requested_target: Option<InstallTarget>,
+) -> Option<&'a T> {
+    let target_key = install_target_bucket_key(requested_target_or_host(requested_target));
+    buckets.get(provider_id)?.get(target_key)
+}
+
+fn user_override_provider_command(
+    cfg: &AgentServerConfigFile,
+    provider_id: &str,
+) -> Option<AgentServerCommand> {
+    let configured = cfg.providers.get(provider_id)?;
+    configured.managed.is_none().then(|| configured.clone())
+}
+
+pub fn managed_install_metadata_for_target<'a>(
+    cfg: &'a AgentServerConfigFile,
+    provider_id: &str,
+    requested_target: Option<InstallTarget>,
+) -> Option<&'a ManagedInstallMetadata> {
+    target_bucket_lookup(&cfg.managed_install_targets, provider_id, requested_target)
+        .or_else(|| {
+            cfg.providers
+                .get(provider_id)
+                .and_then(|e| e.managed.as_ref())
+                .filter(|meta| legacy_managed_metadata_matches_target(meta, requested_target))
+        })
+        .or_else(|| {
+            cfg.managed_installs
+                .get(provider_id)
+                .filter(|meta| legacy_managed_metadata_matches_target(meta, requested_target))
+        })
+}
+
+pub fn managed_provider_command_for_target(
+    cfg: &AgentServerConfigFile,
+    provider_id: &str,
+    requested_target: Option<InstallTarget>,
+) -> Option<AgentServerCommand> {
+    target_bucket_lookup(&cfg.managed_provider_targets, provider_id, requested_target)
+        .cloned()
+        .or_else(|| {
+            cfg.providers
+                .get(provider_id)
+                .filter(|entry| {
+                    entry.managed.as_ref().is_some_and(|meta| {
+                        legacy_managed_metadata_matches_target(meta, requested_target)
+                    })
+                })
+                .cloned()
+        })
+}
+
+pub fn apply_managed_install_details_for_target(
     status: &mut ctx_providers::adapters::ProviderStatus,
     cfg: &AgentServerConfigFile,
+    requested_target: Option<InstallTarget>,
 ) {
-    let meta = cfg
-        .providers
-        .get(&status.provider_id)
-        .and_then(|e| e.managed.as_ref())
-        .or_else(|| cfg.managed_installs.get(&status.provider_id));
-    let Some(meta) = meta else {
+    let Some(meta) =
+        managed_install_metadata_for_target(cfg, &status.provider_id, requested_target)
+    else {
         return;
     };
 
@@ -149,12 +243,22 @@ pub fn apply_managed_install_details(
     }
 }
 
+pub fn apply_managed_install_details(
+    status: &mut ctx_providers::adapters::ProviderStatus,
+    cfg: &AgentServerConfigFile,
+) {
+    apply_managed_install_details_for_target(status, cfg, None);
+}
+
 pub fn resolve_provider_command(
     cfg: &AgentServerConfigFile,
     provider_id: &str,
 ) -> Option<AgentServerCommand> {
-    if let Some(configured) = cfg.providers.get(provider_id) {
+    if let Some(configured) = user_override_provider_command(cfg, provider_id) {
         return Some(configured.clone());
+    }
+    if let Some(configured) = managed_provider_command_for_target(cfg, provider_id, None) {
+        return Some(configured);
     }
     if let Some(bundled) = bundled_assets::bundled_provider_command(provider_id) {
         return Some(AgentServerCommand {
@@ -170,6 +274,7 @@ pub fn resolve_provider_command(
 fn runtime_command_candidate(
     cfg: &AgentServerConfigFile,
     provider_id: &str,
+    requested_target: Option<InstallTarget>,
 ) -> Result<Option<(AgentServerCommand, ProviderRuntimeCommandSource)>> {
     if bundled_only_mode_applies_to_provider(provider_id) {
         if let Some(bundled) = bundled_assets::bundled_provider_command(provider_id) {
@@ -189,13 +294,20 @@ fn runtime_command_candidate(
         );
     }
 
-    if let Some(configured) = cfg.providers.get(provider_id) {
-        let source = if configured.managed.is_some() {
-            ProviderRuntimeCommandSource::ManagedInstall
-        } else {
-            ProviderRuntimeCommandSource::UserOverride
-        };
-        return Ok(Some((configured.clone(), source)));
+    if let Some(configured) = user_override_provider_command(cfg, provider_id) {
+        return Ok(Some((
+            configured,
+            ProviderRuntimeCommandSource::UserOverride,
+        )));
+    }
+
+    if let Some(configured) =
+        managed_provider_command_for_target(cfg, provider_id, requested_target)
+    {
+        return Ok(Some((
+            configured,
+            ProviderRuntimeCommandSource::ManagedInstall,
+        )));
     }
     if let Some(bundled) = bundled_assets::bundled_provider_command(provider_id) {
         return Ok(Some((
@@ -221,11 +333,13 @@ fn preserve_raw_bundle_command_path(path: &Path) -> Option<PathBuf> {
         .then(|| path.to_path_buf())
 }
 
-pub fn resolve_runtime_provider_command(
+pub fn resolve_runtime_provider_command_for_target(
     cfg: &AgentServerConfigFile,
     provider_id: &str,
+    requested_target: Option<InstallTarget>,
 ) -> Result<Option<ProviderRuntimeCommand>> {
-    let Some((candidate, source)) = runtime_command_candidate(cfg, provider_id)? else {
+    let Some((candidate, source)) = runtime_command_candidate(cfg, provider_id, requested_target)?
+    else {
         return Ok(None);
     };
 
@@ -266,6 +380,13 @@ pub fn resolve_runtime_provider_command(
         dependencies: candidate.dependencies,
         source,
     }))
+}
+
+pub fn resolve_runtime_provider_command(
+    cfg: &AgentServerConfigFile,
+    provider_id: &str,
+) -> Result<Option<ProviderRuntimeCommand>> {
+    resolve_runtime_provider_command_for_target(cfg, provider_id, None)
 }
 
 fn env_flag_truthy(var_name: &str) -> bool {
@@ -317,15 +438,17 @@ fn migrate_agent_server_config(cfg: &mut AgentServerConfigFile) -> bool {
     let mut drop_managed_entries = Vec::new();
 
     for (provider_id, command) in cfg.providers.iter_mut() {
-        let Some(managed) = command.managed.as_mut() else {
+        let Some(existing) = command.managed.as_ref() else {
             continue;
         };
-
-        if managed.target.is_none() {
-            managed.target = Some(InstallTarget::Host);
+        let target = infer_legacy_managed_target(provider_id, existing.target);
+        if command.managed.as_ref().and_then(|managed| managed.target) != Some(target) {
+            if let Some(managed) = command.managed.as_mut() {
+                managed.target = Some(target);
+            }
             changed = true;
         }
-
+        let managed = command.managed.clone().expect("managed metadata");
         let has_legacy_rel = managed
             .install_dir_rel
             .as_deref()
@@ -340,13 +463,38 @@ fn migrate_agent_server_config(cfg: &mut AgentServerConfigFile) -> bool {
         if is_legacy_bundle_path(&command.command) || has_legacy_rel {
             drop_provider_entries.push(provider_id.clone());
             drop_managed_entries.push(provider_id.clone());
+            continue;
         }
+        let mut command_clone = command.clone();
+        command_clone.managed = Some(managed.clone());
+
+        let target_key = install_target_bucket_key(target);
+        let provider_targets = cfg
+            .managed_provider_targets
+            .entry(provider_id.clone())
+            .or_default();
+        if !provider_targets.contains_key(target_key) {
+            provider_targets.insert(target_key.to_string(), command_clone);
+        }
+        let install_targets = cfg
+            .managed_install_targets
+            .entry(provider_id.clone())
+            .or_default();
+        if !install_targets.contains_key(target_key) {
+            install_targets.insert(target_key.to_string(), managed.clone());
+        }
+        drop_provider_entries.push(provider_id.clone());
+        changed = true;
     }
 
     for (provider_id, managed) in cfg.managed_installs.iter_mut() {
-        if managed.target.is_none() {
-            managed.target = Some(InstallTarget::Host);
+        let target = infer_legacy_managed_target(provider_id, managed.target);
+        if managed.target != Some(target) {
+            managed.target = Some(target);
             changed = true;
+        }
+        if expected_managed_dependency_version(provider_id).is_some() {
+            continue;
         }
         let has_legacy_rel = managed
             .install_dir_rel
@@ -360,7 +508,19 @@ fn migrate_agent_server_config(cfg: &mut AgentServerConfigFile) -> bool {
                 .unwrap_or(false);
         if has_legacy_rel {
             drop_managed_entries.push(provider_id.clone());
+            continue;
         }
+
+        let target_key = install_target_bucket_key(target);
+        let install_targets = cfg
+            .managed_install_targets
+            .entry(provider_id.clone())
+            .or_default();
+        if !install_targets.contains_key(target_key) {
+            install_targets.insert(target_key.to_string(), managed.clone());
+        }
+        drop_managed_entries.push(provider_id.clone());
+        changed = true;
     }
 
     if !drop_provider_entries.is_empty() {
@@ -529,9 +689,13 @@ mod tests {
             },
         );
 
-        let resolved = resolve_runtime_provider_command(&cfg, "codex")
-            .expect("resolve runtime command")
-            .expect("runtime command");
+        let resolved = resolve_runtime_provider_command_for_target(
+            &cfg,
+            "codex",
+            Some(InstallTarget::Container),
+        )
+        .expect("resolve runtime command")
+        .expect("runtime command");
         assert_eq!(resolved.command_abs_path, raw_command.to_string_lossy());
         assert_ne!(
             std::fs::canonicalize(&raw_command)
@@ -542,16 +706,56 @@ mod tests {
     }
 
     #[test]
-    fn migration_sets_default_target_for_legacy_managed_metadata() {
+    fn migration_moves_legacy_managed_provider_entries_into_target_buckets() {
+        let mut cfg = AgentServerConfigFile::default();
+        cfg.providers.insert(
+            "codex".to_string(),
+            AgentServerCommand {
+                command: "/tmp/codex-host".to_string(),
+                args: Vec::new(),
+                dependencies: vec!["runtime-node-host".to_string()],
+                managed: Some(ManagedInstallMetadata {
+                    package: Some("@openai/codex".to_string()),
+                    version: Some("0.2.54".to_string()),
+                    target: None,
+                    install_dir_rel: Some("providers/agent-servers/codex/0.2.54".to_string()),
+                    bin_dir_rel: Some("providers/agent-servers/codex/0.2.54/bin".to_string()),
+                    last_success_at: None,
+                    last_error: None,
+                }),
+            },
+        );
+
+        assert!(migrate_agent_server_config(&mut cfg));
+        assert!(!cfg.providers.contains_key("codex"));
+        assert!(!cfg.managed_installs.contains_key("codex"));
+        assert_eq!(
+            cfg.managed_install_targets
+                .get("codex")
+                .and_then(|targets| targets.get("host"))
+                .and_then(|meta| meta.target),
+            Some(InstallTarget::Host)
+        );
+        assert_eq!(
+            cfg.managed_provider_targets
+                .get("codex")
+                .and_then(|targets| targets.get("host"))
+                .map(|command| command.command.as_str()),
+            Some("/tmp/codex-host")
+        );
+    }
+
+    #[test]
+    fn migration_preserves_runtime_dependency_entries_and_infers_target_from_id() {
         let mut cfg = AgentServerConfigFile::default();
         cfg.managed_installs.insert(
-            "codex".to_string(),
+            "runtime-node-container".to_string(),
             ManagedInstallMetadata {
-                package: Some("@openai/codex".to_string()),
-                version: Some("0.2.54".to_string()),
+                package: Some("node-runtime".to_string()),
+                version: Some("24.14.0".to_string()),
                 target: None,
-                install_dir_rel: Some("providers/agent-servers/codex/0.2.54".to_string()),
-                bin_dir_rel: None,
+                install_dir_rel: Some("providers/runtimes/node/container".to_string()),
+                bin_dir_rel: Some("providers/runtimes/node/container/bin".to_string()),
                 last_success_at: None,
                 last_error: None,
             },
@@ -560,10 +764,90 @@ mod tests {
         assert!(migrate_agent_server_config(&mut cfg));
         assert_eq!(
             cfg.managed_installs
-                .get("codex")
+                .get("runtime-node-container")
                 .and_then(|meta| meta.target),
-            Some(InstallTarget::Host)
+            Some(InstallTarget::Container)
         );
+        assert!(!cfg
+            .managed_install_targets
+            .contains_key("runtime-node-container"));
+    }
+
+    #[test]
+    fn resolve_runtime_provider_command_for_target_prefers_target_bucket() {
+        let temp = tempdir().expect("tempdir");
+        let host = temp.path().join("codex-host");
+        let container = temp.path().join("codex-container");
+        std::fs::write(&host, b"host").expect("write host runtime");
+        std::fs::write(&container, b"container").expect("write container runtime");
+
+        let mut cfg = AgentServerConfigFile::default();
+        cfg.managed_provider_targets.insert(
+            "codex".to_string(),
+            HashMap::from([
+                (
+                    "host".to_string(),
+                    AgentServerCommand {
+                        command: host.to_string_lossy().to_string(),
+                        args: vec!["--host".to_string()],
+                        dependencies: vec!["runtime-node-host".to_string()],
+                        managed: Some(ManagedInstallMetadata {
+                            package: Some("@openai/codex".to_string()),
+                            version: Some("1.0.0".to_string()),
+                            target: Some(InstallTarget::Host),
+                            install_dir_rel: None,
+                            bin_dir_rel: None,
+                            last_success_at: None,
+                            last_error: None,
+                        }),
+                    },
+                ),
+                (
+                    "container".to_string(),
+                    AgentServerCommand {
+                        command: container.to_string_lossy().to_string(),
+                        args: vec!["--container".to_string()],
+                        dependencies: vec!["runtime-node-container".to_string()],
+                        managed: Some(ManagedInstallMetadata {
+                            package: Some("@openai/codex".to_string()),
+                            version: Some("1.0.0".to_string()),
+                            target: Some(InstallTarget::Container),
+                            install_dir_rel: None,
+                            bin_dir_rel: None,
+                            last_success_at: None,
+                            last_error: None,
+                        }),
+                    },
+                ),
+            ]),
+        );
+
+        let host_resolved =
+            resolve_runtime_provider_command_for_target(&cfg, "codex", Some(InstallTarget::Host))
+                .expect("resolve host")
+                .expect("host runtime");
+        assert_eq!(
+            host_resolved.command_abs_path,
+            std::fs::canonicalize(&host)
+                .expect("canonicalize host runtime")
+                .to_string_lossy()
+        );
+        assert_eq!(host_resolved.args, vec!["--host".to_string()]);
+
+        let container_resolved = resolve_runtime_provider_command_for_target(
+            &cfg,
+            "codex",
+            Some(InstallTarget::Container),
+        )
+        .expect("resolve container")
+        .expect("container runtime");
+        assert_eq!(
+            container_resolved.command_abs_path,
+            std::fs::canonicalize(&container)
+                .expect("canonicalize container runtime")
+                .to_string_lossy()
+        );
+        assert_eq!(container_resolved.args, vec!["--container".to_string()]);
     }
 
     #[test]

@@ -404,7 +404,19 @@ fn managed_dependency_update_available(
     cfg: &AgentServerConfigFile,
     status: &ctx_providers::adapters::ProviderStatus,
 ) -> bool {
-    let Some(command) = cfg.providers.get(&status.provider_id) else {
+    let requested_target = install_target_from_status(status);
+    let command = crate::installer::managed_provider_command_for_target(
+        cfg,
+        &status.provider_id,
+        requested_target,
+    )
+    .or_else(|| {
+        cfg.providers
+            .get(&status.provider_id)
+            .filter(|command| command.managed.is_none())
+            .cloned()
+    });
+    let Some(command) = command else {
         return false;
     };
     command.dependencies.iter().any(|dependency_id| {
@@ -424,6 +436,16 @@ fn managed_dependency_update_available(
     })
 }
 
+fn install_target_from_status(
+    status: &ctx_providers::adapters::ProviderStatus,
+) -> Option<crate::installs::InstallTarget> {
+    status
+        .details
+        .get("install_target")
+        .or_else(|| status.details.get("managed_target"))
+        .and_then(|value| crate::installer::parse_install_target(Some(value.as_str())).ok())
+}
+
 async fn detect_provider_version(
     data_root: &Path,
     cfg: &AgentServerConfigFile,
@@ -433,24 +455,23 @@ async fn detect_provider_version(
     if !status.installed {
         return None;
     }
-    if let Some(meta) = cfg
-        .providers
-        .get(&status.provider_id)
-        .and_then(|c| c.managed.as_ref())
-    {
-        if let Some(version) = meta.version.clone() {
-            return Some(version);
-        }
-    }
-    if let Some(meta) = cfg.managed_installs.get(&status.provider_id) {
+    let requested_target = install_target_from_status(status);
+    if let Some(meta) = crate::installer::managed_install_metadata_for_target(
+        cfg,
+        &status.provider_id,
+        requested_target,
+    ) {
         if let Some(version) = meta.version.clone() {
             return Some(version);
         }
     }
 
     let probe = entry.version_probe.as_ref()?;
-    let command = match crate::installer::resolve_runtime_provider_command(cfg, &status.provider_id)
-    {
+    let command = match crate::installer::resolve_runtime_provider_command_for_target(
+        cfg,
+        &status.provider_id,
+        requested_target,
+    ) {
         Ok(Some(command)) => ProviderCommand {
             command: command.command_abs_path,
             args: command.args,
