@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "$ROOT/scripts/lib/updater_e2e_drill_full_paths.sh"
+
+tmp="$(mktemp -d /tmp/ctx-updater-linux-smoke-contract.XXXXXX)"
+stderr_one="$tmp/stderr-appimage.txt"
+stderr_two="$tmp/stderr-missing-appdir.txt"
+trap 'rm -rf "$tmp"' EXIT
+
+bundle_dir="$tmp/core/apps/desktop/src-tauri/target/release/bundle/appimage"
+appdir_bin="$bundle_dir/ctx_0.5.18_amd64.AppDir/usr/bin/ctx"
+appimage_path="$bundle_dir/ctx_0.5.18_amd64.AppImage"
+
+mkdir -p "$(dirname "$appdir_bin")"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$appdir_bin"
+chmod +x "$appdir_bin"
+printf 'not-a-real-appimage\n' >"$appimage_path"
+chmod +x "$appimage_path"
+
+resolved_path="$(resolve_local_smoke_app_path "$tmp" Linux)"
+if [[ "$resolved_path" != "$appdir_bin" ]]; then
+  echo "error: expected Linux resolver to return AppDir executable" >&2
+  echo "expected: $appdir_bin" >&2
+  echo "actual:   $resolved_path" >&2
+  exit 1
+fi
+
+if CTX_DESKTOP_APP_PATH="$appimage_path" resolve_local_smoke_app_path "$tmp" Linux > /dev/null 2>"$stderr_one"; then
+  echo "error: expected AppImage override to be rejected" >&2
+  exit 1
+fi
+
+if ! grep -Fq "outer AppImage wrapper" "$stderr_one"; then
+  echo "error: expected AppImage rejection message" >&2
+  cat "$stderr_one" >&2 || true
+  exit 1
+fi
+
+rm -f "$appdir_bin"
+
+if resolve_local_smoke_app_path "$tmp" Linux > /dev/null 2>"$stderr_two"; then
+  echo "error: expected Linux resolver to fail when only AppImage is present" >&2
+  exit 1
+fi
+
+if ! grep -Fq "*.AppDir/usr/bin/ctx" "$stderr_two"; then
+  echo "error: expected missing AppDir contract message" >&2
+  cat "$stderr_two" >&2 || true
+  exit 1
+fi
+
+echo "ok: updater_e2e_drill_full Linux smoke path contract holds"
