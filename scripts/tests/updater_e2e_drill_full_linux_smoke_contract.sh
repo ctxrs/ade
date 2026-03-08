@@ -10,19 +10,22 @@ stderr_two="$tmp/stderr-missing-appdir.txt"
 trap 'rm -rf "$tmp"' EXIT
 
 bundle_dir="$tmp/core/apps/desktop/src-tauri/target/release/bundle/appimage"
+apprun_path="$bundle_dir/ctx_0.5.18_amd64.AppDir/AppRun"
 appdir_bin="$bundle_dir/ctx_0.5.18_amd64.AppDir/usr/bin/ctx"
 appimage_path="$bundle_dir/ctx_0.5.18_amd64.AppImage"
 
-mkdir -p "$(dirname "$appdir_bin")"
+mkdir -p "$(dirname "$apprun_path")" "$(dirname "$appdir_bin")"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$apprun_path"
+chmod +x "$apprun_path"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$appdir_bin"
 chmod +x "$appdir_bin"
 printf 'not-a-real-appimage\n' >"$appimage_path"
 chmod +x "$appimage_path"
 
 resolved_path="$(resolve_local_smoke_app_path "$tmp" Linux)"
-if [[ "$resolved_path" != "$appdir_bin" ]]; then
-  echo "error: expected Linux resolver to return AppDir executable" >&2
-  echo "expected: $appdir_bin" >&2
+if [[ "$resolved_path" != "$apprun_path" ]]; then
+  echo "error: expected Linux resolver to return AppDir AppRun launcher" >&2
+  echo "expected: $apprun_path" >&2
   echo "actual:   $resolved_path" >&2
   exit 1
 fi
@@ -38,15 +41,26 @@ if ! grep -Fq "outer AppImage wrapper" "$stderr_one"; then
   exit 1
 fi
 
-rm -f "$appdir_bin"
+if CTX_DESKTOP_APP_PATH="$appdir_bin" resolve_local_smoke_app_path "$tmp" Linux > /dev/null 2>"$stderr_two"; then
+  echo "error: expected inner AppDir binary override to be rejected" >&2
+  exit 1
+fi
+
+if ! grep -Fq "inner bundled binary" "$stderr_two"; then
+  echo "error: expected inner AppDir binary rejection message" >&2
+  cat "$stderr_two" >&2 || true
+  exit 1
+fi
+
+rm -f "$apprun_path"
 
 if resolve_local_smoke_app_path "$tmp" Linux > /dev/null 2>"$stderr_two"; then
   echo "error: expected Linux resolver to fail when only AppImage is present" >&2
   exit 1
 fi
 
-if ! grep -Fq "*.AppDir/usr/bin/ctx" "$stderr_two"; then
-  echo "error: expected missing AppDir contract message" >&2
+if ! grep -Fq "*.AppDir/AppRun" "$stderr_two"; then
+  echo "error: expected missing AppRun contract message" >&2
   cat "$stderr_two" >&2 || true
   exit 1
 fi

@@ -15,18 +15,23 @@ validate_linux_local_smoke_app_path() {
 
   if [[ "$app_path" == *.AppImage ]]; then
     updater_local_smoke_fail \
-      "linux local smoke must launch the AppDir desktop executable, not the outer AppImage wrapper: $app_path"
+      "linux local smoke must launch the AppDir AppRun launcher, not the outer AppImage wrapper: $app_path"
     return 1
   fi
 
   case "$app_path" in
-    *.AppDir/usr/bin/ctx)
+    *.AppDir/AppRun)
       return 0
+      ;;
+    *.AppDir/usr/bin/*)
+      updater_local_smoke_fail \
+        "linux local smoke must launch the AppDir AppRun launcher, not an inner bundled binary: $app_path"
+      return 1
       ;;
   esac
 
   updater_local_smoke_fail \
-    "linux local smoke requires a bundled AppDir executable (*.AppDir/usr/bin/ctx): $app_path"
+    "linux local smoke requires a bundled AppDir AppRun launcher (*.AppDir/AppRun): $app_path"
   return 1
 }
 
@@ -46,7 +51,7 @@ resolve_linux_local_smoke_app_path() {
     [[ -n "$match" ]] || continue
     matches+=("$match")
   done < <(
-    find "$bundle_dir" -maxdepth 4 -type f -path '*.AppDir/usr/bin/ctx' 2>/dev/null | LC_ALL=C sort
+    find "$bundle_dir" -maxdepth 3 -type f -path '*.AppDir/AppRun' 2>/dev/null | LC_ALL=C sort
   )
 
   case "${#matches[@]}" in
@@ -57,13 +62,13 @@ resolve_linux_local_smoke_app_path() {
       ;;
     0)
       updater_local_smoke_fail \
-        "linux local smoke expected exactly one bundled AppDir executable under $bundle_dir (*.AppDir/usr/bin/ctx)"
+        "linux local smoke expected exactly one bundled AppDir AppRun launcher under $bundle_dir (*.AppDir/AppRun)"
       return 1
       ;;
   esac
 
   updater_local_smoke_fail \
-    "linux local smoke found multiple bundled AppDir executables under $bundle_dir"
+    "linux local smoke found multiple bundled AppDir AppRun launchers under $bundle_dir"
   printf '%s\n' "${matches[@]}" >&2
   return 1
 }
