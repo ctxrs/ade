@@ -3654,6 +3654,7 @@ mod tests {
         ));
     }
 
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     #[tokio::test]
     async fn ensure_podman_machine_running_recreates_immediately_for_already_running_unreachable_machine(
     ) {
@@ -3694,6 +3695,7 @@ mod tests {
         assert!(!log.contains("machine stop "));
     }
 
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     #[tokio::test]
     async fn ensure_podman_machine_running_fails_fast_on_unknown_start_error() {
         use std::os::unix::fs::PermissionsExt;
