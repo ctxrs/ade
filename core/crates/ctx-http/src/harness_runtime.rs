@@ -8,6 +8,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use futures::StreamExt;
 use sha2::Digest;
+use sysinfo::{Pid, Signal, System};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::sync::Mutex;
@@ -2380,6 +2381,113 @@ fn clear_stale_podman_machine_temp_state(
     }
 }
 
+fn is_ctx_managed_podman_helper_process_command(
+    command: &[String],
+    data_root: &Path,
+    machine_name: &str,
+) -> bool {
+    let Some(program) = command.first() else {
+        return false;
+    };
+    let helper_name = Path::new(program)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    if helper_name != "gvproxy" && helper_name != "vfkit" {
+        return false;
+    }
+
+    let rendered = command.iter().cloned().collect::<Vec<_>>().join("\n");
+    if !rendered.contains(machine_name) {
+        return false;
+    }
+
+    let scoped_roots = [
+        podman_runtime_root(data_root),
+        podman_home_root(data_root),
+        podman_temp_root(data_root),
+        data_root.join("podman"),
+    ];
+    scoped_roots.iter().any(|root| {
+        let root = root.to_string_lossy();
+        rendered.contains(root.as_ref())
+    })
+}
+
+fn collect_ctx_managed_podman_helper_pids<I>(
+    processes: I,
+    data_root: &Path,
+    machine_name: &str,
+) -> Vec<u32>
+where
+    I: IntoIterator<Item = (u32, Vec<String>)>,
+{
+    let mut pids = processes
+        .into_iter()
+        .filter_map(|(pid, command)| {
+            is_ctx_managed_podman_helper_process_command(&command, data_root, machine_name)
+                .then_some(pid)
+        })
+        .collect::<Vec<_>>();
+    pids.sort_unstable();
+    pids.dedup();
+    pids
+}
+
+fn stale_ctx_managed_podman_helper_pids(data_root: &Path, machine_name: &str) -> Vec<u32> {
+    let mut system = System::new();
+    system.refresh_processes();
+    collect_ctx_managed_podman_helper_pids(
+        system
+            .processes()
+            .iter()
+            .map(|(pid, process)| (pid.as_u32(), process.cmd().to_vec())),
+        data_root,
+        machine_name,
+    )
+}
+
+fn kill_ctx_managed_podman_helper_processes(data_root: &Path, machine_name: &str) -> Vec<u32> {
+    let pids = stale_ctx_managed_podman_helper_pids(data_root, machine_name);
+    if pids.is_empty() {
+        return Vec::new();
+    }
+    let mut system = System::new();
+    system.refresh_processes();
+    let mut killed = Vec::new();
+    for pid in pids {
+        if let Some(process) = system.process(Pid::from_u32(pid)) {
+            if process.kill_with(Signal::Kill).unwrap_or(false) {
+                killed.push(pid);
+            }
+        }
+    }
+    killed
+}
+
+fn cleanup_ctx_managed_podman_helper_processes(
+    data_root: &Path,
+    machine_name: &str,
+    observer: Option<&dyn HarnessSetupObserver>,
+) {
+    let killed = kill_ctx_managed_podman_helper_processes(data_root, machine_name);
+    if !killed.is_empty() {
+        observe_log(
+            observer,
+            HarnessSetupPhase::MachineStartOrInit,
+            HarnessSetupLogLevel::Warn,
+            &format!(
+                "killed stale ctx-managed podman helper process(es) before recovery: {}",
+                killed
+                    .iter()
+                    .map(u32::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        );
+    }
+}
+
 async fn best_effort_start_machine_after_init(
     data_root: &Path,
     machine_name: &str,
@@ -2678,6 +2786,7 @@ async fn ensure_podman_machine_running_with_observer(
 
     // Prefer starting an existing machine; fall back to init when no machine exists.
     let mut wait_after_start = true;
+    let mut force_recreate = false;
     let start_out = {
         let mut start = podman_command(data_root)?;
         start.arg("machine").arg("start").arg(&machine_name);
@@ -2727,6 +2836,7 @@ async fn ensure_podman_machine_running_with_observer(
                     &message,
                 );
                 wait_after_start = false;
+                force_recreate = true;
             } else {
                 let message = if combined.is_empty() {
                     "podman machine start returned a recoverable error; waiting for readiness"
@@ -2776,92 +2886,102 @@ async fn ensure_podman_machine_running_with_observer(
         }
     }
 
-    observe_log(
-        observer,
-        HarnessSetupPhase::MachineStartOrInit,
-        HarnessSetupLogLevel::Warn,
-        "podman machine remained unreachable after start; restarting once",
-    );
-    let stop_out = {
-        let mut stop = podman_command(data_root)?;
-        stop.arg("machine").arg("stop").arg(&machine_name);
-        command_output_with_timeout(stop, PODMAN_MACHINE_START_TIMEOUT).await?
-    };
-    if !stop_out.status.success() {
-        let combined = command_output_message(&stop_out);
-        if !combined.is_empty() {
-            last_err = combined.clone();
-            observe_log(
-                observer,
-                HarnessSetupPhase::MachineStartOrInit,
-                HarnessSetupLogLevel::Warn,
-                &format!("podman machine stop returned non-zero during recovery: {combined}"),
-            );
-        }
-    }
-    let restart_out = {
-        let mut start = podman_command(data_root)?;
-        start.arg("machine").arg("start").arg(&machine_name);
-        command_output_with_timeout(start, PODMAN_MACHINE_START_TIMEOUT).await?
-    };
-    if !restart_out.status.success() {
-        let combined = command_output_message(&restart_out);
-        if !combined.is_empty() {
-            last_err = combined.clone();
-            observe_log(
-                observer,
-                HarnessSetupPhase::MachineStartOrInit,
-                HarnessSetupLogLevel::Warn,
-                &format!(
-                    "podman machine start returned non-zero during restart recovery: {combined}"
-                ),
-            );
-        } else {
-            observe_log(
-                observer,
-                HarnessSetupPhase::MachineStartOrInit,
-                HarnessSetupLogLevel::Warn,
-                &format!(
-                    "podman machine start returned non-zero during restart recovery: {}",
-                    restart_out.status
-                ),
-            );
-        }
-    }
-    observe_log(
-        observer,
-        HarnessSetupPhase::MachineStartOrInit,
-        HarnessSetupLogLevel::Info,
-        "waiting for podman machine readiness after restart",
-    );
-    if wait_for_podman_machine_ready(
-        data_root,
-        observer,
-        "podman machine recovered after restart",
-        &mut last_err,
-    )
-    .await?
-    {
-        return Ok(());
-    }
-
-    // Final recovery: recreate the dedicated ctx machine once if it still cannot be reached.
-    if podman_machine_present(data_root).await.unwrap_or(false) {
+    if !force_recreate {
         observe_log(
             observer,
             HarnessSetupPhase::MachineStartOrInit,
             HarnessSetupLogLevel::Warn,
-            "podman machine still unreachable after restart; recreating machine",
+            "podman machine remained unreachable after start; restarting once",
         );
+        let stop_out = {
+            let mut stop = podman_command(data_root)?;
+            stop.arg("machine").arg("stop").arg(&machine_name);
+            command_output_with_timeout(stop, PODMAN_MACHINE_START_TIMEOUT).await?
+        };
+        if !stop_out.status.success() {
+            let combined = command_output_message(&stop_out);
+            if !combined.is_empty() {
+                last_err = combined.clone();
+                observe_log(
+                    observer,
+                    HarnessSetupPhase::MachineStartOrInit,
+                    HarnessSetupLogLevel::Warn,
+                    &format!("podman machine stop returned non-zero during recovery: {combined}"),
+                );
+            }
+        }
+        let restart_out = {
+            let mut start = podman_command(data_root)?;
+            start.arg("machine").arg("start").arg(&machine_name);
+            command_output_with_timeout(start, PODMAN_MACHINE_START_TIMEOUT).await?
+        };
+        if !restart_out.status.success() {
+            let combined = command_output_message(&restart_out);
+            if !combined.is_empty() {
+                last_err = combined.clone();
+                observe_log(
+                    observer,
+                    HarnessSetupPhase::MachineStartOrInit,
+                    HarnessSetupLogLevel::Warn,
+                    &format!(
+                        "podman machine start returned non-zero during restart recovery: {combined}"
+                    ),
+                );
+            } else {
+                observe_log(
+                    observer,
+                    HarnessSetupPhase::MachineStartOrInit,
+                    HarnessSetupLogLevel::Warn,
+                    &format!(
+                        "podman machine start returned non-zero during restart recovery: {}",
+                        restart_out.status
+                    ),
+                );
+            }
+        }
+        observe_log(
+            observer,
+            HarnessSetupPhase::MachineStartOrInit,
+            HarnessSetupLogLevel::Info,
+            "waiting for podman machine readiness after restart",
+        );
+        if wait_for_podman_machine_ready(
+            data_root,
+            observer,
+            "podman machine recovered after restart",
+            &mut last_err,
+        )
+        .await?
+        {
+            return Ok(());
+        }
+    }
+
+    // Final recovery: recreate the dedicated ctx machine once if it still cannot be reached.
+    let machine_present = podman_machine_present(data_root).await.unwrap_or(false);
+    if machine_present || force_recreate {
+        observe_log(
+            observer,
+            HarnessSetupPhase::MachineStartOrInit,
+            HarnessSetupLogLevel::Warn,
+            if force_recreate {
+                "podman machine reported an already-running but unreachable state; recreating machine"
+            } else {
+                "podman machine still unreachable after restart; recreating machine"
+            },
+        );
+        cleanup_ctx_managed_podman_helper_processes(data_root, &machine_name, observer);
         clear_stale_podman_machine_temp_state(data_root, &machine_name, observer);
 
-        let mut rm = podman_command(data_root)?;
-        rm.arg("machine").arg("rm").arg("-f").arg(&machine_name);
-        let rm_out = command_output_with_timeout(rm, PODMAN_MACHINE_START_TIMEOUT).await?;
-        if !rm_out.status.success() {
-            let combined = command_output_message(&rm_out);
-            if !combined.is_empty() {
-                last_err = format!("podman machine rm -f failed: {combined}");
+        if machine_present {
+            let mut rm = podman_command(data_root)?;
+            rm.arg("machine").arg("rm").arg("-f").arg(&machine_name);
+            let rm_out = command_output_with_timeout(rm, PODMAN_MACHINE_START_TIMEOUT).await?;
+            if !rm_out.status.success() {
+                let combined = command_output_message(&rm_out);
+                if !combined.is_empty() {
+                    last_err = format!("podman machine rm -f failed: {combined}");
+                }
             }
         }
 
@@ -3388,8 +3508,154 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn collect_ctx_managed_podman_helper_pids_matches_only_ctx_scoped_helpers() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let machine_name = ctx_podman_machine_name(temp.path());
+        let helper_dir = temp
+            .path()
+            .join("managed")
+            .join("runtimes")
+            .join("podman")
+            .join("macos")
+            .join("aarch64")
+            .join("podman-5.8.0")
+            .join("usr")
+            .join("libexec")
+            .join("podman");
+        let matches = collect_ctx_managed_podman_helper_pids(
+            vec![
+                (
+                    42,
+                    vec![
+                        helper_dir.join("gvproxy").to_string_lossy().into_owned(),
+                        machine_name.clone(),
+                        podman_temp_root(temp.path())
+                            .join("podman")
+                            .join(format!("{machine_name}-api.sock"))
+                            .to_string_lossy()
+                            .into_owned(),
+                    ],
+                ),
+                (
+                    77,
+                    vec![
+                        "/opt/homebrew/bin/vfkit".to_string(),
+                        temp.path()
+                            .join("podman")
+                            .join("xdg")
+                            .join("data")
+                            .join("containers")
+                            .join("podman")
+                            .join("machine")
+                            .join("applehv")
+                            .join(format!("{machine_name}-arm64.raw"))
+                            .to_string_lossy()
+                            .into_owned(),
+                        machine_name.clone(),
+                    ],
+                ),
+                (
+                    88,
+                    vec![
+                        "/opt/homebrew/libexec/podman/gvproxy".to_string(),
+                        "/tmp/podman/podman-machine-default-api.sock".to_string(),
+                        "podman-machine-default".to_string(),
+                    ],
+                ),
+            ],
+            temp.path(),
+            &machine_name,
+        );
+        assert_eq!(matches, vec![42, 77]);
+    }
+
+    #[test]
+    fn ctx_managed_podman_helper_process_detection_matches_expected_shapes() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let machine_name = ctx_podman_machine_name(temp.path());
+        let matching_gvproxy = vec![
+            temp.path()
+                .join("managed")
+                .join("runtimes")
+                .join("podman")
+                .join("macos")
+                .join("aarch64")
+                .join("podman-5.8.0")
+                .join("usr")
+                .join("libexec")
+                .join("podman")
+                .join("gvproxy")
+                .to_string_lossy()
+                .into_owned(),
+            podman_temp_root(temp.path())
+                .join("podman")
+                .join(format!("{machine_name}-api.sock"))
+                .to_string_lossy()
+                .into_owned(),
+            machine_name.clone(),
+        ];
+        assert!(is_ctx_managed_podman_helper_process_command(
+            &matching_gvproxy,
+            temp.path(),
+            &machine_name
+        ));
+
+        let matching_vfkit = vec![
+            String::from("/opt/homebrew/bin/vfkit"),
+            temp.path()
+                .join("podman")
+                .join("xdg")
+                .join("data")
+                .join("containers")
+                .join("podman")
+                .join("machine")
+                .join("applehv")
+                .join(format!("{machine_name}-arm64.raw"))
+                .to_string_lossy()
+                .into_owned(),
+            machine_name.clone(),
+        ];
+        assert!(is_ctx_managed_podman_helper_process_command(
+            &matching_vfkit,
+            temp.path(),
+            &machine_name
+        ));
+
+        let wrong_machine = vec![
+            String::from("/opt/homebrew/bin/vfkit"),
+            temp.path()
+                .join("podman")
+                .join("xdg")
+                .join("data")
+                .join("containers")
+                .join("podman")
+                .join("machine")
+                .join("applehv")
+                .join("ctx-someone-else-arm64.raw")
+                .to_string_lossy()
+                .into_owned(),
+        ];
+        assert!(!is_ctx_managed_podman_helper_process_command(
+            &wrong_machine,
+            temp.path(),
+            &machine_name
+        ));
+
+        let host_helper = vec![
+            String::from("/opt/homebrew/libexec/podman/gvproxy"),
+            String::from("/tmp/podman/podman-machine-default-api.sock"),
+            String::from("podman-machine-default"),
+        ];
+        assert!(!is_ctx_managed_podman_helper_process_command(
+            &host_helper,
+            temp.path(),
+            &machine_name
+        ));
+    }
+
     #[tokio::test]
-    async fn ensure_podman_machine_running_restarts_immediately_for_already_running_unreachable_machine(
+    async fn ensure_podman_machine_running_recreates_immediately_for_already_running_unreachable_machine(
     ) {
         use std::os::unix::fs::PermissionsExt;
 
@@ -3404,7 +3670,7 @@ mod tests {
         std::fs::write(
             &podman_path,
             format!(
-                "#!/bin/sh\nLOG=\"{log}\"\nSTATE=\"{state}\"\nSTART_COUNT=\"{start_count}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STATE\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  count=0\n  if [ -f \"$START_COUNT\" ]; then\n    count=$(cat \"$START_COUNT\")\n  fi\n  count=$((count + 1))\n  printf '%s' \"$count\" > \"$START_COUNT\"\n  if [ \"$count\" -eq 1 ]; then\n    echo 'Error: unable to start \"ctx\": already running' >&2\n    exit 125\n  fi\n  touch \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  rm -f \"$STATE\"\n  exit 0\nfi\nexit 0\n",
+                "#!/bin/sh\nLOG=\"{log}\"\nSTATE=\"{state}\"\nSTART_COUNT=\"{start_count}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STATE\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"rm\" ]; then\n  rm -f \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  count=0\n  if [ -f \"$START_COUNT\" ]; then\n    count=$(cat \"$START_COUNT\")\n  fi\n  count=$((count + 1))\n  printf '%s' \"$count\" > \"$START_COUNT\"\n  if [ \"$count\" -eq 1 ]; then\n    echo 'Error: unable to start \"ctx\": already running' >&2\n    exit 125\n  fi\n  touch \"$STATE\"\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  rm -f \"$STATE\"\n  exit 0\nfi\nexit 0\n",
                 log = log_path.display(),
                 state = state_path.display(),
                 start_count = start_count_path.display(),
@@ -3422,8 +3688,10 @@ mod tests {
         let log = std::fs::read_to_string(&log_path).expect("read invocation log");
         assert!(log.contains("info"));
         assert!(log.contains("machine start "));
-        assert!(log.contains("machine stop "));
-        assert!(!log.contains("machine rm -f "));
+        assert!(log.contains("machine inspect "));
+        assert!(log.contains("machine rm -f "));
+        assert!(log.contains("machine init "));
+        assert!(!log.contains("machine stop "));
     }
 
     #[tokio::test]
