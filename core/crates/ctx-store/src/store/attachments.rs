@@ -1,3 +1,4 @@
+use super::workspace::WorkspaceMergeQueueEntryIndexRecord;
 use super::*;
 
 impl Store {
@@ -375,6 +376,31 @@ impl Store {
             .fetch_optional(&self.pool)
             .await?;
         Ok(row.and_then(map_merge_queue_entry))
+    }
+
+    pub async fn list_merge_queue_entry_index_records(
+        &self,
+    ) -> Result<Vec<WorkspaceMergeQueueEntryIndexRecord>> {
+        let rows = self
+            .query(
+                r#"SELECT id, status, created_at
+                   FROM merge_queue_entries
+                   ORDER BY created_at ASC"#,
+            )
+            .fetch_all(&self.pool)
+            .await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let id: String = row.try_get("id")?;
+            let status: String = row.try_get("status")?;
+            let created_at: String = row.try_get("created_at")?;
+            out.push(WorkspaceMergeQueueEntryIndexRecord {
+                entry_id: MergeQueueEntryId(uuid::Uuid::parse_str(&id)?),
+                status: parse_merge_queue_entry_status(&status),
+                created_at: parse_dt(&created_at)?,
+            });
+        }
+        Ok(out)
     }
 
     pub async fn list_merge_queue_entries(

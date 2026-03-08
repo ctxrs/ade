@@ -222,29 +222,15 @@ pub(super) async fn get_artifact(
     headers: HeaderMap,
 ) -> Result<Response, StatusCode> {
     let artifact_id = ArtifactId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let workspaces = state
-        .global_store()
-        .list_workspaces()
+    let store = state
+        .store_for_artifact(artifact_id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let mut artifact = None;
-    for workspace in workspaces {
-        let store = state
-            .store_for_workspace(workspace.id)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        if let Some(found) = store
-            .get_artifact(artifact_id)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        {
-            artifact = Some(found);
-            break;
-        }
-    }
-    let Some(artifact) = artifact else {
-        return Err(StatusCode::NOT_FOUND);
-    };
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let artifact = store
+        .get_artifact(artifact_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
 
     let path = PathBuf::from(&artifact.absolute_path);
     let meta = tokio::fs::metadata(&path)
@@ -459,6 +445,26 @@ pub(super) async fn set_session_artifacts(
 
     store
         .replace_session_artifacts(session.id, &artifacts)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    let artifact_ids = store.list_artifact_ids().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })?;
+    state
+        .global_store()
+        .replace_workspace_artifact_index(session.workspace_id, &artifact_ids)
         .await
         .map_err(|e| {
             (

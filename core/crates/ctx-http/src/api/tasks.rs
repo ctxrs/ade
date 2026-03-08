@@ -1772,6 +1772,11 @@ pub(super) async fn create_session_for_task(
                         && existing.attachments.is_empty()
                         && matches!(existing.delivery, MessageDelivery::Immediate);
                     if matches {
+                        state
+                            .global_store()
+                            .upsert_workspace_message_index(existing.id, session.workspace_id)
+                            .await
+                            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
                         existing
                     } else {
                         return Err(StatusCode::CONFLICT);
@@ -1779,6 +1784,11 @@ pub(super) async fn create_session_for_task(
                 }
                 Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
             };
+            state
+                .global_store()
+                .upsert_workspace_message_index(saved.id, session.workspace_id)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
             let event = store
                 .append_session_event(

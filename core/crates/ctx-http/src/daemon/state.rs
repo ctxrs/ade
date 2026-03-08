@@ -31,7 +31,10 @@ use crate::telemetry::Telemetry;
 use crate::terminals::TerminalManager;
 use crate::web_sessions::WebSessionManager;
 use crate::workspace_active_snapshot::WorkspaceActiveSnapshotHub;
-use ctx_core::ids::{SessionId, TaskId, WorkspaceAttachmentId, WorkspaceId, WorktreeId};
+use ctx_core::ids::{
+    ArtifactId, MergeQueueEntryId, MessageId, SessionId, TaskId, WorkspaceAttachmentId,
+    WorkspaceId, WorktreeId,
+};
 use ctx_core::models::{
     Session, SessionEvent, SessionHeadSnapshot, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot,
     WorktreeVcsSnapshot,
@@ -619,6 +622,25 @@ impl AppState {
 
     pub async fn store_for_worktree(&self, worktree_id: WorktreeId) -> Result<Store> {
         self.core.stores.store_for_worktree(worktree_id).await
+    }
+
+    pub async fn store_for_artifact(&self, artifact_id: ArtifactId) -> Result<Store> {
+        self.core.stores.store_for_artifact(artifact_id).await
+    }
+
+    pub async fn store_for_message(&self, message_id: MessageId) -> Result<Store> {
+        self.core.stores.store_for_message(message_id).await
+    }
+
+    pub async fn store_for_subagent_invocation(&self, invocation_id: &str) -> Result<Store> {
+        self.core
+            .stores
+            .store_for_subagent_invocation(invocation_id)
+            .await
+    }
+
+    pub async fn store_for_merge_queue_entry(&self, entry_id: MergeQueueEntryId) -> Result<Store> {
+        self.core.stores.store_for_merge_queue_entry(entry_id).await
     }
 
     pub fn lsp_diag_broadcaster(&self) -> broadcast::Sender<serde_json::Value> {

@@ -1214,7 +1214,9 @@ async fn start_turn(
                             order_seq_state.get_or_assign(format!("message:{}", message_id.0), None)
                         };
                         if let Ok(saved) = persist_assistant_message(
+                            state_for_events.as_ref(),
                             &store,
+                            workspace_id,
                             message_id,
                             order_seq,
                             session_id,
@@ -1355,7 +1357,9 @@ async fn start_turn(
                                     .get_or_assign(format!("message:{}", message_id.0), None)
                             };
                             if let Ok(saved) = persist_assistant_message(
+                                state_for_events.as_ref(),
                                 &store,
+                                workspace_id,
                                 message_id,
                                 order_seq,
                                 session_id,
@@ -2145,7 +2149,9 @@ async fn append_session_event_with_retry(
 
 #[allow(clippy::too_many_arguments)]
 async fn persist_assistant_message(
+    state: &AppState,
     store: &ctx_store::Store,
+    workspace_id: ctx_core::ids::WorkspaceId,
     message_id: ctx_core::ids::MessageId,
     order_seq: i64,
     session_id: ctx_core::ids::SessionId,
@@ -2177,7 +2183,13 @@ async fn persist_assistant_message(
     let mut attempt = 0usize;
     loop {
         match store.insert_message(msg.clone()).await {
-            Ok(saved) => return Ok(saved),
+            Ok(saved) => {
+                state
+                    .global_store()
+                    .upsert_workspace_message_index(saved.id, workspace_id)
+                    .await?;
+                return Ok(saved);
+            }
             Err(err) => {
                 if !is_transient_store_error(&err) || attempt >= STORE_WRITE_RETRY_LIMIT {
                     tracing::warn!("assistant message insert failed: {err:#}");

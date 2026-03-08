@@ -72,25 +72,16 @@ pub(crate) async fn get_subagent_invocation(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<SubagentInvocation>, StatusCode> {
-    let workspaces = state
-        .global_store()
-        .list_workspaces()
+    let store = state
+        .store_for_subagent_invocation(&id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    for workspace in workspaces {
-        let store = state
-            .store_for_workspace(workspace.id)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        if let Some(invocation) = store
-            .get_subagent_invocation(&id)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        {
-            return Ok(Json(invocation));
-        }
-    }
-    Err(StatusCode::NOT_FOUND)
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let invocation = store
+        .get_subagent_invocation(&id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(invocation))
 }
 
 const DEFAULT_MAX_SUBAGENTS_PER_CALL: usize = 10;
@@ -887,6 +878,18 @@ async fn enqueue_subagent_prompt(
             }),
         )
     })?;
+    state
+        .global_store()
+        .upsert_workspace_message_index(saved.id, session.workspace_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
 
     let event = store
         .append_session_event(
@@ -1289,6 +1292,18 @@ pub(crate) async fn mcp_agent_init(
     };
     store
         .upsert_subagent_invocation(invocation)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
+    state
+        .global_store()
+        .upsert_workspace_subagent_invocation_index(&invocation_id, parent.workspace_id)
         .await
         .map_err(|e| {
             (
