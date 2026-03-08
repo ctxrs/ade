@@ -8,6 +8,8 @@ use directories::BaseDirs;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+use crate::provider_accounts::CODEX_AUTH_TYPE_BEARER;
+
 const REGISTRY_VERSION: u32 = 1;
 const SECRET_VERSION: u32 = 1;
 
@@ -28,7 +30,6 @@ const PROVIDER_PI: &str = "pi";
 const PROVIDER_CURSOR: &str = "cursor";
 const CTX_DROID_HOST_AUTH_PATH_ENV: &str = "CTX_DROID_HOST_AUTH_PATH";
 
-const CODEX_AUTH_TYPE_BEARER: &str = "bearer";
 const CLAUDE_AUTH_TYPE_API_KEY: &str = "api_key";
 const GEMINI_AUTH_TYPE_GEMINI_API_KEY: &str = "gemini_api_key";
 const GEMINI_AUTH_TYPE_VERTEX_AI: &str = "vertex_ai";
