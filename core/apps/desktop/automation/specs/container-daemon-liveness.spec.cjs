@@ -6,12 +6,15 @@ const { daemonJson, sampleDaemonHealth } = require("./helpers/daemon.cjs");
 const {
   mkTempDir,
   runWizardScenario,
+  getWorkspace,
   getWorkspaceHarnessContainer,
   assertLocalWorkspaceConfig,
   assertConnectedLocalAndListening,
+  assertWorkspaceTerminalCwdPrefix,
   assertNoDaemonOverlayFor,
   collectWorkspaceRouteDiagnostics,
 } = require("./helpers/workspace_wizard_flow.cjs");
+const { openWorkspaceRouteAndWait } = require("./helpers/container_lifecycle.cjs");
 
 const scenarioFilter = new Set(
   String(process.env.CTX_AUTOMATION_SCENARIOS || "")
@@ -150,6 +153,69 @@ describe("container daemon liveness", () => {
     const health = await sampleDaemonHealth({ durationMs: 30_000, intervalMs: 2_000 });
     if (!health.ok) {
       throw new Error(`daemon health degraded after disk-isolated create: ${JSON.stringify(health.failures)}`);
+    }
+  }).timeout(CASE_TIMEOUT_MS);
+
+  it("same-daemon host and disk-isolated workspaces both stay routable", async function () {
+    if (!scenarioEnabled("local-mixed-mode", ["local", "mixed-mode"])) this.skip();
+
+    const hostDest = path.join(localBase, "mixed-host");
+    const hostWorkspaceId = await runWizardScenario({
+      location: "local",
+      container: "no-container",
+      source: { kind: "new", destPath: hostDest, workspaceName: "mixed-host" },
+      setupHook: "",
+      mergeQueue: { kind: "skip" },
+    });
+
+    await assertConnectedLocalAndListening();
+    const hostWorkspace = await getWorkspace(hostWorkspaceId);
+    await assertLocalWorkspaceConfig(hostWorkspaceId, {
+      environment: "host",
+    });
+    await assertWorkspaceTerminalCwdPrefix(hostWorkspaceId, hostWorkspace.root_path);
+
+    const diskDest = path.join(localBase, "mixed-disk-isolated");
+    const diskWorkspaceId = await runLocalContainerCreate({
+      container: "disk-isolated",
+      workspaceName: "mixed-disk",
+      destPath: diskDest,
+      network: "full",
+    });
+
+    await assertConnectedLocalAndListening();
+    await assertLocalWorkspaceConfig(diskWorkspaceId, {
+      environment: "container_disk_isolated",
+      networkMode: "all",
+    });
+    const diskContainer = await getWorkspaceHarnessContainer(diskWorkspaceId);
+    if (!diskContainer || !diskContainer.running || diskContainer.mount_mode !== "disk_isolated") {
+      throw new Error(`expected running disk-isolated harness container, got ${JSON.stringify(diskContainer)}`);
+    }
+    await assertWorkspaceTerminalCwdPrefix(diskWorkspaceId, "/ctx/ws");
+
+    const workspacesResp = await daemonJson("GET", "/api/workspaces");
+    if (workspacesResp.status !== 200 || !Array.isArray(workspacesResp.payload)) {
+      throw new Error(`failed to list workspaces after mixed-mode create (${workspacesResp.status})`);
+    }
+    const workspaceIds = new Set(workspacesResp.payload.map((workspace) => String(workspace?.id || "")));
+    if (!workspaceIds.has(String(hostWorkspaceId)) || !workspaceIds.has(String(diskWorkspaceId))) {
+      throw new Error(
+        `expected both mixed-mode workspaces to remain registered; ids=${JSON.stringify(Array.from(workspaceIds))}`,
+      );
+    }
+
+    await openWorkspaceRouteAndWait(hostWorkspaceId);
+    await assertNoDaemonOverlayFor(5_000);
+    await assertWorkspaceTerminalCwdPrefix(hostWorkspaceId, hostWorkspace.root_path);
+
+    await openWorkspaceRouteAndWait(diskWorkspaceId);
+    await assertNoDaemonOverlayFor(5_000);
+    await assertWorkspaceTerminalCwdPrefix(diskWorkspaceId, "/ctx/ws");
+
+    const health = await sampleDaemonHealth({ durationMs: 20_000, intervalMs: 2_000 });
+    if (!health.ok) {
+      throw new Error(`daemon health degraded after same-daemon mixed-mode create: ${JSON.stringify(health.failures)}`);
     }
   }).timeout(CASE_TIMEOUT_MS);
 });
