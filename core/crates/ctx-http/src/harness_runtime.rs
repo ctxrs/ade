@@ -2397,7 +2397,7 @@ fn is_ctx_managed_podman_helper_process_command(
         return false;
     }
 
-    let rendered = command.iter().cloned().collect::<Vec<_>>().join("\n");
+    let rendered = command.to_vec().join("\n");
     if !rendered.contains(machine_name) {
         return false;
     }
