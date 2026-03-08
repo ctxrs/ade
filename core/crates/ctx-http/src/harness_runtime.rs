@@ -1,13 +1,14 @@
 use std::collections::{HashMap, HashSet};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{Command as StdCommand, Stdio};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use futures::StreamExt;
 use sha2::Digest;
+#[cfg(not(unix))]
 use sysinfo::{Pid, Signal, System};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
@@ -2381,28 +2382,31 @@ fn clear_stale_podman_machine_temp_state(
     }
 }
 
+#[cfg(any(test, not(unix)))]
 fn is_ctx_managed_podman_helper_process_command(
     command: &[String],
     data_root: &Path,
     machine_name: &str,
 ) -> bool {
-    let Some(program) = command.first() else {
-        return false;
-    };
-    let helper_name = Path::new(program)
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or_default();
-    if helper_name != "gvproxy" && helper_name != "vfkit" {
+    let rendered = command.to_vec().join("\n");
+    is_ctx_managed_podman_helper_process_rendered(&rendered, data_root, machine_name)
+}
+
+fn is_ctx_managed_podman_helper_process_rendered(
+    rendered: &str,
+    data_root: &Path,
+    machine_name: &str,
+) -> bool {
+    if !rendered.contains("/gvproxy") && !rendered.contains("/vfkit") {
         return false;
     }
 
-    let rendered = command.to_vec().join("\n");
     if !rendered.contains(machine_name) {
         return false;
     }
 
     let scoped_roots = [
+        data_root.join("managed").join("runtimes").join("podman"),
         podman_runtime_root(data_root),
         podman_home_root(data_root),
         podman_temp_root(data_root),
@@ -2414,6 +2418,7 @@ fn is_ctx_managed_podman_helper_process_command(
     })
 }
 
+#[cfg(any(test, not(unix)))]
 fn collect_ctx_managed_podman_helper_pids<I>(
     processes: I,
     data_root: &Path,
@@ -2434,6 +2439,57 @@ where
     pids
 }
 
+fn parse_ps_pid_and_command(line: &str) -> Option<(u32, &str)> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let split_idx = trimmed.find(char::is_whitespace)?;
+    let pid = trimmed[..split_idx].trim().parse::<u32>().ok()?;
+    let command = trimmed[split_idx..].trim_start();
+    if command.is_empty() {
+        return None;
+    }
+    Some((pid, command))
+}
+
+fn collect_ctx_managed_podman_helper_pids_from_ps_output(
+    output: &str,
+    data_root: &Path,
+    machine_name: &str,
+) -> Vec<u32> {
+    let mut pids = output
+        .lines()
+        .filter_map(parse_ps_pid_and_command)
+        .filter_map(|(pid, command)| {
+            is_ctx_managed_podman_helper_process_rendered(command, data_root, machine_name)
+                .then_some(pid)
+        })
+        .collect::<Vec<_>>();
+    pids.sort_unstable();
+    pids.dedup();
+    pids
+}
+
+#[cfg(unix)]
+fn stale_ctx_managed_podman_helper_pids(data_root: &Path, machine_name: &str) -> Vec<u32> {
+    let Ok(output) = StdCommand::new("ps")
+        .args(["-Ao", "pid=,command="])
+        .output()
+    else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    collect_ctx_managed_podman_helper_pids_from_ps_output(
+        &String::from_utf8_lossy(&output.stdout),
+        data_root,
+        machine_name,
+    )
+}
+
+#[cfg(not(unix))]
 fn stale_ctx_managed_podman_helper_pids(data_root: &Path, machine_name: &str) -> Vec<u32> {
     let mut system = System::new();
     system.refresh_processes();
@@ -2447,6 +2503,22 @@ fn stale_ctx_managed_podman_helper_pids(data_root: &Path, machine_name: &str) ->
     )
 }
 
+#[cfg(unix)]
+fn kill_ctx_managed_podman_helper_processes(data_root: &Path, machine_name: &str) -> Vec<u32> {
+    let pids = stale_ctx_managed_podman_helper_pids(data_root, machine_name);
+    if pids.is_empty() {
+        return Vec::new();
+    }
+    let mut kill = StdCommand::new("kill");
+    kill.arg("-9")
+        .args(pids.iter().map(u32::to_string));
+    match kill.output() {
+        Ok(output) if output.status.success() => pids,
+        _ => Vec::new(),
+    }
+}
+
+#[cfg(not(unix))]
 fn kill_ctx_managed_podman_helper_processes(data_root: &Path, machine_name: &str) -> Vec<u32> {
     let pids = stale_ctx_managed_podman_helper_pids(data_root, machine_name);
     if pids.is_empty() {
@@ -3652,6 +3724,77 @@ mod tests {
             temp.path(),
             &machine_name
         ));
+    }
+
+    #[test]
+    fn collect_ctx_managed_podman_helper_pids_from_ps_output_matches_real_macos_shapes() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let machine_name = ctx_podman_machine_name(temp.path());
+        let helper_dir = temp
+            .path()
+            .join("managed")
+            .join("runtimes")
+            .join("podman")
+            .join("macos")
+            .join("aarch64")
+            .join("podman-5.8.0")
+            .join("usr")
+            .join("libexec")
+            .join("podman");
+        let gvproxy_line = format!(
+            " 6622 {} -mtu 1500 -listen-vfkit unixgram://{} -forward-sock {} -forward-identity {} -pid-file {}/gvproxy.pid",
+            helper_dir.join("gvproxy").display(),
+            podman_temp_root(temp.path())
+                .join("podman")
+                .join(format!("{machine_name}-gvproxy.sock"))
+                .display(),
+            podman_temp_root(temp.path())
+                .join("podman")
+                .join(format!("{machine_name}-api.sock"))
+                .display(),
+            temp.path()
+                .join("podman")
+                .join("xdg")
+                .join("data")
+                .join("containers")
+                .join("podman")
+                .join("machine")
+                .join("machine")
+                .display(),
+            podman_temp_root(temp.path()).join("podman").display(),
+        );
+        let vfkit_line = format!(
+            "12484 /Users/example-user/Library/Application Support/vfkit --device virtio-blk,path={} --device virtio-vsock,port=1025,socketURL={} --device virtio-net,unixSocketPath={}",
+            temp.path()
+                .join("podman")
+                .join("xdg")
+                .join("data")
+                .join("containers")
+                .join("podman")
+                .join("machine")
+                .join("applehv")
+                .join(format!("{machine_name}-arm64.raw"))
+                .display(),
+            podman_temp_root(temp.path())
+                .join("podman")
+                .join(format!("{machine_name}.sock"))
+                .display(),
+            podman_temp_root(temp.path())
+                .join("podman")
+                .join(format!("{machine_name}-gvproxy.sock"))
+                .display(),
+        );
+        let host_line = String::from(
+            "88 /opt/homebrew/libexec/podman/gvproxy -forward-sock /tmp/podman/podman-machine-default-api.sock podman-machine-default",
+        );
+        let ps_output = format!("{gvproxy_line}\n{vfkit_line}\n{host_line}\n");
+
+        let matches = collect_ctx_managed_podman_helper_pids_from_ps_output(
+            &ps_output,
+            temp.path(),
+            &machine_name,
+        );
+        assert_eq!(matches, vec![6622, 12484]);
     }
 
     #[cfg(any(target_os = "macos", target_os = "windows"))]
