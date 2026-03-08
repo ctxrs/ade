@@ -17,21 +17,44 @@ pub(crate) async fn provider_probe_env(
     state: &Arc<AppState>,
     provider_id: &str,
 ) -> Result<(ResolvedHarnessSource, HashMap<String, String>), String> {
-    let source =
-        harness_sources::resolve_provider_source_for_probe(&state.core.data_root, provider_id)
-            .await
-            .map_err(|e| logs::redact_sensitive(&e.to_string()))?;
+    provider_probe_env_with_runtime_root(state, provider_id, None).await
+}
+
+async fn provider_probe_env_with_runtime_root(
+    state: &Arc<AppState>,
+    provider_id: &str,
+    runtime_data_root: Option<&Path>,
+) -> Result<(ResolvedHarnessSource, HashMap<String, String>), String> {
+    let source = harness_sources::resolve_provider_source_for_probe_with_runtime_root(
+        &state.core.data_root,
+        provider_id,
+        runtime_data_root,
+    )
+    .await
+    .map_err(|e| logs::redact_sensitive(&e.to_string()))?;
     let mut env = HashMap::new();
     env.insert("CTX_DAEMON_URL".to_string(), state.core.daemon_url.clone());
     if let Some(token) = state.core.auth_token.as_ref() {
         env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
     }
     if source.source_kind == HarnessSourceKind::Subscription {
-        let extra = provider_accounts::subscription_env_for_active_account(
-            &state.core.data_root,
-            provider_id,
-        )
-        .await;
+        let extra = match runtime_data_root {
+            Some(runtime_root) => {
+                provider_accounts::subscription_env_for_active_account_with_runtime_root(
+                    &state.core.data_root,
+                    runtime_root,
+                    provider_id,
+                )
+                .await
+            }
+            None => {
+                provider_accounts::subscription_env_for_active_account(
+                    &state.core.data_root,
+                    provider_id,
+                )
+                .await
+            }
+        };
         if let Ok(extra) = extra {
             for (key, value) in extra {
                 env.insert(key, value);
@@ -114,14 +137,13 @@ pub(crate) async fn provider_probe_env_for_workspace_runtime(
     workspace: &Workspace,
     provider_id: &str,
 ) -> Result<(ResolvedHarnessSource, HashMap<String, String>), String> {
-    let (source, mut env) = provider_probe_env(state, provider_id).await?;
     let effective = execution_effective::effective_execution_settings(state, workspace.id)
         .await
         .map_err(|err| {
             logs::redact_sensitive(&format!("effective execution settings failed: {err}"))
         })?;
     if matches!(effective.mode, ExecutionMode::Host) {
-        return Ok((source, env));
+        return provider_probe_env(state, provider_id).await;
     }
 
     let worktrees = state
@@ -141,6 +163,12 @@ pub(crate) async fn provider_probe_env_for_workspace_runtime(
         .map_err(|err| {
             logs::redact_sensitive(&format!("probe runtime preparation failed: {err:#}"))
         })?;
+    let runtime_root = runtime_plan
+        .env_overrides
+        .get("CTX_DATA_ROOT")
+        .map(|value| Path::new(value).to_path_buf());
+    let (source, mut env) =
+        provider_probe_env_with_runtime_root(state, provider_id, runtime_root.as_deref()).await?;
     for (key, value) in runtime_plan.env_overrides {
         env.insert(key, value);
     }
@@ -150,15 +178,35 @@ pub(crate) async fn provider_probe_env_for_workspace_runtime(
 
 #[cfg(test)]
 mod tests {
-    use super::{finalize_workspace_probe_env, select_probe_worktree, synthetic_probe_worktree};
+    use super::{
+        finalize_workspace_probe_env, provider_probe_env_with_runtime_root, select_probe_worktree,
+        synthetic_probe_worktree,
+    };
     use std::collections::HashMap;
+    use std::path::Path;
+    use std::sync::Arc;
 
     use chrono::Utc;
     use ctx_core::ids::{WorkspaceId, WorktreeId};
     use ctx_core::models::{Workspace, Worktree};
+    use ctx_store::StoreManager;
     use uuid::Uuid;
 
+    use crate::daemon::AppState;
     use crate::harness_sources::{HarnessSourceKind, ResolvedHarnessSource};
+    use crate::provider_accounts;
+    use crate::provider_accounts::KIMI_SHARE_DIR_ENV;
+
+    async fn test_state(data_root: &Path) -> Arc<AppState> {
+        let stores = StoreManager::open(data_root).await.expect("open stores");
+        Arc::new(AppState::new(
+            data_root.to_path_buf(),
+            stores,
+            HashMap::new(),
+            "http://127.0.0.1:0".to_string(),
+            None,
+        ))
+    }
 
     fn sample_workspace(root_path: &str) -> Workspace {
         Workspace {
@@ -267,6 +315,67 @@ mod tests {
         assert_eq!(
             env.get("XDG_STATE_HOME").map(String::as_str),
             Some(home.join(".local/state").to_string_lossy().as_ref())
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_probe_env_projects_kimi_subscription_env_into_runtime_root() {
+        let data_root = tempfile::tempdir().expect("tempdir");
+        let runtime_root = tempfile::tempdir().expect("tempdir");
+        let state = test_state(data_root.path()).await;
+
+        provider_accounts::add_kimi_account(
+            data_root.path(),
+            Some("Kimi".to_string()),
+            None,
+            r#"{"api_key":"kimi-key"}"#.to_string(),
+            None,
+            Some("kimi@example.com".to_string()),
+        )
+        .await
+        .expect("add kimi account");
+
+        let (_, env) =
+            provider_probe_env_with_runtime_root(&state, "kimi", Some(runtime_root.path()))
+                .await
+                .expect("resolve probe env");
+
+        let share_dir = env
+            .get(KIMI_SHARE_DIR_ENV)
+            .map(String::as_str)
+            .expect("missing KIMI_SHARE_DIR");
+        assert!(
+            Path::new(share_dir).starts_with(runtime_root.path()),
+            "expected runtime-root projected KIMI_SHARE_DIR, got {share_dir}"
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_probe_env_projects_mistral_subscription_env_into_runtime_root() {
+        let data_root = tempfile::tempdir().expect("tempdir");
+        let runtime_root = tempfile::tempdir().expect("tempdir");
+        let state = test_state(data_root.path()).await;
+
+        provider_accounts::upsert_mistral_account(
+            data_root.path(),
+            Some("Mistral".to_string()),
+            Some("mistral@example.com".to_string()),
+        )
+        .await
+        .expect("upsert mistral account");
+
+        let (_, env) =
+            provider_probe_env_with_runtime_root(&state, "mistral", Some(runtime_root.path()))
+                .await
+                .expect("resolve probe env");
+
+        let home = env
+            .get("HOME")
+            .map(String::as_str)
+            .expect("missing HOME");
+        assert!(
+            Path::new(home).starts_with(runtime_root.path()),
+            "expected runtime-root projected HOME, got {home}"
         );
     }
 }

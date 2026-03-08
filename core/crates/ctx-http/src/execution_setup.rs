@@ -375,6 +375,39 @@ struct LaunchTerminalMutation {
     completed_phase: Option<CompletedPhase>,
 }
 
+fn seed_workspace_launch_initial_state(job: &LaunchJob, settings: &ExecutionSettings) {
+    if matches!(settings.mode, ExecutionMode::Host) {
+        let _ = job.transition_phase(
+            HarnessSetupPhase::Ready,
+            "host execution mode selected; container launch skipped",
+        );
+    } else {
+        let _ = job.transition_phase(
+            HarnessSetupPhase::MachineCheck,
+            "checking container runtime",
+        );
+    }
+}
+
+fn seed_runtime_prewarm_initial_state(job: &LaunchJob, settings: &ExecutionSettings) {
+    if matches!(settings.mode, ExecutionMode::Host) {
+        let _ = job.transition_phase(
+            HarnessSetupPhase::Ready,
+            "host execution mode selected; runtime prewarm skipped",
+        );
+    } else {
+        let _ = job.transition_phase(
+            HarnessSetupPhase::MachineCheck,
+            "checking container runtime",
+        );
+        let _ = job.push_log(
+            HarnessSetupPhase::MachineCheck,
+            HarnessSetupLogLevel::Info,
+            "waiting for runtime prewarm slot",
+        );
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StartupPrewarmMetadata {
     image_ref: String,
@@ -449,6 +482,7 @@ impl ExecutionSetupCoordinator {
 
             let job_id = uuid::Uuid::new_v4().to_string();
             let job = Arc::new(LaunchJob::new(job_id.clone(), workspace.id));
+            seed_workspace_launch_initial_state(job.as_ref(), &settings);
             let snapshot = job.snapshot();
 
             inner
@@ -500,6 +534,7 @@ impl ExecutionSetupCoordinator {
                 let mut job_inner = lock_or_recover(&job.inner, "launch_job_inner");
                 job_inner.kind = ExecutionSetupJobKind::StartupPrewarm;
             }
+            seed_runtime_prewarm_initial_state(job.as_ref(), &settings);
             let snapshot = job.snapshot();
             inner.launch_jobs.insert(job_id, Arc::clone(&job));
             inner.launch_history.push_back(job.job_id.clone());
@@ -572,50 +607,18 @@ impl ExecutionSetupCoordinator {
             job: Arc::clone(&job),
         };
         let is_host_mode = matches!(settings.mode, ExecutionMode::Host);
-        if !is_host_mode {
-            self.emit_phase(
-                &job,
-                HarnessSetupPhase::MachineCheck,
-                "checking container runtime",
-            );
-        }
-        let mut attempt = 0usize;
-        let run_result = loop {
-            attempt += 1;
-            let attempt_result = if is_host_mode {
-                self.emit_phase(
-                    &job,
-                    HarnessSetupPhase::Ready,
-                    "host execution mode selected; container launch skipped",
-                );
-                Ok(())
-            } else {
-                self.harness
-                    .ensure_workspace_container_with_observer(
-                        &workspace,
-                        &settings,
-                        &daemon_url,
-                        Some(&observer),
-                    )
-                    .await
-                    .context("container runtime failed")
-            };
-            match attempt_result {
-                Ok(()) => break Ok(()),
-                Err(err) if should_retry_machine_start_failure(&job, attempt, is_host_mode) => {
-                    let detail = format_error_chain(&err);
-                    self.emit_log(
-                        &job,
-                        HarnessSetupPhase::MachineStartOrInit,
-                        HarnessSetupLogLevel::Warn,
-                        &format!(
-                            "container runtime machine startup failed; retrying once: {detail}"
-                        ),
-                    );
-                    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
-                }
-                Err(err) => break Err(err),
-            }
+        let run_result = if is_host_mode {
+            Ok(())
+        } else {
+            self.harness
+                .ensure_workspace_container_with_observer(
+                    &workspace,
+                    &settings,
+                    &daemon_url,
+                    Some(&observer),
+                )
+                .await
+                .context("container runtime failed")
         };
 
         match run_result {
@@ -674,81 +677,42 @@ impl ExecutionSetupCoordinator {
             job: Arc::clone(&job),
         };
         let is_host_mode = matches!(settings.mode, ExecutionMode::Host);
-        if !is_host_mode {
-            self.emit_phase(
+        let run_result = if is_host_mode {
+            Ok(())
+        } else if !harness_runtime::container_runtime_available(&self.data_root) {
+            Err(anyhow::anyhow!("container runtime unavailable"))
+        } else {
+            let _prewarm_guard = self.prewarm_lock.lock().await;
+            self.emit_log(
                 &job,
                 HarnessSetupPhase::MachineCheck,
-                "checking container runtime",
+                HarnessSetupLogLevel::Info,
+                "runtime prewarm slot acquired",
             );
-        }
-        let mut attempt = 0usize;
-        let run_result = loop {
-            attempt += 1;
-            let attempt_result = if is_host_mode {
-                self.emit_phase(
-                    &job,
-                    HarnessSetupPhase::Ready,
-                    "host execution mode selected; runtime prewarm skipped",
-                );
-                Ok(())
-            } else if !harness_runtime::container_runtime_available(&self.data_root) {
-                Err(anyhow::anyhow!("container runtime unavailable"))
-            } else {
-                self.emit_log(
-                    &job,
-                    HarnessSetupPhase::MachineCheck,
-                    HarnessSetupLogLevel::Info,
-                    "waiting for runtime prewarm slot",
-                );
-                let _prewarm_guard = self.prewarm_lock.lock().await;
-                self.emit_log(
-                    &job,
-                    HarnessSetupPhase::MachineCheck,
-                    HarnessSetupLogLevel::Info,
-                    "runtime prewarm slot acquired",
-                );
-                let prewarm_result = async {
-                    if scope.includes_runtime() {
-                        let image = harness_runtime::resolve_container_image(&settings.container);
-                        harness_runtime::prefetch_container_image_with_observer(
-                            &self.data_root,
-                            &image,
-                            Some(&observer),
-                        )
-                        .await
-                        .context("container runtime failed")?;
-                    }
-                    if scope.includes_builder() {
-                        self.emit_phase(
-                            &job,
-                            HarnessSetupPhase::ImageLoad,
-                            "warming container builder",
-                        );
-                        crate::container_builder::ensure_builder_ready(&self.data_root)
-                            .await
-                            .context("container builder warmup failed")?;
-                    }
-                    Ok::<(), anyhow::Error>(())
+            async {
+                if scope.includes_runtime() {
+                    let image = harness_runtime::resolve_container_image(&settings.container);
+                    harness_runtime::prefetch_container_image_with_observer(
+                        &self.data_root,
+                        &image,
+                        Some(&observer),
+                    )
+                    .await
+                    .context("container runtime failed")?;
                 }
-                .await;
-                prewarm_result
-            };
-            match attempt_result {
-                Ok(()) => break Ok(()),
-                Err(err) if should_retry_machine_start_failure(&job, attempt, is_host_mode) => {
-                    let detail = format_error_chain(&err);
-                    self.emit_log(
+                if scope.includes_builder() {
+                    self.emit_phase(
                         &job,
-                        HarnessSetupPhase::MachineStartOrInit,
-                        HarnessSetupLogLevel::Warn,
-                        &format!(
-                            "container runtime machine startup failed; retrying once: {detail}"
-                        ),
+                        HarnessSetupPhase::ImageLoad,
+                        "warming container builder",
                     );
-                    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+                    crate::container_builder::ensure_builder_ready(&self.data_root)
+                        .await
+                        .context("container builder warmup failed")?;
                 }
-                Err(err) => break Err(err),
+                Ok::<(), anyhow::Error>(())
             }
+            .await
         };
 
         match run_result {
@@ -1137,19 +1101,6 @@ fn phase_label(phase: HarnessSetupPhase) -> &'static str {
     }
 }
 
-fn should_retry_machine_start_failure(
-    job: &Arc<LaunchJob>,
-    attempt: usize,
-    is_host_mode: bool,
-) -> bool {
-    !is_host_mode
-        && attempt == 1
-        && matches!(
-            job.current_phase(),
-            Some(HarnessSetupPhase::MachineStartOrInit)
-        )
-}
-
 fn format_error_chain(err: &anyhow::Error) -> String {
     let mut parts: Vec<String> = Vec::new();
     for cause in err.chain() {
@@ -1357,38 +1308,6 @@ mod tests {
     }
 
     #[test]
-    fn machine_start_retry_predicate_only_retries_first_container_attempt() {
-        let job = Arc::new(LaunchJob::new(
-            uuid::Uuid::new_v4().to_string(),
-            WorkspaceId::new(),
-        ));
-        let _ = job.transition_phase(HarnessSetupPhase::MachineStartOrInit, "starting machine");
-
-        assert!(should_retry_machine_start_failure(&job, 1, false));
-        assert!(!should_retry_machine_start_failure(&job, 2, false));
-        assert!(!should_retry_machine_start_failure(&job, 1, true));
-    }
-
-    #[test]
-    fn machine_start_retry_predicate_disables_retry_for_host_mode() {
-        let job = Arc::new(LaunchJob::new(
-            uuid::Uuid::new_v4().to_string(),
-            WorkspaceId::new(),
-        ));
-        assert!(!should_retry_machine_start_failure(&job, 1, true));
-    }
-
-    #[test]
-    fn machine_start_retry_predicate_requires_machine_start_phase() {
-        let job = Arc::new(LaunchJob::new(
-            uuid::Uuid::new_v4().to_string(),
-            WorkspaceId::new(),
-        ));
-        let _ = job.transition_phase(HarnessSetupPhase::ImageCheck, "checking image");
-        assert!(!should_retry_machine_start_failure(&job, 1, false));
-    }
-
-    #[test]
     fn format_error_chain_includes_context_and_cause() {
         let err = anyhow::anyhow!("inner").context("outer");
         assert_eq!(format_error_chain(&err), "outer: inner");
@@ -1551,6 +1470,61 @@ mod tests {
 
         let snapshot = coordinator
             .start_runtime_prewarm(settings, RuntimePrewarmScope::Runtime)
+            .await;
+        assert_eq!(
+            snapshot.current_phase,
+            Some(HarnessSetupPhase::MachineCheck)
+        );
+        assert!(snapshot.logs.iter().any(|line| {
+            line.phase == HarnessSetupPhase::MachineCheck
+                && line.message == "checking container runtime"
+        }));
+        assert!(snapshot.logs.iter().any(|line| {
+            line.phase == HarnessSetupPhase::MachineCheck
+                && line.message == "waiting for runtime prewarm slot"
+        }));
+
+        let observed = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let latest = coordinator
+                    .launch_status(&snapshot.job_id)
+                    .await
+                    .expect("missing launch job");
+                if !latest.logs.is_empty() {
+                    break latest;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("timed out waiting for initial launch log");
+
+        assert!(matches!(
+            observed.current_phase,
+            Some(HarnessSetupPhase::MachineCheck) | None
+        ));
+        assert!(observed.logs.iter().any(|line| {
+            line.phase == HarnessSetupPhase::MachineCheck
+                && line.message == "checking container runtime"
+        }));
+    }
+
+    #[tokio::test]
+    async fn workspace_launch_emits_initial_log_before_runtime_work_completes() {
+        let data_dir = tempfile::tempdir().expect("tempdir");
+        let coordinator = test_coordinator(data_dir.path().to_path_buf());
+        let workspace = test_workspace(WorkspaceId::new());
+        let settings = ExecutionSettings {
+            mode: ExecutionMode::Container,
+            ..ExecutionSettings::default()
+        };
+
+        let snapshot = coordinator
+            .start_workspace_launch(
+                workspace,
+                settings,
+                "http://127.0.0.1:4399".to_string(),
+            )
             .await;
         let observed = tokio::time::timeout(Duration::from_secs(1), async {
             loop {

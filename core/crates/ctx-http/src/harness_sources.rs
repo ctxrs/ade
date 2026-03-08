@@ -1970,7 +1970,15 @@ pub async fn resolve_provider_source_for_probe(
     data_root: &Path,
     provider_id: &str,
 ) -> Result<ResolvedHarnessSource> {
-    resolve_internal(data_root, provider_id, false, None).await
+    resolve_provider_source_for_probe_with_runtime_root(data_root, provider_id, None).await
+}
+
+pub async fn resolve_provider_source_for_probe_with_runtime_root(
+    data_root: &Path,
+    provider_id: &str,
+    runtime_data_root: Option<&Path>,
+) -> Result<ResolvedHarnessSource> {
+    resolve_internal(data_root, provider_id, false, runtime_data_root).await
 }
 
 pub async fn resolve_provider_source_for_run(

@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { VirtuosoMockContext } from "react-virtuoso";
 import { describe, it, vi, beforeAll, beforeEach, afterEach } from "vitest";
 import type { WorkbenchTab } from "../workbench/types";
+import type { SessionSupervisorSnapshot } from "../state/sessionSupervisorCore";
 import WorkbenchPage from "./WorkbenchPage";
 
 const workspaceId = "ws-1";
@@ -11,10 +12,11 @@ const taskId = "task-1";
 const taskId2 = "task-2";
 const sessionId = "session-1";
 const sessionId2 = "session-2";
+const worktreeId = "worktree-1";
 
 const baseIso = "2024-01-01T00:00:00.000Z";
 
-const buildSessionSnap = () => ({
+const buildSessionSnap = (): SessionSupervisorSnapshot => ({
   connection: "connected",
   sessions: {
     [sessionId]: {
@@ -22,18 +24,39 @@ const buildSessionSnap = () => ({
       session: {
         id: sessionId,
         task_id: taskId,
+        workspace_id: workspaceId,
         provider_id: "codex",
+        worktree_id: worktreeId,
+        model_id: "gpt-5",
+        title: "Starter session",
+        agent_role: "assistant",
         status: "active",
         created_at: baseIso,
       },
       turns: [],
       turnToolsByTurnId: {},
       turnToolsLoading: [],
+      toolSummaries: [],
       toolSummariesReady: true,
       hasMoreTurns: false,
       events: [],
-      messages: [{ role: "assistant", created_at: baseIso }],
+      messages: [{
+        id: "message-1",
+        session_id: sessionId,
+        task_id: taskId,
+        role: "assistant",
+        content: "Hello",
+        delivery: "immediate",
+        created_at: baseIso,
+      }],
+      artifacts: [],
+      artifactsLoading: false,
+      subagentInvocations: [],
+      subagentInvocationsLoading: false,
+      stateLoaded: true,
+      stateLoading: false,
       queue: [],
+      loadState: "live",
       loading: false,
       subscribed: true,
       updatedAtMs: 0,
@@ -344,7 +367,15 @@ describe("WorkbenchPage task rename selection", () => {
           ...sessionSnap.sessions[sessionId],
           messages: [
             ...sessionSnap.sessions[sessionId].messages,
-            { role: "assistant", created_at: "2024-01-01T00:00:01.000Z" },
+            {
+              id: "message-2",
+              session_id: sessionId,
+              task_id: taskId,
+              role: "assistant",
+              content: "Follow-up",
+              delivery: "immediate",
+              created_at: "2024-01-01T00:00:01.000Z",
+            },
           ],
           updatedAtMs: sessionSnap.sessions[sessionId].updatedAtMs + 1,
         },

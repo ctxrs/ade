@@ -642,7 +642,6 @@ export default function WorkspaceSetupPage() {
       step.key !== "harness-downloads"
       || (
         !harnessInstallBusy
-        && selectedHarnessRunningCount === 0
         && selectedHarnessBlockedCount === 0
       )
     )
@@ -677,13 +676,11 @@ export default function WorkspaceSetupPage() {
       ? (
         harnessInstallBusy
           ? "Working..."
-          : selectedHarnessRunningCount > 0
-            ? "Waiting for downloads..."
-            : selectedHarnessBlockedCount > 0
-              ? "Resolve downloads"
-              : selectedHarnessReadyToStartCount > 0
-                ? "Download selected"
-                : "Continue"
+          : selectedHarnessBlockedCount > 0
+            ? "Resolve downloads"
+            : selectedHarnessReadyToStartCount > 0
+              ? "Start and continue"
+              : "Continue"
       )
       : "Next";
 
@@ -2113,6 +2110,7 @@ export default function WorkspaceSetupPage() {
     const runningRows = selectedRows.filter(({ status }) => status === "running");
 
     if (selectedRows.length === 0 || selectedRows.every(({ status }) => status === "installed" || status === "succeeded")) {
+      setHarnessInstallError(null);
       if (currentStepKeyRef.current !== "harness-downloads") return;
       goToStepKey(nextAfterHarnessDownloads(routePlan));
       return;
@@ -2121,13 +2119,16 @@ export default function WorkspaceSetupPage() {
       setHarnessInstallError("Resolve failed or canceled downloads, or skip them for now before continuing.");
       return;
     }
-    if (runningRows.length > 0) {
+    if (runningRows.length > 0 && startableRows.length === 0) {
       setHarnessInstallError(null);
+      if (currentStepKeyRef.current !== "harness-downloads") return;
+      goToStepKey(nextAfterHarnessDownloads(routePlan));
       return;
     }
 
     setHarnessInstallBusy(true);
     setHarnessInstallError(null);
+    let shouldAdvance = false;
     try {
       await connectDaemonForImport();
       const startResults = await Promise.all(
@@ -2185,17 +2186,22 @@ export default function WorkspaceSetupPage() {
           ? "Unable to start selected downloads."
           : "Some downloads failed to start.";
         setHarnessInstallError(`${prefix} ${failures.join(" ; ")}`);
+        return;
       }
 
       const startedAny = startResults.some((result) => result.ok);
-      if (!startedAny) {
+      if (!startedAny && runningRows.length === 0) {
         return;
       }
+      shouldAdvance = true;
     } catch (error) {
       setHarnessInstallError(messageFromError(error));
     } finally {
       setHarnessInstallBusy(false);
     }
+    if (!shouldAdvance) return;
+    if (currentStepKeyRef.current !== "harness-downloads") return;
+    goToStepKey(nextAfterHarnessDownloads(routePlan));
   };
 
   const onNext = async () => {
@@ -2445,13 +2451,6 @@ export default function WorkspaceSetupPage() {
       // This avoids landing on the workbench too early on cold start.
       await waitForDaemonReady(15000);
       const containerEnabled = selections.container !== "no-container";
-      if (selectedHarnessRunningCount > 0) {
-        throw new Error("Selected harness downloads are still running. Wait for them to finish or skip them before creating the workspace.");
-      }
-      if (selectedHarnessBlockedCount > 0 || selectedHarnessReadyToStartCount > 0) {
-        throw new Error("Resolve selected harness downloads before creating the workspace.");
-      }
-
       // Strict UX gate: if container mode is selected, ensure runtime+image readiness
       // before repository/workspace provisioning starts.
       if (containerEnabled) {
@@ -3132,7 +3131,7 @@ export default function WorkspaceSetupPage() {
                     {harnessInstallError ? <div className="wizard-error">{harnessInstallError}</div> : null}
                     {!harnessInstallBusy && selectedHarnessRunningCount > 0 ? (
                       <div className="wizard-note">
-                        Selected downloads are still running. Wait for them to finish, cancel them, or skip them for now before continuing.
+                        Selected downloads are running in the background. Continue now, or stay here to watch/cancel them.
                       </div>
                     ) : null}
                     {!harnessInstallBusy && selectedHarnessBlockedCount > 0 ? (

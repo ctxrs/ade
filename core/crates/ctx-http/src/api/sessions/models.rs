@@ -287,7 +287,18 @@ pub(super) async fn load_provider_model_catalog(
     workspace: &Workspace,
     provider_id: &str,
 ) -> Result<Option<ModelCatalog>, String> {
-    let cache_key = format!("{}/{}", workspace.id.0, provider_id);
+    let install_target =
+        crate::execution_effective::effective_install_target(state.as_ref(), workspace.id)
+            .await
+            .map_err(|err| {
+                format!("workspace execution settings unavailable for provider options: {err:#}")
+            })?;
+    let cache_key = format!(
+        "{}/{}/{}",
+        workspace.id.0,
+        install_target.as_str(),
+        provider_id
+    );
     if let Some(entry) = state.providers.options_cache.lock().await.get(&cache_key) {
         if let Some(models) = entry.value.get("models") {
             if let Some(catalog) = build_model_catalog(models) {
@@ -370,24 +381,6 @@ pub(super) async fn load_provider_model_catalog(
     let cfg = installer::load_agent_server_config(&state.core.data_root)
         .await
         .unwrap_or_default();
-    let install_target = match crate::execution_effective::effective_execution_settings(
-        state.as_ref(),
-        workspace.id,
-    )
-    .await
-    {
-        Ok(effective) if matches!(effective.mode, crate::settings::ExecutionMode::Container) => {
-            crate::installs::InstallTarget::Container
-        }
-        Ok(_) => crate::installs::InstallTarget::Host,
-        Err(err) => {
-            tracing::warn!(
-                workspace_id = %workspace.id.0,
-                "provider options falling back to host runtime target: {err:#}",
-            );
-            crate::installs::InstallTarget::Host
-        }
-    };
     let runtime_command = installer::resolve_runtime_provider_command_for_target(
         &cfg,
         provider_id,
@@ -474,4 +467,76 @@ pub(super) async fn load_provider_model_catalog(
     }
 
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::load_provider_model_catalog;
+
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use ctx_core::models::VcsKind;
+    use ctx_store::StoreManager;
+
+    use crate::daemon::AppState;
+    use crate::settings::{ExecutionMode, ExecutionSettings, Settings};
+
+    #[tokio::test]
+    async fn load_provider_model_catalog_reads_target_scoped_options_cache() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let stores = StoreManager::open(temp.path()).await.expect("open stores");
+        let state = Arc::new(AppState::new(
+            temp.path().to_path_buf(),
+            stores,
+            HashMap::new(),
+            "http://127.0.0.1:4310".to_string(),
+            None,
+        ));
+        let workspace = state
+            .global_store()
+            .create_workspace(
+                "ws".to_string(),
+                temp.path().join("repo").to_string_lossy().to_string(),
+                VcsKind::Git,
+            )
+            .await
+            .expect("create workspace");
+        crate::settings::save_settings(
+            state.global_store(),
+            &Settings {
+                execution: Some(ExecutionSettings {
+                    mode: ExecutionMode::Container,
+                    ..ExecutionSettings::default()
+                }),
+                ..Settings::default()
+            },
+        )
+        .await
+        .expect("save settings");
+
+        state.providers.options_cache.lock().await.insert(
+            format!("{}/container/codex", workspace.id.0),
+            crate::daemon::CachedProviderOptions {
+                cached_at: std::time::Instant::now(),
+                value: serde_json::json!({
+                    "models": {
+                        "models": [
+                            { "id": "gpt-5" },
+                            { "id": "gpt-5/high" }
+                        ],
+                        "current_model_id": "gpt-5"
+                    }
+                }),
+            },
+        );
+
+        let catalog = load_provider_model_catalog(&state, &workspace, "codex")
+            .await
+            .expect("load catalog")
+            .expect("catalog");
+
+        assert!(catalog.full_ids.iter().any(|id| id == "gpt-5"));
+        assert!(catalog.full_ids.iter().any(|id| id == "gpt-5/high"));
+    }
 }

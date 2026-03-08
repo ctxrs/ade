@@ -107,24 +107,17 @@ pub(crate) async fn authenticate_session(
                 }),
             )
         })?;
-    let install_target = match crate::execution_effective::effective_execution_settings(
-        state.as_ref(),
-        worktree.workspace_id,
-    )
-    .await
-    {
-        Ok(effective) if matches!(effective.mode, crate::settings::ExecutionMode::Container) => {
-            crate::installs::InstallTarget::Container
-        }
-        Ok(_) => crate::installs::InstallTarget::Host,
-        Err(err) => {
-            tracing::warn!(
-                workspace_id = %worktree.workspace_id.0,
-                "session authenticate falling back to host runtime target: {err:#}",
-            );
-            crate::installs::InstallTarget::Host
-        }
-    };
+    let install_target =
+        crate::execution_effective::effective_install_target(state.as_ref(), worktree.workspace_id)
+            .await
+            .map_err(|err| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: format!("failed to load workspace execution settings: {err:#}"),
+                    }),
+                )
+            })?;
     let adapter = crate::daemon::ensure_provider_adapter_for_target(
         state.as_ref(),
         &session.provider_id,

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path as StdPath, PathBuf};
 use std::process::Stdio;
@@ -37,7 +37,6 @@ use crate::provider_accounts;
 use crate::provider_auth_import;
 use crate::provider_probe;
 use crate::provider_usage;
-use crate::settings::ExecutionMode;
 use ctx_core::ids::WorkspaceId;
 use ctx_providers::adapters::{ProviderRestartMode, ProviderStatus};
 use ctx_providers::crp::{probe_crp_models, probe_crp_runtime_launch};
@@ -171,6 +170,112 @@ fn inspect_error_status(provider_id: &str, err: anyhow::Error) -> ProviderStatus
     }
 }
 
+fn managed_targets_for_provider(
+    managed: &installer::AgentServerConfigFile,
+    provider_id: &str,
+) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+
+    if let Some(targets) = managed.managed_install_targets.get(provider_id) {
+        for key in targets.keys() {
+            if let Ok(target) = installer::parse_install_target(Some(key.as_str())) {
+                out.insert(target.as_str().to_string());
+            }
+        }
+    }
+    if let Some(targets) = managed.managed_provider_targets.get(provider_id) {
+        for key in targets.keys() {
+            if let Ok(target) = installer::parse_install_target(Some(key.as_str())) {
+                out.insert(target.as_str().to_string());
+            }
+        }
+    }
+    if let Some(target) = managed
+        .providers
+        .get(provider_id)
+        .and_then(|entry| entry.managed.as_ref())
+        .and_then(|meta| meta.target)
+    {
+        out.insert(target.as_str().to_string());
+    }
+    if let Some(target) = managed
+        .managed_installs
+        .get(provider_id)
+        .and_then(|meta| meta.target)
+    {
+        out.insert(target.as_str().to_string());
+    }
+
+    out
+}
+
+fn synthesize_target_mismatch_status(
+    managed: &installer::AgentServerConfigFile,
+    provider_id: &str,
+    target: InstallTarget,
+) -> Option<ProviderStatus> {
+    let runtime_available =
+        match installer::resolve_runtime_provider_command_for_target(managed, provider_id, Some(target))
+        {
+            Ok(Some(_)) => true,
+            Ok(None) => false,
+            Err(_) => return None,
+        };
+    if runtime_available {
+        return None;
+    }
+
+    let requested_target = target.as_str();
+    let available_targets = managed_targets_for_provider(managed, provider_id)
+        .into_iter()
+        .filter(|available| available != requested_target)
+        .collect::<Vec<_>>();
+    if available_targets.is_empty() {
+        return None;
+    }
+
+    let available_csv = available_targets.join(",");
+    let mut details = HashMap::new();
+    details.insert("target_mismatch".to_string(), "true".to_string());
+    details.insert(
+        "target_mismatch_reason".to_string(),
+        format!(
+            "provider has managed install target(s) '{}' but requested '{}'",
+            available_csv,
+            requested_target
+        ),
+    );
+    details.insert("managed_available_targets".to_string(), available_csv.clone());
+    if available_targets.len() == 1 {
+        details.insert("managed_target".to_string(), available_targets[0].clone());
+    }
+
+    let diagnostic = if available_targets.len() == 1 {
+        format!(
+            "provider is installed for target '{}', not '{}'",
+            available_targets[0],
+            requested_target
+        )
+    } else {
+        format!(
+            "provider is not installed for target '{}'; available managed targets: {}",
+            requested_target,
+            available_targets.join(", ")
+        )
+    };
+
+    Some(ProviderStatus {
+        provider_id: provider_id.to_string(),
+        installed: false,
+        detected_path: None,
+        version: None,
+        capabilities: None,
+        health: ctx_providers::adapters::ProviderHealth::Missing,
+        diagnostics: vec![diagnostic],
+        details,
+    })
+}
+
 async fn provider_status_for_target(
     state: &Arc<AppState>,
     managed: &installer::AgentServerConfigFile,
@@ -178,7 +283,11 @@ async fn provider_status_for_target(
     provider_id: &str,
     target: InstallTarget,
 ) -> ProviderStatus {
-    let mut status = if matches!(target, InstallTarget::Host) {
+    let mut status = if let Some(status) =
+        synthesize_target_mismatch_status(managed, provider_id, target)
+    {
+        status
+    } else if matches!(target, InstallTarget::Host) {
         state
             .providers
             .statuses
@@ -237,20 +346,26 @@ fn apply_target_aware_provider_status(
 async fn install_target_for_workspace(
     state: &Arc<AppState>,
     workspace_id: WorkspaceId,
-) -> InstallTarget {
-    match execution_effective::effective_execution_settings(state.as_ref(), workspace_id).await {
-        Ok(effective) if matches!(effective.mode, ExecutionMode::Container) => {
-            InstallTarget::Container
-        }
-        Ok(_) => InstallTarget::Host,
-        Err(error) => {
-            tracing::warn!(
-                "providers falling back to host install target for workspace {}: {error:#}",
+) -> anyhow::Result<InstallTarget> {
+    execution_effective::effective_install_target(state.as_ref(), workspace_id)
+        .await
+        .with_context(|| {
+            format!(
+                "loading execution settings for workspace {}",
                 workspace_id.0
-            );
-            InstallTarget::Host
-        }
-    }
+            )
+        })
+}
+
+fn workspace_execution_settings_error_json(
+    error: &anyhow::Error,
+) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(serde_json::json!({
+            "error": format!("failed to load workspace execution settings: {error:#}"),
+        })),
+    )
 }
 
 pub(super) async fn get_provider(
@@ -4353,7 +4468,9 @@ pub(super) async fn get_workspace_providers_bootstrap(
         ));
     }
 
-    let install_target = install_target_for_workspace(&state, ws_id).await;
+    let install_target = install_target_for_workspace(&state, ws_id)
+        .await
+        .map_err(|error| workspace_execution_settings_error_json(&error))?;
 
     let providers = providers_statuses_response(&state, install_target, true).await;
     let mut provider_options = HashMap::new();
@@ -4526,7 +4643,13 @@ async fn prepare_provider_runtime_probe(
     provider_id: &str,
     selected_endpoint_id: Option<String>,
 ) -> Result<PreparedProviderRuntimeProbe, PreparedProviderRuntimeProbeError> {
-    let install_target = install_target_for_workspace(state, workspace.id).await;
+    let install_target = install_target_for_workspace(state, workspace.id)
+        .await
+        .map_err(|error| {
+            PreparedProviderRuntimeProbeError::Route(workspace_execution_settings_error_json(
+                &error,
+            ))
+        })?;
     let cfg = installer::load_agent_server_config(&state.core.data_root)
         .await
         .unwrap_or_default();
@@ -4618,8 +4741,17 @@ fn endpoint_catalog_runtime_probe_failure(
 
 fn cache_key_matches_provider(cache_key: &str, provider_id: &str) -> bool {
     cache_key
-        .rsplit_once('/')
-        .is_some_and(|(_, key_provider)| key_provider == provider_id)
+        .rsplit('/')
+        .next()
+        .is_some_and(|key_provider| key_provider == provider_id)
+}
+
+fn workspace_provider_cache_key(
+    workspace_id: WorkspaceId,
+    target: InstallTarget,
+    provider_id: &str,
+) -> String {
+    format!("{}/{}/{}", workspace_id.0, target.as_str(), provider_id)
 }
 
 async fn invalidate_provider_probe_caches(state: &Arc<AppState>, provider_id: &str) {
@@ -4813,8 +4945,10 @@ pub(super) async fn get_provider_options(
     }
 
     let ws_id = parse_workspace_id(&ws_id)?;
-
-    let cache_key = format!("{}/{}", ws_id.0, provider_id);
+    let install_target = install_target_for_workspace(&state, ws_id)
+        .await
+        .map_err(|error| workspace_execution_settings_error_json(&error))?;
+    let cache_key = workspace_provider_cache_key(ws_id, install_target, &provider_id);
     let verify_entry: Option<(std::time::Instant, serde_json::Value)> = state
         .providers
         .verify_cache
@@ -4853,13 +4987,19 @@ pub(super) async fn get_provider_options(
         .cloned()
         .filter(|v| !v.is_null());
 
-    let provider_status = state
-        .providers
-        .statuses
-        .lock()
+    let managed = installer::load_agent_server_config(&state.core.data_root)
         .await
-        .get(&provider_id)
-        .cloned();
+        .unwrap_or_default();
+    let matrix = crate::provider_matrix::load_matrix_cached(
+        &state.core.data_root,
+        &state.providers.matrix_cache,
+    )
+    .await;
+    let known = {
+        let map = state.providers.statuses.lock().await;
+        map.contains_key(&provider_id)
+            || crate::provider_matrix::get_entry(&matrix, &provider_id).is_some()
+    };
     let source_config =
         harness_sources::get_provider_source_config(&state.core.data_root, &provider_id)
             .await
@@ -4873,7 +5013,7 @@ pub(super) async fn get_provider_options(
     let auth_mode = provider_auth_mode(has_active_auth, source_config.as_ref());
     let selected_endpoint = selected_endpoint_record_from_harness_config(source_config.as_ref());
 
-    if provider_status.is_none() {
+    if !known {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
@@ -4882,42 +5022,54 @@ pub(super) async fn get_provider_options(
         ));
     }
 
-    if let Some(st) = provider_status.as_ref() {
-        if !st.installed || !matches!(st.health, ctx_providers::adapters::ProviderHealth::Ok) {
-            let mut raw_base_resp = serde_json::json!({
-                "provider_id": provider_id,
-                "workspace_id": ws_id.0,
-                "installed": st.installed,
-                "health": st.health,
-                "diagnostics": st.diagnostics,
-                "probe_ok": false,
-                "probe_error": "provider not installed or unhealthy",
-                "has_active_auth": has_active_auth,
-                "auth_mode": auth_mode,
-                "probed_at": chrono::Utc::now().to_rfc3339(),
-            });
-            if let Some(source) = source_config.as_ref() {
-                raw_base_resp["source"] =
-                    serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
-            }
-            let base_resp = redact_json_value(raw_base_resp);
-            state.providers.options_cache.lock().await.insert(
-                cache_key,
-                crate::daemon::CachedProviderOptions {
-                    cached_at: std::time::Instant::now(),
-                    value: base_resp.clone(),
-                },
-            );
-            let mut out = base_resp;
-            if let Some((verify_at, verify)) = verify_entry.as_ref() {
-                if verify_at.elapsed() < VERIFY_TTL {
-                    if let Some(obj) = out.as_object_mut() {
-                        obj.insert("verify".to_string(), verify.clone());
-                    }
+    let provider_status = provider_status_for_target(
+        &state,
+        &managed,
+        &matrix,
+        &provider_id,
+        install_target,
+    )
+    .await;
+
+    if !provider_status.installed
+        || !matches!(
+            provider_status.health,
+            ctx_providers::adapters::ProviderHealth::Ok
+        )
+    {
+        let mut raw_base_resp = serde_json::json!({
+            "provider_id": provider_id,
+            "workspace_id": ws_id.0,
+            "installed": provider_status.installed,
+            "health": provider_status.health,
+            "diagnostics": provider_status.diagnostics,
+            "probe_ok": false,
+            "probe_error": "provider not installed or unhealthy",
+            "has_active_auth": has_active_auth,
+            "auth_mode": auth_mode,
+            "probed_at": chrono::Utc::now().to_rfc3339(),
+        });
+        if let Some(source) = source_config.as_ref() {
+            raw_base_resp["source"] =
+                serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
+        }
+        let base_resp = redact_json_value(raw_base_resp);
+        state.providers.options_cache.lock().await.insert(
+            cache_key,
+            crate::daemon::CachedProviderOptions {
+                cached_at: std::time::Instant::now(),
+                value: base_resp.clone(),
+            },
+        );
+        let mut out = base_resp;
+        if let Some((verify_at, verify)) = verify_entry.as_ref() {
+            if verify_at.elapsed() < VERIFY_TTL {
+                if let Some(obj) = out.as_object_mut() {
+                    obj.insert("verify".to_string(), verify.clone());
                 }
             }
-            return Ok(Json(out));
         }
+        return Ok(Json(out));
     }
 
     let use_crp_probe = provider_id == "codex" || provider_id == "claude-crp";
@@ -4926,7 +5078,7 @@ pub(super) async fn get_provider_options(
         let mut raw_resp = serde_json::json!({
             "provider_id": provider_id,
             "workspace_id": ws_id.0,
-            "installed": provider_status.as_ref().map(|s| s.installed).unwrap_or(true),
+            "installed": provider_status.installed,
             "probe_ok": true,
             "supports_load": false,
             "auth_required": false,
@@ -5009,7 +5161,7 @@ pub(super) async fn get_provider_options(
             let mut raw_resp = serde_json::json!({
                 "provider_id": provider_id,
                 "workspace_id": ws_id.0,
-                "installed": provider_status.as_ref().map(|s| s.installed).unwrap_or(true),
+                "installed": provider_status.installed,
                 "probe_ok": true,
                 "supports_load": false,
                 "auth_required": false,
@@ -5054,13 +5206,9 @@ pub(super) async fn get_provider_options(
             return Ok(Json(out));
         }
 
-        let install_target = install_target_for_workspace(&state, ws.id).await;
-        let cfg = installer::load_agent_server_config(&state.core.data_root)
-            .await
-            .unwrap_or_default();
         let runtime_command = runtime_probe_command_as_agent_command_for_target(
             &state.core.data_root,
-            &cfg,
+            &managed,
             &provider_id,
             Some(install_target),
         )
@@ -5095,7 +5243,7 @@ pub(super) async fn get_provider_options(
             Ok((_source, mut env)) => {
                 installer::prepend_runtime_bin_dirs_to_provider_path_for_target(
                     &mut env,
-                    &cfg,
+                    &managed,
                     &provider_id,
                     &state.core.data_root,
                     Some(install_target),
@@ -5103,7 +5251,7 @@ pub(super) async fn get_provider_options(
                 if is_acp_provider_id(&provider_id) {
                     installer::prepend_runtime_bin_dirs_to_provider_path_for_target(
                         &mut env,
-                        &cfg,
+                        &managed,
                         "acp-crp-bridge",
                         &state.core.data_root,
                         Some(install_target),
@@ -5125,7 +5273,7 @@ pub(super) async fn get_provider_options(
             Ok(probe) => serde_json::json!({
                 "provider_id": provider_id,
                 "workspace_id": ws_id.0,
-                "installed": provider_status.as_ref().map(|s| s.installed).unwrap_or(true),
+                "installed": provider_status.installed,
                 "probe_ok": true,
                 "supports_load": false,
                 "auth_required": false,
@@ -5140,7 +5288,7 @@ pub(super) async fn get_provider_options(
             Err(e) => serde_json::json!({
                 "provider_id": provider_id,
                 "workspace_id": ws_id.0,
-                "installed": provider_status.as_ref().map(|s| s.installed).unwrap_or(false),
+                "installed": provider_status.installed,
                 "probe_ok": false,
                 "probe_error": logs::redact_sensitive(&e.to_string()),
                 "has_active_auth": has_active_auth,
@@ -5441,19 +5589,32 @@ pub(super) async fn verify_provider_for_workspace(
             })),
         ))?;
 
-    let provider_status = state
-        .providers
-        .statuses
-        .lock()
+    let install_target = install_target_for_workspace(&state, workspace.id)
         .await
-        .get(&provider_id)
-        .cloned()
-        .ok_or((
+        .map_err(|error| workspace_execution_settings_error_json(&error))?;
+    let managed = installer::load_agent_server_config(&state.core.data_root)
+        .await
+        .unwrap_or_default();
+    let matrix = crate::provider_matrix::load_matrix_cached(
+        &state.core.data_root,
+        &state.providers.matrix_cache,
+    )
+    .await;
+    let known = {
+        let map = state.providers.statuses.lock().await;
+        map.contains_key(&provider_id)
+            || crate::provider_matrix::get_entry(&matrix, &provider_id).is_some()
+    };
+    if !known {
+        return Err((
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
                 "error": format!("unsupported provider id: {provider_id}"),
             })),
-        ))?;
+        ));
+    }
+    let provider_status =
+        provider_status_for_target(&state, &managed, &matrix, &provider_id, install_target).await;
 
     let checked_at = Utc::now().to_rfc3339();
     let mut status = "ok".to_string();
@@ -5611,7 +5772,7 @@ pub(super) async fn verify_provider_for_workspace(
 
     let verify_value =
         redact_json_value(serde_json::to_value(&resp).unwrap_or(serde_json::Value::Null));
-    let cache_key = format!("{}/{}", ws_id.0, provider_id);
+    let cache_key = workspace_provider_cache_key(ws_id, install_target, &provider_id);
     state.providers.verify_cache.lock().await.insert(
         cache_key,
         crate::daemon::CachedProviderVerify {
@@ -5673,7 +5834,9 @@ pub(super) async fn authenticate_provider_for_workspace(
         ));
     }
 
-    let install_target = install_target_for_workspace(&state, workspace.id).await;
+    let install_target = install_target_for_workspace(&state, workspace.id)
+        .await
+        .map_err(|error| workspace_execution_settings_error_json(&error))?;
     let adapter =
         ensure_provider_adapter_for_target(state.as_ref(), &provider_id, install_target).await;
 
@@ -5716,7 +5879,7 @@ pub(super) async fn authenticate_provider_for_workspace(
 
     let verify_value =
         redact_json_value(serde_json::to_value(&resp).unwrap_or(serde_json::Value::Null));
-    let cache_key = format!("{}/{}", ws_id.0, provider_id);
+    let cache_key = workspace_provider_cache_key(ws_id, install_target, &provider_id);
     state.providers.verify_cache.lock().await.insert(
         cache_key,
         crate::daemon::CachedProviderVerify {
@@ -6409,11 +6572,11 @@ ZXY987654321
     #[test]
     fn cache_key_provider_matcher_works() {
         assert!(cache_key_matches_provider(
-            "7f72430e-4c43-499f-b54d-6ce2deaed4a0/codex",
+            "7f72430e-4c43-499f-b54d-6ce2deaed4a0/host/codex",
             "codex"
         ));
         assert!(!cache_key_matches_provider(
-            "7f72430e-4c43-499f-b54d-6ce2deaed4a0/claude-crp",
+            "7f72430e-4c43-499f-b54d-6ce2deaed4a0/container/claude-crp",
             "codex"
         ));
         assert!(!cache_key_matches_provider("not-a-key", "codex"));
@@ -6964,28 +7127,28 @@ ZXY987654321
         ));
 
         state.providers.options_cache.lock().await.insert(
-            "ws-a/codex".to_string(),
+            "ws-a/host/codex".to_string(),
             crate::daemon::CachedProviderOptions {
                 cached_at: std::time::Instant::now(),
                 value: serde_json::json!({ "provider_id": "codex", "probe_ok": false }),
             },
         );
         state.providers.options_cache.lock().await.insert(
-            "ws-b/claude-crp".to_string(),
+            "ws-b/container/claude-crp".to_string(),
             crate::daemon::CachedProviderOptions {
                 cached_at: std::time::Instant::now(),
                 value: serde_json::json!({ "provider_id": "claude-crp", "probe_ok": true }),
             },
         );
         state.providers.verify_cache.lock().await.insert(
-            "ws-a/codex".to_string(),
+            "ws-a/host/codex".to_string(),
             crate::daemon::CachedProviderVerify {
                 cached_at: std::time::Instant::now(),
                 value: serde_json::json!({ "status": "error" }),
             },
         );
         state.providers.verify_cache.lock().await.insert(
-            "ws-b/claude-crp".to_string(),
+            "ws-b/container/claude-crp".to_string(),
             crate::daemon::CachedProviderVerify {
                 cached_at: std::time::Instant::now(),
                 value: serde_json::json!({ "status": "ok" }),
@@ -6995,13 +7158,13 @@ ZXY987654321
         restart_provider_for_auth_change(&state, "codex", "test auth updated").await;
 
         let options_cache = state.providers.options_cache.lock().await;
-        assert!(!options_cache.contains_key("ws-a/codex"));
-        assert!(options_cache.contains_key("ws-b/claude-crp"));
+        assert!(!options_cache.contains_key("ws-a/host/codex"));
+        assert!(options_cache.contains_key("ws-b/container/claude-crp"));
         drop(options_cache);
 
         let verify_cache = state.providers.verify_cache.lock().await;
-        assert!(!verify_cache.contains_key("ws-a/codex"));
-        assert!(verify_cache.contains_key("ws-b/claude-crp"));
+        assert!(!verify_cache.contains_key("ws-a/host/codex"));
+        assert!(verify_cache.contains_key("ws-b/container/claude-crp"));
         drop(verify_cache);
 
         assert_eq!(adapter.restart_calls.load(Ordering::SeqCst), 1);
