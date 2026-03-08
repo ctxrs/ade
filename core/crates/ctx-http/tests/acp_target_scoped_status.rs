@@ -57,10 +57,7 @@ fn bridge_missing_status(provider_id: &str) -> ProviderStatus {
         capabilities: None,
         health: ProviderHealth::Error,
         diagnostics: vec!["ACP bridge runtime is not configured or invalid".to_string()],
-        details: HashMap::from([(
-            "error_code".to_string(),
-            "acp_bridge_missing".to_string(),
-        )]),
+        details: HashMap::from([("error_code".to_string(), "acp_bridge_missing".to_string())]),
     }
 }
 
@@ -94,10 +91,7 @@ fn healthy_container_status(provider_id: &str, detected_path: &Path) -> Provider
     }
 }
 
-async fn seed_container_only_install(
-    data_root: &Path,
-    provider_id: &str,
-) -> std::path::PathBuf {
+async fn seed_container_only_install(data_root: &Path, provider_id: &str) -> std::path::PathBuf {
     let install_dir = data_root
         .join("providers")
         .join("agent-servers")
@@ -266,7 +260,9 @@ async fn workspace_options_use_workspace_target_status_for_acp_provider() {
         "host-target options should reflect unhealthy host status before switching targets: {host_body:#?}"
     );
     assert_eq!(
-        host_body.get("probe_ok").and_then(serde_json::Value::as_bool),
+        host_body
+            .get("probe_ok")
+            .and_then(serde_json::Value::as_bool),
         Some(false),
         "host-target options should short-circuit unhealthy host state: {host_body:#?}"
     );

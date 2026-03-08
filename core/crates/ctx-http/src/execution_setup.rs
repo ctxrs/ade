@@ -1520,11 +1520,7 @@ mod tests {
         };
 
         let snapshot = coordinator
-            .start_workspace_launch(
-                workspace,
-                settings,
-                "http://127.0.0.1:4399".to_string(),
-            )
+            .start_workspace_launch(workspace, settings, "http://127.0.0.1:4399".to_string())
             .await;
         let observed = tokio::time::timeout(Duration::from_secs(1), async {
             loop {

@@ -369,10 +369,7 @@ mod tests {
                 .await
                 .expect("resolve probe env");
 
-        let home = env
-            .get("HOME")
-            .map(String::as_str)
-            .expect("missing HOME");
+        let home = env.get("HOME").map(String::as_str).expect("missing HOME");
         assert!(
             Path::new(home).starts_with(runtime_root.path()),
             "expected runtime-root projected HOME, got {home}"

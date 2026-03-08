@@ -214,13 +214,15 @@ fn synthesize_target_mismatch_status(
     provider_id: &str,
     target: InstallTarget,
 ) -> Option<ProviderStatus> {
-    let runtime_available =
-        match installer::resolve_runtime_provider_command_for_target(managed, provider_id, Some(target))
-        {
-            Ok(Some(_)) => true,
-            Ok(None) => false,
-            Err(_) => return None,
-        };
+    let runtime_available = match installer::resolve_runtime_provider_command_for_target(
+        managed,
+        provider_id,
+        Some(target),
+    ) {
+        Ok(Some(_)) => true,
+        Ok(None) => false,
+        Err(_) => return None,
+    };
     if runtime_available {
         return None;
     }
@@ -241,11 +243,13 @@ fn synthesize_target_mismatch_status(
         "target_mismatch_reason".to_string(),
         format!(
             "provider has managed install target(s) '{}' but requested '{}'",
-            available_csv,
-            requested_target
+            available_csv, requested_target
         ),
     );
-    details.insert("managed_available_targets".to_string(), available_csv.clone());
+    details.insert(
+        "managed_available_targets".to_string(),
+        available_csv.clone(),
+    );
     if available_targets.len() == 1 {
         details.insert("managed_target".to_string(), available_targets[0].clone());
     }
@@ -253,8 +257,7 @@ fn synthesize_target_mismatch_status(
     let diagnostic = if available_targets.len() == 1 {
         format!(
             "provider is installed for target '{}', not '{}'",
-            available_targets[0],
-            requested_target
+            available_targets[0], requested_target
         )
     } else {
         format!(
@@ -283,41 +286,40 @@ async fn provider_status_for_target(
     provider_id: &str,
     target: InstallTarget,
 ) -> ProviderStatus {
-    let mut status = if let Some(status) =
-        synthesize_target_mismatch_status(managed, provider_id, target)
-    {
-        status
-    } else if matches!(target, InstallTarget::Host) {
-        state
-            .providers
-            .statuses
-            .lock()
-            .await
-            .get(provider_id)
-            .cloned()
-            .unwrap_or_else(|| ProviderStatus {
-                provider_id: provider_id.to_string(),
-                installed: false,
-                detected_path: None,
-                version: None,
-                capabilities: None,
-                health: ctx_providers::adapters::ProviderHealth::Missing,
-                diagnostics: vec![format!("provider not available: {provider_id}")],
-                details: HashMap::new(),
-            })
-    } else {
-        let adapter = ensure_provider_adapter_for_target_with_cfg(
-            state.as_ref(),
-            managed,
-            provider_id,
-            target,
-        )
-        .await;
-        match adapter.inspect().await {
-            Ok(status) => status,
-            Err(err) => inspect_error_status(provider_id, err),
-        }
-    };
+    let mut status =
+        if let Some(status) = synthesize_target_mismatch_status(managed, provider_id, target) {
+            status
+        } else if matches!(target, InstallTarget::Host) {
+            state
+                .providers
+                .statuses
+                .lock()
+                .await
+                .get(provider_id)
+                .cloned()
+                .unwrap_or_else(|| ProviderStatus {
+                    provider_id: provider_id.to_string(),
+                    installed: false,
+                    detected_path: None,
+                    version: None,
+                    capabilities: None,
+                    health: ctx_providers::adapters::ProviderHealth::Missing,
+                    diagnostics: vec![format!("provider not available: {provider_id}")],
+                    details: HashMap::new(),
+                })
+        } else {
+            let adapter = ensure_provider_adapter_for_target_with_cfg(
+                state.as_ref(),
+                managed,
+                provider_id,
+                target,
+            )
+            .await;
+            match adapter.inspect().await {
+                Ok(status) => status,
+                Err(err) => inspect_error_status(provider_id, err),
+            }
+        };
     status
         .details
         .insert("install_target".into(), target.as_str().to_string());
@@ -5022,14 +5024,8 @@ pub(super) async fn get_provider_options(
         ));
     }
 
-    let provider_status = provider_status_for_target(
-        &state,
-        &managed,
-        &matrix,
-        &provider_id,
-        install_target,
-    )
-    .await;
+    let provider_status =
+        provider_status_for_target(&state, &managed, &matrix, &provider_id, install_target).await;
 
     if !provider_status.installed
         || !matches!(

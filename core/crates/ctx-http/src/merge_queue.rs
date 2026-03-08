@@ -1964,13 +1964,8 @@ async fn finalize_target_branch(
     let workspace_root = Path::new(&workspace.root_path);
     let vcs_kind = vcs.kind();
     if cfg.push_on_success && vcs_kind == VcsKind::Git {
-        ensure_git_target_branch_head(
-            repo_root,
-            &entry.target_branch,
-            target_head,
-            commit_sha,
-        )
-        .await?;
+        ensure_git_target_branch_head(repo_root, &entry.target_branch, target_head, commit_sha)
+            .await?;
         write_log_line(
             log_file,
             &format!(
