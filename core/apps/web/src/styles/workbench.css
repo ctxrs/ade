@@ -1965,6 +1965,31 @@
   white-space: pre-wrap;
 }
 
+.wb-session-load-issues {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.wb-session-load-issues-title {
+  font-weight: 600;
+}
+
+.wb-session-load-issues-retry {
+  border: 1px solid var(--surface-strong);
+  background: var(--surface-subtle);
+  color: var(--text-strong);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.wb-session-load-issues-retry:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .wb-snackbar {
   position: fixed;
   left: 16px;
@@ -4211,6 +4236,11 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.wb-artifacts-error {
+  display: grid;
+  gap: 8px;
 }
 
 .wb-artifacts-grid {

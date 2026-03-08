@@ -400,7 +400,17 @@ function ArtifactViewer({
   );
 }
 
-export function ArtifactsPane({ artifacts, loading }: { artifacts: Artifact[]; loading?: boolean }) {
+export function ArtifactsPane({
+  artifacts,
+  loading,
+  error,
+  onRetry,
+}: {
+  artifacts: Artifact[];
+  loading?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
+}) {
   const [viewerArtifact, setViewerArtifact] = useState<Artifact | null>(null);
   const rows = useMemo(() => {
     return artifacts.map((artifact) => {
@@ -419,6 +429,17 @@ export function ArtifactsPane({ artifacts, loading }: { artifacts: Artifact[]; l
       <div className="wb-artifacts-body">
         {loading ? (
           <div className="wb-muted">Loading artifacts…</div>
+        ) : error ? (
+          <div className="wb-artifacts-error" role="alert">
+            <div>{error}</div>
+            {onRetry ? (
+              <div>
+                <button type="button" className="wb-session-load-issues-retry" onClick={onRetry}>
+                  Retry
+                </button>
+              </div>
+            ) : null}
+          </div>
         ) : artifacts.length === 0 ? (
           <div className="wb-muted">No artifacts yet.</div>
         ) : (

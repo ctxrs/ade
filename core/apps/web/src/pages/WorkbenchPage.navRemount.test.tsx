@@ -111,6 +111,15 @@ const focusTaskSpy = vi.fn(
   },
 );
 const applyTaskUpdateSpy = vi.fn();
+const sessionSupervisorMock = {
+  bindWorkspaceActiveSnapshotStore: vi.fn(),
+  setActiveTaskSessionIds: vi.fn(),
+  setWarmSessionIds: vi.fn(),
+  setDiff: vi.fn(),
+  loadSessionState: vi.fn(),
+  loadArtifacts: vi.fn(),
+  loadSubagentInvocations: vi.fn(),
+};
 const { trackWorkbenchPanelToggledMock } = vi.hoisted(() => ({
   trackWorkbenchPanelToggledMock: vi.fn(),
 }));
@@ -190,15 +199,9 @@ vi.mock("../utils/analytics", async () => {
 });
 
 vi.mock("../state/sessionSupervisor", () => ({
-  useSessionSupervisor: () => ({
-    bindWorkspaceActiveSnapshotStore: vi.fn(),
-    setActiveTaskSessionIds: vi.fn(),
-    setWarmSessionIds: vi.fn(),
-    setDiff: vi.fn(),
-    loadArtifacts: vi.fn(),
-  }),
+  useSessionSupervisor: () => sessionSupervisorMock,
   useSessionCacheSnapshot: () => sessionSnap,
-  useSessionEntry: () => null,
+  useSessionEntry: (id: string) => sessionSnap.sessions[id] ?? null,
   useOpenSession: () => {},
 }));
 
@@ -297,6 +300,13 @@ beforeEach(() => {
   sessionSnap = buildSessionSnap();
   workspaceSnapshotSnap = buildWorkspaceSnapshotSnap();
   trackWorkbenchPanelToggledMock.mockReset();
+  sessionSupervisorMock.bindWorkspaceActiveSnapshotStore.mockReset();
+  sessionSupervisorMock.setActiveTaskSessionIds.mockReset();
+  sessionSupervisorMock.setWarmSessionIds.mockReset();
+  sessionSupervisorMock.setDiff.mockReset();
+  sessionSupervisorMock.loadSessionState.mockReset();
+  sessionSupervisorMock.loadArtifacts.mockReset();
+  sessionSupervisorMock.loadSubagentInvocations.mockReset();
 });
 
 afterEach(() => {
@@ -499,6 +509,50 @@ describe("WorkbenchPage title generation install banner", () => {
 
     expect(await screen.findByText("Session titling model download in progress.")).toBeInTheDocument();
     expect(await screen.findByText("Downloading… 50%")).toBeInTheDocument();
+  });
+});
+
+describe("WorkbenchPage session support load issues", () => {
+  it("loads active session support data and retries from the banner", async () => {
+    sessionSnap = {
+      ...sessionSnap,
+      sessions: {
+        ...sessionSnap.sessions,
+        [sessionId]: {
+          ...sessionSnap.sessions[sessionId],
+          loadErrors: {
+            state: "Failed to load session state: daemon offline",
+            subagentInvocations: "Failed to load subagent invocations: query failed",
+          },
+        },
+      },
+    };
+
+    const ui = (
+      <VirtuosoMockContext.Provider value={{ itemHeight: 40, viewportHeight: 400 }}>
+        <MemoryRouter initialEntries={[`/workspaces/${workspaceId}`]}>
+          <Routes>
+            <Route path="/workspaces/:id" element={<WorkbenchPage />} />
+          </Routes>
+        </MemoryRouter>
+      </VirtuosoMockContext.Provider>
+    );
+
+    render(ui);
+
+    await waitFor(() => {
+      expect(sessionSupervisorMock.loadSessionState).toHaveBeenCalledWith(sessionId);
+      expect(sessionSupervisorMock.loadSubagentInvocations).toHaveBeenCalledWith(sessionId);
+    });
+
+    expect(await screen.findByText("Some session details failed to load.")).toBeInTheDocument();
+    expect(screen.getByText("Failed to load session state: daemon offline")).toBeInTheDocument();
+    expect(screen.getByText("Failed to load subagent invocations: query failed")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(sessionSupervisorMock.loadSessionState).toHaveBeenCalledWith(sessionId, { force: true });
+    expect(sessionSupervisorMock.loadSubagentInvocations).toHaveBeenCalledWith(sessionId, { force: true });
   });
 });
 

@@ -42,6 +42,7 @@ import type { SessionReplicaPatch } from "./sessionReplicaProtocol";
 import { sendDesktopNotification } from "../utils/desktopNotifications";
 import { isAppInForeground } from "../utils/windowFocus";
 import { trackFirstTurnCompleted, trackProviderRunCompleted } from "../utils/analytics";
+import { errorMessage } from "../utils/errorMessage";
 import { emitUiDiagnostic } from "./diagnosticsChannel";
 import { normalizeGitStatusSummaryInput } from "./sessionSupervisor/gitStatusNormalization";
 import {
@@ -100,6 +101,8 @@ const readTunableInt = (key: string, fallback: number) => {
 type ConnectionStatus = "connecting" | "connected" | "disconnected" | "idle";
 export type SessionMode = "active" | "archived";
 export type SessionLoadState = "pending_hydration" | "live" | "recovering" | "fatal";
+export type SessionSupportLoadErrorKey = "state" | "artifacts" | "subagentInvocations";
+export type SessionSupportLoadErrors = Partial<Record<SessionSupportLoadErrorKey, string>>;
 
 export type SessionSupervisorSnapshot = {
   connection: ConnectionStatus;
@@ -131,6 +134,7 @@ export type SessionCacheEntry = {
   stateLoaded: boolean;
   stateLoading: boolean;
   stateRev?: number;
+  loadErrors?: SessionSupportLoadErrors;
   queue: Message[];
   diff?: string;
   gitStatusSummary?: GitStatusSummary | null;
@@ -230,6 +234,7 @@ type InternalEntry = SessionCacheEntry & {
   stateRev?: number;
   stateAppliedRev?: number;
   stateFetchToken: number;
+  loadErrors: SessionSupportLoadErrors;
   diagnosticsByPath: Record<string, unknown[]>;
   loadedFromCache: boolean;
   headFromCache: boolean;
@@ -256,6 +261,23 @@ const WARM_TTL_MS = readTunableInt("contextWarmSessionTtlMs", 10 * 60 * 1000);
 const HEAD_LIMIT = readTunableInt("contextSessionHeadLimit", TURN_PAGE_LIMIT);
 const MODE_RESOLUTION_MAX_ATTEMPTS = 6;
 const MODE_RESOLUTION_RETRY_MS = 100;
+
+const SUPPORT_LOAD_ERROR_LABELS: Record<SessionSupportLoadErrorKey, string> = {
+  state: "session state",
+  artifacts: "artifacts",
+  subagentInvocations: "subagent invocations",
+};
+
+const formatSupportLoadError = (key: SessionSupportLoadErrorKey, value: unknown): string => {
+  const detail = String(errorMessage(value) ?? "").trim();
+  if (!detail || detail === "undefined" || detail === "null" || detail === "[object Object]") {
+    return `Failed to load ${SUPPORT_LOAD_ERROR_LABELS[key]}.`;
+  }
+  if (detail.startsWith("Failed to load ")) {
+    return detail;
+  }
+  return `Failed to load ${SUPPORT_LOAD_ERROR_LABELS[key]}: ${detail}`;
+};
 
 // The daemon serializes transient events with `seq: null` (see Rust `SessionEvent` Serialize).
 // We assign a stable synthetic seq in a negative JS-safe range so sorting never scrambles
@@ -388,10 +410,22 @@ export class SessionSupervisor {
     }
   };
 
+  loadSessionState = (sessionId: string, opts?: { force?: boolean }) => {
+    const entry = this.entries.get(String(sessionId));
+    if (!entry) return;
+    void this.ensureState(entry, opts);
+  };
+
   loadArtifacts = (sessionId: string, opts?: { force?: boolean }) => {
     const entry = this.entries.get(String(sessionId));
     if (!entry) return;
     void this.ensureArtifacts(entry, opts);
+  };
+
+  loadSubagentInvocations = (sessionId: string, opts?: { force?: boolean }) => {
+    const entry = this.entries.get(String(sessionId));
+    if (!entry) return;
+    void this.ensureSubagentInvocations(entry, opts);
   };
 
   refreshQueue = (sessionId: string) => {
@@ -625,6 +659,7 @@ export class SessionSupervisor {
         stateLoaded: e.stateLoaded,
         stateLoading: e.stateLoading,
         stateRev: e.stateRev,
+        loadErrors: { ...e.loadErrors },
         queue: e.queue,
         diff: e.diff,
         gitStatusSummary: e.gitStatusSummary ?? null,
@@ -719,15 +754,20 @@ export class SessionSupervisor {
         entry.artifactsFetchedAtMs = Date.now();
         entry.artifactsLoaded = true;
         entry.artifactsLoading = false;
+        this.clearSupportLoadError(entry, "artifacts");
       }
       if (data.artifactsLoaded !== undefined) {
         entry.artifactsLoaded = data.artifactsLoaded;
         if (data.artifactsLoaded) {
           entry.artifactsLoading = false;
+          this.clearSupportLoadError(entry, "artifacts");
         }
       }
       if (data.stateLoaded !== undefined) {
         entry.stateLoaded = data.stateLoaded;
+        if (data.stateLoaded) {
+          this.clearSupportLoadError(entry, "state");
+        }
       }
       if (data.stateLoading !== undefined) {
         entry.stateLoading = data.stateLoading;
@@ -839,6 +879,7 @@ export class SessionSupervisor {
       stateRev: undefined,
       stateAppliedRev: undefined,
       stateFetchToken: 0,
+      loadErrors: {},
       queue: [],
       diff: undefined,
       gitStatusSummary: null,
@@ -1000,8 +1041,11 @@ export class SessionSupervisor {
 
   private async ensureState(entry: InternalEntry, opts?: { force?: boolean }) {
     if (entry.stateLoading) return;
-    if (entry.stateLoaded && !opts?.force) return;
+    const hasPendingRevision =
+      typeof entry.stateRev === "number" && entry.stateAppliedRev !== entry.stateRev;
+    if (entry.stateLoaded && !opts?.force && !hasPendingRevision) return;
     entry.stateLoading = true;
+    this.clearSupportLoadError(entry, "state");
     const requestRev = entry.stateRev;
     entry.stateFetchToken += 1;
     const fetchToken = entry.stateFetchToken;
@@ -1018,8 +1062,9 @@ export class SessionSupervisor {
         return;
       }
       this.applyState(entry, state, requestRev ?? entry.stateRev);
-    } catch {
-      // ignore state load errors (missing session or daemon offline)
+    } catch (err) {
+      if (entry.stateFetchToken !== fetchToken) return;
+      this.setSupportLoadError(entry, "state", err);
     } finally {
       if (entry.stateFetchToken === fetchToken) {
         entry.stateLoading = false;
@@ -1033,6 +1078,7 @@ export class SessionSupervisor {
     if (entry.artifactsLoading) return;
     if (entry.artifactsLoaded && !opts?.force) return;
     entry.artifactsLoading = true;
+    this.clearSupportLoadError(entry, "artifacts");
     entry.updatedAtMs = Date.now();
     this.publish();
     try {
@@ -1040,8 +1086,9 @@ export class SessionSupervisor {
       entry.artifacts = artifacts;
       entry.artifactsLoaded = true;
       entry.artifactsFetchedAtMs = Date.now();
-    } catch {
-      // ignore artifact load errors (missing session or daemon offline)
+      this.clearSupportLoadError(entry, "artifacts");
+    } catch (err) {
+      this.setSupportLoadError(entry, "artifacts", err);
     } finally {
       entry.artifactsLoading = false;
       entry.updatedAtMs = Date.now();
@@ -1053,6 +1100,7 @@ export class SessionSupervisor {
     if (entry.subagentInvocationsLoading) return;
     if (entry.subagentInvocationsLoaded && !opts?.force) return;
     entry.subagentInvocationsLoading = true;
+    this.clearSupportLoadError(entry, "subagentInvocations");
     entry.updatedAtMs = Date.now();
     this.publish();
     try {
@@ -1060,8 +1108,9 @@ export class SessionSupervisor {
       entry.subagentInvocations = invocations;
       entry.subagentInvocationsLoaded = true;
       entry.subagentInvocationsFetchedAtMs = Date.now();
-    } catch {
-      // ignore invocation load errors
+      this.clearSupportLoadError(entry, "subagentInvocations");
+    } catch (err) {
+      this.setSupportLoadError(entry, "subagentInvocations", err);
     } finally {
       entry.subagentInvocationsLoading = false;
       entry.updatedAtMs = Date.now();
@@ -1317,6 +1366,28 @@ export class SessionSupervisor {
     this.setSessionLoadState(entry, "fatal");
   }
 
+  private clearSupportLoadError(entry: InternalEntry, key: SessionSupportLoadErrorKey) {
+    if (!entry.loadErrors[key]) return;
+    delete entry.loadErrors[key];
+  }
+
+  private setSupportLoadError(entry: InternalEntry, key: SessionSupportLoadErrorKey, value: unknown) {
+    const message = formatSupportLoadError(key, value);
+    emitUiDiagnostic({
+      source: "session_supervisor",
+      code: `session.${key}_load_failed`,
+      severity: "error",
+      fatal: false,
+      message,
+      context: {
+        sessionId: entry.sessionId,
+        mode: entry.mode ?? null,
+        target: key,
+      },
+    });
+    entry.loadErrors[key] = message;
+  }
+
   private markOpenSessionsRecovering() {
     let changed = false;
     for (const entry of this.entries.values()) {
@@ -1481,6 +1552,7 @@ export class SessionSupervisor {
     }
     entry.stateLoaded = true;
     entry.stateLoading = false;
+    this.clearSupportLoadError(entry, "state");
     if (typeof stateRev === "number") {
       entry.stateRev = stateRev;
       entry.stateAppliedRev = stateRev;
@@ -1489,6 +1561,7 @@ export class SessionSupervisor {
     entry.artifactsLoaded = true;
     entry.artifactsLoading = false;
     entry.artifactsFetchedAtMs = Date.now();
+    this.clearSupportLoadError(entry, "artifacts");
     entry.gitStatusSummary = state.git_status ?? null;
   }
 
@@ -2157,6 +2230,7 @@ export class SessionSupervisor {
     entry.artifactsLoaded = true;
     entry.artifactsLoading = false;
     entry.artifactsFetchedAtMs = Date.now();
+    this.clearSupportLoadError(entry, "artifacts");
     return true;
   }
 
@@ -2296,6 +2370,7 @@ export class SessionSupervisor {
     entry.subagentInvocationsLoaded = false;
     entry.subagentInvocationsLoading = false;
     entry.subagentInvocationsFetchedAtMs = undefined;
+    entry.loadErrors = {};
     entry.queue = [];
     entry.turnToolsByTurnId = {};
     entry.turnToolsHydratedByTurnId = {};

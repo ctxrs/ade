@@ -123,6 +123,7 @@ import {
 import { useWorkbenchOptimisticTasks } from "./workbenchShell/useWorkbenchOptimisticTasks";
 import { useWorkbenchProviders } from "./workbenchShell/useWorkbenchProviders";
 import { WorkbenchSessionHeader } from "./workbenchShell/WorkbenchSessionHeader";
+import { WorkbenchSessionLoadIssues } from "./workbenchShell/WorkbenchSessionLoadIssues";
 import { useWorkbenchTaskScrollbar } from "./workbenchShell/useWorkbenchTaskScrollbar";
 import type {
   AnchorRect,
@@ -1565,6 +1566,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   const sessionCache = useSessionCacheSnapshot();
   const activeEntry = useSessionEntry(activeSessionId ?? "");
+  const activeLoadErrors = activeEntry?.loadErrors;
   const activeSessionDiff = activeEntry?.diff ?? "";
   const activeDiffContentError = activeSessionId ? diffContentErrorBySessionId[activeSessionId] ?? null : null;
   const activeWorktreeId = activeEntry?.session ? idToString(activeEntry.session.worktree_id) : "";
@@ -1614,6 +1616,12 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     if (!activeSessionId || !activeEntry || activeEntry.loading) return;
     loadTestTelemetry.finishSessionSwitch(activeSessionId);
   }, [activeEntry?.loading, activeEntry?.updatedAtMs, activeSessionId, loadTestTelemetry]);
+
+  useEffect(() => {
+    if (!activeSessionId || isOptimisticSessionId) return;
+    supervisor.loadSessionState(activeSessionId);
+    supervisor.loadSubagentInvocations(activeSessionId);
+  }, [activeEntry?.stateRev, activeSessionId, isOptimisticSessionId, supervisor]);
 
   useEffect(() => {
     if (!activeWorktreeId) {
@@ -1816,7 +1824,21 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const artifactsLoading = activeSessionId
     ? sessionCache.sessions[activeSessionId]?.artifactsLoading ?? false
     : false;
+  const artifactsError = activeLoadErrors?.artifacts ?? null;
   const artifactsCount = artifacts.length;
+  const sessionLoadIssues = useMemo(() => {
+    const issues: Array<{ key: "state" | "subagentInvocations"; message: string }> = [];
+    if (activeLoadErrors?.state) {
+      issues.push({ key: "state", message: activeLoadErrors.state });
+    }
+    if (activeLoadErrors?.subagentInvocations) {
+      issues.push({
+        key: "subagentInvocations",
+        message: activeLoadErrors.subagentInvocations,
+      });
+    }
+    return issues;
+  }, [activeLoadErrors?.state, activeLoadErrors?.subagentInvocations]);
 
   useEffect(() => {
     if (!artifactsOpen || !activeSessionId) return;
@@ -1826,6 +1848,15 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   useEffect(() => {
     artifactPrefetcher.prefetch(activeSessionId ?? null, artifacts, !activeTaskArchived);
   }, [activeSessionId, activeTaskArchived, artifacts]);
+  const retryActiveSessionLoads = useCallback(() => {
+    if (!activeSessionId) return;
+    supervisor.loadSessionState(activeSessionId, { force: true });
+    supervisor.loadSubagentInvocations(activeSessionId, { force: true });
+  }, [activeSessionId, supervisor]);
+  const retryArtifactsLoad = useCallback(() => {
+    if (!activeSessionId) return;
+    supervisor.loadArtifacts(activeSessionId, { force: true });
+  }, [activeSessionId, supervisor]);
   const sessionsCount = webSessionsEnabled ? webSessions.length : 0;
   const diffContentInFlightRef = useRef<Map<string, Promise<void>>>(new Map());
   const diffRefreshTimerRef = useRef<number | null>(null);
@@ -3344,6 +3375,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
               ) : null}
 
               <div className="wb-session">
+                <WorkbenchSessionLoadIssues issues={sessionLoadIssues} onRetry={retryActiveSessionLoads} />
                 {activeSessionId ? (
                   <WorkbenchSessionSlot
                     key={activeSessionId}
@@ -3405,7 +3437,12 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
                     </div>
                   ) : showArtifactsPane ? (
                     <div className="wb-right-pane">
-                      <ArtifactsPane artifacts={artifacts} loading={artifactsLoading} />
+                      <ArtifactsPane
+                        artifacts={artifacts}
+                        loading={artifactsLoading}
+                        error={artifactsError}
+                        onRetry={retryArtifactsLoad}
+                      />
                     </div>
                   ) : null}
                 </div>

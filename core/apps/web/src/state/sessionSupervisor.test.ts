@@ -53,7 +53,13 @@ vi.mock("./uiStateStore", () => ({
   saveSessionHistoryPageV1: vi.fn(async () => {}),
 }));
 
-import { getSessionHead, getSessionSnapshot } from "../api/client";
+import {
+  getSessionHead,
+  getSessionSnapshot,
+  getSessionState,
+  listSessionArtifacts,
+  listSessionSubagentInvocations,
+} from "../api/client";
 
 const mkSession = (sessionId: string): Session => ({
   id: sessionId,
@@ -90,6 +96,9 @@ const asSupervisorInternals = (value: unknown): SessionSupervisorInternals => va
 
 const getSessionHeadMock = vi.mocked(getSessionHead);
 const getSessionSnapshotMock = vi.mocked(getSessionSnapshot);
+const getSessionStateMock = vi.mocked(getSessionState);
+const listSessionArtifactsMock = vi.mocked(listSessionArtifacts);
+const listSessionSubagentInvocationsMock = vi.mocked(listSessionSubagentInvocations);
 
 const mkWorkspaceSnapshotState = (): WorkspaceActiveSnapshotState => ({
   workspaceId: "ws-1",
@@ -1148,5 +1157,65 @@ describe("SessionSupervisor", () => {
     const entry = sup.getSnapshot().sessions[sessionId];
     expect(entry?.error).toContain("Session not found in workspace snapshot");
     expect(getSessionHead).not.toHaveBeenCalled();
+  });
+
+  it("records support load failures and clears them after a successful retry", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-support-load-errors";
+    getSessionStateMock
+      .mockRejectedValueOnce(new Error("daemon offline"))
+      .mockResolvedValueOnce({ artifacts: [], git_status: null });
+    listSessionArtifactsMock
+      .mockRejectedValueOnce(new Error("artifacts endpoint unavailable"))
+      .mockResolvedValueOnce([]);
+    listSessionSubagentInvocationsMock
+      .mockRejectedValueOnce(new Error("subagent query failed"))
+      .mockResolvedValueOnce([]);
+
+    const sup = new SessionSupervisor();
+    sup.openSession(sessionId, { mode: "active" });
+
+    sup.loadSessionState(sessionId);
+    sup.loadArtifacts(sessionId);
+    sup.loadSubagentInvocations(sessionId);
+
+    await waitForCondition(() => {
+      const loadErrors = sup.getSnapshot().sessions[sessionId]?.loadErrors;
+      return Boolean(loadErrors?.state && loadErrors?.artifacts && loadErrors?.subagentInvocations);
+    });
+
+    const failedEntry = sup.getSnapshot().sessions[sessionId];
+    expect(failedEntry?.stateLoading).toBe(false);
+    expect(failedEntry?.artifactsLoading).toBe(false);
+    expect(failedEntry?.subagentInvocationsLoading).toBe(false);
+    expect(failedEntry?.loadErrors?.state).toBe("Failed to load session state: daemon offline");
+    expect(failedEntry?.loadErrors?.artifacts).toBe(
+      "Failed to load artifacts: artifacts endpoint unavailable",
+    );
+    expect(failedEntry?.loadErrors?.subagentInvocations).toBe(
+      "Failed to load subagent invocations: subagent query failed",
+    );
+
+    sup.loadSessionState(sessionId, { force: true });
+    sup.loadArtifacts(sessionId, { force: true });
+    sup.loadSubagentInvocations(sessionId, { force: true });
+
+    await waitForCondition(() => {
+      const entry = sup.getSnapshot().sessions[sessionId];
+      return (
+        Boolean(entry?.stateLoaded) &&
+        Boolean(entry?.loadErrors) &&
+        !entry?.loadErrors?.state &&
+        !entry?.loadErrors?.artifacts &&
+        !entry?.loadErrors?.subagentInvocations &&
+        entry?.artifactsLoading === false &&
+        entry?.subagentInvocationsLoading === false
+      );
+    });
+
+    const recoveredEntry = sup.getSnapshot().sessions[sessionId];
+    expect(recoveredEntry?.artifacts).toEqual([]);
+    expect(recoveredEntry?.subagentInvocations).toEqual([]);
   });
 });
