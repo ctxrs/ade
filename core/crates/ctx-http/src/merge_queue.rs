@@ -516,11 +516,8 @@ async fn run_entry_inner(
         {
             match err {
                 QueueError::Conflict { message } => {
-                    let _ = write_log_line(
-                        log_file,
-                        &format!("apply patch conflict: {message}\n"),
-                    )
-                    .await;
+                    let _ = write_log_line(log_file, &format!("apply patch conflict: {message}\n"))
+                        .await;
                     return Err(QueueError::Conflict {
                         message: MERGE_QUEUE_CONFLICT_MESSAGE.to_string(),
                     });
@@ -554,18 +551,13 @@ async fn run_entry_inner(
             .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
 
         for cmd in &cfg.verify_commands {
-            run_verify_command(state, &worktree_path, entry, cmd, log_file).await?;
+            run_verify_command(state, &worktree_path, entry, cmd, &commit_sha, log_file).await?;
         }
 
         let target_checkout = if vcs.kind() == VcsKind::Git {
-            find_checked_out_worktree_for_branch(
-                state,
-                entry,
-                git_repo_root,
-                &entry.target_branch,
-            )
-            .await
-            .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.clone())))?
+            find_checked_out_worktree_for_branch(state, entry, git_repo_root, &entry.target_branch)
+                .await
+                .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.clone())))?
         } else {
             None
         };
@@ -586,81 +578,19 @@ async fn run_entry_inner(
             }
         }
 
-        write_log_line(
+        finalize_target_branch(
+            state,
+            workspace,
+            entry,
+            cfg,
+            vcs.as_ref(),
+            git_repo_root,
+            target_checkout.as_deref(),
+            &target_head,
+            &commit_sha,
             log_file,
-            &format!("advance target branch {}\n", entry.target_branch),
         )
-        .await
-        .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
-        if let Some(path) = target_checkout.as_ref() {
-            let previous_head = vcs
-                .rev_parse_ref(Path::new(path), "HEAD")
-                .await
-                .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.clone())))?;
-            if previous_head != target_head {
-                return Err(QueueError::fail(
-                    format!(
-                        "failed to update target branch: expected {target_head}, found {previous_head}"
-                    ),
-                    None,
-                    Some(commit_sha.clone()),
-                ));
-            }
-            reset_worktree_to_commit(state, entry, path, &commit_sha)
-                .await
-                .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.clone())))?;
-            let _ = maybe_update_worktree_base_commit_for_path(
-                state,
-                workspace.id,
-                path,
-                &commit_sha,
-            )
-            .await
-            .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.clone())))?;
-        } else {
-            update_target_branch(
-                state,
-                entry,
-                git_repo_root,
-                Path::new(&workspace.root_path),
-                vcs.kind(),
-                &entry.target_branch,
-                &commit_sha,
-                &target_head,
-            )
-            .await?;
-        }
-
-        if cfg.push_on_success {
-            write_log_line(
-                log_file,
-                &format!(
-                    "push {} {}:{}\n",
-                    cfg.push_remote, entry.target_branch, cfg.push_branch
-                ),
-            )
-            .await
-            .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
-            if let Err(err) = push_target_branch(
-                state,
-                entry,
-                git_repo_root,
-                Path::new(&workspace.root_path),
-                vcs.kind(),
-                &cfg.push_remote,
-                &entry.target_branch,
-                &cfg.push_branch,
-                &commit_sha,
-            )
-            .await
-            {
-                return Err(QueueError::fail(
-                    format!("push_failed: {err}"),
-                    None,
-                    Some(commit_sha),
-                ));
-            }
-        }
+        .await?;
 
         if vcs.kind() == VcsKind::Git {
             if let Some(repo_root) = repo_root.as_ref() {
@@ -675,11 +605,8 @@ async fn run_entry_inner(
                 )
                 .await
                 {
-                    let _ = write_log_line(
-                        log_file,
-                        &format!("canonical sync failed: {err:#}\n"),
-                    )
-                    .await;
+                    let _ = write_log_line(log_file, &format!("canonical sync failed: {err:#}\n"))
+                        .await;
                     tracing::warn!("merge queue canonical sync failed: {err:#}");
                 }
             }
@@ -1668,11 +1595,12 @@ async fn run_verify_command(
     worktree_path: &Path,
     entry: &MergeQueueEntry,
     command: &str,
+    commit_sha: &str,
     log_file: &mut fs::File,
 ) -> std::result::Result<(), QueueError> {
     write_log_line(log_file, &format!("verify: {command}\n"))
         .await
-        .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+        .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.to_string())))?;
     let envs = vec![
         (
             "CTX_MERGE_QUEUE_ENTRY_ID".to_string(),
@@ -1689,18 +1617,18 @@ async fn run_verify_command(
     let output = cmd
         .output()
         .await
-        .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+        .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.to_string())))?;
     write_log_line(log_file, &String::from_utf8_lossy(&output.stdout))
         .await
-        .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+        .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.to_string())))?;
     write_log_line(log_file, &String::from_utf8_lossy(&output.stderr))
         .await
-        .map_err(|e| QueueError::fail(e.to_string(), None, None))?;
+        .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.to_string())))?;
     if !output.status.success() {
         return Err(QueueError::fail(
             format!("verify failed: {command}"),
             Some(output.status.code().unwrap_or(1) as i64),
-            None,
+            Some(commit_sha.to_string()),
         ));
     }
     Ok(())
@@ -1999,6 +1927,152 @@ async fn command_for_shell(
 }
 
 #[allow(clippy::too_many_arguments)]
+async fn finalize_target_branch(
+    state: &AppState,
+    workspace: &Workspace,
+    entry: &MergeQueueEntry,
+    cfg: &MergeQueueConfig,
+    vcs: &dyn VcsDriver,
+    repo_root: &Path,
+    target_checkout: Option<&str>,
+    target_head: &str,
+    commit_sha: &str,
+    log_file: &mut fs::File,
+) -> std::result::Result<(), QueueError> {
+    let workspace_root = Path::new(&workspace.root_path);
+    let vcs_kind = vcs.kind();
+    if cfg.push_on_success && vcs_kind == VcsKind::Git {
+        ensure_git_target_branch_head(
+            repo_root,
+            &entry.target_branch,
+            target_head,
+            commit_sha,
+        )
+        .await?;
+        write_log_line(
+            log_file,
+            &format!(
+                "push {} {}:{}\n",
+                cfg.push_remote, commit_sha, cfg.push_branch
+            ),
+        )
+        .await
+        .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.to_string())))?;
+        if let Err(err) = push_target_branch(
+            state,
+            entry,
+            repo_root,
+            workspace_root,
+            vcs_kind.clone(),
+            &cfg.push_remote,
+            commit_sha,
+            &cfg.push_branch,
+            commit_sha,
+        )
+        .await
+        {
+            return Err(QueueError::fail(
+                format!("push_failed: {err}"),
+                None,
+                Some(commit_sha.to_string()),
+            ));
+        }
+    }
+
+    write_log_line(
+        log_file,
+        &format!("advance target branch {}\n", entry.target_branch),
+    )
+    .await
+    .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.to_string())))?;
+    if let Some(path) = target_checkout {
+        let previous_head = vcs
+            .rev_parse_ref(Path::new(path), "HEAD")
+            .await
+            .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.to_string())))?;
+        if previous_head != target_head {
+            return Err(QueueError::fail(
+                format!(
+                    "failed to update target branch: expected {target_head}, found {previous_head}"
+                ),
+                None,
+                Some(commit_sha.to_string()),
+            ));
+        }
+        reset_worktree_to_commit(state, entry, path, commit_sha)
+            .await
+            .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.to_string())))?;
+        let _ = maybe_update_worktree_base_commit_for_path(state, workspace.id, path, commit_sha)
+            .await
+            .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.to_string())))?;
+    } else {
+        update_target_branch(
+            state,
+            entry,
+            repo_root,
+            workspace_root,
+            vcs_kind.clone(),
+            &entry.target_branch,
+            commit_sha,
+            target_head,
+        )
+        .await?;
+    }
+
+    if cfg.push_on_success && vcs_kind != VcsKind::Git {
+        write_log_line(
+            log_file,
+            &format!(
+                "push {} {}:{}\n",
+                cfg.push_remote, entry.target_branch, cfg.push_branch
+            ),
+        )
+        .await
+        .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.to_string())))?;
+        if let Err(err) = push_target_branch(
+            state,
+            entry,
+            repo_root,
+            workspace_root,
+            vcs_kind.clone(),
+            &cfg.push_remote,
+            &entry.target_branch,
+            &cfg.push_branch,
+            commit_sha,
+        )
+        .await
+        {
+            return Err(QueueError::fail(
+                format!("push_failed: {err}"),
+                None,
+                Some(commit_sha.to_string()),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+async fn ensure_git_target_branch_head(
+    repo_root: &Path,
+    target_branch: &str,
+    expected_head: &str,
+    commit_sha: &str,
+) -> std::result::Result<(), QueueError> {
+    let current = rev_parse_ref(repo_root, target_branch)
+        .await
+        .map_err(|e| QueueError::fail(e.to_string(), None, Some(commit_sha.to_string())))?;
+    if current.trim() != expected_head.trim() {
+        return Err(QueueError::fail(
+            format!("target branch advanced (expected {expected_head}, found {current})"),
+            None,
+            Some(commit_sha.to_string()),
+        ));
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn update_target_branch(
     state: &AppState,
     entry: &MergeQueueEntry,
@@ -2091,7 +2165,7 @@ async fn push_target_branch(
     workspace_root: &Path,
     vcs_kind: VcsKind,
     remote: &str,
-    target_branch: &str,
+    source_ref: &str,
     push_branch: &str,
     commit_sha: &str,
 ) -> Result<()> {
@@ -2102,7 +2176,7 @@ async fn push_target_branch(
             let output = cmd
                 .arg("-C")
                 .arg(repo_root)
-                .args(["push", remote, &format!("{target_branch}:{push_branch}")])
+                .args(["push", remote, &format!("{source_ref}:{push_branch}")])
                 .output()
                 .await
                 .context("running git push")?;
@@ -2115,7 +2189,7 @@ async fn push_target_branch(
             Ok(())
         }
         VcsKind::Jj => {
-            if target_branch != push_branch {
+            if source_ref != push_branch {
                 let mut cmd = merge_queue_command(
                     state,
                     entry,
