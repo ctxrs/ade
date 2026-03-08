@@ -276,12 +276,21 @@ async fn provider_options_probe_uses_workspace_runtime_context_for_container_mod
         Some(false),
         "container-mode probe must use workspace runtime context; host probe success is invalid: {body:#?}"
     );
-    let probe_error = body
-        .get("probe_error")
-        .and_then(serde_json::Value::as_str)
+    let diagnostics = body
+        .get("diagnostics")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
         .unwrap_or_default();
     assert!(
-        probe_error.contains("probe runtime preparation failed"),
-        "expected runtime preparation failure in container mode probe: {body:#?}"
+        diagnostics.iter().any(|value| value
+            .as_str()
+            .unwrap_or_default()
+            .contains("does not verify target 'container'")),
+        "expected explicit target mismatch diagnostic in container mode probe: {body:#?}"
+    );
+    assert_eq!(
+        body.get("probe_error").and_then(serde_json::Value::as_str),
+        Some("provider not installed or unhealthy"),
+        "expected generic probe_error alongside target mismatch diagnostic: {body:#?}"
     );
 }
