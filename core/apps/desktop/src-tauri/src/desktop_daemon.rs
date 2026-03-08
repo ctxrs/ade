@@ -1477,14 +1477,6 @@ pub(super) fn enforce_desktop_parity_bundle_preflight(app: &tauri::AppHandle) ->
     Ok(())
 }
 
-fn normalize_arch_token(raw: &str) -> Option<&'static str> {
-    match raw.trim() {
-        "x86_64" | "amd64" => Some("x86_64"),
-        "aarch64" | "arm64" => Some("aarch64"),
-        _ => None,
-    }
-}
-
 fn read_bundled_ctx_harness_image(
     app: &tauri::AppHandle,
     arch: &str,
@@ -1576,9 +1568,6 @@ pub(super) fn ensure_remote_ctx_harness_image(
         );
     }
     let os = String::from_utf8_lossy(&os_out.stdout).trim().to_string();
-    if os != "Linux" {
-        return Ok(());
-    }
 
     let arch_out = ssh_output(&target, "uname -m")?;
     if !arch_out.status.success() {
@@ -1588,24 +1577,21 @@ pub(super) fn ensure_remote_ctx_harness_image(
         );
     }
     let arch_raw = String::from_utf8_lossy(&arch_out.stdout).trim().to_string();
-    let Some(arch) = normalize_arch_token(&arch_raw) else {
-        anyhow::bail!("unsupported remote architecture: {arch_raw}");
-    };
+    let arch =
+        super::desktop_ssh::validate_remote_container_bootstrap_platform(&target, &os, &arch_raw)?;
 
-    // If the remote doesn't have podman, don't block ssh connection (container mode just won't work).
     let podman_out = ssh_output(
         &target,
         "if command -v podman >/dev/null 2>&1; then command -v podman; else exit 1; fi",
     )?;
-    if !podman_out.status.success() {
-        return Ok(());
-    }
-    let podman_bin = String::from_utf8_lossy(&podman_out.stdout)
-        .trim()
-        .to_string();
-    if podman_bin.is_empty() {
-        return Ok(());
-    }
+    let podman_stdout = String::from_utf8_lossy(&podman_out.stdout);
+    let podman_stderr = String::from_utf8_lossy(&podman_out.stderr);
+    let podman_bin = super::desktop_ssh::require_remote_container_podman_path(
+        &target,
+        podman_out.status.success(),
+        podman_stdout.as_ref(),
+        podman_stderr.as_ref(),
+    )?;
     let podman_cmd = remote_path_expr(&podman_bin);
     let prep_out = ssh_output(&target, &podman_prepare_cmd)?;
     if !prep_out.status.success() {

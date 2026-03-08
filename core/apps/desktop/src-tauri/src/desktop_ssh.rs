@@ -108,6 +108,10 @@ const REMOTE_BOOTSTRAP_CAPABILITY_MSG: &str =
     "Remote daemon bootstrap failed while retrieving managed daemon artifact. Check network connectivity and release metadata.";
 const PLATFORM_PROBE_OS_MARKER: &str = "__CTX_PLATFORM_OS__";
 const PLATFORM_PROBE_ARCH_MARKER: &str = "__CTX_PLATFORM_ARCH__";
+const REMOTE_CONTAINER_BOOTSTRAP_PLATFORM_HINT: &str =
+    "Use a Linux x86_64 or arm64 host, or switch the workspace execution environment to `host`.";
+const REMOTE_CONTAINER_BOOTSTRAP_PODMAN_HINT: &str =
+    "Install podman on the remote host, ensure it is visible on the SSH login shell PATH, then retry, or switch the workspace execution environment to `host`.";
 const SSH_CONFIG_OVERRIDE_ENV: &str = "CTX_DESKTOP_SSH_CONFIG_PATH";
 const SSH_TUNNEL_BOOTSTRAP_HEALTH_RETRIES: usize = 12;
 const SSH_TUNNEL_BOOTSTRAP_HEALTH_BASE_DELAY_MS: u64 = 150;
@@ -1301,6 +1305,57 @@ fn looks_like_windows_shell_error(raw: &str) -> bool {
         || lowered.contains("powershell")
 }
 
+pub(super) fn validate_remote_container_bootstrap_platform(
+    target: &str,
+    os: &str,
+    arch_raw: &str,
+) -> Result<&'static str> {
+    let os = os.trim();
+    if os != "Linux" {
+        anyhow::bail!(
+            "Remote container bootstrap requires a Linux host. Detected remote OS `{os}` on `{target}`. {REMOTE_CONTAINER_BOOTSTRAP_PLATFORM_HINT}"
+        );
+    }
+    let arch_raw = arch_raw.trim();
+    normalize_remote_arch_token(arch_raw).ok_or_else(|| {
+        anyhow!(
+            "Remote container bootstrap requires Linux x86_64 or arm64. Detected remote architecture `{arch_raw}` on `{target}`. {REMOTE_CONTAINER_BOOTSTRAP_PLATFORM_HINT}"
+        )
+    })
+}
+
+pub(super) fn require_remote_container_podman_path(
+    target: &str,
+    probe_succeeded: bool,
+    stdout: &str,
+    stderr: &str,
+) -> Result<String> {
+    if !probe_succeeded {
+        let detail = stderr.trim();
+        let detail = if detail.is_empty() {
+            stdout.trim()
+        } else {
+            detail
+        };
+        if detail.is_empty() {
+            anyhow::bail!(
+                "Remote container bootstrap requires `podman` on `{target}`, but it was not found. {REMOTE_CONTAINER_BOOTSTRAP_PODMAN_HINT}"
+            );
+        }
+        anyhow::bail!(
+            "Remote container bootstrap requires `podman` on `{target}`, but the probe failed: {detail}. {REMOTE_CONTAINER_BOOTSTRAP_PODMAN_HINT}"
+        );
+    }
+
+    let path = stdout.trim();
+    if path.is_empty() {
+        anyhow::bail!(
+            "Remote container bootstrap requires `podman` on `{target}`, but the probe returned an empty path. {REMOTE_CONTAINER_BOOTSTRAP_PODMAN_HINT}"
+        );
+    }
+    Ok(path.to_string())
+}
+
 fn probe_remote_linux_platform(host: &str, user: Option<&str>) -> Result<RemoteLinuxPlatform> {
     let target = ssh_target(host, user);
 
@@ -2097,6 +2152,77 @@ mod remote_path_validation_tests {
         assert_eq!(normalize_remote_arch_token("aarch64"), Some("aarch64"));
         assert_eq!(normalize_remote_arch_token("arm64"), Some("aarch64"));
         assert_eq!(normalize_remote_arch_token("i686"), None);
+    }
+
+    #[test]
+    fn remote_container_bootstrap_platform_requires_linux() {
+        let err =
+            validate_remote_container_bootstrap_platform("dev@example.host", "Darwin", "x86_64")
+                .expect_err("non-linux remote should fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("requires a Linux host"),
+            "unexpected error: {msg}"
+        );
+        assert!(msg.contains("dev@example.host"), "missing target: {msg}");
+        assert!(
+            msg.contains("execution environment to `host`"),
+            "missing remediation guidance: {msg}"
+        );
+    }
+
+    #[test]
+    fn remote_container_bootstrap_platform_requires_supported_arch() {
+        let err = validate_remote_container_bootstrap_platform("dev@example.host", "Linux", "i686")
+            .expect_err("unsupported arch should fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("requires Linux x86_64 or arm64"),
+            "unexpected error: {msg}"
+        );
+        assert!(msg.contains("i686"), "missing arch detail: {msg}");
+        assert!(msg.contains("dev@example.host"), "missing target: {msg}");
+    }
+
+    #[test]
+    fn remote_container_bootstrap_requires_podman_path() {
+        let err = require_remote_container_podman_path("dev@example.host", false, "", "")
+            .expect_err("missing podman should fail");
+        let msg = err.to_string();
+        assert!(msg.contains("requires `podman`"), "unexpected error: {msg}");
+        assert!(msg.contains("dev@example.host"), "missing target: {msg}");
+        assert!(
+            msg.contains("Install podman on the remote host"),
+            "missing remediation guidance: {msg}"
+        );
+    }
+
+    #[test]
+    fn remote_container_bootstrap_reports_podman_probe_detail() {
+        let err = require_remote_container_podman_path(
+            "dev@example.host",
+            false,
+            "",
+            "permission denied",
+        )
+        .expect_err("probe detail should fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("probe failed: permission denied"),
+            "missing probe detail: {msg}"
+        );
+    }
+
+    #[test]
+    fn remote_container_bootstrap_accepts_podman_probe_path() {
+        let path = require_remote_container_podman_path(
+            "dev@example.host",
+            true,
+            " /usr/bin/podman \n",
+            "",
+        )
+        .expect("podman path should resolve");
+        assert_eq!(path, "/usr/bin/podman");
     }
 
     #[test]
