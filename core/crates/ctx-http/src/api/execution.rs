@@ -21,6 +21,7 @@ use crate::logs;
 use crate::settings::ExecutionMode;
 
 use super::errors::ApiErrorResp;
+use super::shared::map_effective_execution_settings_error;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct ExecutionLaunchStartReq {
@@ -228,16 +229,9 @@ async fn resolve_workspace_execution_settings(
         ))?;
 
     let execution_settings =
-        execution_effective::effective_execution_settings(state.as_ref(), workspace_id)
+        execution_effective::effective_execution_settings_classified(state.as_ref(), workspace_id)
             .await
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: logs::redact_sensitive(&e.to_string()),
-                    }),
-                )
-            })?;
+            .map_err(map_effective_execution_settings_error)?;
 
     Ok((workspace, execution_settings))
 }

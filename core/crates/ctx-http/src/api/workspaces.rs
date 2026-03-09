@@ -11,7 +11,9 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 
 use super::errors::ApiErrorResp;
-use super::shared::{load_and_cache_workspace_files, FileCompletionsQuery};
+use super::shared::{
+    load_and_cache_workspace_files, map_effective_execution_settings_error, FileCompletionsQuery,
+};
 use crate::attachments;
 use crate::completions;
 use crate::daemon::AppState;
@@ -273,16 +275,9 @@ pub(super) async fn ensure_workspace_harness_container(
         ))?;
 
     let execution_settings =
-        execution_effective::effective_execution_settings(state.as_ref(), workspace_id)
+        execution_effective::effective_execution_settings_classified(state.as_ref(), workspace_id)
             .await
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: logs::redact_sensitive(&e.to_string()),
-                    }),
-                )
-            })?;
+            .map_err(map_effective_execution_settings_error)?;
 
     state
         .execution

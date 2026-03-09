@@ -1594,6 +1594,9 @@ mod tests {
     #[tokio::test]
     async fn runtime_prewarm_reuses_background_all_job_and_waits_for_builder_tail_when_runtime_joins(
     ) {
+        let _serial = env_var_test_lock()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
         let data_dir = tempfile::tempdir().expect("tempdir");
         let _podman = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "1");
         let ops = Arc::new(BlockingWarmupOperations::default());
@@ -1652,6 +1655,9 @@ mod tests {
 
     #[tokio::test]
     async fn builder_prewarm_reuses_background_all_job() {
+        let _serial = env_var_test_lock()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
         let data_dir = tempfile::tempdir().expect("tempdir");
         let _podman = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "1");
         let ops = Arc::new(BlockingWarmupOperations::default());
@@ -1834,6 +1840,9 @@ mod tests {
 
     #[tokio::test]
     async fn builder_only_prewarm_skips_runtime_warmup_and_runtime_availability() {
+        let _serial = env_var_test_lock()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
         let _podman = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "0");
         let data_dir = tempfile::tempdir().expect("tempdir");
         let ops = Arc::new(BlockingWarmupOperations::default());

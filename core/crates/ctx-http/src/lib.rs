@@ -695,7 +695,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execution_launch_start_returns_internal_server_error_when_execution_settings_fail() {
+    async fn execution_launch_start_returns_bad_request_when_execution_settings_fail() {
         let git_repo = setup_git_repo().await;
         let home = tempfile::tempdir().unwrap();
         std::env::set_var("HOME", home.path());
@@ -735,7 +735,7 @@ mod tests {
             ))
             .unwrap();
         let res = app.clone().oneshot(req).await.unwrap();
-        assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
         let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
         let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert!(value["error"]
@@ -745,8 +745,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ensure_workspace_container_returns_internal_server_error_when_execution_settings_fail()
-    {
+    async fn ensure_workspace_container_returns_bad_request_when_execution_settings_fail() {
         let git_repo = setup_git_repo().await;
         let home = tempfile::tempdir().unwrap();
         std::env::set_var("HOME", home.path());
@@ -783,7 +782,7 @@ mod tests {
             .body(Body::empty())
             .unwrap();
         let res = app.clone().oneshot(req).await.unwrap();
-        assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
         let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
         let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert!(value["error"]

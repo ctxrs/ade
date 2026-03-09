@@ -4,15 +4,18 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::http::StatusCode;
+use axum::Json;
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{Session, Worktree};
 use ctx_fs::git::{list_tracked_files, list_untracked_files};
 use serde::{Deserialize, Serialize};
 
+use super::errors::ApiErrorResp;
 use crate::container_fs::is_container_path;
 use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::harness_runtime;
+use crate::logs;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 
 #[derive(Debug, Serialize)]
@@ -27,6 +30,25 @@ pub(super) fn env_target_for_worktree(wt: Option<&Worktree>) -> String {
         Some(_) => "worktree".to_string(),
         None => "local".to_string(),
     }
+}
+
+pub(super) fn map_effective_execution_settings_error(
+    err: execution_effective::EffectiveExecutionSettingsError,
+) -> (StatusCode, Json<ApiErrorResp>) {
+    let (status, error) = match err {
+        execution_effective::EffectiveExecutionSettingsError::InvalidWorkspaceOverride(err) => {
+            (StatusCode::BAD_REQUEST, err)
+        }
+        execution_effective::EffectiveExecutionSettingsError::Internal(err) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, err)
+        }
+    };
+    (
+        status,
+        Json(ApiErrorResp {
+            error: logs::redact_sensitive(&error.to_string()),
+        }),
+    )
 }
 
 #[derive(Debug, Deserialize, Default)]
