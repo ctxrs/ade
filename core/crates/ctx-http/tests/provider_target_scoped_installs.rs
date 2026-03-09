@@ -478,6 +478,681 @@ async fn provider_status_http_keeps_host_and_container_installs_independent() {
 }
 
 #[tokio::test]
+async fn acp_container_install_surfaces_bridge_as_installable_prerequisite() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        HashMap::new(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+
+    state.providers.statuses.lock().await.insert(
+        "kimi".to_string(),
+        ProviderStatus {
+            provider_id: "kimi".to_string(),
+            installed: false,
+            detected_path: None,
+            version: None,
+            capabilities: None,
+            health: ProviderHealth::Missing,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+        },
+    );
+
+    let (provider_status, provider_body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::GET,
+        "/api/providers/kimi?target=container",
+        None,
+    )
+    .await;
+    assert_eq!(
+        provider_status,
+        StatusCode::OK,
+        "provider status failed: {provider_body:#?}"
+    );
+    assert_eq!(
+        provider_body
+            .pointer("/details/install_supported")
+            .and_then(serde_json::Value::as_str),
+        Some("true"),
+        "container ACP installs should remain supported when the bridge is installable: {provider_body:#?}"
+    );
+    assert!(
+        provider_body
+            .pointer("/details/install_blocked_code")
+            .is_none(),
+        "installable bridge prerequisites must not be surfaced as blocked: {provider_body:#?}"
+    );
+
+    let (providers_status, providers_body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::GET,
+        "/api/providers?target=container",
+        None,
+    )
+    .await;
+    assert_eq!(
+        providers_status,
+        StatusCode::OK,
+        "providers list failed: {providers_body:#?}"
+    );
+    let kimi_status = providers_body
+        .as_array()
+        .and_then(|providers| {
+            providers.iter().find(|provider| {
+                provider
+                    .get("provider_id")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("kimi")
+            })
+        })
+        .cloned()
+        .expect("kimi must appear in provider list");
+    assert_eq!(
+        kimi_status
+            .pointer("/details/install_supported")
+            .and_then(serde_json::Value::as_str),
+        Some("true"),
+        "providers list should advertise installable ACP container targets: {kimi_status:#?}"
+    );
+    assert!(
+        kimi_status.pointer("/details/install_blocked_code").is_none(),
+        "providers list must not mark installable ACP bridge prerequisites as blocked: {kimi_status:#?}"
+    );
+}
+
+#[tokio::test]
+async fn acp_container_install_is_blocked_before_start_when_bridge_runtime_is_invalid() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        HashMap::new(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+
+    save_invalid_container_bridge_runtime(data_dir.path()).await;
+
+    state.providers.statuses.lock().await.insert(
+        "kimi".to_string(),
+        ProviderStatus {
+            provider_id: "kimi".to_string(),
+            installed: false,
+            detected_path: None,
+            version: None,
+            capabilities: None,
+            health: ProviderHealth::Missing,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+        },
+    );
+
+    let (provider_status, provider_body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::GET,
+        "/api/providers/kimi?target=container",
+        None,
+    )
+    .await;
+    assert_eq!(
+        provider_status,
+        StatusCode::OK,
+        "provider status failed: {provider_body:#?}"
+    );
+    assert_eq!(
+        provider_body
+            .pointer("/details/install_supported")
+            .and_then(serde_json::Value::as_str),
+        Some("false"),
+        "invalid bridge config must suppress container ACP installs: {provider_body:#?}"
+    );
+    assert_eq!(
+        provider_body
+            .pointer("/details/install_blocked_code")
+            .and_then(serde_json::Value::as_str),
+        Some("acp_bridge_invalid"),
+        "expected explicit install blocker code: {provider_body:#?}"
+    );
+    assert_eq!(
+        provider_body
+            .pointer("/details/error_code")
+            .and_then(serde_json::Value::as_str),
+        Some("acp_bridge_invalid"),
+        "provider status should preserve invalid bridge classification: {provider_body:#?}"
+    );
+    assert!(
+        provider_body
+            .get("diagnostics")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|diagnostics| diagnostics.iter().any(|value| {
+                value
+                    .as_str()
+                    .is_some_and(|text| text.contains("invalid runtime command for acp-crp-bridge"))
+            })),
+        "provider diagnostics should describe the invalid bridge runtime: {provider_body:#?}"
+    );
+
+    let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::POST,
+        "/api/providers/kimi/install?target=container",
+        None,
+    )
+    .await;
+    assert_eq!(
+        install_status,
+        StatusCode::BAD_REQUEST,
+        "install should fail before start when bridge is invalid: {install_body:#?}"
+    );
+    assert_eq!(
+        install_body.get("code").and_then(serde_json::Value::as_str),
+        Some("acp_bridge_invalid"),
+        "expected explicit install failure code: {install_body:#?}"
+    );
+    assert!(
+        install_body
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|value| value.contains("ACP bridge runtime")),
+        "expected explicit bridge contract error: {install_body:#?}"
+    );
+    assert!(
+        state
+            .find_running_install("kimi", Some(ctx_http::installs::InstallTarget::Container))
+            .await
+            .is_none(),
+        "no install should start when bridge contract is invalid"
+    );
+
+    let cfg = load_agent_server_config(data_dir.path())
+        .await
+        .expect("load agent server config");
+    assert!(
+        cfg.managed_provider_targets.get("kimi").is_none(),
+        "failed preflight must not write partial provider install state"
+    );
+    assert!(
+        cfg.managed_install_targets.get("kimi").is_none(),
+        "failed preflight must not write partial install metadata"
+    );
+}
+
+#[tokio::test]
+async fn acp_container_install_happy_path_installs_bridge_prerequisite_and_keeps_registry_entries()
+{
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let fixture_dir = data_dir.path().join("fixtures");
+    std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
+    let bridge_fixture = fixture_dir.join("acp-crp-bridge");
+    let provider_fixture = fixture_dir.join("kimi-acp");
+    write_executable(&bridge_fixture, "#!/bin/sh\nexit 0\n");
+    write_executable(&provider_fixture, "#!/bin/sh\nexit 0\n");
+    save_matrix_fixture(
+        data_dir.path(),
+        &provider_fixture_matrix(file_url(&bridge_fixture), file_url(&provider_fixture)),
+    )
+    .await;
+
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        HashMap::new(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+
+    let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::POST,
+        "/api/providers/kimi/install?target=container",
+        None,
+    )
+    .await;
+    assert_eq!(
+        install_status,
+        StatusCode::OK,
+        "install should start successfully: {install_body:#?}"
+    );
+    let install_id = install_body
+        .get("install_id")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|raw| raw.parse::<InstallId>().ok())
+        .expect("install id");
+
+    let install_info = wait_for_install_completion(&state, install_id).await;
+    assert!(
+        matches!(install_info.state, InstallStateKind::Succeeded),
+        "kimi install should succeed with bridge prerequisite: {install_info:#?}"
+    );
+
+    let installs = state.providers.installs.lock().await;
+    let bridge_install = installs
+        .iter()
+        .find_map(|(id, install)| {
+            (install.provider_id == "acp-crp-bridge"
+                && install.target == Some(InstallTarget::Container))
+            .then(|| install.info(*id))
+        })
+        .expect("bridge prerequisite install entry");
+    assert!(
+        matches!(bridge_install.state, InstallStateKind::Succeeded),
+        "bridge prerequisite install should be tracked and succeed: {bridge_install:#?}"
+    );
+    drop(installs);
+
+    let cfg = load_agent_server_config(data_dir.path())
+        .await
+        .expect("load agent server config");
+    assert!(
+        cfg.managed_provider_targets
+            .get("acp-crp-bridge")
+            .and_then(|targets| targets.get("container"))
+            .is_some(),
+        "bridge target-scoped runtime command should remain registered"
+    );
+    assert!(
+        cfg.managed_provider_targets
+            .get("kimi")
+            .and_then(|targets| targets.get("container"))
+            .is_some(),
+        "provider target-scoped runtime command should remain registered"
+    );
+    assert!(
+        cfg.managed_install_targets
+            .get("acp-crp-bridge")
+            .and_then(|targets| targets.get("container"))
+            .is_some(),
+        "bridge target-scoped install metadata should remain registered"
+    );
+    assert!(
+        cfg.managed_install_targets
+            .get("kimi")
+            .and_then(|targets| targets.get("container"))
+            .is_some(),
+        "provider target-scoped install metadata should remain registered"
+    );
+
+    let reloaded_stores = common::setup_store(data_dir.path()).await;
+    let reloaded_state = common::build_state(
+        data_dir.path().to_path_buf(),
+        reloaded_stores,
+        HashMap::new(),
+        "http://127.0.0.1:0",
+    );
+    let reloaded_app = common::router(reloaded_state);
+
+    let (provider_status, provider_body): (StatusCode, serde_json::Value) = common::json_request(
+        &reloaded_app,
+        axum::http::Method::GET,
+        "/api/providers/kimi?target=container",
+        None,
+    )
+    .await;
+    assert_eq!(
+        provider_status,
+        StatusCode::OK,
+        "provider status failed after install: {provider_body:#?}"
+    );
+    assert_eq!(
+        provider_body
+            .get("installed")
+            .and_then(serde_json::Value::as_bool),
+        Some(true),
+        "provider should be installed after happy-path bridge prerequisite install: {provider_body:#?}"
+    );
+    assert_eq!(
+        provider_body
+            .pointer("/details/managed_target")
+            .and_then(serde_json::Value::as_str),
+        Some("container"),
+        "provider should keep its container managed-target record: {provider_body:#?}"
+    );
+}
+
+#[tokio::test]
+async fn acp_container_install_parent_polling_stays_bounded_while_bridge_prerequisite_runs() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let fixture_dir = data_dir.path().join("fixtures");
+    std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
+    let bridge_fixture = fixture_dir.join("acp-crp-bridge");
+    let provider_fixture = fixture_dir.join("kimi-acp");
+    write_executable(&bridge_fixture, "#!/bin/sh\nsleep 1.6\nexit 0\n");
+    write_executable(&provider_fixture, "#!/bin/sh\nexit 0\n");
+    let download_server = spawn_download_fixture_server(vec![
+        (
+            "bridge",
+            std::fs::read(&bridge_fixture).expect("read bridge fixture"),
+            1_600,
+        ),
+        (
+            "provider",
+            std::fs::read(&provider_fixture).expect("read provider fixture"),
+            0,
+        ),
+    ])
+    .await;
+    save_matrix_fixture(
+        data_dir.path(),
+        &provider_fixture_matrix(
+            fixture_download_url(&download_server, "bridge"),
+            fixture_download_url(&download_server, "provider"),
+        ),
+    )
+    .await;
+
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        HashMap::new(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+
+    let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::POST,
+        "/api/providers/kimi/install?target=container",
+        None,
+    )
+    .await;
+    assert_eq!(
+        install_status,
+        StatusCode::OK,
+        "kimi install should start successfully: {install_body:#?}"
+    );
+    let install_id = install_body
+        .get("install_id")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|raw| raw.parse::<InstallId>().ok())
+        .expect("install id");
+
+    tokio::time::sleep(Duration::from_millis(950)).await;
+    let polled_info = get_install_info_api(&app, install_id).await;
+    assert!(
+        matches!(polled_info.state, InstallStateKind::Running),
+        "install should still be running while the bridge prerequisite is active: {polled_info:#?}"
+    );
+    assert_eq!(
+        polled_info
+            .last_event
+            .as_ref()
+            .map(|event| event.stage.as_str()),
+        Some("start"),
+        "parent poll surface should keep prerequisite progress visible without copying the child high-water stage: {polled_info:#?}"
+    );
+    assert_eq!(
+        compute_polled_install_pct(&polled_info, None),
+        Some(2),
+        "workbench/settings polling should observe bounded parent progress while the bridge prerequisite runs: {polled_info:#?}"
+    );
+    assert!(
+        polled_info
+            .last_event
+            .as_ref()
+            .is_some_and(|event| event.message.contains("Prerequisite acp-crp-bridge")),
+        "parent poll should still expose prerequisite bridge activity: {polled_info:#?}"
+    );
+
+    let parent_events = get_install_events_api(&app, install_id).await;
+    assert!(
+        parent_events.iter().any(|event| {
+            event.message.contains("Prerequisite acp-crp-bridge")
+                && event.stage == "start"
+                && event.message.contains("stage")
+        }),
+        "parent install events should preserve prerequisite visibility via the real API surface: {parent_events:#?}"
+    );
+    assert!(
+        parent_events
+            .iter()
+            .filter(|event| event.message.contains("Prerequisite acp-crp-bridge"))
+            .all(|event| event.stage == "start"),
+        "mirrored prerequisite events must stay on the bounded parent stage instead of copying child high-water stages: {parent_events:#?}"
+    );
+
+    let install_info = wait_for_install_completion(&state, install_id).await;
+    assert!(
+        matches!(install_info.state, InstallStateKind::Succeeded),
+        "kimi install should succeed after the bridge prerequisite finishes: {install_info:#?}"
+    );
+}
+
+#[tokio::test]
+async fn acp_container_install_joins_existing_bridge_install_and_surfaces_short_prerequisites_to_polling(
+) {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let fixture_dir = data_dir.path().join("fixtures");
+    std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
+    let bridge_fixture = fixture_dir.join("acp-crp-bridge");
+    let provider_fixture = fixture_dir.join("kimi-acp");
+    write_executable(&bridge_fixture, "#!/bin/sh\nsleep 0.2\nexit 0\n");
+    write_executable(&provider_fixture, "#!/bin/sh\nexit 0\n");
+    let download_server = spawn_download_fixture_server(vec![
+        (
+            "bridge",
+            std::fs::read(&bridge_fixture).expect("read bridge fixture"),
+            200,
+        ),
+        (
+            "provider",
+            std::fs::read(&provider_fixture).expect("read provider fixture"),
+            3_000,
+        ),
+    ])
+    .await;
+    save_matrix_fixture(
+        data_dir.path(),
+        &provider_fixture_matrix(
+            fixture_download_url(&download_server, "bridge"),
+            fixture_download_url(&download_server, "provider"),
+        ),
+    )
+    .await;
+
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        HashMap::new(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+
+    let (bridge_status, bridge_body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::POST,
+        "/api/providers/acp-crp-bridge/install?target=container",
+        None,
+    )
+    .await;
+    assert_eq!(
+        bridge_status,
+        StatusCode::OK,
+        "bridge install should start successfully: {bridge_body:#?}"
+    );
+    let bridge_install_id = bridge_body
+        .get("install_id")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|raw| raw.parse::<InstallId>().ok())
+        .expect("bridge install id");
+    let bridge_poll_deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let bridge_info = get_install_info_api(&app, bridge_install_id).await;
+        if bridge_info.last_event.is_some() {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < bridge_poll_deadline,
+            "timed out waiting for bridge install to expose running progress: {bridge_info:#?}"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::POST,
+        "/api/providers/kimi/install?target=container",
+        None,
+    )
+    .await;
+    assert_eq!(
+        install_status,
+        StatusCode::OK,
+        "kimi install should join the running bridge prerequisite: {install_body:#?}"
+    );
+    let install_id = install_body
+        .get("install_id")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|raw| raw.parse::<InstallId>().ok())
+        .expect("install id");
+
+    tokio::time::sleep(Duration::from_millis(950)).await;
+    let reader_a = app.clone();
+    let reader_b = app.clone();
+    let (polled_info_a, polled_info_b) = tokio::join!(
+        get_install_info_api(&reader_a, install_id),
+        get_install_info_api(&reader_b, install_id)
+    );
+    for polled_info in [&polled_info_a, &polled_info_b] {
+        assert!(
+            matches!(polled_info.state, InstallStateKind::Running),
+            "install should still be running on the first polling tick: {polled_info:#?}"
+        );
+        assert_eq!(
+            polled_info
+                .last_event
+                .as_ref()
+                .map(|event| event.stage.as_str()),
+            Some("start"),
+            "short prerequisite installs must still leave a bounded visible parent stage on the first poll: {polled_info:#?}"
+        );
+        assert_eq!(
+            compute_polled_install_pct(polled_info, None),
+            Some(2),
+            "short bridge prerequisites should remain visible across the shipped polling cadence without overstating progress: {polled_info:#?}"
+        );
+        assert!(
+            polled_info
+                .last_event
+                .as_ref()
+                .is_some_and(|event| {
+                    event.message.contains(&format!(
+                        "Prerequisite acp-crp-bridge (install {bridge_install_id}"
+                    ))
+                }),
+            "the first poll should still be showing prerequisite-derived progress, not a rewritten parent event: {polled_info:#?}"
+        );
+    }
+    assert_eq!(
+        polled_info_a
+            .last_event
+            .as_ref()
+            .map(|event| (event.stage.clone(), event.message.clone())),
+        polled_info_b
+            .last_event
+            .as_ref()
+            .map(|event| (event.stage.clone(), event.message.clone())),
+        "concurrent pollers should observe the same prerequisite-derived first visible state: {polled_info_a:#?} vs {polled_info_b:#?}"
+    );
+
+    let parent_events = get_install_events_api(&app, install_id).await;
+    assert!(
+        parent_events.iter().any(|event| {
+            event.message.contains(&format!(
+                "Prerequisite acp-crp-bridge (install {bridge_install_id}"
+            )) && event.stage == "start"
+        }),
+        "parent install events should retain short prerequisite visibility on the real API surface: {parent_events:#?}"
+    );
+
+    let parent_owned_poll_info = {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            let info = get_install_info_api(&app, install_id).await;
+            if info
+                .last_event
+                .as_ref()
+                .is_some_and(|event| !event.message.starts_with("Prerequisite "))
+            {
+                break info;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "timed out waiting for parent-owned running progress on the poll surface: {info:#?}"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    };
+    assert!(
+        matches!(parent_owned_poll_info.state, InstallStateKind::Running),
+        "the parent poll surface should switch off prerequisite-derived progress before install completion: {parent_owned_poll_info:#?}"
+    );
+    assert!(
+        parent_owned_poll_info
+            .last_event
+            .as_ref()
+            .is_some_and(|event| !event.message.starts_with("Prerequisite ")),
+        "once the prerequisite override window expires, polling should surface the parent install's own work: {parent_owned_poll_info:#?}"
+    );
+    assert!(
+        matches!(
+            parent_owned_poll_info
+                .last_event
+                .as_ref()
+                .map(|event| event.stage.as_str()),
+            Some("start") | Some("download")
+        ),
+        "the next poll after the prerequisite window should expose the parent install's own early running stage instead of staying on prerequisite progress: {parent_owned_poll_info:#?}"
+    );
+
+    let install_info = wait_for_install_completion(&state, install_id).await;
+    assert!(
+        matches!(install_info.state, InstallStateKind::Succeeded),
+        "kimi install should succeed after joining the bridge prerequisite: {install_info:#?}"
+    );
+    let final_parent_events = get_install_events_api(&app, install_id).await;
+    assert!(
+        final_parent_events.iter().any(|event| {
+            !event.message.starts_with("Prerequisite ") && event.stage == "download"
+        }),
+        "the parent install event history should still record the parent-owned download stage after the prerequisite handoff: {final_parent_events:#?}"
+    );
+
+    let bridge_info = state
+        .get_install_info(bridge_install_id)
+        .await
+        .expect("missing bridge install info");
+    assert!(
+        matches!(bridge_info.state, InstallStateKind::Succeeded),
+        "bridge prerequisite install should remain tracked as succeeded: {bridge_info:#?}"
+    );
+
+    let installs = state.providers.installs.lock().await;
+    let bridge_install_ids = installs
+        .iter()
+        .filter_map(|(id, install)| {
+            (install.provider_id == "acp-crp-bridge"
+                && install.target == Some(InstallTarget::Container))
+            .then_some(*id)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        bridge_install_ids,
+        vec![bridge_install_id],
+        "joining ACP installs must reuse the same tracked bridge install id"
+    );
+}
+
+#[tokio::test]
 #[ignore]
 async fn provider_target_scoped_installs_work_for_host_and_container_workspaces() {
     if std::env::var("CTX_E2E_PODMAN").ok().as_deref() != Some("1") {

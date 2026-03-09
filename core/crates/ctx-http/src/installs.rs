@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -108,6 +108,9 @@ pub struct InstallState {
     pub error: Option<String>,
     pub error_code: Option<InstallErrorCode>,
     pub events: VecDeque<InstallProgressEvent>,
+    pub mirrors: HashSet<InstallId>,
+    pub info_event_override: Option<InstallProgressEvent>,
+    pub info_event_override_until: Option<DateTime<Utc>>,
     pub tx: broadcast::Sender<InstallProgressEvent>,
 }
 
@@ -123,11 +126,53 @@ impl InstallState {
             error: None,
             error_code: None,
             events: VecDeque::with_capacity(256),
+            mirrors: HashSet::new(),
+            info_event_override: None,
+            info_event_override_until: None,
             tx,
         }
     }
 
     pub fn info(&self, install_id: InstallId) -> InstallInfo {
+        self.build_info(install_id, self.events.back().cloned())
+    }
+
+    pub fn polling_info(&self, install_id: InstallId) -> InstallInfo {
+        let current_last_event = self.events.back().cloned();
+        let override_visible = matches!(self.state, InstallStateKind::Running)
+            && self
+                .info_event_override_until
+                .is_some_and(|visible_until| Utc::now() <= visible_until)
+            && self.should_expose_info_event_override(current_last_event.as_ref());
+        let last_event = if override_visible {
+            self.info_event_override
+                .clone()
+                .or_else(|| current_last_event.clone())
+        } else {
+            current_last_event
+        };
+        self.build_info(install_id, last_event)
+    }
+
+    fn should_expose_info_event_override(
+        &self,
+        current_last_event: Option<&InstallProgressEvent>,
+    ) -> bool {
+        if self.info_event_override.is_none() {
+            return false;
+        }
+        let Some(current_last_event) = current_last_event else {
+            return true;
+        };
+        current_last_event.message.starts_with("Prerequisite ")
+            || matches!(current_last_event.stage.as_str(), "start" | "prerequisites")
+    }
+
+    fn build_info(
+        &self,
+        install_id: InstallId,
+        last_event: Option<InstallProgressEvent>,
+    ) -> InstallInfo {
         InstallInfo {
             install_id,
             provider_id: self.provider_id.clone(),
@@ -137,7 +182,7 @@ impl InstallState {
             finished_at: self.finished_at,
             error: self.error.clone(),
             error_code: self.error_code,
-            last_event: self.events.back().cloned(),
+            last_event,
         }
     }
 }

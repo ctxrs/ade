@@ -1058,13 +1058,13 @@ impl AppState {
         stats
     }
 
-    pub async fn find_running_install(
+    fn find_running_install_locked(
         &self,
+        installs: &mut HashMap<InstallId, InstallState>,
         provider_id: &str,
         target: Option<InstallTarget>,
     ) -> Option<InstallId> {
-        let mut map = self.providers.installs.lock().await;
-        map.iter_mut().find_map(|(id, st)| {
+        installs.iter_mut().find_map(|(id, st)| {
             let _ = self.reconcile_stale_running_install_locked(*id, st);
             if st.provider_id == provider_id
                 && st.target == target
@@ -1075,6 +1075,54 @@ impl AppState {
                 None
             }
         })
+    }
+
+    pub async fn find_running_install(
+        &self,
+        provider_id: &str,
+        target: Option<InstallTarget>,
+    ) -> Option<InstallId> {
+        let mut map = self.providers.installs.lock().await;
+        self.find_running_install_locked(&mut map, provider_id, target)
+    }
+
+    fn push_install_event_locked(st: &mut InstallState, event: InstallProgressEvent) {
+        if st.events.len() >= 256 {
+            st.events.pop_front();
+        }
+        st.events.push_back(event.clone());
+        let _ = st.tx.send(event);
+    }
+
+    fn set_install_info_event_override_locked(st: &mut InstallState, event: &InstallProgressEvent) {
+        st.info_event_override = Some(event.clone());
+        st.info_event_override_until =
+            Some(event.at + chrono::Duration::milliseconds(PREREQUISITE_PROGRESS_VISIBILITY_MS));
+    }
+
+    fn mirrored_install_event(
+        source_install_id: InstallId,
+        source_provider_id: &str,
+        source_event: &InstallProgressEvent,
+        mirror_install_id: InstallId,
+        mirror_state: &InstallState,
+    ) -> InstallProgressEvent {
+        InstallProgressEvent {
+            install_id: mirror_install_id,
+            provider_id: mirror_state.provider_id.clone(),
+            target: mirror_state.target,
+            at: chrono::Utc::now(),
+            stage: PREREQUISITE_PROGRESS_STAGE_FLOOR.to_string(),
+            message: format!(
+                "Prerequisite {source_provider_id} (install {source_install_id}, stage {}): {}",
+                source_event.stage, source_event.message
+            ),
+            level: source_event.level,
+            bytes: None,
+            total_bytes: None,
+            attempt: source_event.attempt,
+            error_code: source_event.error_code,
+        }
     }
 
     pub async fn start_install(
@@ -1130,7 +1178,7 @@ impl AppState {
         let mut map = self.providers.installs.lock().await;
         let st = map.get_mut(&install_id)?;
         let _ = self.reconcile_stale_running_install_locked(install_id, st);
-        Some(st.info(install_id))
+        Some(st.polling_info(install_id))
     }
 
     pub async fn get_install_events(
@@ -1192,6 +1240,8 @@ impl AppState {
             st.error = None;
             st.error_code = None;
         }
+        st.info_event_override = None;
+        st.info_event_override_until = None;
         st.finished_at = Some(chrono::Utc::now());
         let provider_id = st.provider_id.clone();
         let target = st.target;
@@ -1251,6 +1301,8 @@ impl AppState {
         st.state = InstallStateKind::Cancelled;
         st.error = Some("Install canceled by user".to_string());
         st.error_code = Some(InstallErrorCode::Cancelled);
+        st.info_event_override = None;
+        st.info_event_override_until = None;
         st.finished_at = Some(chrono::Utc::now());
 
         let event = InstallProgressEvent {
