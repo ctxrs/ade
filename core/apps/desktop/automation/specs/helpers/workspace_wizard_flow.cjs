@@ -1748,6 +1748,12 @@ const assertConnectedLocalAndListening = async () => {
 };
 
 const runWizardScenario = async (scenario) => {
+  if (Object.prototype.hasOwnProperty.call(scenario, "downloadHarnesses")) {
+    throw new Error(
+      "runWizardScenario(shared helper) expects scenario.harnessDownloads; " +
+      "scenario.downloadHarnesses is only supported by workspace-wizard.spec.cjs's local helper",
+    );
+  }
   // Use a unique query param to force a real navigation (avoid SPA state re-use).
   await browser.url(`tauri://localhost/workspace-setup?e2e=${Date.now()}`);
   await waitForTauri();
