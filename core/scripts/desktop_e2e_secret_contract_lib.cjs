@@ -29,15 +29,7 @@ const defaultReportPath = path.join(
   "desktop",
   "automation",
   "docs",
-  "ci_preflight_redaction_contract.md",
-);
-const defaultAllowlistPath = path.join(
-  coreRoot,
-  "apps",
-  "desktop",
-  "automation",
-  "fixtures",
-  "artifact_redaction_allowlist.tsv",
+  "ci_preflight_secret_contract.md",
 );
 const defaultOpenRouterBaseUrl = "https://openrouter.ai/api/v1";
 
@@ -861,13 +853,6 @@ const resolveBreakMatrixDynamic = ({ caseIds = [], env = process.env }) => {
 
 const uniq = (values) => Array.from(new Set(values.filter(Boolean)));
 
-const collectSecretEnvNames = (requirements) =>
-  uniq(
-    (Array.isArray(requirements) ? requirements : [])
-      .map((requirement) => normalizeText(requirement?.envName))
-      .filter((envName) => envCarriesSecretPayload(envName)),
-  );
-
 const resolveSuiteContract = (suiteId, options = {}) => {
   const platform = normalizeText(options.platform || process.platform);
   const env = options.env || process.env;
@@ -938,8 +923,6 @@ const resolveSuiteContract = (suiteId, options = {}) => {
         description: "Preflight for desktop provider-auth matrix orchestration before any expensive WDIO bootstrap.",
         requirements,
         optionalRequirements,
-        artifactRoots: ["core/apps/desktop/automation/artifacts/provider-auth-matrix/"],
-        redactionEnvNames: collectSecretEnvNames([...requirements, ...optionalRequirements]),
         metadata: {
           lane,
           includeDeferred,
@@ -977,8 +960,6 @@ const resolveSuiteContract = (suiteId, options = {}) => {
             defaultValue: defaultOpenRouterBaseUrl,
           }),
         ],
-        artifactRoots: [],
-        redactionEnvNames: ["OPENROUTER_API_KEY"],
         metadata: {},
         notes: [],
         env,
@@ -1002,8 +983,6 @@ const resolveSuiteContract = (suiteId, options = {}) => {
             defaultValue: defaultOpenRouterBaseUrl,
           }),
         ],
-        artifactRoots: [],
-        redactionEnvNames: ["OPENROUTER_API_KEY"],
         metadata: {},
         notes: [],
         env,
@@ -1019,8 +998,6 @@ const resolveSuiteContract = (suiteId, options = {}) => {
           buildRequirement("CTX_E2E_GEMINI_API_KEY"),
         ],
         optionalRequirements: [],
-        artifactRoots: [],
-        redactionEnvNames: ["CTX_E2E_CURSOR_API_KEY", "CTX_E2E_GEMINI_API_KEY"],
         metadata: {},
         notes: [],
         env,
@@ -1063,8 +1040,6 @@ const resolveSuiteContract = (suiteId, options = {}) => {
         description: "Targeted desktop break-matrix coverage for auth/runtime regression contracts.",
         requirements,
         optionalRequirements,
-        artifactRoots: ["core/apps/desktop/automation/artifacts/macos-break-matrix/"],
-        redactionEnvNames: collectSecretEnvNames([...requirements, ...optionalRequirements]),
         metadata: {
           selectedCaseIds: dynamic.selectedCaseIds,
         },
@@ -1086,8 +1061,6 @@ const resolveSuiteContract = (suiteId, options = {}) => {
           }),
         ],
         optionalRequirements: [],
-        artifactRoots: [],
-        redactionEnvNames: ["CN_API_KEY"],
         metadata: {},
         notes: [
           "This auth contract intentionally excludes CTX_DESKTOP_UPDATER_PUBKEY because it is required config, not a secret.",
@@ -1125,8 +1098,6 @@ const resolveSuiteContract = (suiteId, options = {}) => {
           description: "Remote fixture lane that provisions live hosts before desktop remote coverage runs.",
           requirements,
           optionalRequirements,
-          artifactRoots: [],
-          redactionEnvNames: collectSecretEnvNames([...requirements, ...optionalRequirements]),
           metadata: {
             remoteProvider,
           },
@@ -1234,7 +1205,7 @@ const renderContractReport = () => {
     }
   }
   const lines = [];
-  lines.push("# CI Preflight + Artifact Redaction Contract");
+  lines.push("# CI Preflight Secret Contract");
   lines.push("");
   lines.push("Generated from `core/scripts/desktop_e2e_secret_contract.cjs`. Do not hand-edit this file.");
   lines.push("");
@@ -1249,11 +1220,11 @@ const renderContractReport = () => {
   lines.push("");
   lines.push("## Suites");
   lines.push("");
-  lines.push("| Suite | Required | Optional | Artifact Roots | Notes |");
-  lines.push("| --- | --- | --- | --- | --- |");
+  lines.push("| Suite | Required | Optional | Notes |");
+  lines.push("| --- | --- | --- | --- |");
   for (const suite of suites) {
     const notes = suite.notes.length > 0 ? suite.notes.join("<br>") : "";
-    lines.push(`| \`${suite.id}\` | ${renderRequirementList(suite.requirements)} | ${renderRequirementList(suite.optionalRequirements)} | ${suite.artifactRoots.join("<br>") || "None"} | ${notes || " "} |`);
+    lines.push(`| \`${suite.id}\` | ${renderRequirementList(suite.requirements)} | ${renderRequirementList(suite.optionalRequirements)} | ${notes || " "} |`);
   }
   lines.push("");
   lines.push("## Dynamic Sources");
@@ -1269,7 +1240,8 @@ const renderContractReport = () => {
   lines.push("");
   lines.push("- Preflight is strict by default.");
   lines.push("- Local non-strict runs must opt in explicitly with `--allow-missing` (or the script env wrapper that passes it through).");
-  lines.push("- Redaction scanning uses suite-specific secret env names plus named `KEY=value` and `Authorization: Bearer ...` leak patterns.");
+  lines.push("- Private GitHub Actions diagnostic artifacts are not redaction-scanned at this time.");
+  lines.push("- Revisit private artifact scanning if GitHub contributor or artifact access broadens beyond the current trusted-maintainer setup.");
   lines.push("");
   return `${lines.join("\n")}\n`;
 };
@@ -1278,7 +1250,6 @@ module.exports = {
   buildRequirement,
   coreRoot,
   repoRoot,
-  defaultAllowlistPath,
   defaultOpenRouterBaseUrl,
   defaultReportPath,
   envCarriesSecretPayload,

@@ -15,7 +15,7 @@ const run = (args) =>
 
 test("contract report writes and then validates cleanly", () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-desktop-e2e-contract-"));
-  const reportPath = path.join(tempDir, "ci_preflight_redaction_contract.md");
+  const reportPath = path.join(tempDir, "ci_preflight_secret_contract.md");
 
   const writeResult = run(["--report", reportPath]);
   assert.equal(writeResult.status, 0, `stdout=${writeResult.stdout}\nstderr=${writeResult.stderr}`);
@@ -33,7 +33,7 @@ test("contract report writes and then validates cleanly", () => {
 
 test("contract report check fails when file content is stale", () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-desktop-e2e-contract-stale-"));
-  const reportPath = path.join(tempDir, "ci_preflight_redaction_contract.md");
+  const reportPath = path.join(tempDir, "ci_preflight_secret_contract.md");
   fs.writeFileSync(reportPath, "# stale\n", "utf8");
 
   const result = run(["--check-report", reportPath]);
