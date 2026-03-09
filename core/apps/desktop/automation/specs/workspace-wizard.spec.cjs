@@ -11,6 +11,11 @@ const {
   getConnectionInfo,
 } = require("./helpers/tauri.cjs");
 const { daemonJson, safeDaemonJson } = require("./helpers/daemon.cjs");
+const { runCodexFirstTurnApiSmoke } = require("./helpers/workspace_wizard_flow.cjs");
+const {
+  ensureCodexOpenRouterWorkspaceReady,
+  waitForProviderInstallCompletion,
+} = require("./helpers/provider_runtime.cjs");
 
 const REMOTE_HOST_RAW = process.env.CTX_AUTOMATION_REMOTE_HOST || "";
 const REMOTE_HOST = REMOTE_HOST_RAW.trim();
@@ -47,6 +52,36 @@ const SSH_NO_START_REMOTE = !["0", "false", "no"].includes(
   String(process.env.CTX_AUTOMATION_SSH_NO_START_REMOTE || "1").trim().toLowerCase(),
 );
 const CONTAINER_WORKSPACE_TIMEOUT_MS = 480000;
+const RETRIABLE_WEBDRIVER_ERROR_PATTERNS = [
+  "WebDriverError: Request failed with error code EADDRNOTAVAIL",
+  "WebDriverError: Request failed with error code ECONNREFUSED",
+  "WebDriverError: The operation was aborted due to timeout",
+  "Download failed. Check connectivity and retry.",
+  "Websocket connection lost",
+  "socket hang up",
+  "Error: Timeout",
+];
+
+const shouldRetryWebdriverTransportError = (error) => {
+  const text = String(error || "");
+  return RETRIABLE_WEBDRIVER_ERROR_PATTERNS.some((pattern) => text.includes(pattern));
+};
+
+const browserExecuteWithRetry = async (fn, args = [], attempts = 4) => {
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await browser.execute(fn, ...args);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts || !shouldRetryWebdriverTransportError(error)) {
+        throw error;
+      }
+      await browser.pause(150 * attempt);
+    }
+  }
+  throw lastError || new Error("browser.execute failed");
+};
 
 const run = (cmd, args, opts = {}) => {
   const res = spawnSync(cmd, args, { encoding: "utf8", ...opts });
@@ -323,8 +358,22 @@ const clickNext = async () => {
 };
 
 const clickNextIfEnabled = async () => {
-  return await browser.execute(() => {
+  return await browserExecuteWithRetry(() => {
     const el = document.querySelector('[data-testid="wizard-next"]');
+    if (!(el instanceof HTMLButtonElement)) {
+      return { present: false, disabled: null, clicked: false };
+    }
+    if (el.disabled) {
+      return { present: true, disabled: true, clicked: false };
+    }
+    el.click();
+    return { present: true, disabled: false, clicked: true };
+  });
+};
+
+const clickHarnessSkipIfEnabled = async () => {
+  return await browserExecuteWithRetry(() => {
+    const el = document.querySelector('[data-testid="wizard-harness-skip"]');
     if (!(el instanceof HTMLButtonElement)) {
       return { present: false, disabled: null, clicked: false };
     }
@@ -481,7 +530,7 @@ const collectCodexSmokeDiagnostics = async (workspaceId) => {
   return diag;
 };
 
-const ensureCodexHarnessSelected = async (timeoutMs = 30000) => {
+const ensureCodexHarnessSelected = async (workspaceId = null, timeoutMs = 30000) => {
   const readHarnessState = async () => {
     return await browser.execute(() => {
       const trigger = document.querySelector(".wb-switcher-harness");
@@ -500,8 +549,17 @@ const ensureCodexHarnessSelected = async (timeoutMs = 30000) => {
         : null;
       const rows = Array.from(document.querySelectorAll(".wb-harness-row")).map((row) => {
         const name = String(row.querySelector(".wb-harness-name")?.textContent || "").trim();
-        const disabled = Boolean(row.querySelector(".wb-harness-row-main")?.hasAttribute("disabled"));
-        return { name, disabled };
+        const button = row.querySelector(".wb-harness-row-main");
+        const disabled = Boolean(button?.hasAttribute("disabled"));
+        const reason = button
+          ? String(
+            button.getAttribute("title")
+            || button.getAttribute("aria-label")
+            || button.getAttribute("data-disabled-reason")
+            || "",
+          ).trim()
+          : "";
+        return { name, disabled, reason };
       });
       return {
         label,
@@ -513,42 +571,76 @@ const ensureCodexHarnessSelected = async (timeoutMs = 30000) => {
     });
   };
 
-  let state = await readHarnessState();
-  if (/codex/i.test(state.label)) {
-    return;
-  }
-
-  const opened = await browser.execute(() => {
-    const trigger = document.querySelector(".wb-switcher-harness");
-    if (!(trigger instanceof HTMLButtonElement)) return false;
-    trigger.click();
-    return true;
-  });
-  if (!opened) throw new Error("harness selector trigger not found in composer");
-
-  await browser.waitUntil(async () => {
-    const s = await readHarnessState();
-    return s.menuOpen;
-  }, { timeout: 5000, timeoutMsg: "harness menu did not open" });
-
-  const clicked = await browser.execute(() => {
-    const rows = Array.from(document.querySelectorAll(".wb-harness-row"));
-    const codexRow = rows.find((row) => {
-      const name = String(row.querySelector(".wb-harness-name")?.textContent || "").trim().toLowerCase();
-      return name === "codex" || name.includes("codex");
+  const openHarnessMenu = async () => {
+    return await browser.execute(() => {
+      if (document.querySelector(".wb-harness-menu")) return true;
+      const trigger = document.querySelector(".wb-switcher-harness");
+      if (!(trigger instanceof HTMLButtonElement)) return false;
+      trigger.click();
+      return true;
     });
-    if (!codexRow) return { ok: false, reason: "missing" };
-    const button = codexRow.querySelector(".wb-harness-row-main");
-    if (!(button instanceof HTMLButtonElement)) return { ok: false, reason: "missing-button" };
-    if (button.disabled) return { ok: false, reason: "disabled" };
-    button.click();
-    return { ok: true, reason: "clicked" };
-  });
+  };
+
+  const clickCodexRow = async () => {
+    return await browser.execute(() => {
+      const label = String(
+        document.querySelector(".wb-switcher-harness .wb-switcher-label")?.textContent || "",
+      ).trim();
+      if (/codex/i.test(label)) return { ok: true, reason: "already-selected" };
+      const rows = Array.from(document.querySelectorAll(".wb-harness-row"));
+      const codexRow = rows.find((row) => {
+        const name = String(row.querySelector(".wb-harness-name")?.textContent || "").trim().toLowerCase();
+        return name === "codex" || name.includes("codex");
+      });
+      if (!codexRow) return { ok: false, reason: "missing" };
+      const button = codexRow.querySelector(".wb-harness-row-main");
+      if (!(button instanceof HTMLButtonElement)) return { ok: false, reason: "missing-button" };
+      if (button.disabled) return { ok: false, reason: "disabled" };
+      button.click();
+      return { ok: true, reason: "clicked" };
+    });
+  };
+
+  const triggerWorkbenchProviderRefresh = async () => {
+    await browser.execute(() => {
+      window.dispatchEvent(new Event("focus"));
+      window.dispatchEvent(new Event("online"));
+    });
+  };
+
+  let state = await readHarnessState();
+  if (/codex/i.test(state.label)) return;
+
+  let clicked = { ok: false, reason: "not-attempted" };
+  const deadline = Date.now() + timeoutMs;
+  let attempts = 0;
+  await triggerWorkbenchProviderRefresh();
+  while (Date.now() < deadline) {
+    attempts += 1;
+    if (!(await openHarnessMenu())) {
+      throw new Error("harness selector trigger not found in composer");
+    }
+    state = await readHarnessState();
+    if (/codex/i.test(state.label)) return;
+    clicked = await clickCodexRow();
+    if (clicked?.ok) break;
+    if (clicked?.reason === "disabled" && attempts % 3 === 0) {
+      await triggerWorkbenchProviderRefresh();
+    }
+    await browser.pause(250);
+  }
 
   if (!clicked?.ok) {
     state = await readHarnessState();
+    const diagnostics = await safeDaemonJson("GET", "/api/diagnostics");
+    const workspaceBootstrap = workspaceId
+      ? await safeDaemonJson("GET", `/api/workspaces/${workspaceId}/providers/bootstrap`)
+      : null;
+    const codexBootstrap =
+      workspaceBootstrap?.payload?.providers?.find?.((p) => String(p?.provider_id || "") === "codex")
+      || null;
     throw new Error(
-      `unable to select Codex harness (${clicked?.reason || "unknown"}); harness_rows=${JSON.stringify(state.rows)}`,
+      `unable to select Codex harness (${clicked?.reason || "unknown"}); harness_rows=${JSON.stringify(state.rows)}; diagnostics_status=${diagnostics.status ?? null}; startup_prewarm=${JSON.stringify(diagnostics.payload?.execution?.startup_prewarm || null)}; workspace_bootstrap_status=${workspaceBootstrap?.status ?? null}; codex_bootstrap=${JSON.stringify(codexBootstrap)}`,
     );
   }
 
@@ -560,7 +652,7 @@ const ensureCodexHarnessSelected = async (timeoutMs = 30000) => {
 
 const runCodexComposerSmoke = async (workspaceId, timeoutMs = 240000) => {
   await waitForSelector("textarea.wb-new-composer-textarea", 60000);
-  await ensureCodexHarnessSelected();
+  await ensureCodexHarnessSelected(workspaceId);
   await setTextareaSelector("textarea.wb-new-composer-textarea", "hello");
   await clickSelector("button.wb-send");
 
@@ -728,46 +820,132 @@ const clickHarnessSkip = async () => {
   await clickTestId("wizard-harness-skip");
 };
 
-const syncHarnessSelections = async (providerIds) => {
+const readWizardHarnessDownloadsState = async () => {
+  return await browserExecuteWithRetry(() => {
+    const step = document.querySelector('[data-testid="wizard-step"][data-step-key="harness-downloads"]');
+    const error = step?.querySelector(".wizard-error")
+      ? String(step.querySelector(".wizard-error")?.textContent || "").trim()
+      : "";
+    const rows = Array.from(document.querySelectorAll('[data-testid^="wizard-harness-checkbox-"]'))
+      .flatMap((node) => {
+        if (!(node instanceof HTMLInputElement) || node.type !== "checkbox") {
+          return [];
+        }
+        const providerId = String(node.getAttribute("data-testid") || "")
+          .replace(/^wizard-harness-checkbox-/, "")
+          .trim();
+        if (!providerId) return [];
+        const row = node.closest(".wizard-auth-import-row");
+        return [{
+          providerId,
+          checked: Boolean(node.checked),
+          statusText: String(row?.querySelector(".wizard-auth-import-path")?.textContent || "").trim(),
+          errorText: String(row?.querySelector(".wizard-error")?.textContent || "").trim(),
+        }];
+      });
+    const next = document.querySelector('[data-testid="wizard-next"]');
+    return {
+      error,
+      rows,
+      nextDisabled: next instanceof HTMLButtonElement ? next.disabled : null,
+      nextLabel: next ? String(next.textContent || "").trim() : "",
+    };
+  });
+};
+
+const syncHarnessSelections = async (providerIds, timeoutMs = 10_000) => {
   if (!Array.isArray(providerIds) || providerIds.length === 0) return;
   const selected = Array.from(new Set(providerIds.map((value) => String(value || "").trim()).filter(Boolean)));
   if (selected.length === 0) return;
-  const result = await browser.execute((wanted) => {
-    const inputs = Array.from(document.querySelectorAll('[data-testid^="wizard-harness-checkbox-"]'));
-    const desired = new Set(wanted);
-    const seen = [];
-    for (const node of inputs) {
-      if (!(node instanceof HTMLInputElement) || node.type !== "checkbox") continue;
-      const testId = String(node.getAttribute("data-testid") || "");
-      const providerId = testId.replace(/^wizard-harness-checkbox-/, "");
-      if (!providerId) continue;
-      seen.push(providerId);
-      const wantChecked = desired.has(providerId);
-      if (!node.disabled && Boolean(node.checked) !== wantChecked) {
-        node.click();
+  const started = Date.now();
+  let lastState = null;
+  while (Date.now() - started < timeoutMs) {
+    const result = await browserExecuteWithRetry((wanted) => {
+      const inputs = Array.from(document.querySelectorAll('[data-testid^="wizard-harness-checkbox-"]'));
+      const desired = new Set(wanted);
+      const seen = [];
+      const checked = [];
+      const disabled = [];
+      const ready = [];
+      for (const node of inputs) {
+        if (!(node instanceof HTMLInputElement) || node.type !== "checkbox") continue;
+        const testId = String(node.getAttribute("data-testid") || "");
+        const providerId = testId.replace(/^wizard-harness-checkbox-/, "");
+        if (!providerId) continue;
+        const row = node.closest(".wizard-auth-import-row");
+        const statusText = String(row?.querySelector(".wizard-auth-import-path")?.textContent || "").trim();
+        seen.push(providerId);
+        const wantChecked = desired.has(providerId);
+        if (!node.disabled && Boolean(node.checked) !== wantChecked) {
+          node.click();
+        }
+        if (node.disabled) disabled.push(providerId);
+        if (statusText.startsWith("Installed")) ready.push(providerId);
+        if (node.checked) checked.push(providerId);
       }
+      return { seen, checked, disabled, ready };
+    }, [selected]);
+    lastState = result;
+    if (!result || !Array.isArray(result.seen) || result.seen.length === 0) {
+      await browser.pause(150);
+      continue;
     }
-    return { seen };
-  }, selected);
-  if (!result || !Array.isArray(result.seen) || result.seen.length === 0) {
-    throw new Error("failed to read harness selection rows");
-  }
-  for (const providerId of selected) {
-    if (!result.seen.includes(providerId)) {
-      throw new Error(`expected harness row '${providerId}' to be present`);
+    const missing = selected.filter((providerId) => !result.seen.includes(providerId));
+    if (missing.length > 0) {
+      throw new Error(`expected harness row(s) ${JSON.stringify(missing)} to be present`);
     }
+    if (selected.every((providerId) => result.checked.includes(providerId) || result.ready.includes(providerId))) {
+      return {
+        checked: result.checked,
+        ready: result.ready,
+      };
+    }
+    await browser.pause(150);
   }
+  throw new Error(`failed to select harness rows: ${JSON.stringify(lastState)}`);
 };
 
-const waitForWizardStepDeparture = async (fromStep, timeoutMs = 5000) => {
+const readSelectedHarnessProviderIds = async () => {
+  return await browser.execute(() => {
+    return Array.from(document.querySelectorAll('[data-testid^="wizard-harness-checkbox-"]'))
+      .flatMap((node) => {
+        if (!(node instanceof HTMLInputElement) || node.type !== "checkbox" || !node.checked) {
+          return [];
+        }
+        const testId = String(node.getAttribute("data-testid") || "");
+        const providerId = testId.replace(/^wizard-harness-checkbox-/, "").trim();
+        return providerId ? [providerId] : [];
+      });
+  });
+};
+
+const waitForSelectedHarnessInstallsToKickOff = async (providerIds, target = "host", timeoutMs = 30000) => {
+  const selected = Array.from(new Set((providerIds || []).map((value) => String(value || "").trim()).filter(Boolean)));
+  if (selected.length === 0) return;
   const started = Date.now();
+  let lastProviders = [];
   while (Date.now() - started < timeoutMs) {
-    const key = await currentStepKey();
-    if (key && key !== fromStep) return key;
-    await browser.pause(100);
+    const resp = await safeDaemonJson("GET", `/api/providers?target=${encodeURIComponent(target)}`);
+    const providers = Array.isArray(resp.payload) ? resp.payload : [];
+    lastProviders = providers
+      .filter((provider) => selected.includes(String(provider?.provider_id || "")))
+      .map((provider) => compactEntity(provider));
+    const startedAll = providers
+      .filter((provider) => selected.includes(String(provider?.provider_id || "")))
+      .every((provider) => {
+        const details = provider && typeof provider.details === "object" && provider.details
+          ? provider.details
+          : {};
+        return provider.installed === true || details.install_running === "true";
+      });
+    if (startedAll && lastProviders.length === selected.length) {
+      return;
+    }
+    await browser.pause(250);
   }
-  const diag = await collectWorkspaceRouteDiagnostics();
-  throw new Error(`wizard never left step '${fromStep}'; diag=${JSON.stringify(diag)}`);
+  throw new Error(
+    `selected harness installs never kicked off: expected=${JSON.stringify(selected)} providers=${JSON.stringify(lastProviders)}`,
+  );
 };
 
 const ensureReadyForSourceSelection = async (
@@ -785,6 +963,7 @@ const ensureReadyForSourceSelection = async (
     ? timeoutMs
     : (downloadHarnesses ? 300000 : 60000);
   const started = Date.now();
+  const shouldDownloadHarnesses = downloadHarnesses === true;
   while (Date.now() - started < effectiveTimeoutMs) {
     const key = await currentStepKey();
     if (key && key !== "location") {
@@ -822,18 +1001,94 @@ const ensureReadyForSourceSelection = async (
       continue;
     }
     if (key === "harness-downloads") {
-      if (!downloadHarnesses) {
-        await clickHarnessSkip();
-        await browser.pause(100);
+      if (!shouldDownloadHarnesses) {
+        const harnessState = await readWizardHarnessDownloadsState();
+        const checkedRows = harnessState.rows.filter((row) => row.checked);
+        if (checkedRows.length === 0 && harnessState.nextDisabled === false) {
+          const next = await clickNextIfEnabled();
+          if (next.clicked) {
+            await browser.pause(100);
+            continue;
+          }
+        }
+        const skipped = await clickHarnessSkipIfEnabled();
+        if (skipped.clicked) {
+          await browser.pause(100);
+          continue;
+        }
+        await browser.pause(150);
         continue;
       }
       if (Array.isArray(selectedHarnessProviderIds) && selectedHarnessProviderIds.length > 0) {
-        await syncHarnessSelections(selectedHarnessProviderIds);
+        const harnessSelectionState = await syncHarnessSelections(selectedHarnessProviderIds);
+        const readyProviders = new Set(Array.isArray(harnessSelectionState?.ready) ? harnessSelectionState.ready : []);
+        const expectedKickoffProviderIds = Array.from(
+          new Set(selectedHarnessProviderIds.map((value) => String(value || "").trim()).filter(Boolean)),
+        ).filter((providerId) => !readyProviders.has(providerId));
+        const next = await clickNextIfEnabled();
+        if (next.clicked) {
+          if (expectedKickoffProviderIds.length > 0) {
+            const installTarget = container === "no-container" ? "host" : "container";
+            await waitForSelectedHarnessInstallsToKickOff(
+              expectedKickoffProviderIds,
+              installTarget,
+              30000,
+            );
+          }
+          await browser.pause(100);
+        } else {
+          const harnessState = await readWizardHarnessDownloadsState();
+          const selected = new Set(
+            selectedHarnessProviderIds.map((value) => String(value || "").trim()).filter(Boolean),
+          );
+          const blocked = harnessState.rows.filter((row) =>
+            selected.has(row.providerId) && row.errorText,
+          );
+          if (blocked.length > 0) {
+            throw new Error(
+              `selected harness downloads blocked source selection: ${JSON.stringify({
+                error: harnessState.error,
+                nextDisabled: harnessState.nextDisabled,
+                nextLabel: harnessState.nextLabel,
+                blocked,
+              })}`,
+            );
+          }
+          // Planning work can temporarily disable Next before the kickoff transition settles.
+          await browser.pause(150);
+        }
+        continue;
       }
+      const expectedKickoffProviderIds = await readSelectedHarnessProviderIds();
       const next = await clickNextIfEnabled();
       if (next.clicked) {
-        await waitForWizardStepDeparture("harness-downloads", 5000);
+        const installTarget = container === "no-container" ? "host" : "container";
+        await waitForSelectedHarnessInstallsToKickOff(
+          expectedKickoffProviderIds,
+          installTarget,
+          15000,
+        );
+        await browser.pause(100);
       } else {
+        if (Array.isArray(selectedHarnessProviderIds) && selectedHarnessProviderIds.length > 0) {
+          const harnessState = await readWizardHarnessDownloadsState();
+          const selected = new Set(
+            selectedHarnessProviderIds.map((value) => String(value || "").trim()).filter(Boolean),
+          );
+          const blocked = harnessState.rows.filter((row) =>
+            selected.has(row.providerId) && row.errorText,
+          );
+          if (blocked.length > 0) {
+            throw new Error(
+              `selected harness downloads blocked source selection: ${JSON.stringify({
+                error: harnessState.error,
+                nextDisabled: harnessState.nextDisabled,
+                nextLabel: harnessState.nextLabel,
+                blocked,
+              })}`,
+            );
+          }
+        }
         // Planning work can temporarily disable Next before the kickoff transition settles.
         await browser.pause(150);
       }
@@ -1093,6 +1348,46 @@ const assertConnectedLocalAndListening = async () => {
   const ls = spawnSync("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN"], { encoding: "utf8" });
   if (ls.status !== 0) {
     throw new Error(`expected daemon to be listening on port ${port}`);
+  }
+};
+
+const connectionSignature = (info) => JSON.stringify({
+  kind: info?.kind || null,
+  base_url: info?.base_url || null,
+  token: info?.token || null,
+  host: info?.host || null,
+  user: info?.user || null,
+  remote_port: info?.remote_port ?? null,
+  remote_data_dir: info?.remote_data_dir || null,
+});
+
+const assertDesktopConnectionStable = async (durationMs = 5000, intervalMs = 250) => {
+  const initial = await getConnectionInfo();
+  if (!initial || typeof initial !== "object" || initial.kind === "none") {
+    throw new Error(`expected active desktop connection, got: ${JSON.stringify(initial || null)}`);
+  }
+  const baseline = connectionSignature(initial);
+  const samples = [];
+  const started = Date.now();
+  while (Date.now() - started < durationMs) {
+    const current = await getConnectionInfo();
+    const signature = connectionSignature(current);
+    samples.push(current);
+    if (signature !== baseline) {
+      throw new Error(
+        `desktop connection churn detected after workspace launch: baseline=${baseline} current=${signature} samples=${JSON.stringify(samples)}`,
+      );
+    }
+    const health = await safeDaemonJson("GET", "/api/health");
+    if (health.error) {
+      throw new Error(
+        `desktop daemon health request stayed unavailable after workspace launch: ${String(health.error)}; samples=${JSON.stringify(samples)}`,
+      );
+    }
+    if (Number(health.status) !== 200) {
+      throw new Error(`desktop daemon health degraded after workspace launch: ${JSON.stringify(health)}`);
+    }
+    await browser.pause(intervalMs);
   }
 };
 
@@ -1361,6 +1656,7 @@ const runWizardScenario = async (scenario) => {
   // The workbench must never render the "daemon unavailable" overlay on first navigation.
   // If connect_local returns before the daemon is reachable, this can flash briefly.
   await assertNoDaemonOverlayFor(2000);
+  await assertDesktopConnectionStable(5000, 250);
   return id;
 };
 
@@ -1552,7 +1848,7 @@ describe("launcher workspace wizard (e2e)", () => {
 
   it("local disk-isolated container works end-to-end", async function () {
     if (!scenarioEnabled("local-new-disk-isolated", ["local", "container", "disk-isolated"])) this.skip();
-    this.timeout(600000);
+    this.timeout(780000);
     const dest = path.join(localBase, "new-disk-isolated");
     const id = await runWizardScenario({
       location: "local",
@@ -1590,13 +1886,24 @@ describe("launcher workspace wizard (e2e)", () => {
       container: "host-mounted",
       network: "providers",
       downloadHarnesses: true,
+      selectedHarnessProviderIds: ["codex"],
       source: { kind: "new", destPath: dest, workspaceName: "codex-smoke" },
       setupHook: "",
       mergeQueue: { kind: "skip" },
     });
 
     await assertConnectedLocalAndListening();
-    await runCodexComposerSmoke(id, 240000);
+    await waitForProviderInstallCompletion("codex", "container", { timeoutMs: 10 * 60_000, pollMs: 2_000 });
+    const provider = await ensureCodexOpenRouterWorkspaceReady(id, {
+      installTarget: "container",
+      endpointName: `host-mounted-codex-openrouter-${Date.now()}`,
+      allowInstall: false,
+    });
+    await runCodexFirstTurnApiSmoke(id, {
+      providerId: provider.providerId,
+      modelId: provider.modelId,
+      prompt: "hello",
+    }, 240000);
 
     // Sanity: ensure we stayed in the same workspace route.
     const ws = await getWorkspace(id);

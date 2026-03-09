@@ -63,6 +63,7 @@ const RETRIABLE_WEBDRIVER_ERROR_PATTERNS = [
   "WebDriverError: Request failed with error code EADDRNOTAVAIL",
   "WebDriverError: Request failed with error code ECONNREFUSED",
   "WebDriverError: The operation was aborted due to timeout",
+  "Download failed. Check connectivity and retry.",
   "Websocket connection lost",
   "socket hang up",
   "Error: Timeout",
@@ -420,7 +421,7 @@ const clickNext = async () => {
 };
 
 const clickNextIfEnabled = async () => {
-  return await browser.execute(() => {
+  return await browserExecuteWithRetry(() => {
     const el = document.querySelector('[data-testid="wizard-next"]');
     if (!(el instanceof HTMLButtonElement)) {
       return { present: false, disabled: null, clicked: false };
@@ -434,7 +435,7 @@ const clickNextIfEnabled = async () => {
 };
 
 const clickHarnessSkipIfEnabled = async () => {
-  return await browser.execute(() => {
+  return await browserExecuteWithRetry(() => {
     const el = document.querySelector('[data-testid="wizard-harness-skip"]');
     if (!(el instanceof HTMLButtonElement)) {
       return { present: false, disabled: null, clicked: false };
@@ -452,35 +453,89 @@ const clickHarnessSkip = async () => {
   await clickTestId("wizard-harness-skip");
 };
 
-const syncHarnessSelections = async (providerIds) => {
+const readWizardHarnessDownloadsState = async () => {
+  return await browserExecuteWithRetry(() => {
+    const step = document.querySelector('[data-testid="wizard-step"][data-step-key="harness-downloads"]');
+    const error = step?.querySelector(".wizard-error")
+      ? String(step.querySelector(".wizard-error")?.textContent || "").trim()
+      : "";
+    const rows = Array.from(document.querySelectorAll('[data-testid^="wizard-harness-checkbox-"]'))
+      .flatMap((node) => {
+        if (!(node instanceof HTMLInputElement) || node.type !== "checkbox") {
+          return [];
+        }
+        const providerId = String(node.getAttribute("data-testid") || "")
+          .replace(/^wizard-harness-checkbox-/, "")
+          .trim();
+        if (!providerId) return [];
+        const row = node.closest(".wizard-auth-import-row");
+        return [{
+          providerId,
+          checked: Boolean(node.checked),
+          statusText: String(row?.querySelector(".wizard-auth-import-path")?.textContent || "").trim(),
+          errorText: String(row?.querySelector(".wizard-error")?.textContent || "").trim(),
+        }];
+      });
+    const next = document.querySelector('[data-testid="wizard-next"]');
+    return {
+      error,
+      rows,
+      nextDisabled: next instanceof HTMLButtonElement ? next.disabled : null,
+      nextLabel: next ? String(next.textContent || "").trim() : "",
+    };
+  });
+};
+
+const syncHarnessSelections = async (providerIds, timeoutMs = 10_000) => {
   if (!Array.isArray(providerIds) || providerIds.length === 0) return;
   const selected = Array.from(new Set(providerIds.map((value) => String(value || "").trim()).filter(Boolean)));
   if (selected.length === 0) return;
-  const result = await browser.execute((wanted) => {
-    const inputs = Array.from(document.querySelectorAll('[data-testid^="wizard-harness-checkbox-"]'));
-    const desired = new Set(wanted);
-    const seen = [];
-    for (const node of inputs) {
-      if (!(node instanceof HTMLInputElement) || node.type !== "checkbox") continue;
-      const testId = String(node.getAttribute("data-testid") || "");
-      const providerId = testId.replace(/^wizard-harness-checkbox-/, "");
-      if (!providerId) continue;
-      seen.push(providerId);
-      const wantChecked = desired.has(providerId);
-      if (!node.disabled && Boolean(node.checked) !== wantChecked) {
-        node.click();
+  const started = Date.now();
+  let lastState = null;
+  while (Date.now() - started < timeoutMs) {
+    const result = await browserExecuteWithRetry((wanted) => {
+      const inputs = Array.from(document.querySelectorAll('[data-testid^="wizard-harness-checkbox-"]'));
+      const desired = new Set(wanted);
+      const seen = [];
+      const checked = [];
+      const disabled = [];
+      const ready = [];
+      for (const node of inputs) {
+        if (!(node instanceof HTMLInputElement) || node.type !== "checkbox") continue;
+        const testId = String(node.getAttribute("data-testid") || "");
+        const providerId = testId.replace(/^wizard-harness-checkbox-/, "");
+        if (!providerId) continue;
+        const row = node.closest(".wizard-auth-import-row");
+        const statusText = String(row?.querySelector(".wizard-auth-import-path")?.textContent || "").trim();
+        seen.push(providerId);
+        const wantChecked = desired.has(providerId);
+        if (!node.disabled && Boolean(node.checked) !== wantChecked) {
+          node.click();
+        }
+        if (node.disabled) disabled.push(providerId);
+        if (statusText.startsWith("Installed")) ready.push(providerId);
+        if (node.checked) checked.push(providerId);
       }
+      return { seen, checked, disabled, ready };
+    }, [selected]);
+    lastState = result;
+    if (!result || !Array.isArray(result.seen) || result.seen.length === 0) {
+      await browser.pause(150);
+      continue;
     }
-    return { seen };
-  }, selected);
-  if (!result || !Array.isArray(result.seen) || result.seen.length === 0) {
-    throw new Error("failed to read harness selection rows");
-  }
-  for (const providerId of selected) {
-    if (!result.seen.includes(providerId)) {
-      throw new Error(`expected harness row '${providerId}' to be present`);
+    const missing = selected.filter((providerId) => !result.seen.includes(providerId));
+    if (missing.length > 0) {
+      throw new Error(`expected harness row(s) ${JSON.stringify(missing)} to be present`);
     }
+    if (selected.every((providerId) => result.checked.includes(providerId) || result.ready.includes(providerId))) {
+      return {
+        checked: result.checked,
+        ready: result.ready,
+      };
+    }
+    await browser.pause(150);
   }
+  throw new Error(`failed to select harness rows: ${JSON.stringify(lastState)}`);
 };
 
 const clickCreate = async (timeoutMs = 30000) => {
@@ -1045,6 +1100,7 @@ const ensureReadyForSourceSelection = async (
   timeoutMs = harnessDownloads === "skip" ? 60000 : 300000,
 ) => {
   const started = Date.now();
+  const shouldDownloadHarnesses = harnessDownloads === true || harnessDownloads === "download";
   while (Date.now() - started < timeoutMs) {
     const key = await currentStepKey();
     if (key && key !== "location") {
@@ -1081,9 +1137,22 @@ const ensureReadyForSourceSelection = async (
       continue;
     }
     if (key === "harness-downloads") {
-      if (harnessDownloads === "skip") {
-        await clickHarnessSkip();
-        await browser.pause(100);
+      if (!shouldDownloadHarnesses) {
+        const harnessState = await readWizardHarnessDownloadsState();
+        const checkedRows = harnessState.rows.filter((row) => row.checked);
+        if (checkedRows.length === 0 && harnessState.nextDisabled === false) {
+          const next = await clickNextIfEnabled();
+          if (next.clicked) {
+            await browser.pause(100);
+            continue;
+          }
+        }
+        const skipped = await clickHarnessSkipIfEnabled();
+        if (skipped.clicked) {
+          await browser.pause(100);
+          continue;
+        }
+        await browser.pause(150);
         continue;
       }
       if (Array.isArray(selectedHarnessProviderIds) && selectedHarnessProviderIds.length > 0) {
@@ -1093,6 +1162,25 @@ const ensureReadyForSourceSelection = async (
       if (next.clicked) {
         await browser.pause(100);
       } else {
+        if (Array.isArray(selectedHarnessProviderIds) && selectedHarnessProviderIds.length > 0) {
+          const harnessState = await readWizardHarnessDownloadsState();
+          const selected = new Set(
+            selectedHarnessProviderIds.map((value) => String(value || "").trim()).filter(Boolean),
+          );
+          const blocked = harnessState.rows.filter((row) =>
+            selected.has(row.providerId) && row.errorText,
+          );
+          if (blocked.length > 0) {
+            throw new Error(
+              `selected harness downloads blocked source selection: ${JSON.stringify({
+                error: harnessState.error,
+                nextDisabled: harnessState.nextDisabled,
+                nextLabel: harnessState.nextLabel,
+                blocked,
+              })}`,
+            );
+          }
+        }
         // Background install polling can temporarily disable Next; keep waiting.
         await browser.pause(150);
       }
@@ -1281,6 +1369,46 @@ const waitForLaunchLogsOrWorkspaceRoute = async (timeoutMs = 15000) => {
   throw new Error(`launch logs never appeared before workspace navigation; diag=${JSON.stringify(diag)}`);
 };
 
+const connectionSignature = (info) => JSON.stringify({
+  kind: info?.kind || null,
+  base_url: info?.base_url || null,
+  token: info?.token || null,
+  host: info?.host || null,
+  user: info?.user || null,
+  remote_port: info?.remote_port ?? null,
+  remote_data_dir: info?.remote_data_dir || null,
+});
+
+const assertDesktopConnectionStable = async (durationMs = 5000, intervalMs = 250) => {
+  const initial = await getConnectionInfo();
+  if (!initial || typeof initial !== "object" || initial.kind === "none") {
+    throw new Error(`expected active desktop connection, got: ${JSON.stringify(initial || null)}`);
+  }
+  const baseline = connectionSignature(initial);
+  const samples = [];
+  const started = Date.now();
+  while (Date.now() - started < durationMs) {
+    const current = await getConnectionInfo();
+    const signature = connectionSignature(current);
+    samples.push(current);
+    if (signature !== baseline) {
+      throw new Error(
+        `desktop connection churn detected after workspace launch: baseline=${baseline} current=${signature} samples=${JSON.stringify(samples)}`,
+      );
+    }
+    const health = await safeDaemonJson("GET", "/api/health");
+    if (health.error) {
+      throw new Error(
+        `desktop daemon health request stayed unavailable after workspace launch: ${String(health.error)}; samples=${JSON.stringify(samples)}`,
+      );
+    }
+    if (Number(health.status) !== 200) {
+      throw new Error(`desktop daemon health degraded after workspace launch: ${JSON.stringify(health)}`);
+    }
+    await browser.pause(intervalMs);
+  }
+};
+
 const finalizeWizardSuccess = async (workspaceId) => {
   const trace = await readWizardStepTrace();
   await stopWizardStepTrace();
@@ -1288,6 +1416,7 @@ const finalizeWizardSuccess = async (workspaceId) => {
   // The workbench must never render the "daemon unavailable" overlay on first navigation.
   // If connect_local returns before the daemon is reachable, this can flash briefly.
   await assertNoDaemonOverlayFor(2000);
+  await assertDesktopConnectionStable(5000, 250);
   return workspaceId;
 };
 
@@ -1683,11 +1812,17 @@ const runWizardScenario = async (scenario) => {
   }
 
   await waitForStep("confirm");
+  if (typeof scenario.beforeCreate === "function") {
+    await scenario.beforeCreate();
+  }
   await clickCreate(
     scenario.container && scenario.container !== "no-container" ? CONTAINER_LAUNCH_TIMEOUT_MS : 30000,
   );
   if (scenario.container && scenario.container !== "no-container") {
-    await waitForLaunchLogsOrWorkspaceRoute(15000);
+    const launchVisibility = await waitForLaunchLogsOrWorkspaceRoute(15000);
+    if (launchVisibility.kind === "logs" && typeof scenario.onLaunchLogsVisible === "function") {
+      await scenario.onLaunchLogsVisible();
+    }
   }
 
   const workspaceRouteTimeoutMs = scenario.location === "remote"
@@ -1739,6 +1874,7 @@ module.exports = {
   assertWorkspaceTerminalCwdPrefix,
   daemonOverlayText,
   assertNoDaemonOverlayFor,
+  assertDesktopConnectionStable,
   waitForRemoteStepAfterLocation,
   clickAuthImportSkip,
   clickTitlingSkip,

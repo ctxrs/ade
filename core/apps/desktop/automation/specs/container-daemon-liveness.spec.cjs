@@ -51,6 +51,55 @@ const readLaunchPanelDiagnostics = async () => {
   });
 };
 
+const startRuntimePrewarmJob = async () => {
+  const response = await daemonJson("POST", "/api/execution/launch/start", {
+    kind: "startup_prewarm",
+    prewarm_scope: "all",
+  });
+  if (response.status !== 200 || !response.payload?.job_id) {
+    throw new Error(`failed to start runtime prewarm job: ${JSON.stringify(response)}`);
+  }
+  return response.payload;
+};
+
+const readLaunchSnapshot = async (jobId) => {
+  const response = await daemonJson("GET", `/api/execution/launch/status?job_id=${encodeURIComponent(jobId)}`);
+  if (response.status !== 200) {
+    throw new Error(`failed to read launch status for ${jobId}: ${JSON.stringify(response)}`);
+  }
+  return response.payload;
+};
+
+const waitForLaunchTerminalState = async (jobId, timeoutMs = 600_000, pollMs = 500) => {
+  const started = Date.now();
+  let lastSnapshot = null;
+  while (Date.now() - started < timeoutMs) {
+    lastSnapshot = await readLaunchSnapshot(jobId);
+    if (lastSnapshot?.state === "ready" || lastSnapshot?.state === "error") {
+      return lastSnapshot;
+    }
+    await browser.pause(pollMs);
+  }
+  throw new Error(`launch job ${jobId} did not reach terminal state: ${JSON.stringify(lastSnapshot)}`);
+};
+
+const waitForLaunchLogMessage = async (jobId, message, timeoutMs = 120_000, pollMs = 500) => {
+  const messages = Array.isArray(message) ? message : [message];
+  const started = Date.now();
+  let lastSnapshot = null;
+  while (Date.now() - started < timeoutMs) {
+    lastSnapshot = await readLaunchSnapshot(jobId);
+    if (
+      Array.isArray(lastSnapshot?.logs)
+      && lastSnapshot.logs.some((line) => messages.includes(String(line?.message || "").trim()))
+    ) {
+      return lastSnapshot;
+    }
+    await browser.pause(pollMs);
+  }
+  throw new Error(`launch log ${JSON.stringify(messages)} never surfaced for ${jobId}: ${JSON.stringify(lastSnapshot)}`);
+};
+
 const runLocalContainerCreate = async ({ container, workspaceName, destPath, network = "full" }) => {
   try {
     return await runWizardScenario({
@@ -95,8 +144,73 @@ describe("container daemon liveness", () => {
     }
   });
 
+  it("surfaces startup prewarm contention through the desktop create flow", async function () {
+    if (
+      !scenarioEnabled("local-new-host-mounted", ["local", "container", "host-mounted"])
+      && !scenarioEnabled("local-new-disk-isolated", ["local", "container", "disk-isolated"])
+      && !scenarioEnabled("local-mixed-mode", ["local", "mixed-mode"])
+    ) {
+      this.skip();
+    }
+
+    await assertConnectedLocalAndListening();
+    const dest = path.join(localBase, "prewarm-contention");
+    let prewarmJob = null;
+    let launch = null;
+    const workspaceId = await runWizardScenario({
+      location: "local",
+      container: "host-mounted",
+      network: "allowlist",
+      networkAllowlist: "github.com\nregistry.npmjs.org",
+      harnessDownloads: "skip",
+      source: { kind: "new", destPath: dest, workspaceName: "prewarm-contention" },
+      setupHook: "",
+      mergeQueue: { kind: "skip" },
+      beforeCreate: async () => {
+        prewarmJob = await startRuntimePrewarmJob();
+        await waitForLaunchLogMessage(prewarmJob.job_id, [
+          "runtime prewarm slot acquired",
+          "waiting for runtime prewarm slot",
+        ]);
+      },
+      onLaunchLogsVisible: async () => {
+        launch = await readLaunchPanelDiagnostics();
+      },
+    });
+
+    if (!launch || !Array.isArray(launch.lines) || launch.lines.length === 0) {
+      throw new Error(`workspace launch never exposed prewarm contention diagnostics: ${JSON.stringify(launch)}`);
+    }
+    const contentionLine = launch.lines.find((line) => line.message === "waiting for runtime prewarm slot");
+    if (!contentionLine) {
+      throw new Error(`workspace launch missed prewarm contention log: ${JSON.stringify(launch)}`);
+    }
+    if (!prewarmJob?.job_id) {
+      throw new Error("startup prewarm job id missing from contention setup");
+    }
+    const prewarmFinal = await waitForLaunchTerminalState(prewarmJob.job_id);
+    if (prewarmFinal.state !== "ready") {
+      throw new Error(`runtime prewarm did not finish cleanly: ${JSON.stringify(prewarmFinal)}`);
+    }
+
+    await assertLocalWorkspaceConfig(workspaceId, {
+      environment: "container_host_mounted",
+      networkMode: "allowlist",
+      allowlist: ["github.com", "registry.npmjs.org"],
+    });
+    const container = await getWorkspaceHarnessContainer(workspaceId);
+    if (!container || !container.running || container.mount_mode !== "host_mounted") {
+      throw new Error(`expected running host-mounted harness container after contention create, got ${JSON.stringify(container)}`);
+    }
+  }).timeout(CASE_TIMEOUT_MS);
+
   it("local host-mounted container create keeps daemon healthy", async function () {
-    if (!scenarioEnabled("local-new-host-mounted", ["local", "container", "host-mounted"])) this.skip();
+    if (
+      !scenarioEnabled("local-new-host-mounted", ["local", "container", "host-mounted"])
+      && !scenarioEnabled("local-codex-smoke", ["local", "container", "provider"])
+    ) {
+      this.skip();
+    }
 
     const dest = path.join(localBase, "host-mounted");
     const workspaceId = await runLocalContainerCreate({

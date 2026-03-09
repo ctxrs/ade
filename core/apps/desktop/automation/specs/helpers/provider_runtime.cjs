@@ -3,6 +3,7 @@ const { providerStatusPath } = require("../../../../../test-support/provider_sta
 
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const DEFAULT_CODEX_OPENROUTER_MODEL_OVERRIDE = "openai/gpt-5.2-codex";
+const ACP_BRIDGE_PROVIDER_ID = "acp-crp-bridge";
 
 const asRecord = (value) => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -93,6 +94,27 @@ const installProviderAndWait = async (
     await browser.pause(pollMs);
   }
   throw new Error(`provider install timed out for ${providerId} (${installId})`);
+};
+
+const waitForProviderInstallCompletion = async (
+  providerId,
+  target,
+  { timeoutMs = 10 * 60_000, pollMs = 2000, settleMs = 5_000 } = {},
+) => {
+  const startedAt = Date.now();
+  let lastStatus = null;
+  while (Date.now() - startedAt < timeoutMs) {
+    lastStatus = await getProviderStatus(providerId, target);
+    if (lastStatus.installed) return lastStatus;
+    const installRunning = lastStatus.details.install_running === "true";
+    if (!installRunning && Date.now() - startedAt >= settleMs) {
+      const detail = lastStatus.diagnostics[0]
+        || `health=${lastStatus.health || "unknown"} details=${JSON.stringify(lastStatus.details)}`;
+      throw new Error(`provider '${providerId}' did not finish installing for target=${target}: ${detail}`);
+    }
+    await browser.pause(pollMs);
+  }
+  throw new Error(`provider '${providerId}' install did not finish for target=${target}: ${JSON.stringify(lastStatus)}`);
 };
 
 const configureOpenRouterEndpoint = async ({
@@ -219,6 +241,7 @@ const ensureCodexOpenRouterWorkspaceReady = async (
     endpointName = "",
     timeoutMs = 90_000,
     pollMs = 3_000,
+    allowInstall = true,
   } = {},
 ) => {
   const { apiKey, baseUrl, modelOverride } = readOpenRouterEnv();
@@ -228,6 +251,9 @@ const ensureCodexOpenRouterWorkspaceReady = async (
 
   const status = await getProviderStatus(providerId, installTarget);
   if (!status.installed) {
+    if (!allowInstall) {
+      throw new Error(`provider '${providerId}' is not installed for target=${installTarget}`);
+    }
     await installProviderAndWait(providerId, installTarget);
   }
 
@@ -254,6 +280,16 @@ const ensureCodexOpenRouterWorkspaceReady = async (
   };
 };
 
+const assertAcpBridgeRuntimeViable = async (target = "host") => {
+  const status = await getProviderStatus(ACP_BRIDGE_PROVIDER_ID, target);
+  if (!status.installed || status.health !== "ok") {
+    const detail = status.diagnostics[0]
+      || `installed=${String(status.installed)} health=${status.health || "unknown"}`;
+    throw new Error(`ACP bridge runtime is not viable for target=${target}: ${detail}`);
+  }
+  return status;
+};
+
 module.exports = {
   asRecord,
   asArray,
@@ -262,6 +298,7 @@ module.exports = {
   normalizeErrorMessage,
   getProviderStatus,
   installProviderAndWait,
+  waitForProviderInstallCompletion,
   configureOpenRouterEndpoint,
   selectHarnessSource,
   selectSubscriptionSource,
@@ -270,4 +307,5 @@ module.exports = {
   resolveWorkspaceProviderModelId,
   readOpenRouterEnv,
   ensureCodexOpenRouterWorkspaceReady,
+  assertAcpBridgeRuntimeViable,
 };
