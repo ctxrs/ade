@@ -62,7 +62,7 @@ if is_truthy "$skip_images_raw"; then
   bundle_harness_mode=""
 fi
 if is_truthy "${bundle_harness_mode:-}"; then
-  HARNESS_IMAGE_REF="$(read_const DEFAULT_CONTAINER_IMAGE "$ROOT/core/crates/ctx-http/src/harness_runtime.rs")"
+  HARNESS_IMAGE_REF="$(read_const DEFAULT_CONTAINER_IMAGE "$ROOT/core/crates/ctx-http/src/workspace_runtime/mod.rs")"
   harness_tar_rel="images/ctx-harness-linux-${arch}.tar"
   harness_platform="linux/amd64"
   if [[ "$arch" == "aarch64" ]]; then
@@ -72,7 +72,7 @@ if is_truthy "${bundle_harness_mode:-}"; then
   harness_sha="$(sha256_file "$bundle_dir/$harness_tar_rel")"
   bundle_harness_manifest_entry "$HARNESS_IMAGE_REF" "$arch" "$harness_tar_rel" "$harness_sha"
 elif [[ "$bundle_harness_mode" == "both" || "$bundle_harness_mode" == "all" ]]; then
-  HARNESS_IMAGE_REF="$(read_const DEFAULT_CONTAINER_IMAGE "$ROOT/core/crates/ctx-http/src/harness_runtime.rs")"
+  HARNESS_IMAGE_REF="$(read_const DEFAULT_CONTAINER_IMAGE "$ROOT/core/crates/ctx-http/src/workspace_runtime/mod.rs")"
 
   tar_x86="images/ctx-harness-linux-x86_64.tar"
   tar_arm="images/ctx-harness-linux-aarch64.tar"
