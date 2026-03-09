@@ -944,11 +944,11 @@ async fn acp_container_install_is_blocked_before_start_when_bridge_runtime_is_in
         .await
         .expect("load agent server config");
     assert!(
-        cfg.managed_provider_targets.get("kimi").is_none(),
+        !cfg.managed_provider_targets.contains_key("kimi"),
         "failed preflight must not write partial provider install state"
     );
     assert!(
-        cfg.managed_install_targets.get("kimi").is_none(),
+        !cfg.managed_install_targets.contains_key("kimi"),
         "failed preflight must not write partial install metadata"
     );
 }
