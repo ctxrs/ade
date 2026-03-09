@@ -47,9 +47,12 @@ import {
 } from "./sessionHeadState";
 import {
   asRecord,
+  collectWorkspaceActivePrimarySessionIds,
   hasOwnProperty,
   mapWorktreeVcsSnapshots,
+  projectPrimarySessionHeadOntoTasks,
   readString,
+  resolvePrimarySessionId,
   sortSessionSummaries,
 } from "./workspaceActiveSnapshot/projection";
 import {
@@ -905,16 +908,6 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     }
   }
 
-  private pickPrimarySessionId(item: WorkspaceActiveSnapshotItem): string | null {
-    const direct = item.primarySessionId || idToString(item.task.primary_session_id ?? "");
-    if (direct) return direct;
-    const headId = idToString(item.primarySessionHead?.session?.id ?? "");
-    if (headId) return headId;
-    const summary = item.sessions?.[0];
-    const sessionId = idToString(summary?.session?.id ?? "");
-    return sessionId || null;
-  }
-
   private shouldReplaceHead(prev: SessionHeadSnapshot | null | undefined, next: SessionHeadSnapshot): boolean {
     if (!prev) return true;
     const prevSeq = typeof prev.last_event_seq === "number" ? prev.last_event_seq : -1;
@@ -926,47 +919,19 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   private applyActiveHeads(heads: SessionHeadSnapshot[]): boolean {
     if (!Array.isArray(heads) || heads.length === 0) return false;
     let changed = false;
-    const bySession = new Map<string, SessionHeadSnapshot>();
-    const byTask = new Map<string, SessionHeadSnapshot>();
     for (const head of heads) {
       if (!head || typeof head !== "object") continue;
       const sessionId = idToString(head.session?.id ?? "");
       if (!sessionId) continue;
       const sanitized = sanitizeSessionHeadSnapshot(head);
-      bySession.set(sessionId, sanitized);
-      const taskId = idToString(head.session?.task_id ?? "");
-      if (taskId && !byTask.has(taskId)) {
-        byTask.set(taskId, sanitized);
-      }
       const prev = this.sessionHeadsById.get(sessionId);
       if (this.shouldReplaceHead(prev, sanitized)) {
         this.sessionHeadsById.set(sessionId, sanitized);
         changed = true;
       }
-    }
-
-    for (const taskId of this.activeOrder) {
-      const item = this.tasks.get(taskId);
-      if (!item || item.task.archived_at) continue;
-      const primarySessionId = this.pickPrimarySessionId(item);
-      const head = (primarySessionId && bySession.get(primarySessionId)) ?? byTask.get(taskId);
-      if (!head) continue;
-      const headSessionId = idToString(head.session?.id ?? "");
-      if (primarySessionId && headSessionId && primarySessionId !== headSessionId) {
-        continue;
+      if (projectPrimarySessionHeadOntoTasks(this.tasks, sanitized)) {
+        changed = true;
       }
-      const existingHeadId = idToString(item.primarySessionHead?.session?.id ?? "");
-      if (!primarySessionId && existingHeadId && headSessionId && existingHeadId !== headSessionId) {
-        continue;
-      }
-      const nextPrimarySessionId = primarySessionId || headSessionId;
-      const nextItem: WorkspaceActiveSnapshotItem = {
-        ...item,
-        primarySessionId: nextPrimarySessionId || null,
-        primarySessionHead: head,
-      };
-      this.tasks.set(taskId, nextItem);
-      changed = true;
     }
     return changed;
   }
@@ -976,9 +941,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   ): PersistedWorkspaceActiveTaskSummaryV1 | null {
     if (!item.task) return null;
     const sessions = Array.isArray(item.sessions) ? item.sessions : [];
-    const primaryId =
-      item.primarySessionId ||
-      idToString(item.primarySessionHead?.session?.id ?? "");
+    const primaryId = resolvePrimarySessionId(item);
     let primary = primaryId
       ? sessions.find((summary) => idToString(summary.session.id) === primaryId) ?? null
       : null;
@@ -1045,7 +1008,11 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     if (Array.isArray(heads) && heads.length > 0) {
       this.applyActiveHeads(heads);
     }
-    this.activeSessionIds = this.collectActiveSessionIds();
+    this.activeSessionIds = collectWorkspaceActivePrimarySessionIds({
+      activeIds: this.activeOrder,
+      archivedIds: this.archivedOrder,
+      tasksById: Object.fromEntries(this.tasks.entries()),
+    });
     this.snapshot.worktreeVcsById = mapWorktreeVcsSnapshots(snapshot.worktree_vcs_snapshots ?? []);
     this.snapshot.initialized = true;
     this.liveSnapshotApplied = true;
@@ -1466,13 +1433,11 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   }
 
   private collectActiveSessionIds(): string[] {
-    const ids = new Set<string>();
-    for (const item of this.tasks.values()) {
-      if (item.task.archived_at) continue;
-      const primaryId = this.pickPrimarySessionId(item);
-      if (primaryId) ids.add(primaryId);
-    }
-    return Array.from(ids).sort();
+    return collectWorkspaceActivePrimarySessionIds({
+      activeIds: this.activeOrder,
+      archivedIds: this.archivedOrder,
+      tasksById: Object.fromEntries(this.tasks.entries()),
+    });
   }
 
   private refreshActiveSessionSubscriptions(reason: string) {
@@ -1784,22 +1749,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     if (!this.shouldReplaceHead(existing, next)) return false;
     this.sessionHeadsById.set(sessionId, next);
     changed = true;
-    const headTaskId = idToString(next.session?.task_id ?? "");
-    const headSessionId = idToString(next.session?.id ?? "");
-    for (const [taskId, item] of this.tasks.entries()) {
-      const primaryId =
-        item.primarySessionId ||
-        idToString(item.task.primary_session_id ?? "");
-      const matchesSession = primaryId ? primaryId === headSessionId : false;
-      const matchesTask = headTaskId ? headTaskId === taskId : false;
-      if (!matchesSession && !matchesTask) continue;
-      if (primaryId && !matchesSession) continue;
-      const nextItem: WorkspaceActiveSnapshotItem = {
-        ...item,
-        primarySessionId: primaryId || headSessionId || null,
-        primarySessionHead: next,
-      };
-      this.tasks.set(taskId, nextItem);
+    if (projectPrimarySessionHeadOntoTasks(this.tasks, next)) {
       changed = true;
     }
     return changed;
@@ -1814,22 +1764,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     if (!this.shouldReplaceHead(prev, sanitized)) return false;
     this.sessionHeadsById.set(sessionId, sanitized);
     let changed = true;
-    const headTaskId = idToString(sanitized.session?.task_id ?? "");
-    const headSessionId = idToString(sanitized.session?.id ?? "");
-    for (const [taskId, item] of this.tasks.entries()) {
-      const primaryId =
-        item.primarySessionId ||
-        idToString(item.task.primary_session_id ?? "");
-      const matchesSession = primaryId ? primaryId === headSessionId : false;
-      const matchesTask = headTaskId ? headTaskId === taskId : false;
-      if (!matchesSession && !matchesTask) continue;
-      if (primaryId && !matchesSession) continue;
-      const nextItem: WorkspaceActiveSnapshotItem = {
-        ...item,
-        primarySessionId: primaryId || headSessionId || null,
-        primarySessionHead: sanitized,
-      };
-      this.tasks.set(taskId, nextItem);
+    if (projectPrimarySessionHeadOntoTasks(this.tasks, sanitized)) {
       changed = true;
     }
     return changed;
@@ -1871,8 +1806,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     const archived = new Map<string, SessionHeadSnapshot>();
     for (const item of this.tasks.values()) {
       if (!item.task.archived_at) continue;
-      const primaryId =
-        item.primarySessionId || idToString(item.primarySessionHead?.session?.id ?? "");
+      const primaryId = resolvePrimarySessionId(item);
       if (!primaryId) continue;
       const head = this.sessionHeadsById.get(primaryId) ?? item.primarySessionHead ?? null;
       if (head) archived.set(primaryId, head);
@@ -1896,9 +1830,10 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       : existing?.sort_at ?? null;
     const sortAt = this.taskSortAt(summary.task, fallbackSortAt);
     const sortAtMs = Date.parse(sortAt) || existing?.sortAtMs || Date.now();
+    const existingPrimarySessionId = resolvePrimarySessionId(existing);
     const primarySessionId =
       this.readPrimarySessionId(summary) ||
-      existing?.primarySessionId ||
+      existingPrimarySessionId ||
       idToString((summary as PersistedWorkspaceActiveTaskSummaryV1).primary_session?.session?.id ?? "");
 
     let primaryHead = summaryHasHead ? this.readPrimarySessionHead(summary) : existing?.primarySessionHead ?? null;

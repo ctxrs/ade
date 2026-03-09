@@ -25,6 +25,11 @@ import {
 import type { WorkspaceActiveSnapshotState } from "./workspaceActiveSnapshotStore";
 import { compareSessionTurnOrder, mergeSessionMessages } from "./sessionHeadState";
 import {
+  collectWorkspaceActivePrimarySessionIds,
+  findWorkspaceSessionHead,
+  resolveSessionModeFromWorkspaceState,
+} from "./workspaceActiveSnapshot/projection";
+import {
   loadSessionAcpMetaV1,
   loadSessionHeadV1,
   loadSessionHistoryPageV1,
@@ -336,7 +341,7 @@ export class SessionSupervisor {
       this.setConnection("disconnected");
       return;
     }
-    const nextWorkspaceActivePrimarySessionIds = this.collectWorkspaceActivePrimarySessionIds(state);
+    const nextWorkspaceActivePrimarySessionIds = collectWorkspaceActivePrimarySessionIds(state);
     const activePrimaryMembershipChanged = !sameIdList(
       nextWorkspaceActivePrimarySessionIds,
       this.workspaceActivePrimarySessionIds,
@@ -1163,7 +1168,11 @@ export class SessionSupervisor {
   }
 
   private seedHeadFromActiveSnapshot(entry: InternalEntry): boolean {
-    const head = this.getActiveSnapshotHead(entry.sessionId);
+    const head = findWorkspaceSessionHead(
+      this.workspaceSnapshotState,
+      this.workspaceSessionHeadsById,
+      entry.sessionId,
+    );
     if (!head) return false;
     const applySnapshot = (head: SessionHeadSnapshot): boolean => {
       const nextSeq = typeof head.last_event_seq === "number" ? head.last_event_seq : -1;
@@ -1182,22 +1191,6 @@ export class SessionSupervisor {
     };
 
     return applySnapshot(head);
-  }
-
-  private getActiveSnapshotHead(sessionId: string): SessionHeadSnapshot | null {
-    const direct = this.workspaceSessionHeadsById.get(sessionId) ?? null;
-    if (direct) return direct;
-    const state = this.workspaceSnapshotState;
-    if (!state) return null;
-    for (const taskId of state.activeIds) {
-      const item = state.tasksById[taskId];
-      const head = item?.primarySessionHead;
-      if (!head) continue;
-      const headSessionId = idToString(head.session?.id);
-      if (!headSessionId || headSessionId !== sessionId) continue;
-      return head;
-    }
-    return null;
   }
 
   private openSessionWithMode(
@@ -1250,50 +1243,11 @@ export class SessionSupervisor {
       }
       return "active";
     }
-    const mode = this.resolveSessionModeFromState(state, id);
+    const mode = resolveSessionModeFromWorkspaceState(state, id);
     if (mode && entry) {
       entry.mode = mode;
     }
     return mode;
-  }
-
-  private resolveSessionModeFromState(state: WorkspaceActiveSnapshotState, sessionId: string): SessionMode | null {
-    const id = String(sessionId ?? "").trim();
-    if (!id) return null;
-    const isSessionInTask = (taskId: string): boolean => {
-      const task = state.tasksById[taskId];
-      if (!task) return false;
-      if (idToString(task.task.primary_session_id ?? "") === id) return true;
-      const primaryHeadId = idToString(task.primarySessionHead?.session?.id ?? "");
-      if (primaryHeadId === id) return true;
-      for (const summary of task.sessions) {
-        if (idToString(summary.session.id) === id) return true;
-      }
-      return false;
-    };
-
-    for (const activeTaskId of state.activeIds) {
-      if (isSessionInTask(activeTaskId)) return "active";
-    }
-    for (const archivedTaskId of state.archivedIds) {
-      if (isSessionInTask(archivedTaskId)) return "archived";
-    }
-    return null;
-  }
-
-  private collectWorkspaceActivePrimarySessionIds(state: WorkspaceActiveSnapshotState): string[] {
-    const ids = new Set<string>();
-    for (const taskId of state.activeIds) {
-      const item = state.tasksById[taskId];
-      if (!item) continue;
-      const primaryId =
-        item.primarySessionId ||
-        idToString(item.task.primary_session_id ?? "") ||
-        idToString(item.primarySessionHead?.session?.id ?? "") ||
-        idToString(item.sessions?.[0]?.session?.id ?? "");
-      if (primaryId) ids.add(primaryId);
-    }
-    return Array.from(ids).sort();
   }
 
   private scheduleModeResolution(sessionId: string, opts?: OpenOptions) {
@@ -1346,7 +1300,7 @@ export class SessionSupervisor {
         this.clearModeResolution(sessionId);
         continue;
       }
-      const mode = this.resolveSessionModeFromState(state, sessionId);
+      const mode = resolveSessionModeFromWorkspaceState(state, sessionId);
       if (!mode) continue;
       const opts = this.modeResolutionOptions.get(sessionId);
       this.clearModeResolution(sessionId);

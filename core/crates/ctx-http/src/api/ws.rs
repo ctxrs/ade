@@ -20,7 +20,7 @@ use crate::daemon::AppState;
 use crate::git_status::emit_worktree_vcs_snapshot_for_worktree;
 use crate::terminals::{TerminalClientMessage, TerminalServerMessage};
 use crate::web_sessions::WebSessionManager;
-use crate::workspace_active_snapshot::SessionReplayResult;
+use crate::workspace_active_snapshot::{WorkspaceSessionReplay, WorkspaceSessionReplayItem};
 
 use super::{MobileSecureEnvelope, MobileSecureStreamQuery, SecureEnvelope};
 
@@ -327,11 +327,13 @@ async fn handle_mobile_secure_ws(
                                 let head_buffer = head_buffer.clone();
                                 let active_task_sessions =
                                     next_state.active_task_sessions.clone();
-                                let replay = replay_session_events_secure(
+                                let replay = replay_session_events(
                                     &state,
                                     workspace_id,
                                     session_id,
                                     after_seq,
+                                    "ctx_http.replay_session_events_secure.list",
+                                    None,
                                     move |event| {
                                         let control = control.clone();
                                         let head_buffer = head_buffer.clone();
@@ -1568,11 +1570,13 @@ async fn queue_snapshot_payload(
     Ok(())
 }
 
-async fn replay_session_events_active<F, Fut>(
+async fn replay_session_events<F, Fut>(
     state: &Arc<AppState>,
     workspace_id: WorkspaceId,
     session_id: SessionId,
     after_seq: i64,
+    list_failpoint: &'static str,
+    send_failpoint: Option<&'static str>,
     mut emit: F,
 ) -> Result<ReplayOutcome, ()>
 where
@@ -1581,13 +1585,13 @@ where
 {
     let (snapshot_rev, _) =
         super::tasks::load_workspace_active_snapshot_state(state, workspace_id).await;
-    if crate::fault_injection::maybe_fail("ctx_http.replay_session_events_active.list").is_err() {
+    if crate::fault_injection::maybe_fail(list_failpoint).is_err() {
         return Ok(ReplayOutcome::ResetRequired);
     }
     let replay = state
         .workspaces
         .workspace_active_snapshot
-        .replay_session_head_deltas(
+        .replay_session_stream(
             workspace_id,
             session_id,
             after_seq,
@@ -1595,71 +1599,49 @@ where
         )
         .await;
     match replay {
-        SessionReplayResult::Replay { deltas, last_sent } => {
-            for delta in deltas {
-                let wrapped = WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-                    workspace_id,
-                    snapshot_rev,
-                    delta: Box::new(delta),
+        WorkspaceSessionReplay::Replay { items, last_sent } => {
+            for item in items {
+                if matches!(item, WorkspaceSessionReplayItem::Delta(_)) {
+                    if let Some(label) = send_failpoint {
+                        crate::fault_injection::maybe_fail(label).map_err(|_| ())?;
+                    }
+                }
+                let event = match item {
+                    WorkspaceSessionReplayItem::Delta(delta) => {
+                        WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                            workspace_id,
+                            snapshot_rev,
+                            delta: Box::new(delta),
+                        }
+                    }
+                    WorkspaceSessionReplayItem::Gap {
+                        session_id,
+                        after_seq,
+                        reason,
+                    } => WorkspaceActiveSnapshotEvent::SessionGap {
+                        workspace_id,
+                        snapshot_rev,
+                        session_id,
+                        after_seq,
+                        reason,
+                    },
+                    WorkspaceSessionReplayItem::Seed(head) => {
+                        WorkspaceActiveSnapshotEvent::SessionHeadSeed {
+                            workspace_id,
+                            snapshot_rev,
+                            head: Box::new(head),
+                        }
+                    }
                 };
-                crate::fault_injection::maybe_fail("ctx_http.replay_session_events_active.send")
-                    .map_err(|_| ())?;
                 emit(WorkspaceActiveSnapshotStreamMessage::Event {
                     rev: 0,
-                    event: Box::new(wrapped),
+                    event: Box::new(event),
                 })
                 .await?;
             }
             Ok(ReplayOutcome::Replay { last_sent })
         }
-        SessionReplayResult::Gap {
-            last_known_seq,
-            reason,
-        } => {
-            // Treat `after_seq <= 0` as "not resuming": the client is not asking for replay from a
-            // stable cursor. In that mode we avoid emitting `session_gap` noise and instead start
-            // live updates from the current head.
-            if after_seq <= 0 {
-                return Ok(ReplayOutcome::Replay {
-                    last_sent: last_known_seq.max(after_seq),
-                });
-            }
-            let gap = WorkspaceActiveSnapshotEvent::SessionGap {
-                workspace_id,
-                snapshot_rev,
-                session_id,
-                after_seq,
-                reason,
-            };
-            emit(WorkspaceActiveSnapshotStreamMessage::Event {
-                rev: 0,
-                event: Box::new(gap),
-            })
-            .await?;
-            if let Some(head) = state
-                .workspaces
-                .workspace_active_snapshot
-                .get_session_head(session_id)
-                .await
-            {
-                let last_sent = head.last_event_seq.max(0);
-                let seed = WorkspaceActiveSnapshotEvent::SessionHeadSeed {
-                    workspace_id,
-                    snapshot_rev,
-                    head: Box::new(head),
-                };
-                emit(WorkspaceActiveSnapshotStreamMessage::Event {
-                    rev: 0,
-                    event: Box::new(seed),
-                })
-                .await?;
-                return Ok(ReplayOutcome::Replay { last_sent });
-            }
-            Ok(ReplayOutcome::Replay {
-                last_sent: last_known_seq.max(after_seq),
-            })
-        }
-        SessionReplayResult::ResetRequired => Ok(ReplayOutcome::ResetRequired),
+        WorkspaceSessionReplay::ResetRequired => Ok(ReplayOutcome::ResetRequired),
     }
 }
 
@@ -2109,11 +2091,13 @@ async fn handle_workspace_active_snapshot_ws(
                                     let head_buffer = head_buffer.clone();
                                     let active_task_sessions =
                                         next_state.active_task_sessions.clone();
-                                    let replay = replay_session_events_active(
+                                    let replay = replay_session_events(
                                         &state,
                                         workspace_id,
                                         session_id,
                                         after_seq,
+                                        "ctx_http.replay_session_events_active.list",
+                                        Some("ctx_http.replay_session_events_active.send"),
                                         move |event| {
                                             let control = control.clone();
                                             let head_buffer = head_buffer.clone();
@@ -2315,11 +2299,13 @@ async fn handle_workspace_active_snapshot_ws(
                                         let head_buffer = head_buffer.clone();
                                         let active_task_sessions =
                                             next_state.active_task_sessions.clone();
-                                        let replay = replay_session_events_active(
+                                        let replay = replay_session_events(
                                             &state,
                                             workspace_id,
                                             session_id,
                                             after_seq,
+                                            "ctx_http.replay_session_events_active.list",
+                                            Some("ctx_http.replay_session_events_active.send"),
                                             move |event| {
                                                 let control = control.clone();
                                                 let head_buffer = head_buffer.clone();
@@ -2719,96 +2705,6 @@ async fn handle_workspace_active_snapshot_ws(
     state
         .update_worktree_vcs_activity(&active_worktrees, &HashSet::new())
         .await;
-}
-
-async fn replay_session_events_secure<F, Fut>(
-    state: &Arc<AppState>,
-    workspace_id: WorkspaceId,
-    session_id: SessionId,
-    after_seq: i64,
-    mut emit: F,
-) -> Result<ReplayOutcome, ()>
-where
-    F: FnMut(WorkspaceActiveSnapshotStreamMessage) -> Fut,
-    Fut: std::future::Future<Output = Result<(), ()>>,
-{
-    let (snapshot_rev, _) =
-        super::tasks::load_workspace_active_snapshot_state(state, workspace_id).await;
-    if crate::fault_injection::maybe_fail("ctx_http.replay_session_events_secure.list").is_err() {
-        return Ok(ReplayOutcome::ResetRequired);
-    }
-    let replay = state
-        .workspaces
-        .workspace_active_snapshot
-        .replay_session_head_deltas(
-            workspace_id,
-            session_id,
-            after_seq,
-            SESSION_REPLAY_MAX_EVENTS,
-        )
-        .await;
-    match replay {
-        SessionReplayResult::Replay { deltas, last_sent } => {
-            for delta in deltas {
-                let wrapped = WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-                    workspace_id,
-                    snapshot_rev,
-                    delta: Box::new(delta),
-                };
-                emit(WorkspaceActiveSnapshotStreamMessage::Event {
-                    rev: 0,
-                    event: Box::new(wrapped),
-                })
-                .await?;
-            }
-            Ok(ReplayOutcome::Replay { last_sent })
-        }
-        SessionReplayResult::Gap {
-            last_known_seq,
-            reason,
-        } => {
-            if after_seq <= 0 {
-                return Ok(ReplayOutcome::Replay {
-                    last_sent: last_known_seq.max(after_seq),
-                });
-            }
-            let gap = WorkspaceActiveSnapshotEvent::SessionGap {
-                workspace_id,
-                snapshot_rev,
-                session_id,
-                after_seq,
-                reason,
-            };
-            emit(WorkspaceActiveSnapshotStreamMessage::Event {
-                rev: 0,
-                event: Box::new(gap),
-            })
-            .await?;
-            if let Some(head) = state
-                .workspaces
-                .workspace_active_snapshot
-                .get_session_head(session_id)
-                .await
-            {
-                let last_sent = head.last_event_seq.max(0);
-                let seed = WorkspaceActiveSnapshotEvent::SessionHeadSeed {
-                    workspace_id,
-                    snapshot_rev,
-                    head: Box::new(head),
-                };
-                emit(WorkspaceActiveSnapshotStreamMessage::Event {
-                    rev: 0,
-                    event: Box::new(seed),
-                })
-                .await?;
-                return Ok(ReplayOutcome::Replay { last_sent });
-            }
-            Ok(ReplayOutcome::Replay {
-                last_sent: last_known_seq.max(after_seq),
-            })
-        }
-        SessionReplayResult::ResetRequired => Ok(ReplayOutcome::ResetRequired),
-    }
 }
 
 pub(super) async fn dictation_livekit_stream_ws(

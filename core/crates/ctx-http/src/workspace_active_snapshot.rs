@@ -145,6 +145,26 @@ pub enum SessionReplayResult {
     ResetRequired,
 }
 
+#[derive(Debug, Clone)]
+pub enum WorkspaceSessionReplayItem {
+    Delta(SessionHeadDelta),
+    Gap {
+        session_id: SessionId,
+        after_seq: i64,
+        reason: Option<String>,
+    },
+    Seed(SessionHeadSnapshot),
+}
+
+#[derive(Debug, Clone)]
+pub enum WorkspaceSessionReplay {
+    Replay {
+        items: Vec<WorkspaceSessionReplayItem>,
+        last_sent: i64,
+    },
+    ResetRequired,
+}
+
 struct WorkspaceActiveSnapshotEntry {
     tx: broadcast::Sender<WorkspaceActiveSnapshotEvent>,
     snapshot_rev: i64,
@@ -372,6 +392,50 @@ impl WorkspaceActiveSnapshotHub {
             .entry(workspace_id)
             .or_insert_with(WorkspaceActiveSnapshotEntry::new);
         entry.replay_session(session_id, after_seq, limit)
+    }
+
+    pub async fn replay_session_stream(
+        &self,
+        workspace_id: WorkspaceId,
+        session_id: SessionId,
+        after_seq: i64,
+        limit: usize,
+    ) -> WorkspaceSessionReplay {
+        let replay = self
+            .replay_session_head_deltas(workspace_id, session_id, after_seq, limit)
+            .await;
+        match replay {
+            SessionReplayResult::Replay { deltas, last_sent } => WorkspaceSessionReplay::Replay {
+                items: deltas
+                    .into_iter()
+                    .map(WorkspaceSessionReplayItem::Delta)
+                    .collect(),
+                last_sent,
+            },
+            SessionReplayResult::Gap {
+                last_known_seq,
+                reason,
+            } => {
+                if after_seq <= 0 {
+                    return WorkspaceSessionReplay::Replay {
+                        items: Vec::new(),
+                        last_sent: last_known_seq.max(after_seq),
+                    };
+                }
+                let mut items = vec![WorkspaceSessionReplayItem::Gap {
+                    session_id,
+                    after_seq,
+                    reason,
+                }];
+                let mut last_sent = last_known_seq.max(after_seq);
+                if let Some(head) = self.get_session_head(session_id).await {
+                    last_sent = head.last_event_seq.max(0);
+                    items.push(WorkspaceSessionReplayItem::Seed(head));
+                }
+                WorkspaceSessionReplay::Replay { items, last_sent }
+            }
+            SessionReplayResult::ResetRequired => WorkspaceSessionReplay::ResetRequired,
+        }
     }
 
     pub async fn active_snapshot(
@@ -1553,6 +1617,71 @@ fn apply_head_delta(head: &mut SessionHeadSnapshot, delta: &SessionHeadDelta) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{TimeZone, Utc};
+    use ctx_core::models::{SessionStatus, TaskStatus};
+
+    fn replay_task(session: &Session) -> WorkspaceActiveTaskSummary {
+        let now = Utc.timestamp_opt(0, 0).unwrap();
+        WorkspaceActiveTaskSummary {
+            task: Task {
+                id: session.task_id,
+                workspace_id: session.workspace_id,
+                title: "task".to_string(),
+                description: None,
+                status: TaskStatus::Running,
+                created_at: now,
+                updated_at: now,
+                exec_plan_id: None,
+                primary_session_id: Some(session.id),
+                primary_worktree_id: Some(session.worktree_id),
+                archived_at: None,
+                assistant_seen_at: None,
+                last_activity_at: None,
+                last_assistant_message_at: None,
+                has_active_session: true,
+            },
+            primary_session: SessionSnapshotSummary {
+                session: session_metadata_from_session(session),
+                last_message_at: None,
+                last_message_preview: None,
+                last_event_seq: Some(0),
+                state_rev: 0,
+                activity: SessionActivityState::default(),
+                unread: None,
+            },
+            primary_session_head: None,
+            sessions: vec![SessionSnapshotSummary {
+                session: session_metadata_from_session(session),
+                last_message_at: None,
+                last_message_preview: None,
+                last_event_seq: Some(0),
+                state_rev: 0,
+                activity: SessionActivityState::default(),
+                unread: None,
+            }],
+            sort_at: now,
+        }
+    }
+
+    fn replay_session(session_id: SessionId) -> Session {
+        let now = Utc.timestamp_opt(0, 0).unwrap();
+        Session {
+            id: session_id,
+            task_id: TaskId::new(),
+            workspace_id: WorkspaceId::new(),
+            worktree_id: WorktreeId::new(),
+            parent_session_id: None,
+            relationship: None,
+            provider_id: "fake".to_string(),
+            model_id: "fake-model".to_string(),
+            title: "session".to_string(),
+            agent_role: "assistant".to_string(),
+            status: SessionStatus::Active,
+            provider_session_ref: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
 
     #[test]
     fn replay_records_delta_without_event() {
@@ -1584,6 +1713,79 @@ mod tests {
                 assert_eq!(last_sent, 6);
                 assert_eq!(deltas.len(), 1);
                 assert_eq!(deltas[0].last_event_seq, 6);
+            }
+            other => panic!("expected replay, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn replay_session_stream_emits_gap_then_seed_for_resuming_cursor() {
+        let hub = WorkspaceActiveSnapshotHub::new();
+        let session = replay_session(SessionId::new());
+        let mut head = new_head_snapshot(&session);
+        head.last_event_seq = 7;
+        hub.hydrate_snapshot(
+            session.workspace_id,
+            1,
+            0,
+            vec![replay_task(&session)],
+            vec![head.clone()],
+        )
+        .await;
+
+        match hub
+            .replay_session_stream(session.workspace_id, session.id, 3, 50)
+            .await
+        {
+            WorkspaceSessionReplay::Replay { items, last_sent } => {
+                assert_eq!(last_sent, 7);
+                assert_eq!(items.len(), 2);
+                match &items[0] {
+                    WorkspaceSessionReplayItem::Gap {
+                        session_id,
+                        after_seq,
+                        reason,
+                    } => {
+                        assert_eq!(*session_id, session.id);
+                        assert_eq!(*after_seq, 3);
+                        assert_eq!(reason.as_deref(), Some("missing_replay_events"));
+                    }
+                    other => panic!("expected gap, got {other:?}"),
+                }
+                match &items[1] {
+                    WorkspaceSessionReplayItem::Seed(seed) => {
+                        assert_eq!(seed.session.id, session.id);
+                        assert_eq!(seed.last_event_seq, 7);
+                    }
+                    other => panic!("expected seed, got {other:?}"),
+                }
+            }
+            other => panic!("expected replay, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn replay_session_stream_suppresses_gap_for_non_resuming_cursor() {
+        let hub = WorkspaceActiveSnapshotHub::new();
+        let session = replay_session(SessionId::new());
+        let mut head = new_head_snapshot(&session);
+        head.last_event_seq = 11;
+        hub.hydrate_snapshot(
+            session.workspace_id,
+            1,
+            0,
+            vec![replay_task(&session)],
+            vec![head],
+        )
+        .await;
+
+        match hub
+            .replay_session_stream(session.workspace_id, session.id, 0, 50)
+            .await
+        {
+            WorkspaceSessionReplay::Replay { items, last_sent } => {
+                assert!(items.is_empty());
+                assert_eq!(last_sent, 11);
             }
             other => panic!("expected replay, got {other:?}"),
         }
