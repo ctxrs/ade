@@ -45,6 +45,20 @@ import {
   mergeSessionTurns,
   sanitizeSessionHeadSnapshot,
 } from "./sessionHeadState";
+import {
+  asRecord,
+  hasOwnProperty,
+  mapWorktreeVcsSnapshots,
+  readString,
+  sortSessionSummaries,
+} from "./workspaceActiveSnapshot/projection";
+import {
+  readWorkspaceHeadsBatchPayload,
+  readWorkspaceSnapshotPayload,
+  readWorkspaceStreamRev,
+  shouldRequestWorkspaceSnapshot,
+  toWorkspaceHttpBaseUrl,
+} from "./workspaceActiveSnapshot/transport";
 
 export type WorkspaceActiveSnapshotItem = {
   id: string;
@@ -82,6 +96,7 @@ export type WorkspaceActiveSnapshotEventSource = {
   subscribeEvents: (listener: (event: WorkspaceActiveSnapshotEvent) => void) => () => void;
   getSnapshot: () => WorkspaceActiveSnapshotState;
   getSessionHeadSnapshot: (sessionId: string) => SessionHeadSnapshot | null;
+  getSessionHeadsSnapshot?: () => Record<string, SessionHeadSnapshot>;
   getWorktreeRoot: (worktreeId: string) => string | null;
   getWorktreeVcsSnapshot: (worktreeId: string) => WorktreeVcsSnapshot | null;
   setSubscribedSessionIds?: (sessionIds: string[]) => void;
@@ -111,111 +126,6 @@ const ACTIVE_PAGE_SIZE = 50;
 const SNAPSHOT_WAIT_MS = 1200;
 const FOREGROUND_TASK_DEBOUNCE_MS = 150;
 const WORKSPACE_PATCH_FLUSH_MS = 50;
-const shouldRequestSnapshot = (reason: string): boolean => {
-  switch (reason) {
-    case "ws_open":
-    case "reset_required":
-    case "snapshot_rev_reset":
-    case "stream_seq_gap":
-    case "stream_seq_reset":
-      return true;
-    default:
-      return false;
-  }
-};
-
-const toHttpBaseUrl = (base: string): string => {
-  const trimmed = base.replace(/\/+$/, "");
-  if (trimmed.startsWith("ws://")) return trimmed.replace(/^ws:\/\//, "http://");
-  if (trimmed.startsWith("wss://")) return trimmed.replace(/^wss:\/\//, "https://");
-  return trimmed;
-};
-
-const sortSessionSummaries = (summaries: SessionSnapshotSummary[]): SessionSnapshotSummary[] => {
-  return summaries
-    .slice()
-    .sort((a, b) => String(a.session.created_at ?? "").localeCompare(String(b.session.created_at ?? "")));
-};
-
-const mapWorktreeVcsSnapshots = (
-  snapshots?: WorktreeVcsSnapshot[] | null,
-): Record<string, WorktreeVcsSnapshot> => {
-  const out: Record<string, WorktreeVcsSnapshot> = {};
-  if (!Array.isArray(snapshots)) return out;
-  for (const snapshot of snapshots) {
-    const id = idToString(snapshot?.worktree_id ?? "");
-    if (!id) continue;
-    out[id] = snapshot;
-  }
-  return out;
-};
-
-const hasOwnProperty = (value: unknown, key: string): boolean => {
-  if (!value || typeof value !== "object") return false;
-  return Object.prototype.hasOwnProperty.call(value, key);
-};
-
-const asRecord = (value: unknown): Record<string, unknown> => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  return value as Record<string, unknown>;
-};
-
-const readString = (value: unknown): string | null => {
-  if (typeof value !== "string") return null;
-  return value;
-};
-
-const isWorkspaceActiveSnapshot = (value: unknown): value is WorkspaceActiveSnapshot => {
-  if (!value || typeof value !== "object") return false;
-  const active = (value as WorkspaceActiveSnapshot).active as { tasks?: unknown } | undefined;
-  if (!active || typeof active !== "object") return false;
-  return Array.isArray(active.tasks);
-};
-
-const readWorkspaceStreamRev = (value: unknown): number | null => {
-  if (!value || typeof value !== "object") return null;
-  const rec = value as { rev?: unknown };
-  return typeof rec.rev === "number" ? rec.rev : null;
-};
-
-const readWorkspaceSnapshotPayload = (
-  value: unknown,
-): { snapshot: WorkspaceActiveSnapshot; heads: SessionHeadSnapshot[] } | null => {
-  if (!value || typeof value !== "object") return null;
-  const rec = value as Record<string, unknown>;
-  const directSnapshot =
-    rec.type === "snapshot" && isWorkspaceActiveSnapshot(value) ? (value as WorkspaceActiveSnapshot) : null;
-  const candidate =
-    (rec.snapshot as WorkspaceActiveSnapshot | undefined) ??
-    (rec.active_snapshot as WorkspaceActiveSnapshot | undefined) ??
-    (rec.activeSnapshot as WorkspaceActiveSnapshot | undefined) ??
-    directSnapshot ??
-    null;
-  if (!isWorkspaceActiveSnapshot(candidate)) return null;
-  const headsPayload =
-    (rec.heads as unknown) ??
-    (rec.active_heads as unknown) ??
-    (rec.activeHeads as unknown) ??
-    [];
-  const headsArray = Array.isArray(headsPayload)
-    ? headsPayload
-    : Array.isArray((headsPayload as { heads?: unknown }).heads)
-      ? (headsPayload as { heads: SessionHeadSnapshot[] }).heads
-      : [];
-  return { snapshot: candidate, heads: headsArray };
-};
-
-const readWorkspaceHeadsBatchPayload = (
-  value: unknown,
-): { snapshotRev: number; deltas: SessionHeadDelta[] } | null => {
-  if (!value || typeof value !== "object") return null;
-  const rec = value as Record<string, unknown>;
-  if (rec.type !== "heads_batch") return null;
-  const snapshotRev =
-    (rec.snapshot_rev as number | undefined) ?? (rec.snapshotRev as number | undefined) ?? 0;
-  const deltas = Array.isArray(rec.deltas) ? (rec.deltas as SessionHeadDelta[]) : [];
-  return { snapshotRev, deltas };
-};
 
 export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSource {
   private listeners = new Set<() => void>();
@@ -518,7 +428,8 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     const readState = () => {
       const authToken = opts?.authToken ?? this.authTokenOverride ?? daemonConfig.authToken ?? null;
       const wsBaseUrl = opts?.wsBaseUrl ?? this.wsBaseUrlOverride ?? daemonConfig.wsBaseUrl ?? null;
-      const baseUrl = opts?.baseUrl ?? daemonConfig.baseUrl ?? (wsBaseUrl ? toHttpBaseUrl(wsBaseUrl) : null);
+      const baseUrl =
+        opts?.baseUrl ?? daemonConfig.baseUrl ?? (wsBaseUrl ? toWorkspaceHttpBaseUrl(wsBaseUrl) : null);
       const runId = opts?.runId ?? daemonConfig.runId ?? null;
       return {
         authToken,
@@ -1532,7 +1443,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   private flushSubscriptions(reason = "subscribe") {
     const ws = this.ws;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    const requestSnapshot = shouldRequestSnapshot(reason);
+    const requestSnapshot = shouldRequestWorkspaceSnapshot(reason);
     if (requestSnapshot) {
       this.scheduleSnapshotWarning(reason);
     }

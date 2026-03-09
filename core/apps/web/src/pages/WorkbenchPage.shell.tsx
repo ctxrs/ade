@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Virtuoso } from "react-virtuoso";
-import { flushSync } from "react-dom";
 import { Link, useNavigate } from "react-router-dom";
 import {
   ChevronDown,
@@ -22,8 +21,6 @@ import {
   Worktree,
   Workspace,
   archiveTask,
-  createSession,
-  createTask,
   deleteTask,
   daemonFetchRaw,
   getHealth,
@@ -34,7 +31,6 @@ import {
   listWebSessions,
   markTaskRead as markTaskReadApi,
   markTaskUnread as markTaskUnreadApi,
-  postMessage,
   unarchiveTask,
   updateTaskTitle,
 } from "../api/client";
@@ -58,21 +54,13 @@ import { HARNESS_CATALOG } from "../utils/harnessCatalog";
 import { WorkbenchComposer, type DraftHarness, type WorkbenchModeId } from "../components/WorkbenchComposer";
 import type { SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 import {
-  desktopRecordWorkspaceVisit,
-  desktopSetTitlebarColor,
-  desktopSetWindowTitle,
-  desktopStorageConsumeNotice,
-  getDesktopPlatform,
   isDesktopApp,
-  type DesktopPlatform,
-  type DesktopStorageNotice,
 } from "../utils/desktop";
 import { copyTextToClipboard } from "../utils/clipboard";
 import { errorMessage } from "../utils/errorMessage";
 import { parseModelId } from "../utils/modelEffort";
 import { getLoadTestTelemetry } from "../utils/loadTestTelemetry";
 import { useDictationController } from "../utils/useDictationController";
-import { randomUuid } from "../utils/randomUuid";
 import { trackWorkbenchPanelToggled } from "../utils/analytics";
 import {
   NEW_TASK_DRAFT_KEY,
@@ -113,9 +101,10 @@ import { useWorkbenchOptimisticTasks } from "./workbenchShell/useWorkbenchOptimi
 import { useWorkbenchProviders } from "./workbenchShell/useWorkbenchProviders";
 import { WorkbenchSessionHeader } from "./workbenchShell/WorkbenchSessionHeader";
 import { WorkbenchSessionLoadIssues } from "./workbenchShell/WorkbenchSessionLoadIssues";
-import { useWorkbenchDesktopMenu } from "./workbenchShell/useWorkbenchDesktopMenu";
+import { useWorkbenchChromeIntegration } from "./workbenchShell/useWorkbenchChromeIntegration";
+import { useWorkbenchSessionBridge } from "./workbenchShell/useWorkbenchSessionBridge";
+import { useWorkbenchTaskCreation } from "./workbenchShell/useWorkbenchTaskCreation";
 import { useWorkbenchTaskScrollbar } from "./workbenchShell/useWorkbenchTaskScrollbar";
-import { useWorkbenchTaskActivity } from "./workbenchShell/useWorkbenchTaskActivity";
 import type {
   AnchorRect,
   ArchiveConfirmState,
@@ -130,19 +119,16 @@ import {
   appendSegment,
   clampNum,
   deriveManagedWorktreeRoot,
-  deriveTaskTitle,
   formatWorktreeLabel,
   formatWorktreePath,
   isOptimisticTask,
   lastRoleMessageMs,
-  modelIdsFromOptions,
   normalizeAnchorRect,
   parseMs,
   sanitizeFileName,
   saveMarkdownExport,
   spinnerDelayForNow,
 } from "./WorkbenchPage.utils";
-import { buildOptimisticUserMessage } from "./SessionPage.optimisticMessage";
 
 export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const navigate = useNavigate();
@@ -166,10 +152,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const draftMode = newTaskDraft.modeId;
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
 
-  useEffect(() => {
-    supervisor.bindWorkspaceActiveSnapshotStore(workspaceSnapshotStore);
-    return () => supervisor.bindWorkspaceActiveSnapshotStore(null);
-  }, [supervisor, workspaceSnapshotStore]);
   useEffect(() => {
     if (!optimisticFocus) return;
     if (activeTaskIdFromTab) {
@@ -228,7 +210,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const copyTranscriptBusyRef = useRef(false);
   const transcriptSpinnerDelayRef = useRef<number>(spinnerDelayForNow());
   const [transcriptNotice, setTranscriptNotice] = useState<string | null>(null);
-  const [desktopStorageNotice, setDesktopStorageNotice] = useState<DesktopStorageNotice | null>(null);
 
   const getRenameDraft = useCallback((taskId: string, fallback: string) => {
     return renameDraftsRef.current.get(taskId) ?? fallback;
@@ -258,7 +239,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   );
 
   const [draftHarness, setDraftHarness] = useState<DraftHarness | null>(null);
-  const [startBusy, setStartBusy] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
   const [harnessAuthModalProviderId, setHarnessAuthModalProviderId] = useState<string | null>(null);
@@ -340,6 +320,32 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     scopeRef: newComposerRef,
     activeTaskId,
     setDraftAttachments,
+  });
+
+  const {
+    startBusy,
+    startBlockedReason,
+    startNewTask,
+  } = useWorkbenchTaskCreation({
+    workspaceId,
+    draftPrompt,
+    setNewTaskDraft,
+    draftAttachments,
+    setDraftAttachments,
+    draftHarness,
+    providersById,
+    providerOptions,
+    ensureProviderAuthSummary,
+    dictationRecording,
+    stopDictation,
+    focusTask,
+    workbenchStore,
+    optimisticStartingTaskRef,
+    setOptimisticTasks,
+    setOptimisticFocus,
+    supervisor,
+    newTaskDraftKey: NEW_TASK_DRAFT_KEY,
+    onStartError: setStartError,
   });
 
   const [rightPaneMode, setRightPaneMode] = useState<"diff" | "artifacts" | "sessions" | null>(null);
@@ -699,7 +705,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     taskLiveInfo,
     providerIdsByTaskFromSessions,
     isTaskUnread,
-  } = useWorkbenchTaskActivity({
+  } = useWorkbenchSessionBridge({
     activeTaskId,
     activeSessionIdFromTab: activeSessionIdFromTabResolved,
     activeTaskSummary,
@@ -919,22 +925,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         <div className="wb-snackbar-title">{transcriptNotice}</div>
       </div>
       <button type="button" className="wb-snackbar-close" onClick={dismissTranscriptNotice} aria-label="Dismiss">
-        <X size={14} aria-hidden="true" />
-      </button>
-    </div>
-  ) : null;
-
-  const desktopStorageNoticeSubtitle =
-    desktopStorageNotice?.reason === "schema_mismatch"
-      ? "Desktop detected an outdated local UI state format and reset local UI state."
-      : "Desktop detected invalid local UI state data and reset local UI state.";
-  const desktopStorageNoticeSnackbar = desktopStorageNotice ? (
-    <div className="wb-snackbar" role="status" aria-live="polite">
-      <div className="wb-snackbar-body">
-        <div className="wb-snackbar-title">Local UI state was reset.</div>
-        <div className="wb-snackbar-subtitle">{desktopStorageNoticeSubtitle}</div>
-      </div>
-      <button type="button" className="wb-snackbar-close" onClick={dismissDesktopStorageNotice} aria-label="Dismiss">
         <X size={14} aria-hidden="true" />
       </button>
     </div>
@@ -1841,276 +1831,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   const slashCommands = useMemo<SlashCommandDescriptor[]>(() => [], []);
 
-  const startBlockedReason = useMemo(() => {
-    if (draftPrompt.trim().length === 0) return "Enter a prompt to start.";
-    if (startBusy) return "Starting…";
-    if (!draftHarness) return "Select a harness to start.";
-    const missing =
-      !(providersById[draftHarness.providerId]?.installed === true && providersById[draftHarness.providerId]?.health === "ok");
-    if (missing) {
-      const diag = providersById[draftHarness.providerId]?.diagnostics?.[0];
-      return diag
-        ? `Harness “${draftHarness.providerId}” unavailable: ${diag}`
-        : `Harness “${draftHarness.providerId}” unavailable.`;
-    }
-    return null;
-  }, [draftHarness, draftPrompt, startBusy, providersById]);
-
-  const startNewTask = async () => {
-    if (!workspaceId) return;
-    const prompt = (dictationRecording ? await stopDictation({ awaitFinal: true }) : draftPrompt).trim();
-    if (!prompt) return;
-    if (startBusy) return;
-    if (startBlockedReason && !startBlockedReason.startsWith("Starting")) {
-      setStartError(startBlockedReason);
-      return;
-    }
-    setStartBusy(true);
-    setStartError(null);
-
-    const nowIso = new Date().toISOString();
-    const title = deriveTaskTitle(prompt);
-    const attachmentsToSend = draftAttachments.slice();
-    const primaryTrack = draftHarness;
-    if (!primaryTrack) {
-      setStartBusy(false);
-      setStartError("Select a harness to start.");
-      return;
-    }
-    const optimisticTaskId = randomUuid();
-    const optimisticSessionId = randomUuid();
-    const optimisticMessageId = randomUuid();
-    const optimisticTurnId = randomUuid();
-    const optimisticModelId =
-      primaryTrack.modelId ||
-      modelIdsFromOptions(providerOptions[primaryTrack.providerId])[0] ||
-      (primaryTrack.providerId === "fake" ? "fake-model" : "default");
-
-    const optimisticTask: Task = {
-      id: optimisticTaskId,
-      workspace_id: workspaceId,
-      title,
-      status: "running",
-      primary_session_id: optimisticSessionId,
-      created_at: nowIso,
-      updated_at: nowIso,
-      last_activity_at: nowIso,
-      has_active_session: true,
-    };
-
-    const optimisticSession: Session = {
-      id: optimisticSessionId,
-      task_id: optimisticTaskId,
-      workspace_id: workspaceId,
-      worktree_id: "",
-      provider_id: primaryTrack.providerId,
-      model_id: optimisticModelId,
-      title: "Session 1",
-      agent_role: "assistant",
-      status: "starting",
-      env_target: "worktree",
-      created_at: nowIso,
-      updated_at: nowIso,
-    };
-
-    const optimisticSummary: SessionSnapshotSummary = {
-      session: optimisticSession,
-      last_message_at: nowIso,
-      last_message_preview: prompt.slice(0, 160),
-      activity: { is_working: true, last_turn_status: "running" },
-      unread: false,
-    };
-
-    const optimisticItem: OptimisticTaskSummary = {
-      id: optimisticTaskId,
-      task: optimisticTask,
-      sessions: [optimisticSummary],
-      primarySessionHead: null,
-      primarySessionId: optimisticSessionId,
-      sort_at: nowIso,
-      sortAtMs: Date.parse(nowIso) || Date.now(),
-      providerIds: [primaryTrack.providerId],
-      localStatus: "starting",
-      localPrompt: prompt,
-      localMessageId: optimisticMessageId,
-    };
-
-    const optimisticMessage: Message = buildOptimisticUserMessage({
-      messageId: optimisticMessageId,
-      sessionId: optimisticSessionId,
-      taskId: optimisticTaskId,
-      turnId: optimisticTurnId,
-      content: prompt,
-      attachments: attachmentsToSend,
-      delivery: "immediate",
-      createdAt: nowIso,
-    });
-    const optimisticTurn: SessionTurn = {
-      turn_id: optimisticTurnId,
-      session_id: optimisticSessionId,
-      run_id: null,
-      user_message_id: optimisticMessageId,
-      status: "running",
-      start_seq: null,
-      end_seq: null,
-      started_at: nowIso,
-      updated_at: nowIso,
-      assistant_partial: null,
-      thought_partial: null,
-      metrics_json: null,
-      tool_total: 0,
-      tool_pending: 0,
-      tool_running: 0,
-      tool_completed: 0,
-      tool_failed: 0,
-    };
-
-    // Keep the "switch to task tab" + optimistic seed in the same sync commit to avoid a transient
-    // render where the task pane is focused but has no session/thread data yet.
-    flushSync(() => {
-      optimisticStartingTaskRef.current = optimisticItem;
-      setOptimisticTasks((prev) => [optimisticItem, ...prev]);
-      focusTask(optimisticTaskId, optimisticSessionId);
-      setOptimisticFocus({
-        taskId: optimisticTaskId,
-        sessionId: optimisticSessionId,
-        navToken: workbenchStore.getNavToken(),
-      });
-      supervisor.setSession(optimisticSession);
-      supervisor.setTurns(optimisticSessionId, [optimisticTurn], { replace: true });
-      supervisor.setMessages(optimisticSessionId, [optimisticMessage], { replace: true });
-    });
-
-    setNewTaskDraft({ text: "", modeId: "default" });
-    await workbenchStore.flushDraft(NEW_TASK_DRAFT_KEY);
-    setDraftAttachments([]);
-
-    let currentTaskId = optimisticTaskId;
-    let currentSessionId = optimisticSessionId;
-    let primaryMessagePosted = false;
-
-    try {
-      const task = await createTask(workspaceId, title, undefined, {
-        create_default_session: false,
-        id: optimisticTaskId,
-      });
-      const taskId = idToString(task.id);
-      if (!taskId) throw new Error("Task creation failed.");
-
-      if (taskId !== optimisticTaskId) {
-        throw new Error("Task creation returned an unexpected id.");
-      }
-
-      currentTaskId = taskId;
-      setOptimisticTasks((prev) =>
-        prev.map((item) => {
-          if (item.id !== currentTaskId) return item;
-          const nextTask: Task = { ...task, primary_session_id: item.primarySessionId ?? null };
-          const nextSessions = item.sessions.map((summary) => ({
-            ...summary,
-            session: {
-              ...summary.session,
-              task_id: currentTaskId,
-              workspace_id: task.workspace_id ?? summary.session.workspace_id,
-            },
-          }));
-          return {
-            ...item,
-            task: nextTask,
-            sessions: nextSessions,
-            sort_at: task.created_at ?? item.sort_at,
-            sortAtMs: Date.parse(task.created_at ?? item.sort_at ?? "") || item.sortAtMs,
-          };
-        }),
-      );
-
-      const dt = primaryTrack;
-      const installed = providersById[dt.providerId]?.installed === true && providersById[dt.providerId]?.health === "ok";
-      if (!installed) {
-        const diag = providersById[dt.providerId]?.diagnostics?.[0];
-        throw new Error(
-          diag ? `Harness “${dt.providerId}” unavailable: ${diag}` : `Harness “${dt.providerId}” unavailable.`,
-        );
-      }
-      const env_target = "worktree";
-      const opts = await ensureProviderAuthSummary(dt.providerId).catch(() => undefined);
-      const modelIds = modelIdsFromOptions(opts ?? providerOptions[dt.providerId]);
-      const modelId = dt.modelId || modelIds[0] || (dt.providerId === "fake" ? "fake-model" : "default");
-      const clientSessionId = optimisticSessionId;
-      const messageId = optimisticMessageId;
-      const turnId = optimisticTurnId;
-      const shouldSendInitialPrompt = attachmentsToSend.length === 0;
-      const session = await createSession(currentTaskId, dt.providerId, modelId, {
-        env_target,
-        id: clientSessionId,
-        initial_message_id: messageId,
-        initial_turn_id: turnId,
-        ...(shouldSendInitialPrompt ? { initial_prompt: prompt } : {}),
-      });
-      const sessionId = idToString(session.id);
-      if (!sessionId) throw new Error("Session creation failed.");
-      if (sessionId !== clientSessionId) {
-        throw new Error("Session creation returned an unexpected id.");
-      }
-      currentSessionId = sessionId;
-      supervisor.setSession(session);
-      setOptimisticTasks((prev) =>
-        prev.map((item) => {
-          if (item.id !== currentTaskId) return item;
-          const nextSessions = item.sessions.map((summary) => {
-            if (idToString(summary.session.id) !== sessionId) return summary;
-            const nextSummary: SessionSnapshotSummary = {
-              ...summary,
-              session,
-              last_message_at: nowIso,
-              last_message_preview: summary.last_message_preview ?? prompt.slice(0, 160),
-              activity: { is_working: true, last_turn_status: "running" },
-            };
-            return nextSummary;
-          });
-          return {
-            ...item,
-            sessions: nextSessions,
-            primarySessionId: sessionId,
-            task: { ...item.task, primary_session_id: sessionId },
-          };
-        }),
-      );
-
-      if (shouldSendInitialPrompt) {
-        primaryMessagePosted = true;
-      } else {
-        const posted = await postMessage(sessionId, prompt, "immediate", attachmentsToSend, {
-          id: messageId,
-          turn_id: turnId,
-        });
-        supervisor.setMessages(sessionId, [posted]);
-        primaryMessagePosted = true;
-      }
-      setOptimisticTasks((prev) =>
-        prev.map((item) =>
-          item.id === currentTaskId && item.localStatus === "starting"
-            ? { ...item, localStatus: "synced" }
-            : item,
-        ),
-      );
-
-      if (!primaryMessagePosted) {
-        throw new Error("Failed to start the first session.");
-      }
-    } catch (e: unknown) {
-      const message = errorMessage(e);
-      setOptimisticTasks((prev) =>
-        prev.map((item) =>
-          item.id === currentTaskId ? { ...item, localStatus: "failed", localError: message } : item,
-        ),
-      );
-      setStartError(message);
-    } finally {
-      setStartBusy(false);
-    }
-  };
-
   useEffect(() => {
     if (!diffOpen || !activeSessionId) return;
     void refreshDiff(activeSessionId);
@@ -2565,7 +2285,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     }
   }, [activeSessionId, buildTranscriptExportFromEntry, hydrateTranscriptHistory, supervisor]);
 
-  const desktopUi = isDesktopApp();
   const activeSessionStatus = String(activeEntry?.session?.status ?? "").toLowerCase();
   const canInterruptSession =
     Boolean(activeSessionId) && (activeSessionStatus === "active" || activeSessionStatus === "running");
@@ -2579,9 +2298,16 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed((prev) => !prev);
   }, []);
-
-  useWorkbenchDesktopMenu({
-    enabled: desktopUi,
+  const {
+    desktopUi,
+    desktopPlatform,
+    desktopStorageNotice,
+    setDesktopStorageNotice,
+    useHtmlTopbar,
+  } = useWorkbenchChromeIntegration({
+    enabled: isDesktopApp(),
+    workspaceId,
+    workspaceName: workspace?.name ?? null,
     state: {
       activeSessionId,
       activeTaskId,
@@ -2632,48 +2358,22 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       },
     },
   });
-
-  const [desktopPlatform, setDesktopPlatform] = useState<DesktopPlatform>(() => {
-    if (!desktopUi) return "unknown";
-    const platform = typeof navigator === "undefined" ? "" : navigator.platform;
-    if (/mac/i.test(platform)) return "macos";
-    if (/win/i.test(platform)) return "windows";
-    if (/linux/i.test(platform)) return "linux";
-    return "unknown";
-  });
-
-  useEffect(() => {
-    if (!desktopUi) return;
-    let cancelled = false;
-    getDesktopPlatform()
-      .then((platform) => {
-        if (!cancelled) setDesktopPlatform(platform);
-      })
-      .catch(() => {
-        if (!cancelled) setDesktopPlatform("unknown");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [desktopUi]);
-
-  useEffect(() => {
-    if (!desktopUi) return;
-    let cancelled = false;
-    desktopStorageConsumeNotice()
-      .then((notice) => {
-        if (!cancelled) {
-          setDesktopStorageNotice(notice);
-        }
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [desktopUi]);
-
-  const useHtmlTopbar = !desktopUi || desktopPlatform !== "macos";
   const workspaceTitle = workspace?.name ?? "";
+  const desktopStorageNoticeSubtitle =
+    desktopStorageNotice?.reason === "schema_mismatch"
+      ? "Desktop detected an outdated local UI state format and reset local UI state."
+      : "Desktop detected invalid local UI state data and reset local UI state.";
+  const desktopStorageNoticeSnackbar = desktopStorageNotice ? (
+    <div className="wb-snackbar" role="status" aria-live="polite">
+      <div className="wb-snackbar-body">
+        <div className="wb-snackbar-title">Local UI state was reset.</div>
+        <div className="wb-snackbar-subtitle">{desktopStorageNoticeSubtitle}</div>
+      </div>
+      <button type="button" className="wb-snackbar-close" onClick={dismissDesktopStorageNotice} aria-label="Dismiss">
+        <X size={14} aria-hidden="true" />
+      </button>
+    </div>
+  ) : null;
 
   type RootStyle = React.CSSProperties & {
     "--wb-sidebar-width": string;
@@ -2691,21 +2391,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       "--wb-topbar-height": useHtmlTopbar ? "46px" : "0px",
     };
   }, [sidebarWidth, terminalHeight, terminalOpen, useHtmlTopbar]);
-
-  useEffect(() => {
-    if (!desktopUi) return;
-    const title = workspace?.name ?? "";
-    document.title = title;
-    desktopSetWindowTitle(title).catch(() => {});
-  }, [desktopUi, workspace?.name]);
-
-  useEffect(() => {
-    if (!desktopUi) return;
-    const workspaceIdValue = String(workspaceId || "").trim();
-    if (!workspaceIdValue) return;
-    const workspaceLabel = String(workspace?.name || "").trim() || workspaceIdValue;
-    void desktopRecordWorkspaceVisit(workspaceIdValue, workspaceLabel).catch(() => {});
-  }, [desktopUi, workspace?.name, workspaceId]);
 
   const topbar = useHtmlTopbar ? (
     <div className="wb-topbar" data-tauri-drag-region={desktopUi ? true : undefined}>

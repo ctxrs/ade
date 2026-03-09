@@ -117,6 +117,68 @@ const mkWorkspaceSnapshotState = (): WorkspaceActiveSnapshotState => ({
   archivedLoaded: false,
 });
 
+const mkWorkspaceTaskSummary = ({
+  taskId,
+  primarySessionId,
+  sessionIds,
+}: {
+  taskId: string;
+  primarySessionId: string;
+  sessionIds: string[];
+}) => ({
+  id: taskId,
+  task: {
+    id: taskId,
+    workspace_id: "ws-1",
+    title: `Task ${taskId}`,
+    status: "running",
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    last_activity_at: new Date().toISOString(),
+    archived_at: null,
+    primary_session_id: primarySessionId,
+  },
+  sessions: sessionIds.map((sessionId) => ({
+    session: mkSession(sessionId),
+    last_message_at: null,
+    last_message_preview: null,
+    last_event_seq: null,
+    state_rev: undefined,
+    activity: { is_working: false, last_turn_status: null },
+    unread: false,
+  })),
+  primarySessionId,
+  primarySessionHead: null,
+  sort_at: new Date().toISOString(),
+  sortAtMs: Date.now(),
+});
+
+const attachWorkspaceStore = (
+  sup: {
+    setSubscribedSessionIdsSink: (sink: ((sessionIds: string[]) => void) | null) => void;
+    setWorkspaceSnapshotState: (state: WorkspaceActiveSnapshotState | null) => void;
+    setWorkspaceSessionHeads: (heads: Record<string, SessionHeadSnapshot>) => void;
+    handleWorkspaceEvent: (evt: WorkspaceActiveSnapshotEvent) => void;
+  },
+  store: WorkspaceActiveSnapshotEventSource & { getSessionHeadsSnapshot?: () => Record<string, SessionHeadSnapshot> },
+) => {
+  const sync = () => {
+    sup.setWorkspaceSnapshotState(store.getSnapshot());
+    sup.setWorkspaceSessionHeads(store.getSessionHeadsSnapshot?.() ?? {});
+  };
+  sup.setSubscribedSessionIdsSink((sessionIds) => store.setSubscribedSessionIds?.(sessionIds));
+  sync();
+  const unsubState = store.subscribe(sync);
+  const unsubEvents = store.subscribeEvents((evt) => sup.handleWorkspaceEvent(evt));
+  return () => {
+    unsubEvents();
+    unsubState();
+    sup.setSubscribedSessionIdsSink(null);
+    sup.setWorkspaceSessionHeads({});
+    sup.setWorkspaceSnapshotState(null);
+  };
+};
+
 describe("SessionSupervisor", () => {
   afterEach(() => {
     vi.clearAllMocks();
@@ -163,6 +225,84 @@ describe("SessionSupervisor", () => {
     const entry = sup.getSnapshot().sessions[sessionId];
     expect(entry?.messages.length).toBe(1);
     expect(entry?.queue.length).toBe(1);
+  });
+
+  it("re-emits subscribed session ids when active-task membership changes under an open session", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-reemit-active-membership";
+    const sink = vi.fn();
+    getSessionSnapshotMock.mockResolvedValue({
+      summary: {
+        session: mkSession(sessionId),
+      },
+    });
+    getSessionHeadMock.mockResolvedValue({
+      session: mkSession(sessionId),
+      turns: [] as SessionTurn[],
+      events: [] as SessionEvent[],
+      messages: [] as Message[],
+      last_event_seq: 1,
+      has_more_turns: false,
+      has_more_history: false,
+      history_cursor: null,
+    });
+
+    const sup = new SessionSupervisor();
+    sup.setSubscribedSessionIdsSink(sink);
+    sink.mockClear();
+
+    sup.openSession(sessionId, { mode: "active" });
+
+    expect(sink).toHaveBeenCalledWith([sessionId]);
+    sink.mockClear();
+
+    sup.setActiveTaskSessionIds([sessionId]);
+
+    expect(sink).toHaveBeenCalledWith([sessionId]);
+  });
+
+  it("re-emits subscribed session ids when workspace active-primary membership flips under an identical plan", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sink = vi.fn();
+    const sup = new SessionSupervisor();
+    sup.setSubscribedSessionIdsSink(sink);
+    sink.mockClear();
+
+    sup.setWarmSessionIds(["session-1", "session-2"]);
+    expect(sink).toHaveBeenCalledWith(["session-1", "session-2"]);
+    sink.mockClear();
+
+    const stateWithPrimaryOne: WorkspaceActiveSnapshotState = {
+      ...mkWorkspaceSnapshotState(),
+      activeIds: ["task-1"],
+      tasksById: {
+        "task-1": mkWorkspaceTaskSummary({
+          taskId: "task-1",
+          primarySessionId: "session-1",
+          sessionIds: ["session-1", "session-2"],
+        }),
+      },
+      totalActive: 1,
+    };
+    sup.setWorkspaceSnapshotState(stateWithPrimaryOne);
+    expect(sink).toHaveBeenCalledWith(["session-1", "session-2"]);
+    sink.mockClear();
+
+    const stateWithPrimaryTwo: WorkspaceActiveSnapshotState = {
+      ...stateWithPrimaryOne,
+      tasksById: {
+        "task-1": mkWorkspaceTaskSummary({
+          taskId: "task-1",
+          primarySessionId: "session-2",
+          sessionIds: ["session-1", "session-2"],
+        }),
+      },
+    };
+    sup.setWorkspaceSnapshotState(stateWithPrimaryTwo);
+
+    expect(sink).toHaveBeenCalledWith(["session-1", "session-2"]);
   });
 
   it("hydrates protocol-derived slash command metadata from archived init events", async () => {
@@ -259,7 +399,7 @@ describe("SessionSupervisor", () => {
       getSnapshot: () => mkWorkspaceSnapshotState(),
     };
 
-    sup.bindWorkspaceActiveSnapshotStore(store);
+    attachWorkspaceStore(sup, store);
     sup.openSession(sessionId, { mode: "active" });
 
     await waitForCondition(() => sup.getSnapshot().sessions[sessionId] != null);
@@ -365,7 +505,7 @@ describe("SessionSupervisor", () => {
     };
 
     const sup = new SessionSupervisor();
-    sup.bindWorkspaceActiveSnapshotStore(store);
+    attachWorkspaceStore(sup, store);
     sup.openSession(sessionId, { mode: "active" });
 
     await waitForCondition(() => Boolean(sup.getSnapshot().sessions[sessionId]));
@@ -449,7 +589,7 @@ describe("SessionSupervisor", () => {
     };
 
     const sup = new SessionSupervisor();
-    sup.bindWorkspaceActiveSnapshotStore(store);
+    attachWorkspaceStore(sup, store);
     sup.openSession(sessionId, { mode: "active" });
 
     await waitForCondition(() => sup.getSnapshot().sessions[sessionId] != null);
@@ -525,7 +665,7 @@ describe("SessionSupervisor", () => {
       getSnapshot: () => mkWorkspaceSnapshotState(),
     };
 
-    sup.bindWorkspaceActiveSnapshotStore(store);
+    attachWorkspaceStore(sup, store);
     sup.openSession(sessionId, { mode: "active" });
 
     await waitForCondition(() => sup.getSnapshot().sessions[sessionId] != null);
@@ -602,7 +742,7 @@ describe("SessionSupervisor", () => {
       getSnapshot: () => mkWorkspaceSnapshotState(),
     };
 
-    sup.bindWorkspaceActiveSnapshotStore(store);
+    attachWorkspaceStore(sup, store);
     sup.openSession(sessionId, { mode: "active" });
 
     await waitForCondition(() => sup.getSnapshot().sessions[sessionId] != null);
@@ -682,7 +822,7 @@ describe("SessionSupervisor", () => {
     };
 
     const sup = new SessionSupervisor();
-    sup.bindWorkspaceActiveSnapshotStore(store);
+    attachWorkspaceStore(sup, store);
     sup.openSession(sessionId, { mode: "active" });
     const seedEvent: WorkspaceActiveSnapshotEvent = {
       type: "session_head_seed",
@@ -836,7 +976,7 @@ describe("SessionSupervisor", () => {
     };
 
     const sup = new SessionSupervisor();
-    sup.bindWorkspaceActiveSnapshotStore(store);
+    attachWorkspaceStore(sup, store);
 
     const upsertEvent: WorkspaceActiveSnapshotEvent = {
       type: "active_task_upsert",
@@ -946,7 +1086,7 @@ describe("SessionSupervisor", () => {
     };
 
     const sup = new SessionSupervisor();
-    sup.bindWorkspaceActiveSnapshotStore(store);
+    attachWorkspaceStore(sup, store);
     sup.openSession(sessionId, { mode: "active" });
 
     await waitForCondition(() => {
@@ -1001,7 +1141,7 @@ describe("SessionSupervisor", () => {
     };
 
     const sup = new SessionSupervisor();
-    sup.bindWorkspaceActiveSnapshotStore(store);
+    attachWorkspaceStore(sup, store);
     sup.openSession(sessionId);
 
     await waitForCondition(() => {
@@ -1075,7 +1215,7 @@ describe("SessionSupervisor", () => {
     };
 
     const sup = new SessionSupervisor();
-    sup.bindWorkspaceActiveSnapshotStore(store);
+    attachWorkspaceStore(sup, store);
     sup.openSession(sessionId);
 
     await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.messages.length === 1);
@@ -1126,7 +1266,7 @@ describe("SessionSupervisor", () => {
     };
 
     const sup = new SessionSupervisor();
-    sup.bindWorkspaceActiveSnapshotStore(store);
+    attachWorkspaceStore(sup, store);
     sup.openSession(sessionId);
 
     await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.loadState === "fatal");
@@ -1150,7 +1290,7 @@ describe("SessionSupervisor", () => {
     };
 
     const sup = new SessionSupervisor();
-    sup.bindWorkspaceActiveSnapshotStore(store);
+    attachWorkspaceStore(sup, store);
     sup.openSession(sessionId);
 
     await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.loadState === "fatal");

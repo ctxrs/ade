@@ -135,9 +135,15 @@ const focusTaskSpy = vi.fn(
 );
 const applyTaskUpdateSpy = vi.fn();
 const sessionSupervisorMock = {
-  bindWorkspaceActiveSnapshotStore: vi.fn(),
+  setSubscribedSessionIdsSink: vi.fn(),
+  setWorkspaceSnapshotState: vi.fn(),
+  setWorkspaceSessionHeads: vi.fn(),
+  handleWorkspaceEvent: vi.fn(),
   setActiveTaskSessionIds: vi.fn(),
   setWarmSessionIds: vi.fn(),
+  setSession: vi.fn(),
+  setTurns: vi.fn(),
+  setMessages: vi.fn(),
   setDiff: vi.fn(),
   loadSessionState: vi.fn(),
   loadArtifacts: vi.fn(),
@@ -233,9 +239,14 @@ vi.mock("../state/workspaceActiveSnapshotStore", () => ({
   useWorkspaceActiveSnapshotEvents: () => {},
   useWorkspaceActiveSnapshotSnapshot: () => workspaceSnapshotSnap,
   useWorkspaceActiveSnapshotStore: () => ({
+    subscribe: () => () => {},
+    subscribeEvents: () => () => {},
+    getSnapshot: () => workspaceSnapshotSnap,
+    getSessionHeadsSnapshot: () => ({}),
     applyTaskUpdate: applyTaskUpdateSpy,
     ensureArchivedLoaded: vi.fn(),
     getWorktreeRoot: vi.fn(() => null),
+    getWorktreeVcsSnapshot: vi.fn(() => null),
     loadMoreActive: vi.fn(),
     loadMoreArchived: vi.fn(),
   }),
@@ -323,9 +334,15 @@ beforeEach(() => {
   sessionSnap = buildSessionSnap();
   workspaceSnapshotSnap = buildWorkspaceSnapshotSnap();
   trackWorkbenchPanelToggledMock.mockReset();
-  sessionSupervisorMock.bindWorkspaceActiveSnapshotStore.mockReset();
+  sessionSupervisorMock.setSubscribedSessionIdsSink.mockReset();
+  sessionSupervisorMock.setWorkspaceSnapshotState.mockReset();
+  sessionSupervisorMock.setWorkspaceSessionHeads.mockReset();
+  sessionSupervisorMock.handleWorkspaceEvent.mockReset();
   sessionSupervisorMock.setActiveTaskSessionIds.mockReset();
   sessionSupervisorMock.setWarmSessionIds.mockReset();
+  sessionSupervisorMock.setSession.mockReset();
+  sessionSupervisorMock.setTurns.mockReset();
+  sessionSupervisorMock.setMessages.mockReset();
   sessionSupervisorMock.setDiff.mockReset();
   sessionSupervisorMock.loadSessionState.mockReset();
   sessionSupervisorMock.loadArtifacts.mockReset();

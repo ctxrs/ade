@@ -21,9 +21,8 @@ import {
   type SessionTurnTool,
   type SessionTurnToolSummary,
   type SubagentInvocation,
-  type WorkspaceActiveSnapshotEvent,
 } from "../api/client";
-import type { WorkspaceActiveSnapshotEventSource, WorkspaceActiveSnapshotState } from "./workspaceActiveSnapshotStore";
+import type { WorkspaceActiveSnapshotState } from "./workspaceActiveSnapshotStore";
 import { compareSessionTurnOrder, mergeSessionMessages } from "./sessionHeadState";
 import {
   loadSessionAcpMetaV1,
@@ -72,6 +71,12 @@ import {
 } from "./sessionSupervisor/toolStateProjection";
 import { buildSessionSubscriptionPlan } from "./sessionSupervisor/sessionSubscriptionPlan";
 import { applyTurnOutcomeEffects } from "./sessionSupervisor/turnOutcomeEffects";
+import type {
+  SessionSupervisorSubscribedSessionIdsSink,
+  SessionSupervisorWorkspaceEvent,
+  SessionSupervisorWorkspaceSessionHeads,
+  SessionSupervisorWorkspaceSnapshotState,
+} from "./sessionSupervisor/workspaceInputs";
 
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
@@ -287,12 +292,10 @@ export class SessionSupervisor {
   private snapshot: SessionSupervisorSnapshot = { connection: "idle", sessions: {} };
   private entries = new Map<string, InternalEntry>();
   private replica: SessionReplicaBridge;
-  private snapshotStore: WorkspaceActiveSnapshotEventSource | null = null;
-  private snapshotUnsub: (() => void) | null = null;
-  private snapshotStateUnsub: (() => void) | null = null;
   private activeTaskSessionIds: string[] = [];
   private warmSessionIds: string[] = [];
   private subscribedSessionIds: string[] = [];
+  private subscribedSessionIdsSink: SessionSupervisorSubscribedSessionIdsSink = null;
   private providerOptionsCache = new Map<string, ProviderOptions>();
   private providerOptionsInFlight = new Map<string, Promise<ProviderOptions | undefined>>();
   private taskThoughtCache = new Map<string, PersistedTaskThoughtsV1>();
@@ -300,6 +303,9 @@ export class SessionSupervisor {
   private modeResolutionTimers = new Map<string, ReturnType<typeof globalThis.setTimeout>>();
   private modeResolutionAttempts = new Map<string, number>();
   private modeResolutionOptions = new Map<string, OpenOptions | undefined>();
+  private workspaceSnapshotState: SessionSupervisorWorkspaceSnapshotState = null;
+  private workspaceSessionHeadsById = new Map<string, SessionHeadSnapshot>();
+  private workspaceActivePrimarySessionIds: string[] = [];
 
   constructor() {
     this.replica = new SessionReplicaBridge(this.handleReplicaPatches, {
@@ -315,38 +321,44 @@ export class SessionSupervisor {
 
   getSnapshot = (): SessionSupervisorSnapshot => this.snapshot;
 
-  bindWorkspaceActiveSnapshotStore(store: WorkspaceActiveSnapshotEventSource | null) {
-    if (this.snapshotUnsub) {
-      this.snapshotUnsub();
-      this.snapshotUnsub = null;
-    }
-    if (this.snapshotStateUnsub) {
-      this.snapshotStateUnsub();
-      this.snapshotStateUnsub = null;
-    }
-    this.snapshotStore = store;
-    if (!store) {
+  setSubscribedSessionIdsSink = (sink: SessionSupervisorSubscribedSessionIdsSink) => {
+    this.subscribedSessionIdsSink = sink;
+    this.emitSubscribedSessionIds();
+  };
+
+  setWorkspaceSnapshotState = (state: SessionSupervisorWorkspaceSnapshotState) => {
+    this.workspaceSnapshotState = state;
+    if (!state) {
+      this.workspaceActivePrimarySessionIds = [];
       for (const sessionId of [...this.modeResolutionTimers.keys()]) {
         this.clearModeResolution(sessionId);
       }
       this.setConnection("disconnected");
       return;
     }
-    this.snapshotUnsub = store.subscribeEvents((evt) => this.handleWorkspaceEvent(evt));
-    this.snapshotStateUnsub = store.subscribe(() => {
-      const state = store.getSnapshot();
-      const next = this.mapConnection(state.connection);
-      this.setConnection(next);
-      this.syncActiveSnapshot(state);
-      this.resolvePendingSessionModes(state);
-      if (next !== "connected") {
-        this.markOpenSessionsRecovering();
-      }
-    });
-    this.setConnection(this.mapConnection(store.getSnapshot().connection));
-    this.resolvePendingSessionModes(store.getSnapshot());
-    this.refreshSubscriptions();
-  }
+    const nextWorkspaceActivePrimarySessionIds = this.collectWorkspaceActivePrimarySessionIds(state);
+    const activePrimaryMembershipChanged = !sameIdList(
+      nextWorkspaceActivePrimarySessionIds,
+      this.workspaceActivePrimarySessionIds,
+    );
+    this.workspaceActivePrimarySessionIds = nextWorkspaceActivePrimarySessionIds;
+    const next = this.mapConnection(state.connection);
+    this.setConnection(next);
+    this.syncActiveSnapshot(state);
+    this.resolvePendingSessionModes(state);
+    if (next !== "connected") {
+      this.markOpenSessionsRecovering();
+    }
+    this.refreshSubscriptions({ emitIfUnchanged: activePrimaryMembershipChanged });
+  };
+
+  setWorkspaceSessionHeads = (heads: SessionSupervisorWorkspaceSessionHeads) => {
+    this.workspaceSessionHeadsById = new Map(Object.entries(heads));
+  };
+
+  handleWorkspaceEvent = (evt: SessionSupervisorWorkspaceEvent) => {
+    this.ingestWorkspaceEvent(evt);
+  };
 
   openSession = (sessionId: string, opts?: OpenOptions) => {
     const entry = this.ensureEntry(sessionId);
@@ -430,11 +442,13 @@ export class SessionSupervisor {
     this.replica.dispatch({ type: "refresh_session", sessionId });
   };
 
+  getSubscribedSessionIds = (): string[] => this.subscribedSessionIds.slice();
+
   setActiveTaskSessionIds = (sessionIds: string[]) => {
     const next = dedupeIds(sessionIds);
     if (sameIdList(next, this.activeTaskSessionIds)) return;
     this.activeTaskSessionIds = next;
-    this.refreshSubscriptions();
+    this.refreshSubscriptions({ emitIfUnchanged: true });
   };
 
   setWarmSessionIds = (sessionIds: string[]) => {
@@ -1171,11 +1185,10 @@ export class SessionSupervisor {
   }
 
   private getActiveSnapshotHead(sessionId: string): SessionHeadSnapshot | null {
-    const store = this.snapshotStore;
-    if (!store) return null;
-    const direct = store.getSessionHeadSnapshot(sessionId);
+    const direct = this.workspaceSessionHeadsById.get(sessionId) ?? null;
     if (direct) return direct;
-    const state = store.getSnapshot();
+    const state = this.workspaceSnapshotState;
+    if (!state) return null;
     for (const taskId of state.activeIds) {
       const item = state.tasksById[taskId];
       const head = item?.primarySessionHead;
@@ -1230,7 +1243,7 @@ export class SessionSupervisor {
       return explicitMode;
     }
     if (entry?.mode) return entry.mode;
-    const state = this.snapshotStore?.getSnapshot();
+    const state = this.workspaceSnapshotState;
     if (!state) {
       if (entry) {
         entry.mode = "active";
@@ -1266,6 +1279,21 @@ export class SessionSupervisor {
       if (isSessionInTask(archivedTaskId)) return "archived";
     }
     return null;
+  }
+
+  private collectWorkspaceActivePrimarySessionIds(state: WorkspaceActiveSnapshotState): string[] {
+    const ids = new Set<string>();
+    for (const taskId of state.activeIds) {
+      const item = state.tasksById[taskId];
+      if (!item) continue;
+      const primaryId =
+        item.primarySessionId ||
+        idToString(item.task.primary_session_id ?? "") ||
+        idToString(item.primarySessionHead?.session?.id ?? "") ||
+        idToString(item.sessions?.[0]?.session?.id ?? "");
+      if (primaryId) ids.add(primaryId);
+    }
+    return Array.from(ids).sort();
   }
 
   private scheduleModeResolution(sessionId: string, opts?: OpenOptions) {
@@ -1722,7 +1750,7 @@ export class SessionSupervisor {
     }
   }
 
-  private refreshSubscriptions() {
+  private refreshSubscriptions(opts?: { emitIfUnchanged?: boolean }) {
     const openSessionIds = Array.from(this.entries.values())
       .filter((entry) => entry.refCount > 0)
       .map((entry) => entry.sessionId);
@@ -1732,8 +1760,12 @@ export class SessionSupervisor {
       warmSessionIds: this.warmSessionIds,
       previousSubscribedSessionIds: this.subscribedSessionIds,
     });
-    this.snapshotStore?.setSubscribedSessionIds?.(plan.openSessionIds);
-    if (!plan.changed) return;
+    if (!plan.changed) {
+      if (opts?.emitIfUnchanged) {
+        this.emitSubscribedSessionIds();
+      }
+      return;
+    }
     const nextSet = new Set(plan.nextSubscribedSessionIds);
     this.subscribedSessionIds = plan.nextSubscribedSessionIds;
     for (const entry of this.entries.values()) {
@@ -1743,7 +1775,12 @@ export class SessionSupervisor {
       const entry = this.ensureEntry(sessionId);
       entry.subscribed = true;
     }
+    this.emitSubscribedSessionIds();
     this.publish();
+  }
+
+  private emitSubscribedSessionIds() {
+    this.subscribedSessionIdsSink?.(this.getSubscribedSessionIds());
   }
 
   private overlayThoughtCacheOnEvents(entry: InternalEntry, events: SessionEvent[]): SessionEvent[] {
@@ -2229,7 +2266,7 @@ export class SessionSupervisor {
     return true;
   }
 
-  private handleWorkspaceEvent(evt: WorkspaceActiveSnapshotEvent) {
+  private ingestWorkspaceEvent(evt: SessionSupervisorWorkspaceEvent) {
     if (evt.type === "archived_task_upsert") {
       const taskId = idToString(evt.task?.task?.id);
       if (taskId) {
