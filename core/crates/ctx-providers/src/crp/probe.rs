@@ -16,24 +16,36 @@ use super::config::{
 use super::protocol::{CrpCommand, CrpCommandEnvelope, CrpEvent, CrpEventEnvelope, CrpModelsProbe};
 use super::runtime::{apply_outer_process_env, rewrite_container_command_for_linux};
 
-pub async fn probe_crp_models(
-    provider_id: &str,
-    command: String,
-    args: Vec<String>,
-    workdir: PathBuf,
-    env: HashMap<String, String>,
-    host_timeout: Duration,
-    container_timeout: Duration,
-    crp_version: u32,
-) -> Result<CrpModelsProbe> {
+pub(super) struct CrpModelsProbeRequest {
+    pub provider_id: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub workdir: PathBuf,
+    pub env: HashMap<String, String>,
+    pub host_timeout: Duration,
+    pub container_timeout: Duration,
+    pub crp_version: u32,
+}
+
+pub async fn probe_crp_models(request: CrpModelsProbeRequest) -> Result<CrpModelsProbe> {
+    let CrpModelsProbeRequest {
+        provider_id,
+        command,
+        args,
+        workdir,
+        env,
+        host_timeout,
+        container_timeout,
+        crp_version,
+    } = request;
     if provider_id == "cline" {
-        return synthetic_models_probe_for_provider(provider_id, &env).ok_or_else(|| {
+        return synthetic_models_probe_for_provider(&provider_id, &env).ok_or_else(|| {
             anyhow!(
                 "Cline model discovery requires OPENAI_MODEL; configure a model override for the endpoint"
             )
         });
     }
-    if let Some(probe) = synthetic_models_probe_for_provider(provider_id, &env) {
+    if let Some(probe) = synthetic_models_probe_for_provider(&provider_id, &env) {
         return Ok(probe);
     }
     let command_label = command.clone();
@@ -56,7 +68,7 @@ pub async fn probe_crp_models(
 
     let mut child = cmd
         .spawn()
-        .with_context(|| format!("spawning CRP runtime {provider_id} ({command_label})"))?;
+        .with_context(|| format!("spawning CRP runtime {} ({command_label})", provider_id))?;
     let stdin = child.stdin.take().context("capturing CRP stdin")?;
     let stdout = child.stdout.take().context("capturing CRP stdout")?;
     let stderr = child.stderr.take().context("capturing CRP stderr")?;
@@ -64,7 +76,7 @@ pub async fn probe_crp_models(
     let stderr_tail: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let _stderr_tail_task = spawn_probe_output_tail_reader(
         stderr,
-        provider_id.to_string(),
+        provider_id.clone(),
         "stderr",
         Arc::clone(&stderr_tail),
     );
@@ -273,16 +285,16 @@ mod tests {
             "read _\necho '{\"seq\":1,\"channel\":\"control\",\"type\":\"models.list\",\"models\":[{\"id\":\"gpt-5\",\"name\":\"GPT-5\"}],\"current_model_id\":\"gpt-5\"}'",
         );
 
-        let probe = probe_crp_models(
-            "codex",
-            script.to_string_lossy().to_string(),
-            Vec::new(),
-            tmp.path().to_path_buf(),
-            HashMap::new(),
-            Duration::from_secs(10),
-            Duration::from_secs(45),
-            1,
-        )
+        let probe = probe_crp_models(CrpModelsProbeRequest {
+            provider_id: "codex".to_string(),
+            command: script.to_string_lossy().to_string(),
+            args: Vec::new(),
+            workdir: tmp.path().to_path_buf(),
+            env: HashMap::new(),
+            host_timeout: Duration::from_secs(10),
+            container_timeout: Duration::from_secs(45),
+            crp_version: 1,
+        })
         .await
         .expect("models probe should succeed");
 

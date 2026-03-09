@@ -815,16 +815,16 @@ pub async fn probe_crp_models(
     workdir: PathBuf,
     env: HashMap<String, String>,
 ) -> Result<CrpModelsProbe> {
-    probe::probe_crp_models(
-        provider_id,
+    probe::probe_crp_models(probe::CrpModelsProbeRequest {
+        provider_id: provider_id.to_string(),
         command,
         args,
         workdir,
         env,
-        CRP_MODEL_PROBE_TIMEOUT,
-        CRP_MODEL_PROBE_TIMEOUT_CONTAINER,
-        CRP_VERSION,
-    )
+        host_timeout: CRP_MODEL_PROBE_TIMEOUT,
+        container_timeout: CRP_MODEL_PROBE_TIMEOUT_CONTAINER,
+        crp_version: CRP_VERSION,
+    })
     .await
 }
 

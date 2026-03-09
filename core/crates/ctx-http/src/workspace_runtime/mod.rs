@@ -233,6 +233,16 @@ enum ContainerReadinessState {
     RuntimeReady,
 }
 
+struct EnsureContainerRequest<'a> {
+    workspace: &'a Workspace,
+    worktree: Option<&'a Worktree>,
+    settings: &'a ContainerExecutionSettings,
+    daemon_host: &'a str,
+    daemon_port: u16,
+    observer: Option<&'a dyn HarnessSetupObserver>,
+    readiness: ContainerReadinessState,
+}
+
 fn cached_container_action(
     cached: &HarnessContainer,
     settings: &ContainerExecutionSettings,
@@ -472,15 +482,15 @@ impl HarnessRuntimeManager {
         let proxy_host = "host.containers.internal";
         let daemon_port = daemon_port_from_url(daemon_url).unwrap_or(4399);
         let _ = self
-            .ensure_container_after_machine_ready(
+            .ensure_container_after_machine_ready(EnsureContainerRequest {
                 workspace,
-                None,
-                &settings.container,
-                proxy_host,
+                worktree: None,
+                settings: &settings.container,
+                daemon_host: proxy_host,
                 daemon_port,
                 observer,
                 readiness,
-            )
+            })
             .await?;
         Ok(())
     }
@@ -647,28 +657,31 @@ impl HarnessRuntimeManager {
         observer: Option<&dyn HarnessSetupObserver>,
     ) -> Result<HarnessContainer> {
         self.ensure_container_machine_ready(observer).await?;
-        self.ensure_container_after_machine_ready(
+        self.ensure_container_after_machine_ready(EnsureContainerRequest {
             workspace,
             worktree,
             settings,
             daemon_host,
             daemon_port,
             observer,
-            ContainerReadinessState::MachineReady,
-        )
+            readiness: ContainerReadinessState::MachineReady,
+        })
         .await
     }
 
     async fn ensure_container_after_machine_ready(
         &self,
-        workspace: &Workspace,
-        worktree: Option<&Worktree>,
-        settings: &ContainerExecutionSettings,
-        daemon_host: &str,
-        daemon_port: u16,
-        observer: Option<&dyn HarnessSetupObserver>,
-        readiness: ContainerReadinessState,
+        request: EnsureContainerRequest<'_>,
     ) -> Result<HarnessContainer> {
+        let EnsureContainerRequest {
+            workspace,
+            worktree,
+            settings,
+            daemon_host,
+            daemon_port,
+            observer,
+            readiness,
+        } = request;
         let name = format!("ctx-harness-{}", workspace.id.0);
         let image = resolve_container_image(settings);
         if matches!(settings.mount_mode, ContainerMountMode::DiskIsolated) {
