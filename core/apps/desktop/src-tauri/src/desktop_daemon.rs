@@ -88,76 +88,130 @@ fn local_connect_mutex() -> &'static std::sync::Mutex<()> {
     LOCAL_CONNECT_MUTEX.get_or_init(|| std::sync::Mutex::new(()))
 }
 
+fn lock_local_connect_gate() -> Result<std::sync::MutexGuard<'static, ()>> {
+    local_connect_mutex()
+        .lock()
+        .map_err(|err| anyhow!("local connect mutex poisoned: {err}"))
+}
+
 #[tauri::command]
 pub(super) async fn desktop_connect_local(
     app: tauri::AppHandle,
 ) -> Result<DesktopConnectionInfo, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let _guard = local_connect_mutex()
-            .lock()
-            .map_err(|err| format!("local connect mutex poisoned: {err}"))?;
+        let _guard = lock_local_connect_gate().map_err(to_err)?;
         let state = app.state::<ConnectionManager>();
         let data_dir = daemon_data_dir(&app).map_err(to_err)?;
         let desktop_version = app.package_info().version.to_string();
         let desktop_dev_instance_id = desktop_dev_instance_id();
-        // Idempotent: if we're already connected to a healthy local daemon, keep the connection.
-        // The workspace wizard calls connect_local as part of its flow; disconnecting here can
-        // kill a just-started daemon and introduce flakiness on cold start.
-        let info = state.info();
-        if matches!(info.kind, DesktopConnectionKind::Local) {
-            if let Some(url) = info.base_url.as_deref() {
-                if existing_local_daemon_matches_or_absent(
+        connect_local_with_sources(
+            state.inner(),
+            |url| {
+                existing_local_daemon_matches_or_absent(
                     url,
                     &data_dir,
                     &desktop_version,
                     desktop_dev_instance_id,
-                ) {
-                    return Ok(info);
-                }
-            }
-        }
-        state.disconnect();
-        if let Some((url, token)) = resolve_env_local_daemon(&app).map_err(to_err)? {
-            probe_daemon_health(&url).map_err(to_err)?;
-            state.set_local_external(url, token, None, false);
-            return Ok(state.info());
-        }
-        if let Some((url, token, daemon_pid)) =
-            resolve_existing_local_daemon(&app, &data_dir).map_err(to_err)?
-        {
-            state.set_local_external(url, token, daemon_pid, true);
-            return Ok(state.info());
-        }
-        // Block until the daemon is actually reachable before returning. The workspace wizard
-        // applies the connection and navigates immediately after `desktop_connect_local` resolves;
-        // returning early causes the workbench to briefly render a "daemon unavailable" overlay.
-        let spawned = match spawn_and_validate_local_daemon(
-            &app,
-            &data_dir,
-            &desktop_version,
-            desktop_dev_instance_id,
-        ) {
-            Ok(value) => value,
-            Err(err) => {
-                if let Ok(Some((url, token, daemon_pid))) =
-                    resolve_existing_local_daemon(&app, &data_dir)
-                {
-                    state.set_local_external(url, token, daemon_pid, true);
-                    return Ok(state.info());
-                }
-                return Err(to_err(err));
-            }
-        };
-        state.set_local(
-            spawned.url,
-            spawned.token,
-            spawned.child,
-            spawned.systemd_scope,
-        );
-        Ok(state.info())
+                )
+            },
+            || resolve_env_local_daemon(&app),
+            probe_daemon_health,
+            || resolve_existing_local_daemon(&app, &data_dir),
+            || {
+                spawn_and_validate_local_daemon(
+                    &app,
+                    &data_dir,
+                    &desktop_version,
+                    desktop_dev_instance_id,
+                )
+            },
+        )
+        .map_err(to_err)
     })
     .await
     .map_err(|e| format!("failed to connect to daemon: {e}"))?
+}
+
+fn connect_local_with_sources<
+    CurrentLocalMatchesFn,
+    ResolveEnvFn,
+    ProbeHealthFn,
+    ResolveExistingFn,
+    SpawnFn,
+>(
+    state: &ConnectionManager,
+    current_local_matches_or_absent: CurrentLocalMatchesFn,
+    resolve_env_local_daemon: ResolveEnvFn,
+    probe_health: ProbeHealthFn,
+    mut resolve_existing_local_daemon: ResolveExistingFn,
+    spawn_and_validate_local_daemon: SpawnFn,
+) -> Result<DesktopConnectionInfo>
+where
+    CurrentLocalMatchesFn: Fn(&str) -> bool,
+    ResolveEnvFn: FnOnce() -> Result<Option<(String, String)>>,
+    ProbeHealthFn: Fn(&str) -> Result<()>,
+    ResolveExistingFn: FnMut() -> Result<Option<(String, String, Option<u32>)>>,
+    SpawnFn: FnOnce() -> Result<SpawnedLocalDaemonReady>,
+{
+    // Idempotent: if we're already connected to a healthy local daemon, keep the connection.
+    // The workspace wizard calls connect_local as part of its flow; disconnecting here can
+    // kill a just-started daemon and introduce flakiness on cold start.
+    let info = state.info();
+    if matches!(info.kind, DesktopConnectionKind::Local) {
+        if let Some(url) = info.base_url.as_deref() {
+            if current_local_matches_or_absent(url) {
+                return Ok(info);
+            }
+        }
+    }
+
+    // Keep any currently healthy connection active until a replacement has been validated.
+    // ConnectionManager swaps and cleans up the old transport only after the new one is ready.
+    if let Some((url, token)) = resolve_env_local_daemon()? {
+        probe_health(&url)?;
+        state.set_local_external(url, token, None, false);
+        return Ok(state.info());
+    }
+    if let Some((url, token, daemon_pid)) = resolve_existing_local_daemon()? {
+        state.set_local_external(url, token, daemon_pid, true);
+        return Ok(state.info());
+    }
+
+    // Block until the daemon is actually reachable before returning. The workspace wizard
+    // applies the connection and navigates immediately after `desktop_connect_local` resolves;
+    // returning early causes the workbench to briefly render a "daemon unavailable" overlay.
+    let spawned = spawn_and_validate_local_daemon();
+    let fallback_existing = if spawned.is_err() {
+        resolve_existing_local_daemon().ok().flatten()
+    } else {
+        None
+    };
+    apply_validated_local_connection(state, spawned, fallback_existing)
+}
+
+fn apply_validated_local_connection(
+    state: &ConnectionManager,
+    spawned: Result<SpawnedLocalDaemonReady>,
+    fallback_existing: Option<(String, String, Option<u32>)>,
+) -> Result<DesktopConnectionInfo> {
+    match spawned {
+        Ok(spawned) => {
+            state.set_local(
+                spawned.url,
+                spawned.token,
+                spawned.child,
+                spawned.systemd_scope,
+            );
+            Ok(state.info())
+        }
+        Err(err) => {
+            if let Some((url, token, daemon_pid)) = fallback_existing {
+                state.set_local_external(url, token, daemon_pid, true);
+                return Ok(state.info());
+            }
+            Err(err)
+        }
+    }
 }
 
 #[tauri::command]
@@ -204,9 +258,7 @@ pub(super) fn ensure_local_connection(
     // Multiple webview requests can race on cold start (overlay pollers, initial data loads, etc.).
     // Serialize the "connect local" path so we don't concurrently spawn the daemon and trip the
     // daemon's lockfile, which can surface as spurious "daemon unavailable" errors in the UI.
-    let _guard = local_connect_mutex()
-        .lock()
-        .map_err(|err| anyhow!("local connect mutex poisoned: {err}"))?;
+    let _guard = lock_local_connect_gate()?;
     if !matches!(state.info().kind, DesktopConnectionKind::None) {
         return Ok(());
     }
@@ -2621,6 +2673,331 @@ mod desktop_daemon_tests {
         assert!(msg.contains("daemon_data_root=/tmp/ctx-daemon-other"));
         assert!(msg.contains("daemon_pid=4242"));
         assert!(msg.contains("url=http://127.0.0.1:4123"));
+    }
+
+    #[test]
+    fn replacement_validation_failure_keeps_existing_active_connection() {
+        let state = ConnectionManager::default();
+        state.set_local_external(
+            "http://127.0.0.1:4399".to_string(),
+            "existing-token".to_string(),
+            None,
+            false,
+        );
+
+        let err =
+            apply_validated_local_connection(&state, Err(anyhow!("spawn validation failed")), None)
+                .expect_err("spawn failure should not replace an existing healthy connection");
+        assert!(format!("{err:#}").contains("spawn validation failed"));
+
+        let info = state.info();
+        assert!(matches!(info.kind, DesktopConnectionKind::Local));
+        assert_eq!(info.base_url.as_deref(), Some("http://127.0.0.1:4399"));
+        assert_eq!(info.token.as_deref(), Some("existing-token"));
+    }
+
+    #[test]
+    fn local_connect_gate_serializes_callers() {
+        let first_guard = lock_local_connect_gate().expect("lock first gate holder");
+        let ready = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let entered = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let ready_for_thread = std::sync::Arc::clone(&ready);
+        let entered_for_thread = std::sync::Arc::clone(&entered);
+        let handle = std::thread::spawn(move || {
+            ready_for_thread.store(true, std::sync::atomic::Ordering::SeqCst);
+            let _second_guard = lock_local_connect_gate().expect("lock second gate holder");
+            entered_for_thread.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+
+        while !ready.load(std::sync::atomic::Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        std::thread::sleep(Duration::from_millis(80));
+        assert!(
+            !entered.load(std::sync::atomic::Ordering::SeqCst),
+            "second caller should block while the shared local-connect gate is held"
+        );
+
+        drop(first_guard);
+        handle.join().expect("join gate waiter");
+        assert!(
+            entered.load(std::sync::atomic::Ordering::SeqCst),
+            "second caller should proceed once the shared local-connect gate is released"
+        );
+    }
+
+    #[cfg(unix)]
+    fn pid_is_alive(pid: u32) -> bool {
+        Command::new("kill")
+            .arg("-0")
+            .arg(pid.to_string())
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    }
+
+    #[cfg(unix)]
+    fn wait_for_pid_exit(pid: u32, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if !pid_is_alive(pid) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(80));
+        }
+        !pid_is_alive(pid)
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn desktop_connect_local_spawn_failure_preserves_existing_owned_connection() {
+        let state = ConnectionManager::default();
+        let child = Command::new("sh")
+            .arg("-c")
+            .arg("sleep 60")
+            .spawn()
+            .expect("spawn sleep child");
+        let child_pid = child.id();
+        assert!(
+            pid_is_alive(child_pid),
+            "owned child should be alive before replacement attempt"
+        );
+        state.set_local(
+            "http://127.0.0.1:4399".to_string(),
+            "existing-token".to_string(),
+            child,
+            false,
+        );
+
+        let resolve_existing_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let err = connect_local_with_sources(
+            &state,
+            |_| false,
+            || Ok(None),
+            |_| Ok(()),
+            {
+                let resolve_existing_calls = std::sync::Arc::clone(&resolve_existing_calls);
+                move || {
+                    resolve_existing_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    Ok(None)
+                }
+            },
+            || Err(anyhow!("spawn validation failed")),
+        )
+        .expect_err("spawn failure should preserve the existing owned connection");
+
+        assert!(format!("{err:#}").contains("spawn validation failed"));
+        assert_eq!(
+            resolve_existing_calls.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "spawn failure path should retry existing-daemon resolution before returning"
+        );
+        assert!(
+            pid_is_alive(child_pid),
+            "existing owned daemon child should remain alive after replacement failure"
+        );
+
+        let info = state.info();
+        assert!(matches!(info.kind, DesktopConnectionKind::Local));
+        assert_eq!(info.base_url.as_deref(), Some("http://127.0.0.1:4399"));
+        assert_eq!(info.token.as_deref(), Some("existing-token"));
+
+        state.disconnect();
+        assert!(
+            wait_for_pid_exit(child_pid, Duration::from_secs(3)),
+            "owned child should be cleaned up during test teardown"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn desktop_connect_local_spawn_race_reattaches_same_owned_local_daemon_without_killing_it() {
+        let state = ConnectionManager::default();
+        let child = Command::new("sh")
+            .arg("-c")
+            .arg("sleep 60")
+            .spawn()
+            .expect("spawn local child placeholder");
+        let child_pid = child.id();
+        assert!(
+            pid_is_alive(child_pid),
+            "existing local child should start alive"
+        );
+        state.set_local(
+            "http://127.0.0.1:4301".to_string(),
+            "same-token".to_string(),
+            child,
+            false,
+        );
+
+        let resolve_existing_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let info = connect_local_with_sources(
+            &state,
+            |_| false,
+            || Ok(None),
+            |_| Ok(()),
+            {
+                let resolve_existing_calls = std::sync::Arc::clone(&resolve_existing_calls);
+                move || {
+                    let call_index =
+                        resolve_existing_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    if call_index == 0 {
+                        return Ok(None);
+                    }
+                    Ok(Some((
+                        "http://127.0.0.1:4301".to_string(),
+                        "same-token".to_string(),
+                        Some(child_pid),
+                    )))
+                }
+            },
+            || Err(anyhow!("spawn lost race")),
+        )
+        .expect("same-daemon handoff should preserve the owned local daemon");
+
+        assert_eq!(
+            resolve_existing_calls.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "spawn failure path should retry existing-daemon resolution before reattaching"
+        );
+        assert!(
+            pid_is_alive(child_pid),
+            "same-daemon handoff must not kill the process being reattached"
+        );
+        assert!(matches!(info.kind, DesktopConnectionKind::Local));
+        assert_eq!(info.base_url.as_deref(), Some("http://127.0.0.1:4301"));
+        assert_eq!(info.token.as_deref(), Some("same-token"));
+
+        state.disconnect();
+        assert!(
+            wait_for_pid_exit(child_pid, Duration::from_secs(3)),
+            "reattached owned local daemon should still be terminated on disconnect"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn desktop_connect_local_spawn_race_switches_to_validated_local_daemon_over_existing_local_connection(
+    ) {
+        let state = ConnectionManager::default();
+        let child = Command::new("sh")
+            .arg("-c")
+            .arg("sleep 60")
+            .spawn()
+            .expect("spawn local child placeholder");
+        let child_pid = child.id();
+        assert!(
+            pid_is_alive(child_pid),
+            "existing local child should start alive"
+        );
+        state.set_local(
+            "http://127.0.0.1:4301".to_string(),
+            "stale-token".to_string(),
+            child,
+            false,
+        );
+
+        let resolve_existing_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let info = connect_local_with_sources(
+            &state,
+            |_| false,
+            || Ok(None),
+            |_| Ok(()),
+            {
+                let resolve_existing_calls = std::sync::Arc::clone(&resolve_existing_calls);
+                move || {
+                    let call_index =
+                        resolve_existing_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    if call_index == 0 {
+                        return Ok(None);
+                    }
+                    Ok(Some((
+                        "http://127.0.0.1:4399".to_string(),
+                        "replacement-token".to_string(),
+                        None,
+                    )))
+                }
+            },
+            || Err(anyhow!("spawn lost race")),
+        )
+        .expect("validated local fallback should replace the stale local connection");
+
+        assert_eq!(
+            resolve_existing_calls.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "spawn failure path should retry existing-daemon resolution before reattaching"
+        );
+        assert!(
+            wait_for_pid_exit(child_pid, Duration::from_secs(3)),
+            "stale local child should be cleaned up once the validated local fallback replaces it"
+        );
+        assert!(matches!(info.kind, DesktopConnectionKind::Local));
+        assert_eq!(info.base_url.as_deref(), Some("http://127.0.0.1:4399"));
+        assert_eq!(info.token.as_deref(), Some("replacement-token"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn desktop_connect_local_spawn_race_switches_to_validated_local_daemon_over_ssh_connection() {
+        let state = ConnectionManager::default();
+        let tunnel = Command::new("sh")
+            .arg("-c")
+            .arg("sleep 60")
+            .spawn()
+            .expect("spawn ssh tunnel placeholder");
+        let tunnel_pid = tunnel.id();
+        assert!(
+            pid_is_alive(tunnel_pid),
+            "ssh tunnel placeholder should start alive"
+        );
+        state.set_ssh(
+            "http://127.0.0.1:5401".to_string(),
+            Some("ssh-token".to_string()),
+            tunnel,
+            "example.test".to_string(),
+            Some("dev".to_string()),
+            2222,
+            None,
+            None,
+        );
+
+        let resolve_existing_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let info = connect_local_with_sources(
+            &state,
+            |_| false,
+            || Ok(None),
+            |_| Ok(()),
+            {
+                let resolve_existing_calls = std::sync::Arc::clone(&resolve_existing_calls);
+                move || {
+                    let call_index =
+                        resolve_existing_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    if call_index == 0 {
+                        return Ok(None);
+                    }
+                    Ok(Some((
+                        "http://127.0.0.1:4399".to_string(),
+                        "local-token".to_string(),
+                        None,
+                    )))
+                }
+            },
+            || Err(anyhow!("spawn lost race")),
+        )
+        .expect("validated local fallback should replace an active non-local connection");
+
+        assert_eq!(
+            resolve_existing_calls.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "spawn failure path should retry existing-daemon resolution before attaching"
+        );
+        assert!(
+            wait_for_pid_exit(tunnel_pid, Duration::from_secs(3)),
+            "ssh tunnel placeholder should be cleaned up when the validated local daemon replaces it"
+        );
+        assert!(matches!(info.kind, DesktopConnectionKind::Local));
+        assert_eq!(info.base_url.as_deref(), Some("http://127.0.0.1:4399"));
+        assert_eq!(info.token.as_deref(), Some("local-token"));
     }
 
     #[test]
