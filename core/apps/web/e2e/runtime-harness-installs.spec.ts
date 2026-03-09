@@ -232,6 +232,50 @@ const wireInstallLifecycleRoutes = async (
 ) => {
   const includeCursorReady = opts?.includeCursorReady ?? false;
   const includeBootstrap = opts?.includeBootstrap ?? false;
+  const nextInstallInfo = async () => {
+    state.installPolls += 1;
+    if (state.installPolls <= 1) {
+      return {
+        install_id: state.installId,
+        provider_id: state.providerId,
+        state: "running" as const,
+        started_at: nowIso(),
+        last_event: {
+          install_id: state.installId,
+          provider_id: state.providerId,
+          at: nowIso(),
+          stage: "download",
+          message: "Downloading",
+          level: "info" as const,
+          bytes: 50,
+          total_bytes: 100,
+        },
+      };
+    }
+
+    state.installRunning = false;
+    state.installed = true;
+    if (state.installPolls > 2) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    return {
+      install_id: state.installId,
+      provider_id: state.providerId,
+      state: "succeeded" as const,
+      started_at: nowIso(),
+      finished_at: nowIso(),
+      last_event: {
+        install_id: state.installId,
+        provider_id: state.providerId,
+        at: nowIso(),
+        stage: "refresh",
+        message: "Completed",
+        level: "success" as const,
+        bytes: 100,
+        total_bytes: 100,
+      },
+    };
+  };
 
   await page.route(/\/api\/providers(?:\?.*)?$/, async (route) => {
     if (route.request().method() !== "GET") {
@@ -301,55 +345,43 @@ const wireInstallLifecycleRoutes = async (
       return;
     }
 
-    state.installPolls += 1;
-    if (state.installPolls <= 1) {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(await nextInstallInfo()),
+    });
+  });
+
+  await page.route(/\/api\/providers\/install\/statuses(?:\?.*)?$/, async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    const postData = route.request().postData() ?? "{}";
+    const parsed = JSON.parse(postData) as { install_ids?: unknown };
+    const installIds = Array.isArray(parsed.install_ids)
+      ? parsed.install_ids.filter((value): value is string => typeof value === "string")
+      : [];
+    if (!installIds.includes(state.installId)) {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          install_id: state.installId,
-          provider_id: state.providerId,
-          state: "running",
-          started_at: nowIso(),
-          last_event: {
-            install_id: state.installId,
-            provider_id: state.providerId,
-            at: nowIso(),
-            stage: "download",
-            message: "Downloading",
-            level: "info",
-            bytes: 50,
-            total_bytes: 100,
-          },
+          installs: installIds.map((installId) => ({ install_id: installId, info: null })),
         }),
       });
       return;
-    }
-
-    state.installRunning = false;
-    state.installed = true;
-    if (state.installPolls > 2) {
-      await new Promise((resolve) => setTimeout(resolve, 250));
     }
     await route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
-        install_id: state.installId,
-        provider_id: state.providerId,
-        state: "succeeded",
-        started_at: nowIso(),
-        finished_at: nowIso(),
-        last_event: {
-          install_id: state.installId,
-          provider_id: state.providerId,
-          at: nowIso(),
-          stage: "refresh",
-          message: "Completed",
-          level: "success",
-          bytes: 100,
-          total_bytes: 100,
-        },
+        installs: await Promise.all(
+          installIds.map(async (installId) => ({
+            install_id: installId,
+            info: installId === state.installId ? await nextInstallInfo() : null,
+          })),
+        ),
       }),
     });
   });

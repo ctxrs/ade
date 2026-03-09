@@ -1017,10 +1017,6 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
         auth_token,
         lsp_cfg,
     ));
-    state
-        .execution
-        .harness
-        .spawn_background_podman_machine_download();
     state.transport.web_sessions.clone().start_reaper().await;
     state.transport.terminals.clone().start_reaper().await;
     spawn_cache_sweeper(state.clone());

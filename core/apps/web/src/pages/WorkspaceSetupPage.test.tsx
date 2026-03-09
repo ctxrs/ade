@@ -52,6 +52,7 @@ const {
   trackWizardCompletedMock: vi.fn(),
   trackWizardAbandonedMock: vi.fn(),
 }));
+const getInstallMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../api/client", async () => {
   const actual = await vi.importActual<typeof import("../api/client")>("../api/client");
@@ -61,7 +62,18 @@ vi.mock("../api/client", async () => {
     buildExecutionLaunchWsUrl: vi.fn(),
     cancelInstall: vi.fn(),
     createWorkspace: vi.fn(),
-    getInstall: vi.fn(),
+    getInstall: getInstallMock,
+    getInstallStatuses: vi.fn(async (installIds: string[]) => ({
+      installs: await Promise.all(
+        installIds.map(async (installId) => {
+          const info = await getInstallMock(installId);
+          return {
+            install_id: installId,
+            info: info && typeof info.install_id === "string" ? info : null,
+          };
+        }),
+      ),
+    })),
     getExecutionLaunchStatus: vi.fn(),
     getHealth: vi.fn(),
     getSettings: vi.fn(),
@@ -70,6 +82,10 @@ vi.mock("../api/client", async () => {
     getTitleGenerationLocalStatus: vi.fn(),
     importProviderAuthCandidates: vi.fn(),
     installTitleGenerationLocal: vi.fn(),
+    listInstallEvents: vi.fn(async (installId: string) => {
+      const info = await getInstallMock(installId);
+      return info?.last_event ? [info.last_event] : [];
+    }),
     listProviderAuthImportCandidates: vi.fn(),
     listWorkspaces: vi.fn(),
     repoClone: vi.fn(),
@@ -211,6 +227,7 @@ describe("WorkspaceSetupPage", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    getInstallMock.mockReset();
     trackWizardStartedMock.mockReset();
     trackWizardStepViewedMock.mockReset();
     trackWizardStepCompletedMock.mockReset();
@@ -592,10 +609,11 @@ describe("WorkspaceSetupPage", () => {
     expect(cancelButton).toBeEnabled();
   });
 
-  it("keeps continue enabled after terminal harness install failures", async () => {
+  it("skips the harness step once a tracked install is already terminal failed", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(getSettings).mockResolvedValue(configuredTitlingSettingsFixture() as never);
     vi.mocked(getInstall).mockReset();
+    vi.mocked(installProvider).mockReset();
     vi.mocked(listProviders)
       .mockResolvedValueOnce([
         providerStatusFixture({
@@ -638,20 +656,9 @@ describe("WorkspaceSetupPage", () => {
     });
     fireEvent.click(screen.getByTestId("wizard-option-container-disk-isolated"));
     await waitFor(() => {
-      expect(wizardStepKey()).toBe("harness-downloads");
-    });
-
-    await waitFor(() => {
-      expect(screen.getByText(/Not installed · container/i)).toBeInTheDocument();
-    });
-    expect(screen.getByTestId("wizard-harness-checkbox-codex")).toBeEnabled();
-    expect(screen.getByTestId("wizard-next")).toBeEnabled();
-    expect(screen.getByText(/failed or were canceled/i)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByTestId("wizard-next"));
-    await waitFor(() => {
       expect(wizardStepKey()).toBe("source");
     });
+    expect(installProvider).not.toHaveBeenCalled();
   });
 
   it("keeps continue enabled after a selected harness download is canceled", async () => {
@@ -682,7 +689,7 @@ describe("WorkspaceSetupPage", () => {
       target: "container",
       error_code: undefined,
     } as never);
-    vi.mocked(cancelInstall).mockResolvedValue({
+    const cancelledInstall = {
       install_id: "install_codex",
       provider_id: "codex",
       state: "cancelled",
@@ -692,7 +699,11 @@ describe("WorkspaceSetupPage", () => {
       last_event: undefined,
       target: "container",
       error_code: undefined,
-    } as never);
+    };
+    vi.mocked(cancelInstall).mockImplementation(async () => {
+      vi.mocked(getInstall).mockResolvedValue(cancelledInstall as never);
+      return cancelledInstall as never;
+    });
 
     renderPage();
     await screen.findByTestId("workspace-setup");

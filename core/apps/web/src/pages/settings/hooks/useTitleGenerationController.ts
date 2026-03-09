@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  getInstall,
   getSettings,
   getTitleGenerationLocalStatus,
   installTitleGenerationLocal,
@@ -9,7 +8,7 @@ import {
   type TitleGenerationSettings,
 } from "../../../api/client";
 import type { InstallSession } from "../../SettingsPage.types";
-import { clampPct } from "../../SettingsPage.utils";
+import { observeInstall, subscribeInstallProgress } from "../../../state/installProgressMonitor";
 
 type TitleGenerationController = {
   loaded: boolean;
@@ -60,7 +59,9 @@ export function useTitleGenerationController(enabled: boolean): TitleGenerationC
   const [titleGenLocalInstallBusy, setTitleGenLocalInstallBusy] = useState(false);
   const [localInstall, setLocalInstall] = useState<InstallSession | undefined>(undefined);
 
-  const installPollRef = useRef<number | null>(null);
+  const installObserverRef = useRef<(() => void) | null>(null);
+  const localInstallRef = useRef<InstallSession | undefined>(undefined);
+  const previousLocalInstallRef = useRef<InstallSession | undefined>(undefined);
 
   const titleGenerationPayload = useMemo((): TitleGenerationSettings => {
     return {
@@ -105,61 +106,37 @@ export function useTitleGenerationController(enabled: boolean): TitleGenerationC
     }
   }, []);
 
-  const attachInstall = useCallback(
-    async (installId: string) => {
-      if (!installId) return;
-      if (installPollRef.current) {
-        window.clearTimeout(installPollRef.current);
-        installPollRef.current = null;
-      }
+  const attachInstall = useCallback((installId: string) => {
+    const normalizedInstallId = installId.trim();
+    if (!normalizedInstallId) return;
+    if (localInstallRef.current?.installId === normalizedInstallId && installObserverRef.current) {
+      return;
+    }
 
-      setLocalInstall((prev) => ({
-        installId,
+    installObserverRef.current?.();
+    setLocalInstall((prev) => ({
+      installId: normalizedInstallId,
+      state: "running",
+      pct: prev?.pct ?? null,
+      target: prev?.target,
+      errorCode: undefined,
+      streamError: prev?.streamError,
+      error: undefined,
+    }));
+    installObserverRef.current = observeInstall(normalizedInstallId, {
+      initialState: {
         state: "running",
-        pct: prev?.pct ?? null,
-        streamError: prev?.streamError,
-        error: prev?.error,
-      }));
-
-      const poll = async () => {
-        try {
-          const info = await getInstall(installId);
-          const pct =
-            typeof info.last_event?.bytes === "number"
-            && typeof info.last_event?.total_bytes === "number"
-            && info.last_event.total_bytes > 0
-              ? clampPct(Math.round((info.last_event.bytes / info.last_event.total_bytes) * 100))
-              : null;
-          setLocalInstall({
-            installId,
-            state: info.state,
-            pct,
-            error: info.error,
-          });
-          if (info.state !== "running") {
-            installPollRef.current = null;
-            await refreshTitleGenLocalStatus({ silent: true });
-            return;
-          }
-        } catch {
-          // continue polling; transient fetch failures should not terminate the install status loop
-        }
-        installPollRef.current = window.setTimeout(() => {
-          poll().catch(() => {});
-        }, 900);
-      };
-
-      await poll();
-    },
-    [refreshTitleGenLocalStatus],
-  );
+        pct: localInstallRef.current?.pct ?? null,
+      },
+    });
+  }, []);
 
   const onInstallTitleGenerationLocal = useCallback(async () => {
     setTitleGenLocalInstallBusy(true);
     setTitleGenLocalStatusError(null);
     try {
       const { install_id } = await installTitleGenerationLocal();
-      await attachInstall(install_id);
+      attachInstall(install_id);
     } catch (error) {
       setTitleGenLocalStatusError(messageFromError(error));
     } finally {
@@ -208,20 +185,66 @@ export function useTitleGenerationController(enabled: boolean): TitleGenerationC
   }, [enabled, loaded, titleGenerationPayload]);
 
   useEffect(() => {
+    localInstallRef.current = localInstall;
+  }, [localInstall]);
+
+  useEffect(() => {
+    return subscribeInstallProgress((snapshot) => {
+      const installId = localInstallRef.current?.installId;
+      if (!installId) return;
+      const entry = snapshot[installId];
+      if (!entry) return;
+      setLocalInstall((prev) => {
+        if (!prev || prev.installId !== installId) return prev;
+        const nextInstall: InstallSession = {
+          installId,
+          state: entry.state,
+          pct: entry.pct,
+          target: entry.target,
+          errorCode: entry.errorCode,
+          streamError: prev.streamError,
+          error: entry.error,
+        };
+        if (
+          prev.state === nextInstall.state
+          && prev.pct === nextInstall.pct
+          && prev.target === nextInstall.target
+          && prev.errorCode === nextInstall.errorCode
+          && prev.error === nextInstall.error
+        ) {
+          return prev;
+        }
+        return nextInstall;
+      });
+    });
+  }, []);
+
+  useEffect(() => {
+    const previous = previousLocalInstallRef.current;
+    previousLocalInstallRef.current = localInstall;
+    if (!localInstall || localInstall.state === "running") return;
+    if (previous?.installId === localInstall.installId && previous.state === localInstall.state) {
+      return;
+    }
+    installObserverRef.current?.();
+    installObserverRef.current = null;
+    void refreshTitleGenLocalStatus({ silent: true });
+  }, [localInstall, refreshTitleGenLocalStatus]);
+
+  useEffect(() => {
     if (!enabled) return;
     if (titleGenMode !== "local") return;
     refreshTitleGenLocalStatus().then((status) => {
       if (status?.install_running && status.install_id) {
-        attachInstall(status.install_id).catch(() => {});
+        attachInstall(status.install_id);
       }
     }).catch(() => {});
   }, [attachInstall, enabled, refreshTitleGenLocalStatus, titleGenMode]);
 
   useEffect(() => {
     return () => {
-      if (installPollRef.current) {
-        window.clearTimeout(installPollRef.current);
-      }
+      installObserverRef.current?.();
+      installObserverRef.current = null;
     };
   }, []);
 

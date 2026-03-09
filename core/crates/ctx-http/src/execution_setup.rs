@@ -998,6 +998,29 @@ impl ExecutionSetupCoordinator {
             };
         }
 
+        if let Err(err) = self.prewarm.prefetch_runtime_artifacts(&exec, None).await {
+            let message = format_error_chain(&err);
+            tracing::warn!("startup artifact prefetch failed: {message}");
+            let mut event = OpsEvent::new("warn", "execution.startup_prewarm_error");
+            event.meta = Some(json!({"image": image, "error": message}));
+            self.ops_events.emit(event);
+
+            let snapshot = StartupPrewarmSnapshot {
+                state: StartupPrewarmState::Error,
+                target_image: image,
+                needs_prewarm: true,
+                machine_ready: false,
+                image_present: false,
+                image_ref_changed: false,
+                bundled_image_digest_changed: false,
+                last_attempt_at: Some(attempted_at),
+                last_success_at: None,
+                error: Some(err.to_string()),
+            };
+            self.set_startup_snapshot(snapshot).await;
+            return;
+        }
+
         let gate = match self.compute_prewarm_gate(&image).await {
             Ok(gate) => gate,
             Err(err) => {
@@ -1021,26 +1044,6 @@ impl ExecutionSetupCoordinator {
                 return;
             }
         };
-
-        // Startup prewarm must not bootstrap a Podman machine in the background.
-        // If the engine is not already reachable, skip here and let explicit user-driven
-        // container launch perform machine init/start with foreground progress reporting.
-        if should_skip_startup_prewarm(gate.machine_ready) {
-            let snapshot = StartupPrewarmSnapshot {
-                state: StartupPrewarmState::Skipped,
-                target_image: image,
-                needs_prewarm: true,
-                machine_ready: false,
-                image_present: false,
-                image_ref_changed: gate.image_ref_changed,
-                bundled_image_digest_changed: gate.bundled_image_digest_changed,
-                last_attempt_at: Some(attempted_at),
-                last_success_at: None,
-                error: Some("container machine not ready; startup prewarm skipped".to_string()),
-            };
-            self.set_startup_snapshot(snapshot).await;
-            return;
-        }
 
         if !gate.needs_prewarm {
             let snapshot = StartupPrewarmSnapshot {
@@ -1267,10 +1270,6 @@ fn needs_prewarm(
     !machine_ready || !image_present || image_ref_changed || bundled_image_digest_changed
 }
 
-fn should_skip_startup_prewarm(machine_ready: bool) -> bool {
-    !machine_ready
-}
-
 fn normalize_podman_engine_ready_for_gate(result: anyhow::Result<bool>) -> anyhow::Result<bool> {
     match result {
         Ok(value) => Ok(value),
@@ -1317,6 +1316,12 @@ mod tests {
             std::env::set_var(key, value);
             Self { key, prev }
         }
+
+        fn unset(key: &'static str) -> Self {
+            let prev = std::env::var(key).ok();
+            std::env::remove_var(key);
+            Self { key, prev }
+        }
     }
 
     impl Drop for EnvVarGuard {
@@ -1329,7 +1334,7 @@ mod tests {
         }
     }
 
-    fn env_var_test_lock() -> &'static StdMutex<()> {
+    fn env_var_test_lock() -> &'static tokio::sync::Mutex<()> {
         crate::test_support::podman_env_test_lock()
     }
 
@@ -1363,6 +1368,44 @@ mod tests {
             OpsEvents::new(data_root),
             operations,
         ))
+    }
+
+    async fn init_settings_store(data_root: &Path) {
+        let db_path = data_root.join("db").join("db.sqlite");
+        if let Some(parent) = db_path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .expect("create db directory");
+        }
+        let store = Store::open_sqlite(&db_path, None)
+            .await
+            .expect("open sqlite store");
+        crate::settings::save_settings(&store, &crate::settings::Settings::default())
+            .await
+            .expect("save default settings");
+        store.close().await;
+    }
+
+    fn write_startup_prewarm_podman_shim(dir: &Path) -> PathBuf {
+        let path = dir.join(if cfg!(windows) {
+            "podman-startup-test.cmd"
+        } else {
+            "podman-startup-test.sh"
+        });
+        let script = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"info\" (\r\n  >&2 echo engine unavailable\r\n  exit /b 125\r\n)\r\n>&2 echo unexpected podman invocation: %*\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  echo 'engine unavailable' >&2\n  exit 125\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n"
+        };
+        std::fs::write(&path, script).expect("write startup prewarm podman shim");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod startup prewarm podman shim");
+        }
+        path
     }
 
     #[derive(Default)]
@@ -1416,6 +1459,14 @@ mod tests {
 
     #[async_trait]
     impl SharedWarmupOperations for UnexpectedRuntimeWarmupOperations {
+        async fn prefetch_runtime_artifacts(
+            &self,
+            _settings: ExecutionSettings,
+            _observer: Option<&dyn HarnessSetupObserver>,
+        ) -> Result<()> {
+            Ok(())
+        }
+
         async fn warm_runtime(
             &self,
             _settings: ExecutionSettings,
@@ -1432,6 +1483,14 @@ mod tests {
 
     #[async_trait]
     impl SharedWarmupOperations for BlockingWarmupOperations {
+        async fn prefetch_runtime_artifacts(
+            &self,
+            _settings: ExecutionSettings,
+            _observer: Option<&dyn HarnessSetupObserver>,
+        ) -> Result<()> {
+            Ok(())
+        }
+
         async fn warm_runtime(
             &self,
             _settings: ExecutionSettings,
@@ -1451,6 +1510,47 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct RecordingStartupWarmupOperations {
+        prefetch_runs: AtomicUsize,
+        runtime_runs: AtomicUsize,
+        steps: StdMutex<Vec<&'static str>>,
+    }
+
+    #[async_trait]
+    impl SharedWarmupOperations for RecordingStartupWarmupOperations {
+        async fn prefetch_runtime_artifacts(
+            &self,
+            _settings: ExecutionSettings,
+            _observer: Option<&dyn HarnessSetupObserver>,
+        ) -> Result<()> {
+            self.prefetch_runs.fetch_add(1, Ordering::SeqCst);
+            self.steps
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .push("prefetch");
+            Ok(())
+        }
+
+        async fn warm_runtime(
+            &self,
+            _settings: ExecutionSettings,
+            observer: Arc<dyn HarnessSetupObserver>,
+        ) -> Result<()> {
+            self.runtime_runs.fetch_add(1, Ordering::SeqCst);
+            self.steps
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .push("runtime");
+            observer.on_phase(HarnessSetupPhase::MachineCheck, "warming runtime");
+            Ok(())
+        }
+
+        async fn warm_builder(&self, _observer: Arc<dyn HarnessSetupObserver>) -> Result<()> {
+            Ok(())
+        }
+    }
+
     #[test]
     fn needs_prewarm_gate_matches_truth_table() {
         assert!(needs_prewarm(false, false, false, false));
@@ -1458,12 +1558,6 @@ mod tests {
         assert!(needs_prewarm(true, true, true, false));
         assert!(needs_prewarm(true, true, false, true));
         assert!(!needs_prewarm(true, true, false, false));
-    }
-
-    #[test]
-    fn startup_prewarm_skip_policy_requires_ready_machine() {
-        assert!(should_skip_startup_prewarm(false));
-        assert!(!should_skip_startup_prewarm(true));
     }
 
     #[test]
@@ -1594,9 +1688,6 @@ mod tests {
     #[tokio::test]
     async fn runtime_prewarm_reuses_background_all_job_and_waits_for_builder_tail_when_runtime_joins(
     ) {
-        let _serial = env_var_test_lock()
-            .lock()
-            .unwrap_or_else(|err| err.into_inner());
         let data_dir = tempfile::tempdir().expect("tempdir");
         let _podman = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "1");
         let ops = Arc::new(BlockingWarmupOperations::default());
@@ -1655,9 +1746,6 @@ mod tests {
 
     #[tokio::test]
     async fn builder_prewarm_reuses_background_all_job() {
-        let _serial = env_var_test_lock()
-            .lock()
-            .unwrap_or_else(|err| err.into_inner());
         let data_dir = tempfile::tempdir().expect("tempdir");
         let _podman = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "1");
         let ops = Arc::new(BlockingWarmupOperations::default());
@@ -1840,9 +1928,6 @@ mod tests {
 
     #[tokio::test]
     async fn builder_only_prewarm_skips_runtime_warmup_and_runtime_availability() {
-        let _serial = env_var_test_lock()
-            .lock()
-            .unwrap_or_else(|err| err.into_inner());
         let _podman = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "0");
         let data_dir = tempfile::tempdir().expect("tempdir");
         let ops = Arc::new(BlockingWarmupOperations::default());
@@ -1893,14 +1978,100 @@ mod tests {
         assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 0);
     }
 
+    #[tokio::test]
+    async fn startup_prewarm_prefetches_artifacts_and_does_not_skip_when_machine_is_not_ready() {
+        let _serial = env_var_test_lock().lock().await;
+        let data_dir = tempfile::tempdir().expect("tempdir");
+        let podman_path = write_startup_prewarm_podman_shim(data_dir.path());
+        let _test_podman = EnvVarGuard::unset("CTX_TEST_PODMAN_AVAILABLE");
+        let _podman = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+        init_settings_store(data_dir.path()).await;
+
+        let ops = Arc::new(RecordingStartupWarmupOperations::default());
+        let coordinator =
+            test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
+
+        coordinator.run_startup_prewarm().await;
+
+        let snapshot = coordinator.startup_status().await;
+        assert_eq!(snapshot.state, StartupPrewarmState::Ready);
+        assert!(snapshot.needs_prewarm);
+        assert!(snapshot.machine_ready);
+        assert!(snapshot.image_present);
+        assert_eq!(ops.prefetch_runs.load(Ordering::SeqCst), 1);
+        assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            *ops.steps.lock().unwrap_or_else(|err| err.into_inner()),
+            vec!["prefetch", "runtime"]
+        );
+    }
+
+    #[tokio::test]
+    async fn workspace_launch_is_not_blocked_by_background_runtime_prewarm_job() {
+        let _serial = env_var_test_lock().lock().await;
+        let _podman = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "1");
+        let data_dir = tempfile::tempdir().expect("tempdir");
+        let ops = Arc::new(BlockingWarmupOperations::default());
+        let coordinator =
+            test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
+        let prewarm_settings = ExecutionSettings {
+            mode: ExecutionMode::Container,
+            ..ExecutionSettings::default()
+        };
+        let workspace = test_workspace(WorkspaceId::new());
+        let host_settings = ExecutionSettings {
+            mode: ExecutionMode::Host,
+            ..ExecutionSettings::default()
+        };
+
+        let background = coordinator
+            .start_runtime_prewarm(prewarm_settings, RuntimePrewarmScope::Runtime)
+            .await;
+        ops.wait_for_runtime_runs(1).await;
+
+        let launch = coordinator
+            .start_workspace_launch(
+                workspace.clone(),
+                host_settings,
+                "http://127.0.0.1:4399".to_string(),
+            )
+            .await;
+
+        let ready = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let latest = coordinator
+                    .launch_status(&launch.job_id)
+                    .await
+                    .expect("missing workspace launch job");
+                if latest.state == ExecutionLaunchState::Ready {
+                    break latest;
+                }
+                if latest.state == ExecutionLaunchState::Error {
+                    panic!("workspace launch failed unexpectedly: {:?}", latest.error);
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("timed out waiting for workspace launch readiness");
+
+        let background_snapshot = coordinator
+            .launch_status(&background.job_id)
+            .await
+            .expect("missing background prewarm job");
+        assert_eq!(background_snapshot.state, ExecutionLaunchState::Running);
+        assert_eq!(ready.state, ExecutionLaunchState::Ready);
+        assert_ne!(background.job_id, launch.job_id);
+
+        ops.release_runtime();
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn workspace_launch_reuses_running_container_without_runtime_prewarm_or_image_checks() {
         use std::os::unix::fs::PermissionsExt;
 
-        let _serial = env_var_test_lock()
-            .lock()
-            .unwrap_or_else(|err| err.into_inner());
+        let _serial = env_var_test_lock().lock().await;
         let data_dir = tempfile::tempdir().expect("tempdir");
         let workspace_root = data_dir.path().join("ws");
         std::fs::create_dir_all(&workspace_root).expect("create workspace root");

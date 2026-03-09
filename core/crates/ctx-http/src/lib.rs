@@ -74,7 +74,7 @@ pub mod fault_injection {
 mod tests {
     use std::collections::HashMap;
     use std::path::Path;
-    use std::sync::{Arc, Mutex as StdMutex};
+    use std::sync::Arc;
     use std::time::Duration;
 
     use axum::body::{to_bytes, Body};
@@ -167,7 +167,7 @@ mod tests {
         }
     }
 
-    fn podman_env_test_lock() -> &'static StdMutex<()> {
+    fn podman_env_test_lock() -> &'static tokio::sync::Mutex<()> {
         crate::test_support::podman_env_test_lock()
     }
 
@@ -627,9 +627,7 @@ mod tests {
 
     #[tokio::test]
     async fn execution_launch_startup_prewarm_kind_supported() {
-        let _serial = podman_env_test_lock()
-            .lock()
-            .unwrap_or_else(|err| err.into_inner());
+        let _serial = podman_env_test_lock().lock().await;
         let _podman = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "0");
         let home = tempfile::tempdir().unwrap();
         std::env::set_var("HOME", home.path());

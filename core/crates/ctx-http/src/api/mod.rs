@@ -479,6 +479,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/providers/:id/install", post(install_provider))
         .route("/api/providers/install/:install_id", get(get_install))
         .route(
+            "/api/providers/install/statuses",
+            post(get_install_statuses),
+        )
+        .route(
             "/api/providers/install/:install_id/cancel",
             post(cancel_install),
         )

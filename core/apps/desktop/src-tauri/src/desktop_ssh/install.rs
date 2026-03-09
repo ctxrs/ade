@@ -294,29 +294,6 @@ pub(super) fn remote_ctx_bin_exists_over_ssh(
     anyhow::bail!("checking remote managed daemon binary failed: {detail}");
 }
 
-fn probe_remote_podman_path(host: &str, user: Option<&str>) -> Result<Option<String>> {
-    let output = run_remote_ssh_shell(
-        host,
-        user,
-        "if command -v podman >/dev/null 2>&1; then command -v podman; else exit 1; fi",
-    )
-    .context("probing remote podman path")?;
-    if !output.status.success() {
-        if output.status.code() == Some(1) {
-            return Ok(None);
-        }
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let detail = if !stderr.is_empty() { stderr } else { stdout };
-        anyhow::bail!("remote podman probe failed: {detail}");
-    }
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if path.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(path))
-}
-
 pub(super) fn start_remote_daemon_over_ssh(
     host: &str,
     user: Option<&str>,
@@ -333,34 +310,7 @@ pub(super) fn start_remote_daemon_over_ssh(
     let log_file = format!("{}/daemon.log", log_dir.trim_end_matches('/'));
     let log_file_expr = remote_path_expr(&log_file);
     let ctx_bin = validate_remote_ctx_bin(remote_ctx_bin)?;
-    let ctx_bin_expr = remote_path_expr(&ctx_bin);
-    let mut daemon_env = Vec::<String>::new();
-    if let Some(remote_podman_path) = probe_remote_podman_path(host, user)? {
-        daemon_env.push(format!(
-            "CTX_PODMAN_PATH={}",
-            shell_escape(remote_podman_path.as_str())
-        ));
-    }
-    if let Ok(v) = std::env::var("CTX_PODMAN_MACHINE_PREFETCH") {
-        let trimmed = v.trim();
-        if !trimmed.is_empty() {
-            daemon_env.push(format!(
-                "CTX_PODMAN_MACHINE_PREFETCH={}",
-                shell_escape(trimmed)
-            ));
-        }
-    }
-    let daemon_env_prefix = if daemon_env.is_empty() {
-        String::new()
-    } else {
-        format!("env {} ", daemon_env.join(" "))
-    };
-    let exec_cmd = format!(
-        "if [ -x {ctx_bin} ]; then {env}{ctx_bin} serve --bind 127.0.0.1:{remote_port} --data-dir {dir}; else echo 'ctx not executable at configured remote path' >&2; exit 127; fi",
-        env = daemon_env_prefix,
-        ctx_bin = ctx_bin_expr,
-        dir = remote_path_expr(data_dir),
-    );
+    let exec_cmd = render_remote_daemon_exec_cmd(&ctx_bin, remote_port, data_dir)?;
     let log_cmd = format!(
         "mkdir -p {log_dir} && {exec_cmd} > {log_file} 2>&1",
         log_dir = log_dir_expr,
@@ -395,4 +345,18 @@ pub(super) fn start_remote_daemon_over_ssh(
         ));
     }
     Ok(())
+}
+
+pub(super) fn render_remote_daemon_exec_cmd(
+    remote_ctx_bin: &str,
+    remote_port: u16,
+    remote_data_dir: &str,
+) -> Result<String> {
+    let ctx_bin = validate_remote_ctx_bin(remote_ctx_bin)?;
+    let ctx_bin_expr = remote_path_expr(&ctx_bin);
+    Ok(format!(
+        "if [ -x {ctx_bin} ]; then {ctx_bin} serve --bind 127.0.0.1:{remote_port} --data-dir {dir}; else echo 'ctx not executable at configured remote path' >&2; exit 127; fi",
+        ctx_bin = ctx_bin_expr,
+        dir = remote_path_expr(remote_data_dir),
+    ))
 }

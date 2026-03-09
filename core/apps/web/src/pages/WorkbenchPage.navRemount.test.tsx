@@ -135,23 +135,38 @@ const focusTaskSpy = vi.fn(
 );
 const applyTaskUpdateSpy = vi.fn();
 const sessionSupervisorMock = {
+  bindWorkspaceActiveSnapshotStore: vi.fn(),
+  setActiveTaskSessionIds: vi.fn(),
+  setWarmSessionIds: vi.fn(),
   setSubscribedSessionIdsSink: vi.fn(),
   setWorkspaceSnapshotState: vi.fn(),
   setWorkspaceSessionHeads: vi.fn(),
   handleWorkspaceEvent: vi.fn(),
-  setActiveTaskSessionIds: vi.fn(),
-  setWarmSessionIds: vi.fn(),
-  setSession: vi.fn(),
-  setTurns: vi.fn(),
-  setMessages: vi.fn(),
   setDiff: vi.fn(),
   loadSessionState: vi.fn(),
   loadArtifacts: vi.fn(),
   loadSubagentInvocations: vi.fn(),
 };
+const workspaceSnapshotStoreMock = {
+  applyTaskUpdate: applyTaskUpdateSpy,
+  ensureArchivedLoaded: vi.fn(),
+  getWorktreeRoot: vi.fn(() => null),
+  loadMoreActive: vi.fn(),
+  loadMoreArchived: vi.fn(),
+  subscribe: vi.fn(() => () => {}),
+  subscribeEvents: vi.fn(() => () => {}),
+  getSnapshot: vi.fn(() => workspaceSnapshotSnap),
+  getSessionHeadSnapshot: vi.fn(() => null),
+  getSessionHeadsSnapshot: vi.fn(() => ({})),
+  setForegroundTaskId: vi.fn(),
+  setSubscribedSessionIds: vi.fn(),
+};
 const { trackWorkbenchPanelToggledMock } = vi.hoisted(() => ({
   trackWorkbenchPanelToggledMock: vi.fn(),
 }));
+const getInstallMock = vi.hoisted(() =>
+  vi.fn(async (_installId?: string): Promise<{ install_id?: string; last_event?: unknown }> => ({})),
+);
 
 const createDeferred = <T,>() => {
   let resolve!: (value: T) => void;
@@ -194,7 +209,18 @@ vi.mock("../api/client", () => ({
     current_version: "0.0.0",
     update_available: false,
   })),
-  getInstall: vi.fn(async () => ({})),
+  getInstall: getInstallMock,
+  getInstallStatuses: vi.fn(async (installIds: string[]) => ({
+    installs: await Promise.all(
+      installIds.map(async (installId) => {
+        const info = await getInstallMock(installId);
+        return {
+          install_id: installId,
+          info: info && typeof info.install_id === "string" ? info : null,
+        };
+      }),
+    ),
+  })),
   getProviderOptions: vi.fn(async () => ({})),
   getSessionGitStatusSummary: vi.fn(async () => null),
   getSettings: vi.fn(async () => ({ dictation: { enabled: false } })),
@@ -209,6 +235,10 @@ vi.mock("../api/client", () => ({
   },
   installAllProviders: vi.fn(async () => ({})),
   installProvider: vi.fn(async () => ({ install_id: "install-1" })),
+  listInstallEvents: vi.fn(async (installId: string) => {
+    const info = await getInstallMock(installId);
+    return info?.last_event ? [info.last_event] : [];
+  }),
   listProviders: vi.fn(async () => []),
   listWorkspaces: vi.fn(async () => []),
   markTaskRead: vi.fn(async () => ({})),
@@ -238,18 +268,7 @@ vi.mock("../state/workspaceActiveSnapshotStore", () => ({
   WorkspaceActiveSnapshotProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   useWorkspaceActiveSnapshotEvents: () => {},
   useWorkspaceActiveSnapshotSnapshot: () => workspaceSnapshotSnap,
-  useWorkspaceActiveSnapshotStore: () => ({
-    subscribe: () => () => {},
-    subscribeEvents: () => () => {},
-    getSnapshot: () => workspaceSnapshotSnap,
-    getSessionHeadsSnapshot: () => ({}),
-    applyTaskUpdate: applyTaskUpdateSpy,
-    ensureArchivedLoaded: vi.fn(),
-    getWorktreeRoot: vi.fn(() => null),
-    getWorktreeVcsSnapshot: vi.fn(() => null),
-    loadMoreActive: vi.fn(),
-    loadMoreArchived: vi.fn(),
-  }),
+  useWorkspaceActiveSnapshotStore: () => workspaceSnapshotStoreMock,
 }));
 
 vi.mock("../workbench/store", () => ({
@@ -334,19 +353,34 @@ beforeEach(() => {
   sessionSnap = buildSessionSnap();
   workspaceSnapshotSnap = buildWorkspaceSnapshotSnap();
   trackWorkbenchPanelToggledMock.mockReset();
+  sessionSupervisorMock.bindWorkspaceActiveSnapshotStore.mockReset();
+  sessionSupervisorMock.setActiveTaskSessionIds.mockReset();
+  sessionSupervisorMock.setWarmSessionIds.mockReset();
   sessionSupervisorMock.setSubscribedSessionIdsSink.mockReset();
   sessionSupervisorMock.setWorkspaceSnapshotState.mockReset();
   sessionSupervisorMock.setWorkspaceSessionHeads.mockReset();
   sessionSupervisorMock.handleWorkspaceEvent.mockReset();
-  sessionSupervisorMock.setActiveTaskSessionIds.mockReset();
-  sessionSupervisorMock.setWarmSessionIds.mockReset();
-  sessionSupervisorMock.setSession.mockReset();
-  sessionSupervisorMock.setTurns.mockReset();
-  sessionSupervisorMock.setMessages.mockReset();
   sessionSupervisorMock.setDiff.mockReset();
   sessionSupervisorMock.loadSessionState.mockReset();
   sessionSupervisorMock.loadArtifacts.mockReset();
   sessionSupervisorMock.loadSubagentInvocations.mockReset();
+  workspaceSnapshotStoreMock.ensureArchivedLoaded.mockReset();
+  workspaceSnapshotStoreMock.getWorktreeRoot.mockReset();
+  workspaceSnapshotStoreMock.getWorktreeRoot.mockReturnValue(null);
+  workspaceSnapshotStoreMock.loadMoreActive.mockReset();
+  workspaceSnapshotStoreMock.loadMoreArchived.mockReset();
+  workspaceSnapshotStoreMock.subscribe.mockReset();
+  workspaceSnapshotStoreMock.subscribe.mockReturnValue(() => {});
+  workspaceSnapshotStoreMock.subscribeEvents.mockReset();
+  workspaceSnapshotStoreMock.subscribeEvents.mockReturnValue(() => {});
+  workspaceSnapshotStoreMock.getSnapshot.mockReset();
+  workspaceSnapshotStoreMock.getSnapshot.mockImplementation(() => workspaceSnapshotSnap);
+  workspaceSnapshotStoreMock.getSessionHeadSnapshot.mockReset();
+  workspaceSnapshotStoreMock.getSessionHeadSnapshot.mockReturnValue(null);
+  workspaceSnapshotStoreMock.getSessionHeadsSnapshot.mockReset();
+  workspaceSnapshotStoreMock.getSessionHeadsSnapshot.mockReturnValue({});
+  workspaceSnapshotStoreMock.setForegroundTaskId.mockReset();
+  workspaceSnapshotStoreMock.setSubscribedSessionIds.mockReset();
 });
 
 afterEach(() => {
@@ -556,7 +590,7 @@ describe("WorkbenchPage title generation install banner", () => {
     render(ui);
 
     expect(await screen.findByText("Session titling model download in progress.")).toBeInTheDocument();
-    expect(await screen.findByText("Downloading… 50%")).toBeInTheDocument();
+    expect(await screen.findByText("Downloading… 38%")).toBeInTheDocument();
   });
 });
 

@@ -940,7 +940,6 @@ fn pick_unused_local_port() -> Result<u16> {
     Ok(port)
 }
 
-const SSH_TUNNEL_LOG_BYTES: usize = 4096;
 const SSH_TUNNEL_HEALTH_RETRIES: usize = 12;
 const SSH_TUNNEL_HEALTH_BASE_DELAY_MS: u64 = 150;
 const LOCAL_DAEMON_HEALTH_RETRIES: usize = 20;

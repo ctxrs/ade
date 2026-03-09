@@ -1,27 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { applyDaemonDesktopConnection, daemonFetchRaw, listWorkspaceTasks, listWorkspaces } from "../api/client";
+import { applyDaemonDesktopConnection, listWorkspaceTasks, listWorkspaces } from "../api/client";
 import { useDaemonBaseUrl } from "../api/useDaemonConnection";
 import {
+  checkDaemonAvailabilityNow,
+  getDaemonAvailabilitySnapshot,
+  subscribeDaemonAvailability,
+} from "../state/daemonAvailabilityMonitor";
+import {
   desktopApplyAppUpdate,
-  desktopGetConnection,
-  desktopGetVersion,
   isDesktopApp,
   desktopRestartLocalDaemon,
   desktopUpdateRemoteDaemon,
-  type DesktopConnectionKind,
   type DesktopConnectionInfo,
 } from "../utils/desktop";
-
-type DaemonStatus = "unknown" | "ok" | "down" | "mismatch";
-type VersionMismatchKind = "daemon_older" | "desktop_older" | "unknown";
-
-type VersionMismatch = {
-  desktop_version: string;
-  daemon_version: string;
-  expected_version: string;
-  kind: VersionMismatchKind;
-};
 
 const overlaySuppressed = (pathname: string): boolean => {
   if (pathname === "/") return true;
@@ -32,222 +24,58 @@ const overlaySuppressed = (pathname: string): boolean => {
 const trimError = (value: string): string => {
   const text = String(value || "").trim();
   if (!text) return "";
-  return text.length > 220 ? `${text.slice(0, 220)}…` : text;
-};
-
-const asRecord = (value: unknown): Record<string, unknown> => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  return value as Record<string, unknown>;
-};
-
-const extractErrorMessage = (resp: { status: number; body: string }): string => {
-  const raw = String(resp.body ?? "").trim();
-  if (!raw) return `Daemon responded with ${resp.status}.`;
-  try {
-    const parsed = JSON.parse(raw);
-    const msg = parsed?.error ?? parsed?.message;
-    if (typeof msg === "string" && msg.trim()) return trimError(msg);
-  } catch {
-    // ignore parse errors
-  }
-  return trimError(raw);
-};
-
-const normalizeVersionParts = (value: string): number[] | null => {
-  const trimmed = String(value || "").trim();
-  if (!trimmed) return null;
-  const cleaned = trimmed.replace(/^v/i, "");
-  const parts = cleaned.split(".");
-  const nums = parts.map((part) => {
-    const match = part.match(/^(\d+)/);
-    return match ? Number(match[1]) : Number.NaN;
-  });
-  if (nums.some((n) => Number.isNaN(n))) return null;
-  return nums;
-};
-
-const normalizeVersionString = (value: string): string => {
-  const trimmed = String(value || "").trim();
-  if (!trimmed) return "";
-  return trimmed.replace(/^v/i, "");
-};
-
-const compareVersions = (left: string, right: string): number | null => {
-  const leftParts = normalizeVersionParts(left);
-  const rightParts = normalizeVersionParts(right);
-  if (!leftParts || !rightParts) return null;
-  const len = Math.max(leftParts.length, rightParts.length);
-  for (let i = 0; i < len; i += 1) {
-    const a = leftParts[i] ?? 0;
-    const b = rightParts[i] ?? 0;
-    if (a < b) return -1;
-    if (a > b) return 1;
-  }
-  return 0;
+  return text.length > 220 ? `${text.slice(0, 220)}...` : text;
 };
 
 export default function DaemonAvailabilityOverlay() {
   const location = useLocation();
-  const [status, setStatus] = useState<DaemonStatus>("unknown");
-  const [checking, setChecking] = useState(false);
   const [restartBusy, setRestartBusy] = useState(false);
   const [remoteUpdateBusy, setRemoteUpdateBusy] = useState(false);
   const [desktopAppUpdateBusy, setDesktopAppUpdateBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [desktopKind, setDesktopKind] = useState<DesktopConnectionKind | null>(null);
-  const [desktopVersion, setDesktopVersion] = useState<string | null>(null);
-  const [mismatch, setMismatch] = useState<VersionMismatch | null>(null);
-  const checkingRef = useRef(false);
-  const requestIdRef = useRef(0);
-  const restartLockRef = useRef(false);
-  const remoteUpdateLockRef = useRef(false);
+  const [restartLock, setRestartLock] = useState(false);
+  const [remoteUpdateLock, setRemoteUpdateLock] = useState(false);
   const isDesktop = isDesktopApp();
   const daemonBaseUrl = useDaemonBaseUrl();
-
-  const refreshDesktopKind = useCallback(async () => {
-    if (!isDesktop) return null;
-    try {
-      const info = await desktopGetConnection();
-      setDesktopKind(info.kind);
-      return info;
-    } catch {
-      setDesktopKind(null);
-      return null;
-    }
-  }, [isDesktop]);
-
-  const refreshDesktopVersion = useCallback(async () => {
-    if (!isDesktop) return null;
-    try {
-      const version = await desktopGetVersion();
-      setDesktopVersion(version);
-      return version;
-    } catch {
-      setDesktopVersion(null);
-      return null;
-    }
-  }, [isDesktop]);
+  const availability = useSyncExternalStore(
+    subscribeDaemonAvailability,
+    getDaemonAvailabilitySnapshot,
+    getDaemonAvailabilitySnapshot,
+  );
+  const checking = availability.checking;
+  const status = availability.status;
+  const desktopKind = availability.desktopKind;
+  const mismatch = availability.mismatch;
+  const error = actionError ?? availability.error;
 
   const checkNow = useCallback(async () => {
-    if (checkingRef.current) return;
-    checkingRef.current = true;
-    setChecking(true);
-    const requestId = ++requestIdRef.current;
-    void refreshDesktopKind();
-    try {
-      const resp = await daemonFetchRaw("/api/health");
-      if (requestId !== requestIdRef.current) return;
-      if (resp.status >= 200 && resp.status < 300) {
-        let parsed: unknown = null;
-        if (resp.body) {
-          try {
-            parsed = JSON.parse(resp.body);
-          } catch {
-            parsed = null;
-          }
-        }
-        const parsedRecord = asRecord(parsed);
-        const compat = asRecord(parsedRecord.compatibility);
-        const daemonVersion = String(parsedRecord.daemon_version ?? parsedRecord.version ?? "").trim();
-        const expectedVersion = String(
-          compat.desktop_exact_version ?? daemonVersion ?? "",
-        ).trim();
-        const currentDesktopVersion =
-          desktopVersion ?? (await refreshDesktopVersion()) ?? "";
-        const normalizedDesktopVersion = normalizeVersionString(currentDesktopVersion);
-        const normalizedExpectedVersion = normalizeVersionString(expectedVersion);
-        const cmp = compareVersions(normalizedDesktopVersion, normalizedExpectedVersion);
-        const versionsMatch =
-          cmp === 0 || (cmp === null && normalizedDesktopVersion === normalizedExpectedVersion);
-        if (isDesktop && normalizedDesktopVersion && normalizedExpectedVersion && !versionsMatch) {
-          const kind: VersionMismatchKind =
-            cmp === 1 ? "daemon_older" : cmp === -1 ? "desktop_older" : "unknown";
-          setMismatch({
-            desktop_version: currentDesktopVersion,
-            daemon_version: daemonVersion || expectedVersion,
-            expected_version: expectedVersion,
-            kind,
-          });
-          setStatus("mismatch");
-          setError(null);
-        } else {
-          setMismatch(null);
-          setStatus("ok");
-          setError(null);
-        }
-      } else {
-        setMismatch(null);
-        setStatus("down");
-        setError(extractErrorMessage(resp));
-      }
-    } catch (err) {
-      if (requestId !== requestIdRef.current) return;
-      setMismatch(null);
-      const message = err instanceof Error ? err.message : String(err);
-      setStatus("down");
-      setError(trimError(message || "Unable to reach the ctx daemon."));
-    } finally {
-      if (requestId === requestIdRef.current) {
-        checkingRef.current = false;
-        setChecking(false);
-      }
-    }
-  }, [desktopVersion, isDesktop, refreshDesktopKind, refreshDesktopVersion]);
-
-  useEffect(() => {
-    checkNow();
-    const handleOnline = () => {
-      checkNow();
-    };
-    window.addEventListener("online", handleOnline);
-    return () => {
-      window.removeEventListener("online", handleOnline);
-    };
-  }, [checkNow]);
-
-  useEffect(() => {
-    void refreshDesktopKind();
-  }, [refreshDesktopKind]);
-
-  useEffect(() => {
-    void refreshDesktopVersion();
-  }, [refreshDesktopVersion]);
-
-  useEffect(() => {
-    const intervalMs = status === "down" || status === "mismatch" ? 8000 : 20000;
-    const intervalId = window.setInterval(() => {
-      if (document.visibilityState !== "visible") return;
-      checkNow();
-    }, intervalMs);
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [checkNow, status]);
+    setActionError(null);
+    await checkDaemonAvailabilityNow();
+  }, []);
 
   const applyConnection = (info: DesktopConnectionInfo) => {
     applyDaemonDesktopConnection(info);
   };
 
   const restartDaemon = useCallback(async () => {
-    if (!isDesktop || restartLockRef.current) return;
-    restartLockRef.current = true;
+    if (!isDesktop || restartLock) return;
+    setRestartLock(true);
     setRestartBusy(true);
-    setError(null);
+    setActionError(null);
     setNotice(null);
     try {
       const info = await desktopRestartLocalDaemon();
       applyConnection(info);
-      setDesktopKind(info.kind);
       await checkNow();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      setError(trimError(message || "Unable to restart the daemon."));
+      setActionError(trimError(message || "Unable to restart the daemon."));
     } finally {
-      restartLockRef.current = false;
+      setRestartLock(false);
       setRestartBusy(false);
     }
-  }, [checkNow, isDesktop]);
+  }, [checkNow, isDesktop, restartLock]);
 
   const confirmInterruptingAction = (action: "restart" | "update_remote" | "update_desktop"): boolean => {
     if (typeof window === "undefined") return true;
@@ -268,10 +96,10 @@ export default function DaemonAvailabilityOverlay() {
   }, [isDesktop, restartBusy, restartDaemon]);
 
   const onMismatchUpdateRemote = useCallback(async () => {
-    if (!isDesktop || remoteUpdateLockRef.current) return;
-    remoteUpdateLockRef.current = true;
+    if (!isDesktop || remoteUpdateLock) return;
+    setRemoteUpdateLock(true);
     setRemoteUpdateBusy(true);
-    setError(null);
+    setActionError(null);
     setNotice(null);
     try {
       let runningTaskCount: number | null = null;
@@ -312,18 +140,18 @@ export default function DaemonAvailabilityOverlay() {
       await checkNow();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      setError(trimError(message || "Unable to update the remote daemon."));
+      setActionError(trimError(message || "Unable to update the remote daemon."));
     } finally {
-      remoteUpdateLockRef.current = false;
+      setRemoteUpdateLock(false);
       setRemoteUpdateBusy(false);
     }
-  }, [checkNow, isDesktop]);
+  }, [checkNow, isDesktop, remoteUpdateLock]);
 
   const onMismatchUpdateDesktop = useCallback(async () => {
     if (!isDesktop || desktopAppUpdateBusy) return;
     if (!confirmInterruptingAction("update_desktop")) return;
     setDesktopAppUpdateBusy(true);
-    setError(null);
+    setActionError(null);
     setNotice(null);
     try {
       const resp = await desktopApplyAppUpdate("stable");
@@ -338,7 +166,7 @@ export default function DaemonAvailabilityOverlay() {
       await checkNow();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      setError(trimError(message || "Unable to update the desktop app."));
+      setActionError(trimError(message || "Unable to update the desktop app."));
     } finally {
       setDesktopAppUpdateBusy(false);
     }

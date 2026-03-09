@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   InstallInfo,
@@ -6,14 +6,11 @@ import {
   ProviderStatus,
   ProviderOptions,
   Workspace,
-  getInstall,
   getProviderOptions,
   idToString,
   installAllProviders,
   installProvider,
-  installStreamUrl,
   listProviders,
-  listInstallEvents,
   listWorkspaces,
 } from "../api/client";
 import {
@@ -23,8 +20,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../components/ui/select";
+import {
+  getInstallProgressSnapshot,
+  observeInstall,
+  subscribeInstallProgress,
+  type InstallProgressEntry,
+  type InstallProgressSnapshot,
+} from "../state/installProgressMonitor";
 import { copyTextToClipboard } from "../utils/clipboard";
-import { isDesktopApp } from "../utils/desktop";
 import { errorMessage } from "../utils/errorMessage";
 import { PROVIDER_INSTALLS_ENABLED } from "../utils/providerInstallGate";
 import { formatProviderVersionDisplay, getMatrixVersionDisplay } from "../utils/providerVersionLabel";
@@ -35,14 +38,6 @@ type InstallSession = {
   events: InstallProgressEvent[];
   streamError?: string;
   error?: string;
-};
-
-const nextInstallState = (prev: InstallInfo["state"] | undefined, ev?: InstallProgressEvent) => {
-  if (prev && prev !== "running") return prev;
-  if (!ev) return prev ?? "running";
-  if (ev.level === "error") return "failed";
-  if (ev.stage === "done" || ev.level === "success") return "succeeded";
-  return prev ?? "running";
 };
 
 const fmtBytes = (n: number): string => {
@@ -62,6 +57,22 @@ const asRecord = (value: unknown): Record<string, unknown> => {
   return value as Record<string, unknown>;
 };
 
+const toInstallSession = (entry: InstallProgressEntry): InstallSession => ({
+  installId: entry.installId,
+  state: entry.state,
+  events: entry.events,
+  error: entry.error,
+});
+
+const installsFromSnapshot = (
+  snapshot: InstallProgressSnapshot,
+): Record<string, InstallSession> =>
+  Object.fromEntries(
+    Object.values(snapshot)
+      .filter((entry) => typeof entry.providerId === "string" && entry.providerId.trim().length > 0)
+      .map((entry) => [entry.providerId as string, toInstallSession(entry)]),
+  );
+
 export default function ProvidersPage() {
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -70,189 +81,107 @@ export default function ProvidersPage() {
   const [optsBusy, setOptsBusy] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [installs, setInstalls] = useState<Record<string, InstallSession>>({});
+  const [installs, setInstalls] = useState<Record<string, InstallSession>>(
+    () => installsFromSnapshot(getInstallProgressSnapshot()),
+  );
   const installControlsEnabled = PROVIDER_INSTALLS_ENABLED;
 
-  const eventSourcesRef = useRef<Record<string, EventSource>>({});
-  const pollTimeoutsRef = useRef<Record<string, number>>({});
+  const installObserversRef = useRef<Record<string, () => void>>({});
+  const previousInstallsRef = useRef<Record<string, InstallSession>>({});
 
-  const refresh = () =>
+  const refresh = useCallback(() =>
     listProviders()
       .then(setProviders)
-      .catch((e: unknown) => setError(errorMessage(e)));
+      .catch((e: unknown) => setError(errorMessage(e))), []);
 
   useEffect(() => {
     refresh();
     listWorkspaces()
       .then((ws) => {
         setWorkspaces(ws);
-        if (!workspaceId && ws.length > 0) {
-          setWorkspaceId(idToString(ws[0]?.id ?? ""));
-        }
+        setWorkspaceId((prev) => prev ?? (ws.length > 0 ? idToString(ws[0]?.id ?? "") : null));
       })
       .catch(() => {});
-  }, []);
+  }, [refresh]);
 
   useEffect(() => {
     setProviderOptions({});
   }, [workspaceId]);
 
   useEffect(() => {
-    for (const p of providers) {
-      const installId = p.details?.install_id;
-      const running = p.details?.install_running === "true";
-      if (running && installId && !installs[p.provider_id]) {
-        attachInstall(p.provider_id, installId);
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [providers]);
-
-  useEffect(() => {
-    return () => {
-      for (const key of Object.keys(eventSourcesRef.current)) {
-        eventSourcesRef.current[key].close();
-      }
-      for (const key of Object.keys(pollTimeoutsRef.current)) {
-        window.clearTimeout(pollTimeoutsRef.current[key]);
-      }
-      eventSourcesRef.current = {};
-      pollTimeoutsRef.current = {};
-    };
+    return subscribeInstallProgress((snapshot) => {
+      setInstalls(installsFromSnapshot(snapshot));
+    });
   }, []);
 
-  const attachInstall = async (providerId: string, installId: string) => {
-    if (eventSourcesRef.current[providerId] || pollTimeoutsRef.current[providerId]) {
+  const attachInstall = useCallback((providerId: string, installId: string) => {
+    if (!providerId || !installId) return;
+    const existingInstallId = installs[providerId]?.installId;
+    if (existingInstallId === installId && installObserversRef.current[providerId]) {
       return;
     }
-
+    installObserversRef.current[providerId]?.();
     setInstalls((prev) => ({
       ...prev,
       [providerId]: {
         installId,
         state: "running",
         events: prev[providerId]?.events ?? [],
-        error: prev[providerId]?.error,
+        error: undefined,
       },
     }));
+    installObserversRef.current[providerId] = observeInstall(installId, {
+      providerId,
+      loadHistory: true,
+      initialState: {
+        state: "running",
+      },
+    });
+  }, [installs]);
 
-    void (async () => {
-      try {
-        const history = await listInstallEvents(installId);
-        const last = history[history.length - 1];
-        setInstalls((prev) => ({
-          ...prev,
-          [providerId]: {
-            installId,
-            state: nextInstallState(prev[providerId]?.state, last),
-            events: history,
-            streamError: prev[providerId]?.streamError,
-            error: prev[providerId]?.error,
-          },
-        }));
-      } catch {
-        // ignore
+  useEffect(() => {
+    for (const p of providers) {
+      const installId = p.details?.install_id;
+      const running = p.details?.install_running === "true";
+      const tracked = installs[p.provider_id];
+      if (
+        running
+        && installId
+        && (!tracked || tracked.installId !== installId || tracked.state !== "running")
+      ) {
+        attachInstall(p.provider_id, installId);
       }
-    })();
-
-    let eventSource: EventSource | null = null;
-    try {
-      if (isDesktopApp()) {
-        throw new Error("desktop mode uses polling (no EventSource)");
-      }
-      eventSource = new EventSource(installStreamUrl(installId));
-      eventSourcesRef.current[providerId] = eventSource;
-      eventSource.addEventListener("progress", (evt: Event) => {
-        const data = (evt as MessageEvent).data;
-        try {
-          const ev = JSON.parse(data) as InstallProgressEvent;
-          setInstalls((prev) => {
-            const existing = prev[providerId];
-            const events = [...(existing?.events ?? [])];
-            if (!events.find((e) => e.at === ev.at && e.stage === ev.stage && e.message === ev.message)) {
-              events.push(ev);
-              if (events.length > 200) events.splice(0, events.length - 200);
-            }
-            return {
-              ...prev,
-              [providerId]: {
-                installId,
-                state: nextInstallState(existing?.state, ev),
-                events,
-                streamError: existing?.streamError,
-                error: existing?.error,
-              },
-            };
-          });
-        } catch {
-          // ignore
-        }
-      });
-      eventSource.onerror = () => {
-        setInstalls((prev) => ({
-          ...prev,
-          [providerId]: {
-            installId,
-            state: prev[providerId]?.state ?? "running",
-            events: prev[providerId]?.events ?? [],
-            streamError: "Lost connection to install stream; polling status…",
-            error: prev[providerId]?.error,
-          },
-        }));
-        eventSource?.close();
-        delete eventSourcesRef.current[providerId];
-      };
-    } catch {
-      setInstalls((prev) => ({
-        ...prev,
-        [providerId]: {
-          installId,
-          state: prev[providerId]?.state ?? "running",
-          events: prev[providerId]?.events ?? [],
-          streamError: "Failed to open install stream; polling status…",
-          error: prev[providerId]?.error,
-        },
-      }));
     }
+  }, [attachInstall, installs, providers]);
 
-    const poll = async () => {
-      try {
-        const info = await getInstall(installId);
-        setInstalls((prev) => ({
-          ...prev,
-          [providerId]: {
-            installId,
-            state: info.state,
-            events: prev[providerId]?.events ?? [],
-            streamError: prev[providerId]?.streamError,
-            error: info.error,
-          },
-        }));
-        if (info.state !== "running") {
-          eventSource?.close();
-          delete eventSourcesRef.current[providerId];
-          const t = pollTimeoutsRef.current[providerId];
-          if (t) {
-            window.clearTimeout(t);
-            delete pollTimeoutsRef.current[providerId];
-          }
-          await refresh();
-          return;
-        }
-      } catch {
-        // ignore
+  useEffect(() => {
+    return () => {
+      for (const stop of Object.values(installObserversRef.current)) {
+        stop();
       }
-      pollTimeoutsRef.current[providerId] = window.setTimeout(poll, 900);
+      installObserversRef.current = {};
     };
-    poll();
-  };
+  }, []);
+
+  useEffect(() => {
+    let needsRefresh = false;
+    for (const [providerId, install] of Object.entries(installs)) {
+      const previous = previousInstallsRef.current[providerId];
+      if (!install || install.state === "running") continue;
+      if (previous?.installId === install.installId && previous.state === install.state) continue;
+      needsRefresh = true;
+    }
+    previousInstallsRef.current = installs;
+    if (!needsRefresh) return;
+    void refresh();
+  }, [installs, refresh]);
 
   const onInstall = async (id: string) => {
     setBusy(id);
     setError(null);
     try {
       const { install_id } = await installProvider(id);
-      await attachInstall(id, install_id);
+      attachInstall(id, install_id);
     } catch (e: unknown) {
       setError(errorMessage(e));
     } finally {

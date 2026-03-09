@@ -314,6 +314,23 @@ export function useWorkspaceSetupWorkflow({
     setters.pushBranch(draft.targetBranch);
   }, [draft.pushBranchTouched, draft.targetBranch, setters]);
 
+  useEffect(() => {
+    if (flow.step.key !== "harness-downloads") return;
+    if (provisioning.harnessInstallBusy) return;
+    if (provisioning.harnessInstallError) return;
+    if (provisioning.selectedHarnessReadyToStartCount > 0) return;
+    if (provisioning.selectedHarnessRunningCount > 0) return;
+    if (provisioning.selectedHarnessFailedCount === 0) return;
+    flow.goToStepKey(nextAfterHarnessDownloads(flow.routePlan));
+  }, [
+    flow,
+    provisioning.harnessInstallBusy,
+    provisioning.harnessInstallError,
+    provisioning.selectedHarnessFailedCount,
+    provisioning.selectedHarnessReadyToStartCount,
+    provisioning.selectedHarnessRunningCount,
+  ]);
+
   const hasAllowlist = flow.step.key !== "network"
     || flow.selections.network !== "allowlist"
     || draft.networkAllowlist.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length > 0;

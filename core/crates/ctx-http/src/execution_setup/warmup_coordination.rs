@@ -20,6 +20,12 @@ const SHARED_WARMUP_CHANNEL_CAP: usize = 256;
 
 #[async_trait]
 pub(crate) trait SharedWarmupOperations: Send + Sync {
+    async fn prefetch_runtime_artifacts(
+        &self,
+        settings: ExecutionSettings,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<()>;
+
     async fn warm_runtime(
         &self,
         settings: ExecutionSettings,
@@ -42,6 +48,21 @@ impl DefaultWarmupOperations {
 
 #[async_trait]
 impl SharedWarmupOperations for DefaultWarmupOperations {
+    async fn prefetch_runtime_artifacts(
+        &self,
+        settings: ExecutionSettings,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<()> {
+        let image = harness_runtime::resolve_container_image(&settings.container);
+        harness_runtime::prefetch_container_startup_artifacts_with_overrides(
+            &self.data_root,
+            &image,
+            None,
+            observer,
+        )
+        .await
+    }
+
     async fn warm_runtime(
         &self,
         settings: ExecutionSettings,
@@ -90,6 +111,17 @@ impl LaunchPrewarmCoordinator {
             self.ensure_builder(observer).await?;
         }
         Ok(())
+    }
+
+    pub(crate) async fn prefetch_runtime_artifacts(
+        &self,
+        settings: &ExecutionSettings,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<()> {
+        self.inner
+            .operations
+            .prefetch_runtime_artifacts(settings.clone(), observer)
+            .await
     }
 
     pub(crate) async fn ensure_runtime(
@@ -662,6 +694,14 @@ mod tests {
 
     #[async_trait]
     impl SharedWarmupOperations for FakeWarmupOperations {
+        async fn prefetch_runtime_artifacts(
+            &self,
+            _settings: ExecutionSettings,
+            _observer: Option<&dyn HarnessSetupObserver>,
+        ) -> Result<()> {
+            Ok(())
+        }
+
         async fn warm_runtime(
             &self,
             _settings: ExecutionSettings,

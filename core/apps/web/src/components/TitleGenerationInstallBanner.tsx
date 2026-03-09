@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
+import { getTitleGenerationLocalStatus } from "../api/client";
 import {
-  getInstall,
-  getSettings,
-  getTitleGenerationLocalStatus,
-} from "../api/client";
+  observeInstall,
+  subscribeInstallProgress,
+  type InstallProgressEntry,
+} from "../state/installProgressMonitor";
 
 const TITLE_GEN_DISMISSED_INSTALLS_KEY = "wb.title_generation.dismissed_install_ids.v1";
-const TITLE_GEN_STATUS_POLL_MS = 2500;
-const TITLE_GEN_INSTALL_POLL_MS = 900;
+const TITLE_GENERATION_LOCAL_PROVIDER_ID = "title_generation_local";
 
 type TitleGenInstallBannerState = {
   installId: string;
@@ -40,129 +40,109 @@ const saveDismissedInstallIds = (ids: Set<string>) => {
   }
 };
 
-const clampPct = (value: number): number => Math.max(0, Math.min(100, Math.round(value)));
+const toBannerState = (entry: InstallProgressEntry): TitleGenInstallBannerState | null => {
+  const stage = typeof entry.lastEvent?.stage === "string" ? entry.lastEvent.stage : null;
+  const message = typeof entry.lastEvent?.message === "string" ? entry.lastEvent.message : null;
+  if (entry.state === "running") {
+    return {
+      installId: entry.installId,
+      status: "running",
+      pct: entry.pct,
+      stage,
+      message,
+      error: null,
+    };
+  }
+  if (entry.state === "failed") {
+    return {
+      installId: entry.installId,
+      status: "failed",
+      pct: entry.pct,
+      stage,
+      message,
+      error: entry.error ?? "Local title model install failed.",
+    };
+  }
+  return null;
+};
 
-const pctFromInstallInfo = (bytes: number | undefined, totalBytes: number | undefined): number | null => {
-  if (typeof bytes !== "number" || typeof totalBytes !== "number" || totalBytes <= 0) return null;
-  return clampPct((bytes / totalBytes) * 100);
+const findTrackedEntry = (
+  currentInstallId: string | null,
+  entries: InstallProgressEntry[],
+  dismissedInstallIds: Set<string>,
+): InstallProgressEntry | null => {
+  const visibleEntries = entries.filter((entry) => !dismissedInstallIds.has(entry.installId));
+  const runningEntry = visibleEntries.find(
+    (entry) => entry.providerId === TITLE_GENERATION_LOCAL_PROVIDER_ID && entry.state === "running",
+  );
+  if (runningEntry) return runningEntry;
+  if (currentInstallId) {
+    const currentEntry = visibleEntries.find((entry) => entry.installId === currentInstallId);
+    if (currentEntry) return currentEntry;
+  }
+  return visibleEntries.find((entry) => entry.providerId === TITLE_GENERATION_LOCAL_PROVIDER_ID) ?? null;
 };
 
 export function TitleGenerationInstallBanner() {
   const [state, setState] = useState<TitleGenInstallBannerState | null>(null);
   const activeInstallIdRef = useRef<string | null>(null);
   const dismissedInstallIdsRef = useRef<Set<string>>(new Set<string>());
-  const installPollTimerRef = useRef<number | null>(null);
-  const statusPollTimerRef = useRef<number | null>(null);
+  const bootstrapObserverRef = useRef<(() => void) | null>(null);
 
-  const clearInstallPoll = useCallback(() => {
-    if (installPollTimerRef.current) {
-      window.clearTimeout(installPollTimerRef.current);
-      installPollTimerRef.current = null;
+  const attachInstall = useCallback((installId: string) => {
+    const normalizedInstallId = installId.trim();
+    if (!normalizedInstallId) return;
+    if (dismissedInstallIdsRef.current.has(normalizedInstallId)) return;
+    if (activeInstallIdRef.current === normalizedInstallId && bootstrapObserverRef.current) {
+      return;
     }
+    bootstrapObserverRef.current?.();
+    activeInstallIdRef.current = normalizedInstallId;
+    bootstrapObserverRef.current = observeInstall(normalizedInstallId, {
+      loadHistory: true,
+      initialState: {
+        state: "running",
+      },
+    });
   }, []);
-
-  const clearStatusPoll = useCallback(() => {
-    if (statusPollTimerRef.current) {
-      window.clearTimeout(statusPollTimerRef.current);
-      statusPollTimerRef.current = null;
-    }
-  }, []);
-
-  const attachInstall = useCallback(async (installId: string) => {
-    if (!installId.trim()) return;
-    if (dismissedInstallIdsRef.current.has(installId)) return;
-    if (activeInstallIdRef.current === installId && installPollTimerRef.current) return;
-    activeInstallIdRef.current = installId;
-    clearInstallPoll();
-
-    const poll = async () => {
-      if (activeInstallIdRef.current !== installId) return;
-      try {
-        const info = await getInstall(installId);
-        if (activeInstallIdRef.current !== installId) return;
-        const pct = pctFromInstallInfo(info.last_event?.bytes, info.last_event?.total_bytes);
-        const stage = typeof info.last_event?.stage === "string" ? info.last_event.stage : null;
-        const message = typeof info.last_event?.message === "string" ? info.last_event.message : null;
-        if (info.state === "running") {
-          setState({
-            installId,
-            status: "running",
-            pct,
-            stage,
-            message,
-            error: null,
-          });
-          installPollTimerRef.current = window.setTimeout(() => {
-            poll().catch(() => {});
-          }, TITLE_GEN_INSTALL_POLL_MS);
-          return;
-        }
-        clearInstallPoll();
-        activeInstallIdRef.current = null;
-        if (info.state === "failed") {
-          setState({
-            installId,
-            status: "failed",
-            pct,
-            stage,
-            message,
-            error: info.error ?? "Local title model install failed.",
-          });
-          return;
-        }
-        setState(null);
-      } catch {
-        if (activeInstallIdRef.current !== installId) return;
-        installPollTimerRef.current = window.setTimeout(() => {
-          poll().catch(() => {});
-        }, TITLE_GEN_INSTALL_POLL_MS);
-      }
-    };
-
-    await poll();
-  }, [clearInstallPoll]);
-
-  const refresh = useCallback(async () => {
-    try {
-      const settings = await getSettings();
-      if (settings.title_generation?.mode !== "local") {
-        clearInstallPoll();
-        activeInstallIdRef.current = null;
-        setState(null);
-        return;
-      }
-      const status = await getTitleGenerationLocalStatus();
-      if (status.install_running && typeof status.install_id === "string" && status.install_id.trim()) {
-        await attachInstall(status.install_id);
-        return;
-      }
-      if (activeInstallIdRef.current && !status.install_running) {
-        clearInstallPoll();
-        activeInstallIdRef.current = null;
-      }
-      if (status.ready) {
-        setState(null);
-      }
-    } catch {
-      // Keep silent; this banner is best effort.
-    }
-  }, [attachInstall, clearInstallPoll]);
 
   useEffect(() => {
     dismissedInstallIdsRef.current = loadDismissedInstallIds();
-    void refresh();
-    const pollLoop = () => {
-      void refresh().finally(() => {
-        statusPollTimerRef.current = window.setTimeout(pollLoop, TITLE_GEN_STATUS_POLL_MS);
-      });
-    };
-    statusPollTimerRef.current = window.setTimeout(pollLoop, TITLE_GEN_STATUS_POLL_MS);
+    let cancelled = false;
+    void getTitleGenerationLocalStatus()
+      .then((status) => {
+        if (cancelled) return;
+        if (status.install_running && typeof status.install_id === "string" && status.install_id.trim()) {
+          attachInstall(status.install_id);
+        }
+      })
+      .catch(() => {});
+    const unsubscribe = subscribeInstallProgress((snapshot) => {
+      const tracked = findTrackedEntry(
+        activeInstallIdRef.current,
+        Object.values(snapshot),
+        dismissedInstallIdsRef.current,
+      );
+      if (!tracked) {
+        activeInstallIdRef.current = null;
+        setState(null);
+        return;
+      }
+      activeInstallIdRef.current = tracked.installId;
+      setState(toBannerState(tracked));
+      if (tracked.state === "succeeded" || tracked.state === "cancelled") {
+        bootstrapObserverRef.current?.();
+        bootstrapObserverRef.current = null;
+      }
+    });
     return () => {
-      clearInstallPoll();
-      clearStatusPoll();
+      cancelled = true;
+      unsubscribe();
+      bootstrapObserverRef.current?.();
+      bootstrapObserverRef.current = null;
       activeInstallIdRef.current = null;
     };
-  }, [clearInstallPoll, clearStatusPoll, refresh]);
+  }, [attachInstall]);
 
   const dismiss = useCallback(() => {
     if (state?.installId) {
@@ -171,10 +151,11 @@ export function TitleGenerationInstallBanner() {
     }
     if (activeInstallIdRef.current === state?.installId) {
       activeInstallIdRef.current = null;
-      clearInstallPoll();
+      bootstrapObserverRef.current?.();
+      bootstrapObserverRef.current = null;
     }
     setState(null);
-  }, [clearInstallPoll, state]);
+  }, [state]);
 
   if (!state) return null;
 

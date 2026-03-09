@@ -44,38 +44,6 @@ pub(crate) fn validate_remote_container_bootstrap_platform(
     })
 }
 
-pub(crate) fn require_remote_container_podman_path(
-    target: &str,
-    probe_succeeded: bool,
-    stdout: &str,
-    stderr: &str,
-) -> Result<String> {
-    if !probe_succeeded {
-        let detail = stderr.trim();
-        let detail = if detail.is_empty() {
-            stdout.trim()
-        } else {
-            detail
-        };
-        if detail.is_empty() {
-            anyhow::bail!(
-                "Remote container bootstrap requires `podman` on `{target}`, but it was not found. {REMOTE_CONTAINER_BOOTSTRAP_PODMAN_HINT}"
-            );
-        }
-        anyhow::bail!(
-            "Remote container bootstrap requires `podman` on `{target}`, but the probe failed: {detail}. {REMOTE_CONTAINER_BOOTSTRAP_PODMAN_HINT}"
-        );
-    }
-
-    let path = stdout.trim();
-    if path.is_empty() {
-        anyhow::bail!(
-            "Remote container bootstrap requires `podman` on `{target}`, but the probe returned an empty path. {REMOTE_CONTAINER_BOOTSTRAP_PODMAN_HINT}"
-        );
-    }
-    Ok(path.to_string())
-}
-
 pub(super) fn probe_remote_linux_platform_with_optional_password(
     host: &str,
     user: Option<&str>,

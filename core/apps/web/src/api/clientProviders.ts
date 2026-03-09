@@ -1,5 +1,6 @@
 import type { ProviderStatus } from "@ctx/types";
 import { apiAny, authToken } from "./clientBase";
+import { getDaemonHttpUrl } from "./daemonConnection";
 
 export type InstallEventLevel = "info" | "warning" | "error" | "success";
 export type InstallTarget = "host" | "container" | "linux-aarch64" | "linux-x86_64";
@@ -46,6 +47,15 @@ export type InstallStartResponse = {
   provider_id: string;
   install_id: string;
   target: InstallTarget;
+};
+
+export type InstallInfoBatchItem = {
+  install_id: string;
+  info: InstallInfo | null;
+};
+
+export type InstallInfoBatchResponse = {
+  installs: InstallInfoBatchItem[];
 };
 
 const withInstallTargetParam = (path: string, target?: InstallTarget): string => {
@@ -817,6 +827,12 @@ export const installAllProviders = (target?: InstallTarget) =>
 export const getInstall = (installId: string) =>
   apiAny<InstallInfo>(`/api/providers/install/${installId}`);
 
+export const getInstallStatuses = (installIds: string[]) =>
+  apiAny<InstallInfoBatchResponse>(`/api/providers/install/statuses`, {
+    method: "POST",
+    body: JSON.stringify({ install_ids: installIds }),
+  });
+
 export const cancelInstall = (installId: string) =>
   apiAny<InstallInfo>(`/api/providers/install/${installId}/cancel`, { method: "POST" });
 
@@ -825,9 +841,10 @@ export const listInstallEvents = (installId: string) =>
 
 export const installStreamUrl = (installId: string): string => {
   const token = authToken();
+  const base = getDaemonHttpUrl(`/api/providers/install/${installId}/stream`);
   return token
-    ? `/api/providers/install/${installId}/stream?token=${encodeURIComponent(token)}`
-    : `/api/providers/install/${installId}/stream`;
+    ? `${base}?token=${encodeURIComponent(token)}`
+    : base;
 };
 
 export type DevRestartProvidersMode = "immediate" | "drain";

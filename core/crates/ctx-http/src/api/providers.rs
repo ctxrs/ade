@@ -6266,6 +6266,55 @@ pub(super) async fn get_install(
         .ok_or(StatusCode::NOT_FOUND)
 }
 
+#[derive(Debug, Deserialize)]
+pub(super) struct GetInstallStatusesReq {
+    install_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct InstallStatusBatchItem {
+    install_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    info: Option<InstallInfo>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct GetInstallStatusesResp {
+    installs: Vec<InstallStatusBatchItem>,
+}
+
+pub(super) async fn get_install_statuses(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<GetInstallStatusesReq>,
+) -> Result<Json<GetInstallStatusesResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let install_ids = req
+        .install_ids
+        .into_iter()
+        .map(|raw| {
+            let parsed = uuid::Uuid::parse_str(raw.trim()).map_err(|_| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: format!("invalid install id: {raw}"),
+                    }),
+                )
+            })?;
+            Ok(InstallId::from(parsed))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut installs = Vec::with_capacity(install_ids.len());
+    for install_id in install_ids {
+        let info = state.get_install_polling_info(install_id).await;
+        installs.push(InstallStatusBatchItem {
+            install_id: install_id.to_string(),
+            info,
+        });
+    }
+
+    Ok(Json(GetInstallStatusesResp { installs }))
+}
+
 pub(super) async fn cancel_install(
     State(state): State<Arc<AppState>>,
     Path(install_id): Path<String>,
@@ -6442,6 +6491,7 @@ pub(super) async fn dev_restart_providers(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::installs::InstallEventLevel;
     use chrono::Utc;
     use ctx_providers::adapters::{
         ProviderAdapter, ProviderHealth, ProviderProcessInfo, ProviderRestartMode, ProviderStatus,
@@ -7320,5 +7370,96 @@ ZXY987654321
         drop(verify_cache);
 
         assert_eq!(adapter.restart_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn get_install_statuses_returns_known_and_missing_installs_in_request_order() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let stores = StoreManager::open(temp.path()).await.expect("open stores");
+        let state = Arc::new(AppState::new(
+            temp.path().to_path_buf(),
+            stores,
+            HashMap::new(),
+            "http://127.0.0.1:4310".to_string(),
+            None,
+        ));
+
+        let (install_id, started_new) = state
+            .start_install("codex".to_string(), Some(InstallTarget::Container))
+            .await;
+        assert!(started_new);
+        state
+            .emit_install_event(
+                install_id,
+                InstallProgressEvent {
+                    install_id,
+                    provider_id: "codex".to_string(),
+                    target: Some(InstallTarget::Container),
+                    at: Utc::now(),
+                    stage: "download".to_string(),
+                    message: "Downloading runtime".to_string(),
+                    level: InstallEventLevel::Info,
+                    bytes: Some(64),
+                    total_bytes: Some(128),
+                    attempt: Some(1),
+                    error_code: None,
+                },
+            )
+            .await;
+        let missing_install_id = InstallId::new_v4();
+
+        let Json(resp) = get_install_statuses(
+            State(state),
+            Json(GetInstallStatusesReq {
+                install_ids: vec![install_id.to_string(), missing_install_id.to_string()],
+            }),
+        )
+        .await
+        .expect("get install statuses should succeed");
+
+        assert_eq!(resp.installs.len(), 2);
+        assert_eq!(resp.installs[0].install_id, install_id.to_string());
+        let info = resp.installs[0]
+            .info
+            .as_ref()
+            .expect("known install should return status");
+        assert_eq!(info.provider_id, "codex");
+        assert_eq!(info.target, Some(InstallTarget::Container));
+        assert!(matches!(
+            info.state,
+            crate::installs::InstallStateKind::Running
+        ));
+        assert_eq!(
+            info.last_event.as_ref().map(|event| event.stage.as_str()),
+            Some("download")
+        );
+        assert_eq!(resp.installs[1].install_id, missing_install_id.to_string());
+        assert!(resp.installs[1].info.is_none());
+    }
+
+    #[tokio::test]
+    async fn get_install_statuses_rejects_invalid_install_ids() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let stores = StoreManager::open(temp.path()).await.expect("open stores");
+        let state = Arc::new(AppState::new(
+            temp.path().to_path_buf(),
+            stores,
+            HashMap::new(),
+            "http://127.0.0.1:4310".to_string(),
+            None,
+        ));
+
+        let err = get_install_statuses(
+            State(state),
+            Json(GetInstallStatusesReq {
+                install_ids: vec!["not-a-uuid".to_string()],
+            }),
+        )
+        .await
+        .expect_err("invalid install id should fail");
+        let (status, Json(body)) = err;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body.error, "invalid install id: not-a-uuid");
     }
 }

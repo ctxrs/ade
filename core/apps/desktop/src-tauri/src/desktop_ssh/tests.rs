@@ -62,12 +62,38 @@ fn remote_container_bootstrap_platform_requires_linux() {
 }
 
 #[test]
-fn remote_container_bootstrap_requires_podman_path() {
-    let err = require_remote_container_podman_path("dev@example.host", false, "", "")
-        .expect_err("missing podman should fail");
-    let msg = err.to_string();
-    assert!(msg.contains("requires `podman`"));
-    assert!(msg.contains("dev@example.host"));
+fn remote_daemon_exec_command_does_not_inject_system_podman_env() {
+    let command = super::install::render_remote_daemon_exec_cmd("~/.ctx/bin/ctx", 44199, "~/.ctx")
+        .expect("render remote daemon exec command");
+    assert!(
+        command.contains(
+            "\"$HOME/.ctx/bin/ctx\" serve --bind 127.0.0.1:44199 --data-dir \"$HOME/.ctx\""
+        ),
+        "unexpected command: {command}"
+    );
+    assert!(
+        !command.contains("CTX_PODMAN_PATH"),
+        "remote daemon start command should not inject system podman: {command}"
+    );
+    assert!(
+        !command.contains("CTX_PODMAN_MACHINE_PREFETCH"),
+        "remote daemon start command should not depend on desktop podman prefetch env: {command}"
+    );
+}
+
+#[test]
+fn remote_startup_prewarm_request_targets_daemon_launch_api() {
+    let request = super::commands::build_remote_startup_prewarm_request();
+    assert_eq!(request.method, "POST");
+    assert_eq!(request.path, "/api/execution/launch/start");
+    assert_eq!(
+        request.headers,
+        vec![("Content-Type".to_string(), "application/json".to_string())]
+    );
+    assert_eq!(
+        request.body.as_deref(),
+        Some(r#"{"kind":"startup_prewarm","prewarm_scope":"all"}"#)
+    );
 }
 
 #[test]

@@ -191,10 +191,11 @@ pub(crate) async fn desktop_kickoff_remote_prewarm(
 
     tauri::async_runtime::spawn(async move {
         let result = tauri::async_runtime::spawn_blocking(move || {
-            ensure_remote_ctx_harness_image(
+            request_remote_startup_prewarm(
                 &app,
                 &host,
                 user.as_deref(),
+                remote_port,
                 remote_data_dir.as_deref(),
             )
         })
@@ -209,4 +210,49 @@ pub(crate) async fn desktop_kickoff_remote_prewarm(
         }
     });
     Ok(())
+}
+
+fn request_remote_startup_prewarm(
+    app: &tauri::AppHandle,
+    host: &str,
+    user: Option<&str>,
+    remote_port: u16,
+    remote_data_dir: Option<&str>,
+) -> Result<()> {
+    let state = app.state::<ConnectionManager>();
+    let manager: &ConnectionManager = state.inner();
+    let active = manager.ssh_target()?;
+    let requested_key = remote_prewarm_dedupe_key(host, user, remote_port, remote_data_dir);
+    let active_key = remote_prewarm_dedupe_key(
+        &active.host,
+        active.user.as_deref(),
+        active.remote_port,
+        active.remote_data_dir.as_deref(),
+    );
+    if requested_key != active_key {
+        anyhow::bail!("current SSH connection target does not match remote prewarm request");
+    }
+    let response = manager.daemon_request(build_remote_startup_prewarm_request())?;
+    if (200..300).contains(&response.status) {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "remote startup prewarm request failed with status {}",
+        response.status
+    );
+}
+
+pub(super) fn build_remote_startup_prewarm_request() -> DesktopDaemonRequest {
+    DesktopDaemonRequest {
+        method: "POST".to_string(),
+        path: "/api/execution/launch/start".to_string(),
+        body: Some(
+            serde_json::json!({
+                "kind": "startup_prewarm",
+                "prewarm_scope": "all",
+            })
+            .to_string(),
+        ),
+        headers: vec![("Content-Type".to_string(), "application/json".to_string())],
+    }
 }

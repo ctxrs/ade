@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type 
 import {
   cancelInstall,
   getProviderOptions,
-  getInstall,
   installAllProviders,
   installProvider,
   type InstallInfo,
@@ -18,9 +17,9 @@ import {
   getProviderInstallProgressSnapshot,
   removeProviderInstallProgress,
   subscribeProviderInstallProgress,
-  upsertProviderInstallProgress,
   type ProviderInstallProgressSnapshot,
 } from "../../state/providerInstallProgressStore";
+import { observeInstall } from "../../state/installProgressMonitor";
 import type { DraftHarness } from "../../components/WorkbenchComposer";
 import { computeInstallPct, parseInstallTarget } from "../../utils/providerInstallUi";
 
@@ -125,6 +124,8 @@ export function useWorkbenchProviders({
   const postInstallHandledRef = useRef<Set<string>>(new Set());
   const postInstallInFlightRef = useRef<Set<string>>(new Set());
   const providerAuthSummaryInFlightRef = useRef<Record<string, Promise<ProviderOptions | undefined>>>({});
+  const installObserversRef = useRef<Record<string, () => void>>({});
+  const previousInstallsRef = useRef<Record<string, ProviderInstallState | undefined>>({});
 
   useEffect(() => {
     return subscribeProviderInstallProgress((snapshot) => {
@@ -214,6 +215,12 @@ export function useWorkbenchProviders({
   }, [applyProvidersBootstrap, workspaceId]);
 
   const attachProviderInstall = useCallback((providerId: string, installId: string) => {
+    const existingInstallId = providerInstallsById[providerId]?.installId;
+    if (existingInstallId === installId && installObserversRef.current[providerId]) {
+      return;
+    }
+    installObserversRef.current[providerId]?.();
+
     const nextInstallState: ProviderInstallState = {
       installId,
       state: "running",
@@ -233,14 +240,22 @@ export function useWorkbenchProviders({
         },
       };
     });
-    upsertProviderInstallProgress(providerId, nextInstallState);
-  }, []);
+    installObserversRef.current[providerId] = observeInstall(installId, {
+      providerId,
+      initialState: nextInstallState,
+    });
+  }, [providerInstallsById]);
 
   useEffect(() => {
     for (const provider of providers) {
       const installId = provider.details?.install_id;
       const running = provider.details?.install_running === "true";
-      if (running && installId && !providerInstallsById[provider.provider_id]) {
+      const tracked = providerInstallsById[provider.provider_id];
+      if (
+        running
+        && installId
+        && (!tracked || tracked.installId !== installId || tracked.state !== "running")
+      ) {
         attachProviderInstall(provider.provider_id, installId);
       }
     }
@@ -257,102 +272,41 @@ export function useWorkbenchProviders({
   );
 
   useEffect(() => {
-    const active = Object.entries(providerInstallsById).flatMap(([providerId, install]) =>
-      install && (install.state === "running" || install.state === "succeeded") ? ([[providerId, install]] as const) : [],
-    );
-    if (active.length === 0) return;
+    let needsProviderRefresh = false;
+    const completedProviders: string[] = [];
+
+    for (const [providerId, install] of Object.entries(providerInstallsById)) {
+      const previous = previousInstallsRef.current[providerId];
+      if (!install || install.state === "running") continue;
+      if (previous?.installId === install.installId && previous.state === install.state) continue;
+
+      needsProviderRefresh = true;
+      if (install.state === "succeeded" && !postInstallHandledRef.current.has(install.installId)) {
+        postInstallHandledRef.current.add(install.installId);
+        completedProviders.push(providerId);
+      }
+    }
+
+    previousInstallsRef.current = providerInstallsById;
+    if (!needsProviderRefresh || !workspaceId) return;
 
     let cancelled = false;
-    const tick = async () => {
-      if (cancelled) return;
-      let needsProviderRefresh = false;
-      const completedProviders: string[] = [];
-      await Promise.all(
-        active.map(async ([providerId, install]) => {
-          try {
-            const info = await getInstall(install.installId);
-            const pct = computeInstallPct(info, install.pct);
-
-            setProviderInstallsById((prev) => {
-              const existing = prev[providerId];
-              if (!existing || existing.installId !== install.installId) return prev;
-              const stablePct =
-                info.state === "succeeded"
-                  ? 100
-                  : typeof pct === "number" && Number.isFinite(pct)
-                    ? Math.max(existing.pct ?? 0, pct)
-                    : (existing.pct ?? 0);
-              const nextInstallState: ProviderInstallState = {
-                installId: install.installId,
-                state: info.state,
-                pct: stablePct,
-                target: info.target,
-                errorCode: info.error_code,
-                error: info.error,
-              };
-              if (sameProviderInstallState(existing, nextInstallState)) {
-                return prev;
-              }
-              return {
-                ...prev,
-                [providerId]: nextInstallState,
-              };
-            });
-            upsertProviderInstallProgress(providerId, {
-              installId: install.installId,
-              state: info.state,
-              pct:
-                info.state === "succeeded"
-                  ? 100
-                  : typeof pct === "number" && Number.isFinite(pct)
-                    ? Math.max(install.pct ?? 0, pct)
-                    : (install.pct ?? 0),
-              target: info.target,
-              errorCode: info.error_code,
-              error: info.error,
-            });
-
-            if (info.state !== "running") {
-              needsProviderRefresh = true;
-            }
-
-            if (info.state === "succeeded" && !postInstallHandledRef.current.has(install.installId)) {
-              postInstallHandledRef.current.add(install.installId);
-              completedProviders.push(providerId);
-            }
-          } catch {
-            // ignore poll errors
-          }
-        }),
-      );
-
-      if (needsProviderRefresh) {
-        try {
-          const next = await refreshProvidersBootstrap(workspaceId);
-          if (!cancelled) {
-            applyProvidersBootstrap(next);
-          }
-
-          if (!cancelled && completedProviders.length > 0) {
-            for (const providerId of completedProviders) {
-              if (postInstallInFlightRef.current.has(providerId)) continue;
-              postInstallInFlightRef.current.add(providerId);
-              runPostInstallAuthVerify(providerId).finally(() => {
-                postInstallInFlightRef.current.delete(providerId);
-              });
-            }
-          }
-        } catch {
-          // ignore provider refresh errors
+    void refreshProvidersBootstrap(workspaceId)
+      .then((next) => {
+        if (cancelled) return;
+        applyProvidersBootstrap(next);
+        for (const providerId of completedProviders) {
+          if (postInstallInFlightRef.current.has(providerId)) continue;
+          postInstallInFlightRef.current.add(providerId);
+          runPostInstallAuthVerify(providerId).finally(() => {
+            postInstallInFlightRef.current.delete(providerId);
+          });
         }
-      }
-    };
+      })
+      .catch(() => {});
 
-    void tick();
-    const timerId = window.setInterval(() => void tick(), 1000);
     return () => {
       cancelled = true;
-      window.clearInterval(timerId);
     };
   }, [applyProvidersBootstrap, providerInstallsById, runPostInstallAuthVerify, workspaceId]);
 
@@ -406,20 +360,21 @@ export function useWorkbenchProviders({
             error: info.error,
           },
         }));
-        upsertProviderInstallProgress(providerId, {
-          installId,
-          state: info.state,
-          pct: computeInstallPct(info, providerInstallsById[providerId]?.pct ?? null),
-          target: info.target,
-          errorCode: info.error_code,
-          error: info.error,
-        });
       } catch (error: unknown) {
         onStartError(toErrorMessage(error));
       }
     },
     [onStartError, providerInstallsById, providersById],
   );
+
+  useEffect(() => {
+    return () => {
+      for (const stop of Object.values(installObserversRef.current)) {
+        stop();
+      }
+      installObserversRef.current = {};
+    };
+  }, []);
 
   useEffect(() => {
     if (Object.keys(providerInstallsById).length === 0) return;

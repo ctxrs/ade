@@ -1,8 +1,10 @@
 use super::*;
+
+#[cfg(test)]
+use std::cell::Cell;
 use crate::desktop_local_daemon::ensure_local_connection;
 
 const SSH_CONFIG_OVERRIDE_ENV: &str = "CTX_DESKTOP_SSH_CONFIG_PATH";
-const DEFAULT_CTX_HARNESS_IMAGE: &str = "ghcr.io/ctxrs/ctx-harness:ubuntu-24.04";
 
 fn normalized_ssh_config_override(value: &str) -> Option<String> {
     let trimmed = value.trim();
@@ -798,7 +800,6 @@ struct DesktopBundledImage {
     pub os: String,
     pub arch: String,
     pub tar: String,
-    pub image: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -1272,242 +1273,52 @@ pub(super) fn enforce_desktop_parity_bundle_preflight(app: &tauri::AppHandle) ->
     Ok(())
 }
 
-fn read_bundled_ctx_harness_image(
-    app: &tauri::AppHandle,
-    arch: &str,
-) -> Result<Option<(PathBuf, String)>> {
-    let bundle_dir = desktop_bundle_dir(app).ok_or_else(|| anyhow!("bundle dir not found"))?;
-    let manifest_path = bundle_dir.join("manifest.json");
-    let raw = std::fs::read_to_string(&manifest_path)
-        .with_context(|| format!("reading {}", manifest_path.display()))?;
-    let manifest: DesktopBundledAssetsManifest = serde_json::from_str(&raw)
-        .with_context(|| format!("parsing {}", manifest_path.display()))?;
-    let Some(entry) = manifest
-        .images
-        .iter()
-        .find(|img| img.id == "ctx-harness" && img.os == "linux" && img.arch == arch)
-    else {
-        return Ok(None);
-    };
-    let tar = bundle_dir.join(&entry.tar);
-    if !tar.exists() {
-        anyhow::bail!("bundled ctx-harness image tar missing at {}", tar.display());
-    }
-    Ok(Some((tar, entry.image.clone())))
-}
-
-fn ssh_target(host: &str, user: Option<&str>) -> String {
-    match user {
-        Some(u) if !u.trim().is_empty() => format!("{}@{}", u.trim(), host),
-        _ => host.to_string(),
-    }
-}
-
-fn ssh_output(target: &str, cmd: &str) -> Result<std::process::Output> {
-    let remote_cmd = format!("sh -lc {}", shell_escape(cmd));
-    let output = new_ssh_command()
-        .arg("-o")
-        .arg("BatchMode=yes")
-        .arg("-o")
-        .arg("ConnectTimeout=8")
-        .arg("-o")
-        .arg("ConnectionAttempts=1")
-        .arg("-o")
-        .arg("ServerAliveInterval=5")
-        .arg("-o")
-        .arg("ServerAliveCountMax=1")
-        .arg(target)
-        .arg(remote_cmd)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .with_context(|| format!("ssh: {cmd}"))?;
-    Ok(output)
-}
-
-pub(super) fn ensure_remote_ctx_harness_image(
-    app: &tauri::AppHandle,
-    host: &str,
-    user: Option<&str>,
-    remote_data_dir: Option<&str>,
-) -> Result<()> {
-    let target = ssh_target(host, user);
-    let data_dir = remote_data_dir
-        .filter(|d| !d.trim().is_empty())
-        .unwrap_or("~/.ctx");
-    let podman_xdg_root = format!("{}/podman/xdg", data_dir.trim_end_matches('/'));
-    let podman_xdg_config = format!("{}/config", podman_xdg_root);
-    let podman_xdg_data = format!("{}/data", podman_xdg_root);
-    let podman_xdg_run = format!("{}/run", podman_xdg_root);
-    let podman_env_prefix = format!(
-        "XDG_CONFIG_HOME={} XDG_DATA_HOME={} XDG_RUNTIME_DIR={}",
-        remote_path_expr(&podman_xdg_config),
-        remote_path_expr(&podman_xdg_data),
-        remote_path_expr(&podman_xdg_run),
-    );
-    let podman_prepare_cmd = format!(
-        "mkdir -p {} {} {} && chmod 700 {} >/dev/null 2>&1 || true",
-        remote_path_expr(&podman_xdg_config),
-        remote_path_expr(&podman_xdg_data),
-        remote_path_expr(&podman_xdg_run),
-        remote_path_expr(&podman_xdg_run),
-    );
-
-    // Only provision the Linux container image on Linux hosts.
-    let os_out = ssh_output(&target, "uname -s")?;
-    if !os_out.status.success() {
-        anyhow::bail!(
-            "ssh uname failed: {}",
-            String::from_utf8_lossy(&os_out.stderr).trim()
-        );
-    }
-    let os = String::from_utf8_lossy(&os_out.stdout).trim().to_string();
-
-    let arch_out = ssh_output(&target, "uname -m")?;
-    if !arch_out.status.success() {
-        anyhow::bail!(
-            "ssh uname -m failed: {}",
-            String::from_utf8_lossy(&arch_out.stderr).trim()
-        );
-    }
-    let arch_raw = String::from_utf8_lossy(&arch_out.stdout).trim().to_string();
-    let arch =
-        super::desktop_ssh::validate_remote_container_bootstrap_platform(&target, &os, &arch_raw)?;
-
-    let podman_out = ssh_output(
-        &target,
-        "if command -v podman >/dev/null 2>&1; then command -v podman; else exit 1; fi",
-    )?;
-    let podman_stdout = String::from_utf8_lossy(&podman_out.stdout);
-    let podman_stderr = String::from_utf8_lossy(&podman_out.stderr);
-    let podman_bin = super::desktop_ssh::require_remote_container_podman_path(
-        &target,
-        podman_out.status.success(),
-        podman_stdout.as_ref(),
-        podman_stderr.as_ref(),
-    )?;
-    let podman_cmd = remote_path_expr(&podman_bin);
-    let prep_out = ssh_output(&target, &podman_prepare_cmd)?;
-    if !prep_out.status.success() {
-        anyhow::bail!(
-            "ssh podman xdg setup failed: {}",
-            String::from_utf8_lossy(&prep_out.stderr).trim()
-        );
-    }
-
-    let bundled_image = read_bundled_ctx_harness_image(app, arch)?;
-    let (image, bundled_tar) = match bundled_image {
-        Some((tar, image)) => (image, Some(tar)),
-        None => (DEFAULT_CTX_HARNESS_IMAGE.to_string(), None),
-    };
-
-    // Check if the image is already present.
-    let exists_out = ssh_output(
-        &target,
-        &format!(
-            "{podman_env_prefix} {podman_cmd} image exists -- {}",
-            shell_escape(&image)
-        ),
-    )?;
-    if exists_out.status.success() {
-        return Ok(());
-    }
-    if exists_out.status.code() != Some(1) {
-        anyhow::bail!(
-            "remote podman image exists failed: {}",
-            String::from_utf8_lossy(&exists_out.stderr).trim()
-        );
-    }
-
-    if let Some(tar) = bundled_tar {
-        // Stream tar to podman load over SSH.
-        let remote_cmd = format!(
-            "sh -lc {}",
-            shell_escape(&format!(
-                "{podman_prepare_cmd} && {podman_env_prefix} {podman_cmd} load"
-            ))
-        );
-        let mut child = new_ssh_command()
-            .arg("-o")
-            .arg("BatchMode=yes")
-            .arg("-o")
-            .arg("ConnectTimeout=8")
-            .arg("-o")
-            .arg("ConnectionAttempts=1")
-            .arg("-o")
-            .arg("ServerAliveInterval=5")
-            .arg("-o")
-            .arg("ServerAliveCountMax=1")
-            .arg(&target)
-            .arg(remote_cmd)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .context("spawning ssh for podman load")?;
-
-        {
-            let mut file =
-                std::fs::File::open(&tar).with_context(|| format!("opening {}", tar.display()))?;
-            let mut stdin = child
-                .stdin
-                .take()
-                .ok_or_else(|| anyhow!("ssh stdin unavailable"))?;
-            std::io::copy(&mut file, &mut stdin).context("streaming image tar to ssh")?;
-        }
-
-        let output = child
-            .wait_with_output()
-            .context("waiting for ssh podman load")?;
-        if !output.status.success() {
-            anyhow::bail!(
-                "remote podman load failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            );
-        }
-    } else {
-        let pull_out = ssh_output(
-            &target,
-            &format!(
-                "{podman_prepare_cmd} && {podman_env_prefix} {podman_cmd} pull -- {}",
-                shell_escape(&image)
-            ),
-        )?;
-        if !pull_out.status.success() {
-            anyhow::bail!(
-                "remote podman pull failed: {}",
-                String::from_utf8_lossy(&pull_out.stderr).trim()
-            );
-        }
-    }
-    let exists_after = ssh_output(
-        &target,
-        &format!(
-            "{podman_env_prefix} {podman_cmd} image exists -- {}",
-            shell_escape(&image)
-        ),
-    )?;
-    if !exists_after.status.success() {
-        anyhow::bail!(
-            "remote podman load completed but image is still missing for daemon storage: {}",
-            image
-        );
-    }
-
-    Ok(())
-}
-
 pub(super) fn daemon_health(base_url: &str) -> Result<DaemonHealthSummary> {
     daemon_health_with_timeout(base_url, daemon_health_timeout())
 }
 
-fn daemon_health_with_timeout(base_url: &str, timeout: Duration) -> Result<DaemonHealthSummary> {
-    let url = format!("{}/api/health", base_url.trim_end_matches('/'));
+#[cfg(test)]
+thread_local! {
+    static DAEMON_HEALTH_CLIENT_BUILD_COUNT: Cell<usize> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+fn reset_daemon_health_client_build_count() {
+    DAEMON_HEALTH_CLIENT_BUILD_COUNT.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+fn daemon_health_client_build_count() -> usize {
+    DAEMON_HEALTH_CLIENT_BUILD_COUNT.with(Cell::get)
+}
+
+fn daemon_health_client(
+    timeout: Duration,
+) -> Result<reqwest::blocking::Client> {
+    static DAEMON_HEALTH_CLIENTS: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<u64, reqwest::blocking::Client>>,
+    > = std::sync::OnceLock::new();
+    let timeout_key = timeout.as_millis() as u64;
+    let clients = DAEMON_HEALTH_CLIENTS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    let mut guard = clients
+        .lock()
+        .map_err(|err| anyhow!("daemon health client cache poisoned: {err}"))?;
+    if let Some(existing) = guard.get(&timeout_key) {
+        return Ok(existing.clone());
+    }
+    #[cfg(test)]
+    DAEMON_HEALTH_CLIENT_BUILD_COUNT.with(|count| count.set(count.get() + 1));
     let client = reqwest::blocking::Client::builder()
         .timeout(timeout)
         .build()
         .context("building http client")?;
+    guard.insert(timeout_key, client.clone());
+    Ok(client)
+}
+
+fn daemon_health_with_timeout(base_url: &str, timeout: Duration) -> Result<DaemonHealthSummary> {
+    let url = format!("{}/api/health", base_url.trim_end_matches('/'));
+    let client = daemon_health_client(timeout)?;
     let res = client.get(url).send().context("requesting /api/health")?;
     let res = res.error_for_status().context("health status")?;
     res.json::<DaemonHealthSummary>()
@@ -2413,6 +2224,38 @@ mod desktop_daemon_tests {
         assert!(msg.contains("daemon_data_root=/tmp/ctx-daemon-other"));
         assert!(msg.contains("daemon_pid=4242"));
         assert!(msg.contains("url=http://127.0.0.1:4123"));
+    }
+
+    #[test]
+    fn daemon_health_reuses_cached_client_for_same_timeout() {
+        reset_daemon_health_client_build_count();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind test listener");
+        let addr = listener.local_addr().expect("listener addr");
+        let server = std::thread::spawn(move || {
+            let body =
+                "{\"pid\":1,\"data_root\":\"/tmp/test\",\"compatibility\":{\"desktop_exact_version\":\"1.0.0\",\"desktop_dev_instance_id\":\"dev\"}}";
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().expect("accept request");
+                let mut buf = [0_u8; 1024];
+                let _ = std::io::Read::read(&mut stream, &mut buf);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body,
+                );
+                std::io::Write::write_all(&mut stream, response.as_bytes()).expect("write response");
+            }
+        });
+
+        let base_url = format!("http://{}", addr);
+        for _ in 0..2 {
+            let health = daemon_health_with_timeout(&base_url, Duration::from_secs(5))
+                .expect("daemon health succeeds");
+            assert_eq!(health.pid, 1);
+        }
+
+        server.join().expect("join test server");
+        assert_eq!(daemon_health_client_build_count(), 1);
     }
 
     #[test]

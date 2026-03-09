@@ -1,15 +1,21 @@
 import type { ClientTelemetryBatch } from "@ctx/types";
-import { desktopDaemonRequest, desktopGetConnection, isDesktopApp, type DesktopConnectionInfo } from "../utils/desktop";
+import { isDesktopApp } from "../utils/desktop";
 import { emitUiDiagnostic, normalizeDiagnosticErrorMessage } from "../state/diagnosticsChannel";
+import {
+  ensureDesktopDaemonConnection,
+  syncDesktopDaemonConnectionFromBridge as syncDesktopDaemonConnectionFromBridgeImpl,
+} from "./desktopDaemonConnection";
 import {
   applyDesktopDaemonConnection,
   bootstrapDaemonConnectionFromRuntime,
   clearDaemonConnection,
   getDaemonConnection,
+  getDaemonHttpUrl,
   normalizeDaemonBaseUrl,
   setDaemonConnection,
   subscribeDaemonConnection,
 } from "./daemonConnection";
+import { buildDaemonRequestHeaders } from "./daemonRequestHeaders";
 
 export type DaemonClientConfig = {
   baseUrl: string | null;
@@ -51,7 +57,7 @@ export const primeDaemonConnection = bootstrapDaemonConnectionFromRuntime;
 
 export type DesktopDaemonConnectionSyncResult = {
   config: DaemonClientConfig;
-  info: DesktopConnectionInfo | null;
+  info: Awaited<ReturnType<typeof syncDesktopDaemonConnectionFromBridgeImpl>>["info"];
   synced: boolean;
   error: string | null;
 };
@@ -62,12 +68,8 @@ type DesktopDaemonConnectionSyncOptions = {
   reason?: string;
 };
 
-const DESKTOP_DAEMON_SYNC_THROTTLE_MS = 1000;
-let desktopSyncInFlight: Promise<DesktopDaemonConnectionSyncResult> | null = null;
-let desktopLastSyncAtMs = 0;
-
 const makeDesktopSyncResult = (
-  info: DesktopConnectionInfo | null,
+  info: Awaited<ReturnType<typeof syncDesktopDaemonConnectionFromBridgeImpl>>["info"],
   error: string | null,
 ): DesktopDaemonConnectionSyncResult => ({
   config: getDaemonClientConfig(),
@@ -76,70 +78,15 @@ const makeDesktopSyncResult = (
   error,
 });
 
-// Desktop invariant: worker and main-thread HTTP clients should share the same daemon connection state.
-// Bridge-backed requests can succeed before JS state is hydrated, so we opportunistically reconcile here.
 export const syncDesktopDaemonConnectionFromBridge = async (
   opts?: DesktopDaemonConnectionSyncOptions,
 ): Promise<DesktopDaemonConnectionSyncResult> => {
-  if (!isDesktopApp()) return makeDesktopSyncResult(null, null);
-  const now = Date.now();
-  const current = getDaemonConnection();
-  if (
-    !opts?.force
-    && current.baseUrl
-    && now - desktopLastSyncAtMs < DESKTOP_DAEMON_SYNC_THROTTLE_MS
-  ) {
-    return makeDesktopSyncResult(null, null);
-  }
-  if (desktopSyncInFlight) return desktopSyncInFlight;
-  const run = (async (): Promise<DesktopDaemonConnectionSyncResult> => {
-    let info: DesktopConnectionInfo | null = null;
-    let error: string | null = null;
-    try {
-      info = await desktopGetConnection();
-      const shouldProbeHealth = (opts?.probeHealth ?? true) && (!info.base_url || info.kind === "none");
-      if (shouldProbeHealth) {
-        try {
-          await desktopDaemonRequest({
-            method: "GET",
-            path: "/api/health",
-            body: null,
-            headers: [["content-type", "application/json"]],
-          });
-        } catch {
-          // ignore probe failures; caller will still receive the refreshed bridge state
-        }
-        try {
-          info = await desktopGetConnection();
-        } catch {
-          // ignore and use the earlier connection snapshot
-        }
-      }
-      applyDesktopDaemonConnection(info);
-    } catch (err) {
-      error = normalizeDiagnosticErrorMessage(err, "Desktop daemon connection sync failed.");
-      if (opts?.reason) {
-        emitUiDiagnostic({
-          source: "api",
-          code: "api.desktop_connection_sync_failed",
-          severity: "warning",
-          message: `Desktop daemon connection sync failed during ${opts.reason}.`,
-          context: { reason: opts.reason, error },
-        });
-      }
-    } finally {
-      desktopLastSyncAtMs = Date.now();
-    }
-    return makeDesktopSyncResult(info, error);
-  })();
-  desktopSyncInFlight = run;
-  try {
-    return await run;
-  } finally {
-    if (desktopSyncInFlight === run) {
-      desktopSyncInFlight = null;
-    }
-  }
+  const result = await syncDesktopDaemonConnectionFromBridgeImpl({
+    force: opts?.force,
+    connectLocalWhenMissing: opts?.probeHealth,
+    reason: opts?.reason,
+  });
+  return makeDesktopSyncResult(result.info, result.error);
 };
 
 const shouldEmitApiDiagnostic = (path: string): boolean =>
@@ -169,39 +116,20 @@ const emitApiDiagnostic = (args: {
 
 export const api = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const token = authToken();
-  const extraHeaders: Record<string, string> = {};
-  if (init?.headers) {
-    if (init.headers instanceof Headers) {
-      init.headers.forEach((value, key) => {
-        extraHeaders[key] = value;
-      });
-    } else if (Array.isArray(init.headers)) {
-      for (const [key, value] of init.headers) {
-        extraHeaders[key] = value;
-      }
-    } else {
-      Object.assign(extraHeaders, init.headers as Record<string, string>);
-    }
-  }
   const traceparent = createTraceparent();
-  if (traceparent && !extraHeaders.traceparent) {
-    extraHeaders.traceparent = traceparent;
-  }
   const runId = getTelemetryRunId();
-  if (runId && !extraHeaders["x-ctx-run-id"]) {
-    extraHeaders["x-ctx-run-id"] = runId;
-  }
   const method = init?.method ? String(init.method) : "GET";
   const start = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
   let res: Response;
   try {
-    res = await fetch(path, {
-      headers: {
-        "content-type": "application/json",
-        ...(token ? { authorization: `Bearer ${token}` } : {}),
-        ...extraHeaders,
-      },
+    res = await fetch(getDaemonHttpUrl(path), {
       ...init,
+      headers: buildDaemonRequestHeaders({
+        headers: init?.headers,
+        token,
+        traceparent,
+        runId,
+      }),
     });
   } catch (err) {
     const end = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
@@ -308,61 +236,26 @@ export const api = async <T>(path: string, init?: RequestInit): Promise<T> => {
 };
 
 const desktopApi = async <T>(path: string, init?: RequestInit): Promise<T> => {
-  if (!getDaemonConnection().baseUrl) {
-    await syncDesktopDaemonConnectionFromBridge({
-      force: true,
-      probeHealth: true,
-      reason: "desktop_api_preflight",
-    });
-  } else {
-    void syncDesktopDaemonConnectionFromBridge({
-      force: false,
-      probeHealth: false,
-      reason: "desktop_api_background",
-    }).catch(() => {});
-  }
-
-  const extraHeaders: Record<string, string> = {};
-  if (init?.headers) {
-    if (init.headers instanceof Headers) {
-      init.headers.forEach((value, key) => {
-        extraHeaders[key] = value;
-      });
-    } else if (Array.isArray(init.headers)) {
-      for (const [key, value] of init.headers) {
-        extraHeaders[key] = value;
-      }
-    } else {
-      Object.assign(extraHeaders, init.headers as Record<string, string>);
-    }
-  }
+  await ensureDesktopDaemonConnection({
+    connectLocalWhenMissing: true,
+    reason: "desktop_api_preflight",
+  });
+  const token = authToken();
   const traceparent = createTraceparent();
-  if (traceparent && !extraHeaders.traceparent) {
-    extraHeaders.traceparent = traceparent;
-  }
   const runId = getTelemetryRunId();
-  if (runId && !extraHeaders["x-ctx-run-id"]) {
-    extraHeaders["x-ctx-run-id"] = runId;
-  }
 
   const method = init?.method ? String(init.method) : "GET";
-  const body =
-    init?.body === undefined || init?.body === null
-      ? null
-      : typeof init.body === "string"
-        ? init.body
-        : String(init.body);
 
   const start = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
-  let resp;
+  let res: Response;
   try {
-    resp = await desktopDaemonRequest({
-      method,
-      path,
-      body,
-      headers: Object.entries({
-        "content-type": "application/json",
-        ...extraHeaders,
+    res = await fetch(getDaemonHttpUrl(path), {
+      ...init,
+      headers: buildDaemonRequestHeaders({
+        headers: init?.headers,
+        token,
+        traceparent,
+        runId,
       }),
     });
   } catch (err) {
@@ -378,10 +271,10 @@ const desktopApi = async <T>(path: string, init?: RequestInit): Promise<T> => {
     throw err;
   }
   const end = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
-  recordClientApiMetric(path, method, resp.status, resp.status < 500, end - start, runId);
+  recordClientApiMetric(path, method, res.status, res.status < 500, end - start, runId);
 
-  const contentType = String(resp.content_type ?? "");
-  const text = String(resp.body ?? "");
+  const contentType = String(res.headers.get("content-type") ?? "");
+  const text = await res.text();
 
   const looksLikeHtml = (t: string): boolean => {
     const s = String(t || "").trimStart().toLowerCase();
@@ -394,14 +287,14 @@ const desktopApi = async <T>(path: string, init?: RequestInit): Promise<T> => {
     return `${s.slice(0, 800)}…`;
   };
 
-  const ok = resp.status >= 200 && resp.status < 300;
+  const ok = res.status >= 200 && res.status < 300;
   if (!ok) {
     if ((contentType.includes("text/html") || looksLikeHtml(text)) && path.startsWith("/api/")) {
-      const message = `The daemon returned HTML for ${path} (${resp.status}). Restart/update the daemon.`;
+      const message = `The daemon returned HTML for ${path} (${res.status}). Restart/update the daemon.`;
       emitApiDiagnostic({
         path,
         method,
-        status: resp.status,
+        status: res.status,
         code: "api.http_error",
         severity: "error",
         message,
@@ -410,7 +303,7 @@ const desktopApi = async <T>(path: string, init?: RequestInit): Promise<T> => {
     }
     const lowered = String(text || "").toLowerCase();
     if (
-      resp.status >= 500 &&
+      res.status >= 500 &&
       (lowered.includes("econnrefused") ||
         lowered.includes("proxy error") ||
         lowered.includes("connect econnrefused") ||
@@ -420,7 +313,7 @@ const desktopApi = async <T>(path: string, init?: RequestInit): Promise<T> => {
       emitApiDiagnostic({
         path,
         method,
-        status: resp.status,
+        status: res.status,
         code: "api.http_error",
         severity: "error",
         message,
@@ -437,19 +330,19 @@ const desktopApi = async <T>(path: string, init?: RequestInit): Promise<T> => {
     } catch {
       // ignore
     }
-    const message = parsedMessage ?? (trimForError(text) || `${resp.status}`);
+    const message = parsedMessage ?? (trimForError(text) || `${res.status}`);
     emitApiDiagnostic({
       path,
       method,
-      status: resp.status,
+      status: res.status,
       code: "api.http_error",
-      severity: resp.status >= 500 ? "error" : "warning",
+      severity: res.status >= 500 ? "error" : "warning",
       message,
     });
     throw new Error(message);
   }
 
-  if (resp.status === 204) {
+  if (res.status === 204) {
     return undefined as T;
   }
   if (!text) return undefined as T;
@@ -596,19 +489,13 @@ const flushClientTelemetry = async () => {
   const token = authToken();
   try {
     if (isDesktopApp()) {
-      await desktopDaemonRequest({
-        method: "POST",
-        path: CLIENT_TELEMETRY_PATH,
-        body: JSON.stringify(batch),
-        headers: Object.entries({
-          "content-type": "application/json",
-          ...(token ? { authorization: `Bearer ${token}` } : {}),
-        }),
+      await ensureDesktopDaemonConnection({
+        connectLocalWhenMissing: false,
+        reason: "client_telemetry_flush",
       });
-      return;
     }
     if (typeof fetch === "undefined") return;
-    await fetch(CLIENT_TELEMETRY_PATH, {
+    await fetch(getDaemonHttpUrl(CLIENT_TELEMETRY_PATH), {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -630,82 +517,30 @@ export type DaemonRawResponse = {
 
 // For endpoints that need to handle non-2xx statuses without throwing (e.g. buffers update conflict 409).
 export const daemonFetchRaw = async (path: string, init?: RequestInit): Promise<DaemonRawResponse> => {
-  const token = authToken();
-  const extraHeaders: Record<string, string> = {};
-  if (init?.headers) {
-    if (init.headers instanceof Headers) {
-      init.headers.forEach((value, key) => {
-        extraHeaders[key] = value;
-      });
-    } else if (Array.isArray(init.headers)) {
-      for (const [key, value] of init.headers) {
-        extraHeaders[key] = value;
-      }
-    } else {
-      Object.assign(extraHeaders, init.headers as Record<string, string>);
-    }
-  }
-
   const method = init?.method ? String(init.method) : "GET";
-  const body =
-    init?.body === undefined || init?.body === null
-      ? null
-      : typeof init.body === "string"
-        ? init.body
-        : String(init.body);
-
   const traceparent = createTraceparent();
-  if (traceparent && !extraHeaders.traceparent) {
-    extraHeaders.traceparent = traceparent;
-  }
   const runId = getTelemetryRunId();
-  if (runId && !extraHeaders["x-ctx-run-id"]) {
-    extraHeaders["x-ctx-run-id"] = runId;
-  }
 
   const start =
     typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
 
   if (isDesktopApp()) {
-    if (!getDaemonConnection().baseUrl) {
-      await syncDesktopDaemonConnectionFromBridge({
-        force: true,
-        probeHealth: true,
-        reason: "daemon_fetch_raw_preflight",
-      });
-    } else {
-      void syncDesktopDaemonConnectionFromBridge({
-        force: false,
-        probeHealth: false,
-        reason: "daemon_fetch_raw_background",
-      }).catch(() => {});
-    }
-
-    const resp = await desktopDaemonRequest({
-      method,
-      path,
-      body,
-      headers: Object.entries({
-        "content-type": "application/json",
-        ...extraHeaders,
-      }),
+    await ensureDesktopDaemonConnection({
+      connectLocalWhenMissing: true,
+      reason: "daemon_fetch_raw_preflight",
     });
-    const end = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
-    recordClientApiMetric(path, method, resp.status, resp.status < 500, end - start, runId);
-    return {
-      status: resp.status,
-      body: String(resp.body ?? ""),
-      content_type: String(resp.content_type ?? ""),
-    };
   }
+  const token = authToken();
 
   try {
-    const res = await fetch(path, {
-      headers: {
-        ...(token ? { authorization: `Bearer ${token}` } : {}),
-        ...extraHeaders,
-      },
+    const res = await fetch(getDaemonHttpUrl(path), {
       ...init,
+      headers: buildDaemonRequestHeaders({
+        headers: init?.headers,
+        token,
+        traceparent,
+        runId,
+      }),
     });
     const text = await res.text();
     const end = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();

@@ -1,5 +1,8 @@
 use super::*;
 
+#[cfg(test)]
+use std::cell::Cell;
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum DesktopConnectionKind {
@@ -79,6 +82,7 @@ struct LocalConnection {
     daemon_pid: Option<u32>,
     source: LocalConnectionSource,
     ownership: LocalConnectionOwnership,
+    http_client: std::sync::OnceLock<reqwest::blocking::Client>,
 }
 
 enum LocalConnectionOwnership {
@@ -96,6 +100,45 @@ struct SshConnection {
     remote_port: u16,
     remote_data_dir: Option<String>,
     runtime: SshRuntimeMetadata,
+    http_client: std::sync::OnceLock<reqwest::blocking::Client>,
+}
+
+#[cfg(test)]
+thread_local! {
+    static CONNECTION_HTTP_CLIENT_BUILD_COUNT: Cell<usize> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+fn reset_connection_http_client_build_count() {
+    CONNECTION_HTTP_CLIENT_BUILD_COUNT.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+fn connection_http_client_build_count() -> usize {
+    CONNECTION_HTTP_CLIENT_BUILD_COUNT.with(Cell::get)
+}
+
+fn build_connection_http_client() -> Result<reqwest::blocking::Client> {
+    #[cfg(test)]
+    CONNECTION_HTTP_CLIENT_BUILD_COUNT.with(|count| count.set(count.get() + 1));
+    reqwest::blocking::Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .build()
+        .context("building http client")
+}
+
+fn get_connection_http_client(
+    client: &std::sync::OnceLock<reqwest::blocking::Client>,
+) -> Result<reqwest::blocking::Client> {
+    if let Some(existing) = client.get() {
+        return Ok(existing.clone());
+    }
+    let built = build_connection_http_client()?;
+    let _ = client.set(built);
+    client
+        .get()
+        .cloned()
+        .context("connection http client missing after initialization")
 }
 
 fn stop_owned_local_daemon_pid(base_url: &str, pid: u32) -> Result<()> {
@@ -293,6 +336,7 @@ impl ConnectionManager {
                         child,
                         systemd_scope,
                     },
+                    http_client: std::sync::OnceLock::new(),
                 }))
         };
         if let Some(previous) = previous {
@@ -319,6 +363,7 @@ impl ConnectionManager {
                     }
                     _ => LocalConnectionOwnership::UnownedExternal,
                 },
+                http_client: std::sync::OnceLock::new(),
             };
             let mut guard = match self.0.lock() {
                 Ok(g) => g,
@@ -338,6 +383,7 @@ impl ConnectionManager {
                 {
                     next.ownership = c.ownership;
                     next.source = c.source;
+                    next.http_client = c.http_client;
                     None
                 }
                 other => other,
@@ -378,6 +424,7 @@ impl ConnectionManager {
                 remote_port,
                 remote_data_dir,
                 runtime,
+                http_client: std::sync::OnceLock::new(),
             }))
         };
         if let Some(previous) = previous {
@@ -440,7 +487,7 @@ impl ConnectionManager {
             return Err(anyhow!("only /api/* paths are supported"));
         }
 
-        let (base_url, token) = {
+        let (base_url, token, client) = {
             let guard = self
                 .0
                 .lock()
@@ -450,21 +497,20 @@ impl ConnectionManager {
                 .as_ref()
                 .ok_or_else(|| anyhow!("not connected (open a workspace first)"))?;
             match active {
-                ActiveConnection::Local(c) => (c.base_url.clone(), Some(c.token.clone())),
-                ActiveConnection::Ssh(c) => (c.base_url.clone(), c.token.clone()),
+                ActiveConnection::Local(c) => (
+                    c.base_url.clone(),
+                    Some(c.token.clone()),
+                    get_connection_http_client(&c.http_client)?,
+                ),
+                ActiveConnection::Ssh(c) => (
+                    c.base_url.clone(),
+                    c.token.clone(),
+                    get_connection_http_client(&c.http_client)?,
+                ),
             }
         };
 
         let url = format!("{}{}", base_url.trim_end_matches('/'), req.path);
-        // Some daemon operations (notably container provisioning on first run) can legitimately
-        // take minutes. Keep a short connect timeout so a dead daemon fails fast, but allow
-        // long-running requests to complete.
-        let client = reqwest::blocking::Client::builder()
-            .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(10 * 60))
-            .build()
-            .context("building http client")?;
-
         let method = req.method.trim().to_uppercase();
         let mut builder = match method.as_str() {
             "GET" => client.get(&url),
@@ -473,7 +519,8 @@ impl ConnectionManager {
             "PUT" => client.put(&url),
             "PATCH" => client.patch(&url),
             other => return Err(anyhow!("unsupported method: {other}")),
-        };
+        }
+        .timeout(Duration::from_secs(10 * 60));
 
         if let Some(t) = token.as_deref() {
             if !t.trim().is_empty() {
@@ -509,7 +556,7 @@ impl ConnectionManager {
         mime_type: String,
         name: Option<String>,
     ) -> Result<serde_json::Value> {
-        let (base_url, token) = {
+        let (base_url, token, client) = {
             let guard = self
                 .0
                 .lock()
@@ -519,16 +566,20 @@ impl ConnectionManager {
                 .as_ref()
                 .ok_or_else(|| anyhow!("not connected (open a workspace first)"))?;
             match active {
-                ActiveConnection::Local(c) => (c.base_url.clone(), Some(c.token.clone())),
-                ActiveConnection::Ssh(c) => (c.base_url.clone(), c.token.clone()),
+                ActiveConnection::Local(c) => (
+                    c.base_url.clone(),
+                    Some(c.token.clone()),
+                    get_connection_http_client(&c.http_client)?,
+                ),
+                ActiveConnection::Ssh(c) => (
+                    c.base_url.clone(),
+                    c.token.clone(),
+                    get_connection_http_client(&c.http_client)?,
+                ),
             }
         };
 
         let url = format!("{}/api/blobs", base_url.trim_end_matches('/'));
-        let client = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(60))
-            .build()
-            .context("building http client")?;
 
         let mut part = reqwest::blocking::multipart::Part::bytes(bytes);
         if let Some(n) = name.as_deref().filter(|s| !s.trim().is_empty()) {
@@ -539,7 +590,7 @@ impl ConnectionManager {
             .context("invalid mime_type for multipart")?;
 
         let form = reqwest::blocking::multipart::Form::new().part("file", part);
-        let mut req = client.post(url).multipart(form);
+        let mut req = client.post(url).timeout(Duration::from_secs(60)).multipart(form);
         if let Some(t) = token.as_deref() {
             if !t.trim().is_empty() {
                 req = req.bearer_auth(t);
@@ -902,5 +953,47 @@ mod connection_manager_tests {
             message.contains("sending request GET http://127.0.0.1:65535/api/health"),
             "expected method/url context in error, got: {message}"
         );
+    }
+
+    #[test]
+    fn daemon_request_reuses_connection_http_client() {
+        reset_connection_http_client_build_count();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind test listener");
+        let addr = listener.local_addr().expect("listener addr");
+        let server = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().expect("accept request");
+                let mut buf = [0_u8; 1024];
+                let _ = std::io::Read::read(&mut stream, &mut buf);
+                std::io::Write::write_all(
+                    &mut stream,
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}",
+                )
+                .expect("write response");
+            }
+        });
+
+        let manager = ConnectionManager::default();
+        manager.set_local_attached(
+            format!("http://{}", addr),
+            "token".to_string(),
+            None,
+            LocalConnectionSource::EnvOverride,
+        );
+
+        for _ in 0..2 {
+            let response = manager
+                .daemon_request(DesktopDaemonRequest {
+                    method: "GET".to_string(),
+                    path: "/api/health".to_string(),
+                    body: None,
+                    headers: Vec::new(),
+                })
+                .expect("daemon request succeeds");
+            assert_eq!(response.status, 200);
+        }
+
+        server.join().expect("join test server");
+        assert_eq!(connection_http_client_build_count(), 1);
     }
 }

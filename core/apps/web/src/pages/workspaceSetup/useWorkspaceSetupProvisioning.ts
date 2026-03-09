@@ -17,7 +17,6 @@ import type {
 } from "../../api/client";
 import {
   cancelInstall,
-  getInstall,
   getSettings,
   getTitleGenerationLocalStatus,
   importProviderAuthCandidates,
@@ -60,7 +59,15 @@ import {
   type LocalInstallState,
   type RemoteStatus,
 } from "./wizardTypes";
-import { upsertProviderInstallProgress } from "../../state/providerInstallProgressStore";
+import {
+  observeInstall,
+  subscribeInstallProgress,
+  type InstallProgressSnapshot,
+} from "../../state/installProgressMonitor";
+import {
+  subscribeProviderInstallProgress,
+  upsertProviderInstallProgress,
+} from "../../state/providerInstallProgressStore";
 import type { EnsureOnboardingAfterDaemonConnectResult } from "./workflowTypes";
 
 type UseWorkspaceSetupProvisioningArgs = {
@@ -148,10 +155,9 @@ export function useWorkspaceSetupProvisioning({
   const routePlanRunRef = useRef<FlowRunToken | null>(null);
   const titlingProbePromiseRef = useRef<Promise<boolean | null> | null>(null);
   const titlingProbePromiseTargetKeyRef = useRef<string | null>(null);
-  const titlingInstallPollRef = useRef<number | null>(null);
-  const titlingInstallPollGenerationRef = useRef(0);
-  const harnessInstallPollTimeoutsRef = useRef<Record<string, number>>({});
-  const harnessInstallPollGenerationsRef = useRef<Record<string, number>>({});
+  const titlingInstallObserverRef = useRef<{ installId: string; stop: () => void } | null>(null);
+  const titlingInstallStateRef = useRef<LocalInstallState | null>(null);
+  const harnessInstallObserversRef = useRef<Record<string, { installId: string; stop: () => void }>>({});
   const previousTargetKeyRef = useRef<string | null>(null);
 
   const harnessByProviderId = useMemo(() => {
@@ -205,32 +211,23 @@ export function useWorkspaceSetupProvisioning({
     setTitlingPersistedHash(null);
   };
 
-  const clearHarnessInstallPoll = (providerId?: string) => {
+  const clearHarnessInstallObserver = (providerId?: string) => {
     if (providerId) {
-      harnessInstallPollGenerationsRef.current[providerId] =
-        (harnessInstallPollGenerationsRef.current[providerId] ?? 0) + 1;
-      const timeout = harnessInstallPollTimeoutsRef.current[providerId];
-      if (timeout) {
-        window.clearTimeout(timeout);
-        delete harnessInstallPollTimeoutsRef.current[providerId];
-      }
+      const active = harnessInstallObserversRef.current[providerId];
+      if (!active) return;
+      active.stop();
+      delete harnessInstallObserversRef.current[providerId];
       return;
     }
-    for (const key of Object.keys(harnessInstallPollTimeoutsRef.current)) {
-      harnessInstallPollGenerationsRef.current[key] =
-        (harnessInstallPollGenerationsRef.current[key] ?? 0) + 1;
-      const timeout = harnessInstallPollTimeoutsRef.current[key];
-      window.clearTimeout(timeout);
-      delete harnessInstallPollTimeoutsRef.current[key];
+    for (const active of Object.values(harnessInstallObserversRef.current)) {
+      active.stop();
     }
+    harnessInstallObserversRef.current = {};
   };
 
-  const clearTitlingInstallPoll = () => {
-    titlingInstallPollGenerationRef.current += 1;
-    if (titlingInstallPollRef.current) {
-      window.clearTimeout(titlingInstallPollRef.current);
-      titlingInstallPollRef.current = null;
-    }
+  const clearTitlingInstallObserver = () => {
+    titlingInstallObserverRef.current?.stop();
+    titlingInstallObserverRef.current = null;
   };
 
   const resetProvisioningState = useCallback(() => {
@@ -242,9 +239,8 @@ export function useWorkspaceSetupProvisioning({
     harnessInstallScanRunRef.current = null;
     titlingProbePromiseRef.current = null;
     titlingProbePromiseTargetKeyRef.current = null;
-    clearHarnessInstallPoll();
-    harnessInstallPollGenerationsRef.current = {};
-    clearTitlingInstallPoll();
+    clearHarnessInstallObserver();
+    clearTitlingInstallObserver();
     setAuthImportBusy(false);
     setAuthImportCandidates([]);
     setAuthImportSelected({});
@@ -297,57 +293,16 @@ export function useWorkspaceSetupProvisioning({
 
   const attachHarnessInstall = async (providerId: string, installId: string) => {
     if (!providerId || !installId) return;
-    if (harnessInstallPollTimeoutsRef.current[providerId]) return;
-    const generation = (harnessInstallPollGenerationsRef.current[providerId] ?? 0) + 1;
-    harnessInstallPollGenerationsRef.current[providerId] = generation;
-
-    const poll = async () => {
-      if (harnessInstallPollGenerationsRef.current[providerId] !== generation) return;
-      try {
-        const info = await getInstall(installId);
-        if (harnessInstallPollGenerationsRef.current[providerId] !== generation) return;
-        const pct = computeInstallPct(info, harnessInstallRows[providerId]?.pct ?? null);
-        const nextInstallState = {
-          installId,
-          state: info.state,
-          pct,
-          target: info.target,
-          errorCode: info.error_code,
-          error: info.error,
-        };
-        setHarnessInstallRows((prev) => ({
-          ...prev,
-          [providerId]: nextInstallState,
-        }));
-        setHarnessInstallCandidates((prev) =>
-          prev.map((candidate) =>
-            candidate.providerId === providerId
-              ? {
-                  ...candidate,
-                  installRunning: info.state === "running",
-                  installId,
-                }
-              : candidate,
-          ),
-        );
-        upsertProviderInstallProgress(providerId, nextInstallState);
-        if (info.state !== "running") {
-          clearHarnessInstallPoll(providerId);
-          setHarnessInstallScannedKey(null);
-          setHarnessInstallDeferredKey(null);
-          return;
-        }
-      } catch {
-        // keep polling while install is active
-      }
-      if (harnessInstallPollGenerationsRef.current[providerId] !== generation) return;
-      harnessInstallPollTimeoutsRef.current[providerId] = window.setTimeout(() => {
-        if (harnessInstallPollGenerationsRef.current[providerId] !== generation) return;
-        void poll();
-      }, 900);
+    const active = harnessInstallObserversRef.current[providerId];
+    if (active?.installId === installId) return;
+    active?.stop();
+    harnessInstallObserversRef.current[providerId] = {
+      installId,
+      stop: observeInstall(installId, {
+        providerId,
+        initialState: harnessInstallRows[providerId],
+      }),
     };
-
-    await poll();
   };
 
   const cancelHarnessInstall = async (providerId: string) => {
@@ -384,7 +339,7 @@ export function useWorkspaceSetupProvisioning({
         ),
       );
       if (info.state !== "running") {
-        clearHarnessInstallPoll(providerId);
+        clearHarnessInstallObserver(providerId);
       }
       upsertProviderInstallProgress(providerId, nextInstallState);
     } catch (error) {
@@ -413,46 +368,20 @@ export function useWorkspaceSetupProvisioning({
 
   const attachTitlingInstall = async (installId: string) => {
     if (!installId) return;
-    clearTitlingInstallPoll();
-    const generation = titlingInstallPollGenerationRef.current;
+    if (titlingInstallObserverRef.current?.installId === installId) return;
+    clearTitlingInstallObserver();
     setTitlingLocalInstall({
       installId,
       state: "running",
       pct: null,
     });
-
-    const poll = async () => {
-      if (generation !== titlingInstallPollGenerationRef.current) return;
-      try {
-        const info = await getInstall(installId);
-        if (generation !== titlingInstallPollGenerationRef.current) return;
-        const pct = computeInstallPct(info, titlingLocalInstall?.pct ?? null);
-        setTitlingLocalInstall({
-          installId,
-          state: info.state,
-          pct,
-          errorCode: info.error_code,
-          error: info.error,
-        });
-        if (info.state !== "running") {
-          if (generation === titlingInstallPollGenerationRef.current) {
-            clearTitlingInstallPoll();
-          }
-          await refreshTitlingLocalStatus({ silent: true });
-          return;
-        }
-      } catch {
-        // Keep polling: install fetches may transiently fail while daemon restarts/backgrounds.
-      }
-
-      if (generation !== titlingInstallPollGenerationRef.current) return;
-      titlingInstallPollRef.current = window.setTimeout(() => {
-        if (generation !== titlingInstallPollGenerationRef.current) return;
-        poll().catch(() => {});
-      }, 900);
+    titlingInstallObserverRef.current = {
+      installId,
+      stop: observeInstall(installId, {
+        providerId: "title_generation_local",
+        initialState: titlingLocalInstall ?? { installId, state: "running", pct: null },
+      }),
     };
-
-    await poll();
   };
 
   const probeTitlingForTarget = async (targetKey: string): Promise<boolean | null> => {
@@ -1140,6 +1069,9 @@ export function useWorkspaceSetupProvisioning({
   const selectedHarnessBlockedCount = selectedHarnessStatuses.filter(
     ({ status }) => status === "failed" || status === "cancelled",
   ).length;
+  const selectedHarnessFailedCount = selectedHarnessStatuses.filter(
+    ({ status }) => status === "failed",
+  ).length;
   const selectedHarnessCompletedCount = selectedHarnessStatuses.filter(
     ({ status }) => status === "installed" || status === "succeeded",
   ).length;
@@ -1171,6 +1103,111 @@ export function useWorkspaceSetupProvisioning({
         : "Not configured";
 
   useEffect(() => {
+    titlingInstallStateRef.current = titlingLocalInstall;
+  }, [titlingLocalInstall]);
+
+  useEffect(() => {
+    return subscribeProviderInstallProgress((snapshot) => {
+      const entries = Object.entries(snapshot);
+      if (entries.length === 0) return;
+
+      setHarnessInstallRows((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const [providerId, session] of entries) {
+          const nextRow: HarnessInstallRowState = {
+            installId: session.installId,
+            state: session.state,
+            pct: session.pct,
+            target: session.target,
+            errorCode: session.errorCode,
+            error: session.error,
+          };
+          const current = prev[providerId];
+          if (
+            current?.installId === nextRow.installId
+            && current.state === nextRow.state
+            && current.pct === nextRow.pct
+            && current.target === nextRow.target
+            && current.errorCode === nextRow.errorCode
+            && current.error === nextRow.error
+          ) {
+            continue;
+          }
+          next[providerId] = nextRow;
+          changed = true;
+        }
+        return changed ? next : prev;
+      });
+
+      setHarnessInstallCandidates((prev) => {
+        let changed = false;
+        const next = prev.map((candidate) => {
+          const session = snapshot[candidate.providerId];
+          if (!session) return candidate;
+          const installRunning = session.state === "running";
+          if (candidate.installRunning === installRunning && candidate.installId === session.installId) {
+            return candidate;
+          }
+          changed = true;
+          return {
+            ...candidate,
+            installRunning,
+            installId: session.installId,
+          };
+        });
+        return changed ? next : prev;
+      });
+
+      const terminalProviderIds = entries
+        .filter(([, session]) => session.state !== "running")
+        .map(([providerId]) => providerId);
+      if (terminalProviderIds.length === 0) return;
+      for (const providerId of terminalProviderIds) {
+        clearHarnessInstallObserver(providerId);
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    return subscribeInstallProgress((snapshot: InstallProgressSnapshot) => {
+      const trackedInstallId =
+        titlingInstallObserverRef.current?.installId
+        ?? titlingInstallStateRef.current?.installId
+        ?? null;
+      if (!trackedInstallId) return;
+      const entry = snapshot[trackedInstallId];
+      if (!entry) return;
+
+      const nextState: LocalInstallState = {
+        installId: entry.installId,
+        state: entry.state,
+        pct: entry.pct,
+        errorCode: entry.errorCode,
+        error: entry.error,
+      };
+      const previousState = titlingInstallStateRef.current?.state ?? null;
+      titlingInstallStateRef.current = nextState;
+      setTitlingLocalInstall((prev) => {
+        if (
+          prev?.installId === nextState.installId
+          && prev.state === nextState.state
+          && prev.pct === nextState.pct
+          && prev.errorCode === nextState.errorCode
+          && prev.error === nextState.error
+        ) {
+          return prev;
+        }
+        return nextState;
+      });
+      if (previousState === "running" && entry.state !== "running") {
+        clearTitlingInstallObserver();
+        void refreshTitlingLocalStatus({ silent: true });
+      }
+    });
+  }, [refreshTitlingLocalStatus]);
+
+  useEffect(() => {
     selectedDaemonTargetKeyRef.current = selectedDaemonTargetKey;
   }, [selectedDaemonTargetKey]);
 
@@ -1199,7 +1236,7 @@ export function useWorkspaceSetupProvisioning({
       setTitlingLocalStatusRequestedTargetKey(null);
       setTitlingStatusError(null);
       setTitlingLocalInstall(null);
-      clearTitlingInstallPoll();
+      clearTitlingInstallObserver();
       return;
     }
 
@@ -1218,7 +1255,7 @@ export function useWorkspaceSetupProvisioning({
       setTitlingLocalStatusRequestedTargetKey(null);
       setTitlingStatusError(null);
       setTitlingLocalInstall(null);
-      clearTitlingInstallPoll();
+      clearTitlingInstallObserver();
       resetTitlingDraft();
     }
   }, [
@@ -1229,8 +1266,8 @@ export function useWorkspaceSetupProvisioning({
 
   useEffect(() => {
     return () => {
-      clearTitlingInstallPoll();
-      clearHarnessInstallPoll();
+      clearTitlingInstallObserver();
+      clearHarnessInstallObserver();
     };
   }, []);
 
@@ -1321,6 +1358,7 @@ export function useWorkspaceSetupProvisioning({
     selectedHarnessReadyToStartCount,
     selectedHarnessRunningCount,
     selectedHarnessBlockedCount,
+    selectedHarnessFailedCount,
     harnessSummaryValue,
     titlingStepVisible,
     titlingProbeBusy,
