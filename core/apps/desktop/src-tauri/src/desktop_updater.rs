@@ -12,9 +12,9 @@ mod recovery;
 mod restart;
 mod staged;
 mod support;
-mod transaction;
 #[cfg(test)]
 mod tests;
+mod transaction;
 
 const RESTART_MARKER_FILENAME: &str = "desktop_update_restart_required.json";
 const STAGED_UPDATE_META_FILENAME: &str = "desktop_update_staged.v1.json";

@@ -547,8 +547,7 @@ fn apply_short_circuit_rejects_unconfigured_updater() {
         last_error: None,
     };
 
-    let err =
-        transaction::short_circuit_apply(&state).expect_err("unconfigured apply should fail");
+    let err = transaction::short_circuit_apply(&state).expect_err("unconfigured apply should fail");
     assert!(
         err.contains("CTX_DESKTOP_UPDATER_PUBKEY"),
         "expected missing pubkey guidance: {err}"
@@ -568,10 +567,7 @@ fn staged_ready_transaction_marks_update_available_without_restart() {
     assert!(state.available);
     assert!(!state.restart_required);
     assert!(state.staged);
-    assert_eq!(
-        state.phase,
-        DesktopAppUpdatePhase::StagedReady.as_str()
-    );
+    assert_eq!(state.phase, DesktopAppUpdatePhase::StagedReady.as_str());
     assert_eq!(state.latest_version.as_deref(), Some("1.2.4"));
 }
 

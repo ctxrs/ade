@@ -1,4 +1,5 @@
 use super::*;
+use crate::desktop_local_daemon::ensure_local_connection;
 
 const SSH_CONFIG_OVERRIDE_ENV: &str = "CTX_DESKTOP_SSH_CONFIG_PATH";
 const DEFAULT_CTX_HARNESS_IMAGE: &str = "ghcr.io/ctxrs/ctx-harness:ubuntu-24.04";
@@ -34,27 +35,21 @@ pub(super) struct DaemonAuthFile {
 }
 
 #[derive(Debug, Default, Deserialize)]
-struct DaemonHealthCompatibility {
+pub(super) struct DaemonHealthCompatibility {
     #[serde(default)]
-    desktop_exact_version: String,
+    pub(super) desktop_exact_version: String,
     #[serde(default)]
-    desktop_dev_instance_id: String,
+    pub(super) desktop_dev_instance_id: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
-struct DaemonHealthSummary {
+pub(super) struct DaemonHealthSummary {
     #[serde(default)]
-    pid: u32,
+    pub(super) pid: u32,
     #[serde(default)]
-    data_root: String,
+    pub(super) data_root: String,
     #[serde(default)]
-    compatibility: DaemonHealthCompatibility,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct DesktopRestartLocalDaemonReq {
-    #[serde(default)]
-    confirm: bool,
+    pub(super) compatibility: DaemonHealthCompatibility,
 }
 
 #[derive(Debug, Deserialize)]
@@ -80,248 +75,6 @@ pub(super) struct DesktopHttpResponse {
     pub(super) body: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) content_type: Option<String>,
-}
-
-fn local_connect_mutex() -> &'static std::sync::Mutex<()> {
-    static LOCAL_CONNECT_MUTEX: std::sync::OnceLock<std::sync::Mutex<()>> =
-        std::sync::OnceLock::new();
-    LOCAL_CONNECT_MUTEX.get_or_init(|| std::sync::Mutex::new(()))
-}
-
-fn lock_local_connect_gate() -> Result<std::sync::MutexGuard<'static, ()>> {
-    local_connect_mutex()
-        .lock()
-        .map_err(|err| anyhow!("local connect mutex poisoned: {err}"))
-}
-
-#[tauri::command]
-pub(super) async fn desktop_connect_local(
-    app: tauri::AppHandle,
-) -> Result<DesktopConnectionInfo, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let _guard = lock_local_connect_gate().map_err(to_err)?;
-        let state = app.state::<ConnectionManager>();
-        let data_dir = daemon_data_dir(&app).map_err(to_err)?;
-        let desktop_version = app.package_info().version.to_string();
-        let desktop_dev_instance_id = desktop_dev_instance_id();
-        connect_local_with_sources(
-            state.inner(),
-            |url| {
-                existing_local_daemon_matches_or_absent(
-                    url,
-                    &data_dir,
-                    &desktop_version,
-                    desktop_dev_instance_id,
-                )
-            },
-            || resolve_env_local_daemon(&app),
-            probe_daemon_health,
-            || resolve_existing_local_daemon(&app, &data_dir),
-            || {
-                spawn_and_validate_local_daemon(
-                    &app,
-                    &data_dir,
-                    &desktop_version,
-                    desktop_dev_instance_id,
-                )
-            },
-        )
-        .map_err(to_err)
-    })
-    .await
-    .map_err(|e| format!("failed to connect to daemon: {e}"))?
-}
-
-fn connect_local_with_sources<
-    CurrentLocalMatchesFn,
-    ResolveEnvFn,
-    ProbeHealthFn,
-    ResolveExistingFn,
-    SpawnFn,
->(
-    state: &ConnectionManager,
-    current_local_matches_or_absent: CurrentLocalMatchesFn,
-    resolve_env_local_daemon: ResolveEnvFn,
-    probe_health: ProbeHealthFn,
-    mut resolve_existing_local_daemon: ResolveExistingFn,
-    spawn_and_validate_local_daemon: SpawnFn,
-) -> Result<DesktopConnectionInfo>
-where
-    CurrentLocalMatchesFn: Fn(&str) -> bool,
-    ResolveEnvFn: FnOnce() -> Result<Option<(String, String)>>,
-    ProbeHealthFn: Fn(&str) -> Result<()>,
-    ResolveExistingFn: FnMut() -> Result<Option<(String, String, Option<u32>)>>,
-    SpawnFn: FnOnce() -> Result<SpawnedLocalDaemonReady>,
-{
-    // Idempotent: if we're already connected to a healthy local daemon, keep the connection.
-    // The workspace wizard calls connect_local as part of its flow; disconnecting here can
-    // kill a just-started daemon and introduce flakiness on cold start.
-    let info = state.info();
-    if matches!(info.kind, DesktopConnectionKind::Local) {
-        if let Some(url) = info.base_url.as_deref() {
-            if current_local_matches_or_absent(url) {
-                return Ok(info);
-            }
-        }
-    }
-
-    // Keep any currently healthy connection active until a replacement has been validated.
-    // ConnectionManager swaps and cleans up the old transport only after the new one is ready.
-    if let Some((url, token)) = resolve_env_local_daemon()? {
-        probe_health(&url)?;
-        state.set_local_external(url, token, None, false);
-        return Ok(state.info());
-    }
-    if let Some((url, token, daemon_pid)) = resolve_existing_local_daemon()? {
-        state.set_local_external(url, token, daemon_pid, true);
-        return Ok(state.info());
-    }
-
-    // Block until the daemon is actually reachable before returning. The workspace wizard
-    // applies the connection and navigates immediately after `desktop_connect_local` resolves;
-    // returning early causes the workbench to briefly render a "daemon unavailable" overlay.
-    let spawned = spawn_and_validate_local_daemon();
-    let fallback_existing = if spawned.is_err() {
-        resolve_existing_local_daemon().ok().flatten()
-    } else {
-        None
-    };
-    apply_validated_local_connection(state, spawned, fallback_existing)
-}
-
-fn apply_validated_local_connection(
-    state: &ConnectionManager,
-    spawned: Result<SpawnedLocalDaemonReady>,
-    fallback_existing: Option<(String, String, Option<u32>)>,
-) -> Result<DesktopConnectionInfo> {
-    match spawned {
-        Ok(spawned) => {
-            state.set_local(
-                spawned.url,
-                spawned.token,
-                spawned.child,
-                spawned.systemd_scope,
-            );
-            Ok(state.info())
-        }
-        Err(err) => {
-            if let Some((url, token, daemon_pid)) = fallback_existing {
-                state.set_local_external(url, token, daemon_pid, true);
-                return Ok(state.info());
-            }
-            Err(err)
-        }
-    }
-}
-
-#[tauri::command]
-pub(super) async fn desktop_restart_local_daemon(
-    app: tauri::AppHandle,
-    req: DesktopRestartLocalDaemonReq,
-) -> Result<DesktopConnectionInfo, String> {
-    if !req.confirm {
-        return Err("confirm required".to_string());
-    }
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<ConnectionManager>();
-        let manager: &ConnectionManager = state.inner();
-        manager.disconnect();
-        let data_dir = daemon_data_dir(&app).map_err(to_err)?;
-        let desktop_version = app.package_info().version.to_string();
-        let desktop_dev_instance_id = desktop_dev_instance_id();
-        let spawned = spawn_and_validate_local_daemon(
-            &app,
-            &data_dir,
-            &desktop_version,
-            desktop_dev_instance_id,
-        )
-        .map_err(to_err)?;
-        manager.set_local(
-            spawned.url,
-            spawned.token,
-            spawned.child,
-            spawned.systemd_scope,
-        );
-        Ok(manager.info())
-    })
-    .await
-    .map_err(|e| format!("failed to restart local daemon: {e}"))?
-}
-
-pub(super) fn ensure_local_connection(
-    app: &tauri::AppHandle,
-    state: &ConnectionManager,
-) -> Result<()> {
-    if !matches!(state.info().kind, DesktopConnectionKind::None) {
-        return Ok(());
-    }
-    // Multiple webview requests can race on cold start (overlay pollers, initial data loads, etc.).
-    // Serialize the "connect local" path so we don't concurrently spawn the daemon and trip the
-    // daemon's lockfile, which can surface as spurious "daemon unavailable" errors in the UI.
-    let _guard = lock_local_connect_gate()?;
-    if !matches!(state.info().kind, DesktopConnectionKind::None) {
-        return Ok(());
-    }
-    let data_dir = daemon_data_dir(app)?;
-    let desktop_version = app.package_info().version.to_string();
-    let desktop_dev_instance_id = desktop_dev_instance_id();
-    if let Some((url, token)) = resolve_env_local_daemon(app)? {
-        probe_daemon_health(&url)?;
-        state.set_local_external(url, token, None, false);
-        return Ok(());
-    }
-    if let Some((url, token, daemon_pid)) = resolve_existing_local_daemon(app, &data_dir)? {
-        state.set_local_external(url, token, daemon_pid, true);
-        return Ok(());
-    }
-    let spawned = match spawn_and_validate_local_daemon(
-        app,
-        &data_dir,
-        &desktop_version,
-        desktop_dev_instance_id,
-    ) {
-        Ok(value) => value,
-        Err(err) => {
-            // This can happen if another thread already started the daemon but we raced before
-            // the auth file became visible or health was reachable. Retry by waiting for the auth
-            // file + health and then attaching as an external local connection.
-            let auth = read_daemon_auth_with_retry(&data_dir)
-                .with_context(|| format!("spawning local daemon failed: {err:#}"))?;
-            let Some(url) = auth.daemon_url.as_deref() else {
-                return Err(err)
-                    .context("spawning local daemon failed (auth file missing daemon_url)");
-            };
-            probe_local_daemon_health_with_retry(url)?;
-            let compatible = existing_local_daemon_matches(
-                url,
-                &data_dir,
-                &desktop_version,
-                desktop_dev_instance_id,
-            )
-                .with_context(|| {
-                    format!(
-                        "spawning local daemon failed: {err:#}; validating existing local daemon compatibility"
-                    )
-                })?;
-            if !compatible {
-                return Err(err).context(format!(
-                    "spawning local daemon failed and existing daemon is incompatible (url={url})"
-                ));
-            }
-            let daemon_pid = daemon_health(url)
-                .ok()
-                .and_then(|health| normalize_daemon_pid(health.pid));
-            state.set_local_external(url.to_string(), auth.token, daemon_pid, true);
-            return Ok(());
-        }
-    };
-    state.set_local(
-        spawned.url,
-        spawned.token,
-        spawned.child,
-        spawned.systemd_scope,
-    );
-    Ok(())
 }
 
 #[tauri::command]
@@ -586,7 +339,7 @@ fn parse_daemon_auth(bytes: &[u8], path: &Path) -> Result<DaemonAuthFile> {
     Ok(auth)
 }
 
-fn read_daemon_auth_with_retry(data_dir: &Path) -> Result<DaemonAuthFile> {
+pub(super) fn read_daemon_auth_with_retry(data_dir: &Path) -> Result<DaemonAuthFile> {
     let path = data_dir.join(DAEMON_AUTH_FILENAME);
     let deadline = Instant::now() + DAEMON_AUTH_READ_TIMEOUT;
     loop {
@@ -617,7 +370,7 @@ fn read_daemon_auth_if_present(data_dir: &Path) -> Result<Option<DaemonAuthFile>
     }
 }
 
-fn resolve_env_local_daemon(app: &tauri::AppHandle) -> Result<Option<(String, String)>> {
+pub(super) fn resolve_env_local_daemon(app: &tauri::AppHandle) -> Result<Option<(String, String)>> {
     let url = match std::env::var("CTX_DESKTOP_DAEMON_URL") {
         Ok(v) => v.trim().to_string(),
         Err(_) => return Ok(None),
@@ -642,7 +395,7 @@ fn resolve_env_local_daemon(app: &tauri::AppHandle) -> Result<Option<(String, St
     Ok(Some((url, token)))
 }
 
-fn resolve_existing_local_daemon(
+pub(super) fn resolve_existing_local_daemon(
     app: &tauri::AppHandle,
     data_dir: &Path,
 ) -> Result<Option<(String, String, Option<u32>)>> {
@@ -679,7 +432,7 @@ fn resolve_existing_local_daemon(
     Ok(None)
 }
 
-fn normalize_daemon_pid(pid: u32) -> Option<u32> {
+pub(super) fn normalize_daemon_pid(pid: u32) -> Option<u32> {
     if pid == 0 {
         None
     } else {
@@ -724,7 +477,7 @@ fn reclaim_incompatible_local_daemon(base_url: &str, health: &DaemonHealthSummar
     } else {
         None
     };
-    if wait_until_daemon_reclaimed(base_url, pid, Duration::from_secs(3)) {
+    if wait_for_daemon_reclaim(base_url, pid, Duration::from_secs(3)).is_ok() {
         return Ok(());
     }
     let force_revalidated = daemon_reports_expected_pid(base_url, pid);
@@ -733,7 +486,7 @@ fn reclaim_incompatible_local_daemon(base_url: &str, health: &DaemonHealthSummar
     } else {
         None
     };
-    if wait_until_daemon_reclaimed(base_url, pid, Duration::from_secs(2)) {
+    if wait_for_daemon_reclaim(base_url, pid, Duration::from_secs(2)).is_ok() {
         return Ok(());
     }
     let mut details = Vec::new();
@@ -785,6 +538,16 @@ fn wait_until_daemon_reclaimed(base_url: &str, pid: u32, timeout: Duration) -> b
         }
         std::thread::sleep(Duration::from_millis(120));
     }
+}
+
+pub(super) fn wait_for_daemon_reclaim(base_url: &str, pid: u32, timeout: Duration) -> Result<()> {
+    if pid == 0 {
+        anyhow::bail!("invalid pid 0");
+    }
+    if wait_until_daemon_reclaimed(base_url, pid, timeout) {
+        return Ok(());
+    }
+    anyhow::bail!("local daemon pid {pid} did not exit within {:?}", timeout);
 }
 
 fn reclaim_health_probe_timeout(remaining: Duration, max_probe_timeout: Duration) -> Duration {
@@ -868,7 +631,7 @@ fn is_pid_alive(pid: u32) -> Result<bool> {
     }
 }
 
-fn terminate_pid(pid: u32, force: bool) -> Result<()> {
+pub(super) fn terminate_pid(pid: u32, force: bool) -> Result<()> {
     if pid == 0 {
         anyhow::bail!("invalid pid 0");
     }
@@ -910,32 +673,6 @@ fn terminate_pid(pid: u32, force: bool) -> Result<()> {
         let _ = (pid, force);
         anyhow::bail!("process termination is unsupported on this platform");
     }
-}
-
-pub(super) fn stop_local_daemon_pid(pid: u32) -> Result<()> {
-    if pid == 0 {
-        anyhow::bail!("invalid daemon pid 0");
-    }
-
-    let _ = terminate_pid(pid, false);
-    let soft_deadline = Instant::now() + Duration::from_secs(2);
-    while Instant::now() < soft_deadline {
-        if !is_pid_alive(pid).unwrap_or(false) {
-            return Ok(());
-        }
-        std::thread::sleep(Duration::from_millis(120));
-    }
-
-    let _ = terminate_pid(pid, true);
-    let hard_deadline = Instant::now() + Duration::from_secs(2);
-    while Instant::now() < hard_deadline {
-        if !is_pid_alive(pid).unwrap_or(false) {
-            return Ok(());
-        }
-        std::thread::sleep(Duration::from_millis(120));
-    }
-
-    anyhow::bail!("daemon pid {pid} is still alive after termination attempts")
 }
 
 fn command_reports_missing_process(output: &std::process::Output) -> bool {
@@ -1761,7 +1498,7 @@ pub(super) fn ensure_remote_ctx_harness_image(
     Ok(())
 }
 
-fn daemon_health(base_url: &str) -> Result<DaemonHealthSummary> {
+pub(super) fn daemon_health(base_url: &str) -> Result<DaemonHealthSummary> {
     daemon_health_with_timeout(base_url, daemon_health_timeout())
 }
 
@@ -1791,7 +1528,7 @@ fn normalize_path_for_compare(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| normalize_path(path))
 }
 
-fn desktop_dev_instance_id() -> &'static str {
+pub(super) fn desktop_dev_instance_id() -> &'static str {
     option_env!("CTX_DEV_INSTANCE_ID").unwrap_or("unknown")
 }
 
@@ -1858,7 +1595,7 @@ fn spawned_local_daemon_incompatibility_message(
     )
 }
 
-fn existing_local_daemon_matches(
+pub(super) fn existing_local_daemon_matches(
     base_url: &str,
     expected_data_dir: &Path,
     expected_desktop_version: &str,
@@ -1873,7 +1610,7 @@ fn existing_local_daemon_matches(
     ))
 }
 
-fn existing_local_daemon_matches_or_absent(
+pub(super) fn existing_local_daemon_matches_or_absent(
     base_url: &str,
     expected_data_dir: &Path,
     expected_desktop_version: &str,
@@ -1893,7 +1630,7 @@ pub(super) fn probe_daemon_health(base_url: &str) -> Result<()> {
     Ok(())
 }
 
-fn probe_local_daemon_health_with_retry(base_url: &str) -> Result<()> {
+pub(super) fn probe_local_daemon_health_with_retry(base_url: &str) -> Result<()> {
     let mut last_err: Option<anyhow::Error> = None;
     for attempt in 0..LOCAL_DAEMON_HEALTH_RETRIES {
         match probe_daemon_health(base_url) {
@@ -2466,11 +2203,11 @@ pub(super) fn try_kill_child(mut child: Child) -> Result<()> {
     Ok(())
 }
 
-struct SpawnedLocalDaemonReady {
-    url: String,
-    token: String,
-    child: Child,
-    systemd_scope: bool,
+pub(super) struct SpawnedLocalDaemonReady {
+    pub(super) url: String,
+    pub(super) token: String,
+    pub(super) child: Child,
+    pub(super) systemd_scope: bool,
 }
 
 struct PendingSpawnedLocalDaemon {
@@ -2510,7 +2247,7 @@ impl Drop for PendingSpawnedLocalDaemon {
     }
 }
 
-fn spawn_and_validate_local_daemon(
+pub(super) fn spawn_and_validate_local_daemon(
     app: &tauri::AppHandle,
     data_dir: &Path,
     desktop_version: &str,
@@ -2560,6 +2297,9 @@ fn cleanup_rejected_spawned_local_daemon(child: Child, systemd_scope: bool, base
 #[cfg(test)]
 mod desktop_daemon_tests {
     use super::*;
+    use crate::desktop_local_daemon::{
+        apply_validated_local_connection, connect_local_with_sources, lock_local_connect_gate,
+    };
 
     #[test]
     fn ssh_config_override_normalization() {
@@ -2678,11 +2418,11 @@ mod desktop_daemon_tests {
     #[test]
     fn replacement_validation_failure_keeps_existing_active_connection() {
         let state = ConnectionManager::default();
-        state.set_local_external(
+        state.set_local_attached(
             "http://127.0.0.1:4399".to_string(),
             "existing-token".to_string(),
             None,
-            false,
+            LocalConnectionSource::ExistingCompatibleDaemon,
         );
 
         let err =
@@ -2958,7 +2698,10 @@ mod desktop_daemon_tests {
             Some("dev".to_string()),
             2222,
             None,
-            None,
+            SshRuntimeMetadata {
+                managed_ctx_bin: "~/.ctx/bin/ctx".to_string(),
+                active_ctx_bin: Some("~/.ctx/bin/ctx".to_string()),
+            },
         );
 
         let resolve_existing_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
