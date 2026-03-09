@@ -3,7 +3,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use anyhow::{anyhow, Result};
 use chrono::Utc;
@@ -12,10 +12,10 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 
 use ctx_core::ids::{MessageId, RunId, TurnId};
 use ctx_core::models::{
-    Message, MessageDelivery, MessageRole, Session, SessionEvent, SessionEventType,
-    SessionTurnStatus, SessionTurnTool,
+    Message, MessageDelivery, MessageRole, Session, SessionEventType, SessionTurnStatus,
+    SessionTurnTool,
 };
-use ctx_providers::adapters::{ProviderAdapter, RunHandle, TurnInput};
+use ctx_providers::adapters::TurnInput;
 use ctx_providers::events::NormalizedEvent;
 use ctx_store::store::SessionTurnToolCountDeltas;
 
@@ -31,8 +31,17 @@ use crate::provider_accounts;
 use crate::settings::{self, ProviderControlMode};
 use crate::telemetry::TelemetryEvent;
 use crate::workspace_config;
+mod lifecycle;
+mod persistence;
+mod reconcile;
 mod tools;
 
+use lifecycle::{
+    finalize_start_failure_if_needed, handle_provider_exit, stop_running_turn, RunningTurn,
+    StopReason,
+};
+use persistence::{append_session_event_with_retry, emit_event, persist_assistant_message};
+pub use reconcile::{reconcile_turn_failed_on_provider_exit, reconcile_turn_terminal_state};
 use tools::{
     build_tool_ops_meta, build_turn_tool_update_from_payload, cwd_outside_worktree,
     maybe_spool_tool_output, merge_tool_update, sanitize_tool_event_payload, tool_count_deltas,
@@ -52,15 +61,6 @@ pub enum SchedulerCommand {
     RemoveQueued(MessageId),
     Cancel,
     Interrupt,
-}
-
-struct RunningTurn {
-    adapter: Arc<dyn ProviderAdapter>,
-    handle: RunHandle,
-    run_id: RunId,
-    turn_id: TurnId,
-    event_tx: mpsc::Sender<NormalizedEvent>,
-    events_done: Option<oneshot::Receiver<()>>,
 }
 
 fn provider_mode_id_for(
@@ -172,45 +172,15 @@ pub async fn session_worker(
                             "failed to start turn: {err:#}"
                         );
                         if let Some(turn_id) = msg_turn_id {
-                            if let Ok(event) = emit_event(
+                            finalize_start_failure_if_needed(
                                 &state,
                                 session.id,
                                 msg_run_id,
-                                Some(turn_id),
-                                SessionEventType::Error,
-                                json!({
-                                    "kind": "start_failed",
-                                    "message": err_string,
-                                }),
+                                turn_id,
+                                msg_id,
+                                &err_string,
                             )
-                            .await
-                            {
-                                if let Ok(store) = state.store_for_session(session.id).await {
-                                    let _ = store
-                                        .update_session_turn_status(
-                                            session.id,
-                                            turn_id,
-                                            SessionTurnStatus::Failed,
-                                            Some(event.seq),
-                                            None,
-                                            event.created_at,
-                                        )
-                                        .await;
-                                }
-                                let _ = emit_event(
-                                    &state,
-                                    session.id,
-                                    msg_run_id,
-                                    Some(turn_id),
-                                    SessionEventType::TurnFinished,
-                                    json!({
-                                        "message_id": msg_id.0,
-                                        "status": "failed",
-                                        "reason": "start_failed",
-                                    }),
-                                )
-                                .await;
-                            }
+                            .await;
                         }
                         state.set_running(session.id, false).await;
                         running = None;
@@ -244,55 +214,24 @@ pub async fn session_worker(
                     }
                     Some(SchedulerCommand::Cancel) => {
                         if let Some(turn) = running.take() {
-                            let sent = send_turn_interrupted(
-                                &turn.event_tx,
-                                "user_cancel",
-                                true,
+                            let _ = stop_running_turn(
+                                &state,
+                                session.id,
+                                turn,
+                                StopReason::Cancel,
                             )
                             .await;
-                            let _ = turn.adapter.cancel(turn.handle).await;
-                            if !sent {
-                                let _ = reconcile_turn_terminal_state(
-                                    &state,
-                                    session.id,
-                                    Some(turn.run_id),
-                                    turn.turn_id,
-                                    "user_cancel",
-                                )
-                                .await;
-                            }
-                            state.set_running(session.id, false).await;
                         }
                     }
                     Some(SchedulerCommand::Interrupt) => {
                         if let Some(turn) = running.take() {
-                            let _ = emit_event(
+                            suspend_queue = stop_running_turn(
                                 &state,
                                 session.id,
-                                Some(turn.run_id),
-                                Some(turn.turn_id),
-                                SessionEventType::InterruptRequested,
-                                json!({"by":"user"}),
-                            ).await;
-                            let sent = send_turn_interrupted(
-                                &turn.event_tx,
-                                "user_interrupt",
-                                true,
+                                turn,
+                                StopReason::Interrupt,
                             )
                             .await;
-                            let _ = turn.adapter.cancel(turn.handle).await;
-                            if !sent {
-                                let _ = reconcile_turn_terminal_state(
-                                    &state,
-                                    session.id,
-                                    Some(turn.run_id),
-                                    turn.turn_id,
-                                    "user_interrupt",
-                                )
-                                .await;
-                            }
-                            state.set_running(session.id, false).await;
-                            suspend_queue = true;
                         }
                     }
                     None => break,
@@ -303,60 +242,8 @@ pub async fn session_worker(
                     let _ = (&mut turn.handle.done).await;
                 }
             }, if running.is_some() => {
-                if let Some(mut turn) = running.take() {
-                    drop(turn.event_tx);
-                    if let Some(mut events_done) = turn.events_done.take() {
-                        let session_id = session.id;
-                        let run_id = turn.run_id;
-                        let turn_id = turn.turn_id;
-                        let state_for_reconcile = Arc::clone(&state);
-                        let events_flushed = tokio::select! {
-                            _ = &mut events_done => true,
-                            _ = tokio::time::sleep(Duration::from_secs(2)) => false,
-                        };
-                        if events_flushed {
-                            let _ = reconcile_turn_failed_on_provider_exit(
-                                &state_for_reconcile,
-                                session_id,
-                                Some(run_id),
-                                turn_id,
-                                "provider_exit",
-                            )
-                            .await;
-                        } else {
-                            tracing::debug!(
-                                session_id = %session_id.0,
-                                run_id = %run_id.0,
-                                turn_id = %turn_id.0,
-                                "event loop still draining after provider exit; deferring reconciliation"
-                            );
-                            tokio::spawn(async move {
-                                tokio::select! {
-                                    _ = &mut events_done => (),
-                                    _ = tokio::time::sleep(Duration::from_secs(15)) => (),
-                                };
-                                let _ = reconcile_turn_failed_on_provider_exit(
-                                    &state_for_reconcile,
-                                    session_id,
-                                    Some(run_id),
-                                    turn_id,
-                                    "provider_exit",
-                                )
-                                .await;
-                            });
-                        }
-                    } else {
-                        // If the provider process exits without emitting a terminal event, the
-                        // turn would otherwise stay stuck in `Running` forever (UI shows "Working").
-                        let _ = reconcile_turn_failed_on_provider_exit(
-                            &state,
-                            session.id,
-                            Some(turn.run_id),
-                            turn.turn_id,
-                            "provider_exit",
-                        )
-                        .await;
-                    }
+                if let Some(turn) = running.take() {
+                    handle_provider_exit(&state, session.id, turn).await;
                 }
                 state.set_running(session.id, false).await;
             }
@@ -1698,252 +1585,6 @@ async fn start_turn(
     })
 }
 
-async fn send_turn_interrupted(
-    event_tx: &mpsc::Sender<NormalizedEvent>,
-    reason: &str,
-    provider_cancelled: bool,
-) -> bool {
-    event_tx
-        .send(NormalizedEvent {
-            event_type: SessionEventType::TurnInterrupted,
-            payload_json: json!({
-                "reason": reason,
-                "provider_cancelled": provider_cancelled,
-                "status": "interrupted",
-            }),
-        })
-        .await
-        .is_ok()
-}
-
-pub async fn reconcile_turn_terminal_state(
-    state: &Arc<AppState>,
-    session_id: ctx_core::ids::SessionId,
-    run_id: Option<RunId>,
-    turn_id: TurnId,
-    fallback_reason: &str,
-) -> Result<()> {
-    let store = state.store_for_session(session_id).await?;
-    let turn = store.get_session_turn(session_id, turn_id).await?;
-    let Some(turn) = turn else {
-        return Ok(());
-    };
-    if matches!(
-        turn.status,
-        SessionTurnStatus::Completed | SessionTurnStatus::Failed | SessionTurnStatus::Interrupted
-    ) {
-        return Ok(());
-    }
-
-    let events = store
-        .list_session_events_for_turn(session_id, turn_id, false)
-        .await?;
-    if let Some(event) = events.iter().rev().find(|ev| {
-        matches!(
-            ev.event_type,
-            SessionEventType::Done
-                | SessionEventType::Error
-                | SessionEventType::TurnInterrupted
-                | SessionEventType::TurnFinished
-        )
-    }) {
-        match event.event_type {
-            SessionEventType::Done => {
-                let metrics = event.payload_json.get("context_window");
-                let _ = store
-                    .update_session_turn_status(
-                        session_id,
-                        turn_id,
-                        SessionTurnStatus::Completed,
-                        Some(event.seq),
-                        metrics,
-                        event.created_at,
-                    )
-                    .await;
-            }
-            SessionEventType::TurnFinished => {
-                let _ = store
-                    .update_session_turn_status(
-                        session_id,
-                        turn_id,
-                        SessionTurnStatus::Completed,
-                        Some(event.seq),
-                        None,
-                        event.created_at,
-                    )
-                    .await;
-            }
-            SessionEventType::TurnInterrupted => {
-                let _ = store
-                    .update_session_turn_status(
-                        session_id,
-                        turn_id,
-                        SessionTurnStatus::Interrupted,
-                        Some(event.seq),
-                        None,
-                        event.created_at,
-                    )
-                    .await;
-            }
-            SessionEventType::Error => {
-                let _ = store
-                    .update_session_turn_status(
-                        session_id,
-                        turn_id,
-                        SessionTurnStatus::Failed,
-                        None,
-                        None,
-                        event.created_at,
-                    )
-                    .await;
-            }
-            _ => {}
-        }
-        return Ok(());
-    }
-
-    let event = emit_event(
-        state,
-        session_id,
-        run_id,
-        Some(turn_id),
-        SessionEventType::TurnInterrupted,
-        json!({"reason": fallback_reason, "provider_cancelled": false}),
-    )
-    .await?;
-    let _ = store
-        .update_session_turn_status(
-            session_id,
-            turn_id,
-            SessionTurnStatus::Interrupted,
-            Some(event.seq),
-            None,
-            event.created_at,
-        )
-        .await;
-    let _ = emit_event(
-        state,
-        session_id,
-        run_id,
-        Some(turn_id),
-        SessionEventType::TurnFinished,
-        json!({
-            "message_id": turn.user_message_id.map(|id| id.0),
-            "status": "interrupted",
-            "reason": fallback_reason,
-        }),
-    )
-    .await;
-    Ok(())
-}
-
-pub async fn reconcile_turn_failed_on_provider_exit(
-    state: &Arc<AppState>,
-    session_id: ctx_core::ids::SessionId,
-    run_id: Option<RunId>,
-    turn_id: TurnId,
-    fallback_reason: &str,
-) -> Result<()> {
-    let store = state.store_for_session(session_id).await?;
-    let turn = store.get_session_turn(session_id, turn_id).await?;
-    let Some(turn) = turn else {
-        return Ok(());
-    };
-    if matches!(
-        turn.status,
-        SessionTurnStatus::Completed | SessionTurnStatus::Failed | SessionTurnStatus::Interrupted
-    ) {
-        return Ok(());
-    }
-
-    // If we already have a terminal event in the event log, let the normal reconciler derive the
-    // terminal state from that. The important bit here is the "no terminal events at all" case.
-    let mut events = store
-        .list_session_events_for_turn(session_id, turn_id, false)
-        .await?;
-    if events.iter().rev().any(|ev| {
-        matches!(
-            ev.event_type,
-            SessionEventType::Done
-                | SessionEventType::Error
-                | SessionEventType::TurnInterrupted
-                | SessionEventType::TurnFinished
-        )
-    }) {
-        return reconcile_turn_terminal_state(state, session_id, run_id, turn_id, fallback_reason)
-            .await;
-    }
-
-    // Give any in-flight terminal event a chance to flush before failing the turn.
-    // We specifically want to avoid emitting a provider-exit Error if the harness already wrote
-    // `turn.completed` but the stdout pump hasn't ingested it yet.
-    for _ in 0..20 {
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        events = store
-            .list_session_events_for_turn(session_id, turn_id, false)
-            .await?;
-        if events.iter().rev().any(|ev| {
-            matches!(
-                ev.event_type,
-                SessionEventType::Done
-                    | SessionEventType::Error
-                    | SessionEventType::TurnInterrupted
-                    | SessionEventType::TurnFinished
-            )
-        }) {
-            return reconcile_turn_terminal_state(
-                state,
-                session_id,
-                run_id,
-                turn_id,
-                fallback_reason,
-            )
-            .await;
-        }
-    }
-
-    let failed_at = Utc::now();
-    let message_id = turn.user_message_id.map(|id| id.0);
-    let _ = emit_event(
-        state,
-        session_id,
-        run_id,
-        Some(turn_id),
-        SessionEventType::Error,
-        json!({
-            "message_id": message_id,
-            "error": "provider exited without emitting a terminal event",
-            "reason": fallback_reason,
-            "status": "failed",
-        }),
-    )
-    .await;
-    let _ = store
-        .update_session_turn_status(
-            session_id,
-            turn_id,
-            SessionTurnStatus::Failed,
-            None,
-            None,
-            failed_at,
-        )
-        .await;
-    let _ = emit_event(
-        state,
-        session_id,
-        run_id,
-        Some(turn_id),
-        SessionEventType::TurnFinished,
-        json!({
-            "message_id": message_id,
-            "status": "failed",
-            "reason": fallback_reason,
-        }),
-    )
-    .await;
-    Ok(())
-}
-
 #[allow(dead_code)]
 async fn build_rehydrate_transcript_block(
     store: &ctx_store::Store,
@@ -1996,28 +1637,6 @@ async fn build_rehydrate_transcript_block(
         }
     }))
 }
-async fn emit_event(
-    state: &Arc<AppState>,
-    session_id: ctx_core::ids::SessionId,
-    run_id: Option<RunId>,
-    turn_id: Option<TurnId>,
-    event_type: SessionEventType,
-    payload_json: serde_json::Value,
-) -> Result<SessionEvent> {
-    let store = state.store_for_session(session_id).await?;
-    let event = append_session_event_with_retry(
-        &store,
-        session_id,
-        run_id,
-        turn_id,
-        event_type,
-        payload_json,
-    )
-    .await?;
-    state.publish_event(event.clone()).await;
-    Ok(event)
-}
-
 fn should_track_thought_chunk(payload: &serde_json::Value) -> bool {
     let meta = payload
         .get("acp_update")
@@ -2101,105 +1720,6 @@ fn strip_emitted_prefix(full_content: &str, emitted: &str) -> Option<String> {
         }
     } else {
         Some(full.to_string())
-    }
-}
-
-const STORE_WRITE_RETRY_LIMIT: usize = 3;
-const STORE_WRITE_RETRY_BASE_MS: u64 = 40;
-
-fn is_transient_store_error(err: &anyhow::Error) -> bool {
-    let msg = err.to_string().to_lowercase();
-    msg.contains("database is locked")
-        || msg.contains("sqlite_busy")
-        || msg.contains("database is busy")
-}
-
-async fn append_session_event_with_retry(
-    store: &ctx_store::Store,
-    session_id: ctx_core::ids::SessionId,
-    run_id: Option<RunId>,
-    turn_id: Option<TurnId>,
-    event_type: SessionEventType,
-    payload_json: serde_json::Value,
-) -> Result<SessionEvent> {
-    let mut attempt = 0usize;
-    loop {
-        match store
-            .append_session_event(
-                session_id,
-                run_id,
-                turn_id,
-                event_type.clone(),
-                payload_json.clone(),
-            )
-            .await
-        {
-            Ok(event) => return Ok(event),
-            Err(err) => {
-                if !is_transient_store_error(&err) || attempt >= STORE_WRITE_RETRY_LIMIT {
-                    return Err(err);
-                }
-                attempt += 1;
-                let backoff_ms = STORE_WRITE_RETRY_BASE_MS.saturating_mul(attempt as u64);
-                tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
-            }
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn persist_assistant_message(
-    state: &AppState,
-    store: &ctx_store::Store,
-    workspace_id: ctx_core::ids::WorkspaceId,
-    message_id: ctx_core::ids::MessageId,
-    order_seq: i64,
-    session_id: ctx_core::ids::SessionId,
-    task_id: ctx_core::ids::TaskId,
-    run_id: RunId,
-    turn_id: TurnId,
-    content: String,
-    turn_sequence: i64,
-    created_at: chrono::DateTime<chrono::Utc>,
-) -> Result<Message> {
-    if content.is_empty() {
-        return Err(anyhow!("assistant message content empty"));
-    }
-    let msg = Message {
-        id: message_id,
-        session_id,
-        task_id,
-        run_id: Some(run_id),
-        turn_id: Some(turn_id),
-        turn_sequence: Some(turn_sequence),
-        order_seq: Some(order_seq),
-        role: MessageRole::Assistant,
-        content,
-        attachments: vec![],
-        delivery: MessageDelivery::Immediate,
-        delivered_at: Some(created_at),
-        created_at,
-    };
-    let mut attempt = 0usize;
-    loop {
-        match store.insert_message(msg.clone()).await {
-            Ok(saved) => {
-                state
-                    .global_store()
-                    .upsert_workspace_message_index(saved.id, workspace_id)
-                    .await?;
-                return Ok(saved);
-            }
-            Err(err) => {
-                if !is_transient_store_error(&err) || attempt >= STORE_WRITE_RETRY_LIMIT {
-                    tracing::warn!("assistant message insert failed: {err:#}");
-                    return Err(err);
-                }
-                attempt += 1;
-                let backoff_ms = STORE_WRITE_RETRY_BASE_MS.saturating_mul(attempt as u64);
-                tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
-            }
-        }
     }
 }
 

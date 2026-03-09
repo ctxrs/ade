@@ -130,3 +130,113 @@ async fn queued_message_emits_lifecycle_events_in_order_with_interrupt() {
         Some("interrupted")
     );
 }
+
+#[tokio::test]
+async fn cancel_promotes_next_queued_turn_after_interrupted_finish() {
+    let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
+    let data_dir = tempfile::tempdir().unwrap();
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let task = common::create_task(&app, ws.id.0, "t1").await;
+    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+
+    let (status, msg1): (StatusCode, ctx_core::models::Message) = common::json_request(
+        &app,
+        Method::POST,
+        format!("/api/sessions/{}/messages", session.id.0),
+        Some(json!({"content":"first slow-diff-test"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, msg2): (StatusCode, ctx_core::models::Message) = common::json_request(
+        &app,
+        Method::POST,
+        format!("/api/sessions/{}/messages", session.id.0),
+        Some(json!({"content":"second","delivery":"queued"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let turn_id_one = msg1.turn_id.expect("first turn id");
+    let turn_id_two = msg2.turn_id.expect("second turn id");
+    let store = state.store_for_session(session.id).await.unwrap();
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let events = store.list_session_events(session.id).await.unwrap();
+        let saw_started = events.iter().any(|event| {
+            event.turn_id == Some(turn_id_one)
+                && matches!(event.event_type, SessionEventType::TurnStarted)
+        });
+        let saw_queued = events.iter().any(|event| {
+            event.turn_id == Some(turn_id_two)
+                && matches!(event.event_type, SessionEventType::TurnQueued)
+        });
+        if saw_started && saw_queued {
+            break;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            panic!("timed out waiting for turn start + queue events");
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/api/sessions/{}/cancel", session.id.0))
+        .body(Body::empty())
+        .unwrap();
+    let (status, _) = common::oneshot_bytes(&app, req).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let events = store.list_session_events(session.id).await.unwrap();
+        let saw_finished = events.iter().any(|event| {
+            event.turn_id == Some(turn_id_one)
+                && matches!(event.event_type, SessionEventType::TurnFinished)
+        });
+        let saw_next_started = events.iter().any(|event| {
+            event.turn_id == Some(turn_id_two)
+                && matches!(event.event_type, SessionEventType::TurnStarted)
+        });
+        if saw_finished && saw_next_started {
+            break;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            panic!("timed out waiting for cancel promotion");
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    let events = store.list_session_events(session.id).await.unwrap();
+    let seq_for = |turn_id, event_type| {
+        let target = std::mem::discriminant(&event_type);
+        events
+            .iter()
+            .find(|event| {
+                event.turn_id == Some(turn_id)
+                    && std::mem::discriminant(&event.event_type) == target
+            })
+            .map(|event| event.seq)
+            .expect("expected event seq")
+    };
+
+    let interrupted_seq = seq_for(turn_id_one, SessionEventType::TurnInterrupted);
+    let finished_seq = seq_for(turn_id_one, SessionEventType::TurnFinished);
+    let promoted_seq = seq_for(turn_id_two, SessionEventType::MessageQueuePromoted);
+    let started_seq = seq_for(turn_id_two, SessionEventType::TurnStarted);
+
+    assert!(interrupted_seq < finished_seq);
+    assert!(interrupted_seq < promoted_seq);
+    assert!(promoted_seq < started_seq);
+}
