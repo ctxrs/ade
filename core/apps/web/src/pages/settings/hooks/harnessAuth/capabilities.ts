@@ -1,4 +1,4 @@
-import type { HarnessAuthModalState } from "../../SettingsPage.types";
+import type { HarnessAuthModalState } from "../../../SettingsPage.types";
 
 const HARNESSES_WITH_ENDPOINT_CONFIG = new Set([
   "codex",

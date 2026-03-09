@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { HarnessAuthModalState } from "../../SettingsPage.types";
+import type { HarnessAuthModalState } from "../../../SettingsPage.types";
 import { defaultEndpointBaseUrlForProvider } from "../../harnessAuthRows";
 import {
   defaultEndpointProviderPresetForHarness,
@@ -93,7 +93,7 @@ export function useHarnessAuthModalController(): HarnessAuthModalStateController
   }, [cancelAllOperations]);
 
   const patchHarnessAuthModal = useCallback((patch: Partial<HarnessAuthModalState>) => {
-    setHarnessAuthModal((prev) => (prev ? { ...prev, ...patch } : prev));
+    setHarnessAuthModal((prev: HarnessAuthModalState | null) => (prev ? { ...prev, ...patch } : prev));
   }, []);
 
   const startOperation = useCallback(
@@ -113,7 +113,7 @@ export function useHarnessAuthModalController(): HarnessAuthModalStateController
   const patchHarnessAuthModalForOperation = useCallback(
     (operation: HarnessAuthModalOperation, patch: Partial<HarnessAuthModalState>): boolean => {
       if (!operation.isCurrent()) return false;
-      setHarnessAuthModal((prev) => (prev ? { ...prev, ...patch } : prev));
+      setHarnessAuthModal((prev: HarnessAuthModalState | null) => (prev ? { ...prev, ...patch } : prev));
       return true;
     },
     [],

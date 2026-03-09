@@ -25,7 +25,7 @@ import {
   type QwenAccountsResponse,
 } from "../../../../api/client";
 import { openExternalLink } from "../../../../utils/desktop";
-import type { HarnessAuthModalState } from "../../SettingsPage.types";
+import type { HarnessAuthModalState } from "../../../SettingsPage.types";
 import { delayWithAbort, isCancelledOperationError } from "./operationOwner";
 import {
   AMP_LOGIN_POLL_ATTEMPTS,

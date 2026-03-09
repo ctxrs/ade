@@ -652,8 +652,8 @@ export function useHarnessAuthenticationController({
     const key = modal.api_key.trim();
     const manualModelIds = modal.manual_model_ids
       .split(/[\n,]/)
-      .map((value) => value.trim())
-      .filter((value) => value.length > 0);
+      .map((value: string) => value.trim())
+      .filter((value: string) => value.length > 0);
 
     if (requiresBaseUrl && !base) {
       setProviderError("Endpoint base URL is required.");

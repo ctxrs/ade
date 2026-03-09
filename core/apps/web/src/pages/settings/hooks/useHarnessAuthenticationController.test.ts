@@ -94,6 +94,11 @@ vi.mock("../../../utils/desktop", async (importOriginal) => {
 
 type Controller = ReturnType<typeof useHarnessAuthenticationController>;
 
+const requireController = (controller: Controller | null): Controller => {
+  if (!controller) throw new Error("controller not ready");
+  return controller;
+};
+
 type Deferred<T> = {
   promise: Promise<T>;
   resolve: (value: T) => void;
@@ -638,7 +643,7 @@ describe("useHarnessAuthenticationController", () => {
       account_id: "codex-login-1",
       auth_url: "https://example.com/codex-login",
       expected_callback_url: null,
-      completion_token: null,
+      completion_token: "",
     });
     vi.mocked(getCodexLogin).mockReturnValue(loginPoll.promise as ReturnType<typeof getCodexLogin>);
     vi.mocked(openExternalLink).mockResolvedValue(true);
@@ -680,9 +685,9 @@ describe("useHarnessAuthenticationController", () => {
       await submitPromise;
     });
 
-    expect(controller?.harnessAuthModal).toBeNull();
+    expect(requireController(controller).harnessAuthModal).toBeNull();
     expect(vi.mocked(selectProviderHarnessSource)).not.toHaveBeenCalled();
-    expect(controller?.providerError).toBeNull();
+    expect(requireController(controller).providerError).toBeNull();
   });
 
   it("suppresses stale subscription completion after switching providers", async () => {
@@ -739,10 +744,10 @@ describe("useHarnessAuthenticationController", () => {
       await submitPromise;
     });
 
-    expect(controller?.harnessAuthModal?.provider_id).toBe("qwen");
-    expect(controller?.harnessAuthModal?.subscription_busy).toBe(false);
+    expect(requireController(controller).harnessAuthModal?.provider_id).toBe("qwen");
+    expect(requireController(controller).harnessAuthModal?.subscription_busy).toBe(false);
     expect(vi.mocked(selectProviderHarnessSource)).not.toHaveBeenCalled();
-    expect(controller?.providerError).toBeNull();
+    expect(requireController(controller).providerError).toBeNull();
   });
 
   it("suppresses stale api-key submit effects after switching providers", async () => {
@@ -803,10 +808,10 @@ describe("useHarnessAuthenticationController", () => {
       await submitPromise;
     });
 
-    expect(controller?.harnessAuthModal?.provider_id).toBe("gemini");
+    expect(requireController(controller).harnessAuthModal?.provider_id).toBe("gemini");
     expect(vi.mocked(selectProviderHarnessSource)).not.toHaveBeenCalled();
     expect(vi.mocked(verifyProviderForWorkspace)).not.toHaveBeenCalled();
-    expect(controller?.providerError).toBeNull();
+    expect(requireController(controller).providerError).toBeNull();
   });
 
   it("does not let a stale codex poll close a reopened codex modal", async () => {
@@ -817,7 +822,7 @@ describe("useHarnessAuthenticationController", () => {
       account_id: "codex-login-2",
       auth_url: "https://example.com/codex-login-2",
       expected_callback_url: null,
-      completion_token: null,
+      completion_token: "",
     });
     vi.mocked(getCodexLogin).mockReturnValue(loginPoll.promise as ReturnType<typeof getCodexLogin>);
     vi.mocked(openExternalLink).mockResolvedValue(true);
@@ -857,10 +862,10 @@ describe("useHarnessAuthenticationController", () => {
       await submitPromise;
     });
 
-    expect(controller?.harnessAuthModal?.provider_id).toBe("codex");
-    expect(controller?.harnessAuthModal).not.toBeNull();
+    expect(requireController(controller).harnessAuthModal?.provider_id).toBe("codex");
+    expect(requireController(controller).harnessAuthModal).not.toBeNull();
     expect(vi.mocked(selectProviderHarnessSource)).not.toHaveBeenCalled();
-    expect(controller?.providerError).toBeNull();
+    expect(requireController(controller).providerError).toBeNull();
   });
 
   it("rolls back endpoint selection silently when verification finishes after switching providers", async () => {
@@ -941,8 +946,8 @@ describe("useHarnessAuthenticationController", () => {
     });
 
     expect(vi.mocked(selectProviderHarnessSource)).toHaveBeenNthCalledWith(2, "codex", "subscription", null);
-    expect(controller?.harnessAuthModal?.provider_id).toBe("gemini");
-    expect(controller?.providerError).toBeNull();
+    expect(requireController(controller).harnessAuthModal?.provider_id).toBe("gemini");
+    expect(requireController(controller).providerError).toBeNull();
   });
 
   it("suppresses duplicate subscription starts before busy state flushes", async () => {
