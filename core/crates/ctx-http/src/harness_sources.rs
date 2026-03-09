@@ -292,25 +292,327 @@ fn amp_subscription_home(data_root: &Path, runtime_data_root: Option<&Path>) -> 
         .join("home")
 }
 
-fn subscription_env_for_provider(
-    canonical: &str,
-    data_root: &Path,
-    runtime_data_root: Option<&Path>,
-) -> HashMap<String, String> {
-    let mut env = HashMap::new();
-    if canonical == PROVIDER_AMP {
-        let home = amp_subscription_home(data_root, runtime_data_root);
-        env.insert("HOME".to_string(), home.to_string_lossy().to_string());
-        env.insert(
-            "XDG_CONFIG_HOME".to_string(),
-            home.join(".config").to_string_lossy().to_string(),
-        );
-        env.insert(
-            "XDG_CACHE_HOME".to_string(),
-            home.join(".cache").to_string_lossy().to_string(),
-        );
+struct ProviderRuntimeContext<'a> {
+    canonical: &'static str,
+    data_root: &'a Path,
+    runtime_data_root: Option<&'a Path>,
+}
+
+impl<'a> ProviderRuntimeContext<'a> {
+    fn new(
+        canonical: &'static str,
+        data_root: &'a Path,
+        runtime_data_root: Option<&'a Path>,
+    ) -> Self {
+        Self {
+            canonical,
+            data_root,
+            runtime_data_root,
+        }
     }
-    env
+
+    fn runtime_data_root(&self) -> &'a Path {
+        self.runtime_data_root.unwrap_or(self.data_root)
+    }
+
+    fn subscription_env(&self) -> HashMap<String, String> {
+        let mut env = HashMap::new();
+        if self.canonical == PROVIDER_AMP {
+            let home = amp_subscription_home(self.data_root, self.runtime_data_root);
+            env.insert("HOME".to_string(), home.to_string_lossy().to_string());
+            env.insert(
+                "XDG_CONFIG_HOME".to_string(),
+                home.join(".config").to_string_lossy().to_string(),
+            );
+            env.insert(
+                "XDG_CACHE_HOME".to_string(),
+                home.join(".cache").to_string_lossy().to_string(),
+            );
+        }
+        env
+    }
+
+    async fn endpoint_env(
+        &self,
+        endpoint: &HarnessEndpointRecordInternal,
+        api_key: &str,
+    ) -> Result<HashMap<String, String>> {
+        let mut env = HashMap::new();
+
+        match self.canonical {
+            PROVIDER_CODEX => {
+                let base_url = endpoint_base_url_or_err(endpoint)?;
+                ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
+                ensure_safe_endpoint_id(&endpoint.id)?;
+                let codex_home = codex_endpoint_home(self.data_root, &endpoint.id);
+                prepare_codex_home_with_api_key(&codex_home, api_key).await?;
+                env.insert(
+                    "CODEX_HOME".to_string(),
+                    codex_home.to_string_lossy().to_string(),
+                );
+                env.insert("OPENAI_API_KEY".to_string(), api_key.to_string());
+                env.insert("OPENAI_BASE_URL".to_string(), base_url);
+            }
+            PROVIDER_CLAUDE => {
+                let base_url = endpoint_base_url_or_err(endpoint)?;
+                ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
+                env.insert("ANTHROPIC_API_KEY".to_string(), api_key.to_string());
+                env.insert("ANTHROPIC_BASE_URL".to_string(), base_url);
+            }
+            PROVIDER_GEMINI => {
+                ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
+                ensure_safe_endpoint_id(&endpoint.id)?;
+                let gemini_home = gemini_endpoint_home(self.runtime_data_root(), &endpoint.id);
+                tokio::fs::create_dir_all(gemini_home.join(".gemini"))
+                    .await
+                    .with_context(|| {
+                        format!("creating gemini endpoint home for endpoint {}", endpoint.id)
+                    })?;
+                env.insert(
+                    "HOME".to_string(),
+                    gemini_home.to_string_lossy().to_string(),
+                );
+                env.insert(
+                    "GEMINI_CLI_HOME".to_string(),
+                    gemini_home.to_string_lossy().to_string(),
+                );
+                env.insert("GEMINI_FORCE_FILE_STORAGE".to_string(), "true".to_string());
+                match endpoint.auth_type.as_str() {
+                    GEMINI_AUTH_TYPE_VERTEX_AI => {
+                        env.insert("GOOGLE_API_KEY".to_string(), api_key.to_string());
+                        env.insert("GOOGLE_GENAI_USE_VERTEXAI".to_string(), "true".to_string());
+                    }
+                    GEMINI_AUTH_TYPE_GEMINI_API_KEY => {
+                        env.insert("GEMINI_API_KEY".to_string(), api_key.to_string());
+                    }
+                    _ => {
+                        anyhow::bail!(
+                            "unsupported gemini endpoint auth_type '{}' (use '{}' or '{}')",
+                            endpoint.auth_type,
+                            GEMINI_AUTH_TYPE_GEMINI_API_KEY,
+                            GEMINI_AUTH_TYPE_VERTEX_AI
+                        );
+                    }
+                }
+            }
+            PROVIDER_KIMI => {
+                let base_url = endpoint_base_url_or_err(endpoint)?;
+                ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
+                env.insert("KIMI_API_KEY".to_string(), api_key.to_string());
+                env.insert("KIMI_BASE_URL".to_string(), base_url);
+                if let Some(model) = endpoint
+                    .model_override
+                    .as_ref()
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+                {
+                    env.insert("KIMI_MODEL_NAME".to_string(), model);
+                }
+            }
+            PROVIDER_QWEN => {
+                let base_url = endpoint_base_url_or_err(endpoint)?;
+                ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
+                ensure_safe_endpoint_id(&endpoint.id)?;
+                let qwen_home = qwen_endpoint_home(self.runtime_data_root(), &endpoint.id);
+                prepare_qwen_home_with_openai_settings(&qwen_home).await?;
+                env.insert("HOME".to_string(), qwen_home.to_string_lossy().to_string());
+                env.insert("OPENAI_API_KEY".to_string(), api_key.to_string());
+                env.insert("OPENAI_BASE_URL".to_string(), base_url);
+                if let Some(model) = endpoint
+                    .model_override
+                    .as_ref()
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+                {
+                    env.insert("OPENAI_MODEL".to_string(), model);
+                }
+            }
+            PROVIDER_OPENCODE => {
+                let base_url = endpoint_base_url_or_err(endpoint)?;
+                ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
+                let provider_namespace = infer_endpoint_model_provider_namespace(&base_url)
+                    .unwrap_or_else(|| "endpoint".to_string());
+                env.insert("OPENAI_API_KEY".to_string(), api_key.to_string());
+                env.insert("OPENAI_BASE_URL".to_string(), base_url.clone());
+                if provider_namespace == "openrouter" {
+                    env.insert("OPENROUTER_API_KEY".to_string(), api_key.to_string());
+                    env.insert("OPENROUTER_BASE_URL".to_string(), base_url.clone());
+                }
+
+                let mut provider_config = serde_json::Map::new();
+                provider_config.insert(
+                    provider_namespace.clone(),
+                    serde_json::json!({
+                        "options": {
+                            "baseURL": base_url,
+                            "apiKey": api_key,
+                        }
+                    }),
+                );
+                let mut root = serde_json::Map::new();
+                if let Some(model) = endpoint
+                    .model_override
+                    .as_ref()
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+                {
+                    root.insert(
+                        "model".to_string(),
+                        serde_json::Value::String(normalize_namespaced_model_override(
+                            &model,
+                            Some(provider_namespace.as_str()),
+                        )),
+                    );
+                }
+                root.insert(
+                    "provider".to_string(),
+                    serde_json::Value::Object(provider_config),
+                );
+                env.insert(
+                    "OPENCODE_CONFIG_CONTENT".to_string(),
+                    serde_json::Value::Object(root).to_string(),
+                );
+            }
+            PROVIDER_GOOSE => {
+                let base_url = endpoint_base_url_or_err(endpoint)?;
+                ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
+                env.insert("OPENAI_API_KEY".to_string(), api_key.to_string());
+                env.insert("OPENAI_BASE_URL".to_string(), base_url.clone());
+                env.insert("OPENAI_HOST".to_string(), base_url.clone());
+                env.insert("OPENROUTER_API_KEY".to_string(), api_key.to_string());
+                env.insert("OPENROUTER_BASE_URL".to_string(), base_url);
+                env.insert("GOOSE_PROVIDER".to_string(), "openrouter".to_string());
+                env.insert("GOOSE_DISABLE_KEYRING".to_string(), "1".to_string());
+                if let Some(model) = endpoint
+                    .model_override
+                    .as_ref()
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+                {
+                    env.insert("GOOSE_MODEL".to_string(), model.clone());
+                    env.insert("OPENAI_MODEL".to_string(), model.clone());
+                    env.insert("OPENROUTER_MODEL".to_string(), model);
+                }
+            }
+            PROVIDER_MISTRAL => {
+                let base_url = endpoint_base_url_or_err(endpoint)?;
+                ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
+                env.insert("MISTRAL_API_KEY".to_string(), api_key.to_string());
+                env.insert("MISTRAL_BASE_URL".to_string(), base_url.clone());
+                env.insert("OPENAI_API_KEY".to_string(), api_key.to_string());
+                env.insert("OPENAI_BASE_URL".to_string(), base_url);
+            }
+            PROVIDER_AMP => {
+                ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
+                env.insert("AMP_API_KEY".to_string(), api_key.to_string());
+            }
+            PROVIDER_DROID => {
+                let base_url = endpoint_base_url_or_err(endpoint)?;
+                ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
+                ensure_safe_endpoint_id(&endpoint.id)?;
+                let droid_home = droid_endpoint_home(self.runtime_data_root(), &endpoint.id);
+                let model_id = endpoint_preferred_model_id(endpoint)
+                    .unwrap_or_else(|| "openai/gpt-5.2-codex".to_string());
+                let droid_default_model = prepare_droid_home_with_endpoint_settings(
+                    &droid_home,
+                    &base_url,
+                    api_key,
+                    &model_id,
+                )
+                .await?;
+                env.insert("HOME".to_string(), droid_home.to_string_lossy().to_string());
+                env.insert("OPENAI_API_KEY".to_string(), api_key.to_string());
+                env.insert("OPENAI_BASE_URL".to_string(), base_url);
+                if let Ok(factory_api_key) = std::env::var("FACTORY_API_KEY") {
+                    let trimmed = factory_api_key.trim();
+                    if !trimmed.is_empty() {
+                        env.insert("FACTORY_API_KEY".to_string(), trimmed.to_string());
+                    }
+                }
+                if let Some(model) = droid_default_model {
+                    env.insert("DROID_DEFAULT_MODEL".to_string(), model);
+                }
+            }
+            PROVIDER_OPENHANDS => {
+                let base_url = endpoint_base_url_or_err(endpoint)?;
+                ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
+                env.insert("LLM_API_KEY".to_string(), api_key.to_string());
+                env.insert("LLM_BASE_URL".to_string(), base_url.clone());
+                env.insert("OPENAI_API_KEY".to_string(), api_key.to_string());
+                env.insert("OPENAI_BASE_URL".to_string(), base_url);
+                if let Some(model) = endpoint
+                    .model_override
+                    .as_ref()
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+                {
+                    env.insert("LLM_MODEL".to_string(), model.clone());
+                    env.insert("OPENAI_MODEL".to_string(), model);
+                }
+            }
+            PROVIDER_COPILOT => {
+                ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
+                env.insert("GH_TOKEN".to_string(), api_key.to_string());
+                env.insert("GITHUB_TOKEN".to_string(), api_key.to_string());
+            }
+            PROVIDER_PI => {
+                ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
+                env.insert("PI_ACP_PROVIDER".to_string(), "openai".to_string());
+                env.insert("OPENAI_API_KEY".to_string(), api_key.to_string());
+                let base_url = endpoint.base_url.trim().to_string();
+                if !base_url.is_empty() {
+                    env.insert("OPENAI_BASE_URL".to_string(), base_url);
+                }
+                if let Some(model) = endpoint
+                    .model_override
+                    .as_ref()
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+                {
+                    env.insert("PI_ACP_MODEL".to_string(), model);
+                }
+            }
+            PROVIDER_AUGGIE => {
+                ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
+                env.insert("AUGMENT_SESSION_AUTH".to_string(), api_key.to_string());
+                env.insert("AUGMENT_API_TOKEN".to_string(), api_key.to_string());
+            }
+            _ => {}
+        }
+
+        Ok(env)
+    }
+
+    async fn cleanup_endpoint_runtime(&self, endpoint_id: &str) -> Result<()> {
+        let Some(endpoint_home) = (match self.canonical {
+            PROVIDER_CODEX => Some(codex_endpoint_home(self.data_root, endpoint_id)),
+            PROVIDER_QWEN => Some(qwen_endpoint_home(self.data_root, endpoint_id)),
+            PROVIDER_GEMINI => Some(gemini_endpoint_home(self.data_root, endpoint_id)),
+            PROVIDER_DROID => Some(droid_endpoint_home(self.data_root, endpoint_id)),
+            _ => None,
+        }) else {
+            return Ok(());
+        };
+
+        ensure_safe_endpoint_id(endpoint_id)?;
+        match tokio::fs::remove_dir_all(&endpoint_home).await {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => {
+                return Err(err).with_context(|| {
+                    format!(
+                        "removing {} endpoint home for endpoint {}",
+                        self.canonical, endpoint_id
+                    )
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+fn provider_requires_verified_endpoint_for_run(canonical: &str) -> bool {
+    matches!(canonical, PROVIDER_CODEX | PROVIDER_CLAUDE)
 }
 
 fn normalize_provider_id(provider_id: &str) -> Option<&'static str> {
@@ -1122,6 +1424,7 @@ pub async fn delete_provider_endpoint(
     }
 
     if before != provider.endpoints.len() {
+        let runtime = ProviderRuntimeContext::new(canonical, data_root, None);
         for (removed_endpoint_id, secret_ref) in removed {
             let secret_path = endpoint_secret_path(data_root, &secret_ref);
             match tokio::fs::remove_file(&secret_path).await {
@@ -1133,68 +1436,9 @@ pub async fn delete_provider_endpoint(
                     });
                 }
             }
-
-            if canonical == PROVIDER_CODEX {
-                ensure_safe_endpoint_id(&removed_endpoint_id)?;
-                let endpoint_home = codex_endpoint_home(data_root, &removed_endpoint_id);
-                match tokio::fs::remove_dir_all(&endpoint_home).await {
-                    Ok(()) => {}
-                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(err) => {
-                        return Err(err).with_context(|| {
-                            format!(
-                                "removing codex endpoint home for endpoint {}",
-                                removed_endpoint_id
-                            )
-                        });
-                    }
-                }
-            } else if canonical == PROVIDER_QWEN {
-                ensure_safe_endpoint_id(&removed_endpoint_id)?;
-                let endpoint_home = qwen_endpoint_home(data_root, &removed_endpoint_id);
-                match tokio::fs::remove_dir_all(&endpoint_home).await {
-                    Ok(()) => {}
-                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(err) => {
-                        return Err(err).with_context(|| {
-                            format!(
-                                "removing qwen endpoint home for endpoint {}",
-                                removed_endpoint_id
-                            )
-                        });
-                    }
-                }
-            } else if canonical == PROVIDER_GEMINI {
-                ensure_safe_endpoint_id(&removed_endpoint_id)?;
-                let endpoint_home = gemini_endpoint_home(data_root, &removed_endpoint_id);
-                match tokio::fs::remove_dir_all(&endpoint_home).await {
-                    Ok(()) => {}
-                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(err) => {
-                        return Err(err).with_context(|| {
-                            format!(
-                                "removing gemini endpoint home for endpoint {}",
-                                removed_endpoint_id
-                            )
-                        });
-                    }
-                }
-            } else if canonical == PROVIDER_DROID {
-                ensure_safe_endpoint_id(&removed_endpoint_id)?;
-                let endpoint_home = droid_endpoint_home(data_root, &removed_endpoint_id);
-                match tokio::fs::remove_dir_all(&endpoint_home).await {
-                    Ok(()) => {}
-                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(err) => {
-                        return Err(err).with_context(|| {
-                            format!(
-                                "removing droid endpoint home for endpoint {}",
-                                removed_endpoint_id
-                            )
-                        });
-                    }
-                }
-            }
+            runtime
+                .cleanup_endpoint_runtime(&removed_endpoint_id)
+                .await?;
         }
         save_registry(data_root, &registry).await?;
     }
@@ -1669,6 +1913,7 @@ async fn resolve_internal(
             });
         }
     };
+    let runtime = ProviderRuntimeContext::new(canonical, data_root, runtime_data_root);
 
     let registry = load_registry(data_root).await?;
     let provider = provider_store(&registry, canonical)
@@ -1679,7 +1924,7 @@ async fn resolve_internal(
         return Ok(ResolvedHarnessSource {
             source_kind: HarnessSourceKind::Subscription,
             endpoint: None,
-            env: subscription_env_for_provider(canonical, data_root, runtime_data_root),
+            env: runtime.subscription_env(),
         });
     }
 
@@ -1687,7 +1932,7 @@ async fn resolve_internal(
         return Ok(ResolvedHarnessSource {
             source_kind: HarnessSourceKind::Subscription,
             endpoint: None,
-            env: subscription_env_for_provider(canonical, data_root, runtime_data_root),
+            env: runtime.subscription_env(),
         });
     }
 
@@ -1713,251 +1958,7 @@ async fn resolve_internal(
     }
 
     let api_key = read_endpoint_secret(data_root, &endpoint.secret_ref).await?;
-    let mut env = HashMap::new();
-
-    match canonical {
-        PROVIDER_CODEX => {
-            let base_url = endpoint_base_url_or_err(&endpoint)?;
-            ensure_shape_compatible(canonical, endpoint.api_shape)?;
-            ensure_safe_endpoint_id(&endpoint.id)?;
-            let codex_home = codex_endpoint_home(data_root, &endpoint.id);
-            prepare_codex_home_with_api_key(&codex_home, &api_key).await?;
-            env.insert(
-                "CODEX_HOME".to_string(),
-                codex_home.to_string_lossy().to_string(),
-            );
-            env.insert("OPENAI_API_KEY".to_string(), api_key);
-            env.insert("OPENAI_BASE_URL".to_string(), base_url);
-        }
-        PROVIDER_CLAUDE => {
-            let base_url = endpoint_base_url_or_err(&endpoint)?;
-            ensure_shape_compatible(canonical, endpoint.api_shape)?;
-            env.insert("ANTHROPIC_API_KEY".to_string(), api_key);
-            env.insert("ANTHROPIC_BASE_URL".to_string(), base_url);
-        }
-        PROVIDER_GEMINI => {
-            ensure_shape_compatible(canonical, endpoint.api_shape)?;
-            ensure_safe_endpoint_id(&endpoint.id)?;
-            let gemini_home_root = runtime_data_root.unwrap_or(data_root);
-            let gemini_home = gemini_endpoint_home(gemini_home_root, &endpoint.id);
-            tokio::fs::create_dir_all(gemini_home.join(".gemini"))
-                .await
-                .with_context(|| {
-                    format!("creating gemini endpoint home for endpoint {}", endpoint.id)
-                })?;
-            env.insert(
-                "HOME".to_string(),
-                gemini_home.to_string_lossy().to_string(),
-            );
-            env.insert(
-                "GEMINI_CLI_HOME".to_string(),
-                gemini_home.to_string_lossy().to_string(),
-            );
-            env.insert("GEMINI_FORCE_FILE_STORAGE".to_string(), "true".to_string());
-            match endpoint.auth_type.as_str() {
-                GEMINI_AUTH_TYPE_VERTEX_AI => {
-                    env.insert("GOOGLE_API_KEY".to_string(), api_key);
-                    env.insert("GOOGLE_GENAI_USE_VERTEXAI".to_string(), "true".to_string());
-                }
-                GEMINI_AUTH_TYPE_GEMINI_API_KEY => {
-                    env.insert("GEMINI_API_KEY".to_string(), api_key);
-                }
-                _ => {
-                    anyhow::bail!(
-                        "unsupported gemini endpoint auth_type '{}' (use '{}' or '{}')",
-                        endpoint.auth_type,
-                        GEMINI_AUTH_TYPE_GEMINI_API_KEY,
-                        GEMINI_AUTH_TYPE_VERTEX_AI
-                    );
-                }
-            }
-        }
-        PROVIDER_KIMI => {
-            let base_url = endpoint_base_url_or_err(&endpoint)?;
-            ensure_shape_compatible(canonical, endpoint.api_shape)?;
-            env.insert("KIMI_API_KEY".to_string(), api_key);
-            env.insert("KIMI_BASE_URL".to_string(), base_url);
-            if let Some(model) = endpoint
-                .model_override
-                .as_ref()
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-            {
-                env.insert("KIMI_MODEL_NAME".to_string(), model);
-            }
-        }
-        PROVIDER_QWEN => {
-            let base_url = endpoint_base_url_or_err(&endpoint)?;
-            ensure_shape_compatible(canonical, endpoint.api_shape)?;
-            ensure_safe_endpoint_id(&endpoint.id)?;
-            let qwen_home_root = runtime_data_root.unwrap_or(data_root);
-            let qwen_home = qwen_endpoint_home(qwen_home_root, &endpoint.id);
-            prepare_qwen_home_with_openai_settings(&qwen_home).await?;
-            env.insert("HOME".to_string(), qwen_home.to_string_lossy().to_string());
-            env.insert("OPENAI_API_KEY".to_string(), api_key);
-            env.insert("OPENAI_BASE_URL".to_string(), base_url);
-            if let Some(model) = endpoint
-                .model_override
-                .as_ref()
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-            {
-                env.insert("OPENAI_MODEL".to_string(), model);
-            }
-        }
-        PROVIDER_OPENCODE => {
-            let base_url = endpoint_base_url_or_err(&endpoint)?;
-            ensure_shape_compatible(canonical, endpoint.api_shape)?;
-            let provider_namespace = infer_endpoint_model_provider_namespace(&base_url)
-                .unwrap_or_else(|| "endpoint".to_string());
-            env.insert("OPENAI_API_KEY".to_string(), api_key.clone());
-            env.insert("OPENAI_BASE_URL".to_string(), base_url.clone());
-            if provider_namespace == "openrouter" {
-                env.insert("OPENROUTER_API_KEY".to_string(), api_key.clone());
-                env.insert("OPENROUTER_BASE_URL".to_string(), base_url.clone());
-            }
-
-            let mut provider_config = serde_json::Map::new();
-            provider_config.insert(
-                provider_namespace.clone(),
-                serde_json::json!({
-                    "options": {
-                        "baseURL": base_url,
-                        "apiKey": api_key,
-                    }
-                }),
-            );
-            let mut root = serde_json::Map::new();
-            if let Some(model) = endpoint
-                .model_override
-                .as_ref()
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-            {
-                root.insert(
-                    "model".to_string(),
-                    serde_json::Value::String(normalize_namespaced_model_override(
-                        &model,
-                        Some(provider_namespace.as_str()),
-                    )),
-                );
-            }
-            root.insert(
-                "provider".to_string(),
-                serde_json::Value::Object(provider_config),
-            );
-            env.insert(
-                "OPENCODE_CONFIG_CONTENT".to_string(),
-                serde_json::Value::Object(root).to_string(),
-            );
-        }
-        PROVIDER_GOOSE => {
-            let base_url = endpoint_base_url_or_err(&endpoint)?;
-            ensure_shape_compatible(canonical, endpoint.api_shape)?;
-            env.insert("OPENAI_API_KEY".to_string(), api_key.clone());
-            env.insert("OPENAI_BASE_URL".to_string(), base_url.clone());
-            env.insert("OPENAI_HOST".to_string(), base_url.clone());
-            env.insert("OPENROUTER_API_KEY".to_string(), api_key.clone());
-            env.insert("OPENROUTER_BASE_URL".to_string(), base_url);
-            env.insert("GOOSE_PROVIDER".to_string(), "openrouter".to_string());
-            env.insert("GOOSE_DISABLE_KEYRING".to_string(), "1".to_string());
-            if let Some(model) = endpoint
-                .model_override
-                .as_ref()
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-            {
-                env.insert("GOOSE_MODEL".to_string(), model.clone());
-                env.insert("OPENAI_MODEL".to_string(), model.clone());
-                env.insert("OPENROUTER_MODEL".to_string(), model);
-            }
-        }
-        PROVIDER_MISTRAL => {
-            let base_url = endpoint_base_url_or_err(&endpoint)?;
-            ensure_shape_compatible(canonical, endpoint.api_shape)?;
-            env.insert("MISTRAL_API_KEY".to_string(), api_key.clone());
-            env.insert("MISTRAL_BASE_URL".to_string(), base_url.clone());
-            env.insert("OPENAI_API_KEY".to_string(), api_key);
-            env.insert("OPENAI_BASE_URL".to_string(), base_url);
-        }
-        PROVIDER_AMP => {
-            ensure_shape_compatible(canonical, endpoint.api_shape)?;
-            env.insert("AMP_API_KEY".to_string(), api_key);
-        }
-        PROVIDER_DROID => {
-            let base_url = endpoint_base_url_or_err(&endpoint)?;
-            ensure_shape_compatible(canonical, endpoint.api_shape)?;
-            ensure_safe_endpoint_id(&endpoint.id)?;
-            let droid_home_root = runtime_data_root.unwrap_or(data_root);
-            let droid_home = droid_endpoint_home(droid_home_root, &endpoint.id);
-            let model_id = endpoint_preferred_model_id(&endpoint)
-                .unwrap_or_else(|| "openai/gpt-5.2-codex".to_string());
-            let droid_default_model = prepare_droid_home_with_endpoint_settings(
-                &droid_home,
-                &base_url,
-                &api_key,
-                &model_id,
-            )
-            .await?;
-            env.insert("HOME".to_string(), droid_home.to_string_lossy().to_string());
-            env.insert("OPENAI_API_KEY".to_string(), api_key);
-            env.insert("OPENAI_BASE_URL".to_string(), base_url);
-            if let Ok(factory_api_key) = std::env::var("FACTORY_API_KEY") {
-                let trimmed = factory_api_key.trim();
-                if !trimmed.is_empty() {
-                    env.insert("FACTORY_API_KEY".to_string(), trimmed.to_string());
-                }
-            }
-            if let Some(model) = droid_default_model {
-                env.insert("DROID_DEFAULT_MODEL".to_string(), model);
-            }
-        }
-        PROVIDER_OPENHANDS => {
-            let base_url = endpoint_base_url_or_err(&endpoint)?;
-            ensure_shape_compatible(canonical, endpoint.api_shape)?;
-            env.insert("LLM_API_KEY".to_string(), api_key.clone());
-            env.insert("LLM_BASE_URL".to_string(), base_url.clone());
-            env.insert("OPENAI_API_KEY".to_string(), api_key);
-            env.insert("OPENAI_BASE_URL".to_string(), base_url);
-            if let Some(model) = endpoint
-                .model_override
-                .as_ref()
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-            {
-                env.insert("LLM_MODEL".to_string(), model.clone());
-                env.insert("OPENAI_MODEL".to_string(), model);
-            }
-        }
-        PROVIDER_COPILOT => {
-            ensure_shape_compatible(canonical, endpoint.api_shape)?;
-            env.insert("GH_TOKEN".to_string(), api_key.clone());
-            env.insert("GITHUB_TOKEN".to_string(), api_key);
-        }
-        PROVIDER_PI => {
-            ensure_shape_compatible(canonical, endpoint.api_shape)?;
-            env.insert("PI_ACP_PROVIDER".to_string(), "openai".to_string());
-            env.insert("OPENAI_API_KEY".to_string(), api_key);
-            let base_url = endpoint.base_url.trim().to_string();
-            if !base_url.is_empty() {
-                env.insert("OPENAI_BASE_URL".to_string(), base_url);
-            }
-            if let Some(model) = endpoint
-                .model_override
-                .as_ref()
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-            {
-                env.insert("PI_ACP_MODEL".to_string(), model);
-            }
-        }
-        PROVIDER_AUGGIE => {
-            ensure_shape_compatible(canonical, endpoint.api_shape)?;
-            env.insert("AUGMENT_SESSION_AUTH".to_string(), api_key.clone());
-            env.insert("AUGMENT_API_TOKEN".to_string(), api_key);
-        }
-        _ => {}
-    }
+    let env = runtime.endpoint_env(&endpoint, &api_key).await?;
 
     let public = public_endpoint_from_internal(&endpoint);
     Ok(ResolvedHarnessSource {
@@ -1994,10 +1995,8 @@ pub async fn resolve_provider_source_for_run_with_runtime_root(
     provider_id: &str,
     runtime_data_root: Option<&Path>,
 ) -> Result<ResolvedHarnessSource> {
-    let require_verified_endpoint = matches!(
-        normalize_provider_id(provider_id),
-        Some(PROVIDER_CODEX) | Some(PROVIDER_CLAUDE)
-    );
+    let require_verified_endpoint =
+        normalize_provider_id(provider_id).is_some_and(provider_requires_verified_endpoint_for_run);
     resolve_internal(
         data_root,
         provider_id,

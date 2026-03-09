@@ -107,6 +107,15 @@ struct PathSpec {
     path: PathBuf,
 }
 
+#[derive(Debug, Clone)]
+struct AuthImportScanner {
+    roots: HostRoots,
+}
+
+struct CanonicalAuthImporter<'a> {
+    data_root: &'a Path,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredSecretMaterial {
     kind: String,
@@ -295,6 +304,33 @@ fn host_roots() -> Result<HostRoots> {
         xdg_data,
         codex_home,
     })
+}
+
+impl AuthImportScanner {
+    fn discover() -> Result<Self> {
+        Ok(Self {
+            roots: host_roots()?,
+        })
+    }
+
+    fn scan(&self) -> Vec<CandidateMaterial> {
+        let mut out = Vec::new();
+        let mut seen: HashMap<String, ()> = HashMap::new();
+        for spec in build_catalog(&self.roots) {
+            if let Some(candidate) = candidate_from_spec(&spec) {
+                if seen.insert(candidate.candidate.id.clone(), ()).is_none() {
+                    out.push(candidate);
+                }
+            }
+        }
+        out.sort_by(|a, b| {
+            a.candidate
+                .provider_label
+                .cmp(&b.candidate.provider_label)
+                .then_with(|| a.candidate.path.cmp(&b.candidate.path))
+        });
+        out
+    }
 }
 
 fn build_catalog(roots: &HostRoots) -> Vec<PathSpec> {
@@ -722,40 +758,200 @@ fn summarize_json_candidate(provider_id: &str, value: &serde_json::Value) -> Opt
     None
 }
 
+#[cfg(test)]
 fn scan_with_roots(roots: &HostRoots) -> Vec<CandidateMaterial> {
-    let mut out = Vec::new();
-    let mut seen: HashMap<String, ()> = HashMap::new();
-    for spec in build_catalog(roots) {
-        if let Some(candidate) = candidate_from_spec(&spec) {
-            if seen.insert(candidate.candidate.id.clone(), ()).is_none() {
-                out.push(candidate);
+    AuthImportScanner {
+        roots: roots.clone(),
+    }
+    .scan()
+}
+
+impl<'a> CanonicalAuthImporter<'a> {
+    fn new(data_root: &'a Path) -> Self {
+        Self { data_root }
+    }
+
+    async fn list_profiles(&self) -> Result<Vec<ProviderImportedAuthProfile>> {
+        self.migrate_legacy_imported_profiles_once().await?;
+        let registry = load_imported_registry(self.data_root).await;
+        Ok(registry.profiles)
+    }
+
+    async fn import_candidates(
+        &self,
+        scanner: &AuthImportScanner,
+        candidate_ids: &[String],
+    ) -> Result<Vec<ProviderAuthImportResult>> {
+        if candidate_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.migrate_legacy_imported_profiles_once().await?;
+
+        let materials = scanner.scan();
+        let mut by_id: HashMap<String, CandidateMaterial> = HashMap::new();
+        for material in materials {
+            by_id.insert(material.candidate.id.clone(), material);
+        }
+
+        let mut results = Vec::new();
+        for candidate_id in candidate_ids {
+            let Some(material) = by_id.get(candidate_id) else {
+                results.push(ProviderAuthImportResult {
+                    candidate_id: candidate_id.clone(),
+                    provider_id: "unknown".to_string(),
+                    status: "error".to_string(),
+                    profile_id: None,
+                    message: Some("Candidate no longer available; re-scan and retry.".to_string()),
+                });
+                continue;
+            };
+
+            if !material.importable {
+                results.push(ProviderAuthImportResult {
+                    candidate_id: material.candidate.id.clone(),
+                    provider_id: material.candidate.provider_id.clone(),
+                    status: "unsupported".to_string(),
+                    profile_id: None,
+                    message: material.candidate.unsupported_reason.clone().or_else(|| {
+                        Some("Candidate cannot be imported automatically.".to_string())
+                    }),
+                });
+                continue;
+            }
+
+            match self.import_candidate_to_canonical(material).await {
+                Ok(result) => results.push(result),
+                Err(error) => results.push(ProviderAuthImportResult {
+                    candidate_id: material.candidate.id.clone(),
+                    provider_id: material.candidate.provider_id.clone(),
+                    status: "error".to_string(),
+                    profile_id: None,
+                    message: Some(error.to_string()),
+                }),
             }
         }
+
+        Ok(results)
     }
-    out.sort_by(|a, b| {
-        a.candidate
-            .provider_label
-            .cmp(&b.candidate.provider_label)
-            .then_with(|| a.candidate.path.cmp(&b.candidate.path))
-    });
-    out
+
+    async fn import_candidate_to_canonical(
+        &self,
+        material: &CandidateMaterial,
+    ) -> Result<ProviderAuthImportResult> {
+        if !material.importable || material.secret_bytes.is_none() {
+            return Ok(import_result(
+                material,
+                "unsupported",
+                None,
+                material
+                    .candidate
+                    .unsupported_reason
+                    .clone()
+                    .or_else(|| Some("No importable auth material.".to_string())),
+            ));
+        }
+        match material.candidate.provider_id.as_str() {
+            "codex" => import_codex_candidate(self.data_root, material).await,
+            "gemini" => {
+                if material.candidate.kind == "env_file" {
+                    import_gemini_env_candidate(self.data_root, material).await
+                } else {
+                    import_gemini_auth_file_candidate(self.data_root, material).await
+                }
+            }
+            "qwen" => import_qwen_candidate(self.data_root, material).await,
+            "opencode" => import_opencode_candidate(self.data_root, material).await,
+            "amp" => import_amp_candidate(self.data_root, material).await,
+            _ => Ok(import_result(
+                material,
+                "unsupported",
+                None,
+                Some(format!(
+                    "Provider '{}' import is not wired into canonical auth storage yet.",
+                    material.candidate.provider_id
+                )),
+            )),
+        }
+    }
+
+    async fn migrate_legacy_imported_profiles_once(&self) -> Result<()> {
+        if legacy_migration_marker_exists(self.data_root).await {
+            return Ok(());
+        }
+
+        let mut registry = load_imported_registry(self.data_root).await;
+        if registry.profiles.is_empty() {
+            write_legacy_migration_marker(self.data_root).await?;
+            return Ok(());
+        }
+
+        // Decision: migration must be lossless. Keep any legacy profile that cannot be migrated yet
+        // (missing secret material, unsupported provider, transient failure) so future runs can retry.
+        let mut remaining_profiles: Vec<ProviderImportedAuthProfile> = Vec::new();
+        for profile in registry.profiles.iter().cloned() {
+            let Some(secret_bytes) =
+                read_legacy_secret_material_bytes(self.data_root, &profile.id).await
+            else {
+                remaining_profiles.push(profile);
+                continue;
+            };
+            let material = CandidateMaterial {
+                candidate: ProviderAuthImportCandidate {
+                    id: profile.id.clone(),
+                    provider_id: profile.provider_id.clone(),
+                    provider_label: profile.provider_label.clone(),
+                    kind: profile.source_kind.clone(),
+                    path: profile.source_path.clone(),
+                    signal_strength: "legacy".to_string(),
+                    confidence: "legacy".to_string(),
+                    parse_status: "parsed".to_string(),
+                    unsupported_reason: None,
+                    summary: None,
+                    account_identity: profile.account_identity.clone(),
+                    endpoint: profile.endpoint.clone(),
+                    auth_type: profile.auth_type.clone(),
+                    fingerprint: Some(profile.secret_fingerprint.clone()),
+                    last_modified: None,
+                },
+                importable: true,
+                secret_bytes: Some(secret_bytes),
+                label: Some(profile.label.clone()),
+            };
+            let migrated = match self.import_candidate_to_canonical(&material).await {
+                Ok(result) => matches!(
+                    result.status.as_str(),
+                    "imported" | "updated" | "already_imported"
+                ),
+                Err(_) => false,
+            };
+            if migrated {
+                let _ =
+                    tokio::fs::remove_file(imported_secret_path(self.data_root, &profile.id)).await;
+            } else {
+                remaining_profiles.push(profile);
+            }
+        }
+
+        registry.profiles = remaining_profiles;
+        save_imported_registry(self.data_root, &registry).await?;
+        if registry.profiles.is_empty() {
+            let _ = tokio::fs::remove_dir_all(imported_secrets_dir(self.data_root)).await;
+            write_legacy_migration_marker(self.data_root).await?;
+        }
+        Ok(())
+    }
 }
 
 pub async fn list_provider_auth_import_candidates() -> Result<Vec<ProviderAuthImportCandidate>> {
-    let roots = host_roots()?;
-    let candidates = scan_with_roots(&roots)
-        .into_iter()
-        .map(|c| c.candidate)
-        .collect();
+    let scanner = AuthImportScanner::discover()?;
+    let candidates = scanner.scan().into_iter().map(|c| c.candidate).collect();
     Ok(candidates)
 }
 
 pub async fn list_provider_auth_profiles(
     data_root: &Path,
 ) -> Result<Vec<ProviderImportedAuthProfile>> {
-    migrate_legacy_imported_profiles_once(data_root).await?;
-    let registry = load_imported_registry(data_root).await;
-    Ok(registry.profiles)
+    CanonicalAuthImporter::new(data_root).list_profiles().await
 }
 
 async fn import_codex_candidate(
@@ -1379,44 +1575,14 @@ async fn import_amp_candidate(
     .await
 }
 
+#[cfg(test)]
 async fn import_candidate_to_canonical(
     data_root: &Path,
     material: &CandidateMaterial,
 ) -> Result<ProviderAuthImportResult> {
-    if !material.importable || material.secret_bytes.is_none() {
-        return Ok(import_result(
-            material,
-            "unsupported",
-            None,
-            material
-                .candidate
-                .unsupported_reason
-                .clone()
-                .or_else(|| Some("No importable auth material.".to_string())),
-        ));
-    }
-    match material.candidate.provider_id.as_str() {
-        "codex" => import_codex_candidate(data_root, material).await,
-        "gemini" => {
-            if material.candidate.kind == "env_file" {
-                import_gemini_env_candidate(data_root, material).await
-            } else {
-                import_gemini_auth_file_candidate(data_root, material).await
-            }
-        }
-        "qwen" => import_qwen_candidate(data_root, material).await,
-        "opencode" => import_opencode_candidate(data_root, material).await,
-        "amp" => import_amp_candidate(data_root, material).await,
-        _ => Ok(import_result(
-            material,
-            "unsupported",
-            None,
-            Some(format!(
-                "Provider '{}' import is not wired into canonical auth storage yet.",
-                material.candidate.provider_id
-            )),
-        )),
-    }
+    CanonicalAuthImporter::new(data_root)
+        .import_candidate_to_canonical(material)
+        .await
 }
 
 async fn read_legacy_secret_material_bytes(data_root: &Path, profile_id: &str) -> Option<Vec<u8>> {
@@ -1428,128 +1594,21 @@ async fn read_legacy_secret_material_bytes(data_root: &Path, profile_id: &str) -
     base64::Engine::decode(&base64::engine::general_purpose::STANDARD, content).ok()
 }
 
+#[cfg(test)]
 async fn migrate_legacy_imported_profiles_once(data_root: &Path) -> Result<()> {
-    if legacy_migration_marker_exists(data_root).await {
-        return Ok(());
-    }
-
-    let mut registry = load_imported_registry(data_root).await;
-    if registry.profiles.is_empty() {
-        write_legacy_migration_marker(data_root).await?;
-        return Ok(());
-    }
-
-    // Decision: migration must be lossless. Keep any legacy profile that cannot be migrated yet
-    // (missing secret material, unsupported provider, transient failure) so future runs can retry.
-    let mut remaining_profiles: Vec<ProviderImportedAuthProfile> = Vec::new();
-    for profile in registry.profiles.iter().cloned() {
-        let Some(secret_bytes) = read_legacy_secret_material_bytes(data_root, &profile.id).await
-        else {
-            remaining_profiles.push(profile);
-            continue;
-        };
-        let material = CandidateMaterial {
-            candidate: ProviderAuthImportCandidate {
-                id: profile.id.clone(),
-                provider_id: profile.provider_id.clone(),
-                provider_label: profile.provider_label.clone(),
-                kind: profile.source_kind.clone(),
-                path: profile.source_path.clone(),
-                signal_strength: "legacy".to_string(),
-                confidence: "legacy".to_string(),
-                parse_status: "parsed".to_string(),
-                unsupported_reason: None,
-                summary: None,
-                account_identity: profile.account_identity.clone(),
-                endpoint: profile.endpoint.clone(),
-                auth_type: profile.auth_type.clone(),
-                fingerprint: Some(profile.secret_fingerprint.clone()),
-                last_modified: None,
-            },
-            importable: true,
-            secret_bytes: Some(secret_bytes),
-            label: Some(profile.label.clone()),
-        };
-        let migrated = match import_candidate_to_canonical(data_root, &material).await {
-            Ok(result) => matches!(
-                result.status.as_str(),
-                "imported" | "updated" | "already_imported"
-            ),
-            Err(_) => false,
-        };
-        if migrated {
-            let _ = tokio::fs::remove_file(imported_secret_path(data_root, &profile.id)).await;
-        } else {
-            remaining_profiles.push(profile);
-        }
-    }
-
-    registry.profiles = remaining_profiles;
-    save_imported_registry(data_root, &registry).await?;
-    if registry.profiles.is_empty() {
-        let _ = tokio::fs::remove_dir_all(imported_secrets_dir(data_root)).await;
-        write_legacy_migration_marker(data_root).await?;
-    }
-    Ok(())
+    CanonicalAuthImporter::new(data_root)
+        .migrate_legacy_imported_profiles_once()
+        .await
 }
 
 pub async fn import_provider_auth_candidates(
     data_root: &Path,
     candidate_ids: &[String],
 ) -> Result<Vec<ProviderAuthImportResult>> {
-    if candidate_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    migrate_legacy_imported_profiles_once(data_root).await?;
-
-    let roots = host_roots()?;
-    let materials = scan_with_roots(&roots);
-    let mut by_id: HashMap<String, CandidateMaterial> = HashMap::new();
-    for material in materials {
-        by_id.insert(material.candidate.id.clone(), material);
-    }
-
-    let mut results = Vec::new();
-
-    for candidate_id in candidate_ids {
-        let Some(material) = by_id.get(candidate_id) else {
-            results.push(ProviderAuthImportResult {
-                candidate_id: candidate_id.clone(),
-                provider_id: "unknown".to_string(),
-                status: "error".to_string(),
-                profile_id: None,
-                message: Some("Candidate no longer available; re-scan and retry.".to_string()),
-            });
-            continue;
-        };
-
-        if !material.importable {
-            results.push(ProviderAuthImportResult {
-                candidate_id: material.candidate.id.clone(),
-                provider_id: material.candidate.provider_id.clone(),
-                status: "unsupported".to_string(),
-                profile_id: None,
-                message: material
-                    .candidate
-                    .unsupported_reason
-                    .clone()
-                    .or_else(|| Some("Candidate cannot be imported automatically.".to_string())),
-            });
-            continue;
-        }
-
-        match import_candidate_to_canonical(data_root, material).await {
-            Ok(result) => results.push(result),
-            Err(error) => results.push(ProviderAuthImportResult {
-                candidate_id: material.candidate.id.clone(),
-                provider_id: material.candidate.provider_id.clone(),
-                status: "error".to_string(),
-                profile_id: None,
-                message: Some(error.to_string()),
-            }),
-        }
-    }
-    Ok(results)
+    let scanner = AuthImportScanner::discover()?;
+    CanonicalAuthImporter::new(data_root)
+        .import_candidates(&scanner, candidate_ids)
+        .await
 }
 
 #[cfg(test)]
