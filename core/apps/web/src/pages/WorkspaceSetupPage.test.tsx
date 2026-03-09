@@ -22,8 +22,8 @@ import {
   repoStagingPath,
   repoStatus,
   repoValidateDestination,
-  startExecutionLaunch,
-  startExecutionRuntimePrewarm,
+  startWorkspaceSetupLaunchHandoff,
+  startWorkspaceSetupRuntimePrewarm,
   updateSettings,
   updateWorkspaceExecutionConfig,
   updateWorkspaceMergeQueueConfig,
@@ -77,8 +77,8 @@ vi.mock("../api/client", async () => {
     repoStatus: vi.fn(),
     repoValidateDestination: vi.fn(),
     repoStagingPath: vi.fn(),
-    startExecutionLaunch: vi.fn(),
-    startExecutionRuntimePrewarm: vi.fn(),
+    startWorkspaceSetupLaunchHandoff: vi.fn(),
+    startWorkspaceSetupRuntimePrewarm: vi.fn(),
     updateSettings: vi.fn(),
     updateWorkspaceExecutionConfig: vi.fn(),
     updateWorkspaceMergeQueueConfig: vi.fn(),
@@ -262,7 +262,7 @@ describe("WorkspaceSetupPage", () => {
     vi.mocked(updateWorkspaceExecutionConfig).mockResolvedValue({ ok: true } as never);
     vi.mocked(updateWorkspaceMergeQueueConfig).mockResolvedValue({ ok: true } as never);
     vi.mocked(updateWorkspaceWorktreeBootstrapConfig).mockResolvedValue({ ok: true } as never);
-    vi.mocked(startExecutionLaunch).mockResolvedValue({
+    vi.mocked(startWorkspaceSetupLaunchHandoff).mockResolvedValue({
       job_id: "job_test",
       workspace_id: "ws_test",
       kind: "workspace_launch",
@@ -272,7 +272,7 @@ describe("WorkspaceSetupPage", () => {
       logs: [],
       error: null,
     } as never);
-    vi.mocked(startExecutionRuntimePrewarm).mockResolvedValue({
+    vi.mocked(startWorkspaceSetupRuntimePrewarm).mockResolvedValue({
       job_id: "job_prewarm_test",
       workspace_id: "00000000-0000-0000-0000-000000000000",
       kind: "startup_prewarm",
@@ -658,6 +658,7 @@ describe("WorkspaceSetupPage", () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(getSettings).mockResolvedValue(configuredTitlingSettingsFixture() as never);
     vi.mocked(getInstall).mockReset();
+    vi.mocked(installProvider).mockReset();
     vi.mocked(listProviders).mockResolvedValue([
       providerStatusFixture({
         provider_id: "codex",
@@ -719,6 +720,7 @@ describe("WorkspaceSetupPage", () => {
     await waitFor(() => {
       expect(wizardStepKey()).toBe("source");
     });
+    expect(installProvider).not.toHaveBeenCalled();
   });
 
   it("tracks wizard start, step viewed, and abandonment on unmount", async () => {
@@ -829,8 +831,8 @@ describe("WorkspaceSetupPage", () => {
       expect(req.start_remote).toBe(false);
     }
     expect(desktopKickoffRemotePrewarm).not.toHaveBeenCalled();
-    expect(startExecutionRuntimePrewarm).not.toHaveBeenCalled();
-    expect(startExecutionLaunch).not.toHaveBeenCalled();
+    expect(startWorkspaceSetupRuntimePrewarm).not.toHaveBeenCalled();
+    expect(startWorkspaceSetupLaunchHandoff).not.toHaveBeenCalled();
     expect(repoValidateDestination).not.toHaveBeenCalled();
   });
 
@@ -1722,6 +1724,121 @@ describe("WorkspaceSetupPage", () => {
     expect(updateSettings).not.toHaveBeenCalled();
   });
 
+  it("keeps auth import in the cached route plan after an explicit titling skip", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue({ title_generation: null } as never);
+    vi.mocked(listProviderAuthImportCandidates).mockResolvedValue({
+      candidates: [
+        {
+          id: "cand-codex",
+          provider_id: "codex",
+          provider_label: "Codex",
+          kind: "auth_file",
+          path: "/Users/example-user/.codex/auth.json",
+          signal_strength: "strong",
+          confidence: "high",
+          parse_status: "parsed",
+        },
+      ],
+    } as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    await selectLocalAndContinue();
+    await advanceToTitlingStep();
+    fireEvent.click(screen.getByTestId("wizard-titling-skip"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("source");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-back"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("auth-import");
+    });
+  });
+
+  it("does not reinsert session titling after an explicit skip when auth import advances again", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue({ title_generation: null } as never);
+    vi.mocked(listProviderAuthImportCandidates).mockResolvedValue({
+      candidates: [
+        {
+          id: "cand-codex",
+          provider_id: "codex",
+          provider_label: "Codex",
+          kind: "auth_file",
+          path: "/Users/example-user/.codex/auth.json",
+          signal_strength: "strong",
+          confidence: "high",
+          parse_status: "parsed",
+        },
+      ],
+    } as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    await selectLocalAndContinue();
+    await advanceToTitlingStep();
+    fireEvent.click(screen.getByTestId("wizard-titling-skip"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("source");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-back"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("auth-import");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    await waitFor(() => {
+      expect(importProviderAuthCandidates).not.toHaveBeenCalled();
+      expect(wizardStepKey()).toBe("source");
+    });
+  });
+
+  it("preserves an explicit titling skip across later force re-probes and route-plan recalculations", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue({ title_generation: null } as never);
+    vi.mocked(listProviderAuthImportCandidates).mockResolvedValue({ candidates: [] } as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    await selectLocalAndContinue();
+    await advanceToTitlingStep();
+    fireEvent.click(screen.getByTestId("wizard-titling-skip"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("source");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-option-source-new"));
+    fireEvent.change(screen.getByTestId("wizard-source-path"), {
+      target: { value: "/tmp/durable-skip-repro" },
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("setup");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-back"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("source");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-back"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("source");
+    });
+  });
+
   it("creates a local workspace in browser mode without desktop bridge connect", async () => {
     renderPage();
     await screen.findByTestId("workspace-setup");
@@ -1916,8 +2033,8 @@ describe("WorkspaceSetupPage", () => {
 
     await waitFor(() => {
       expect(createWorkspace).toHaveBeenCalled();
-      expect(startExecutionRuntimePrewarm).toHaveBeenCalled();
-      expect(startExecutionLaunch).toHaveBeenCalled();
+      expect(startWorkspaceSetupRuntimePrewarm).toHaveBeenCalled();
+      expect(startWorkspaceSetupLaunchHandoff).toHaveBeenCalled();
     });
   });
 });

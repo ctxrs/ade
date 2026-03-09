@@ -72,10 +72,10 @@ export function resolveHarnessInstallCandidateStatus(
   installUi?: HarnessInstallRowState,
 ): HarnessInstallCandidateStatus {
   if (candidate.installed && candidate.healthy) return "installed";
-  if (installUi?.state === "running" || candidate.installRunning) return "running";
   if (installUi?.state === "failed") return "failed";
   if (installUi?.state === "cancelled") return "cancelled";
   if (installUi?.state === "succeeded") return "succeeded";
+  if (installUi?.state === "running" || candidate.installRunning) return "running";
   return "ready_to_start";
 }
 

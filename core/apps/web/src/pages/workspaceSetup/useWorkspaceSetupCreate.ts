@@ -2,13 +2,9 @@ import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import type {
   ExecutionLaunchLogLine,
   ExecutionLaunchSnapshot,
-  ExecutionLaunchStreamEvent,
-  InstallTarget,
 } from "../../api/client";
 import {
-  buildExecutionLaunchWsUrl,
   createWorkspace,
-  getExecutionLaunchStatus,
   idToString,
   listWorkspaces,
   repoClone,
@@ -16,8 +12,6 @@ import {
   repoStatus,
   repoStagingPath,
   repoValidateDestination,
-  startExecutionLaunch,
-  startExecutionRuntimePrewarm,
   updateWorkspaceExecutionConfig,
   updateWorkspaceMergeQueueConfig,
   updateWorkspaceWorktreeBootstrapConfig,
@@ -28,51 +22,41 @@ import {
   deriveRepoNameFromUrl,
   parseCloneDestPath,
   resolveWorkspaceName,
-  type SessionTitlingMode,
 } from "../WorkspaceSetupPage.logic";
 import {
   formatLaunchElapsed,
-  launchErrorFromSnapshot,
-  mergeLaunchLogs,
   parseUtcMs,
   phaseEntryForCurrent,
 } from "./launchProgress";
 import type { WizardStepKey } from "./wizardFlow";
-import type { WizardSelections } from "./wizardFlowReducer";
 import {
   lastPathSegment,
   messageFromError,
   type ImportInitDialogState,
 } from "./wizardTypes";
+import {
+  buildWorkspaceSetupCreateIntent,
+  parseNetworkAllowlist,
+  resolveCreateErrorStepKey,
+  type WorkspaceSetupCreateIntent,
+} from "./createHandoff";
+import {
+  mergeWorkspaceSetupLaunchLogs,
+  startWorkspaceSetupLaunchHandoff,
+  startWorkspaceSetupRuntimePrewarm,
+  waitForLaunchHandoffTerminal,
+} from "./launchHandoff";
+import type { RoutePlanInsertionStep } from "./workflowTypes";
 
 type UseWorkspaceSetupCreateArgs = {
   currentStepKey: WizardStepKey;
-  currentStepKeyRef: MutableRefObject<WizardStepKey>;
-  selections: WizardSelections;
-  titlingStepVisible: boolean;
-  titlingMode: SessionTitlingMode;
-  titlingRemoteValid: boolean;
-  titlingPersistError: string | null;
+  intent: WorkspaceSetupCreateIntent;
   ensureTitlingPersistedForCurrentTarget: () => Promise<boolean>;
-  sourcePath: string;
   setSourcePath: (value: string) => void;
-  repoUrl: string;
-  repoBranch: string;
-  workspaceName: string;
-  networkAllowlist: string;
-  useDiskIsolatedStaging: boolean;
-  importRepoStatus: "idle" | "checking" | "ok" | "error";
   setImportRepoStatus: (status: "idle" | "checking" | "ok" | "error") => void;
-  importRepoNote: string | null;
   setImportRepoNote: (note: string | null) => void;
-  targetBranch: string;
-  verifyCommand: string;
-  mergeQueueSkipped: boolean;
-  pushOnSuccess: boolean;
-  pushRemote: string;
-  pushBranch: string;
-  setupHook: string;
-  goToStepKey: (key: WizardStepKey) => void;
+  onOnboardingInsertionRequested: (stepKey: RoutePlanInsertionStep) => void;
+  onCreateErrorStep: (stepKey: WizardStepKey) => void;
   navigate: (path: string, opts: { replace: boolean }) => void;
   wizardCompletedRef: MutableRefObject<boolean>;
   wizardKey: string;
@@ -80,44 +64,28 @@ type UseWorkspaceSetupCreateArgs = {
   desktopApp: boolean;
   parsedRemoteHost: string | undefined;
   parsedRemoteUser: string | null | undefined;
-  remoteHostInput: string;
   remotePasswordOnce: string | null;
   parsedRemotePort: number | null;
   remoteDataDirInput: string;
   connectDaemonForImport: (locationOverride?: "local" | "remote") => Promise<void>;
-  ensureOnboardingAfterDaemonConnect: (options?: { allowTitlingInsertion?: boolean }) => Promise<boolean>;
+  ensureOnboardingAfterDaemonConnect: (options?: { allowTitlingInsertion?: boolean }) => Promise<{
+    insertionStep: RoutePlanInsertionStep | null;
+  } | null>;
   waitForDaemonReady: (timeoutMs: number) => Promise<void>;
   applyConnection: (info: Awaited<ReturnType<typeof desktopConnectLocal>>) => void;
   rememberRemoteProfile: (host: string, user: string | null) => void;
-  createError: string | null;
   setCreateError: (message: string | null) => void;
 };
 
 export function useWorkspaceSetupCreate({
   currentStepKey,
-  selections,
-  titlingStepVisible,
-  titlingMode,
-  titlingRemoteValid,
-  titlingPersistError,
+  intent,
   ensureTitlingPersistedForCurrentTarget,
-  sourcePath,
   setSourcePath,
-  repoUrl,
-  repoBranch,
-  workspaceName,
-  networkAllowlist,
-  useDiskIsolatedStaging,
   setImportRepoStatus,
   setImportRepoNote,
-  targetBranch,
-  verifyCommand,
-  mergeQueueSkipped,
-  pushOnSuccess,
-  pushRemote,
-  pushBranch,
-  setupHook,
-  goToStepKey,
+  onOnboardingInsertionRequested,
+  onCreateErrorStep,
   navigate,
   wizardCompletedRef,
   wizardKey,
@@ -125,7 +93,6 @@ export function useWorkspaceSetupCreate({
   desktopApp,
   parsedRemoteHost,
   parsedRemoteUser,
-  remoteHostInput,
   remotePasswordOnce,
   parsedRemotePort,
   remoteDataDirInput,
@@ -143,6 +110,27 @@ export function useWorkspaceSetupCreate({
   const [launchCopyState, setLaunchCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const [importInitDialog, setImportInitDialog] = useState<ImportInitDialogState | null>(null);
   const importInitResolveRef = useRef<((confirmed: boolean) => void) | null>(null);
+  const createIntent = buildWorkspaceSetupCreateIntent(intent);
+  const {
+    selections,
+    sourcePath,
+    repoUrl,
+    repoBranch,
+    workspaceName,
+    networkAllowlist,
+    useDiskIsolatedStaging,
+    targetBranch,
+    verifyCommand,
+    mergeQueueSkipped,
+    pushOnSuccess,
+    pushRemote,
+    pushBranch,
+    setupHook,
+    titlingStepVisible,
+    titlingMode,
+    titlingRemoteValid,
+    titlingPersistError,
+  } = createIntent;
 
   useEffect(() => {
     if (!creating || !launchSnapshot || launchSnapshot.state !== "running") return;
@@ -191,7 +179,9 @@ export function useWorkspaceSetupCreate({
     if (desktopApp && selections.location === "local") {
       try {
         await connectDaemonForImport();
-        if (await ensureOnboardingAfterDaemonConnect({ allowTitlingInsertion: true })) {
+        const onboardingResult = await ensureOnboardingAfterDaemonConnect({ allowTitlingInsertion: true });
+        if (onboardingResult?.insertionStep) {
+          onOnboardingInsertionRequested(onboardingResult.insertionStep);
           return false;
         }
       } catch (error) {
@@ -287,85 +277,27 @@ export function useWorkspaceSetupCreate({
 
   const applyLaunchSnapshot = (snapshot: ExecutionLaunchSnapshot) => {
     setLaunchSnapshot(snapshot);
-    setLaunchLogs((prev) => mergeLaunchLogs(prev, snapshot.logs ?? []));
+    setLaunchLogs((prev) => mergeWorkspaceSetupLaunchLogs(prev, snapshot.logs ?? []));
   };
 
   const appendLaunchLine = (line: ExecutionLaunchLogLine) => {
-    setLaunchLogs((prev) => mergeLaunchLogs(prev, [line]));
+    setLaunchLogs((prev) => mergeWorkspaceSetupLaunchLogs(prev, [line]));
   };
 
   const waitForLaunchTerminal = async (initial: ExecutionLaunchSnapshot) => {
-    applyLaunchSnapshot(initial);
-
-    if (initial.state === "ready") return;
-    if (initial.state === "error") throw new Error(launchErrorFromSnapshot(initial));
-
-    await new Promise<void>((resolve, reject) => {
-      let settled = false;
-      const ws = new WebSocket(buildExecutionLaunchWsUrl(initial.job_id));
-
-      const settle = (error?: Error) => {
-        if (settled) return;
-        settled = true;
-        ws.close();
-        if (error) reject(error);
-        else resolve();
-      };
-
-      ws.onmessage = (event) => {
-        let parsed: ExecutionLaunchStreamEvent | null = null;
-        try {
-          parsed = JSON.parse(String(event.data ?? "")) as ExecutionLaunchStreamEvent;
-        } catch {
-          return;
-        }
-        if (!parsed) return;
-        if (parsed.type === "launch_log") {
-          appendLaunchLine(parsed.line);
-          return;
-        }
-        if (parsed.type === "launch_snapshot") {
-          applyLaunchSnapshot(parsed.snapshot);
-          return;
-        }
-        if (parsed.type === "launch_complete") {
-          applyLaunchSnapshot(parsed.snapshot);
-          settle();
-          return;
-        }
-        if (parsed.type === "launch_error") {
-          applyLaunchSnapshot(parsed.snapshot);
-          settle(new Error(launchErrorFromSnapshot(parsed.snapshot)));
-        }
-      };
-
-      ws.onclose = () => {
-        if (settled) return;
-        getExecutionLaunchStatus(initial.job_id)
-          .then((latest) => {
-            applyLaunchSnapshot(latest);
-            if (latest.state === "ready") {
-              settle();
-            } else if (latest.state === "error") {
-              settle(new Error(launchErrorFromSnapshot(latest)));
-            } else {
-              settle(new Error("Lost workspace launch stream before setup finished."));
-            }
-          })
-          .catch((error: unknown) => {
-            settle(new Error(messageFromError(error)));
-          });
-      };
+    await waitForLaunchHandoffTerminal(initial, {
+      applySnapshot: applyLaunchSnapshot,
+      appendLine: appendLaunchLine,
     });
   };
 
   const waitForLaunchCompletion = async (workspaceId: string) => {
-    const initial = await startExecutionLaunch(workspaceId);
+    const initial = await startWorkspaceSetupLaunchHandoff(workspaceId);
     await waitForLaunchTerminal(initial);
   };
 
   const waitForRuntimePrewarm = async () => {
-    const initial = await startExecutionRuntimePrewarm();
+    const initial = await startWorkspaceSetupRuntimePrewarm();
     await waitForLaunchTerminal(initial);
   };
 
@@ -418,9 +350,11 @@ export function useWorkspaceSetupCreate({
       }
 
       await waitForDaemonReady(15000);
-      if (await ensureOnboardingAfterDaemonConnect({
+      const onboardingResult = await ensureOnboardingAfterDaemonConnect({
         allowTitlingInsertion: selections.location === "remote",
-      })) {
+      });
+      if (onboardingResult?.insertionStep) {
+        onOnboardingInsertionRequested(onboardingResult.insertionStep);
         return;
       }
       const containerEnabled = selections.container !== "no-container";
@@ -565,10 +499,7 @@ export function useWorkspaceSetupCreate({
         : selections.container === "host-mounted"
           ? "container_host_mounted"
           : "container_disk_isolated";
-      const allowlist = networkAllowlist
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean);
+      const allowlist = parseNetworkAllowlist(networkAllowlist);
       const netMode = selections.network === "allowlist"
         ? "allowlist"
         : selections.network === "full"
@@ -636,19 +567,8 @@ export function useWorkspaceSetupCreate({
     } catch (error) {
       const message = messageFromError(error);
       setCreateError(message);
-
-      const stepKeyForError = (value: string): WizardStepKey | null => {
-        if (value.includes("Remote host is required")) return "location";
-        if (value.includes("session titling") || value.includes("title generation")) return "session-titling";
-        if (value.includes("repo_url") || value.includes("Destination") || value.includes("Folder") || value.includes("git clone") || value.includes("git init") || value.includes("root_path") || value.includes("not a repo")) {
-          return "source";
-        }
-        return null;
-      };
-      const key = stepKeyForError(message);
-      if (key) {
-        goToStepKey(key);
-      }
+      const key = resolveCreateErrorStepKey(message);
+      if (key) onCreateErrorStep(key);
     } finally {
       setCreating(false);
     }

@@ -2,11 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { launchPhaseLabel } from "./workspaceSetup/launchProgress";
 import { WorkspaceSetupPageView } from "./workspaceSetup/WorkspaceSetupPageView";
-import { useWorkspaceSetupCreate } from "./workspaceSetup/useWorkspaceSetupCreate";
-import { useWorkspaceSetupFlow } from "./workspaceSetup/useWorkspaceSetupFlow";
-import { useWorkspaceSetupProvisioning } from "./workspaceSetup/useWorkspaceSetupProvisioning";
-import { useWorkspaceSetupRemote } from "./workspaceSetup/useWorkspaceSetupRemote";
-import { nextBoundaryStep } from "./workspaceSetup/wizardFlow";
+import { useWorkspaceSetupWorkflow } from "./workspaceSetup/useWorkspaceSetupWorkflow";
 import {
   trackWizardAbandoned,
   trackWizardCompleted,
@@ -14,29 +10,11 @@ import {
   trackWizardStepViewed,
 } from "../utils/analytics";
 
-type ImportRepoStatus = "idle" | "checking" | "ok" | "error";
-
 export function WorkspaceSetupPageController() {
   const navigate = useNavigate();
-  const [sourcePath, setSourcePath] = useState("");
-  const [repoUrl, setRepoUrl] = useState("");
-  const [repoBranch, setRepoBranch] = useState("");
-  const [workspaceName, setWorkspaceName] = useState("");
-  const [networkAllowlist, setNetworkAllowlist] = useState("");
-  const [containerAdvancedOpen, setContainerAdvancedOpen] = useState(false);
-  const [setupHook, setSetupHook] = useState("");
-  const [targetBranch, setTargetBranch] = useState("main");
-  const [targetBranchTouched, setTargetBranchTouched] = useState(false);
-  const [verifyCommand, setVerifyCommand] = useState("");
-  const [mergeAdvancedOpen, setMergeAdvancedOpen] = useState(false);
-  const [pushOnSuccess, setPushOnSuccess] = useState(false);
-  const [pushRemote, setPushRemote] = useState("origin");
-  const [pushBranch, setPushBranch] = useState("main");
-  const [pushBranchTouched, setPushBranchTouched] = useState(false);
   const [openInfoKey, setOpenInfoKey] = useState<string | null>(null);
-  const [createError, setCreateError] = useState<string | null>(null);
-  const [importRepoStatus, setImportRepoStatus] = useState<ImportRepoStatus>("idle");
-  const [importRepoNote, setImportRepoNote] = useState<string | null>(null);
+  const [containerAdvancedOpen, setContainerAdvancedOpen] = useState(false);
+  const [mergeAdvancedOpen, setMergeAdvancedOpen] = useState(false);
   const [harnessDownloadsCanScroll, setHarnessDownloadsCanScroll] = useState(false);
   const [harnessDownloadsAtBottom, setHarnessDownloadsAtBottom] = useState(true);
 
@@ -46,74 +24,7 @@ export function WorkspaceSetupPageController() {
   const lastWizardStepViewedRef = useRef<{ key: string; index: number } | null>(null);
   const harnessDownloadsScrollRef = useRef<HTMLDivElement | null>(null);
 
-  const flow = useWorkspaceSetupFlow({
-    sourcePath,
-    repoUrl,
-  });
-
-  const remote = useWorkspaceSetupRemote({
-    selections: flow.selections,
-    stepKey: flow.currentStepKey,
-    needsSourcePath: flow.needsSourcePath,
-    sourcePath,
-    setImportRepoStatus,
-    setImportRepoNote,
-    setTargetBranch,
-    setPushBranch,
-    targetBranchTouched,
-    pushBranchTouched,
-    onRemoteEndpointChanged: flow.invalidateRoutePlan,
-  });
-
-  const provisioning = useWorkspaceSetupProvisioning({
-    currentStepKey: flow.currentStepKey,
-    currentStepKeyRef: flow.currentStepKeyRef,
-    selections: flow.selections,
-    routePlan: flow.routePlan,
-    setRoutePlan: flow.setRoutePlan,
-    setRoutePlanningBusy: flow.setRoutePlanningBusy,
-    invalidateRoutePlan: flow.invalidateRoutePlan,
-    goToStepKey: flow.goToStepKey,
-    goRelativeStep: flow.goRelativeStep,
-    desktopApp: remote.desktopApp,
-    selectedDaemonTargetKey: remote.selectedDaemonTargetKey,
-    parsedRemoteHost: remote.parsedRemote?.host,
-    parsedRemoteUser: remote.parsedRemote?.user,
-    parsedRemotePort: remote.parsedRemotePort,
-    remoteDataDirInput: remote.remoteDataDirInput,
-    remoteStatus: remote.remoteStatus,
-    remoteStatusRef: remote.remoteStatusRef,
-    connectDaemonForImport: remote.connectDaemonForImport,
-  });
-
-  const create = useWorkspaceSetupCreate({
-    currentStepKey: flow.currentStepKey,
-    currentStepKeyRef: flow.currentStepKeyRef,
-    selections: flow.selections,
-    titlingStepVisible: provisioning.titlingStepVisible,
-    titlingMode: provisioning.titlingMode,
-    titlingRemoteValid: provisioning.titlingRemoteValid,
-    titlingPersistError: provisioning.titlingPersistError,
-    ensureTitlingPersistedForCurrentTarget: provisioning.ensureTitlingPersistedForCurrentTarget,
-    sourcePath,
-    setSourcePath,
-    repoUrl,
-    repoBranch,
-    workspaceName,
-    networkAllowlist,
-    useDiskIsolatedStaging: flow.useDiskIsolatedStaging,
-    importRepoStatus,
-    setImportRepoStatus,
-    importRepoNote,
-    setImportRepoNote,
-    targetBranch,
-    verifyCommand,
-    mergeQueueSkipped: flow.mergeQueueSkipped,
-    pushOnSuccess,
-    pushRemote,
-    pushBranch,
-    setupHook,
-    goToStepKey: flow.goToStepKey,
+  const workflow = useWorkspaceSetupWorkflow({
     navigate: (path, opts) => navigate(path, opts),
     wizardCompletedRef,
     wizardKey,
@@ -123,60 +34,11 @@ export function WorkspaceSetupPageController() {
         workspaceKind: payload.workspaceKind as "local" | "remote" | "unknown",
       });
     },
-    desktopApp: remote.desktopApp,
-    parsedRemoteHost: remote.parsedRemote?.host,
-    parsedRemoteUser: remote.parsedRemote?.user,
-    remoteHostInput: remote.remoteHostInput,
-    remotePasswordOnce: remote.remotePasswordOnce,
-    parsedRemotePort: remote.parsedRemotePort,
-    remoteDataDirInput: remote.remoteDataDirInput,
-    connectDaemonForImport: remote.connectDaemonForImport,
-    ensureOnboardingAfterDaemonConnect: provisioning.ensureOnboardingAfterDaemonConnect,
-    waitForDaemonReady: remote.waitForDaemonReady,
-    applyConnection: remote.applyConnection,
-    rememberRemoteProfile: remote.rememberRemoteProfile,
-    createError,
-    setCreateError,
   });
 
-  const infoStep = openInfoKey ? flow.steps.find((step) => step.key === openInfoKey) ?? null : null;
-  const hasAllowlist = flow.step.key !== "network"
-    || flow.selections.network !== "allowlist"
-    || networkAllowlist.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length > 0;
-  const hasSourceStepInputs = flow.step.key !== "source" || flow.sourceStepValidation.isComplete;
-  const hasTargetBranch = flow.step.key !== "merge-queue"
-    || flow.mergeQueueSkipped
-    || targetBranch.trim() !== "";
-  const titlingSelectionComplete = !provisioning.titlingStepVisible
-    || provisioning.titlingMode === "skip"
-    || (provisioning.titlingMode === "remote" && provisioning.titlingRemoteValid)
-    || provisioning.titlingMode === "local";
-  const titlingStepCanAdvance = flow.step.key !== "session-titling"
-    || (!provisioning.titlingPersistBusy && titlingSelectionComplete);
-  const canAdvance = (!flow.requiresSelection || flow.hasSelection)
-    && !(flow.step.key === "location" && flow.selections.location === "remote" && (
-      !remote.hasRemoteHost
-      || remote.remoteStatus === "connecting"
-      || remote.parsedRemotePort === null
-    ))
-    && !(flow.step.key === "container" && flow.routePlanningBusy)
-    && hasSourceStepInputs
-    && hasTargetBranch
-    && hasAllowlist
-    && (flow.step.key !== "auth-import" || !provisioning.authImportBusy)
-    && (flow.step.key !== "harness-downloads" || !provisioning.harnessInstallBusy)
-    && titlingStepCanAdvance;
-  const nextButtonLabel = flow.step.key === "container" && flow.routePlanningBusy
-    ? "Working..."
-    : flow.step.key === "harness-downloads"
-      ? (
-        provisioning.harnessInstallBusy
-          ? "Working..."
-          : provisioning.selectedHarnessReadyToStartCount > 0
-            ? "Start and continue"
-            : "Continue"
-      )
-      : "Next";
+  const infoStep = openInfoKey
+    ? workflow.flow.steps.find((step) => step.key === openInfoKey) ?? null
+    : null;
 
   const updateHarnessDownloadsScrollState = useCallback(() => {
     const node = harnessDownloadsScrollRef.current;
@@ -191,112 +53,8 @@ export function WorkspaceSetupPageController() {
     setHarnessDownloadsAtBottom(atBottom);
   }, []);
 
-  const onSelect = useCallback((stepKey: string, optionId: string) => {
-    setCreateError(null);
-    flow.selectOption(stepKey, optionId);
-    if (stepKey === "location" && optionId === "local") {
-      remote.resetForLocalSelection();
-    }
-    if (stepKey === "location") {
-      flow.invalidateRoutePlan();
-    }
-    if (stepKey === "container" && optionId === "no-container") {
-      setNetworkAllowlist("");
-    }
-    if (stepKey === "network" && optionId !== "allowlist") {
-      setNetworkAllowlist("");
-    }
-    if (stepKey === "source") {
-      if (optionId !== "clone") {
-        setRepoUrl("");
-        setRepoBranch("");
-      }
-      if (optionId !== "new") {
-        setWorkspaceName("");
-      }
-      if (optionId !== "import") {
-        setImportRepoStatus("idle");
-        setImportRepoNote(null);
-      }
-    }
-  }, [flow, remote]);
-
-  const onSelectOption = useCallback((stepKey: string, optionId: string) => {
-    onSelect(stepKey, optionId);
-    if (stepKey === "location" && optionId === "local") {
-      flow.goToStepKey("container");
-      return;
-    }
-    if (stepKey === "container") {
-      void (async () => {
-        const plan = await provisioning.ensureRoutePlanForSelection(optionId);
-        if (!plan) return;
-        if (flow.currentStepKeyRef.current !== "container") return;
-        flow.goToStepKey(nextBoundaryStep(plan));
-      })();
-      return;
-    }
-    if (stepKey === "network" && optionId !== "allowlist") {
-      flow.goRelativeStep(1);
-    }
-  }, [flow, onSelect, provisioning]);
-
-  const onNext = useCallback(async () => {
-    if (flow.step.key === "location") {
-      if (flow.selections.location === "remote") {
-        const connected = await remote.verifyRemoteConnection();
-        if (!connected) return;
-      }
-      if (flow.currentStepKeyRef.current !== "location") return;
-      flow.goToStepKey("container");
-      return;
-    }
-    if (flow.step.key === "container") {
-      const plan = await provisioning.ensureRoutePlanForSelection();
-      if (!plan) return;
-      if (flow.currentStepKeyRef.current !== "container") return;
-      flow.goToStepKey(nextBoundaryStep(plan));
-      return;
-    }
-    if (flow.step.key === "auth-import") {
-      await provisioning.advanceFromAuthImportStep();
-      return;
-    }
-    if (flow.step.key === "harness-downloads") {
-      await provisioning.advanceFromHarnessDownloadsStep();
-      return;
-    }
-    if (flow.step.key === "session-titling") {
-      provisioning.setTitlingPersistError(null);
-      if (provisioning.titlingMode === "skip") {
-        flow.goRelativeStep(1);
-        return;
-      }
-      if (provisioning.titlingMode !== "remote" && provisioning.titlingMode !== "local") {
-        provisioning.setTitlingPersistError("Choose a titling option or skip for now.");
-        return;
-      }
-      if (provisioning.titlingMode === "remote" && !provisioning.titlingRemoteValid) {
-        provisioning.setTitlingPersistError("Remote titling needs base URL, API key, and model.");
-        return;
-      }
-      const persisted = await provisioning.ensureTitlingPersistedForCurrentTarget();
-      if (!persisted) return;
-      flow.goRelativeStep(1);
-      return;
-    }
-    if (flow.step.key === "source") {
-      setCreateError(null);
-      const preflightOk = await create.preflightSourceStep();
-      if (!preflightOk) return;
-      flow.goRelativeStep(1);
-      return;
-    }
-    flow.goRelativeStep(1);
-  }, [create, flow, provisioning, remote]);
-
   useEffect(() => {
-    if (flow.currentStepKey !== "harness-downloads") {
+    if (workflow.flow.currentStepKey !== "harness-downloads") {
       setHarnessDownloadsCanScroll(false);
       setHarnessDownloadsAtBottom(true);
       return;
@@ -310,11 +68,11 @@ export function WorkspaceSetupPageController() {
       window.removeEventListener("resize", updateHarnessDownloadsScrollState);
     };
   }, [
-    flow.currentStepKey,
-    provisioning.harnessInstallBusy,
-    provisioning.harnessInstallCandidates,
-    provisioning.harnessInstallRows,
     updateHarnessDownloadsScrollState,
+    workflow.flow.currentStepKey,
+    workflow.provisioning.harnessInstallBusy,
+    workflow.provisioning.harnessInstallCandidates,
+    workflow.provisioning.harnessInstallRows,
   ]);
 
   useEffect(() => {
@@ -324,8 +82,8 @@ export function WorkspaceSetupPageController() {
     return () => {
       if (wizardCompletedRef.current) return;
       const last = lastWizardStepViewedRef.current ?? {
-        key: flow.currentStepKeyRef.current,
-        index: flow.stepIndex,
+        key: workflow.flow.currentStepKeyRef.current,
+        index: workflow.flow.stepIndex,
       };
       trackWizardAbandoned({
         wizardKey,
@@ -333,201 +91,187 @@ export function WorkspaceSetupPageController() {
         lastStepIndex: last.index,
       });
     };
-  }, [flow.currentStepKeyRef, flow.stepIndex, wizardKey]);
+  }, [wizardKey, workflow.flow.currentStepKeyRef, workflow.flow.stepIndex]);
 
   useEffect(() => {
-    lastWizardStepViewedRef.current = { key: flow.step.key, index: flow.stepIndex };
+    lastWizardStepViewedRef.current = { key: workflow.flow.step.key, index: workflow.flow.stepIndex };
     trackWizardStepViewed({
       wizardKey,
-      stepKey: flow.step.key,
-      stepIndex: flow.stepIndex,
+      stepKey: workflow.flow.step.key,
+      stepIndex: workflow.flow.stepIndex,
     });
-  }, [flow.step.key, flow.stepIndex, wizardKey]);
+  }, [wizardKey, workflow.flow.step.key, workflow.flow.stepIndex]);
 
   useEffect(() => {
-    if (flow.selections.container === "host-mounted") {
+    if (workflow.flow.selections.container === "host-mounted") {
       setContainerAdvancedOpen(true);
     }
-  }, [flow.selections.container]);
+  }, [workflow.flow.selections.container]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (create.importInitDialog) {
-        create.resolveImportInitDialog(false);
+      if (workflow.create.importInitDialog) {
+        workflow.create.resolveImportInitDialog(false);
         return;
       }
       setOpenInfoKey(null);
     };
-    if (openInfoKey || create.importInitDialog) {
+    if (openInfoKey || workflow.create.importInitDialog) {
       window.addEventListener("keydown", onKeyDown);
       return () => window.removeEventListener("keydown", onKeyDown);
     }
     return;
-  }, [create.importInitDialog, create.resolveImportInitDialog, openInfoKey]);
-
-  useEffect(() => {
-    if (pushBranchTouched) return;
-    if (!targetBranch.trim()) return;
-    setPushBranch(targetBranch);
-  }, [pushBranchTouched, targetBranch]);
+  }, [openInfoKey, workflow.create.importInitDialog, workflow.create.resolveImportInitDialog]);
 
   return (
     <WorkspaceSetupPageView
-      importInitDialog={create.importInitDialog}
-      resolveImportInitDialog={create.resolveImportInitDialog}
+      importInitDialog={workflow.create.importInitDialog}
+      resolveImportInitDialog={workflow.create.resolveImportInitDialog}
       infoStep={infoStep}
       openInfoKey={openInfoKey}
       setOpenInfoKey={setOpenInfoKey}
-      step={flow.step}
-      steps={flow.steps}
-      stepIndex={flow.stepIndex}
-      selections={flow.selections}
-      createError={createError}
-      setCreateError={setCreateError}
-      showLaunchPanel={create.showLaunchPanel}
-      launchSnapshot={create.launchSnapshot}
-      currentLaunchPhaseLabel={launchPhaseLabel(create.launchSnapshot?.current_phase)}
-      currentLaunchElapsed={create.currentLaunchElapsed}
-      launchCopyLabel={create.launchCopyLabel}
+      step={workflow.flow.step}
+      steps={workflow.flow.steps}
+      stepIndex={workflow.flow.stepIndex}
+      selections={workflow.flow.selections}
+      createError={workflow.draft.createError}
+      setCreateError={workflow.setters.createError}
+      showLaunchPanel={workflow.create.showLaunchPanel}
+      launchSnapshot={workflow.create.launchSnapshot}
+      currentLaunchPhaseLabel={launchPhaseLabel(workflow.create.launchSnapshot?.current_phase)}
+      currentLaunchElapsed={workflow.create.currentLaunchElapsed}
+      launchCopyLabel={workflow.create.launchCopyLabel}
       onCopyLaunchDiagnostics={() => {
-        void create.onCopyLaunchDiagnostics();
+        void workflow.create.onCopyLaunchDiagnostics();
       }}
-      launchLogs={create.launchLogs}
-      onSelectOption={onSelectOption}
+      launchLogs={workflow.create.launchLogs}
+      onSelectOption={workflow.onSelectOption}
       containerAdvancedOpen={containerAdvancedOpen}
       setContainerAdvancedOpen={setContainerAdvancedOpen}
-      networkAllowlist={networkAllowlist}
-      setNetworkAllowlist={setNetworkAllowlist}
-      remoteHostInput={remote.remoteHostInput}
-      onRemoteInputChange={remote.onRemoteInputChange}
-      remotePasswordPromptVisible={remote.remotePasswordPromptVisible}
-      remotePasswordInput={remote.remotePasswordInput}
-      setRemotePasswordInput={remote.setRemotePasswordInput}
-      remoteStatus={remote.remoteStatus}
-      setRemoteStatus={remote.setRemoteStatus}
-      remoteError={remote.remoteError}
-      setRemoteError={remote.setRemoteError}
-      sshSuggestions={remote.sshSuggestions}
-      authImportBusy={provisioning.authImportBusy}
-      authImportError={provisioning.authImportError}
-      authImportCandidates={provisioning.authImportCandidates}
-      authImportSelected={provisioning.authImportSelected}
-      setAuthImportSelected={provisioning.setAuthImportSelected}
-      harnessByProviderId={provisioning.harnessByProviderId}
-      onSkipAuthImport={() => {
-        void provisioning.advanceFromAuthImportStep({ clearSelections: true });
-      }}
-      harnessInstallBusy={provisioning.harnessInstallBusy}
-      harnessInstallError={provisioning.harnessInstallError}
-      selectedHarnessRunningCount={provisioning.selectedHarnessRunningCount}
-      selectedHarnessBlockedCount={provisioning.selectedHarnessBlockedCount}
-      harnessInstallCandidates={provisioning.harnessInstallCandidates}
+      networkAllowlist={workflow.draft.networkAllowlist}
+      setNetworkAllowlist={workflow.setters.networkAllowlist}
+      remoteHostInput={workflow.remote.remoteHostInput}
+      onRemoteInputChange={workflow.remote.onRemoteInputChange}
+      remotePasswordPromptVisible={workflow.remote.remotePasswordPromptVisible}
+      remotePasswordInput={workflow.remote.remotePasswordInput}
+      setRemotePasswordInput={workflow.remote.setRemotePasswordInput}
+      remoteStatus={workflow.remote.remoteStatus}
+      setRemoteStatus={workflow.remote.setRemoteStatus}
+      remoteError={workflow.remote.remoteError}
+      setRemoteError={workflow.remote.setRemoteError}
+      sshSuggestions={workflow.remote.sshSuggestions}
+      authImportBusy={workflow.provisioning.authImportBusy}
+      authImportError={workflow.provisioning.authImportError}
+      authImportCandidates={workflow.provisioning.authImportCandidates}
+      authImportSelected={workflow.provisioning.authImportSelected}
+      setAuthImportSelected={workflow.provisioning.setAuthImportSelected}
+      harnessByProviderId={workflow.provisioning.harnessByProviderId}
+      onSkipAuthImport={workflow.onSkipAuthImport}
+      harnessInstallBusy={workflow.provisioning.harnessInstallBusy}
+      harnessInstallError={workflow.provisioning.harnessInstallError}
+      selectedHarnessRunningCount={workflow.provisioning.selectedHarnessRunningCount}
+      selectedHarnessBlockedCount={workflow.provisioning.selectedHarnessBlockedCount}
+      harnessInstallCandidates={workflow.provisioning.harnessInstallCandidates}
       harnessDownloadsCanScroll={harnessDownloadsCanScroll}
       harnessDownloadsAtBottom={harnessDownloadsAtBottom}
       harnessDownloadsScrollRef={harnessDownloadsScrollRef}
       updateHarnessDownloadsScrollState={updateHarnessDownloadsScrollState}
-      harnessInstallSelected={provisioning.harnessInstallSelected}
-      setHarnessInstallSelected={provisioning.setHarnessInstallSelected}
-      harnessInstallRows={provisioning.harnessInstallRows}
-      selectedHarnessInstallTarget={provisioning.selectedHarnessInstallTarget}
+      harnessInstallSelected={workflow.provisioning.harnessInstallSelected}
+      setHarnessInstallSelected={workflow.provisioning.setHarnessInstallSelected}
+      harnessInstallRows={workflow.provisioning.harnessInstallRows}
+      selectedHarnessInstallTarget={workflow.provisioning.selectedHarnessInstallTarget}
       cancelHarnessInstall={(providerId) => {
-        void provisioning.cancelHarnessInstall(providerId);
+        void workflow.provisioning.cancelHarnessInstall(providerId);
       }}
-      onSkipHarnessDownloads={() => {
-        void provisioning.advanceFromHarnessDownloadsStep({ clearSelections: true });
-      }}
-      titlingProbeBusy={provisioning.titlingProbeBusy}
-      titlingProbeError={provisioning.titlingProbeError}
-      titlingPersistError={provisioning.titlingPersistError}
-      titlingStatusError={provisioning.titlingStatusError}
-      titlingMode={provisioning.titlingMode}
-      setTitlingMode={provisioning.setTitlingMode}
-      titlingLocalInstallBusy={provisioning.titlingLocalInstallBusy}
-      titlingPersistBusy={provisioning.titlingPersistBusy}
-      onSelectTitlingLocal={provisioning.onSelectTitlingLocal}
-      titlingLocalStatus={provisioning.titlingLocalStatus}
-      titlingLocalInstall={provisioning.titlingLocalInstall}
-      titlingRemoteBaseUrl={provisioning.titlingRemoteBaseUrl}
-      setTitlingRemoteBaseUrl={provisioning.setTitlingRemoteBaseUrl}
-      titlingRemoteApiKey={provisioning.titlingRemoteApiKey}
-      setTitlingRemoteApiKey={provisioning.setTitlingRemoteApiKey}
-      titlingRemoteModel={provisioning.titlingRemoteModel}
-      setTitlingRemoteModel={provisioning.setTitlingRemoteModel}
-      titlingRemoteAdvancedOpen={provisioning.titlingRemoteAdvancedOpen}
-      setTitlingRemoteAdvancedOpen={provisioning.setTitlingRemoteAdvancedOpen}
-      titlingRemoteUseJson={provisioning.titlingRemoteUseJson}
-      setTitlingRemoteUseJson={provisioning.setTitlingRemoteUseJson}
-      invalidateTitlingPersisted={provisioning.invalidateTitlingPersisted}
-      onSkipTitling={() => {
-        provisioning.invalidateTitlingPersisted();
-        provisioning.setTitlingMode("skip");
-        flow.goRelativeStep(1);
-      }}
-      needsSourcePath={flow.needsSourcePath}
-      sourcePath={sourcePath}
-      setSourcePath={setSourcePath}
+      onSkipHarnessDownloads={workflow.onSkipHarnessDownloads}
+      titlingProbeBusy={workflow.provisioning.titlingProbeBusy}
+      titlingProbeError={workflow.provisioning.titlingProbeError}
+      titlingPersistError={workflow.provisioning.titlingPersistError}
+      titlingStatusError={workflow.provisioning.titlingStatusError}
+      titlingMode={workflow.provisioning.titlingMode}
+      setTitlingMode={workflow.provisioning.setTitlingMode}
+      titlingLocalInstallBusy={workflow.provisioning.titlingLocalInstallBusy}
+      titlingPersistBusy={workflow.provisioning.titlingPersistBusy}
+      onSelectTitlingLocal={workflow.onSelectTitlingLocal}
+      titlingLocalStatus={workflow.provisioning.titlingLocalStatus}
+      titlingLocalInstall={workflow.provisioning.titlingLocalInstall}
+      titlingRemoteBaseUrl={workflow.provisioning.titlingRemoteBaseUrl}
+      setTitlingRemoteBaseUrl={workflow.provisioning.setTitlingRemoteBaseUrl}
+      titlingRemoteApiKey={workflow.provisioning.titlingRemoteApiKey}
+      setTitlingRemoteApiKey={workflow.provisioning.setTitlingRemoteApiKey}
+      titlingRemoteModel={workflow.provisioning.titlingRemoteModel}
+      setTitlingRemoteModel={workflow.provisioning.setTitlingRemoteModel}
+      titlingRemoteAdvancedOpen={workflow.provisioning.titlingRemoteAdvancedOpen}
+      setTitlingRemoteAdvancedOpen={workflow.provisioning.setTitlingRemoteAdvancedOpen}
+      titlingRemoteUseJson={workflow.provisioning.titlingRemoteUseJson}
+      setTitlingRemoteUseJson={workflow.provisioning.setTitlingRemoteUseJson}
+      invalidateTitlingPersisted={workflow.provisioning.invalidateTitlingPersisted}
+      onSkipTitling={workflow.onSkipTitling}
+      needsSourcePath={workflow.flow.needsSourcePath}
+      sourcePath={workflow.draft.sourcePath}
+      setSourcePath={workflow.setters.sourcePath}
       onPickLocalFolder={() => {
-        void create.onPickLocalFolder();
+        void workflow.create.onPickLocalFolder();
       }}
-      importRepoStatus={importRepoStatus}
-      importRepoNote={importRepoNote}
-      remotePathSuggestions={remote.remotePathSuggestions}
-      remotePathStatus={remote.remotePathStatus}
-      remotePathError={remote.remotePathError}
-      repoUrl={repoUrl}
-      setRepoUrl={setRepoUrl}
-      repoBranch={repoBranch}
-      setRepoBranch={setRepoBranch}
-      useDiskIsolatedStaging={flow.useDiskIsolatedStaging}
-      setupHook={setupHook}
-      setSetupHook={setSetupHook}
-      workspaceName={workspaceName}
-      setWorkspaceName={setWorkspaceName}
-      mergeQueueSkipped={flow.mergeQueueSkipped}
-      targetBranch={targetBranch}
-      setTargetBranch={setTargetBranch}
-      setTargetBranchTouched={setTargetBranchTouched}
-      verifyCommand={verifyCommand}
-      setVerifyCommand={setVerifyCommand}
+      importRepoStatus={workflow.draft.importRepoStatus}
+      importRepoNote={workflow.draft.importRepoNote}
+      remotePathSuggestions={workflow.remote.remotePathSuggestions}
+      remotePathStatus={workflow.remote.remotePathStatus}
+      remotePathError={workflow.remote.remotePathError}
+      repoUrl={workflow.draft.repoUrl}
+      setRepoUrl={workflow.setters.repoUrl}
+      repoBranch={workflow.draft.repoBranch}
+      setRepoBranch={workflow.setters.repoBranch}
+      useDiskIsolatedStaging={workflow.flow.useDiskIsolatedStaging}
+      setupHook={workflow.draft.setupHook}
+      setSetupHook={workflow.setters.setupHook}
+      workspaceName={workflow.draft.workspaceName}
+      setWorkspaceName={workflow.setters.workspaceName}
+      mergeQueueSkipped={workflow.flow.mergeQueueSkipped}
+      targetBranch={workflow.draft.targetBranch}
+      setTargetBranch={workflow.setters.targetBranch}
+      setTargetBranchTouched={workflow.setters.targetBranchTouched}
+      verifyCommand={workflow.draft.verifyCommand}
+      setVerifyCommand={workflow.setters.verifyCommand}
       mergeAdvancedOpen={mergeAdvancedOpen}
       setMergeAdvancedOpen={setMergeAdvancedOpen}
-      pushOnSuccess={pushOnSuccess}
-      setPushOnSuccess={setPushOnSuccess}
-      pushRemote={pushRemote}
-      setPushRemote={setPushRemote}
-      pushBranch={pushBranch}
-      setPushBranch={setPushBranch}
-      setPushBranchTouched={setPushBranchTouched}
+      pushOnSuccess={workflow.draft.pushOnSuccess}
+      setPushOnSuccess={workflow.setters.pushOnSuccess}
+      pushRemote={workflow.draft.pushRemote}
+      setPushRemote={workflow.setters.pushRemote}
+      pushBranch={workflow.draft.pushBranch}
+      setPushBranch={workflow.setters.pushBranch}
+      setPushBranchTouched={workflow.setters.pushBranchTouched}
       enableMergeQueueIfSkipped={() => {
-        if (!flow.mergeQueueSkipped) return;
-        flow.clearSelection("merge-queue");
+        if (!workflow.flow.mergeQueueSkipped) return;
+        workflow.flow.clearSelection("merge-queue");
       }}
       onMergeSkip={() => {
-        onSelect("merge-queue", "skip");
+        workflow.onSelect("merge-queue", "skip");
         setMergeAdvancedOpen(false);
-        setPushOnSuccess(false);
-        flow.goRelativeStep(1);
+        workflow.setters.pushOnSuccess(false);
+        workflow.flow.goRelativeStep(1);
       }}
-      harnessSummaryValue={provisioning.harnessSummaryValue}
-      titlingSummaryValue={provisioning.titlingSummaryValue}
-      sourceStepComplete={flow.sourceStepValidation.isComplete}
-      titlingRemoteValid={provisioning.titlingRemoteValid}
-      hasRemoteHost={remote.hasRemoteHost}
-      goToStepKey={flow.goToStepKey}
-      isFirst={flow.isFirst}
-      isLast={flow.isLast}
-      canAdvance={canAdvance}
-      creating={create.creating}
+      harnessSummaryValue={workflow.provisioning.harnessSummaryValue}
+      titlingSummaryValue={workflow.provisioning.titlingSummaryValue}
+      sourceStepComplete={workflow.flow.sourceStepValidation.isComplete}
+      titlingRemoteValid={workflow.provisioning.titlingRemoteValid}
+      hasRemoteHost={workflow.remote.hasRemoteHost}
+      goToStepKey={workflow.flow.goToStepKey}
+      isFirst={workflow.flow.isFirst}
+      isLast={workflow.flow.isLast}
+      canAdvance={workflow.canAdvance}
+      creating={workflow.create.creating}
       onCreate={() => {
-        void create.onCreate();
+        void workflow.create.onCreate();
       }}
       onNext={() => {
-        void onNext();
+        void workflow.onNext();
       }}
-      goRelativeStep={flow.goRelativeStep}
-      createButtonLabel={create.createButtonLabel}
-      nextButtonLabel={nextButtonLabel}
+      goRelativeStep={workflow.flow.goRelativeStep}
+      createButtonLabel={workflow.create.createButtonLabel}
+      nextButtonLabel={workflow.nextButtonLabel}
     />
   );
 }

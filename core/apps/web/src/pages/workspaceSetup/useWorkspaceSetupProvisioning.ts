@@ -47,10 +47,10 @@ import { isCurrentFlowRunToken, nextFlowRunToken, type FlowRunToken } from "./fl
 import {
   nextAfterAuthImport,
   nextAfterHarnessDownloads,
-  nextBoundaryStep,
   type WizardRoutePlan,
   type WizardStepKey,
 } from "./wizardFlow";
+import { buildOnboardingAfterConnectResult, buildWizardRoutePlan } from "./routePlanner";
 import type { WizardSelections } from "./wizardFlowReducer";
 import {
   messageFromError,
@@ -61,6 +61,7 @@ import {
   type RemoteStatus,
 } from "./wizardTypes";
 import { upsertProviderInstallProgress } from "../../state/providerInstallProgressStore";
+import type { EnsureOnboardingAfterDaemonConnectResult } from "./workflowTypes";
 
 type UseWorkspaceSetupProvisioningArgs = {
   currentStepKey: WizardStepKey;
@@ -70,8 +71,6 @@ type UseWorkspaceSetupProvisioningArgs = {
   setRoutePlan: (routePlan: WizardRoutePlan | null) => void;
   setRoutePlanningBusy: (busy: boolean) => void;
   invalidateRoutePlan: () => void;
-  goToStepKey: (key: WizardStepKey) => void;
-  goRelativeStep: (delta: number) => void;
   desktopApp: boolean;
   selectedDaemonTargetKey: string | null;
   parsedRemoteHost: string | undefined;
@@ -91,8 +90,6 @@ export function useWorkspaceSetupProvisioning({
   setRoutePlan,
   setRoutePlanningBusy,
   invalidateRoutePlan,
-  goToStepKey,
-  goRelativeStep,
   desktopApp,
   selectedDaemonTargetKey,
   parsedRemoteHost,
@@ -154,6 +151,7 @@ export function useWorkspaceSetupProvisioning({
   const titlingInstallPollRef = useRef<number | null>(null);
   const titlingInstallPollGenerationRef = useRef(0);
   const harnessInstallPollTimeoutsRef = useRef<Record<string, number>>({});
+  const harnessInstallPollGenerationsRef = useRef<Record<string, number>>({});
   const previousTargetKeyRef = useRef<string | null>(null);
 
   const harnessByProviderId = useMemo(() => {
@@ -209,6 +207,8 @@ export function useWorkspaceSetupProvisioning({
 
   const clearHarnessInstallPoll = (providerId?: string) => {
     if (providerId) {
+      harnessInstallPollGenerationsRef.current[providerId] =
+        (harnessInstallPollGenerationsRef.current[providerId] ?? 0) + 1;
       const timeout = harnessInstallPollTimeoutsRef.current[providerId];
       if (timeout) {
         window.clearTimeout(timeout);
@@ -217,6 +217,8 @@ export function useWorkspaceSetupProvisioning({
       return;
     }
     for (const key of Object.keys(harnessInstallPollTimeoutsRef.current)) {
+      harnessInstallPollGenerationsRef.current[key] =
+        (harnessInstallPollGenerationsRef.current[key] ?? 0) + 1;
       const timeout = harnessInstallPollTimeoutsRef.current[key];
       window.clearTimeout(timeout);
       delete harnessInstallPollTimeoutsRef.current[key];
@@ -241,6 +243,7 @@ export function useWorkspaceSetupProvisioning({
     titlingProbePromiseRef.current = null;
     titlingProbePromiseTargetKeyRef.current = null;
     clearHarnessInstallPoll();
+    harnessInstallPollGenerationsRef.current = {};
     clearTitlingInstallPoll();
     setAuthImportBusy(false);
     setAuthImportCandidates([]);
@@ -295,10 +298,14 @@ export function useWorkspaceSetupProvisioning({
   const attachHarnessInstall = async (providerId: string, installId: string) => {
     if (!providerId || !installId) return;
     if (harnessInstallPollTimeoutsRef.current[providerId]) return;
+    const generation = (harnessInstallPollGenerationsRef.current[providerId] ?? 0) + 1;
+    harnessInstallPollGenerationsRef.current[providerId] = generation;
 
     const poll = async () => {
+      if (harnessInstallPollGenerationsRef.current[providerId] !== generation) return;
       try {
         const info = await getInstall(installId);
+        if (harnessInstallPollGenerationsRef.current[providerId] !== generation) return;
         const pct = computeInstallPct(info, harnessInstallRows[providerId]?.pct ?? null);
         const nextInstallState = {
           installId,
@@ -333,7 +340,9 @@ export function useWorkspaceSetupProvisioning({
       } catch {
         // keep polling while install is active
       }
+      if (harnessInstallPollGenerationsRef.current[providerId] !== generation) return;
       harnessInstallPollTimeoutsRef.current[providerId] = window.setTimeout(() => {
+        if (harnessInstallPollGenerationsRef.current[providerId] !== generation) return;
         void poll();
       }, 900);
     };
@@ -376,8 +385,6 @@ export function useWorkspaceSetupProvisioning({
       );
       if (info.state !== "running") {
         clearHarnessInstallPoll(providerId);
-        setHarnessInstallScannedKey(null);
-        setHarnessInstallDeferredKey(null);
       }
       upsertProviderInstallProgress(providerId, nextInstallState);
     } catch (error) {
@@ -468,7 +475,7 @@ export function useWorkspaceSetupProvisioning({
       setTitlingRemoteModel(draft.remote.model);
       setTitlingRemoteUseJson(draft.remote.useJson);
       setTitlingLocalUseJson(draft.local.useJson);
-      setTitlingMode(draft.mode);
+      setTitlingMode((currentMode) => (currentMode === "skip" ? "skip" : draft.mode));
 
       let localStatus: TitleGenerationLocalStatus | null = null;
       if (!settings.title_generation || settings.title_generation.mode === "local") {
@@ -600,13 +607,12 @@ export function useWorkspaceSetupProvisioning({
   };
 
   const onSelectTitlingLocal = () => {
-    if (titlingLocalInstallBusy || titlingPersistBusy) return;
+    if (titlingLocalInstallBusy || titlingPersistBusy) return false;
     invalidateTitlingPersisted();
     setTitlingMode("local");
     setTitlingLocalInstallBusy(true);
     setTitlingStatusError(null);
     setTitlingPersistError(null);
-    goRelativeStep(1);
     void (async () => {
       try {
         const persisted = await ensureTitlingPersistedForCurrentTarget("local");
@@ -621,6 +627,7 @@ export function useWorkspaceSetupProvisioning({
         setTitlingLocalInstallBusy(false);
       }
     })();
+    return true;
   };
 
   const scanAuthImportCandidatesForTarget = useCallback(async (
@@ -814,12 +821,12 @@ export function useWorkspaceSetupProvisioning({
 
   const ensureOnboardingAfterDaemonConnect = useCallback(async (
     options?: { allowTitlingInsertion?: boolean },
-  ): Promise<boolean> => {
+  ): Promise<EnsureOnboardingAfterDaemonConnectResult | null> => {
     const location = selections.location;
-    if (location !== "local" && location !== "remote") return false;
+    if (location !== "local" && location !== "remote") return null;
     const targetKey = selectedDaemonTargetKeyRef.current;
     const containerSelection = (selections.container ?? "").trim();
-    if (!targetKey || !containerSelection) return false;
+    if (!targetKey || !containerSelection) return null;
     const allowTitlingInsertion = options?.allowTitlingInsertion ?? true;
 
     const authScanKey = authImportScanKeyForTarget(location);
@@ -838,43 +845,23 @@ export function useWorkspaceSetupProvisioning({
       ensureTitlingProbeForCurrentTarget({ force: true }),
     ]);
 
-    const nextPlan: WizardRoutePlan = {
-      targetKey: `${targetKey}|${containerSelection}`,
+    const result = buildOnboardingAfterConnectResult({
+      targetKey,
       containerSelection,
-      includeHarnessDownloads: harnessRows.some(
+      authImportCandidateCount: authCandidates.length,
+      missingHarnessCount: harnessRows.filter(
         (candidate) => candidate.installSupported && !(candidate.installed && candidate.healthy),
-      ),
-      includeAuthImport: authCandidates.length > 0,
-      includeTitling: titlingMode !== "skip" && titlingRequired === true,
-    };
-    setRoutePlan(nextPlan);
-
-    const shouldInsertHarnessDownloads =
-      nextPlan.includeHarnessDownloads && routePlan?.includeHarnessDownloads !== true;
-    const shouldInsertAuthImport =
-      nextPlan.includeAuthImport && routePlan?.includeAuthImport !== true;
-    const shouldInsertTitling =
-      allowTitlingInsertion && nextPlan.includeTitling && routePlan?.includeTitling !== true;
-
-    if (shouldInsertHarnessDownloads) {
-      goToStepKey("harness-downloads");
-      return true;
-    }
-    if (shouldInsertAuthImport) {
-      goToStepKey("auth-import");
-      return true;
-    }
-    if (shouldInsertTitling) {
-      goToStepKey("session-titling");
-      return true;
-    }
-    return false;
+      ).length,
+      titlingRequired: titlingRequired === true,
+      titlingMode,
+    }, routePlan, { allowTitlingInsertion });
+    setRoutePlan(result.routePlan);
+    return result;
   }, [
     authImportCandidates,
     authImportDeferredKey,
     authImportScannedKey,
     ensureTitlingProbeForCurrentTarget,
-    goToStepKey,
     harnessInstallCandidates,
     harnessInstallDeferredKey,
     harnessInstallScannedKey,
@@ -912,15 +899,16 @@ export function useWorkspaceSetupProvisioning({
       ]);
       if (!isCurrentFlowRunToken(routePlanRunRef.current, run)) return null;
 
-      const nextPlan: WizardRoutePlan = {
-        targetKey: routeKey,
+      const nextPlan = buildWizardRoutePlan({
+        targetKey,
         containerSelection,
-        includeHarnessDownloads: harnessRows.some(
+        authImportCandidateCount: authCandidates.length,
+        missingHarnessCount: harnessRows.filter(
           (candidate) => candidate.installSupported && !(candidate.installed && candidate.healthy),
-        ),
-        includeAuthImport: authCandidates.length > 0,
-        includeTitling: titlingRequired === true,
-      };
+        ).length,
+        titlingRequired: titlingRequired === true,
+        titlingMode,
+      });
       setRoutePlan(nextPlan);
       return nextPlan;
     } finally {
@@ -937,12 +925,13 @@ export function useWorkspaceSetupProvisioning({
     selections.location,
     setRoutePlan,
     setRoutePlanningBusy,
+    titlingMode,
   ]);
 
   const advanceFromAuthImportStep = async (
     options?: { clearSelections?: boolean },
-  ): Promise<void> => {
-    if (authImportBusy) return;
+  ): Promise<WizardStepKey | null> => {
+    if (authImportBusy) return null;
     const selectionSnapshot = options?.clearSelections ? {} : authImportSelected;
     if (options?.clearSelections) {
       setAuthImportSelected({});
@@ -968,31 +957,34 @@ export function useWorkspaceSetupProvisioning({
         if (failures.length > 0) {
           setAuthImportError(`Some auth imports did not apply. ${failures.join(" ; ")}`);
           setAuthImportBusy(false);
-          return;
+          return null;
         }
       } catch (error) {
         setAuthImportError(messageFromError(error));
         setAuthImportBusy(false);
-        return;
+        return null;
       }
       setAuthImportBusy(false);
     }
     const titlingRequired = await ensureTitlingProbeForCurrentTarget();
-    if (currentStepKeyRef.current !== "auth-import") return;
-    if (titlingRequired === true && routePlan?.includeTitling !== true) {
+    if (currentStepKeyRef.current !== "auth-import") return null;
+    if (
+      titlingRequired === true
+      && titlingMode !== "skip"
+      && routePlan?.includeTitling !== true
+    ) {
       if (routePlan) {
         setRoutePlan({ ...routePlan, includeTitling: true });
       }
-      goToStepKey("session-titling");
-      return;
+      return "session-titling";
     }
-    goToStepKey(nextAfterAuthImport(routePlan));
+    return nextAfterAuthImport(routePlan);
   };
 
   const advanceFromHarnessDownloadsStep = async (
     options?: { clearSelections?: boolean },
-  ): Promise<void> => {
-    if (harnessInstallBusy) return;
+  ): Promise<WizardStepKey | null> => {
+    if (harnessInstallBusy) return null;
     const selectionSnapshot = options?.clearSelections ? {} : harnessInstallSelected;
     if (options?.clearSelections) {
       setHarnessInstallSelected({});
@@ -1015,15 +1007,17 @@ export function useWorkspaceSetupProvisioning({
 
     if (selectedRows.length === 0 || selectedRows.every(({ status }) => status === "installed" || status === "succeeded")) {
       setHarnessInstallError(null);
-      if (currentStepKeyRef.current !== "harness-downloads") return;
-      goToStepKey(nextAfterHarnessDownloads(routePlan));
-      return;
+      if (currentStepKeyRef.current !== "harness-downloads") return null;
+      return nextAfterHarnessDownloads(routePlan);
     }
     if (runningRows.length > 0 && startableRows.length === 0) {
       setHarnessInstallError(null);
-      if (currentStepKeyRef.current !== "harness-downloads") return;
-      goToStepKey(nextAfterHarnessDownloads(routePlan));
-      return;
+      if (currentStepKeyRef.current !== "harness-downloads") return null;
+      return nextAfterHarnessDownloads(routePlan);
+    }
+    if (blockingRows.length > 0 && startableRows.length === 0) {
+      if (currentStepKeyRef.current !== "harness-downloads") return null;
+      return nextAfterHarnessDownloads(routePlan);
     }
 
     setHarnessInstallBusy(true);
@@ -1109,7 +1103,7 @@ export function useWorkspaceSetupProvisioning({
 
       const startedAny = startResults.some((result) => result.ok);
       if (!shouldAdvance && !startedAny && runningRows.length === 0 && blockingRows.length === 0) {
-        return;
+        return null;
       }
       shouldAdvance = true;
     } catch (error) {
@@ -1118,9 +1112,9 @@ export function useWorkspaceSetupProvisioning({
     } finally {
       setHarnessInstallBusy(false);
     }
-    if (!shouldAdvance) return;
-    if (currentStepKeyRef.current !== "harness-downloads") return;
-    goToStepKey(nextAfterHarnessDownloads(routePlan));
+    if (!shouldAdvance) return null;
+    if (currentStepKeyRef.current !== "harness-downloads") return null;
+    return nextAfterHarnessDownloads(routePlan);
   };
 
   const harnessCandidateStatuses = harnessInstallCandidates.map((candidate) => {
