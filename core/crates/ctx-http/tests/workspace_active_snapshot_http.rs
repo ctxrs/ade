@@ -1,10 +1,12 @@
 use std::collections::HashSet;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use futures::{SinkExt, StreamExt};
+use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
+use tokio::sync::Semaphore;
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
 use chrono::Utc;
@@ -13,6 +15,11 @@ use ctx_core::models::{SessionEventType, SessionTurn, SessionTurnStatus};
 use ctx_http::daemon::AppState;
 
 mod common;
+
+fn workspace_http_test_gate() -> &'static Arc<Semaphore> {
+    static GATE: OnceLock<Arc<Semaphore>> = OnceLock::new();
+    GATE.get_or_init(|| Arc::new(Semaphore::new(4)))
+}
 
 fn git_status_untracked_from_message(
     message: ctx_core::models::WorkspaceActiveSnapshotStreamMessage,
@@ -45,13 +52,19 @@ fn git_status_untracked_from_message(
     }
 }
 
-async fn setup() -> (
+async fn setup_with_root(
+    repo: tempfile::TempDir,
+) -> (
     tempfile::TempDir,
     tempfile::TempDir,
     Arc<AppState>,
     common::TestServer,
 ) {
-    let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
+    let permit = workspace_http_test_gate()
+        .clone()
+        .acquire_owned()
+        .await
+        .unwrap();
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
 
@@ -62,14 +75,173 @@ async fn setup() -> (
         "http://127.0.0.1:0",
     );
     let app = common::router(state.clone());
-    let server = common::spawn_http_server(app).await;
+    let server = common::spawn_http_server(app)
+        .await
+        .with_resource_permit(permit);
 
     (repo, data_dir, state, server)
 }
 
+async fn setup() -> (
+    tempfile::TempDir,
+    tempfile::TempDir,
+    Arc<AppState>,
+    common::TestServer,
+) {
+    setup_with_root(common::init_git_repo(&[("file.txt", "hello\n")]).await).await
+}
+
+async fn setup_git() -> (
+    tempfile::TempDir,
+    tempfile::TempDir,
+    Arc<AppState>,
+    common::TestServer,
+) {
+    setup().await
+}
+
+async fn decode_json_response<T: DeserializeOwned>(response: reqwest::Response) -> T {
+    let status = response.status();
+    let body = response.text().await.unwrap();
+    serde_json::from_str(&body).unwrap_or_else(|err| {
+        panic!(
+            "failed to decode JSON response (status {}): {}\nbody: {}",
+            status, err, body
+        )
+    })
+}
+
+async fn create_task_without_default_session(
+    client: &reqwest::Client,
+    base: &str,
+    workspace_id: ctx_core::ids::WorkspaceId,
+    title: &str,
+) -> ctx_core::models::Task {
+    let response = client
+        .post(format!("{base}/api/workspaces/{}/tasks", workspace_id.0))
+        .json(&json!({
+            "title": title,
+            "create_default_session": false,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        response.status().is_success(),
+        "create_task_without_default_session failed for title {:?}: status {}",
+        title,
+        response.status()
+    );
+    decode_json_response(response).await
+}
+
+async fn attach_primary_worktree(
+    state: &Arc<AppState>,
+    workspace_id: ctx_core::ids::WorkspaceId,
+    task_id: ctx_core::ids::TaskId,
+    root_path: &Path,
+) -> ctx_core::models::Worktree {
+    let worktree = ctx_core::models::Worktree {
+        id: WorktreeId::new(),
+        workspace_id,
+        root_path: root_path.to_string_lossy().to_string(),
+        base_commit_sha: "test-base".to_string(),
+        git_branch: None,
+        vcs_kind: None,
+        base_revision: None,
+        vcs_ref: None,
+        created_at: Utc::now(),
+        bootstrap_status: None,
+        bootstrap_started_at: None,
+        bootstrap_finished_at: None,
+        bootstrap_exit_code: None,
+        bootstrap_timeout_sec: None,
+        bootstrap_error: None,
+        bootstrap_log_path: None,
+        bootstrap_log_truncated: None,
+        bootstrap_command: None,
+        bootstrap_script_path: None,
+    };
+
+    let store = state.store_for_task(task_id).await.unwrap();
+    store.insert_worktree(worktree.clone()).await.unwrap();
+    state
+        .global_store()
+        .upsert_workspace_worktree_index(worktree.id, workspace_id)
+        .await
+        .unwrap();
+    store
+        .set_task_primary_worktree(task_id, worktree.id)
+        .await
+        .unwrap();
+    worktree
+}
+
+async fn create_task_with_primary_worktree(
+    client: &reqwest::Client,
+    state: &Arc<AppState>,
+    base: &str,
+    workspace_id: ctx_core::ids::WorkspaceId,
+    root_path: &Path,
+    title: &str,
+) -> ctx_core::models::Task {
+    let task = create_task_without_default_session(client, base, workspace_id, title).await;
+    attach_primary_worktree(state, workspace_id, task.id, root_path).await;
+    task
+}
+
+async fn create_session_with_request(
+    client: &reqwest::Client,
+    base: &str,
+    task_id: ctx_core::ids::TaskId,
+    request: Value,
+) -> ctx_core::models::Session {
+    let request = match request {
+        Value::Object(map) => map,
+        _ => panic!("session request must be a JSON object"),
+    };
+
+    let response = client
+        .post(format!("{base}/api/tasks/{}/sessions", task_id.0))
+        .json(&Value::Object(request))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        response.status().is_success(),
+        "create_session_with_request failed for task {}: status {}",
+        task_id.0,
+        response.status()
+    );
+    decode_json_response(response).await
+}
+
+async fn create_primary_worktree_session(
+    client: &reqwest::Client,
+    base: &str,
+    task_id: ctx_core::ids::TaskId,
+) -> ctx_core::models::Session {
+    create_session_with_request(
+        client,
+        base,
+        task_id,
+        json!({"provider_id":"fake","model_id":"fake-model"}),
+    )
+    .await
+}
+
+async fn create_primary_worktree_session_with_request(
+    client: &reqwest::Client,
+    base: &str,
+    task_id: ctx_core::ids::TaskId,
+    request: Value,
+) -> ctx_core::models::Session {
+    create_session_with_request(client, base, task_id, request).await
+}
+
 #[tokio::test]
 async fn workspace_active_snapshot_includes_sessions() {
-    let (repo, _data_dir, _state, server) = setup().await;
+    let (repo, _data_dir, state, server) = setup().await;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -83,33 +255,24 @@ async fn workspace_active_snapshot_includes_sessions() {
         .await
         .unwrap();
 
-    let task_active: ctx_core::models::Task = client
-        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
-        .json(&json!({"title":"active"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let task_active =
+        create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "active").await;
 
     let initial_message_id = uuid::Uuid::new_v4().to_string();
     let initial_turn_id = uuid::Uuid::new_v4().to_string();
-    let session: ctx_core::models::Session = client
-        .post(format!("{base}/api/tasks/{}/sessions", task_active.id.0))
-        .json(&json!({
+    let session = create_primary_worktree_session_with_request(
+        client,
+        base,
+        task_active.id,
+        json!({
             "provider_id":"fake",
             "model_id":"fake-model",
             "initial_prompt":"hello",
             "initial_message_id": initial_message_id,
             "initial_turn_id": initial_turn_id,
-        }))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+        }),
+    )
+    .await;
 
     let snapshot: ctx_core::models::WorkspaceActiveSnapshot = client
         .get(format!(
@@ -132,7 +295,7 @@ async fn workspace_active_snapshot_includes_sessions() {
 
 #[tokio::test]
 async fn create_session_rejects_initial_prompt_without_client_ids() {
-    let (repo, _data_dir, _state, server) = setup().await;
+    let (repo, _data_dir, state, server) = setup().await;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -146,15 +309,8 @@ async fn create_session_rejects_initial_prompt_without_client_ids() {
         .await
         .unwrap();
 
-    let task_active: ctx_core::models::Task = client
-        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
-        .json(&json!({"title":"active"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let task_active =
+        create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "active").await;
 
     let resp = client
         .post(format!("{base}/api/tasks/{}/sessions", task_active.id.0))
@@ -201,7 +357,7 @@ async fn create_session_rejects_initial_prompt_without_client_ids() {
 
 #[tokio::test]
 async fn workspace_active_snapshot_includes_worktree_vcs_for_active_tasks_only() {
-    let (repo, _data_dir, state, server) = setup().await;
+    let (repo, _data_dir, state, server) = setup_git().await;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -215,45 +371,23 @@ async fn workspace_active_snapshot_includes_worktree_vcs_for_active_tasks_only()
         .await
         .unwrap();
 
-    let task_active: ctx_core::models::Task = client
-        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
-        .json(&json!({"title":"active-task"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let task_active =
+        create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "active-task")
+            .await;
 
-    let session_active: ctx_core::models::Session = client
-        .post(format!("{base}/api/tasks/{}/sessions", task_active.id.0))
-        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let session_active = create_primary_worktree_session(client, base, task_active.id).await;
 
-    let task_archived: ctx_core::models::Task = client
-        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
-        .json(&json!({"title":"archived-task"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let task_archived = create_task_with_primary_worktree(
+        client,
+        &state,
+        base,
+        ws.id,
+        repo.path(),
+        "archived-task",
+    )
+    .await;
 
-    let session_archived: ctx_core::models::Session = client
-        .post(format!("{base}/api/tasks/{}/sessions", task_archived.id.0))
-        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let session_archived = create_primary_worktree_session(client, base, task_archived.id).await;
 
     let store_active = state.store_for_session(session_active.id).await.unwrap();
     let worktree_active = store_active
@@ -337,25 +471,11 @@ async fn workspace_active_heads_batch_strips_partials() {
         .await
         .unwrap();
 
-    let task: ctx_core::models::Task = client
-        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
-        .json(&json!({"title":"active-heads"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let task =
+        create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "active-heads")
+            .await;
 
-    let session: ctx_core::models::Session = client
-        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let session = create_primary_worktree_session(client, base, task.id).await;
 
     let store = state.store_for_session(session.id).await.unwrap();
     let now = Utc::now();
@@ -403,7 +523,7 @@ async fn workspace_active_heads_batch_strips_partials() {
 
 #[tokio::test]
 async fn session_snapshot_returns_summary_only() {
-    let (repo, _data_dir, _state, server) = setup().await;
+    let (repo, _data_dir, state, server) = setup().await;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -417,25 +537,11 @@ async fn session_snapshot_returns_summary_only() {
         .await
         .unwrap();
 
-    let task: ctx_core::models::Task = client
-        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
-        .json(&json!({"title":"snapshot"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let task =
+        create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "snapshot")
+            .await;
 
-    let session: ctx_core::models::Session = client
-        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let session = create_primary_worktree_session(client, base, task.id).await;
 
     let snapshot: ctx_core::models::SessionSnapshot = client
         .get(format!(
@@ -455,7 +561,7 @@ async fn session_snapshot_returns_summary_only() {
 
 #[tokio::test]
 async fn session_head_returns_head() {
-    let (repo, _data_dir, _state, server) = setup().await;
+    let (repo, _data_dir, state, server) = setup().await;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -469,25 +575,10 @@ async fn session_head_returns_head() {
         .await
         .unwrap();
 
-    let task: ctx_core::models::Task = client
-        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
-        .json(&json!({"title":"head"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let task =
+        create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "head").await;
 
-    let session: ctx_core::models::Session = client
-        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let session = create_primary_worktree_session(client, base, task.id).await;
 
     let head: ctx_core::models::SessionHeadSnapshot = client
         .get(format!(
@@ -520,25 +611,10 @@ async fn workspace_stream_replays_from_after_seq() {
         .await
         .unwrap();
 
-    let task: ctx_core::models::Task = client
-        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
-        .json(&json!({"title":"replay"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let task =
+        create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "replay").await;
 
-    let session: ctx_core::models::Session = client
-        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let session = create_primary_worktree_session(client, base, task.id).await;
     state.remember_session_meta(&session).await;
 
     let store = state.store_for_session(session.id).await.unwrap();
@@ -682,25 +758,11 @@ async fn workspace_stream_replays_tool_events() {
         .await
         .unwrap();
 
-    let task: ctx_core::models::Task = client
-        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
-        .json(&json!({"title":"tool-replay"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let task =
+        create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "tool-replay")
+            .await;
 
-    let session: ctx_core::models::Session = client
-        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let session = create_primary_worktree_session(client, base, task.id).await;
     state.remember_session_meta(&session).await;
 
     let store = state.store_for_session(session.id).await.unwrap();
@@ -843,25 +905,10 @@ async fn workspace_stream_under_load_no_gap_or_reset() {
         .await
         .unwrap();
 
-    let task: ctx_core::models::Task = client
-        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
-        .json(&json!({"title":"load"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let task =
+        create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "load").await;
 
-    let session: ctx_core::models::Session = client
-        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let session = create_primary_worktree_session(client, base, task.id).await;
     state.remember_session_meta(&session).await;
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
@@ -984,7 +1031,7 @@ async fn workspace_stream_under_load_no_gap_or_reset() {
 
 #[tokio::test]
 async fn workspace_stream_emits_git_status_snapshot_on_change() {
-    let (repo, _data_dir, state, server) = setup().await;
+    let (repo, _data_dir, state, server) = setup_git().await;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -998,25 +1045,11 @@ async fn workspace_stream_emits_git_status_snapshot_on_change() {
         .await
         .unwrap();
 
-    let task: ctx_core::models::Task = client
-        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
-        .json(&json!({"title":"git-status"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let task =
+        create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "git-status")
+            .await;
 
-    let session: ctx_core::models::Session = client
-        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let session = create_primary_worktree_session(client, base, task.id).await;
     state.remember_session_meta(&session).await;
     let store = state.store_for_session(session.id).await.unwrap();
     let worktree = store
@@ -1100,7 +1133,7 @@ async fn workspace_stream_emits_git_status_snapshot_on_change() {
 
 #[tokio::test]
 async fn workspace_stream_emits_git_status_snapshot_for_new_subscriber() {
-    let (repo, _data_dir, state, server) = setup().await;
+    let (repo, _data_dir, state, server) = setup_git().await;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -1114,25 +1147,17 @@ async fn workspace_stream_emits_git_status_snapshot_for_new_subscriber() {
         .await
         .unwrap();
 
-    let task: ctx_core::models::Task = client
-        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
-        .json(&json!({"title":"git-status-new-subscriber"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let task = create_task_with_primary_worktree(
+        client,
+        &state,
+        base,
+        ws.id,
+        repo.path(),
+        "git-status-new-subscriber",
+    )
+    .await;
 
-    let session_one: ctx_core::models::Session = client
-        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let session_one = create_primary_worktree_session(client, base, task.id).await;
     state.remember_session_meta(&session_one).await;
     let store_one = state.store_for_session(session_one.id).await.unwrap();
     let worktree_one = store_one
@@ -1184,15 +1209,7 @@ async fn workspace_stream_emits_git_status_snapshot_for_new_subscriber() {
     }
     assert!(saw_initial, "expected initial git status snapshot");
 
-    let session_two: ctx_core::models::Session = client
-        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let session_two = create_primary_worktree_session(client, base, task.id).await;
     state.remember_session_meta(&session_two).await;
     let store_two = state.store_for_session(session_two.id).await.unwrap();
     let worktree_two = store_two
@@ -1249,7 +1266,7 @@ async fn workspace_stream_emits_git_status_snapshot_for_new_subscriber() {
 
 #[tokio::test]
 async fn workspace_stream_emits_worktree_vcs_snapshot_on_activation() {
-    let (repo, _data_dir, _state, server) = setup().await;
+    let (repo, _data_dir, state, server) = setup_git().await;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -1263,25 +1280,11 @@ async fn workspace_stream_emits_worktree_vcs_snapshot_on_activation() {
         .await
         .unwrap();
 
-    let task: ctx_core::models::Task = client
-        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
-        .json(&json!({"title":"vcs-snapshot"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let task =
+        create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "vcs-snapshot")
+            .await;
 
-    let session: ctx_core::models::Session = client
-        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let session = create_primary_worktree_session(client, base, task.id).await;
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
@@ -1356,25 +1359,10 @@ async fn workspace_stream_emits_gap_on_large_replay() {
         .await
         .unwrap();
 
-    let task: ctx_core::models::Task = client
-        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
-        .json(&json!({"title":"gap"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let task =
+        create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "gap").await;
 
-    let session: ctx_core::models::Session = client
-        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let session = create_primary_worktree_session(client, base, task.id).await;
     state.remember_session_meta(&session).await;
     let store = state.store_for_task(task.id).await.unwrap();
     let sessions = store.list_sessions_for_task(task.id).await.unwrap();
@@ -1463,7 +1451,7 @@ async fn workspace_stream_emits_gap_on_large_replay() {
 
 #[tokio::test]
 async fn workspace_active_snapshot_stream_pushes_updates() {
-    let (repo, _data_dir, _state, server) = setup().await;
+    let (repo, _data_dir, state, server) = setup().await;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -1500,25 +1488,10 @@ async fn workspace_active_snapshot_stream_pushes_updates() {
         panic!("expected ready text frame");
     }
 
-    let task: ctx_core::models::Task = client
-        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
-        .json(&json!({"title":"live"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let task =
+        create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "live").await;
 
-    let _session: ctx_core::models::Session = client
-        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let _session = create_primary_worktree_session(client, base, task.id).await;
 
     let mut saw_upsert = false;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
@@ -1553,7 +1526,7 @@ async fn workspace_active_snapshot_stream_pushes_updates() {
 
 #[tokio::test]
 async fn workspace_stream_archived_task_upsert_has_no_snapshot_payload() {
-    let (repo, _data_dir, _state, server) = setup().await;
+    let (repo, _data_dir, state, server) = setup().await;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -1567,25 +1540,11 @@ async fn workspace_stream_archived_task_upsert_has_no_snapshot_payload() {
         .await
         .unwrap();
 
-    let task: ctx_core::models::Task = client
-        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
-        .json(&json!({"title":"archive me"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let task =
+        create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "archive me")
+            .await;
 
-    let _session: ctx_core::models::Session = client
-        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let _session = create_primary_worktree_session(client, base, task.id).await;
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
@@ -1686,34 +1645,11 @@ async fn workspace_active_snapshot_stream_filters_session_head_deltas() {
         .await
         .unwrap();
 
-    let task: ctx_core::models::Task = client
-        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
-        .json(&json!({"title":"live"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let task =
+        create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "live").await;
 
-    let session_a: ctx_core::models::Session = client
-        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    let session_b: ctx_core::models::Session = client
-        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({"provider_id":"fake","model_id":"fake-model"}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let session_a = create_primary_worktree_session(client, base, task.id).await;
+    let session_b = create_primary_worktree_session(client, base, task.id).await;
     let store = state.store_for_task(task.id).await.unwrap();
     let sessions = store.list_sessions_for_task(task.id).await.unwrap();
     assert!(

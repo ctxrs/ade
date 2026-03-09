@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use axum::body::{to_bytes, Body};
 use axum::http::{Method, Request, StatusCode};
@@ -15,6 +15,7 @@ use ctx_store::StoreManager;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tokio::process::Command;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinHandle;
 use tower::ServiceExt;
 
@@ -23,6 +24,13 @@ pub mod openai_responses_stub;
 pub mod updates_failure_safety;
 
 const JJ_MIN_VERSION: (u64, u64, u64) = (0, 25, 0);
+
+fn vcs_command_gate() -> &'static Semaphore {
+    static GATE: OnceLock<Semaphore> = OnceLock::new();
+    // Keep helper subprocess fan-out below local ulimit pressure during
+    // concurrent integration test startup.
+    GATE.get_or_init(|| Semaphore::new(2))
+}
 
 fn parse_jj_version(output: &str) -> Option<(u64, u64, u64)> {
     for token in output.split_whitespace() {
@@ -179,6 +187,7 @@ pub async fn spawn_http_server(app: axum::Router) -> TestServer {
         base_url: format!("http://{addr}"),
         client: reqwest::Client::new(),
         handle,
+        _resource_permit: None,
     }
 }
 
@@ -186,6 +195,14 @@ pub struct TestServer {
     pub base_url: String,
     pub client: reqwest::Client,
     handle: JoinHandle<()>,
+    _resource_permit: Option<OwnedSemaphorePermit>,
+}
+
+impl TestServer {
+    pub fn with_resource_permit(mut self, permit: OwnedSemaphorePermit) -> Self {
+        self._resource_permit = Some(permit);
+        self
+    }
 }
 
 impl Drop for TestServer {
@@ -289,6 +306,7 @@ pub fn fixed_utc(offset_seconds: i64) -> chrono::DateTime<chrono::Utc> {
 }
 
 pub async fn run_git(root: &Path, args: &[&str]) {
+    let _permit = vcs_command_gate().acquire().await.unwrap();
     let output = Command::new("git")
         .arg("-C")
         .arg(root)
@@ -305,6 +323,7 @@ pub async fn run_git(root: &Path, args: &[&str]) {
 }
 
 pub async fn run_git_output(root: &Path, args: &[&str]) -> String {
+    let _permit = vcs_command_gate().acquire().await.unwrap();
     let output = Command::new("git")
         .arg("-C")
         .arg(root)
@@ -339,6 +358,7 @@ pub async fn run_jj_output(root: &Path, args: &[&str]) -> String {
 }
 
 pub async fn run_jj(root: &Path, args: &[&str]) {
+    let _permit = vcs_command_gate().acquire().await.unwrap();
     let output = Command::new("jj")
         .arg("-R")
         .arg(root)
