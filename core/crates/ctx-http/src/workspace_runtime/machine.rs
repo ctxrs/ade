@@ -558,6 +558,32 @@ fn managed_podman_install_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+fn managed_podman_runtime_ready_marker_path(runtime_root: &Path) -> PathBuf {
+    runtime_root.join(".ctx-managed-ready")
+}
+
+fn managed_podman_runtime_is_ready(
+    runtime_root: &Path,
+    runtime_bin: &Path,
+    source: &bundled_assets::ManagedRuntimeSource,
+) -> bool {
+    if !runtime_bin.exists() || !managed_podman_runtime_ready_marker_path(runtime_root).exists() {
+        return false;
+    }
+    source.helpers.keys().all(|name| {
+        managed_podman_helper_path(runtime_root, name)
+            .map(|path| path.exists())
+            .unwrap_or(true)
+    })
+}
+
+async fn mark_managed_podman_runtime_ready(runtime_root: &Path) -> Result<()> {
+    let marker = managed_podman_runtime_ready_marker_path(runtime_root);
+    fs::write(&marker, b"ready")
+        .await
+        .with_context(|| format!("writing {}", marker.display()))
+}
+
 pub(super) async fn ensure_managed_podman_runtime(
     data_root: &Path,
     observer: Option<&dyn HarnessSetupObserver>,
@@ -593,11 +619,11 @@ pub(super) async fn ensure_managed_podman_runtime_with_override(
     };
     let runtime_root = managed_podman_runtime_root(data_root, &source);
     let runtime_bin = managed_podman_runtime_bin_path(data_root, &source);
-    if runtime_bin.exists() {
+    if managed_podman_runtime_is_ready(&runtime_root, &runtime_bin, &source) {
         return Ok(runtime_bin);
     }
     let _install_guard = managed_podman_install_lock().lock().await;
-    if runtime_bin.exists() {
+    if managed_podman_runtime_is_ready(&runtime_root, &runtime_bin, &source) {
         return Ok(runtime_bin);
     }
 
@@ -776,6 +802,7 @@ pub(super) async fn ensure_managed_podman_runtime_with_override(
             }
         }
     }
+    mark_managed_podman_runtime_ready(&runtime_root).await?;
     Ok(runtime_bin)
 }
 
@@ -812,4 +839,51 @@ pub(super) async fn download_managed_artifact(url: &str, dest: &Path) -> Result<
         .await
         .with_context(|| format!("flushing {}", dest.display()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn partial_managed_podman_runtime_triggers_repair_instead_of_reuse() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let source = bundled_assets::ManagedRuntimeSource {
+            uri: "http://127.0.0.1:9/podman-runtime.tar.gz".to_string(),
+            sha256: "deadbeef".to_string(),
+            version: "test-version".to_string(),
+            bin: "bin/podman".to_string(),
+            helpers: HashMap::from([(
+                "gvproxy".to_string(),
+                bundled_assets::ManagedArtifactSource {
+                    uri: "http://127.0.0.1:9/gvproxy".to_string(),
+                    sha256: "deadbeef".to_string(),
+                },
+            )]),
+        };
+
+        let runtime_root = managed_podman_runtime_root(temp.path(), &source);
+        let runtime_bin = managed_podman_runtime_bin_path(temp.path(), &source);
+        fs::create_dir_all(runtime_bin.parent().expect("runtime bin parent"))
+            .await
+            .expect("create runtime bin parent");
+        fs::write(&runtime_bin, b"partial-podman")
+            .await
+            .expect("write partial runtime binary");
+
+        let err = ensure_managed_podman_runtime_with_override(temp.path(), Some(&source), None)
+            .await
+            .expect_err("partial runtime should trigger repair attempt");
+
+        assert!(
+            !managed_podman_runtime_is_ready(&runtime_root, &runtime_bin, &source),
+            "missing ready marker/helper payload must not count as a ready runtime"
+        );
+        let rendered = format!("{err:#}");
+        assert!(
+            rendered.contains("downloading managed artifact")
+                || rendered.contains("managed artifact download http error"),
+            "repair should attempt managed runtime download, got: {rendered}"
+        );
+    }
 }
