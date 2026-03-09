@@ -214,7 +214,7 @@ test("local mismatch requires confirm before restart action", async ({ page }) =
     .toBeGreaterThanOrEqual(initialCalls + 1);
 });
 
-test("remote mismatch requires confirm before remote update action", async ({ page }) => {
+test("remote mismatch updates immediately when no active tasks are detected", async ({ page }) => {
   await installDesktopHarness(page, {
     connectionKind: "ssh",
     desktopVersion: "2.0.0",
@@ -228,10 +228,6 @@ test("remote mismatch requires confirm before remote update action", async ({ pa
   await expect(page.getByText(/remote daemon is older than this desktop app/i)).toBeVisible();
 
   const initialCalls = await commandCallCount(page, "desktop_update_remote_daemon");
-  await page.getByRole("button", { name: "Update remote daemon" }).click();
-  await expect.poll(async () => commandCallCount(page, "desktop_update_remote_daemon")).toBe(initialCalls);
-
-  await setConfirmResult(page, true);
   await page.getByRole("button", { name: "Update remote daemon" }).click();
   await expect
     .poll(async () => commandCallCount(page, "desktop_update_remote_daemon"))

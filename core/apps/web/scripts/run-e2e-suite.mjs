@@ -17,7 +17,7 @@ if (forwardedArgs[0] === "--") {
   forwardedArgs.shift();
 }
 
-const suites = ["premerge_required", "cross_platform", "soak", "load"];
+const suites = ["premerge_required", "release_required", "cross_platform", "soak", "load"];
 const allSuites = new Set([...suites, "all"]);
 
 if (!suite || !allSuites.has(suite)) {
@@ -28,6 +28,7 @@ if (!suite || !allSuites.has(suite)) {
 const configBySuite = {
   all: "playwright.config.ts",
   premerge_required: "playwright.premerge.config.ts",
+  release_required: "playwright.release.config.ts",
   cross_platform: "playwright.cross-platform.config.ts",
   soak: "playwright.soak.config.ts",
   load: "playwright.load.config.ts",

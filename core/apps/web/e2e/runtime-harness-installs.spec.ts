@@ -418,7 +418,7 @@ test("wizard: harness downloads step installs selected provider and advances", a
   await page.getByTestId("wizard-next").click();
 
   await expect.poll(() => state.installCalls).toBe(1);
-  await expect.poll(async () => page.getByTestId("workspace-setup").getAttribute("data-step-key")).toBe("source");
+  await expect.poll(async () => page.getByTestId("workspace-setup").getAttribute("data-step-key")).toBe("auth-import");
 });
 
 test("workbench composer: install action in harness menu reaches installed state", async ({ page, request }) => {
@@ -443,7 +443,7 @@ test("workbench composer: install action in harness menu reaches installed state
   await expect(menu).toBeVisible({ timeout: 10_000 });
 
   const codexRow = menu.locator(".wb-harness-row").filter({ hasText: "Codex" }).first();
-  const installButton = codexRow.locator('button.wb-harness-install[title="Install this harness"]');
+  const installButton = codexRow.getByRole("button", { name: /^Install$/ });
   await expect(installButton).toBeVisible();
   await installButton.click();
 
@@ -461,7 +461,7 @@ test("workbench composer: install action in harness menu reaches installed state
   const menuAfterReload = page.locator(".wb-harness-menu");
   await expect(menuAfterReload).toBeVisible({ timeout: 10_000 });
   const codexRowAfterReload = menuAfterReload.locator(".wb-harness-row").filter({ hasText: "Codex" }).first();
-  await expect(codexRowAfterReload.locator('button.wb-harness-install[title="Install this harness"]')).toHaveCount(0);
+  await expect(codexRowAfterReload.getByRole("button", { name: /^Install$/ })).toHaveCount(0);
   await expect(codexRowAfterReload.locator(".wb-harness-row-main")).toBeEnabled();
 });
 
@@ -483,7 +483,7 @@ test("settings harness authentication: install button becomes add-auth after com
   const codexRow = page.locator(".settings-harness-row").filter({ hasText: "Codex" }).first();
   await expect(codexRow).toBeVisible();
 
-  const installButton = codexRow.locator('button[title="Install this harness"]');
+  const installButton = codexRow.getByRole("button", { name: /^Install$/ });
   await expect(installButton).toBeVisible();
   await installButton.click();
 

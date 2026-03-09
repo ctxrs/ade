@@ -67,14 +67,17 @@ test("update snackbar prompt shows when updates are available", async ({ page },
     });
   });
 
-  await page.goto(`/workspaces/${workspaceId}`, { waitUntil: "domcontentloaded" });
-  await page.waitForResponse((response) => response.url().includes("/api/health") && response.status() === 200, {
-    timeout: 20000,
-  });
-  await page.waitForResponse(
+  const healthResponse = page.waitForResponse(
+    (response) => response.url().includes("/api/health") && response.status() === 200,
+    {
+      timeout: 20000,
+    },
+  );
+  const updatesResponse = page.waitForResponse(
     (response) => response.url().includes("/api/updates/check") && response.status() === 200,
     { timeout: 20000 },
   );
+  await Promise.all([healthResponse, updatesResponse, page.goto(`/workspaces/${workspaceId}`, { waitUntil: "domcontentloaded" })]);
   await expect(page.getByTestId("update-available-snackbar")).toBeVisible({ timeout: 20000 });
   await expect(page.getByText(/Update available:\s*9\.9\.9\./)).toBeVisible({ timeout: 20000 });
   await expect(page.getByRole("button", { name: "Update Now" })).toBeVisible({ timeout: 20000 });

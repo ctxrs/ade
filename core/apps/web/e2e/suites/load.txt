@@ -3,7 +3,6 @@ e2e/workbench-background-updates.spec.ts
 e2e/workbench-instant-switch.spec.ts
 e2e/workbench-no-extra-requests.spec.ts
 e2e/workbench-spinner-replay.spec.ts
-e2e/workbench-spinner-stale-cache.spec.ts
 e2e/workbench-stream-ordering.spec.ts
 e2e/workbench-task-switching.spec.ts
 e2e/ws-missed-events-recovery.spec.ts

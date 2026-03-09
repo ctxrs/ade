@@ -43,6 +43,7 @@ if (files.length === 0) {
 const laneForJob = (job) => {
   const j = String(job || "").toLowerCase();
   if (j.includes("premerge")) return "premerge_required";
+  if (j.includes("release-preflight") || j.includes("e2e-release")) return "release_required";
   if (j.includes("cross-platform")) return "cross_platform";
   if (j.includes("soak")) return "soak";
   if (j.includes("load")) return "load";

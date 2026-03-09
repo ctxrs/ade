@@ -58,6 +58,7 @@ const resolvePort = async (reuseExistingServer: boolean): Promise<number> => {
 export type E2ESuiteProfile =
   | "all"
   | "premerge_required"
+  | "release_required"
   | "cross_platform"
   | "soak"
   | "load";
@@ -67,7 +68,8 @@ export async function createCtxPlaywrightConfig(
 ): Promise<PlaywrightTestConfig> {
   const profileSlug = profile.replace(/[^a-z0-9_-]/gi, "-").toLowerCase();
   const reuseRequested = parseBool(process.env.CTX_E2E_REUSE_SERVER);
-  const reuseExistingServer = profile === "premerge_required" ? false : reuseRequested;
+  const reuseExistingServer =
+    profile === "premerge_required" || profile === "release_required" ? false : reuseRequested;
   const skipWebBuild = parseBool(process.env.CTX_E2E_SKIP_WEB_BUILD);
 
   const PORT = await resolvePort(reuseExistingServer);

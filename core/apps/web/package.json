@@ -21,6 +21,7 @@
     "test:e2e": "node ./scripts/run-e2e-suite.mjs all",
     "test:e2e:list": "node ./scripts/run-e2e-suite.mjs all --list",
     "test:e2e:premerge": "node ./scripts/run-e2e-suite.mjs premerge_required",
+    "test:e2e:release": "node ./scripts/run-e2e-suite.mjs release_required",
     "test:e2e:cross-platform": "node ./scripts/run-e2e-suite.mjs cross_platform",
     "test:e2e:soak": "node ./scripts/run-e2e-suite.mjs soak",
     "test:e2e:load": "node ./scripts/run-e2e-suite.mjs load",
