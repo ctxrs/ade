@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-03-06",
+  "generated_at": "2026-03-09",
   "summary": "Provider auth matrix contract for desktop/web e2e lane coverage. Support=covered now, deferred=known coverage gap, unsupported=explicitly out of product auth support.",
   "providers": [
     {
@@ -203,8 +203,8 @@
       "provider_id": "codex",
       "auth_mode": "endpoint_api_key",
       "env_target": "local_host",
-      "support": "deferred",
-      "lane": "nightly",
+      "support": "supported",
+      "lane": "required",
       "required_assertions": [
         "install_success",
         "probe_success",
@@ -212,11 +212,15 @@
         "first_turn_success"
       ],
       "owner": "provider-codex",
-      "prerequisites": [],
+      "prerequisites": [
+        "OPENROUTER_API_KEY"
+      ],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "local-codex-host-smoke"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": null
     },
     {
       "id": "codex.endpoint_api_key.local_container",
@@ -371,8 +375,8 @@
       "provider_id": "codex",
       "auth_mode": "configure_later_then_connect",
       "env_target": "local_host",
-      "support": "deferred",
-      "lane": "nightly",
+      "support": "supported",
+      "lane": "required",
       "required_assertions": [
         "install_success",
         "configure_later_connect_success",
@@ -381,11 +385,15 @@
         "first_turn_success"
       ],
       "owner": "provider-codex",
-      "prerequisites": [],
+      "prerequisites": [
+        "OPENROUTER_API_KEY"
+      ],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "local-codex-host-smoke"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": null
     },
     {
       "id": "codex.configure_later_then_connect.local_container",
@@ -467,13 +475,15 @@
         "first_turn_success"
       ],
       "owner": "provider-claude",
-      "prerequisites": [],
+      "prerequisites": [
+        "CTX_E2E_CLAUDE_SETUP_TOKEN"
+      ],
       "runner": {
         "kind": "desktop_wdio",
         "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
         "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "credential_backed_validation_pending"
+      "skip_reason": "missing_ci_secret_contract"
     },
     {
       "id": "claude-crp.subscription_oauth.local_container",
@@ -488,13 +498,15 @@
         "first_turn_success"
       ],
       "owner": "provider-claude",
-      "prerequisites": [],
+      "prerequisites": [
+        "CTX_E2E_CLAUDE_SETUP_TOKEN"
+      ],
       "runner": {
         "kind": "desktop_wdio",
         "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
         "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "credential_backed_validation_pending"
+      "skip_reason": "missing_ci_secret_contract"
     },
     {
       "id": "claude-crp.subscription_oauth.remote_host",
@@ -779,13 +791,15 @@
         "first_turn_success"
       ],
       "owner": "provider-gemini",
-      "prerequisites": [],
+      "prerequisites": [
+        "CTX_E2E_GEMINI_OAUTH_CREDS_JSON"
+      ],
       "runner": {
         "kind": "desktop_wdio",
         "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
         "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "credential_backed_validation_pending"
+      "skip_reason": "missing_ci_secret_contract"
     },
     {
       "id": "gemini.subscription_oauth.local_container",
@@ -800,13 +814,15 @@
         "first_turn_success"
       ],
       "owner": "provider-gemini",
-      "prerequisites": [],
+      "prerequisites": [
+        "CTX_E2E_GEMINI_OAUTH_CREDS_JSON"
+      ],
       "runner": {
         "kind": "desktop_wdio",
         "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
         "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "credential_backed_validation_pending"
+      "skip_reason": "missing_ci_secret_contract"
     },
     {
       "id": "gemini.subscription_oauth.remote_host",
@@ -1423,13 +1439,15 @@
         "first_turn_success"
       ],
       "owner": "provider-qwen",
-      "prerequisites": [],
+      "prerequisites": [
+        "CTX_E2E_QWEN_OAUTH_CREDS_JSON"
+      ],
       "runner": {
         "kind": "desktop_wdio",
         "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
         "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "credential_backed_validation_pending"
+      "skip_reason": "missing_ci_secret_contract"
     },
     {
       "id": "qwen.subscription_oauth.local_container",
@@ -1444,13 +1462,15 @@
         "first_turn_success"
       ],
       "owner": "provider-qwen",
-      "prerequisites": [],
+      "prerequisites": [
+        "CTX_E2E_QWEN_OAUTH_CREDS_JSON"
+      ],
       "runner": {
         "kind": "desktop_wdio",
         "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
         "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "credential_backed_validation_pending"
+      "skip_reason": "missing_ci_secret_contract"
     },
     {
       "id": "qwen.subscription_oauth.remote_host",
@@ -1751,13 +1771,15 @@
         "first_turn_success"
       ],
       "owner": "provider-kimi",
-      "prerequisites": [],
+      "prerequisites": [
+        "CTX_E2E_KIMI_CREDENTIALS_JSON"
+      ],
       "runner": {
         "kind": "desktop_wdio",
         "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
         "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "credential_backed_validation_pending"
+      "skip_reason": "missing_ci_secret_contract"
     },
     {
       "id": "kimi.subscription_oauth.local_container",
@@ -1772,13 +1794,15 @@
         "first_turn_success"
       ],
       "owner": "provider-kimi",
-      "prerequisites": [],
+      "prerequisites": [
+        "CTX_E2E_KIMI_CREDENTIALS_JSON"
+      ],
       "runner": {
         "kind": "desktop_wdio",
         "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
         "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "credential_backed_validation_pending"
+      "skip_reason": "missing_ci_secret_contract"
     },
     {
       "id": "kimi.subscription_oauth.remote_host",
@@ -2063,13 +2087,15 @@
         "first_turn_success"
       ],
       "owner": "provider-mistral",
-      "prerequisites": [],
+      "prerequisites": [
+        "CTX_E2E_MISTRAL_HOME_SEED_DIR"
+      ],
       "runner": {
         "kind": "desktop_wdio",
         "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
         "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "credential_backed_validation_pending"
+      "skip_reason": "missing_seed_fixture"
     },
     {
       "id": "mistral.subscription_oauth.local_container",
@@ -2084,13 +2110,15 @@
         "first_turn_success"
       ],
       "owner": "provider-mistral",
-      "prerequisites": [],
+      "prerequisites": [
+        "CTX_E2E_MISTRAL_HOME_SEED_DIR"
+      ],
       "runner": {
         "kind": "desktop_wdio",
         "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
         "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "credential_backed_validation_pending"
+      "skip_reason": "missing_seed_fixture"
     },
     {
       "id": "mistral.subscription_oauth.remote_host",
@@ -2375,13 +2403,15 @@
         "first_turn_success"
       ],
       "owner": "provider-amp",
-      "prerequisites": [],
+      "prerequisites": [
+        "CTX_E2E_AMP_SECRETS_JSON"
+      ],
       "runner": {
         "kind": "desktop_wdio",
         "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
         "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "credential_backed_validation_pending"
+      "skip_reason": "missing_seed_fixture"
     },
     {
       "id": "amp.subscription_oauth.local_container",
@@ -2396,13 +2426,15 @@
         "first_turn_success"
       ],
       "owner": "provider-amp",
-      "prerequisites": [],
+      "prerequisites": [
+        "CTX_E2E_AMP_SECRETS_JSON"
+      ],
       "runner": {
         "kind": "desktop_wdio",
         "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
         "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "credential_backed_validation_pending"
+      "skip_reason": "missing_seed_fixture"
     },
     {
       "id": "amp.subscription_oauth.remote_host",
@@ -2703,13 +2735,15 @@
         "first_turn_success"
       ],
       "owner": "provider-copilot",
-      "prerequisites": [],
+      "prerequisites": [
+        "CTX_E2E_COPILOT_TOKEN"
+      ],
       "runner": {
         "kind": "desktop_wdio",
         "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
         "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "credential_backed_validation_pending"
+      "skip_reason": "missing_ci_secret_contract"
     },
     {
       "id": "copilot.subscription_oauth.local_container",
@@ -2724,13 +2758,15 @@
         "first_turn_success"
       ],
       "owner": "provider-copilot",
-      "prerequisites": [],
+      "prerequisites": [
+        "CTX_E2E_COPILOT_TOKEN"
+      ],
       "runner": {
         "kind": "desktop_wdio",
         "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
         "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "credential_backed_validation_pending"
+      "skip_reason": "missing_ci_secret_contract"
     },
     {
       "id": "copilot.subscription_oauth.remote_host",

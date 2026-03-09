@@ -6,30 +6,37 @@ const providerAuthMatrixScenarioTags = ({
   authMode = "",
   envTarget = "",
 } = {}) => {
+  const normalizedProviderId = normalizeText(providerId);
+  const normalizedAuthMode = normalizeText(authMode);
+  const normalizedEnvTarget = normalizeText(envTarget);
   const tags = new Set([
     "local",
     "provider",
     "matrix",
     "provider-auth-matrix",
     normalizeText(cellId),
-    normalizeText(providerId),
-    normalizeText(authMode),
-    normalizeText(envTarget),
+    normalizedProviderId,
+    normalizedAuthMode,
+    normalizedEnvTarget,
   ]);
 
-  if (normalizeText(authMode) === "auth_import") {
+  if (normalizedAuthMode === "auth_import") {
     tags.add("provider-auth-import");
   }
 
   if (
-    normalizeText(providerId) === "codex"
-    && normalizeText(envTarget) === "local_container"
+    normalizedProviderId === "codex"
     && (
-      normalizeText(authMode) === "endpoint_api_key"
-      || normalizeText(authMode) === "configure_later_then_connect"
+      normalizedAuthMode === "endpoint_api_key"
+      || normalizedAuthMode === "configure_later_then_connect"
     )
   ) {
-    tags.add("local-codex-smoke");
+    if (normalizedEnvTarget === "local_container") {
+      tags.add("local-codex-smoke");
+    }
+    if (normalizedEnvTarget === "local_host") {
+      tags.add("local-codex-host-smoke");
+    }
   }
 
   return Array.from(tags).filter(Boolean);

@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const {
   defaultAllowlistPath,
+  envCarriesSecretPayload,
   envSpecs,
   resolveRequirement,
   resolveSuiteContract,
@@ -15,6 +16,7 @@ const parseArgs = (argv) => {
     suiteId: "",
     paths: [],
     allowlistPath: defaultAllowlistPath,
+    includeDeferred: false,
     cellIds: [],
     caseIds: [],
     platform: "",
@@ -50,6 +52,10 @@ const parseArgs = (argv) => {
     if (arg === "--platform") {
       opts.platform = String(argv[index + 1] || "").trim();
       index += 1;
+      continue;
+    }
+    if (arg === "--include-deferred") {
+      opts.includeDeferred = true;
       continue;
     }
     if (arg === "--help" || arg === "-h") {
@@ -111,44 +117,50 @@ const isProbablyText = (buffer) => {
 
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-const buildPatterns = (suite) => {
-  const patterns = [];
+const resolveRedactionSecrets = (suite) => {
   const seenEnvNames = new Set();
-  const sourcesByEnvName = new Map();
+  const resolved = [];
   for (const requirement of [...suite.requirements, ...suite.optionalRequirements]) {
-    if (!requirement?.envName) continue;
-    if (!sourcesByEnvName.has(requirement.envName)) {
-      sourcesByEnvName.set(requirement.envName, requirement.source);
-    }
-  }
-
-  for (const envName of suite.redactionEnvNames || []) {
-    if (seenEnvNames.has(envName)) continue;
+    const envName = String(requirement?.envName || "").trim();
+    if (!envName || seenEnvNames.has(envName) || !envCarriesSecretPayload(envName)) continue;
     seenEnvNames.add(envName);
-    patterns.push({
-      kind: "named-assignment",
+    resolved.push({
       envName,
-      regex: new RegExp(`\\b${escapeRegex(envName)}\\b\\s*[:=]\\s*[^\\s"']+`, "g"),
+      requirement,
+      resolution: resolveRequirement(requirement, {
+        env: process.env,
+        platform: suite.platform,
+      }),
     });
-    const source = sourcesByEnvName.get(envName) || "env";
-    const resolution = resolveRequirement({
-      envName,
-      applies: true,
-      required: false,
-      source,
-    }, {
-      env: process.env,
-      platform: suite.platform,
-    });
-    if (resolution.value && envSpecs[envName]?.kind === "secret") {
+  }
+  return resolved;
+};
+
+const buildPatterns = (resolvedSecrets) => {
+  const patterns = [];
+  const seenSecretValues = new Set();
+  for (const { envName, resolution } of resolvedSecrets) {
+    if (envSpecs[envName]?.kind === "secret") {
+      patterns.push({
+        kind: "named-assignment",
+        envName,
+        regex: new RegExp(`\\b${escapeRegex(envName)}\\b\\s*[:=]\\s*[^\\s"']+`, "g"),
+      });
+    }
+    const secretValues = Array.isArray(resolution.secretValues) && resolution.secretValues.length > 0
+      ? resolution.secretValues
+      : (resolution.value ? [resolution.value] : []);
+    for (const secretValue of secretValues) {
+      const secretKey = `${envName}\u0000${secretValue}`;
+      if (seenSecretValues.has(secretKey)) continue;
+      seenSecretValues.add(secretKey);
       patterns.push({
         kind: "literal-secret",
         envName,
-        regex: new RegExp(escapeRegex(resolution.value), "g"),
+        regex: new RegExp(escapeRegex(secretValue), "g"),
       });
     }
   }
-
   patterns.push({
     kind: "authorization-bearer",
     envName: "authorization",
@@ -164,7 +176,7 @@ const main = () => {
   const opts = parseArgs(process.argv.slice(2));
   if (opts.help || !opts.suiteId || opts.paths.length === 0) {
     process.stdout.write(
-      `usage: desktop_e2e_redaction_scan.cjs --suite <${suiteIds.join("|")}> --path <file-or-dir> [--path ...] [--allowlist PATH] [--cell ID[,ID...]] [--case ID[,ID...]] [--platform darwin|linux|win32]\n`,
+      `usage: desktop_e2e_redaction_scan.cjs --suite <${suiteIds.join("|")}> --path <file-or-dir> [--path ...] [--allowlist PATH] [--cell ID[,ID...]] [--case ID[,ID...]] [--platform darwin|linux|win32] [--include-deferred]\n`,
     );
     return;
   }
@@ -172,11 +184,22 @@ const main = () => {
   const suite = resolveSuiteContract(opts.suiteId, {
     env: process.env,
     platform: opts.platform || process.platform,
+    includeDeferred: opts.includeDeferred,
     cellIds: opts.cellIds,
     caseIds: opts.caseIds,
   });
   const allowlist = loadAllowlist(opts.allowlistPath);
-  const patterns = buildPatterns(suite);
+  const resolvedSecrets = resolveRedactionSecrets(suite);
+  const invalidResolutions = resolvedSecrets.filter(({ resolution }) => resolution.status === "invalid");
+  if (invalidResolutions.length > 0) {
+    process.stderr.write(`redaction scan invalid for ${suite.id}\n`);
+    for (const { envName, resolution } of invalidResolutions) {
+      process.stderr.write(`- ${envName}: ${resolution.errors.join("; ")}\n`);
+    }
+    process.exitCode = 1;
+    return;
+  }
+  const patterns = buildPatterns(resolvedSecrets);
   const files = [];
   for (const candidate of opts.paths) {
     collectFiles(candidate, files);

@@ -171,6 +171,9 @@ run_preflight() {
     cells_csv="$(IFS=,; echo "${REQUESTED_CELLS[*]}")"
     cmd+=(--cell "${cells_csv}")
   fi
+  if [[ "${INCLUDE_DEFERRED}" -eq 1 ]]; then
+    cmd+=(--include-deferred)
+  fi
   if [[ "${CTX_DESKTOP_E2E_PREFLIGHT_ALLOW_MISSING:-0}" == "1" ]]; then
     cmd+=(--allow-missing)
   fi
@@ -370,15 +373,23 @@ fs.writeFileSync(process.argv[3], JSON.stringify(cell, null, 2) + "\n");
 
   local missing_env=""
   missing_env="$(maybe_run_with_infisical node -e '
+const { buildRequirement, resolveRequirement } = require(process.argv[2]);
 const prereq = JSON.parse(process.argv[1] || "[]");
 const missing = [];
 for (const key of prereq) {
   const name = String(key || "").trim();
   if (!name) continue;
-  if (!process.env[name] || !String(process.env[name]).trim()) missing.push(name);
+  const requirement = buildRequirement(name);
+  const resolution = resolveRequirement(requirement, {
+    env: process.env,
+    platform: process.platform,
+  });
+  if (resolution.status === "missing" || resolution.status === "invalid") {
+    missing.push(name);
+  }
 }
 process.stdout.write(missing.join(","));
-' "${prerequisites_json}")"
+' "${prerequisites_json}" "${ROOT}/core/scripts/desktop_e2e_secret_contract_lib.cjs")"
   if [[ -n "${missing_env}" ]]; then
     printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
       "${id}" "skip" "0" "${cell_dir}" "${provider_id}" "${auth_mode}" "${env_target}" "${lane}" "${support}" "missing_env:${missing_env}" >>"${SUMMARY}"

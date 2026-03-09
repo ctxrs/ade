@@ -95,3 +95,41 @@ test("validate script fails when report content is out of date", () => {
   assert.notEqual(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
   assert.match(result.stderr, /report out of date/i);
 });
+
+test("validate script fails when a deferred concrete runner lacks an approved blocker reason", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-auth-matrix-fail-blocker-"));
+  const manifestPath = path.join(tmp, "provider_auth_matrix.json");
+  const manifest = baseManifest();
+  manifest.cells[0].support = "deferred";
+  manifest.cells[0].lane = "nightly";
+  manifest.cells[0].skip_reason = "credential_backed_validation_pending";
+  writeJson(manifestPath, manifest);
+
+  const result = run(["--manifest", manifestPath]);
+  assert.notEqual(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
+  assert.match(result.stderr, /requires skip_reason/i);
+});
+
+test("validate script fails when a required cell introduces a non-approved prerequisite", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-auth-matrix-fail-required-secret-"));
+  const manifestPath = path.join(tmp, "provider_auth_matrix.json");
+  const manifest = baseManifest();
+  manifest.cells[0].prerequisites = ["OPENROUTER_API_KEY", "CTX_E2E_CURSOR_API_KEY"];
+  writeJson(manifestPath, manifest);
+
+  const result = run(["--manifest", manifestPath]);
+  assert.notEqual(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
+  assert.match(result.stderr, /outside approved required-lane secret set/i);
+});
+
+test("validate script fails when a required Codex container cell loses the container scenario token", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-auth-matrix-fail-required-scenario-"));
+  const manifestPath = path.join(tmp, "provider_auth_matrix.json");
+  const manifest = baseManifest();
+  manifest.cells[0].runner.scenarios = "local-codex-host-smoke";
+  writeJson(manifestPath, manifest);
+
+  const result = run(["--manifest", manifestPath]);
+  assert.notEqual(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
+  assert.match(result.stderr, /local_container Codex required coverage must include local-codex-smoke/i);
+});

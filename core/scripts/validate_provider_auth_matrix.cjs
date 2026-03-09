@@ -24,6 +24,15 @@ const defaultReportPath = path.join(
 const SUPPORT_VALUES = new Set(["supported", "deferred", "unsupported"]);
 const LANE_VALUES = new Set(["required", "nightly", "none"]);
 const RUNNER_KINDS = new Set(["desktop_wdio", "web_playwright", "none"]);
+const DEFERRED_RUNNER_SKIP_REASONS = new Set([
+  "missing_ci_secret_contract",
+  "missing_seed_fixture",
+  "provider_external_challenge",
+]);
+const REQUIRED_PROVIDER_IDS = new Set(["codex"]);
+const REQUIRED_AUTH_MODES = new Set(["endpoint_api_key", "configure_later_then_connect"]);
+const REQUIRED_ENV_TARGETS = new Set(["local_host", "local_container"]);
+const REQUIRED_ALLOWED_PREREQUISITES = new Set(["OPENROUTER_API_KEY"]);
 
 const resolveInputPath = (raw, { fallbackPath = "", mustExist = false } = {}) => {
   const value = String(raw || "").trim();
@@ -208,11 +217,34 @@ const validateManifest = (manifest) => {
     if (support === "supported" && runnerKind === "none") {
       errors.push(`cell ${id} support=supported requires a concrete runner`);
     }
+    if (support === "deferred" && runnerKind !== "none" && !DEFERRED_RUNNER_SKIP_REASONS.has(skipReason)) {
+      errors.push(
+        `cell ${id} support=deferred with concrete runner requires skip_reason in ${JSON.stringify([...DEFERRED_RUNNER_SKIP_REASONS])}`,
+      );
+    }
     if (runnerKind === "desktop_wdio" && !readString(runner.spec).trim()) {
       errors.push(`cell ${id} desktop_wdio runner requires spec`);
     }
     if (runnerKind === "desktop_wdio" && !readString(runner.scenarios).trim()) {
       errors.push(`cell ${id} desktop_wdio runner requires scenarios`);
+    }
+    if (
+      providerId === "codex"
+      && REQUIRED_AUTH_MODES.has(authMode)
+      && envTarget === "local_host"
+      && runnerKind === "desktop_wdio"
+      && !readString(runner.scenarios).split(",").map((entry) => entry.trim()).includes("local-codex-host-smoke")
+    ) {
+      errors.push(`cell ${id} local_host Codex required coverage must include local-codex-host-smoke`);
+    }
+    if (
+      providerId === "codex"
+      && REQUIRED_AUTH_MODES.has(authMode)
+      && envTarget === "local_container"
+      && runnerKind === "desktop_wdio"
+      && !readString(runner.scenarios).split(",").map((entry) => entry.trim()).includes("local-codex-smoke")
+    ) {
+      errors.push(`cell ${id} local_container Codex required coverage must include local-codex-smoke`);
     }
     if (runnerKind === "web_playwright" && !readString(runner.spec).trim()) {
       errors.push(`cell ${id} web_playwright runner requires spec`);
@@ -220,6 +252,30 @@ const validateManifest = (manifest) => {
     for (const key of prerequisites) {
       if (!/^[A-Z0-9_]+$/.test(key)) {
         errors.push(`cell ${id} has invalid prerequisite env var '${key}'`);
+      }
+    }
+    if (lane === "required") {
+      if (!REQUIRED_PROVIDER_IDS.has(providerId)) {
+        errors.push(`cell ${id} lane=required requires provider_id in ${JSON.stringify([...REQUIRED_PROVIDER_IDS])}`);
+      }
+      if (!REQUIRED_AUTH_MODES.has(authMode)) {
+        errors.push(`cell ${id} lane=required requires auth_mode in ${JSON.stringify([...REQUIRED_AUTH_MODES])}`);
+      }
+      if (!REQUIRED_ENV_TARGETS.has(envTarget)) {
+        errors.push(`cell ${id} lane=required requires env_target in ${JSON.stringify([...REQUIRED_ENV_TARGETS])}`);
+      }
+      if (runnerKind !== "desktop_wdio") {
+        errors.push(`cell ${id} lane=required requires desktop_wdio runner`);
+      }
+      if (prerequisites.length === 0) {
+        errors.push(`cell ${id} lane=required requires explicit prerequisites`);
+      }
+      for (const key of prerequisites) {
+        if (!REQUIRED_ALLOWED_PREREQUISITES.has(key)) {
+          errors.push(
+            `cell ${id} lane=required prerequisite '${key}' is outside approved required-lane secret set ${JSON.stringify([...REQUIRED_ALLOWED_PREREQUISITES])}`,
+          );
+        }
       }
     }
 
@@ -268,6 +324,10 @@ const validateManifest = (manifest) => {
 const buildReport = (manifest, validationSummary) => {
   const cells = asArray(manifest.cells).map(asRecord).sort((a, b) => readString(a.id).localeCompare(readString(b.id)));
   const requiredCells = cells.filter((cell) => readString(cell.lane) === "required");
+  const deferredRunnerCells = cells.filter((cell) => {
+    const runner = asRecord(cell.runner);
+    return readString(cell.support) === "deferred" && readString(runner.kind) !== "none";
+  });
   const summary = validationSummary.summary;
 
   const lines = [];
@@ -308,6 +368,21 @@ const buildReport = (manifest, validationSummary) => {
     lines.push("| _none_ | - | - | - | - | - |");
   }
   lines.push("");
+  lines.push("## Deferred Cells With Concrete Runners");
+  lines.push("");
+  lines.push("| cell_id | provider | auth_mode | env_target | runner | blocker | prerequisites |");
+  lines.push("| --- | --- | --- | --- | --- | --- | --- |");
+  for (const cell of deferredRunnerCells) {
+    const runner = asRecord(cell.runner);
+    const prereq = asArray(cell.prerequisites).map((entry) => readString(entry)).filter(Boolean).join(", ");
+    lines.push(
+      `| ${readString(cell.id)} | ${readString(cell.provider_id)} | ${readString(cell.auth_mode)} | ${readString(cell.env_target)} | ${readString(runner.kind)} | ${readString(cell.skip_reason) || "-"} | ${prereq || "-"} |`,
+    );
+  }
+  if (deferredRunnerCells.length === 0) {
+    lines.push("| _none_ | - | - | - | - | - | - |");
+  }
+  lines.push("");
   lines.push("## Provider Coverage Summary");
   lines.push("");
   lines.push("| provider | supported | deferred | unsupported |");
@@ -323,6 +398,7 @@ const buildReport = (manifest, validationSummary) => {
   lines.push("- `supported` means the cell currently has automated execution coverage.");
   lines.push("- `deferred` means provider/auth behavior is expected, but automated coverage is still a known gap.");
   lines.push("- `unsupported` means the provider/auth combination is intentionally out of supported product behavior.");
+  lines.push("- Deferred cells with concrete runners must carry a blocker classification in `skip_reason`.");
   lines.push("");
 
   return `${lines.join("\n")}\n`;

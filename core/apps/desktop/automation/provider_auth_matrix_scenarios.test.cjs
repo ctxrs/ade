@@ -15,7 +15,22 @@ test("codex local container endpoint cells include the local codex smoke alias",
 
   assert(tags.includes("provider-auth-matrix"));
   assert(tags.includes("local-codex-smoke"));
+  assert.equal(tags.includes("local-codex-host-smoke"), false);
   assert(tags.includes("endpoint_api_key"));
+});
+
+test("codex local host required cells use the host-only codex smoke alias", () => {
+  const tags = providerAuthMatrixScenarioTags({
+    cellId: "codex.configure_later_then_connect.local_host",
+    providerId: "codex",
+    authMode: "configure_later_then_connect",
+    envTarget: "local_host",
+  });
+
+  assert(tags.includes("provider-auth-matrix"));
+  assert(tags.includes("local-codex-host-smoke"));
+  assert.equal(tags.includes("local-codex-smoke"), false);
+  assert(tags.includes("configure_later_then_connect"));
 });
 
 test("auth import cells include the provider auth import alias", () => {
@@ -29,6 +44,7 @@ test("auth import cells include the provider auth import alias", () => {
   assert(tags.includes("provider-auth-matrix"));
   assert(tags.includes("provider-auth-import"));
   assert.equal(tags.includes("local-codex-smoke"), false);
+  assert.equal(tags.includes("local-codex-host-smoke"), false);
 });
 
 test("non-codex cells do not inherit codex-only smoke aliases", () => {
@@ -41,4 +57,5 @@ test("non-codex cells do not inherit codex-only smoke aliases", () => {
 
   assert(tags.includes("provider-auth-matrix"));
   assert.equal(tags.includes("local-codex-smoke"), false);
+  assert.equal(tags.includes("local-codex-host-smoke"), false);
 });

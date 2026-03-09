@@ -216,6 +216,183 @@ const envSpecs = {
   },
 };
 
+Object.assign(envSpecs, {
+  CTX_E2E_CLAUDE_SETUP_TOKEN: {
+    kind: "secret",
+    description: "Claude setup token used by deferred provider-auth matrix managed subscription upserts.",
+    validation: [
+      "trimmed, non-empty secret value",
+      "must not be a placeholder example",
+      "must not contain whitespace",
+      "minimum length 10",
+    ],
+    minLength: 10,
+  },
+  CTX_E2E_CLAUDE_SETUP_TOKEN_PATH: {
+    kind: "config",
+    description: "Path to a file containing the Claude setup token for deferred provider-auth matrix coverage.",
+    validation: [
+      "trimmed, non-empty file path when provided",
+      "file must exist and be readable",
+    ],
+  },
+  CTX_E2E_GEMINI_OAUTH_CREDS_JSON: {
+    kind: "secret",
+    description: "Gemini managed OAuth credentials JSON for deferred provider-auth matrix subscription coverage.",
+    validation: [
+      "trimmed, non-empty secret value",
+      "must not be a placeholder example",
+      "minimum length 20",
+    ],
+    minLength: 20,
+    allowWhitespace: true,
+  },
+  CTX_E2E_GEMINI_OAUTH_CREDS_PATH: {
+    kind: "config",
+    description: "Path to a file containing Gemini managed OAuth credentials JSON for deferred provider-auth matrix coverage.",
+    validation: [
+      "trimmed, non-empty file path when provided",
+      "file must exist and be readable",
+    ],
+  },
+  CTX_E2E_QWEN_OAUTH_CREDS_JSON: {
+    kind: "secret",
+    description: "Qwen managed OAuth credentials JSON for deferred provider-auth matrix subscription coverage.",
+    validation: [
+      "trimmed, non-empty secret value",
+      "must not be a placeholder example",
+      "minimum length 20",
+    ],
+    minLength: 20,
+    allowWhitespace: true,
+  },
+  CTX_E2E_QWEN_OAUTH_CREDS_PATH: {
+    kind: "config",
+    description: "Path to a file containing Qwen managed OAuth credentials JSON for deferred provider-auth matrix coverage.",
+    validation: [
+      "trimmed, non-empty file path when provided",
+      "file must exist and be readable",
+    ],
+  },
+  CTX_E2E_KIMI_CREDENTIALS_JSON: {
+    kind: "secret",
+    description: "Kimi credentials JSON for deferred provider-auth matrix subscription coverage.",
+    validation: [
+      "trimmed, non-empty secret value",
+      "must not be a placeholder example",
+      "minimum length 20",
+    ],
+    minLength: 20,
+    allowWhitespace: true,
+  },
+  CTX_E2E_KIMI_CREDENTIALS_PATH: {
+    kind: "config",
+    description: "Path to a file containing Kimi credentials JSON for deferred provider-auth matrix coverage.",
+    validation: [
+      "trimmed, non-empty file path when provided",
+      "file must exist and be readable",
+    ],
+  },
+  CTX_E2E_COPILOT_TOKEN: {
+    kind: "secret",
+    description: "Copilot token used by deferred provider-auth matrix managed subscription upserts.",
+    validation: [
+      "trimmed, non-empty secret value",
+      "must not be a placeholder example",
+      "must not contain whitespace",
+      "minimum length 10",
+    ],
+    minLength: 10,
+  },
+  CTX_E2E_COPILOT_TOKEN_PATH: {
+    kind: "config",
+    description: "Path to a file containing the Copilot token for deferred provider-auth matrix coverage.",
+    validation: [
+      "trimmed, non-empty file path when provided",
+      "file must exist and be readable",
+    ],
+  },
+  CTX_E2E_AMP_SECRETS_JSON: {
+    kind: "secret",
+    description: "Amp secrets JSON used by deferred provider-auth matrix subscription coverage.",
+    validation: [
+      "trimmed, non-empty secret value",
+      "must not be a placeholder example",
+      "minimum length 20",
+    ],
+    minLength: 20,
+    allowWhitespace: true,
+  },
+  CTX_E2E_AMP_SECRETS_PATH: {
+    kind: "config",
+    description: "Path to a file containing Amp secrets JSON for deferred provider-auth matrix coverage.",
+    validation: [
+      "trimmed, non-empty file path when provided",
+      "file must exist and be readable",
+    ],
+  },
+  CTX_E2E_AMP_HOME_SEED_DIR: {
+    kind: "config",
+    carriesSecretPayload: true,
+    description: "Path to a seeded Amp runtime home directory for deferred provider-auth matrix coverage.",
+    validation: [
+      "trimmed, non-empty directory path when provided",
+      "directory must exist",
+    ],
+  },
+  CTX_E2E_MISTRAL_HOME_SEED_DIR: {
+    kind: "config",
+    carriesSecretPayload: true,
+    description: "Path to a seeded Mistral runtime home directory for deferred provider-auth matrix coverage.",
+    validation: [
+      "trimmed, non-empty directory path when provided",
+      "directory must exist",
+    ],
+  },
+});
+
+const providerAuthEnvAlternatives = {
+  CTX_E2E_CLAUDE_SETUP_TOKEN: [
+    { envName: "CTX_E2E_CLAUDE_SETUP_TOKEN", source: "env" },
+    { envName: "CTX_E2E_CLAUDE_SETUP_TOKEN_PATH", source: "file" },
+  ],
+  CTX_E2E_GEMINI_OAUTH_CREDS_JSON: [
+    { envName: "CTX_E2E_GEMINI_OAUTH_CREDS_JSON", source: "env" },
+    { envName: "CTX_E2E_GEMINI_OAUTH_CREDS_PATH", source: "file" },
+  ],
+  CTX_E2E_QWEN_OAUTH_CREDS_JSON: [
+    { envName: "CTX_E2E_QWEN_OAUTH_CREDS_JSON", source: "env" },
+    { envName: "CTX_E2E_QWEN_OAUTH_CREDS_PATH", source: "file" },
+  ],
+  CTX_E2E_KIMI_CREDENTIALS_JSON: [
+    { envName: "CTX_E2E_KIMI_CREDENTIALS_JSON", source: "env" },
+    { envName: "CTX_E2E_KIMI_CREDENTIALS_PATH", source: "file" },
+  ],
+  CTX_E2E_COPILOT_TOKEN: [
+    { envName: "CTX_E2E_COPILOT_TOKEN", source: "env" },
+    { envName: "CTX_E2E_COPILOT_TOKEN_PATH", source: "file" },
+  ],
+  CTX_E2E_AMP_SECRETS_JSON: [
+    { envName: "CTX_E2E_AMP_HOME_SEED_DIR", source: "dir" },
+    { envName: "CTX_E2E_AMP_SECRETS_JSON", source: "env" },
+    { envName: "CTX_E2E_AMP_SECRETS_PATH", source: "file" },
+  ],
+  CTX_E2E_MISTRAL_HOME_SEED_DIR: [
+    { envName: "CTX_E2E_MISTRAL_HOME_SEED_DIR", source: "dir" },
+  ],
+};
+
+const cloneRequirementAlternatives = (envName, source = "env") => {
+  if (source !== "env") {
+    return [{ envName, source }];
+  }
+  const alternatives = providerAuthEnvAlternatives[envName];
+  if (!Array.isArray(alternatives) || alternatives.length === 0) {
+    return [{ envName, source: "env" }];
+  }
+  return alternatives.map((entry) => ({ ...entry }));
+};
+
 const suiteIds = [
   "provider-auth-matrix-required",
   "provider-auth-matrix-nightly",
@@ -228,8 +405,51 @@ const suiteIds = [
 ];
 
 const normalizeText = (value) => (typeof value === "string" ? value.trim() : "");
+const envCarriesSecretPayload = (envName) =>
+  envSpecs[envName]?.kind === "secret" || envSpecs[envName]?.carriesSecretPayload === true;
 
 const readJson = (filePath) => JSON.parse(fs.readFileSync(filePath, "utf8"));
+
+const isProbablyTextBuffer = (buffer) => {
+  const limit = Math.min(buffer.length, 4096);
+  for (let index = 0; index < limit; index += 1) {
+    if (buffer[index] === 0) return false;
+  }
+  return true;
+};
+
+const collectDirectorySecretPayloads = (rootDir, payloads = [], totalSize = { value: 0 }) => {
+  if (payloads.length >= 32 || totalSize.value >= 262144) {
+    return payloads;
+  }
+  let entries = [];
+  try {
+    entries = fs.readdirSync(rootDir, { withFileTypes: true });
+  } catch {
+    return payloads;
+  }
+  entries.sort((left, right) => left.name.localeCompare(right.name));
+  for (const entry of entries) {
+    if (payloads.length >= 32 || totalSize.value >= 262144) break;
+    const nextPath = path.join(rootDir, entry.name);
+    if (entry.isDirectory()) {
+      collectDirectorySecretPayloads(nextPath, payloads, totalSize);
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    let buffer;
+    try {
+      buffer = fs.readFileSync(nextPath);
+    } catch {
+      continue;
+    }
+    if (!isProbablyTextBuffer(buffer)) continue;
+    totalSize.value += buffer.length;
+    const value = normalizeText(buffer.toString("utf8"));
+    if (value) payloads.push(value);
+  }
+  return payloads;
+};
 
 const commandExists = (command, cwd = repoRoot) => {
   const result = childProcess.spawnSync("bash", ["-lc", `command -v ${command}`], {
@@ -333,6 +553,108 @@ const validateResolvedValue = (envName, value) => {
   return validateConfigValue(envName, value);
 };
 
+const resolveRequirementAlternative = (alternative, env) => {
+  const envName = normalizeText(alternative?.envName || "");
+  const source = normalizeText(alternative?.source || "env");
+  if (!envName) {
+    return { status: "missing" };
+  }
+
+  if (source === "env") {
+    const value = normalizeText(env[envName] || "");
+    if (!value) {
+      return { status: "missing" };
+    }
+    return {
+      status: "present",
+      value,
+      valueSource: `env:${envName}`,
+      secretValues: envCarriesSecretPayload(envName) && value ? [value] : [],
+    };
+  }
+
+  if (source === "file") {
+    const filePath = normalizeText(env[envName] || "");
+    if (!filePath) {
+      return { status: "missing" };
+    }
+    if (!fs.existsSync(filePath)) {
+      return {
+        status: "invalid",
+        valueSource: `env:${envName}`,
+        errors: [`${envName} file not found: ${filePath}`],
+      };
+    }
+    let stat;
+    try {
+      stat = fs.statSync(filePath);
+    } catch (error) {
+      const code = normalizeText(error?.code || "");
+      return {
+        status: "invalid",
+        valueSource: `env:${envName}`,
+        errors: [`${envName} file could not be inspected: ${filePath}${code ? ` (${code})` : ""}`],
+      };
+    }
+    if (!stat.isFile()) {
+      return {
+        status: "invalid",
+        valueSource: `env:${envName}`,
+        errors: [`${envName} is not a file: ${filePath}`],
+      };
+    }
+    let rawValue = "";
+    try {
+      rawValue = fs.readFileSync(filePath, "utf8");
+    } catch (error) {
+      const code = normalizeText(error?.code || "");
+      return {
+        status: "invalid",
+        valueSource: `env:${envName}`,
+        errors: [`${envName} file could not be read: ${filePath}${code ? ` (${code})` : ""}`],
+      };
+    }
+    const value = normalizeText(rawValue);
+    return {
+      status: "present",
+      value,
+      valueSource: `file:${envName}`,
+      secretValues: envCarriesSecretPayload(envName) && value ? [value] : [],
+    };
+  }
+
+  if (source === "dir") {
+    const dirPath = normalizeText(env[envName] || "");
+    if (!dirPath) {
+      return { status: "missing" };
+    }
+    if (!fs.existsSync(dirPath)) {
+      return {
+        status: "invalid",
+        valueSource: `env:${envName}`,
+        errors: [`${envName} directory not found: ${dirPath}`],
+      };
+    }
+    const stat = fs.statSync(dirPath);
+    if (!stat.isDirectory()) {
+      return {
+        status: "invalid",
+        valueSource: `env:${envName}`,
+        errors: [`${envName} is not a directory: ${dirPath}`],
+      };
+    }
+    return {
+      status: "present",
+      value: "",
+      valueSource: `dir:${envName}`,
+      skipValidation: true,
+      secretValues: envCarriesSecretPayload(envName) ? collectDirectorySecretPayloads(dirPath) : [],
+    };
+  }
+
+  throw new Error(`unsupported requirement alternative source '${source}'`);
+};
+
 const resolveRequirement = (requirement, context) => {
   const env = context.env || process.env;
   const platform = normalizeText(context.platform || process.platform);
@@ -350,12 +672,22 @@ const resolveRequirement = (requirement, context) => {
     valueSource: "",
     errors: [],
     status: "missing",
+    alternatives: Array.isArray(requirement.alternatives) ? requirement.alternatives.slice() : [],
+    secretValues: [],
   };
 
-  const finish = (status, value, valueSource) => {
+  const finish = (status, value, valueSource, extra = {}) => {
     const next = { ...base, status, value: value || "", valueSource: valueSource || "" };
-    if (value) {
-      next.errors = validateResolvedValue(envName, value);
+    next.secretValues = Array.isArray(extra.secretValues)
+      ? extra.secretValues.map((entry) => normalizeText(entry)).filter(Boolean)
+      : (value ? [value] : []);
+    if (Array.isArray(extra.errors) && extra.errors.length > 0) {
+      next.errors = extra.errors.slice();
+      next.status = "invalid";
+      return next;
+    }
+    if (value && !extra.skipValidation) {
+      next.errors = validateResolvedValue(extra.validationEnvName || envName, value);
       if (next.errors.length > 0) {
         next.status = "invalid";
       }
@@ -365,6 +697,31 @@ const resolveRequirement = (requirement, context) => {
 
   if (!base.applies) {
     return finish("skipped", "", "");
+  }
+
+  if (Array.isArray(requirement.alternatives) && requirement.alternatives.length > 0 && requirement.source === "env") {
+    for (const alternative of requirement.alternatives) {
+      const alternativeResolution = resolveRequirementAlternative(alternative, env);
+      if (alternativeResolution.status === "present") {
+        return finish(
+          "present",
+          alternativeResolution.value,
+          alternativeResolution.valueSource,
+          {
+            validationEnvName: envName,
+            skipValidation: Boolean(alternativeResolution.skipValidation),
+            secretValues: alternativeResolution.secretValues,
+          },
+        );
+      }
+      if (alternativeResolution.status === "invalid") {
+        return finish("invalid", "", alternativeResolution.valueSource, {
+          errors: alternativeResolution.errors,
+          skipValidation: true,
+        });
+      }
+    }
+    return finish("missing", "", "");
   }
 
   if (fromEnv) {
@@ -407,10 +764,25 @@ const buildRequirement = (envName, extra = {}) => ({
   note: extra.note || "",
   defaultValue: extra.defaultValue || "",
   derivedFrom: Array.isArray(extra.derivedFrom) ? extra.derivedFrom.slice() : [],
+  alternatives: Array.isArray(extra.alternatives)
+    ? extra.alternatives.map((entry) => ({ ...entry }))
+    : cloneRequirementAlternatives(envName, extra.source || "env"),
 });
 
-const resolveProviderAuthDynamic = ({ lane, cellIds = [] }) => {
-  const manifest = readJson(providerAuthMatrixPath);
+const addDerivedCellIds = (map, cell, id) => {
+  const prerequisites = Array.isArray(cell.prerequisites) ? cell.prerequisites : [];
+  for (const entry of prerequisites) {
+    const envName = normalizeText(entry);
+    if (!envName) continue;
+    const existing = map.get(envName) || [];
+    existing.push(id);
+    map.set(envName, existing);
+  }
+};
+
+const resolveProviderAuthDynamic = ({ lane, cellIds = [], env = process.env }) => {
+  const manifestPath = normalizeText(env.CTX_PROVIDER_AUTH_MATRIX_FIXTURE || "") || providerAuthMatrixPath;
+  const manifest = readJson(manifestPath);
   const cells = Array.isArray(manifest.cells) ? manifest.cells : [];
   const selectedIds = cellIds.length > 0 ? new Set(cellIds.map((value) => normalizeText(value)).filter(Boolean)) : null;
   const unknownCellIds = selectedIds
@@ -427,28 +799,30 @@ const resolveProviderAuthDynamic = ({ lane, cellIds = [] }) => {
     return normalizeText(cell?.lane) === lane;
   });
   const supported = filtered.filter((cell) => normalizeText(cell?.support) === "supported");
+  const deferredRunnerBacked = filtered.filter(
+    (cell) => normalizeText(cell?.support) === "deferred" && normalizeText(cell?.runner?.kind) !== "none",
+  );
   const prerequisiteMap = new Map();
   for (const cell of supported) {
-    const id = normalizeText(cell.id);
-    const prerequisites = Array.isArray(cell.prerequisites) ? cell.prerequisites : [];
-    for (const entry of prerequisites) {
-      const envName = normalizeText(entry);
-      if (!envName) continue;
-      const existing = prerequisiteMap.get(envName) || [];
-      existing.push(id);
-      prerequisiteMap.set(envName, existing);
-    }
+    addDerivedCellIds(prerequisiteMap, cell, normalizeText(cell.id));
+  }
+  const deferredPrerequisiteMap = new Map();
+  for (const cell of deferredRunnerBacked) {
+    addDerivedCellIds(deferredPrerequisiteMap, cell, normalizeText(cell.id));
   }
   return {
     lane,
     selectedCellIds: filtered.map((cell) => normalizeText(cell.id)).filter(Boolean),
     supportedCellIds: supported.map((cell) => normalizeText(cell.id)).filter(Boolean),
+    deferredRunnerCellIds: deferredRunnerBacked.map((cell) => normalizeText(cell.id)).filter(Boolean),
     prerequisiteMap,
+    deferredPrerequisiteMap,
   };
 };
 
-const resolveBreakMatrixDynamic = ({ caseIds = [] }) => {
-  const manifest = readJson(macosBreakMatrixPath);
+const resolveBreakMatrixDynamic = ({ caseIds = [], env = process.env }) => {
+  const manifestPath = normalizeText(env.CTX_MACOS_BREAK_MATRIX_FIXTURE || "") || macosBreakMatrixPath;
+  const manifest = readJson(manifestPath);
   const cases = Array.isArray(manifest.cases) ? manifest.cases : [];
   const selectedIds = caseIds.length > 0 ? new Set(caseIds.map((value) => normalizeText(value)).filter(Boolean)) : null;
   const unknownCaseIds = selectedIds
@@ -491,7 +865,7 @@ const collectSecretEnvNames = (requirements) =>
   uniq(
     (Array.isArray(requirements) ? requirements : [])
       .map((requirement) => normalizeText(requirement?.envName))
-      .filter((envName) => envSpecs[envName]?.kind === "secret"),
+      .filter((envName) => envCarriesSecretPayload(envName)),
   );
 
 const resolveSuiteContract = (suiteId, options = {}) => {
@@ -503,9 +877,11 @@ const resolveSuiteContract = (suiteId, options = {}) => {
     case "provider-auth-matrix-required":
     case "provider-auth-matrix-nightly": {
       const lane = normalizedId.endsWith("required") ? "required" : "nightly";
+      const includeDeferred = Boolean(options.includeDeferred);
       const dynamic = resolveProviderAuthDynamic({
         lane,
         cellIds: Array.isArray(options.cellIds) ? options.cellIds : [],
+        env,
       });
       const requirements = [];
       for (const [envName, derivedFrom] of dynamic.prerequisiteMap.entries()) {
@@ -515,7 +891,26 @@ const resolveSuiteContract = (suiteId, options = {}) => {
           note: `derived from supported provider_auth_matrix ${lane} lane cells`,
         }));
       }
-      if (dynamic.supportedCellIds.length > 0) {
+      const deferredOptionalRequirements = [];
+      if (includeDeferred) {
+        for (const [envName, derivedFrom] of dynamic.deferredPrerequisiteMap.entries()) {
+          requirements.push(buildRequirement(envName, {
+            source: "env",
+            derivedFrom,
+            note: `required when provider_auth_matrix ${lane} runs include deferred runner-backed cells`,
+          }));
+        }
+      } else {
+        for (const [envName, derivedFrom] of dynamic.deferredPrerequisiteMap.entries()) {
+          deferredOptionalRequirements.push(buildRequirement(envName, {
+            required: false,
+            source: "env",
+            derivedFrom,
+            note: `accepted for provider_auth_matrix ${lane} include-deferred runs`,
+          }));
+        }
+      }
+      if (dynamic.supportedCellIds.length > 0 || (includeDeferred && dynamic.deferredRunnerCellIds.length > 0)) {
         requirements.push(buildRequirement("CN_API_KEY", {
           source: "env_or_infisical_darwin",
           applies: platform === "darwin",
@@ -523,17 +918,20 @@ const resolveSuiteContract = (suiteId, options = {}) => {
           note: "required when supported provider-auth matrix cells run through CrabNebula WebDriver",
         }));
       }
-      const optionalRequirements = dynamic.prerequisiteMap.has("OPENROUTER_API_KEY")
-        ? [
-          buildRequirement("OPENROUTER_BASE_URL", {
-            required: false,
-            applies: true,
-            source: "env_or_default",
-            defaultValue: defaultOpenRouterBaseUrl,
-            note: "OpenRouter base URL falls back to the canonical default when unset",
-          }),
-        ]
-        : [];
+      const optionalRequirements = [
+        ...deferredOptionalRequirements,
+        ...((dynamic.prerequisiteMap.has("OPENROUTER_API_KEY") || dynamic.deferredPrerequisiteMap.has("OPENROUTER_API_KEY"))
+          ? [
+            buildRequirement("OPENROUTER_BASE_URL", {
+              required: false,
+              applies: true,
+              source: "env_or_default",
+              defaultValue: defaultOpenRouterBaseUrl,
+              note: "OpenRouter base URL falls back to the canonical default when unset",
+            }),
+          ]
+          : []),
+      ];
       return {
         id: normalizedId,
         title: lane === "required" ? "Provider auth matrix required lane" : "Provider auth matrix nightly lane",
@@ -544,12 +942,19 @@ const resolveSuiteContract = (suiteId, options = {}) => {
         redactionEnvNames: collectSecretEnvNames([...requirements, ...optionalRequirements]),
         metadata: {
           lane,
+          includeDeferred,
           selectedCellIds: dynamic.selectedCellIds,
           supportedCellIds: dynamic.supportedCellIds,
+          deferredRunnerCellIds: dynamic.deferredRunnerCellIds,
         },
-        notes: dynamic.supportedCellIds.length === 0
-          ? ["No supported provider-auth matrix cells are currently selected for this lane."]
-          : [],
+        notes: [
+          ...(dynamic.supportedCellIds.length === 0
+            ? ["No supported provider-auth matrix cells are currently selected for this lane."]
+            : []),
+          ...(!includeDeferred && dynamic.deferredRunnerCellIds.length > 0
+            ? ["Deferred runner-backed nightly cells publish optional secret-contract entries here and become blocking only with --include-deferred."]
+            : []),
+        ],
         env,
         platform,
       };
@@ -624,6 +1029,7 @@ const resolveSuiteContract = (suiteId, options = {}) => {
     case "macos-break-matrix": {
       const dynamic = resolveBreakMatrixDynamic({
         caseIds: Array.isArray(options.caseIds) ? options.caseIds : [],
+        env,
       });
       const requirements = [];
       if (dynamic.selectedCaseIds.length > 0) {
@@ -765,6 +1171,10 @@ const sourceSummary = (source) => {
       return "Environment variable or CTX_DATA_ROOT/settings.json title_generation.api_key";
     case "env_or_infisical_darwin":
       return "Environment variable or Infisical access on macOS";
+    case "file":
+      return "Path to readable file containing the secret payload";
+    case "dir":
+      return "Directory path containing a staged runtime seed";
     default:
       return source;
   }
@@ -783,6 +1193,14 @@ const renderRequirementList = (requirements) => {
   return requirements
     .map((requirement) => {
       const pieces = [requirementLabel(requirement)];
+      const alternatives = Array.isArray(requirement.alternatives)
+        ? requirement.alternatives
+          .map((entry) => normalizeText(entry?.envName))
+          .filter((envName) => envName && envName !== requirement.envName)
+        : [];
+      if (alternatives.length > 0) {
+        pieces.push(`accepted via ${alternatives.join(" or ")}`);
+      }
       if (requirement.defaultValue) {
         pieces.push(`default: ${requirement.defaultValue}`);
       }
@@ -806,6 +1224,13 @@ const renderContractReport = () => {
       const existing = sourceMap.get(requirement.envName) || new Set();
       existing.add(sourceSummary(requirement.source));
       sourceMap.set(requirement.envName, existing);
+      for (const alternative of Array.isArray(requirement.alternatives) ? requirement.alternatives : []) {
+        const alternativeEnvName = normalizeText(alternative?.envName);
+        if (!alternativeEnvName || alternativeEnvName === requirement.envName) continue;
+        const alternativeExisting = sourceMap.get(alternativeEnvName) || new Set();
+        alternativeExisting.add(sourceSummary(normalizeText(alternative?.source || "env")));
+        sourceMap.set(alternativeEnvName, alternativeExisting);
+      }
     }
   }
   const lines = [];
@@ -850,11 +1275,13 @@ const renderContractReport = () => {
 };
 
 module.exports = {
+  buildRequirement,
   coreRoot,
   repoRoot,
   defaultAllowlistPath,
   defaultOpenRouterBaseUrl,
   defaultReportPath,
+  envCarriesSecretPayload,
   envSpecs,
   renderContractReport,
   resolveRequirement,

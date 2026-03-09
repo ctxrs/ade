@@ -42,6 +42,38 @@ const createFixture = (tmpDir) => {
   return fixturePath;
 };
 
+const createDeferredGeminiFixture = (tmpDir) => {
+  const fixturePath = path.join(tmpDir, "provider_auth_matrix.json");
+  fs.writeFileSync(
+    fixturePath,
+    JSON.stringify(
+      {
+        cells: [
+          {
+            id: "gemini.subscription_oauth.local_host",
+            provider_id: "gemini",
+            auth_mode: "subscription_oauth",
+            env_target: "local_host",
+            support: "deferred",
+            lane: "nightly",
+            prerequisites: ["CTX_E2E_GEMINI_OAUTH_CREDS_JSON"],
+            skip_reason: "missing_ci_secret_contract",
+            runner: {
+              kind: "desktop_wdio",
+              spec: "automation/specs/provider-auth-matrix-cell.spec.cjs",
+              scenarios: "provider,provider-auth-matrix",
+            },
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+  return fixturePath;
+};
+
 const createPreflightScript = (tmpDir) => {
   const preflightPath = path.join(tmpDir, "fake_preflight.cjs");
   writeExecutable(
@@ -55,6 +87,17 @@ if (!process.env.OPENROUTER_API_KEY) {
   console.error("OPENROUTER_API_KEY missing");
   process.exit(1);
 }
+console.log("preflight passed");
+`,
+  );
+  return preflightPath;
+};
+
+const createPassthroughPreflightScript = (tmpDir) => {
+  const preflightPath = path.join(tmpDir, "fake_preflight_pass.cjs");
+  writeExecutable(
+    preflightPath,
+    `#!/usr/bin/env node
 console.log("preflight passed");
 `,
   );
@@ -113,14 +156,20 @@ const runMatrixScript = ({
   preflightOut,
   smokeOut,
   artifactsDir,
+  lane = "required",
+  cellId = "codex.endpoint_api_key.local_container",
+  extraArgs = [],
   extraEnv = {},
 }) =>
   childProcess.spawnSync("bash", [
     scriptPath,
+    "--lane",
+    lane,
     "--cell",
-    "codex.endpoint_api_key.local_container",
+    cellId,
     "--artifacts-dir",
     artifactsDir,
+    ...extraArgs,
   ], {
     cwd: path.join(__dirname, "..", "..", "..", ".."),
     encoding: "utf8",
@@ -198,4 +247,39 @@ test("run_provider_auth_matrix leaves preflight strict when infisical auto-hydra
   assert.notEqual(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
   assert.equal(fs.readFileSync(preflightOut, "utf8").trim(), "unset");
   assert.equal(fs.existsSync(smokeOut), false);
+});
+
+test("run_provider_auth_matrix accepts file-backed deferred oauth prerequisites during dry-run selection", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-run-provider-auth-matrix-deferred-"));
+  const fixturePath = createDeferredGeminiFixture(tmpDir);
+  const preflightPath = createPassthroughPreflightScript(tmpDir);
+  const smokePath = createSmokeScript(tmpDir);
+  const oauthCredsPath = path.join(tmpDir, "gemini-oauth.json");
+  fs.writeFileSync(oauthCredsPath, '{"refresh_token":"gemini-refresh-token-12345"}\n', "utf8");
+  const artifactsDir = path.join(tmpDir, "artifacts");
+
+  const result = runMatrixScript({
+    fixturePath,
+    preflightPath,
+    smokePath,
+    pathPrefix: process.env.PATH || "",
+    infisicalConfigPath: path.join(tmpDir, "missing-infisical.json"),
+    preflightOut: path.join(tmpDir, "preflight.out"),
+    smokeOut: path.join(tmpDir, "smoke.out"),
+    artifactsDir,
+    lane: "nightly",
+    cellId: "gemini.subscription_oauth.local_host",
+    extraArgs: ["--include-deferred", "--dry-run"],
+    extraEnv: {
+      CTX_PROVIDER_AUTH_MATRIX_USE_INFISICAL: "0",
+      CN_API_KEY: "cn_secret_value_12345",
+      CTX_E2E_GEMINI_OAUTH_CREDS_JSON: "",
+      CTX_E2E_GEMINI_OAUTH_CREDS_PATH: oauthCredsPath,
+    },
+  });
+
+  assert.equal(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
+  const summary = fs.readFileSync(path.join(artifactsDir, "summary.tsv"), "utf8");
+  assert.match(summary, /gemini\.subscription_oauth\.local_host\tdry-run\t0\t/);
+  assert.doesNotMatch(summary, /missing_env:/);
 });

@@ -163,6 +163,33 @@ test("amp plan accepts secrets JSON file input", () => {
   assert.equal(result.plan.sources.secrets_json, secretsPath);
 });
 
+test("amp plan prefers seeded home over stale secrets payloads", () => {
+  const { resolveSubscriptionAuthPlan } = loadHelper();
+  const dir = mkTempDir("ctx-provider-auth-amp-home-");
+  const ampHomeSeedDir = path.join(dir, "amp-home");
+  fs.mkdirSync(ampHomeSeedDir, { recursive: true });
+  const result = resolveSubscriptionAuthPlan("amp", {
+    CTX_E2E_AMP_HOME_SEED_DIR: ampHomeSeedDir,
+    CTX_E2E_AMP_SECRETS_JSON: "placeholder",
+  });
+  assert.equal(result.status, "ready");
+  assert.equal(result.plan.strategy, "stage_amp_home");
+  assert.equal(result.plan.sources.home_seed_dir, ampHomeSeedDir);
+});
+
+test("amp plan blocks on an invalid seeded home instead of falling back to secrets JSON", () => {
+  const { resolveSubscriptionAuthPlan } = loadHelper();
+  const dir = mkTempDir("ctx-provider-auth-amp-home-invalid-");
+  const invalidAmpSeedPath = path.join(dir, "amp-home.txt");
+  fs.writeFileSync(invalidAmpSeedPath, "not-a-directory\n", "utf8");
+  const result = resolveSubscriptionAuthPlan("amp", {
+    CTX_E2E_AMP_HOME_SEED_DIR: invalidAmpSeedPath,
+    CTX_E2E_AMP_SECRETS_JSON: '{"apiKey@test":"amp-secret-value-12345"}',
+  });
+  assert.equal(result.status, "skip");
+  assert.match(result.reason, /Amp home seed is not a directory/i);
+});
+
 test("mistral plan requires a seeded runtime home directory", () => {
   const { resolveSubscriptionAuthPlan } = loadHelper();
   const result = resolveSubscriptionAuthPlan("mistral", {});

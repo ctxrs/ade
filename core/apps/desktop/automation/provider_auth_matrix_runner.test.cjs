@@ -32,7 +32,7 @@ const writeFixture = (dir) => {
         lane: "nightly",
         required_assertions: ["probe_success"],
         owner: "provider-gemini",
-        prerequisites: [],
+        prerequisites: ["CTX_E2E_GEMINI_OAUTH_CREDS_JSON"],
         runner: {
           kind: "desktop_wdio",
           spec: "automation/specs/provider-auth-matrix-cell.spec.cjs",
@@ -46,7 +46,7 @@ const writeFixture = (dir) => {
   return fixturePath;
 };
 
-const runRunner = ({ includeDeferred, insertedSeparator = false }) => {
+const runRunner = ({ includeDeferred, insertedSeparator = false, extraEnv = {} }) => {
   const tmp = mkTempDir("ctx-provider-matrix-runner-");
   const artifactsDir = path.join(tmp, "artifacts");
   const fixturePath = writeFixture(tmp);
@@ -59,6 +59,7 @@ const runRunner = ({ includeDeferred, insertedSeparator = false }) => {
     env: {
       ...process.env,
       CTX_PROVIDER_AUTH_MATRIX_FIXTURE: fixturePath,
+      ...extraEnv,
     },
   });
   const summaryPath = path.join(artifactsDir, "summary.tsv");
@@ -69,6 +70,12 @@ const runRunner = ({ includeDeferred, insertedSeparator = false }) => {
   };
 };
 
+const writeGeminiOauthFile = (tmpDir) => {
+  const oauthCredsPath = path.join(tmpDir, "gemini-oauth.json");
+  fs.writeFileSync(oauthCredsPath, '{"refresh_token":"gemini-refresh-token-12345"}\n', "utf8");
+  return oauthCredsPath;
+};
+
 test("runner skips deferred cells by default", () => {
   const result = runRunner({ includeDeferred: false });
   assert.equal(result.status, 0, result.stderr || result.stdout);
@@ -76,13 +83,28 @@ test("runner skips deferred cells by default", () => {
 });
 
 test("runner dry-runs deferred cells when include-deferred is set", () => {
-  const result = runRunner({ includeDeferred: true });
+  const tmpDir = mkTempDir("ctx-provider-matrix-runner-creds-");
+  const oauthCredsPath = writeGeminiOauthFile(tmpDir);
+  const result = runRunner({
+    includeDeferred: true,
+    extraEnv: {
+      CTX_E2E_GEMINI_OAUTH_CREDS_PATH: oauthCredsPath,
+    },
+  });
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.match(result.summary, /\tdry-run\t0\t.*\tdeferred\tdry-run/);
 });
 
 test("runner tolerates pnpm-style separator before forwarded flags", () => {
-  const result = runRunner({ includeDeferred: true, insertedSeparator: true });
+  const tmpDir = mkTempDir("ctx-provider-matrix-runner-creds-separator-");
+  const oauthCredsPath = writeGeminiOauthFile(tmpDir);
+  const result = runRunner({
+    includeDeferred: true,
+    insertedSeparator: true,
+    extraEnv: {
+      CTX_E2E_GEMINI_OAUTH_CREDS_PATH: oauthCredsPath,
+    },
+  });
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.match(result.summary, /\tdry-run\t0\t.*\tdeferred\tdry-run/);
 });

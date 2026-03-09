@@ -16,6 +16,7 @@ const parseArgs = (argv) => {
   const opts = {
     suiteId: "",
     allowMissing: false,
+    includeDeferred: false,
     cellIds: [],
     caseIds: [],
     platform: "",
@@ -45,6 +46,10 @@ const parseArgs = (argv) => {
     }
     if (arg === "--allow-missing") {
       opts.allowMissing = true;
+      continue;
+    }
+    if (arg === "--include-deferred") {
+      opts.includeDeferred = true;
       continue;
     }
     if (arg === "--help" || arg === "-h") {
@@ -78,7 +83,7 @@ const main = () => {
   const opts = parseArgs(process.argv.slice(2));
   if (opts.help || !opts.suiteId) {
     process.stdout.write(
-      `usage: desktop_e2e_preflight.cjs --suite <${suiteIds.join("|")}> [--cell ID[,ID...]] [--case ID[,ID...]] [--platform darwin|linux|win32] [--allow-missing]\n`,
+      `usage: desktop_e2e_preflight.cjs --suite <${suiteIds.join("|")}> [--cell ID[,ID...]] [--case ID[,ID...]] [--platform darwin|linux|win32] [--include-deferred] [--allow-missing]\n`,
     );
     return;
   }
@@ -86,6 +91,7 @@ const main = () => {
   const suite = resolveSuiteContract(opts.suiteId, {
     cellIds: opts.cellIds,
     caseIds: opts.caseIds,
+    includeDeferred: opts.includeDeferred,
     env: process.env,
     platform: opts.platform || process.platform,
   });
