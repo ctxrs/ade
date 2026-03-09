@@ -24,6 +24,7 @@ import {
   type WorkspaceActiveSnapshotEvent,
 } from "../api/client";
 import type { WorkspaceActiveSnapshotEventSource, WorkspaceActiveSnapshotState } from "./workspaceActiveSnapshotStore";
+import { compareSessionTurnOrder, mergeSessionMessages } from "./sessionHeadState";
 import {
   loadSessionAcpMetaV1,
   loadSessionHeadV1,
@@ -36,12 +37,8 @@ import {
   saveSessionHistoryPageV1,
 } from "./uiStateStore";
 import type { PersistedTaskThoughtsV1 } from "./uiStateStore";
-import { getClientSettings } from "./clientSettings";
 import { SessionReplicaBridge } from "./sessionReplicaBridge";
 import type { SessionReplicaPatch } from "./sessionReplicaProtocol";
-import { sendDesktopNotification } from "../utils/desktopNotifications";
-import { isAppInForeground } from "../utils/windowFocus";
-import { trackFirstTurnCompleted, trackProviderRunCompleted } from "../utils/analytics";
 import { errorMessage } from "../utils/errorMessage";
 import { emitUiDiagnostic } from "./diagnosticsChannel";
 import { normalizeGitStatusSummaryInput } from "./sessionSupervisor/gitStatusNormalization";
@@ -49,7 +46,6 @@ import {
   appendFragment,
   dedupeIds,
   isPartialEvent,
-  mergeOrderedIds,
   mergeTurn,
   sameIdList,
   stripPartialEvents,
@@ -74,6 +70,8 @@ import {
   summarizeToolPayload,
   toolStatusBucket,
 } from "./sessionSupervisor/toolStateProjection";
+import { buildSessionSubscriptionPlan } from "./sessionSupervisor/sessionSubscriptionPlan";
+import { applyTurnOutcomeEffects } from "./sessionSupervisor/turnOutcomeEffects";
 
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
@@ -1725,26 +1723,25 @@ export class SessionSupervisor {
   }
 
   private refreshSubscriptions() {
-    const openIds = Array.from(this.entries.values())
+    const openSessionIds = Array.from(this.entries.values())
       .filter((entry) => entry.refCount > 0)
       .map((entry) => entry.sessionId);
-    this.snapshotStore?.setSubscribedSessionIds?.(openIds);
-    const combined = mergeOrderedIds(openIds, this.activeTaskSessionIds, this.warmSessionIds);
-    const next = combined;
-    const key = next.join("|");
-    const prev = this.subscribedSessionIds.join("|");
-    if (key === prev) return;
-    const nextSet = new Set(next);
-    const prevSet = new Set(this.subscribedSessionIds);
-    this.subscribedSessionIds = next;
+    const plan = buildSessionSubscriptionPlan({
+      openSessionIds,
+      activeTaskSessionIds: this.activeTaskSessionIds,
+      warmSessionIds: this.warmSessionIds,
+      previousSubscribedSessionIds: this.subscribedSessionIds,
+    });
+    this.snapshotStore?.setSubscribedSessionIds?.(plan.openSessionIds);
+    if (!plan.changed) return;
+    const nextSet = new Set(plan.nextSubscribedSessionIds);
+    this.subscribedSessionIds = plan.nextSubscribedSessionIds;
     for (const entry of this.entries.values()) {
       entry.subscribed = nextSet.has(entry.sessionId);
     }
-    for (const sessionId of next) {
-      if (!prevSet.has(sessionId)) {
-        const entry = this.ensureEntry(sessionId);
-        entry.subscribed = true;
-      }
+    for (const sessionId of plan.addedSessionIds) {
+      const entry = this.ensureEntry(sessionId);
+      entry.subscribed = true;
     }
     this.publish();
   }
@@ -1804,7 +1801,7 @@ export class SessionSupervisor {
       const prev = byId.get(id);
       byId.set(id, prev ? mergeTurn(prev, t) : t);
     }
-    let next = Array.from(byId.values()).sort(this.compareTurnOrder.bind(this));
+    let next = Array.from(byId.values()).sort(compareSessionTurnOrder);
     const overlayed = this.overlayThoughtCacheOnTurns(entry, next);
     if (overlayed !== next) {
       next = overlayed;
@@ -1816,28 +1813,9 @@ export class SessionSupervisor {
 
   private mergeMessages(entry: InternalEntry, incoming: Message[]) {
     if (incoming.length === 0) return;
-    const byId = new Map<string, Message>();
-    for (const m of entry.messages) {
-      const id = idToString(m.id);
-      if (id) byId.set(id, m);
-    }
-    for (const m of incoming) {
-      const id = idToString(m.id);
-      if (!id) continue;
-      byId.set(id, m);
-    }
-    const next = Array.from(byId.values()).sort((a, b) => {
-      const c = String(a.created_at).localeCompare(String(b.created_at));
-      if (c !== 0) return c;
-      const sa = Number(a.turn_sequence ?? Number.NaN);
-      const sb = Number(b.turn_sequence ?? Number.NaN);
-      if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return sa - sb;
-      if (Number.isFinite(sa) && !Number.isFinite(sb)) return -1;
-      if (!Number.isFinite(sa) && Number.isFinite(sb)) return 1;
-      return String(idToString(a.id)).localeCompare(String(idToString(b.id)));
-    });
+    const next = mergeSessionMessages(entry.messages, incoming);
     entry.messages = next;
-    entry.queue = next.filter((m) => m.delivery === "queued");
+    entry.queue = next.filter((message) => message.delivery === "queued");
   }
 
   private ensureEventSeq(entry: InternalEntry, event: SessionEvent): SessionEvent {
@@ -1923,15 +1901,6 @@ export class SessionSupervisor {
     }
   }
 
-  private compareTurnOrder(a: SessionTurn, b: SessionTurn): number {
-    const sa = Number(a.start_seq ?? Number.NaN);
-    const sb = Number(b.start_seq ?? Number.NaN);
-    if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) {
-      return sa - sb;
-    }
-    return String(a.started_at).localeCompare(String(b.started_at));
-  }
-
   private recordFinalThought(entry: InternalEntry, event: SessionEvent): boolean {
     if (!isFinalThoughtEvent(event)) return false;
     const key = buildThoughtCacheKey(event);
@@ -1986,7 +1955,7 @@ export class SessionSupervisor {
       tool_completed: 0,
       tool_failed: 0,
     };
-    entry.turns = [...entry.turns, turn].sort(this.compareTurnOrder.bind(this));
+    entry.turns = [...entry.turns, turn].sort(compareSessionTurnOrder);
     entry.oldestTurnSeq = entry.turns[0]?.start_seq ?? entry.oldestTurnSeq;
     return turn;
   }
@@ -2127,47 +2096,16 @@ export class SessionSupervisor {
     if (!changed) return false;
     turn.updated_at = event.created_at ?? turn.updated_at;
     entry.turns[idx] = { ...turn };
-    const shouldNotify = opts?.notify ?? true;
-    if (shouldNotify) {
-      this.trackTurnOutcomeAnalytics(entry, turn, prevStatus);
-    }
-    if (shouldNotify && prevStatus !== "completed" && turn.status === "completed") {
-      this.notifyTurnCompleted(entry);
-    }
+    applyTurnOutcomeEffects({
+      notify: opts?.notify ?? true,
+      sessionId: idToString(entry.session?.id ?? turn.session_id ?? ""),
+      providerId: String(entry.session?.provider_id ?? "").trim() || undefined,
+      modelId: String(entry.session?.model_id ?? "").trim() || undefined,
+      title: entry.session?.title ? String(entry.session.title) : undefined,
+      previousStatus: prevStatus,
+      nextStatus: turn.status,
+    });
     return true;
-  }
-
-  private trackTurnOutcomeAnalytics(
-    entry: InternalEntry,
-    turn: SessionTurn,
-    prevStatus: SessionTurn["status"],
-  ) {
-    if (turn.status === prevStatus) return;
-    if (turn.status !== "completed" && turn.status !== "failed" && turn.status !== "interrupted") {
-      return;
-    }
-    const sessionId = idToString(entry.session?.id ?? turn.session_id ?? "");
-    if (!sessionId) return;
-    const providerId = String(entry.session?.provider_id ?? "").trim() || undefined;
-    const modelId = String(entry.session?.model_id ?? "").trim() || undefined;
-    trackProviderRunCompleted({
-      providerId,
-      modelId,
-      status: turn.status,
-    });
-    trackFirstTurnCompleted({
-      sessionId,
-      providerId,
-      status: turn.status,
-    });
-  }
-
-  private notifyTurnCompleted(entry: InternalEntry) {
-    if (isAppInForeground()) return;
-    if (!getClientSettings().desktopNotifications.turnCompleted) return;
-    const title = "Turn completed";
-    const body = entry.session?.title ? String(entry.session.title) : undefined;
-    void sendDesktopNotification({ title, body });
   }
 
   private applyQueueEvent(entry: InternalEntry, event: SessionEvent): boolean {

@@ -69,21 +69,11 @@ import {
 } from "../utils/desktop";
 import { copyTextToClipboard } from "../utils/clipboard";
 import { errorMessage } from "../utils/errorMessage";
-import { pickPreferredSessionId } from "../utils/workbenchSelection";
 import { parseModelId } from "../utils/modelEffort";
 import { getLoadTestTelemetry } from "../utils/loadTestTelemetry";
 import { useDictationController } from "../utils/useDictationController";
 import { randomUuid } from "../utils/randomUuid";
 import { trackWorkbenchPanelToggled } from "../utils/analytics";
-import {
-  WEB_MENU_COMMAND_EVENT,
-  WEB_MENU_STATE_EVENT,
-  WEB_MENU_TRACE_EVENT,
-  type DesktopMenuItemState,
-  type WebMenuTraceDetail,
-  type WebMenuCommandDetail,
-  type WebMenuStateDetail,
-} from "../utils/desktopMenuCommands";
 import {
   NEW_TASK_DRAFT_KEY,
   scrollKey,
@@ -113,7 +103,6 @@ import { TASK_LIST_COMPONENTS } from "./WorkbenchPage.taskList";
 import { WorkbenchSessionSlot } from "./WorkbenchPage.sessionSlot";
 import { useWorkbenchDragDropAttachments } from "./workbenchShell/useWorkbenchDragDropAttachments";
 import { getDiffSummaryStats, isDiffSummaryTooLarge } from "./workbenchShell/useWorkbenchDiffPane";
-import { WORKBENCH_TASK_IDLE_EVENT, type WorkbenchTaskIdleDetail } from "../utils/updaterEvents";
 import {
   collectSelectableHarnessProviderIds,
   getHarnessMruStorageKey,
@@ -124,7 +113,9 @@ import { useWorkbenchOptimisticTasks } from "./workbenchShell/useWorkbenchOptimi
 import { useWorkbenchProviders } from "./workbenchShell/useWorkbenchProviders";
 import { WorkbenchSessionHeader } from "./workbenchShell/WorkbenchSessionHeader";
 import { WorkbenchSessionLoadIssues } from "./workbenchShell/WorkbenchSessionLoadIssues";
+import { useWorkbenchDesktopMenu } from "./workbenchShell/useWorkbenchDesktopMenu";
 import { useWorkbenchTaskScrollbar } from "./workbenchShell/useWorkbenchTaskScrollbar";
+import { useWorkbenchTaskActivity } from "./workbenchShell/useWorkbenchTaskActivity";
 import type {
   AnchorRect,
   ArchiveConfirmState,
@@ -143,7 +134,6 @@ import {
   formatWorktreeLabel,
   formatWorktreePath,
   isOptimisticTask,
-  lastAssistantMessageMs,
   lastRoleMessageMs,
   modelIdsFromOptions,
   normalizeAnchorRect,
@@ -641,26 +631,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     setHarnessAuthModalProviderId(null);
     setPendingHarnessSelectionProviderId(null);
   }, [activeTaskId]);
-
-
-  const ensureActiveSessionSelection = useCallback(
-    (taskId: string, sessions: Array<{ session?: Session | null }>, preferredSessionId?: string | null) => {
-      const activeTab = workbenchStore.getActiveTab();
-      const prevSessionId =
-        activeTab?.kind === "task" && activeTab.ref.taskId === taskId ? (activeTab.ref.sessionId ?? null) : null;
-      const sessionList = sessions
-        .map((s) => s.session)
-        .filter((session): session is Session => Boolean(session));
-      const nextSessionId = preferredSessionId
-        ? preferredSessionId
-        : pickPreferredSessionId(sessionList, prevSessionId ?? null);
-      if (activeTab?.kind === "task" && activeTab.ref.taskId === taskId && nextSessionId !== prevSessionId) {
-        workbenchStore.setActiveSessionForActiveTask(nextSessionId, { source: "system" });
-      }
-    },
-    [workbenchStore],
-  );
-
   useEffect(() => {
     if (!workspaceId) return;
     let cancelled = false;
@@ -705,81 +675,44 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     };
   }, [workspaceId]);
 
-  const sessionSummaries = useMemo(() => activeTaskSummary?.sessions ?? [], [activeTaskSummary]);
-  const sessions = useMemo(() => sessionSummaries.map((s) => s.session), [sessionSummaries]);
-  const sessionIds = useMemo(
-    () => sessions.map((session) => idToString(session.id)).filter(Boolean),
-    [sessions],
-  );
-  const primarySessionId = useMemo(
-    () => idToString(activeTaskSummary?.task.primary_session_id ?? ""),
-    [activeTaskSummary?.task.primary_session_id],
-  );
-  const activeTaskSessionIds = useMemo(() => {
-    if (primarySessionId) return [primarySessionId];
-    return sessionIds;
-  }, [primarySessionId, sessionIds]);
+  const markTaskReadInFlightRef = useRef<Record<string, Promise<void> | undefined>>({});
 
-  const warmSessionIds = useMemo(() => {
-    const ids: { id: string; updatedAt: number; running: boolean }[] = [];
-    const activeSet = new Set(activeTaskSessionIds);
-    for (const taskId of workspaceSnapshot.activeIds) {
-      const task = tasksById[taskId];
-      if (!task) continue;
-      for (const sess of task.sessions) {
-        const sid = idToString(sess.session.id);
-        if (!sid || activeSet.has(sid)) continue;
-        const last = parseMs(sess.last_message_at) ?? parseMs(sess.session.updated_at) ?? 0;
-        const running = sess.session.status === "active" || sess.session.status === "running";
-        ids.push({ id: sid, updatedAt: last, running });
+  const markTaskRead = useCallback(async (taskId: string) => {
+    if (markTaskReadInFlightRef.current[taskId]) return;
+    const promise = (async () => {
+      try {
+        const updated = await markTaskReadApi(taskId);
+        workspaceSnapshotStore.applyTaskUpdate(updated);
+      } catch {
+        // ignore
       }
-    }
-    ids.sort((a, b) => {
-      if (a.running !== b.running) return a.running ? -1 : 1;
-      return b.updatedAt - a.updatedAt;
+    })().finally(() => {
+      delete markTaskReadInFlightRef.current[taskId];
     });
-    return ids.map((s) => s.id).slice(0, 20);
-  }, [activeTaskSessionIds, tasksById, workspaceSnapshot.activeIds]);
+    markTaskReadInFlightRef.current[taskId] = promise;
+    await promise;
+  }, [workspaceSnapshotStore]);
 
-  useEffect(() => {
-    if (!activeTaskId) {
-      return;
-    }
-    const snapshotReady = workspaceSnapshot.initialized && workspaceSnapshot.fetchState.active === "idle";
-    if (!activeTaskSummary) {
-      if (!snapshotReady) return;
-      workbenchStore.setActiveSessionForActiveTask(null, { source: "system" });
-      return;
-    }
-    if (sessionIds.length === 0 && !primarySessionId) {
-      if (!snapshotReady) return;
-      workbenchStore.setActiveSessionForActiveTask(null, { source: "system" });
-      return;
-    }
-    ensureActiveSessionSelection(activeTaskId, sessionSummaries, primarySessionId || null);
-  }, [
+  const {
+    sessions,
+    activeSessionId,
+    taskLiveInfo,
+    providerIdsByTaskFromSessions,
+    isTaskUnread,
+  } = useWorkbenchTaskActivity({
     activeTaskId,
+    activeSessionIdFromTab: activeSessionIdFromTabResolved,
     activeTaskSummary,
-    ensureActiveSessionSelection,
-    primarySessionId,
-    sessionIds.length,
-    sessionSummaries,
+    tasksById,
+    workspaceSnapshot,
+    sessionSnap,
+    optimisticTasks,
+    optimisticTasksById,
+    supervisor,
     workbenchStore,
-    workspaceSnapshot.initialized,
-    workspaceSnapshot.fetchState.active,
-  ]);
-
-  useEffect(() => {
-    supervisor.setActiveTaskSessionIds(activeTaskSessionIds);
-  }, [supervisor, activeTaskSessionIds]);
-
-  useEffect(() => {
-    workspaceSnapshotStore.setForegroundTaskId?.(activeTaskId ?? null);
-  }, [workspaceSnapshotStore, activeTaskId]);
-
-  useEffect(() => {
-    supervisor.setWarmSessionIds(warmSessionIds);
-  }, [supervisor, warmSessionIds]);
+    workspaceSnapshotStore,
+    markTaskRead,
+  });
 
   const normalizedTaskQuery = taskQuery.trim().toLowerCase();
   const optimisticActiveSummaries = useMemo(() => {
@@ -823,85 +756,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     () => filteredArchivedIds.map((id) => tasksById[id]).filter((v): v is WorkspaceActiveSnapshotItem => Boolean(v)),
     [filteredArchivedIds, tasksById],
   );
-  const tasksForLiveInfo = useMemo(() => {
-    const merged: Record<string, WorkspaceActiveSnapshotItem> = { ...tasksById };
-    for (const item of optimisticTasks) {
-      if (item.localStatus === "failed" || !merged[item.id]) {
-        merged[item.id] = item;
-      }
-    }
-    return merged;
-  }, [optimisticTasks, tasksById]);
-
-  const taskLiveInfo = useMemo(() => {
-    const workingByTask = new Set<string>();
-    const errorByTask = new Set<string>();
-    const lastAssistantMsByTask: Record<string, number> = {};
-    const entryBySessionId = new Map<string, SessionCacheEntry>();
-    for (const entry of Object.values(sessionSnap.sessions)) {
-      const sessionId = entry.session ? idToString(entry.session.id) : "";
-      if (sessionId) entryBySessionId.set(sessionId, entry);
-    }
-
-    for (const summary of Object.values(tasksForLiveInfo)) {
-      if (!summary) continue;
-      const taskId = summary.id;
-      const primarySessionId = summary.task.primary_session_id
-        ? idToString(summary.task.primary_session_id)
-        : "";
-      // Left nav status must reflect the primary session only (subagents are ignored).
-      const primarySessionSummary = primarySessionId
-        ? summary.sessions.find((sessionSummary) => idToString(sessionSummary.session.id) === primarySessionId)
-        : undefined;
-      const primaryEntry = primarySessionId ? entryBySessionId.get(primarySessionId) : undefined;
-
-      if (primarySessionSummary) {
-        const isWorking = primarySessionSummary.activity?.is_working === true;
-        if (isWorking) workingByTask.add(taskId);
-
-        const status = primaryEntry?.session?.status ?? primarySessionSummary.session.status;
-        if (status === "failed" || status === "cancelled") {
-          errorByTask.add(taskId);
-        }
-
-        const liveMs = primaryEntry ? lastAssistantMessageMs(primaryEntry.messages) : null;
-        const summaryMs = parseMs(primarySessionSummary.last_message_at ?? null);
-        const ms =
-          liveMs !== null && summaryMs !== null ? Math.max(liveMs, summaryMs) : liveMs ?? summaryMs;
-        if (ms !== null) lastAssistantMsByTask[taskId] = Math.max(lastAssistantMsByTask[taskId] ?? 0, ms);
-      } else if (primaryEntry?.session) {
-        const status = primaryEntry.session.status;
-        if (status === "failed" || status === "cancelled") {
-          errorByTask.add(taskId);
-        }
-        const ms = lastAssistantMessageMs(primaryEntry.messages);
-        if (ms !== null) lastAssistantMsByTask[taskId] = Math.max(lastAssistantMsByTask[taskId] ?? 0, ms);
-      }
-    }
-
-    for (const entry of Object.values(sessionSnap.sessions)) {
-      const session = entry.session;
-      const taskId = session ? idToString(session.task_id) : "";
-      if (!taskId || tasksForLiveInfo[taskId]) continue;
-      if (session?.parent_session_id || session?.relationship === "sub_agent") continue;
-      const status = session?.status;
-      if (status === "failed" || status === "cancelled") errorByTask.add(taskId);
-      const ms = lastAssistantMessageMs(entry.messages);
-      if (ms !== null) lastAssistantMsByTask[taskId] = Math.max(lastAssistantMsByTask[taskId] ?? 0, ms);
-    }
-    return { workingByTask, errorByTask, lastAssistantMsByTask };
-  }, [sessionSnap.sessions, tasksForLiveInfo]);
-
-  useEffect(() => {
-    const detail: WorkbenchTaskIdleDetail = {
-      allTasksIdle: taskLiveInfo.workingByTask.size === 0,
-    };
-    window.dispatchEvent(
-      new CustomEvent<WorkbenchTaskIdleDetail>(WORKBENCH_TASK_IDLE_EVENT, {
-        detail,
-      }),
-    );
-  }, [taskLiveInfo.workingByTask.size]);
 
   useEffect(() => {
     if (optimisticTasks.length === 0) return;
@@ -928,50 +782,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     });
   }, [optimisticTasks, tasksById]);
 
-  const providerIdsByTaskFromSessions = useMemo(() => {
-    const byTask: Record<string, Array<{ providerId: string; updatedAt: number }>> = {};
-    for (const entry of Object.values(sessionSnap.sessions)) {
-      const sess = entry.session;
-      const taskId = sess ? idToString(sess.task_id) : "";
-      const providerId = String(sess?.provider_id ?? "").trim();
-      if (!taskId || !providerId) continue;
-      (byTask[taskId] ??= []).push({ providerId, updatedAt: entry.updatedAtMs ?? 0 });
-    }
-    const out: Record<string, string[]> = {};
-    for (const [taskId, list] of Object.entries(byTask)) {
-      const seen = new Set<string>();
-      const ordered = list
-        .slice()
-        .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
-        .map((x) => x.providerId)
-        .filter((p) => {
-          if (seen.has(p)) return false;
-          seen.add(p);
-          return true;
-        });
-      out[taskId] = ordered;
-    }
-    return out;
-  }, [sessionSnap.sessions]);
-
-  const markTaskReadInFlightRef = useRef<Record<string, Promise<void> | undefined>>({});
-
-  const markTaskRead = useCallback(async (taskId: string) => {
-    if (markTaskReadInFlightRef.current[taskId]) return;
-    const p = (async () => {
-      try {
-        const updated = await markTaskReadApi(taskId);
-        workspaceSnapshotStore.applyTaskUpdate(updated);
-      } catch {
-        // ignore
-      }
-    })().finally(() => {
-      delete markTaskReadInFlightRef.current[taskId];
-    });
-    markTaskReadInFlightRef.current[taskId] = p;
-    await p;
-  }, [workspaceSnapshotStore]);
-
   const markTaskUnread = useCallback(async (taskId: string) => {
     try {
       const updated = await markTaskUnreadApi(taskId);
@@ -980,51 +790,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       // ignore
     }
   }, [workspaceSnapshotStore]);
-
-  const isTaskUnread = useCallback(
-    (taskId: string): boolean => {
-      const summary = tasksById[taskId];
-      const t = summary?.task;
-      if (!t) return false;
-      const serverLastAssistantMs = parseMs(t.last_assistant_message_at ?? null);
-      const liveLastAssistantMs = taskLiveInfo.lastAssistantMsByTask[taskId] ?? null;
-      const lastAssistantMs =
-        liveLastAssistantMs !== null && serverLastAssistantMs !== null
-          ? Math.max(liveLastAssistantMs, serverLastAssistantMs)
-          : liveLastAssistantMs ?? serverLastAssistantMs;
-      if (lastAssistantMs === null) return false;
-      const seenMs = parseMs(t.assistant_seen_at ?? null);
-      return seenMs === null || lastAssistantMs > seenMs;
-    },
-    [taskLiveInfo.lastAssistantMsByTask, tasksById],
-  );
-
-  useEffect(() => {
-    if (!activeTaskId) return;
-    const tid = activeTaskId;
-    const taskSummary = tasksById[tid];
-    const t = taskSummary?.task;
-    if (!t) return;
-    if (optimisticTasksById[tid]) return;
-    const working = taskLiveInfo.workingByTask.has(tid);
-    const serverLastAssistantMs = parseMs(t.last_assistant_message_at ?? null);
-    const liveLastAssistantMs = taskLiveInfo.lastAssistantMsByTask[tid] ?? null;
-    const lastAssistantMs =
-      liveLastAssistantMs !== null && serverLastAssistantMs !== null
-        ? Math.max(liveLastAssistantMs, serverLastAssistantMs)
-        : liveLastAssistantMs ?? serverLastAssistantMs;
-    const seenMs = parseMs(t.assistant_seen_at ?? null);
-    const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
-    if (!unread) return;
-    void markTaskRead(tid);
-  }, [
-    activeTaskId,
-    markTaskRead,
-    taskLiveInfo.lastAssistantMsByTask,
-    taskLiveInfo.workingByTask,
-    tasksById,
-    optimisticTasksById,
-  ]);
 
   useEnsureArchivedLoaded({
     archivedCollapsed,
@@ -1522,11 +1287,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     setConvoMenu((prev) => (prev ? null : { style: { left, top } }));
   }, []);
 
-  const activeSessionId = useMemo(() => {
-    if (primarySessionId) return primarySessionId;
-    if (activeSessionIdFromTabResolved) return activeSessionIdFromTabResolved;
-    return pickPreferredSessionId(sessions, null);
-  }, [activeSessionIdFromTabResolved, primarySessionId, sessions]);
   const activeTaskArchived = Boolean(activeTaskSummary?.task?.archived_at);
   const preserveScrollOnFocus = true;
   // `optimisticSessionIdSet` is derived from React state, but on the first tick of "New Task" we can
@@ -2806,246 +2566,72 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [activeSessionId, buildTranscriptExportFromEntry, hydrateTranscriptHistory, supervisor]);
 
   const desktopUi = isDesktopApp();
-  const emitMenuTrace = useCallback(
-    (detail: Omit<WebMenuTraceDetail, "layer">) => {
-      window.dispatchEvent(
-        new CustomEvent<WebMenuTraceDetail>(WEB_MENU_TRACE_EVENT, {
-          detail: { ...detail, layer: "workbench" },
-        }),
-      );
+  const activeSessionStatus = String(activeEntry?.session?.status ?? "").toLowerCase();
+  const canInterruptSession =
+    Boolean(activeSessionId) && (activeSessionStatus === "active" || activeSessionStatus === "running");
+  const canToggleArchive = Boolean(activeTaskId) && !Boolean(activeTaskId && archivePendingById[activeTaskId]);
+  const focusTaskSearch = useCallback(() => {
+    if (!taskSearchRef.current) return false;
+    taskSearchRef.current.focus();
+    taskSearchRef.current.select();
+    return true;
+  }, []);
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed((prev) => !prev);
+  }, []);
+
+  useWorkbenchDesktopMenu({
+    enabled: desktopUi,
+    state: {
+      activeSessionId,
+      activeTaskId,
+      activeTaskArchived: Boolean(activeTask?.archived_at),
+      activeTaskHasAssistantMessage,
+      activeTaskIsOptimistic,
+      canToggleArchive,
+      canInterruptSession,
+      copyTranscriptBusy,
+      sidebarCollapsed,
+      diffOpen,
+      artifactsOpen,
+      sessionsOpen,
+      terminalOpen,
+      webSessionsEnabled,
+      worktreeCanCopy: worktreeChip.canCopyWorktree,
+      worktreeCanOpenTerminal: worktreeChip.canOpenTerminal,
+      isTaskUnread,
     },
-    [],
-  );
-
-  useEffect(() => {
-    if (!desktopUi) return;
-
-    const onMenuCommand = (event: Event) => {
-      const custom = event as CustomEvent<WebMenuCommandDetail>;
-      const detail = custom.detail;
-      if (!detail) return;
-
-      switch (detail.commandId) {
-        case "file.export-transcript":
-          if (!activeSessionId) {
-            emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "session-missing" });
-            return;
-          }
-          void exportTranscript();
-          emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "export-transcript" });
-          return;
-        case "file.export-session-log":
-          if (!activeSessionId) {
-            emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "session-missing" });
-            return;
-          }
-          void exportSessionLog();
-          emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "export-session-log" });
-          return;
-        case "view.find-tasks":
-          if (!taskSearchRef.current) {
-            emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "task-search-missing" });
-            return;
-          }
-          taskSearchRef.current.focus();
-          taskSearchRef.current.select();
-          emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "focus-task-search" });
-          return;
-        case "view.toggle-sidebar":
-          setSidebarCollapsed((prev) => !prev);
-          emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "toggle-sidebar" });
-          return;
-        case "view.toggle-diff":
-          if (!activeTaskId) {
-            emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "task-missing" });
-            return;
-          }
-          toggleDiffPane("menu_command");
-          emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "toggle-diff-pane" });
-          return;
-        case "view.toggle-artifacts":
-          if (!activeTaskId || !activeSessionId) {
-            emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "task-or-session-missing" });
-            return;
-          }
-          toggleArtifactsPane("menu_command");
-          emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "toggle-artifacts-pane" });
-          return;
-        case "view.toggle-sessions":
-          if (webSessionsEnabled && activeTaskId && activeSessionId) {
-            toggleSessionsPane("menu_command");
-            emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "toggle-sessions-pane" });
-            return;
-          }
-          emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "sessions-unavailable" });
-          return;
-        case "view.toggle-terminal":
-          toggleTerminalPanel("menu_command");
-          emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "toggle-terminal" });
-          return;
-        case "task.new":
-          focusNewTask();
-          emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "create-task" });
-          return;
-        case "task.rename":
-          if (activeTaskId && !activeTaskIsOptimistic) {
-            beginRenameTask(activeTaskId);
-            emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "rename-task" });
-            return;
-          }
-          emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "task-missing-or-optimistic" });
-          return;
-        case "task.archive-toggle":
-          if (activeTaskId) {
-            void onToggleArchive(activeTaskId, !Boolean(activeTask?.archived_at), null).catch(() => {});
-            emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "toggle-task-archive" });
-            return;
-          }
-          emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "task-missing" });
-          return;
-        case "task.mark-read-toggle":
-          if (activeTaskId && activeTaskHasAssistantMessage) {
-            if (isTaskUnread(activeTaskId)) {
-              void markTaskRead(activeTaskId);
-            } else {
-              void markTaskUnread(activeTaskId);
-            }
-            emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "toggle-task-read" });
-            return;
-          }
-          emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "task-or-message-missing" });
-          return;
-        case "task.delete":
-          if (activeTaskId) {
-            void onDeleteTask(activeTaskId);
-            emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "delete-task" });
-            return;
-          }
-          emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "task-missing" });
-          return;
-        case "session.copy-transcript":
-          void copyTranscript();
-          emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "copy-transcript" });
-          return;
-        case "session.copy-session-log":
-          void copySessionLog();
-          emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "copy-session-log" });
-          return;
-        case "session.copy-worktree-location":
-          if (!worktreeChip.canCopyWorktree) {
-            emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "worktree-unavailable" });
-            return;
-          }
-          void copyWorktreeLocation();
-          emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "copy-worktree-location" });
-          return;
-        case "session.open-worktree-terminal":
-          if (!worktreeChip.canOpenTerminal) {
-            emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "worktree-unavailable" });
-            return;
-          }
-          void openWorktreeTerminal();
-          emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "open-worktree-terminal" });
-          return;
-        case "session.interrupt":
-          if (activeSessionId) {
-            void interruptSession(activeSessionId).catch(() => {});
-            emitMenuTrace({ commandId: detail.commandId, status: "handled", note: "interrupt-session" });
-            return;
-          }
-          emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "session-missing" });
-          return;
-        default:
-          emitMenuTrace({ commandId: detail.commandId, status: "ignored", note: "unsupported-command" });
-          return;
-      }
-    };
-
-    window.addEventListener(WEB_MENU_COMMAND_EVENT, onMenuCommand as EventListener);
-    return () => {
-      window.removeEventListener(WEB_MENU_COMMAND_EVENT, onMenuCommand as EventListener);
-    };
-  }, [
-    activeSessionId,
-    activeTask?.archived_at,
-    activeTaskHasAssistantMessage,
-    activeTaskId,
-    activeTaskIsOptimistic,
-    beginRenameTask,
-    copySessionLog,
-    copyTranscript,
-    copyWorktreeLocation,
-    desktopUi,
-    exportSessionLog,
-    exportTranscript,
-    focusNewTask,
-    isTaskUnread,
-    markTaskRead,
-    markTaskUnread,
-    onDeleteTask,
-    onToggleArchive,
-    openWorktreeTerminal,
-    toggleArtifactsPane,
-    toggleDiffPane,
-    toggleSessionsPane,
-    toggleTerminalPanel,
-    webSessionsEnabled,
-    emitMenuTrace,
-    worktreeChip.canCopyWorktree,
-    worktreeChip.canOpenTerminal,
-  ]);
-
-  useEffect(() => {
-    if (!desktopUi) return;
-    const activeSessionStatus = String(activeEntry?.session?.status ?? "").toLowerCase();
-    const canInterruptSession =
-      Boolean(activeSessionId) && (activeSessionStatus === "active" || activeSessionStatus === "running");
-    const canToggleArchive = Boolean(activeTaskId) && !Boolean(activeTaskId && archivePendingById[activeTaskId]);
-
-    const items: DesktopMenuItemState[] = [
-      { id: "file.export-transcript", enabled: Boolean(activeSessionId) },
-      { id: "file.export-session-log", enabled: Boolean(activeSessionId) },
-      { id: "view.find-tasks", enabled: true },
-      { id: "view.toggle-sidebar", enabled: true, checked: !sidebarCollapsed },
-      { id: "view.toggle-diff", enabled: Boolean(activeTaskId), checked: diffOpen },
-      { id: "view.toggle-artifacts", enabled: Boolean(activeTaskId && activeSessionId), checked: artifactsOpen },
-      { id: "view.toggle-sessions", enabled: Boolean(webSessionsEnabled && activeTaskId && activeSessionId), checked: sessionsOpen },
-      { id: "view.toggle-terminal", enabled: true, checked: terminalOpen },
-      { id: "task.new", enabled: true },
-      { id: "task.rename", enabled: Boolean(activeTaskId) && !activeTaskIsOptimistic },
-      { id: "task.archive-toggle", enabled: canToggleArchive },
-      { id: "task.mark-read-toggle", enabled: Boolean(activeTaskId) && activeTaskHasAssistantMessage },
-      { id: "task.delete", enabled: Boolean(activeTaskId) },
-      { id: "session.copy-transcript", enabled: Boolean(activeSessionId) && !copyTranscriptBusy },
-      { id: "session.copy-session-log", enabled: Boolean(activeSessionId) },
-      { id: "session.copy-worktree-location", enabled: worktreeChip.canCopyWorktree },
-      { id: "session.open-worktree-terminal", enabled: worktreeChip.canOpenTerminal },
-      { id: "session.interrupt", enabled: canInterruptSession },
-    ];
-
-    window.dispatchEvent(
-      new CustomEvent<WebMenuStateDetail>(WEB_MENU_STATE_EVENT, {
-        detail: { replace: true, items },
-      }),
-    );
-  }, [
-    activeEntry?.session?.status,
-    activeSessionId,
-    activeTaskHasAssistantMessage,
-    activeTaskId,
-    activeTaskIsOptimistic,
-    archivePendingById,
-    artifactsOpen,
-    copyTranscriptBusy,
-    desktopUi,
-    diffOpen,
-    sessionsOpen,
-    sidebarCollapsed,
-    terminalOpen,
-    webSessionsEnabled,
-    worktreeChip.canCopyWorktree,
-    worktreeChip.canOpenTerminal,
-  ]);
+    handlers: {
+      exportTranscript,
+      exportSessionLog,
+      focusTaskSearch,
+      toggleSidebar,
+      toggleDiffPane: () => toggleDiffPane("menu_command"),
+      toggleArtifactsPane: () => toggleArtifactsPane("menu_command"),
+      toggleSessionsPane: () => toggleSessionsPane("menu_command"),
+      toggleTerminalPanel: () => toggleTerminalPanel("menu_command"),
+      focusNewTask,
+      beginRenameTask,
+      toggleArchiveTask: (taskId, nextArchived) => {
+        void onToggleArchive(taskId, nextArchived, null).catch(() => {});
+      },
+      toggleTaskRead: (taskId, unread) => {
+        if (unread) {
+          void markTaskRead(taskId);
+        } else {
+          void markTaskUnread(taskId);
+        }
+      },
+      deleteTask: onDeleteTask,
+      copyTranscript,
+      copySessionLog,
+      copyWorktreeLocation,
+      openWorktreeTerminal,
+      interruptSession: (sessionId) => {
+        void interruptSession(sessionId).catch(() => {});
+      },
+    },
+  });
 
   const [desktopPlatform, setDesktopPlatform] = useState<DesktopPlatform>(() => {
     if (!desktopUi) return "unknown";

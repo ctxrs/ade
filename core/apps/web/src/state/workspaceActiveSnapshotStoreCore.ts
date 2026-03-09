@@ -1,13 +1,9 @@
 import type {
-  Message,
   Session,
-  SessionEvent,
   SessionHeadDelta,
   SessionHeadSnapshot,
-  SessionHeadWindow,
   SessionSummary,
   SessionSnapshotSummary,
-  SessionTurn,
   Task,
   WorktreeVcsSnapshot,
   WorkspaceActiveSnapshot,
@@ -41,6 +37,14 @@ import type {
   WorkspaceActiveSnapshotPatch,
   WorkspaceActiveSnapshotWorkerMessage,
 } from "./workspaceActiveSnapshotProtocol";
+import {
+  emptySessionHeadWindow,
+  mergeSessionEvents,
+  mergeSessionMessages,
+  mergeSessionToolSummaries,
+  mergeSessionTurns,
+  sanitizeSessionHeadSnapshot,
+} from "./sessionHeadState";
 
 export type WorkspaceActiveSnapshotItem = {
   id: string;
@@ -211,159 +215,6 @@ const readWorkspaceHeadsBatchPayload = (
     (rec.snapshot_rev as number | undefined) ?? (rec.snapshotRev as number | undefined) ?? 0;
   const deltas = Array.isArray(rec.deltas) ? (rec.deltas as SessionHeadDelta[]) : [];
   return { snapshotRev, deltas };
-};
-
-const isFinalThoughtEvent = (event: SessionEvent | null | undefined): boolean => {
-  if (!event) return false;
-  if (String(event.event_type ?? "") !== "thought_chunk") return false;
-  const payload = event.payload_json ?? {};
-  return (
-    payload?.is_final === true ||
-    payload?.isFinal === true ||
-    typeof payload?.full_content === "string" ||
-    typeof payload?.fullContent === "string"
-  );
-};
-
-const PARTIAL_EVENT_TYPES = new Set(["assistant_chunk"]);
-const HEAD_EVENT_BUFFER_LIMIT = 800;
-
-const isPartialEvent = (event: SessionEvent | null | undefined): boolean => {
-  if (!event) return false;
-  const type = String(event.event_type ?? "");
-  if (PARTIAL_EVENT_TYPES.has(type)) return true;
-  if (type === "thought_chunk") return !isFinalThoughtEvent(event);
-  return false;
-};
-
-const stripTurnPartials = (turns: SessionTurn[]): SessionTurn[] => {
-  return turns.map((turn) => {
-    const next = {
-      ...turn,
-      assistant_partial: null,
-      thought_partial: null,
-    } as SessionTurn & {
-      assistant_partial_provider_message_id?: string | null;
-      assistant_last_provider_message_id?: string | null;
-      thought_partial_provider_item_id?: string | null;
-    };
-    next.assistant_partial_provider_message_id = null;
-    next.assistant_last_provider_message_id = null;
-    next.thought_partial_provider_item_id = null;
-    return next;
-  });
-};
-
-const stripPartialEvents = (events: SessionEvent[]): SessionEvent[] => {
-  return events.filter((event) => !isPartialEvent(event));
-};
-
-const emptyHeadWindow = (): SessionHeadWindow => ({
-  turn_limit: 0,
-  message_limit: 0,
-  event_limit: 0,
-  byte_limit: 0,
-  turn_count: 0,
-  message_count: 0,
-  event_count: 0,
-  bytes: 0,
-  truncated: false,
-});
-
-const sanitizeHeadSnapshot = (head: SessionHeadSnapshot): SessionHeadSnapshot => {
-  const turns = Array.isArray(head.turns) ? stripTurnPartials(head.turns) : head.turns ?? [];
-  const events = Array.isArray(head.events) ? stripPartialEvents(head.events) : head.events ?? [];
-  return {
-    ...head,
-    turns,
-    events,
-  };
-};
-
-const mergePartial = (p: string, n: string): string => {
-  if (!p) return n;
-  if (!n) return p;
-  if (n.startsWith(p)) return n;
-  if (p.startsWith(n)) return p;
-  return n.length >= p.length ? n : p;
-};
-
-const mergeTurn = (prev: SessionTurn, next: SessionTurn): SessionTurn => {
-  const assistant_partial = mergePartial(prev.assistant_partial ?? "", next.assistant_partial ?? "");
-  const thought_partial = mergePartial(prev.thought_partial ?? "", next.thought_partial ?? "");
-  return {
-    ...prev,
-    ...next,
-    assistant_partial,
-    thought_partial,
-    tool_total: Math.max(prev.tool_total ?? 0, next.tool_total ?? 0),
-    tool_pending: Math.max(prev.tool_pending ?? 0, next.tool_pending ?? 0),
-    tool_running: Math.max(prev.tool_running ?? 0, next.tool_running ?? 0),
-    tool_completed: Math.max(prev.tool_completed ?? 0, next.tool_completed ?? 0),
-    tool_failed: Math.max(prev.tool_failed ?? 0, next.tool_failed ?? 0),
-  };
-};
-
-const compareTurnOrder = (a: SessionTurn, b: SessionTurn): number => {
-  const sa = Number(a.start_seq ?? Number.NaN);
-  const sb = Number(b.start_seq ?? Number.NaN);
-  if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) {
-    return sa - sb;
-  }
-  return String(a.started_at).localeCompare(String(b.started_at));
-};
-
-const mergeTurns = (prev: SessionTurn[], incoming: SessionTurn[]): SessionTurn[] => {
-  if (incoming.length === 0) return prev;
-  const byId = new Map<string, SessionTurn>();
-  for (const t of prev) {
-    const id = idToString(t.turn_id);
-    if (id) byId.set(id, t);
-  }
-  for (const t of incoming) {
-    const id = idToString(t.turn_id);
-    if (!id) continue;
-    const existing = byId.get(id);
-    byId.set(id, existing ? mergeTurn(existing, t) : t);
-  }
-  return Array.from(byId.values()).sort(compareTurnOrder);
-};
-
-const mergeMessages = (prev: Message[], incoming: Message[]): Message[] => {
-  if (incoming.length === 0) return prev;
-  const byId = new Map<string, Message>();
-  for (const msg of prev) {
-    const id = idToString(msg.id);
-    if (id) byId.set(id, msg);
-  }
-  for (const msg of incoming) {
-    const id = idToString(msg.id);
-    if (!id) continue;
-    byId.set(id, msg);
-  }
-  return Array.from(byId.values()).sort((a, b) => {
-    const c = String(a.created_at).localeCompare(String(b.created_at));
-    if (c !== 0) return c;
-    const sa = Number(a.turn_sequence ?? Number.NaN);
-    const sb = Number(b.turn_sequence ?? Number.NaN);
-    if (Number.isFinite(sa) && Number.isFinite(sb) && sa !== sb) return sa - sb;
-    if (Number.isFinite(sa) && !Number.isFinite(sb)) return -1;
-    if (!Number.isFinite(sa) && Number.isFinite(sb)) return 1;
-    return String(idToString(a.id)).localeCompare(String(idToString(b.id)));
-  });
-};
-
-const mergeEvents = (prev: SessionEvent[], incoming: SessionEvent[]): SessionEvent[] => {
-  if (incoming.length === 0) return prev;
-  const bySeq = new Map<number, SessionEvent>();
-  for (const ev of prev) {
-    if (typeof ev.seq === "number") bySeq.set(ev.seq, ev);
-  }
-  for (const ev of incoming) {
-    if (typeof ev.seq === "number") bySeq.set(ev.seq, ev);
-  }
-  const next = Array.from(bySeq.values()).sort((a, b) => Number(a.seq ?? 0) - Number(b.seq ?? 0));
-  return next.length > HEAD_EVENT_BUFFER_LIMIT ? next.slice(-HEAD_EVENT_BUFFER_LIMIT) : next;
 };
 
 export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSource {
@@ -1170,7 +1021,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       if (!head || typeof head !== "object") continue;
       const sessionId = idToString(head.session?.id ?? "");
       if (!sessionId) continue;
-      const sanitized = sanitizeHeadSnapshot(head);
+      const sanitized = sanitizeSessionHeadSnapshot(head);
       bySession.set(sessionId, sanitized);
       const taskId = idToString(head.session?.task_id ?? "");
       if (taskId && !byTask.has(taskId)) {
@@ -1233,7 +1084,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     return {
       task: item.task,
       primary_session: primary ?? null,
-      primary_session_head: head ? sanitizeHeadSnapshot(head) : null,
+      primary_session_head: head ? sanitizeSessionHeadSnapshot(head) : null,
       sessions,
       sort_at: sortAt,
     };
@@ -1967,7 +1818,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
           history_cursor: null,
           has_more_history: false,
           summary_checkpoint: undefined,
-          head_window: emptyHeadWindow(),
+          head_window: emptySessionHeadWindow(),
         };
       }
     }
@@ -1990,34 +1841,23 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     let messages = existing.messages ?? [];
     let events = existing.events ?? [];
     if (delta.turn) {
-      turns = mergeTurns(turns, [delta.turn]);
+      turns = mergeSessionTurns(turns, [delta.turn]);
       changed = true;
     }
     if (delta.message) {
-      messages = mergeMessages(messages, [delta.message]);
+      messages = mergeSessionMessages(messages, [delta.message]);
       changed = true;
     }
-    if (delta.event && !isPartialEvent(delta.event)) {
-      events = mergeEvents(events, [delta.event]);
+    if (delta.event) {
+      events = mergeSessionEvents(events, [delta.event]);
       changed = true;
     }
     const incomingToolSummaries = Array.isArray(delta.tool_summaries) ? delta.tool_summaries : [];
     if (incomingToolSummaries.length > 0) {
-      const byId = new Map(toolSummaries.map((s) => [String(s?.tool_call_id ?? ""), s]));
-      for (const s of incomingToolSummaries) {
-        const id = String(s?.tool_call_id ?? "").trim();
-        if (!id) continue;
-        byId.set(id, s);
-      }
-      toolSummaries = Array.from(byId.values()).filter((s) => String(s?.tool_call_id ?? "").trim());
+      toolSummaries = mergeSessionToolSummaries(toolSummaries, incomingToolSummaries, turns);
       changed = true;
     }
-    if (toolSummaries.length > 0 && turns.length > 0) {
-      // Keep summaries bounded to the head window turns, matching server-side behavior.
-      const allowed = new Set(turns.map((t) => idToString(t?.turn_id ?? "")));
-      toolSummaries = toolSummaries.filter((s) => allowed.has(idToString(s?.turn_id ?? "")));
-    }
-    const next: SessionHeadSnapshot = sanitizeHeadSnapshot({
+    const next: SessionHeadSnapshot = sanitizeSessionHeadSnapshot({
       ...existing,
       turns,
       tool_summaries: toolSummaries,
@@ -2058,7 +1898,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     if (!head) return false;
     const sessionId = idToString(head?.session?.id ?? "");
     if (!sessionId) return false;
-    const sanitized = sanitizeHeadSnapshot(head);
+    const sanitized = sanitizeSessionHeadSnapshot(head);
     const prev = this.sessionHeadsById.get(sessionId);
     if (!this.shouldReplaceHead(prev, sanitized)) return false;
     this.sessionHeadsById.set(sessionId, sanitized);
@@ -2089,7 +1929,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     const rec = summary as Record<string, unknown>;
     const head = rec.primary_session_head ?? rec.primarySessionHead ?? null;
     if (!head || typeof head !== "object") return null;
-    return sanitizeHeadSnapshot(head as SessionHeadSnapshot);
+    return sanitizeSessionHeadSnapshot(head as SessionHeadSnapshot);
   }
 
   private readPrimarySessionId(summary: unknown): string | null {
@@ -2110,7 +1950,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     if (!head) return;
     const sessionId = idToString(head?.session?.id ?? "");
     if (!sessionId) return;
-    const sanitized = sanitizeHeadSnapshot(head);
+    const sanitized = sanitizeSessionHeadSnapshot(head);
     const prev = this.sessionHeadsById.get(sessionId);
     if (!this.shouldReplaceHead(prev, sanitized)) return;
     this.sessionHeadsById.set(sessionId, sanitized);
