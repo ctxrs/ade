@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import {
-  authenticateProviderForWorkspace,
   cancelInstall,
   completeClaudeLogin,
   deleteAmpAccount,
@@ -13,53 +12,38 @@ import {
   deleteMistralAccount,
   deleteQwenAccount,
   deleteProviderHarnessEndpoint,
-  listAmpAccounts,
-  getAmpLogin,
-  getClaudeLogin,
-  getCodexLogin,
-  getGeminiLogin,
-  getMistralLogin,
-  getQwenLogin,
   getInstall,
+  installAllProviders,
+  installProvider,
+  listAmpAccounts,
   listClaudeAccounts,
+  listCodexAccounts,
   listCopilotAccounts,
+  listCursorAccounts,
   listGeminiAccounts,
   listKimiAccounts,
   listMistralAccounts,
-  listQwenAccounts,
-  installAllProviders,
-  installProvider,
-  listCodexAccounts,
-  listCursorAccounts,
   listProviders,
+  listQwenAccounts,
   refreshProviderHarnessEndpointModels,
   selectProviderHarnessSource,
-  setClaudeActiveAccount,
-  setCopilotActiveAccount,
-  setCodexActiveAccount,
-  setCursorActiveAccount,
   setAmpActiveAccount,
+  setClaudeActiveAccount,
+  setCodexActiveAccount,
+  setCopilotActiveAccount,
+  setCursorActiveAccount,
   setGeminiActiveAccount,
   setKimiActiveAccount,
   setMistralActiveAccount,
   setQwenActiveAccount,
-  startCodexLogin,
-  startAmpLogin,
-  startClaudeLogin,
-  startGeminiLogin,
-  startMistralLogin,
-  startQwenLogin,
-  upsertClaudeAccount,
-  upsertCopilotAccount,
   upsertCursorAccount,
-  upsertKimiAccount,
   upsertProviderHarnessEndpoint,
   verifyProviderForWorkspace,
-  type ClaudeAccountsResponse,
-  type CopilotAccountsResponse,
-  type CodexAccountsResponse,
-  type CursorAccountsResponse,
   type AmpAccountsResponse,
+  type ClaudeAccountsResponse,
+  type CodexAccountsResponse,
+  type CopilotAccountsResponse,
+  type CursorAccountsResponse,
   type GeminiAccountsResponse,
   type HarnessEndpointRecord,
   type HarnessProviderSourceConfig,
@@ -81,9 +65,8 @@ import {
   type ProviderInstallProgressSnapshot,
 } from "../../../state/providerInstallProgressStore";
 import type { HarnessAuthModalState, InstallSession } from "../../SettingsPage.types";
-import { defaultEndpointBaseUrlForProvider, type HarnessAuthRow } from "../harnessAuthRows";
+import type { HarnessAuthRow } from "../harnessAuthRows";
 import {
-  defaultEndpointProviderPresetForHarness,
   defaultShapeForHarnessProvider,
   getHarnessEndpointProviderPreset,
   normalizeOptionalBaseUrl,
@@ -91,6 +74,34 @@ import {
   nextTokenEndpointName,
 } from "../harnessEndpointProviders";
 import { computeInstallPct, parseInstallTarget } from "../../../utils/providerInstallUi";
+import {
+  harnessEndpointRequiresApiShape,
+  harnessEndpointRequiresBaseUrl,
+  messageFromError,
+  shouldCompleteClaudeLoginWithCallbackCode,
+  supportsHarnessEndpointConfigStatic,
+  supportsHarnessSubscriptionAuth,
+  toErrorObject,
+} from "./harnessAuth/capabilities";
+import { runHarnessSubscriptionFlow } from "./harnessAuth/subscriptionFlow";
+import { useHarnessAuthModalController } from "./harnessAuth/useHarnessAuthModalController";
+
+export {
+  CLAUDE_LOGIN_COMPLETION_TIMEOUT_MS,
+  CLAUDE_LOGIN_POLL_ATTEMPTS,
+  CLAUDE_LOGIN_POLL_INTERVAL_MS,
+  extractGithubDeviceCodeFromAuthUrl,
+  resolveHarnessAuthModalInitialStage,
+  shouldAutoOpenCopilotAuthUrl,
+  shouldAutoOpenKimiAuthUrl,
+  shouldCompleteClaudeLoginWithCallbackCode,
+  shouldOpenPolledAuthUrlForStatus,
+  shouldOpenPolledClaudeAuthUrl,
+  shouldSkipDuplicateAmpLoginStart,
+  supportsHarnessSubscriptionAuth,
+  takeNextClaudeAuthUrlToOpen,
+  toErrorObject,
+} from "./harnessAuth/capabilities";
 
 type UseHarnessAuthenticationControllerArgs = {
   workspaceId: string | null;
@@ -148,75 +159,21 @@ type HarnessAuthenticationController = {
   harnessEndpointRequiresBaseUrl: (providerId: string) => boolean;
 };
 
-const HARNESSES_WITH_ENDPOINT_CONFIG = new Set([
-  "codex",
-  "claude-crp",
-  "gemini",
-  "kimi",
-  "qwen",
-  "opencode",
-  "mistral",
-  "goose",
-  "amp",
-  "droid",
-  "openhands",
-  "copilot",
-  "auggie",
-  "pi",
-]);
-
-const supportsHarnessEndpointConfigStatic = (providerId: string): boolean =>
-  HARNESSES_WITH_ENDPOINT_CONFIG.has(providerId);
-
-const HARNESSES_WITH_SUBSCRIPTION_AUTH = new Set([
-  "codex",
-  "claude-crp",
-  "gemini",
-  "kimi",
-  "qwen",
-  "mistral",
-  "amp",
-  "copilot",
-  "cursor",
-  "auggie",
-]);
-
-export const supportsHarnessSubscriptionAuth = (providerId: string): boolean =>
-  HARNESSES_WITH_SUBSCRIPTION_AUTH.has(providerId);
-
-const HARNESSES_WITH_ENDPOINT_BASE_URL = new Set([
-  "codex",
-  "claude-crp",
-  "kimi",
-  "qwen",
-  "opencode",
-  "mistral",
-  "goose",
-  "pi",
-  "droid",
-  "openhands",
-]);
-
-const harnessEndpointRequiresBaseUrl = (providerId: string): boolean =>
-  HARNESSES_WITH_ENDPOINT_BASE_URL.has(providerId);
-
-const harnessEndpointRequiresApiShape = (providerId: string): boolean =>
-  HARNESSES_WITH_ENDPOINT_BASE_URL.has(providerId);
-
-export const resolveHarnessAuthModalInitialStage = (providerId: string): HarnessAuthModalState["stage"] => {
-  const supportsApiKey = providerId === "cursor" || supportsHarnessEndpointConfigStatic(providerId);
-  const supportsSubscription = supportsHarnessSubscriptionAuth(providerId);
-  if (supportsApiKey && !supportsSubscription) return "api_key";
-  if (!supportsApiKey && supportsSubscription) return "subscription";
-  return "choose";
+type RefreshOptions = {
+  silent?: boolean;
 };
 
-const messageFromError = (error: unknown): string => {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-  return String(error);
+type ResolveUpsertedEndpointArgs = {
+  requestedEndpointId: string | null;
+  previousEndpointIds: Set<string>;
+  nextEndpoints: HarnessEndpointRecord[];
+  name: string;
+  normalizedBase: string | null;
+  geminiAuthType: "gemini_api_key" | "vertex_ai" | null;
 };
+
+type StateSetter<T> = Dispatch<SetStateAction<T>>;
+type NullableStateSetter<T> = Dispatch<SetStateAction<T | null>>;
 
 const toInstallSession = (session: ProviderInstallProgressSnapshot[string]): InstallSession => ({
   installId: session.installId,
@@ -235,114 +192,48 @@ const installsFromProgressSnapshot = (
     Object.entries(snapshot).map(([providerId, session]) => [providerId, toInstallSession(session)]),
   );
 
-export const toErrorObject = (error: unknown): Error => {
-  if (error instanceof Error) return error;
-  return new Error(String(error));
-};
-
-const looksLikeClaudeSetupToken = (value: string): boolean => value.trim().startsWith("sk-ant-oat");
-const CLAUDE_POLLED_AUTH_URL_OPEN_GRACE_MS = 5000;
-export const CLAUDE_LOGIN_POLL_INTERVAL_MS = 1600;
-export const CLAUDE_LOGIN_COMPLETION_TIMEOUT_MS = 15 * 60 * 1000;
-export const CLAUDE_LOGIN_POLL_ATTEMPTS =
-  Math.ceil(CLAUDE_LOGIN_COMPLETION_TIMEOUT_MS / CLAUDE_LOGIN_POLL_INTERVAL_MS);
-const GEMINI_LOGIN_POLL_ATTEMPTS = 90;
-const GEMINI_LOGIN_POLL_INTERVAL_MS = 1600;
-const QWEN_LOGIN_POLL_ATTEMPTS = 90;
-const QWEN_LOGIN_POLL_INTERVAL_MS = 1600;
-const AMP_LOGIN_POLL_ATTEMPTS = 90;
-const AMP_LOGIN_POLL_INTERVAL_MS = 1600;
-const MISTRAL_LOGIN_POLL_ATTEMPTS = 90;
-const MISTRAL_LOGIN_POLL_INTERVAL_MS = 1600;
-
-export const shouldSkipDuplicateAmpLoginStart = (params: {
-  providerId: string;
-  ampLoginInFlight: boolean;
-}): boolean => params.providerId === "amp" && params.ampLoginInFlight;
-
-export const shouldCompleteClaudeLoginWithCallbackCode = (params: {
-  providerId: string;
-  subscriptionBusy: boolean;
-  pendingLoginId: string | null;
-  token: string;
-}): boolean => {
-  if (params.providerId !== "claude-crp") return false;
-  if (!params.subscriptionBusy) return false;
-  if (!params.pendingLoginId) return false;
-  const trimmed = params.token.trim();
-  if (!trimmed) return false;
-  return !looksLikeClaudeSetupToken(trimmed);
-};
-
-export const shouldOpenPolledAuthUrlForStatus = (status: string): boolean =>
-  status === "pending";
-
-export const takeNextClaudeAuthUrlToOpen = (
-  authUrl: string | null | undefined,
-  openedAuthUrls: Set<string>,
-): string | null => {
-  const normalized = authUrl?.trim() ?? "";
-  if (!normalized || openedAuthUrls.has(normalized)) return null;
-  openedAuthUrls.add(normalized);
-  return normalized;
-};
-
-const takeNextAuthUrlToOpen = (
-  authUrl: string | null | undefined,
-  openedAuthUrls: Set<string>,
-): string | null => {
-  const normalized = authUrl?.trim() ?? "";
-  if (!normalized || openedAuthUrls.has(normalized)) return null;
-  openedAuthUrls.add(normalized);
-  return normalized;
-};
-
-export const extractGithubDeviceCodeFromAuthUrl = (
-  authUrl: string | null | undefined,
-): string | null => {
-  const trimmed = authUrl?.trim() ?? "";
-  if (!trimmed) return null;
+const refreshAccountCollection = async <TResponse>(params: {
+  silent?: boolean;
+  list: () => Promise<TResponse>;
+  setData: NullableStateSetter<TResponse>;
+  setBusy: StateSetter<boolean>;
+  setProviderError: StateSetter<string | null>;
+}): Promise<TResponse | null> => {
+  if (!params.silent) {
+    params.setBusy(true);
+  }
   try {
-    const parsed = new URL(trimmed);
-    if (parsed.hostname.toLowerCase() !== "github.com") return null;
-    const path = parsed.pathname.replace(/\/+$/, "");
-    if (path !== "/login/device") return null;
-    const code = parsed.searchParams.get("user_code")?.trim() ?? "";
-    return code || null;
-  } catch {
+    const next = await params.list();
+    params.setData(next);
+    return next;
+  } catch (error) {
+    params.setProviderError(messageFromError(error));
     return null;
+  } finally {
+    if (!params.silent) {
+      params.setBusy(false);
+    }
   }
 };
 
-export const shouldAutoOpenCopilotAuthUrl = (authUrl: string): boolean => {
-  void authUrl;
-  return false;
-};
-
-export const shouldOpenPolledClaudeAuthUrl = (params: {
-  loginStartedAtMs: number;
-  initialAuthUrl: string | null | undefined;
-  polledAuthUrl: string;
-  nowMs: number;
-}): boolean => {
-  const polled = params.polledAuthUrl.trim();
-  if (!polled) return false;
-  const initial = params.initialAuthUrl?.trim() ?? "";
-  if (!initial) {
-    return params.nowMs - params.loginStartedAtMs >= CLAUDE_POLLED_AUTH_URL_OPEN_GRACE_MS;
+const mutateAccountCollection = async <TResponse>(params: {
+  mutate: () => Promise<TResponse>;
+  setData: NullableStateSetter<TResponse>;
+  setBusy: StateSetter<boolean>;
+  setProviderError: StateSetter<string | null>;
+  onMutationComplete: () => Promise<void>;
+}): Promise<void> => {
+  params.setBusy(true);
+  params.setProviderError(null);
+  try {
+    const next = await params.mutate();
+    params.setData(next);
+    await params.onMutationComplete();
+  } catch (error) {
+    params.setProviderError(messageFromError(error));
+  } finally {
+    params.setBusy(false);
   }
-  return polled !== initial;
-};
-
-export const shouldAutoOpenKimiAuthUrl = (): boolean => false;
-
-type ResolveUpsertedEndpointArgs = {
-  requestedEndpointId: string | null;
-  previousEndpointIds: Set<string>;
-  nextEndpoints: HarnessEndpointRecord[];
-  name: string;
-  normalizedBase: string | null;
-  geminiAuthType: "gemini_api_key" | "vertex_ai" | null;
 };
 
 export const resolveUpsertedEndpoint = ({
@@ -381,8 +272,18 @@ export function useHarnessAuthenticationController({
   const [providerHarnessConfig, setProviderHarnessConfig] = useState<Record<string, HarnessProviderSourceConfig | undefined>>({});
   const [providerHarnessBusy, setProviderHarnessBusy] = useState<Record<string, boolean>>({});
   const [providerEndpointUnsupported, setProviderEndpointUnsupported] = useState<Record<string, boolean>>({});
-  const [harnessAuthModal, setHarnessAuthModal] = useState<HarnessAuthModalState | null>(null);
-  const [claudePendingLoginId, setClaudePendingLoginId] = useState<string | null>(null);
+  const {
+    harnessAuthModal,
+    claudePendingLoginId,
+    openHarnessAuthModal: baseOpenHarnessAuthModal,
+    closeHarnessAuthModal: baseCloseHarnessAuthModal,
+    patchHarnessAuthModal: basePatchHarnessAuthModal,
+    startOperation: startHarnessAuthModalOperation,
+    finishOperation: finishHarnessAuthModalOperation,
+    patchHarnessAuthModalForOperation,
+    closeHarnessAuthModalForOperation,
+    setClaudePendingLoginIdForOperation,
+  } = useHarnessAuthModalController();
   const [installBusy, setInstallBusy] = useState<string | null>(null);
   const [installs, setInstalls] = useState<Record<string, InstallSession>>(
     () => installsFromProgressSnapshot(getProviderInstallProgressSnapshot()),
@@ -411,9 +312,7 @@ export function useHarnessAuthenticationController({
   const installsRef = useRef<Record<string, InstallSession>>({});
   const providersByIdRef = useRef<Record<string, ProviderStatus>>({});
   const providerHarnessConfigRef = useRef<Record<string, HarnessProviderSourceConfig | undefined>>({});
-  const providerHarnessBusyRef = useRef<Record<string, boolean>>({});
   const providerEndpointUnsupportedRef = useRef<Record<string, boolean>>({});
-  const ampLoginInFlightRef = useRef(false);
 
   useEffect(() => {
     return subscribeProviderInstallProgress((snapshot) => {
@@ -430,10 +329,6 @@ export function useHarnessAuthenticationController({
   useEffect(() => {
     providerHarnessConfigRef.current = providerHarnessConfig;
   }, [providerHarnessConfig]);
-
-  useEffect(() => {
-    providerHarnessBusyRef.current = providerHarnessBusy;
-  }, [providerHarnessBusy]);
 
   useEffect(() => {
     providerEndpointUnsupportedRef.current = providerEndpointUnsupported;
@@ -482,7 +377,6 @@ export function useHarnessAuthenticationController({
   );
 
   const setProviderHarnessBusyForProvider = useCallback((providerId: string, busy: boolean) => {
-    providerHarnessBusyRef.current = { ...providerHarnessBusyRef.current, [providerId]: busy };
     setProviderHarnessBusy((prev) => ({ ...prev, [providerId]: busy }));
   }, []);
 
@@ -538,167 +432,114 @@ export function useHarnessAuthenticationController({
     }
   }, [refreshProvidersBootstrapState, workspaceId]);
 
-  const refreshCodexAccounts = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) {
-      setCodexAccountsBusy(true);
-    }
-    try {
-      const next = await listCodexAccounts();
-      setCodexAccounts(next);
-      return next;
-    } catch (error) {
-      setProviderError(messageFromError(error));
-      return null;
-    } finally {
-      if (!opts?.silent) {
-        setCodexAccountsBusy(false);
-      }
-    }
-  }, []);
+  const refreshCodexAccounts = useCallback(
+    (opts?: RefreshOptions) =>
+      refreshAccountCollection({
+        silent: opts?.silent,
+        list: listCodexAccounts,
+        setData: setCodexAccounts,
+        setBusy: setCodexAccountsBusy,
+        setProviderError,
+      }),
+    [],
+  );
 
-  const refreshClaudeAccounts = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) {
-      setClaudeAccountsBusy(true);
-    }
-    try {
-      const next = await listClaudeAccounts();
-      setClaudeAccounts(next);
-      return next;
-    } catch (error) {
-      setProviderError(messageFromError(error));
-      return null;
-    } finally {
-      if (!opts?.silent) {
-        setClaudeAccountsBusy(false);
-      }
-    }
-  }, []);
+  const refreshClaudeAccounts = useCallback(
+    (opts?: RefreshOptions) =>
+      refreshAccountCollection({
+        silent: opts?.silent,
+        list: listClaudeAccounts,
+        setData: setClaudeAccounts,
+        setBusy: setClaudeAccountsBusy,
+        setProviderError,
+      }),
+    [],
+  );
 
-  const refreshGeminiAccounts = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) {
-      setGeminiAccountsBusy(true);
-    }
-    try {
-      const next = await listGeminiAccounts();
-      setGeminiAccounts(next);
-      return next;
-    } catch (error) {
-      setProviderError(messageFromError(error));
-      return null;
-    } finally {
-      if (!opts?.silent) {
-        setGeminiAccountsBusy(false);
-      }
-    }
-  }, []);
+  const refreshGeminiAccounts = useCallback(
+    (opts?: RefreshOptions) =>
+      refreshAccountCollection({
+        silent: opts?.silent,
+        list: listGeminiAccounts,
+        setData: setGeminiAccounts,
+        setBusy: setGeminiAccountsBusy,
+        setProviderError,
+      }),
+    [],
+  );
 
-  const refreshQwenAccounts = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) {
-      setQwenAccountsBusy(true);
-    }
-    try {
-      const next = await listQwenAccounts();
-      setQwenAccounts(next);
-      return next;
-    } catch (error) {
-      setProviderError(messageFromError(error));
-      return null;
-    } finally {
-      if (!opts?.silent) {
-        setQwenAccountsBusy(false);
-      }
-    }
-  }, []);
+  const refreshQwenAccounts = useCallback(
+    (opts?: RefreshOptions) =>
+      refreshAccountCollection({
+        silent: opts?.silent,
+        list: listQwenAccounts,
+        setData: setQwenAccounts,
+        setBusy: setQwenAccountsBusy,
+        setProviderError,
+      }),
+    [],
+  );
 
-  const refreshKimiAccounts = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) {
-      setKimiAccountsBusy(true);
-    }
-    try {
-      const next = await listKimiAccounts();
-      setKimiAccounts(next);
-      return next;
-    } catch (error) {
-      setProviderError(messageFromError(error));
-      return null;
-    } finally {
-      if (!opts?.silent) {
-        setKimiAccountsBusy(false);
-      }
-    }
-  }, []);
+  const refreshKimiAccounts = useCallback(
+    (opts?: RefreshOptions) =>
+      refreshAccountCollection({
+        silent: opts?.silent,
+        list: listKimiAccounts,
+        setData: setKimiAccounts,
+        setBusy: setKimiAccountsBusy,
+        setProviderError,
+      }),
+    [],
+  );
 
-  const refreshMistralAccounts = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) {
-      setMistralAccountsBusy(true);
-    }
-    try {
-      const next = await listMistralAccounts();
-      setMistralAccounts(next);
-      return next;
-    } catch (error) {
-      setProviderError(messageFromError(error));
-      return null;
-    } finally {
-      if (!opts?.silent) {
-        setMistralAccountsBusy(false);
-      }
-    }
-  }, []);
+  const refreshMistralAccounts = useCallback(
+    (opts?: RefreshOptions) =>
+      refreshAccountCollection({
+        silent: opts?.silent,
+        list: listMistralAccounts,
+        setData: setMistralAccounts,
+        setBusy: setMistralAccountsBusy,
+        setProviderError,
+      }),
+    [],
+  );
 
-  const refreshCopilotAccounts = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) {
-      setCopilotAccountsBusy(true);
-    }
-    try {
-      const next = await listCopilotAccounts();
-      setCopilotAccounts(next);
-      return next;
-    } catch (error) {
-      setProviderError(messageFromError(error));
-      return null;
-    } finally {
-      if (!opts?.silent) {
-        setCopilotAccountsBusy(false);
-      }
-    }
-  }, []);
+  const refreshCopilotAccounts = useCallback(
+    (opts?: RefreshOptions) =>
+      refreshAccountCollection({
+        silent: opts?.silent,
+        list: listCopilotAccounts,
+        setData: setCopilotAccounts,
+        setBusy: setCopilotAccountsBusy,
+        setProviderError,
+      }),
+    [],
+  );
 
-  const refreshCursorAccounts = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) {
-      setCursorAccountsBusy(true);
-    }
-    try {
-      const next = await listCursorAccounts();
-      setCursorAccounts(next);
-      return next;
-    } catch (error) {
-      setProviderError(messageFromError(error));
-      return null;
-    } finally {
-      if (!opts?.silent) {
-        setCursorAccountsBusy(false);
-      }
-    }
-  }, []);
+  const refreshCursorAccounts = useCallback(
+    (opts?: RefreshOptions) =>
+      refreshAccountCollection({
+        silent: opts?.silent,
+        list: listCursorAccounts,
+        setData: setCursorAccounts,
+        setBusy: setCursorAccountsBusy,
+        setProviderError,
+      }),
+    [],
+  );
 
-  const refreshAmpAccounts = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) {
-      setAmpAccountsBusy(true);
-    }
-    try {
-      const next = await listAmpAccounts();
-      setAmpAccounts(next);
-      return next;
-    } catch (error) {
-      setProviderError(messageFromError(error));
-      return null;
-    } finally {
-      if (!opts?.silent) {
-        setAmpAccountsBusy(false);
-      }
-    }
-  }, []);
+  const refreshAmpAccounts = useCallback(
+    (opts?: RefreshOptions) =>
+      refreshAccountCollection({
+        silent: opts?.silent,
+        list: listAmpAccounts,
+        setData: setAmpAccounts,
+        setBusy: setAmpAccountsBusy,
+        setProviderError,
+      }),
+    [],
+  );
+
   const onDeleteProviderEndpoint = useCallback(async (providerId: string, endpointId: string) => {
     setProviderHarnessBusyForProvider(providerId, true);
     setProviderError(null);
@@ -769,53 +610,22 @@ export function useHarnessAuthenticationController({
   );
 
   const openHarnessAuthModal = useCallback((providerId: string) => {
-    const defaultPresetId = defaultEndpointProviderPresetForHarness(providerId);
-    const defaultPreset = getHarnessEndpointProviderPreset(defaultPresetId);
-    const requiresBaseUrl = harnessEndpointRequiresBaseUrl(providerId);
     setProviderError(null);
-    setHarnessAuthModal({
-      provider_id: providerId,
-      stage: resolveHarnessAuthModalInitialStage(providerId),
-      endpoint_id: null,
-      endpoint_provider_id: defaultPresetId,
-      gemini_endpoint_auth_type: "gemini_api_key",
-      endpoint_name: "",
-      base_url: providerId === "gemini"
-        ? (defaultPreset.base_url ?? "")
-        : requiresBaseUrl
-          ? (defaultPreset.base_url ?? defaultEndpointBaseUrlForProvider(providerId))
-          : "",
-      api_key: "",
-      manual_model_ids: "",
-      subscription_label: "",
-      subscription_token: "",
-      subscription_email: "",
-      subscription_provider: "",
-      subscription_credentials_json: "",
-      subscription_config_toml: "",
-      subscription_auth_token_json: "",
-      subscription_oauth_creds_json: "",
-      subscription_google_accounts_json: "",
-      subscription_device_code: null,
-      subscription_auth_url: null,
-      subscription_status: null,
-      subscription_busy: false,
-      api_key_busy: false,
-    });
-  }, []);
+    baseOpenHarnessAuthModal(providerId);
+  }, [baseOpenHarnessAuthModal]);
 
   const closeHarnessAuthModal = useCallback(() => {
-    setHarnessAuthModal(null);
-    setClaudePendingLoginId(null);
-  }, []);
+    baseCloseHarnessAuthModal();
+  }, [baseCloseHarnessAuthModal]);
 
   const patchHarnessAuthModal = useCallback((patch: Partial<HarnessAuthModalState>) => {
-    setHarnessAuthModal((prev) => (prev ? { ...prev, ...patch } : prev));
-  }, []);
+    basePatchHarnessAuthModal(patch);
+  }, [basePatchHarnessAuthModal]);
 
   const submitHarnessApiKeyModal = useCallback(async () => {
     const modal = harnessAuthModal;
     if (!modal || modal.stage !== "api_key") return;
+    if (modal.api_key_busy) return;
 
     const isCursor = modal.provider_id === "cursor";
     if (!isCursor && !supportsHarnessEndpointConfig(modal.provider_id)) {
@@ -843,6 +653,7 @@ export function useHarnessAuthenticationController({
       .split(/[\n,]/)
       .map((value) => value.trim())
       .filter((value) => value.length > 0);
+
     if (requiresBaseUrl && !base) {
       setProviderError("Endpoint base URL is required.");
       return;
@@ -852,28 +663,35 @@ export function useHarnessAuthenticationController({
       return;
     }
 
-    setHarnessAuthModal((prev) => (prev ? { ...prev, api_key_busy: true } : prev));
+    const operation = startHarnessAuthModalOperation("modal-action");
+    patchHarnessAuthModalForOperation(operation, { api_key_busy: true });
     setProviderError(null);
+
+    const previousSourceConfig = providerHarnessConfigRef.current[modal.provider_id];
+    const previousSourceKind = previousSourceConfig?.selected_source_kind ?? "subscription";
+    const previousEndpointId = previousSourceKind === "endpoint"
+      ? previousSourceConfig?.selected_endpoint_id ?? null
+      : null;
+    let shouldRollbackToPreviousSource = false;
+    let rollbackMessage: string | null = null;
+
     try {
       if (isCursor) {
         const label = name.trim();
         const next = await upsertCursorAccount(key, label ? { label } : undefined);
-        setCursorAccounts(next);
         await refreshBootstrapAfterMutation();
+        if (!operation.isCurrent()) return;
+        setCursorAccounts(next);
         await selectSubscriptionSourceIfSupported(modal.provider_id);
+        if (!operation.isCurrent()) return;
         setSubscriptionSourceFallback(modal.provider_id);
-        closeHarnessAuthModal();
+        closeHarnessAuthModalForOperation(operation);
         return;
       }
 
       const previousEndpointIds = new Set(
         (providerHarnessConfigRef.current[modal.provider_id]?.endpoints ?? []).map((endpoint) => endpoint.id),
       );
-      const previousSourceConfig = providerHarnessConfigRef.current[modal.provider_id];
-      const previousSourceKind = previousSourceConfig?.selected_source_kind ?? "subscription";
-      const previousEndpointId = previousSourceKind === "endpoint"
-        ? previousSourceConfig?.selected_endpoint_id ?? null
-        : null;
       const requestedEndpointId = modal.endpoint_id?.trim() || null;
       const next = await upsertProviderHarnessEndpoint(modal.provider_id, {
         endpoint_id: requestedEndpointId,
@@ -884,6 +702,8 @@ export function useHarnessAuthenticationController({
         api_key: key,
         manual_model_ids: manualModelIds,
       });
+      if (!operation.isCurrent()) return;
+
       const upsertedEndpoint = resolveUpsertedEndpoint({
         requestedEndpointId,
         previousEndpointIds,
@@ -893,202 +713,65 @@ export function useHarnessAuthenticationController({
         geminiAuthType,
       });
       const selected = upsertedEndpoint?.id ?? next.selected_endpoint_id ?? requestedEndpointId ?? null;
-      setHarnessAuthModal((prev) => {
-        if (!prev || prev.provider_id !== modal.provider_id || prev.stage !== "api_key") return prev;
-        return { ...prev, endpoint_id: selected };
-      });
+      patchHarnessAuthModalForOperation(operation, { endpoint_id: selected });
+
       await onSelectProviderSource(modal.provider_id, "endpoint", selected);
+
       if (workspaceId) {
         const verify = await verifyProviderForWorkspace(workspaceId, modal.provider_id);
-        if (verify.status !== "ok") {
-          const verifyMessage = verify.message?.trim()
-            || `Endpoint verification failed for ${modal.provider_id} (${verify.status}).`;
-          try {
-            await onSelectProviderSource(modal.provider_id, previousSourceKind, previousEndpointId);
-          } catch (rollbackError) {
-            setProviderError(
-              `${verifyMessage} Failed to restore previous provider source: ${messageFromError(rollbackError)}`,
-            );
-            return;
-          }
-          setProviderError(verifyMessage);
+        if (!operation.isCurrent()) {
+          shouldRollbackToPreviousSource = true;
           return;
         }
+        if (verify.status !== "ok") {
+          rollbackMessage = verify.message?.trim()
+            || `Endpoint verification failed for ${modal.provider_id} (${verify.status}).`;
+          shouldRollbackToPreviousSource = true;
+          return;
+        }
+      } else if (!operation.isCurrent()) {
+        shouldRollbackToPreviousSource = true;
+        return;
       }
-      closeHarnessAuthModal();
+
+      closeHarnessAuthModalForOperation(operation);
     } catch (error) {
-      setProviderError(messageFromError(error));
+      if (operation.isCurrent()) {
+        setProviderError(messageFromError(error));
+      }
     } finally {
-      setHarnessAuthModal((prev) => (prev ? { ...prev, api_key_busy: false } : prev));
+      if (shouldRollbackToPreviousSource) {
+        try {
+          await onSelectProviderSource(modal.provider_id, previousSourceKind, previousEndpointId);
+          if (rollbackMessage && operation.isCurrent()) {
+            setProviderError(rollbackMessage);
+          }
+        } catch (rollbackError) {
+          if (operation.isCurrent()) {
+            setProviderError(
+              rollbackMessage
+                ? `${rollbackMessage} Failed to restore previous provider source: ${messageFromError(rollbackError)}`
+                : `Failed to restore previous provider source: ${messageFromError(rollbackError)}`,
+            );
+          }
+        }
+      }
+
+      patchHarnessAuthModalForOperation(operation, { api_key_busy: false });
+      finishHarnessAuthModalOperation(operation);
     }
   }, [
-    closeHarnessAuthModal,
     harnessAuthModal,
+    closeHarnessAuthModalForOperation,
+    finishHarnessAuthModalOperation,
     onSelectProviderSource,
+    patchHarnessAuthModalForOperation,
     refreshBootstrapAfterMutation,
     selectSubscriptionSourceIfSupported,
     setSubscriptionSourceFallback,
+    startHarnessAuthModalOperation,
     workspaceId,
   ]);
-
-  const waitForCodexLoginOutcome = useCallback(async (accountId: string): Promise<"success" | "failed" | "timeout"> => {
-    const attempts = 75;
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
-      try {
-        const status = await getCodexLogin(accountId);
-        if (status.status === "success") return "success";
-        if (status.status === "failed") return "failed";
-      } catch {
-        // continue polling
-      }
-      await new Promise((resolve) => {
-        window.setTimeout(resolve, 1600);
-      });
-    }
-    return "timeout";
-  }, []);
-
-  const waitForClaudeLoginOutcome = useCallback(async (
-    loginId: string,
-    onAuthUrl?: (authUrl: string) => Promise<void>,
-    opts?: { openedAuthUrl?: string | null },
-  ): Promise<"success" | "failed" | "timeout"> => {
-    const openedAuthUrls = new Set<string>();
-    takeNextClaudeAuthUrlToOpen(opts?.openedAuthUrl, openedAuthUrls);
-    for (let attempt = 0; attempt < CLAUDE_LOGIN_POLL_ATTEMPTS; attempt += 1) {
-      try {
-        const status = await getClaudeLogin(loginId);
-        const authUrl = takeNextClaudeAuthUrlToOpen(status.auth_url, openedAuthUrls);
-        if (authUrl && onAuthUrl) {
-          await onAuthUrl(authUrl);
-        }
-        if (status.status === "success") return "success";
-        if (status.status === "failed") return "failed";
-      } catch {
-        // continue polling
-      }
-      await new Promise((resolve) => {
-        window.setTimeout(resolve, CLAUDE_LOGIN_POLL_INTERVAL_MS);
-      });
-    }
-    return "timeout";
-  }, []);
-
-  const waitForGeminiLoginOutcome = useCallback(async (
-    loginId: string,
-    onAuthUrl?: (authUrl: string) => Promise<void>,
-    opts?: { openedAuthUrl?: string | null },
-  ): Promise<{ status: "success" | "failed" | "timeout"; error?: string | null }> => {
-    const openedAuthUrls = new Set<string>();
-    takeNextAuthUrlToOpen(opts?.openedAuthUrl, openedAuthUrls);
-    for (let attempt = 0; attempt < GEMINI_LOGIN_POLL_ATTEMPTS; attempt += 1) {
-      try {
-        const status = await getGeminiLogin(loginId);
-        if (status.status === "success") return { status: "success" };
-        if (status.status === "failed") return { status: "failed", error: status.error };
-        if (status.status === "timeout") return { status: "timeout", error: status.error };
-        if (shouldOpenPolledAuthUrlForStatus(status.status)) {
-          const authUrl = takeNextAuthUrlToOpen(status.auth_url, openedAuthUrls);
-          if (authUrl && onAuthUrl) {
-            await onAuthUrl(authUrl);
-          }
-        }
-      } catch {
-        // continue polling
-      }
-      await new Promise((resolve) => {
-        window.setTimeout(resolve, GEMINI_LOGIN_POLL_INTERVAL_MS);
-      });
-    }
-    return { status: "timeout" };
-  }, []);
-
-  const waitForQwenLoginOutcome = useCallback(async (
-    loginId: string,
-    onAuthUrl?: (authUrl: string) => Promise<void>,
-    opts?: { openedAuthUrl?: string | null },
-  ): Promise<{ status: "success" | "failed" | "timeout"; error?: string | null }> => {
-    const openedAuthUrls = new Set<string>();
-    takeNextAuthUrlToOpen(opts?.openedAuthUrl, openedAuthUrls);
-    for (let attempt = 0; attempt < QWEN_LOGIN_POLL_ATTEMPTS; attempt += 1) {
-      try {
-        const status = await getQwenLogin(loginId);
-        if (status.status === "success") return { status: "success" };
-        if (status.status === "failed") return { status: "failed", error: status.error };
-        if (status.status === "timeout") return { status: "timeout", error: status.error };
-        if (shouldOpenPolledAuthUrlForStatus(status.status)) {
-          const authUrl = takeNextAuthUrlToOpen(status.auth_url, openedAuthUrls);
-          if (authUrl && onAuthUrl) {
-            await onAuthUrl(authUrl);
-          }
-        }
-      } catch {
-        // continue polling
-      }
-      await new Promise((resolve) => {
-        window.setTimeout(resolve, QWEN_LOGIN_POLL_INTERVAL_MS);
-      });
-    }
-    return { status: "timeout" };
-  }, []);
-
-  const waitForAmpLoginOutcome = useCallback(async (
-    loginId: string,
-    onAuthUrl?: (authUrl: string) => Promise<void>,
-    opts?: { openedAuthUrl?: string | null },
-  ): Promise<{ status: "success" | "failed" | "timeout"; error?: string | null }> => {
-    const openedAuthUrls = new Set<string>();
-    takeNextAuthUrlToOpen(opts?.openedAuthUrl, openedAuthUrls);
-    for (let attempt = 0; attempt < AMP_LOGIN_POLL_ATTEMPTS; attempt += 1) {
-      try {
-        const status = await getAmpLogin(loginId);
-        if (status.status === "success") return { status: "success" };
-        if (status.status === "failed") return { status: "failed", error: status.error };
-        if (status.status === "timeout") return { status: "timeout", error: status.error };
-        if (shouldOpenPolledAuthUrlForStatus(status.status)) {
-          const authUrl = takeNextAuthUrlToOpen(status.auth_url, openedAuthUrls);
-          if (authUrl && onAuthUrl) {
-            await onAuthUrl(authUrl);
-          }
-        }
-      } catch {
-        // continue polling
-      }
-      await new Promise((resolve) => {
-        window.setTimeout(resolve, AMP_LOGIN_POLL_INTERVAL_MS);
-      });
-    }
-    return { status: "timeout" };
-  }, []);
-
-  const waitForMistralLoginOutcome = useCallback(async (
-    loginId: string,
-    onAuthUrl?: (authUrl: string) => Promise<void>,
-    opts?: { openedAuthUrl?: string | null },
-  ): Promise<{ status: "success" | "failed" | "timeout"; error?: string | null }> => {
-    const openedAuthUrls = new Set<string>();
-    takeNextAuthUrlToOpen(opts?.openedAuthUrl, openedAuthUrls);
-    for (let attempt = 0; attempt < MISTRAL_LOGIN_POLL_ATTEMPTS; attempt += 1) {
-      try {
-        const status = await getMistralLogin(loginId);
-        if (status.status === "success") return { status: "success" };
-        if (status.status === "failed") return { status: "failed", error: status.error };
-        if (status.status === "timeout") return { status: "timeout", error: status.error };
-        if (shouldOpenPolledAuthUrlForStatus(status.status)) {
-          const authUrl = takeNextAuthUrlToOpen(status.auth_url, openedAuthUrls);
-          if (authUrl && onAuthUrl) {
-            await onAuthUrl(authUrl);
-          }
-        }
-      } catch {
-        // continue polling
-      }
-      await new Promise((resolve) => {
-        window.setTimeout(resolve, MISTRAL_LOGIN_POLL_INTERVAL_MS);
-      });
-    }
-    return { status: "timeout" };
-  }, []);
 
   const tryStartCodexDesktopRelay = useCallback(async (params: {
     accountId: string;
@@ -1126,800 +809,273 @@ export function useHarnessAuthenticationController({
   const submitHarnessSubscriptionModal = useCallback(async () => {
     const modal = harnessAuthModal;
     if (!modal) return;
-    if (shouldSkipDuplicateAmpLoginStart({
+
+    const shouldCompleteClaudeCallback = shouldCompleteClaudeLoginWithCallbackCode({
       providerId: modal.provider_id,
-      ampLoginInFlight: ampLoginInFlightRef.current,
-    })) {
+      subscriptionBusy: modal.subscription_busy,
+      pendingLoginId: claudePendingLoginId,
+      token: modal.subscription_token,
+    });
+
+    if (modal.subscription_busy && !shouldCompleteClaudeCallback) {
       return;
     }
-    if (modal.stage !== "subscription") {
-      setHarnessAuthModal((prev) => (prev ? { ...prev, stage: "subscription" } : prev));
+
+    if (shouldCompleteClaudeCallback) {
+      const operation = startHarnessAuthModalOperation("modal-action");
+      setProviderError(null);
+      try {
+        if (!claudePendingLoginId) {
+          throw new Error("Claude login callback requires an active pending login.");
+        }
+        await completeClaudeLogin(claudePendingLoginId, modal.subscription_token.trim());
+        patchHarnessAuthModalForOperation(operation, {
+          subscription_status: "Submitted callback code. Waiting for Claude setup-token completion...",
+        });
+      } catch (error) {
+        if (operation.isCurrent()) {
+          setProviderError(messageFromError(error));
+          patchHarnessAuthModalForOperation(operation, {
+            subscription_status: "Subscription flow failed. Check error details below.",
+          });
+        }
+      } finally {
+        finishHarnessAuthModalOperation(operation);
+      }
+      return;
     }
 
-    let releaseAmpLoginInFlight = false;
-    if (modal.provider_id === "amp") {
-      ampLoginInFlightRef.current = true;
-      releaseAmpLoginInFlight = true;
-    }
-    let preserveClaudeBusyState = false;
-    setHarnessAuthModal((prev) =>
-      prev ? { ...prev, subscription_busy: true, subscription_status: "Starting subscription flow..." } : prev);
+    const flow = startHarnessAuthModalOperation("subscription-flow");
+    patchHarnessAuthModalForOperation(flow, {
+      stage: "subscription",
+      subscription_busy: true,
+      subscription_status: "Starting subscription flow...",
+    });
     setProviderError(null);
     try {
-      if (modal.provider_id === "codex") {
-        const res = await startCodexLogin();
-        await openCodexAuthUrl(res.auth_url, {
-          accountId: res.account_id,
-          expectedCallbackUrl: res.expected_callback_url ?? null,
-          completionToken: res.completion_token,
-        });
-        setHarnessAuthModal((prev) =>
-          prev
-            ? {
-                ...prev,
-                subscription_status: "Waiting for browser sign-in to complete. You can close this dialog after finishing auth.",
-              }
-            : prev);
-        const outcome = await waitForCodexLoginOutcome(res.account_id);
-        await refreshCodexAccounts();
-        if (outcome === "success") {
-          await onSelectProviderSource("codex", "subscription", null);
-          closeHarnessAuthModal();
-          return;
-        }
-        if (outcome === "failed") {
-          setHarnessAuthModal((prev) =>
-            prev ? { ...prev, subscription_status: "Sign-in failed. Please retry or use the callback completion flow." } : prev);
-          return;
-        }
-        setHarnessAuthModal((prev) =>
-          prev
-            ? {
-                ...prev,
-                subscription_status: "Still waiting for callback completion. Continue in Harness Subscriptions if needed.",
-              }
-            : prev);
-        return;
-      }
-
-      if (modal.provider_id === "claude-crp") {
-        const token = modal.subscription_token.trim();
-        const label = modal.subscription_label.trim();
-        if (shouldCompleteClaudeLoginWithCallbackCode({
-          providerId: modal.provider_id,
-          subscriptionBusy: modal.subscription_busy,
-          pendingLoginId: claudePendingLoginId,
-          token,
-        })) {
-          if (!claudePendingLoginId) {
-            throw new Error("Claude login callback requires an active pending login.");
-          }
-          await completeClaudeLogin(claudePendingLoginId, token);
-          setHarnessAuthModal((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  subscription_status: "Submitted callback code. Waiting for Claude setup-token completion...",
-                }
-              : prev);
-          preserveClaudeBusyState = true;
-          return;
-        }
-        if (token) {
-          const next = await upsertClaudeAccount(token, label ? label : undefined);
-          setClaudeAccounts(next);
-          setClaudePendingLoginId(null);
-          await refreshBootstrapAfterMutation();
-          await selectSubscriptionSourceIfSupported(modal.provider_id);
-          closeHarnessAuthModal();
-          return;
-        }
-        const login = await startClaudeLogin(label ? label : undefined);
-        setClaudePendingLoginId(login.login_id);
-        const loginStartedAtMs = Date.now();
-        const initialAuthUrl = takeNextClaudeAuthUrlToOpen(login.auth_url, new Set<string>());
-        if (initialAuthUrl) {
-          await openExternalLink(initialAuthUrl);
-        }
-        setHarnessAuthModal((prev) =>
-          prev
-            ? {
-                ...prev,
-                subscription_status:
-                  "Waiting for browser sign-in. If Claude shows a token, paste it here and press Enter.",
-              }
-            : prev);
-        const outcome = await waitForClaudeLoginOutcome(login.login_id, async (authUrl) => {
-          if (!shouldOpenPolledClaudeAuthUrl({
-            loginStartedAtMs,
-            initialAuthUrl,
-            polledAuthUrl: authUrl,
-            nowMs: Date.now(),
-          })) {
-            return;
-          }
-          await openExternalLink(authUrl);
-        }, {
-          openedAuthUrl: initialAuthUrl,
-        });
-        setClaudePendingLoginId(null);
-        await refreshClaudeAccounts();
-        if (outcome === "success") {
-          await onSelectProviderSource("claude-crp", "subscription", null);
-          closeHarnessAuthModal();
-          return;
-        }
-        if (outcome === "failed") {
-          setHarnessAuthModal((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  subscription_status:
-                    "Sign-in failed. Retry, or paste a token in the field above.",
-                }
-              : prev);
-          return;
-        }
-        setHarnessAuthModal((prev) =>
-          prev
-            ? {
-                ...prev,
-                subscription_status:
-                  "Still waiting for completion. Keep this dialog open or retry.",
-              }
-            : prev);
-        return;
-      }
-
-      if (modal.provider_id === "gemini") {
-        const label = modal.subscription_label.trim();
-        const openGeminiAuthUrl = async (authUrl: string): Promise<boolean> => {
-          const opened = await openExternalLink(authUrl);
-          if (opened) return true;
-          setHarnessAuthModal((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  subscription_status:
-                    `Couldn't open browser automatically. Open this URL manually: ${authUrl}`,
-                }
-              : prev);
-          return false;
-        };
-
-        const login = await startGeminiLogin(label ? label : undefined);
-        const initialAuthUrl = takeNextAuthUrlToOpen(login.auth_url, new Set<string>());
-        let initialAuthOpened = false;
-        if (initialAuthUrl) {
-          initialAuthOpened = await openGeminiAuthUrl(initialAuthUrl);
-        }
-        setHarnessAuthModal((prev) =>
-          prev
-            ? {
-                ...prev,
-                subscription_status: initialAuthUrl && !initialAuthOpened
-                  ? `Couldn't open browser automatically. Open this URL manually: ${initialAuthUrl}`
-                  : "Waiting for Google sign-in to complete in your browser...",
-              }
-            : prev);
-        const outcome = await waitForGeminiLoginOutcome(login.login_id, async (authUrl) => {
-          await openGeminiAuthUrl(authUrl);
-        }, {
-          openedAuthUrl: initialAuthUrl,
-        });
-        await refreshGeminiAccounts();
-        if (outcome.status === "success") {
-          await onSelectProviderSource("gemini", "subscription", null);
-          closeHarnessAuthModal();
-          return;
-        }
-        if (outcome.error && outcome.error.trim()) {
-          setProviderError(outcome.error);
-        }
-        if (outcome.status === "failed") {
-          const failureMessage = outcome.error?.trim() || "Sign-in failed. Retry.";
-          setHarnessAuthModal((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  subscription_status: failureMessage,
-                }
-              : prev);
-          return;
-        }
-        if (outcome.status === "timeout") {
-          const timeoutMessage =
-            outcome.error?.trim() || "Timed out waiting for Gemini sign-in completion. Retry.";
-          setHarnessAuthModal((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  subscription_status: timeoutMessage,
-                }
-              : prev);
-          return;
-        }
-        setHarnessAuthModal((prev) =>
-          prev
-            ? {
-                ...prev,
-                subscription_status:
-                  "Still waiting for completion. Keep this dialog open or retry.",
-              }
-            : prev);
-        return;
-      }
-
-      if (modal.provider_id === "qwen") {
-        const label = modal.subscription_label.trim();
-        const openQwenAuthUrl = async (authUrl: string): Promise<boolean> => {
-          const opened = await openExternalLink(authUrl);
-          if (opened) return true;
-          setHarnessAuthModal((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  subscription_status:
-                    `Couldn't open browser automatically. Open this URL manually: ${authUrl}`,
-                }
-              : prev);
-          return false;
-        };
-
-        const login = await startQwenLogin(label ? label : undefined);
-        const initialAuthUrl = takeNextAuthUrlToOpen(login.auth_url, new Set<string>());
-        let initialAuthOpened = false;
-        if (initialAuthUrl) {
-          initialAuthOpened = await openQwenAuthUrl(initialAuthUrl);
-        }
-        setHarnessAuthModal((prev) =>
-          prev
-            ? {
-                ...prev,
-                subscription_status: initialAuthUrl && !initialAuthOpened
-                  ? `Couldn't open browser automatically. Open this URL manually: ${initialAuthUrl}`
-                  : "Waiting for Qwen sign-in to complete in your browser...",
-              }
-            : prev);
-        const outcome = await waitForQwenLoginOutcome(login.login_id, async (authUrl) => {
-          await openQwenAuthUrl(authUrl);
-        }, {
-          openedAuthUrl: initialAuthUrl,
-        });
-        await refreshQwenAccounts();
-        if (outcome.status === "success") {
-          await onSelectProviderSource("qwen", "subscription", null);
-          closeHarnessAuthModal();
-          return;
-        }
-        if (outcome.error && outcome.error.trim()) {
-          setProviderError(outcome.error);
-        }
-        if (outcome.status === "failed") {
-          const failureMessage = outcome.error?.trim() || "Sign-in failed. Retry.";
-          setHarnessAuthModal((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  subscription_status: failureMessage,
-                }
-              : prev);
-          return;
-        }
-        if (outcome.status === "timeout") {
-          const timeoutMessage =
-            outcome.error?.trim() || "Timed out waiting for Qwen sign-in completion. Retry.";
-          setHarnessAuthModal((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  subscription_status: timeoutMessage,
-                }
-              : prev);
-          return;
-        }
-        setHarnessAuthModal((prev) =>
-          prev
-            ? {
-                ...prev,
-                subscription_status:
-                  "Still waiting for completion. Keep this dialog open or retry.",
-              }
-            : prev);
-        return;
-      }
-
-      if (modal.provider_id === "amp") {
-        const label = modal.subscription_label.trim();
-        const openAmpAuthUrl = async (authUrl: string): Promise<boolean> => {
-          const opened = await openExternalLink(authUrl);
-          if (opened) return true;
-          setHarnessAuthModal((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  subscription_status:
-                    `Couldn't open browser automatically. Open this URL manually: ${authUrl}`,
-                }
-              : prev);
-          return false;
-        };
-
-        const login = await startAmpLogin(label ? label : undefined);
-        const initialAuthUrl = takeNextAuthUrlToOpen(login.auth_url, new Set<string>());
-        let initialAuthOpened = false;
-        if (initialAuthUrl) {
-          initialAuthOpened = await openAmpAuthUrl(initialAuthUrl);
-        }
-        setHarnessAuthModal((prev) =>
-          prev
-            ? {
-                ...prev,
-                subscription_status: initialAuthUrl && !initialAuthOpened
-                  ? `Couldn't open browser automatically. Open this URL manually: ${initialAuthUrl}`
-                  : "Waiting for Amp sign-in to complete in your browser...",
-              }
-            : prev);
-        const outcome = await waitForAmpLoginOutcome(login.login_id, async (authUrl) => {
-          await openAmpAuthUrl(authUrl);
-        }, {
-          openedAuthUrl: initialAuthUrl,
-        });
-        if (outcome.status === "success") {
-          await refreshAmpAccounts();
-          await onSelectProviderSource("amp", "subscription", null);
-          closeHarnessAuthModal();
-          return;
-        }
-        if (outcome.error && outcome.error.trim()) {
-          setProviderError(outcome.error);
-        }
-        if (outcome.status === "failed") {
-          const failureMessage = outcome.error?.trim() || "Sign-in failed. Retry.";
-          setHarnessAuthModal((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  subscription_status: failureMessage,
-                }
-              : prev);
-          return;
-        }
-        if (outcome.status === "timeout") {
-          const timeoutMessage =
-            outcome.error?.trim() || "Timed out waiting for Amp sign-in completion. Retry.";
-          setHarnessAuthModal((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  subscription_status: timeoutMessage,
-                }
-              : prev);
-          return;
-        }
-        setHarnessAuthModal((prev) =>
-          prev
-            ? {
-                ...prev,
-                subscription_status:
-                  "Still waiting for completion. Keep this dialog open or retry.",
-              }
-            : prev);
-        return;
-      }
-
-      if (modal.provider_id === "mistral") {
-        const label = modal.subscription_label.trim();
-        const openMistralAuthUrl = async (authUrl: string): Promise<boolean> => {
-          const opened = await openExternalLink(authUrl);
-          if (opened) return true;
-          setHarnessAuthModal((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  subscription_status:
-                    `Couldn't open browser automatically. Open this URL manually: ${authUrl}`,
-                }
-              : prev);
-          return false;
-        };
-
-        const login = await startMistralLogin(label ? label : undefined);
-        const initialAuthUrl = takeNextAuthUrlToOpen(login.auth_url, new Set<string>());
-        let initialAuthOpened = false;
-        if (initialAuthUrl) {
-          initialAuthOpened = await openMistralAuthUrl(initialAuthUrl);
-        }
-        setHarnessAuthModal((prev) =>
-          prev
-            ? {
-                ...prev,
-                subscription_status: initialAuthUrl && !initialAuthOpened
-                  ? `Couldn't open browser automatically. Open this URL manually: ${initialAuthUrl}`
-                  : "Waiting for Mistral sign-in to complete in your browser...",
-              }
-            : prev);
-        const outcome = await waitForMistralLoginOutcome(login.login_id, async (authUrl) => {
-          await openMistralAuthUrl(authUrl);
-        }, {
-          openedAuthUrl: initialAuthUrl,
-        });
-        await refreshMistralAccounts();
-        if (outcome.status === "success") {
-          await onSelectProviderSource("mistral", "subscription", null);
-          closeHarnessAuthModal();
-          return;
-        }
-        if (outcome.error && outcome.error.trim()) {
-          setProviderError(outcome.error);
-        }
-        if (outcome.status === "failed") {
-          const failureMessage = outcome.error?.trim() || "Sign-in failed. Retry.";
-          setHarnessAuthModal((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  subscription_status: failureMessage,
-                }
-              : prev);
-          return;
-        }
-        if (outcome.status === "timeout") {
-          const timeoutMessage =
-            outcome.error?.trim() || "Timed out waiting for Mistral sign-in completion. Retry.";
-          setHarnessAuthModal((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  subscription_status: timeoutMessage,
-                }
-              : prev);
-          return;
-        }
-        setHarnessAuthModal((prev) =>
-          prev
-            ? {
-                ...prev,
-                subscription_status:
-                  "Still waiting for completion. Keep this dialog open or retry.",
-              }
-            : prev);
-        return;
-      }
-
-      if (modal.provider_id === "kimi") {
-        const credentialsJson = modal.subscription_credentials_json.trim();
-        if (!credentialsJson) {
-          throw new Error("Credentials JSON is required.");
-        }
-        const provider = modal.subscription_provider.trim();
-        const configToml = modal.subscription_config_toml.trim();
-        const label = modal.subscription_label.trim();
-        const email = modal.subscription_email.trim();
-        const next = await upsertKimiAccount(credentialsJson, {
-          ...(label ? { label } : {}),
-          ...(provider ? { provider } : {}),
-          ...(configToml ? { configToml } : {}),
-          ...(email ? { email } : {}),
-        });
-        setKimiAccounts(next);
-        await refreshBootstrapAfterMutation();
-        await selectSubscriptionSourceIfSupported(modal.provider_id);
-        closeHarnessAuthModal();
-        return;
-      }
-
-      if (modal.provider_id === "copilot") {
-        const token = modal.subscription_token.trim();
-        if (!token) {
-          throw new Error("Token is required.");
-        }
-        const label = modal.subscription_label.trim();
-        const email = modal.subscription_email.trim();
-        const next = await upsertCopilotAccount(token, {
-          ...(label ? { label } : {}),
-          ...(email ? { email } : {}),
-        });
-        setCopilotAccounts(next);
-        await refreshBootstrapAfterMutation();
-        await selectSubscriptionSourceIfSupported(modal.provider_id);
-        closeHarnessAuthModal();
-        return;
-      }
-
-      if (!workspaceId) {
-        throw new Error("Select a workspace first.");
-      }
-      await authenticateProviderForWorkspace(workspaceId, modal.provider_id);
-      await refreshBootstrapAfterMutation();
-      await selectSubscriptionSourceIfSupported(modal.provider_id);
-      closeHarnessAuthModal();
-    } catch (error) {
-      const message = messageFromError(error);
-      setProviderError(message);
-      setHarnessAuthModal((prev) =>
-        prev ? { ...prev, subscription_status: "Subscription flow failed. Check error details below." } : prev);
+      await runHarnessSubscriptionFlow({
+        modal,
+        workspaceId,
+        flow,
+        patchHarnessAuthModalForOperation,
+        closeHarnessAuthModalForOperation,
+        setClaudePendingLoginIdForOperation,
+        setProviderError,
+        refreshBootstrapAfterMutation,
+        selectSubscriptionSourceIfSupported,
+        refreshCodexAccounts,
+        refreshClaudeAccounts,
+        refreshGeminiAccounts,
+        refreshQwenAccounts,
+        refreshAmpAccounts,
+        refreshMistralAccounts,
+        setClaudeAccounts,
+        setKimiAccounts,
+        setCopilotAccounts,
+        openCodexAuthUrl,
+      });
     } finally {
-      if (releaseAmpLoginInFlight) {
-        ampLoginInFlightRef.current = false;
-      }
-      if (!preserveClaudeBusyState) {
-        setHarnessAuthModal((prev) => (prev ? { ...prev, subscription_busy: false } : prev));
-      }
+      patchHarnessAuthModalForOperation(flow, { subscription_busy: false });
+      finishHarnessAuthModalOperation(flow);
     }
   }, [
     claudePendingLoginId,
-    closeHarnessAuthModal,
     harnessAuthModal,
+    closeHarnessAuthModalForOperation,
+    finishHarnessAuthModalOperation,
     openCodexAuthUrl,
+    patchHarnessAuthModalForOperation,
     refreshAmpAccounts,
-    refreshMistralAccounts,
-    refreshQwenAccounts,
-    onSelectProviderSource,
+    refreshBootstrapAfterMutation,
     refreshClaudeAccounts,
     refreshCodexAccounts,
     refreshGeminiAccounts,
-    refreshBootstrapAfterMutation,
+    refreshMistralAccounts,
+    refreshQwenAccounts,
     selectSubscriptionSourceIfSupported,
-    waitForMistralLoginOutcome,
-    waitForQwenLoginOutcome,
-    waitForAmpLoginOutcome,
-    waitForClaudeLoginOutcome,
-    waitForCodexLoginOutcome,
-    waitForGeminiLoginOutcome,
+    setClaudePendingLoginIdForOperation,
+    startHarnessAuthModalOperation,
     workspaceId,
   ]);
 
   const onCodexDelete = useCallback(async (accountId: string) => {
-    setCodexAccountsBusy(true);
-    setProviderError(null);
-    try {
-      const next = await deleteCodexAccount(accountId);
-      setCodexAccounts(next);
-      await refreshBootstrapAfterMutation();
-    } catch (error) {
-      setProviderError(messageFromError(error));
-    } finally {
-      setCodexAccountsBusy(false);
-    }
+    await mutateAccountCollection({
+      mutate: () => deleteCodexAccount(accountId),
+      setData: setCodexAccounts,
+      setBusy: setCodexAccountsBusy,
+      setProviderError,
+      onMutationComplete: refreshBootstrapAfterMutation,
+    });
   }, [refreshBootstrapAfterMutation]);
 
   const onCodexSetActive = useCallback(async (accountId: string | null) => {
-    setCodexAccountsBusy(true);
-    setProviderError(null);
-    try {
-      const next = await setCodexActiveAccount(accountId);
-      setCodexAccounts(next);
-      await refreshBootstrapAfterMutation();
-    } catch (error) {
-      setProviderError(messageFromError(error));
-    } finally {
-      setCodexAccountsBusy(false);
-    }
+    await mutateAccountCollection({
+      mutate: () => setCodexActiveAccount(accountId),
+      setData: setCodexAccounts,
+      setBusy: setCodexAccountsBusy,
+      setProviderError,
+      onMutationComplete: refreshBootstrapAfterMutation,
+    });
   }, [refreshBootstrapAfterMutation]);
 
   const onClaudeDelete = useCallback(async (accountId: string) => {
-    setClaudeAccountsBusy(true);
-    setProviderError(null);
-    try {
-      const next = await deleteClaudeAccount(accountId);
-      setClaudeAccounts(next);
-      await refreshBootstrapAfterMutation();
-    } catch (error) {
-      setProviderError(messageFromError(error));
-    } finally {
-      setClaudeAccountsBusy(false);
-    }
+    await mutateAccountCollection({
+      mutate: () => deleteClaudeAccount(accountId),
+      setData: setClaudeAccounts,
+      setBusy: setClaudeAccountsBusy,
+      setProviderError,
+      onMutationComplete: refreshBootstrapAfterMutation,
+    });
   }, [refreshBootstrapAfterMutation]);
 
   const onClaudeSetActive = useCallback(async (accountId: string | null) => {
-    setClaudeAccountsBusy(true);
-    setProviderError(null);
-    try {
-      const next = await setClaudeActiveAccount(accountId);
-      setClaudeAccounts(next);
-      await refreshBootstrapAfterMutation();
-    } catch (error) {
-      setProviderError(messageFromError(error));
-    } finally {
-      setClaudeAccountsBusy(false);
-    }
+    await mutateAccountCollection({
+      mutate: () => setClaudeActiveAccount(accountId),
+      setData: setClaudeAccounts,
+      setBusy: setClaudeAccountsBusy,
+      setProviderError,
+      onMutationComplete: refreshBootstrapAfterMutation,
+    });
   }, [refreshBootstrapAfterMutation]);
 
   const onGeminiDelete = useCallback(async (accountId: string) => {
-    setGeminiAccountsBusy(true);
-    setProviderError(null);
-    try {
-      const next = await deleteGeminiAccount(accountId);
-      setGeminiAccounts(next);
-      await refreshBootstrapAfterMutation();
-    } catch (error) {
-      setProviderError(messageFromError(error));
-    } finally {
-      setGeminiAccountsBusy(false);
-    }
+    await mutateAccountCollection({
+      mutate: () => deleteGeminiAccount(accountId),
+      setData: setGeminiAccounts,
+      setBusy: setGeminiAccountsBusy,
+      setProviderError,
+      onMutationComplete: refreshBootstrapAfterMutation,
+    });
   }, [refreshBootstrapAfterMutation]);
 
   const onGeminiSetActive = useCallback(async (accountId: string | null) => {
-    setGeminiAccountsBusy(true);
-    setProviderError(null);
-    try {
-      const next = await setGeminiActiveAccount(accountId);
-      setGeminiAccounts(next);
-      await refreshBootstrapAfterMutation();
-    } catch (error) {
-      setProviderError(messageFromError(error));
-    } finally {
-      setGeminiAccountsBusy(false);
-    }
+    await mutateAccountCollection({
+      mutate: () => setGeminiActiveAccount(accountId),
+      setData: setGeminiAccounts,
+      setBusy: setGeminiAccountsBusy,
+      setProviderError,
+      onMutationComplete: refreshBootstrapAfterMutation,
+    });
   }, [refreshBootstrapAfterMutation]);
 
   const onQwenDelete = useCallback(async (accountId: string) => {
-    setQwenAccountsBusy(true);
-    setProviderError(null);
-    try {
-      const next = await deleteQwenAccount(accountId);
-      setQwenAccounts(next);
-      await refreshBootstrapAfterMutation();
-    } catch (error) {
-      setProviderError(messageFromError(error));
-    } finally {
-      setQwenAccountsBusy(false);
-    }
+    await mutateAccountCollection({
+      mutate: () => deleteQwenAccount(accountId),
+      setData: setQwenAccounts,
+      setBusy: setQwenAccountsBusy,
+      setProviderError,
+      onMutationComplete: refreshBootstrapAfterMutation,
+    });
   }, [refreshBootstrapAfterMutation]);
 
   const onQwenSetActive = useCallback(async (accountId: string | null) => {
-    setQwenAccountsBusy(true);
-    setProviderError(null);
-    try {
-      const next = await setQwenActiveAccount(accountId);
-      setQwenAccounts(next);
-      await refreshBootstrapAfterMutation();
-    } catch (error) {
-      setProviderError(messageFromError(error));
-    } finally {
-      setQwenAccountsBusy(false);
-    }
+    await mutateAccountCollection({
+      mutate: () => setQwenActiveAccount(accountId),
+      setData: setQwenAccounts,
+      setBusy: setQwenAccountsBusy,
+      setProviderError,
+      onMutationComplete: refreshBootstrapAfterMutation,
+    });
   }, [refreshBootstrapAfterMutation]);
 
   const onKimiDelete = useCallback(async (accountId: string) => {
-    setKimiAccountsBusy(true);
-    setProviderError(null);
-    try {
-      const next = await deleteKimiAccount(accountId);
-      setKimiAccounts(next);
-      await refreshBootstrapAfterMutation();
-    } catch (error) {
-      setProviderError(messageFromError(error));
-    } finally {
-      setKimiAccountsBusy(false);
-    }
+    await mutateAccountCollection({
+      mutate: () => deleteKimiAccount(accountId),
+      setData: setKimiAccounts,
+      setBusy: setKimiAccountsBusy,
+      setProviderError,
+      onMutationComplete: refreshBootstrapAfterMutation,
+    });
   }, [refreshBootstrapAfterMutation]);
 
   const onKimiSetActive = useCallback(async (accountId: string | null) => {
-    setKimiAccountsBusy(true);
-    setProviderError(null);
-    try {
-      const next = await setKimiActiveAccount(accountId);
-      setKimiAccounts(next);
-      await refreshBootstrapAfterMutation();
-    } catch (error) {
-      setProviderError(messageFromError(error));
-    } finally {
-      setKimiAccountsBusy(false);
-    }
+    await mutateAccountCollection({
+      mutate: () => setKimiActiveAccount(accountId),
+      setData: setKimiAccounts,
+      setBusy: setKimiAccountsBusy,
+      setProviderError,
+      onMutationComplete: refreshBootstrapAfterMutation,
+    });
   }, [refreshBootstrapAfterMutation]);
 
   const onMistralDelete = useCallback(async (accountId: string) => {
-    setMistralAccountsBusy(true);
-    setProviderError(null);
-    try {
-      const next = await deleteMistralAccount(accountId);
-      setMistralAccounts(next);
-      await refreshBootstrapAfterMutation();
-    } catch (error) {
-      setProviderError(messageFromError(error));
-    } finally {
-      setMistralAccountsBusy(false);
-    }
+    await mutateAccountCollection({
+      mutate: () => deleteMistralAccount(accountId),
+      setData: setMistralAccounts,
+      setBusy: setMistralAccountsBusy,
+      setProviderError,
+      onMutationComplete: refreshBootstrapAfterMutation,
+    });
   }, [refreshBootstrapAfterMutation]);
 
   const onMistralSetActive = useCallback(async (accountId: string | null) => {
-    setMistralAccountsBusy(true);
-    setProviderError(null);
-    try {
-      const next = await setMistralActiveAccount(accountId);
-      setMistralAccounts(next);
-      await refreshBootstrapAfterMutation();
-    } catch (error) {
-      setProviderError(messageFromError(error));
-    } finally {
-      setMistralAccountsBusy(false);
-    }
+    await mutateAccountCollection({
+      mutate: () => setMistralActiveAccount(accountId),
+      setData: setMistralAccounts,
+      setBusy: setMistralAccountsBusy,
+      setProviderError,
+      onMutationComplete: refreshBootstrapAfterMutation,
+    });
   }, [refreshBootstrapAfterMutation]);
 
   const onCopilotDelete = useCallback(async (accountId: string) => {
-    setCopilotAccountsBusy(true);
-    setProviderError(null);
-    try {
-      const next = await deleteCopilotAccount(accountId);
-      setCopilotAccounts(next);
-      await refreshBootstrapAfterMutation();
-    } catch (error) {
-      setProviderError(messageFromError(error));
-    } finally {
-      setCopilotAccountsBusy(false);
-    }
+    await mutateAccountCollection({
+      mutate: () => deleteCopilotAccount(accountId),
+      setData: setCopilotAccounts,
+      setBusy: setCopilotAccountsBusy,
+      setProviderError,
+      onMutationComplete: refreshBootstrapAfterMutation,
+    });
   }, [refreshBootstrapAfterMutation]);
 
   const onCopilotSetActive = useCallback(async (accountId: string | null) => {
-    setCopilotAccountsBusy(true);
-    setProviderError(null);
-    try {
-      const next = await setCopilotActiveAccount(accountId);
-      setCopilotAccounts(next);
-      await refreshBootstrapAfterMutation();
-    } catch (error) {
-      setProviderError(messageFromError(error));
-    } finally {
-      setCopilotAccountsBusy(false);
-    }
+    await mutateAccountCollection({
+      mutate: () => setCopilotActiveAccount(accountId),
+      setData: setCopilotAccounts,
+      setBusy: setCopilotAccountsBusy,
+      setProviderError,
+      onMutationComplete: refreshBootstrapAfterMutation,
+    });
   }, [refreshBootstrapAfterMutation]);
 
   const onCursorDelete = useCallback(async (accountId: string) => {
-    setCursorAccountsBusy(true);
-    setProviderError(null);
-    try {
-      const next = await deleteCursorAccount(accountId);
-      setCursorAccounts(next);
-      await refreshBootstrapAfterMutation();
-    } catch (error) {
-      setProviderError(messageFromError(error));
-    } finally {
-      setCursorAccountsBusy(false);
-    }
+    await mutateAccountCollection({
+      mutate: () => deleteCursorAccount(accountId),
+      setData: setCursorAccounts,
+      setBusy: setCursorAccountsBusy,
+      setProviderError,
+      onMutationComplete: refreshBootstrapAfterMutation,
+    });
   }, [refreshBootstrapAfterMutation]);
 
   const onCursorSetActive = useCallback(async (accountId: string | null) => {
-    setCursorAccountsBusy(true);
-    setProviderError(null);
-    try {
-      const next = await setCursorActiveAccount(accountId);
-      setCursorAccounts(next);
-      await refreshBootstrapAfterMutation();
-    } catch (error) {
-      setProviderError(messageFromError(error));
-    } finally {
-      setCursorAccountsBusy(false);
-    }
+    await mutateAccountCollection({
+      mutate: () => setCursorActiveAccount(accountId),
+      setData: setCursorAccounts,
+      setBusy: setCursorAccountsBusy,
+      setProviderError,
+      onMutationComplete: refreshBootstrapAfterMutation,
+    });
   }, [refreshBootstrapAfterMutation]);
 
   const onAmpDelete = useCallback(async (accountId: string) => {
-    setAmpAccountsBusy(true);
-    setProviderError(null);
-    try {
-      const next = await deleteAmpAccount(accountId);
-      setAmpAccounts(next);
-      await refreshBootstrapAfterMutation();
-    } catch (error) {
-      setProviderError(messageFromError(error));
-    } finally {
-      setAmpAccountsBusy(false);
-    }
+    await mutateAccountCollection({
+      mutate: () => deleteAmpAccount(accountId),
+      setData: setAmpAccounts,
+      setBusy: setAmpAccountsBusy,
+      setProviderError,
+      onMutationComplete: refreshBootstrapAfterMutation,
+    });
   }, [refreshBootstrapAfterMutation]);
 
   const onAmpSetActive = useCallback(async (accountId: string | null) => {
-    setAmpAccountsBusy(true);
-    setProviderError(null);
-    try {
-      const next = await setAmpActiveAccount(accountId);
-      setAmpAccounts(next);
-      await refreshBootstrapAfterMutation();
-    } catch (error) {
-      setProviderError(messageFromError(error));
-    } finally {
-      setAmpAccountsBusy(false);
-    }
+    await mutateAccountCollection({
+      mutate: () => setAmpActiveAccount(accountId),
+      setData: setAmpAccounts,
+      setBusy: setAmpAccountsBusy,
+      setProviderError,
+      onMutationComplete: refreshBootstrapAfterMutation,
+    });
   }, [refreshBootstrapAfterMutation]);
 
   const onSelectHarnessAuthRow = useCallback(async (providerId: string, row: HarnessAuthRow) => {
@@ -2153,9 +1309,8 @@ export function useHarnessAuthenticationController({
 
   useEffect(() => {
     if (enabled) return;
-    setHarnessAuthModal(null);
-    setClaudePendingLoginId(null);
-  }, [enabled]);
+    closeHarnessAuthModal();
+  }, [closeHarnessAuthModal, enabled]);
 
   useEffect(() => {
     return () => {

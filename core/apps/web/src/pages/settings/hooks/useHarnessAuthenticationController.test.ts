@@ -9,8 +9,12 @@ import type {
 } from "../../../api/client";
 import {
   deleteAmpAccount,
+  getCodexLogin,
+  getGeminiLogin,
   selectProviderHarnessSource,
   setAmpActiveAccount,
+  startCodexLogin,
+  startGeminiLogin,
   upsertProviderHarnessEndpoint,
   verifyProviderForWorkspace,
 } from "../../../api/client";
@@ -38,14 +42,19 @@ import {
   useHarnessAuthenticationController,
 } from "./useHarnessAuthenticationController";
 import type { HarnessAuthRow } from "../harnessAuthRows";
+import { openExternalLink } from "../../../utils/desktop";
 
 vi.mock("../../../api/client", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../../api/client")>();
   return {
     ...original,
     deleteAmpAccount: vi.fn(),
+    getCodexLogin: vi.fn(),
+    getGeminiLogin: vi.fn(),
     selectProviderHarnessSource: vi.fn(),
     setAmpActiveAccount: vi.fn(),
+    startCodexLogin: vi.fn(),
+    startGeminiLogin: vi.fn(),
     upsertProviderHarnessEndpoint: vi.fn(),
     verifyProviderForWorkspace: vi.fn(),
   };
@@ -82,6 +91,22 @@ vi.mock("../../../utils/desktop", async (importOriginal) => {
 });
 
 type Controller = ReturnType<typeof useHarnessAuthenticationController>;
+
+type Deferred<T> = {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (error: unknown) => void;
+};
+
+const deferred = <T,>(): Deferred<T> => {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+};
 
 const baseEndpoint = {
   id: "ep-old",
@@ -180,6 +205,19 @@ function ControllerHarness({ onChange }: { onChange: (controller: Controller) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(deleteAmpAccount).mockReset();
+  vi.mocked(getCodexLogin).mockReset();
+  vi.mocked(getGeminiLogin).mockReset();
+  vi.mocked(selectProviderHarnessSource).mockReset();
+  vi.mocked(setAmpActiveAccount).mockReset();
+  vi.mocked(startCodexLogin).mockReset();
+  vi.mocked(startGeminiLogin).mockReset();
+  vi.mocked(upsertProviderHarnessEndpoint).mockReset();
+  vi.mocked(verifyProviderForWorkspace).mockReset();
+  vi.mocked(invalidateProvidersBootstrap).mockReset();
+  vi.mocked(loadProvidersBootstrap).mockReset();
+  vi.mocked(refreshProvidersBootstrap).mockReset();
+  vi.mocked(openExternalLink).mockReset();
   vi.mocked(loadProvidersBootstrap).mockResolvedValue(makeBootstrap());
   vi.mocked(refreshProvidersBootstrap).mockResolvedValue(makeBootstrap());
 });
@@ -587,5 +625,320 @@ describe("useHarnessAuthenticationController", () => {
       expect(vi.mocked(refreshProvidersBootstrap).mock.calls.length).toBeGreaterThan(refreshCallsAfterDelete);
       expect(vi.mocked(invalidateProvidersBootstrap).mock.calls.length).toBeGreaterThan(invalidateCallsAfterDelete);
     });
+  });
+
+  it("cancels an in-flight codex subscription poll when the modal closes", async () => {
+    let controller: Controller | null = null;
+    const loginPoll = deferred<{ status: "success" }>();
+
+    vi.mocked(startCodexLogin).mockResolvedValue({
+      account_id: "codex-login-1",
+      auth_url: "https://example.com/codex-login",
+      expected_callback_url: null,
+      completion_token: null,
+    });
+    vi.mocked(getCodexLogin).mockReturnValue(loginPoll.promise as ReturnType<typeof getCodexLogin>);
+    vi.mocked(openExternalLink).mockResolvedValue(true);
+
+    render(createElement(ControllerHarness, {
+      onChange: (next) => {
+        controller = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(controller).not.toBeNull();
+    });
+
+    await act(async () => {
+      controller?.openHarnessAuthModal("codex");
+    });
+    await act(async () => {
+      controller?.patchHarnessAuthModal({ stage: "subscription" });
+    });
+
+    let submitPromise: Promise<void> | undefined;
+    await act(async () => {
+      submitPromise = controller?.submitHarnessSubscriptionModal();
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(startCodexLogin)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(openExternalLink)).toHaveBeenCalledWith("https://example.com/codex-login");
+    });
+
+    await act(async () => {
+      controller?.closeHarnessAuthModal();
+    });
+
+    loginPoll.resolve({ status: "success" });
+
+    await act(async () => {
+      await submitPromise;
+    });
+
+    expect(controller?.harnessAuthModal).toBeNull();
+    expect(vi.mocked(selectProviderHarnessSource)).not.toHaveBeenCalled();
+    expect(controller?.providerError).toBeNull();
+  });
+
+  it("suppresses stale subscription completion after switching providers", async () => {
+    let controller: Controller | null = null;
+    const loginPoll = deferred<{
+      login_id: string;
+      auth_url?: string | null;
+      status: string;
+      error?: string | null;
+    }>();
+
+    vi.mocked(startGeminiLogin).mockResolvedValue({
+      login_id: "gemini-login-1",
+      auth_url: "https://example.com/gemini-login",
+    });
+    vi.mocked(getGeminiLogin).mockReturnValue(loginPoll.promise as ReturnType<typeof getGeminiLogin>);
+    vi.mocked(openExternalLink).mockResolvedValue(true);
+
+    render(createElement(ControllerHarness, {
+      onChange: (next) => {
+        controller = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(controller).not.toBeNull();
+    });
+
+    await act(async () => {
+      controller?.openHarnessAuthModal("gemini");
+    });
+
+    let submitPromise: Promise<void> | undefined;
+    await act(async () => {
+      submitPromise = controller?.submitHarnessSubscriptionModal();
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(startGeminiLogin)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(openExternalLink)).toHaveBeenCalledWith("https://example.com/gemini-login");
+    });
+
+    await act(async () => {
+      controller?.openHarnessAuthModal("qwen");
+    });
+
+    loginPoll.resolve({
+      login_id: "gemini-login-1",
+      auth_url: "https://example.com/gemini-login",
+      status: "success",
+    });
+
+    await act(async () => {
+      await submitPromise;
+    });
+
+    expect(controller?.harnessAuthModal?.provider_id).toBe("qwen");
+    expect(controller?.harnessAuthModal?.subscription_busy).toBe(false);
+    expect(vi.mocked(selectProviderHarnessSource)).not.toHaveBeenCalled();
+    expect(controller?.providerError).toBeNull();
+  });
+
+  it("suppresses stale api-key submit effects after switching providers", async () => {
+    let controller: Controller | null = null;
+    const endpointUpsert = deferred<HarnessProviderSourceConfig>();
+
+    vi.mocked(upsertProviderHarnessEndpoint).mockReturnValue(
+      endpointUpsert.promise as ReturnType<typeof upsertProviderHarnessEndpoint>,
+    );
+
+    render(createElement(ControllerHarness, {
+      onChange: (next) => {
+        controller = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(controller).not.toBeNull();
+    });
+
+    await act(async () => {
+      controller?.openHarnessAuthModal("codex");
+    });
+    await act(async () => {
+      controller?.patchHarnessAuthModal({
+        stage: "api_key",
+        api_key: "sk-test",
+      });
+    });
+
+    let submitPromise: Promise<void> | undefined;
+    await act(async () => {
+      submitPromise = controller?.submitHarnessApiKeyModal();
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(upsertProviderHarnessEndpoint)).toHaveBeenCalledTimes(1);
+    });
+
+    await act(async () => {
+      controller?.openHarnessAuthModal("gemini");
+    });
+
+    endpointUpsert.resolve({
+      ...baseCodexConfig,
+      endpoints: [
+        ...baseCodexConfig.endpoints,
+        {
+          ...baseEndpoint,
+          id: "ep-new",
+          name: "Secondary",
+          updated_at: "2026-03-03T00:00:00Z",
+        },
+      ],
+    });
+
+    await act(async () => {
+      await submitPromise;
+    });
+
+    expect(controller?.harnessAuthModal?.provider_id).toBe("gemini");
+    expect(vi.mocked(selectProviderHarnessSource)).not.toHaveBeenCalled();
+    expect(vi.mocked(verifyProviderForWorkspace)).not.toHaveBeenCalled();
+    expect(controller?.providerError).toBeNull();
+  });
+
+  it("does not let a stale codex poll close a reopened codex modal", async () => {
+    let controller: Controller | null = null;
+    const loginPoll = deferred<{ status: "success" }>();
+
+    vi.mocked(startCodexLogin).mockResolvedValue({
+      account_id: "codex-login-2",
+      auth_url: "https://example.com/codex-login-2",
+      expected_callback_url: null,
+      completion_token: null,
+    });
+    vi.mocked(getCodexLogin).mockReturnValue(loginPoll.promise as ReturnType<typeof getCodexLogin>);
+    vi.mocked(openExternalLink).mockResolvedValue(true);
+
+    render(createElement(ControllerHarness, {
+      onChange: (next) => {
+        controller = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(controller).not.toBeNull();
+    });
+
+    await act(async () => {
+      controller?.openHarnessAuthModal("codex");
+      controller?.patchHarnessAuthModal({ stage: "subscription" });
+    });
+
+    let submitPromise: Promise<void> | undefined;
+    await act(async () => {
+      submitPromise = controller?.submitHarnessSubscriptionModal();
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(startCodexLogin)).toHaveBeenCalledTimes(1);
+    });
+
+    await act(async () => {
+      controller?.closeHarnessAuthModal();
+      controller?.openHarnessAuthModal("codex");
+    });
+
+    loginPoll.resolve({ status: "success" });
+
+    await act(async () => {
+      await submitPromise;
+    });
+
+    expect(controller?.harnessAuthModal?.provider_id).toBe("codex");
+    expect(controller?.harnessAuthModal).not.toBeNull();
+    expect(vi.mocked(selectProviderHarnessSource)).not.toHaveBeenCalled();
+    expect(controller?.providerError).toBeNull();
+  });
+
+  it("rolls back endpoint selection silently when verification finishes after switching providers", async () => {
+    let controller: Controller | null = null;
+    const verifyDeferred = deferred<ProviderAuthCheck>();
+    const freshEndpoint = {
+      ...baseEndpoint,
+      id: "ep-switched",
+      name: "Rollback Test",
+      updated_at: "2026-03-04T00:00:00Z",
+    };
+    const afterUpsert: HarnessProviderSourceConfig = {
+      ...baseCodexConfig,
+      endpoints: [...baseCodexConfig.endpoints, freshEndpoint],
+    };
+    const selectedEndpointConfig: HarnessProviderSourceConfig = {
+      ...afterUpsert,
+      selected_source_kind: "endpoint",
+      selected_endpoint_id: freshEndpoint.id,
+    };
+
+    vi.mocked(upsertProviderHarnessEndpoint).mockResolvedValue(afterUpsert);
+    vi.mocked(selectProviderHarnessSource)
+      .mockResolvedValueOnce(selectedEndpointConfig)
+      .mockResolvedValueOnce(baseCodexConfig);
+    vi.mocked(refreshProvidersBootstrap)
+      .mockResolvedValueOnce(makeBootstrap({
+        provider_harness_config: {
+          codex: selectedEndpointConfig,
+        },
+      }))
+      .mockResolvedValueOnce(makeBootstrap());
+    vi.mocked(verifyProviderForWorkspace).mockReturnValue(
+      verifyDeferred.promise as ReturnType<typeof verifyProviderForWorkspace>,
+    );
+
+    render(createElement(ControllerHarness, {
+      onChange: (next) => {
+        controller = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(controller).not.toBeNull();
+    });
+
+    await act(async () => {
+      controller?.openHarnessAuthModal("codex");
+      controller?.patchHarnessAuthModal({
+        stage: "api_key",
+        api_key: "sk-test",
+      });
+    });
+
+    let submitPromise: Promise<void> | undefined;
+    await act(async () => {
+      submitPromise = controller?.submitHarnessApiKeyModal();
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(selectProviderHarnessSource)).toHaveBeenNthCalledWith(1, "codex", "endpoint", "ep-switched");
+      expect(vi.mocked(verifyProviderForWorkspace)).toHaveBeenCalledWith("ws-test", "codex");
+    });
+
+    await act(async () => {
+      controller?.openHarnessAuthModal("gemini");
+    });
+
+    verifyDeferred.resolve({
+      provider_id: "codex",
+      workspace_id: "ws-test",
+      status: "failed",
+      message: "bad endpoint",
+    });
+
+    await act(async () => {
+      await submitPromise;
+    });
+
+    expect(vi.mocked(selectProviderHarnessSource)).toHaveBeenNthCalledWith(2, "codex", "subscription", null);
+    expect(controller?.harnessAuthModal?.provider_id).toBe("gemini");
+    expect(controller?.providerError).toBeNull();
   });
 });
