@@ -14,6 +14,13 @@ const bundleHarnessScriptPath = path.join(
   "scripts",
   "ensure_bundled_harnesses.sh",
 );
+const bundleHarnessProvidersScriptPath = path.join(
+  repoRoot,
+  "..",
+  "scripts",
+  "lib",
+  "bundled_harnesses_providers.sh",
+);
 const canonicalBundleDir = path.join(
   repoRoot,
   "apps",
@@ -98,7 +105,18 @@ test("endpoint bundle defaults use a home-shareable cache root", () => {
 
 test("bundle harnesses treat archive js entrypoints as requiring node", () => {
   const script = fs.readFileSync(bundleHarnessScriptPath, "utf8");
+  const providersScript = fs.readFileSync(
+    bundleHarnessProvidersScriptPath,
+    "utf8",
+  );
 
-  assert.match(script, /elif kind == "archive":/);
-  assert.match(script, /bin_path\.endswith\(\("\.js", "\.mjs", "\.cjs"\)\)/);
+  assert.match(
+    script,
+    /source "\$ROOT\/scripts\/lib\/bundled_harnesses_providers\.sh"/,
+  );
+  assert.match(providersScript, /elif kind == "archive":/);
+  assert.match(
+    providersScript,
+    /bin_path\.endswith\(\("\.js", "\.mjs", "\.cjs"\)\)/,
+  );
 });
