@@ -13,6 +13,7 @@ import {
   getGeminiLogin,
   selectProviderHarnessSource,
   setAmpActiveAccount,
+  startAmpLogin,
   startCodexLogin,
   startGeminiLogin,
   upsertProviderHarnessEndpoint,
@@ -53,6 +54,7 @@ vi.mock("../../../api/client", async (importOriginal) => {
     getGeminiLogin: vi.fn(),
     selectProviderHarnessSource: vi.fn(),
     setAmpActiveAccount: vi.fn(),
+    startAmpLogin: vi.fn(),
     startCodexLogin: vi.fn(),
     startGeminiLogin: vi.fn(),
     upsertProviderHarnessEndpoint: vi.fn(),
@@ -210,6 +212,7 @@ beforeEach(() => {
   vi.mocked(getGeminiLogin).mockReset();
   vi.mocked(selectProviderHarnessSource).mockReset();
   vi.mocked(setAmpActiveAccount).mockReset();
+  vi.mocked(startAmpLogin).mockReset();
   vi.mocked(startCodexLogin).mockReset();
   vi.mocked(startGeminiLogin).mockReset();
   vi.mocked(upsertProviderHarnessEndpoint).mockReset();
@@ -940,5 +943,43 @@ describe("useHarnessAuthenticationController", () => {
     expect(vi.mocked(selectProviderHarnessSource)).toHaveBeenNthCalledWith(2, "codex", "subscription", null);
     expect(controller?.harnessAuthModal?.provider_id).toBe("gemini");
     expect(controller?.providerError).toBeNull();
+  });
+
+  it("suppresses duplicate subscription starts before busy state flushes", async () => {
+    let controller: Controller | null = null;
+    const startAmpLoginDeferred = deferred<{ login_id: string; auth_url?: string | null }>();
+    vi.mocked(startAmpLogin).mockReturnValue(
+      startAmpLoginDeferred.promise as ReturnType<typeof startAmpLogin>,
+    );
+
+    render(createElement(ControllerHarness, {
+      onChange: (next) => {
+        controller = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(controller).not.toBeNull();
+    });
+
+    await act(async () => {
+      controller?.openHarnessAuthModal("amp");
+      controller?.patchHarnessAuthModal({
+        stage: "subscription",
+        subscription_label: "Amp Login",
+      });
+    });
+
+    await act(async () => {
+      void controller?.submitHarnessSubscriptionModal();
+      void controller?.submitHarnessSubscriptionModal();
+    });
+
+    expect(vi.mocked(startAmpLogin)).toHaveBeenCalledTimes(1);
+
+    startAmpLoginDeferred.resolve({
+      login_id: "amp-login-1",
+      auth_url: "https://example.com/amp-login",
+    });
   });
 });

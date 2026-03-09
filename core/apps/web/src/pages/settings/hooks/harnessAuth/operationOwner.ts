@@ -65,6 +65,8 @@ export const createOperationOwner = <TKey extends string>() => {
   const isCurrent = (operation: Pick<OwnedOperation<TKey>, "key" | "token">): boolean =>
     activeOperations.get(operation.key)?.token === operation.token;
 
+  const hasActive = (key: TKey): boolean => activeOperations.has(key);
+
   const start = (key: TKey): OwnedOperation<TKey> => {
     cancel(key);
     const controller = new AbortController();
@@ -94,6 +96,7 @@ export const createOperationOwner = <TKey extends string>() => {
     cancel,
     cancelAll,
     isCurrent,
+    hasActive,
     finish,
   };
 };

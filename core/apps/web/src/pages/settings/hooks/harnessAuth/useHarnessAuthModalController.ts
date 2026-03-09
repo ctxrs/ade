@@ -23,6 +23,7 @@ type HarnessAuthModalStateController = {
   patchHarnessAuthModal: (patch: Partial<HarnessAuthModalState>) => void;
   startOperation: (key: HarnessAuthModalOperationKey) => HarnessAuthModalOperation;
   finishOperation: (operation: HarnessAuthModalOperation) => void;
+  hasActiveOperation: (key: HarnessAuthModalOperationKey) => boolean;
   patchHarnessAuthModalForOperation: (
     operation: HarnessAuthModalOperation,
     patch: Partial<HarnessAuthModalState>,
@@ -104,6 +105,11 @@ export function useHarnessAuthModalController(): HarnessAuthModalStateController
     operationOwnerRef.current.finish(operation);
   }, []);
 
+  const hasActiveOperation = useCallback(
+    (key: HarnessAuthModalOperationKey): boolean => operationOwnerRef.current.hasActive(key),
+    [],
+  );
+
   const patchHarnessAuthModalForOperation = useCallback(
     (operation: HarnessAuthModalOperation, patch: Partial<HarnessAuthModalState>): boolean => {
       if (!operation.isCurrent()) return false;
@@ -140,6 +146,7 @@ export function useHarnessAuthModalController(): HarnessAuthModalStateController
     patchHarnessAuthModal,
     startOperation,
     finishOperation,
+    hasActiveOperation,
     patchHarnessAuthModalForOperation,
     closeHarnessAuthModalForOperation,
     setClaudePendingLoginIdForOperation,

@@ -280,6 +280,7 @@ export function useHarnessAuthenticationController({
     patchHarnessAuthModal: basePatchHarnessAuthModal,
     startOperation: startHarnessAuthModalOperation,
     finishOperation: finishHarnessAuthModalOperation,
+    hasActiveOperation: hasActiveHarnessAuthModalOperation,
     patchHarnessAuthModalForOperation,
     closeHarnessAuthModalForOperation,
     setClaudePendingLoginIdForOperation,
@@ -821,6 +822,10 @@ export function useHarnessAuthenticationController({
       return;
     }
 
+    if (hasActiveHarnessAuthModalOperation("subscription-flow") && !shouldCompleteClaudeCallback) {
+      return;
+    }
+
     if (shouldCompleteClaudeCallback) {
       const operation = startHarnessAuthModalOperation("modal-action");
       setProviderError(null);
@@ -883,6 +888,7 @@ export function useHarnessAuthenticationController({
     harnessAuthModal,
     closeHarnessAuthModalForOperation,
     finishHarnessAuthModalOperation,
+    hasActiveHarnessAuthModalOperation,
     openCodexAuthUrl,
     patchHarnessAuthModalForOperation,
     refreshAmpAccounts,
