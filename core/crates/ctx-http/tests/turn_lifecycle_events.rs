@@ -82,11 +82,25 @@ async fn queued_message_emits_lifecycle_events_in_order_with_interrupt() {
             event.turn_id == Some(turn_id_one)
                 && matches!(event.event_type, SessionEventType::TurnInterrupted)
         });
-        if saw_interrupted {
+        let saw_finished = events.iter().any(|event| {
+            event.turn_id == Some(turn_id_one)
+                && matches!(event.event_type, SessionEventType::TurnFinished)
+        });
+        let saw_queue_lifecycle = events.iter().any(|event| {
+            event.turn_id == Some(turn_id_two)
+                && matches!(event.event_type, SessionEventType::InputQueued)
+        }) && events.iter().any(|event| {
+            event.turn_id == Some(turn_id_two)
+                && matches!(event.event_type, SessionEventType::MessageQueueAdded)
+        }) && events.iter().any(|event| {
+            event.turn_id == Some(turn_id_two)
+                && matches!(event.event_type, SessionEventType::TurnQueued)
+        });
+        if saw_interrupted && saw_finished && saw_queue_lifecycle {
             break;
         }
         if tokio::time::Instant::now() >= deadline {
-            panic!("timed out waiting for interrupt event");
+            panic!("timed out waiting for interrupt + queue lifecycle events");
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
@@ -205,11 +219,15 @@ async fn cancel_promotes_next_queued_turn_after_interrupted_finish() {
             event.turn_id == Some(turn_id_one)
                 && matches!(event.event_type, SessionEventType::TurnFinished)
         });
+        let saw_promoted = events.iter().any(|event| {
+            event.turn_id == Some(turn_id_two)
+                && matches!(event.event_type, SessionEventType::MessageQueuePromoted)
+        });
         let saw_next_started = events.iter().any(|event| {
             event.turn_id == Some(turn_id_two)
                 && matches!(event.event_type, SessionEventType::TurnStarted)
         });
-        if saw_finished && saw_next_started {
+        if saw_finished && saw_promoted && saw_next_started {
             break;
         }
         if tokio::time::Instant::now() >= deadline {
