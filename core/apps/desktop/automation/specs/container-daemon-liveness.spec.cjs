@@ -454,6 +454,7 @@ describe("container daemon liveness", () => {
       harnessDownloads: true,
       selectedHarnessProviderIds: ["cursor"],
       requireSelectedHarnessInstallsNonBlocking: true,
+      requireExactSelectedHarnessInstallProof: true,
       source: { kind: "new", destPath: dest, workspaceName: "container-daemon-disk" },
       setupHook: "",
       mergeQueue: { kind: "skip" },
