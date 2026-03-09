@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Message, SessionEvent, SessionTurn, SessionTurnTool } from "../api/client";
 import type { ThreadItem } from "./SessionPage.types";
+import { getArchivedEventsOnlyDegradedFixture } from "../testdata/projectionEquivalenceFixtures";
 
 vi.mock("react-syntax-highlighter", () => ({ Prism: () => null }));
 vi.mock("react-syntax-highlighter/dist/esm/styles/prism", () => ({ oneDark: {} }));
@@ -52,6 +53,33 @@ describe("buildWorkbenchThreadViewModel", () => {
     expect(
       degraded.groups[0]?.items.some((it) => it.kind === "assistant" && String(it.content).includes("Hi")),
     ).toBe(true);
+  }, 10000);
+
+  it("renders archived fallback from the shared degraded fixture", async () => {
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+
+    const fixture = getArchivedEventsOnlyDegradedFixture();
+    const out = buildWorkbenchThreadViewModel(
+      [],
+      fixture.messages as unknown as Message[],
+      {},
+      fixture.events as unknown as SessionEvent[],
+      undefined,
+      { mode: "events_only_degraded" },
+    );
+
+    expect(out.groups).toHaveLength(1);
+    expect(out.groups[0]?.header?.content).toBe(fixture.expected.headerContent);
+    const items = out.groups[0]?.items ?? [];
+    expect(items.map((item) => item.kind)).toEqual(fixture.expected.renderItemKinds);
+    expect(items.find(isToolItem)).toMatchObject({
+      kind: "tool",
+      tool_call_id: fixture.expected.toolCallId,
+    });
+    expect(items.find((item) => item.kind === "assistant")).toMatchObject({
+      kind: "assistant",
+      content: fixture.expected.assistantContent,
+    });
   }, 10000);
 
   it("does not infer user headers when turn.user_message_id is missing", async () => {

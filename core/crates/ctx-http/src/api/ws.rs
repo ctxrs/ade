@@ -1541,6 +1541,9 @@ async fn queue_snapshot_payload(
     let task_count = active_snapshot.active.tasks.len();
     let head_count = active_heads.heads.len();
     let build_ms = build_start.elapsed().as_millis();
+    if crate::fault_injection::maybe_fail("ctx_http.send_workspace_active_snapshot").is_err() {
+        return Err(());
+    }
     push_stream_message(
         pending,
         workspace_id,

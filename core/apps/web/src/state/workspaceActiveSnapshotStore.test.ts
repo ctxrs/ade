@@ -10,6 +10,10 @@ import type {
 } from "@ctx/types";
 import { waitForCondition } from "../testUtils/waitForCondition";
 import { getUiDiagnostics, resetUiDiagnosticsForTests } from "./diagnosticsChannel";
+import {
+  getActiveProjectionFixture,
+  getSessionGapSeedFixture,
+} from "../testdata/projectionEquivalenceFixtures";
 
 vi.mock("../api/client", () => {
   const idToString = (id: string | null | undefined): string => {
@@ -242,6 +246,111 @@ describe("WorkspaceActiveSnapshotStore", () => {
     const payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
     expect(payload.type).toBe("subscribe");
     expect(payload.include_active_heads).toBe(false);
+  });
+
+  it("keeps cache and render projections aligned with the shared active fixture", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+    const { buildWorkbenchThreadViewModel } = await import("../pages/SessionPage");
+
+    const fixture = getActiveProjectionFixture();
+    const store = new WorkspaceActiveSnapshotStoreImpl(fixture.workspaceId, { disableWorker: true });
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "snapshot",
+        rev: 4,
+        active_snapshot: fixture.activeSnapshot,
+        active_heads: fixture.activeHeads,
+      }),
+    );
+
+    await waitForCondition(() => store.getSnapshot().initialized);
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 4,
+        event: {
+          type: "session_head_delta",
+          workspace_id: fixture.workspaceId,
+          snapshot_rev: 4,
+          delta: fixture.partialDelta,
+        },
+      }),
+    );
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.activeIds).toEqual([fixture.task.id]);
+
+    const summary = snapshot.tasksById[fixture.task.id]?.sessions[0];
+    expect(summary?.last_event_seq).toBe(fixture.expected.summaryLastEventSeq);
+
+    const head = store.getSessionHeadSnapshot(fixture.session.id);
+    expect(head?.last_event_seq).toBe(fixture.expected.headLastEventSeq);
+    expect((head?.events ?? []).map((event) => event.event_type)).toEqual(
+      fixture.expected.stableEventTypes,
+    );
+    expect((head?.events ?? []).some((event) => event.event_type === "assistant_chunk")).toBe(false);
+
+    const view = buildWorkbenchThreadViewModel(
+      head?.turns ?? [],
+      head?.messages ?? [],
+      fixture.toolsByTurnId,
+      head?.events ?? [],
+    );
+    const items = view.groups[0]?.items ?? [];
+    expect(items.map((item) => item.kind)).toEqual(fixture.expected.renderItemKinds);
+    expect(items.find((item) => item.kind === "assistant")).toMatchObject({
+      kind: "assistant",
+      content: fixture.expected.assistantContent,
+    });
+    expect(items.find((item) => item.kind === "tool")).toMatchObject({
+      kind: "tool",
+      tool_call_id: fixture.expected.toolCallId,
+    });
+  });
+
+  it("rehydrates the seeded head from the shared gap fixture", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const fixture = getSessionGapSeedFixture();
+    const store = new WorkspaceActiveSnapshotStoreImpl(fixture.workspaceId, { disableWorker: true });
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "snapshot",
+        rev: 4,
+        active_snapshot: fixture.activeSnapshot,
+        active_heads: fixture.activeHeads,
+      }),
+    );
+
+    await waitForCondition(() => store.getSnapshot().initialized);
+
+    const ws = mkOpenWs();
+    asStoreInternals(store).ws = ws;
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 5,
+        event: fixture.gapEvent,
+      }),
+    );
+
+    expect(ws.send).toHaveBeenCalledTimes(1);
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 5,
+        event: fixture.seedEvent,
+      }),
+    );
+
+    const head = store.getSessionHeadSnapshot(fixture.session.id);
+    expect(head?.last_event_seq).toBe(fixture.expected.headLastEventSeq);
+    expect(head?.messages?.[1]?.content).toBe("Seeded response after gap.");
   });
 
   it("uses one canonical websocket url per connect cycle", async () => {
