@@ -1,16 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command as StdCommand, Stdio};
-use std::sync::{Arc, Mutex as StdMutex, OnceLock};
+use std::process::Stdio;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use futures::StreamExt;
 use sha2::Digest;
-#[cfg(not(unix))]
-use sysinfo::{Pid, Signal, System};
-use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::{fs, io::AsyncWriteExt};
@@ -28,6 +25,15 @@ use crate::settings::{
 };
 use crate::updates;
 use url::Url;
+
+mod network_policy_transition;
+mod podman_recovery;
+
+use self::network_policy_transition::apply_container_network_policy;
+use self::podman_recovery::{
+    ensure_podman_machine_running_with_observer, podman_machine_present,
+    podman_machine_singleflight_lock, run_podman_machine_init,
+};
 
 // Default container image for ctx-managed execution.
 //
@@ -432,21 +438,6 @@ async fn persist_podman_machine_cache_to_shared_best_effort(
     }
 }
 
-static PODMAN_MACHINE_SINGLEFLIGHT_LOCKS: OnceLock<StdMutex<HashMap<String, Arc<Mutex<()>>>>> =
-    OnceLock::new();
-
-fn podman_machine_singleflight_lock(machine_name: &str) -> Arc<Mutex<()>> {
-    let registry = PODMAN_MACHINE_SINGLEFLIGHT_LOCKS.get_or_init(|| StdMutex::new(HashMap::new()));
-    let mut guard = match registry.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    guard
-        .entry(machine_name.to_string())
-        .or_insert_with(|| Arc::new(Mutex::new(())))
-        .clone()
-}
-
 #[derive(Debug, Clone)]
 pub enum HarnessRuntimeKind {
     Host,
@@ -474,6 +465,12 @@ enum CachedContainerAction {
     Reuse,
     Reconfigure,
     Recreate,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContainerReadinessState {
+    MachineReady,
+    RuntimeReady,
 }
 
 fn cached_container_action(
@@ -688,22 +685,106 @@ impl HarnessRuntimeManager {
         if matches!(settings.mode, ExecutionMode::Host) {
             return Ok(());
         }
-        ensure_managed_podman_runtime(&self.data_root, observer)
+        self.ensure_container_machine_ready(observer)
             .await
             .context("podman unavailable and execution mode is container")?;
+        self.ensure_workspace_container_after_machine_ready_with_observer(
+            workspace,
+            settings,
+            daemon_url,
+            observer,
+            ContainerReadinessState::MachineReady,
+        )
+        .await
+    }
+
+    async fn ensure_workspace_container_after_machine_ready_with_observer(
+        &self,
+        workspace: &Workspace,
+        settings: &ExecutionSettings,
+        daemon_url: &str,
+        observer: Option<&dyn HarnessSetupObserver>,
+        readiness: ContainerReadinessState,
+    ) -> Result<()> {
+        if matches!(settings.mode, ExecutionMode::Host) {
+            return Ok(());
+        }
         let proxy_host = "host.containers.internal";
         let daemon_port = daemon_port_from_url(daemon_url).unwrap_or(4399);
         let _ = self
-            .ensure_container(
+            .ensure_container_after_machine_ready(
                 workspace,
                 None,
                 &settings.container,
                 proxy_host,
                 daemon_port,
                 observer,
+                readiness,
             )
             .await?;
         Ok(())
+    }
+
+    pub async fn ensure_workspace_container_after_runtime_ready_with_observer(
+        &self,
+        workspace: &Workspace,
+        settings: &ExecutionSettings,
+        daemon_url: &str,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<()> {
+        if matches!(settings.mode, ExecutionMode::Host) {
+            return Ok(());
+        }
+        self.ensure_workspace_container_after_machine_ready_with_observer(
+            workspace,
+            settings,
+            daemon_url,
+            observer,
+            ContainerReadinessState::RuntimeReady,
+        )
+        .await
+    }
+
+    async fn ensure_container_machine_ready(
+        &self,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<()> {
+        observe_phase(
+            observer,
+            HarnessSetupPhase::MachineCheck,
+            "checking container runtime",
+        );
+        ensure_managed_podman_runtime(&self.data_root, observer).await?;
+        ensure_podman_machine_running_with_observer(&self.data_root, observer).await?;
+        Ok(())
+    }
+
+    async fn ensure_container_image_ready(
+        &self,
+        settings: &ContainerExecutionSettings,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<()> {
+        let image = resolve_container_image(settings);
+        observe_phase(
+            observer,
+            HarnessSetupPhase::ImageCheck,
+            "checking harness image availability",
+        );
+        if container_image_present(&self.data_root, &image).await? {
+            observe_log(
+                observer,
+                HarnessSetupPhase::ImageCheck,
+                HarnessSetupLogLevel::Info,
+                "harness image already present",
+            );
+            return Ok(());
+        }
+        observe_phase(
+            observer,
+            HarnessSetupPhase::ImageLoad,
+            "loading harness image into podman",
+        );
+        ensure_container_image_available(&self.data_root, &image, observer).await
     }
 
     pub async fn container_status(
@@ -805,15 +886,31 @@ impl HarnessRuntimeManager {
         daemon_port: u16,
         observer: Option<&dyn HarnessSetupObserver>,
     ) -> Result<HarnessContainer> {
+        self.ensure_container_machine_ready(observer).await?;
+        self.ensure_container_after_machine_ready(
+            workspace,
+            worktree,
+            settings,
+            daemon_host,
+            daemon_port,
+            observer,
+            ContainerReadinessState::MachineReady,
+        )
+        .await
+    }
+
+    async fn ensure_container_after_machine_ready(
+        &self,
+        workspace: &Workspace,
+        worktree: Option<&Worktree>,
+        settings: &ContainerExecutionSettings,
+        daemon_host: &str,
+        daemon_port: u16,
+        observer: Option<&dyn HarnessSetupObserver>,
+        readiness: ContainerReadinessState,
+    ) -> Result<HarnessContainer> {
         let name = format!("ctx-harness-{}", workspace.id.0);
         let image = resolve_container_image(settings);
-        observe_phase(
-            observer,
-            HarnessSetupPhase::MachineCheck,
-            "checking container runtime",
-        );
-        // On macOS/Windows the engine is a VM; ensure it is running before we run any podman ops.
-        ensure_podman_machine_running_with_observer(&self.data_root, observer).await?;
         if matches!(settings.mount_mode, ContainerMountMode::DiskIsolated) {
             observe_log(
                 observer,
@@ -911,28 +1008,10 @@ impl HarnessRuntimeManager {
                 );
             }
         } else {
-            observe_phase(
-                observer,
-                HarnessSetupPhase::ImageCheck,
-                "checking harness image availability",
-            );
-            let image_present = container_image_present(&self.data_root, &image).await?;
-            if !image_present {
-                observe_phase(
-                    observer,
-                    HarnessSetupPhase::ImageLoad,
-                    "loading harness image into podman",
-                );
-                ensure_container_image_available(&self.data_root, &image, observer).await?;
-            } else {
-                observe_log(
-                    observer,
-                    HarnessSetupPhase::ImageCheck,
-                    HarnessSetupLogLevel::Info,
-                    "harness image already present",
-                );
+            if readiness == ContainerReadinessState::MachineReady {
+                self.ensure_container_image_ready(settings, observer)
+                    .await?;
             }
-
             observe_phase(
                 observer,
                 HarnessSetupPhase::ContainerStartOrCreate,
@@ -979,73 +1058,16 @@ impl HarnessRuntimeManager {
             HarnessSetupPhase::RuntimeNetworkSetup,
             "configuring container network policy",
         );
-        let egress_guard = if matches!(settings.network_mode, ContainerNetworkMode::All) {
-            if let Err(err) = stop_transparent_proxy(&self.data_root, &name).await {
-                observe_log(
-                    observer,
-                    HarnessSetupPhase::RuntimeNetworkSetup,
-                    HarnessSetupLogLevel::Warn,
-                    &format!("failed to stop transparent proxy: {err:#}"),
-                );
-                tracing::warn!("failed to stop transparent proxy: {err:#}");
-            }
-            if let Err(err) = clear_egress_guard(&self.data_root, &name).await {
-                observe_log(
-                    observer,
-                    HarnessSetupPhase::RuntimeNetworkSetup,
-                    HarnessSetupLogLevel::Warn,
-                    &format!("failed to clear egress guard: {err:#}"),
-                );
-                tracing::warn!("failed to clear egress guard: {err:#}");
-            }
-            false
-        } else {
-            // Prefer the in-image proxy binary (required for out-of-the-box behavior on macOS/Windows).
-            // If the image doesn't have it, we also allow an explicit override via CTX_EGRESS_PROXY_PATH,
-            // but restricted modes must not silently fall back to full network access.
-            let proxy_bin = match ensure_egress_proxy_available(&self.data_root, &name).await {
-                Ok(()) => EGRESS_PROXY_CONTAINER_PATH.to_string(),
-                Err(img_err) => {
-                    // Optional escape hatch: allow a Linux proxy binary to be provided via the host
-                    // (it is bind-mounted into the container under ~/.ctx/runtimes/...).
-                    if std::env::var("CTX_EGRESS_PROXY_PATH").ok().is_some() {
-                        let host_bin = ensure_egress_proxy_binary(&self.data_root).await?;
-                        host_bin.to_string_lossy().to_string()
-                    } else {
-                        return Err(img_err).context(
-                            "restricted container networking requires ctx-egress-proxy in the container image",
-                        );
-                    }
-                }
-            };
-            let (proxy_mode, proxy_allowlist) = transparent_proxy_policy(settings);
-            let proxy_config = TransparentProxyConfig {
-                listen: format!("127.0.0.1:{TRANSPARENT_PROXY_PORT}"),
-                mode: proxy_mode,
-                allowlist: proxy_allowlist,
-                max_peek_bytes: 16 * 1024,
-            };
-            let config_path = write_transparent_proxy_config(
-                &container_data_root(&self.data_root, workspace.id),
-                proxy_config,
-            )
-            .await?;
-            start_transparent_proxy(
-                &self.data_root,
-                &name,
-                &PathBuf::from(proxy_bin),
-                &config_path,
-            )
-            .await?;
-            configure_transparent_egress_guard(
-                &self.data_root,
-                &name,
-                TRANSPARENT_PROXY_PORT,
-                daemon_host,
-                daemon_port,
-            )
-            .await?
-        };
+        let egress_guard = apply_container_network_policy(
+            &self.data_root,
+            workspace.id,
+            &name,
+            settings,
+            daemon_host,
+            daemon_port,
+        )
+        .await?
+        .egress_guard;
         observe_log(
             observer,
             HarnessSetupPhase::RuntimeNetworkSetup,
@@ -1907,260 +1929,6 @@ fn proxy_runtime_path(data_root: &Path) -> PathBuf {
     proxy_runtime_root(data_root).join(EGRESS_PROXY_BINARY)
 }
 
-fn llm_only_proxy_allowlist_entries() -> Vec<String> {
-    let mut entries: Vec<String> = network_allowlist::LLM_ALLOWLIST
-        .iter()
-        .filter_map(|entry| network_allowlist::normalize_allowlist_entry(entry))
-        .collect();
-    entries.sort();
-    entries.dedup();
-    entries
-}
-
-fn transparent_proxy_policy(
-    settings: &ContainerExecutionSettings,
-) -> (ContainerNetworkMode, Vec<String>) {
-    match settings.network_mode {
-        // Use explicit allowlist mode for llm_only so policy is fully driven by daemon-side
-        // config and does not depend on baked allowlist constants inside container images.
-        ContainerNetworkMode::LlmOnly => (
-            ContainerNetworkMode::Allowlist,
-            llm_only_proxy_allowlist_entries(),
-        ),
-        ContainerNetworkMode::Allowlist => {
-            (ContainerNetworkMode::Allowlist, settings.allowlist.clone())
-        }
-        ContainerNetworkMode::All => (ContainerNetworkMode::All, Vec::new()),
-    }
-}
-
-async fn ensure_egress_proxy_binary(data_root: &Path) -> Result<PathBuf> {
-    let runtime_root = proxy_runtime_root(data_root);
-    fs::create_dir_all(&runtime_root).await?;
-    let dest = proxy_runtime_path(data_root);
-    let src = match std::env::var("CTX_EGRESS_PROXY_PATH") {
-        Ok(path) => PathBuf::from(path),
-        Err(_) => {
-            anyhow::bail!(
-                "missing CTX_EGRESS_PROXY_PATH; host-injected egress proxy requires an explicit Linux binary path"
-            )
-        }
-    };
-    if !src.exists() {
-        anyhow::bail!("missing {EGRESS_PROXY_BINARY} binary at {}", src.display());
-    }
-    if src != dest {
-        fs::copy(&src, &dest).await?;
-    }
-    let mut perms = fs::metadata(&dest).await?.permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&dest, perms).await?;
-    Ok(dest)
-}
-
-async fn ensure_egress_proxy_available(data_root: &Path, container_name: &str) -> Result<()> {
-    // Validate required tooling inside the container for restricted network modes.
-    //
-    // This is a hard requirement: without these, we cannot enforce allowlist/llm-only safely.
-    let script = format!(
-        "set -e; command -v iptables >/dev/null 2>&1; test -x '{EGRESS_PROXY_CONTAINER_PATH}'"
-    );
-    let mut cmd = podman_command(data_root)?;
-    cmd.arg("exec")
-        .arg("--user")
-        .arg("0")
-        .arg(container_name)
-        .arg("sh")
-        .arg("-c")
-        .arg(script);
-    let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
-    if output.status.success() {
-        return Ok(());
-    }
-    anyhow::bail!(
-        "container missing required egress tooling (iptables and/or {EGRESS_PROXY_CONTAINER_PATH}); status {}",
-        output.status
-    );
-}
-
-async fn write_transparent_proxy_config(
-    root: &Path,
-    config: TransparentProxyConfig,
-) -> Result<PathBuf> {
-    fs::create_dir_all(root).await?;
-    let path = root.join(EGRESS_PROXY_CONFIG_NAME);
-    let raw = serde_json::to_string_pretty(&config)?;
-    let mut file = fs::File::create(&path).await?;
-    file.write_all(raw.as_bytes()).await?;
-    Ok(path)
-}
-
-async fn start_transparent_proxy(
-    data_root: &Path,
-    name: &str,
-    bin_path: &Path,
-    config_path: &Path,
-) -> Result<()> {
-    let bin = bin_path.to_string_lossy();
-    let config = config_path.to_string_lossy();
-    let script = format!(
-        r#"
-set -e
-pid_file="/tmp/ctx-egress-proxy.pid"
-if [ -f "$pid_file" ]; then
-  old_pid="$(cat "$pid_file" 2>/dev/null || true)"
-  if [ -n "$old_pid" ]; then
-    kill "$old_pid" || true
-  fi
-  rm -f "$pid_file"
-fi
-if command -v nohup >/dev/null 2>&1; then
-  nohup '{bin}' --config '{config}' >/tmp/ctx-egress-proxy.log 2>&1 &
-elif command -v setsid >/dev/null 2>&1; then
-  setsid '{bin}' --config '{config}' >/tmp/ctx-egress-proxy.log 2>&1 &
-else
-  '{bin}' --config '{config}' >/tmp/ctx-egress-proxy.log 2>&1 &
-fi
-echo $! > "$pid_file"
-exit 0
-"#
-    );
-    let mut cmd = podman_command(data_root)?;
-    cmd.arg("exec")
-        .arg("--user")
-        .arg("0")
-        .arg(name)
-        .arg("sh")
-        .arg("-c")
-        .arg(script);
-    let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        anyhow::bail!(
-            "failed to start transparent proxy (status: {})",
-            output.status
-        );
-    }
-}
-
-async fn stop_transparent_proxy(data_root: &Path, name: &str) -> Result<()> {
-    let script = r#"
-pid_file="/tmp/ctx-egress-proxy.pid"
-if [ -f "$pid_file" ]; then
-  old_pid="$(cat "$pid_file" 2>/dev/null || true)"
-  if [ -n "$old_pid" ]; then
-    kill "$old_pid" || true
-  fi
-  rm -f "$pid_file"
-fi
-exit 0
-"#;
-    let mut cmd = podman_command(data_root)?;
-    cmd.arg("exec")
-        .arg("--user")
-        .arg("0")
-        .arg(name)
-        .arg("sh")
-        .arg("-c")
-        .arg(script);
-    let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        anyhow::bail!(
-            "failed to stop transparent proxy (status: {})",
-            output.status
-        );
-    }
-}
-
-async fn configure_transparent_egress_guard(
-    data_root: &Path,
-    name: &str,
-    proxy_port: u16,
-    daemon_host: &str,
-    daemon_port: u16,
-) -> Result<bool> {
-    let script = format!(
-        r#"
-set -e
-if ! command -v iptables >/dev/null 2>&1; then
-  exit 43
-fi
-daemon_ip="$(getent hosts {daemon_host} | awk '{{print $1}}' | head -n1)"
-if [ -z "$daemon_ip" ]; then
-  exit 44
-fi
-iptables -t nat -F OUTPUT || true
-iptables -F OUTPUT || true
-iptables -P OUTPUT DROP
-iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-iptables -A OUTPUT -d 127.0.0.1/8 -j ACCEPT
-iptables -A OUTPUT -o lo -j ACCEPT
-iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
-iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
-iptables -A OUTPUT -d "$daemon_ip" -p tcp --dport {daemon_port} -j ACCEPT
-iptables -A OUTPUT -m owner --uid-owner 0 -j ACCEPT
-iptables -t nat -A OUTPUT -m owner --uid-owner 0 -j RETURN
-iptables -t nat -A OUTPUT -p tcp --dport 80 -j REDIRECT --to-ports {proxy_port}
-iptables -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-ports {proxy_port}
-exit 0
-"#
-    );
-    let mut cmd = podman_command(data_root)?;
-    cmd.arg("exec")
-        .arg("--user")
-        .arg("0")
-        .arg(name)
-        .arg("sh")
-        .arg("-c")
-        .arg(script);
-    let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
-    if output.status.success() {
-        return Ok(true);
-    }
-    if let Some(code) = output.status.code() {
-        if code == 43 {
-            anyhow::bail!("iptables missing in harness container");
-        }
-        if code == 44 {
-            anyhow::bail!("daemon host not resolvable inside harness container");
-        }
-    }
-    anyhow::bail!(
-        "failed to configure egress guard (status: {})",
-        output.status
-    );
-}
-
-async fn clear_egress_guard(data_root: &Path, name: &str) -> Result<()> {
-    let script = r#"
-set -e
-if ! command -v iptables >/dev/null 2>&1; then
-  exit 0
-fi
-iptables -t nat -F OUTPUT || true
-iptables -F OUTPUT || true
-iptables -P OUTPUT ACCEPT || true
-exit 0
-"#;
-    let mut cmd = podman_command(data_root)?;
-    cmd.arg("exec")
-        .arg("--user")
-        .arg("0")
-        .arg(name)
-        .arg("sh")
-        .arg("-c")
-        .arg(script);
-    let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        anyhow::bail!("failed to clear egress guard (status: {})", output.status);
-    }
-}
-
 fn podman_available(data_root: &Path) -> bool {
     if cfg!(test) {
         if let Ok(value) = std::env::var("CTX_TEST_PODMAN_AVAILABLE") {
@@ -2292,802 +2060,10 @@ pub async fn podman_engine_ready(data_root: &Path) -> Result<bool> {
     }
 }
 
-async fn podman_machine_present(data_root: &Path) -> Result<bool> {
-    let machine_name = ctx_podman_machine_name(data_root);
-    // `inspect` is the cheapest existence check and avoids JSON schema drift.
-    let mut cmd = podman_command(data_root)?;
-    cmd.arg("machine").arg("inspect").arg(machine_name);
-    let output = command_output_with_timeout(cmd, PODMAN_INFO_TIMEOUT).await?;
-    Ok(output.status.success())
-}
-
-fn looks_like_missing_machine_error(message_lc: &str) -> bool {
-    message_lc.contains("no such")
-        || message_lc.contains("not found")
-        || message_lc.contains("does not exist")
-        || message_lc.contains("no machine")
-}
-
-fn looks_like_recoverable_machine_start_error(message_lc: &str) -> bool {
-    message_lc.contains("already running")
-        || message_lc.contains("already starting")
-        || message_lc.contains("already started")
-        || message_lc.contains("in progress")
-        || message_lc.contains("timed out")
-        || message_lc.contains("resource busy")
-        || message_lc.contains("another process")
-        || message_lc.contains("lock")
-        || message_lc.contains("port conflict")
-        || message_lc.contains("unable to connect to \"gvproxy\" socket")
-        || message_lc.contains("reassigning")
-        || message_lc.contains("exited unexpectedly")
-        || message_lc.contains("address already in use")
-}
-
-fn looks_like_running_but_unreachable_machine_start_error(message_lc: &str) -> bool {
-    message_lc.contains("already running")
-        || message_lc.contains("already started")
-        || message_lc.contains("unable to connect to \"gvproxy\" socket")
-}
-
 fn command_output_message(output: &std::process::Output) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     format!("{stderr}\n{stdout}").trim().to_string()
-}
-
-fn podman_machine_temp_state_paths(data_root: &Path, machine_name: &str) -> Vec<PathBuf> {
-    let podman_tmp = podman_temp_root(data_root).join("podman");
-    let podman_home = podman_home_root(data_root).join(".podman");
-    vec![
-        podman_tmp.join("gvproxy.pid"),
-        podman_tmp.join(format!("{machine_name}-api.sock")),
-        podman_tmp.join(format!("{machine_name}-gvproxy.sock")),
-        podman_tmp.join(format!("{machine_name}.sock")),
-        podman_home.join(format!("{machine_name}-api.sock")),
-        podman_home.join(format!("{machine_name}-gvproxy.sock")),
-    ]
-}
-
-fn clear_stale_podman_machine_temp_state(
-    data_root: &Path,
-    machine_name: &str,
-    observer: Option<&dyn HarnessSetupObserver>,
-) {
-    let mut removed: Vec<String> = Vec::new();
-    for path in podman_machine_temp_state_paths(data_root, machine_name) {
-        match std::fs::remove_file(&path) {
-            Ok(()) => removed.push(path.to_string_lossy().to_string()),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => {
-                observe_log(
-                    observer,
-                    HarnessSetupPhase::MachineStartOrInit,
-                    HarnessSetupLogLevel::Warn,
-                    &format!(
-                        "failed to clear stale podman temp state at {}: {err}",
-                        path.display()
-                    ),
-                );
-            }
-        }
-    }
-    if !removed.is_empty() {
-        observe_log(
-            observer,
-            HarnessSetupPhase::MachineStartOrInit,
-            HarnessSetupLogLevel::Info,
-            &format!("cleared stale podman temp state: {}", removed.join(", ")),
-        );
-    }
-}
-
-#[cfg(any(test, not(unix)))]
-fn is_ctx_managed_podman_helper_process_command(
-    command: &[String],
-    data_root: &Path,
-    machine_name: &str,
-) -> bool {
-    let rendered = command.to_vec().join("\n");
-    is_ctx_managed_podman_helper_process_rendered(&rendered, data_root, machine_name)
-}
-
-fn is_ctx_managed_podman_helper_process_rendered(
-    rendered: &str,
-    data_root: &Path,
-    machine_name: &str,
-) -> bool {
-    if !rendered.contains("/gvproxy") && !rendered.contains("/vfkit") {
-        return false;
-    }
-
-    if !rendered.contains(machine_name) {
-        return false;
-    }
-
-    let scoped_roots = [
-        data_root.join("managed").join("runtimes").join("podman"),
-        podman_runtime_root(data_root),
-        podman_home_root(data_root),
-        podman_temp_root(data_root),
-        data_root.join("podman"),
-    ];
-    scoped_roots.iter().any(|root| {
-        let root = root.to_string_lossy();
-        rendered.contains(root.as_ref())
-    })
-}
-
-#[cfg(any(test, not(unix)))]
-fn collect_ctx_managed_podman_helper_pids<I>(
-    processes: I,
-    data_root: &Path,
-    machine_name: &str,
-) -> Vec<u32>
-where
-    I: IntoIterator<Item = (u32, Vec<String>)>,
-{
-    let mut pids = processes
-        .into_iter()
-        .filter_map(|(pid, command)| {
-            is_ctx_managed_podman_helper_process_command(&command, data_root, machine_name)
-                .then_some(pid)
-        })
-        .collect::<Vec<_>>();
-    pids.sort_unstable();
-    pids.dedup();
-    pids
-}
-
-fn parse_ps_pid_and_command(line: &str) -> Option<(u32, &str)> {
-    let trimmed = line.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let split_idx = trimmed.find(char::is_whitespace)?;
-    let pid = trimmed[..split_idx].trim().parse::<u32>().ok()?;
-    let command = trimmed[split_idx..].trim_start();
-    if command.is_empty() {
-        return None;
-    }
-    Some((pid, command))
-}
-
-fn collect_ctx_managed_podman_helper_pids_from_ps_output(
-    output: &str,
-    data_root: &Path,
-    machine_name: &str,
-) -> Vec<u32> {
-    let mut pids = output
-        .lines()
-        .filter_map(parse_ps_pid_and_command)
-        .filter_map(|(pid, command)| {
-            is_ctx_managed_podman_helper_process_rendered(command, data_root, machine_name)
-                .then_some(pid)
-        })
-        .collect::<Vec<_>>();
-    pids.sort_unstable();
-    pids.dedup();
-    pids
-}
-
-#[cfg(unix)]
-fn stale_ctx_managed_podman_helper_pids(data_root: &Path, machine_name: &str) -> Vec<u32> {
-    let Ok(output) = StdCommand::new("ps")
-        .args(["-Ao", "pid=,command="])
-        .output()
-    else {
-        return Vec::new();
-    };
-    if !output.status.success() {
-        return Vec::new();
-    }
-    collect_ctx_managed_podman_helper_pids_from_ps_output(
-        &String::from_utf8_lossy(&output.stdout),
-        data_root,
-        machine_name,
-    )
-}
-
-#[cfg(not(unix))]
-fn stale_ctx_managed_podman_helper_pids(data_root: &Path, machine_name: &str) -> Vec<u32> {
-    let mut system = System::new();
-    system.refresh_processes();
-    collect_ctx_managed_podman_helper_pids(
-        system
-            .processes()
-            .iter()
-            .map(|(pid, process)| (pid.as_u32(), process.cmd().to_vec())),
-        data_root,
-        machine_name,
-    )
-}
-
-#[cfg(unix)]
-fn kill_ctx_managed_podman_helper_processes(data_root: &Path, machine_name: &str) -> Vec<u32> {
-    let pids = stale_ctx_managed_podman_helper_pids(data_root, machine_name);
-    if pids.is_empty() {
-        return Vec::new();
-    }
-    let mut kill = StdCommand::new("kill");
-    kill.arg("-9").args(pids.iter().map(u32::to_string));
-    match kill.output() {
-        Ok(output) if output.status.success() => pids,
-        _ => Vec::new(),
-    }
-}
-
-#[cfg(not(unix))]
-fn kill_ctx_managed_podman_helper_processes(data_root: &Path, machine_name: &str) -> Vec<u32> {
-    let pids = stale_ctx_managed_podman_helper_pids(data_root, machine_name);
-    if pids.is_empty() {
-        return Vec::new();
-    }
-    let mut system = System::new();
-    system.refresh_processes();
-    let mut killed = Vec::new();
-    for pid in pids {
-        if let Some(process) = system.process(Pid::from_u32(pid)) {
-            if process.kill_with(Signal::Kill).unwrap_or(false) {
-                killed.push(pid);
-            }
-        }
-    }
-    killed
-}
-
-fn cleanup_ctx_managed_podman_helper_processes(
-    data_root: &Path,
-    machine_name: &str,
-    observer: Option<&dyn HarnessSetupObserver>,
-) {
-    let killed = kill_ctx_managed_podman_helper_processes(data_root, machine_name);
-    if !killed.is_empty() {
-        observe_log(
-            observer,
-            HarnessSetupPhase::MachineStartOrInit,
-            HarnessSetupLogLevel::Warn,
-            &format!(
-                "killed stale ctx-managed podman helper process(es) before recovery: {}",
-                killed
-                    .iter()
-                    .map(u32::to_string)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        );
-    }
-}
-
-async fn best_effort_start_machine_after_init(
-    data_root: &Path,
-    machine_name: &str,
-    observer: Option<&dyn HarnessSetupObserver>,
-    last_err: &mut String,
-) -> Result<()> {
-    let mut start = podman_command(data_root)?;
-    start.arg("machine").arg("start").arg(machine_name);
-    match command_output_with_timeout(start, PODMAN_MACHINE_START_TIMEOUT).await {
-        Ok(out) if out.status.success() => Ok(()),
-        Ok(out) => {
-            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-            let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            let combined = format!("{stderr}\n{stdout}").trim().to_string();
-            if !combined.is_empty() {
-                *last_err = combined.clone();
-            }
-            observe_log(
-                observer,
-                HarnessSetupPhase::MachineStartOrInit,
-                HarnessSetupLogLevel::Warn,
-                &format!("podman machine start after init returned non-zero: {combined}"),
-            );
-            Ok(())
-        }
-        Err(err) => {
-            *last_err = err.to_string();
-            observe_log(
-                observer,
-                HarnessSetupPhase::MachineStartOrInit,
-                HarnessSetupLogLevel::Warn,
-                &format!("podman machine start after init failed: {err}"),
-            );
-            Ok(())
-        }
-    }
-}
-
-async fn wait_for_podman_machine_ready(
-    data_root: &Path,
-    observer: Option<&dyn HarnessSetupObserver>,
-    success_message: &str,
-    last_err: &mut String,
-) -> Result<bool> {
-    let deadline = tokio::time::Instant::now() + podman_machine_ready_timeout();
-    while tokio::time::Instant::now() < deadline {
-        let mut cmd = podman_command(data_root)?;
-        cmd.arg("info");
-        match command_output_with_timeout(cmd, PODMAN_INFO_TIMEOUT).await {
-            Ok(out) if out.status.success() => {
-                observe_log(
-                    observer,
-                    HarnessSetupPhase::MachineStartOrInit,
-                    HarnessSetupLogLevel::Info,
-                    success_message,
-                );
-                persist_podman_machine_cache_to_shared_best_effort(data_root, observer).await;
-                return Ok(true);
-            }
-            Ok(out) => {
-                let combined = command_output_message(&out);
-                if !combined.is_empty() {
-                    *last_err = combined;
-                }
-            }
-            Err(err) => *last_err = err.to_string(),
-        }
-        tokio::time::sleep(podman_machine_ready_poll_interval()).await;
-    }
-    Ok(false)
-}
-
-struct PodmanMachineInitOutcome {
-    output: std::process::Output,
-    continued_after_machine_present: bool,
-}
-
-async fn read_child_pipe<R>(mut reader: R) -> std::io::Result<Vec<u8>>
-where
-    R: tokio::io::AsyncRead + Unpin,
-{
-    let mut buf = Vec::new();
-    reader.read_to_end(&mut buf).await?;
-    Ok(buf)
-}
-
-async fn collect_child_output(
-    status: std::process::ExitStatus,
-    stdout_task: tokio::task::JoinHandle<std::io::Result<Vec<u8>>>,
-    stderr_task: tokio::task::JoinHandle<std::io::Result<Vec<u8>>>,
-) -> Result<std::process::Output> {
-    let stdout = stdout_task
-        .await
-        .context("joining podman machine init stdout capture")??;
-    let stderr = stderr_task
-        .await
-        .context("joining podman machine init stderr capture")??;
-    Ok(std::process::Output {
-        status,
-        stdout,
-        stderr,
-    })
-}
-
-async fn run_podman_machine_init(
-    data_root: &Path,
-    machine_name: &str,
-    observer: Option<&dyn HarnessSetupObserver>,
-) -> Result<PodmanMachineInitOutcome> {
-    let mut init = podman_command(data_root)?;
-    init.arg("machine").arg("init").arg(machine_name);
-    init.stdout(Stdio::piped());
-    init.stderr(Stdio::piped());
-    init.kill_on_drop(true);
-    let mut child = init.spawn().context("spawning podman machine init")?;
-    let stdout = child
-        .stdout
-        .take()
-        .context("podman machine init stdout was not captured")?;
-    let stderr = child
-        .stderr
-        .take()
-        .context("podman machine init stderr was not captured")?;
-    let stdout_task = tokio::spawn(read_child_pipe(stdout));
-    let stderr_task = tokio::spawn(read_child_pipe(stderr));
-    let deadline = tokio::time::Instant::now() + PODMAN_MACHINE_INIT_TIMEOUT;
-    let mut machine_present_since: Option<tokio::time::Instant> = None;
-
-    loop {
-        if let Some(status) = child
-            .try_wait()
-            .context("polling podman machine init process")?
-        {
-            return Ok(PodmanMachineInitOutcome {
-                output: collect_child_output(status, stdout_task, stderr_task).await?,
-                continued_after_machine_present: false,
-            });
-        }
-
-        let machine_present = podman_machine_present(data_root).await.unwrap_or(false);
-        if machine_present {
-            let now = tokio::time::Instant::now();
-            let present_since = machine_present_since.get_or_insert(now);
-            if now.duration_since(*present_since) >= podman_machine_init_created_machine_grace() {
-                observe_log(
-                    observer,
-                    HarnessSetupPhase::MachineStartOrInit,
-                    HarnessSetupLogLevel::Warn,
-                    "podman machine init created machine state but did not exit; terminating init and continuing with explicit start",
-                );
-                let _ = child.start_kill();
-                let status = child
-                    .wait()
-                    .await
-                    .context("waiting for terminated podman machine init")?;
-                return Ok(PodmanMachineInitOutcome {
-                    output: collect_child_output(status, stdout_task, stderr_task).await?,
-                    continued_after_machine_present: true,
-                });
-            }
-        } else {
-            machine_present_since = None;
-        }
-
-        if tokio::time::Instant::now() >= deadline {
-            let _ = child.start_kill();
-            let status = child
-                .wait()
-                .await
-                .context("waiting for timed out podman machine init")?;
-            let output = collect_child_output(status, stdout_task, stderr_task).await?;
-            if machine_present {
-                observe_log(
-                    observer,
-                    HarnessSetupPhase::MachineStartOrInit,
-                    HarnessSetupLogLevel::Warn,
-                    "podman machine init timed out after machine creation; continuing with explicit start",
-                );
-                return Ok(PodmanMachineInitOutcome {
-                    output,
-                    continued_after_machine_present: true,
-                });
-            }
-            anyhow::bail!(
-                "podman machine init timed out after {}s",
-                PODMAN_MACHINE_INIT_TIMEOUT.as_secs()
-            );
-        }
-
-        tokio::time::sleep(podman_machine_init_poll_interval()).await;
-    }
-}
-
-async fn initialize_podman_machine(
-    data_root: &Path,
-    machine_name: &str,
-    observer: Option<&dyn HarnessSetupObserver>,
-    last_err: &mut String,
-) -> Result<()> {
-    let init_outcome = run_podman_machine_init(data_root, machine_name, observer)
-        .await
-        .context("podman machine init")?;
-    let out = init_outcome.output;
-    let combined = command_output_message(&out);
-    if init_outcome.continued_after_machine_present {
-        if !combined.is_empty() {
-            *last_err = combined;
-        }
-    } else if !out.status.success() {
-        let combined_lc = combined.to_ascii_lowercase();
-        if combined_lc.contains("already exists") {
-            let message = if combined.is_empty() {
-                "podman machine init reported existing machine; starting it explicitly".to_string()
-            } else {
-                format!(
-                    "podman machine init reported existing machine; starting it explicitly: {combined}"
-                )
-            };
-            observe_log(
-                observer,
-                HarnessSetupPhase::MachineStartOrInit,
-                HarnessSetupLogLevel::Warn,
-                &message,
-            );
-            if !combined.is_empty() {
-                *last_err = combined;
-            }
-        } else if combined.is_empty() {
-            anyhow::bail!("podman machine init failed (status: {})", out.status);
-        } else {
-            anyhow::bail!("podman machine init failed: {combined}");
-        }
-    }
-
-    best_effort_start_machine_after_init(data_root, machine_name, observer, last_err).await
-}
-
-async fn ensure_podman_machine_running_with_observer(
-    data_root: &Path,
-    observer: Option<&dyn HarnessSetupObserver>,
-) -> Result<()> {
-    let machine_name = ctx_podman_machine_name(data_root);
-    let machine_lock = podman_machine_singleflight_lock(&machine_name);
-    let machine_guard = match machine_lock.try_lock() {
-        Ok(guard) => guard,
-        Err(_) => {
-            observe_log(
-                observer,
-                HarnessSetupPhase::MachineStartOrInit,
-                HarnessSetupLogLevel::Info,
-                "waiting for concurrent podman machine init/start operation",
-            );
-            machine_lock.lock().await
-        }
-    };
-    if !podman_machine_required() {
-        observe_log(
-            observer,
-            HarnessSetupPhase::MachineCheck,
-            HarnessSetupLogLevel::Info,
-            "podman machine not required on this platform",
-        );
-        return Ok(());
-    }
-    seed_shared_podman_machine_cache_best_effort(data_root, observer).await;
-
-    // If `podman info` works, we have a running engine connection.
-    // Otherwise, capture the initial failure to reuse in error messages.
-    let mut last_err = {
-        let mut cmd = podman_command(data_root)?;
-        cmd.arg("info");
-        match command_output_with_timeout(cmd, PODMAN_INFO_TIMEOUT).await {
-            Ok(out) if out.status.success() => {
-                observe_log(
-                    observer,
-                    HarnessSetupPhase::MachineCheck,
-                    HarnessSetupLogLevel::Info,
-                    "podman runtime is already reachable",
-                );
-                persist_podman_machine_cache_to_shared_best_effort(data_root, observer).await;
-                return Ok(());
-            }
-            Ok(out) => String::from_utf8_lossy(&out.stderr).trim().to_string(),
-            Err(err) => err.to_string(),
-        }
-    };
-
-    observe_phase(
-        observer,
-        HarnessSetupPhase::MachineStartOrInit,
-        "starting or initializing podman machine",
-    );
-    // Podman may leave stale temp state (gvproxy pid/socket markers) across crashed starts,
-    // causing repeated "starting" or connection-refused loops. Clear these markers before start.
-    clear_stale_podman_machine_temp_state(data_root, &machine_name, observer);
-
-    // Prefer starting an existing machine; fall back to init when no machine exists.
-    let mut wait_after_start = true;
-    let mut force_recreate = false;
-    let start_out = {
-        let mut start = podman_command(data_root)?;
-        start.arg("machine").arg("start").arg(&machine_name);
-        command_output_with_timeout(start, PODMAN_MACHINE_START_TIMEOUT).await?
-    };
-    if start_out.status.success() {
-        observe_log(
-            observer,
-            HarnessSetupPhase::MachineStartOrInit,
-            HarnessSetupLogLevel::Info,
-            "podman machine start command completed; waiting for readiness",
-        );
-    } else {
-        let combined = command_output_message(&start_out);
-        let combined_lc = combined.to_ascii_lowercase();
-
-        let looks_like_missing_machine = looks_like_missing_machine_error(&combined_lc);
-
-        if looks_like_missing_machine {
-            observe_log(
-                observer,
-                HarnessSetupPhase::MachineStartOrInit,
-                HarnessSetupLogLevel::Info,
-                "podman machine not found; running init then explicit start",
-            );
-            initialize_podman_machine(data_root, &machine_name, observer, &mut last_err).await?;
-            observe_log(
-                observer,
-                HarnessSetupPhase::MachineStartOrInit,
-                HarnessSetupLogLevel::Info,
-                "podman machine initialized; waiting for readiness",
-            );
-        } else if looks_like_recoverable_machine_start_error(&combined_lc) {
-            if looks_like_running_but_unreachable_machine_start_error(&combined_lc) {
-                let message = if combined.is_empty() {
-                    "podman machine start reported an already-running machine while podman remained unreachable; restarting once"
-                        .to_string()
-                } else {
-                    format!(
-                        "podman machine start reported an already-running machine while podman remained unreachable; restarting once: {combined}"
-                    )
-                };
-                observe_log(
-                    observer,
-                    HarnessSetupPhase::MachineStartOrInit,
-                    HarnessSetupLogLevel::Warn,
-                    &message,
-                );
-                wait_after_start = false;
-                force_recreate = true;
-            } else {
-                let message = if combined.is_empty() {
-                    "podman machine start returned a recoverable error; waiting for readiness"
-                        .to_string()
-                } else {
-                    format!(
-                        "podman machine start returned recoverable error; waiting for readiness: {combined}"
-                    )
-                };
-                observe_log(
-                    observer,
-                    HarnessSetupPhase::MachineStartOrInit,
-                    HarnessSetupLogLevel::Warn,
-                    &message,
-                );
-            }
-            if !combined.is_empty() {
-                last_err = combined;
-            }
-        } else {
-            if combined.is_empty() {
-                anyhow::bail!(
-                    "podman machine start failed with non-zero exit {}",
-                    start_out.status
-                );
-            }
-            anyhow::bail!("podman machine start failed: {combined}");
-        }
-    }
-
-    if wait_after_start {
-        observe_log(
-            observer,
-            HarnessSetupPhase::MachineStartOrInit,
-            HarnessSetupLogLevel::Info,
-            "waiting for podman machine readiness after start",
-        );
-        if wait_for_podman_machine_ready(
-            data_root,
-            observer,
-            "podman machine is ready",
-            &mut last_err,
-        )
-        .await?
-        {
-            return Ok(());
-        }
-    }
-
-    if !force_recreate {
-        observe_log(
-            observer,
-            HarnessSetupPhase::MachineStartOrInit,
-            HarnessSetupLogLevel::Warn,
-            "podman machine remained unreachable after start; restarting once",
-        );
-        let stop_out = {
-            let mut stop = podman_command(data_root)?;
-            stop.arg("machine").arg("stop").arg(&machine_name);
-            command_output_with_timeout(stop, PODMAN_MACHINE_START_TIMEOUT).await?
-        };
-        if !stop_out.status.success() {
-            let combined = command_output_message(&stop_out);
-            if !combined.is_empty() {
-                last_err = combined.clone();
-                observe_log(
-                    observer,
-                    HarnessSetupPhase::MachineStartOrInit,
-                    HarnessSetupLogLevel::Warn,
-                    &format!("podman machine stop returned non-zero during recovery: {combined}"),
-                );
-            }
-        }
-        let restart_out = {
-            let mut start = podman_command(data_root)?;
-            start.arg("machine").arg("start").arg(&machine_name);
-            command_output_with_timeout(start, PODMAN_MACHINE_START_TIMEOUT).await?
-        };
-        if !restart_out.status.success() {
-            let combined = command_output_message(&restart_out);
-            if !combined.is_empty() {
-                last_err = combined.clone();
-                observe_log(
-                    observer,
-                    HarnessSetupPhase::MachineStartOrInit,
-                    HarnessSetupLogLevel::Warn,
-                    &format!(
-                        "podman machine start returned non-zero during restart recovery: {combined}"
-                    ),
-                );
-            } else {
-                observe_log(
-                    observer,
-                    HarnessSetupPhase::MachineStartOrInit,
-                    HarnessSetupLogLevel::Warn,
-                    &format!(
-                        "podman machine start returned non-zero during restart recovery: {}",
-                        restart_out.status
-                    ),
-                );
-            }
-        }
-        observe_log(
-            observer,
-            HarnessSetupPhase::MachineStartOrInit,
-            HarnessSetupLogLevel::Info,
-            "waiting for podman machine readiness after restart",
-        );
-        if wait_for_podman_machine_ready(
-            data_root,
-            observer,
-            "podman machine recovered after restart",
-            &mut last_err,
-        )
-        .await?
-        {
-            return Ok(());
-        }
-    }
-
-    // Final recovery: recreate the dedicated ctx machine once if it still cannot be reached.
-    let machine_present = podman_machine_present(data_root).await.unwrap_or(false);
-    if machine_present || force_recreate {
-        observe_log(
-            observer,
-            HarnessSetupPhase::MachineStartOrInit,
-            HarnessSetupLogLevel::Warn,
-            if force_recreate {
-                "podman machine reported an already-running but unreachable state; recreating machine"
-            } else {
-                "podman machine still unreachable after restart; recreating machine"
-            },
-        );
-        cleanup_ctx_managed_podman_helper_processes(data_root, &machine_name, observer);
-        clear_stale_podman_machine_temp_state(data_root, &machine_name, observer);
-
-        if machine_present {
-            let mut rm = podman_command(data_root)?;
-            rm.arg("machine").arg("rm").arg("-f").arg(&machine_name);
-            let rm_out = command_output_with_timeout(rm, PODMAN_MACHINE_START_TIMEOUT).await?;
-            if !rm_out.status.success() {
-                let combined = command_output_message(&rm_out);
-                if !combined.is_empty() {
-                    last_err = format!("podman machine rm -f failed: {combined}");
-                }
-            }
-        }
-
-        if let Err(err) =
-            initialize_podman_machine(data_root, &machine_name, observer, &mut last_err).await
-        {
-            last_err = format!("podman machine init failed after recreate: {err:#}");
-        } else {
-            observe_log(
-                observer,
-                HarnessSetupPhase::MachineStartOrInit,
-                HarnessSetupLogLevel::Info,
-                "waiting for podman machine readiness after recreation",
-            );
-            if wait_for_podman_machine_ready(
-                data_root,
-                observer,
-                "podman machine recovered after recreation",
-                &mut last_err,
-            )
-            .await?
-            {
-                return Ok(());
-            }
-        }
-    }
-
-    drop(machine_guard);
-    if last_err.trim().is_empty() {
-        anyhow::bail!("podman machine remained unreachable after bounded recovery");
-    }
-    anyhow::bail!(
-        "podman machine remained unreachable after bounded recovery: {}",
-        last_err.trim()
-    );
 }
 
 async fn container_exists(data_root: &Path, name: &str) -> Result<bool> {
@@ -3237,17 +2213,27 @@ fn should_use_keep_id_userns() -> bool {
 #[allow(clippy::await_holding_lock)]
 mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex as StdMutex};
 
     use super::*;
     use chrono::Utc;
-    use ctx_core::ids::WorktreeId;
+    use ctx_core::ids::{WorkspaceId, WorktreeId};
     use sha2::{Digest, Sha256};
     use tempfile::TempDir;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
     use tokio::task::JoinHandle;
     use tokio::time::{sleep, Duration};
+
+    use super::network_policy_transition::transparent_proxy_policy;
+    use super::podman_recovery::{
+        collect_ctx_managed_podman_helper_pids,
+        collect_ctx_managed_podman_helper_pids_from_ps_output, initialize_podman_machine,
+        is_ctx_managed_podman_helper_process_command, kill_ctx_managed_podman_helper_processes,
+        literal_pkill_pattern, looks_like_missing_machine_error,
+        looks_like_recoverable_machine_start_error,
+        looks_like_running_but_unreachable_machine_start_error, podman_machine_temp_state_paths,
+    };
 
     struct EnvGuard {
         key: &'static str,
@@ -3273,8 +2259,7 @@ mod tests {
     }
 
     fn env_var_test_lock() -> &'static StdMutex<()> {
-        static LOCK: std::sync::OnceLock<StdMutex<()>> = std::sync::OnceLock::new();
-        LOCK.get_or_init(|| StdMutex::new(()))
+        crate::test_support::podman_env_test_lock()
     }
 
     fn sample_workspace(tmp: &TempDir) -> Workspace {
@@ -3389,6 +2374,73 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("podman unavailable"));
         assert!(message.contains("execution mode is container"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn prepare_reuses_running_workspace_container_without_front_loading_image_readiness() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _serial = env_var_test_lock()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let temp = tempfile::tempdir().expect("tempdir");
+        let log_path = temp.path().join("podman-invocations.log");
+        let podman_path = temp.path().join("podman.sh");
+        let manager = runtime_manager(&temp).await;
+        let workspace = sample_workspace(&temp);
+        let worktree = sample_worktree(&temp, workspace.id);
+        let container_name = workspace_container_name(workspace.id);
+        let settings = ExecutionSettings {
+            mode: ExecutionMode::Container,
+            container: ContainerExecutionSettings {
+                network_mode: ContainerNetworkMode::All,
+                ..Default::default()
+            },
+        };
+
+        std::fs::write(
+            &podman_path,
+            format!(
+                "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  echo 'transient image store failure' >&2\n  exit 125\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"start\" ] && [ \"$2\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"rm\" ] && [ \"$2\" = \"-f\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+                log = log_path.display(),
+                container = container_name,
+            ),
+        )
+        .expect("write podman shim");
+        std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod podman shim");
+        let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+
+        let plan = manager
+            .prepare(&workspace, &worktree, &settings, "http://127.0.0.1:4399")
+            .await
+            .expect("running workspace container should be reused without image checks");
+
+        match plan.runtime {
+            HarnessRuntimeKind::Container { name } => assert_eq!(name, container_name),
+            HarnessRuntimeKind::Host => panic!("expected container runtime"),
+        }
+
+        let log = std::fs::read_to_string(&log_path).expect("read podman invocation log");
+        assert!(
+            log.contains(&format!("container exists {container_name}")),
+            "expected running container existence check in log:\n{log}"
+        );
+        assert!(
+            log.contains(&format!(
+                "container inspect --format {{{{.State.Running}}}} {container_name}"
+            )),
+            "expected running-container inspect in log:\n{log}"
+        );
+        assert!(
+            !log.contains("image exists"),
+            "running-container reuse should not front-load image checks:\n{log}"
+        );
+        assert!(
+            !log.contains("run -d --name"),
+            "running-container reuse should not recreate the container:\n{log}"
+        );
     }
 
     #[test]
@@ -4014,6 +3066,438 @@ mod tests {
         let (mode, allowlist) = transparent_proxy_policy(&settings);
         assert_eq!(mode, ContainerNetworkMode::Allowlist);
         assert_eq!(allowlist, settings.allowlist);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unrestricted_network_transition_surfaces_teardown_failures() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _serial = env_var_test_lock()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let temp = tempfile::tempdir().expect("tempdir");
+        let log_path = temp.path().join("podman-invocations.log");
+        let fakebin = temp.path().join("fakebin");
+        std::fs::create_dir_all(&fakebin).expect("create fakebin");
+        let helper_log_path = temp.path().join("cleanup-helpers.log");
+        let pid_file_path = temp.path().join("ctx-egress-proxy.pid");
+        std::fs::write(&pid_file_path, b"\n").expect("write fake proxy pid file");
+        let _pid_file_guard = EnvGuard::set(
+            "CTX_EGRESS_PROXY_PID_FILE",
+            &pid_file_path.to_string_lossy(),
+        );
+
+        let rm_path = fakebin.join("rm");
+        std::fs::write(
+            &rm_path,
+            format!(
+                "#!/bin/sh\nprintf 'rm %s\\n' \"$*\" >> \"{log}\"\necho 'failed to remove proxy pid file' >&2\nexit 23\n",
+                log = helper_log_path.display(),
+            ),
+        )
+        .expect("write fake rm");
+        std::fs::set_permissions(&rm_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod fake rm");
+
+        let iptables_path = fakebin.join("iptables");
+        std::fs::write(
+            &iptables_path,
+            format!(
+                "#!/bin/sh\nprintf 'iptables %s\\n' \"$*\" >> \"{log}\"\nif [ \"$1\" = \"-P\" ] && [ \"$2\" = \"OUTPUT\" ] && [ \"$3\" = \"ACCEPT\" ]; then\n  echo 'failed to reset output policy' >&2\n  exit 42\nfi\nexit 0\n",
+                log = helper_log_path.display(),
+            ),
+        )
+        .expect("write fake iptables");
+        std::fs::set_permissions(&iptables_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod fake iptables");
+
+        let podman_path = temp.path().join("podman.sh");
+        std::fs::write(
+            &podman_path,
+            format!(
+                "#!/bin/sh\nLOG=\"{log}\"\nFAKEBIN=\"{fakebin}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"exec\" ]; then\n  PATH=\"$FAKEBIN:$PATH\" /bin/sh -c \"$7\"\n  exit $?\nfi\nexit 0\n",
+                log = log_path.display(),
+                fakebin = fakebin.display(),
+            ),
+        )
+        .expect("write podman shim");
+        std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod podman shim");
+        let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+
+        let settings = ContainerExecutionSettings {
+            network_mode: ContainerNetworkMode::All,
+            ..Default::default()
+        };
+        let err = apply_container_network_policy(
+            temp.path(),
+            WorkspaceId::new(),
+            "ctx-harness-test",
+            &settings,
+            "127.0.0.1",
+            4399,
+        )
+        .await
+        .expect_err("teardown failure should be explicit");
+
+        let message = format!("{err:#}");
+        assert!(message.contains("failed to tear down restricted container network policy"));
+        assert!(message.contains("stop transparent proxy"));
+        assert!(message.contains("failed to remove proxy pid file"));
+        assert!(message.contains("clear egress guard"));
+        assert!(message.contains("failed to reset output policy"));
+
+        let log = std::fs::read_to_string(&log_path).expect("read invocation log");
+        assert_eq!(
+            log.lines().filter(|line| line.starts_with("exec ")).count(),
+            2,
+            "expected both teardown steps to run before surfacing the failure"
+        );
+
+        let helper_log =
+            std::fs::read_to_string(&helper_log_path).expect("read cleanup helper invocation log");
+        assert!(helper_log.contains(&format!("rm -f {}", pid_file_path.display())));
+        assert!(helper_log.contains("iptables -t nat -F OUTPUT"));
+        assert!(helper_log.contains("iptables -F OUTPUT"));
+        assert!(helper_log.contains("iptables -P OUTPUT ACCEPT"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unrestricted_network_transition_ignores_stale_proxy_pid_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _serial = env_var_test_lock()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let temp = tempfile::tempdir().expect("tempdir");
+        let log_path = temp.path().join("podman-invocations.log");
+        let fakebin = temp.path().join("fakebin");
+        std::fs::create_dir_all(&fakebin).expect("create fakebin");
+        let helper_log_path = temp.path().join("cleanup-helpers.log");
+        let pid_file_path = temp.path().join("ctx-egress-proxy.pid");
+        std::fs::write(&pid_file_path, b"999999\n").expect("write stale proxy pid file");
+        let _pid_file_guard = EnvGuard::set(
+            "CTX_EGRESS_PROXY_PID_FILE",
+            &pid_file_path.to_string_lossy(),
+        );
+
+        let rm_path = fakebin.join("rm");
+        std::fs::write(
+            &rm_path,
+            format!(
+                "#!/bin/sh\nprintf 'rm %s\\n' \"$*\" >> \"{log}\"\nexec /bin/rm \"$@\"\n",
+                log = helper_log_path.display(),
+            ),
+        )
+        .expect("write fake rm");
+        std::fs::set_permissions(&rm_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod fake rm");
+
+        let iptables_path = fakebin.join("iptables");
+        std::fs::write(
+            &iptables_path,
+            format!(
+                "#!/bin/sh\nprintf 'iptables %s\\n' \"$*\" >> \"{log}\"\nexit 0\n",
+                log = helper_log_path.display(),
+            ),
+        )
+        .expect("write fake iptables");
+        std::fs::set_permissions(&iptables_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod fake iptables");
+
+        let podman_path = temp.path().join("podman.sh");
+        std::fs::write(
+            &podman_path,
+            format!(
+                "#!/bin/sh\nLOG=\"{log}\"\nFAKEBIN=\"{fakebin}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"exec\" ]; then\n  PATH=\"$FAKEBIN:$PATH\" /bin/sh -c \"$7\"\n  exit $?\nfi\nexit 0\n",
+                log = log_path.display(),
+                fakebin = fakebin.display(),
+            ),
+        )
+        .expect("write podman shim");
+        std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod podman shim");
+        let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+
+        let settings = ContainerExecutionSettings {
+            network_mode: ContainerNetworkMode::All,
+            ..Default::default()
+        };
+        let applied = apply_container_network_policy(
+            temp.path(),
+            WorkspaceId::new(),
+            "ctx-harness-test",
+            &settings,
+            "127.0.0.1",
+            4399,
+        )
+        .await
+        .expect("stale proxy pid should be ignored during unrestricted teardown");
+
+        assert!(!applied.egress_guard);
+        assert!(
+            !pid_file_path.exists(),
+            "stale proxy pid file should be removed during teardown"
+        );
+
+        let log = std::fs::read_to_string(&log_path).expect("read invocation log");
+        assert_eq!(
+            log.lines().filter(|line| line.starts_with("exec ")).count(),
+            2,
+            "expected both unrestricted teardown steps to run"
+        );
+
+        let helper_log =
+            std::fs::read_to_string(&helper_log_path).expect("read cleanup helper invocation log");
+        assert!(helper_log.contains(&format!("rm -f {}", pid_file_path.display())));
+        assert!(helper_log.contains("iptables -t nat -F OUTPUT"));
+        assert!(helper_log.contains("iptables -F OUTPUT"));
+        assert!(helper_log.contains("iptables -P OUTPUT ACCEPT"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn kill_ctx_managed_podman_helper_processes_reports_only_successful_kills() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _serial = env_var_test_lock()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let temp = tempfile::tempdir().expect("tempdir");
+        let machine_name = ctx_podman_machine_name(temp.path());
+        let fakebin = temp.path().join("fakebin");
+        std::fs::create_dir_all(&fakebin).expect("create fakebin");
+        let helper_dir = temp
+            .path()
+            .join("managed")
+            .join("runtimes")
+            .join("podman")
+            .join("macos")
+            .join("aarch64")
+            .join("podman-5.8.0")
+            .join("usr")
+            .join("libexec")
+            .join("podman");
+        let pkill_log_path = temp.path().join("pkill-invocations.log");
+        let ps_count_path = temp.path().join("ps-count");
+
+        let gvproxy = format!(
+            "{} -forward-sock {} {}",
+            helper_dir.join("gvproxy").display(),
+            podman_temp_root(temp.path())
+                .join("podman")
+                .join(format!("{machine_name}-api.sock"))
+                .display(),
+            machine_name,
+        );
+        let vfkit = format!(
+            "/opt/homebrew/bin/vfkit --device virtio-blk,path={} --device virtio-net,unixSocketPath={}",
+            temp.path()
+                .join("podman")
+                .join("xdg")
+                .join("data")
+                .join("containers")
+                .join("podman")
+                .join("machine")
+                .join("applehv")
+                .join(format!("{machine_name}-arm64.raw"))
+                .display(),
+            podman_temp_root(temp.path())
+                .join("podman")
+                .join(format!("{machine_name}-gvproxy.sock"))
+                .display(),
+        );
+        let escaped_gvproxy = literal_pkill_pattern(&gvproxy);
+        let escaped_vfkit = literal_pkill_pattern(&vfkit);
+
+        let ps_path = fakebin.join("ps");
+        std::fs::write(
+            &ps_path,
+            format!(
+                "#!/bin/sh\ncount=0\nif [ -f \"{count_path}\" ]; then\n  count=$(cat \"{count_path}\")\nfi\ncount=$((count + 1))\nprintf '%s' \"$count\" > \"{count_path}\"\nif [ \"$1\" = \"-axo\" ] && [ \"$count\" -eq 1 ]; then\n  printf ' 6622 {gvproxy}\\n12484 {vfkit}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"-axo\" ] && [ \"$count\" -eq 2 ]; then\n  printf '12484 {vfkit}\\n'\n  exit 0\nfi\nexit 1\n",
+                count_path = ps_count_path.display(),
+                gvproxy = gvproxy,
+                vfkit = vfkit,
+            ),
+        )
+        .expect("write fake ps");
+        std::fs::set_permissions(&ps_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod fake ps");
+
+        let kill_path = fakebin.join("pkill");
+        std::fs::write(
+            &kill_path,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"{log}\"\nif [ \"$4\" = '{vfkit}' ]; then\n  exit 1\nfi\nexit 0\n",
+                log = pkill_log_path.display(),
+                vfkit = escaped_vfkit,
+            ),
+        )
+        .expect("write fake pkill");
+        std::fs::set_permissions(&kill_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod fake pkill");
+
+        let prior_path = std::env::var("PATH").unwrap_or_default();
+        let path_value = format!("{}:{prior_path}", fakebin.display());
+        let _guard = EnvGuard::set("PATH", &path_value);
+
+        let outcome = kill_ctx_managed_podman_helper_processes(temp.path(), &machine_name);
+        assert_eq!(outcome.killed, vec![6622]);
+        assert_eq!(outcome.failed, vec![12484]);
+        assert!(outcome.skipped.is_empty());
+
+        let kill_log = std::fs::read_to_string(&pkill_log_path).expect("read pkill log");
+        assert!(kill_log.contains(&format!("-9 -f -x {escaped_gvproxy}")));
+        assert!(kill_log.contains(&format!("-9 -f -x {escaped_vfkit}")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn kill_ctx_managed_podman_helper_processes_escapes_regex_metacharacters_for_pkill() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _serial = env_var_test_lock()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let temp = tempfile::tempdir().expect("tempdir");
+        let machine_name = ctx_podman_machine_name(temp.path());
+        let fakebin = temp.path().join("fakebin");
+        std::fs::create_dir_all(&fakebin).expect("create fakebin");
+        let helper_dir = temp
+            .path()
+            .join("managed")
+            .join("runtimes")
+            .join("podman")
+            .join("macos")
+            .join("aarch64")
+            .join("podman-5.8.0")
+            .join("usr")
+            .join("libexec")
+            .join("podman");
+        let pkill_log_path = temp.path().join("pkill-invocations.log");
+        let ps_count_path = temp.path().join("ps-count");
+
+        let gvproxy = format!(
+            "{} -forward-sock {} {}",
+            helper_dir.join("gvproxy").display(),
+            podman_temp_root(temp.path())
+                .join("podman")
+                .join(format!("{machine_name}-api.sock"))
+                .display(),
+            machine_name,
+        );
+
+        let ps_path = fakebin.join("ps");
+        std::fs::write(
+            &ps_path,
+            format!(
+                "#!/bin/sh\ncount=0\nif [ -f \"{count_path}\" ]; then\n  count=$(cat \"{count_path}\")\nfi\ncount=$((count + 1))\nprintf '%s' \"$count\" > \"{count_path}\"\nif [ \"$1\" = \"-axo\" ] && [ \"$count\" -eq 1 ]; then\n  printf ' 6622 {gvproxy}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"-axo\" ] && [ \"$count\" -eq 2 ]; then\n  exit 0\nfi\nexit 1\n",
+                count_path = ps_count_path.display(),
+                gvproxy = gvproxy,
+            ),
+        )
+        .expect("write fake ps");
+        std::fs::set_permissions(&ps_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod fake ps");
+
+        let kill_path = fakebin.join("pkill");
+        std::fs::write(
+            &kill_path,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$4\" >> \"{log}\"\nexit 0\n",
+                log = pkill_log_path.display(),
+            ),
+        )
+        .expect("write fake pkill");
+        std::fs::set_permissions(&kill_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod fake pkill");
+
+        let prior_path = std::env::var("PATH").unwrap_or_default();
+        let path_value = format!("{}:{prior_path}", fakebin.display());
+        let _guard = EnvGuard::set("PATH", &path_value);
+
+        let outcome = kill_ctx_managed_podman_helper_processes(temp.path(), &machine_name);
+        assert_eq!(outcome.killed, vec![6622]);
+        assert!(outcome.failed.is_empty());
+        assert!(outcome.skipped.is_empty());
+
+        let pkill_pattern = std::fs::read_to_string(&pkill_log_path).expect("read pkill log");
+        assert_eq!(pkill_pattern.trim(), literal_pkill_pattern(&gvproxy));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn kill_ctx_managed_podman_helper_processes_skips_reused_pid_after_command_scoped_kill() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _serial = env_var_test_lock()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let temp = tempfile::tempdir().expect("tempdir");
+        let machine_name = ctx_podman_machine_name(temp.path());
+        let fakebin = temp.path().join("fakebin");
+        std::fs::create_dir_all(&fakebin).expect("create fakebin");
+        let helper_dir = temp
+            .path()
+            .join("managed")
+            .join("runtimes")
+            .join("podman")
+            .join("macos")
+            .join("aarch64")
+            .join("podman-5.8.0")
+            .join("usr")
+            .join("libexec")
+            .join("podman");
+        let pkill_log_path = temp.path().join("pkill-invocations.log");
+        let ps_count_path = temp.path().join("ps-count");
+
+        let gvproxy = format!(
+            "{} -forward-sock {} {}",
+            helper_dir.join("gvproxy").display(),
+            podman_temp_root(temp.path())
+                .join("podman")
+                .join(format!("{machine_name}-api.sock"))
+                .display(),
+            machine_name,
+        );
+
+        let ps_path = fakebin.join("ps");
+        std::fs::write(
+            &ps_path,
+            format!(
+                "#!/bin/sh\ncount=0\nif [ -f \"{count_path}\" ]; then\n  count=$(cat \"{count_path}\")\nfi\ncount=$((count + 1))\nprintf '%s' \"$count\" > \"{count_path}\"\nif [ \"$1\" = \"-axo\" ] && [ \"$count\" -eq 1 ]; then\n  printf ' 6622 {gvproxy}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"-axo\" ] && [ \"$count\" -eq 2 ]; then\n  printf ' 6622 /usr/bin/python3 /tmp/not-ctx-helper.py\\n'\n  exit 0\nfi\nexit 1\n",
+                count_path = ps_count_path.display(),
+                gvproxy = gvproxy,
+            ),
+        )
+        .expect("write fake ps");
+        std::fs::set_permissions(&ps_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod fake ps");
+
+        let kill_path = fakebin.join("pkill");
+        std::fs::write(
+            &kill_path,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"{log}\"\nexit 1\n",
+                log = pkill_log_path.display(),
+            ),
+        )
+        .expect("write fake pkill");
+        std::fs::set_permissions(&kill_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod fake pkill");
+
+        let prior_path = std::env::var("PATH").unwrap_or_default();
+        let path_value = format!("{}:{prior_path}", fakebin.display());
+        let _guard = EnvGuard::set("PATH", &path_value);
+
+        let outcome = kill_ctx_managed_podman_helper_processes(temp.path(), &machine_name);
+        assert!(outcome.killed.is_empty());
+        assert!(outcome.failed.is_empty());
+        assert_eq!(outcome.skipped, vec![6622]);
+        let pkill_log = std::fs::read_to_string(&pkill_log_path).expect("read pkill log");
+        assert!(pkill_log.contains(&format!("-9 -f -x {}", literal_pkill_pattern(&gvproxy))));
     }
 
     #[test]

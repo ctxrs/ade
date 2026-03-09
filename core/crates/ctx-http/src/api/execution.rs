@@ -12,13 +12,13 @@ use tokio::sync::broadcast;
 use ctx_core::ids::WorkspaceId;
 
 use crate::daemon::AppState;
+use crate::execution_effective;
 use crate::execution_setup::{
     ExecutionLaunchSnapshot, ExecutionLaunchState, ExecutionLaunchStreamEvent,
     ExecutionSetupJobKind, RuntimePrewarmScope,
 };
 use crate::logs;
 use crate::settings::ExecutionMode;
-use crate::workspace_config;
 
 use super::errors::ApiErrorResp;
 
@@ -227,39 +227,17 @@ async fn resolve_workspace_execution_settings(
             }),
         ))?;
 
-    let settings = crate::settings::load_settings(state.global_store())
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-    let mut execution_settings = settings.execution.clone().unwrap_or_default();
-    let store = state.store_for_workspace(workspace_id).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
-    match workspace_config::load_execution_settings_override(&store).await {
-        Ok(Some(ov)) => {
-            workspace_config::apply_execution_settings_override(&mut execution_settings, &ov)
-        }
-        Ok(None) => {}
-        Err(err) => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&err.to_string()),
-                }),
-            ));
-        }
-    }
+    let execution_settings =
+        execution_effective::effective_execution_settings(state.as_ref(), workspace_id)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&e.to_string()),
+                    }),
+                )
+            })?;
 
     Ok((workspace, execution_settings))
 }

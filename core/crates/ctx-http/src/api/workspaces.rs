@@ -15,6 +15,7 @@ use super::shared::{load_and_cache_workspace_files, FileCompletionsQuery};
 use crate::attachments;
 use crate::completions;
 use crate::daemon::AppState;
+use crate::execution_effective;
 use crate::harness_runtime::HarnessContainerStatus;
 use crate::logs;
 use crate::telemetry::TelemetryEvent;
@@ -271,39 +272,17 @@ pub(super) async fn ensure_workspace_harness_container(
             }),
         ))?;
 
-    let settings = crate::settings::load_settings(state.global_store())
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-    let mut execution_settings = settings.execution.clone().unwrap_or_default();
-    let store = state.store_for_workspace(workspace_id).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
-    match workspace_config::load_execution_settings_override(&store).await {
-        Ok(Some(ov)) => {
-            workspace_config::apply_execution_settings_override(&mut execution_settings, &ov)
-        }
-        Ok(None) => {}
-        Err(err) => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&err.to_string()),
-                }),
-            ));
-        }
-    }
+    let execution_settings =
+        execution_effective::effective_execution_settings(state.as_ref(), workspace_id)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&e.to_string()),
+                    }),
+                )
+            })?;
 
     state
         .execution

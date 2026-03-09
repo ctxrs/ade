@@ -20,6 +20,7 @@ use ctx_providers::events::NormalizedEvent;
 use ctx_store::store::SessionTurnToolCountDeltas;
 
 use crate::daemon::{ensure_provider_adapter_for_target_with_cfg, AppState};
+use crate::execution_effective;
 use crate::harness_runtime::HarnessRuntimeKind;
 use crate::harness_sources::{self, HarnessSourceKind};
 use crate::installer;
@@ -449,17 +450,16 @@ async fn start_turn(
             return Err(err);
         }
     };
-    let mut execution_settings = settings.execution.clone().unwrap_or_default();
-    match workspace_config::load_execution_settings_override(&store).await {
-        Ok(Some(ov)) => {
-            workspace_config::apply_execution_settings_override(&mut execution_settings, &ov)
-        }
-        Ok(None) => {}
-        Err(err) => {
-            // Don't fail the whole turn on config parse issues; surface via logs and continue with defaults.
-            tracing::warn!("failed to load workspace execution config: {err:#}");
-        }
-    }
+    let execution_settings =
+        match execution_effective::effective_execution_settings(state.as_ref(), workspace.id).await
+        {
+            Ok(settings) => settings,
+            Err(err) => {
+                emit_turn_start_failed(state, &store, session, run_id, turn_id, message_id, &err)
+                    .await;
+                return Err(err);
+            }
+        };
     let runtime_plan = match state
         .execution
         .harness

@@ -19,6 +19,13 @@ use crate::ops_events::{OpsEvent, OpsEvents};
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
 use crate::settings::{ExecutionMode, ExecutionSettings};
 
+mod warmup_coordination;
+
+use warmup_coordination::{
+    DefaultWarmupOperations, LaunchPrewarmCoordinator, PrewarmJobRegistry, SharedPrewarmLaunchJob,
+    SharedWarmupOperations,
+};
+
 const JOB_LOG_CAP: usize = 400;
 const JOB_HISTORY_CAP: usize = 128;
 const LAUNCH_EVENT_CHANNEL_CAP: usize = 256;
@@ -155,7 +162,31 @@ struct CoordinatorState {
     launch_jobs: HashMap<String, Arc<LaunchJob>>,
     launch_history: VecDeque<String>,
     running_launch_by_workspace: HashMap<WorkspaceId, String>,
+    prewarm_jobs: PrewarmJobRegistry,
     startup: StartupPrewarmSnapshot,
+}
+
+impl CoordinatorState {
+    fn remember_launch_job(&mut self, job: Arc<LaunchJob>) {
+        self.launch_jobs
+            .insert(job.job_id.clone(), Arc::clone(&job));
+        self.launch_history.push_back(job.job_id.clone());
+        while self.launch_history.len() > JOB_HISTORY_CAP {
+            let Some(old_id) = self.launch_history.pop_front() else {
+                break;
+            };
+            if !self.is_job_running(&old_id) {
+                self.launch_jobs.remove(&old_id);
+            }
+        }
+    }
+
+    fn is_job_running(&self, job_id: &str) -> bool {
+        self.running_launch_by_workspace
+            .values()
+            .any(|active_id| active_id == job_id)
+            || self.prewarm_jobs.contains_job_id(job_id)
+    }
 }
 
 #[derive(Debug)]
@@ -273,12 +304,20 @@ struct LaunchJob {
 
 impl LaunchJob {
     fn new(job_id: String, workspace_id: WorkspaceId) -> Self {
+        Self::new_with_kind(job_id, workspace_id, ExecutionSetupJobKind::WorkspaceLaunch)
+    }
+
+    fn new_with_kind(
+        job_id: String,
+        workspace_id: WorkspaceId,
+        kind: ExecutionSetupJobKind,
+    ) -> Self {
         let (tx, _) = broadcast::channel(LAUNCH_EVENT_CHANNEL_CAP);
         Self {
             job_id,
             workspace_id,
             tx,
-            inner: StdMutex::new(LaunchJobInner::new(ExecutionSetupJobKind::WorkspaceLaunch)),
+            inner: StdMutex::new(LaunchJobInner::new(kind)),
         }
     }
 
@@ -290,6 +329,11 @@ impl LaunchJob {
     fn current_phase(&self) -> Option<HarnessSetupPhase> {
         let inner = lock_or_recover(&self.inner, "launch job");
         inner.current_phase
+    }
+
+    fn is_terminal(&self) -> bool {
+        let inner = lock_or_recover(&self.inner, "launch job");
+        inner.state != ExecutionLaunchState::Running
     }
 
     fn transition_phase(&self, phase: HarnessSetupPhase, message: &str) -> LaunchMutation {
@@ -384,7 +428,7 @@ fn seed_workspace_launch_initial_state(job: &LaunchJob, settings: &ExecutionSett
     } else {
         let _ = job.transition_phase(
             HarnessSetupPhase::MachineCheck,
-            "checking container runtime",
+            "requesting shared container readiness",
         );
     }
 }
@@ -398,12 +442,7 @@ fn seed_runtime_prewarm_initial_state(job: &LaunchJob, settings: &ExecutionSetti
     } else {
         let _ = job.transition_phase(
             HarnessSetupPhase::MachineCheck,
-            "checking container runtime",
-        );
-        let _ = job.push_log(
-            HarnessSetupPhase::MachineCheck,
-            HarnessSetupLogLevel::Info,
-            "waiting for runtime prewarm slot",
+            "requesting shared container readiness",
         );
     }
 }
@@ -432,7 +471,7 @@ pub struct ExecutionSetupCoordinator {
     perf_telemetry: PerfTelemetry,
     ops_events: OpsEvents,
     inner: Mutex<CoordinatorState>,
-    prewarm_lock: Mutex<()>,
+    prewarm: LaunchPrewarmCoordinator,
 }
 
 impl ExecutionSetupCoordinator {
@@ -442,13 +481,24 @@ impl ExecutionSetupCoordinator {
         perf_telemetry: PerfTelemetry,
         ops_events: OpsEvents,
     ) -> Self {
+        let operations = Arc::new(DefaultWarmupOperations::new(data_root.clone()));
+        Self::new_with_operations(data_root, harness, perf_telemetry, ops_events, operations)
+    }
+
+    fn new_with_operations(
+        data_root: PathBuf,
+        harness: Arc<HarnessRuntimeManager>,
+        perf_telemetry: PerfTelemetry,
+        ops_events: OpsEvents,
+        operations: Arc<dyn SharedWarmupOperations>,
+    ) -> Self {
         Self {
+            prewarm: LaunchPrewarmCoordinator::new(operations),
             data_root,
             harness,
             perf_telemetry,
             ops_events,
             inner: Mutex::new(CoordinatorState::default()),
-            prewarm_lock: Mutex::new(()),
         }
     }
 
@@ -488,20 +538,7 @@ impl ExecutionSetupCoordinator {
             inner
                 .running_launch_by_workspace
                 .insert(workspace.id, job_id.clone());
-            inner.launch_jobs.insert(job_id, Arc::clone(&job));
-            inner.launch_history.push_back(job.job_id.clone());
-            while inner.launch_history.len() > JOB_HISTORY_CAP {
-                let Some(old_id) = inner.launch_history.pop_front() else {
-                    break;
-                };
-                let still_running = inner
-                    .running_launch_by_workspace
-                    .values()
-                    .any(|active_id| active_id == &old_id);
-                if !still_running {
-                    inner.launch_jobs.remove(&old_id);
-                }
-            }
+            inner.remember_launch_job(Arc::clone(&job));
 
             (job, snapshot)
         };
@@ -525,41 +562,34 @@ impl ExecutionSetupCoordinator {
         settings: ExecutionSettings,
         scope: RuntimePrewarmScope,
     ) -> ExecutionLaunchSnapshot {
-        let workspace_id = WorkspaceId(uuid::Uuid::nil());
-        let (job, snapshot) = {
+        let (shared_job, snapshot) = {
             let mut inner = self.inner.lock().await;
-            let job_id = uuid::Uuid::new_v4().to_string();
-            let job = Arc::new(LaunchJob::new(job_id.clone(), workspace_id));
-            {
-                let mut job_inner = lock_or_recover(&job.inner, "launch_job_inner");
-                job_inner.kind = ExecutionSetupJobKind::StartupPrewarm;
+            if let Some(existing) = inner.prewarm_jobs.find_compatible(&settings, scope) {
+                let snapshot = existing.snapshot();
+                return snapshot;
             }
-            seed_runtime_prewarm_initial_state(job.as_ref(), &settings);
+
+            let job = Arc::new(SharedPrewarmLaunchJob::new(
+                uuid::Uuid::new_v4().to_string(),
+                &settings,
+                scope,
+            ));
             let snapshot = job.snapshot();
-            inner.launch_jobs.insert(job_id, Arc::clone(&job));
-            inner.launch_history.push_back(job.job_id.clone());
-            while inner.launch_history.len() > JOB_HISTORY_CAP {
-                let Some(old_id) = inner.launch_history.pop_front() else {
-                    break;
-                };
-                let still_running = inner
-                    .running_launch_by_workspace
-                    .values()
-                    .any(|active_id| active_id == &old_id);
-                if !still_running {
-                    inner.launch_jobs.remove(&old_id);
-                }
-            }
+            inner.prewarm_jobs.insert(Arc::clone(&job));
+            inner.remember_launch_job(job.job());
             (job, snapshot)
         };
 
-        let _ = job.tx.send(ExecutionLaunchStreamEvent::LaunchSnapshot {
-            snapshot: snapshot.clone(),
-        });
+        let launch_job = shared_job.job();
+        let _ = launch_job
+            .tx
+            .send(ExecutionLaunchStreamEvent::LaunchSnapshot {
+                snapshot: snapshot.clone(),
+            });
 
         let coordinator = Arc::clone(self);
         tokio::spawn(async move {
-            coordinator.run_runtime_prewarm(job, settings, scope).await;
+            coordinator.run_runtime_prewarm(shared_job, settings).await;
         });
 
         snapshot
@@ -667,11 +697,11 @@ impl ExecutionSetupCoordinator {
 
     async fn run_runtime_prewarm(
         self: Arc<Self>,
-        job: Arc<LaunchJob>,
+        shared_job: Arc<SharedPrewarmLaunchJob>,
         settings: ExecutionSettings,
-        scope: RuntimePrewarmScope,
     ) {
         let launch_started = std::time::Instant::now();
+        let job = shared_job.job();
         let observer = LaunchObserver {
             coordinator: Arc::clone(&self),
             job: Arc::clone(&job),
@@ -679,82 +709,126 @@ impl ExecutionSetupCoordinator {
         let is_host_mode = matches!(settings.mode, ExecutionMode::Host);
         let run_result = if is_host_mode {
             Ok(())
-        } else if !harness_runtime::container_runtime_available(&self.data_root) {
-            Err(anyhow::anyhow!("container runtime unavailable"))
-        } else {
-            let _prewarm_guard = self.prewarm_lock.lock().await;
-            self.emit_log(
-                &job,
-                HarnessSetupPhase::MachineCheck,
-                HarnessSetupLogLevel::Info,
-                "runtime prewarm slot acquired",
-            );
-            async {
-                if scope.includes_runtime() {
-                    let image = harness_runtime::resolve_container_image(&settings.container);
-                    harness_runtime::prefetch_container_image_with_observer(
-                        &self.data_root,
-                        &image,
-                        Some(&observer),
-                    )
+        } else if shared_job.runtime_requested() {
+            if !harness_runtime::container_runtime_available(&self.data_root) {
+                Err(anyhow::anyhow!("container runtime unavailable"))
+            } else {
+                match self
+                    .prewarm
+                    .ensure_runtime(&settings, Some(&observer))
                     .await
-                    .context("container runtime failed")?;
+                {
+                    Ok(()) => {
+                        if shared_job.builder_requested() {
+                            match self.wait_for_builder_completion(observer.clone()).await {
+                                Ok(()) => {}
+                                Err(err) => {
+                                    return self
+                                        .finish_runtime_prewarm_error(
+                                            shared_job,
+                                            job,
+                                            launch_started,
+                                            err,
+                                        )
+                                        .await
+                                }
+                            }
+                        }
+                        Ok(())
+                    }
+                    Err(err) => Err(err),
                 }
-                if scope.includes_builder() {
-                    self.emit_phase(
-                        &job,
-                        HarnessSetupPhase::ImageLoad,
-                        "warming container builder",
-                    );
-                    crate::container_builder::ensure_builder_ready(&self.data_root)
-                        .await
-                        .context("container builder warmup failed")?;
-                }
-                Ok::<(), anyhow::Error>(())
             }
-            .await
+        } else if shared_job.builder_requested() {
+            self.prewarm.ensure_builder(Some(&observer)).await
+        } else {
+            Ok(())
         };
 
         match run_result {
             Ok(()) => {
                 if !matches!(settings.mode, ExecutionMode::Host) {
-                    self.emit_phase(&job, HarnessSetupPhase::Ready, "container runtime is ready");
+                    let ready_message = if shared_job.runtime_requested() {
+                        "container runtime is ready"
+                    } else {
+                        "container builder is ready"
+                    };
+                    self.emit_phase(&job, HarnessSetupPhase::Ready, ready_message);
                 }
-                let terminal = job.mark_terminal(ExecutionLaunchState::Ready, None);
-                if let Some(completed) = terminal.completed_phase {
-                    self.record_phase_metric(completed.phase, completed.elapsed_ms, "ready");
+                if let Some(terminal) = shared_job.complete_ready() {
+                    if let Some(completed) = terminal.completed_phase {
+                        self.record_phase_metric(completed.phase, completed.elapsed_ms, "ready");
+                    }
+                    let _ = job.tx.send(ExecutionLaunchStreamEvent::LaunchComplete {
+                        snapshot: terminal.snapshot.clone(),
+                    });
+                    self.record_launch_metric(launch_started.elapsed().as_millis() as u64, "ready");
                 }
-                let _ = job.tx.send(ExecutionLaunchStreamEvent::LaunchComplete {
-                    snapshot: terminal.snapshot.clone(),
-                });
-                self.record_launch_metric(launch_started.elapsed().as_millis() as u64, "ready");
             }
             Err(err) => {
-                let message = format_error_chain(&err);
-                let phase = job.current_phase().unwrap_or(HarnessSetupPhase::ImageLoad);
-                self.emit_log(&job, phase, HarnessSetupLogLevel::Error, &message);
-                let terminal =
-                    job.mark_terminal(ExecutionLaunchState::Error, Some(message.clone()));
-                if let Some(completed) = terminal.completed_phase {
-                    self.record_phase_metric(completed.phase, completed.elapsed_ms, "error");
-                }
-                let _ = job.tx.send(ExecutionLaunchStreamEvent::LaunchError {
-                    snapshot: terminal.snapshot.clone(),
-                });
-                self.record_launch_metric(launch_started.elapsed().as_millis() as u64, "error");
-
-                let mut event = OpsEvent::new("error", "execution.runtime_prewarm_error");
-                event.meta = Some(json!({
-                    "job_id": terminal.snapshot.job_id,
-                    "phase": terminal.snapshot.current_phase,
-                    "error": message,
-                }));
-                self.ops_events.emit(event);
+                self.finish_runtime_prewarm_error(shared_job, job, launch_started, err)
+                    .await;
+                return;
             }
         }
+
+        self.clear_running_prewarm(&shared_job).await;
+    }
+
+    async fn finish_runtime_prewarm_error(
+        &self,
+        shared_job: Arc<SharedPrewarmLaunchJob>,
+        job: Arc<LaunchJob>,
+        launch_started: std::time::Instant,
+        err: anyhow::Error,
+    ) {
+        let message = format_error_chain(&err);
+        let phase = job.current_phase().unwrap_or(HarnessSetupPhase::ImageLoad);
+        self.emit_log(&job, phase, HarnessSetupLogLevel::Error, &message);
+        if let Some(terminal) = shared_job.complete_error(message.clone()) {
+            if let Some(completed) = terminal.completed_phase {
+                self.record_phase_metric(completed.phase, completed.elapsed_ms, "error");
+            }
+            let _ = job.tx.send(ExecutionLaunchStreamEvent::LaunchError {
+                snapshot: terminal.snapshot.clone(),
+            });
+            self.record_launch_metric(launch_started.elapsed().as_millis() as u64, "error");
+
+            let mut event = OpsEvent::new("error", "execution.runtime_prewarm_error");
+            event.meta = Some(json!({
+                "job_id": terminal.snapshot.job_id,
+                "phase": terminal.snapshot.current_phase,
+                "error": message,
+            }));
+            self.ops_events.emit(event);
+        }
+        self.clear_running_prewarm(&shared_job).await;
+    }
+
+    async fn wait_for_builder_completion(self: &Arc<Self>, observer: LaunchObserver) -> Result<()> {
+        let coordinator = Arc::clone(self);
+        let builder_observer = observer;
+        tokio::spawn(async move {
+            coordinator
+                .prewarm
+                .ensure_builder(Some(&builder_observer))
+                .await
+        })
+        .await
+        .map_err(|err| anyhow::anyhow!("builder warmup task join failed: {err}"))?
+    }
+
+    async fn clear_running_prewarm(&self, shared_job: &Arc<SharedPrewarmLaunchJob>) {
+        let mut inner = self.inner.lock().await;
+        inner
+            .prewarm_jobs
+            .remove_if_current(shared_job.key(), shared_job);
     }
 
     fn emit_phase(&self, job: &Arc<LaunchJob>, phase: HarnessSetupPhase, message: &str) {
+        if job.is_terminal() {
+            return;
+        }
         let update = job.transition_phase(phase, message);
         if let Some(completed) = update.completed_phase {
             self.record_phase_metric(completed.phase, completed.elapsed_ms, "running");
@@ -779,6 +853,9 @@ impl ExecutionSetupCoordinator {
         level: HarnessSetupLogLevel,
         message: &str,
     ) {
+        if job.is_terminal() {
+            return;
+        }
         let update = job.push_log(phase, level, message);
         if let Some(line) = update.line {
             let _ = job.tx.send(ExecutionLaunchStreamEvent::LaunchLog {
@@ -921,7 +998,6 @@ impl ExecutionSetupCoordinator {
             };
         }
 
-        let _prewarm_guard = self.prewarm_lock.lock().await;
         let gate = match self.compute_prewarm_gate(&image).await {
             Ok(gate) => gate,
             Err(err) => {
@@ -983,7 +1059,11 @@ impl ExecutionSetupCoordinator {
             return;
         }
 
-        match harness_runtime::prefetch_container_image(&self.data_root, &image).await {
+        match self
+            .prewarm
+            .ensure_scope(&exec, RuntimePrewarmScope::Runtime, None)
+            .await
+        {
             Ok(()) => {
                 let metadata = StartupPrewarmMetadata {
                     image_ref: image.clone(),
@@ -1073,6 +1153,7 @@ impl ExecutionSetupCoordinator {
     }
 }
 
+#[derive(Clone)]
 struct LaunchObserver {
     coordinator: Arc<ExecutionSetupCoordinator>,
     job: Arc<LaunchJob>,
@@ -1211,16 +1292,46 @@ fn normalize_podman_engine_ready_for_gate(result: anyhow::Result<bool>) -> anyho
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex as StdMutex};
     use std::time::Duration;
 
+    use async_trait::async_trait;
     use chrono::Utc;
-    use tokio::sync::Barrier;
+    use tokio::sync::{Barrier, Notify};
 
+    use crate::execution_setup::warmup_coordination::SharedWarmupOperations;
     use crate::harness_runtime::HarnessRuntimeManager;
     use crate::ops_events::OpsEvents;
     use crate::perf_telemetry::PerfTelemetry;
     use crate::settings::{ExecutionMode, ExecutionSettings};
+
+    struct EnvVarGuard {
+        key: &'static str,
+        prev: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let prev = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            if let Some(prev) = self.prev.take() {
+                std::env::set_var(self.key, prev);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    fn env_var_test_lock() -> &'static StdMutex<()> {
+        crate::test_support::podman_env_test_lock()
+    }
 
     fn test_workspace(id: WorkspaceId) -> Workspace {
         Workspace {
@@ -1239,6 +1350,105 @@ mod tests {
             PerfTelemetry::new(data_root.clone()),
             OpsEvents::new(data_root),
         ))
+    }
+
+    fn test_coordinator_with_operations(
+        data_root: PathBuf,
+        operations: Arc<dyn SharedWarmupOperations>,
+    ) -> Arc<ExecutionSetupCoordinator> {
+        Arc::new(ExecutionSetupCoordinator::new_with_operations(
+            data_root.clone(),
+            Arc::new(HarnessRuntimeManager::new(data_root.clone())),
+            PerfTelemetry::new(data_root.clone()),
+            OpsEvents::new(data_root),
+            operations,
+        ))
+    }
+
+    #[derive(Default)]
+    struct BlockingWarmupOperations {
+        runtime_runs: AtomicUsize,
+        builder_runs: AtomicUsize,
+        runtime_release: Notify,
+        builder_release: Notify,
+    }
+
+    impl BlockingWarmupOperations {
+        async fn wait_for_runtime_runs(&self, expected: usize) {
+            tokio::time::timeout(Duration::from_secs(1), async {
+                loop {
+                    if self.runtime_runs.load(Ordering::SeqCst) >= expected {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("timed out waiting for runtime runs");
+        }
+
+        async fn wait_for_builder_runs(&self, expected: usize) {
+            tokio::time::timeout(Duration::from_secs(1), async {
+                loop {
+                    if self.builder_runs.load(Ordering::SeqCst) >= expected {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("timed out waiting for builder runs");
+        }
+
+        fn release_runtime(&self) {
+            self.runtime_release.notify_waiters();
+        }
+
+        fn release_builder(&self) {
+            self.builder_release.notify_waiters();
+        }
+    }
+
+    #[derive(Default)]
+    struct UnexpectedRuntimeWarmupOperations {
+        runtime_runs: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl SharedWarmupOperations for UnexpectedRuntimeWarmupOperations {
+        async fn warm_runtime(
+            &self,
+            _settings: ExecutionSettings,
+            _observer: Arc<dyn HarnessSetupObserver>,
+        ) -> Result<()> {
+            self.runtime_runs.fetch_add(1, Ordering::SeqCst);
+            anyhow::bail!("unexpected runtime warmup")
+        }
+
+        async fn warm_builder(&self, _observer: Arc<dyn HarnessSetupObserver>) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl SharedWarmupOperations for BlockingWarmupOperations {
+        async fn warm_runtime(
+            &self,
+            _settings: ExecutionSettings,
+            observer: Arc<dyn HarnessSetupObserver>,
+        ) -> Result<()> {
+            self.runtime_runs.fetch_add(1, Ordering::SeqCst);
+            observer.on_phase(HarnessSetupPhase::MachineCheck, "warming runtime");
+            self.runtime_release.notified().await;
+            Ok(())
+        }
+
+        async fn warm_builder(&self, observer: Arc<dyn HarnessSetupObserver>) -> Result<()> {
+            self.builder_runs.fetch_add(1, Ordering::SeqCst);
+            observer.on_phase(HarnessSetupPhase::ImageLoad, "warming builder");
+            self.builder_release.notified().await;
+            Ok(())
+        }
     }
 
     #[test]
@@ -1382,6 +1592,122 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn runtime_prewarm_reuses_background_all_job_and_waits_for_builder_tail_when_runtime_joins(
+    ) {
+        let data_dir = tempfile::tempdir().expect("tempdir");
+        let _podman = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "1");
+        let ops = Arc::new(BlockingWarmupOperations::default());
+        let coordinator =
+            test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
+        let settings = ExecutionSettings {
+            mode: ExecutionMode::Container,
+            ..ExecutionSettings::default()
+        };
+
+        let background = coordinator
+            .start_runtime_prewarm(settings.clone(), RuntimePrewarmScope::All)
+            .await;
+        ops.wait_for_runtime_runs(1).await;
+
+        let foreground = coordinator
+            .start_runtime_prewarm(settings, RuntimePrewarmScope::Runtime)
+            .await;
+
+        assert_eq!(foreground.job_id, background.job_id);
+        {
+            let inner = coordinator.inner.lock().await;
+            assert_eq!(inner.launch_jobs.len(), 1);
+            assert_eq!(inner.launch_history.len(), 1);
+        }
+
+        ops.release_runtime();
+        ops.wait_for_builder_runs(1).await;
+
+        let still_running = coordinator
+            .launch_status(&background.job_id)
+            .await
+            .expect("missing shared prewarm job");
+        assert_eq!(still_running.state, ExecutionLaunchState::Running);
+
+        ops.release_builder();
+
+        let ready = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let latest = coordinator
+                    .launch_status(&background.job_id)
+                    .await
+                    .expect("missing shared prewarm job");
+                if latest.state == ExecutionLaunchState::Ready {
+                    break latest;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("shared all prewarm wait timed out");
+
+        assert_eq!(ready.job_id, background.job_id);
+        assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn builder_prewarm_reuses_background_all_job() {
+        let data_dir = tempfile::tempdir().expect("tempdir");
+        let _podman = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "1");
+        let ops = Arc::new(BlockingWarmupOperations::default());
+        let coordinator =
+            test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
+        let settings = ExecutionSettings {
+            mode: ExecutionMode::Container,
+            ..ExecutionSettings::default()
+        };
+
+        let background = coordinator
+            .start_runtime_prewarm(settings.clone(), RuntimePrewarmScope::All)
+            .await;
+        ops.wait_for_runtime_runs(1).await;
+
+        let builder_only = coordinator
+            .start_runtime_prewarm(settings, RuntimePrewarmScope::Builder)
+            .await;
+
+        assert_eq!(builder_only.job_id, background.job_id);
+        {
+            let inner = coordinator.inner.lock().await;
+            assert_eq!(inner.launch_jobs.len(), 1);
+            assert_eq!(inner.launch_history.len(), 1);
+        }
+        assert_eq!(
+            ops.builder_runs.load(Ordering::SeqCst),
+            0,
+            "builder-only join should not start a second builder warmup before the shared all job reaches builder work"
+        );
+
+        ops.release_runtime();
+        ops.wait_for_builder_runs(1).await;
+        ops.release_builder();
+
+        let ready = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let latest = coordinator
+                    .launch_status(&background.job_id)
+                    .await
+                    .expect("missing shared prewarm job");
+                if latest.state == ExecutionLaunchState::Ready {
+                    break latest;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("timed out waiting for shared all/builder prewarm readiness");
+
+        assert_eq!(ready.job_id, background.job_id);
+        assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 1);
+        assert_eq!(ops.builder_runs.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn subscribe_launch_returns_terminal_snapshot_when_job_is_done() {
         let data_dir = tempfile::tempdir().expect("tempdir");
         let coordinator = test_coordinator(data_dir.path().to_path_buf());
@@ -1477,11 +1803,7 @@ mod tests {
         );
         assert!(snapshot.logs.iter().any(|line| {
             line.phase == HarnessSetupPhase::MachineCheck
-                && line.message == "checking container runtime"
-        }));
-        assert!(snapshot.logs.iter().any(|line| {
-            line.phase == HarnessSetupPhase::MachineCheck
-                && line.message == "waiting for runtime prewarm slot"
+                && line.message == "requesting shared container readiness"
         }));
 
         let observed = tokio::time::timeout(Duration::from_secs(1), async {
@@ -1505,8 +1827,148 @@ mod tests {
         ));
         assert!(observed.logs.iter().any(|line| {
             line.phase == HarnessSetupPhase::MachineCheck
-                && line.message == "checking container runtime"
+                && (line.message == "requesting shared container readiness"
+                    || line.message == "checking container runtime")
         }));
+    }
+
+    #[tokio::test]
+    async fn builder_only_prewarm_skips_runtime_warmup_and_runtime_availability() {
+        let _podman = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "0");
+        let data_dir = tempfile::tempdir().expect("tempdir");
+        let ops = Arc::new(BlockingWarmupOperations::default());
+        let coordinator =
+            test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
+        let settings = ExecutionSettings {
+            mode: ExecutionMode::Container,
+            ..ExecutionSettings::default()
+        };
+
+        let snapshot = coordinator
+            .start_runtime_prewarm(settings, RuntimePrewarmScope::Builder)
+            .await;
+
+        ops.wait_for_builder_runs(1).await;
+        assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 0);
+
+        let running = coordinator
+            .launch_status(&snapshot.job_id)
+            .await
+            .expect("missing builder-only prewarm job");
+        assert_eq!(running.current_phase, Some(HarnessSetupPhase::ImageLoad));
+        assert!(running.logs.iter().any(|line| {
+            line.phase == HarnessSetupPhase::ImageLoad && line.message == "warming builder"
+        }));
+
+        ops.release_builder();
+
+        let terminal = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let latest = coordinator
+                    .launch_status(&snapshot.job_id)
+                    .await
+                    .expect("missing builder-only prewarm job");
+                if latest.state == ExecutionLaunchState::Ready {
+                    break latest;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("timed out waiting for builder-only prewarm readiness");
+
+        assert_eq!(terminal.state, ExecutionLaunchState::Ready);
+        assert!(terminal.logs.iter().any(|line| {
+            line.phase == HarnessSetupPhase::Ready && line.message == "container builder is ready"
+        }));
+        assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 0);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn workspace_launch_reuses_running_container_without_runtime_prewarm_or_image_checks() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _serial = env_var_test_lock()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let data_dir = tempfile::tempdir().expect("tempdir");
+        let workspace_root = data_dir.path().join("ws");
+        std::fs::create_dir_all(&workspace_root).expect("create workspace root");
+        let log_path = data_dir.path().join("podman-invocations.log");
+        let podman_path = data_dir.path().join("podman.sh");
+        let ops = Arc::new(UnexpectedRuntimeWarmupOperations::default());
+        let coordinator =
+            test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
+        let workspace = Workspace {
+            id: WorkspaceId::new(),
+            name: "ws".to_string(),
+            root_path: workspace_root.to_string_lossy().to_string(),
+            created_at: Utc::now(),
+            vcs_kind: None,
+        };
+        let container_name = format!("ctx-harness-{}", workspace.id.0);
+        let settings = ExecutionSettings {
+            mode: ExecutionMode::Container,
+            container: crate::settings::ContainerExecutionSettings {
+                network_mode: crate::settings::ContainerNetworkMode::All,
+                ..Default::default()
+            },
+        };
+
+        std::fs::write(
+            &podman_path,
+            format!(
+                "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  echo 'transient image store failure' >&2\n  exit 125\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+                log = log_path.display(),
+                container = container_name,
+            ),
+        )
+        .expect("write podman shim");
+        std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod podman shim");
+        let _podman = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+
+        let snapshot = coordinator
+            .start_workspace_launch(workspace, settings, "http://127.0.0.1:4399".to_string())
+            .await;
+
+        let ready = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let latest = coordinator
+                    .launch_status(&snapshot.job_id)
+                    .await
+                    .expect("missing workspace launch job");
+                if latest.state == ExecutionLaunchState::Ready {
+                    break latest;
+                }
+                if latest.state == ExecutionLaunchState::Error {
+                    panic!("workspace launch failed unexpectedly: {:?}", latest.error);
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("timed out waiting for workspace launch readiness");
+
+        assert_eq!(ready.state, ExecutionLaunchState::Ready);
+        assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 0);
+
+        let log = std::fs::read_to_string(&log_path).expect("read podman invocation log");
+        assert!(
+            log.contains(&format!("container exists {container_name}")),
+            "expected existing-container check in log:\n{log}"
+        );
+        assert!(
+            log.contains(&format!(
+                "container inspect --format {{{{.State.Running}}}} {container_name}"
+            )),
+            "expected running-container inspect in log:\n{log}"
+        );
+        assert!(
+            !log.contains("image exists"),
+            "workspace launch should not front-load image checks for reusable containers:\n{log}"
+        );
     }
 
     #[tokio::test]
@@ -1543,7 +2005,8 @@ mod tests {
         ));
         assert!(observed.logs.iter().any(|line| {
             line.phase == HarnessSetupPhase::MachineCheck
-                && line.message == "checking container runtime"
+                && (line.message == "requesting shared container readiness"
+                    || line.message == "checking container runtime")
         }));
     }
 }

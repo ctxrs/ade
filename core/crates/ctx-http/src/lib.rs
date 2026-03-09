@@ -58,6 +58,9 @@ pub mod worktree_bootstrap;
 #[cfg(feature = "fault_injection")]
 pub mod fault_injection;
 
+#[cfg(test)]
+pub(crate) mod test_support;
+
 #[cfg(not(feature = "fault_injection"))]
 pub mod fault_injection {
     pub fn clear_failpoints() {}
@@ -71,7 +74,7 @@ pub mod fault_injection {
 mod tests {
     use std::collections::HashMap;
     use std::path::Path;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex as StdMutex};
     use std::time::Duration;
 
     use axum::body::{to_bytes, Body};
@@ -119,6 +122,28 @@ mod tests {
         dir
     }
 
+    async fn create_workspace_via_api(
+        app: &axum::Router,
+        root_path: &str,
+    ) -> ctx_core::models::Workspace {
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/workspaces")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "root_path": root_path,
+                    "name": "ws"
+                })
+                .to_string(),
+            ))
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        serde_json::from_slice(&body).unwrap()
+    }
+
     struct EnvVarGuard {
         key: &'static str,
         prev: Option<String>,
@@ -140,6 +165,10 @@ mod tests {
                 std::env::remove_var(self.key);
             }
         }
+    }
+
+    fn podman_env_test_lock() -> &'static StdMutex<()> {
+        crate::test_support::podman_env_test_lock()
     }
 
     #[tokio::test]
@@ -598,6 +627,9 @@ mod tests {
 
     #[tokio::test]
     async fn execution_launch_startup_prewarm_kind_supported() {
+        let _serial = podman_env_test_lock()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
         let _podman = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "0");
         let home = tempfile::tempdir().unwrap();
         std::env::set_var("HOME", home.path());
@@ -660,6 +692,104 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
         assert_ne!(terminal.state, ExecutionLaunchState::Running);
+    }
+
+    #[tokio::test]
+    async fn execution_launch_start_returns_internal_server_error_when_execution_settings_fail() {
+        let git_repo = setup_git_repo().await;
+        let home = tempfile::tempdir().unwrap();
+        std::env::set_var("HOME", home.path());
+
+        let data_dir = tempfile::tempdir().unwrap();
+        let stores = StoreManager::open(data_dir.path()).await.unwrap();
+
+        let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
+            HashMap::new();
+        providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
+
+        let state = Arc::new(AppState::new(
+            data_dir.path().to_path_buf(),
+            stores,
+            providers,
+            "http://127.0.0.1:4399".to_string(),
+            None,
+        ));
+        let app = api::router(state.clone());
+
+        let workspace = create_workspace_via_api(&app, &git_repo.path().to_string_lossy()).await;
+        let store = state.store_for_workspace(workspace.id).await.unwrap();
+        store
+            .upsert_runtime_settings_document(1, "{")
+            .await
+            .unwrap();
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/execution/launch/start")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "workspace_id": workspace.id.0.to_string(),
+                })
+                .to_string(),
+            ))
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(value["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("workspace runtime settings"));
+    }
+
+    #[tokio::test]
+    async fn ensure_workspace_container_returns_internal_server_error_when_execution_settings_fail()
+    {
+        let git_repo = setup_git_repo().await;
+        let home = tempfile::tempdir().unwrap();
+        std::env::set_var("HOME", home.path());
+
+        let data_dir = tempfile::tempdir().unwrap();
+        let stores = StoreManager::open(data_dir.path()).await.unwrap();
+
+        let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
+            HashMap::new();
+        providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
+
+        let state = Arc::new(AppState::new(
+            data_dir.path().to_path_buf(),
+            stores,
+            providers,
+            "http://127.0.0.1:4399".to_string(),
+            None,
+        ));
+        let app = api::router(state.clone());
+
+        let workspace = create_workspace_via_api(&app, &git_repo.path().to_string_lossy()).await;
+        let store = state.store_for_workspace(workspace.id).await.unwrap();
+        store
+            .upsert_runtime_settings_document(1, "{")
+            .await
+            .unwrap();
+
+        let req = Request::builder()
+            .method("POST")
+            .uri(format!(
+                "/api/workspaces/{}/harness_container/ensure",
+                workspace.id.0
+            ))
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(value["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("workspace runtime settings"));
     }
 
     #[tokio::test]
