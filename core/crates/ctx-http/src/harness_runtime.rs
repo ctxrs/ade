@@ -2510,8 +2510,7 @@ fn kill_ctx_managed_podman_helper_processes(data_root: &Path, machine_name: &str
         return Vec::new();
     }
     let mut kill = StdCommand::new("kill");
-    kill.arg("-9")
-        .args(pids.iter().map(u32::to_string));
+    kill.arg("-9").args(pids.iter().map(u32::to_string));
     match kill.output() {
         Ok(output) if output.status.success() => pids,
         _ => Vec::new(),
