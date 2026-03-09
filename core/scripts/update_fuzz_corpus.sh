@@ -3,13 +3,16 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-usage: update_fuzz_corpus.sh <providers|mcp> <source_dir>
+usage: update_fuzz_corpus.sh <providers|mcp|workspace|updates|desktop-ipc> <source_dir>
 
 Promote minimized reproducer files into deterministic fuzz regression corpus.
 
 Targets:
-  providers -> crates/ctx-providers/tests/corpus/acp
-  mcp       -> crates/ctx-mcp/tests/corpus/tools
+  providers   -> crates/ctx-providers/tests/corpus/acp
+  mcp         -> crates/ctx-mcp/tests/corpus/tools
+  workspace   -> crates/ctx-core/tests/corpus/workspace_payloads
+  updates     -> crates/ctx-http/tests/corpus/release_manifests
+  desktop-ipc -> apps/web/src/utils/testdata/desktop-ipc
 EOF
 }
 
@@ -36,6 +39,15 @@ case "${suite}" in
     ;;
   mcp)
     target_dir="crates/ctx-mcp/tests/corpus/tools"
+    ;;
+  workspace)
+    target_dir="crates/ctx-core/tests/corpus/workspace_payloads"
+    ;;
+  updates)
+    target_dir="crates/ctx-http/tests/corpus/release_manifests"
+    ;;
+  desktop-ipc)
+    target_dir="apps/web/src/utils/testdata/desktop-ipc"
     ;;
   *)
     echo "error: unknown suite '${suite}'" >&2

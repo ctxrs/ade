@@ -14,20 +14,31 @@ run() {
 
 providers_corpus="crates/ctx-providers/tests/corpus/acp"
 mcp_corpus="crates/ctx-mcp/tests/corpus/tools"
+workspace_corpus="crates/ctx-core/tests/corpus/workspace_payloads"
+updates_corpus="crates/ctx-http/tests/corpus/release_manifests"
+desktop_ipc_corpus="apps/web/src/utils/testdata/desktop-ipc"
 
-if [[ -d "${providers_corpus}" ]]; then
-  find "${providers_corpus}" -type f | sort >/tmp/ctx-fuzz-regression-providers-files.txt
-  if [[ -s /tmp/ctx-fuzz-regression-providers-files.txt ]]; then
-    echo "providers corpus files: $(wc -l </tmp/ctx-fuzz-regression-providers-files.txt)"
+report_corpus() {
+  local label="$1"
+  local dir="$2"
+  local tmp_file="$3"
+  if [[ ! -d "${dir}" ]]; then
+    return
   fi
-fi
+  find "${dir}" -type f | sort >"${tmp_file}"
+  if [[ -s "${tmp_file}" ]]; then
+    echo "${label} corpus files: $(wc -l <"${tmp_file}")"
+  fi
+}
 
-if [[ -d "${mcp_corpus}" ]]; then
-  find "${mcp_corpus}" -type f | sort >/tmp/ctx-fuzz-regression-mcp-files.txt
-  if [[ -s /tmp/ctx-fuzz-regression-mcp-files.txt ]]; then
-    echo "mcp corpus files: $(wc -l </tmp/ctx-fuzz-regression-mcp-files.txt)"
-  fi
-fi
+report_corpus "providers" "${providers_corpus}" /tmp/ctx-fuzz-regression-providers-files.txt
+report_corpus "mcp" "${mcp_corpus}" /tmp/ctx-fuzz-regression-mcp-files.txt
+report_corpus "workspace" "${workspace_corpus}" /tmp/ctx-fuzz-regression-workspace-files.txt
+report_corpus "updates" "${updates_corpus}" /tmp/ctx-fuzz-regression-updates-files.txt
+report_corpus "desktop ipc" "${desktop_ipc_corpus}" /tmp/ctx-fuzz-regression-desktop-ipc-files.txt
 
 run cargo test -p ctx-providers --features fuzz_tests
 run cargo test -p ctx-mcp --features fuzz_tests
+run cargo test -p ctx-core --test workspace_payload_corpus
+run cargo test -p ctx-http --test release_manifest_corpus
+run pnpm -C apps/web exec vitest run src/utils/desktop.corpus.test.ts --silent --reporter=dot
