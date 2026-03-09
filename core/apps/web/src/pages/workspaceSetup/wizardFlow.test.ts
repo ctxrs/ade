@@ -8,6 +8,10 @@ import {
   stepKeyOffset,
   type WizardRoutePlan,
 } from "./wizardFlow";
+import {
+  createInitialWizardFlowState,
+  wizardFlowReducer,
+} from "./wizardFlowReducer";
 
 const routePlan = (overrides?: Partial<WizardRoutePlan>): WizardRoutePlan => ({
   targetKey: "local",
@@ -98,5 +102,44 @@ describe("wizardFlow", () => {
     });
     expect(stepKeyOffset(keys, "container", 1)).toBe("harness-downloads");
     expect(stepKeyOffset(keys, "source", -1)).toBe("auth-import");
+  });
+
+  it("clears network selection when the flow switches back to host mode", () => {
+    const state = wizardFlowReducer(
+      {
+        ...createInitialWizardFlowState(),
+        selections: {
+          container: "disk-isolated",
+          network: "allowlist",
+        },
+      },
+      {
+        type: "select_option",
+        stepKey: "container",
+        optionId: "no-container",
+      },
+    );
+
+    expect(state.selections.container).toBe("no-container");
+    expect(state.selections.network).toBeUndefined();
+  });
+
+  it("invalidates the frozen route plan without resetting the current step", () => {
+    const state = wizardFlowReducer(
+      {
+        ...createInitialWizardFlowState(),
+        currentStepKey: "harness-downloads",
+        routePlanningBusy: true,
+        routePlan: routePlan({
+          includeHarnessDownloads: true,
+          includeAuthImport: true,
+        }),
+      },
+      { type: "invalidate_route_plan" },
+    );
+
+    expect(state.currentStepKey).toBe("harness-downloads");
+    expect(state.routePlanningBusy).toBe(false);
+    expect(state.routePlan).toBeNull();
   });
 });

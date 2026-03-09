@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import WorkspaceSetupPage from "./WorkspaceSetupPage";
 import {
   buildExecutionLaunchWsUrl,
+  cancelInstall,
   createWorkspace,
   getInstall,
   getExecutionLaunchStatus,
@@ -51,6 +52,7 @@ vi.mock("../api/client", async () => {
     ...actual,
     applyDaemonDesktopConnection: vi.fn(),
     buildExecutionLaunchWsUrl: vi.fn(),
+    cancelInstall: vi.fn(),
     createWorkspace: vi.fn(),
     getInstall: vi.fn(),
     getExecutionLaunchStatus: vi.fn(),
@@ -439,7 +441,7 @@ describe("WorkspaceSetupPage", () => {
     });
   }, 15000);
 
-  it("blocks on harness step when a selected download fails to start", async () => {
+  it("continues past harness step when a selected download fails to start", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(getSettings).mockResolvedValue(configuredTitlingSettingsFixture() as never);
     vi.mocked(listProviders).mockResolvedValue([
@@ -467,9 +469,15 @@ describe("WorkspaceSetupPage", () => {
 
     await waitFor(() => {
       expect(installProvider).toHaveBeenCalledWith("codex", "container");
+      expect(wizardStepKey()).toBe("source");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-back"));
+    await waitFor(() => {
       expect(wizardStepKey()).toBe("harness-downloads");
-      expect(screen.getByText(/Unable to start selected downloads\./i)).toBeInTheDocument();
+      expect(screen.getByText(/Selected downloads failed to start\./i)).toBeInTheDocument();
       expect(screen.getByText(/Codex: network timed out/i)).toBeInTheDocument();
+      expect(screen.getByText(/Continuing without those downloads\./i)).toBeInTheDocument();
     });
   });
 
@@ -577,7 +585,7 @@ describe("WorkspaceSetupPage", () => {
     expect(cancelButton).toBeEnabled();
   });
 
-  it("clears stale running state after terminal harness install failures", async () => {
+  it("keeps continue enabled after terminal harness install failures", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(getSettings).mockResolvedValue(configuredTitlingSettingsFixture() as never);
     vi.mocked(getInstall).mockReset();
@@ -630,10 +638,77 @@ describe("WorkspaceSetupPage", () => {
       expect(screen.getByText(/Not installed · container/i)).toBeInTheDocument();
     });
     expect(screen.getByTestId("wizard-harness-checkbox-codex")).toBeEnabled();
-    expect(screen.getByTestId("wizard-next")).toBeDisabled();
+    expect(screen.getByTestId("wizard-next")).toBeEnabled();
     expect(screen.getByText(/failed or were canceled/i)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByTestId("wizard-harness-skip"));
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("source");
+    });
+  });
+
+  it("keeps continue enabled after a selected harness download is canceled", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue(configuredTitlingSettingsFixture() as never);
+    vi.mocked(getInstall).mockReset();
+    vi.mocked(listProviders).mockResolvedValue([
+      providerStatusFixture({
+        provider_id: "codex",
+        installed: false,
+        health: "error",
+        details: {
+          install_supported: "true",
+          install_running: "true",
+          install_id: "install_codex",
+        },
+      }),
+    ] as never);
+    vi.mocked(getInstall).mockResolvedValue({
+      install_id: "install_codex",
+      provider_id: "codex",
+      state: "running",
+      started_at: "2026-02-28T00:00:00Z",
+      finished_at: undefined,
+      error: undefined,
+      last_event: undefined,
+      target: "container",
+      error_code: undefined,
+    } as never);
+    vi.mocked(cancelInstall).mockResolvedValue({
+      install_id: "install_codex",
+      provider_id: "codex",
+      state: "cancelled",
+      started_at: "2026-02-28T00:00:00Z",
+      finished_at: "2026-02-28T00:00:05Z",
+      error: "canceled by user",
+      last_event: undefined,
+      target: "container",
+      error_code: undefined,
+    } as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    await selectLocalAndContinue();
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+    });
+    fireEvent.click(screen.getByTestId("wizard-option-container-disk-isolated"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("harness-downloads");
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Cancel install" })).toBeEnabled();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel install" }));
+
+    await waitFor(() => {
+      expect(cancelInstall).toHaveBeenCalledWith("install_codex");
+      expect(screen.getByText(/failed or were canceled/i)).toBeInTheDocument();
+      expect(screen.getByTestId("wizard-next")).toBeEnabled();
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-next"));
     await waitFor(() => {
       expect(wizardStepKey()).toBe("source");
     });
@@ -698,6 +773,58 @@ describe("WorkspaceSetupPage", () => {
       });
     });
     expect(screen.queryByTestId("wizard-remote-password-once")).not.toBeInTheDocument();
+  });
+
+  it("keeps remote verification and source-step flow cold before create", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue(configuredTitlingSettingsFixture() as never);
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+
+    fireEvent.click(screen.getByTestId("wizard-option-location-remote"));
+    fireEvent.change(await screen.findByTestId("wizard-remote-host"), {
+      target: { value: "devbox.example" },
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+      expect(desktopTestSsh).toHaveBeenCalledWith({
+        host: "devbox.example",
+        user: null,
+        password_once: null,
+      });
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-option-container-no-container"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("source");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-option-source-new"));
+    fireEvent.change(screen.getByTestId("wizard-source-path"), {
+      target: { value: "/remote/new-workspace" },
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
+    await waitFor(() => {
+      expect(["session-titling", "setup"]).toContain(wizardStepKey());
+    });
+    if (wizardStepKey() === "session-titling") {
+      fireEvent.click(screen.getByTestId("wizard-titling-skip"));
+      await waitFor(() => {
+        expect(wizardStepKey()).toBe("setup");
+      });
+    }
+
+    expect(vi.mocked(desktopConnectSsh).mock.calls.length).toBeGreaterThan(0);
+    for (const [req] of vi.mocked(desktopConnectSsh).mock.calls) {
+      expect(req.start_remote).toBe(false);
+    }
+    expect(desktopKickoffRemotePrewarm).not.toHaveBeenCalled();
+    expect(startExecutionRuntimePrewarm).not.toHaveBeenCalled();
+    expect(startExecutionLaunch).not.toHaveBeenCalled();
+    expect(repoValidateDestination).not.toHaveBeenCalled();
   });
 
   it("asks for one-time SSH password only after key-auth failure", async () => {
@@ -781,6 +908,102 @@ describe("WorkspaceSetupPage", () => {
     });
 
     expect(wizardStepKey()).toBe("container");
+  });
+
+  it("defers a failed local auth probe after one unavailable-daemon attempt", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(desktopConnectLocal).mockRejectedValue(new Error("local daemon unavailable") as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+
+    await waitFor(() => {
+      expect(desktopConnectLocal).toHaveBeenCalledTimes(1);
+      expect(wizardStepKey()).toBe("location");
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 25));
+    });
+
+    expect(desktopConnectLocal).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries deferred local auth and harness scans after a later successful local daemon connect", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue(configuredTitlingSettingsFixture() as never);
+    vi.mocked(listProviderAuthImportCandidates).mockResolvedValue({
+      candidates: [
+        {
+          id: "cand-codex",
+          provider_id: "codex",
+          provider_label: "Codex",
+          kind: "auth_file",
+          path: "/Users/test/.codex/auth.json",
+          signal_strength: "strong",
+          confidence: "high",
+          parse_status: "parsed",
+        },
+      ],
+    } as never);
+    vi.mocked(listProviders).mockResolvedValue([
+      providerStatusFixture({
+        provider_id: "codex",
+        installed: false,
+        health: "error",
+        details: {
+          install_supported: "true",
+        },
+      }),
+    ] as never);
+
+    const localInfo = {
+      kind: "local",
+      base_url: "http://127.0.0.1:4402",
+      token: "test-token",
+    } as const;
+    let localDaemonAvailable = false;
+    vi.mocked(desktopConnectLocal).mockImplementation(async () => {
+      if (!localDaemonAvailable) {
+        throw new Error("local daemon unavailable");
+      }
+      return localInfo as never;
+    });
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+
+    fireEvent.click(screen.getByTestId("wizard-option-location-local"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-option-container-no-container"));
+    await waitFor(() => {
+      expect(["session-titling", "source"]).toContain(wizardStepKey());
+    });
+    if (wizardStepKey() === "session-titling") {
+      fireEvent.click(screen.getByTestId("wizard-titling-skip"));
+      await waitFor(() => {
+        expect(wizardStepKey()).toBe("source");
+      });
+    }
+
+    localDaemonAvailable = true;
+    fireEvent.click(screen.getByTestId("wizard-option-source-new"));
+    fireEvent.change(screen.getByTestId("wizard-source-path"), {
+      target: { value: "/tmp/local-retry-workspace" },
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("harness-downloads");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-harness-skip"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("auth-import");
+    });
   });
 
   it("shows destination validation errors on source next before create", async () => {

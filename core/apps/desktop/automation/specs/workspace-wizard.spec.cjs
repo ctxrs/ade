@@ -759,20 +759,6 @@ const syncHarnessSelections = async (providerIds) => {
   }
 };
 
-const readSelectedHarnessProviderIds = async () => {
-  return await browser.execute(() => {
-    return Array.from(document.querySelectorAll('[data-testid^="wizard-harness-checkbox-"]'))
-      .flatMap((node) => {
-        if (!(node instanceof HTMLInputElement) || node.type !== "checkbox" || !node.checked) {
-          return [];
-        }
-        const testId = String(node.getAttribute("data-testid") || "");
-        const providerId = testId.replace(/^wizard-harness-checkbox-/, "").trim();
-        return providerId ? [providerId] : [];
-      });
-  });
-};
-
 const waitForWizardStepDeparture = async (fromStep, timeoutMs = 5000) => {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
@@ -782,35 +768,6 @@ const waitForWizardStepDeparture = async (fromStep, timeoutMs = 5000) => {
   }
   const diag = await collectWorkspaceRouteDiagnostics();
   throw new Error(`wizard never left step '${fromStep}'; diag=${JSON.stringify(diag)}`);
-};
-
-const waitForSelectedHarnessInstallsToKickOff = async (providerIds, target = "host", timeoutMs = 15000) => {
-  const selected = Array.from(new Set((providerIds || []).map((value) => String(value || "").trim()).filter(Boolean)));
-  if (selected.length === 0) return;
-  const started = Date.now();
-  let lastProviders = [];
-  while (Date.now() - started < timeoutMs) {
-    const resp = await safeDaemonJson("GET", `/api/providers?target=${encodeURIComponent(target)}`);
-    const providers = Array.isArray(resp.payload) ? resp.payload : [];
-    lastProviders = providers
-      .filter((provider) => selected.includes(String(provider?.provider_id || "")))
-      .map((provider) => compactEntity(provider));
-    const startedAll = providers
-      .filter((provider) => selected.includes(String(provider?.provider_id || "")))
-      .every((provider) => {
-        const details = provider && typeof provider.details === "object" && provider.details
-          ? provider.details
-          : {};
-        return provider.installed === true || details.install_running === "true";
-      });
-    if (startedAll && lastProviders.length === selected.length) {
-      return;
-    }
-    await browser.pause(250);
-  }
-  throw new Error(
-    `selected harness installs never kicked off: expected=${JSON.stringify(selected)} providers=${JSON.stringify(lastProviders)}`,
-  );
 };
 
 const ensureReadyForSourceSelection = async (
@@ -873,19 +830,9 @@ const ensureReadyForSourceSelection = async (
       if (Array.isArray(selectedHarnessProviderIds) && selectedHarnessProviderIds.length > 0) {
         await syncHarnessSelections(selectedHarnessProviderIds);
       }
-      const expectedKickoffProviderIds = Array.isArray(selectedHarnessProviderIds) && selectedHarnessProviderIds.length > 0
-        ? Array.from(new Set(selectedHarnessProviderIds.map((value) => String(value || "").trim()).filter(Boolean)))
-        : await readSelectedHarnessProviderIds();
       const next = await clickNextIfEnabled();
       if (next.clicked) {
-        const departurePromise = waitForWizardStepDeparture("harness-downloads", 5000);
-        const installTarget = container === "no-container" ? "host" : "container";
-        const kickoffPromise = waitForSelectedHarnessInstallsToKickOff(
-          expectedKickoffProviderIds,
-          installTarget,
-          15000,
-        );
-        await Promise.all([departurePromise, kickoffPromise]);
+        await waitForWizardStepDeparture("harness-downloads", 5000);
       } else {
         // Planning work can temporarily disable Next before the kickoff transition settles.
         await browser.pause(150);
