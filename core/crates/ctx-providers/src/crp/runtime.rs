@@ -1,0 +1,1001 @@
+use std::collections::HashMap;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
+
+use anyhow::{Context, Result};
+use chrono::Utc;
+use serde::Deserialize;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::{Child, Command};
+use tokio::sync::{broadcast, mpsc, watch, Mutex};
+use tokio::time::Duration;
+use uuid::Uuid;
+
+use crate::container_exec::{build_container_exec_command, container_exec_spec};
+
+use super::protocol::{CrpCommand, CrpCommandEnvelope, CrpEventEnvelope};
+use super::{CODEX_CRP_DUMP_CODEX_EVENTS_ENV, CODEX_CRP_DUMP_CRP_EVENTS_ENV};
+
+#[derive(Debug, Clone)]
+pub(super) struct CrpAgentConfig {
+    pub(super) provider_id: String,
+    pub(super) command: String,
+    pub(super) args: Vec<String>,
+}
+
+enum BundledLinuxRewrite {
+    NotBundledPath,
+    AlreadyLinux,
+    Candidate(String),
+}
+
+fn bundled_linux_candidate_for_marker(path: &str, marker: &str) -> BundledLinuxRewrite {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return BundledLinuxRewrite::NotBundledPath;
+    }
+    let sep = if trimmed.contains('\\') { '\\' } else { '/' };
+    let needle = format!("{sep}{marker}{sep}");
+    let Some(idx) = trimmed.find(&needle) else {
+        return BundledLinuxRewrite::NotBundledPath;
+    };
+    let prefix = &trimmed[..idx];
+    let bundles_segment = format!("{sep}bundles");
+    let prefix_path = Path::new(prefix);
+    let looks_like_bundle_root = prefix == "bundles"
+        || prefix.ends_with(&bundles_segment)
+        || prefix_path.join("manifest.json").is_file()
+        || prefix_path.join("runtime_lock.v2.json").is_file();
+    if !looks_like_bundle_root {
+        return BundledLinuxRewrite::NotBundledPath;
+    }
+    let rest = &trimmed[idx + needle.len()..];
+    let mut parts = rest.split(sep);
+    let Some(id) = parts.next() else {
+        return BundledLinuxRewrite::NotBundledPath;
+    };
+    let Some(os) = parts.next() else {
+        return BundledLinuxRewrite::NotBundledPath;
+    };
+    let Some(arch) = parts.next() else {
+        return BundledLinuxRewrite::NotBundledPath;
+    };
+    if os == "linux" {
+        return BundledLinuxRewrite::AlreadyLinux;
+    }
+    let tail: String = parts.collect::<Vec<_>>().join(&sep.to_string());
+    let candidate = format!("{prefix}{needle}{id}{sep}linux{sep}{arch}{sep}{tail}");
+    BundledLinuxRewrite::Candidate(candidate)
+}
+
+fn bundled_linux_candidate(path: &str) -> BundledLinuxRewrite {
+    let providers = bundled_linux_candidate_for_marker(path, "providers");
+    if !matches!(providers, BundledLinuxRewrite::NotBundledPath) {
+        return providers;
+    }
+    bundled_linux_candidate_for_marker(path, "runtimes")
+}
+
+#[derive(Debug, Deserialize)]
+struct BundledManifestRuntimeEntry {
+    id: String,
+    os: String,
+    arch: String,
+    root: String,
+    bin: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct BundledManifestForRuntimeRewrite {
+    #[serde(default)]
+    runtimes: Vec<BundledManifestRuntimeEntry>,
+}
+
+fn bundles_root_for_path(path: &Path) -> Option<PathBuf> {
+    path.ancestors().find_map(|ancestor| {
+        let looks_like_bundle_root = ancestor
+            .file_name()
+            .is_some_and(|name| name == std::ffi::OsStr::new("bundles"))
+            || ancestor.join("manifest.json").is_file()
+            || ancestor.join("runtime_lock.v2.json").is_file();
+        if looks_like_bundle_root {
+            Some(ancestor.to_path_buf())
+        } else {
+            None
+        }
+    })
+}
+
+fn resolve_runtime_linux_path_from_manifest(path: &str) -> Option<String> {
+    let source_path = Path::new(path);
+    let bundles_root = bundles_root_for_path(source_path)?;
+    let rel = source_path.strip_prefix(&bundles_root).ok()?;
+    let mut parts = rel.components();
+    if parts.next()?.as_os_str() != std::ffi::OsStr::new("runtimes") {
+        return None;
+    }
+    let runtime_id = parts.next()?.as_os_str().to_string_lossy().to_string();
+    let _host_os = parts.next()?;
+    let arch = parts.next()?.as_os_str().to_string_lossy().to_string();
+    let source_bin_name = source_path.file_name()?.to_string_lossy().to_string();
+
+    let manifest_path = bundles_root.join("manifest.json");
+    let raw = std::fs::read_to_string(&manifest_path).ok()?;
+    let manifest: BundledManifestForRuntimeRewrite = serde_json::from_str(&raw).ok()?;
+    let runtime = manifest
+        .runtimes
+        .iter()
+        .find(|entry| entry.id == runtime_id && entry.os == "linux" && entry.arch == arch)?;
+    let root = Path::new(&runtime.root);
+    let runtime_root = if root.is_absolute() {
+        root.to_path_buf()
+    } else {
+        bundles_root.join(root)
+    };
+    let candidate = runtime_root.join(&runtime.bin);
+    if !candidate.exists() {
+        return None;
+    }
+    if candidate
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy() == source_bin_name)
+    {
+        return Some(candidate.to_string_lossy().to_string());
+    }
+    None
+}
+
+pub(crate) fn rewrite_bundled_path_for_linux(path: &str) -> Result<String> {
+    match bundled_linux_candidate(path) {
+        BundledLinuxRewrite::NotBundledPath | BundledLinuxRewrite::AlreadyLinux => {
+            Ok(path.to_string())
+        }
+        BundledLinuxRewrite::Candidate(candidate) => {
+            if std::path::Path::new(&candidate).exists() {
+                Ok(candidate)
+            } else if let Some(runtime_candidate) = resolve_runtime_linux_path_from_manifest(path) {
+                Ok(runtime_candidate)
+            } else {
+                anyhow::bail!(
+                    "missing linux bundled path for container execution: source='{}' expected='{}'",
+                    path,
+                    candidate
+                );
+            }
+        }
+    }
+}
+
+fn rewrite_bundled_paths_in_shell_command(
+    raw: &str,
+    env: &HashMap<String, String>,
+) -> Result<String> {
+    let tokens = shlex::split(raw).ok_or_else(|| {
+        anyhow::anyhow!("invalid shell command in --acp-command: unmatched quote")
+    })?;
+    if tokens.is_empty() {
+        return Ok(raw.to_string());
+    }
+
+    let mut rewritten = Vec::with_capacity(tokens.len());
+    for token in tokens {
+        rewritten.push(rewrite_bundled_path_for_linux(&token)?);
+    }
+
+    let first_is_js_entrypoint = rewritten
+        .first()
+        .and_then(|command| std::path::Path::new(command).extension())
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("js"));
+    if first_is_js_entrypoint {
+        let node = resolve_node_binary_from_env(env)
+            .ok_or_else(|| anyhow::anyhow!("could not resolve node binary for JS ACP command"))?;
+        let rewritten_node = rewrite_bundled_path_for_linux(&node)?;
+        rewritten.insert(0, rewritten_node);
+    }
+
+    shlex::try_join(rewritten.iter().map(String::as_str))
+        .map_err(|err| anyhow::anyhow!("failed to quote --acp-command after rewrite: {err}"))
+}
+
+fn rewrite_container_args_for_linux(
+    args: &[String],
+    env: &HashMap<String, String>,
+) -> Result<Vec<String>> {
+    let mut out = Vec::with_capacity(args.len());
+    let mut idx = 0;
+    while idx < args.len() {
+        let arg = &args[idx];
+        if arg == "--acp-command" {
+            out.push(arg.clone());
+            if let Some(acp_command) = args.get(idx + 1) {
+                out.push(rewrite_bundled_paths_in_shell_command(acp_command, env)?);
+                idx += 2;
+                continue;
+            }
+            idx += 1;
+            continue;
+        }
+        out.push(rewrite_bundled_path_for_linux(arg)?);
+        idx += 1;
+    }
+    Ok(out)
+}
+
+fn resolve_node_binary_from_env(env: &HashMap<String, String>) -> Option<String> {
+    let path_value = env
+        .get("PATH")
+        .cloned()
+        .or_else(|| std::env::var("PATH").ok())?;
+    let executable_names: &[&str] = if cfg!(windows) {
+        &["node.exe", "node"]
+    } else {
+        &["node"]
+    };
+    for dir in std::env::split_paths(std::ffi::OsStr::new(&path_value)) {
+        for name in executable_names {
+            let candidate = dir.join(name);
+            if candidate.is_file() {
+                return Some(candidate.to_string_lossy().to_string());
+            }
+        }
+    }
+    None
+}
+
+pub(super) fn rewrite_container_command_for_linux(
+    command: &str,
+    args: &[String],
+    env: &HashMap<String, String>,
+) -> Result<(String, Vec<String>)> {
+    let rewritten_command = rewrite_bundled_path_for_linux(command)?;
+    let rewritten_args = rewrite_container_args_for_linux(args, env)?;
+    let is_js_entrypoint = std::path::Path::new(&rewritten_command)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("js"));
+    if !is_js_entrypoint {
+        return Ok((rewritten_command, rewritten_args));
+    }
+    let Some(node_binary) = resolve_node_binary_from_env(env) else {
+        return Ok((rewritten_command, rewritten_args));
+    };
+    let rewritten_node = rewrite_bundled_path_for_linux(&node_binary)?;
+    let mut final_args = Vec::with_capacity(rewritten_args.len() + 1);
+    final_args.push(rewritten_command);
+    final_args.extend(rewritten_args);
+    Ok((rewritten_node, final_args))
+}
+
+pub(super) fn resolve_explicit_command_path(command: &str) -> Option<PathBuf> {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    // Intentionally do not consult PATH for determinism. Providers should be configured
+    // with a known absolute path (e.g. managed install path or bundled asset path).
+    let p = Path::new(trimmed);
+    // On Windows, paths may be expressed with either '\\' or '/' separators.
+    if p.is_absolute() || trimmed.contains('/') || trimmed.contains('\\') {
+        return if p.exists() {
+            Some(p.to_path_buf())
+        } else {
+            None
+        };
+    }
+    None
+}
+
+pub(super) struct CrpProcess {
+    agent: CrpAgentConfig,
+    child: Mutex<Child>,
+    pid: AtomicU32,
+    write_tx: mpsc::UnboundedSender<String>,
+    pub(super) events: broadcast::Sender<CrpEventEnvelope>,
+    pub(super) stderr_lines: broadcast::Sender<String>,
+    pub(super) shutdown: watch::Sender<Option<String>>,
+}
+
+struct CrpLogPaths {
+    codex_events: PathBuf,
+    crp_events: PathBuf,
+    stderr: PathBuf,
+}
+
+impl CrpProcess {
+    pub(super) async fn spawn(
+        agent: &CrpAgentConfig,
+        workdir: &PathBuf,
+        env: &HashMap<String, String>,
+    ) -> Result<Arc<Self>> {
+        let mut cmd = if let Some(spec) = container_exec_spec(env) {
+            let (container_command, container_args) =
+                rewrite_container_command_for_linux(&agent.command, &agent.args, env)?;
+            build_container_exec_command(&spec, workdir, env, &container_command, &container_args)?
+        } else {
+            let mut cmd = Command::new(&agent.command);
+            cmd.args(&agent.args);
+            cmd.current_dir(workdir);
+            cmd
+        };
+        cmd.stdin(std::process::Stdio::piped());
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+        let mut stderr_log_path: Option<PathBuf> = None;
+        if let Some(paths) = crp_log_paths(env, &agent.provider_id) {
+            if let Some(parent) = paths.stderr.parent() {
+                if std::fs::create_dir_all(parent).is_ok() {
+                    if !env.contains_key(CODEX_CRP_DUMP_CODEX_EVENTS_ENV) {
+                        cmd.env(CODEX_CRP_DUMP_CODEX_EVENTS_ENV, &paths.codex_events);
+                    }
+                    if !env.contains_key(CODEX_CRP_DUMP_CRP_EVENTS_ENV) {
+                        cmd.env(CODEX_CRP_DUMP_CRP_EVENTS_ENV, &paths.crp_events);
+                    }
+                    stderr_log_path = Some(paths.stderr);
+                }
+            }
+        }
+        apply_outer_process_env(&mut cmd, env);
+
+        let mut child = cmd.spawn()?;
+        let pid = child.id().unwrap_or(0);
+
+        let stdin = child.stdin.take().context("capturing CRP stdin")?;
+        let stdout = child.stdout.take().context("capturing CRP stdout")?;
+        let stderr = child.stderr.take().context("capturing CRP stderr")?;
+
+        let (write_tx, mut write_rx) = mpsc::unbounded_channel::<String>();
+        let _writer = tokio::spawn(async move {
+            let mut stdin = tokio::io::BufWriter::new(stdin);
+            while let Some(line) = write_rx.recv().await {
+                if stdin.write_all(line.as_bytes()).await.is_err() {
+                    break;
+                }
+                if stdin.write_all(b"\n").await.is_err() {
+                    break;
+                }
+                let _ = stdin.flush().await;
+            }
+        });
+
+        let (events, _) = broadcast::channel(512);
+        let (stderr_lines, _) = broadcast::channel(256);
+        let (shutdown, _) = watch::channel::<Option<String>>(None);
+        let process = Arc::new(Self {
+            agent: agent.clone(),
+            child: Mutex::new(child),
+            pid: AtomicU32::new(pid),
+            write_tx,
+            events,
+            stderr_lines,
+            shutdown,
+        });
+
+        let stdout_process = Arc::clone(&process);
+        tokio::spawn(async move {
+            stdout_pump(stdout_process, stdout).await;
+        });
+        let stderr_process = Arc::clone(&process);
+        tokio::spawn(async move {
+            stderr_pump(stderr_process, stderr, stderr_log_path).await;
+        });
+
+        let monitor_process = Arc::clone(&process);
+        tokio::spawn(async move {
+            monitor_crp_child_exit(monitor_process).await;
+        });
+
+        Ok(process)
+    }
+
+    pub(super) async fn pid(&self) -> Option<u32> {
+        let pid = self.pid.load(Ordering::Relaxed);
+        if pid != 0 {
+            return Some(pid);
+        }
+        let child = self.child.lock().await;
+        child.id()
+    }
+
+    pub(super) async fn send(&self, command: CrpCommand) -> Result<()> {
+        let envelope = CrpCommandEnvelope {
+            v: super::CRP_VERSION,
+            command,
+        };
+        let line = serde_json::to_string(&envelope)?;
+        self.write_tx
+            .send(line)
+            .map_err(|_| anyhow::anyhow!("crp runtime stdin closed"))?;
+        Ok(())
+    }
+
+    pub(super) fn signal_shutdown(&self, reason: &str) {
+        let next = reason.to_string();
+        let prefer_over_stdout_close =
+            next.starts_with("crp_runtime_exited:") || next.starts_with("crp_runtime_wait_failed:");
+
+        // Avoid clobbering an existing shutdown reason (e.g. drain/restart), which is
+        // user-visible via TurnInterrupted. The only exception is upgrading a generic
+        // stdout-close reason to a more specific exit/wait failure.
+        let _ = self.shutdown.send_if_modified(|current| {
+            let should_replace = match current.as_deref() {
+                None => true,
+                Some("crp_runtime_stdout_closed") => prefer_over_stdout_close,
+                Some(_) => false,
+            };
+
+            if should_replace {
+                *current = Some(next.clone());
+            }
+
+            should_replace
+        });
+    }
+
+    pub(super) async fn shutdown(&self, reason: &str) {
+        self.signal_shutdown(reason);
+        let mut child = self.child.lock().await;
+        if let Err(err) = child.kill().await {
+            tracing::debug!(
+                provider_id = %self.agent.provider_id,
+                "crp shutdown failed ({reason}): {err}"
+            );
+        }
+        let _ = child.wait().await;
+        self.pid.store(0, Ordering::Relaxed);
+    }
+}
+
+async fn monitor_crp_child_exit(process: Arc<CrpProcess>) {
+    let mut shutdown_rx = process.shutdown.subscribe();
+    loop {
+        if shutdown_rx.borrow().is_some() {
+            return;
+        }
+
+        let status = {
+            let mut child = process.child.lock().await;
+            child.try_wait()
+        };
+
+        match status {
+            Ok(Some(status)) => {
+                process.pid.store(0, Ordering::Relaxed);
+                process.signal_shutdown(&format!("crp_runtime_exited: {status}"));
+                return;
+            }
+            Ok(None) => {}
+            Err(err) => {
+                process.pid.store(0, Ordering::Relaxed);
+                process.signal_shutdown(&format!("crp_runtime_wait_failed: {err}"));
+                return;
+            }
+        }
+
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_millis(500)) => {},
+            changed = shutdown_rx.changed() => {
+                if changed.is_err() || shutdown_rx.borrow().is_some() {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+fn crp_log_paths(env: &HashMap<String, String>, provider_id: &str) -> Option<CrpLogPaths> {
+    let data_root = crate::env::data_root_for_host(env)?;
+    let timestamp = Utc::now().format("%Y-%m-%dT%H-%M-%SZ");
+    let suffix = Uuid::new_v4().simple().to_string();
+    let base = format!("crp-{}-{}-{}", provider_id, timestamp, suffix);
+    let dir = Path::new(&data_root).join("logs").join("providers");
+    Some(CrpLogPaths {
+        codex_events: dir.join(format!("{base}.codex-events.jsonl")),
+        crp_events: dir.join(format!("{base}.crp-events.jsonl")),
+        stderr: dir.join(format!("{base}.stderr.log")),
+    })
+}
+
+async fn stdout_pump(process: Arc<CrpProcess>, stdout: impl tokio::io::AsyncRead + Unpin) {
+    // Debugging aid: when set, dump raw CRP stdout lines from the runtime to this file.
+    // This lets us confirm what the runtime emitted without involving storage/UI layers.
+    let dump_path = std::env::var("CTX_CRP_DUMP_EVENTS_PATH")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let mut dump_file = dump_path.as_deref().and_then(|path| {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .ok()
+    });
+
+    let mut lines = BufReader::new(stdout).lines();
+    loop {
+        match lines.next_line().await {
+            Ok(Some(line)) => {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                if let Some(f) = dump_file.as_mut() {
+                    // Best-effort only; never fail the pump because debug dumping failed.
+                    let _ = writeln!(f, "{trimmed}");
+                }
+                match serde_json::from_str::<CrpEventEnvelope>(trimmed) {
+                    Ok(env) => {
+                        let _ = process.events.send(env);
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            provider_id = %process.agent.provider_id,
+                            error = %err,
+                            "failed to parse CRP event"
+                        );
+                    }
+                }
+            }
+            Ok(None) => break,
+            Err(err) => {
+                tracing::warn!(
+                    provider_id = %process.agent.provider_id,
+                    error = %err,
+                    "failed to read CRP stdout"
+                );
+                break;
+            }
+        }
+    }
+
+    process.signal_shutdown("crp_runtime_stdout_closed");
+}
+
+async fn stderr_pump(
+    process: Arc<CrpProcess>,
+    stderr: impl tokio::io::AsyncRead + Unpin,
+    log_path: Option<PathBuf>,
+) {
+    let mut log_file = match log_path {
+        Some(path) => tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .await
+            .ok(),
+        None => None,
+    };
+    let mut lines = BufReader::new(stderr).lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Some(file) = log_file.as_mut() {
+            let redacted = redact_sensitive(trimmed);
+            if file.write_all(redacted.as_bytes()).await.is_err() {
+                log_file = None;
+            } else {
+                let _ = file.write_all(b"\n").await;
+                let _ = file.flush().await;
+            }
+        }
+        let _ = process.stderr_lines.send(redact_sensitive(trimmed));
+        tracing::debug!(
+            provider_id = %process.agent.provider_id,
+            "crp stderr: {}",
+            trimmed
+        );
+    }
+}
+
+fn redact_sensitive(input: &str) -> String {
+    fn redact_after_marker(mut s: String, marker: &str) -> String {
+        let redacted = "[REDACTED]";
+        let mut search_from = 0usize;
+        while let Some(rel) = s[search_from..].find(marker) {
+            let marker_start = search_from + rel;
+            let start = marker_start + marker.len();
+            if start >= s.len() {
+                break;
+            }
+            if s[start..].starts_with(redacted) {
+                search_from = start + redacted.len();
+                continue;
+            }
+
+            let mut end = s.len();
+            for (i, ch) in s[start..].char_indices() {
+                if ch.is_whitespace() || ch == '"' || ch == '\'' || ch == '&' {
+                    end = start + i;
+                    break;
+                }
+            }
+
+            s.replace_range(start..end, redacted);
+            search_from = start + redacted.len();
+        }
+        s
+    }
+
+    let mut out = input.to_string();
+    out = redact_after_marker(out, "Bearer ");
+    out = redact_after_marker(out, "bearer ");
+    out = redact_after_marker(out, "Authorization: Bearer ");
+    out = redact_after_marker(out, "authorization: Bearer ");
+    out = redact_after_marker(out, "token=");
+    out = redact_after_marker(out, "TOKEN=");
+    out = redact_after_marker(out, "CTX_AUTH_TOKEN=");
+    out = redact_after_marker(out, "ctxAuthToken\":\"");
+    out = redact_after_marker(out, "ctx_auth_token\":\"");
+    out
+}
+
+pub(super) fn apply_outer_process_env(cmd: &mut Command, env: &HashMap<String, String>) {
+    let is_container_exec = container_exec_spec(env).is_some();
+    for (key, value) in env {
+        if should_skip_outer_process_env_key(key, is_container_exec) {
+            continue;
+        }
+        cmd.env(key, value);
+    }
+}
+
+pub(super) fn should_skip_outer_process_env_key(key: &str, is_container_exec: bool) -> bool {
+    if !is_container_exec {
+        return false;
+    }
+    matches!(key, "HOME" | "TMPDIR" | "TMP" | "TEMP") || key.starts_with("XDG_")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn container_exec_outer_process_env_skips_provider_home_and_xdg_keys() {
+        assert!(should_skip_outer_process_env_key("HOME", true));
+        assert!(should_skip_outer_process_env_key("TMPDIR", true));
+        assert!(should_skip_outer_process_env_key("XDG_CONFIG_HOME", true));
+        assert!(should_skip_outer_process_env_key("XDG_STATE_HOME", true));
+        assert!(!should_skip_outer_process_env_key("OPENAI_API_KEY", true));
+        assert!(!should_skip_outer_process_env_key("HOME", false));
+    }
+
+    #[test]
+    fn rewrite_bundled_path_for_linux_rewrites_provider_paths() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let host = tmp
+            .path()
+            .join("bundles/providers/acp-crp-bridge/macos/aarch64/acp-crp-bridge");
+        let linux = tmp
+            .path()
+            .join("bundles/providers/acp-crp-bridge/linux/aarch64/acp-crp-bridge");
+        fs::create_dir_all(linux.parent().expect("parent")).expect("mkdir");
+        fs::write(&linux, b"ok").expect("write");
+
+        let rewritten = rewrite_bundled_path_for_linux(host.to_string_lossy().as_ref())
+            .expect("rewrite should succeed");
+        assert_eq!(rewritten, linux.to_string_lossy());
+    }
+
+    #[test]
+    fn rewrite_bundled_path_for_linux_rewrites_e2e_bundle_provider_paths() {
+        let tmp = tempfile::Builder::new()
+            .prefix("ctx-e2e-bundles-runtime-probe-")
+            .tempdir()
+            .expect("tempdir");
+        let host = tmp.path().join("providers/codex/macos/aarch64/codex-crp");
+        let linux = tmp.path().join("providers/codex/linux/aarch64/codex-crp");
+        fs::create_dir_all(linux.parent().expect("parent")).expect("mkdir");
+        fs::write(&linux, b"ok").expect("write linux");
+        fs::write(tmp.path().join("manifest.json"), "{}").expect("write manifest");
+
+        let rewritten = rewrite_bundled_path_for_linux(host.to_string_lossy().as_ref())
+            .expect("rewrite should succeed");
+        assert_eq!(rewritten, linux.to_string_lossy());
+    }
+
+    #[test]
+    fn rewrite_bundled_path_for_linux_rewrites_runtime_flavor_directory() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let host = tmp
+            .path()
+            .join("bundles/runtimes/node/macos/aarch64/node-v24.12.0-darwin-arm64/bin/node");
+        let linux = tmp
+            .path()
+            .join("bundles/runtimes/node/linux/aarch64/node-v24.12.0-linux-arm64/bin/node");
+        fs::create_dir_all(linux.parent().expect("parent")).expect("mkdir");
+        fs::write(&linux, b"ok").expect("write");
+        let manifest_path = tmp.path().join("bundles/manifest.json");
+        fs::write(
+            &manifest_path,
+            serde_json::json!({
+                "version": 1,
+                "providers": [],
+                "runtimes": [
+                    {
+                        "id": "node",
+                        "os": "linux",
+                        "arch": "aarch64",
+                        "root": "runtimes/node/linux/aarch64/node-v24.12.0-linux-arm64",
+                        "bin": "bin/node"
+                    }
+                ],
+                "images": [],
+                "daemons": []
+            })
+            .to_string(),
+        )
+        .expect("write manifest");
+
+        let rewritten = rewrite_bundled_path_for_linux(host.to_string_lossy().as_ref())
+            .expect("rewrite should succeed");
+        assert_eq!(rewritten, linux.to_string_lossy());
+    }
+
+    #[test]
+    fn rewrite_bundled_path_for_linux_rewrites_runtime_flavor_directory_for_e2e_bundle_root() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let host = tmp
+            .path()
+            .join("runtimes/node/macos/aarch64/node-v24.12.0-darwin-arm64/bin/node");
+        let linux = tmp
+            .path()
+            .join("runtimes/node/linux/aarch64/node-v24.12.0-linux-arm64/bin/node");
+        fs::create_dir_all(linux.parent().expect("parent")).expect("mkdir");
+        fs::write(&linux, b"ok").expect("write");
+        let manifest_path = tmp.path().join("manifest.json");
+        fs::write(
+            &manifest_path,
+            serde_json::json!({
+                "version": 1,
+                "providers": [],
+                "runtimes": [
+                    {
+                        "id": "node",
+                        "os": "linux",
+                        "arch": "aarch64",
+                        "root": "runtimes/node/linux/aarch64/node-v24.12.0-linux-arm64",
+                        "bin": "bin/node"
+                    }
+                ],
+                "images": [],
+                "daemons": []
+            })
+            .to_string(),
+        )
+        .expect("write manifest");
+
+        let rewritten = rewrite_bundled_path_for_linux(host.to_string_lossy().as_ref())
+            .expect("rewrite should succeed");
+        assert_eq!(rewritten, linux.to_string_lossy());
+    }
+
+    #[test]
+    fn rewrite_container_args_for_linux_rewrites_nested_acp_command_paths() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let host_provider = tmp
+            .path()
+            .join("bundles/providers/pi/macos/aarch64/pi-acp.js");
+        let linux_provider = tmp
+            .path()
+            .join("bundles/providers/pi/linux/aarch64/pi-acp.js");
+        let host_node = tmp
+            .path()
+            .join("bundles/runtimes/node/macos/aarch64/node-v1/bin/node");
+        let linux_node = tmp
+            .path()
+            .join("bundles/runtimes/node/linux/aarch64/node-v1/bin/node");
+        fs::create_dir_all(linux_provider.parent().expect("parent")).expect("mkdir");
+        fs::create_dir_all(host_node.parent().expect("parent")).expect("mkdir host node");
+        fs::create_dir_all(linux_node.parent().expect("parent")).expect("mkdir");
+        fs::write(&linux_provider, b"ok").expect("write");
+        fs::write(&host_node, b"ok").expect("write host node");
+        fs::write(&linux_node, b"ok").expect("write");
+
+        let raw_acp = format!("{} --foo", host_provider.to_string_lossy());
+        let args = vec!["--acp-command".to_string(), raw_acp];
+        let mut env = HashMap::new();
+        env.insert(
+            "PATH".to_string(),
+            host_node
+                .parent()
+                .expect("node dir")
+                .to_string_lossy()
+                .to_string(),
+        );
+        let rewritten = rewrite_container_args_for_linux(&args, &env).expect("rewrite args");
+        assert_eq!(rewritten.len(), 2);
+        let parsed = shlex::split(&rewritten[1]).expect("parse rewritten command");
+        assert_eq!(
+            parsed,
+            vec![
+                linux_node.to_string_lossy().to_string(),
+                linux_provider.to_string_lossy().to_string(),
+                "--foo".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn rewrite_container_args_for_linux_preserves_quoted_paths_with_spaces() {
+        let tmp = tempfile::Builder::new()
+            .prefix("ctx bundles with spaces ")
+            .tempdir()
+            .expect("tempdir");
+        let host_provider = tmp
+            .path()
+            .join("bundles/providers/pi/macos/aarch64/pi-acp.js");
+        let linux_provider = tmp
+            .path()
+            .join("bundles/providers/pi/linux/aarch64/pi-acp.js");
+        let host_node = tmp
+            .path()
+            .join("bundles/runtimes/node/macos/aarch64/node-v1/bin/node");
+        let linux_node = tmp
+            .path()
+            .join("bundles/runtimes/node/linux/aarch64/node-v1/bin/node");
+        fs::create_dir_all(linux_provider.parent().expect("parent")).expect("mkdir");
+        fs::create_dir_all(host_node.parent().expect("parent")).expect("mkdir host node");
+        fs::create_dir_all(linux_node.parent().expect("parent")).expect("mkdir");
+        fs::write(&linux_provider, b"ok").expect("write");
+        fs::write(&host_node, b"ok").expect("write host node");
+        fs::write(&linux_node, b"ok").expect("write");
+
+        let raw_acp = shlex::try_join(
+            [
+                host_provider.to_string_lossy().to_string(),
+                "--flag".to_string(),
+            ]
+            .iter()
+            .map(String::as_str),
+        )
+        .expect("quote acp command");
+        let args = vec!["--acp-command".to_string(), raw_acp];
+        let mut env = HashMap::new();
+        env.insert(
+            "PATH".to_string(),
+            host_node
+                .parent()
+                .expect("node dir")
+                .to_string_lossy()
+                .to_string(),
+        );
+        let rewritten = rewrite_container_args_for_linux(&args, &env).expect("rewrite args");
+        assert_eq!(rewritten.len(), 2);
+        let parsed = shlex::split(&rewritten[1]).expect("parse rewritten command");
+        assert_eq!(
+            parsed,
+            vec![
+                linux_node.to_string_lossy().to_string(),
+                linux_provider.to_string_lossy().to_string(),
+                "--flag".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn rewrite_container_args_for_linux_keeps_explicit_node_binary_for_acp_command() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let host_provider = tmp
+            .path()
+            .join("bundles/providers/goose/macos/aarch64/goose-acp.js");
+        let linux_provider = tmp
+            .path()
+            .join("bundles/providers/goose/linux/aarch64/goose-acp.js");
+        let host_node = tmp
+            .path()
+            .join("bundles/runtimes/node/macos/aarch64/node-v1/bin/node");
+        let linux_node = tmp
+            .path()
+            .join("bundles/runtimes/node/linux/aarch64/node-v1/bin/node");
+        fs::create_dir_all(linux_provider.parent().expect("parent")).expect("mkdir");
+        fs::create_dir_all(linux_node.parent().expect("parent")).expect("mkdir");
+        fs::write(&linux_provider, b"ok").expect("write provider");
+        fs::write(&linux_node, b"ok").expect("write node");
+
+        let raw_acp = shlex::try_join(
+            [
+                host_node.to_string_lossy().to_string(),
+                host_provider.to_string_lossy().to_string(),
+                "--flag".to_string(),
+            ]
+            .iter()
+            .map(String::as_str),
+        )
+        .expect("quote acp command");
+        let args = vec!["--acp-command".to_string(), raw_acp];
+        let mut env = HashMap::new();
+        env.insert(
+            "PATH".to_string(),
+            linux_node
+                .parent()
+                .expect("node dir")
+                .to_string_lossy()
+                .to_string(),
+        );
+
+        let rewritten = rewrite_container_args_for_linux(&args, &env).expect("rewrite args");
+        let parsed = shlex::split(&rewritten[1]).expect("parse rewritten command");
+        assert_eq!(
+            parsed,
+            vec![
+                linux_node.to_string_lossy().to_string(),
+                linux_provider.to_string_lossy().to_string(),
+                "--flag".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn rewrite_container_command_for_linux_uses_explicit_node_binary_for_js_entrypoints() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node_dir = tmp.path().join("runtimes/node/linux/aarch64/node-v1/bin");
+        fs::create_dir_all(&node_dir).expect("mkdir node dir");
+        let node_bin = node_dir.join("node");
+        fs::write(&node_bin, b"ok").expect("write node");
+        let script = tmp
+            .path()
+            .join("providers/goose/linux/aarch64/goose-acp.js");
+        fs::create_dir_all(script.parent().expect("parent")).expect("mkdir script parent");
+        fs::write(&script, b"#!/usr/bin/env node\n").expect("write script");
+
+        let mut env = HashMap::new();
+        env.insert("PATH".to_string(), node_dir.to_string_lossy().to_string());
+        let args = vec!["--flag".to_string()];
+
+        let (command, rewritten_args) =
+            rewrite_container_command_for_linux(script.to_string_lossy().as_ref(), &args, &env)
+                .expect("rewrite command");
+
+        assert_eq!(command, node_bin.to_string_lossy());
+        assert_eq!(
+            rewritten_args,
+            vec![script.to_string_lossy().to_string(), "--flag".to_string()]
+        );
+    }
+
+    #[test]
+    fn rewrite_bundled_path_for_linux_errors_when_linux_target_missing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let host = tmp
+            .path()
+            .join("bundles/providers/cursor/macos/aarch64/cursor-agent-acp.js");
+        fs::create_dir_all(host.parent().expect("parent")).expect("mkdir");
+        fs::write(&host, b"ok").expect("write");
+
+        let err = rewrite_bundled_path_for_linux(host.to_string_lossy().as_ref())
+            .expect_err("expected missing linux target error");
+        let msg = err.to_string();
+        assert!(msg.contains("missing linux bundled path"));
+    }
+
+    #[test]
+    fn rewrite_bundled_path_for_linux_ignores_managed_install_provider_paths() {
+        let path =
+            "/tmp/providers/agent-servers/cursor-agent-acp/node_modules/@scope/pkg/dist/bin/app.js";
+        let rewritten = rewrite_bundled_path_for_linux(path).expect("rewrite should succeed");
+        assert_eq!(rewritten, path);
+    }
+
+    #[test]
+    fn rewrite_bundled_path_for_linux_ignores_managed_install_runtime_paths() {
+        let path = "/tmp/runtimes/node/v24.12.0/bin/node";
+        let rewritten = rewrite_bundled_path_for_linux(path).expect("rewrite should succeed");
+        assert_eq!(rewritten, path);
+    }
+
+    #[test]
+    fn rewrite_container_args_for_linux_rejects_invalid_shell_command() {
+        let args = vec!["--acp-command".to_string(), "\"unterminated".to_string()];
+        let err = rewrite_container_args_for_linux(&args, &HashMap::new())
+            .expect_err("expected parse error");
+        assert!(err
+            .to_string()
+            .contains("invalid shell command in --acp-command"));
+    }
+}
