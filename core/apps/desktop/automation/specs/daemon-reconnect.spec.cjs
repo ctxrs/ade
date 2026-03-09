@@ -1,5 +1,6 @@
 const { waitForTauri, getConnectionInfo } = require("./helpers/tauri.cjs");
 const { daemonJson } = require("./helpers/daemon.cjs");
+const { assertDesktopConnectionStable } = require("./helpers/workspace_wizard_flow.cjs");
 
 const connectLocal = async () => {
   const result = await browser.execute(async () => {
@@ -86,6 +87,13 @@ describe("desktop daemon reconnect + deep-link token", () => {
       throw new Error(`expected base_url + token after reconnect, got: ${JSON.stringify(afterReconnect)}`);
     }
 
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const health = await daemonJson("GET", "/api/health");
+      if (health.status !== 200) {
+        throw new Error(`reconnect stability /api/health failed on attempt ${attempt + 1}: ${JSON.stringify(health)}`);
+      }
+    }
+    await assertDesktopConnectionStable(5000, 250);
     const token = await requestDeepLinkToken();
     if (!token || typeof token.token !== "string" || token.token.trim().length < 8) {
       throw new Error(`invalid deep link token payload: ${JSON.stringify(token)}`);
@@ -95,4 +103,3 @@ describe("desktop daemon reconnect + deep-link token", () => {
     }
   });
 });
-

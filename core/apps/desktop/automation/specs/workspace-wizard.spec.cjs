@@ -10,10 +10,11 @@ const {
   setInputTestId,
   getConnectionInfo,
 } = require("./helpers/tauri.cjs");
-const { daemonJson, safeDaemonJson } = require("./helpers/daemon.cjs");
+const { daemonJson, daemonJsonOnce, safeDaemonJson } = require("./helpers/daemon.cjs");
 const { runCodexFirstTurnApiSmoke } = require("./helpers/workspace_wizard_flow.cjs");
 const {
   ensureCodexOpenRouterWorkspaceReady,
+  getProviderStatus,
   waitForProviderInstallCompletion,
 } = require("./helpers/provider_runtime.cjs");
 
@@ -61,10 +62,73 @@ const RETRIABLE_WEBDRIVER_ERROR_PATTERNS = [
   "socket hang up",
   "Error: Timeout",
 ];
+const ACP_BRIDGE_PROVIDER_ID = "acp-crp-bridge";
+const ACP_BRIDGE_INVALID_PATTERNS = [
+  /ACP bridge runtime is not configured or invalid/i,
+  /runtime command is not configured for provider 'acp-crp-bridge'/i,
+];
 
 const shouldRetryWebdriverTransportError = (error) => {
   const text = String(error || "");
   return RETRIABLE_WEBDRIVER_ERROR_PATTERNS.some((pattern) => text.includes(pattern));
+};
+
+const hasAcpBridgeInvalidDiagnostic = (status) => {
+  const diagnostics = Array.isArray(status?.diagnostics) ? status.diagnostics : [];
+  return diagnostics.some((entry) => ACP_BRIDGE_INVALID_PATTERNS.some((pattern) => pattern.test(String(entry || ""))));
+};
+
+const waitForProviderInstallOrAcpBridgeObservation = async (
+  providerId,
+  target,
+  { timeoutMs = 10 * 60_000, pollMs = 2_000, settleMs = 5_000 } = {},
+) => {
+  const startedAt = Date.now();
+  let lastProviderStatus = null;
+  let lastBridgeStatus = null;
+  while (Date.now() - startedAt < timeoutMs) {
+    lastProviderStatus = await getProviderStatus(providerId, target);
+    lastBridgeStatus = await getProviderStatus(ACP_BRIDGE_PROVIDER_ID, target);
+
+    if (lastProviderStatus.installed) {
+      if (lastBridgeStatus.installed && lastBridgeStatus.health === "ok") {
+        return {
+          outcome: "viable",
+          providerStatus: lastProviderStatus,
+          bridgeStatus: lastBridgeStatus,
+        };
+      }
+      throw new Error(
+        `provider '${providerId}' installed but ACP bridge runtime stayed invalid for target=${target}: ${JSON.stringify(lastBridgeStatus)}`,
+      );
+    }
+
+    if (hasAcpBridgeInvalidDiagnostic(lastProviderStatus) || hasAcpBridgeInvalidDiagnostic(lastBridgeStatus)) {
+      return {
+        outcome: "acp-bridge-invalid",
+        providerStatus: lastProviderStatus,
+        bridgeStatus: lastBridgeStatus,
+      };
+    }
+
+    const installRunning = lastProviderStatus.details.install_running === "true";
+    if (!installRunning && Date.now() - startedAt >= settleMs) {
+      const detail = lastProviderStatus.diagnostics[0]
+        || lastBridgeStatus.diagnostics[0]
+        || `provider=${JSON.stringify(lastProviderStatus)} bridge=${JSON.stringify(lastBridgeStatus)}`;
+      throw new Error(
+        `provider '${providerId}' did not converge to install or explicit ACP bridge diagnostics for target=${target}: ${detail}`,
+      );
+    }
+    await browser.pause(pollMs);
+  }
+
+  throw new Error(
+    `provider '${providerId}' install/ACP bridge observation timed out for target=${target}: ${JSON.stringify({
+      providerStatus: lastProviderStatus,
+      bridgeStatus: lastBridgeStatus,
+    })}`,
+  );
 };
 
 const browserExecuteWithRetry = async (fn, args = [], attempts = 4) => {
@@ -839,6 +903,7 @@ const readWizardHarnessDownloadsState = async () => {
         return [{
           providerId,
           checked: Boolean(node.checked),
+          disabled: Boolean(node.disabled),
           statusText: String(row?.querySelector(".wizard-auth-import-path")?.textContent || "").trim(),
           errorText: String(row?.querySelector(".wizard-error")?.textContent || "").trim(),
         }];
@@ -851,6 +916,54 @@ const readWizardHarnessDownloadsState = async () => {
       nextLabel: next ? String(next.textContent || "").trim() : "",
     };
   });
+};
+
+const rowNeedsHarnessInstall = (row) => !String(row?.statusText || "").trim().startsWith("Installed");
+
+const pickHarnessProvidersForNonBlockingInstallProof = async (providerIds, timeoutMs = 10_000) => {
+  const preferred = Array.from(new Set((providerIds || []).map((value) => String(value || "").trim()).filter(Boolean)));
+  const started = Date.now();
+  let lastHarnessState = null;
+  while (Date.now() - started < timeoutMs) {
+    const harnessState = await readWizardHarnessDownloadsState();
+    lastHarnessState = harnessState;
+    const rows = Array.isArray(harnessState?.rows) ? harnessState.rows : [];
+    const installableRows = rows.filter((row) =>
+      row
+      && row.providerId
+      && row.disabled !== true
+      && !row.errorText
+      && rowNeedsHarnessInstall(row),
+    );
+
+    for (const providerId of preferred) {
+      const row = installableRows.find((entry) => entry.providerId === providerId);
+      if (row) {
+        return {
+          providerIds: [providerId],
+          requestedProviderIds: preferred,
+          harnessState,
+        };
+      }
+    }
+
+    const fallback = installableRows.find((row) => !preferred.includes(row.providerId));
+    if (fallback) {
+      return {
+        providerIds: [fallback.providerId],
+        requestedProviderIds: preferred,
+        harnessState,
+      };
+    }
+    await browser.pause(150);
+  }
+
+  throw new Error(
+    `no installable harness rows remained to prove non-blocking background progress: ${JSON.stringify({
+      requestedProviderIds: preferred,
+      harnessState: lastHarnessState,
+    })}`,
+  );
 };
 
 const syncHarnessSelections = async (providerIds, timeoutMs = 10_000) => {
@@ -948,12 +1061,66 @@ const waitForSelectedHarnessInstallsToKickOff = async (providerIds, target = "ho
   );
 };
 
+const waitForWizardAdvanceWhileSelectedHarnessInstallsRun = async (
+  providerIds,
+  target = "host",
+  timeoutMs = 30000,
+) => {
+  const selected = Array.from(new Set((providerIds || []).map((value) => String(value || "").trim()).filter(Boolean)));
+  if (selected.length === 0) {
+    throw new Error("expected pending selected harness installs to prove background progress, got none");
+  }
+
+  const started = Date.now();
+  let lastSnapshot = null;
+  while (Date.now() - started < timeoutMs) {
+    const step = await currentStepKey();
+    const resp = await safeDaemonJson("GET", `/api/providers?target=${encodeURIComponent(target)}`);
+    const providers = Array.isArray(resp.payload) ? resp.payload : [];
+    const relevant = providers.filter((provider) => selected.includes(String(provider?.provider_id || "")));
+    const running = relevant.filter((provider) => {
+      const details = provider && typeof provider.details === "object" && provider.details
+        ? provider.details
+        : {};
+      return provider.installed !== true && details.install_running === "true";
+    });
+    lastSnapshot = {
+      step,
+      providers: relevant.map((provider) => compactEntity(provider)),
+      error: resp.error || null,
+    };
+
+    if (step && step !== "harness-downloads" && running.length > 0) {
+      return lastSnapshot;
+    }
+
+    if (
+      step
+      && step !== "harness-downloads"
+      && relevant.length === selected.length
+      && running.length === 0
+      && relevant.every((provider) => provider.installed === true)
+    ) {
+      throw new Error(
+        `wizard advanced only after selected harness installs completed; snapshot=${JSON.stringify(lastSnapshot)}`,
+      );
+    }
+
+    await browser.pause(250);
+  }
+
+  throw new Error(
+    `wizard never advanced while selected harness installs were still running: ${JSON.stringify(lastSnapshot)}`,
+  );
+};
+
 const ensureReadyForSourceSelection = async (
   {
     location,
     container,
     downloadHarnesses = false,
     selectedHarnessProviderIds = null,
+    requireSelectedHarnessInstallsNonBlocking = false,
     forbidLocationRegression = false,
     locationProgress = { leftLocation: false },
   },
@@ -1020,15 +1187,40 @@ const ensureReadyForSourceSelection = async (
         continue;
       }
       if (Array.isArray(selectedHarnessProviderIds) && selectedHarnessProviderIds.length > 0) {
-        const harnessSelectionState = await syncHarnessSelections(selectedHarnessProviderIds);
+        let effectiveSelectedHarnessProviderIds = Array.from(
+          new Set(selectedHarnessProviderIds.map((value) => String(value || "").trim()).filter(Boolean)),
+        );
+        if (requireSelectedHarnessInstallsNonBlocking) {
+          const installProofSelection = await pickHarnessProvidersForNonBlockingInstallProof(
+            effectiveSelectedHarnessProviderIds,
+          );
+          effectiveSelectedHarnessProviderIds = installProofSelection.providerIds;
+        }
+        const harnessSelectionState = await syncHarnessSelections(effectiveSelectedHarnessProviderIds);
         const readyProviders = new Set(Array.isArray(harnessSelectionState?.ready) ? harnessSelectionState.ready : []);
         const expectedKickoffProviderIds = Array.from(
-          new Set(selectedHarnessProviderIds.map((value) => String(value || "").trim()).filter(Boolean)),
+          new Set(effectiveSelectedHarnessProviderIds.map((value) => String(value || "").trim()).filter(Boolean)),
         ).filter((providerId) => !readyProviders.has(providerId));
         const next = await clickNextIfEnabled();
         if (next.clicked) {
-          if (expectedKickoffProviderIds.length > 0) {
-            const installTarget = container === "no-container" ? "host" : "container";
+          const installTarget = container === "no-container" ? "host" : "container";
+          if (requireSelectedHarnessInstallsNonBlocking) {
+            if (expectedKickoffProviderIds.length === 0) {
+              throw new Error(
+                `selected harness installs were already complete before wizard could prove background progress: ${JSON.stringify({
+                  selectedHarnessProviderIds: effectiveSelectedHarnessProviderIds,
+                  requestedHarnessProviderIds: selectedHarnessProviderIds,
+                  ready: Array.from(readyProviders),
+                  installTarget,
+                })}`,
+              );
+            }
+            await waitForWizardAdvanceWhileSelectedHarnessInstallsRun(
+              expectedKickoffProviderIds,
+              installTarget,
+              30000,
+            );
+          } else if (expectedKickoffProviderIds.length > 0) {
             await waitForSelectedHarnessInstallsToKickOff(
               expectedKickoffProviderIds,
               installTarget,
@@ -1039,7 +1231,7 @@ const ensureReadyForSourceSelection = async (
         } else {
           const harnessState = await readWizardHarnessDownloadsState();
           const selected = new Set(
-            selectedHarnessProviderIds.map((value) => String(value || "").trim()).filter(Boolean),
+            effectiveSelectedHarnessProviderIds.map((value) => String(value || "").trim()).filter(Boolean),
           );
           const blocked = harnessState.rows.filter((row) =>
             selected.has(row.providerId) && row.errorText,
@@ -1126,6 +1318,7 @@ const selectSourceOptionWithRetry = async (
     sourceKind,
     downloadHarnesses = false,
     selectedHarnessProviderIds = null,
+    requireSelectedHarnessInstallsNonBlocking = false,
     forbidLocationRegression = false,
   },
   attempts = 6,
@@ -1156,6 +1349,7 @@ const selectSourceOptionWithRetry = async (
       container,
       downloadHarnesses,
       selectedHarnessProviderIds,
+      requireSelectedHarnessInstallsNonBlocking,
       forbidLocationRegression,
       locationProgress,
     });
@@ -1378,10 +1572,12 @@ const assertDesktopConnectionStable = async (durationMs = 5000, intervalMs = 250
         `desktop connection churn detected after workspace launch: baseline=${baseline} current=${signature} samples=${JSON.stringify(samples)}`,
       );
     }
-    const health = await safeDaemonJson("GET", "/api/health");
-    if (health.error) {
+    let health;
+    try {
+      health = await daemonJsonOnce("GET", "/api/health");
+    } catch (error) {
       throw new Error(
-        `desktop daemon health request stayed unavailable after workspace launch: ${String(health.error)}; samples=${JSON.stringify(samples)}`,
+        `desktop daemon health request failed immediately after workspace launch: ${String(error)}; samples=${JSON.stringify(samples)}`,
       );
     }
     if (Number(health.status) !== 200) {
@@ -1470,6 +1666,7 @@ const runWizardScenario = async (scenario) => {
     selectedHarnessProviderIds: Array.isArray(scenario.selectedHarnessProviderIds)
       ? scenario.selectedHarnessProviderIds
       : null,
+    requireSelectedHarnessInstallsNonBlocking: Boolean(scenario.requireSelectedHarnessInstallsNonBlocking),
     forbidLocationRegression: true,
   });
 
@@ -1855,7 +2052,8 @@ describe("launcher workspace wizard (e2e)", () => {
       container: "disk-isolated",
       network: "full",
       downloadHarnesses: true,
-      selectedHarnessProviderIds: ["codex"],
+      selectedHarnessProviderIds: ["cursor"],
+      requireSelectedHarnessInstallsNonBlocking: true,
       source: { kind: "new", destPath: dest, workspaceName: "disk-isolated-ws" },
       setupHook: "",
       mergeQueue: { kind: "skip" },
@@ -1867,6 +2065,10 @@ describe("launcher workspace wizard (e2e)", () => {
       environment: "container_disk_isolated",
       networkMode: "all",
       mergeQueueEnabled: false,
+    });
+    await waitForProviderInstallOrAcpBridgeObservation("cursor", "container", {
+      timeoutMs: 10 * 60_000,
+      pollMs: 2_000,
     });
     const container = await getWorkspaceHarnessContainer(id);
     if (!container || !container.running || container.mount_mode !== "disk_isolated") {

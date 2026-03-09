@@ -10,7 +10,7 @@ const {
   setInputTestId,
   getConnectionInfo,
 } = require("./tauri.cjs");
-const { daemonJson, safeDaemonJson } = require("./daemon.cjs");
+const { daemonJson, daemonJsonOnce, safeDaemonJson } = require("./daemon.cjs");
 
 const REMOTE_HOST_RAW = process.env.CTX_AUTOMATION_REMOTE_HOST || "";
 const REMOTE_HOST = REMOTE_HOST_RAW.trim();
@@ -472,6 +472,7 @@ const readWizardHarnessDownloadsState = async () => {
         return [{
           providerId,
           checked: Boolean(node.checked),
+          disabled: Boolean(node.disabled),
           statusText: String(row?.querySelector(".wizard-auth-import-path")?.textContent || "").trim(),
           errorText: String(row?.querySelector(".wizard-error")?.textContent || "").trim(),
         }];
@@ -484,6 +485,54 @@ const readWizardHarnessDownloadsState = async () => {
       nextLabel: next ? String(next.textContent || "").trim() : "",
     };
   });
+};
+
+const rowNeedsHarnessInstall = (row) => !String(row?.statusText || "").trim().startsWith("Installed");
+
+const pickHarnessProvidersForNonBlockingInstallProof = async (providerIds, timeoutMs = 10_000) => {
+  const preferred = Array.from(new Set((providerIds || []).map((value) => String(value || "").trim()).filter(Boolean)));
+  const started = Date.now();
+  let lastHarnessState = null;
+  while (Date.now() - started < timeoutMs) {
+    const harnessState = await readWizardHarnessDownloadsState();
+    lastHarnessState = harnessState;
+    const rows = Array.isArray(harnessState?.rows) ? harnessState.rows : [];
+    const installableRows = rows.filter((row) =>
+      row
+      && row.providerId
+      && row.disabled !== true
+      && !row.errorText
+      && rowNeedsHarnessInstall(row),
+    );
+
+    for (const providerId of preferred) {
+      const row = installableRows.find((entry) => entry.providerId === providerId);
+      if (row) {
+        return {
+          providerIds: [providerId],
+          requestedProviderIds: preferred,
+          harnessState,
+        };
+      }
+    }
+
+    const fallback = installableRows.find((row) => !preferred.includes(row.providerId));
+    if (fallback) {
+      return {
+        providerIds: [fallback.providerId],
+        requestedProviderIds: preferred,
+        harnessState,
+      };
+    }
+    await browser.pause(150);
+  }
+
+  throw new Error(
+    `no installable harness rows remained to prove non-blocking background progress: ${JSON.stringify({
+      requestedProviderIds: preferred,
+      harnessState: lastHarnessState,
+    })}`,
+  );
 };
 
 const syncHarnessSelections = async (providerIds, timeoutMs = 10_000) => {
@@ -536,6 +585,102 @@ const syncHarnessSelections = async (providerIds, timeoutMs = 10_000) => {
     await browser.pause(150);
   }
   throw new Error(`failed to select harness rows: ${JSON.stringify(lastState)}`);
+};
+
+const readSelectedHarnessProviderIds = async () => {
+  return await browser.execute(() => {
+    return Array.from(document.querySelectorAll('[data-testid^="wizard-harness-checkbox-"]'))
+      .flatMap((node) => {
+        if (!(node instanceof HTMLInputElement) || node.type !== "checkbox" || !node.checked) {
+          return [];
+        }
+        const testId = String(node.getAttribute("data-testid") || "");
+        const providerId = testId.replace(/^wizard-harness-checkbox-/, "").trim();
+        return providerId ? [providerId] : [];
+      });
+  });
+};
+
+const waitForSelectedHarnessInstallsToKickOff = async (providerIds, target = "host", timeoutMs = 30000) => {
+  const selected = Array.from(new Set((providerIds || []).map((value) => String(value || "").trim()).filter(Boolean)));
+  if (selected.length === 0) return;
+  const started = Date.now();
+  let lastProviders = [];
+  while (Date.now() - started < timeoutMs) {
+    const resp = await safeDaemonJson("GET", `/api/providers?target=${encodeURIComponent(target)}`);
+    const providers = Array.isArray(resp.payload) ? resp.payload : [];
+    lastProviders = providers
+      .filter((provider) => selected.includes(String(provider?.provider_id || "")))
+      .map((provider) => compactEntity(provider));
+    const startedAll = providers
+      .filter((provider) => selected.includes(String(provider?.provider_id || "")))
+      .every((provider) => {
+        const details = provider && typeof provider.details === "object" && provider.details
+          ? provider.details
+          : {};
+        return provider.installed === true || details.install_running === "true";
+      });
+    if (startedAll && lastProviders.length === selected.length) {
+      return;
+    }
+    await browser.pause(250);
+  }
+  throw new Error(
+    `selected harness installs never kicked off: expected=${JSON.stringify(selected)} providers=${JSON.stringify(lastProviders)}`,
+  );
+};
+
+const waitForWizardAdvanceWhileSelectedHarnessInstallsRun = async (
+  providerIds,
+  target = "host",
+  timeoutMs = 30000,
+) => {
+  const selected = Array.from(new Set((providerIds || []).map((value) => String(value || "").trim()).filter(Boolean)));
+  if (selected.length === 0) {
+    throw new Error("expected pending selected harness installs to prove background progress, got none");
+  }
+
+  const started = Date.now();
+  let lastSnapshot = null;
+  while (Date.now() - started < timeoutMs) {
+    const step = await currentStepKey();
+    const resp = await safeDaemonJson("GET", `/api/providers?target=${encodeURIComponent(target)}`);
+    const providers = Array.isArray(resp.payload) ? resp.payload : [];
+    const relevant = providers.filter((provider) => selected.includes(String(provider?.provider_id || "")));
+    const running = relevant.filter((provider) => {
+      const details = provider && typeof provider.details === "object" && provider.details
+        ? provider.details
+        : {};
+      return provider.installed !== true && details.install_running === "true";
+    });
+    lastSnapshot = {
+      step,
+      providers: relevant.map((provider) => compactEntity(provider)),
+      error: resp.error || null,
+    };
+
+    if (step && step !== "harness-downloads" && running.length > 0) {
+      return lastSnapshot;
+    }
+
+    if (
+      step
+      && step !== "harness-downloads"
+      && relevant.length === selected.length
+      && running.length === 0
+      && relevant.every((provider) => provider.installed === true)
+    ) {
+      throw new Error(
+        `wizard advanced only after selected harness installs completed; snapshot=${JSON.stringify(lastSnapshot)}`,
+      );
+    }
+
+    await browser.pause(250);
+  }
+
+  throw new Error(
+    `wizard never advanced while selected harness installs were still running: ${JSON.stringify(lastSnapshot)}`,
+  );
 };
 
 const clickCreate = async (timeoutMs = 30000) => {
@@ -1094,6 +1239,7 @@ const ensureReadyForSourceSelection = async (
     container,
     harnessDownloads,
     selectedHarnessProviderIds = null,
+    requireSelectedHarnessInstallsNonBlocking = false,
     forbidLocationRegression = false,
     locationProgress = { leftLocation: false },
   },
@@ -1156,10 +1302,79 @@ const ensureReadyForSourceSelection = async (
         continue;
       }
       if (Array.isArray(selectedHarnessProviderIds) && selectedHarnessProviderIds.length > 0) {
-        await syncHarnessSelections(selectedHarnessProviderIds);
+        let effectiveSelectedHarnessProviderIds = Array.from(
+          new Set(selectedHarnessProviderIds.map((value) => String(value || "").trim()).filter(Boolean)),
+        );
+        if (requireSelectedHarnessInstallsNonBlocking) {
+          const installProofSelection = await pickHarnessProvidersForNonBlockingInstallProof(
+            effectiveSelectedHarnessProviderIds,
+          );
+          effectiveSelectedHarnessProviderIds = installProofSelection.providerIds;
+        }
+        const harnessSelectionState = await syncHarnessSelections(effectiveSelectedHarnessProviderIds);
+        const readyProviders = new Set(Array.isArray(harnessSelectionState?.ready) ? harnessSelectionState.ready : []);
+        const expectedKickoffProviderIds = Array.from(
+          new Set(effectiveSelectedHarnessProviderIds.map((value) => String(value || "").trim()).filter(Boolean)),
+        ).filter((providerId) => !readyProviders.has(providerId));
+        const next = await clickNextIfEnabled();
+        if (next.clicked) {
+          const installTarget = container === "no-container" ? "host" : "container";
+          if (requireSelectedHarnessInstallsNonBlocking) {
+            if (expectedKickoffProviderIds.length === 0) {
+              throw new Error(
+                `selected harness installs were already complete before wizard could prove background progress: ${JSON.stringify({
+                  selectedHarnessProviderIds: effectiveSelectedHarnessProviderIds,
+                  requestedHarnessProviderIds: selectedHarnessProviderIds,
+                  ready: Array.from(readyProviders),
+                  installTarget,
+                })}`,
+              );
+            }
+            await waitForWizardAdvanceWhileSelectedHarnessInstallsRun(
+              expectedKickoffProviderIds,
+              installTarget,
+              30000,
+            );
+          } else if (expectedKickoffProviderIds.length > 0) {
+            await waitForSelectedHarnessInstallsToKickOff(
+              expectedKickoffProviderIds,
+              installTarget,
+              30000,
+            );
+          }
+          await browser.pause(100);
+        } else {
+          const harnessState = await readWizardHarnessDownloadsState();
+          const selected = new Set(
+            effectiveSelectedHarnessProviderIds.map((value) => String(value || "").trim()).filter(Boolean),
+          );
+          const blocked = harnessState.rows.filter((row) =>
+            selected.has(row.providerId) && row.errorText,
+          );
+          if (blocked.length > 0) {
+            throw new Error(
+              `selected harness downloads blocked source selection: ${JSON.stringify({
+                error: harnessState.error,
+                nextDisabled: harnessState.nextDisabled,
+                nextLabel: harnessState.nextLabel,
+                blocked,
+              })}`,
+            );
+          }
+          // Planning work can temporarily disable Next before the kickoff transition settles.
+          await browser.pause(150);
+        }
+        continue;
       }
+      const expectedKickoffProviderIds = await readSelectedHarnessProviderIds();
       const next = await clickNextIfEnabled();
       if (next.clicked) {
+        const installTarget = container === "no-container" ? "host" : "container";
+        await waitForSelectedHarnessInstallsToKickOff(
+          expectedKickoffProviderIds,
+          installTarget,
+          15000,
+        );
         await browser.pause(100);
       } else {
         if (Array.isArray(selectedHarnessProviderIds) && selectedHarnessProviderIds.length > 0) {
@@ -1181,7 +1396,7 @@ const ensureReadyForSourceSelection = async (
             );
           }
         }
-        // Background install polling can temporarily disable Next; keep waiting.
+        // Planning work can temporarily disable Next before the kickoff transition settles.
         await browser.pause(150);
       }
       continue;
@@ -1225,6 +1440,7 @@ const selectSourceOptionWithRetry = async (
     harnessDownloads,
     sourceKind,
     selectedHarnessProviderIds = null,
+    requireSelectedHarnessInstallsNonBlocking = false,
     forbidLocationRegression = false,
   },
   attempts = 6,
@@ -1255,6 +1471,7 @@ const selectSourceOptionWithRetry = async (
       container,
       harnessDownloads,
       selectedHarnessProviderIds,
+      requireSelectedHarnessInstallsNonBlocking,
       forbidLocationRegression,
       locationProgress,
     });
@@ -1396,10 +1613,12 @@ const assertDesktopConnectionStable = async (durationMs = 5000, intervalMs = 250
         `desktop connection churn detected after workspace launch: baseline=${baseline} current=${signature} samples=${JSON.stringify(samples)}`,
       );
     }
-    const health = await safeDaemonJson("GET", "/api/health");
-    if (health.error) {
+    let health;
+    try {
+      health = await daemonJsonOnce("GET", "/api/health");
+    } catch (error) {
       throw new Error(
-        `desktop daemon health request stayed unavailable after workspace launch: ${String(health.error)}; samples=${JSON.stringify(samples)}`,
+        `desktop daemon health request failed immediately after workspace launch: ${String(error)}; samples=${JSON.stringify(samples)}`,
       );
     }
     if (Number(health.status) !== 200) {
@@ -1615,6 +1834,7 @@ const runWizardScenario = async (scenario) => {
     selectedHarnessProviderIds: Array.isArray(scenario.selectedHarnessProviderIds)
       ? scenario.selectedHarnessProviderIds
       : null,
+    requireSelectedHarnessInstallsNonBlocking: Boolean(scenario.requireSelectedHarnessInstallsNonBlocking),
     forbidLocationRegression: true,
   });
 

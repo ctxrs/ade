@@ -4,7 +4,11 @@ const path = require("path");
 const { waitForTauri } = require("./helpers/tauri.cjs");
 const { daemonJson, sampleDaemonHealth } = require("./helpers/daemon.cjs");
 const {
+  getProviderStatus,
+} = require("./helpers/provider_runtime.cjs");
+const {
   mkTempDir,
+  initGitRepo,
   runWizardScenario,
   getWorkspace,
   getWorkspaceHarnessContainer,
@@ -31,6 +35,16 @@ const CASE_TIMEOUT_MS = Number.parseInt(
   String(process.env.CTX_AUTOMATION_CASE_TIMEOUT_MS || "900000"),
   10,
 ) || 900000;
+const ACP_BRIDGE_PROVIDER_ID = "acp-crp-bridge";
+const ACP_BRIDGE_INVALID_PATTERNS = [
+  /ACP bridge runtime is not configured or invalid/i,
+  /runtime command is not configured for provider 'acp-crp-bridge'/i,
+];
+
+const hasAcpBridgeInvalidDiagnostic = (status) => {
+  const diagnostics = Array.isArray(status?.diagnostics) ? status.diagnostics : [];
+  return diagnostics.some((entry) => ACP_BRIDGE_INVALID_PATTERNS.some((pattern) => pattern.test(String(entry || ""))));
+};
 
 const readLaunchPanelDiagnostics = async () => {
   return await browser.execute(() => {
@@ -51,15 +65,107 @@ const readLaunchPanelDiagnostics = async () => {
   });
 };
 
-const startRuntimePrewarmJob = async () => {
-  const response = await daemonJson("POST", "/api/execution/launch/start", {
-    kind: "startup_prewarm",
-    prewarm_scope: "all",
-  });
-  if (response.status !== 200 || !response.payload?.job_id) {
-    throw new Error(`failed to start runtime prewarm job: ${JSON.stringify(response)}`);
+const waitForLaunchPanelLogMessage = async (message, timeoutMs = 30_000, pollMs = 250) => {
+  const messages = Array.isArray(message) ? message : [message];
+  const started = Date.now();
+  let lastLaunch = null;
+  while (Date.now() - started < timeoutMs) {
+    lastLaunch = await readLaunchPanelDiagnostics();
+    if (
+      Array.isArray(lastLaunch?.lines)
+      && lastLaunch.lines.some((line) => messages.includes(String(line?.message || "").trim()))
+    ) {
+      return lastLaunch;
+    }
+    await browser.pause(pollMs);
   }
-  return response.payload;
+  throw new Error(`launch panel never surfaced ${JSON.stringify(messages)}: ${JSON.stringify(lastLaunch)}`);
+};
+
+const readStartupPrewarmDiagnostics = async () => {
+  const diagnostics = await daemonJson("GET", "/api/diagnostics");
+  return {
+    diagnostics,
+    startupPrewarm: diagnostics.payload?.execution?.startup_prewarm || null,
+  };
+};
+
+const ensureExecutionMachineReady = async ({
+  dest,
+  name,
+  timeoutMs = 15 * 60_000,
+}) => {
+  const initial = await readStartupPrewarmDiagnostics();
+  if (initial.diagnostics.status === 200 && initial.startupPrewarm?.machine_ready === true) {
+    return {
+      bootstrap: null,
+      startupPrewarm: initial.startupPrewarm,
+    };
+  }
+
+  const bootstrap = await startBackgroundContainerLaunchJob({
+    dest,
+    name,
+  });
+  const bootstrapFinal = await waitForLaunchTerminalState(bootstrap.jobId, timeoutMs);
+  if (bootstrapFinal.state !== "ready") {
+    throw new Error(`machine bootstrap launch did not finish cleanly: ${JSON.stringify(bootstrapFinal)}`);
+  }
+  return {
+    bootstrap,
+    startupPrewarm: initial.startupPrewarm,
+  };
+};
+
+const startBackgroundContainerLaunchJob = async ({
+  dest,
+  name,
+  environment = "container_host_mounted",
+  networkMode = "all",
+}) => {
+  initGitRepo(dest, name);
+
+  const create = await daemonJson("POST", "/api/workspaces", {
+    root_path: dest,
+    name,
+  });
+  if (create.status !== 200 || !create.payload?.id) {
+    throw new Error(`failed to create background workspace for launch contention: ${JSON.stringify(create)}`);
+  }
+
+  const workspaceId = String(create.payload.id || "").trim();
+  const config = await daemonJson("POST", `/api/workspaces/${workspaceId}/execution_config`, {
+    environment,
+    network_mode: networkMode,
+  });
+  if (config.status !== 200) {
+    throw new Error(`failed to configure background workspace execution: ${JSON.stringify(config)}`);
+  }
+
+  const launch = await daemonJson("POST", "/api/execution/launch/start", {
+    workspace_id: workspaceId,
+  });
+  if (launch.status !== 200 || !launch.payload?.job_id) {
+    throw new Error(`failed to start background workspace launch: ${JSON.stringify(launch)}`);
+  }
+
+  return {
+    workspaceId,
+    jobId: String(launch.payload.job_id || "").trim(),
+  };
+};
+
+const startBackgroundRuntimePrewarmJob = async ({ scope = "all" } = {}) => {
+  const launch = await daemonJson("POST", "/api/execution/launch/start", {
+    kind: "startup_prewarm",
+    prewarm_scope: scope,
+  });
+  if (launch.status !== 200 || !launch.payload?.job_id) {
+    throw new Error(`failed to start background runtime prewarm: ${JSON.stringify(launch)}`);
+  }
+  return {
+    jobId: String(launch.payload.job_id || "").trim(),
+  };
 };
 
 const readLaunchSnapshot = async (jobId) => {
@@ -98,6 +204,103 @@ const waitForLaunchLogMessage = async (jobId, message, timeoutMs = 120_000, poll
     await browser.pause(pollMs);
   }
   throw new Error(`launch log ${JSON.stringify(messages)} never surfaced for ${jobId}: ${JSON.stringify(lastSnapshot)}`);
+};
+
+const waitForQueuedRuntimePrewarmJob = async (jobIds, timeoutMs = 30_000, pollMs = 100) => {
+  const candidates = Array.isArray(jobIds) ? jobIds.filter(Boolean) : [];
+  if (candidates.length === 0) {
+    throw new Error("expected queued runtime prewarm jobs, got none");
+  }
+
+  const started = Date.now();
+  let lastSnapshots = [];
+  while (Date.now() - started < timeoutMs) {
+    lastSnapshots = await Promise.all(candidates.map(async (jobId) => ({
+      jobId,
+      snapshot: await readLaunchSnapshot(jobId),
+    })));
+    const waiting = lastSnapshots.find(({ snapshot }) => {
+      const logs = Array.isArray(snapshot?.logs) ? snapshot.logs : [];
+      const sawWaiting = logs.some((line) => line?.message === "waiting for runtime prewarm slot");
+      const sawAcquired = logs.some((line) => line?.message === "runtime prewarm slot acquired");
+      return snapshot?.state === "running" && sawWaiting && !sawAcquired;
+    });
+    if (waiting) return waiting;
+    await browser.pause(pollMs);
+  }
+
+  throw new Error(
+    `runtime prewarm queue never formed before create: ${JSON.stringify(lastSnapshots.map(({ jobId, snapshot }) => ({
+      jobId,
+      state: snapshot?.state || null,
+      logs: Array.isArray(snapshot?.logs) ? snapshot.logs.slice(-5) : [],
+    })))}`,
+  );
+};
+
+const prepareRuntimePrewarmContention = async () => {
+  const holder = await startBackgroundRuntimePrewarmJob();
+  await waitForLaunchLogMessage(holder.jobId, "runtime prewarm slot acquired");
+  const queued = await startBackgroundRuntimePrewarmJob();
+  await waitForQueuedRuntimePrewarmJob([queued.jobId]);
+  return {
+    jobs: [holder, queued],
+    holderJobId: holder.jobId,
+    queuedJobId: queued.jobId,
+  };
+};
+
+const waitForProviderInstallOrAcpBridgeObservation = async (
+  providerId,
+  target,
+  { timeoutMs = 10 * 60_000, pollMs = 2_000, settleMs = 5_000 } = {},
+) => {
+  const startedAt = Date.now();
+  let lastProviderStatus = null;
+  let lastBridgeStatus = null;
+  while (Date.now() - startedAt < timeoutMs) {
+    lastProviderStatus = await getProviderStatus(providerId, target);
+    lastBridgeStatus = await getProviderStatus(ACP_BRIDGE_PROVIDER_ID, target);
+
+    if (lastProviderStatus.installed) {
+      if (lastBridgeStatus.installed && lastBridgeStatus.health === "ok") {
+        return {
+          outcome: "viable",
+          providerStatus: lastProviderStatus,
+          bridgeStatus: lastBridgeStatus,
+        };
+      }
+      throw new Error(
+        `provider '${providerId}' installed but ACP bridge runtime stayed invalid for target=${target}: ${JSON.stringify(lastBridgeStatus)}`,
+      );
+    }
+
+    if (hasAcpBridgeInvalidDiagnostic(lastProviderStatus) || hasAcpBridgeInvalidDiagnostic(lastBridgeStatus)) {
+      return {
+        outcome: "acp-bridge-invalid",
+        providerStatus: lastProviderStatus,
+        bridgeStatus: lastBridgeStatus,
+      };
+    }
+
+    const installRunning = lastProviderStatus.details.install_running === "true";
+    if (!installRunning && Date.now() - startedAt >= settleMs) {
+      const detail = lastProviderStatus.diagnostics[0]
+        || lastBridgeStatus.diagnostics[0]
+        || `provider=${JSON.stringify(lastProviderStatus)} bridge=${JSON.stringify(lastBridgeStatus)}`;
+      throw new Error(
+        `provider '${providerId}' did not converge to install or explicit ACP bridge diagnostics for target=${target}: ${detail}`,
+      );
+    }
+    await browser.pause(pollMs);
+  }
+
+  throw new Error(
+    `provider '${providerId}' install/ACP bridge observation timed out for target=${target}: ${JSON.stringify({
+      providerStatus: lastProviderStatus,
+      bridgeStatus: lastBridgeStatus,
+    })}`,
+  );
 };
 
 const runLocalContainerCreate = async ({ container, workspaceName, destPath, network = "full" }) => {
@@ -155,7 +358,7 @@ describe("container daemon liveness", () => {
 
     await assertConnectedLocalAndListening();
     const dest = path.join(localBase, "prewarm-contention");
-    let prewarmJob = null;
+    let prewarmQueue = null;
     let launch = null;
     const workspaceId = await runWizardScenario({
       location: "local",
@@ -167,14 +370,14 @@ describe("container daemon liveness", () => {
       setupHook: "",
       mergeQueue: { kind: "skip" },
       beforeCreate: async () => {
-        prewarmJob = await startRuntimePrewarmJob();
-        await waitForLaunchLogMessage(prewarmJob.job_id, [
-          "runtime prewarm slot acquired",
-          "waiting for runtime prewarm slot",
-        ]);
+        await ensureExecutionMachineReady({
+          dest: path.join(localBase, "prewarm-bootstrap"),
+          name: "prewarm-bootstrap",
+        });
+        prewarmQueue = await prepareRuntimePrewarmContention();
       },
       onLaunchLogsVisible: async () => {
-        launch = await readLaunchPanelDiagnostics();
+        launch = await waitForLaunchPanelLogMessage("waiting for runtime prewarm slot");
       },
     });
 
@@ -185,12 +388,15 @@ describe("container daemon liveness", () => {
     if (!contentionLine) {
       throw new Error(`workspace launch missed prewarm contention log: ${JSON.stringify(launch)}`);
     }
-    if (!prewarmJob?.job_id) {
-      throw new Error("startup prewarm job id missing from contention setup");
+    if (!prewarmQueue || !Array.isArray(prewarmQueue.jobs) || prewarmQueue.jobs.length < 2) {
+      throw new Error(`background runtime prewarm queue missing from contention setup: ${JSON.stringify(prewarmQueue)}`);
     }
-    const prewarmFinal = await waitForLaunchTerminalState(prewarmJob.job_id);
-    if (prewarmFinal.state !== "ready") {
-      throw new Error(`runtime prewarm did not finish cleanly: ${JSON.stringify(prewarmFinal)}`);
+    const prewarmFinals = await Promise.all(
+      prewarmQueue.jobs.map(async ({ jobId }) => await waitForLaunchTerminalState(jobId)),
+    );
+    const failedPrewarms = prewarmFinals.filter((snapshot) => snapshot.state !== "ready");
+    if (failedPrewarms.length > 0) {
+      throw new Error(`background runtime prewarm queue did not finish cleanly: ${JSON.stringify(failedPrewarms)}`);
     }
 
     await assertLocalWorkspaceConfig(workspaceId, {
@@ -241,17 +447,25 @@ describe("container daemon liveness", () => {
     if (!scenarioEnabled("local-new-disk-isolated", ["local", "container", "disk-isolated"])) this.skip();
 
     const dest = path.join(localBase, "disk-isolated");
-    const workspaceId = await runLocalContainerCreate({
+    const workspaceId = await runWizardScenario({
+      location: "local",
       container: "disk-isolated",
-      workspaceName: "container-daemon-disk",
-      destPath: dest,
       network: "full",
+      downloadHarnesses: true,
+      selectedHarnessProviderIds: ["cursor"],
+      source: { kind: "new", destPath: dest, workspaceName: "container-daemon-disk" },
+      setupHook: "",
+      mergeQueue: { kind: "skip" },
     });
 
     await assertConnectedLocalAndListening();
     await assertLocalWorkspaceConfig(workspaceId, {
       environment: "container_disk_isolated",
       networkMode: "all",
+    });
+    await waitForProviderInstallOrAcpBridgeObservation("cursor", "container", {
+      timeoutMs: 10 * 60_000,
+      pollMs: 2_000,
     });
     const container = await getWorkspaceHarnessContainer(workspaceId);
     if (!container || !container.running || container.mount_mode !== "disk_isolated") {
