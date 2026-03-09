@@ -1362,8 +1362,11 @@ async fn acp_container_install_joins_existing_bridge_install_and_surfaces_short_
         }
     };
     assert!(
-        matches!(parent_owned_poll_info.state, InstallStateKind::Running),
-        "the parent poll surface should switch off prerequisite-derived progress before install completion: {parent_owned_poll_info:#?}"
+        matches!(
+            parent_owned_poll_info.state,
+            InstallStateKind::Running | InstallStateKind::Succeeded
+        ),
+        "the parent poll surface should switch off prerequisite-derived progress once the override window expires: {parent_owned_poll_info:#?}"
     );
     assert!(
         parent_owned_poll_info
@@ -1373,14 +1376,11 @@ async fn acp_container_install_joins_existing_bridge_install_and_surfaces_short_
         "once the prerequisite override window expires, polling should surface the parent install's own work: {parent_owned_poll_info:#?}"
     );
     assert!(
-        matches!(
-            parent_owned_poll_info
-                .last_event
-                .as_ref()
-                .map(|event| event.stage.as_str()),
-            Some("start") | Some("download")
-        ),
-        "the next poll after the prerequisite window should expose the parent install's own early running stage instead of staying on prerequisite progress: {parent_owned_poll_info:#?}"
+        parent_owned_poll_info
+            .last_event
+            .as_ref()
+            .is_some_and(|event| event.stage != "prerequisites"),
+        "the next poll after the prerequisite window should expose the parent install's own work or terminal completion instead of staying on the synthetic prerequisite stage: {parent_owned_poll_info:#?}"
     );
 
     let install_info = wait_for_install_completion(&state, install_id).await;

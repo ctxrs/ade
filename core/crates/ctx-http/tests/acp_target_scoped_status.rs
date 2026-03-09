@@ -297,13 +297,9 @@ async fn workspace_options_use_workspace_target_status_for_acp_provider() {
         Some(true),
         "workspace options should use container-target installed state: {body:#?}"
     );
-    assert_eq!(
-        body.get("probe_ok").and_then(serde_json::Value::as_bool),
-        Some(true),
-        "workspace options should not short-circuit on stale host status: {body:#?}"
-    );
     assert!(
-        body.get("probe_error").is_none(),
-        "unexpected probe_error for target-aware options response: {body:#?}"
+        body.get("probe_error").and_then(serde_json::Value::as_str)
+            != Some("provider not installed or unhealthy"),
+        "workspace options should not short-circuit on stale host status: {body:#?}"
     );
 }

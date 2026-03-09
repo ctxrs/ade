@@ -395,12 +395,9 @@ mod tests {
             bootstrap_script_path: None,
         };
 
-        let selected = select_probe_worktree(
-            data_root.path(),
-            &workspace,
-            std::slice::from_ref(&managed),
-        )
-            .expect("selection should succeed");
+        let selected =
+            select_probe_worktree(data_root.path(), &workspace, std::slice::from_ref(&managed))
+                .expect("selection should succeed");
         assert_eq!(selected.expect("selected").id, managed.id);
     }
 
