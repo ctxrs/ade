@@ -100,6 +100,7 @@ export default function DaemonAvailabilityOverlay() {
   const [mismatch, setMismatch] = useState<VersionMismatch | null>(null);
   const checkingRef = useRef(false);
   const requestIdRef = useRef(0);
+  const restartLockRef = useRef(false);
   const remoteUpdateLockRef = useRef(false);
   const isDesktop = isDesktopApp();
   const daemonBaseUrl = useDaemonBaseUrl();
@@ -229,7 +230,8 @@ export default function DaemonAvailabilityOverlay() {
   };
 
   const restartDaemon = useCallback(async () => {
-    if (!isDesktop || restartBusy) return;
+    if (!isDesktop || restartLockRef.current) return;
+    restartLockRef.current = true;
     setRestartBusy(true);
     setError(null);
     setNotice(null);
@@ -242,9 +244,10 @@ export default function DaemonAvailabilityOverlay() {
       const message = err instanceof Error ? err.message : String(err);
       setError(trimError(message || "Unable to restart the daemon."));
     } finally {
+      restartLockRef.current = false;
       setRestartBusy(false);
     }
-  }, [checkNow, isDesktop, restartBusy]);
+  }, [checkNow, isDesktop]);
 
   const confirmInterruptingAction = (action: "restart" | "update_remote" | "update_desktop"): boolean => {
     if (typeof window === "undefined") return true;

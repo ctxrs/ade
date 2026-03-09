@@ -666,22 +666,97 @@ fn last_attempt_path_for_app(app: &tauri::AppHandle) -> Result<PathBuf, String> 
     Ok(app_data_root_for_app(app)?.join(LAST_ATTEMPT_FILENAME))
 }
 
+fn clear_staged_update_files(meta_path: &Path, bytes_path: &Path) -> Result<(), String> {
+    if meta_path.exists() {
+        std::fs::remove_file(meta_path).map_err(|e| {
+            format!(
+                "clearing staged update metadata '{}': {e}",
+                meta_path.display()
+            )
+        })?;
+    }
+    if bytes_path.exists() {
+        std::fs::remove_file(bytes_path).map_err(|e| {
+            format!(
+                "clearing staged update bytes '{}': {e}",
+                bytes_path.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn staged_update_meta_is_valid(meta: &DesktopStagedUpdateMeta) -> bool {
+    !meta.version.trim().is_empty()
+        && !meta.target.trim().is_empty()
+        && !meta.endpoint.trim().is_empty()
+        && !meta.channel.trim().is_empty()
+}
+
+fn read_staged_update_meta(
+    meta_path: &Path,
+    bytes_path: &Path,
+) -> Result<Option<DesktopStagedUpdateMeta>, String> {
+    if !meta_path.exists() {
+        return Ok(None);
+    }
+    let raw = std::fs::read_to_string(meta_path).map_err(|e| {
+        format!(
+            "reading staged update metadata '{}': {e}",
+            meta_path.display()
+        )
+    })?;
+    let parsed = match serde_json::from_str::<DesktopStagedUpdateMeta>(&raw) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            eprintln!(
+                "warn: clearing corrupt staged update metadata '{}': {err}",
+                meta_path.display()
+            );
+            clear_staged_update_files(meta_path, bytes_path).map_err(|clear_err| {
+                format!(
+                    "parsing staged update metadata '{}': {err}; clearing corrupt staged update state: {clear_err}",
+                    meta_path.display()
+                )
+            })?;
+            return Ok(None);
+        }
+    };
+    if !staged_update_meta_is_valid(&parsed) {
+        clear_staged_update_files(meta_path, bytes_path)?;
+        return Ok(None);
+    }
+    Ok(Some(parsed))
+}
+
+fn write_staged_update_files(
+    meta_path: &Path,
+    bytes_path: &Path,
+    meta: &DesktopStagedUpdateMeta,
+    bytes: &[u8],
+) -> Result<(), String> {
+    std::fs::write(bytes_path, bytes).map_err(|e| {
+        format!(
+            "writing staged update bytes '{}': {e}",
+            bytes_path.display()
+        )
+    })?;
+    let encoded = serde_json::to_string_pretty(meta)
+        .map_err(|e| format!("encoding staged update metadata: {e}"))?;
+    std::fs::write(meta_path, format!("{encoded}\n")).map_err(|e| {
+        format!(
+            "writing staged update metadata '{}': {e}",
+            meta_path.display()
+        )
+    })
+}
+
 fn read_staged_update_meta_for_app(
     app: &tauri::AppHandle,
 ) -> Result<Option<DesktopStagedUpdateMeta>, String> {
     let path = staged_meta_path_for_app(app)?;
-    if !path.exists() {
-        return Ok(None);
-    }
-    let raw = std::fs::read_to_string(&path)
-        .map_err(|e| format!("reading staged update metadata '{}': {e}", path.display()))?;
-    let parsed = serde_json::from_str::<DesktopStagedUpdateMeta>(&raw)
-        .map_err(|e| format!("parsing staged update metadata '{}': {e}", path.display()))?;
-    if parsed.version.trim().is_empty() {
-        clear_staged_update_for_app(app)?;
-        return Ok(None);
-    }
-    Ok(Some(parsed))
+    let bytes_path = staged_bytes_path_for_app(app)?;
+    read_staged_update_meta(&path, &bytes_path)
 }
 
 fn write_staged_update_for_app(
@@ -691,42 +766,13 @@ fn write_staged_update_for_app(
 ) -> Result<(), String> {
     let bytes_path = staged_bytes_path_for_app(app)?;
     let meta_path = staged_meta_path_for_app(app)?;
-    std::fs::write(&bytes_path, bytes).map_err(|e| {
-        format!(
-            "writing staged update bytes '{}': {e}",
-            bytes_path.display()
-        )
-    })?;
-    let encoded = serde_json::to_string_pretty(meta)
-        .map_err(|e| format!("encoding staged update metadata: {e}"))?;
-    std::fs::write(&meta_path, format!("{encoded}\n")).map_err(|e| {
-        format!(
-            "writing staged update metadata '{}': {e}",
-            meta_path.display()
-        )
-    })
+    write_staged_update_files(&meta_path, &bytes_path, meta, bytes)
 }
 
 fn clear_staged_update_for_app(app: &tauri::AppHandle) -> Result<(), String> {
     let meta_path = staged_meta_path_for_app(app)?;
     let bytes_path = staged_bytes_path_for_app(app)?;
-    if meta_path.exists() {
-        std::fs::remove_file(&meta_path).map_err(|e| {
-            format!(
-                "clearing staged update metadata '{}': {e}",
-                meta_path.display()
-            )
-        })?;
-    }
-    if bytes_path.exists() {
-        std::fs::remove_file(&bytes_path).map_err(|e| {
-            format!(
-                "clearing staged update bytes '{}': {e}",
-                bytes_path.display()
-            )
-        })?;
-    }
-    Ok(())
+    clear_staged_update_files(&meta_path, &bytes_path)
 }
 
 fn clear_staged_update_if_current_version_is_new_enough(
@@ -748,7 +794,19 @@ fn has_matching_staged_update(
     expected_version: &str,
     config: &DesktopNativeUpdaterConfig,
 ) -> Result<bool, String> {
-    let Some(meta) = read_staged_update_meta_for_app(app)? else {
+    let meta_path = staged_meta_path_for_app(app)?;
+    let bytes_path = staged_bytes_path_for_app(app)?;
+    has_matching_staged_update_paths(&meta_path, &bytes_path, channel, expected_version, config)
+}
+
+fn has_matching_staged_update_paths(
+    meta_path: &Path,
+    bytes_path: &Path,
+    channel: &str,
+    expected_version: &str,
+    config: &DesktopNativeUpdaterConfig,
+) -> Result<bool, String> {
+    let Some(meta) = read_staged_update_meta(meta_path, bytes_path)? else {
         return Ok(false);
     };
     if meta.version.trim() != expected_version.trim()
@@ -758,10 +816,9 @@ fn has_matching_staged_update(
     {
         return Ok(false);
     }
-    let bytes_path = staged_bytes_path_for_app(app)?;
     let exists = bytes_path.exists();
     if !exists {
-        clear_staged_update_for_app(app)?;
+        clear_staged_update_files(&meta_path, &bytes_path)?;
     }
     Ok(exists)
 }
@@ -772,18 +829,36 @@ fn read_staged_update_bytes_if_matching(
     expected_version: &str,
     config: &DesktopNativeUpdaterConfig,
 ) -> Result<Option<Vec<u8>>, String> {
-    if !has_matching_staged_update(app, channel, expected_version, config)? {
+    let meta_path = staged_meta_path_for_app(app)?;
+    let bytes_path = staged_bytes_path_for_app(app)?;
+    read_staged_update_bytes_if_matching_paths(
+        &meta_path,
+        &bytes_path,
+        channel,
+        expected_version,
+        config,
+    )
+}
+
+fn read_staged_update_bytes_if_matching_paths(
+    meta_path: &Path,
+    bytes_path: &Path,
+    channel: &str,
+    expected_version: &str,
+    config: &DesktopNativeUpdaterConfig,
+) -> Result<Option<Vec<u8>>, String> {
+    if !has_matching_staged_update_paths(meta_path, bytes_path, channel, expected_version, config)?
+    {
         return Ok(None);
     }
-    let bytes_path = staged_bytes_path_for_app(app)?;
-    let bytes = std::fs::read(&bytes_path).map_err(|e| {
+    let bytes = std::fs::read(bytes_path).map_err(|e| {
         format!(
             "reading staged update bytes '{}': {e}",
             bytes_path.display()
         )
     })?;
     if bytes.is_empty() {
-        clear_staged_update_for_app(app)?;
+        clear_staged_update_files(meta_path, bytes_path)?;
         return Ok(None);
     }
     Ok(Some(bytes))
@@ -1118,12 +1193,22 @@ fn read_restart_marker(path: &Path) -> Result<Option<String>, String> {
             path.display()
         )
     })?;
-    let parsed: RestartMarker = serde_json::from_str(&raw).map_err(|e| {
-        format!(
-            "parsing desktop updater restart marker '{}': {e}",
-            path.display()
-        )
-    })?;
+    let parsed: RestartMarker = match serde_json::from_str(&raw) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            eprintln!(
+                "warn: clearing corrupt desktop updater restart marker '{}': {err}",
+                path.display()
+            );
+            clear_restart_marker(path).map_err(|clear_err| {
+                format!(
+                    "parsing desktop updater restart marker '{}': {err}; clearing corrupt restart marker: {clear_err}",
+                    path.display()
+                )
+            })?;
+            return Ok(None);
+        }
+    };
     let trimmed = parsed.version.trim();
     if trimmed.is_empty() {
         clear_restart_marker(path)?;
@@ -1347,6 +1432,32 @@ mod tests {
         path
     }
 
+    fn staged_paths(label: &str) -> (PathBuf, PathBuf) {
+        let meta_path = temp_path(&format!("{label}-meta"));
+        let mut bytes_path = temp_path(&format!("{label}-bytes"));
+        bytes_path.set_extension("bin");
+        (meta_path, bytes_path)
+    }
+
+    fn staged_meta(version: &str) -> DesktopStagedUpdateMeta {
+        DesktopStagedUpdateMeta {
+            version: version.to_string(),
+            target: "macos-arm64".to_string(),
+            endpoint: "https://example.test/releases/stable/latest-tauri.json".to_string(),
+            channel: "stable".to_string(),
+            downloaded_at_ms: 1,
+            size_bytes: 7,
+        }
+    }
+
+    fn staged_config() -> DesktopNativeUpdaterConfig {
+        DesktopNativeUpdaterConfig {
+            target: "macos-arm64".to_string(),
+            endpoint: "https://example.test/releases/stable/latest-tauri.json".to_string(),
+            pubkey: Some("pubkey".to_string()),
+        }
+    }
+
     #[test]
     fn desktop_platform_key_is_known_for_current_target() {
         let key = desktop_platform_key();
@@ -1526,6 +1637,101 @@ mod tests {
             "marker file should remain while restart is pending"
         );
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn read_restart_marker_clears_blank_version_marker() {
+        let path = temp_path("marker-blank");
+        std::fs::write(&path, "{\n  \"version\": \"   \"\n}\n").expect("write marker");
+        let marker = read_restart_marker(&path).expect("read marker");
+        assert!(marker.is_none(), "blank marker should be ignored");
+        assert!(!path.exists(), "blank marker file should be removed");
+    }
+
+    #[test]
+    fn read_restart_marker_clears_corrupt_marker() {
+        let path = temp_path("marker-corrupt");
+        std::fs::write(&path, "{\n").expect("write corrupt marker");
+        let marker = read_restart_marker(&path).expect("read marker");
+        assert!(marker.is_none(), "corrupt marker should be ignored");
+        assert!(!path.exists(), "corrupt marker file should be removed");
+    }
+
+    #[test]
+    fn read_staged_update_meta_clears_corrupt_metadata() {
+        let (meta_path, bytes_path) = staged_paths("corrupt-stage");
+        std::fs::write(&meta_path, "{\n").expect("write corrupt staged metadata");
+        std::fs::write(&bytes_path, b"payload").expect("write staged bytes");
+
+        let meta = read_staged_update_meta(&meta_path, &bytes_path).expect("read staged metadata");
+
+        assert!(meta.is_none(), "corrupt staged metadata should be ignored");
+        assert!(
+            !meta_path.exists(),
+            "corrupt staged metadata should be removed after detection"
+        );
+        assert!(
+            !bytes_path.exists(),
+            "paired staged bytes should be removed with corrupt metadata"
+        );
+    }
+
+    #[test]
+    fn has_matching_staged_update_clears_orphaned_metadata_when_bytes_are_missing() {
+        let (meta_path, bytes_path) = staged_paths("orphaned-stage");
+        let meta = staged_meta("1.2.4");
+        write_staged_update_files(&meta_path, &bytes_path, &meta, b"payload")
+            .expect("write staged update");
+        std::fs::remove_file(&bytes_path).expect("remove staged bytes");
+
+        let has_match = has_matching_staged_update_paths(
+            &meta_path,
+            &bytes_path,
+            "stable",
+            "1.2.4",
+            &staged_config(),
+        )
+        .expect("check staged update");
+
+        assert!(
+            !has_match,
+            "orphaned staged metadata must not be treated as ready"
+        );
+        assert!(
+            !meta_path.exists(),
+            "orphaned staged metadata should be cleared after detection"
+        );
+        assert!(
+            !bytes_path.exists(),
+            "missing staged bytes should stay absent after cleanup"
+        );
+    }
+
+    #[test]
+    fn read_staged_update_bytes_if_matching_clears_empty_payload() {
+        let (meta_path, bytes_path) = staged_paths("empty-stage");
+        let meta = staged_meta("1.2.4");
+        write_staged_update_files(&meta_path, &bytes_path, &meta, &[])
+            .expect("write empty staged update");
+
+        let bytes = read_staged_update_bytes_if_matching_paths(
+            &meta_path,
+            &bytes_path,
+            "stable",
+            "1.2.4",
+            &staged_config(),
+        )
+        .expect("read staged update bytes");
+
+        assert!(bytes.is_none(), "empty staged payload should be discarded");
+        assert!(
+            !meta_path.exists(),
+            "empty staged metadata should be removed after detection"
+        );
+        assert!(
+            !bytes_path.exists(),
+            "empty staged payload should be removed after detection"
+        );
     }
 
     #[test]

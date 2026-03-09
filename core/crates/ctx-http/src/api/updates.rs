@@ -427,6 +427,25 @@ mod tests {
     }
 
     #[test]
+    fn in_place_update_capability_is_false_when_platform_is_not_supported() {
+        let mut platforms = HashMap::new();
+        platforms.insert("linux-x64".to_string(), release_platform_with_appimage());
+        let manifest = manifest_with_platforms(platforms);
+
+        let (supported, reason) = in_place_update_capability_with_appimage_path(
+            &manifest,
+            Some("linux-x64"),
+            false,
+            true,
+        );
+        assert!(!supported);
+        assert_eq!(
+            reason.as_deref(),
+            Some("no compatible desktop artifact for this platform")
+        );
+    }
+
+    #[test]
     fn in_place_update_capability_is_false_for_non_linux_platforms() {
         let mut platforms = HashMap::new();
         platforms.insert("macos-arm64".to_string(), release_platform_with_dmg());

@@ -82,11 +82,20 @@ pub(super) struct DesktopHttpResponse {
     pub(super) content_type: Option<String>,
 }
 
+fn local_connect_mutex() -> &'static std::sync::Mutex<()> {
+    static LOCAL_CONNECT_MUTEX: std::sync::OnceLock<std::sync::Mutex<()>> =
+        std::sync::OnceLock::new();
+    LOCAL_CONNECT_MUTEX.get_or_init(|| std::sync::Mutex::new(()))
+}
+
 #[tauri::command]
 pub(super) async fn desktop_connect_local(
     app: tauri::AppHandle,
 ) -> Result<DesktopConnectionInfo, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let _guard = local_connect_mutex()
+            .lock()
+            .map_err(|err| format!("local connect mutex poisoned: {err}"))?;
         let state = app.state::<ConnectionManager>();
         let data_dir = daemon_data_dir(&app).map_err(to_err)?;
         let desktop_version = app.package_info().version.to_string();
@@ -195,10 +204,7 @@ pub(super) fn ensure_local_connection(
     // Multiple webview requests can race on cold start (overlay pollers, initial data loads, etc.).
     // Serialize the "connect local" path so we don't concurrently spawn the daemon and trip the
     // daemon's lockfile, which can surface as spurious "daemon unavailable" errors in the UI.
-    static LOCAL_CONNECT_MUTEX: std::sync::OnceLock<std::sync::Mutex<()>> =
-        std::sync::OnceLock::new();
-    let mutex = LOCAL_CONNECT_MUTEX.get_or_init(|| std::sync::Mutex::new(()));
-    let _guard = mutex
+    let _guard = local_connect_mutex()
         .lock()
         .map_err(|err| anyhow!("local connect mutex poisoned: {err}"))?;
     if !matches!(state.info().kind, DesktopConnectionKind::None) {

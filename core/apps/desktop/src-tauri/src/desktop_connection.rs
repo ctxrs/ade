@@ -73,6 +73,7 @@ struct LocalExternalConnection {
     token: String,
     daemon_pid: Option<u32>,
     owns_lifecycle: bool,
+    child: Option<Child>,
 }
 
 struct SshConnection {
@@ -84,6 +85,54 @@ struct SshConnection {
     remote_port: u16,
     remote_data_dir: Option<String>,
     remote_ctx_bin: Option<String>,
+}
+
+fn cleanup_active_connection(active: ActiveConnection) {
+    match active {
+        ActiveConnection::Local(c) => {
+            if c.systemd_scope {
+                stop_systemd_scope("ctx-daemon");
+                if let Some(scope) = systemd_scope_for_local_daemon_url(&c.base_url) {
+                    stop_systemd_scope(&scope);
+                }
+            }
+            let _ = try_kill_child(c.child);
+        }
+        ActiveConnection::LocalExternal(c) => {
+            if c.owns_lifecycle {
+                stop_systemd_scope("ctx-daemon");
+                if let Some(scope) = systemd_scope_for_local_daemon_url(&c.base_url) {
+                    stop_systemd_scope(&scope);
+                }
+                if let Some(child) = c.child {
+                    let _ = try_kill_child(child);
+                } else if let Some(pid) = c.daemon_pid {
+                    let _ = stop_local_daemon_pid(pid);
+                }
+            }
+        }
+        ActiveConnection::Ssh(c) => {
+            let _ = try_kill_child(c.tunnel);
+        }
+    }
+}
+
+fn should_preserve_local_handoff(
+    base_url: &str,
+    token: &str,
+    daemon_pid: Option<u32>,
+    owns_lifecycle: bool,
+    previous_base_url: &str,
+    previous_token: &str,
+    previous_daemon_pid: Option<u32>,
+) -> bool {
+    if !owns_lifecycle {
+        return false;
+    }
+    daemon_pid.is_some()
+        && daemon_pid == previous_daemon_pid
+        && previous_base_url == base_url
+        && previous_token == token
 }
 
 impl ConnectionManager {
@@ -149,36 +198,15 @@ impl ConnectionManager {
     }
 
     pub(super) fn disconnect(&self) {
-        let mut guard = match self.0.lock() {
-            Ok(g) => g,
-            Err(_) => return,
+        let active = {
+            let mut guard = match self.0.lock() {
+                Ok(g) => g,
+                Err(_) => return,
+            };
+            guard.active.take()
         };
-        if let Some(active) = guard.active.take() {
-            match active {
-                ActiveConnection::Local(c) => {
-                    if c.systemd_scope {
-                        stop_systemd_scope("ctx-daemon");
-                        if let Some(scope) = systemd_scope_for_local_daemon_url(&c.base_url) {
-                            stop_systemd_scope(&scope);
-                        }
-                    }
-                    let _ = try_kill_child(c.child);
-                }
-                ActiveConnection::LocalExternal(c) => {
-                    if c.owns_lifecycle {
-                        stop_systemd_scope("ctx-daemon");
-                        if let Some(scope) = systemd_scope_for_local_daemon_url(&c.base_url) {
-                            stop_systemd_scope(&scope);
-                        }
-                        if let Some(pid) = c.daemon_pid {
-                            let _ = stop_local_daemon_pid(pid);
-                        }
-                    }
-                }
-                ActiveConnection::Ssh(c) => {
-                    let _ = try_kill_child(c.tunnel);
-                }
-            }
+        if let Some(active) = active {
+            cleanup_active_connection(active);
         }
     }
 
@@ -189,19 +217,26 @@ impl ConnectionManager {
         child: Child,
         systemd_scope: bool,
     ) {
-        let mut guard = match self.0.lock() {
-            Ok(g) => g,
-            Err(_) => {
-                let _ = try_kill_child(child);
-                return;
-            }
+        let previous = {
+            let mut guard = match self.0.lock() {
+                Ok(g) => g,
+                Err(_) => {
+                    let _ = try_kill_child(child);
+                    return;
+                }
+            };
+            guard
+                .active
+                .replace(ActiveConnection::Local(LocalConnection {
+                    base_url,
+                    token,
+                    child,
+                    systemd_scope,
+                }))
         };
-        guard.active = Some(ActiveConnection::Local(LocalConnection {
-            base_url,
-            token,
-            child,
-            systemd_scope,
-        }));
+        if let Some(previous) = previous {
+            cleanup_active_connection(previous);
+        }
     }
 
     pub(super) fn set_local_external(
@@ -211,16 +246,56 @@ impl ConnectionManager {
         daemon_pid: Option<u32>,
         owns_lifecycle: bool,
     ) {
-        let mut guard = match self.0.lock() {
-            Ok(g) => g,
-            Err(_) => return,
+        let previous = {
+            let mut next = LocalExternalConnection {
+                base_url,
+                token,
+                daemon_pid,
+                owns_lifecycle,
+                child: None,
+            };
+            let mut guard = match self.0.lock() {
+                Ok(g) => g,
+                Err(_) => return,
+            };
+            let previous = guard.active.take();
+            let previous = match previous {
+                Some(ActiveConnection::Local(c))
+                    if should_preserve_local_handoff(
+                        &next.base_url,
+                        &next.token,
+                        next.daemon_pid,
+                        next.owns_lifecycle,
+                        &c.base_url,
+                        &c.token,
+                        Some(c.child.id()),
+                    ) =>
+                {
+                    next.child = Some(c.child);
+                    None
+                }
+                Some(ActiveConnection::LocalExternal(c))
+                    if should_preserve_local_handoff(
+                        &next.base_url,
+                        &next.token,
+                        next.daemon_pid,
+                        next.owns_lifecycle,
+                        &c.base_url,
+                        &c.token,
+                        c.daemon_pid,
+                    ) =>
+                {
+                    next.child = c.child;
+                    None
+                }
+                other => other,
+            };
+            guard.active = Some(ActiveConnection::LocalExternal(next));
+            previous
         };
-        guard.active = Some(ActiveConnection::LocalExternal(LocalExternalConnection {
-            base_url,
-            token,
-            daemon_pid,
-            owns_lifecycle,
-        }));
+        if let Some(previous) = previous {
+            cleanup_active_connection(previous);
+        }
     }
 
     pub(super) fn set_ssh(
@@ -234,23 +309,28 @@ impl ConnectionManager {
         remote_data_dir: Option<String>,
         remote_ctx_bin: Option<String>,
     ) {
-        let mut guard = match self.0.lock() {
-            Ok(g) => g,
-            Err(_) => {
-                let _ = try_kill_child(tunnel);
-                return;
-            }
+        let previous = {
+            let mut guard = match self.0.lock() {
+                Ok(g) => g,
+                Err(_) => {
+                    let _ = try_kill_child(tunnel);
+                    return;
+                }
+            };
+            guard.active.replace(ActiveConnection::Ssh(SshConnection {
+                base_url,
+                token,
+                tunnel,
+                host,
+                user,
+                remote_port,
+                remote_data_dir,
+                remote_ctx_bin,
+            }))
         };
-        guard.active = Some(ActiveConnection::Ssh(SshConnection {
-            base_url,
-            token,
-            tunnel,
-            host,
-            user,
-            remote_port,
-            remote_data_dir,
-            remote_ctx_bin,
-        }));
+        if let Some(previous) = previous {
+            cleanup_active_connection(previous);
+        }
     }
 
     pub(super) fn ssh_target(&self) -> Result<SshConnectionTarget> {
@@ -455,6 +535,18 @@ mod connection_manager_tests {
         !pid_is_alive(pid)
     }
 
+    #[cfg(unix)]
+    fn spawn_tokio_sleep_child() -> Child {
+        let mut command = Command::new("sh");
+        command
+            .arg("-c")
+            .arg("sleep 30 >/dev/null 2>&1")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        command.spawn().expect("spawn tokio sleep child")
+    }
+
     #[test]
     #[cfg(unix)]
     fn disconnect_stops_owned_local_external_pid() {
@@ -505,6 +597,212 @@ mod connection_manager_tests {
             .arg("-KILL")
             .arg(pid.to_string())
             .output();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn replacing_owned_local_external_connection_stops_previous_pid() {
+        let previous_pid = spawn_detached_sleep_pid();
+        let next_pid = spawn_detached_sleep_pid();
+        assert!(
+            pid_is_alive(previous_pid),
+            "previous pid should start alive"
+        );
+        assert!(pid_is_alive(next_pid), "next pid should start alive");
+
+        let manager = ConnectionManager::default();
+        manager.set_local_external(
+            "http://127.0.0.1:65529".to_string(),
+            "token".to_string(),
+            Some(previous_pid),
+            true,
+        );
+        manager.set_local_external(
+            "http://127.0.0.1:65528".to_string(),
+            "token".to_string(),
+            Some(next_pid),
+            true,
+        );
+
+        assert!(
+            wait_for_pid_exit(previous_pid, Duration::from_secs(3)),
+            "replaced owned local external pid {previous_pid} should be terminated"
+        );
+        assert!(
+            pid_is_alive(next_pid),
+            "replacement pid {next_pid} should remain alive until disconnect"
+        );
+
+        manager.disconnect();
+        assert!(
+            wait_for_pid_exit(next_pid, Duration::from_secs(3)),
+            "active replacement pid {next_pid} should be terminated on disconnect"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn replacing_unowned_local_external_connection_leaves_previous_pid_running() {
+        let previous_pid = spawn_detached_sleep_pid();
+        assert!(
+            pid_is_alive(previous_pid),
+            "previous pid should start alive"
+        );
+
+        let manager = ConnectionManager::default();
+        manager.set_local_external(
+            "http://127.0.0.1:65527".to_string(),
+            "token".to_string(),
+            Some(previous_pid),
+            false,
+        );
+        manager.set_local_external(
+            "http://127.0.0.1:65526".to_string(),
+            "token".to_string(),
+            None,
+            false,
+        );
+
+        assert!(
+            pid_is_alive(previous_pid),
+            "replacing an unowned local external pid {previous_pid} must not terminate it"
+        );
+        let _ = Command::new("kill")
+            .arg("-KILL")
+            .arg(previous_pid.to_string())
+            .output();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn replacing_local_connection_stops_previous_child() {
+        let previous = spawn_tokio_sleep_child();
+        let previous_pid = previous.id();
+        assert!(
+            pid_is_alive(previous_pid),
+            "previous local child should start alive"
+        );
+
+        let next = spawn_tokio_sleep_child();
+        let next_pid = next.id();
+        assert!(
+            pid_is_alive(next_pid),
+            "next local child should start alive"
+        );
+
+        let manager = ConnectionManager::default();
+        manager.set_local(
+            "http://127.0.0.1:65525".to_string(),
+            "token".to_string(),
+            previous,
+            false,
+        );
+        manager.set_local(
+            "http://127.0.0.1:65524".to_string(),
+            "token".to_string(),
+            next,
+            false,
+        );
+
+        assert!(
+            wait_for_pid_exit(previous_pid, Duration::from_secs(3)),
+            "replaced local child {previous_pid} should be terminated"
+        );
+        assert!(
+            pid_is_alive(next_pid),
+            "replacement local child {next_pid} should remain alive until disconnect"
+        );
+
+        manager.disconnect();
+        assert!(
+            wait_for_pid_exit(next_pid, Duration::from_secs(3)),
+            "active replacement local child {next_pid} should be terminated on disconnect"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn reattaching_to_same_owned_local_daemon_preserves_process() {
+        let child = spawn_tokio_sleep_child();
+        let pid = child.id();
+        assert!(pid_is_alive(pid), "local child should start alive");
+
+        let manager = ConnectionManager::default();
+        manager.set_local(
+            "http://127.0.0.1:65524".to_string(),
+            "token".to_string(),
+            child,
+            false,
+        );
+        manager.set_local_external(
+            "http://127.0.0.1:65524".to_string(),
+            "token".to_string(),
+            Some(pid),
+            true,
+        );
+
+        assert!(
+            pid_is_alive(pid),
+            "same-daemon handoff must not kill the process being reattached"
+        );
+
+        manager.disconnect();
+        assert!(
+            wait_for_pid_exit(pid, Duration::from_secs(3)),
+            "reattached owned local daemon pid {pid} should still be terminated on disconnect"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn replacing_ssh_connection_stops_previous_tunnel() {
+        let previous = spawn_tokio_sleep_child();
+        let previous_pid = previous.id();
+        assert!(
+            pid_is_alive(previous_pid),
+            "previous ssh tunnel should start alive"
+        );
+
+        let next = spawn_tokio_sleep_child();
+        let next_pid = next.id();
+        assert!(pid_is_alive(next_pid), "next ssh tunnel should start alive");
+
+        let manager = ConnectionManager::default();
+        manager.set_ssh(
+            "http://127.0.0.1:65523".to_string(),
+            Some("token".to_string()),
+            previous,
+            "example.test".to_string(),
+            Some("dev".to_string()),
+            22,
+            Some("/tmp/ctx".to_string()),
+            None,
+        );
+        manager.set_ssh(
+            "http://127.0.0.1:65522".to_string(),
+            Some("token".to_string()),
+            next,
+            "example.test".to_string(),
+            Some("dev".to_string()),
+            22,
+            Some("/tmp/ctx".to_string()),
+            None,
+        );
+
+        assert!(
+            wait_for_pid_exit(previous_pid, Duration::from_secs(3)),
+            "replaced ssh tunnel {previous_pid} should be terminated"
+        );
+        assert!(
+            pid_is_alive(next_pid),
+            "replacement ssh tunnel {next_pid} should remain alive until disconnect"
+        );
+
+        manager.disconnect();
+        assert!(
+            wait_for_pid_exit(next_pid, Duration::from_secs(3)),
+            "active replacement ssh tunnel {next_pid} should be terminated on disconnect"
+        );
     }
 
     #[test]

@@ -994,23 +994,24 @@ const acquireSharedCnBackendLease = async (host, port) => {
         throw new Error(
           `[wdio] shared CN backend launch environment changed while ${activeLeases.length} other lease(s) are active; cannot safely reuse backend`,
         );
-      }
-      if (backendProcess && cnBackendOwnedBySharedManager) {
-        try {
-          backendProcess.kill();
-        } catch {
-          // ignore
+      } else {
+        if (backendProcess && cnBackendOwnedBySharedManager) {
+          try {
+            backendProcess.kill();
+          } catch {
+            // ignore
+          }
+          backendProcess = null;
+        } else if (existingPidAlive) {
+          await stopSharedCnBackendProcess(existingPid);
         }
-        backendProcess = null;
-      } else if (existingPidAlive) {
-        await stopSharedCnBackendProcess(existingPid);
+        removeFileIfExists(CN_BACKEND_STATE_FILE);
+        existingState = {};
+        existingPid = null;
+        existingPidAlive = false;
+        portOpen = false;
+        console.error(`[wdio] restarting shared test-runner-backend for updated launch environment`);
       }
-      removeFileIfExists(CN_BACKEND_STATE_FILE);
-      existingState = {};
-      existingPid = null;
-      existingPidAlive = false;
-      portOpen = false;
-      console.error(`[wdio] restarting shared test-runner-backend for updated launch environment`);
     }
 
     if (portOpen || existingPidAlive) {

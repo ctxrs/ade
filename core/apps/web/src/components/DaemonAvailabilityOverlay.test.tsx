@@ -236,6 +236,40 @@ describe("DaemonAvailabilityOverlay", () => {
     });
   });
 
+  it("runs local daemon restart as a single flight across rapid clicks", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(desktopGetConnection).mockResolvedValue({ kind: "local" });
+    vi.mocked(desktopGetVersion).mockResolvedValue("2.0.0");
+    vi.mocked(daemonFetchRaw).mockResolvedValue({
+      status: 200,
+      body: JSON.stringify({
+        ...baseHealth,
+        daemon_version: "1.0.0",
+        compatibility: { ...baseHealth.compatibility, desktop_exact_version: "1.0.0" },
+      }),
+      content_type: "application/json",
+    });
+    let releaseGate!: () => void;
+    const restartGate = new Promise<void>((resolve) => {
+      releaseGate = () => resolve();
+    });
+    vi.mocked(desktopRestartLocalDaemon).mockImplementation(async () => {
+      await restartGate;
+      return { kind: "local" };
+    });
+
+    renderOverlay();
+    const button = await screen.findByRole("button", { name: "Restart local daemon" });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(vi.mocked(desktopRestartLocalDaemon)).toHaveBeenCalledTimes(1);
+    releaseGate();
+
+    await waitFor(() => {
+      expect(vi.mocked(desktopRestartLocalDaemon)).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("normalizes desktop version prefixes before comparing", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(desktopGetVersion).mockResolvedValue("v1.2.3");
