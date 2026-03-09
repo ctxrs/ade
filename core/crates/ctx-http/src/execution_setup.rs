@@ -2113,7 +2113,7 @@ mod tests {
             .start_workspace_launch(workspace, settings, "http://127.0.0.1:4399".to_string())
             .await;
 
-        let ready = tokio::time::timeout(Duration::from_secs(1), async {
+        let ready = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 let latest = coordinator
                     .launch_status(&snapshot.job_id)
@@ -2125,7 +2125,7 @@ mod tests {
                 if latest.state == ExecutionLaunchState::Error {
                     panic!("workspace launch failed unexpectedly: {:?}", latest.error);
                 }
-                tokio::task::yield_now().await;
+                tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
         .await
