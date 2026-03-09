@@ -34,6 +34,7 @@ pub mod provider_auth_import;
 pub mod provider_child_reclassifier;
 pub mod provider_guard;
 pub(crate) mod provider_install_contract;
+pub mod provider_launch;
 pub mod provider_matrix;
 pub mod provider_probe;
 pub mod provider_restart;
@@ -53,6 +54,7 @@ pub mod vcs_hooks;
 pub mod web_sessions;
 pub mod workspace_active_snapshot;
 pub mod workspace_config;
+pub mod workspace_runtime;
 pub mod worktree_bootstrap;
 
 #[cfg(feature = "fault_injection")]

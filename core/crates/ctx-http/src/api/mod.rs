@@ -32,6 +32,7 @@ mod extractors;
 mod lsp;
 mod merge_queue_api;
 mod mobile_access;
+mod provider_launch;
 mod providers;
 mod repo;
 pub(crate) mod sessions;
@@ -279,7 +280,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             "/api/providers/matrix/refresh",
             post(refresh_provider_matrix),
         )
-        .route("/api/providers/install_all", post(install_all_providers))
+        .route(
+            "/api/providers/install_all",
+            post(provider_launch::install_all_providers),
+        )
         .route("/api/providers/:id", get(get_provider))
         .route("/api/providers/:id/usage", get(get_provider_usage))
         .route(
@@ -476,23 +480,29 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             "/api/providers/cursor/accounts/:id",
             delete(delete_cursor_account),
         )
-        .route("/api/providers/:id/install", post(install_provider))
-        .route("/api/providers/install/:install_id", get(get_install))
+        .route(
+            "/api/providers/:id/install",
+            post(provider_launch::install_provider),
+        )
+        .route(
+            "/api/providers/install/:install_id",
+            get(provider_launch::get_install),
+        )
         .route(
             "/api/providers/install/statuses",
-            post(get_install_statuses),
+            post(provider_launch::get_install_statuses),
         )
         .route(
             "/api/providers/install/:install_id/cancel",
-            post(cancel_install),
+            post(provider_launch::cancel_install),
         )
         .route(
             "/api/providers/install/:install_id/events",
-            get(list_install_events),
+            get(provider_launch::list_install_events),
         )
         .route(
             "/api/providers/install/:install_id/stream",
-            get(install_stream_sse),
+            get(provider_launch::install_stream_sse),
         )
         .route("/api/dev/providers/restart", post(dev_restart_providers))
         .route("/api/lsp/status", get(lsp_status))
@@ -684,7 +694,7 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/mobile/register", post(register_mobile_device))
         .route(
             "/api/workspaces/:id/providers/:provider_id/options",
-            get(get_provider_options),
+            get(provider_launch::get_provider_options),
         )
         .route(
             "/api/workspaces/:id/providers/bootstrap",
@@ -692,11 +702,11 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         )
         .route(
             "/api/workspaces/:id/providers/:provider_id/authenticate",
-            post(authenticate_provider_for_workspace),
+            post(provider_launch::authenticate_provider_for_workspace),
         )
         .route(
             "/api/workspaces/:id/providers/:provider_id/verify",
-            post(verify_provider_for_workspace),
+            post(provider_launch::verify_provider_for_workspace),
         )
         .route(
             "/api/workspaces/:id/attachments",

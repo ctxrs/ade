@@ -1,8 +1,7 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use std::{fs, path::Path};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -10,6 +9,9 @@ use axum::Router;
 use chrono::Utc;
 use directories::BaseDirs;
 use serde_json::json;
+#[cfg(test)]
+use std::fs;
+#[cfg(test)]
 use which::which;
 
 use ctx_core::models::SessionTurnStatus;
@@ -183,39 +185,14 @@ fn runtime_command_invalid_adapter(provider_id: &str, err: String) -> Arc<dyn Pr
 }
 
 pub(crate) fn is_acp_provider_id(provider_id: &str) -> bool {
-    matches!(
-        provider_id,
-        "gemini"
-            | "qwen"
-            | "cursor"
-            | "pi"
-            | "opencode"
-            | "mistral"
-            | "goose"
-            | "kimi"
-            | "auggie"
-            | "amp"
-            | "droid"
-            | "copilot"
-            | "cline"
-            | "openhands"
-    )
+    crate::provider_launch::resolver::is_acp_provider_id(provider_id)
 }
 
 pub(crate) fn acp_bridge_command(
     bridge_cmd: &installer::AgentServerCommand,
     acp_cmd: installer::AgentServerCommand,
 ) -> installer::AgentServerCommand {
-    let acp_command = format_shell_command(&acp_cmd.command, &acp_cmd.args);
-    let mut args = bridge_cmd.args.clone();
-    args.push("--acp-command".to_string());
-    args.push(acp_command);
-    installer::AgentServerCommand {
-        command: bridge_cmd.command.clone(),
-        args,
-        dependencies: Vec::new(),
-        managed: None,
-    }
+    crate::provider_launch::resolver::acp_bridge_command(bridge_cmd, acp_cmd)
 }
 
 pub(crate) fn acp_bridge_adapter(
@@ -223,41 +200,22 @@ pub(crate) fn acp_bridge_adapter(
     bridge_cmd: &installer::AgentServerCommand,
     acp_cmd: installer::AgentServerCommand,
 ) -> Arc<dyn ProviderAdapter> {
-    let bridged = acp_bridge_command(bridge_cmd, acp_cmd);
-    Arc::new(Tier1CrpAdapter::from_raw(id, bridged.command, bridged.args))
+    crate::provider_launch::resolver::acp_bridge_adapter(id, bridge_cmd, acp_cmd)
 }
 
+#[cfg(test)]
 pub(crate) fn runtime_probe_command_as_agent_command_for_target(
     data_root: &Path,
     cfg: &installer::AgentServerConfigFile,
     provider_id: &str,
     requested_target: Option<InstallTarget>,
 ) -> Result<Option<installer::AgentServerCommand>> {
-    let Some(runtime_cmd) =
-        runtime_command_as_agent_command_for_target(cfg, provider_id, requested_target)?
-    else {
-        return Ok(None);
-    };
-    if !is_acp_provider_id(provider_id) {
-        return Ok(Some(runtime_cmd));
-    }
-
-    let bridge_cmd =
-        runtime_command_as_agent_command_for_target(cfg, "acp-crp-bridge", requested_target)?
-            .ok_or_else(|| {
-                anyhow::anyhow!("runtime command is not configured for provider 'acp-crp-bridge'")
-            })?;
-    let normalized = normalize_acp_provider_command(data_root, provider_id, runtime_cmd);
-    let mut bridged = acp_bridge_command(&bridge_cmd, normalized.clone());
-    let mut dependencies = bridge_cmd.dependencies.clone();
-    for dependency in &normalized.dependencies {
-        if !dependencies.contains(dependency) {
-            dependencies.push(dependency.clone());
-        }
-    }
-    bridged.dependencies = dependencies;
-    bridged.managed = bridge_cmd.managed.clone();
-    Ok(Some(bridged))
+    crate::provider_launch::resolver::runtime_probe_command_as_agent_command_for_target(
+        data_root,
+        cfg,
+        provider_id,
+        requested_target,
+    )
 }
 
 #[cfg(test)]
@@ -394,37 +352,7 @@ pub(crate) async fn ensure_provider_adapter_for_target(
     ensure_provider_adapter_for_target_with_cfg(state, &cfg, provider_id, target).await
 }
 
-fn escape_shell_arg(value: &str) -> String {
-    if value.is_empty() {
-        return "''".to_string();
-    }
-    let is_simple = value
-        .bytes()
-        .all(|b| b.is_ascii_alphanumeric() || b"@%_-+=:,./".contains(&b));
-    if is_simple {
-        return value.to_string();
-    }
-    let mut out = String::from("'");
-    for ch in value.chars() {
-        if ch == '\'' {
-            out.push_str("'\\''");
-        } else {
-            out.push(ch);
-        }
-    }
-    out.push('\'');
-    out
-}
-
-fn format_shell_command(command: &str, args: &[String]) -> String {
-    let mut parts = Vec::with_capacity(1 + args.len());
-    parts.push(escape_shell_arg(command));
-    for arg in args {
-        parts.push(escape_shell_arg(arg));
-    }
-    parts.join(" ")
-}
-
+#[cfg(test)]
 fn maybe_wrap_gemini_acp_command(
     data_root: &Path,
     mut cmd: installer::AgentServerCommand,
@@ -580,47 +508,12 @@ await import('file://{}');\n",
     cmd
 }
 
-fn maybe_set_qwen_openai_auth_type(
-    mut cmd: installer::AgentServerCommand,
-) -> installer::AgentServerCommand {
-    if cmd.args.iter().any(|arg| arg == "--auth-type") {
-        return cmd;
-    }
-    cmd.args.push("--auth-type".to_string());
-    cmd.args.push("openai".to_string());
-    cmd
-}
-
-fn maybe_set_bridge_env_override(
-    mut cmd: installer::AgentServerCommand,
-) -> installer::AgentServerCommand {
-    if cmd.args.iter().any(|arg| arg == "--override-with-envs") {
-        return cmd;
-    }
-    cmd.args.push("--override-with-envs".to_string());
-    cmd
-}
-
 pub(crate) fn normalize_acp_provider_command(
     data_root: &Path,
     provider_id: &str,
     cmd: installer::AgentServerCommand,
 ) -> installer::AgentServerCommand {
-    let cmd = if provider_id == "gemini" {
-        maybe_wrap_gemini_acp_command(data_root, cmd)
-    } else {
-        cmd
-    };
-    let cmd = if provider_id == "qwen" {
-        maybe_set_qwen_openai_auth_type(cmd)
-    } else {
-        cmd
-    };
-    if provider_id == "openhands" {
-        maybe_set_bridge_env_override(cmd)
-    } else {
-        cmd
-    }
+    crate::provider_launch::resolver::normalize_acp_provider_command(data_root, provider_id, cmd)
 }
 
 async fn reconcile_running_turns(state: &Arc<AppState>) -> Result<()> {
