@@ -113,6 +113,7 @@ pub struct ProviderRuntime {
     pub amp_login_sessions: Mutex<HashMap<String, provider_accounts::AmpLoginStatus>>,
     pub mistral_login_sessions: Mutex<HashMap<String, provider_accounts::MistralLoginStatus>>,
     pub claude_login_inputs: Mutex<HashMap<String, mpsc::UnboundedSender<String>>>,
+    pub install_start_gate: Mutex<()>,
     pub installs: Mutex<HashMap<InstallId, InstallState>>,
 }
 
@@ -225,6 +226,8 @@ const INSTALL_TIMEOUT_PACKAGE_MANAGER_SECS: u64 = (12 * 60) + INSTALL_TIMEOUT_GR
 const INSTALL_TIMEOUT_PREPARE_SECS: u64 = 5 * 60;
 const INSTALL_TIMEOUT_REGISTRY_SECS: u64 = 2 * 60;
 const INSTALL_TIMEOUT_DEFAULT_SECS: u64 = 20 * 60;
+const PREREQUISITE_PROGRESS_STAGE_FLOOR: &str = "start";
+const PREREQUISITE_PROGRESS_VISIBILITY_MS: i64 = 1_200;
 
 #[derive(Clone, Copy, Debug)]
 pub struct CacheSweepConfig {
@@ -564,6 +567,7 @@ impl AppState {
                 amp_login_sessions: Mutex::new(HashMap::new()),
                 mistral_login_sessions: Mutex::new(HashMap::new()),
                 claude_login_inputs: Mutex::new(HashMap::new()),
+                install_start_gate: Mutex::new(()),
                 installs: Mutex::new(HashMap::new()),
             },
             telemetry: TelemetryRuntime {
@@ -1077,15 +1081,6 @@ impl AppState {
         })
     }
 
-    pub async fn find_running_install(
-        &self,
-        provider_id: &str,
-        target: Option<InstallTarget>,
-    ) -> Option<InstallId> {
-        let mut map = self.providers.installs.lock().await;
-        self.find_running_install_locked(&mut map, provider_id, target)
-    }
-
     fn push_install_event_locked(st: &mut InstallState, event: InstallProgressEvent) {
         if st.events.len() >= 256 {
             st.events.pop_front();
@@ -1125,12 +1120,26 @@ impl AppState {
         }
     }
 
+    pub async fn find_running_install(
+        &self,
+        provider_id: &str,
+        target: Option<InstallTarget>,
+    ) -> Option<InstallId> {
+        let mut map = self.providers.installs.lock().await;
+        self.find_running_install_locked(&mut map, provider_id, target)
+    }
+
     pub async fn start_install(
         &self,
         provider_id: String,
         target: Option<InstallTarget>,
     ) -> (InstallId, bool) {
-        if let Some(existing) = self.find_running_install(&provider_id, target).await {
+        let _start_gate = self.providers.install_start_gate.lock().await;
+        let existing = {
+            let mut installs = self.providers.installs.lock().await;
+            self.find_running_install_locked(&mut installs, &provider_id, target)
+        };
+        if let Some(existing) = existing {
             let mut event = OpsEvent::new("info", "provider_install_joined");
             event.provider_id = Some(provider_id.clone());
             event.meta = Some(serde_json::json!({
@@ -1178,6 +1187,16 @@ impl AppState {
         let mut map = self.providers.installs.lock().await;
         let st = map.get_mut(&install_id)?;
         let _ = self.reconcile_stale_running_install_locked(install_id, st);
+        Some(st.info(install_id))
+    }
+
+    pub async fn get_install_polling_info(
+        &self,
+        install_id: InstallId,
+    ) -> Option<crate::installs::InstallInfo> {
+        let mut map = self.providers.installs.lock().await;
+        let st = map.get_mut(&install_id)?;
+        let _ = self.reconcile_stale_running_install_locked(install_id, st);
         Some(st.polling_info(install_id))
     }
 
@@ -1191,16 +1210,74 @@ impl AppState {
         Some(st.events.iter().cloned().collect())
     }
 
+    pub async fn register_install_progress_mirror(
+        &self,
+        source_install_id: InstallId,
+        mirror_install_id: InstallId,
+    ) -> bool {
+        let mut installs = self.providers.installs.lock().await;
+        let (source_provider_id, source_target, inserted, last_event) = {
+            let Some(source_state) = installs.get_mut(&source_install_id) else {
+                return false;
+            };
+            let inserted = source_state.mirrors.insert(mirror_install_id);
+            let source_provider_id = source_state.provider_id.clone();
+            let source_target = source_state.target;
+            let last_event = source_state.events.back().cloned();
+            (source_provider_id, source_target, inserted, last_event)
+        };
+        let Some(mirror_state) = installs.get_mut(&mirror_install_id) else {
+            return false;
+        };
+        if inserted {
+            let source_event = last_event.unwrap_or_else(|| InstallProgressEvent {
+                install_id: source_install_id,
+                provider_id: source_provider_id.clone(),
+                target: source_target,
+                at: chrono::Utc::now(),
+                stage: "start".to_string(),
+                message: "Waiting for tracked prerequisite install to report progress".to_string(),
+                level: InstallEventLevel::Info,
+                bytes: None,
+                total_bytes: None,
+                attempt: None,
+                error_code: None,
+            });
+            let mirrored_event = Self::mirrored_install_event(
+                source_install_id,
+                &source_provider_id,
+                &source_event,
+                mirror_install_id,
+                mirror_state,
+            );
+            Self::set_install_info_event_override_locked(mirror_state, &mirrored_event);
+            Self::push_install_event_locked(mirror_state, mirrored_event);
+        }
+        true
+    }
+
     pub async fn emit_install_event(&self, install_id: InstallId, event: InstallProgressEvent) {
-        let mut map = self.providers.installs.lock().await;
-        let Some(st) = map.get_mut(&install_id) else {
+        let mut installs = self.providers.installs.lock().await;
+        let Some(st) = installs.get_mut(&install_id) else {
             return;
         };
-        if st.events.len() >= 256 {
-            st.events.pop_front();
+        let source_provider_id = st.provider_id.clone();
+        let mirrors = st.mirrors.iter().copied().collect::<Vec<_>>();
+        Self::push_install_event_locked(st, event.clone());
+        for mirror_install_id in mirrors {
+            let Some(mirror_state) = installs.get_mut(&mirror_install_id) else {
+                continue;
+            };
+            let mirrored_event = Self::mirrored_install_event(
+                install_id,
+                &source_provider_id,
+                &event,
+                mirror_install_id,
+                mirror_state,
+            );
+            Self::set_install_info_event_override_locked(mirror_state, &mirrored_event);
+            Self::push_install_event_locked(mirror_state, mirrored_event);
         }
-        st.events.push_back(event.clone());
-        let _ = st.tx.send(event);
     }
 
     pub async fn finish_install(
@@ -1433,5 +1510,42 @@ mod tests {
             .expect("missing install info");
         assert!(matches!(info.state, InstallStateKind::Running));
         assert_eq!(info.error_code, None);
+    }
+
+    #[tokio::test]
+    async fn start_install_dedupes_concurrent_requests_for_same_provider_target() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state = test_state(&temp).await;
+
+        let mut tasks = Vec::new();
+        for _ in 0..8 {
+            let state = state.clone();
+            tasks.push(tokio::spawn(async move {
+                state
+                    .start_install("acp-crp-bridge".to_string(), Some(InstallTarget::Container))
+                    .await
+            }));
+        }
+
+        let mut install_ids = Vec::new();
+        let mut started_new_count = 0usize;
+        for task in tasks {
+            let (install_id, started_new) = task.await.expect("join start_install task");
+            install_ids.push(install_id);
+            if started_new {
+                started_new_count += 1;
+            }
+        }
+
+        assert_eq!(
+            started_new_count, 1,
+            "concurrent start_install callers must share one tracked running install"
+        );
+        assert!(
+            install_ids
+                .windows(2)
+                .all(|pair| pair.first() == pair.get(1)),
+            "all concurrent start_install callers should receive the same install id: {install_ids:#?}"
+        );
     }
 }

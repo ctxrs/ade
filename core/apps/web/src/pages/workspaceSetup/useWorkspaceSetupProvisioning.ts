@@ -174,6 +174,24 @@ export function useWorkspaceSetupProvisioning({
   const selectedHarnessInstallTarget: InstallTarget =
     selections.container && selections.container !== "no-container" ? "container" : "host";
 
+  const authImportScanKeyForTarget = useCallback((target: "local" | "remote"): string => (
+    target === "local"
+      ? "local|@"
+      : `remote|${parsedRemoteUser ?? ""}@${parsedRemoteHost ?? ""}:${parsedRemotePort ?? 4399}:${remoteDataDirInput.trim()}`
+  ), [parsedRemoteHost, parsedRemotePort, parsedRemoteUser, remoteDataDirInput]);
+
+  const harnessInstallScanKeyForTarget = useCallback((
+    target: "local" | "remote",
+    containerSelectionOverride?: string,
+  ): string => {
+    const containerSelection = containerSelectionOverride ?? selections.container;
+    const installTarget: InstallTarget =
+      containerSelection && containerSelection !== "no-container" ? "container" : "host";
+    return target === "local"
+      ? `local|@|${installTarget}`
+      : `remote|${parsedRemoteUser ?? ""}@${parsedRemoteHost ?? ""}|${installTarget}`;
+  }, [parsedRemoteHost, parsedRemoteUser, selections.container]);
+
   const resetTitlingDraft = () => {
     setTitlingMode("unset");
     setTitlingRemoteBaseUrl(DEFAULT_TITLE_REMOTE_BASE_URL);

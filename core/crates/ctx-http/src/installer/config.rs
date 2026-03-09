@@ -276,17 +276,29 @@ fn runtime_command_candidate(
     provider_id: &str,
     requested_target: Option<InstallTarget>,
 ) -> Result<Option<(AgentServerCommand, ProviderRuntimeCommandSource)>> {
+    let allow_bundled_seed = matches!(
+        requested_target_or_host(requested_target),
+        InstallTarget::Host
+    );
     if bundled_only_mode_applies_to_provider(provider_id) {
-        if let Some(bundled) = bundled_assets::bundled_provider_command(provider_id) {
-            return Ok(Some((
-                AgentServerCommand {
-                    command: bundled.command,
-                    args: bundled.args,
-                    dependencies: Vec::new(),
-                    managed: None,
-                },
-                ProviderRuntimeCommandSource::BundledSeed,
-            )));
+        if allow_bundled_seed {
+            if let Some(bundled) = bundled_assets::bundled_provider_command(provider_id) {
+                return Ok(Some((
+                    AgentServerCommand {
+                        command: bundled.command,
+                        args: bundled.args,
+                        dependencies: Vec::new(),
+                        managed: None,
+                    },
+                    ProviderRuntimeCommandSource::BundledSeed,
+                )));
+            }
+        } else {
+            anyhow::bail!(
+                "runtime_command_missing_bundled_target: provider={} target={}",
+                provider_id,
+                requested_target_or_host(requested_target).as_str()
+            );
         }
         anyhow::bail!(
             "runtime_command_missing_bundled: provider={} (set CTX_BUNDLE_DIR and ensure bundled manifest includes provider)",
@@ -309,16 +321,18 @@ fn runtime_command_candidate(
             ProviderRuntimeCommandSource::ManagedInstall,
         )));
     }
-    if let Some(bundled) = bundled_assets::bundled_provider_command(provider_id) {
-        return Ok(Some((
-            AgentServerCommand {
-                command: bundled.command,
-                args: bundled.args,
-                dependencies: Vec::new(),
-                managed: None,
-            },
-            ProviderRuntimeCommandSource::BundledSeed,
-        )));
+    if allow_bundled_seed {
+        if let Some(bundled) = bundled_assets::bundled_provider_command(provider_id) {
+            return Ok(Some((
+                AgentServerCommand {
+                    command: bundled.command,
+                    args: bundled.args,
+                    dependencies: Vec::new(),
+                    managed: None,
+                },
+                ProviderRuntimeCommandSource::BundledSeed,
+            )));
+        }
     }
     Ok(None)
 }
@@ -848,6 +862,56 @@ mod tests {
                 .to_string_lossy()
         );
         assert_eq!(container_resolved.args, vec!["--container".to_string()]);
+    }
+
+    #[test]
+    fn resolve_runtime_provider_command_for_target_does_not_use_bundled_seed_for_container() {
+        let _guard = env_lock().lock().expect("lock env");
+        let temp = tempdir().expect("tempdir");
+        let bundle_dir = temp.path().join("bundle");
+        let bundle_bin = bundle_dir.join("bin");
+        let bundle_cmd = bundle_bin.join("acp-crp-bridge");
+        std::fs::create_dir_all(&bundle_bin).expect("mkdir bundle bin");
+        std::fs::write(&bundle_cmd, b"bridge").expect("write bundle bridge");
+        std::fs::write(
+            bundle_dir.join("manifest.json"),
+            format!(
+                r#"{{
+  "version": 1,
+  "providers": [
+    {{
+      "id": "acp-crp-bridge",
+      "protocol": "crp",
+      "version": "0.1.0",
+      "os": "{}",
+      "arch": "{}",
+      "command": "acp-crp-bridge",
+      "args": [],
+      "sha256": "deadbeef"
+    }}
+  ]
+}}"#,
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            ),
+        )
+        .expect("write bundle manifest");
+        let _bundle_dir = EnvVarGuard::set("CTX_BUNDLE_DIR", &bundle_dir.to_string_lossy());
+        let _bundle_manifest = EnvVarGuard::unset("CTX_BUNDLE_MANIFEST");
+        let _strict = EnvVarGuard::unset("CTX_E2E_BUNDLED_ONLY");
+        let _providers = EnvVarGuard::unset("CTX_E2E_BUNDLED_ONLY_PROVIDERS");
+
+        let resolved = resolve_runtime_provider_command_for_target(
+            &AgentServerConfigFile::default(),
+            "acp-crp-bridge",
+            Some(InstallTarget::Container),
+        )
+        .expect("resolve container target");
+
+        assert!(
+            resolved.is_none(),
+            "container target must not reuse host bundled provider commands"
+        );
     }
 
     #[test]

@@ -11,14 +11,21 @@ use axum::http::StatusCode;
 use ctx_core::models::SessionEventType;
 use ctx_http::daemon::AppState;
 use ctx_http::installer::{
-    refresh_provider_statuses, save_agent_server_config, AgentServerCommand, AgentServerConfigFile,
-    ManagedInstallMetadata,
+    load_agent_server_config, refresh_provider_statuses, save_agent_server_config,
+    AgentServerCommand, AgentServerConfigFile, ManagedInstallMetadata,
+};
+use ctx_http::installs::{
+    InstallId, InstallInfo, InstallProgressEvent, InstallStateKind, InstallTarget,
+};
+use ctx_http::provider_matrix::{
+    matrix_cache_path, ProviderArchiveKind, ProviderArchiveTarget, ProviderInstall, ProviderMatrix,
+    ProviderMatrixEntry, ProviderRelease, ProviderReleaseStatus,
 };
 use ctx_http::settings::{
     save_settings, ContainerExecutionSettings, ContainerMountMode, ContainerNetworkMode,
     ExecutionMode, ExecutionSettings, Settings,
 };
-use ctx_providers::adapters::ProviderAdapter;
+use ctx_providers::adapters::{ProviderAdapter, ProviderHealth, ProviderStatus};
 use ctx_providers::crp::Tier1CrpAdapter;
 use ctx_store::Store;
 
@@ -304,6 +311,268 @@ async fn set_workspace_container_execution(
     )
     .await;
     assert_eq!(status, StatusCode::OK, "execution config failed: {body:#?}");
+}
+
+fn file_url(path: &Path) -> String {
+    url::Url::from_file_path(path)
+        .expect("file url")
+        .to_string()
+}
+
+#[derive(Clone)]
+struct DownloadFixture {
+    body: Vec<u8>,
+    delay_ms: u64,
+}
+
+async fn spawn_download_fixture_server(fixtures: Vec<(&str, Vec<u8>, u64)>) -> common::TestServer {
+    let fixture_map = Arc::new(
+        fixtures
+            .into_iter()
+            .map(|(name, body, delay_ms)| (name.to_string(), DownloadFixture { body, delay_ms }))
+            .collect::<HashMap<_, _>>(),
+    );
+
+    async fn serve_fixture(
+        axum::extract::State(fixtures): axum::extract::State<Arc<HashMap<String, DownloadFixture>>>,
+        axum::extract::Path(name): axum::extract::Path<String>,
+    ) -> impl axum::response::IntoResponse {
+        let fixture = fixtures
+            .get(&name)
+            .cloned()
+            .expect("missing download fixture");
+        tokio::time::sleep(Duration::from_millis(fixture.delay_ms)).await;
+        (
+            [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
+            fixture.body,
+        )
+    }
+
+    common::spawn_http_server(
+        axum::Router::new()
+            .route("/:name", axum::routing::get(serve_fixture))
+            .with_state(fixture_map),
+    )
+    .await
+}
+
+fn fixture_download_url(server: &common::TestServer, name: &str) -> String {
+    format!("{}/{}", server.base_url, name)
+}
+
+fn local_archive_entry(url: String) -> ProviderArchiveTarget {
+    ProviderArchiveTarget {
+        url,
+        sha256: None,
+        size_bytes: None,
+        archive: ProviderArchiveKind::None,
+        bin_path: "bin/runtime".to_string(),
+    }
+}
+
+async fn save_matrix_fixture(data_root: &Path, matrix: &ProviderMatrix) {
+    let path = matrix_cache_path(data_root);
+    let parent = path.parent().expect("matrix cache parent");
+    tokio::fs::create_dir_all(parent)
+        .await
+        .expect("create matrix cache dir");
+    tokio::fs::write(
+        &path,
+        serde_json::to_vec_pretty(matrix).expect("serialize matrix"),
+    )
+    .await
+    .expect("write matrix cache");
+}
+
+fn archive_targets(url: String) -> HashMap<String, ProviderArchiveTarget> {
+    HashMap::from([
+        (
+            "linux-aarch64".to_string(),
+            local_archive_entry(url.clone()),
+        ),
+        ("linux-x86_64".to_string(), local_archive_entry(url)),
+    ])
+}
+
+fn acp_provider_fixture_entry(provider_id: &str, provider_url: String) -> ProviderMatrixEntry {
+    ProviderMatrixEntry {
+        id: provider_id.to_string(),
+        display_name: Some(provider_id.to_string()),
+        tier: Some("tier2".to_string()),
+        command: None,
+        managed_install: Some(ProviderInstall::Archive {
+            version: "0.1.0".to_string(),
+            args: vec!["--provider".to_string()],
+            targets: archive_targets(provider_url),
+        }),
+        dependencies: Vec::new(),
+        version_probe: None,
+        releases: vec![ProviderRelease {
+            version: "0.1.0".to_string(),
+            status: ProviderReleaseStatus::Supported,
+            upstream_version: None,
+            provenance: None,
+            context_min: None,
+            context_max: None,
+            notes: None,
+        }],
+    }
+}
+
+fn provider_fixture_matrix_with_providers(
+    bridge_url: String,
+    providers: Vec<(&str, String)>,
+) -> ProviderMatrix {
+    let bridge_targets = HashMap::from([
+        (
+            "linux-aarch64".to_string(),
+            local_archive_entry(bridge_url.clone()),
+        ),
+        ("linux-x86_64".to_string(), local_archive_entry(bridge_url)),
+    ]);
+    let mut entries = vec![ProviderMatrixEntry {
+        id: "acp-crp-bridge".to_string(),
+        display_name: Some("ACP Bridge".to_string()),
+        tier: Some("tier2".to_string()),
+        command: None,
+        managed_install: Some(ProviderInstall::Archive {
+            version: "0.1.0".to_string(),
+            args: Vec::new(),
+            targets: bridge_targets,
+        }),
+        dependencies: Vec::new(),
+        version_probe: None,
+        releases: vec![ProviderRelease {
+            version: "0.1.0".to_string(),
+            status: ProviderReleaseStatus::Supported,
+            upstream_version: None,
+            provenance: None,
+            context_min: None,
+            context_max: None,
+            notes: None,
+        }],
+    }];
+    entries.extend(
+        providers.into_iter().map(|(provider_id, provider_url)| {
+            acp_provider_fixture_entry(provider_id, provider_url)
+        }),
+    );
+    ProviderMatrix {
+        version: 2,
+        generated_at: None,
+        providers: entries,
+    }
+}
+
+fn provider_fixture_matrix(bridge_url: String, provider_url: String) -> ProviderMatrix {
+    provider_fixture_matrix_with_providers(bridge_url, vec![("kimi", provider_url)])
+}
+
+async fn wait_for_install_completion(
+    state: &Arc<AppState>,
+    install_id: InstallId,
+) -> ctx_http::installs::InstallInfo {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        let info = state
+            .get_install_info(install_id)
+            .await
+            .expect("missing install info");
+        if !matches!(info.state, InstallStateKind::Running) {
+            return info;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out waiting for install {install_id}: {info:#?}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+fn install_stage_progress_value(stage: &str) -> Option<u32> {
+    match stage {
+        "start" => Some(2),
+        "download" => Some(10),
+        "node" => Some(15),
+        "node_download" => Some(18),
+        "prepare" => Some(25),
+        "venv" => Some(35),
+        "npm_install" => Some(65),
+        "pip_install" => Some(70),
+        "extract" => Some(78),
+        "entrypoint" => Some(80),
+        "inspect" => Some(90),
+        "refresh" => Some(95),
+        "registry" => Some(98),
+        _ => None,
+    }
+}
+
+fn compute_polled_install_pct(info: &InstallInfo, previous_pct: Option<u32>) -> Option<u32> {
+    if matches!(info.state, InstallStateKind::Succeeded) {
+        return Some(100);
+    }
+    let last_event = info.last_event.as_ref()?;
+    let staged = install_stage_progress_value(last_event.stage.as_str())?;
+    Some(previous_pct.map_or(staged, |pct| pct.max(staged)))
+}
+
+async fn get_install_info_api(app: &axum::Router, install_id: InstallId) -> InstallInfo {
+    let (status, body): (StatusCode, InstallInfo) = common::json_request(
+        app,
+        axum::http::Method::GET,
+        format!("/api/providers/install/{install_id}"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "install info failed: {body:#?}");
+    body
+}
+
+async fn get_install_events_api(
+    app: &axum::Router,
+    install_id: InstallId,
+) -> Vec<InstallProgressEvent> {
+    let (status, body): (StatusCode, Vec<InstallProgressEvent>) = common::json_request(
+        app,
+        axum::http::Method::GET,
+        format!("/api/providers/install/{install_id}/events"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "install events failed: {body:#?}");
+    body
+}
+
+async fn save_invalid_container_bridge_runtime(data_root: &Path) {
+    let mut cfg = load_agent_server_config(data_root)
+        .await
+        .unwrap_or_default();
+    cfg.managed_provider_targets.insert(
+        "acp-crp-bridge".to_string(),
+        HashMap::from([(
+            "container".to_string(),
+            AgentServerCommand {
+                command: "relative-bridge".to_string(),
+                args: Vec::new(),
+                dependencies: Vec::new(),
+                managed: Some(ManagedInstallMetadata {
+                    package: Some("acp-crp-bridge".to_string()),
+                    version: Some("1.0.0".to_string()),
+                    target: Some(ctx_http::installs::InstallTarget::Container),
+                    install_dir_rel: Some(
+                        "providers/agent-servers/acp-crp-bridge/invalid".to_string(),
+                    ),
+                    bin_dir_rel: Some("providers/agent-servers/acp-crp-bridge/invalid".to_string()),
+                    last_success_at: None,
+                    last_error: None,
+                }),
+            },
+        )]),
+    );
+    save_agent_server_config(data_root, &cfg)
+        .await
+        .expect("save invalid bridge runtime config");
 }
 
 async fn post_message(app: &axum::Router, session_id: uuid::Uuid, content: &str) {
@@ -693,7 +962,7 @@ async fn acp_container_install_happy_path_installs_bridge_prerequisite_and_keeps
     let bridge_fixture = fixture_dir.join("acp-crp-bridge");
     let provider_fixture = fixture_dir.join("kimi-acp");
     write_executable(&bridge_fixture, "#!/bin/sh\nexit 0\n");
-    write_executable(&provider_fixture, "#!/bin/sh\nexit 0\n");
+    write_executable(&provider_fixture, "#!/bin/sh\nsleep 0.5\nexit 0\n");
     save_matrix_fixture(
         data_dir.path(),
         &provider_fixture_matrix(file_url(&bridge_fixture), file_url(&provider_fixture)),

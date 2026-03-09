@@ -1,10 +1,11 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chrono::Utc;
 use ctx_core::ids::WorktreeId;
 use ctx_core::models::{Workspace, Worktree};
+use ctx_fs::worktrees::managed_worktree_path;
 
 use crate::daemon::AppState;
 use crate::execution_effective;
@@ -13,17 +14,24 @@ use crate::logs;
 use crate::provider_accounts;
 use crate::settings::ExecutionMode;
 
+pub(crate) struct WorkspaceRuntimeProbeContext {
+    pub(crate) source: ResolvedHarnessSource,
+    pub(crate) env: HashMap<String, String>,
+    pub(crate) cwd: PathBuf,
+}
+
 pub(crate) async fn provider_probe_env(
     state: &Arc<AppState>,
     provider_id: &str,
 ) -> Result<(ResolvedHarnessSource, HashMap<String, String>), String> {
-    provider_probe_env_with_runtime_root(state, provider_id, None).await
+    provider_env_with_runtime_root(state, provider_id, None, true).await
 }
 
-async fn provider_probe_env_with_runtime_root(
+async fn provider_env_with_runtime_root(
     state: &Arc<AppState>,
     provider_id: &str,
     runtime_data_root: Option<&Path>,
+    require_subscription_account_env: bool,
 ) -> Result<(ResolvedHarnessSource, HashMap<String, String>), String> {
     let source = harness_sources::resolve_provider_source_for_probe_with_runtime_root(
         &state.core.data_root,
@@ -54,11 +62,22 @@ async fn provider_probe_env_with_runtime_root(
                 )
                 .await
             }
-        };
-        if let Ok(extra) = extra {
-            for (key, value) in extra {
-                env.insert(key, value);
-            }
+        }
+        .map_err(|err| {
+            logs::redact_sensitive(&format!(
+                "probe subscription env preparation failed: {err:#}"
+            ))
+        })?;
+        if require_subscription_account_env
+            && subscription_probe_requires_account_env(provider_id)
+            && extra.is_empty()
+        {
+            return Err(format!(
+                "subscription account env is missing for provider '{provider_id}'; configure an active account or select an endpoint"
+            ));
+        }
+        for (key, value) in extra {
+            env.insert(key, value);
         }
     }
     for (key, value) in source.env.iter() {
@@ -67,14 +86,66 @@ async fn provider_probe_env_with_runtime_root(
     Ok((source, env))
 }
 
-fn select_probe_worktree(workspace: &Workspace, worktrees: &[Worktree]) -> Option<Worktree> {
-    if let Some(preferred) = worktrees
-        .iter()
-        .find(|worktree| worktree.root_path == workspace.root_path)
-    {
-        return Some(preferred.clone());
+fn subscription_probe_requires_account_env(provider_id: &str) -> bool {
+    matches!(
+        provider_id,
+        "claude-crp" | "gemini" | "qwen" | "kimi" | "mistral" | "copilot" | "cursor" | "amp"
+    )
+}
+
+fn probe_worktree_priority(
+    data_root: &Path,
+    workspace: &Workspace,
+    worktree: &Worktree,
+) -> Option<u8> {
+    if worktree.root_path == workspace.root_path {
+        return Some(0);
     }
-    worktrees.first().cloned()
+
+    if Path::new(&worktree.root_path) == managed_worktree_path(data_root, workspace.id, worktree.id)
+    {
+        return Some(1);
+    }
+
+    None
+}
+
+fn select_probe_worktree(
+    data_root: &Path,
+    workspace: &Workspace,
+    worktrees: &[Worktree],
+) -> Result<Option<Worktree>, String> {
+    if worktrees.is_empty() {
+        return Ok(None);
+    }
+
+    let mut selected: Option<(u8, Worktree)> = None;
+    let mut stale_paths = Vec::new();
+    for worktree in worktrees {
+        match probe_worktree_priority(data_root, workspace, worktree) {
+            Some(priority) => {
+                if selected
+                    .as_ref()
+                    .map(|(best_priority, _)| priority < *best_priority)
+                    .unwrap_or(true)
+                {
+                    selected = Some((priority, worktree.clone()));
+                }
+            }
+            None => stale_paths.push(worktree.root_path.clone()),
+        }
+    }
+
+    if let Some((_, worktree)) = selected {
+        return Ok(Some(worktree));
+    }
+
+    stale_paths.sort();
+    Err(format!(
+        "container provider probe requires an explicit ctx-managed worktree; workspace '{}' has no worktree at the workspace root or ctx-managed path (found: {})",
+        workspace.root_path,
+        stale_paths.join(", ")
+    ))
 }
 
 fn synthetic_probe_worktree(workspace: &Workspace) -> Worktree {
@@ -132,18 +203,28 @@ async fn finalize_workspace_probe_env(
     Ok(())
 }
 
-pub(crate) async fn provider_probe_env_for_workspace_runtime(
+async fn provider_context_for_workspace_runtime(
     state: &Arc<AppState>,
     workspace: &Workspace,
     provider_id: &str,
-) -> Result<(ResolvedHarnessSource, HashMap<String, String>), String> {
+    require_subscription_account_env: bool,
+) -> Result<WorkspaceRuntimeProbeContext, String> {
     let effective = execution_effective::effective_execution_settings(state, workspace.id)
         .await
         .map_err(|err| {
             logs::redact_sensitive(&format!("effective execution settings failed: {err}"))
         })?;
     if matches!(effective.mode, ExecutionMode::Host) {
-        return provider_probe_env(state, provider_id).await;
+        let (source, env) = if require_subscription_account_env {
+            provider_probe_env(state, provider_id).await
+        } else {
+            provider_env_with_runtime_root(state, provider_id, None, false).await
+        }?;
+        return Ok(WorkspaceRuntimeProbeContext {
+            source,
+            env,
+            cwd: PathBuf::from(&workspace.root_path),
+        });
     }
 
     let worktrees = state
@@ -153,8 +234,9 @@ pub(crate) async fn provider_probe_env_for_workspace_runtime(
         .map_err(|err| {
             logs::redact_sensitive(&format!("loading workspace worktrees failed: {err}"))
         })?;
-    let worktree = select_probe_worktree(workspace, &worktrees)
+    let worktree = select_probe_worktree(&state.core.data_root, workspace, &worktrees)?
         .unwrap_or_else(|| synthetic_probe_worktree(workspace));
+    let cwd = PathBuf::from(&worktree.root_path);
     let runtime_plan = state
         .execution
         .harness
@@ -167,19 +249,50 @@ pub(crate) async fn provider_probe_env_for_workspace_runtime(
         .env_overrides
         .get("CTX_DATA_ROOT")
         .map(|value| Path::new(value).to_path_buf());
-    let (source, mut env) =
-        provider_probe_env_with_runtime_root(state, provider_id, runtime_root.as_deref()).await?;
+    let (source, mut env) = provider_env_with_runtime_root(
+        state,
+        provider_id,
+        runtime_root.as_deref(),
+        require_subscription_account_env,
+    )
+    .await?;
     for (key, value) in runtime_plan.env_overrides {
         env.insert(key, value);
     }
     finalize_workspace_probe_env(&source, provider_id, &mut env).await?;
-    Ok((source, env))
+    Ok(WorkspaceRuntimeProbeContext { source, env, cwd })
+}
+
+pub(crate) async fn provider_probe_context_for_workspace_runtime(
+    state: &Arc<AppState>,
+    workspace: &Workspace,
+    provider_id: &str,
+) -> Result<WorkspaceRuntimeProbeContext, String> {
+    provider_context_for_workspace_runtime(state, workspace, provider_id, true).await
+}
+
+pub(crate) async fn provider_auth_context_for_workspace_runtime(
+    state: &Arc<AppState>,
+    workspace: &Workspace,
+    provider_id: &str,
+) -> Result<WorkspaceRuntimeProbeContext, String> {
+    provider_context_for_workspace_runtime(state, workspace, provider_id, false).await
+}
+
+pub(crate) async fn provider_probe_env_for_workspace_runtime(
+    state: &Arc<AppState>,
+    workspace: &Workspace,
+    provider_id: &str,
+) -> Result<(ResolvedHarnessSource, HashMap<String, String>), String> {
+    let context =
+        provider_probe_context_for_workspace_runtime(state, workspace, provider_id).await?;
+    Ok((context.source, context.env))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        finalize_workspace_probe_env, provider_probe_env_with_runtime_root, select_probe_worktree,
+        finalize_workspace_probe_env, provider_env_with_runtime_root, select_probe_worktree,
         synthetic_probe_worktree,
     };
     use std::collections::HashMap;
@@ -189,6 +302,7 @@ mod tests {
     use chrono::Utc;
     use ctx_core::ids::{WorkspaceId, WorktreeId};
     use ctx_core::models::{Workspace, Worktree};
+    use ctx_fs::worktrees::managed_worktree_path;
     use ctx_store::StoreManager;
     use uuid::Uuid;
 
@@ -243,27 +357,163 @@ mod tests {
     }
 
     #[test]
-    fn select_probe_worktree_prefers_workspace_root_match() {
+    fn select_probe_worktree_accepts_workspace_root_match() {
         let workspace = sample_workspace("/repo");
         let first = sample_worktree(workspace.id, "/repo-alt");
         let preferred = sample_worktree(workspace.id, "/repo");
-        let selected = select_probe_worktree(&workspace, &[first, preferred.clone()]);
+        let selected =
+            select_probe_worktree(Path::new("/ctx"), &workspace, &[first, preferred.clone()])
+                .expect("selection should succeed");
         assert_eq!(selected.expect("selected").id, preferred.id);
     }
 
     #[test]
-    fn select_probe_worktree_falls_back_to_first_entry() {
+    fn select_probe_worktree_accepts_ctx_managed_worktree_match() {
+        let data_root = tempfile::tempdir().expect("tempdir");
+        let workspace = sample_workspace("/repo");
+        let worktree_id = WorktreeId(Uuid::new_v4());
+        let managed_path = managed_worktree_path(data_root.path(), workspace.id, worktree_id);
+        let managed = Worktree {
+            id: worktree_id,
+            workspace_id: workspace.id,
+            root_path: managed_path.to_string_lossy().to_string(),
+            base_commit_sha: String::new(),
+            git_branch: None,
+            vcs_kind: None,
+            base_revision: None,
+            vcs_ref: None,
+            created_at: Utc::now(),
+            bootstrap_status: None,
+            bootstrap_started_at: None,
+            bootstrap_finished_at: None,
+            bootstrap_exit_code: None,
+            bootstrap_timeout_sec: None,
+            bootstrap_error: None,
+            bootstrap_log_path: None,
+            bootstrap_log_truncated: None,
+            bootstrap_command: None,
+            bootstrap_script_path: None,
+        };
+
+        let selected = select_probe_worktree(data_root.path(), &workspace, &[managed.clone()])
+            .expect("selection should succeed");
+        assert_eq!(selected.expect("selected").id, managed.id);
+    }
+
+    #[test]
+    fn select_probe_worktree_rejects_only_stale_worktrees() {
         let workspace = sample_workspace("/repo");
         let first = sample_worktree(workspace.id, "/repo-a");
         let second = sample_worktree(workspace.id, "/repo-b");
-        let selected = select_probe_worktree(&workspace, &[first.clone(), second]);
-        assert_eq!(selected.expect("selected").id, first.id);
+        let err = select_probe_worktree(Path::new("/ctx"), &workspace, &[first, second])
+            .expect_err("stale worktrees should be rejected explicitly");
+        assert!(err.contains("explicit ctx-managed worktree"));
     }
 
     #[test]
     fn select_probe_worktree_returns_none_for_empty_list() {
         let workspace = sample_workspace("/repo");
-        assert!(select_probe_worktree(&workspace, &[]).is_none());
+        assert!(select_probe_worktree(Path::new("/ctx"), &workspace, &[])
+            .expect("empty selection should not error")
+            .is_none());
+    }
+
+    #[test]
+    fn select_probe_worktree_prefers_workspace_root_when_multiple_valid_worktrees_exist() {
+        let data_root = tempfile::tempdir().expect("tempdir");
+        let workspace = sample_workspace("/repo");
+        let root_worktree = sample_worktree(workspace.id, "/repo");
+        let managed_id = WorktreeId(Uuid::new_v4());
+        let managed = Worktree {
+            id: managed_id,
+            workspace_id: workspace.id,
+            root_path: managed_worktree_path(data_root.path(), workspace.id, managed_id)
+                .to_string_lossy()
+                .to_string(),
+            base_commit_sha: String::new(),
+            git_branch: None,
+            vcs_kind: None,
+            base_revision: None,
+            vcs_ref: None,
+            created_at: Utc::now(),
+            bootstrap_status: None,
+            bootstrap_started_at: None,
+            bootstrap_finished_at: None,
+            bootstrap_exit_code: None,
+            bootstrap_timeout_sec: None,
+            bootstrap_error: None,
+            bootstrap_log_path: None,
+            bootstrap_log_truncated: None,
+            bootstrap_command: None,
+            bootstrap_script_path: None,
+        };
+
+        let selected = select_probe_worktree(
+            data_root.path(),
+            &workspace,
+            &[managed, root_worktree.clone()],
+        )
+        .expect("multiple valid candidates should be accepted");
+        assert_eq!(selected.expect("selected").id, root_worktree.id);
+    }
+
+    #[test]
+    fn select_probe_worktree_accepts_multiple_valid_ctx_managed_worktrees() {
+        let data_root = tempfile::tempdir().expect("tempdir");
+        let workspace = sample_workspace("/repo");
+        let first_id = WorktreeId(Uuid::new_v4());
+        let first = Worktree {
+            id: first_id,
+            workspace_id: workspace.id,
+            root_path: managed_worktree_path(data_root.path(), workspace.id, first_id)
+                .to_string_lossy()
+                .to_string(),
+            base_commit_sha: String::new(),
+            git_branch: None,
+            vcs_kind: None,
+            base_revision: None,
+            vcs_ref: None,
+            created_at: Utc::now(),
+            bootstrap_status: None,
+            bootstrap_started_at: None,
+            bootstrap_finished_at: None,
+            bootstrap_exit_code: None,
+            bootstrap_timeout_sec: None,
+            bootstrap_error: None,
+            bootstrap_log_path: None,
+            bootstrap_log_truncated: None,
+            bootstrap_command: None,
+            bootstrap_script_path: None,
+        };
+        let second_id = WorktreeId(Uuid::new_v4());
+        let second = Worktree {
+            id: second_id,
+            workspace_id: workspace.id,
+            root_path: managed_worktree_path(data_root.path(), workspace.id, second_id)
+                .to_string_lossy()
+                .to_string(),
+            base_commit_sha: String::new(),
+            git_branch: None,
+            vcs_kind: None,
+            base_revision: None,
+            vcs_ref: None,
+            created_at: Utc::now(),
+            bootstrap_status: None,
+            bootstrap_started_at: None,
+            bootstrap_finished_at: None,
+            bootstrap_exit_code: None,
+            bootstrap_timeout_sec: None,
+            bootstrap_error: None,
+            bootstrap_log_path: None,
+            bootstrap_log_truncated: None,
+            bootstrap_command: None,
+            bootstrap_script_path: None,
+        };
+
+        let selected =
+            select_probe_worktree(data_root.path(), &workspace, &[first.clone(), second])
+                .expect("multiple valid managed worktrees should be accepted");
+        assert_eq!(selected.expect("selected").id, first.id);
     }
 
     #[test]
@@ -336,7 +586,7 @@ mod tests {
         .expect("add kimi account");
 
         let (_, env) =
-            provider_probe_env_with_runtime_root(&state, "kimi", Some(runtime_root.path()))
+            provider_env_with_runtime_root(&state, "kimi", Some(runtime_root.path()), true)
                 .await
                 .expect("resolve probe env");
 
@@ -365,7 +615,7 @@ mod tests {
         .expect("upsert mistral account");
 
         let (_, env) =
-            provider_probe_env_with_runtime_root(&state, "mistral", Some(runtime_root.path()))
+            provider_env_with_runtime_root(&state, "mistral", Some(runtime_root.path()), true)
                 .await
                 .expect("resolve probe env");
 
@@ -374,5 +624,29 @@ mod tests {
             Path::new(home).starts_with(runtime_root.path()),
             "expected runtime-root projected HOME, got {home}"
         );
+    }
+
+    #[tokio::test]
+    async fn provider_probe_env_requires_kimi_account_env() {
+        let data_root = tempfile::tempdir().expect("tempdir");
+        let state = test_state(data_root.path()).await;
+
+        let err = provider_env_with_runtime_root(&state, "kimi", None, true)
+            .await
+            .expect_err("missing kimi account env should fail probe");
+        assert!(err.contains("subscription account env is missing"));
+        assert!(err.contains("active account"));
+    }
+
+    #[tokio::test]
+    async fn provider_probe_env_requires_mistral_account_env() {
+        let data_root = tempfile::tempdir().expect("tempdir");
+        let state = test_state(data_root.path()).await;
+
+        let err = provider_env_with_runtime_root(&state, "mistral", None, true)
+            .await
+            .expect_err("missing mistral account env should fail probe");
+        assert!(err.contains("subscription account env is missing"));
+        assert!(err.contains("active account"));
     }
 }

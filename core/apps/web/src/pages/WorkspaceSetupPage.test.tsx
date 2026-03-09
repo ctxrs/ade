@@ -29,7 +29,14 @@ import {
   updateWorkspaceMergeQueueConfig,
   updateWorkspaceWorktreeBootstrapConfig,
 } from "../api/client";
-import { desktopConnectLocal, desktopListSshHosts, desktopTestSsh, isDesktopApp } from "../utils/desktop";
+import {
+  desktopConnectLocal,
+  desktopConnectSsh,
+  desktopKickoffRemotePrewarm,
+  desktopListSshHosts,
+  desktopTestSsh,
+  isDesktopApp,
+} from "../utils/desktop";
 import { upsertLauncherRecent } from "../state/launcherRecentsStore";
 
 const {

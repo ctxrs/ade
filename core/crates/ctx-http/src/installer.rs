@@ -16,9 +16,10 @@ use crate::container_builder;
 use crate::daemon::{self, AppState};
 use crate::installs::{
     truncate_for_storage, InstallErrorCode, InstallEventLevel, InstallId, InstallProgressEvent,
-    InstallTarget,
+    InstallStateKind, InstallTarget,
 };
 use crate::lsp_catalog::{LspCatalogArchive, LspCatalogInstall};
+use crate::provider_install_contract;
 use crate::provider_matrix;
 use crate::title_generation_local;
 use crate::updates;
@@ -57,6 +58,7 @@ const RETRY_COUNT: u32 = 2;
 const RETRY_BACKOFF_BASE_MS: u64 = 750;
 const LAST_ERROR_MAX_LEN: usize = 8000;
 const INSTALL_EVENT_ERROR_MAX_LEN: usize = 6000;
+const INSTALL_REGISTRY_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 static NODE_RUNTIME_INSTALL_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static PYTHON_RUNTIME_INSTALL_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -119,6 +121,173 @@ fn managed_provider_runtime_command(
     })?;
     let acp_cmd = daemon::normalize_acp_provider_command(data_root, provider_id, managed_cmd);
     Ok(daemon::acp_bridge_command(bridge_cmd, acp_cmd))
+}
+
+async fn install_provider_prerequisites(
+    state: &AppState,
+    provider_id: &str,
+    target: InstallTarget,
+    prerequisites: &[provider_install_contract::ProviderInstallPrerequisite],
+    install_id: Option<InstallId>,
+) -> Result<()> {
+    for prerequisite in prerequisites {
+        ensure_install_not_cancelled(state, install_id).await?;
+        let (prerequisite_install_id, started_new) = state
+            .start_install(prerequisite.provider_id.to_string(), Some(target))
+            .await;
+        if let Some(parent_install_id) = install_id {
+            anyhow::ensure!(
+                state
+                    .register_install_progress_mirror(prerequisite_install_id, parent_install_id)
+                    .await,
+                "tracked prerequisite install {} for provider '{}' target '{}' is missing",
+                prerequisite_install_id,
+                prerequisite.provider_id,
+                target.as_str()
+            );
+        }
+        emit_install(
+            state,
+            install_id,
+            provider_id,
+            InstallEventLevel::Info,
+            "prerequisites",
+            if started_new {
+                format!(
+                    "Installing prerequisite provider {} for {}",
+                    prerequisite.provider_id, provider_id
+                )
+            } else {
+                format!(
+                    "Waiting for prerequisite provider {} install {} for {}",
+                    prerequisite.provider_id, prerequisite_install_id, provider_id
+                )
+            },
+            None,
+            None,
+            None,
+        )
+        .await;
+        if started_new {
+            run_tracked_provider_install(
+                state,
+                prerequisite_install_id,
+                prerequisite.provider_id,
+                target,
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "installing prerequisite provider '{}' for '{}'",
+                    prerequisite.provider_id, provider_id
+                )
+            })?;
+        } else {
+            wait_for_tracked_install(
+                state,
+                prerequisite_install_id,
+                prerequisite.provider_id,
+                target,
+                install_id,
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "waiting for prerequisite provider '{}' for '{}'",
+                    prerequisite.provider_id, provider_id
+                )
+            })?;
+        }
+        emit_install(
+            state,
+            install_id,
+            provider_id,
+            InstallEventLevel::Info,
+            "prerequisites",
+            format!(
+                "Prerequisite provider {} install {} completed for {}",
+                prerequisite.provider_id, prerequisite_install_id, provider_id
+            ),
+            None,
+            None,
+            None,
+        )
+        .await;
+    }
+    Ok(())
+}
+
+async fn wait_for_tracked_install(
+    state: &AppState,
+    install_id: InstallId,
+    provider_id: &str,
+    target: InstallTarget,
+    parent_install_id: Option<InstallId>,
+) -> Result<()> {
+    loop {
+        ensure_install_not_cancelled(state, parent_install_id).await?;
+        let info = state.get_install_info(install_id).await.ok_or_else(|| {
+            anyhow::anyhow!(
+                "tracked install {} for provider '{}' target '{}' is missing",
+                install_id,
+                provider_id,
+                target.as_str()
+            )
+        })?;
+        match info.state {
+            InstallStateKind::Running => {
+                tokio::time::sleep(INSTALL_REGISTRY_POLL_INTERVAL).await;
+            }
+            InstallStateKind::Succeeded => return Ok(()),
+            InstallStateKind::Failed | InstallStateKind::Cancelled => {
+                anyhow::bail!(
+                    "tracked install {} for provider '{}' target '{}' {}: {}",
+                    install_id,
+                    provider_id,
+                    target.as_str(),
+                    match info.state {
+                        InstallStateKind::Failed => "failed",
+                        InstallStateKind::Cancelled => "was cancelled",
+                        InstallStateKind::Running | InstallStateKind::Succeeded => unreachable!(),
+                    },
+                    info.error
+                        .unwrap_or_else(|| "unknown install failure".to_string())
+                );
+            }
+        }
+    }
+}
+
+async fn run_tracked_provider_install(
+    state: &AppState,
+    install_id: InstallId,
+    provider_id: &str,
+    target: InstallTarget,
+) -> Result<()> {
+    provider_matrix::invalidate_matrix_cache(&state.providers.matrix_cache).await;
+    let res = Box::pin(install_provider_impl(
+        state,
+        provider_id,
+        target,
+        Some(install_id),
+    ))
+    .await;
+    match &res {
+        Ok(()) => state.finish_install(install_id, true, None, None).await,
+        Err(e) => {
+            let code = classify_install_error("provider_install", e);
+            state
+                .finish_install(
+                    install_id,
+                    false,
+                    Some(truncate_for_storage(&format!("{e:#}"), 12_000)),
+                    Some(code),
+                )
+                .await
+        }
+    }
+    provider_matrix::invalidate_matrix_cache(&state.providers.matrix_cache).await;
+    res
 }
 
 pub async fn install_provider(state: &AppState, provider_id: &str) -> Result<()> {
@@ -483,24 +652,7 @@ pub async fn install_provider_with_progress(
     provider_id: String,
     target: InstallTarget,
 ) -> Result<()> {
-    provider_matrix::invalidate_matrix_cache(&state.providers.matrix_cache).await;
-    let res = install_provider_impl(state.as_ref(), &provider_id, target, Some(install_id)).await;
-    match &res {
-        Ok(()) => state.finish_install(install_id, true, None, None).await,
-        Err(e) => {
-            let code = classify_install_error("provider_install", e);
-            state
-                .finish_install(
-                    install_id,
-                    false,
-                    Some(truncate_for_storage(&format!("{e:#}"), 12_000)),
-                    Some(code),
-                )
-                .await
-        }
-    }
-    provider_matrix::invalidate_matrix_cache(&state.providers.matrix_cache).await;
-    res
+    run_tracked_provider_install(state.as_ref(), install_id, &provider_id, target).await
 }
 
 fn resolve_command_path(command: &str) -> (bool, Option<PathBuf>) {
@@ -1789,14 +1941,30 @@ async fn install_provider_impl(
     let provider_id = provider_id.to_string();
     let _provider_install_lock = acquire_provider_install_lock(&provider_id, target).await;
     let requested_target_label = target.as_str();
-    let resolved_target_key =
-        resolve_matrix_target_key(target).context("resolving install target key")?;
     let mut stage: &'static str = "start";
     let mut error_package: Option<String> = None;
     let mut error_version: Option<String> = None;
     let mut error_install_dir_rel: Option<String> = None;
 
     let res: Result<()> = async {
+        let matrix = provider_matrix::load_matrix_cached(
+            &state.core.data_root,
+            &state.providers.matrix_cache,
+        )
+        .await;
+        let install_cfg = load_agent_server_config(&state.core.data_root)
+            .await
+            .unwrap_or_default();
+        let install_contract = provider_install_contract::resolve_provider_install_contract(
+            &state.core.data_root,
+            &install_cfg,
+            &matrix,
+            &provider_id,
+            target,
+        )
+        .map_err(anyhow::Error::new)?;
+        let resolved_target_key = install_contract.resolved_target_key;
+
         ensure_install_not_cancelled(state, install_id).await?;
         emit_install(
             state,
@@ -1812,12 +1980,14 @@ async fn install_provider_impl(
             None,
         )
         .await;
-
-        let matrix = provider_matrix::load_matrix_cached(
-            &state.core.data_root,
-            &state.providers.matrix_cache,
+        install_provider_prerequisites(
+            state,
+            &provider_id,
+            target,
+            &install_contract.prerequisites,
+            install_id,
         )
-        .await;
+        .await?;
         let entry = provider_matrix::get_entry(&matrix, &provider_id)
             .ok_or_else(|| anyhow::anyhow!("unsupported provider for install: {provider_id}"))?;
         let Some(install) = entry.managed_install.as_ref() else {

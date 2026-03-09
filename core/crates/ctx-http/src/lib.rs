@@ -33,6 +33,7 @@ pub mod provider_accounts;
 pub mod provider_auth_import;
 pub mod provider_child_reclassifier;
 pub mod provider_guard;
+pub(crate) mod provider_install_contract;
 pub mod provider_matrix;
 pub mod provider_probe;
 pub mod provider_restart;

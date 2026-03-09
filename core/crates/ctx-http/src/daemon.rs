@@ -139,6 +139,16 @@ fn acp_status_adapter_bridge_missing(provider_id: &str, msg: String) -> Arc<dyn 
     )
 }
 
+fn acp_status_adapter_bridge_invalid(provider_id: &str, msg: String) -> Arc<dyn ProviderAdapter> {
+    static_status_adapter(
+        provider_id,
+        false,
+        ProviderHealth::Error,
+        "acp_bridge_invalid",
+        msg,
+    )
+}
+
 fn acp_status_adapter_acp_command_invalid(
     provider_id: &str,
     msg: String,
@@ -289,13 +299,13 @@ fn build_provider_adapter_for_target(
         ) {
             Ok(cmd) => cmd,
             Err(err) => {
-                return acp_status_adapter_bridge_missing(
+                return acp_status_adapter_bridge_invalid(
                     provider_id,
                     format!("invalid runtime command for acp-crp-bridge: {err}"),
                 );
             }
         };
-        let bridge_missing_message = "ACP bridge runtime is not configured or invalid".to_string();
+        let bridge_missing_message = "ACP bridge runtime is not configured".to_string();
         return match bridge_cmd.as_ref() {
             None => acp_status_adapter_bridge_missing(provider_id, bridge_missing_message),
             Some(bridge) => {
@@ -948,9 +958,15 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
     ] {
         let bridge_missing_message = bridge_runtime_error
             .clone()
-            .unwrap_or_else(|| "ACP bridge runtime is not configured or invalid".to_string());
+            .unwrap_or_else(|| "ACP bridge runtime is not configured".to_string());
         let adapter = match bridge_cmd.as_ref() {
-            None => acp_status_adapter_bridge_missing(provider_id, bridge_missing_message),
+            None => {
+                if let Some(message) = bridge_runtime_error.clone() {
+                    acp_status_adapter_bridge_invalid(provider_id, message)
+                } else {
+                    acp_status_adapter_bridge_missing(provider_id, bridge_missing_message)
+                }
+            }
             Some(bridge) => match runtime_command_as_agent_command(&agent_cfg, provider_id) {
                 Ok(Some(cmd)) => {
                     let cmd = normalize_acp_provider_command(&data_root, provider_id, cmd);

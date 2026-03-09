@@ -35,6 +35,7 @@ use crate::installs::{InstallId, InstallInfo, InstallProgressEvent, InstallTarge
 use crate::logs;
 use crate::provider_accounts;
 use crate::provider_auth_import;
+use crate::provider_install_contract;
 use crate::provider_probe;
 use crate::provider_usage;
 use ctx_core::ids::WorkspaceId;
@@ -120,18 +121,7 @@ async fn providers_statuses_response(
                 if show_fake { "false" } else { "true" }.into(),
             );
         }
-        status.details.insert(
-            "install_supported".into(),
-            if installer::is_supported_managed_provider_for_target(
-                &matrix,
-                &status.provider_id,
-                target,
-            ) {
-                "true".into()
-            } else {
-                "false".into()
-            },
-        );
+        apply_install_viability_details(status, &state.core.data_root, &managed, &matrix, target);
         status
             .details
             .insert("install_target".into(), target.as_str().to_string());
@@ -155,6 +145,54 @@ async fn providers_statuses_response(
         }
     }
     out
+}
+
+fn apply_install_viability_details(
+    status: &mut ProviderStatus,
+    data_root: &StdPath,
+    managed: &installer::AgentServerConfigFile,
+    matrix: &crate::provider_matrix::ProviderMatrix,
+    target: InstallTarget,
+) {
+    let install_viability = provider_install_contract::provider_install_viability_issue(
+        data_root,
+        managed,
+        matrix,
+        &status.provider_id,
+        target,
+    );
+    status.details.insert(
+        "install_supported".into(),
+        if installer::is_supported_managed_provider_for_target(matrix, &status.provider_id, target)
+            && install_viability.is_none()
+        {
+            "true".into()
+        } else {
+            "false".into()
+        },
+    );
+    if let Some(issue) = install_viability {
+        status
+            .details
+            .insert("install_blocked".into(), "true".into());
+        status
+            .details
+            .insert("install_blocked_code".into(), issue.code.to_string());
+        status
+            .details
+            .insert("install_blocked_reason".into(), issue.message.clone());
+        if !status
+            .diagnostics
+            .iter()
+            .any(|value| value == &issue.message)
+        {
+            status.diagnostics.push(issue.message);
+        }
+    } else {
+        status.details.remove("install_blocked");
+        status.details.remove("install_blocked_code");
+        status.details.remove("install_blocked_reason");
+    }
 }
 
 fn inspect_error_status(provider_id: &str, err: anyhow::Error) -> ProviderStatus {
@@ -406,14 +444,12 @@ pub(super) async fn get_provider(
         ));
     }
     let mut status = provider_status_for_target(&state, &managed, &matrix, &id, target).await;
-    status.details.insert(
-        "install_supported".into(),
-        if installer::is_supported_managed_provider_for_target(&matrix, &status.provider_id, target)
-        {
-            "true".into()
-        } else {
-            "false".into()
-        },
+    apply_install_viability_details(
+        &mut status,
+        &state.core.data_root,
+        &managed,
+        &matrix,
+        target,
     );
     if let Some(bytes) =
         installer::managed_install_download_size_bytes(&matrix, &status.provider_id, target)
@@ -4469,6 +4505,7 @@ pub(super) async fn get_workspace_providers_bootstrap(
             })),
         ));
     }
+    let workspace = workspace.expect("checked workspace exists");
 
     let install_target = install_target_for_workspace(&state, ws_id)
         .await
@@ -4478,48 +4515,65 @@ pub(super) async fn get_workspace_providers_bootstrap(
     let mut provider_options = HashMap::new();
     let mut provider_harness_config = HashMap::new();
     let ws_id_str = ws_id.0.to_string();
-    let visible_provider_ids = providers
+    let visible_providers = providers
         .iter()
         .filter(|provider| provider.details.get("ui_hidden").map(String::as_str) != Some("true"))
-        .map(|provider| provider.provider_id.clone())
+        .cloned()
         .collect::<Vec<_>>();
 
-    let per_provider = futures::stream::iter(visible_provider_ids.into_iter().map(|provider_id| {
-        let state = Arc::clone(&state);
-        let ws_id = ws_id_str.clone();
-        async move {
-            let source_config =
-                harness_sources::get_provider_source_config(&state.core.data_root, &provider_id)
-                    .await
-                    .ok();
-            let has_active_auth = provider_has_active_auth_config(
-                &state.core.data_root,
-                &provider_id,
-                source_config.as_ref(),
-            )
-            .await;
-            let auth_mode = provider_auth_mode(has_active_auth, source_config.as_ref());
+    let per_provider =
+        futures::stream::iter(visible_providers.into_iter().map(|provider_status| {
+            let state = Arc::clone(&state);
+            let workspace = workspace.clone();
+            let ws_id = ws_id_str.clone();
+            async move {
+                let provider_id = provider_status.provider_id.clone();
+                let source_config = harness_sources::get_provider_source_config(
+                    &state.core.data_root,
+                    &provider_id,
+                )
+                .await
+                .ok();
+                let has_active_auth = provider_has_active_auth_config(
+                    &state.core.data_root,
+                    &provider_id,
+                    source_config.as_ref(),
+                )
+                .await;
+                let auth_mode = provider_auth_mode(has_active_auth, source_config.as_ref());
+                let (probe_ok, auth_required, probe_error) = bootstrap_provider_probe_summary(
+                    &state,
+                    &workspace,
+                    install_target,
+                    &provider_status,
+                    &provider_id,
+                )
+                .await;
 
-            let mut options = serde_json::json!({
-                "provider_id": provider_id,
-                "workspace_id": ws_id,
-                "supports_load": false,
-                "auth_required": false,
-                "has_active_auth": has_active_auth,
-                "auth_mode": auth_mode,
-                "probe_ok": true,
-                "probed_at": chrono::Utc::now().to_rfc3339(),
-            });
-            if let Some(source) = source_config.as_ref() {
-                options["source"] = serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
+                let mut options = serde_json::json!({
+                    "provider_id": provider_id,
+                    "workspace_id": ws_id,
+                    "supports_load": false,
+                        "auth_required": auth_required,
+                    "has_active_auth": has_active_auth,
+                    "auth_mode": auth_mode,
+                        "probe_ok": probe_ok,
+                    "probed_at": chrono::Utc::now().to_rfc3339(),
+                });
+                if let Some(probe_error) = probe_error {
+                    options["probe_error"] = serde_json::json!(probe_error);
+                }
+                if let Some(source) = source_config.as_ref() {
+                    options["source"] =
+                        serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
+                }
+
+                (provider_id, options, source_config)
             }
-
-            (provider_id, options, source_config)
-        }
-    }))
-    .buffer_unordered(visible_provider_count_hint(providers.len()))
-    .collect::<Vec<_>>()
-    .await;
+        }))
+        .buffer_unordered(visible_provider_count_hint(providers.len()))
+        .collect::<Vec<_>>()
+        .await;
 
     for (provider_id, options, source_config) in per_provider {
         provider_options.insert(provider_id.clone(), options);
@@ -4585,6 +4639,9 @@ fn classify_probe_error(
         "expired token",
         "access token",
         "bearer token",
+        "active account",
+        "account env",
+        "configure an active account",
     ];
     if auth_required.iter().any(|needle| lower.contains(needle)) {
         return (
@@ -4631,6 +4688,7 @@ struct PreparedProviderRuntimeProbe {
     command: String,
     args: Vec<String>,
     env: HashMap<String, String>,
+    cwd: PathBuf,
     selected_endpoint_id: Option<String>,
 }
 
@@ -4684,10 +4742,12 @@ async fn prepare_provider_runtime_probe(
     let command = runtime_command.command;
     let args = runtime_command.args;
 
-    let (source, mut env) =
-        provider_probe::provider_probe_env_for_workspace_runtime(state, workspace, provider_id)
+    let probe_context =
+        provider_probe::provider_probe_context_for_workspace_runtime(state, workspace, provider_id)
             .await
             .map_err(PreparedProviderRuntimeProbeError::Verify)?;
+    let source = probe_context.source;
+    let mut env = probe_context.env;
     installer::prepend_runtime_bin_dirs_to_provider_path_for_target(
         &mut env,
         &cfg,
@@ -4719,6 +4779,7 @@ async fn prepare_provider_runtime_probe(
         command,
         args,
         env,
+        cwd: probe_context.cwd,
         selected_endpoint_id,
     })
 }
@@ -4935,6 +4996,42 @@ fn provider_auth_mode(
     "subscription"
 }
 
+async fn bootstrap_provider_probe_summary(
+    state: &Arc<AppState>,
+    workspace: &ctx_core::models::Workspace,
+    install_target: InstallTarget,
+    provider_status: &ProviderStatus,
+    provider_id: &str,
+) -> (bool, bool, Option<String>) {
+    if !provider_status.installed
+        || !matches!(
+            provider_status.health,
+            ctx_providers::adapters::ProviderHealth::Ok
+        )
+    {
+        return (
+            false,
+            false,
+            Some("provider not installed or unhealthy".to_string()),
+        );
+    }
+
+    if !matches!(install_target, InstallTarget::Container) {
+        return (true, false, None);
+    }
+
+    match provider_probe::provider_probe_env_for_workspace_runtime(state, workspace, provider_id)
+        .await
+    {
+        Ok(_) => (true, false, None),
+        Err(err) => {
+            let probe_error = logs::redact_sensitive(&err);
+            let (_, auth_required, _) = classify_probe_error(&probe_error);
+            (false, auth_required.unwrap_or(false), Some(probe_error))
+        }
+    }
+}
+
 pub(super) async fn get_provider_options(
     State(state): State<Arc<AppState>>,
     Path((ws_id, provider_id)): Path<(String, String)>,
@@ -5070,18 +5167,54 @@ pub(super) async fn get_provider_options(
 
     let use_crp_probe = provider_id == "codex" || provider_id == "claude-crp";
     if !use_crp_probe {
+        let ws = state
+            .global_store()
+            .get_workspace(ws_id)
+            .await
+            .map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({
+                        "error": "failed to load workspace",
+                    })),
+                )
+            })?
+            .ok_or((
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "error": "workspace not found",
+                })),
+            ))?;
+        let (probe_ok, auth_required, probe_error) =
+            match provider_probe::provider_probe_env_for_workspace_runtime(
+                &state,
+                &ws,
+                &provider_id,
+            )
+            .await
+            {
+                Ok(_) => (true, false, None),
+                Err(err) => {
+                    let probe_error = logs::redact_sensitive(&err);
+                    let (_, auth_required, _) = classify_probe_error(&probe_error);
+                    (false, auth_required.unwrap_or(false), Some(probe_error))
+                }
+            };
         let now = chrono::Utc::now();
         let mut raw_resp = serde_json::json!({
             "provider_id": provider_id,
             "workspace_id": ws_id.0,
             "installed": provider_status.installed,
-            "probe_ok": true,
+            "probe_ok": probe_ok,
             "supports_load": false,
-            "auth_required": false,
+            "auth_required": auth_required,
             "has_active_auth": has_active_auth,
             "auth_mode": auth_mode,
             "probed_at": now.to_rfc3339(),
         });
+        if let Some(probe_error) = probe_error {
+            raw_resp["probe_error"] = serde_json::json!(probe_error);
+        }
         if let Some(source) = source_config.as_ref() {
             raw_resp["source"] = serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
         }
@@ -5202,67 +5335,19 @@ pub(super) async fn get_provider_options(
             return Ok(Json(out));
         }
 
-        let runtime_command = runtime_probe_command_as_agent_command_for_target(
-            &state.core.data_root,
-            &managed,
-            &provider_id,
-            Some(install_target),
-        )
-        .map_err(|e| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": format!(
-                        "runtime_command_invalid: provider={provider_id} error={e}"
-                    ),
-                })),
-            )
-        })?
-        .ok_or((
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": format!(
-                    "runtime_command_missing: provider={provider_id} (configure an absolute runtime command)"
-                ),
-            })),
-        ))?;
-        let command = runtime_command.command;
-        let args = runtime_command.args;
-
-        let probe = match provider_probe::provider_probe_env_for_workspace_runtime(
-            &state,
-            &ws,
-            &provider_id,
-        )
-        .await
-        {
-            Ok((_source, mut env)) => {
-                installer::prepend_runtime_bin_dirs_to_provider_path_for_target(
-                    &mut env,
-                    &managed,
-                    &provider_id,
-                    &state.core.data_root,
-                    Some(install_target),
-                );
-                if is_acp_provider_id(&provider_id) {
-                    installer::prepend_runtime_bin_dirs_to_provider_path_for_target(
-                        &mut env,
-                        &managed,
-                        "acp-crp-bridge",
-                        &state.core.data_root,
-                        Some(install_target),
-                    );
-                }
+        let probe = match prepare_provider_runtime_probe(&state, &ws, &provider_id, None).await {
+            Ok(prepared) => {
                 probe_crp_models(
                     &provider_id,
-                    command,
-                    args,
-                    PathBuf::from(&ws.root_path),
-                    env,
+                    prepared.command,
+                    prepared.args,
+                    prepared.cwd,
+                    prepared.env,
                 )
                 .await
             }
-            Err(err) => Err(anyhow::anyhow!(err)),
+            Err(PreparedProviderRuntimeProbeError::Route(err)) => return Err(err),
+            Err(PreparedProviderRuntimeProbeError::Verify(err)) => Err(anyhow::anyhow!(err)),
         };
 
         let mut raw_resp = match probe {
@@ -5281,16 +5366,21 @@ pub(super) async fn get_provider_options(
                 },
                 "probed_at": chrono::Utc::now().to_rfc3339(),
             }),
-            Err(e) => serde_json::json!({
-                "provider_id": provider_id,
-                "workspace_id": ws_id.0,
-                "installed": provider_status.installed,
-                "probe_ok": false,
-                "probe_error": logs::redact_sensitive(&e.to_string()),
-                "has_active_auth": has_active_auth,
-                "auth_mode": auth_mode,
-                "probed_at": chrono::Utc::now().to_rfc3339(),
-            }),
+            Err(e) => {
+                let probe_error = logs::redact_sensitive(&e.to_string());
+                let (_, auth_required, _) = classify_probe_error(&probe_error);
+                serde_json::json!({
+                    "provider_id": provider_id,
+                    "workspace_id": ws_id.0,
+                    "installed": provider_status.installed,
+                    "probe_ok": false,
+                    "probe_error": probe_error,
+                    "auth_required": auth_required.unwrap_or(false),
+                    "has_active_auth": has_active_auth,
+                    "auth_mode": auth_mode,
+                    "probed_at": chrono::Utc::now().to_rfc3339(),
+                })
+            }
         };
         if let Some(source) = source_config.as_ref() {
             raw_resp["source"] = serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
@@ -5680,7 +5770,7 @@ pub(super) async fn verify_provider_for_workspace(
                         &provider_id,
                         prepared.command,
                         prepared.args,
-                        PathBuf::from(&workspace.root_path),
+                        prepared.cwd,
                         prepared.env,
                     )
                     .await
@@ -5721,7 +5811,7 @@ pub(super) async fn verify_provider_for_workspace(
                     &provider_id,
                     prepared.command,
                     prepared.args,
-                    PathBuf::from(&workspace.root_path),
+                    prepared.cwd,
                     prepared.env,
                 )
                 .await;
@@ -5810,18 +5900,21 @@ pub(super) async fn authenticate_provider_for_workspace(
             })),
         ))?;
 
-    let (source, provider_env) =
-        provider_probe::provider_probe_env_for_workspace_runtime(&state, &workspace, &provider_id)
-            .await
-            .map_err(|err| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({
-                        "error": err,
-                    })),
-                )
-            })?;
-    if source.source_kind == HarnessSourceKind::Endpoint {
+    let probe_context = provider_probe::provider_auth_context_for_workspace_runtime(
+        &state,
+        &workspace,
+        &provider_id,
+    )
+    .await
+    .map_err(|err| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": err,
+            })),
+        )
+    })?;
+    if probe_context.source.source_kind == HarnessSourceKind::Endpoint {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
@@ -5843,8 +5936,8 @@ pub(super) async fn authenticate_provider_for_workspace(
     let result = adapter
         .authenticate_session(
             format!("auth-{}", uuid::Uuid::new_v4()),
-            PathBuf::from(workspace.root_path),
-            provider_env,
+            probe_context.cwd,
+            probe_context.env,
             method_id,
             event_tx,
         )
@@ -5909,6 +6002,9 @@ pub(super) async fn install_provider(
         &state.providers.matrix_cache,
     )
     .await;
+    let managed = installer::load_agent_server_config(&state.core.data_root)
+        .await
+        .unwrap_or_default();
     if !installer::is_supported_managed_provider_for_target(&matrix, &id, target) {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -5920,9 +6016,26 @@ pub(super) async fn install_provider(
             })),
         ));
     }
+    if let Some(issue) = provider_install_contract::provider_install_viability_issue(
+        &state.core.data_root,
+        &managed,
+        &matrix,
+        &id,
+        target,
+    ) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": issue.message,
+                "code": issue.code,
+            })),
+        ));
+    }
 
     let (install_id, started_new) = state.start_install(id.clone(), Some(target)).await;
     if started_new {
+        seed_running_prerequisite_progress(&state, &managed, &matrix, &id, target, install_id)
+            .await;
         let state2 = state.clone();
         let provider_id = id.clone();
         tokio::spawn(async move {
@@ -6004,6 +6117,17 @@ pub(super) async fn install_all_providers(
             continue;
         }
         let id = entry.id.as_str();
+        if provider_install_contract::provider_install_viability_issue(
+            &state.core.data_root,
+            &managed,
+            &matrix,
+            id,
+            target,
+        )
+        .is_some()
+        {
+            continue;
+        }
         if let Some(install_id) = state.find_running_install(id, Some(target)).await {
             out.push(InstallStartResponse {
                 provider_id: id.to_string(),
@@ -6020,6 +6144,8 @@ pub(super) async fn install_all_providers(
 
         let (install_id, started_new) = state.start_install(id.to_string(), Some(target)).await;
         if started_new {
+            seed_running_prerequisite_progress(&state, &managed, &matrix, id, target, install_id)
+                .await;
             let state2 = state.clone();
             let provider_id = id.to_string();
             tokio::spawn(async move {
@@ -6042,6 +6168,36 @@ pub(super) async fn install_all_providers(
         });
     }
     Ok(Json(out))
+}
+
+async fn seed_running_prerequisite_progress(
+    state: &Arc<AppState>,
+    managed: &installer::AgentServerConfigFile,
+    matrix: &crate::provider_matrix::ProviderMatrix,
+    provider_id: &str,
+    target: InstallTarget,
+    install_id: InstallId,
+) {
+    let Ok(contract) = provider_install_contract::resolve_provider_install_contract(
+        &state.core.data_root,
+        managed,
+        matrix,
+        provider_id,
+        target,
+    ) else {
+        return;
+    };
+    for prerequisite in &contract.prerequisites {
+        let Some(prerequisite_install_id) = state
+            .find_running_install(prerequisite.provider_id, Some(target))
+            .await
+        else {
+            continue;
+        };
+        let _ = state
+            .register_install_progress_mirror(prerequisite_install_id, install_id)
+            .await;
+    }
 }
 
 fn has_provider_update_available(status: &ctx_providers::adapters::ProviderStatus) -> bool {
@@ -6104,7 +6260,7 @@ pub(super) async fn get_install(
     let install_id: InstallId =
         uuid::Uuid::parse_str(&install_id).map_err(|_| StatusCode::BAD_REQUEST)?;
     state
-        .get_install_info(install_id)
+        .get_install_polling_info(install_id)
         .await
         .map(Json)
         .ok_or(StatusCode::NOT_FOUND)
