@@ -3700,11 +3700,13 @@ mod tests {
     #[tokio::test]
     async fn probe_crp_runtime_launch_reports_early_exit_output() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let script = write_probe_script(&tmp, "echo bridge missing >&2\nexit 17");
         let err = probe_crp_runtime_launch(
             "opencode",
-            script.to_string_lossy().to_string(),
-            Vec::new(),
+            "/bin/sh".to_string(),
+            vec![
+                "-c".to_string(),
+                "echo bridge missing >&2\nexit 17".to_string(),
+            ],
             tmp.path().to_path_buf(),
             HashMap::new(),
         )
