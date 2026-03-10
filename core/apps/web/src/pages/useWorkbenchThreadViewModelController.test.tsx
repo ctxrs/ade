@@ -371,6 +371,124 @@ describe("useWorkbenchThreadViewModelController", () => {
     expect(expectListItem("turn-header-turn-2")).toBe(secondHeaderBefore);
   });
 
+  it("falls back to a full rebuild when an existing event changes during an append tick", async () => {
+    const askUserQuestionAnswers = new Map<string, AskUserQuestionAnswerState>();
+    const emptyToolsByTurnId: Record<string, SessionTurnTool[]> = {};
+    const multiTurns = [
+      {
+        turn_id: "turn-1",
+        session_id: "session-1",
+        run_id: null,
+        user_message_id: "message-1",
+        status: "running",
+        start_seq: 1,
+        end_seq: 2,
+        started_at: "2025-12-15T00:00:00.000Z",
+        updated_at: "2025-12-15T00:00:01.000Z",
+        assistant_partial: "",
+        thought_partial: "",
+        metrics_json: null,
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      },
+    ] as SessionTurn[];
+    const multiMessages = [
+      {
+        id: "message-1",
+        session_id: "session-1",
+        task_id: "task-1",
+        turn_id: "turn-1",
+        turn_sequence: 1,
+        role: "user",
+        content: "First turn",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:00.000Z",
+        order_seq: 1,
+      },
+    ] as unknown as Message[];
+    const baseEvents: SessionEvent[] = [
+      {
+        seq: 1,
+        id: "event-tool-1",
+        session_id: "session-1",
+        run_id: "run-1",
+        turn_id: "turn-1",
+        event_type: "tool_call",
+        payload_json: {
+          tool_call_id: "tool-1",
+          title: "ls -la",
+          order_seq: 2,
+        },
+        created_at: "2025-12-15T00:00:01.500Z",
+      },
+    ];
+    const { rerender } = renderController({
+      turns: multiTurns,
+      messages: multiMessages,
+      events: baseEvents,
+      eventsStamp: "1:1",
+      turnsStamp: buildTurnsStamp(multiTurns),
+      messagesStamp: buildMessagesStamp(multiMessages),
+      toolsByTurnId: emptyToolsByTurnId,
+      askUserQuestionAnswers,
+    });
+
+    await waitFor(() => {
+      const tool = latestResult?.listItems.find(isToolItem);
+      expect(tool?.title).toBe("ls -la");
+    });
+
+    const nextEvents: SessionEvent[] = [
+      {
+        ...baseEvents[0],
+        payload_json: {
+          ...baseEvents[0].payload_json,
+          title: "pwd",
+        },
+      },
+      {
+        seq: 2,
+        id: "event-tool-2",
+        session_id: "session-1",
+        run_id: "run-1",
+        turn_id: "turn-1",
+        event_type: "tool_call",
+        payload_json: {
+          tool_call_id: "tool-2",
+          title: "echo hi",
+          order_seq: 3,
+        },
+        created_at: "2025-12-15T00:00:01.750Z",
+      },
+    ];
+
+    rerender(
+      <Harness
+        sessionId="session-1"
+        turnsStamp={buildTurnsStamp(multiTurns)}
+        messagesStamp={buildMessagesStamp(multiMessages)}
+        eventsStamp="2:2"
+        verbosity="default"
+        turns={multiTurns}
+        messages={multiMessages}
+        events={nextEvents}
+        toolsByTurnId={emptyToolsByTurnId}
+        toolSummariesReady
+        askUserQuestionAnswers={askUserQuestionAnswers}
+        enableDebugEvents={false}
+      />,
+    );
+
+    await waitFor(() => {
+      const tool = latestResult?.listItems.find(isToolItem);
+      expect(tool?.title).toBe("pwd");
+    });
+  });
+
   it("fully rebuilds when turnsStamp changes for a same-length in-place turn update", async () => {
     const askUserQuestionAnswers = new Map<string, AskUserQuestionAnswerState>();
     const emptyToolsByTurnId: Record<string, SessionTurnTool[]> = {};

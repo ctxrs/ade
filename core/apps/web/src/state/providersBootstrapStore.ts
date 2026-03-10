@@ -1,4 +1,9 @@
-import { getProvidersBootstrap, type ProviderOptions, type ProvidersBootstrapResponse } from "../api/client";
+import {
+  getProvidersBootstrap,
+  listProviders,
+  type ProviderOptions,
+  type ProvidersBootstrapResponse,
+} from "../api/client";
 
 type Listener = () => void;
 
@@ -36,7 +41,9 @@ export const EMPTY_PROVIDERS_BOOTSTRAP: ProvidersBootstrapResponse = Object.free
   amp_accounts: EMPTY_ACCOUNTS,
 });
 
-const providersBootstrapByWorkspace = new Map<string, ProvidersBootstrapEntry>();
+const HOST_PROVIDERS_BOOTSTRAP_SCOPE_KEY = "__host__";
+
+const providersBootstrapByScope = new Map<string, ProvidersBootstrapEntry>();
 
 const hasProviderModels = (options: ProviderOptions | undefined): boolean => {
   const raw = options?.models;
@@ -180,13 +187,13 @@ const normalizeProvidersBootstrap = (
   };
 };
 
-function getOrCreateEntry(workspaceId: string): ProvidersBootstrapEntry {
-  let entry = providersBootstrapByWorkspace.get(workspaceId);
+function getOrCreateEntry(scopeKey: string): ProvidersBootstrapEntry {
+  let entry = providersBootstrapByScope.get(scopeKey);
   if (!entry) {
     entry = {
       listeners: new Set(),
     };
-    providersBootstrapByWorkspace.set(workspaceId, entry);
+    providersBootstrapByScope.set(scopeKey, entry);
   }
   return entry;
 }
@@ -198,21 +205,25 @@ function emit(entry: ProvidersBootstrapEntry): void {
 }
 
 function setEntryData(
-  workspaceId: string,
+  scopeKey: string,
   entry: ProvidersBootstrapEntry,
   next: ProvidersBootstrapResponse,
 ): ProvidersBootstrapResponse {
   const normalized = normalizeProvidersBootstrap(next, entry.data);
   entry.data = normalized;
   entry.stale = false;
-  providersBootstrapByWorkspace.set(workspaceId, entry);
+  providersBootstrapByScope.set(scopeKey, entry);
   emit(entry);
   return normalized;
 }
 
-function loadFresh(workspaceId: string, entry: ProvidersBootstrapEntry): Promise<ProvidersBootstrapResponse> {
-  const request = getProvidersBootstrap(workspaceId)
-    .then((next) => setEntryData(workspaceId, entry, next))
+function loadFresh(
+  scopeKey: string,
+  entry: ProvidersBootstrapEntry,
+  load: (current: ProvidersBootstrapResponse | undefined) => Promise<ProvidersBootstrapResponse>,
+): Promise<ProvidersBootstrapResponse> {
+  const request = load(entry.data)
+    .then((next) => setEntryData(scopeKey, entry, next))
     .finally(() => {
       if (entry.inFlight === request) {
         entry.inFlight = undefined;
@@ -224,7 +235,7 @@ function loadFresh(workspaceId: string, entry: ProvidersBootstrapEntry): Promise
 }
 
 export function getCachedProvidersBootstrap(workspaceId: string): ProvidersBootstrapResponse | undefined {
-  return providersBootstrapByWorkspace.get(workspaceId)?.data;
+  return providersBootstrapByScope.get(workspaceId)?.data;
 }
 
 export function getProvidersBootstrapSnapshot(workspaceId: string): ProvidersBootstrapResponse {
@@ -240,7 +251,7 @@ export function subscribeProvidersBootstrap(workspaceId: string, listener: Liste
   return () => {
     entry.listeners.delete(listener);
     if (entry.listeners.size === 0 && !entry.inFlight && !entry.data) {
-      providersBootstrapByWorkspace.delete(workspaceId);
+      providersBootstrapByScope.delete(workspaceId);
     }
   };
 }
@@ -258,7 +269,7 @@ export function updateProvidersBootstrap(
 }
 
 export function hasCachedProvidersBootstrap(workspaceId: string): boolean {
-  return providersBootstrapByWorkspace.get(workspaceId)?.data !== undefined;
+  return providersBootstrapByScope.get(workspaceId)?.data !== undefined;
 }
 
 export async function loadProvidersBootstrap(workspaceId: string): Promise<ProvidersBootstrapResponse> {
@@ -272,7 +283,7 @@ export async function loadProvidersBootstrap(workspaceId: string): Promise<Provi
   if (entry.inFlight) {
     return entry.inFlight;
   }
-  return loadFresh(workspaceId, entry);
+  return loadFresh(workspaceId, entry, () => getProvidersBootstrap(workspaceId));
 }
 
 export async function refreshProvidersBootstrap(workspaceId: string): Promise<ProvidersBootstrapResponse> {
@@ -283,12 +294,74 @@ export async function refreshProvidersBootstrap(workspaceId: string): Promise<Pr
   if (entry.inFlight) {
     return entry.inFlight;
   }
-  return loadFresh(workspaceId, entry);
+  return loadFresh(workspaceId, entry, () => getProvidersBootstrap(workspaceId));
 }
 
 export function invalidateProvidersBootstrap(workspaceId: string): void {
   if (!workspaceId) return;
-  const entry = providersBootstrapByWorkspace.get(workspaceId);
+  const entry = providersBootstrapByScope.get(workspaceId);
+  if (!entry) return;
+  entry.stale = true;
+}
+
+export function getCachedHostProvidersBootstrap(): ProvidersBootstrapResponse | undefined {
+  return providersBootstrapByScope.get(HOST_PROVIDERS_BOOTSTRAP_SCOPE_KEY)?.data;
+}
+
+export function getHostProvidersBootstrapSnapshot(): ProvidersBootstrapResponse {
+  return getCachedHostProvidersBootstrap() ?? EMPTY_PROVIDERS_BOOTSTRAP;
+}
+
+export function subscribeHostProvidersBootstrap(listener: Listener): () => void {
+  const entry = getOrCreateEntry(HOST_PROVIDERS_BOOTSTRAP_SCOPE_KEY);
+  entry.listeners.add(listener);
+  return () => {
+    entry.listeners.delete(listener);
+    if (entry.listeners.size === 0 && !entry.inFlight && !entry.data) {
+      providersBootstrapByScope.delete(HOST_PROVIDERS_BOOTSTRAP_SCOPE_KEY);
+    }
+  };
+}
+
+export function updateHostProvidersBootstrap(
+  updater: ProvidersBootstrapUpdater,
+): ProvidersBootstrapResponse {
+  const entry = getOrCreateEntry(HOST_PROVIDERS_BOOTSTRAP_SCOPE_KEY);
+  const next = updater(entry.data ?? EMPTY_PROVIDERS_BOOTSTRAP);
+  return setEntryData(HOST_PROVIDERS_BOOTSTRAP_SCOPE_KEY, entry, next);
+}
+
+export function hasCachedHostProvidersBootstrap(): boolean {
+  return providersBootstrapByScope.get(HOST_PROVIDERS_BOOTSTRAP_SCOPE_KEY)?.data !== undefined;
+}
+
+export async function loadHostProvidersBootstrap(): Promise<ProvidersBootstrapResponse> {
+  const entry = getOrCreateEntry(HOST_PROVIDERS_BOOTSTRAP_SCOPE_KEY);
+  if (entry.data && !entry.stale) {
+    return entry.data;
+  }
+  if (entry.inFlight) {
+    return entry.inFlight;
+  }
+  return loadFresh(HOST_PROVIDERS_BOOTSTRAP_SCOPE_KEY, entry, async (current) => ({
+    ...(current ?? EMPTY_PROVIDERS_BOOTSTRAP),
+    providers: await listProviders("host"),
+  }));
+}
+
+export async function refreshHostProvidersBootstrap(): Promise<ProvidersBootstrapResponse> {
+  const entry = getOrCreateEntry(HOST_PROVIDERS_BOOTSTRAP_SCOPE_KEY);
+  if (entry.inFlight) {
+    return entry.inFlight;
+  }
+  return loadFresh(HOST_PROVIDERS_BOOTSTRAP_SCOPE_KEY, entry, async (current) => ({
+    ...(current ?? EMPTY_PROVIDERS_BOOTSTRAP),
+    providers: await listProviders("host"),
+  }));
+}
+
+export function invalidateHostProvidersBootstrap(): void {
+  const entry = providersBootstrapByScope.get(HOST_PROVIDERS_BOOTSTRAP_SCOPE_KEY);
   if (!entry) return;
   entry.stale = true;
 }

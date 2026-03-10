@@ -126,6 +126,7 @@ export function useWorkbenchThreadViewModelController(
   const lastTurnsStampRef = useRef(turnsStamp);
   const lastMessagesStampRef = useRef(messagesStamp);
   const lastEventsStampRef = useRef(eventsStamp);
+  const lastEventsRef = useRef(events);
   const lastEnableDebugEventsRef = useRef(enableDebugEvents);
   const lastVerbosityRef = useRef(verbosity);
   const lastAskUserQuestionAnswersRef = useRef(askUserQuestionAnswers);
@@ -180,6 +181,7 @@ export function useWorkbenchThreadViewModelController(
       lastTurnsStampRef.current = turnsStamp;
       lastMessagesStampRef.current = messagesStamp;
       lastEventsStampRef.current = eventsStamp;
+      lastEventsRef.current = events;
       lastEnableDebugEventsRef.current = enableDebugEvents;
       lastVerbosityRef.current = verbosity;
       lastAskUserQuestionAnswersRef.current = askUserQuestionAnswers;
@@ -246,6 +248,22 @@ export function useWorkbenchThreadViewModelController(
     // Debug mode prioritizes correctness over streaming performance.
     // Rebuild once per event append (no infinite loop).
     if (enableDebugEvents) {
+      syncInvalidationRefs();
+      fullRebuild.current();
+      return;
+    }
+
+    const previousEvents = lastEventsRef.current;
+    let appendOnlyPrefixStable = previousEvents.length === state.eventsLen;
+    if (appendOnlyPrefixStable) {
+      for (let i = 0; i < state.eventsLen; i += 1) {
+        if (previousEvents[i] !== events[i]) {
+          appendOnlyPrefixStable = false;
+          break;
+        }
+      }
+    }
+    if (!appendOnlyPrefixStable) {
       syncInvalidationRefs();
       fullRebuild.current();
       return;

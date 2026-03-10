@@ -30,7 +30,6 @@ import {
   listGeminiAccounts,
   listKimiAccounts,
   listMistralAccounts,
-  listProviders,
   listQwenAccounts,
   refreshProviderHarnessEndpointModels,
   selectProviderHarnessSource,
@@ -62,11 +61,18 @@ import {
 import { desktopStartCodexLoginRelay, isDesktopApp, openExternalLink } from "../../../utils/desktop";
 import {
   EMPTY_PROVIDERS_BOOTSTRAP,
+  getHostProvidersBootstrapSnapshot,
+  hasCachedHostProvidersBootstrap,
+  invalidateHostProvidersBootstrap,
   getProvidersBootstrapSnapshot,
+  loadHostProvidersBootstrap,
   invalidateProvidersBootstrap,
+  refreshHostProvidersBootstrap,
   loadProvidersBootstrap,
   refreshProvidersBootstrap,
+  subscribeHostProvidersBootstrap,
   subscribeProvidersBootstrap,
+  updateHostProvidersBootstrap,
   updateProvidersBootstrap,
 } from "../../../state/providersBootstrapStore";
 import {
@@ -308,11 +314,7 @@ export function useHarnessAuthenticationController({
   workspaceId,
   enabled,
 }: UseHarnessAuthenticationControllerArgs): HarnessAuthenticationController {
-  const [hostProviders, setHostProviders] = useState<ProviderStatus[]>([]);
   const [providerError, setProviderError] = useState<string | null>(null);
-  const [hostProviderHarnessConfig, setHostProviderHarnessConfig] = useState<
-    Record<string, HarnessProviderSourceConfig | undefined>
-  >({});
   const [providerHarnessBusy, setProviderHarnessBusy] = useState<Record<string, boolean>>({});
   const [providerEndpointUnsupported, setProviderEndpointUnsupported] = useState<Record<string, boolean>>({});
   const {
@@ -333,47 +335,45 @@ export function useHarnessAuthenticationController({
     () => installsFromProgressSnapshot(getProviderInstallProgressSnapshot()),
   );
 
-  const [hostCodexAccounts, setHostCodexAccounts] = useState<CodexAccountsResponse | null>(null);
   const [codexAccountsBusy, setCodexAccountsBusy] = useState(false);
-  const [hostClaudeAccounts, setHostClaudeAccounts] = useState<ClaudeAccountsResponse | null>(null);
   const [claudeAccountsBusy, setClaudeAccountsBusy] = useState(false);
-  const [hostGeminiAccounts, setHostGeminiAccounts] = useState<GeminiAccountsResponse | null>(null);
   const [geminiAccountsBusy, setGeminiAccountsBusy] = useState(false);
-  const [hostQwenAccounts, setHostQwenAccounts] = useState<QwenAccountsResponse | null>(null);
   const [qwenAccountsBusy, setQwenAccountsBusy] = useState(false);
-  const [hostKimiAccounts, setHostKimiAccounts] = useState<KimiAccountsResponse | null>(null);
   const [kimiAccountsBusy, setKimiAccountsBusy] = useState(false);
-  const [hostMistralAccounts, setHostMistralAccounts] = useState<MistralAccountsResponse | null>(null);
   const [mistralAccountsBusy, setMistralAccountsBusy] = useState(false);
-  const [hostCopilotAccounts, setHostCopilotAccounts] = useState<CopilotAccountsResponse | null>(null);
   const [copilotAccountsBusy, setCopilotAccountsBusy] = useState(false);
-  const [hostCursorAccounts, setHostCursorAccounts] = useState<CursorAccountsResponse | null>(null);
   const [cursorAccountsBusy, setCursorAccountsBusy] = useState(false);
-  const [hostAmpAccounts, setHostAmpAccounts] = useState<AmpAccountsResponse | null>(null);
   const [ampAccountsBusy, setAmpAccountsBusy] = useState(false);
 
-  const workspaceBootstrap = useSyncExternalStore(
+  const scopedBootstrap = useSyncExternalStore(
     useCallback(
-      (onStoreChange) => (workspaceId ? subscribeProvidersBootstrap(workspaceId, onStoreChange) : () => {}),
+      (onStoreChange) => (
+        workspaceId
+          ? subscribeProvidersBootstrap(workspaceId, onStoreChange)
+          : subscribeHostProvidersBootstrap(onStoreChange)
+      ),
       [workspaceId],
     ),
     useCallback(
-      () => (workspaceId ? getProvidersBootstrapSnapshot(workspaceId) : EMPTY_PROVIDERS_BOOTSTRAP),
+      () => (workspaceId ? getProvidersBootstrapSnapshot(workspaceId) : getHostProvidersBootstrapSnapshot()),
       [workspaceId],
     ),
     useCallback(() => EMPTY_PROVIDERS_BOOTSTRAP, []),
   );
-  const providers = workspaceId ? workspaceBootstrap.providers : hostProviders;
-  const providerHarnessConfig = workspaceId ? workspaceBootstrap.provider_harness_config : hostProviderHarnessConfig;
-  const codexAccounts = workspaceId ? workspaceBootstrap.codex_accounts : hostCodexAccounts;
-  const claudeAccounts = workspaceId ? workspaceBootstrap.claude_accounts : hostClaudeAccounts;
-  const geminiAccounts = workspaceId ? workspaceBootstrap.gemini_accounts : hostGeminiAccounts;
-  const qwenAccounts = workspaceId ? workspaceBootstrap.qwen_accounts : hostQwenAccounts;
-  const kimiAccounts = workspaceId ? workspaceBootstrap.kimi_accounts : hostKimiAccounts;
-  const mistralAccounts = workspaceId ? workspaceBootstrap.mistral_accounts : hostMistralAccounts;
-  const copilotAccounts = workspaceId ? workspaceBootstrap.copilot_accounts : hostCopilotAccounts;
-  const cursorAccounts = workspaceId ? workspaceBootstrap.cursor_accounts : hostCursorAccounts;
-  const ampAccounts = workspaceId ? workspaceBootstrap.amp_accounts : hostAmpAccounts;
+  const hostBootstrapLoaded = workspaceId ? false : hasCachedHostProvidersBootstrap();
+  const providers = workspaceId ? scopedBootstrap.providers : (hostBootstrapLoaded ? scopedBootstrap.providers : []);
+  const providerHarnessConfig = workspaceId
+    ? scopedBootstrap.provider_harness_config
+    : (hostBootstrapLoaded ? scopedBootstrap.provider_harness_config : {});
+  const codexAccounts = workspaceId ? scopedBootstrap.codex_accounts : (hostBootstrapLoaded ? scopedBootstrap.codex_accounts : null);
+  const claudeAccounts = workspaceId ? scopedBootstrap.claude_accounts : (hostBootstrapLoaded ? scopedBootstrap.claude_accounts : null);
+  const geminiAccounts = workspaceId ? scopedBootstrap.gemini_accounts : (hostBootstrapLoaded ? scopedBootstrap.gemini_accounts : null);
+  const qwenAccounts = workspaceId ? scopedBootstrap.qwen_accounts : (hostBootstrapLoaded ? scopedBootstrap.qwen_accounts : null);
+  const kimiAccounts = workspaceId ? scopedBootstrap.kimi_accounts : (hostBootstrapLoaded ? scopedBootstrap.kimi_accounts : null);
+  const mistralAccounts = workspaceId ? scopedBootstrap.mistral_accounts : (hostBootstrapLoaded ? scopedBootstrap.mistral_accounts : null);
+  const copilotAccounts = workspaceId ? scopedBootstrap.copilot_accounts : (hostBootstrapLoaded ? scopedBootstrap.copilot_accounts : null);
+  const cursorAccounts = workspaceId ? scopedBootstrap.cursor_accounts : (hostBootstrapLoaded ? scopedBootstrap.cursor_accounts : null);
+  const ampAccounts = workspaceId ? scopedBootstrap.amp_accounts : (hostBootstrapLoaded ? scopedBootstrap.amp_accounts : null);
 
   const installObserversRef = useRef<Record<string, () => void>>({});
   const installsRef = useRef<Record<string, InstallSession>>({});
@@ -434,11 +434,14 @@ export function useHarnessAuthenticationController({
         providerHarnessConfigRef.current = next.provider_harness_config;
         return;
       }
-      setHostProviderHarnessConfig((prev) => {
-        const next = { ...prev, [providerId]: nextConfig };
-        providerHarnessConfigRef.current = next;
-        return next;
-      });
+      const next = updateHostProvidersBootstrap((current) => ({
+        ...current,
+        provider_harness_config: {
+          ...current.provider_harness_config,
+          [providerId]: nextConfig,
+        },
+      }));
+      providerHarnessConfigRef.current = next.provider_harness_config;
     },
     [workspaceId],
   );
@@ -480,8 +483,8 @@ export function useHarnessAuthenticationController({
       return;
     }
     try {
-      const nextProviders = await listProviders("host");
-      setHostProviders(nextProviders);
+      invalidateHostProvidersBootstrap();
+      await refreshHostProvidersBootstrap();
     } catch (error) {
       setProviderError(messageFromError(error));
     }
@@ -493,9 +496,8 @@ export function useHarnessAuthenticationController({
       return bootstrap?.providers ?? [];
     }
     try {
-      const next = await listProviders("host");
-      setHostProviders(next);
-      return next;
+      const bootstrap = await refreshHostProvidersBootstrap();
+      return bootstrap.providers;
     } catch (error) {
       setProviderError(messageFromError(error));
       return [];
@@ -507,7 +509,7 @@ export function useHarnessAuthenticationController({
       updateProvidersBootstrap(workspaceId, (current) => ({ ...current, codex_accounts: next }));
       return;
     }
-    setHostCodexAccounts(next);
+    updateHostProvidersBootstrap((current) => ({ ...current, codex_accounts: next }));
   }, [workspaceId]);
 
   const applyClaudeAccounts = useCallback((next: ClaudeAccountsResponse) => {
@@ -515,7 +517,7 @@ export function useHarnessAuthenticationController({
       updateProvidersBootstrap(workspaceId, (current) => ({ ...current, claude_accounts: next }));
       return;
     }
-    setHostClaudeAccounts(next);
+    updateHostProvidersBootstrap((current) => ({ ...current, claude_accounts: next }));
   }, [workspaceId]);
 
   const applyGeminiAccounts = useCallback((next: GeminiAccountsResponse) => {
@@ -523,7 +525,7 @@ export function useHarnessAuthenticationController({
       updateProvidersBootstrap(workspaceId, (current) => ({ ...current, gemini_accounts: next }));
       return;
     }
-    setHostGeminiAccounts(next);
+    updateHostProvidersBootstrap((current) => ({ ...current, gemini_accounts: next }));
   }, [workspaceId]);
 
   const applyQwenAccounts = useCallback((next: QwenAccountsResponse) => {
@@ -531,7 +533,7 @@ export function useHarnessAuthenticationController({
       updateProvidersBootstrap(workspaceId, (current) => ({ ...current, qwen_accounts: next }));
       return;
     }
-    setHostQwenAccounts(next);
+    updateHostProvidersBootstrap((current) => ({ ...current, qwen_accounts: next }));
   }, [workspaceId]);
 
   const applyKimiAccounts = useCallback((next: KimiAccountsResponse) => {
@@ -539,7 +541,7 @@ export function useHarnessAuthenticationController({
       updateProvidersBootstrap(workspaceId, (current) => ({ ...current, kimi_accounts: next }));
       return;
     }
-    setHostKimiAccounts(next);
+    updateHostProvidersBootstrap((current) => ({ ...current, kimi_accounts: next }));
   }, [workspaceId]);
 
   const applyMistralAccounts = useCallback((next: MistralAccountsResponse) => {
@@ -547,7 +549,7 @@ export function useHarnessAuthenticationController({
       updateProvidersBootstrap(workspaceId, (current) => ({ ...current, mistral_accounts: next }));
       return;
     }
-    setHostMistralAccounts(next);
+    updateHostProvidersBootstrap((current) => ({ ...current, mistral_accounts: next }));
   }, [workspaceId]);
 
   const applyCopilotAccounts = useCallback((next: CopilotAccountsResponse) => {
@@ -555,7 +557,7 @@ export function useHarnessAuthenticationController({
       updateProvidersBootstrap(workspaceId, (current) => ({ ...current, copilot_accounts: next }));
       return;
     }
-    setHostCopilotAccounts(next);
+    updateHostProvidersBootstrap((current) => ({ ...current, copilot_accounts: next }));
   }, [workspaceId]);
 
   const applyCursorAccounts = useCallback((next: CursorAccountsResponse) => {
@@ -563,7 +565,7 @@ export function useHarnessAuthenticationController({
       updateProvidersBootstrap(workspaceId, (current) => ({ ...current, cursor_accounts: next }));
       return;
     }
-    setHostCursorAccounts(next);
+    updateHostProvidersBootstrap((current) => ({ ...current, cursor_accounts: next }));
   }, [workspaceId]);
 
   const applyAmpAccounts = useCallback((next: AmpAccountsResponse) => {
@@ -571,7 +573,7 @@ export function useHarnessAuthenticationController({
       updateProvidersBootstrap(workspaceId, (current) => ({ ...current, amp_accounts: next }));
       return;
     }
-    setHostAmpAccounts(next);
+    updateHostProvidersBootstrap((current) => ({ ...current, amp_accounts: next }));
   }, [workspaceId]);
 
   const setScopedClaudeAccounts = useCallback((update: SetStateAction<ClaudeAccountsResponse | null>) => {
@@ -581,7 +583,10 @@ export function useHarnessAuthenticationController({
       return;
     }
     if (!workspaceId) {
-      setHostClaudeAccounts(null);
+      updateHostProvidersBootstrap((current) => ({
+        ...current,
+        claude_accounts: EMPTY_PROVIDERS_BOOTSTRAP.claude_accounts,
+      }));
     }
   }, [applyClaudeAccounts, claudeAccounts, workspaceId]);
 
@@ -592,7 +597,10 @@ export function useHarnessAuthenticationController({
       return;
     }
     if (!workspaceId) {
-      setHostKimiAccounts(null);
+      updateHostProvidersBootstrap((current) => ({
+        ...current,
+        kimi_accounts: EMPTY_PROVIDERS_BOOTSTRAP.kimi_accounts,
+      }));
     }
   }, [applyKimiAccounts, kimiAccounts, workspaceId]);
 
@@ -603,7 +611,10 @@ export function useHarnessAuthenticationController({
       return;
     }
     if (!workspaceId) {
-      setHostCopilotAccounts(null);
+      updateHostProvidersBootstrap((current) => ({
+        ...current,
+        copilot_accounts: EMPTY_PROVIDERS_BOOTSTRAP.copilot_accounts,
+      }));
     }
   }, [applyCopilotAccounts, copilotAccounts, workspaceId]);
 
@@ -1459,8 +1470,10 @@ export function useHarnessAuthenticationController({
       refreshProvidersBootstrapState({ silent: true }).catch(() => {});
       return;
     }
-    refreshProviders().catch(() => {});
-  }, [enabled, refreshProviders, refreshProvidersBootstrapState, workspaceId]);
+    loadHostProvidersBootstrap().catch((error) => {
+      setProviderError(messageFromError(error));
+    });
+  }, [enabled, refreshProvidersBootstrapState, workspaceId]);
 
   useEffect(() => {
     if (!enabled || !workspaceId) return;
