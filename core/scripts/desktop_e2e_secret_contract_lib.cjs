@@ -175,6 +175,27 @@ const envSpecs = {
     ],
     minLength: 3,
   },
+  GOOGLE_TEST_EMAIL: {
+    kind: "config",
+    description: "Shared Google account email used for real browser-backed provider OAuth coverage.",
+    validation: [
+      "trimmed, non-empty email address",
+      "must contain @",
+      "must not contain whitespace",
+    ],
+    format: "email",
+  },
+  GOOGLE_TEST_PASSWORD: {
+    kind: "secret",
+    description: "Shared Google account password used for real browser-backed provider OAuth coverage.",
+    validation: [
+      "trimmed, non-empty secret value",
+      "must not be a placeholder example",
+      "minimum length 8",
+    ],
+    minLength: 8,
+    allowWhitespace: true,
+  },
   AWS_ACCESS_KEY_ID: {
     kind: "secret",
     description: "AWS access key ID used to provision real remote CI fixture hosts.",
@@ -414,6 +435,7 @@ const suiteIds = [
   "providers-tokens",
   "providers-endpoint-ui",
   "providers-provider-api-auth",
+  "providers-provider-browser-auth",
   "macos-break-matrix",
   "mac-webdriver-quick-smoke",
   "desktop-remote-real-ci",
@@ -1028,6 +1050,24 @@ const resolveSuiteContract = (suiteId, options = {}) => {
         optionalRequirements: [],
         metadata: {},
         notes: [],
+        env,
+        platform,
+      };
+    case "providers-provider-browser-auth":
+      return {
+        id: normalizedId,
+        title: "Provider browser OAuth auth suite",
+        description: "Real Playwright suite validating browser-driven subscription OAuth flows.",
+        requirements: [
+          buildRequirement("GOOGLE_TEST_EMAIL"),
+          buildRequirement("GOOGLE_TEST_PASSWORD"),
+        ],
+        optionalRequirements: [],
+        metadata: {},
+        notes: [
+          "Current mainline browser-auth coverage is Claude-only.",
+          "The suite defaults to a persistent branded browser plus stealth init script through scripts/providers_e2e.sh.",
+        ],
         env,
         platform,
       };

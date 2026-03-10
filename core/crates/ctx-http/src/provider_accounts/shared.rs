@@ -143,6 +143,15 @@ pub(crate) fn home_config_cache_env(home: &Path) -> HashMap<String, String> {
     env
 }
 
+pub(crate) fn prepend_dir_to_path_env(dir: &Path) -> Result<String> {
+    let mut path_parts = vec![dir.to_path_buf()];
+    if let Some(existing) = std::env::var_os("PATH") {
+        path_parts.extend(std::env::split_paths(&existing));
+    }
+    let joined = std::env::join_paths(path_parts).context("joining PATH with prepended dir")?;
+    Ok(joined.to_string_lossy().to_string())
+}
+
 pub(crate) async fn ensure_home_config_cache_dirs(home: &Path) -> Result<()> {
     tokio::fs::create_dir_all(home.join(".config")).await?;
     tokio::fs::create_dir_all(home.join(".cache")).await?;

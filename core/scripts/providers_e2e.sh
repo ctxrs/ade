@@ -3,7 +3,7 @@ set -euo pipefail
 
 suite="${1:-}"
 if [[ -z "${suite}" ]]; then
-  echo "usage: $0 {e2e|runner|tokens|endpoint-ui|provider-api-auth|linux-arm-critical|linux-arm-nightly}" >&2
+  echo "usage: $0 {e2e|runner|tokens|endpoint-ui|provider-api-auth|provider-browser-auth|linux-arm-critical|linux-arm-nightly}" >&2
   exit 2
 fi
 
@@ -558,6 +558,56 @@ case "${suite}" in
     )
     exit 0
     ;;
+  provider-browser-auth)
+    run_preflight "providers-provider-browser-auth"
+    export CTX_E2E_TIER="provider-browser-auth"
+    export CTX_E2E_PROVIDER_BROWSER_AUTH_PERSISTENT="${CTX_E2E_PROVIDER_BROWSER_AUTH_PERSISTENT:-1}"
+    export CTX_E2E_PROVIDER_BROWSER_AUTH_STEALTH="${CTX_E2E_PROVIDER_BROWSER_AUTH_STEALTH:-1}"
+    export CTX_E2E_PROVIDER_BROWSER_AUTH_HEADLESS="${CTX_E2E_PROVIDER_BROWSER_AUTH_HEADLESS:-0}"
+    if [[ "${OSTYPE:-}" == darwin* ]]; then
+      export CTX_E2E_PROVIDER_BROWSER_AUTH_CHANNEL="${CTX_E2E_PROVIDER_BROWSER_AUTH_CHANNEL:-chrome}"
+      export CTX_E2E_PROVIDER_BROWSER_AUTH_USE_LOCAL_GOOGLE_PROFILE="${CTX_E2E_PROVIDER_BROWSER_AUTH_USE_LOCAL_GOOGLE_PROFILE:-1}"
+    fi
+
+    missing_provider_browser_auth_keys=()
+    if [[ -z "${GOOGLE_TEST_EMAIL:-}" ]]; then
+      missing_provider_browser_auth_keys+=("GOOGLE_TEST_EMAIL")
+    fi
+    if [[ -z "${GOOGLE_TEST_PASSWORD:-}" ]]; then
+      missing_provider_browser_auth_keys+=("GOOGLE_TEST_PASSWORD")
+    fi
+
+    if (( ${#missing_provider_browser_auth_keys[@]} > 0 )); then
+      missing_keys_csv="$(IFS=,; echo "${missing_provider_browser_auth_keys[*]}")"
+      if [[ -n "${CI:-}" ]]; then
+        echo "missing ${missing_keys_csv}; set shared Google browser OAuth secrets before running provider-browser-auth suite" >&2
+        exit 1
+      fi
+      echo "skipping provider-browser-auth tests; missing ${missing_keys_csv}" >&2
+      exit 0
+    fi
+
+    export CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS="${CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-${CTX_E2E_PROVIDER_BROWSER_AUTH_BUNDLE_PROVIDERS:-acp-crp-bridge,claude-cli,claude-crp}}"
+    export CTX_E2E_ENDPOINT_BUNDLE_HARNESS_IMAGE="${CTX_E2E_ENDPOINT_BUNDLE_HARNESS_IMAGE:-0}"
+    export CTX_E2E_ENDPOINT_BUNDLE_PODMAN="${CTX_E2E_ENDPOINT_BUNDLE_PODMAN:-0}"
+    export CTX_E2E_ENDPOINT_APPEND_LINUX_TARGETS="${CTX_E2E_ENDPOINT_APPEND_LINUX_TARGETS:-0}"
+    ensure_endpoint_ui_bundles
+
+    provider_browser_auth_specs=(
+      e2e/workbench-claude-subscription-oauth-browser-real.spec.ts
+    )
+    if [[ -n "${CTX_E2E_PROVIDER_BROWSER_AUTH_SPECS:-}" ]]; then
+      IFS=',' read -r -a provider_browser_auth_specs <<<"${CTX_E2E_PROVIDER_BROWSER_AUTH_SPECS}"
+    fi
+
+    (
+      cd "${repo_root}/apps/web"
+      pnpm exec playwright test -c playwright.config.ts \
+        "${provider_browser_auth_specs[@]}" \
+        --workers=1
+    )
+    exit 0
+    ;;
   linux-arm-critical)
     export CTX_E2E_TIER="endpoint-ui"
     run_linux_arm_runtime_install_lane "linux-arm-critical" "0"
@@ -569,7 +619,7 @@ case "${suite}" in
     exit 0
     ;;
   *)
-    echo "usage: $0 {e2e|runner|tokens|endpoint-ui|provider-api-auth|linux-arm-critical|linux-arm-nightly}" >&2
+    echo "usage: $0 {e2e|runner|tokens|endpoint-ui|provider-api-auth|provider-browser-auth|linux-arm-critical|linux-arm-nightly}" >&2
     exit 2
     ;;
 esac

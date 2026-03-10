@@ -17,6 +17,7 @@
     "test:providers:tokens": "bash -lc 'scripts/providers_e2e.sh tokens'",
     "test:providers:endpoint-ui": "bash -lc 'scripts/providers_e2e.sh endpoint-ui'",
     "test:providers:provider-api-auth": "bash -lc 'scripts/providers_e2e.sh provider-api-auth'",
+    "test:providers:browser-auth": "bash -lc 'scripts/providers_e2e.sh provider-browser-auth'",
     "test:providers:linux-arm:preflight:critical": "node scripts/linux_arm_provider_preflight.cjs --lane critical",
     "test:providers:linux-arm:preflight:nightly": "node scripts/linux_arm_provider_preflight.cjs --lane nightly",
     "test:providers:linux-arm:critical": "bash -lc 'scripts/providers_e2e.sh linux-arm-critical'",

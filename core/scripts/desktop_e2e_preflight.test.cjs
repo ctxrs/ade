@@ -70,6 +70,35 @@ test("allow-missing is an explicit local opt out", () => {
   assert.match(result.stderr, /allow-missing enabled/i);
 });
 
+test("provider-browser-auth preflight requires the shared Google credentials", () => {
+  const result = run([
+    "--suite",
+    "providers-provider-browser-auth",
+  ], {
+    GOOGLE_TEST_EMAIL: "contact-086a332885a5@fixture.example.test",
+    GOOGLE_TEST_PASSWORD: "",
+  });
+
+  assert.notEqual(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
+  assert.match(result.stderr, /GOOGLE_TEST_PASSWORD/);
+  assert.match(result.stderr, /preflight failed/i);
+});
+
+test("provider-browser-auth preflight passes with the shared Google credentials", () => {
+  const result = run([
+    "--suite",
+    "providers-provider-browser-auth",
+  ], {
+    GOOGLE_TEST_EMAIL: "contact-086a332885a5@fixture.example.test",
+    GOOGLE_TEST_PASSWORD: "browser-oauth-secret",
+  });
+
+  assert.equal(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
+  assert.match(result.stdout, /GOOGLE_TEST_EMAIL.*present/i);
+  assert.match(result.stdout, /GOOGLE_TEST_PASSWORD.*present/i);
+  assert.match(result.stdout, /preflight passed/i);
+});
+
 test("preflight resolves codex oauth credentials from selected nightly matrix cells", () => {
   const result = run([
     "--suite",

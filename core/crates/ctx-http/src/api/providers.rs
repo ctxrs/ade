@@ -1,9 +1,7 @@
 use std::collections::{HashMap, HashSet};
-use std::io::Write;
 use std::path::{Path as StdPath, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
-use std::sync::Mutex as StdMutex;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context};
@@ -12,11 +10,9 @@ use axum::http::StatusCode;
 use axum::Json;
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
-use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 use url::Url;
 
 use super::errors::ApiErrorResp;
@@ -82,9 +78,9 @@ use imports::import_result_requires_provider_restart;
 #[cfg(test)]
 use login::{
     auth_url_looks_complete, expected_callback_from_auth_url, extract_auth_url,
-    extract_auth_url_from_value, extract_claude_setup_token, normalize_claude_login_line,
-    read_trailing_claude_login_lines, resolve_claude_setup_token_runtime_with_bootstrap,
-    should_attempt_claude_cli_bootstrap, validate_callback_url,
+    extract_auth_url_from_value, normalize_claude_login_line, read_trailing_claude_login_lines,
+    resolve_claude_login_runtime_with_bootstrap, should_attempt_claude_cli_bootstrap,
+    validate_callback_url,
 };
 #[cfg(test)]
 use probe::*;
@@ -510,6 +506,18 @@ mod tests {
     }
 
     #[test]
+    fn extract_auth_url_reconstructs_wrapped_scheme_prefix() {
+        let wrapped =
+            "Open this URL: ht\ntps://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A64111%2Fauth%2Fcallback&state=abc";
+        assert_eq!(
+            extract_auth_url(wrapped).as_deref(),
+            Some(
+                "https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A64111%2Fauth%2Fcallback&state=abc"
+            )
+        );
+    }
+
+    #[test]
     fn extract_auth_url_from_value_detects_embedded_url_in_message() {
         let payload = serde_json::json!({
             "message": "Visit this link to sign in: https://accounts.google.com/o/oauth2/auth?foo=bar"
@@ -595,7 +603,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolve_claude_setup_token_runtime_bootstraps_missing_runtime_command() {
+    async fn resolve_claude_login_runtime_bootstraps_missing_runtime_command() {
         let temp = tempfile::tempdir().expect("tempdir");
         let data_root = temp.path().to_path_buf();
         let runtime_path = data_root.join("claude-cli-mock.sh");
@@ -603,7 +611,7 @@ mod tests {
         let runtime_path_str = runtime_path.to_string_lossy().to_string();
         let install_called = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-        let resolved = resolve_claude_setup_token_runtime_with_bootstrap(&data_root, || {
+        let resolved = resolve_claude_login_runtime_with_bootstrap(&data_root, || {
             let data_root = data_root.clone();
             let runtime_path_str = runtime_path_str.clone();
             let install_called = Arc::clone(&install_called);
@@ -633,75 +641,6 @@ mod tests {
         assert!(install_called.load(std::sync::atomic::Ordering::SeqCst));
         assert!(resolved.command_abs_path.contains("claude-cli-mock.sh"));
         assert_eq!(resolved.args, vec!["--shim".to_string()]);
-    }
-
-    #[test]
-    fn extract_claude_setup_token_handles_wrapped_output() {
-        let output = r#"
-Long-lived authentication token created successfully!
-
-Your OAuth token (valid for 1 year):
-
-sk-ant-oat01-1WRAPPED_TEST_ONLY_0123456789_WR
-APPED_TEST_ONLY_0123456789_WRAPPED_TEST_ONLY_
-0123456789_WRAPPED
-
-Store this token securely.
-"#;
-        let token = extract_claude_setup_token(output).expect("token should parse");
-        assert!(token.starts_with("sk-ant-oat01-"));
-        assert!(token.contains("APPED_TEST_ONLY_0123456789_WRAPPED_TEST_ONLY_"));
-        assert!(token.ends_with("0123456789_WRAPPED"));
-    }
-
-    #[test]
-    fn extract_claude_setup_token_ignores_wrapped_prose_after_token() {
-        let output = r#"
-Your OAuth token (valid for 1 year):
-
-sk-ant-oat01-1WRAPPED_TEST_ONLY_0123456789_WR
-APPED_TEST_ONLY_0123456789_WRAPPED_TEST_ONLY_
-0123456789_WRAPPED
-Store
-this
-token
-securely
-You
-won't
-be
-able
-to
-see
-it
-again
-"#;
-        let token = extract_claude_setup_token(output).expect("token should parse");
-        assert!(token.starts_with("sk-ant-oat01-"));
-        assert!(token.ends_with("0123456789_WRAPPED"));
-        assert!(!token.contains("Store"));
-        assert!(!token.contains("securely"));
-    }
-
-    #[test]
-    fn extract_claude_setup_token_stops_before_inline_prose() {
-        let output = "sk-ant-oat01-1INLINE_TEST_ONLY_0123456789_INLINE_TEST_ONLY_0123456789_INLINE_TEST_ONLY_0123456789_INLINE_TESStore this token securely.";
-        let token = extract_claude_setup_token(output).expect("token should parse");
-        assert!(token.starts_with("sk-ant-oat01-"));
-        assert!(token.ends_with("INE_TES"));
-        assert!(!token.contains("Store"));
-        assert!(!token.contains("securely"));
-    }
-
-    #[test]
-    fn extract_claude_setup_token_accepts_short_final_fragment() {
-        let output = r#"
-Your OAuth token (valid for 1 year):
-
-sk-ant-oat01-abcDEF1234567890_
-ZXY987654321
-"#;
-        let token = extract_claude_setup_token(output).expect("token should parse");
-        assert_eq!(token, "sk-ant-oat01-abcDEF1234567890_ZXY987654321");
     }
 
     #[test]
