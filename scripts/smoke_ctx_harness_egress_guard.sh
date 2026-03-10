@@ -60,7 +60,7 @@ EOF
 # Configure iptables the same way ctx does (with a harmless daemon allow rule).
 "$RUNTIME" exec --user 0 "$NAME" sh -lc '
   set -e
-  daemon_ip="$(getent hosts localhost | awk "{print \\$1}" | head -n1)"
+  daemon_ip="$(getent hosts localhost | awk "{print \$1}" | head -n1)"
   test -n "$daemon_ip"
 
   iptables -t nat -F OUTPUT || true
@@ -96,4 +96,3 @@ if [ "$status" -eq 0 ]; then
 fi
 
 echo "ok: allowlist enforcement works ($ALLOW_HOST allowed, $BLOCK_HOST blocked)"
-
