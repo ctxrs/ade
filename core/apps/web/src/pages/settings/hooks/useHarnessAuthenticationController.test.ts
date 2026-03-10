@@ -46,6 +46,7 @@ import {
   toErrorObject,
   useHarnessAuthenticationController,
 } from "./useHarnessAuthenticationController";
+import { resetProviderOnboardingCoordinatorForTests } from "../../../state/providerOnboardingCoordinator";
 import type { HarnessAuthRow } from "../harnessAuthRows";
 import { openExternalLink } from "../../../utils/desktop";
 
@@ -341,6 +342,7 @@ function ControllerHarness({
 }
 
 beforeEach(() => {
+  resetProviderOnboardingCoordinatorForTests();
   bootstrapMockState.bootstrapStateByWorkspace.clear();
   bootstrapMockState.bootstrapLoadQueueByWorkspace.clear();
   bootstrapMockState.bootstrapRefreshQueueByWorkspace.clear();

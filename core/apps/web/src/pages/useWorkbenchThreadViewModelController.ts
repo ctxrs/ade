@@ -39,6 +39,10 @@ type PerTurnCaches = {
   eventsByTurnId: Map<string, SessionEvent[]>;
 };
 
+function getTurnGroupKey(turnId: string): string {
+  return `turn-${turnId}`;
+}
+
 function buildMessagesByTurnId(messages: Message[]): Map<string, Message[]> {
   const byTurnMsg = new Map<string, Message[]>();
   for (const message of messages) {
@@ -112,10 +116,10 @@ function buildStateFromInputs(opts: {
 }
 
 /**
- * Builds the workbench thread view model outside of render and incrementally updates it
- * on streaming event appends. This prevents full thread re-derivation on every WAL tick.
- *
- * For correctness, we still rebuild fully on structural changes (turns/messages).
+ * Narrow sanctioned projector fast path:
+ * - only append-only event deltas
+ * - only when transcript stamps and local projection inputs are unchanged
+ * - rebuild immediately on any ambiguity
  */
 export function useWorkbenchThreadViewModelController(
   params: Params,
@@ -167,8 +171,7 @@ export function useWorkbenchThreadViewModelController(
     return map;
   }, [turns, turnsStamp]);
 
-  const messagesByTurnIdRef = useRef<Map<string, Message[]>>(initialBuild.caches.messagesByTurnId);
-  const eventsByTurnIdRef = useRef<Map<string, SessionEvent[]>>(initialBuild.caches.eventsByTurnId);
+  const perTurnCachesRef = useRef<PerTurnCaches>(initialBuild.caches);
   const lastSessionIdRef = useRef(sessionId);
   const lastTurnsStampRef = useRef(turnsStamp);
   const lastMessagesStampRef = useRef(messagesStamp);
@@ -192,9 +195,7 @@ export function useWorkbenchThreadViewModelController(
       verbosity,
     });
 
-    const { messagesByTurnId, eventsByTurnId } = buildPerTurnCaches(messages, events);
-    messagesByTurnIdRef.current = messagesByTurnId;
-    eventsByTurnIdRef.current = eventsByTurnId;
+    perTurnCachesRef.current = buildPerTurnCaches(messages, events);
 
     setState({
       view,
@@ -223,8 +224,10 @@ export function useWorkbenchThreadViewModelController(
     if (sessionChanged) {
       lastSessionIdRef.current = sessionId;
       syncInvalidationRefs();
-      messagesByTurnIdRef.current = new Map();
-      eventsByTurnIdRef.current = new Map();
+      perTurnCachesRef.current = {
+        messagesByTurnId: new Map(),
+        eventsByTurnId: new Map(),
+      };
       fullRebuild.current();
       return;
     }
@@ -305,9 +308,9 @@ export function useWorkbenchThreadViewModelController(
       const tid = idToString(ev.turn_id ?? "");
       if (tid) {
         dirtyTurnIds.add(tid);
-        const list = eventsByTurnIdRef.current.get(tid) ?? [];
+        const list = perTurnCachesRef.current.eventsByTurnId.get(tid) ?? [];
         list.push(ev);
-        eventsByTurnIdRef.current.set(tid, list);
+        perTurnCachesRef.current.eventsByTurnId.set(tid, list);
       }
     }
     if (dirtyTurnIds.size === 0) {
@@ -318,6 +321,24 @@ export function useWorkbenchThreadViewModelController(
 
     // Rebuild only the groups for the turns affected by the new events.
     const currentGroups = state.view.groups;
+    const currentTurnGroupKeys = new Set(
+      currentGroups
+        .map((group) => String(group.key ?? ""))
+        .filter((groupKey) => groupKey.startsWith("turn-")),
+    );
+    for (const turnId of dirtyTurnIds) {
+      const groupKey = getTurnGroupKey(turnId);
+      if (
+        !turnsById.has(turnId)
+        || !state.groupRanges.has(groupKey)
+        || !currentTurnGroupKeys.has(groupKey)
+      ) {
+        syncInvalidationRefs();
+        fullRebuild.current();
+        return;
+      }
+    }
+
     const updatedGroups: WorkbenchThreadView["groups"] = [];
     const updatedSegments = new Map<string, WorkbenchListItem[]>();
 
@@ -335,23 +356,28 @@ export function useWorkbenchThreadViewModelController(
 
       const turn = turnsById.get(turnId);
       if (!turn) {
-        updatedGroups.push(g);
-        continue;
+        syncInvalidationRefs();
+        fullRebuild.current();
+        return;
       }
-      const msgs = messagesByTurnIdRef.current.get(turnId) ?? [];
-      const evs = eventsByTurnIdRef.current.get(turnId) ?? [];
+      const msgs = perTurnCachesRef.current.messagesByTurnId.get(turnId) ?? [];
+      const evs = perTurnCachesRef.current.eventsByTurnId.get(turnId) ?? [];
       const tools = toolSummariesReady ? { [turnId]: toolsByTurnId[turnId] ?? [] } : {};
 
       const rebuilt = buildWorkbenchThreadViewModelFromTurns([turn], msgs, tools, evs, askUserQuestionAnswers);
-      const nextGroup = rebuilt.groups.find((x) => x.key === key) ?? rebuilt.groups[0];
-      const finalGroup = nextGroup ?? g;
-      updatedGroups.push(finalGroup);
+      const nextGroup = rebuilt.groups.find((x) => x.key === key);
+      if (!nextGroup) {
+        syncInvalidationRefs();
+        fullRebuild.current();
+        return;
+      }
+      updatedGroups.push(nextGroup);
 
       const segment: WorkbenchListItem[] = [];
-      if (finalGroup.header) {
-        segment.push({ kind: "turn_header", id: `turn-header-${finalGroup.header.id}`, header: finalGroup.header });
+      if (nextGroup.header) {
+        segment.push({ kind: "turn_header", id: `turn-header-${nextGroup.header.id}`, header: nextGroup.header });
       }
-      segment.push(...filterThreadItemsForVerbosity(finalGroup.items, verbosity));
+      segment.push(...filterThreadItemsForVerbosity(nextGroup.items, verbosity));
       updatedSegments.set(key, segment);
     }
 
@@ -360,7 +386,11 @@ export function useWorkbenchThreadViewModelController(
     let nextRanges = state.groupRanges;
     for (const [groupKey, segment] of updatedSegments.entries()) {
       const range = nextRanges.get(groupKey);
-      if (!range) continue;
+      if (!range) {
+        syncInvalidationRefs();
+        fullRebuild.current();
+        return;
+      }
       const prevLen = range.end - range.start;
       const nextLen = segment.length;
       if (prevLen === nextLen) {

@@ -80,7 +80,12 @@ const asRecord = (value: unknown): Record<string, unknown> => {
 
 type TestInternalEntry = {
   turnsHydrated: boolean;
+  turns: SessionTurn[];
+  turnsRev: number;
   messages: Message[];
+  messagesRev: number;
+  events: SessionEvent[];
+  eventsRev: number;
   queue: Message[];
   lastEventSeq?: number;
   stateLoaded?: boolean;
@@ -231,6 +236,117 @@ describe("SessionSupervisor", () => {
     const entry = sup.getSnapshot().sessions[sessionId];
     expect(entry?.messages.length).toBe(1);
     expect(entry?.queue.length).toBe(1);
+  });
+
+  it("bumps messagesRev when streamed queue events flip delivery in place", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-queue-rev";
+    const createdAt = new Date().toISOString();
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+    const entry = internals.ensureEntry(sessionId);
+
+    entry.messages = [
+      {
+        id: "message-1",
+        session_id: sessionId,
+        task_id: "task-1",
+        role: "user",
+        content: "queue me",
+        attachments: [],
+        delivery: "immediate",
+        created_at: createdAt,
+        turn_id: "turn-1",
+        order_seq: 1,
+      } as Message,
+    ];
+    entry.queue = [];
+    const beforeMessagesRev = entry.messagesRev;
+
+    internals.handleReplicaPatches([
+      {
+        op: "append",
+        sessionId,
+        data: {
+          events: [
+            {
+              seq: 1,
+              id: "event-queue-added",
+              session_id: sessionId,
+              run_id: "run-1",
+              turn_id: "turn-1",
+              event_type: "message_queue_added",
+              payload_json: { message_id: "message-1" },
+              created_at: createdAt,
+            },
+          ],
+        },
+      },
+    ]);
+
+    expect(entry.messages).toHaveLength(1);
+    expect(entry.messages[0]?.delivery).toBe("queued");
+    expect(entry.queue.map((message) => String(message.id))).toEqual(["message-1"]);
+    expect(entry.messagesRev).toBeGreaterThan(beforeMessagesRev);
+  });
+
+  it("bumps turnsRev when streamed turn events mutate an existing turn in place", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-turn-rev";
+    const createdAt = new Date().toISOString();
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+    const entry = internals.ensureEntry(sessionId);
+
+    entry.turns = [
+      {
+        turn_id: "turn-1",
+        session_id: sessionId,
+        run_id: "run-1",
+        user_message_id: "message-1",
+        status: "running",
+        start_seq: 1,
+        end_seq: null,
+        started_at: createdAt,
+        updated_at: createdAt,
+        assistant_partial: "",
+        thought_partial: "",
+        metrics_json: null,
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      } as SessionTurn,
+    ];
+    const beforeTurnsRev = entry.turnsRev;
+
+    internals.handleReplicaPatches([
+      {
+        op: "append",
+        sessionId,
+        data: {
+          events: [
+            {
+              seq: 2,
+              id: "event-turn-done",
+              session_id: sessionId,
+              run_id: "run-1",
+              turn_id: "turn-1",
+              event_type: "done",
+              payload_json: {},
+              created_at: createdAt,
+            },
+          ],
+        },
+      },
+    ]);
+
+    expect(entry.turns).toHaveLength(1);
+    expect(entry.turns[0]?.status).toBe("completed");
+    expect(entry.turnsRev).toBeGreaterThan(beforeTurnsRev);
   });
 
   it("re-emits subscribed session ids when active-task membership changes under an open session", async () => {

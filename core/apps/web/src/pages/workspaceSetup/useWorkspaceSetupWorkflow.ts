@@ -3,14 +3,23 @@ import {
   useEffect,
   useMemo,
   useReducer,
+  useRef,
   type SetStateAction,
   type MutableRefObject,
 } from "react";
-import { nextAfterHarnessDownloads, nextBoundaryStep } from "./wizardFlow";
 import { useWorkspaceSetupCreate } from "./useWorkspaceSetupCreate";
 import { useWorkspaceSetupFlow } from "./useWorkspaceSetupFlow";
 import { useWorkspaceSetupProvisioning } from "./useWorkspaceSetupProvisioning";
 import { useWorkspaceSetupRemote } from "./useWorkspaceSetupRemote";
+import {
+  applyWorkspaceSetupMachineEffect,
+  executeWorkspaceSetupMachineCommand,
+} from "./workspaceSetupCoordinator";
+import {
+  createInitialWorkspaceSetupMachineState,
+  workspaceSetupMachineReducer,
+  type WorkspaceSetupMachineSnapshot,
+} from "./workspaceSetupMachine";
 import {
   createInitialWorkflowDraftState,
   makeDraftFieldSetter,
@@ -22,7 +31,6 @@ import {
   type WorkspaceSetupTargetDraft,
 } from "./workflowTypes";
 import { workspaceSetupWorkflowReducer } from "./workflowReducer";
-import type { WizardStepKey } from "./wizardFlow";
 
 type UseWorkspaceSetupWorkflowArgs = {
   navigate: (path: string, opts: { replace: boolean }) => void;
@@ -50,6 +58,12 @@ export function useWorkspaceSetupWorkflow({
     undefined,
     createInitialWorkflowDraftState,
   );
+  const [machineState, dispatchMachine] = useReducer(
+    workspaceSetupMachineReducer,
+    undefined,
+    createInitialWorkspaceSetupMachineState,
+  );
+  const handledMachineEffectIdsRef = useRef<Set<number>>(new Set());
 
   const setters = useMemo<FieldSetters>(() => ({
     targetDraft: makeDraftFieldSetter(dispatchDraft, "targetDraft"),
@@ -166,6 +180,95 @@ export function useWorkspaceSetupWorkflow({
     setCreateError: setters.createError,
   });
 
+  const machineSnapshot = useMemo<WorkspaceSetupMachineSnapshot>(() => ({
+    stepKey: flow.step.key,
+    routePlan: flow.routePlan,
+    locationSelection: flow.selections.location,
+    harnessInstallBusy: provisioning.harnessInstallBusy,
+    harnessInstallError: provisioning.harnessInstallError,
+    selectedHarnessReadyToStartCount: provisioning.selectedHarnessReadyToStartCount,
+    selectedHarnessRunningCount: provisioning.selectedHarnessRunningCount,
+    selectedHarnessFailedCount: provisioning.selectedHarnessFailedCount,
+    titlingMode: provisioning.titlingMode,
+    titlingRemoteValid: provisioning.titlingRemoteValid,
+  }), [
+    flow.routePlan,
+    flow.selections.location,
+    flow.step.key,
+    provisioning.harnessInstallBusy,
+    provisioning.harnessInstallError,
+    provisioning.selectedHarnessFailedCount,
+    provisioning.selectedHarnessReadyToStartCount,
+    provisioning.selectedHarnessRunningCount,
+    provisioning.titlingMode,
+    provisioning.titlingRemoteValid,
+  ]);
+
+  const machineCommandHandlers = useMemo(() => ({
+    verifyRemoteConnection: remote.verifyRemoteConnection,
+    ensureRoutePlanForSelection: provisioning.ensureRoutePlanForSelection,
+    advanceFromAuthImportStep: provisioning.advanceFromAuthImportStep,
+    advanceFromHarnessDownloadsStep: provisioning.advanceFromHarnessDownloadsStep,
+    onSelectTitlingLocal: provisioning.onSelectTitlingLocal,
+    ensureTitlingPersistedForCurrentTarget: provisioning.ensureTitlingPersistedForCurrentTarget,
+    preflightSourceStep: create.preflightSourceStep,
+  }), [
+    create.preflightSourceStep,
+    provisioning.advanceFromAuthImportStep,
+    provisioning.advanceFromHarnessDownloadsStep,
+    provisioning.ensureRoutePlanForSelection,
+    provisioning.ensureTitlingPersistedForCurrentTarget,
+    provisioning.onSelectTitlingLocal,
+    remote.verifyRemoteConnection,
+  ]);
+
+  const machineEffectHandlers = useMemo(() => ({
+    goToStepKey: flow.goToStepKey,
+    goRelativeStep: flow.goRelativeStep,
+    setTitlingPersistError: provisioning.setTitlingPersistError,
+    setTitlingMode: provisioning.setTitlingMode,
+    invalidateTitlingPersisted: provisioning.invalidateTitlingPersisted,
+    setRoutePlan: flow.setRoutePlan,
+  }), [
+    flow.goRelativeStep,
+    flow.goToStepKey,
+    flow.setRoutePlan,
+    provisioning.invalidateTitlingPersisted,
+    provisioning.setTitlingMode,
+    provisioning.setTitlingPersistError,
+  ]);
+
+  useEffect(() => {
+    if (machineState.pendingEffects.length === 0) return;
+
+    const effectIds: number[] = [];
+    for (const effect of machineState.pendingEffects) {
+      if (handledMachineEffectIdsRef.current.has(effect.id)) {
+        continue;
+      }
+      handledMachineEffectIdsRef.current.add(effect.id);
+      effectIds.push(effect.id);
+      if (effect.kind === "run_command") {
+        void executeWorkspaceSetupMachineCommand(effect.command, machineCommandHandlers)
+          .then((result) => {
+            dispatchMachine({
+              type: "command_completed",
+              effectId: effect.id,
+              result,
+            });
+          });
+        continue;
+      }
+      applyWorkspaceSetupMachineEffect(effect, machineEffectHandlers);
+    }
+
+    if (effectIds.length === 0) return;
+    dispatchMachine({
+      type: "effects_applied",
+      effectIds,
+    });
+  }, [machineCommandHandlers, machineEffectHandlers, machineState.pendingEffects]);
+
   const onSelect = useCallback((stepKey: string, optionId: string) => {
     setters.createError(null);
     flow.selectOption(stepKey, optionId);
@@ -198,134 +301,47 @@ export function useWorkspaceSetupWorkflow({
 
   const onSelectOption = useCallback((stepKey: string, optionId: string) => {
     onSelect(stepKey, optionId);
-    if (stepKey === "location" && optionId === "local") {
-      flow.goToStepKey("container");
-      return;
-    }
-    if (stepKey === "container") {
-      void (async () => {
-        const plan = await provisioning.ensureRoutePlanForSelection(optionId);
-        if (!plan) return;
-        if (flow.currentStepKeyRef.current !== "container") return;
-        flow.goToStepKey(nextBoundaryStep(plan));
-      })();
-      return;
-    }
-    if (stepKey === "network" && optionId !== "allowlist") {
-      flow.goRelativeStep(1);
-    }
-  }, [flow, onSelect, provisioning]);
+    dispatchMachine({
+      type: "option_selected",
+      stepKey,
+      optionId,
+      snapshot: machineSnapshot,
+    });
+  }, [machineSnapshot, onSelect]);
 
   const onSkipAuthImport = useCallback(() => {
-    void (async () => {
-      const nextStep = await provisioning.advanceFromAuthImportStep({ clearSelections: true });
-      if (nextStep) {
-        flow.goToStepKey(nextStep);
-      }
-    })();
-  }, [flow, provisioning]);
+    dispatchMachine({
+      type: "skip_auth_import_requested",
+    });
+  }, []);
 
   const onSkipHarnessDownloads = useCallback(() => {
-    void (async () => {
-      if (flow.currentStepKeyRef.current === "harness-downloads") {
-        flow.goToStepKey(nextAfterHarnessDownloads(flow.routePlan));
-      }
-      const nextStep = await provisioning.advanceFromHarnessDownloadsStep({ clearSelections: true });
-      if (nextStep) {
-        flow.goToStepKey(nextStep);
-      }
-    })();
-  }, [flow, provisioning]);
+    dispatchMachine({
+      type: "skip_harness_downloads_requested",
+      snapshot: machineSnapshot,
+    });
+  }, [machineSnapshot]);
 
   const onSelectTitlingLocal = useCallback(() => {
-    const started = provisioning.onSelectTitlingLocal();
-    if (started) {
-      flow.goRelativeStep(1);
-    }
-  }, [flow, provisioning]);
+    dispatchMachine({
+      type: "select_titling_local_requested",
+    });
+  }, []);
 
   const onSkipTitling = useCallback(() => {
-    provisioning.invalidateTitlingPersisted();
-    provisioning.setTitlingMode("skip");
-    if (flow.routePlan?.includeTitling) {
-      flow.setRoutePlan({ ...flow.routePlan, includeTitling: false });
-    }
-    flow.goRelativeStep(1);
-  }, [flow, provisioning]);
+    dispatchMachine({
+      type: "skip_titling_requested",
+      snapshot: machineSnapshot,
+    });
+  }, [machineSnapshot]);
 
-  const onNext = useCallback(async () => {
-    if (flow.step.key === "location") {
-      if (flow.selections.location === "remote") {
-        const connected = await remote.verifyRemoteConnection();
-        if (!connected) return;
-      }
-      if (flow.currentStepKeyRef.current !== "location") return;
-      flow.goToStepKey("container");
-      return;
-    }
-    if (flow.step.key === "container") {
-      const plan = await provisioning.ensureRoutePlanForSelection();
-      if (!plan) return;
-      if (flow.currentStepKeyRef.current !== "container") return;
-      flow.goToStepKey(nextBoundaryStep(plan));
-      return;
-    }
-    if (flow.step.key === "auth-import") {
-      const nextStep = await provisioning.advanceFromAuthImportStep();
-      if (nextStep) {
-        flow.goToStepKey(nextStep);
-      }
-      return;
-    }
-    if (flow.step.key === "harness-downloads") {
-      if (provisioning.selectedHarnessReadyToStartCount === 0) {
-        flow.goToStepKey(nextAfterHarnessDownloads(flow.routePlan));
-        return;
-      }
-      const nextStep = await provisioning.advanceFromHarnessDownloadsStep();
-      if (nextStep) {
-        flow.goToStepKey(nextStep);
-        return;
-      }
-      if (
-        provisioning.selectedHarnessBlockedCount > 0
-        && provisioning.selectedHarnessReadyToStartCount === 0
-      ) {
-        flow.goToStepKey(nextAfterHarnessDownloads(flow.routePlan));
-      }
-      return;
-    }
-    if (flow.step.key === "session-titling") {
-      provisioning.setTitlingPersistError(null);
-      if (provisioning.titlingMode === "skip") {
-        if (flow.routePlan?.includeTitling) {
-          flow.setRoutePlan({ ...flow.routePlan, includeTitling: false });
-        }
-        flow.goRelativeStep(1);
-        return;
-      }
-      if (provisioning.titlingMode !== "remote" && provisioning.titlingMode !== "local") {
-        provisioning.setTitlingPersistError("Choose a titling option or skip for now.");
-        return;
-      }
-      if (provisioning.titlingMode === "remote" && !provisioning.titlingRemoteValid) {
-        provisioning.setTitlingPersistError("Remote titling needs base URL, API key, and model.");
-        return;
-      }
-      const persisted = await provisioning.ensureTitlingPersistedForCurrentTarget();
-      if (!persisted) return;
-      flow.goRelativeStep(1);
-      return;
-    }
-    if (flow.step.key === "source") {
-      setters.createError(null);
-      const preflightOk = await create.preflightSourceStep();
-      if (!preflightOk) return;
-      flow.goRelativeStep(1);
-      return;
-    }
-    flow.goRelativeStep(1);
-  }, [create, flow, provisioning, remote, setters]);
+  const onNext = useCallback(() => {
+    setters.createError(null);
+    dispatchMachine({
+      type: "next_requested",
+      snapshot: machineSnapshot,
+    });
+  }, [machineSnapshot, setters.createError]);
 
   useEffect(() => {
     if (draft.pushBranchTouched) return;
@@ -334,21 +350,11 @@ export function useWorkspaceSetupWorkflow({
   }, [draft.pushBranchTouched, draft.targetBranch, setters]);
 
   useEffect(() => {
-    if (flow.step.key !== "harness-downloads") return;
-    if (provisioning.harnessInstallBusy) return;
-    if (provisioning.harnessInstallError) return;
-    if (provisioning.selectedHarnessReadyToStartCount > 0) return;
-    if (provisioning.selectedHarnessRunningCount > 0) return;
-    if (provisioning.selectedHarnessFailedCount === 0) return;
-    flow.goToStepKey(nextAfterHarnessDownloads(flow.routePlan));
-  }, [
-    flow,
-    provisioning.harnessInstallBusy,
-    provisioning.harnessInstallError,
-    provisioning.selectedHarnessFailedCount,
-    provisioning.selectedHarnessReadyToStartCount,
-    provisioning.selectedHarnessRunningCount,
-  ]);
+    dispatchMachine({
+      type: "provisioning_snapshot_changed",
+      snapshot: machineSnapshot,
+    });
+  }, [machineSnapshot]);
 
   const hasAllowlist = flow.step.key !== "network"
     || flow.selections.network !== "allowlist"

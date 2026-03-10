@@ -1,5 +1,6 @@
 import { getDaemonConnection } from "../api/client";
 import { clearWorkbenchSelectionV1, loadWorkbenchSelectionV1, uiStateBatch, uiStateDelete, uiStateGet, uiStateSet } from "../state/uiStateStore";
+import { serializeDaemonTargetScope } from "../state/scopeIdentity";
 import { randomUuid } from "../utils/randomUuid";
 import type {
   LayoutNode,
@@ -28,7 +29,8 @@ const TERMINAL_LAYOUT_DB_VERSION = 1 as const;
 const TERMINAL_TITLES_DB_VERSION = 1 as const;
 
 export function workbenchDaemonKey(): string {
-  return String(getDaemonConnection().baseUrl || "unknown").trim() || "unknown";
+  const targetScope = getDaemonConnection().targetScope;
+  return targetScope ? serializeDaemonTargetScope(targetScope) : "unknown";
 }
 
 function safeKeyPart(v: string): string {

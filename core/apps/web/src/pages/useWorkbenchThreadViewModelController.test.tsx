@@ -603,6 +603,101 @@ describe("useWorkbenchThreadViewModelController", () => {
     });
   });
 
+  it("falls back to a full rebuild when an appended event targets a turn outside the cached groups", async () => {
+    const askUserQuestionAnswers = new Map<string, AskUserQuestionAnswerState>();
+    const emptyToolsByTurnId: Record<string, SessionTurnTool[]> = {};
+    const singleTurn = [
+      {
+        turn_id: "turn-1",
+        session_id: "session-1",
+        run_id: null,
+        user_message_id: "message-1",
+        status: "running",
+        start_seq: 1,
+        end_seq: 2,
+        started_at: "2025-12-15T00:00:00.000Z",
+        updated_at: "2025-12-15T00:00:01.000Z",
+        assistant_partial: "",
+        thought_partial: "",
+        metrics_json: null,
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      },
+    ] as SessionTurn[];
+    const singleMessages = [
+      {
+        id: "message-1",
+        session_id: "session-1",
+        task_id: "task-1",
+        turn_id: "turn-1",
+        turn_sequence: 1,
+        role: "user",
+        content: "Only turn",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:00.000Z",
+        order_seq: 1,
+      },
+    ] as unknown as Message[];
+    const turnsStamp = buildTurnsStamp(singleTurn);
+    const messagesStamp = buildMessagesStamp(singleMessages);
+    const { rerender } = renderController({
+      turns: singleTurn,
+      messages: singleMessages,
+      events: [],
+      eventsStamp: "0:0",
+      turnsStamp,
+      messagesStamp,
+      toolsByTurnId: emptyToolsByTurnId,
+      askUserQuestionAnswers,
+    });
+
+    await waitFor(() => {
+      expect(expectGroup("turn-turn-1").header?.content).toBe("Only turn");
+    });
+
+    const firstGroupBefore = expectGroup("turn-turn-1");
+
+    rerender(
+      <Harness
+        sessionId="session-1"
+        turnsStamp={turnsStamp}
+        messagesStamp={messagesStamp}
+        eventsStamp="1:1"
+        verbosity="default"
+        turns={singleTurn}
+        messages={singleMessages}
+        events={[
+          {
+            seq: 1,
+            id: "event-foreign-turn",
+            session_id: "session-1",
+            run_id: "run-1",
+            turn_id: "turn-2",
+            event_type: "tool_call",
+            payload_json: {
+              tool_call_id: "tool-2",
+              title: "echo hi",
+              order_seq: 2,
+            },
+            created_at: "2025-12-15T00:00:01.500Z",
+          },
+        ]}
+        toolsByTurnId={emptyToolsByTurnId}
+        toolSummariesReady
+        askUserQuestionAnswers={askUserQuestionAnswers}
+        enableDebugEvents={false}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(expectGroup("turn-turn-1")).not.toBe(firstGroupBefore);
+    });
+  });
+
   it("fully rebuilds when turnsStamp changes for a same-length in-place turn update", async () => {
     const askUserQuestionAnswers = new Map<string, AskUserQuestionAnswerState>();
     const emptyToolsByTurnId: Record<string, SessionTurnTool[]> = {};

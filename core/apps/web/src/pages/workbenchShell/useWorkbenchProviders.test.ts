@@ -5,6 +5,7 @@ import type { DraftHarness } from "../../components/WorkbenchComposer";
 import type { ProviderOptions, ProvidersBootstrapResponse } from "../../api/client";
 import { getProviderOptions, getProvidersBootstrap } from "../../api/client";
 import { getProviderInstallProgressSnapshot } from "../../state/providerInstallProgressStore";
+import { resetProviderOnboardingCoordinatorForTests } from "../../state/providerOnboardingCoordinator";
 import { refreshProvidersBootstrap } from "../../state/providersBootstrapStore";
 import { resolveProviderOptionsUpdate, shouldHydrateProviderModels } from "./useWorkbenchProviders";
 import { useWorkbenchProviders } from "./useWorkbenchProviders";
@@ -148,6 +149,7 @@ function WorkbenchProvidersHarness({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetProviderOnboardingCoordinatorForTests();
 });
 
 describe("shouldHydrateProviderModels", () => {

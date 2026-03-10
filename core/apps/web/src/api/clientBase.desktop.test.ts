@@ -174,6 +174,79 @@ describe("clientBase desktop connection sync", () => {
     }
   });
 
+  it("refreshes daemon target scope when the desktop bridge reuses the same forwarded base URL", async () => {
+    const dateNowSpy = vi.spyOn(Date, "now");
+    let now = 1_000;
+    dateNowSpy.mockImplementation(() => now);
+    desktopGetConnectionMock
+      .mockResolvedValueOnce({
+        kind: "ssh",
+        base_url: "http://127.0.0.1:4399",
+        token: "abc",
+        host: "host-a.example",
+        user: "user",
+        remote_port: 4399,
+        remote_data_dir: "/srv/ctx-a",
+      })
+      .mockResolvedValueOnce({
+        kind: "ssh",
+        base_url: "http://127.0.0.1:4399",
+        token: "abc",
+        host: "host-b.example",
+        user: "user",
+        remote_port: 4399,
+        remote_data_dir: "/srv/ctx-a",
+      });
+    fetchMock.mockImplementation(() => Promise.resolve(okJsonResponse({ ok: true })));
+
+    try {
+      const mod = await import("./clientBase");
+      const daemonConnection = await import("./daemonConnection");
+      await mod.apiAny<{ ok: boolean }>("/api/health");
+      expect(daemonConnection.getDaemonConnection().targetScope).toMatchObject({
+        kind: "desktop_ssh",
+        host: "host-a.example",
+        user: "user",
+        port: 4399,
+        dataDir: "/srv/ctx-a",
+      });
+
+      now = 3_000;
+      await mod.apiAny<{ ok: boolean }>("/api/providers");
+
+      expect(desktopGetConnectionMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        1,
+        "http://127.0.0.1:4399/api/health",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            authorization: "Bearer abc",
+          }),
+        }),
+      );
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        2,
+        "http://127.0.0.1:4399/api/providers",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            authorization: "Bearer abc",
+          }),
+        }),
+      );
+      expect(daemonConnection.getDaemonConnection().targetScope).toMatchObject({
+        kind: "desktop_ssh",
+        host: "host-b.example",
+        user: "user",
+        port: 4399,
+        dataDir: "/srv/ctx-a",
+      });
+      expect(String(JSON.parse(sessionStorage.getItem(SESSION_CONNECTION_KEY) ?? "{}").targetScope)).toContain("host-b.example");
+      expect(String(JSON.parse(localStorage.getItem(PERSISTED_BASE_KEY) ?? "{}").targetScope)).toContain("host-b.example");
+    } finally {
+      dateNowSpy.mockRestore();
+    }
+  });
+
   it("repopulates canonical session and persisted base storage after a later bridge rotation", async () => {
     sessionStorage.setItem(
       SESSION_CONNECTION_KEY,

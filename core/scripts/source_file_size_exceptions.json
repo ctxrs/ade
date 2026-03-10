@@ -96,8 +96,8 @@
   },
   {
     "path": "crates/ctx-http/src/daemon/state.rs",
-    "maxLines": 1551,
-    "reason": "Existing oversized daemon state module. Keep stable until a dedicated breakup."
+    "maxLines": 1554,
+    "reason": "Existing oversized daemon state module. A nearby mainline change grew it slightly; keep stable until a dedicated breakup."
   },
   {
     "path": "crates/ctx-http/src/api/providers.rs",
@@ -116,8 +116,8 @@
   },
   {
     "path": "apps/web/src/pages/SessionPage.view.tsx",
-    "maxLines": 1418,
-    "reason": "Existing oversized session view module. Keep stable until a dedicated breakup."
+    "maxLines": 1458,
+    "reason": "Existing oversized session view module. Allow the narrowed projector fast-path proof and ask-user identity stabilization for beta, then break it up deliberately."
   },
   {
     "path": "crates/ctx-http/src/settings.rs",

@@ -59,6 +59,10 @@ describe("daemonConnection", () => {
     expect(connection.baseUrl).toBe("http://127.0.0.1:4399");
     expect(connection.wsBaseUrl).toBe("ws://127.0.0.1:4399");
     expect(connection.authToken).toBeNull();
+    expect(connection.targetScope).toEqual({
+      kind: "browser",
+      baseUrl: "http://127.0.0.1:4399",
+    });
     expect(sessionStorage.getItem(SESSION_CONNECTION_KEY)).toContain('"v":1');
   });
 
@@ -73,6 +77,10 @@ describe("daemonConnection", () => {
       baseUrl: "http://127.0.0.1:4399",
       wsBaseUrl: "ws://127.0.0.1:4399",
       authToken: "abc",
+      targetScope: {
+        kind: "browser",
+        baseUrl: "http://127.0.0.1:4399",
+      },
     });
 
     mod.setDaemonConnection({ baseUrl: "http://127.0.0.1:4399", authToken: "abc" });
@@ -102,6 +110,7 @@ describe("daemonConnection", () => {
     expect(connection.baseUrl).toBeNull();
     expect(connection.wsBaseUrl).toBeNull();
     expect(connection.authToken).toBeNull();
+    expect(connection.targetScope).toBeNull();
     expect(localStorage.getItem(LOCAL_PERSISTED_BASE_KEY)).toBeNull();
   });
 
@@ -122,7 +131,57 @@ describe("daemonConnection", () => {
     expect(connection.wsBaseUrl).toBeNull();
     expect(connection.authToken).toBeNull();
     expect(connection.source).toBe("desktop");
+    expect(connection.targetScope).toBeNull();
     expect(localStorage.getItem(LOCAL_PERSISTED_BASE_KEY)).toBeNull();
+  });
+
+  it("treats desktop ssh metadata as part of connection identity even when baseUrl is reused", async () => {
+    const mod = await import("./daemonConnection");
+    const listener = vi.fn();
+    const unsubscribe = mod.subscribeDaemonConnection(listener);
+
+    mod.applyDesktopDaemonConnection({
+      kind: "ssh",
+      base_url: "http://127.0.0.1:4399",
+      token: "abc",
+      host: "host-a.example",
+      user: "user",
+      remote_port: 4399,
+      remote_data_dir: "/srv/ctx-a",
+    });
+    mod.applyDesktopDaemonConnection({
+      kind: "ssh",
+      base_url: "http://127.0.0.1:4399",
+      token: "abc",
+      host: "host-b.example",
+      user: "user",
+      remote_port: 4399,
+      remote_data_dir: "/srv/ctx-a",
+    });
+
+    const connection = mod.getDaemonConnection();
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(connection).toMatchObject({
+      baseUrl: "http://127.0.0.1:4399",
+      authToken: "abc",
+      source: "desktop",
+      targetScope: {
+        kind: "desktop_ssh",
+        host: "host-b.example",
+        user: "user",
+        port: 4399,
+        dataDir: "/srv/ctx-a",
+      },
+    });
+    expect(JSON.parse(sessionStorage.getItem(SESSION_CONNECTION_KEY) ?? "{}")).toMatchObject({
+      v: 1,
+      baseUrl: "http://127.0.0.1:4399",
+      source: "desktop",
+    });
+    expect(String(JSON.parse(sessionStorage.getItem(SESSION_CONNECTION_KEY) ?? "{}").targetScope)).toContain("host-b.example");
+    expect(String(JSON.parse(localStorage.getItem(LOCAL_PERSISTED_BASE_KEY) ?? "{}").targetScope)).toContain("host-b.example");
+
+    unsubscribe();
   });
 
   it("ignores legacy split keys when canonical state is absent", async () => {
@@ -144,6 +203,10 @@ describe("daemonConnection", () => {
 
     expect(connection.baseUrl).toBe(window.location.origin);
     expect(connection.wsBaseUrl).toBe(window.location.origin.replace(/^http/, "ws"));
+    expect(connection.targetScope).toEqual({
+      kind: "browser",
+      baseUrl: window.location.origin,
+    });
   });
 
   it("does not same-origin bootstrap daemon base in desktop windows", async () => {
@@ -154,6 +217,7 @@ describe("daemonConnection", () => {
 
     expect(connection.baseUrl).toBeNull();
     expect(connection.wsBaseUrl).toBeNull();
+    expect(connection.targetScope).toBeNull();
   });
 
   it("applies dev env daemon url even after same-origin preseed", async () => {

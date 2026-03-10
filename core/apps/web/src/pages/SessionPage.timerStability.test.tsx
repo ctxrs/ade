@@ -10,6 +10,9 @@ const workbenchKeySpies = vi.hoisted(() => ({
   deriveTurnsKey: vi.fn(),
   deriveMessagesKey: vi.fn(),
 }));
+const controllerParamSpies = vi.hoisted(() => ({
+  useWorkbenchThreadViewModelController: vi.fn(),
+}));
 
 vi.mock("./SessionPage.workbenchViewModel", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./SessionPage.workbenchViewModel")>();
@@ -23,6 +26,19 @@ vi.mock("./SessionPage.workbenchViewModel", async (importOriginal) => {
       workbenchKeySpies.deriveMessagesKey(...args);
       return actual.deriveMessagesKey(...args);
     }),
+  };
+});
+
+vi.mock("./useWorkbenchThreadViewModelController", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./useWorkbenchThreadViewModelController")>();
+  return {
+    ...actual,
+    useWorkbenchThreadViewModelController: vi.fn(
+      (...args: Parameters<typeof actual.useWorkbenchThreadViewModelController>) => {
+        controllerParamSpies.useWorkbenchThreadViewModelController(...args);
+        return actual.useWorkbenchThreadViewModelController(...args);
+      },
+    ),
   };
 });
 
@@ -219,6 +235,7 @@ afterEach(() => {
   updateSettingsSpy.mockClear();
   workbenchKeySpies.deriveTurnsKey.mockClear();
   workbenchKeySpies.deriveMessagesKey.mockClear();
+  controllerParamSpies.useWorkbenchThreadViewModelController.mockClear();
 });
 
 describe("SessionPage timer stability", () => {
@@ -336,5 +353,104 @@ describe("SessionPage timer stability", () => {
 
     expect(workbenchKeySpies.deriveTurnsKey.mock.calls).toHaveLength(initialTurnsKeyCalls);
     expect(workbenchKeySpies.deriveMessagesKey.mock.calls).toHaveLength(initialMessagesKeyCalls);
+  });
+
+  it("keeps ask-user answers referentially stable across unrelated event appends", async () => {
+    const { rerender } = render(
+      <SessionView sessionId={sessionIdA} isActive autoOpenSession={false} />,
+    );
+
+    await act(async () => {
+      vi.advanceTimersByTime(16);
+    });
+
+    const initialAskAnswers = controllerParamSpies.useWorkbenchThreadViewModelController.mock.calls.at(-1)?.[0]
+      ?.askUserQuestionAnswers;
+    expect(initialAskAnswers).toBeInstanceOf(Map);
+
+    const initialEntry = sessionEntries.map[sessionIdA] as ReturnType<typeof buildSessionEntry>;
+    sessionEntries.map[sessionIdA] = {
+      ...initialEntry,
+      lastEventSeq: 1,
+      eventsRev: 1,
+      events: [
+        {
+          seq: 1,
+          id: "event-ask-stable",
+          session_id: sessionIdA,
+          run_id: "run-1",
+          turn_id: `${sessionIdA}-turn-1`,
+          event_type: "notice",
+          payload_json: { kind: "context.compacted", message: "Compacted." },
+          created_at: new Date(baseMs + 1_000).toISOString(),
+        },
+      ],
+      updatedAtMs: 1,
+    };
+
+    rerender(<SessionView sessionId={sessionIdA} isActive autoOpenSession={false} />);
+
+    await act(async () => {
+      vi.advanceTimersByTime(16);
+    });
+
+    const nextAskAnswers = controllerParamSpies.useWorkbenchThreadViewModelController.mock.calls.at(-1)?.[0]
+      ?.askUserQuestionAnswers;
+    expect(nextAskAnswers).toBe(initialAskAnswers);
+  });
+
+  it("updates ask-user answers when an answer event appends", async () => {
+    const { rerender } = render(
+      <SessionView sessionId={sessionIdA} isActive autoOpenSession={false} />,
+    );
+
+    await act(async () => {
+      vi.advanceTimersByTime(16);
+    });
+
+    const initialAskAnswers = controllerParamSpies.useWorkbenchThreadViewModelController.mock.calls.at(-1)?.[0]
+      ?.askUserQuestionAnswers as Map<string, { outcome: string; answers: Record<string, string> }>;
+    expect(initialAskAnswers.size).toBe(0);
+
+    const initialEntry = sessionEntries.map[sessionIdA] as ReturnType<typeof buildSessionEntry>;
+    sessionEntries.map[sessionIdA] = {
+      ...initialEntry,
+      lastEventSeq: 1,
+      eventsRev: 1,
+      events: [
+        {
+          seq: 1,
+          id: "event-ask-answer",
+          session_id: sessionIdA,
+          run_id: "run-1",
+          turn_id: `${sessionIdA}-turn-1`,
+          event_type: "notice",
+          payload_json: {
+            kind: "ask_user_question_answered",
+            tool_call_id: "tool-call-1",
+            outcome: "submitted",
+            answers: {
+              summary: "Ship it",
+            },
+          },
+          created_at: new Date(baseMs + 1_000).toISOString(),
+        },
+      ],
+      updatedAtMs: 1,
+    };
+
+    rerender(<SessionView sessionId={sessionIdA} isActive autoOpenSession={false} />);
+
+    await act(async () => {
+      vi.advanceTimersByTime(16);
+    });
+
+    const nextAskAnswers = controllerParamSpies.useWorkbenchThreadViewModelController.mock.calls.at(-1)?.[0]
+      ?.askUserQuestionAnswers as Map<string, { outcome: string; answers: Record<string, string> }>;
+    expect(nextAskAnswers).not.toBe(initialAskAnswers);
+    expect(nextAskAnswers.get("tool-call-1")).toEqual({
+      outcome: "submitted",
+      answers: { summary: "Ship it" },
+    });
   });
 });

@@ -1,0 +1,778 @@
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
+import {
+  cancelInstall,
+  getProviderOptions,
+  installAllProviders,
+  installProvider,
+  type InstallInfo,
+  type InstallStartResponse,
+  type InstallTarget,
+  type ProviderOptions,
+  type ProviderStatus,
+  type ProvidersBootstrapResponse,
+} from "../api/client";
+import { computeInstallPct, parseInstallTarget } from "../utils/providerInstallUi";
+import {
+  getHostProvidersBootstrapSnapshot,
+  getProvidersBootstrapSnapshot,
+  loadHostProvidersBootstrap,
+  loadProvidersBootstrap,
+  refreshHostProvidersBootstrap,
+  refreshProvidersBootstrap,
+  resolveProviderOptionsUpdate,
+  subscribeHostProvidersBootstrap,
+  subscribeProvidersBootstrap,
+  updateProvidersBootstrap,
+} from "./providersBootstrapStore";
+import {
+  getProviderInstallProgressSnapshot,
+  resolveProviderInstallProgressSession,
+  subscribeProviderInstallProgress,
+  upsertProviderInstallProgress,
+  type ProviderInstallProgressSnapshot,
+} from "./providerInstallProgressStore";
+import { observeInstall } from "./installProgressMonitor";
+
+const HOST_PROVIDER_ONBOARDING_SCOPE_KEY = "__host__";
+const MODEL_DISCOVERY_PROVIDER_IDS = new Set(["codex", "claude-crp", "copilot"]);
+
+export { resolveProviderOptionsUpdate } from "./providersBootstrapStore";
+
+export type ProviderAuthSummaryTrigger = "passive" | "explicit";
+
+export type ProviderOnboardingInstallState = {
+  installId: string;
+  state: InstallInfo["state"];
+  pct: number | null;
+  target?: InstallTarget;
+  errorCode?: InstallInfo["error_code"];
+  error?: string;
+};
+
+export type ProviderOnboardingSnapshot = {
+  bootstrap: ProvidersBootstrapResponse;
+  providersById: Record<string, ProviderStatus>;
+  installsById: Record<string, ProviderOnboardingInstallState>;
+};
+
+type ProviderOnboardingListener = () => void;
+
+type ProviderOnboardingEntry = {
+  scopeKey: string;
+  workspaceId: string | null;
+  refCount: number;
+  disposed: boolean;
+  listeners: Set<ProviderOnboardingListener>;
+  snapshot: ProviderOnboardingSnapshot;
+  bootstrapUnsubscribe?: () => void;
+  installProgressUnsubscribe?: () => void;
+  installObserversByProviderId: Record<string, () => void>;
+  previousInstallsById: Record<string, ProviderOnboardingInstallState>;
+  postInstallHandledIds: Set<string>;
+  postInstallInFlightProviderIds: Set<string>;
+  providerAuthSummaryInFlightByKey: Record<string, Promise<ProviderOptions | undefined>>;
+};
+
+const providerOnboardingByScope = new Map<string, ProviderOnboardingEntry>();
+const foregroundRefreshScopeKeys = new Set<string>();
+
+let foregroundRefreshListenersInstalled = false;
+
+const hasProviderModels = (options: ProviderOptions | undefined): boolean => {
+  const raw = options?.models;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+  const record = raw as Record<string, unknown>;
+  const current = record.currentModelId ?? record.current_model_id;
+  if (typeof current === "string" && current.trim().length > 0) return true;
+  const list = record.availableModels ?? record.available_models ?? record.models;
+  return Array.isArray(list) && list.length > 0;
+};
+
+const hasFailedProviderModelProbe = (options: ProviderOptions | undefined): boolean => {
+  if (!options) return false;
+  if (options.probe_ok === false) return true;
+  return typeof options.probe_error === "string" && options.probe_error.trim().length > 0;
+};
+
+const sameProviderInstallState = (
+  lhs: ProviderOnboardingInstallState | undefined,
+  rhs: ProviderOnboardingInstallState | undefined,
+): boolean => {
+  if (!lhs && !rhs) return true;
+  if (!lhs || !rhs) return false;
+  return lhs.installId === rhs.installId
+    && lhs.state === rhs.state
+    && lhs.pct === rhs.pct
+    && lhs.target === rhs.target
+    && lhs.errorCode === rhs.errorCode
+    && lhs.error === rhs.error;
+};
+
+const sameProviderInstallStateMap = (
+  lhs: Record<string, ProviderOnboardingInstallState>,
+  rhs: Record<string, ProviderOnboardingInstallState>,
+): boolean => {
+  const lhsKeys = Object.keys(lhs);
+  const rhsKeys = Object.keys(rhs);
+  if (lhsKeys.length !== rhsKeys.length) return false;
+  for (const key of lhsKeys) {
+    if (!sameProviderInstallState(lhs[key], rhs[key])) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const getProviderAccountIdentityById = (
+  bootstrap: ProvidersBootstrapResponse,
+): Record<string, string | null | undefined> => ({
+  codex: bootstrap.codex_accounts.active_account_id,
+  "claude-crp": bootstrap.claude_accounts.active_account_id,
+  gemini: bootstrap.gemini_accounts.active_account_id,
+  qwen: bootstrap.qwen_accounts.active_account_id,
+  kimi: bootstrap.kimi_accounts.active_account_id,
+  mistral: bootstrap.mistral_accounts.active_account_id,
+  copilot: bootstrap.copilot_accounts.active_account_id,
+  cursor: bootstrap.cursor_accounts.active_account_id,
+  amp: bootstrap.amp_accounts.active_account_id,
+  auggie: bootstrap.auggie_accounts?.active_account_id,
+});
+
+const withProviderAccountIdentity = (
+  providerId: string,
+  options: ProviderOptions | undefined,
+  accountIdentityById: Record<string, string | null | undefined>,
+): ProviderOptions | undefined => {
+  if (!options) return options;
+  const accountIdentity = accountIdentityById[providerId] ?? null;
+  if (options.account_identity === accountIdentity) return options;
+  return {
+    ...options,
+    account_identity: accountIdentity,
+  };
+};
+
+const mergeProviderOptionsMap = (
+  previous: Record<string, ProviderOptions>,
+  next: Record<string, ProviderOptions>,
+): Record<string, ProviderOptions> => {
+  const merged = Object.fromEntries(
+    Object.entries(next).map(([providerId, options]) => {
+      const resolved = resolveProviderOptionsUpdate(previous[providerId], options) ?? options;
+      return [providerId, resolved] as const;
+    }),
+  ) as Record<string, ProviderOptions>;
+
+  const previousKeys = Object.keys(previous);
+  const mergedKeys = Object.keys(merged);
+  if (
+    previousKeys.length === mergedKeys.length
+    && mergedKeys.every((providerId) => previous[providerId] === merged[providerId])
+  ) {
+    return previous;
+  }
+  return merged;
+};
+
+const toProvidersById = (
+  providers: ProviderStatus[],
+): Record<string, ProviderStatus> => Object.fromEntries(
+  providers.map((provider) => [provider.provider_id, provider]),
+);
+
+const withScopedProviderAccountIdentity = (
+  scoped: ProviderOptions | undefined,
+  next: ProviderOptions | undefined,
+): ProviderOptions | undefined => {
+  if (!next || !scoped) return next;
+  const accountIdentity = scoped.account_identity ?? null;
+  if (next.account_identity === accountIdentity) return next;
+  return {
+    ...next,
+    account_identity: accountIdentity,
+  };
+};
+
+const providerInstallTargetForProvider = (
+  provider: ProviderStatus | undefined,
+): InstallTarget | undefined => parseInstallTarget(provider?.details?.install_target);
+
+const toProviderInstallState = (
+  session: NonNullable<ReturnType<typeof resolveProviderInstallProgressSession>>,
+): ProviderOnboardingInstallState => ({
+  installId: session.installId,
+  state: session.state,
+  pct: session.pct,
+  target: session.target,
+  errorCode: session.errorCode,
+  error: session.error,
+});
+
+const providerInstallsFromSnapshot = (
+  snapshot: ProviderInstallProgressSnapshot,
+  providersById: Record<string, ProviderStatus>,
+): Record<string, ProviderOnboardingInstallState> =>
+  Object.fromEntries(
+    Array.from(new Set([...Object.keys(snapshot), ...Object.keys(providersById)]))
+      .map((providerId) => {
+        const session = resolveProviderInstallProgressSession(
+          snapshot,
+          providerId,
+          providerInstallTargetForProvider(providersById[providerId]),
+        );
+        return session ? ([providerId, toProviderInstallState(session)] as const) : null;
+      })
+      .filter((entry): entry is readonly [string, ProviderOnboardingInstallState] => entry !== null),
+  );
+
+const scopeKeyForWorkspace = (workspaceId: string | null): string =>
+  workspaceId ?? HOST_PROVIDER_ONBOARDING_SCOPE_KEY;
+
+const getScopeBootstrapSnapshot = (workspaceId: string | null): ProvidersBootstrapResponse =>
+  workspaceId ? getProvidersBootstrapSnapshot(workspaceId) : getHostProvidersBootstrapSnapshot();
+
+const loadScopeBootstrap = (workspaceId: string | null): Promise<ProvidersBootstrapResponse> =>
+  workspaceId ? loadProvidersBootstrap(workspaceId) : loadHostProvidersBootstrap();
+
+const refreshScopeBootstrap = (workspaceId: string | null): Promise<ProvidersBootstrapResponse> =>
+  workspaceId ? refreshProvidersBootstrap(workspaceId) : refreshHostProvidersBootstrap();
+
+const subscribeScopeBootstrap = (
+  workspaceId: string | null,
+  listener: ProviderOnboardingListener,
+): (() => void) =>
+  workspaceId ? subscribeProvidersBootstrap(workspaceId, listener) : subscribeHostProvidersBootstrap(listener);
+
+const shouldInstallForegroundRefreshListeners = (): boolean =>
+  foregroundRefreshScopeKeys.size > 0
+  && typeof window !== "undefined"
+  && typeof document !== "undefined";
+
+const refreshForegroundScopes = (): void => {
+  for (const scopeKey of foregroundRefreshScopeKeys) {
+    const entry = providerOnboardingByScope.get(scopeKey);
+    if (!entry || entry.disposed || entry.refCount <= 0) continue;
+    void refreshScopeBootstrap(entry.workspaceId).catch(() => {});
+  }
+};
+
+const onVisibilityChange = (): void => {
+  if (document.visibilityState === "visible") {
+    refreshForegroundScopes();
+  }
+};
+
+const syncForegroundRefreshListeners = (): void => {
+  const shouldInstall = shouldInstallForegroundRefreshListeners();
+  if (shouldInstall && !foregroundRefreshListenersInstalled) {
+    window.addEventListener("focus", refreshForegroundScopes);
+    window.addEventListener("online", refreshForegroundScopes);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    foregroundRefreshListenersInstalled = true;
+    return;
+  }
+  if (!shouldInstall && foregroundRefreshListenersInstalled) {
+    window.removeEventListener("focus", refreshForegroundScopes);
+    window.removeEventListener("online", refreshForegroundScopes);
+    document.removeEventListener("visibilitychange", onVisibilityChange);
+    foregroundRefreshListenersInstalled = false;
+  }
+};
+
+const emit = (entry: ProviderOnboardingEntry): void => {
+  for (const listener of entry.listeners) {
+    listener();
+  }
+};
+
+const buildSnapshot = (workspaceId: string | null): ProviderOnboardingSnapshot => {
+  const bootstrap = getScopeBootstrapSnapshot(workspaceId);
+  const providersById = toProvidersById(bootstrap.providers);
+  const installsById = providerInstallsFromSnapshot(
+    getProviderInstallProgressSnapshot(),
+    providersById,
+  );
+  return {
+    bootstrap,
+    providersById,
+    installsById,
+  };
+};
+
+const getOrCreateEntry = (workspaceId: string | null): ProviderOnboardingEntry => {
+  const scopeKey = scopeKeyForWorkspace(workspaceId);
+  const existing = providerOnboardingByScope.get(scopeKey);
+  if (existing) return existing;
+
+  const entry: ProviderOnboardingEntry = {
+    scopeKey,
+    workspaceId,
+    refCount: 0,
+    disposed: false,
+    listeners: new Set(),
+    snapshot: buildSnapshot(workspaceId),
+    installObserversByProviderId: {},
+    previousInstallsById: {},
+    postInstallHandledIds: new Set(),
+    postInstallInFlightProviderIds: new Set(),
+    providerAuthSummaryInFlightByKey: {},
+  };
+  providerOnboardingByScope.set(scopeKey, entry);
+  return entry;
+};
+
+const maybeDeleteEntry = (entry: ProviderOnboardingEntry): void => {
+  if (entry.refCount > 0 || entry.listeners.size > 0) return;
+  providerOnboardingByScope.delete(entry.scopeKey);
+};
+
+const updateEntrySnapshot = (
+  entry: ProviderOnboardingEntry,
+  installProgressSnapshot?: ProviderInstallProgressSnapshot,
+): void => {
+  if (entry.disposed) return;
+
+  const nextBootstrap = getScopeBootstrapSnapshot(entry.workspaceId);
+  const nextProvidersById = toProvidersById(nextBootstrap.providers);
+  const nextInstallsById = providerInstallsFromSnapshot(
+    installProgressSnapshot ?? getProviderInstallProgressSnapshot(),
+    nextProvidersById,
+  );
+
+  if (
+    entry.snapshot.bootstrap === nextBootstrap
+    && sameProviderInstallStateMap(entry.snapshot.installsById, nextInstallsById)
+  ) {
+    return;
+  }
+
+  entry.snapshot = {
+    bootstrap: nextBootstrap,
+    providersById: nextProvidersById,
+    installsById: nextInstallsById,
+  };
+  emit(entry);
+};
+
+const detachInstallObserver = (entry: ProviderOnboardingEntry, providerId: string): void => {
+  const stop = entry.installObserversByProviderId[providerId];
+  if (!stop) return;
+  stop();
+  delete entry.installObserversByProviderId[providerId];
+};
+
+const attachInstallObserver = (
+  entry: ProviderOnboardingEntry,
+  providerId: string,
+  installId: string,
+  initialTarget?: InstallTarget,
+): void => {
+  const existingInstallId = entry.snapshot.installsById[providerId]?.installId;
+  if (existingInstallId === installId && entry.installObserversByProviderId[providerId]) {
+    return;
+  }
+
+  detachInstallObserver(entry, providerId);
+  entry.installObserversByProviderId[providerId] = observeInstall(installId, {
+    providerId,
+    initialState: {
+      state: "running",
+      pct: entry.snapshot.installsById[providerId]?.pct ?? 0,
+      target: initialTarget ?? entry.snapshot.installsById[providerId]?.target,
+      errorCode: undefined,
+      error: undefined,
+    },
+  });
+};
+
+const reconcileRunningInstalls = (entry: ProviderOnboardingEntry): void => {
+  for (const provider of entry.snapshot.bootstrap.providers) {
+    const installId = provider.details?.install_id;
+    const running = provider.details?.install_running === "true";
+    const tracked = entry.snapshot.installsById[provider.provider_id];
+    if (
+      running
+      && installId
+      && (!tracked || tracked.installId !== installId || tracked.state !== "running")
+    ) {
+      attachInstallObserver(
+        entry,
+        provider.provider_id,
+        installId,
+        providerInstallTargetForProvider(provider),
+      );
+    }
+  }
+};
+
+const cleanupSucceededInstalls = (entry: ProviderOnboardingEntry): void => {
+  if (entry.disposed) return;
+
+  for (const [providerId, install] of Object.entries(entry.snapshot.installsById)) {
+    const provider = entry.snapshot.providersById[providerId];
+    const stillRunning = provider?.details?.install_running === "true";
+    if (install.state === "succeeded" && provider?.installed && provider.health === "ok" && !stillRunning) {
+      detachInstallObserver(entry, providerId);
+    }
+  }
+};
+
+export const shouldHydrateProviderModels = (
+  providerId: string,
+  options: ProviderOptions | undefined,
+  trigger: ProviderAuthSummaryTrigger = "passive",
+): boolean => {
+  if (!MODEL_DISCOVERY_PROVIDER_IDS.has(providerId)) return false;
+  if (!options) return false;
+  if (options.has_active_auth !== true) return false;
+  if (hasProviderModels(options)) return false;
+  if (trigger === "passive" && hasFailedProviderModelProbe(options)) return false;
+  return true;
+};
+
+const ensureProviderAuthSummaryForEntry = async (
+  entry: ProviderOnboardingEntry,
+  providerId: string,
+  opts?: { force?: boolean; trigger?: ProviderAuthSummaryTrigger },
+): Promise<ProviderOptions | undefined> => {
+  if (!entry.workspaceId) return undefined;
+
+  const ready = entry.snapshot.providersById[providerId]?.installed === true
+    && entry.snapshot.providersById[providerId]?.health === "ok";
+  if (!ready) return undefined;
+
+  const force = opts?.force ?? false;
+  const trigger = opts?.trigger ?? (force ? "explicit" : "passive");
+  const requestKey = `${entry.workspaceId}:${providerId}`;
+  const existing = entry.providerAuthSummaryInFlightByKey[requestKey];
+  if (existing && !force) return existing;
+
+  const cached = getProvidersBootstrapSnapshot(entry.workspaceId).provider_options[providerId];
+  if (!force && cached && !shouldHydrateProviderModels(providerId, cached, trigger)) {
+    return cached;
+  }
+
+  const request = (force ? refreshProvidersBootstrap(entry.workspaceId) : loadProvidersBootstrap(entry.workspaceId))
+    .then(async (latestBootstrap) => {
+      let next = resolveProviderOptionsUpdate(
+        cached,
+        latestBootstrap.provider_options[providerId],
+      );
+
+      if (shouldHydrateProviderModels(providerId, next, trigger)) {
+        try {
+          const detailedResponse = await getProviderOptions(entry.workspaceId!, providerId);
+          const detailed = withScopedProviderAccountIdentity(
+            getProvidersBootstrapSnapshot(entry.workspaceId!).provider_options[providerId],
+            detailedResponse,
+          ) ?? detailedResponse;
+          const updated = updateProvidersBootstrap(entry.workspaceId!, (current) => {
+            const accountIdentityById = getProviderAccountIdentityById(current);
+            const normalizedProviderOptions = Object.fromEntries(
+              Object.entries(current.provider_options).map(([nextProviderId, options]) => [
+                nextProviderId,
+                withProviderAccountIdentity(nextProviderId, options, accountIdentityById),
+              ]),
+            ) as Record<string, ProviderOptions>;
+            const resolved = resolveProviderOptionsUpdate(
+              normalizedProviderOptions[providerId],
+              detailed,
+            ) ?? detailed;
+            if (normalizedProviderOptions[providerId] === resolved) {
+              return current;
+            }
+            const nextProviderOptions = mergeProviderOptionsMap(normalizedProviderOptions, {
+              ...normalizedProviderOptions,
+              [providerId]: resolved,
+            });
+            return {
+              ...current,
+              provider_options: nextProviderOptions,
+            };
+          });
+          next = updated.provider_options[providerId];
+        } catch {
+          // Keep bootstrap options when probe hydration is unavailable.
+        }
+      }
+
+      return next;
+    })
+    .finally(() => {
+      if (entry.providerAuthSummaryInFlightByKey[requestKey] === request) {
+        delete entry.providerAuthSummaryInFlightByKey[requestKey];
+      }
+    });
+
+  entry.providerAuthSummaryInFlightByKey[requestKey] = request;
+  return request;
+};
+
+const handleInstallTransitions = (entry: ProviderOnboardingEntry): void => {
+  if (entry.disposed) return;
+
+  let needsBootstrapRefresh = false;
+  const completedProvidersNeedingAuthSummary: string[] = [];
+
+  for (const [providerId, install] of Object.entries(entry.snapshot.installsById)) {
+    const previous = entry.previousInstallsById[providerId];
+    if (!install || install.state === "running") continue;
+    if (previous?.installId === install.installId && previous.state === install.state) {
+      continue;
+    }
+
+    needsBootstrapRefresh = true;
+    if (
+      entry.workspaceId
+      && install.state === "succeeded"
+      && !entry.postInstallHandledIds.has(install.installId)
+    ) {
+      entry.postInstallHandledIds.add(install.installId);
+      completedProvidersNeedingAuthSummary.push(providerId);
+    }
+  }
+
+  entry.previousInstallsById = entry.snapshot.installsById;
+
+  if (!needsBootstrapRefresh) return;
+
+  void refreshScopeBootstrap(entry.workspaceId)
+    .then(() => {
+      if (entry.disposed) return;
+      for (const providerId of completedProvidersNeedingAuthSummary) {
+        if (entry.postInstallInFlightProviderIds.has(providerId)) continue;
+        entry.postInstallInFlightProviderIds.add(providerId);
+        void ensureProviderAuthSummaryForEntry(entry, providerId)
+          .catch(() => {})
+          .finally(() => {
+            entry.postInstallInFlightProviderIds.delete(providerId);
+          });
+      }
+    })
+    .catch(() => {});
+};
+
+const startEntry = (entry: ProviderOnboardingEntry): void => {
+  if (entry.refCount <= 0) return;
+
+  entry.disposed = false;
+  if (entry.workspaceId) {
+    foregroundRefreshScopeKeys.add(entry.scopeKey);
+    syncForegroundRefreshListeners();
+  }
+
+  entry.bootstrapUnsubscribe = subscribeScopeBootstrap(entry.workspaceId, () => {
+    updateEntrySnapshot(entry);
+    reconcileRunningInstalls(entry);
+    cleanupSucceededInstalls(entry);
+  });
+  entry.installProgressUnsubscribe = subscribeProviderInstallProgress((snapshot) => {
+    updateEntrySnapshot(entry, snapshot);
+    handleInstallTransitions(entry);
+    cleanupSucceededInstalls(entry);
+  });
+
+  updateEntrySnapshot(entry);
+  reconcileRunningInstalls(entry);
+  handleInstallTransitions(entry);
+  cleanupSucceededInstalls(entry);
+};
+
+const stopEntry = (entry: ProviderOnboardingEntry): void => {
+  entry.disposed = true;
+  entry.bootstrapUnsubscribe?.();
+  entry.bootstrapUnsubscribe = undefined;
+  entry.installProgressUnsubscribe?.();
+  entry.installProgressUnsubscribe = undefined;
+
+  for (const stop of Object.values(entry.installObserversByProviderId)) {
+    stop();
+  }
+  entry.installObserversByProviderId = {};
+  entry.providerAuthSummaryInFlightByKey = {};
+  entry.postInstallInFlightProviderIds.clear();
+
+  if (entry.workspaceId) {
+    foregroundRefreshScopeKeys.delete(entry.scopeKey);
+    syncForegroundRefreshListeners();
+  }
+};
+
+const retainEntry = (workspaceId: string | null): (() => void) => {
+  const entry = getOrCreateEntry(workspaceId);
+  entry.refCount += 1;
+  if (entry.refCount === 1) {
+    startEntry(entry);
+  }
+
+  return () => {
+    const current = providerOnboardingByScope.get(entry.scopeKey);
+    if (!current) return;
+    current.refCount = Math.max(0, current.refCount - 1);
+    if (current.refCount === 0) {
+      stopEntry(current);
+    }
+    maybeDeleteEntry(current);
+  };
+};
+
+export const getProviderOnboardingSnapshot = (
+  workspaceId: string | null,
+): ProviderOnboardingSnapshot => getOrCreateEntry(workspaceId).snapshot;
+
+export const subscribeProviderOnboarding = (
+  workspaceId: string | null,
+  listener: ProviderOnboardingListener,
+): (() => void) => {
+  const entry = getOrCreateEntry(workspaceId);
+  entry.listeners.add(listener);
+  return () => {
+    entry.listeners.delete(listener);
+    maybeDeleteEntry(entry);
+  };
+};
+
+export const loadProviderOnboardingBootstrap = (
+  workspaceId: string | null,
+): Promise<ProvidersBootstrapResponse> => loadScopeBootstrap(workspaceId);
+
+export const refreshProviderOnboardingBootstrap = (
+  workspaceId: string | null,
+): Promise<ProvidersBootstrapResponse> => refreshScopeBootstrap(workspaceId);
+
+export const ensureProviderAuthSummary = (
+  workspaceId: string | null,
+  providerId: string,
+  opts?: { force?: boolean; trigger?: ProviderAuthSummaryTrigger },
+): Promise<ProviderOptions | undefined> => ensureProviderAuthSummaryForEntry(
+  getOrCreateEntry(workspaceId),
+  providerId,
+  opts,
+);
+
+export const startProviderInstall = async (
+  workspaceId: string | null,
+  providerId: string,
+): Promise<InstallStartResponse> => {
+  const entry = getOrCreateEntry(workspaceId);
+  const target = providerInstallTargetForProvider(entry.snapshot.providersById[providerId]) ?? "host";
+  const started = await installProvider(providerId, target);
+  attachInstallObserver(entry, providerId, started.install_id, started.target);
+  return started;
+};
+
+export const startAllProviderInstalls = async (
+  workspaceId: string | null,
+): Promise<InstallStartResponse[]> => {
+  const entry = getOrCreateEntry(workspaceId);
+  const target = providerInstallTargetForProvider(
+    entry.snapshot.bootstrap.providers.find((provider) => provider.details?.install_target),
+  ) ?? "host";
+  const started = await installAllProviders(target);
+  for (const install of started) {
+    attachInstallObserver(entry, install.provider_id, install.install_id, install.target);
+  }
+  return started;
+};
+
+export const cancelProviderOnboardingInstall = async (
+  workspaceId: string | null,
+  providerId: string,
+): Promise<InstallInfo | undefined> => {
+  const entry = getOrCreateEntry(workspaceId);
+  const install = entry.snapshot.installsById[providerId];
+  const installId = install?.installId ?? entry.snapshot.providersById[providerId]?.details?.install_id;
+  if (!installId) return undefined;
+
+  const info = await cancelInstall(installId);
+  upsertProviderInstallProgress(providerId, {
+    installId,
+    state: info.state,
+    pct: computeInstallPct(info, install?.pct ?? null),
+    target: info.target,
+    errorCode: info.error_code,
+    error: info.error,
+  });
+  return info;
+};
+
+export const resetProviderOnboardingCoordinatorForTests = (): void => {
+  for (const entry of providerOnboardingByScope.values()) {
+    stopEntry(entry);
+  }
+  providerOnboardingByScope.clear();
+  foregroundRefreshScopeKeys.clear();
+  syncForegroundRefreshListeners();
+};
+
+export const useProviderOnboardingCoordinator = ({
+  workspaceId,
+  enabled = true,
+  onLoadError,
+}: {
+  workspaceId: string | null;
+  enabled?: boolean;
+  onLoadError?: (error: unknown) => void;
+}) => {
+  const snapshot = useSyncExternalStore(
+    useCallback((listener) => subscribeProviderOnboarding(workspaceId, listener), [workspaceId]),
+    useCallback(() => getProviderOnboardingSnapshot(workspaceId), [workspaceId]),
+    useCallback(() => getProviderOnboardingSnapshot(workspaceId), [workspaceId]),
+  );
+
+  useEffect(() => {
+    if (!enabled) return;
+    return retainEntry(workspaceId);
+  }, [enabled, workspaceId]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    loadProviderOnboardingBootstrap(workspaceId).catch((error) => {
+      onLoadError?.(error);
+    });
+  }, [enabled, onLoadError, workspaceId]);
+
+  const loadBootstrap = useCallback(
+    () => loadProviderOnboardingBootstrap(workspaceId),
+    [workspaceId],
+  );
+  const refreshBootstrap = useCallback(
+    () => refreshProviderOnboardingBootstrap(workspaceId),
+    [workspaceId],
+  );
+  const ensureAuthSummary = useCallback(
+    (providerId: string, opts?: { force?: boolean; trigger?: ProviderAuthSummaryTrigger }) =>
+      ensureProviderAuthSummary(workspaceId, providerId, opts),
+    [workspaceId],
+  );
+  const onInstallProvider = useCallback(
+    (providerId: string) => startProviderInstall(workspaceId, providerId),
+    [workspaceId],
+  );
+  const onInstallAllProviders = useCallback(
+    () => startAllProviderInstalls(workspaceId),
+    [workspaceId],
+  );
+  const onCancelInstall = useCallback(
+    (providerId: string) => cancelProviderOnboardingInstall(workspaceId, providerId),
+    [workspaceId],
+  );
+
+  return useMemo(() => ({
+    ...snapshot,
+    loadBootstrap,
+    refreshBootstrap,
+    ensureProviderAuthSummary: ensureAuthSummary,
+    startProviderInstall: onInstallProvider,
+    startAllProviderInstalls: onInstallAllProviders,
+    cancelProviderInstall: onCancelInstall,
+  }), [
+    ensureAuthSummary,
+    loadBootstrap,
+    onCancelInstall,
+    onInstallAllProviders,
+    onInstallProvider,
+    refreshBootstrap,
+    snapshot,
+  ]);
+};
