@@ -50,7 +50,7 @@ test("provider e2e refuses canonical desktop bundle dir mutation by default", ()
   const output = `${result.stdout || ""}\n${result.stderr || ""}`;
   assert.match(output, /refusing to use canonical desktop bundles dir for e2e/);
 });
-test("linux-arm lanes source acp-crp-bridge locally before publish while preserving managed provider bundles for the rest", () => {
+test("linux-arm lanes source repo-owned local adapters from the workspace before publish", () => {
   const script = fs.readFileSync(scriptPath, "utf8");
 
   assert.match(
@@ -63,7 +63,11 @@ test("linux-arm lanes source acp-crp-bridge locally before publish while preserv
   );
   assert.match(
     script,
-    /source the bridge from the local workspace while keeping the other/,
+    /source local adapters from the workspace while external lane/,
+  );
+  assert.match(
+    script,
+    /providers continue using their managed archive paths/,
   );
 });
 

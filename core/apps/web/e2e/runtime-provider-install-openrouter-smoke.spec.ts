@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import path from "path";
 import type { APIRequestContext, TestInfo } from "playwright/test";
 import { test, expect } from "./fixtures";
+import { envTruthy, parseCsv, shouldSkipBundledOnlyInstall } from "./runtimeInstallSmoke";
 
 type ProviderStatus = {
   installed: boolean;
@@ -92,15 +93,6 @@ const readStringMap = (value: unknown): Record<string, string> => {
   }
   return out;
 };
-
-const parseCsv = (value: string | undefined): string[] =>
-  String(value || "")
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-
-const envTruthy = (value: string | undefined): boolean =>
-  ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
 
 const envInt = (value: string | undefined, fallback: number): number => {
   const parsed = Number.parseInt(String(value || "").trim(), 10);
@@ -559,8 +551,18 @@ async function runProvider(
     console.log(`runtime install smoke: provider=${providerId} before installed=${providerBefore.installed} health=${providerBefore.health}`);
 
     stage = "install";
-    installId = (await installProviderAndWait(request, providerId, installTarget)).installId;
-    console.log(`runtime install smoke: provider=${providerId} install_id=${installId} completed`);
+    if (shouldSkipBundledOnlyInstall(providerId)) {
+      if (!providerBefore.installed || providerBefore.health !== "ok") {
+        const detail = normalizeErrorMessage(
+          firstText(providerBefore.diagnostics[0], `installed=${providerBefore.installed} health=${providerBefore.health}`),
+        );
+        throw createStageError(stage, `bundled-only provider unavailable before install: ${detail}`);
+      }
+      console.log(`runtime install smoke: provider=${providerId} install skipped bundled_only=true`);
+    } else {
+      installId = (await installProviderAndWait(request, providerId, installTarget)).installId;
+      console.log(`runtime install smoke: provider=${providerId} install_id=${installId} completed`);
+    }
 
     stage = "status_after_install";
     const providerAfter = await getProviderStatus(request, providerId, installTarget);

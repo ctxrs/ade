@@ -84,37 +84,37 @@
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/amp/0.1.1/macos/aarch64/amp-0.1.1-macos-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/amp-acp.js",
-            "sha256": "9acaafb13567a355f58f25fadedd16e33e5c8e709f6efdfb1d73fed01e2c1c45"
+            "sha256": "d104cb2f78fdf476727255161495593d5a6ac3477181b289271c2d886fc6038c"
           },
           "darwin-x86_64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/amp/0.1.1/macos/x86_64/amp-0.1.1-macos-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/amp-acp.js",
-            "sha256": "a48d3a08d12d5d9a7760ed582097f0c856b7de3bfc85fe11bb6a342e9c916dc1"
+            "sha256": "6ca4ea2efa03370b14d4f09c0a39c288af0934428b1299afe820262f8c9e6db8"
           },
           "linux-aarch64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/amp/0.1.1/linux/aarch64/amp-0.1.1-linux-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/amp-acp.js",
-            "sha256": "4e097c145dcbcc9edaf9d68acae60cf9e939feac4cd6f5abe23f438b29d550ef"
+            "sha256": "802daafae7aa351ac14781b65c8f78c95a4a75c56d6d3cd9adfacbc25db58611"
           },
           "linux-x86_64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/amp/0.1.1/linux/x86_64/amp-0.1.1-linux-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/amp-acp.js",
-            "sha256": "06952b7e702fa0fa54460ba3157cbec715151d620bf2cd42e46c560da7000a93"
+            "sha256": "95c37d91c7a976f34e2a545fae7579cd3d4e4b9d8c79e68f51ed0e8d404438e6"
           },
           "macos-aarch64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/amp/0.1.1/macos/aarch64/amp-0.1.1-macos-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/amp-acp.js",
-            "sha256": "9acaafb13567a355f58f25fadedd16e33e5c8e709f6efdfb1d73fed01e2c1c45"
+            "sha256": "d104cb2f78fdf476727255161495593d5a6ac3477181b289271c2d886fc6038c"
           },
           "macos-x86_64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/amp/0.1.1/macos/x86_64/amp-0.1.1-macos-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/amp-acp.js",
-            "sha256": "a48d3a08d12d5d9a7760ed582097f0c856b7de3bfc85fe11bb6a342e9c916dc1"
+            "sha256": "6ca4ea2efa03370b14d4f09c0a39c288af0934428b1299afe820262f8c9e6db8"
           }
         }
       },
@@ -699,37 +699,37 @@
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/goose/0.1.1/macos/aarch64/goose-0.1.1-macos-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/goose-acp.js",
-            "sha256": "0f9ebfb44b9041532c4e1b49d78747b03269bd9bcf0ce085ef7da44cda8cdfb0"
+            "sha256": "7581a1e5a9c00b128b377b9ab9c90d90e1c919b13aa62ecbc79a34f9eef40a0d"
           },
           "darwin-x86_64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/goose/0.1.1/macos/x86_64/goose-0.1.1-macos-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/goose-acp.js",
-            "sha256": "0f9ebfb44b9041532c4e1b49d78747b03269bd9bcf0ce085ef7da44cda8cdfb0"
+            "sha256": "7581a1e5a9c00b128b377b9ab9c90d90e1c919b13aa62ecbc79a34f9eef40a0d"
           },
           "linux-aarch64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/goose/0.1.1/linux/aarch64/goose-0.1.1-linux-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/goose-acp.js",
-            "sha256": "75cd56d6243f1b244e048a8c0c82feb2b284439a12dbf79e7a92fcc5644df3df"
+            "sha256": "e27501114ac5ffcbfe6356af8c162f77e3cbe5f46d3b2eeb4b7f614f8c7051cf"
           },
           "linux-x86_64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/goose/0.1.1/linux/x86_64/goose-0.1.1-linux-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/goose-acp.js",
-            "sha256": "75cd56d6243f1b244e048a8c0c82feb2b284439a12dbf79e7a92fcc5644df3df"
+            "sha256": "e27501114ac5ffcbfe6356af8c162f77e3cbe5f46d3b2eeb4b7f614f8c7051cf"
           },
           "macos-aarch64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/goose/0.1.1/macos/aarch64/goose-0.1.1-macos-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/goose-acp.js",
-            "sha256": "0f9ebfb44b9041532c4e1b49d78747b03269bd9bcf0ce085ef7da44cda8cdfb0"
+            "sha256": "7581a1e5a9c00b128b377b9ab9c90d90e1c919b13aa62ecbc79a34f9eef40a0d"
           },
           "macos-x86_64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/goose/0.1.1/macos/x86_64/goose-0.1.1-macos-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/goose-acp.js",
-            "sha256": "0f9ebfb44b9041532c4e1b49d78747b03269bd9bcf0ce085ef7da44cda8cdfb0"
+            "sha256": "7581a1e5a9c00b128b377b9ab9c90d90e1c919b13aa62ecbc79a34f9eef40a0d"
           }
         }
       },
@@ -888,37 +888,37 @@
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/openhands/0.1.1/macos/aarch64/openhands-0.1.1-macos-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/openhands-acp.js",
-            "sha256": "567d0a178dead67b9fbc1fafbcda2a751f0d73111c52a975a2a20537ceff4970"
+            "sha256": "d034740f817e7de11bf1c7bf819f8ec361cb91671a586f5adfa01635fa9a46ee"
           },
           "darwin-x86_64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/openhands/0.1.1/macos/x86_64/openhands-0.1.1-macos-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/openhands-acp.js",
-            "sha256": "567d0a178dead67b9fbc1fafbcda2a751f0d73111c52a975a2a20537ceff4970"
+            "sha256": "d034740f817e7de11bf1c7bf819f8ec361cb91671a586f5adfa01635fa9a46ee"
           },
           "linux-aarch64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/openhands/0.1.1/linux/aarch64/openhands-0.1.1-linux-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/openhands-acp.js",
-            "sha256": "c11bbf6ef17aea4c20bcc313302ba40fccf7e83b46b3e3642e171107fe6a9215"
+            "sha256": "ed21c5f73fbeb35991cde88eb43901bc5db6ae4bf5e8309b01279a879094ce61"
           },
           "linux-x86_64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/openhands/0.1.1/linux/x86_64/openhands-0.1.1-linux-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/openhands-acp.js",
-            "sha256": "c11bbf6ef17aea4c20bcc313302ba40fccf7e83b46b3e3642e171107fe6a9215"
+            "sha256": "ed21c5f73fbeb35991cde88eb43901bc5db6ae4bf5e8309b01279a879094ce61"
           },
           "macos-aarch64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/openhands/0.1.1/macos/aarch64/openhands-0.1.1-macos-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/openhands-acp.js",
-            "sha256": "567d0a178dead67b9fbc1fafbcda2a751f0d73111c52a975a2a20537ceff4970"
+            "sha256": "d034740f817e7de11bf1c7bf819f8ec361cb91671a586f5adfa01635fa9a46ee"
           },
           "macos-x86_64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/openhands/0.1.1/macos/x86_64/openhands-0.1.1-macos-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/openhands-acp.js",
-            "sha256": "567d0a178dead67b9fbc1fafbcda2a751f0d73111c52a975a2a20537ceff4970"
+            "sha256": "d034740f817e7de11bf1c7bf819f8ec361cb91671a586f5adfa01635fa9a46ee"
           }
         }
       },
@@ -955,37 +955,37 @@
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/pi/0.1.1/macos/aarch64/pi-0.1.1-macos-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/pi-acp.js",
-            "sha256": "ef874eea37ddb6a95073d6d58335c12e8703c5acbb0b3c87d002b4a757d32b12"
+            "sha256": "971b02674a846366e2ff4cbb2441676ab2253672799b1d35e6c488f85d19b957"
           },
           "darwin-x86_64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/pi/0.1.1/macos/x86_64/pi-0.1.1-macos-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/pi-acp.js",
-            "sha256": "22d7bf62e7655f7be5b217f6373fd586fc291c714f2cc527b2cc7379c089b236"
+            "sha256": "ee746bfc881503f0916b64383c0e1273a470736bc9862522ec79b8e8c2f3c3b6"
           },
           "linux-aarch64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/pi/0.1.1/linux/aarch64/pi-0.1.1-linux-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/pi-acp.js",
-            "sha256": "81b98a99bff5a50d8b8ef11e23ad8ddc2f4259f109988682bc7268b7aa751c1e"
+            "sha256": "d5e2f99df2a9be4bbab3974594c3aea593fa12047fe0e7f01701b3e496549d59"
           },
           "linux-x86_64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/pi/0.1.1/linux/x86_64/pi-0.1.1-linux-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/pi-acp.js",
-            "sha256": "d2c60350b3154e24abe0313537b6ae3346520abf1f5fbeda1de3eb609d5e76f1"
+            "sha256": "e1f3a60f961b6b5fdb235ff166d9729cc6a13db76c0e1802045c82e3e3ef96d4"
           },
           "macos-aarch64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/pi/0.1.1/macos/aarch64/pi-0.1.1-macos-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/pi-acp.js",
-            "sha256": "ef874eea37ddb6a95073d6d58335c12e8703c5acbb0b3c87d002b4a757d32b12"
+            "sha256": "971b02674a846366e2ff4cbb2441676ab2253672799b1d35e6c488f85d19b957"
           },
           "macos-x86_64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/pi/0.1.1/macos/x86_64/pi-0.1.1-macos-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/pi-acp.js",
-            "sha256": "22d7bf62e7655f7be5b217f6373fd586fc291c714f2cc527b2cc7379c089b236"
+            "sha256": "ee746bfc881503f0916b64383c0e1273a470736bc9862522ec79b8e8c2f3c3b6"
           }
         }
       },

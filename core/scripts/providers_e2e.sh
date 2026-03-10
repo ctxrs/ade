@@ -416,6 +416,10 @@ run_linux_arm_runtime_install_lane() {
   export CTX_E2E_INSTALL_SMOKE_NETWORK_MODE="${CTX_E2E_INSTALL_SMOKE_NETWORK_MODE:-${expected_network_mode:-llm_only}}"
   export CTX_E2E_INSTALL_SMOKE_REPORT_PATH="${smoke_report}"
   export CTX_E2E_INSTALL_SMOKE_ALLOW_FAILURES="${allow_failures}"
+  # Repo-owned local-adapter providers are bundled into this lane before their
+  # stable artifacts exist, so explicit install requests must treat bundled-only
+  # providers as preseeded instead of forcing a managed download.
+  export CTX_E2E_INSTALL_SMOKE_SKIP_BUNDLED_ONLY_INSTALLS="${CTX_E2E_INSTALL_SMOKE_SKIP_BUNDLED_ONLY_INSTALLS:-1}"
   export CTX_PODMAN_MACHINE_PREFETCH="${CTX_PODMAN_MACHINE_PREFETCH:-1}"
   export OPENAI_API_KEY="${OPENAI_API_KEY:-${OPENROUTER_API_KEY}}"
   export OPENAI_BASE_URL="${OPENAI_BASE_URL:-${OPENROUTER_BASE_URL}}"
