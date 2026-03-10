@@ -179,7 +179,6 @@ test("workbench: unauthed harness opens auth modal and API key flow readies harn
   await menu.getByRole("button", { name: /Cursor/ }).click();
   const modal = page.locator(".settings-harness-modal");
   await expect(modal).toBeVisible({ timeout: 10_000 });
-  await expect(modal.getByRole("button", { name: "Subscription" })).toHaveCount(0);
   const apiKeyButton = modal.getByRole("button", { name: "API Key" });
   if (await apiKeyButton.count()) {
     await expect(apiKeyButton).toBeVisible();

@@ -170,17 +170,20 @@ async fn handle_workspace_active_snapshot_ws(
                             if let Ok(message) =
                                 serde_json::from_str::<WorkspaceActiveSnapshotClientMessage>(&text)
                             {
+                                let mut subscribe_ctx = WorkspaceActiveSubscribeContext {
+                                    control: &control,
+                                    head_buffer: &head_buffer,
+                                    send_control: &send_control,
+                                    subscriptions: &mut subscriptions,
+                                    subscription_state: &mut subscription_state,
+                                    active_worktrees: &mut active_worktrees,
+                                    reset_queued: &mut reset_queued,
+                                };
                                 handle_subscribe_message(
                                     &state,
                                     workspace_id,
                                     message,
-                                    &control,
-                                    &head_buffer,
-                                    &send_control,
-                                    &mut subscriptions,
-                                    &mut subscription_state,
-                                    &mut active_worktrees,
-                                    &mut reset_queued,
+                                    &mut subscribe_ctx,
                                 ).await?;
                             }
                         }
@@ -189,17 +192,20 @@ async fn handle_workspace_active_snapshot_ws(
                                 if let Ok(message) =
                                     serde_json::from_str::<WorkspaceActiveSnapshotClientMessage>(&text)
                                 {
+                                    let mut subscribe_ctx = WorkspaceActiveSubscribeContext {
+                                        control: &control,
+                                        head_buffer: &head_buffer,
+                                        send_control: &send_control,
+                                        subscriptions: &mut subscriptions,
+                                        subscription_state: &mut subscription_state,
+                                        active_worktrees: &mut active_worktrees,
+                                        reset_queued: &mut reset_queued,
+                                    };
                                     handle_subscribe_message(
                                         &state,
                                         workspace_id,
                                         message,
-                                        &control,
-                                        &head_buffer,
-                                        &send_control,
-                                        &mut subscriptions,
-                                        &mut subscription_state,
-                                        &mut active_worktrees,
-                                        &mut reset_queued,
+                                        &mut subscribe_ctx,
                                     ).await?;
                                 }
                             }
@@ -501,17 +507,21 @@ async fn handle_workspace_active_snapshot_ws(
         .await;
 }
 
+struct WorkspaceActiveSubscribeContext<'a> {
+    control: &'a Arc<StreamQueue<WorkspaceActiveSnapshotStreamMessage>>,
+    head_buffer: &'a Arc<HeadBatchBuffer>,
+    send_control: &'a Arc<StreamSendControl>,
+    subscriptions: &'a mut HashMap<SessionId, SessionCursor>,
+    subscription_state: &'a mut WorkspaceActiveSubscriptionState,
+    active_worktrees: &'a mut HashSet<WorktreeId>,
+    reset_queued: &'a mut bool,
+}
+
 async fn handle_subscribe_message(
     state: &Arc<AppState>,
     workspace_id: WorkspaceId,
     message: WorkspaceActiveSnapshotClientMessage,
-    control: &Arc<StreamQueue<WorkspaceActiveSnapshotStreamMessage>>,
-    head_buffer: &Arc<HeadBatchBuffer>,
-    send_control: &Arc<StreamSendControl>,
-    subscriptions: &mut HashMap<SessionId, SessionCursor>,
-    subscription_state: &mut WorkspaceActiveSubscriptionState,
-    active_worktrees: &mut HashSet<WorktreeId>,
-    reset_queued: &mut bool,
+    ctx: &mut WorkspaceActiveSubscribeContext<'_>,
 ) -> Result<(), ()> {
     let include_active_heads = matches!(
         &message,
@@ -527,7 +537,7 @@ async fn handle_subscribe_message(
         state,
         workspace_id,
         message,
-        subscriptions,
+        ctx.subscriptions,
     )
     .await
     {
@@ -538,16 +548,16 @@ async fn handle_subscribe_message(
                 workspace_id = %workspace_id.0,
                 "workspace stream subscribe resolution failed",
             );
-            control.clear().await;
-            head_buffer.clear().await;
-            if queue_reset_required(control, state, workspace_id)
+            ctx.control.clear().await;
+            ctx.head_buffer.clear().await;
+            if queue_reset_required(ctx.control, state, workspace_id)
                 .await
                 .is_err()
             {
                 return Err(());
             }
-            *reset_queued = true;
-            send_control.set_disconnect_after_flush();
+            *ctx.reset_queued = true;
+            ctx.send_control.set_disconnect_after_flush();
             return Ok(());
         }
     };
@@ -556,15 +566,15 @@ async fn handle_subscribe_message(
         state: next_state,
     } = resolved;
 
-    control.clear().await;
-    head_buffer.clear().await;
-    *reset_queued = false;
-    send_control.clear_disconnect_after_flush();
+    ctx.control.clear().await;
+    ctx.head_buffer.clear().await;
+    *ctx.reset_queued = false;
+    ctx.send_control.clear_disconnect_after_flush();
     if include_active_heads {
-        send_control.set_hydrating();
+        ctx.send_control.set_hydrating();
     }
     if include_active_heads
-        && queue_snapshot_payload(control, state, workspace_id)
+        && queue_snapshot_payload(ctx.control, state, workspace_id)
             .await
             .is_err()
     {
@@ -593,8 +603,8 @@ async fn handle_subscribe_message(
             next_map.insert(session_id, SessionCursor { last_sent });
             continue;
         }
-        let control = control.clone();
-        let head_buffer = head_buffer.clone();
+        let control = ctx.control.clone();
+        let head_buffer = ctx.head_buffer.clone();
         let active_task_sessions = next_state.active_task_sessions.clone();
         let replay = replay_session_events(
             state,
@@ -672,23 +682,23 @@ async fn handle_subscribe_message(
         };
     }
     if replay_failed {
-        control.clear().await;
-        head_buffer.clear().await;
-        if queue_reset_required(control, state, workspace_id)
+        ctx.control.clear().await;
+        ctx.head_buffer.clear().await;
+        if queue_reset_required(ctx.control, state, workspace_id)
             .await
             .is_err()
         {
             return Err(());
         }
-        *reset_queued = true;
-        send_control.set_disconnect_after_flush();
+        *ctx.reset_queued = true;
+        ctx.send_control.set_disconnect_after_flush();
         return Ok(());
     }
-    *subscriptions = next_map;
-    *subscription_state = next_state;
+    *ctx.subscriptions = next_map;
+    *ctx.subscription_state = next_state;
     let git_status_session_ids: Vec<SessionId> =
         resolved_sessions.iter().map(|sub| sub.session_id).collect();
-    sync_active_worktrees(state, active_worktrees, &git_status_session_ids).await;
+    sync_active_worktrees(state, ctx.active_worktrees, &git_status_session_ids).await;
     ensure_worktree_vcs_watchers_for_sessions(state, &git_status_session_ids).await;
     Ok(())
 }
