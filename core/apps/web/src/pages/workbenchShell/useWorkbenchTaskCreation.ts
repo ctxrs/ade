@@ -264,7 +264,10 @@ export function useWorkbenchTaskCreation({
         );
       }
       const env_target = "worktree";
-      const opts = await ensureProviderAuthSummary(primaryTrack.providerId).catch(() => undefined);
+      const opts = await ensureProviderAuthSummary(primaryTrack.providerId, {
+        force: true,
+        trigger: "explicit",
+      }).catch(() => undefined);
       const modelIds = modelIdsFromOptions(opts ?? providerOptions[primaryTrack.providerId]);
       const modelId =
         primaryTrack.modelId || modelIds[0] || (primaryTrack.providerId === "fake" ? "fake-model" : "default");

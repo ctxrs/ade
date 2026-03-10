@@ -21,6 +21,15 @@ const asRecord = (value: unknown): Record<string, unknown> => {
   return value as Record<string, unknown>;
 };
 
+const selectedEndpointModelOverride = (opts?: ProviderOptions): string => {
+  const source = opts?.source;
+  if (!source || source.selected_source_kind !== "endpoint") return "";
+  const endpointId = String(source.selected_endpoint_id ?? "").trim();
+  if (!endpointId) return "";
+  const endpoint = source.endpoints.find((candidate) => candidate.id === endpointId);
+  return String(endpoint?.model_override ?? "").trim();
+};
+
 export function imageAttachmentSrc(a: MessageAttachment): string {
   return a.kind === "image_ref" ? blobUrl(a.blob_id) : `data:${a.mime_type};base64,${a.data_base64}`;
 }
@@ -126,9 +135,11 @@ export function deriveFullModelIdForBase(
 
 export function modelIdFromProviderOptions(opts?: ProviderOptions): string | null {
   const raw = asRecord(opts?.models);
-  if (!raw || Object.keys(raw).length === 0) return null;
   const current = raw.currentModelId ?? raw.current_model_id;
   if (typeof current === "string" && current.trim().length > 0) return current.trim();
+  const sourceOverride = selectedEndpointModelOverride(opts);
+  if (sourceOverride) return sourceOverride;
+  if (Object.keys(raw).length === 0) return null;
   const list = raw.availableModels ?? raw.available_models ?? raw.models ?? [];
   if (!Array.isArray(list) || list.length === 0) return null;
   const first = asRecord(list[0]);

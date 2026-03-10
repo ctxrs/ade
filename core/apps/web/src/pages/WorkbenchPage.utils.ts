@@ -150,18 +150,28 @@ export const deriveManagedWorktreeRoot = (dataRoot: string | null, workspaceId: 
   return joinDaemonPath(dataRoot, "worktrees", workspaceId, worktreeId);
 };
 
+const selectedEndpointModelOverride = (opts?: ProviderOptions): string => {
+  const source = opts?.source;
+  if (!source || source.selected_source_kind !== "endpoint") return "";
+  const endpointId = String(source.selected_endpoint_id ?? "").trim();
+  if (!endpointId) return "";
+  const endpoint = source.endpoints.find((candidate) => candidate.id === endpointId);
+  return String(endpoint?.model_override ?? "").trim();
+};
+
 export function modelIdsFromOptions(opts?: ProviderOptions): string[] {
   const raw = opts?.models;
-  if (!raw) return [];
   const rec = asRecord(raw);
+  const current = String(rec.currentModelId ?? rec.current_model_id ?? "").trim();
+  const sourceOverride = selectedEndpointModelOverride(opts);
   const list = rec.availableModels ?? rec.available_models ?? rec.models ?? raw;
-  if (!Array.isArray(list)) return [];
-  return list
+  const ids = (Array.isArray(list) ? list : [])
     .map((m) => {
       const model = asRecord(m);
       return String(model.modelId ?? model.model_id ?? model.id ?? "").trim();
     })
     .filter((s: string) => s.length > 0);
+  return Array.from(new Set([current, sourceOverride, ...ids].filter((id) => id.length > 0)));
 }
 
 export function appendSegment(base: string, addition: string): string {

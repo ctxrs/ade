@@ -1206,6 +1206,12 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const { onTaskListScroll, onTaskListScrollerChange } = useWorkbenchTaskScrollbar({
     itemCount: taskListItems.length,
   });
+  const initialTaskListItemCount = activeTaskSummaries.length === 0 && taskListItems.length > 0
+    ? taskListItems.length
+    : undefined;
+  const taskListVirtuosoKey = activeTaskSummaries.length === 0
+    ? `empty-${archivedCollapsed ? "collapsed" : "expanded"}-${taskListItems.length}`
+    : "default";
 
   const loadMoreArchived = useCallback(() => {
     workspaceSnapshotStore.loadMoreArchived();
@@ -2355,8 +2361,10 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
         <div className="wb-sidebar-section wb-sidebar-grow" style={{ minHeight: 0, display: "flex" }}>
           <Virtuoso
+            key={taskListVirtuosoKey}
             style={{ height: "100%" }}
             data={taskListItems}
+            initialItemCount={initialTaskListItemCount}
             overscan={8}
             computeItemKey={computeTaskListItemKey}
             itemContent={(_, item) => renderTaskListItem(item)}

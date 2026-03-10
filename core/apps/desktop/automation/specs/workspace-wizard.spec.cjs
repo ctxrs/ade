@@ -719,7 +719,7 @@ const ensureCodexHarnessSelected = async (workspaceId = null, timeoutMs = 30000)
 
 const runCodexComposerSmoke = async (workspaceId, timeoutMs = 240000) => {
   await waitForSelector("textarea.wb-new-composer-textarea", 60000);
-  await ensureCodexHarnessSelected(workspaceId);
+  await ensureCodexHarnessSelected(workspaceId, timeoutMs);
   await setTextareaSelector("textarea.wb-new-composer-textarea", "hello");
   await clickSelector("button.wb-send");
 

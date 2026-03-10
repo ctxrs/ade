@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkbenchComposer } from "./WorkbenchComposer";
@@ -568,6 +568,87 @@ describe("WorkbenchComposer textarea sizing", () => {
     expect(ensureProviderAuthSummary).toHaveBeenCalledWith("claude-crp");
   });
 
+  it("seeds the draft model from the selected endpoint override before models hydrate", async () => {
+    const NewTaskHarness = () => {
+      const [value, setValue] = useState("");
+      const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
+      const [draftHarness, setDraftHarness] = useState<DraftHarness | null>({ providerId: "codex", modelId: "" });
+      const harnessCatalog: HarnessCatalogEntry[] = [{ id: "codex", label: "Codex", logoSrc: "" }];
+      const providersById: Record<string, ProviderStatus> = {
+        codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
+      };
+      const providerOptions: Record<string, ProviderOptions | undefined> = {
+        codex: {
+          ...baseOptions("codex"),
+          has_active_auth: true,
+          auth_mode: "endpoint",
+          source: {
+            provider_id: "codex",
+            selected_source_kind: "endpoint",
+            selected_endpoint_id: "openrouter",
+            endpoints: [
+              {
+                id: "openrouter",
+                provider_id: "codex",
+                name: "OpenRouter",
+                base_url: "https://openrouter.ai/api/v1",
+                api_shape: "openai_responses",
+                auth_type: "bearer",
+                model_override: "openai/gpt-5.2-codex",
+                created_at: "2026-03-10T00:00:00.000Z",
+                updated_at: "2026-03-10T00:00:00.000Z",
+                last_verification_status: "valid",
+                last_verification_at: null,
+                last_error: null,
+                has_api_key: true,
+              },
+            ],
+          },
+        },
+      };
+
+      return (
+        <>
+          <div data-testid="draft-model">{draftHarness?.modelId ?? ""}</div>
+          <WorkbenchComposer
+            variant="newSession"
+            value={value}
+            setValue={setValue}
+            placeholder="@ for context, / for commands"
+            inputDisabled={false}
+            sessionIdForAutocomplete={null}
+            workspaceIdForAutocomplete={null}
+            slashCommands={[]}
+            attachments={attachments}
+            setAttachments={setAttachments}
+            onSend={vi.fn()}
+            sendDisabled={false}
+            sendDisabledReason={null}
+            onInterrupt={null}
+            modeId={modeId}
+            setModeId={setModeId}
+            harnessCatalog={harnessCatalog}
+            providersById={providersById}
+            providerInstallsById={{}}
+            onInstallProvider={vi.fn()}
+            onInstallAllProviders={vi.fn()}
+            providerOptions={providerOptions}
+            ensureProviderAuthSummary={async () => providerOptions.codex}
+            draftHarness={draftHarness}
+            setDraftHarness={setDraftHarness}
+            defaultProviderId="codex"
+          />
+        </>
+      );
+    };
+
+    render(<NewTaskHarness />);
+    await waitFor(() => {
+      expect(screen.getByTestId("draft-model").textContent).toBe("openai/gpt-5.2-codex");
+    });
+  });
+
   it("shows an explicit unselected harness state", async () => {
     const NewTaskHarness = () => {
       const [value, setValue] = useState("");
@@ -764,5 +845,4 @@ describe("WorkbenchComposer textarea sizing", () => {
     });
     expect(ensureProviderAuthSummary).toHaveBeenNthCalledWith(2, "codex", { trigger: "explicit" });
   });
-
 });

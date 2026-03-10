@@ -24,6 +24,7 @@ type CtxE2EBridge = {
   getSessionHeadMessages?: (sessionId: string) => string[];
   getSessionHeadUserMessages?: (sessionId: string) => string[];
   getSessionLastEventSeq?: (sessionId: string) => number | null;
+  getWorkspaceSnapshot?: () => WorkspaceActiveSnapshotState | null;
   getDiagnostics?: () => ReturnType<typeof getUiDiagnostics>;
   clearDiagnostics?: () => void;
   workspaceStream?: CtxE2EWorkspaceStream;
@@ -87,6 +88,7 @@ export function WorkspaceActiveSnapshotProvider({
       const head = storeRef.current?.getSessionHeadSnapshot(sessionId);
       return head?.last_event_seq ?? null;
     };
+    win.__ctxE2E.getWorkspaceSnapshot = () => storeRef.current?.getSnapshot() ?? null;
     win.__ctxE2E.workspaceStream ??= {};
     win.__ctxE2E.workspaceStream.getConnectionState = () => storeRef.current?.getSnapshot().connection ?? "idle";
     win.__ctxE2E.workspaceStream.close = () => storeRef.current?.e2eCloseActiveSnapshotStream();
@@ -102,6 +104,7 @@ export function WorkspaceActiveSnapshotProvider({
       delete win.__ctxE2E.getSessionHeadMessages;
       delete win.__ctxE2E.getSessionHeadUserMessages;
       delete win.__ctxE2E.getSessionLastEventSeq;
+      delete win.__ctxE2E.getWorkspaceSnapshot;
       delete win.__ctxE2E.getDiagnostics;
       delete win.__ctxE2E.clearDiagnostics;
       if (win.__ctxE2E.workspaceStream) {

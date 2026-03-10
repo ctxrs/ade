@@ -38,15 +38,44 @@ const createWorkspace = async (rootPath) => {
   return workspaceId;
 };
 
+const collectArchivedToggleDiagnostics = async () =>
+  await browser.execute(() => {
+    const text = (value) => String(value || "").replace(/\s+/g, " ").trim();
+    const buttons = Array.from(document.querySelectorAll("button"))
+      .map((btn) => text(btn.textContent))
+      .filter(Boolean);
+    const sectionTitles = Array.from(document.querySelectorAll(".wb-section-title"))
+      .map((el) => text(el.textContent))
+      .filter(Boolean);
+    const mutedTexts = Array.from(document.querySelectorAll(".wb-muted"))
+      .map((el) => text(el.textContent))
+      .filter(Boolean);
+    return {
+      pathname: window.location.pathname,
+      workbenchTaskSearch: Boolean(document.querySelector('[data-testid="workbench-task-search"]')),
+      taskListCount: document.querySelectorAll(".wb-task-list").length,
+      taskScrollCount: document.querySelectorAll(".wb-task-scroll").length,
+      buttons,
+      sectionTitles,
+      mutedTexts,
+      bodyPreview: text(document.body?.innerText || "").slice(0, 800),
+    };
+  });
+
 const clickArchivedTasksToggle = async () => {
-  await browser.waitUntil(
-    async () =>
-      await browser.execute(() => {
-        const buttons = Array.from(document.querySelectorAll("button"));
-        return buttons.some((btn) => String(btn.textContent || "").includes("Archived Tasks"));
-      }),
-    { timeout: 30000, timeoutMsg: "Archived Tasks toggle not found." },
-  );
+  try {
+    await browser.waitUntil(
+      async () =>
+        await browser.execute(() => {
+          const buttons = Array.from(document.querySelectorAll("button"));
+          return buttons.some((btn) => String(btn.textContent || "").includes("Archived Tasks"));
+        }),
+      { timeout: 30000, timeoutMsg: "Archived Tasks toggle not found." },
+    );
+  } catch (err) {
+    const diagnostics = await collectArchivedToggleDiagnostics();
+    throw new Error(`Archived Tasks toggle not found. diagnostics=${JSON.stringify(diagnostics)} cause=${String(err)}`);
+  }
   const clicked = await browser.execute(() => {
     const buttons = Array.from(document.querySelectorAll("button"));
     const target = buttons.find((btn) => String(btn.textContent || "").includes("Archived Tasks"));
@@ -61,13 +90,33 @@ const clickArchivedTasksToggle = async () => {
 
 const readArchivedTasksUiState = async () =>
   await browser.execute(() => {
+    const text = (value) => String(value || "").replace(/\s+/g, " ").trim();
     const mutedTexts = Array.from(document.querySelectorAll(".wb-muted"))
-      .map((el) => String(el.textContent || "").trim())
+      .map((el) => text(el.textContent))
       .filter(Boolean);
+    const archivedToggle = Array.from(document.querySelectorAll("button"))
+      .find((btn) => text(btn.textContent).includes("Archived Tasks"));
+    const taskTitles = Array.from(document.querySelectorAll(".wb-task-title"))
+      .map((el) => text(el.textContent))
+      .filter(Boolean);
+    const snapshot = window.__ctxE2E?.getWorkspaceSnapshot?.() ?? null;
     return {
       mutedTexts,
       hasEmpty: mutedTexts.includes("No archived tasks."),
       hasError: mutedTexts.some((text) => text.includes("Failed to load archived tasks")),
+      hasLoading: Boolean(document.querySelector(".wb-archived-loading")),
+      archivedExpanded: archivedToggle ? archivedToggle.getAttribute("aria-expanded") : null,
+      taskTitles,
+      bodyPreview: text(document.body?.innerText || "").slice(0, 800),
+      snapshot: snapshot
+        ? {
+          archivedIds: Array.isArray(snapshot.archivedIds) ? snapshot.archivedIds : [],
+          archivedLoaded: Boolean(snapshot.archivedLoaded),
+          fetchState: snapshot.fetchState || null,
+          hasMoreArchived: Boolean(snapshot.hasMoreArchived),
+          initialized: Boolean(snapshot.initialized),
+        }
+        : null,
     };
   });
 

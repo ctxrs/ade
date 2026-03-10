@@ -741,16 +741,37 @@ impl HarnessRuntimeManager {
             HarnessSetupPhase::ContainerCheck,
             "checking existing workspace container",
         );
-        if let Some(container) = containers.get(&workspace.id) {
-            match cached_container_action(container, settings, &mount_plan.external_mounts) {
+        if let Some(container) = containers.get(&workspace.id).cloned() {
+            match cached_container_action(&container, settings, &mount_plan.external_mounts) {
                 CachedContainerAction::Reuse => {
+                    let exists = container_exists(&self.data_root, &name).await?;
+                    let running = if exists {
+                        container_running(&self.data_root, &name)
+                            .await?
+                            .unwrap_or(false)
+                    } else {
+                        false
+                    };
+                    if exists && running {
+                        observe_log(
+                            observer,
+                            HarnessSetupPhase::ContainerCheck,
+                            HarnessSetupLogLevel::Info,
+                            "container already ready in runtime cache",
+                        );
+                        return Ok(container);
+                    }
                     observe_log(
                         observer,
                         HarnessSetupPhase::ContainerCheck,
                         HarnessSetupLogLevel::Info,
-                        "container already ready in runtime cache",
+                        if exists {
+                            "runtime cache entry stale; workspace container is stopped and will be restarted"
+                        } else {
+                            "runtime cache entry stale; workspace container is missing and will be recreated"
+                        },
                     );
-                    return Ok(container.clone());
+                    containers.remove(&workspace.id);
                 }
                 CachedContainerAction::Reconfigure => {
                     observe_log(
@@ -1150,6 +1171,94 @@ mod tests {
         assert!(
             !log.contains("run -d --name"),
             "running-container reuse should not recreate the container:\n{log}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn prepare_starts_cached_workspace_container_when_podman_reports_it_stopped() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _serial = env_var_test_lock().lock().await;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let log_path = temp.path().join("podman-invocations.log");
+        let podman_path = temp.path().join("podman.sh");
+        let manager = runtime_manager(&temp).await;
+        let workspace = sample_workspace(&temp);
+        let worktree = sample_worktree(&temp, workspace.id);
+        let container_name = workspace_container_name(workspace.id);
+        let settings = ExecutionSettings {
+            mode: ExecutionMode::Container,
+            container: ContainerExecutionSettings {
+                network_mode: ContainerNetworkMode::All,
+                allowlist: Vec::new(),
+                ..Default::default()
+            },
+        };
+        let mount_plan = build_mounts(
+            temp.path(),
+            &workspace,
+            Some(&worktree),
+            &settings.container,
+        );
+
+        manager.containers.lock().await.insert(
+            workspace.id,
+            HarnessContainer {
+                name: container_name.clone(),
+                mount_mode: settings.container.mount_mode.clone(),
+                network_mode: settings.container.network_mode.clone(),
+                allowlist: settings.container.allowlist.clone(),
+                external_mounts: mount_plan.external_mounts,
+                egress_guard: false,
+            },
+        );
+
+        std::fs::write(
+            &podman_path,
+            format!(
+                "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'false\\n'\n  exit 0\nfi\nif [ \"$1\" = \"start\" ] && [ \"$2\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+                log = log_path.display(),
+                container = container_name,
+            ),
+        )
+        .expect("write podman shim");
+        std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod podman shim");
+        let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+
+        let plan = manager
+            .prepare(&workspace, &worktree, &settings, "http://127.0.0.1:4399")
+            .await
+            .expect("stopped cached workspace container should be restarted");
+
+        match plan.runtime {
+            HarnessRuntimeKind::Container { name } => assert_eq!(name, container_name),
+            HarnessRuntimeKind::Host => panic!("expected container runtime"),
+        }
+
+        let log = std::fs::read_to_string(&log_path).expect("read podman invocation log");
+        assert!(
+            log.contains(&format!("container exists {container_name}")),
+            "expected container existence check in log:\n{log}"
+        );
+        assert!(
+            log.contains(&format!(
+                "container inspect --format {{{{.State.Running}}}} {container_name}"
+            )),
+            "expected stopped-container inspect in log:\n{log}"
+        );
+        assert!(
+            log.contains(&format!("start {container_name}")),
+            "expected stopped cached container to be started:\n{log}"
+        );
+        assert!(
+            !log.contains("image exists"),
+            "starting a stopped cached container should not front-load image checks:\n{log}"
+        );
+        assert!(
+            !log.contains("run -d --name"),
+            "starting a stopped cached container should not recreate the container:\n{log}"
         );
     }
 
