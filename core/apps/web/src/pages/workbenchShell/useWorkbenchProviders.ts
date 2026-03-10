@@ -7,6 +7,7 @@ import {
   type InstallInfo,
   type InstallTarget,
   type ProviderOptions,
+  type ProvidersBootstrapResponse,
   type ProviderStatus,
 } from "../../api/client";
 import {
@@ -84,6 +85,21 @@ const hasFailedProviderModelProbe = (options: ProviderOptions | undefined): bool
   return typeof options.probe_error === "string" && options.probe_error.trim().length > 0;
 };
 
+const selectedEndpointScopeVersion = (options: ProviderOptions | undefined): string | null => {
+  if (!options || options.source?.selected_source_kind !== "endpoint") return null;
+  const endpointId = options.source.selected_endpoint_id;
+  if (!endpointId) return null;
+  const endpoint = options.source.endpoints.find((candidate) => candidate.id === endpointId);
+  if (!endpoint) return endpointId;
+  return [
+    endpoint.id,
+    endpoint.updated_at,
+    endpoint.base_url ?? "",
+    endpoint.has_api_key ? "1" : "0",
+    endpoint.model_override ?? "",
+  ].join(":");
+};
+
 const sameProviderOptionsScope = (
   lhs: ProviderOptions | undefined,
   rhs: ProviderOptions | undefined,
@@ -92,9 +108,11 @@ const sameProviderOptionsScope = (
   return lhs.provider_id === rhs.provider_id
     && lhs.workspace_id === rhs.workspace_id
     && lhs.auth_mode === rhs.auth_mode
+    && lhs.account_identity === rhs.account_identity
     && lhs.has_active_auth === rhs.has_active_auth
     && lhs.source?.selected_source_kind === rhs.source?.selected_source_kind
-    && lhs.source?.selected_endpoint_id === rhs.source?.selected_endpoint_id;
+    && lhs.source?.selected_endpoint_id === rhs.source?.selected_endpoint_id
+    && selectedEndpointScopeVersion(lhs) === selectedEndpointScopeVersion(rhs);
 };
 
 const sameProviderOptions = (
@@ -157,6 +175,47 @@ const mergeProviderOptionsMap = (
   return merged;
 };
 
+const deriveProviderAccountIdentityById = (
+  bootstrap: ProvidersBootstrapResponse,
+): Record<string, string | null | undefined> => ({
+  codex: bootstrap.codex_accounts.active_account_id,
+  "claude-crp": bootstrap.claude_accounts.active_account_id,
+  gemini: bootstrap.gemini_accounts.active_account_id,
+  qwen: bootstrap.qwen_accounts.active_account_id,
+  kimi: bootstrap.kimi_accounts.active_account_id,
+  mistral: bootstrap.mistral_accounts.active_account_id,
+  copilot: bootstrap.copilot_accounts.active_account_id,
+  cursor: bootstrap.cursor_accounts.active_account_id,
+  amp: bootstrap.amp_accounts.active_account_id,
+  auggie: bootstrap.auggie_accounts?.active_account_id,
+});
+
+const withProviderAccountIdentity = (
+  providerId: string,
+  options: ProviderOptions | undefined,
+  accountIdentityById: Record<string, string | null | undefined>,
+): ProviderOptions | undefined => {
+  if (!options) return options;
+  const accountIdentity = accountIdentityById[providerId] ?? null;
+  if (options.account_identity === accountIdentity) return options;
+  return {
+    ...options,
+    account_identity: accountIdentity,
+  };
+};
+
+const normalizeBootstrapProviderOptions = (
+  bootstrap: ProvidersBootstrapResponse,
+): Record<string, ProviderOptions | undefined> => {
+  const accountIdentityById = deriveProviderAccountIdentityById(bootstrap);
+  return Object.fromEntries(
+    Object.entries(bootstrap.provider_options).map(([providerId, options]) => [
+      providerId,
+      withProviderAccountIdentity(providerId, options, accountIdentityById),
+    ]),
+  );
+};
+
 const toErrorMessage = (error: unknown): string => {
   if (error instanceof Error) return error.message;
   return String(error);
@@ -204,9 +263,9 @@ export function useWorkbenchProviders({
     });
   }, []);
 
-  const applyProvidersBootstrap = useCallback((bootstrap: Awaited<ReturnType<typeof loadProvidersBootstrap>>) => {
+  const applyProvidersBootstrap = useCallback((bootstrap: ProvidersBootstrapResponse) => {
     setProviders(bootstrap.providers);
-    setProviderOptions((prev) => mergeProviderOptionsMap(prev, bootstrap.provider_options));
+    setProviderOptions((prev) => mergeProviderOptionsMap(prev, normalizeBootstrapProviderOptions(bootstrap)));
   }, []);
 
   const providersById = useMemo(
@@ -496,10 +555,18 @@ export function useWorkbenchProviders({
       const request = (force ? refreshProvidersBootstrap(workspaceId) : loadProvidersBootstrap(workspaceId))
         .then(async (bootstrap) => {
           applyProvidersBootstrap(bootstrap);
-          let next = resolveProviderOptionsUpdate(cached, bootstrap.provider_options[providerId]);
+          const accountIdentityById = deriveProviderAccountIdentityById(bootstrap);
+          let next = resolveProviderOptionsUpdate(
+            cached,
+            withProviderAccountIdentity(providerId, bootstrap.provider_options[providerId], accountIdentityById),
+          );
           if (shouldHydrateProviderModels(providerId, next, trigger)) {
             try {
-              const detailed = await getProviderOptions(workspaceId, providerId);
+              const detailed = withProviderAccountIdentity(
+                providerId,
+                await getProviderOptions(workspaceId, providerId),
+                accountIdentityById,
+              );
               next = resolveProviderOptionsUpdate(next, detailed);
               setProviderOptions((prev) => {
                 const resolved = resolveProviderOptionsUpdate(prev[providerId], next);

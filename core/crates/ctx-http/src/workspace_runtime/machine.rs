@@ -441,6 +441,67 @@ fn managed_podman_machine_cache_install_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+fn managed_artifact_download_tmp_path(final_path: &Path) -> PathBuf {
+    let file_name = final_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or("managed-artifact");
+    final_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(format!(
+            ".{file_name}.download-{}",
+            uuid::Uuid::new_v4().simple()
+        ))
+}
+
+async fn verify_managed_artifact_checksum(path: &Path, expected_sha256: &str) -> Result<bool> {
+    if !path.exists() {
+        return Ok(false);
+    }
+    let digest = updates::sha256_hex_file(path)
+        .await
+        .with_context(|| format!("computing sha256 for {}", path.display()))?;
+    Ok(digest.eq_ignore_ascii_case(expected_sha256.trim()))
+}
+
+async fn finalize_managed_artifact_download(
+    tmp_path: &Path,
+    final_path: &Path,
+    expected_sha256: &str,
+    artifact_label: &str,
+) -> Result<()> {
+    let digest = updates::sha256_hex_file(tmp_path)
+        .await
+        .with_context(|| format!("computing sha256 for {}", tmp_path.display()))?;
+    if !digest.eq_ignore_ascii_case(expected_sha256.trim()) {
+        let _ = fs::remove_file(tmp_path).await;
+        anyhow::bail!(
+            "{artifact_label} checksum mismatch: expected {}, got {}",
+            expected_sha256.trim(),
+            digest
+        );
+    }
+
+    match fs::rename(tmp_path, final_path).await {
+        Ok(()) => Ok(()),
+        Err(rename_err) => {
+            if verify_managed_artifact_checksum(final_path, expected_sha256).await? {
+                let _ = fs::remove_file(tmp_path).await;
+                return Ok(());
+            }
+            Err(rename_err).with_context(|| {
+                format!(
+                    "moving {artifact_label} into place: {} -> {}",
+                    tmp_path.display(),
+                    final_path.display()
+                )
+            })
+        }
+    }
+}
+
 pub(super) async fn ensure_managed_podman_machine_cache(
     data_root: &Path,
     observer: Option<&dyn HarnessSetupObserver>,
@@ -483,7 +544,7 @@ pub(super) async fn ensure_managed_podman_machine_cache(
     fs::create_dir_all(parent)
         .await
         .with_context(|| format!("creating {}", parent.display()))?;
-    let tmp_path = final_path.with_extension("download");
+    let tmp_path = managed_artifact_download_tmp_path(&final_path);
     observe_log(
         observer,
         HarnessSetupPhase::ArtifactDownload,
@@ -504,24 +565,13 @@ pub(super) async fn ensure_managed_podman_machine_cache(
         )),
     )
     .await?;
-    let digest = updates::sha256_hex_file(&tmp_path)
-        .await
-        .with_context(|| format!("computing sha256 for {}", tmp_path.display()))?;
-    if !digest.eq_ignore_ascii_case(source.sha256.trim()) {
-        let _ = fs::remove_file(&tmp_path).await;
-        anyhow::bail!(
-            "managed podman machine cache checksum mismatch: expected {}, got {}",
-            source.sha256.trim(),
-            digest
-        );
-    }
-    fs::rename(&tmp_path, &final_path).await.with_context(|| {
-        format!(
-            "moving managed podman machine cache into place: {} -> {}",
-            tmp_path.display(),
-            final_path.display()
-        )
-    })?;
+    finalize_managed_artifact_download(
+        &tmp_path,
+        &final_path,
+        &source.sha256,
+        "managed podman machine cache",
+    )
+    .await?;
     Ok(final_path)
 }
 
@@ -1332,6 +1382,57 @@ mod tests {
             rendered.contains("downloading managed artifact")
                 || rendered.contains("managed artifact download http error"),
             "repair should attempt managed runtime download, got: {rendered}"
+        );
+    }
+
+    #[tokio::test]
+    async fn finalize_managed_artifact_download_tolerates_parallel_committers() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let final_path = temp.path().join("podman-machine");
+        let first_tmp = temp.path().join("podman-machine.download-first");
+        let second_tmp = temp.path().join("podman-machine.download-second");
+        let payload = b"shared-machine-cache";
+
+        fs::write(&first_tmp, payload)
+            .await
+            .expect("write first tmp payload");
+        fs::write(&second_tmp, payload)
+            .await
+            .expect("write second tmp payload");
+        let expected_sha256 = updates::sha256_hex_file(&first_tmp)
+            .await
+            .expect("compute tmp checksum");
+
+        let (first, second) = tokio::join!(
+            finalize_managed_artifact_download(
+                &first_tmp,
+                &final_path,
+                &expected_sha256,
+                "managed podman machine cache"
+            ),
+            finalize_managed_artifact_download(
+                &second_tmp,
+                &final_path,
+                &expected_sha256,
+                "managed podman machine cache"
+            ),
+        );
+
+        first.expect("first finalization should succeed");
+        second.expect("second finalization should succeed");
+        assert!(
+            verify_managed_artifact_checksum(&final_path, &expected_sha256)
+                .await
+                .expect("verify final checksum"),
+            "final cache artifact should exist with the expected checksum"
+        );
+        assert!(
+            !first_tmp.exists(),
+            "first tmp path should be consumed during finalization"
+        );
+        assert!(
+            !second_tmp.exists(),
+            "second tmp path should be cleaned up during finalization"
         );
     }
 }

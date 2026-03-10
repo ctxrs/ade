@@ -119,7 +119,6 @@ export const trackWorkspaceLaunchCompleted = (props: {
 }): void => {
   const clickToLaunchReadyMs = Math.max(0, Date.now() - props.startedAtMs);
   capture("workspace_launch_completed", {
-    workspace_id: props.workspaceId,
     workspace_kind: props.workspaceKind,
     execution_mode: props.executionMode,
     source: props.source,
@@ -144,7 +143,6 @@ export const trackWorkspaceRouteOpenedFromPending = (workspaceId: string): void 
   if (!pending) return;
   clearPendingWorkspaceLaunch(workspaceId);
   capture("workspace_route_opened", {
-    workspace_id: pending.workspace_id,
     workspace_kind: pending.workspace_kind,
     execution_mode: pending.execution_mode,
     source: pending.source,

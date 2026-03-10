@@ -92,6 +92,7 @@ type TestInternalEntry = {
 
 type SessionSupervisorInternals = {
   entries: Map<string, TestInternalEntry>;
+  stateCacheBySessionId: Map<string, { state: { git_status: unknown }; stateRev?: number }>;
   ensureEntry: (sessionId: string) => TestInternalEntry;
   handleReplicaPatches: (patches: SessionReplicaPatch[]) => void;
 };
@@ -1234,6 +1235,61 @@ describe("SessionSupervisor", () => {
     expect(listSessionSubagentInvocations).toHaveBeenCalledTimes(1);
   });
 
+  it("refetches session state instead of reusing cache when no revision is known", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-state-unknown-revision";
+    const createdAt = new Date().toISOString();
+    getSessionStateMock
+      .mockResolvedValueOnce({
+        artifacts: [
+          {
+            id: "artifact-a",
+            session_id: sessionId,
+            task_id: "task-1",
+            worktree_id: "wt-1",
+            absolute_path: "/tmp/a",
+            mime_type: "text/plain",
+            bytes: 1,
+            created_at: createdAt,
+          },
+        ],
+        git_status: null,
+      } as never)
+      .mockResolvedValueOnce({
+        artifacts: [
+          {
+            id: "artifact-b",
+            session_id: sessionId,
+            task_id: "task-1",
+            worktree_id: "wt-1",
+            absolute_path: "/tmp/b",
+            mime_type: "text/plain",
+            bytes: 1,
+            created_at: createdAt,
+          },
+        ],
+        git_status: null,
+      } as never);
+
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+
+    sup.loadSessionState(sessionId);
+    await waitForCondition(() => internals.entries.get(sessionId)?.stateLoaded === true);
+
+    internals.entries.delete(sessionId);
+
+    sup.loadSessionState(sessionId);
+    await waitForCondition(() => {
+      const entry = internals.entries.get(sessionId);
+      return entry?.stateLoaded === true
+        && sup.getSnapshot().sessions[sessionId]?.artifacts[0]?.absolute_path === "/tmp/b";
+    });
+
+    expect(getSessionState).toHaveBeenCalledTimes(2);
+  });
+
   it("refetches session state when streamed head revisions advance after a warm load", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 
@@ -1544,5 +1600,42 @@ describe("SessionSupervisor", () => {
     const recoveredEntry = sup.getSnapshot().sessions[sessionId];
     expect(recoveredEntry?.artifacts).toEqual([]);
     expect(recoveredEntry?.subagentInvocations).toEqual([]);
+  });
+
+  it("clears cached git status when a fresh state response omits it", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-state-clears-git-status";
+    getSessionStateMock
+      .mockResolvedValueOnce({
+        artifacts: [],
+        git_status: {
+          summary_line: "main +1",
+          branch: "main",
+          upstream: "origin/main",
+          ahead: 1,
+          behind: 0,
+          detached: false,
+          staged: 0,
+          unstaged: 1,
+          untracked: 0,
+        },
+      } as never)
+      .mockResolvedValueOnce({
+        artifacts: [],
+        git_status: null,
+      } as never);
+
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+
+    sup.loadSessionState(sessionId);
+    await waitForCondition(() => internals.entries.get(sessionId)?.stateLoaded === true);
+
+    sup.loadSessionState(sessionId, { force: true });
+    await waitForCondition(() => internals.stateCacheBySessionId.get(sessionId)?.state.git_status === null);
+
+    expect(sup.getSnapshot().sessions[sessionId]?.gitStatusSummary).toBeNull();
+    expect(internals.stateCacheBySessionId.get(sessionId)?.state.git_status).toBeNull();
   });
 });

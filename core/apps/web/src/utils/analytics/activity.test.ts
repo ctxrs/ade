@@ -111,7 +111,6 @@ describe("analytics events", () => {
       "workspace_launch_completed",
       1,
       expect.objectContaining({
-        workspace_id: "ws_123",
         click_to_launch_ready_ms: 10000,
         execution_mode: "container",
         result: "ready",
@@ -121,10 +120,19 @@ describe("analytics events", () => {
       "workspace_route_opened",
       1,
       expect.objectContaining({
-        workspace_id: "ws_123",
         click_to_workspace_route_ms: 10000,
         execution_mode: "container",
       }),
+    );
+    expect(captureProductEventMock).not.toHaveBeenCalledWith(
+      "workspace_launch_completed",
+      1,
+      expect.objectContaining({ workspace_id: "ws_123" }),
+    );
+    expect(captureProductEventMock).not.toHaveBeenCalledWith(
+      "workspace_route_opened",
+      1,
+      expect.objectContaining({ workspace_id: "ws_123" }),
     );
   });
 });

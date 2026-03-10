@@ -142,6 +142,7 @@ export type SessionCacheEntry = {
   artifacts: Artifact[];
   artifactsLoading: boolean;
   subagentInvocations: SubagentInvocation[];
+  subagentInvocationsLoaded?: boolean;
   subagentInvocationsLoading: boolean;
   stateLoaded: boolean;
   stateLoading: boolean;
@@ -666,6 +667,7 @@ export class SessionSupervisor {
         artifacts: e.artifacts,
         artifactsLoading: e.artifactsLoading,
         subagentInvocations: e.subagentInvocations,
+        subagentInvocationsLoaded: e.subagentInvocationsLoaded,
         subagentInvocationsLoading: e.subagentInvocationsLoading,
         stateLoaded: e.stateLoaded,
         stateLoading: e.stateLoading,
@@ -1059,11 +1061,13 @@ export class SessionSupervisor {
 
   private async ensureState(entry: InternalEntry, opts?: { force?: boolean }) {
     const cached = this.stateCacheBySessionId.get(entry.sessionId);
+    const requestedStateRev = this.resolveRequestedStateRev(entry);
     const cachedOrAppliedRev =
       typeof cached?.stateRev === "number" ? cached.stateRev : entry.stateAppliedRev;
     const cacheMatchesRequestedRev =
-      typeof entry.stateRev !== "number"
-      || (typeof cachedOrAppliedRev === "number" && cachedOrAppliedRev >= entry.stateRev);
+      typeof requestedStateRev === "number"
+      && typeof cachedOrAppliedRev === "number"
+      && cachedOrAppliedRev >= requestedStateRev;
     if (!opts?.force && cached && cacheMatchesRequestedRev) {
       this.applyState(entry, cached.state);
       entry.updatedAtMs = Date.now();
@@ -1079,7 +1083,7 @@ export class SessionSupervisor {
     if (!shouldFetchSessionState(entry, opts)) return;
     entry.stateLoading = true;
     this.clearSupportLoadError(entry, "state");
-    const requestRev = entry.stateRev;
+    const requestRev = requestedStateRev;
     entry.stateFetchToken += 1;
     const fetchToken = entry.stateFetchToken;
     entry.updatedAtMs = Date.now();
@@ -1119,6 +1123,19 @@ export class SessionSupervisor {
       }
     });
     this.stateRequestsInFlight.set(entry.sessionId, request);
+  }
+
+  private resolveRequestedStateRev(entry: InternalEntry): number | undefined {
+    if (typeof entry.stateRev === "number") return entry.stateRev;
+    const head = findWorkspaceSessionHead(
+      this.workspaceSnapshotState,
+      this.workspaceSessionHeadsById,
+      entry.sessionId,
+    );
+    if (!head) return undefined;
+    const headRecord = asRecord(head);
+    const headStateRev = headRecord?.state_rev ?? headRecord?.stateRev;
+    return typeof headStateRev === "number" ? headStateRev : undefined;
   }
 
   private async ensureArtifacts(entry: InternalEntry, opts?: { force?: boolean }) {
@@ -1627,7 +1644,7 @@ export class SessionSupervisor {
   private buildStateGitStatusSummary(entry: InternalEntry): SessionState["git_status"] {
     const summary = entry.gitStatusSummary;
     const cached = this.stateCacheBySessionId.get(entry.sessionId)?.state.git_status ?? null;
-    if (!summary && !cached) return null;
+    if (!summary) return null;
 
     const summaryLine =
       typeof summary?.summary_line === "string"
@@ -1636,8 +1653,8 @@ export class SessionSupervisor {
           ? summary.summaryLine
           : typeof summary?.summary === "string"
             ? summary.summary
-            : cached?.summary_line ?? "";
-    if (!summaryLine) return cached;
+            : "";
+    if (!summaryLine) return null;
 
     const readNumber = (value: unknown, fallback: number): number => {
       if (typeof value === "number" && Number.isFinite(value)) return value;

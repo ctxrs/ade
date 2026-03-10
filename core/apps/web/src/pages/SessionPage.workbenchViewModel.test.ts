@@ -853,7 +853,7 @@ describe("buildWorkbenchThreadViewModel", () => {
   }, 10000);
 
   it("produces a messagesKey that changes when message content changes with same length", async () => {
-    const { deriveMessagesKey } = await import("./SessionPage");
+    const { deriveMessagesKey } = await import("./SessionPage.workbenchViewModel");
 
     const base = {
       id: "m1",
@@ -866,6 +866,55 @@ describe("buildWorkbenchThreadViewModel", () => {
 
     const k1 = deriveMessagesKey([{ ...base, content: "hello" }] as unknown as Message[]);
     const k2 = deriveMessagesKey([{ ...base, content: "world" }] as unknown as Message[]);
+    expect(k1).not.toBe(k2);
+  }, 10000);
+
+  it("produces a messagesKey that changes when message attachments change in place", async () => {
+    const { deriveMessagesKey } = await import("./SessionPage.workbenchViewModel");
+
+    const base = {
+      id: "m1",
+      session_id: "s1",
+      role: "assistant",
+      content: "same",
+      delivery: "immediate",
+      created_at: "2025-12-15T00:00:00.000Z",
+    };
+
+    const k1 = deriveMessagesKey([{ ...base, attachments: [] }] as unknown as Message[]);
+    const k2 = deriveMessagesKey([
+      {
+        ...base,
+        attachments: [{ blob_id: "blob-1", mime_type: "image/png" }],
+      },
+    ] as unknown as Message[]);
+    expect(k1).not.toBe(k2);
+  }, 10000);
+
+  it("produces a turnsKey that changes when a non-tail turn updates in place", async () => {
+    const { deriveTurnsKey } = await import("./SessionPage.workbenchViewModel");
+
+    const turns = [
+      {
+        turn_id: "turn-1",
+        start_seq: 1,
+        updated_at: "2025-12-15T00:00:00.000Z",
+      },
+      {
+        turn_id: "turn-2",
+        start_seq: 2,
+        updated_at: "2025-12-15T00:00:01.000Z",
+      },
+    ];
+
+    const k1 = deriveTurnsKey(turns as unknown as SessionTurn[]);
+    const k2 = deriveTurnsKey([
+      {
+        ...turns[0],
+        updated_at: "2025-12-15T00:01:00.000Z",
+      },
+      turns[1],
+    ] as unknown as SessionTurn[]);
     expect(k1).not.toBe(k2);
   }, 10000);
 

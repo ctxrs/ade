@@ -109,4 +109,73 @@ describe("resolveProviderOptionsUpdate", () => {
       probe_error: previous.probe_error,
     });
   });
+
+  it("drops preserved models and probe state when subscription account identity changes", () => {
+    const previous: ProviderOptions = {
+      ...baseOptions("codex"),
+      account_identity: "acct-a",
+      models: {
+        models: [{ id: "gpt-5" }],
+        current_model_id: "gpt-5",
+      },
+      probe_ok: false,
+      probe_error: "stale probe failure",
+    };
+    const next: ProviderOptions = {
+      ...baseOptions("codex"),
+      account_identity: "acct-b",
+      probed_at: "2026-03-09T00:00:05.000Z",
+    };
+
+    expect(resolveProviderOptionsUpdate(previous, next)).toEqual(next);
+  });
+
+  it("drops preserved models when endpoint credentials rotate on the same endpoint", () => {
+    const previous: ProviderOptions = {
+      ...baseOptions("claude-crp"),
+      auth_mode: "endpoint",
+      source: {
+        provider_id: "claude-crp",
+        selected_source_kind: "endpoint",
+        selected_endpoint_id: "ep-1",
+        endpoints: [
+          {
+            id: "ep-1",
+            provider_id: "claude-crp",
+            name: "Primary",
+            base_url: "https://api.example.test",
+            api_shape: "anthropic_messages",
+            auth_type: "bearer",
+            model_override: null,
+            created_at: "2026-03-09T00:00:00.000Z",
+            updated_at: "2026-03-09T00:00:00.000Z",
+            last_verification_status: "valid",
+            last_verification_at: null,
+            last_error: null,
+            has_api_key: true,
+          },
+        ],
+      },
+      models: {
+        models: [{ id: "claude-sonnet-4.5" }],
+        current_model_id: "claude-sonnet-4.5",
+      },
+    };
+    const next: ProviderOptions = {
+      ...previous,
+      probed_at: "2026-03-09T00:00:05.000Z",
+      models: undefined,
+      source: {
+        ...previous.source!,
+        endpoints: [
+          {
+            ...previous.source!.endpoints[0]!,
+            updated_at: "2026-03-09T00:01:00.000Z",
+          },
+        ],
+      },
+    };
+
+    expect(resolveProviderOptionsUpdate(previous, next)).toEqual(next);
+  });
 });

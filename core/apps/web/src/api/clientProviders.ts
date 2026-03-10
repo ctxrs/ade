@@ -77,6 +77,7 @@ export type ProviderOptions = {
   auth_required: boolean;
   has_active_auth?: boolean;
   auth_mode?: "subscription" | "endpoint" | "none";
+  account_identity?: string | null;
   auth_methods?: unknown;
   modes?: unknown;
   models?: unknown;

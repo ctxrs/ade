@@ -608,6 +608,19 @@ describe("useHarnessAuthenticationController", () => {
       active_account_id: "amp-2",
       accounts: baseAmpAccounts.accounts,
     });
+    vi.mocked(refreshProvidersBootstrap).mockResolvedValue(makeBootstrap({
+      providers: [
+        {
+          provider_id: "codex",
+          display_name: "Codex",
+          installed: true,
+          health: "ok",
+          details: {
+            install_target: "container",
+          },
+        } as never,
+      ],
+    }));
 
     render(createElement(ControllerHarness, {
       onChange: (next) => {
@@ -623,10 +636,11 @@ describe("useHarnessAuthenticationController", () => {
       await controller?.onAmpDelete("amp-1");
     });
     await waitFor(() => {
-      expect(vi.mocked(listProviders)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(refreshProvidersBootstrap)).toHaveBeenCalledTimes(1);
       expect(vi.mocked(invalidateProvidersBootstrap)).toHaveBeenCalledTimes(1);
+      expect(requireController(controller).providers[0]?.details?.install_target).toBe("container");
     });
-    const refreshCallsAfterDelete = vi.mocked(listProviders).mock.calls.length;
+    const refreshCallsAfterDelete = vi.mocked(refreshProvidersBootstrap).mock.calls.length;
     const invalidateCallsAfterDelete = vi.mocked(invalidateProvidersBootstrap).mock.calls.length;
 
     await act(async () => {
@@ -634,8 +648,9 @@ describe("useHarnessAuthenticationController", () => {
     });
     await waitFor(() => {
       expect(vi.mocked(setAmpActiveAccount)).toHaveBeenCalledWith("amp-2");
-      expect(vi.mocked(listProviders).mock.calls.length).toBeGreaterThan(refreshCallsAfterDelete);
+      expect(vi.mocked(refreshProvidersBootstrap).mock.calls.length).toBeGreaterThan(refreshCallsAfterDelete);
       expect(vi.mocked(invalidateProvidersBootstrap).mock.calls.length).toBeGreaterThan(invalidateCallsAfterDelete);
+      expect(requireController(controller).providers[0]?.details?.install_target).toBe("container");
     });
   });
 
