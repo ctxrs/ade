@@ -11,6 +11,7 @@ import {
   deleteAmpAccount,
   getCodexLogin,
   getGeminiLogin,
+  listProviders,
   selectProviderHarnessSource,
   setAmpActiveAccount,
   startAmpLogin,
@@ -52,6 +53,7 @@ vi.mock("../../../api/client", async (importOriginal) => {
     deleteAmpAccount: vi.fn(),
     getCodexLogin: vi.fn(),
     getGeminiLogin: vi.fn(),
+    listProviders: vi.fn(),
     selectProviderHarnessSource: vi.fn(),
     setAmpActiveAccount: vi.fn(),
     startAmpLogin: vi.fn(),
@@ -215,6 +217,7 @@ beforeEach(() => {
   vi.mocked(deleteAmpAccount).mockReset();
   vi.mocked(getCodexLogin).mockReset();
   vi.mocked(getGeminiLogin).mockReset();
+  vi.mocked(listProviders).mockReset();
   vi.mocked(selectProviderHarnessSource).mockReset();
   vi.mocked(setAmpActiveAccount).mockReset();
   vi.mocked(startAmpLogin).mockReset();
@@ -226,6 +229,7 @@ beforeEach(() => {
   vi.mocked(loadProvidersBootstrap).mockReset();
   vi.mocked(refreshProvidersBootstrap).mockReset();
   vi.mocked(openExternalLink).mockReset();
+  vi.mocked(listProviders).mockResolvedValue([]);
   vi.mocked(loadProvidersBootstrap).mockResolvedValue(makeBootstrap());
   vi.mocked(refreshProvidersBootstrap).mockResolvedValue(makeBootstrap());
 });
@@ -585,7 +589,7 @@ describe("useHarnessAuthenticationController", () => {
     });
   });
 
-  it("refreshes providers bootstrap after Amp account mutations", async () => {
+  it("refreshes provider slices after Amp account mutations", async () => {
     let controller: Controller | null = null;
     const ampRow: HarnessAuthRow = {
       key: "amp:amp-2",
@@ -619,10 +623,10 @@ describe("useHarnessAuthenticationController", () => {
       await controller?.onAmpDelete("amp-1");
     });
     await waitFor(() => {
-      expect(vi.mocked(refreshProvidersBootstrap)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(listProviders)).toHaveBeenCalledTimes(1);
       expect(vi.mocked(invalidateProvidersBootstrap)).toHaveBeenCalledTimes(1);
     });
-    const refreshCallsAfterDelete = vi.mocked(refreshProvidersBootstrap).mock.calls.length;
+    const refreshCallsAfterDelete = vi.mocked(listProviders).mock.calls.length;
     const invalidateCallsAfterDelete = vi.mocked(invalidateProvidersBootstrap).mock.calls.length;
 
     await act(async () => {
@@ -630,7 +634,7 @@ describe("useHarnessAuthenticationController", () => {
     });
     await waitFor(() => {
       expect(vi.mocked(setAmpActiveAccount)).toHaveBeenCalledWith("amp-2");
-      expect(vi.mocked(refreshProvidersBootstrap).mock.calls.length).toBeGreaterThan(refreshCallsAfterDelete);
+      expect(vi.mocked(listProviders).mock.calls.length).toBeGreaterThan(refreshCallsAfterDelete);
       expect(vi.mocked(invalidateProvidersBootstrap).mock.calls.length).toBeGreaterThan(invalidateCallsAfterDelete);
     });
   });
