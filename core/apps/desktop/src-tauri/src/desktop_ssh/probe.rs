@@ -25,25 +25,6 @@ fn looks_like_windows_shell_error(raw: &str) -> bool {
         || lowered.contains("powershell")
 }
 
-pub(crate) fn validate_remote_container_bootstrap_platform(
-    target: &str,
-    os: &str,
-    arch_raw: &str,
-) -> Result<&'static str> {
-    let os = os.trim();
-    if os != "Linux" {
-        anyhow::bail!(
-            "Remote container bootstrap requires a Linux host. Detected remote OS `{os}` on `{target}`. {REMOTE_CONTAINER_BOOTSTRAP_PLATFORM_HINT}"
-        );
-    }
-    let arch_raw = arch_raw.trim();
-    normalize_remote_arch_token(arch_raw).ok_or_else(|| {
-        anyhow!(
-            "Remote container bootstrap requires Linux x86_64 or arm64. Detected remote architecture `{arch_raw}` on `{target}`. {REMOTE_CONTAINER_BOOTSTRAP_PLATFORM_HINT}"
-        )
-    })
-}
-
 pub(super) fn probe_remote_linux_platform_with_optional_password(
     host: &str,
     user: Option<&str>,

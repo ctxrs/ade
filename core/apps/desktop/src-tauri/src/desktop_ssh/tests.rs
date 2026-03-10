@@ -53,15 +53,6 @@ fn remote_ctx_bin_parent_dir_handles_home_and_absolute_paths() {
 }
 
 #[test]
-fn remote_container_bootstrap_platform_requires_linux() {
-    let err = validate_remote_container_bootstrap_platform("dev@example.host", "Darwin", "x86_64")
-        .expect_err("non-linux remote should fail");
-    let msg = err.to_string();
-    assert!(msg.contains("requires a Linux host"));
-    assert!(msg.contains("dev@example.host"));
-}
-
-#[test]
 fn remote_daemon_exec_command_does_not_inject_system_podman_env() {
     let command = super::install::render_remote_daemon_exec_cmd("~/.ctx/bin/ctx", 44199, "~/.ctx")
         .expect("render remote daemon exec command");

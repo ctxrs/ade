@@ -28,7 +28,6 @@ pub(crate) use commands::{
 pub(crate) use connect::{desktop_connect_ssh, desktop_connect_ssh_begin};
 pub(crate) use jobs::desktop_connect_ssh_poll;
 pub(crate) use model::normalize_update_channel;
-pub(crate) use probe::validate_remote_container_bootstrap_platform;
 pub(crate) use transport::{remote_path_expr, shell_escape};
 pub(crate) use update::desktop_update_remote_daemon;
 

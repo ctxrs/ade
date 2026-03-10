@@ -113,8 +113,6 @@ pub(super) const REMOTE_BOOTSTRAP_CAPABILITY_MSG: &str =
     "Remote daemon bootstrap failed while retrieving managed daemon artifact. Check network connectivity and release metadata.";
 pub(super) const PLATFORM_PROBE_OS_MARKER: &str = "__CTX_PLATFORM_OS__";
 pub(super) const PLATFORM_PROBE_ARCH_MARKER: &str = "__CTX_PLATFORM_ARCH__";
-pub(super) const REMOTE_CONTAINER_BOOTSTRAP_PLATFORM_HINT: &str =
-    "Use a Linux x86_64 or arm64 host, or switch the workspace execution environment to `host`.";
 pub(super) const SSH_CONFIG_OVERRIDE_ENV: &str = "CTX_DESKTOP_SSH_CONFIG_PATH";
 pub(super) const SSH_TUNNEL_BOOTSTRAP_HEALTH_RETRIES: usize = 12;
 pub(super) const SSH_TUNNEL_BOOTSTRAP_HEALTH_BASE_DELAY_MS: u64 = 150;
