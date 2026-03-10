@@ -13,6 +13,7 @@ import {
 
 const INSTALL_POLL_MS = 900;
 const INSTALL_EVENT_HISTORY_LIMIT = 200;
+const MISSING_INSTALL_ERROR = "Install is no longer tracked by the daemon. Retry from this screen.";
 
 type Listener = (snapshot: InstallProgressSnapshot) => void;
 
@@ -181,6 +182,19 @@ const mergeInstallInfo = (entry: InstallProgressInternalEntry, info: InstallInfo
   return changed;
 };
 
+const markInstallMissingAsTerminal = (entry: InstallProgressInternalEntry): boolean => {
+  const changed =
+    entry.state !== "failed"
+    || entry.errorCode !== "unknown"
+    || entry.error !== MISSING_INSTALL_ERROR;
+
+  entry.state = "failed";
+  entry.errorCode = "unknown";
+  entry.error = MISSING_INSTALL_ERROR;
+  entry.updatedAtMs = Date.now();
+  return changed;
+};
+
 async function runPollCycle(): Promise<void> {
   if (pollInFlight) {
     await pollInFlight;
@@ -198,8 +212,8 @@ async function runPollCycle(): Promise<void> {
       const response = await getInstallStatuses(installIds);
       for (const item of response.installs) {
         const entry = installsById.get(item.install_id);
-        if (!entry || !item.info) continue;
-        if (mergeInstallInfo(entry, item.info)) {
+        if (!entry) continue;
+        if (item.info ? mergeInstallInfo(entry, item.info) : markInstallMissingAsTerminal(entry)) {
           changed = true;
         }
         syncProviderAliases(entry);

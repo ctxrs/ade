@@ -6,6 +6,7 @@ import type {
   HarnessProviderSourceConfig,
   ProvidersBootstrapResponse,
   ProviderAuthCheck,
+  ProviderStatus,
 } from "../../../api/client";
 import {
   deleteAmpAccount,
@@ -743,6 +744,61 @@ describe("useHarnessAuthenticationController", () => {
       expect(vi.mocked(invalidateProvidersBootstrap).mock.calls.length).toBeGreaterThan(invalidateCallsAfterDelete);
       expect(requireController(controller).providers[0]?.details?.install_target).toBe("container");
     });
+  });
+
+  it("preserves workspace-scoped providers when workspace refresh fails after a mutation", async () => {
+    let controller: Controller | null = null;
+    const workspaceProvider: ProviderStatus = {
+      provider_id: "codex",
+      installed: true,
+      health: "ok",
+      diagnostics: [],
+      details: {
+        install_target: "container",
+      },
+    };
+    const hostProvider: ProviderStatus = {
+      provider_id: "codex",
+      installed: true,
+      health: "ok",
+      diagnostics: [],
+      details: {
+        install_target: "host",
+      },
+    };
+
+    vi.mocked(loadProvidersBootstrap).mockResolvedValue(makeBootstrap({
+      providers: [workspaceProvider],
+    }));
+    vi.mocked(refreshProvidersBootstrap).mockRejectedValue(new Error("workspace refresh failed"));
+    vi.mocked(listProviders).mockResolvedValue([hostProvider]);
+    vi.mocked(deleteAmpAccount).mockResolvedValue({
+      active_account_id: "amp-2",
+      accounts: [baseAmpAccounts.accounts[1]!],
+    });
+
+    render(createElement(ControllerHarness, {
+      onChange: (next) => {
+        controller = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(controller).not.toBeNull();
+      expect(requireController(controller).providers[0]?.details?.install_target).toBe("container");
+    });
+
+    await act(async () => {
+      await controller?.onAmpDelete("amp-1");
+    });
+
+    await waitFor(() => {
+      expect(requireController(controller).providerError).toBe("workspace refresh failed");
+    });
+
+    expect(requireController(controller).providers[0]?.details?.install_target).toBe("container");
+    expect(vi.mocked(listProviders)).not.toHaveBeenCalled();
+    expect(vi.mocked(invalidateProvidersBootstrap)).toHaveBeenCalledWith("ws-test");
   });
 
   it("cancels an in-flight codex subscription poll when the modal closes", async () => {

@@ -1042,6 +1042,138 @@ async fn acp_container_install_is_blocked_before_start_when_bridge_runtime_is_in
 }
 
 #[tokio::test]
+async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_and_keeps_acp_dependents_in_batch(
+) {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let fixture_dir = data_dir.path().join("fixtures");
+    std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
+    let bridge_fixture = fixture_dir.join("acp-crp-bridge");
+    let kimi_fixture = fixture_dir.join("kimi-acp");
+    let qwen_fixture = fixture_dir.join("qwen-acp");
+    write_executable(&bridge_fixture, "#!/bin/sh\nsleep 0.3\nexit 0\n");
+    write_executable(&kimi_fixture, "#!/bin/sh\nexit 0\n");
+    write_executable(&qwen_fixture, "#!/bin/sh\nexit 0\n");
+    save_matrix_fixture(
+        data_dir.path(),
+        &provider_fixture_matrix_with_providers(
+            file_url(&bridge_fixture),
+            vec![
+                ("kimi", file_url(&kimi_fixture)),
+                ("qwen", file_url(&qwen_fixture)),
+            ],
+        ),
+    )
+    .await;
+
+    save_invalid_container_bridge_runtime(data_dir.path()).await;
+
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        HashMap::new(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+
+    let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::POST,
+        "/api/providers/install_all?target=container",
+        None,
+    )
+    .await;
+    assert_eq!(
+        install_status,
+        StatusCode::OK,
+        "bulk install should accept the bridge repair flow: {install_body:#?}"
+    );
+    let installs = install_body
+        .as_array()
+        .cloned()
+        .expect("bulk install response should be an array");
+    let install_ids = installs
+        .iter()
+        .map(|entry| {
+            let provider_id = entry
+                .get("provider_id")
+                .and_then(serde_json::Value::as_str)
+                .expect("provider id")
+                .to_string();
+            let install_id = entry
+                .get("install_id")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|raw| raw.parse::<InstallId>().ok())
+                .expect("install id");
+            (provider_id, install_id)
+        })
+        .collect::<HashMap<_, _>>();
+    assert_eq!(
+        install_ids.len(),
+        3,
+        "bulk install should keep the bridge and ACP dependents in the same batch: {install_body:#?}"
+    );
+    assert!(
+        install_ids.contains_key("acp-crp-bridge"),
+        "bridge repair must stay in the batch: {install_body:#?}"
+    );
+    assert!(
+        install_ids.contains_key("kimi"),
+        "kimi should be deferred behind the bridge repair instead of skipped: {install_body:#?}"
+    );
+    assert!(
+        install_ids.contains_key("qwen"),
+        "qwen should be deferred behind the bridge repair instead of skipped: {install_body:#?}"
+    );
+
+    for provider_id in ["acp-crp-bridge", "kimi", "qwen"] {
+        let install_info = wait_for_install_completion(
+            &state,
+            *install_ids
+                .get(provider_id)
+                .expect("missing install id from bulk response"),
+        )
+        .await;
+        assert!(
+            matches!(install_info.state, InstallStateKind::Succeeded),
+            "{provider_id} should succeed after the bridge repair batch: {install_info:#?}"
+        );
+    }
+
+    let reloaded_stores = common::setup_store(data_dir.path()).await;
+    let reloaded_state = common::build_state(
+        data_dir.path().to_path_buf(),
+        reloaded_stores,
+        HashMap::new(),
+        "http://127.0.0.1:0",
+    );
+    let reloaded_app = common::router(reloaded_state);
+
+    for provider_id in ["kimi", "qwen"] {
+        let (provider_status, provider_body): (StatusCode, serde_json::Value) =
+            common::json_request(
+                &reloaded_app,
+                axum::http::Method::GET,
+                format!("/api/providers/{provider_id}?target=container"),
+                None,
+            )
+            .await;
+        assert_eq!(
+            provider_status,
+            StatusCode::OK,
+            "provider status failed after bulk repair/install: {provider_body:#?}"
+        );
+        assert_eq!(
+            provider_body
+                .get("installed")
+                .and_then(serde_json::Value::as_bool),
+            Some(true),
+            "{provider_id} should be installed by the same bulk repair batch: {provider_body:#?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn acp_container_install_happy_path_installs_bridge_prerequisite_and_keeps_registry_entries()
 {
     let data_dir = tempfile::tempdir().expect("tempdir");

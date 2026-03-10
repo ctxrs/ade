@@ -228,6 +228,7 @@ describe("WorkspaceSetupPage", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    window.localStorage.clear();
     getInstallMock.mockReset();
     trackWizardStartedMock.mockReset();
     trackWizardStepViewedMock.mockReset();
@@ -836,6 +837,104 @@ describe("WorkspaceSetupPage", () => {
     expect(desktopKickoffRemotePrewarm).not.toHaveBeenCalled();
     expect(startWorkspaceSetupLaunchHandoff).not.toHaveBeenCalled();
     expect(repoValidateDestination).not.toHaveBeenCalled();
+  });
+
+  it("ignores hidden saved remote overrides during remote create flow", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue(configuredTitlingSettingsFixture() as never);
+    window.localStorage.setItem("contextDesktopRemoteProfilesV1", JSON.stringify([
+      {
+        host: "devbox.example",
+        user: null,
+        remote_port: 4411,
+        remote_data_dir: "/tmp/ctx-hidden",
+        updated_at_ms: 1,
+      },
+    ]));
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+
+    fireEvent.click(screen.getByTestId("wizard-option-location-remote"));
+    fireEvent.change(await screen.findByTestId("wizard-remote-host"), {
+      target: { value: "devbox.example" },
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+      expect(desktopTestSsh).toHaveBeenCalledWith({
+        host: "devbox.example",
+        user: null,
+        password_once: null,
+      });
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-option-container-no-container"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("source");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-option-source-new"));
+    fireEvent.change(screen.getByTestId("wizard-source-path"), {
+      target: { value: "/remote/new-hidden-defaults" },
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
+    await waitFor(() => {
+      expect(["session-titling", "setup"]).toContain(wizardStepKey());
+      expect(vi.mocked(desktopConnectSsh).mock.calls.length).toBeGreaterThan(0);
+    });
+    for (const [request] of vi.mocked(desktopConnectSsh).mock.calls) {
+      expect(request).toEqual(expect.objectContaining({
+        host: "devbox.example",
+        user: null,
+        password_once: null,
+        remote_port: 4399,
+        remote_data_dir: null,
+      }));
+    }
+    if (wizardStepKey() === "session-titling") {
+      fireEvent.click(screen.getByTestId("wizard-titling-skip"));
+      await waitFor(() => {
+        expect(wizardStepKey()).toBe("setup");
+      });
+    }
+
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("merge-queue");
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("confirm");
+    });
+    fireEvent.click(screen.getByTestId("wizard-create"));
+
+    await waitFor(() => {
+      expect(createWorkspace).toHaveBeenCalledWith(
+        "/remote/new-hidden-defaults",
+        "new-hidden-defaults",
+        "remote",
+        "wizard",
+      );
+      expect(upsertLauncherRecent).toHaveBeenCalledWith(expect.objectContaining({
+        kind: "ssh",
+        host: "devbox.example",
+        user: null,
+        remote_port: 4399,
+        remote_data_dir: null,
+      }));
+    });
+
+    expect(JSON.parse(window.localStorage.getItem("contextDesktopRemoteProfilesV1") ?? "[]")).toEqual([
+      expect.objectContaining({
+        host: "devbox.example",
+        user: null,
+        remote_port: 4399,
+        remote_data_dir: null,
+      }),
+    ]);
   });
 
   it("asks for one-time SSH password only after key-auth failure", async () => {

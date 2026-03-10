@@ -286,6 +286,7 @@ type InternalEntry = SessionCacheEntry & {
   artifactsFetchedAtMs?: number;
   subagentInvocationsLoaded: boolean;
   subagentInvocationsFetchedAtMs?: number;
+  subagentInvocationsAppliedRev?: number;
   stateLoaded: boolean;
   stateLoading: boolean;
   stateRev?: number;
@@ -339,7 +340,10 @@ export class SessionSupervisor {
   private taskThoughtCacheLoading = new Map<string, Promise<PersistedTaskThoughtsV1>>();
   private stateCacheBySessionId = new Map<string, { state: SessionState; stateRev?: number }>();
   private stateRequestsInFlight = new Map<string, Promise<void>>();
-  private subagentInvocationsCacheBySessionId = new Map<string, SubagentInvocation[]>();
+  private subagentInvocationsCacheBySessionId = new Map<
+    string,
+    { invocations: SubagentInvocation[]; stateRev: number }
+  >();
   private subagentInvocationsRequestsInFlight = new Map<string, Promise<void>>();
   private modeResolutionTimers = new Map<string, ReturnType<typeof globalThis.setTimeout>>();
   private modeResolutionAttempts = new Map<string, number>();
@@ -403,6 +407,7 @@ export class SessionSupervisor {
 
   openSession = (sessionId: string, opts?: OpenOptions) => {
     const entry = this.ensureEntry(sessionId);
+    const reopeningSession = entry.refCount === 0;
     entry.refCount += 1;
     entry.warmUntilMs = Date.now() + WARM_TTL_MS;
     if (opts?.mode) {
@@ -410,6 +415,9 @@ export class SessionSupervisor {
     }
     if (entry.error) {
       entry.error = undefined;
+    }
+    if (reopeningSession) {
+      this.invalidateSupportLoadsWithoutAuthoritativeRevision(entry);
     }
     this.setSessionLoadState(entry, "pending_hydration");
     const mode = this.resolveSessionMode(sessionId, entry, opts?.mode);
@@ -838,6 +846,7 @@ export class SessionSupervisor {
           entry.stateAppliedRev,
           data.stateRev,
         );
+        this.adoptLoadedSubagentInvocationsRevision(entry, data.stateRev);
       }
       if (data.summaryCheckpoint !== undefined) {
         entry.summaryCheckpoint = data.summaryCheckpoint;
@@ -971,6 +980,7 @@ export class SessionSupervisor {
       artifactsFetchedAtMs: undefined,
       subagentInvocationsLoaded: false,
       subagentInvocationsFetchedAtMs: undefined,
+      subagentInvocationsAppliedRev: undefined,
       loadedFromCache: false,
       headFromCache: false,
       thoughtCacheByKey: {},
@@ -1205,11 +1215,17 @@ export class SessionSupervisor {
   }
 
   private async ensureSubagentInvocations(entry: InternalEntry, opts?: { force?: boolean }) {
+    const requestedStateRev = this.resolveRequestedStateRev(entry);
     const cached = this.subagentInvocationsCacheBySessionId.get(entry.sessionId);
-    if (!opts?.force && cached) {
-      entry.subagentInvocations = cached.slice();
+    const cacheMatchesRequestedRev =
+      typeof requestedStateRev === "number"
+      && typeof cached?.stateRev === "number"
+      && cached.stateRev >= requestedStateRev;
+    if (!opts?.force && cached && cacheMatchesRequestedRev) {
+      entry.subagentInvocations = cached.invocations.slice();
       entry.subagentInvocationsLoaded = true;
       entry.subagentInvocationsLoading = false;
+      entry.subagentInvocationsAppliedRev = cached.stateRev;
       entry.subagentInvocationsFetchedAtMs = Date.now();
       this.clearSupportLoadError(entry, "subagentInvocations");
       entry.updatedAtMs = Date.now();
@@ -1233,10 +1249,29 @@ export class SessionSupervisor {
         const invocations = await listSessionSubagentInvocations(entry.sessionId);
         const liveEntry = this.entries.get(entry.sessionId);
         if (!liveEntry) return;
-        this.subagentInvocationsCacheBySessionId.set(entry.sessionId, invocations.slice());
+        const liveRequestedStateRev = this.resolveRequestedStateRev(liveEntry);
+        if (
+          typeof requestedStateRev === "number"
+          && typeof liveRequestedStateRev === "number"
+          && liveRequestedStateRev !== requestedStateRev
+        ) {
+          return;
+        }
+        const appliedStateRev =
+          typeof requestedStateRev === "number" ? requestedStateRev : liveRequestedStateRev;
         liveEntry.subagentInvocations = invocations;
         liveEntry.subagentInvocationsLoaded = true;
+        liveEntry.subagentInvocationsAppliedRev =
+          typeof appliedStateRev === "number" ? appliedStateRev : undefined;
         liveEntry.subagentInvocationsFetchedAtMs = Date.now();
+        if (typeof appliedStateRev === "number") {
+          this.subagentInvocationsCacheBySessionId.set(entry.sessionId, {
+            invocations: invocations.slice(),
+            stateRev: appliedStateRev,
+          });
+        } else {
+          this.subagentInvocationsCacheBySessionId.delete(entry.sessionId);
+        }
         this.clearSupportLoadError(liveEntry, "subagentInvocations");
       } catch (err) {
         const liveEntry = this.entries.get(entry.sessionId);
@@ -1453,6 +1488,28 @@ export class SessionSupervisor {
     entry.loadState = next;
   }
 
+  private invalidateSupportLoadsWithoutAuthoritativeRevision(entry: InternalEntry) {
+    if (typeof this.resolveRequestedStateRev(entry) === "number") return;
+    if (!entry.stateLoading) {
+      entry.stateLoaded = false;
+    }
+    if (!entry.subagentInvocationsLoading) {
+      entry.subagentInvocationsLoaded = false;
+      entry.subagentInvocationsAppliedRev = undefined;
+    }
+    this.subagentInvocationsCacheBySessionId.delete(entry.sessionId);
+  }
+
+  private adoptLoadedSubagentInvocationsRevision(entry: InternalEntry, stateRev: number) {
+    if (!entry.subagentInvocationsLoaded) return;
+    if (typeof entry.subagentInvocationsAppliedRev === "number") return;
+    entry.subagentInvocationsAppliedRev = stateRev;
+    this.subagentInvocationsCacheBySessionId.set(entry.sessionId, {
+      invocations: entry.subagentInvocations.slice(),
+      stateRev,
+    });
+  }
+
   private setFatalError(entry: InternalEntry, message: string) {
     emitUiDiagnostic({
       source: "session_supervisor",
@@ -1533,6 +1590,7 @@ export class SessionSupervisor {
         entry.stateAppliedRev,
         headStateRev,
       );
+      this.adoptLoadedSubagentInvocationsRevision(entry, headStateRev);
     }
     this.mergeTurns(entry, head.turns ?? []);
     this.mergeEvents(entry, head.events ?? [], { notify: false });

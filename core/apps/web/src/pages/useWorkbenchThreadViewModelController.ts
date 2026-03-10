@@ -118,7 +118,7 @@ export function useWorkbenchThreadViewModelController(
       if (tid) map.set(tid, t);
     }
     return map;
-  }, [turns]);
+  }, [turns, turnsKey]);
 
   const messagesByTurnIdRef = useRef<Map<string, Message[]>>(new Map());
   const eventsByTurnIdRef = useRef<Map<string, SessionEvent[]>>(new Map());
@@ -127,6 +127,10 @@ export function useWorkbenchThreadViewModelController(
   const lastMessagesKeyRef = useRef(messagesKey);
   const lastEventsKeyRef = useRef(eventsKey);
   const lastEnableDebugEventsRef = useRef(enableDebugEvents);
+  const lastVerbosityRef = useRef(verbosity);
+  const lastAskUserQuestionAnswersRef = useRef(askUserQuestionAnswers);
+  const lastToolSummariesReadyRef = useRef(toolSummariesReady);
+  const lastToolsByTurnIdRef = useRef(toolsByTurnId);
 
   const fullRebuild = useRef(() => {});
   fullRebuild.current = () => {
@@ -172,13 +176,21 @@ export function useWorkbenchThreadViewModelController(
   };
 
   useLayoutEffect(() => {
-    const sessionChanged = lastSessionIdRef.current !== sessionId;
-    if (sessionChanged) {
-      lastSessionIdRef.current = sessionId;
+    const syncInvalidationRefs = () => {
       lastTurnsKeyRef.current = turnsKey;
       lastMessagesKeyRef.current = messagesKey;
       lastEventsKeyRef.current = eventsKey;
       lastEnableDebugEventsRef.current = enableDebugEvents;
+      lastVerbosityRef.current = verbosity;
+      lastAskUserQuestionAnswersRef.current = askUserQuestionAnswers;
+      lastToolSummariesReadyRef.current = toolSummariesReady;
+      lastToolsByTurnIdRef.current = toolsByTurnId;
+    };
+
+    const sessionChanged = lastSessionIdRef.current !== sessionId;
+    if (sessionChanged) {
+      lastSessionIdRef.current = sessionId;
+      syncInvalidationRefs();
       messagesByTurnIdRef.current = new Map();
       eventsByTurnIdRef.current = new Map();
       fullRebuild.current();
@@ -187,8 +199,19 @@ export function useWorkbenchThreadViewModelController(
 
     const debugToggled = lastEnableDebugEventsRef.current !== enableDebugEvents;
     if (debugToggled) {
-      lastEnableDebugEventsRef.current = enableDebugEvents;
+      syncInvalidationRefs();
       // Debug events are derived in the view-model builder; rebuild once when toggled.
+      fullRebuild.current();
+      return;
+    }
+
+    const verbosityChanged = lastVerbosityRef.current !== verbosity;
+    const askUserQuestionAnswersChanged = lastAskUserQuestionAnswersRef.current !== askUserQuestionAnswers;
+    const toolSummariesChanged =
+      lastToolSummariesReadyRef.current !== toolSummariesReady ||
+      lastToolsByTurnIdRef.current !== toolsByTurnId;
+    if (verbosityChanged || askUserQuestionAnswersChanged || toolSummariesChanged) {
+      syncInvalidationRefs();
       fullRebuild.current();
       return;
     }
@@ -199,23 +222,21 @@ export function useWorkbenchThreadViewModelController(
     const messagesStructural = messagesKey !== lastMessagesKeyRef.current || messages.length !== state.messagesLen;
     const eventsKeyChanged = eventsKey !== lastEventsKeyRef.current;
     if (turnsStructural || messagesStructural) {
-      lastTurnsKeyRef.current = turnsKey;
-      lastMessagesKeyRef.current = messagesKey;
-      lastEventsKeyRef.current = eventsKey;
+      syncInvalidationRefs();
       fullRebuild.current();
       return;
     }
 
     // Incremental path: events appended only.
     if (events.length < state.eventsLen) {
-      lastEventsKeyRef.current = eventsKey;
+      syncInvalidationRefs();
       fullRebuild.current();
       return;
     }
     if (events.length === state.eventsLen) {
       // If the key changed but length didn't, we can't assume append-only.
       if (eventsKeyChanged) {
-        lastEventsKeyRef.current = eventsKey;
+        syncInvalidationRefs();
         fullRebuild.current();
       }
       return;
@@ -224,7 +245,7 @@ export function useWorkbenchThreadViewModelController(
     // Debug mode prioritizes correctness over streaming performance.
     // Rebuild once per event append (no infinite loop).
     if (enableDebugEvents) {
-      lastEventsKeyRef.current = eventsKey;
+      syncInvalidationRefs();
       fullRebuild.current();
       return;
     }
@@ -241,6 +262,7 @@ export function useWorkbenchThreadViewModelController(
       }
     }
     if (dirtyTurnIds.size === 0) {
+      syncInvalidationRefs();
       setState((prev) => ({ ...prev, eventsLen: events.length }));
       return;
     }
@@ -322,7 +344,7 @@ export function useWorkbenchThreadViewModelController(
       nextRanges = adjusted;
     }
 
-    lastEventsKeyRef.current = eventsKey;
+    syncInvalidationRefs();
     setState((prev) => ({
       ...prev,
       view: { groups: updatedGroups, debugEvents: prev.view.debugEvents },

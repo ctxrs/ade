@@ -129,6 +129,11 @@ const SNAPSHOT_WAIT_MS = 1200;
 const FOREGROUND_TASK_DEBOUNCE_MS = 150;
 const WORKSPACE_PATCH_FLUSH_MS = 50;
 
+const hasDesktopCanonicalConnection = (connection: {
+  baseUrl?: string | null;
+  authToken?: string | null;
+}): boolean => Boolean(connection.baseUrl && connection.authToken);
+
 export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSource {
   private listeners = new Set<() => void>();
   private eventListeners = new Set<(event: WorkspaceActiveSnapshotEvent) => void>();
@@ -390,15 +395,25 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     phase: "worker_init" | "worker_update_auth",
     bridgeKind: "none" | "local" | "ssh" | null,
     syncError: string | null,
+    missing: "base" | "auth" = "base",
   ) => {
     const connection = getDaemonConnection();
     const bridgeConnected = bridgeKind === "local" || bridgeKind === "ssh";
-    const code = bridgeConnected
-      ? "workspace.worker_desktop_bridge_missing_base"
-      : "workspace.worker_connection_missing";
-    const message = bridgeConnected
-      ? "Desktop bridge is connected, but worker daemon HTTP base URL is missing."
-      : "Worker daemon HTTP base URL is missing.";
+    const missingAuth = missing === "auth";
+    const code = missingAuth
+      ? bridgeConnected
+        ? "workspace.worker_desktop_bridge_missing_auth"
+        : "workspace.worker_connection_missing"
+      : bridgeConnected
+        ? "workspace.worker_desktop_bridge_missing_base"
+        : "workspace.worker_connection_missing";
+    const message = missingAuth
+      ? bridgeConnected
+        ? "Desktop bridge is connected, but worker daemon auth token is missing."
+        : "Worker daemon auth token is missing."
+      : bridgeConnected
+        ? "Desktop bridge is connected, but worker daemon HTTP base URL is missing."
+        : "Worker daemon HTTP base URL is missing.";
     emitUiDiagnostic({
       source: "workspace_snapshot",
       code,
@@ -407,6 +422,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       context: {
         workspaceId: this.workspaceId,
         phase,
+        missing,
         bridgeKind,
         connectionSource: connection.source ?? null,
         syncError: syncError ?? undefined,
@@ -442,7 +458,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     };
 
     let state = readState();
-    if (!state.baseUrl && isDesktopApp()) {
+    if (isDesktopApp() && !hasDesktopCanonicalConnection(state)) {
       const synced = await syncDesktopDaemonConnectionFromBridge({
         force: true,
         probeHealth: true,
@@ -454,8 +470,13 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       state = readState();
     }
 
-    if (!state.baseUrl && isDesktopApp()) {
-      this.emitWorkerConnectionMissingDiagnostic(phase, bridgeKind, syncError);
+    if (isDesktopApp() && !hasDesktopCanonicalConnection(state)) {
+      this.emitWorkerConnectionMissingDiagnostic(
+        phase,
+        bridgeKind,
+        syncError,
+        state.baseUrl ? "auth" : "base",
+      );
     }
     return state;
   }
@@ -466,6 +487,9 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     try {
       const connection = await this.resolveWorkerConnectionState("worker_init");
       if (this.worker || this.destroyed) {
+        return;
+      }
+      if (isDesktopApp() && !hasDesktopCanonicalConnection(connection)) {
         return;
       }
       this.useWorker = true;
@@ -570,6 +594,9 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     }
 
     if (!this.disableWorker) {
+      if (!this.destroyed) {
+        this.startWorker().catch(() => {});
+      }
       return;
     }
     if (!authChanged && !wsChanged) return;

@@ -891,6 +891,23 @@ describe("buildWorkbenchThreadViewModel", () => {
     expect(k1).not.toBe(k2);
   }, 10000);
 
+  it("produces a messagesKey that changes when queued delivery changes in place", async () => {
+    const { deriveMessagesKey } = await import("./SessionPage.workbenchViewModel");
+
+    const base = {
+      id: "m1",
+      session_id: "s1",
+      role: "user",
+      content: "same",
+      attachments: [],
+      created_at: "2025-12-15T00:00:00.000Z",
+    };
+
+    const k1 = deriveMessagesKey([{ ...base, delivery: "immediate" }] as unknown as Message[]);
+    const k2 = deriveMessagesKey([{ ...base, delivery: "queued" }] as unknown as Message[]);
+    expect(k1).not.toBe(k2);
+  }, 10000);
+
   it("produces a turnsKey that changes when a non-tail turn updates in place", async () => {
     const { deriveTurnsKey } = await import("./SessionPage.workbenchViewModel");
 
@@ -915,6 +932,23 @@ describe("buildWorkbenchThreadViewModel", () => {
       },
       turns[1],
     ] as unknown as SessionTurn[]);
+    expect(k1).not.toBe(k2);
+  }, 10000);
+
+  it("produces a turnsKey that changes when turn status changes with the same timestamp", async () => {
+    const { deriveTurnsKey } = await import("./SessionPage.workbenchViewModel");
+
+    const turns = [
+      {
+        turn_id: "turn-1",
+        start_seq: 1,
+        updated_at: "2025-12-15T00:00:00.000Z",
+        status: "running",
+      },
+    ];
+
+    const k1 = deriveTurnsKey(turns as unknown as SessionTurn[]);
+    const k2 = deriveTurnsKey([{ ...turns[0], status: "completed" }] as unknown as SessionTurn[]);
     expect(k1).not.toBe(k2);
   }, 10000);
 

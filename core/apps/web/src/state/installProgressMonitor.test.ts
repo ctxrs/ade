@@ -138,4 +138,67 @@ describe("installProgressMonitor", () => {
 
     expect(getProviderInstallProgressSnapshot().codex).toBeUndefined();
   });
+
+  it("treats info-null status rows as terminal after the daemon loses install state", async () => {
+    vi.mocked(getInstallStatuses)
+      .mockResolvedValueOnce({
+        installs: [
+          {
+            install_id: "install-1",
+            info: buildInstallInfo("install-1", "codex"),
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        installs: [
+          {
+            install_id: "install-1",
+            info: null,
+          },
+        ],
+      });
+
+    const stop = observeInstall("install-1", {
+      providerId: "codex",
+      initialState: { state: "running" },
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(getInstallProgressSnapshot()["install-1"]).toMatchObject({
+      state: "running",
+      pct: 30,
+      errorCode: undefined,
+      error: undefined,
+    });
+    expect(getProviderInstallProgressSnapshot().codex).toMatchObject({
+      installId: "install-1",
+      state: "running",
+      pct: 30,
+    });
+
+    await vi.advanceTimersByTimeAsync(900);
+
+    const snapshot = getInstallProgressSnapshot();
+    expect(snapshot["install-1"]).toMatchObject({
+      state: "failed",
+      pct: 30,
+      errorCode: "unknown",
+      error: "Install is no longer tracked by the daemon. Retry from this screen.",
+    });
+    expect(snapshot["install-1"]?.lastEvent?.message).toBe("Downloading codex");
+    expect(snapshot["install-1"]?.events).toHaveLength(1);
+    expect(getProviderInstallProgressSnapshot().codex).toMatchObject({
+      installId: "install-1",
+      state: "failed",
+      pct: 30,
+      errorCode: "unknown",
+      error: "Install is no longer tracked by the daemon. Retry from this screen.",
+    });
+
+    await vi.advanceTimersByTimeAsync(900);
+    expect(getInstallStatuses).toHaveBeenCalledTimes(2);
+
+    stop();
+  });
 });

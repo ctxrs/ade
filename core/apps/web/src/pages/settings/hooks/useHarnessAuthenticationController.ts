@@ -441,8 +441,8 @@ export function useHarnessAuthenticationController({
   const refreshProviderSlicesAfterMutation = useCallback(async () => {
     if (workspaceId) {
       invalidateProvidersBootstrap(workspaceId);
-      const bootstrap = await refreshProvidersBootstrapState({ force: true, silent: true });
-      if (bootstrap) return;
+      await refreshProvidersBootstrapState({ force: true });
+      return;
     }
     try {
       const nextProviders = await listProviders("host");

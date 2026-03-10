@@ -101,9 +101,8 @@ export const ensureDesktopDaemonConnection = async (
 ): Promise<DaemonConnection> => {
   const current = getDaemonConnection();
   if (!isDesktopApp()) return current;
-  if (hasDesktopDataPlaneConnection(current)) return current;
   const synced = await syncDesktopDaemonConnectionFromBridge({
-    force: true,
+    force: !hasDesktopDataPlaneConnection(current),
     connectLocalWhenMissing: opts?.connectLocalWhenMissing ?? true,
     reason: opts?.reason ?? "desktop_transport_bootstrap",
   });

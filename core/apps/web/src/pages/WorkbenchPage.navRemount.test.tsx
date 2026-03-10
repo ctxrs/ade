@@ -675,6 +675,57 @@ describe("WorkbenchPage session support load issues", () => {
       expect(sessionSupervisorMock.loadSubagentInvocations).toHaveBeenCalledWith(sessionId);
     });
   });
+
+  it("reloads no-revision support data after remount when the supervisor marks it stale", async () => {
+    sessionSnap = {
+      ...sessionSnap,
+      sessions: {
+        ...sessionSnap.sessions,
+        [sessionId]: {
+          ...sessionSnap.sessions[sessionId],
+          stateRev: undefined,
+        },
+      },
+    };
+
+    const renderWorkbench = () => (
+      <VirtuosoMockContext.Provider value={{ itemHeight: 40, viewportHeight: 400 }}>
+        <MemoryRouter initialEntries={[`/workspaces/${workspaceId}`]}>
+          <Routes>
+            <Route path="/workspaces/:id" element={<WorkbenchPage />} />
+          </Routes>
+        </MemoryRouter>
+      </VirtuosoMockContext.Provider>
+    );
+
+    const firstRender = render(renderWorkbench());
+
+    await screen.findAllByText("Starter task");
+    expect(sessionSupervisorMock.loadSessionState).not.toHaveBeenCalled();
+    expect(sessionSupervisorMock.loadSubagentInvocations).not.toHaveBeenCalled();
+
+    firstRender.unmount();
+
+    sessionSnap = {
+      ...sessionSnap,
+      sessions: {
+        ...sessionSnap.sessions,
+        [sessionId]: {
+          ...sessionSnap.sessions[sessionId],
+          stateLoaded: false,
+          subagentInvocationsLoaded: false,
+          updatedAtMs: sessionSnap.sessions[sessionId].updatedAtMs + 1,
+        },
+      },
+    };
+
+    render(renderWorkbench());
+
+    await waitFor(() => {
+      expect(sessionSupervisorMock.loadSessionState).toHaveBeenCalledWith(sessionId);
+      expect(sessionSupervisorMock.loadSubagentInvocations).toHaveBeenCalledWith(sessionId);
+    });
+  });
 });
 
 describe("WorkbenchPage panel analytics", () => {

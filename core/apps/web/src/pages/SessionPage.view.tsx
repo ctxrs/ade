@@ -323,8 +323,8 @@ export function SessionView({
   const subagentInvocations: SubagentInvocation[] = entry?.subagentInvocations ?? [];
   const subagentInvocationsLoading = entry?.subagentInvocationsLoading ?? false;
   const eventsKey = `${entry?.lastEventSeq ?? 0}:${events.length}`;
-  const turnsKey = deriveTurnsKey(turns);
-  const messagesKey = deriveMessagesKey(messages);
+  const turnsKey = useMemo(() => deriveTurnsKey(turns), [turns, eventsKey]);
+  const messagesKey = useMemo(() => deriveMessagesKey(messages), [messages, queue]);
   const optimisticQueueRemovalSet = useMemo(
     () => new Set(optimisticQueueRemovalIds),
     [optimisticQueueRemovalIds],
@@ -436,7 +436,7 @@ export function SessionView({
     () => mergeMessagesForView(messages, pendingMessages, queuedMessageIdsToShow),
     [messagesKey, pendingMessages, queuedMessageIdsToShow],
   );
-  const displayMessagesKey = deriveMessagesKey(displayMessages);
+  const displayMessagesKey = useMemo(() => deriveMessagesKey(displayMessages), [displayMessages]);
   const pendingTurns = useMemo(
     () => buildPendingTurns(turns, displayMessages),
     [turnsKey, displayMessagesKey],
@@ -445,7 +445,7 @@ export function SessionView({
     () => (pendingTurns.length > 0 ? [...turns, ...pendingTurns] : turns),
     [turnsKey, pendingTurns],
   );
-  const displayTurnsKey = deriveTurnsKey(displayTurns);
+  const displayTurnsKey = useMemo(() => deriveTurnsKey(displayTurns), [displayTurns, turnsKey]);
   const coalescedEvents = useRafCoalesced(events);
   const coalescedEventsKey = useRafCoalesced(eventsKey);
   const coalescedDisplayMessages = useRafCoalesced(displayMessages);
@@ -458,7 +458,7 @@ export function SessionView({
   );
   const displayTurnsForThreadKey = useMemo(
     () => deriveTurnsKey(displayTurnsForThread),
-    [displayTurnsForThread],
+    [displayTurnsForThread, coalescedDisplayTurnsKey],
   );
   const computedContextWindow = useMemo<ContextWindowInfo | null>(() => {
     for (let i = turns.length - 1; i >= 0; i -= 1) {

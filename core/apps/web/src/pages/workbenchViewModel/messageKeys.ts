@@ -1,29 +1,95 @@
 import type { Message, SessionTurn } from "../../api/client";
 
-function serializeForKey(value: unknown): string {
-  try {
-    return JSON.stringify(value, (_key, inner) => (inner === undefined ? "__undefined__" : inner)) ?? "null";
-  } catch {
-    return String(value);
+const HASH_SEED = 5381;
+
+function hashString(hash: number, value: string | null | undefined): number {
+  const text = value ?? "";
+  for (let i = 0; i < text.length; i += 1) {
+    hash = ((hash << 5) + hash) ^ text.charCodeAt(i);
   }
+  return hash;
 }
 
-function deriveCollectionKey(values: unknown[]): string {
-  if (values.length === 0) return "0";
-  let hash = 5381;
-  for (const value of values) {
-    const serialized = serializeForKey(value);
-    for (let i = 0; i < serialized.length; i += 1) {
-      hash = ((hash << 5) + hash) ^ serialized.charCodeAt(i);
+function hashNumber(hash: number, value: number | null | undefined): number {
+  if (!Number.isFinite(value ?? Number.NaN)) return hashString(hash, "");
+  return hashString(hash, String(value));
+}
+
+function hashUnknownRecord(hash: number, value: Record<string, unknown> | null | undefined): number {
+  if (!value) return hashString(hash, "");
+  const keys = Object.keys(value).sort();
+  for (const key of keys) {
+    hash = hashString(hash, key);
+    const inner = value[key];
+    if (inner == null) {
+      hash = hashString(hash, "");
+      continue;
     }
+    if (typeof inner === "string") {
+      hash = hashString(hash, inner);
+      continue;
+    }
+    if (typeof inner === "number") {
+      hash = hashNumber(hash, inner);
+      continue;
+    }
+    if (typeof inner === "boolean") {
+      hash = hashString(hash, inner ? "1" : "0");
+      continue;
+    }
+    hash = hashString(hash, JSON.stringify(inner));
   }
-  return `${values.length}:${(hash >>> 0).toString(36)}`;
+  return hash;
+}
+
+function finalizeHash(length: number, hash: number): string {
+  return `${length}:${(hash >>> 0).toString(36)}`;
 }
 
 export function deriveMessagesKey(messages: Message[]): string {
-  return deriveCollectionKey(messages);
+  if (messages.length === 0) return "0";
+  let hash = HASH_SEED;
+  for (const message of messages) {
+    hash = hashString(hash, String(message.id ?? ""));
+    hash = hashString(hash, String(message.turn_id ?? ""));
+    hash = hashNumber(hash, Number(message.turn_sequence ?? Number.NaN));
+    hash = hashString(hash, String(message.role ?? ""));
+    hash = hashString(hash, String(message.delivery ?? ""));
+    hash = hashString(hash, String(message.created_at ?? ""));
+    hash = hashString(hash, String(message.content ?? ""));
+    const attachments = Array.isArray(message.attachments) ? message.attachments : [];
+    hash = hashNumber(hash, attachments.length);
+    for (const attachment of attachments) {
+      const record = (attachment ?? {}) as Record<string, unknown>;
+      hash = hashString(hash, typeof record.kind === "string" ? record.kind : "");
+      hash = hashString(hash, typeof record.mime_type === "string" ? record.mime_type : "");
+      hash = hashString(hash, typeof record.name === "string" ? record.name : "");
+      hash = hashString(hash, typeof record.blob_id === "string" ? record.blob_id : "");
+      hash = hashString(hash, typeof record.data_base64 === "string" ? record.data_base64 : "");
+    }
+  }
+  return finalizeHash(messages.length, hash);
 }
 
 export function deriveTurnsKey(turns: SessionTurn[]): string {
-  return deriveCollectionKey(turns);
+  if (turns.length === 0) return "0";
+  let hash = HASH_SEED;
+  for (const turn of turns) {
+    hash = hashString(hash, String(turn.turn_id ?? ""));
+    hash = hashString(hash, String(turn.user_message_id ?? ""));
+    hash = hashString(hash, String(turn.status ?? ""));
+    hash = hashNumber(hash, Number(turn.start_seq ?? Number.NaN));
+    hash = hashNumber(hash, Number(turn.end_seq ?? Number.NaN));
+    hash = hashString(hash, String(turn.started_at ?? ""));
+    hash = hashString(hash, String(turn.updated_at ?? ""));
+    hash = hashString(hash, String(turn.assistant_partial ?? ""));
+    hash = hashString(hash, String(turn.thought_partial ?? ""));
+    hash = hashNumber(hash, turn.tool_total);
+    hash = hashNumber(hash, turn.tool_pending);
+    hash = hashNumber(hash, turn.tool_running);
+    hash = hashNumber(hash, turn.tool_completed);
+    hash = hashNumber(hash, turn.tool_failed);
+    hash = hashUnknownRecord(hash, turn.metrics_json ?? null);
+  }
+  return finalizeHash(turns.length, hash);
 }

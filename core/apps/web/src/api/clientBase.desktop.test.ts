@@ -83,6 +83,59 @@ describe("clientBase desktop connection sync", () => {
     );
   });
 
+  it("refreshes desktop bridge state before reuse after a later token rotation", async () => {
+    const dateNowSpy = vi.spyOn(Date, "now");
+    let now = 1_000;
+    dateNowSpy.mockImplementation(() => now);
+    desktopGetConnectionMock
+      .mockResolvedValueOnce({
+        kind: "local",
+        base_url: "http://127.0.0.1:4399",
+        token: "token-old",
+      })
+      .mockResolvedValueOnce({
+        kind: "local",
+        base_url: "http://127.0.0.1:4400",
+        token: "token-new",
+      });
+    fetchMock.mockImplementation(() => Promise.resolve(okJsonResponse({ ok: true })));
+
+    try {
+      const mod = await import("./clientBase");
+      await mod.apiAny<{ ok: boolean }>("/api/health");
+
+      now = 3_000;
+      await mod.apiAny<{ ok: boolean }>("/api/providers");
+
+      expect(desktopGetConnectionMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        1,
+        "http://127.0.0.1:4399/api/health",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            authorization: "Bearer token-old",
+          }),
+        }),
+      );
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        2,
+        "http://127.0.0.1:4400/api/providers",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            authorization: "Bearer token-new",
+          }),
+        }),
+      );
+      expect(mod.getDaemonClientConfig()).toMatchObject({
+        baseUrl: "http://127.0.0.1:4400",
+        wsBaseUrl: "ws://127.0.0.1:4400",
+        authToken: "token-new",
+      });
+    } finally {
+      dateNowSpy.mockRestore();
+    }
+  });
+
   it("re-syncs desktop auth when restore only has a persisted base URL", async () => {
     localStorage.setItem(PERSISTED_BASE_KEY, JSON.stringify({
       v: 1,

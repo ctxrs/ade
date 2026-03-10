@@ -901,6 +901,73 @@ describe("WorkspaceActiveSnapshotStore", () => {
     }
   });
 
+  it("rehydrates desktop auth before worker init when only a persisted base is available", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+    const { getDaemonClientConfig, syncDesktopDaemonConnectionFromBridge } = await import("../api/client");
+
+    const previousTauri = (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;
+    const previousWorker = globalThis.Worker;
+
+    class WorkerMock {
+      static instances: WorkerMock[] = [];
+      onmessage: ((event: MessageEvent<unknown>) => void) | null = null;
+      postMessage = vi.fn();
+      terminate = vi.fn();
+      constructor(..._args: unknown[]) {
+        WorkerMock.instances.push(this);
+      }
+    }
+
+    try {
+      (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = {};
+      vi.stubGlobal("Worker", WorkerMock as unknown as typeof Worker);
+      vi.mocked(getDaemonClientConfig).mockReturnValue({
+        baseUrl: "http://daemon.local",
+        wsBaseUrl: "ws://daemon.local",
+        authToken: null,
+        runId: null,
+      });
+      vi.mocked(syncDesktopDaemonConnectionFromBridge).mockResolvedValue({
+        config: {
+          baseUrl: "http://daemon.local",
+          wsBaseUrl: "ws://daemon.local",
+          authToken: "token-1",
+          runId: null,
+        },
+        info: {
+          kind: "local",
+          base_url: "http://daemon.local",
+          token: "token-1",
+        },
+        synced: true,
+        error: null,
+      });
+
+      const store = new WorkspaceActiveSnapshotStoreImpl("ws-1");
+      store.init();
+      await waitForCondition(() => WorkerMock.instances.length === 1);
+      const initCall = WorkerMock.instances[0]?.postMessage.mock.calls.find(
+        ([msg]) => asRecord(msg).type === "init",
+      );
+      expect(initCall).toBeTruthy();
+      expect(asRecord(initCall?.[0]).baseUrl).toBe("http://daemon.local");
+      expect(asRecord(initCall?.[0]).authToken).toBe("token-1");
+      expect(syncDesktopDaemonConnectionFromBridge).toHaveBeenCalledTimes(1);
+      store.destroy();
+    } finally {
+      if (previousWorker) {
+        vi.stubGlobal("Worker", previousWorker);
+      } else {
+        Reflect.deleteProperty(globalThis as unknown as Record<string, unknown>, "Worker");
+      }
+      if (previousTauri === undefined) {
+        delete (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;
+      } else {
+        (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = previousTauri;
+      }
+    }
+  });
+
   it("emits a desktop bridge invariant diagnostic when worker base URL stays missing", async () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
     const { getDaemonClientConfig, syncDesktopDaemonConnectionFromBridge } = await import("../api/client");
@@ -939,6 +1006,84 @@ describe("WorkspaceActiveSnapshotStore", () => {
       expect(asRecord(diagnostics[0]?.context).phase).toBe("worker_init");
       store.destroy();
     } finally {
+      if (previousTauri === undefined) {
+        delete (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;
+      } else {
+        (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = previousTauri;
+      }
+    }
+  });
+
+  it("waits for desktop auth before starting the worker when bridge sync still lacks a token", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+    const { getDaemonClientConfig, syncDesktopDaemonConnectionFromBridge } = await import("../api/client");
+
+    const previousTauri = (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;
+    const previousWorker = globalThis.Worker;
+
+    class WorkerMock {
+      static instances: WorkerMock[] = [];
+      onmessage: ((event: MessageEvent<unknown>) => void) | null = null;
+      postMessage = vi.fn();
+      terminate = vi.fn();
+      constructor(..._args: unknown[]) {
+        WorkerMock.instances.push(this);
+      }
+    }
+
+    try {
+      (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = {};
+      vi.stubGlobal("Worker", WorkerMock as unknown as typeof Worker);
+      vi.mocked(getDaemonClientConfig).mockReturnValue({
+        baseUrl: "http://daemon.local",
+        wsBaseUrl: "ws://daemon.local",
+        authToken: null,
+        runId: null,
+      });
+      vi.mocked(syncDesktopDaemonConnectionFromBridge).mockResolvedValue({
+        config: {
+          baseUrl: "http://daemon.local",
+          wsBaseUrl: "ws://daemon.local",
+          authToken: null,
+          runId: null,
+        },
+        info: {
+          kind: "local",
+          base_url: "http://daemon.local",
+          token: null,
+        },
+        synced: true,
+        error: null,
+      });
+
+      const store = new WorkspaceActiveSnapshotStoreImpl("ws-1");
+      store.init();
+      await waitForCondition(
+        () => getUiDiagnostics().some((event) => event.code === "workspace.worker_desktop_bridge_missing_auth"),
+      );
+      expect(WorkerMock.instances).toHaveLength(0);
+
+      store.updateAuthConfig({
+        authToken: "token-1",
+        wsBaseUrl: "ws://daemon.local",
+        baseUrl: "http://daemon.local",
+        runId: null,
+      });
+
+      await waitForCondition(() => WorkerMock.instances.length === 1);
+      const initCall = WorkerMock.instances[0]?.postMessage.mock.calls.find(
+        ([msg]) => asRecord(msg).type === "init",
+      );
+      expect(initCall).toBeTruthy();
+      expect(asRecord(initCall?.[0]).authToken).toBe("token-1");
+      expect(syncDesktopDaemonConnectionFromBridge).toHaveBeenCalledTimes(1);
+      store.destroy();
+    } finally {
+      if (previousWorker) {
+        vi.stubGlobal("Worker", previousWorker);
+      } else {
+        Reflect.deleteProperty(globalThis as unknown as Record<string, unknown>, "Worker");
+      }
       if (previousTauri === undefined) {
         delete (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;
       } else {

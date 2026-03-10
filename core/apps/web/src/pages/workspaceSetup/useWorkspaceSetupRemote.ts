@@ -298,11 +298,8 @@ export function useWorkspaceSetupRemote({
     if (remoteProfileAutoAppliedKeyRef.current === key) return;
     const profile = remoteProfiles.find((entry) => remoteProfileKey(entry.host, entry.user) === key);
     if (!profile) return;
-
-    if (typeof profile.remote_port === "number" && Number.isFinite(profile.remote_port)) {
-      setRemotePortInput(String(profile.remote_port));
-    }
-    setRemoteDataDirInput(String(profile.remote_data_dir ?? ""));
+    // The advanced remote target controls are currently hidden, so saved overrides
+    // must not silently change the effective daemon target.
     remoteProfileAutoAppliedKeyRef.current = key;
   }, [remoteHostInput, remoteProfiles, selections.location]);
 
