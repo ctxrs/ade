@@ -1,6 +1,16 @@
 import {
+  getProviderHarnessConfig,
   getProvidersBootstrap,
+  listAmpAccounts,
+  listClaudeAccounts,
+  listCodexAccounts,
+  listCopilotAccounts,
+  listCursorAccounts,
+  listGeminiAccounts,
+  listKimiAccounts,
+  listMistralAccounts,
   listProviders,
+  listQwenAccounts,
   type ProviderOptions,
   type ProvidersBootstrapResponse,
 } from "../api/client";
@@ -44,6 +54,21 @@ export const EMPTY_PROVIDERS_BOOTSTRAP: ProvidersBootstrapResponse = Object.free
 const HOST_PROVIDERS_BOOTSTRAP_SCOPE_KEY = "__host__";
 
 const providersBootstrapByScope = new Map<string, ProvidersBootstrapEntry>();
+
+type HostProvidersBootstrapSlices = Pick<
+  ProvidersBootstrapResponse,
+  | "providers"
+  | "provider_harness_config"
+  | "codex_accounts"
+  | "claude_accounts"
+  | "gemini_accounts"
+  | "qwen_accounts"
+  | "kimi_accounts"
+  | "mistral_accounts"
+  | "copilot_accounts"
+  | "cursor_accounts"
+  | "amp_accounts"
+>;
 
 const hasProviderModels = (options: ProviderOptions | undefined): boolean => {
   const raw = options?.models;
@@ -234,6 +259,51 @@ function loadFresh(
   return request;
 }
 
+async function loadHostBootstrapSlices(): Promise<HostProvidersBootstrapSlices> {
+  const providers = await listProviders("host");
+  const [
+    codex_accounts,
+    claude_accounts,
+    gemini_accounts,
+    qwen_accounts,
+    kimi_accounts,
+    mistral_accounts,
+    copilot_accounts,
+    cursor_accounts,
+    amp_accounts,
+    providerConfigs,
+  ] = await Promise.all([
+    listCodexAccounts(),
+    listClaudeAccounts(),
+    listGeminiAccounts(),
+    listQwenAccounts(),
+    listKimiAccounts(),
+    listMistralAccounts(),
+    listCopilotAccounts(),
+    listCursorAccounts(),
+    listAmpAccounts(),
+    Promise.all(
+      providers.map(async (provider) => (
+        [provider.provider_id, await getProviderHarnessConfig(provider.provider_id)] as const
+      )),
+    ),
+  ]);
+
+  return {
+    providers,
+    provider_harness_config: Object.fromEntries(providerConfigs),
+    codex_accounts,
+    claude_accounts,
+    gemini_accounts,
+    qwen_accounts,
+    kimi_accounts,
+    mistral_accounts,
+    copilot_accounts,
+    cursor_accounts,
+    amp_accounts,
+  };
+}
+
 export function getCachedProvidersBootstrap(workspaceId: string): ProvidersBootstrapResponse | undefined {
   return providersBootstrapByScope.get(workspaceId)?.data;
 }
@@ -345,7 +415,7 @@ export async function loadHostProvidersBootstrap(): Promise<ProvidersBootstrapRe
   }
   return loadFresh(HOST_PROVIDERS_BOOTSTRAP_SCOPE_KEY, entry, async (current) => ({
     ...(current ?? EMPTY_PROVIDERS_BOOTSTRAP),
-    providers: await listProviders("host"),
+    ...(await loadHostBootstrapSlices()),
   }));
 }
 
@@ -356,7 +426,7 @@ export async function refreshHostProvidersBootstrap(): Promise<ProvidersBootstra
   }
   return loadFresh(HOST_PROVIDERS_BOOTSTRAP_SCOPE_KEY, entry, async (current) => ({
     ...(current ?? EMPTY_PROVIDERS_BOOTSTRAP),
-    providers: await listProviders("host"),
+    ...(await loadHostBootstrapSlices()),
   }));
 }
 

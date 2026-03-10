@@ -8,6 +8,7 @@ import {
 import {
   clearProviderInstallProgress,
   getProviderInstallProgressSnapshot,
+  resolveProviderInstallProgressSession,
 } from "./providerInstallProgressStore";
 import {
   getInstallStatuses,
@@ -128,7 +129,7 @@ describe("installProgressMonitor", () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(listInstallEvents).toHaveBeenCalledTimes(1);
-    expect(getProviderInstallProgressSnapshot().codex?.installId).toBe("install-1");
+    expect(resolveProviderInstallProgressSession(getProviderInstallProgressSnapshot(), "codex")?.installId).toBe("install-1");
 
     const snapshot = getInstallProgressSnapshot();
     expect(snapshot["install-1"]?.historyLoaded).toBe(true);
@@ -136,7 +137,7 @@ describe("installProgressMonitor", () => {
 
     stop();
 
-    expect(getProviderInstallProgressSnapshot().codex).toBeUndefined();
+    expect(resolveProviderInstallProgressSession(getProviderInstallProgressSnapshot(), "codex")).toBeUndefined();
   });
 
   it("treats info-null status rows as terminal after the daemon loses install state", async () => {
@@ -171,7 +172,7 @@ describe("installProgressMonitor", () => {
       errorCode: undefined,
       error: undefined,
     });
-    expect(getProviderInstallProgressSnapshot().codex).toMatchObject({
+    expect(resolveProviderInstallProgressSession(getProviderInstallProgressSnapshot(), "codex")).toMatchObject({
       installId: "install-1",
       state: "running",
       pct: 30,
@@ -188,7 +189,7 @@ describe("installProgressMonitor", () => {
     });
     expect(snapshot["install-1"]?.lastEvent?.message).toBe("Downloading codex");
     expect(snapshot["install-1"]?.events).toHaveLength(1);
-    expect(getProviderInstallProgressSnapshot().codex).toMatchObject({
+    expect(resolveProviderInstallProgressSession(getProviderInstallProgressSnapshot(), "codex")).toMatchObject({
       installId: "install-1",
       state: "failed",
       pct: 30,

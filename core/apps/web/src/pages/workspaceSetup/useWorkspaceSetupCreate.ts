@@ -494,6 +494,13 @@ export function useWorkspaceSetupCreate({
 
       const workspaceKind = selections.location === "remote" ? "remote" : "local";
       const executionMode = selections.container === "no-container" ? "host" : "container";
+      let pendingRouteLaunch: {
+        workspaceId: string;
+        workspaceKind: "local" | "remote";
+        executionMode: "host" | "container";
+        source: "wizard";
+        startedAtMs: number;
+      } | null = null;
       if (!workspaceId) {
         const created = await createWorkspace(rootPath, name, workspaceKind, "wizard");
         workspaceId = idToString(created.id);
@@ -526,7 +533,15 @@ export function useWorkspaceSetupCreate({
             source: "wizard",
             startedAtMs: launchStartedAtMs,
             result: "ready",
+            persistPendingRoute: false,
           });
+          pendingRouteLaunch = {
+            workspaceId,
+            workspaceKind,
+            executionMode,
+            source: "wizard",
+            startedAtMs: launchStartedAtMs,
+          };
         } catch (error) {
           trackWorkspaceLaunchCompleted({
             workspaceId,
@@ -581,6 +596,13 @@ export function useWorkspaceSetupCreate({
         }
       } catch {
         // best-effort only; do not block workspace creation if recents persistence fails
+      }
+      if (pendingRouteLaunch) {
+        trackWorkspaceLaunchCompleted({
+          ...pendingRouteLaunch,
+          result: "ready",
+          emitEvent: false,
+        });
       }
       wizardCompletedRef.current = true;
       trackWizardCompleted({

@@ -86,8 +86,8 @@
   },
   {
     "path": "apps/web/src/pages/settings/hooks/useHarnessAuthenticationController.ts",
-    "maxLines": 1603,
-    "reason": "Existing oversized harness authentication controller. Keep stable until a dedicated breakup."
+    "maxLines": 1619,
+    "reason": "Existing oversized harness authentication controller. Allow the target-scoped install fix for beta, then break it up deliberately."
   },
   {
     "path": "crates/ctx-http/src/harness_sources/mod.rs",
@@ -126,8 +126,8 @@
   },
   {
     "path": "apps/web/src/pages/workspaceSetup/useWorkspaceSetupProvisioning.ts",
-    "maxLines": 1397,
-    "reason": "Existing oversized workspace setup provisioning module. Keep stable until a dedicated breakup."
+    "maxLines": 1435,
+    "reason": "Existing oversized workspace setup provisioning module. Allow the remote scan-key and install-target fixes for beta, then break it up deliberately."
   },
   {
     "path": "crates/ctx-http/src/daemon.rs",

@@ -34,6 +34,42 @@ type InternalState = {
   eventsLen: number;
 };
 
+type PerTurnCaches = {
+  messagesByTurnId: Map<string, Message[]>;
+  eventsByTurnId: Map<string, SessionEvent[]>;
+};
+
+function buildMessagesByTurnId(messages: Message[]): Map<string, Message[]> {
+  const byTurnMsg = new Map<string, Message[]>();
+  for (const message of messages) {
+    const turnId = idToString(message.turn_id);
+    if (!turnId) continue;
+    const list = byTurnMsg.get(turnId) ?? [];
+    list.push(message);
+    byTurnMsg.set(turnId, list);
+  }
+  return byTurnMsg;
+}
+
+function buildEventsByTurnId(events: SessionEvent[]): Map<string, SessionEvent[]> {
+  const byTurnEv = new Map<string, SessionEvent[]>();
+  for (const event of events) {
+    const turnId = idToString(event.turn_id ?? "");
+    if (!turnId) continue;
+    const list = byTurnEv.get(turnId) ?? [];
+    list.push(event);
+    byTurnEv.set(turnId, list);
+  }
+  return byTurnEv;
+}
+
+function buildPerTurnCaches(messages: Message[], events: SessionEvent[]): PerTurnCaches {
+  return {
+    messagesByTurnId: buildMessagesByTurnId(messages),
+    eventsByTurnId: buildEventsByTurnId(events),
+  };
+}
+
 function buildStateFromInputs(opts: {
   turns: SessionTurn[];
   messages: Message[];
@@ -99,16 +135,27 @@ export function useWorkbenchThreadViewModelController(
     enableDebugEvents,
   } = params;
 
+  const initialBuildRef = useRef<{ state: InternalState; caches: PerTurnCaches } | null>(null);
+  if (initialBuildRef.current === null) {
+    initialBuildRef.current = {
+      state: buildStateFromInputs({
+        turns,
+        messages,
+        toolsByTurnId,
+        toolSummariesReady,
+        events,
+        askUserQuestionAnswers,
+        verbosity,
+      }),
+      // Prime the per-turn caches on mount so the first append-only update can
+      // rebuild a dirty turn group with the already-rendered transcript context.
+      caches: buildPerTurnCaches(messages, events),
+    };
+  }
+  const initialBuild = initialBuildRef.current!;
+
   const [state, setState] = useState<InternalState>(() => ({
-    ...buildStateFromInputs({
-      turns,
-      messages,
-      toolsByTurnId,
-      toolSummariesReady,
-      events,
-      askUserQuestionAnswers,
-      verbosity,
-    }),
+    ...initialBuild.state,
   }));
 
   const turnsById = useMemo(() => {
@@ -120,8 +167,8 @@ export function useWorkbenchThreadViewModelController(
     return map;
   }, [turns, turnsStamp]);
 
-  const messagesByTurnIdRef = useRef<Map<string, Message[]>>(new Map());
-  const eventsByTurnIdRef = useRef<Map<string, SessionEvent[]>>(new Map());
+  const messagesByTurnIdRef = useRef<Map<string, Message[]>>(initialBuild.caches.messagesByTurnId);
+  const eventsByTurnIdRef = useRef<Map<string, SessionEvent[]>>(initialBuild.caches.eventsByTurnId);
   const lastSessionIdRef = useRef(sessionId);
   const lastTurnsStampRef = useRef(turnsStamp);
   const lastMessagesStampRef = useRef(messagesStamp);
@@ -145,26 +192,9 @@ export function useWorkbenchThreadViewModelController(
       verbosity,
     });
 
-    // Reset per-turn caches; incremental updates depend on these.
-    const byTurnMsg = new Map<string, Message[]>();
-    for (const m of messages) {
-      const tid = idToString(m.turn_id);
-      if (!tid) continue;
-      const list = byTurnMsg.get(tid) ?? [];
-      list.push(m);
-      byTurnMsg.set(tid, list);
-    }
-    messagesByTurnIdRef.current = byTurnMsg;
-
-    const byTurnEv = new Map<string, SessionEvent[]>();
-    for (const ev of events) {
-      const tid = idToString(ev.turn_id ?? "");
-      if (!tid) continue;
-      const list = byTurnEv.get(tid) ?? [];
-      list.push(ev);
-      byTurnEv.set(tid, list);
-    }
-    eventsByTurnIdRef.current = byTurnEv;
+    const { messagesByTurnId, eventsByTurnId } = buildPerTurnCaches(messages, events);
+    messagesByTurnIdRef.current = messagesByTurnId;
+    eventsByTurnIdRef.current = eventsByTurnId;
 
     setState({
       view,

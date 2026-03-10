@@ -25,14 +25,16 @@ export const resolveRoutePlanInsertionStep = (
   options?: ResolveRoutePlanInsertionOptions,
 ): RoutePlanInsertionStep | null => {
   const allowTitlingInsertion = options?.allowTitlingInsertion ?? true;
+  const reusablePreviousPlan =
+    previousPlan?.targetKey === routePlan.targetKey ? previousPlan : null;
   const shouldInsertHarnessDownloads =
-    routePlan.includeHarnessDownloads && previousPlan?.includeHarnessDownloads !== true;
+    routePlan.includeHarnessDownloads && reusablePreviousPlan?.includeHarnessDownloads !== true;
   if (shouldInsertHarnessDownloads) {
     return "harness-downloads";
   }
 
   const shouldInsertAuthImport =
-    routePlan.includeAuthImport && previousPlan?.includeAuthImport !== true;
+    routePlan.includeAuthImport && reusablePreviousPlan?.includeAuthImport !== true;
   if (shouldInsertAuthImport) {
     return "auth-import";
   }
@@ -40,7 +42,7 @@ export const resolveRoutePlanInsertionStep = (
   const shouldInsertTitling =
     allowTitlingInsertion
     && routePlan.includeTitling
-    && previousPlan?.includeTitling !== true;
+    && reusablePreviousPlan?.includeTitling !== true;
   if (shouldInsertTitling) {
     return "session-titling";
   }
@@ -59,4 +61,3 @@ export const buildOnboardingAfterConnectResult = (
     insertionStep: resolveRoutePlanInsertionStep(routePlan, previousPlan, options),
   };
 };
-

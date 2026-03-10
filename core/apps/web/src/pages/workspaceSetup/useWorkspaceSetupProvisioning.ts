@@ -65,6 +65,7 @@ import {
   type InstallProgressSnapshot,
 } from "../../state/installProgressMonitor";
 import {
+  resolveProviderInstallProgressSession,
   subscribeProviderInstallProgress,
   upsertProviderInstallProgress,
 } from "../../state/providerInstallProgressStore";
@@ -87,6 +88,32 @@ type UseWorkspaceSetupProvisioningArgs = {
   remoteStatusRef: MutableRefObject<RemoteStatus>;
   connectDaemonForImport: (locationOverride?: "local" | "remote") => Promise<void>;
 };
+
+type RemoteScanKeyInput = {
+  user?: string | null;
+  host?: string | null;
+  port?: number | null;
+  dataDir?: string | null;
+};
+
+export const buildWorkspaceSetupAuthImportScanKey = (
+  target: "local" | "remote",
+  remote: RemoteScanKeyInput,
+): string => (
+  target === "local"
+    ? "local|@"
+    : `remote|${remote.user ?? ""}@${remote.host ?? ""}:${remote.port ?? 4399}:${remote.dataDir?.trim() ?? ""}`
+);
+
+export const buildWorkspaceSetupHarnessInstallScanKey = (
+  target: "local" | "remote",
+  installTarget: InstallTarget,
+  remote: RemoteScanKeyInput,
+): string => (
+  target === "local"
+    ? `local|@|${installTarget}`
+    : `remote|${remote.user ?? ""}@${remote.host ?? ""}:${remote.port ?? 4399}:${remote.dataDir?.trim() ?? ""}|${installTarget}`
+);
 
 export function useWorkspaceSetupProvisioning({
   currentStepKey,
@@ -180,9 +207,12 @@ export function useWorkspaceSetupProvisioning({
     selections.container && selections.container !== "no-container" ? "container" : "host";
 
   const authImportScanKeyForTarget = useCallback((target: "local" | "remote"): string => (
-    target === "local"
-      ? "local|@"
-      : `remote|${parsedRemoteUser ?? ""}@${parsedRemoteHost ?? ""}:${parsedRemotePort ?? 4399}:${remoteDataDirInput.trim()}`
+    buildWorkspaceSetupAuthImportScanKey(target, {
+      user: parsedRemoteUser,
+      host: parsedRemoteHost,
+      port: parsedRemotePort,
+      dataDir: remoteDataDirInput,
+    })
   ), [parsedRemoteHost, parsedRemotePort, parsedRemoteUser, remoteDataDirInput]);
 
   const harnessInstallScanKeyForTarget = useCallback((
@@ -192,10 +222,13 @@ export function useWorkspaceSetupProvisioning({
     const containerSelection = containerSelectionOverride ?? selections.container;
     const installTarget: InstallTarget =
       containerSelection && containerSelection !== "no-container" ? "container" : "host";
-    return target === "local"
-      ? `local|@|${installTarget}`
-      : `remote|${parsedRemoteUser ?? ""}@${parsedRemoteHost ?? ""}|${installTarget}`;
-  }, [parsedRemoteHost, parsedRemoteUser, selections.container]);
+    return buildWorkspaceSetupHarnessInstallScanKey(target, installTarget, {
+      user: parsedRemoteUser,
+      host: parsedRemoteHost,
+      port: parsedRemotePort,
+      dataDir: remoteDataDirInput,
+    });
+  }, [parsedRemoteHost, parsedRemotePort, parsedRemoteUser, remoteDataDirInput, selections.container]);
 
   const resetTitlingDraft = () => {
     setTitlingMode("unset");
@@ -570,9 +603,7 @@ export function useWorkspaceSetupProvisioning({
       if (remoteStatusRef.current !== "connected") return [];
     }
 
-    const scanKey = target === "local"
-      ? "local|@"
-      : `remote|${parsedRemoteUser ?? ""}@${parsedRemoteHost ?? ""}:${parsedRemotePort ?? 4399}:${remoteDataDirInput.trim()}`;
+    const scanKey = authImportScanKeyForTarget(target);
     if (!options?.force && authImportScannedKey === scanKey) return authImportCandidates;
 
     if (
@@ -635,12 +666,10 @@ export function useWorkspaceSetupProvisioning({
     authImportCandidates,
     authImportDeferredKey,
     authImportScannedKey,
+    authImportScanKeyForTarget,
     connectDaemonForImport,
     desktopApp,
     parsedRemoteHost,
-    parsedRemotePort,
-    parsedRemoteUser,
-    remoteDataDirInput,
     remoteStatusRef,
   ]);
 
@@ -658,9 +687,7 @@ export function useWorkspaceSetupProvisioning({
     const containerSelection = containerSelectionOverride ?? selections.container;
     const installTarget: InstallTarget =
       containerSelection && containerSelection !== "no-container" ? "container" : "host";
-    const scanKey = target === "local"
-      ? `local|@|${installTarget}`
-      : `remote|${parsedRemoteUser ?? ""}@${parsedRemoteHost ?? ""}|${installTarget}`;
+    const scanKey = harnessInstallScanKeyForTarget(target, containerSelectionOverride);
     if (!options?.force && harnessInstallScannedKey === scanKey) return harnessInstallCandidates;
 
     if (
@@ -735,11 +762,11 @@ export function useWorkspaceSetupProvisioning({
   }, [
     connectDaemonForImport,
     desktopApp,
+    harnessInstallScanKeyForTarget,
     harnessInstallCandidates,
     harnessInstallDeferredKey,
     harnessInstallScannedKey,
     parsedRemoteHost,
-    parsedRemoteUser,
     remoteStatusRef,
     selections.container,
   ]);
@@ -1109,13 +1136,19 @@ export function useWorkspaceSetupProvisioning({
 
   useEffect(() => {
     return subscribeProviderInstallProgress((snapshot) => {
-      const entries = Object.entries(snapshot);
-      if (entries.length === 0) return;
+      const providerIds = new Set([
+        ...Object.keys(snapshot),
+        ...Object.keys(harnessInstallRows),
+        ...harnessInstallCandidates.map((candidate) => candidate.providerId),
+      ]);
+      if (providerIds.size === 0) return;
 
       setHarnessInstallRows((prev) => {
         let changed = false;
         const next = { ...prev };
-        for (const [providerId, session] of entries) {
+        for (const providerId of providerIds) {
+          const session = resolveProviderInstallProgressSession(snapshot, providerId, selectedHarnessInstallTarget);
+          if (!session) continue;
           const nextRow: HarnessInstallRowState = {
             installId: session.installId,
             state: session.state,
@@ -1144,7 +1177,11 @@ export function useWorkspaceSetupProvisioning({
       setHarnessInstallCandidates((prev) => {
         let changed = false;
         const next = prev.map((candidate) => {
-          const session = snapshot[candidate.providerId];
+          const session = resolveProviderInstallProgressSession(
+            snapshot,
+            candidate.providerId,
+            selectedHarnessInstallTarget,
+          );
           if (!session) return candidate;
           const installRunning = session.state === "running";
           if (candidate.installRunning === installRunning && candidate.installId === session.installId) {
@@ -1160,15 +1197,16 @@ export function useWorkspaceSetupProvisioning({
         return changed ? next : prev;
       });
 
-      const terminalProviderIds = entries
-        .filter(([, session]) => session.state !== "running")
-        .map(([providerId]) => providerId);
+      const terminalProviderIds = Array.from(providerIds).filter((providerId) => {
+        const session = resolveProviderInstallProgressSession(snapshot, providerId, selectedHarnessInstallTarget);
+        return session ? session.state !== "running" : false;
+      });
       if (terminalProviderIds.length === 0) return;
       for (const providerId of terminalProviderIds) {
         clearHarnessInstallObserver(providerId);
       }
     });
-  }, []);
+  }, [harnessInstallCandidates, harnessInstallRows, selectedHarnessInstallTarget]);
 
   useEffect(() => {
     return subscribeInstallProgress((snapshot: InstallProgressSnapshot) => {

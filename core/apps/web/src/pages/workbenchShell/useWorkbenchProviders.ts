@@ -16,6 +16,7 @@ import {
   type InstallInfo,
   type InstallTarget,
   type ProviderOptions,
+  type ProviderStatus,
 } from "../../api/client";
 import {
   getProvidersBootstrapSnapshot,
@@ -28,6 +29,7 @@ import {
 import {
   getProviderInstallProgressSnapshot,
   removeProviderInstallProgress,
+  resolveProviderInstallProgressSession,
   subscribeProviderInstallProgress,
   type ProviderInstallProgressSnapshot,
 } from "../../state/providerInstallProgressStore";
@@ -130,7 +132,7 @@ const toErrorMessage = (error: unknown): string => {
 };
 
 const toProviderInstallState = (
-  session: ProviderInstallProgressSnapshot[string],
+  session: NonNullable<ReturnType<typeof resolveProviderInstallProgressSession>>,
 ): ProviderInstallState => ({
   installId: session.installId,
   state: session.state,
@@ -140,11 +142,25 @@ const toProviderInstallState = (
   error: session.error,
 });
 
+const providerInstallTargetForProvider = (
+  provider: ProviderStatus | undefined,
+): InstallTarget | undefined => parseInstallTarget(provider?.details?.install_target);
+
 const providerInstallsFromSnapshot = (
   snapshot: ProviderInstallProgressSnapshot,
+  providersById: Record<string, ProviderStatus>,
 ): Record<string, ProviderInstallState | undefined> =>
   Object.fromEntries(
-    Object.entries(snapshot).map(([providerId, session]) => [providerId, toProviderInstallState(session)]),
+    Array.from(new Set([...Object.keys(snapshot), ...Object.keys(providersById)]))
+      .map((providerId) => {
+        const session = resolveProviderInstallProgressSession(
+          snapshot,
+          providerId,
+          providerInstallTargetForProvider(providersById[providerId]),
+        );
+        return session ? ([providerId, toProviderInstallState(session)] as const) : null;
+      })
+      .filter((entry): entry is readonly [string, ProviderInstallState] => entry !== null),
   );
 
 export function useWorkbenchProviders({
@@ -153,7 +169,7 @@ export function useWorkbenchProviders({
   onStartError,
 }: UseWorkbenchProvidersArgs) {
   const [providerInstallsById, setProviderInstallsById] = useState<Record<string, ProviderInstallState | undefined>>(
-    () => providerInstallsFromSnapshot(getProviderInstallProgressSnapshot()),
+    () => providerInstallsFromSnapshot(getProviderInstallProgressSnapshot(), {}),
   );
   const [installAllBusy, setInstallAllBusy] = useState(false);
   const postInstallHandledRef = useRef<Set<string>>(new Set());
@@ -161,6 +177,7 @@ export function useWorkbenchProviders({
   const providerAuthSummaryInFlightRef = useRef<Record<string, Promise<ProviderOptions | undefined>>>({});
   const installObserversRef = useRef<Record<string, () => void>>({});
   const previousInstallsRef = useRef<Record<string, ProviderInstallState | undefined>>({});
+  const providersByIdRef = useRef<Record<string, ProviderStatus>>({});
 
   const bootstrap = useSyncExternalStore(
     useCallback((onStoreChange) => subscribeProvidersBootstrap(workspaceId, onStoreChange), [workspaceId]),
@@ -170,17 +187,27 @@ export function useWorkbenchProviders({
   const providers = bootstrap.providers;
   const providerOptions = bootstrap.provider_options;
 
-  useEffect(() => {
-    return subscribeProviderInstallProgress((snapshot) => {
-      const next = providerInstallsFromSnapshot(snapshot);
-      setProviderInstallsById((prev) => (sameProviderInstallStateMap(prev, next) ? prev : next));
-    });
-  }, []);
-
   const providersById = useMemo(
     () => Object.fromEntries(providers.map((provider) => [provider.provider_id, provider])),
     [providers],
   );
+
+  useEffect(() => {
+    providersByIdRef.current = providersById;
+    const next = providerInstallsFromSnapshot(getProviderInstallProgressSnapshot(), providersById);
+    setProviderInstallsById((prev) => (sameProviderInstallStateMap(prev, next) ? prev : next));
+  }, [providersById]);
+
+  useEffect(() => {
+    return subscribeProviderInstallProgress((snapshot) => {
+      const next = providerInstallsFromSnapshot(snapshot, providersByIdRef.current);
+      setProviderInstallsById((prev) => (sameProviderInstallStateMap(prev, next) ? prev : next));
+    });
+  }, []);
+
+  useEffect(() => {
+    providerAuthSummaryInFlightRef.current = {};
+  }, [workspaceId]);
 
   const defaultProviderId = useMemo(() => {
     const installed = providers
@@ -222,7 +249,7 @@ export function useWorkbenchProviders({
     };
   }, [workspaceId]);
 
-  const attachProviderInstall = useCallback((providerId: string, installId: string) => {
+  const attachProviderInstall = useCallback((providerId: string, installId: string, initialTarget?: InstallTarget) => {
     const existingInstallId = providerInstallsById[providerId]?.installId;
     if (existingInstallId === installId && installObserversRef.current[providerId]) {
       return;
@@ -233,7 +260,7 @@ export function useWorkbenchProviders({
       installId,
       state: "running",
       pct: 0,
-      target: undefined,
+      target: initialTarget,
       errorCode: undefined,
       error: undefined,
     };
@@ -264,7 +291,11 @@ export function useWorkbenchProviders({
         && installId
         && (!tracked || tracked.installId !== installId || tracked.state !== "running")
       ) {
-        attachProviderInstall(provider.provider_id, installId);
+        attachProviderInstall(
+          provider.provider_id,
+          installId,
+          providerInstallTargetForProvider(provider),
+        );
       }
     }
   }, [attachProviderInstall, providerInstallsById, providers]);
@@ -320,8 +351,8 @@ export function useWorkbenchProviders({
       onStartError(null);
       try {
         const target = parseInstallTarget(providersById[providerId]?.details?.install_target);
-        const { install_id: installId } = await installProvider(providerId, target);
-        attachProviderInstall(providerId, installId);
+        const started = await installProvider(providerId, target);
+        attachProviderInstall(providerId, started.install_id, started.target);
       } catch (error: unknown) {
         onStartError(toErrorMessage(error));
       }
@@ -337,8 +368,8 @@ export function useWorkbenchProviders({
         providers.find((provider) => provider.details?.install_target)?.details?.install_target,
       ) ?? "host";
       const installs = await installAllProviders(target);
-      for (const { provider_id: providerId, install_id: installId } of installs) {
-        attachProviderInstall(providerId, installId);
+      for (const { provider_id: providerId, install_id: installId, target: installTarget } of installs) {
+        attachProviderInstall(providerId, installId, installTarget);
       }
     } catch (error: unknown) {
       onStartError(toErrorMessage(error));
@@ -387,7 +418,12 @@ export function useWorkbenchProviders({
       const state = providersById[providerId];
       const stillRunning = state?.details?.install_running === "true";
       if (install?.state === "succeeded" && state?.installed && state.health === "ok" && !stillRunning) {
-        removeProviderInstallProgress(providerId);
+        removeProviderInstallProgress(
+          providerId,
+          install.target
+            ? { target: install.target, installId: install.installId }
+            : { installId: install.installId },
+        );
       }
     }
   }, [providerInstallsById, providersById]);
@@ -417,7 +453,8 @@ export function useWorkbenchProviders({
 
       const force = opts?.force ?? false;
       const trigger = opts?.trigger ?? (force ? "explicit" : "passive");
-      const existing = providerAuthSummaryInFlightRef.current[providerId];
+      const requestKey = `${workspaceId}:${providerId}`;
+      const existing = providerAuthSummaryInFlightRef.current[requestKey];
       if (existing && !force) return existing;
 
       const cached = getProvidersBootstrapSnapshot(workspaceId).provider_options[providerId];
@@ -461,12 +498,12 @@ export function useWorkbenchProviders({
           return next;
         })
         .finally(() => {
-          if (providerAuthSummaryInFlightRef.current[providerId] === request) {
-            delete providerAuthSummaryInFlightRef.current[providerId];
+          if (providerAuthSummaryInFlightRef.current[requestKey] === request) {
+            delete providerAuthSummaryInFlightRef.current[requestKey];
           }
         });
 
-      providerAuthSummaryInFlightRef.current[providerId] = request;
+      providerAuthSummaryInFlightRef.current[requestKey] = request;
       return request;
     },
     [providersById, workspaceId],

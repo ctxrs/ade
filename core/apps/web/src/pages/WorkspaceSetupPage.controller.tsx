@@ -20,7 +20,6 @@ export function WorkspaceSetupPageController() {
   const wizardKey = "workspace_setup" as const;
   const wizardCompletedRef = useRef(false);
   const wizardStartedRef = useRef(false);
-  const lastWizardStepViewedRef = useRef<{ key: string; index: number } | null>(null);
   const harnessDownloadsScrollRef = useRef<HTMLDivElement | null>(null);
 
   const workflow = useWorkspaceSetupWorkflow({
@@ -33,6 +32,10 @@ export function WorkspaceSetupPageController() {
         workspaceKind: payload.workspaceKind as "local" | "remote" | "unknown",
       });
     },
+  });
+  const lastWizardStepViewedRef = useRef<{ key: string; index: number }>({
+    key: workflow.flow.step.key,
+    index: workflow.flow.stepIndex,
   });
 
   const infoStep = openInfoKey
@@ -80,17 +83,14 @@ export function WorkspaceSetupPageController() {
     trackWizardStarted({ wizardKey });
     return () => {
       if (wizardCompletedRef.current) return;
-      const last = lastWizardStepViewedRef.current ?? {
-        key: workflow.flow.currentStepKeyRef.current,
-        index: workflow.flow.stepIndex,
-      };
+      const last = lastWizardStepViewedRef.current;
       trackWizardAbandoned({
         wizardKey,
         lastStepKey: last.key,
         lastStepIndex: last.index,
       });
     };
-  }, [wizardKey, workflow.flow.currentStepKeyRef, workflow.flow.stepIndex]);
+  }, [wizardKey]);
 
   useEffect(() => {
     lastWizardStepViewedRef.current = { key: workflow.flow.step.key, index: workflow.flow.stepIndex };

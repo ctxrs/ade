@@ -10,12 +10,32 @@ export type ProviderInstallProgressSession = {
   updatedAtMs: number;
 };
 
-export type ProviderInstallProgressSnapshot = Record<string, ProviderInstallProgressSession>;
+export const UNKNOWN_PROVIDER_INSTALL_TARGET = "__unknown__";
+
+type ProviderInstallProgressTarget = Exclude<InstallInfo["target"], undefined>;
+
+export type ProviderInstallProgressTargetKey =
+  | ProviderInstallProgressTarget
+  | typeof UNKNOWN_PROVIDER_INSTALL_TARGET;
+
+export type ProviderInstallProgressSnapshot = Record<
+  string,
+  Partial<Record<ProviderInstallProgressTargetKey, ProviderInstallProgressSession>>
+>;
 
 type Listener = (snapshot: ProviderInstallProgressSnapshot) => void;
 
-const installsByProviderId = new Map<string, ProviderInstallProgressSession>();
+const installsByProviderId = new Map<string, Map<ProviderInstallProgressTargetKey, ProviderInstallProgressSession>>();
 const listeners = new Set<Listener>();
+
+const toTargetKey = (
+  target: InstallInfo["target"] | undefined,
+): ProviderInstallProgressTargetKey => target ?? UNKNOWN_PROVIDER_INSTALL_TARGET;
+
+const sameTarget = (
+  target: InstallInfo["target"] | undefined,
+  targetKey: ProviderInstallProgressTargetKey,
+): boolean => toTargetKey(target) === targetKey;
 
 function sameSession(
   lhs: ProviderInstallProgressSession | undefined,
@@ -32,8 +52,10 @@ function sameSession(
 
 function cloneSnapshot(): ProviderInstallProgressSnapshot {
   const snapshot: ProviderInstallProgressSnapshot = {};
-  for (const [providerId, session] of installsByProviderId.entries()) {
-    snapshot[providerId] = { ...session };
+  for (const [providerId, sessionsByTarget] of installsByProviderId.entries()) {
+    snapshot[providerId] = Object.fromEntries(
+      Array.from(sessionsByTarget.entries()).map(([targetKey, session]) => [targetKey, { ...session }]),
+    ) as Partial<Record<ProviderInstallProgressTargetKey, ProviderInstallProgressSession>>;
   }
   return snapshot;
 }
@@ -63,21 +85,84 @@ export function upsertProviderInstallProgress(
   session: Omit<ProviderInstallProgressSession, "updatedAtMs"> & { updatedAtMs?: number },
 ): void {
   if (!providerId || !session.installId) return;
+  const targetKey = toTargetKey(session.target);
   const nextSession: ProviderInstallProgressSession = {
     ...session,
     updatedAtMs: session.updatedAtMs ?? Date.now(),
   };
-  const existing = installsByProviderId.get(providerId);
-  if (sameSession(existing, nextSession)) {
+  let sessionsByTarget = installsByProviderId.get(providerId);
+  if (!sessionsByTarget) {
+    sessionsByTarget = new Map<ProviderInstallProgressTargetKey, ProviderInstallProgressSession>();
+    installsByProviderId.set(providerId, sessionsByTarget);
+  }
+
+  let changed = false;
+  if (targetKey !== UNKNOWN_PROVIDER_INSTALL_TARGET) {
+    const unknownSession = sessionsByTarget.get(UNKNOWN_PROVIDER_INSTALL_TARGET);
+    if (unknownSession?.installId === nextSession.installId) {
+      sessionsByTarget.delete(UNKNOWN_PROVIDER_INSTALL_TARGET);
+      changed = true;
+    }
+  }
+
+  const existing = sessionsByTarget.get(targetKey);
+  if (!changed && sameSession(existing, nextSession)) {
     return;
   }
-  installsByProviderId.set(providerId, nextSession);
+  sessionsByTarget.set(targetKey, nextSession);
   emitChange();
 }
 
-export function removeProviderInstallProgress(providerId: string): void {
+export function resolveProviderInstallProgressSession(
+  snapshot: ProviderInstallProgressSnapshot,
+  providerId: string,
+  target?: InstallInfo["target"],
+): ProviderInstallProgressSession | undefined {
+  const sessionsByTarget = snapshot[providerId];
+  if (!sessionsByTarget) return undefined;
+
+  if (target) {
+    const exact = sessionsByTarget[toTargetKey(target)];
+    if (exact) return exact;
+    return sessionsByTarget[UNKNOWN_PROVIDER_INSTALL_TARGET];
+  }
+
+  const unknown = sessionsByTarget[UNKNOWN_PROVIDER_INSTALL_TARGET];
+  if (unknown) return unknown;
+
+  const sessions = Object.values(sessionsByTarget);
+  if (sessions.length === 0) return undefined;
+  if (sessions.length === 1) return sessions[0];
+  return sessions.reduce((latest, current) => (
+    current.updatedAtMs > latest.updatedAtMs ? current : latest
+  ));
+}
+
+export function removeProviderInstallProgress(
+  providerId: string,
+  options?: { target?: InstallInfo["target"]; installId?: string },
+): void {
   if (!providerId) return;
-  if (installsByProviderId.delete(providerId)) {
+  const sessionsByTarget = installsByProviderId.get(providerId);
+  if (!sessionsByTarget) return;
+
+  const hasTargetFilter = Boolean(options && "target" in options);
+  let changed = false;
+  for (const [targetKey, session] of sessionsByTarget.entries()) {
+    if (hasTargetFilter && !sameTarget(options?.target, targetKey)) {
+      continue;
+    }
+    if (options?.installId && session.installId !== options.installId) {
+      continue;
+    }
+    sessionsByTarget.delete(targetKey);
+    changed = true;
+  }
+
+  if (sessionsByTarget.size === 0) {
+    installsByProviderId.delete(providerId);
+  }
+  if (changed) {
     emitChange();
   }
 }

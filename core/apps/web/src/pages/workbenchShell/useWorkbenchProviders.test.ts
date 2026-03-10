@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DraftHarness } from "../../components/WorkbenchComposer";
 import type { ProviderOptions, ProvidersBootstrapResponse } from "../../api/client";
 import { getProviderOptions, getProvidersBootstrap } from "../../api/client";
+import { getProviderInstallProgressSnapshot } from "../../state/providerInstallProgressStore";
 import { refreshProvidersBootstrap } from "../../state/providersBootstrapStore";
 import { resolveProviderOptionsUpdate, shouldHydrateProviderModels } from "./useWorkbenchProviders";
 import { useWorkbenchProviders } from "./useWorkbenchProviders";
@@ -55,6 +56,16 @@ const requireHookValue = (value: HookValue | null): HookValue => {
     throw new Error("hook value not ready");
   }
   return value;
+};
+
+const deferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 };
 
 const makeBootstrap = (
@@ -433,5 +444,146 @@ describe("useWorkbenchProviders", () => {
     });
 
     expect(requireHookValue(hookValue).providerOptions.codex?.models).toBeUndefined();
+  });
+
+  it("scopes in-flight provider auth-summary requests by workspace", async () => {
+    const pendingByWorkspace = new Map([
+      ["ws-a", deferred<ProviderOptions>()],
+      ["ws-b", deferred<ProviderOptions>()],
+    ]);
+    let hookValue: HookValue | null = null;
+
+    vi.mocked(getProvidersBootstrap).mockImplementation(async (workspaceId: string) => makeBootstrap({
+      codex: {
+        ...baseOptions("codex"),
+        workspace_id: workspaceId,
+      },
+    }));
+    vi.mocked(getProviderOptions).mockImplementation((workspaceId: string, _providerId: string) => {
+      const pending = pendingByWorkspace.get(workspaceId);
+      if (!pending) {
+        throw new Error(`missing pending provider options for ${workspaceId}`);
+      }
+      return pending.promise;
+    });
+
+    const renderResult = render(createElement(WorkbenchProvidersHarness, {
+      workspaceId: "ws-a",
+      onChange: (next) => {
+        hookValue = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(hookValue?.providerOptions.codex?.workspace_id).toBe("ws-a");
+    });
+
+    void requireHookValue(hookValue).ensureProviderAuthSummary("codex");
+    await Promise.resolve();
+
+    await waitFor(() => {
+      expect(vi.mocked(getProviderOptions)).toHaveBeenCalledWith("ws-a", "codex");
+    });
+
+    renderResult.rerender(createElement(WorkbenchProvidersHarness, {
+      workspaceId: "ws-b",
+      onChange: (next) => {
+        hookValue = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(hookValue?.providerOptions.codex?.workspace_id).toBe("ws-b");
+    });
+
+    void requireHookValue(hookValue).ensureProviderAuthSummary("codex");
+    await Promise.resolve();
+
+    await waitFor(() => {
+      expect(vi.mocked(getProviderOptions).mock.calls.some(
+        ([workspaceId, providerId]) => workspaceId === "ws-b" && providerId === "codex",
+      )).toBe(true);
+    });
+
+    pendingByWorkspace.get("ws-b")?.resolve({
+      ...baseOptions("codex"),
+      workspace_id: "ws-b",
+      models: {
+        models: [{ id: "gpt-5" }],
+        current_model_id: "gpt-5",
+      },
+    });
+    pendingByWorkspace.get("ws-a")?.resolve({
+      ...baseOptions("codex"),
+      workspace_id: "ws-a",
+    });
+
+    await waitFor(() => {
+      expect(hookValue?.providerOptions.codex?.workspace_id).toBe("ws-b");
+      expect(hookValue?.providerOptions.codex?.models).toEqual({
+        models: [{ id: "gpt-5" }],
+        current_model_id: "gpt-5",
+      });
+    });
+  });
+
+  it("selects provider install progress for the provider target", async () => {
+    const workspaceId = "ws-target-install";
+    let hookValue: HookValue | null = null;
+
+    vi.mocked(getProviderInstallProgressSnapshot).mockReturnValue({
+      codex: {
+        host: {
+          installId: "install-host",
+          state: "running",
+          pct: 10,
+          target: "host",
+          errorCode: undefined,
+          error: undefined,
+          updatedAtMs: 1,
+        },
+        container: {
+          installId: "install-container",
+          state: "running",
+          pct: 30,
+          target: "container",
+          errorCode: undefined,
+          error: undefined,
+          updatedAtMs: 2,
+        },
+      },
+    });
+    vi.mocked(getProvidersBootstrap).mockResolvedValue({
+      ...makeBootstrap({
+        codex: {
+          ...baseOptions("codex"),
+          workspace_id: workspaceId,
+        },
+      }),
+      providers: [
+        {
+          provider_id: "codex",
+          display_name: "Codex",
+          installed: true,
+          health: "ok",
+          diagnostics: [],
+          details: {
+            install_target: "container",
+          },
+        } as never,
+      ],
+    });
+
+    render(createElement(WorkbenchProvidersHarness, {
+      workspaceId,
+      onChange: (next) => {
+        hookValue = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(hookValue?.providerInstallsById.codex?.installId).toBe("install-container");
+      expect(hookValue?.providerInstallsById.codex?.target).toBe("container");
+    });
   });
 });

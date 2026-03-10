@@ -37,6 +37,8 @@ import {
   isDesktopApp,
 } from "../utils/desktop";
 import { upsertLauncherRecent } from "../state/launcherRecentsStore";
+import { clearInstallProgress } from "../state/installProgressMonitor";
+import { clearProviderInstallProgress } from "../state/providerInstallProgressStore";
 
 const {
   trackWizardStartedMock,
@@ -223,11 +225,15 @@ const configuredTitlingSettingsFixture = () => ({
 
 describe("WorkspaceSetupPage", () => {
   afterEach(() => {
+    clearInstallProgress();
+    clearProviderInstallProgress();
     vi.useRealTimers();
   });
 
   beforeEach(() => {
     vi.clearAllMocks();
+    clearInstallProgress();
+    clearProviderInstallProgress();
     window.localStorage.clear();
     getInstallMock.mockReset();
     trackWizardStartedMock.mockReset();
@@ -727,7 +733,7 @@ describe("WorkspaceSetupPage", () => {
     expect(installProvider).not.toHaveBeenCalled();
   });
 
-  it("tracks wizard start, step viewed, and abandonment on unmount", async () => {
+  it("tracks abandonment only on true unmount and uses the latest viewed step", async () => {
     const view = renderPage();
     await screen.findByTestId("workspace-setup");
 
@@ -738,12 +744,24 @@ describe("WorkspaceSetupPage", () => {
       stepIndex: 0,
     });
 
+    await selectLocalAndContinue();
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+      expect(trackWizardStepViewedMock).toHaveBeenCalledWith({
+        wizardKey: "workspace_setup",
+        stepKey: "container",
+        stepIndex: 1,
+      });
+    });
+    expect(trackWizardAbandonedMock).not.toHaveBeenCalled();
+
     view.unmount();
 
     expect(trackWizardAbandonedMock).toHaveBeenCalledWith(
       expect.objectContaining({
         wizardKey: "workspace_setup",
-        lastStepKey: "location",
+        lastStepKey: "container",
+        lastStepIndex: 1,
       }),
     );
   });
@@ -2230,12 +2248,24 @@ describe("WorkspaceSetupPage", () => {
     await waitFor(() => {
       expect(createWorkspace).toHaveBeenCalled();
       expect(startWorkspaceSetupLaunchHandoff).toHaveBeenCalled();
-      expect(trackWorkspaceLaunchCompletedMock).toHaveBeenCalledWith(
+      expect(trackWorkspaceLaunchCompletedMock).toHaveBeenNthCalledWith(
+        1,
         expect.objectContaining({
           workspaceId: "ws_test",
           workspaceKind: "local",
           executionMode: "container",
           result: "ready",
+          persistPendingRoute: false,
+        }),
+      );
+      expect(trackWorkspaceLaunchCompletedMock).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          workspaceId: "ws_test",
+          workspaceKind: "local",
+          executionMode: "container",
+          result: "ready",
+          emitEvent: false,
         }),
       );
     });

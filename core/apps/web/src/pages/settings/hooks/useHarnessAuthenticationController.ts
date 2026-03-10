@@ -62,7 +62,6 @@ import { desktopStartCodexLoginRelay, isDesktopApp, openExternalLink } from "../
 import {
   EMPTY_PROVIDERS_BOOTSTRAP,
   getHostProvidersBootstrapSnapshot,
-  hasCachedHostProvidersBootstrap,
   invalidateHostProvidersBootstrap,
   getProvidersBootstrapSnapshot,
   loadHostProvidersBootstrap,
@@ -77,6 +76,7 @@ import {
 } from "../../../state/providersBootstrapStore";
 import {
   getProviderInstallProgressSnapshot,
+  resolveProviderInstallProgressSession,
   subscribeProviderInstallProgress,
   type ProviderInstallProgressSnapshot,
 } from "../../../state/providerInstallProgressStore";
@@ -206,7 +206,9 @@ const resolveNextNullableState = <T,>(update: SetStateAction<T | null>, current:
     ? (update as (previous: T | null) => T | null)(current)
     : update;
 
-const toInstallSession = (session: ProviderInstallProgressSnapshot[string]): InstallSession => ({
+const toInstallSession = (
+  session: NonNullable<ReturnType<typeof resolveProviderInstallProgressSession>>,
+): InstallSession => ({
   installId: session.installId,
   state: session.state,
   pct: session.pct,
@@ -216,11 +218,24 @@ const toInstallSession = (session: ProviderInstallProgressSnapshot[string]): Ins
   error: session.error,
 });
 
+const providerInstallTargetForProvider = (provider: ProviderStatus | undefined) =>
+  parseInstallTarget(provider?.details?.install_target);
+
 const installsFromProgressSnapshot = (
   snapshot: ProviderInstallProgressSnapshot,
+  providersById: Record<string, ProviderStatus>,
 ): Record<string, InstallSession> =>
   Object.fromEntries(
-    Object.entries(snapshot).map(([providerId, session]) => [providerId, toInstallSession(session)]),
+    Array.from(new Set([...Object.keys(snapshot), ...Object.keys(providersById)]))
+      .map((providerId) => {
+        const session = resolveProviderInstallProgressSession(
+          snapshot,
+          providerId,
+          providerInstallTargetForProvider(providersById[providerId]),
+        );
+        return session ? ([providerId, toInstallSession(session)] as const) : null;
+      })
+      .filter((entry): entry is readonly [string, InstallSession] => entry !== null),
   );
 
 const selectHarnessSource = (
@@ -332,7 +347,7 @@ export function useHarnessAuthenticationController({
   } = useHarnessAuthModalController();
   const [installBusy, setInstallBusy] = useState<string | null>(null);
   const [installs, setInstalls] = useState<Record<string, InstallSession>>(
-    () => installsFromProgressSnapshot(getProviderInstallProgressSnapshot()),
+    () => installsFromProgressSnapshot(getProviderInstallProgressSnapshot(), {}),
   );
 
   const [codexAccountsBusy, setCodexAccountsBusy] = useState(false);
@@ -360,7 +375,7 @@ export function useHarnessAuthenticationController({
     ),
     useCallback(() => EMPTY_PROVIDERS_BOOTSTRAP, []),
   );
-  const hostBootstrapLoaded = workspaceId ? false : hasCachedHostProvidersBootstrap();
+  const hostBootstrapLoaded = workspaceId ? false : scopedBootstrap !== EMPTY_PROVIDERS_BOOTSTRAP;
   const providers = workspaceId ? scopedBootstrap.providers : (hostBootstrapLoaded ? scopedBootstrap.providers : []);
   const providerHarnessConfig = workspaceId
     ? scopedBootstrap.provider_harness_config
@@ -384,7 +399,7 @@ export function useHarnessAuthenticationController({
 
   useEffect(() => {
     return subscribeProviderInstallProgress((snapshot) => {
-      setInstalls(installsFromProgressSnapshot(snapshot));
+      setInstalls(installsFromProgressSnapshot(snapshot, providersByIdRef.current));
     });
   }, []);
 
@@ -410,6 +425,7 @@ export function useHarnessAuthenticationController({
     providersByIdRef.current = Object.fromEntries(
       providers.map((provider) => [provider.provider_id, provider]),
     );
+    setInstalls(installsFromProgressSnapshot(getProviderInstallProgressSnapshot(), providersByIdRef.current));
   }, [providers]);
 
   const markProviderEndpointUnsupported = useCallback((providerId: string) => {
@@ -1375,7 +1391,7 @@ export function useHarnessAuthenticationController({
     supportsHarnessEndpointConfig,
   ]);
 
-  const attachInstall = useCallback(async (providerId: string, installId: string) => {
+  const attachInstall = useCallback(async (providerId: string, installId: string, initialTarget?: string) => {
     if (!providerId || !installId) return;
     const existingInstallId = installsRef.current[providerId]?.installId;
     if (existingInstallId === installId && installObserversRef.current[providerId]) return;
@@ -1385,7 +1401,7 @@ export function useHarnessAuthenticationController({
       installId,
       state: "running",
       pct: installsRef.current[providerId]?.pct ?? null,
-      target: installsRef.current[providerId]?.target,
+      target: parseInstallTarget(initialTarget) ?? installsRef.current[providerId]?.target,
       errorCode: undefined,
       streamError: installsRef.current[providerId]?.streamError,
       error: undefined,
@@ -1408,8 +1424,8 @@ export function useHarnessAuthenticationController({
       const target =
         parseInstallTarget(providers.find((provider) => provider.provider_id === providerId)?.details?.install_target)
         ?? "host";
-      const { install_id } = await installProvider(providerId, target);
-      await attachInstall(providerId, install_id);
+      const started = await installProvider(providerId, target);
+      await attachInstall(providerId, started.install_id, started.target);
     } catch (error) {
       setProviderError(messageFromError(error));
     } finally {
@@ -1426,7 +1442,7 @@ export function useHarnessAuthenticationController({
       ) ?? "host";
       const started = await installAllProviders(target);
       for (const install of started) {
-        attachInstall(install.provider_id, install.install_id).catch(() => {});
+        attachInstall(install.provider_id, install.install_id, install.target).catch(() => {});
       }
     } catch (error) {
       setProviderError(messageFromError(error));

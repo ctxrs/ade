@@ -51,6 +51,41 @@ describe("routePlanner", () => {
     expect(resolveRoutePlanInsertionStep(plan, null)).toBe("harness-downloads");
   });
 
+  it("reuses prior onboarding insertions only for the same route key", () => {
+    const previousPlan = {
+      targetKey: "local|disk-isolated",
+      containerSelection: "disk-isolated",
+      includeHarnessDownloads: true,
+      includeAuthImport: false,
+      includeTitling: false,
+    };
+    const plan = buildWizardRoutePlan(snapshot({
+      authImportCandidateCount: 1,
+      missingHarnessCount: 1,
+    }));
+
+    expect(resolveRoutePlanInsertionStep(plan, previousPlan)).toBe("auth-import");
+  });
+
+  it("does not suppress onboarding insertions when the route key changes", () => {
+    const previousPlan = {
+      targetKey: "local|disk-isolated",
+      containerSelection: "disk-isolated",
+      includeHarnessDownloads: true,
+      includeAuthImport: true,
+      includeTitling: true,
+    };
+    const plan = buildWizardRoutePlan(snapshot({
+      targetKey: "ssh:user@devbox.example:4399:/srv/ctx",
+      authImportCandidateCount: 1,
+      missingHarnessCount: 1,
+      titlingRequired: true,
+      titlingMode: "remote",
+    }));
+
+    expect(resolveRoutePlanInsertionStep(plan, previousPlan)).toBe("harness-downloads");
+  });
+
   it("can suppress titling insertion during create-time rechecks", () => {
     const result = buildOnboardingAfterConnectResult(snapshot({
       titlingRequired: true,

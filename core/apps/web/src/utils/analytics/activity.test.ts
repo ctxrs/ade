@@ -96,7 +96,7 @@ describe("analytics events", () => {
     );
   });
 
-  it("tracks click-to-ready and click-to-route metrics for workspace launch", () => {
+  it("tracks launch ready immediately but only records a pending route marker when explicitly persisted", () => {
     trackWorkspaceLaunchCompleted({
       workspaceId: "ws_123",
       workspaceKind: "local",
@@ -104,6 +104,17 @@ describe("analytics events", () => {
       source: "wizard",
       startedAtMs: Date.parse("2026-03-10T00:00:00.000Z"),
       result: "ready",
+      persistPendingRoute: false,
+    });
+    trackWorkspaceRouteOpenedFromPending("ws_123");
+    trackWorkspaceLaunchCompleted({
+      workspaceId: "ws_123",
+      workspaceKind: "local",
+      executionMode: "container",
+      source: "wizard",
+      startedAtMs: Date.parse("2026-03-10T00:00:00.000Z"),
+      result: "ready",
+      emitEvent: false,
     });
     trackWorkspaceRouteOpenedFromPending("ws_123");
 
@@ -124,6 +135,12 @@ describe("analytics events", () => {
         execution_mode: "container",
       }),
     );
+    expect(
+      captureProductEventMock.mock.calls.filter(([eventName]) => eventName === "workspace_launch_completed"),
+    ).toHaveLength(1);
+    expect(
+      captureProductEventMock.mock.calls.filter(([eventName]) => eventName === "workspace_route_opened"),
+    ).toHaveLength(1);
     expect(captureProductEventMock).not.toHaveBeenCalledWith(
       "workspace_launch_completed",
       1,

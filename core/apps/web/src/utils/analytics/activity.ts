@@ -116,23 +116,29 @@ export const trackWorkspaceLaunchCompleted = (props: {
   source: "wizard" | "launcher" | "api" | "unknown";
   startedAtMs: number;
   result: "ready" | "error";
+  emitEvent?: boolean;
+  persistPendingRoute?: boolean;
 }): void => {
-  const clickToLaunchReadyMs = Math.max(0, Date.now() - props.startedAtMs);
-  capture("workspace_launch_completed", {
-    workspace_kind: props.workspaceKind,
-    execution_mode: props.executionMode,
-    source: props.source,
-    result: props.result,
-    click_to_launch_ready_ms: clickToLaunchReadyMs,
-  });
-  if (props.result === "ready") {
-    writePendingWorkspaceLaunch({
-      workspace_id: props.workspaceId,
+  if (props.emitEvent ?? true) {
+    const clickToLaunchReadyMs = Math.max(0, Date.now() - props.startedAtMs);
+    capture("workspace_launch_completed", {
       workspace_kind: props.workspaceKind,
       execution_mode: props.executionMode,
       source: props.source,
-      started_at_ms: props.startedAtMs,
+      result: props.result,
+      click_to_launch_ready_ms: clickToLaunchReadyMs,
     });
+  }
+  if (props.result === "ready") {
+    if (props.persistPendingRoute ?? true) {
+      writePendingWorkspaceLaunch({
+        workspace_id: props.workspaceId,
+        workspace_kind: props.workspaceKind,
+        execution_mode: props.executionMode,
+        source: props.source,
+        started_at_ms: props.startedAtMs,
+      });
+    }
     return;
   }
   clearPendingWorkspaceLaunch(props.workspaceId);

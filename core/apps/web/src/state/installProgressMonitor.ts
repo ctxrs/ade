@@ -112,7 +112,7 @@ const appendInstallEvent = (
 
 const clearProviderAliases = (entry: InstallProgressInternalEntry): void => {
   for (const providerId of entry.providerAliases) {
-    removeProviderInstallProgress(providerId);
+    removeProviderInstallProgress(providerId, { installId: entry.installId });
   }
 };
 
