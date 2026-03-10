@@ -69,7 +69,12 @@ pub use validation::{
     default_shape_for_provider, ensure_shape_compatible, supports_harness_endpoint,
 };
 
-pub(crate) use runtime_resolution::droid_cli_model_id_for_endpoint_model;
+pub(crate) fn droid_cli_model_id_for_endpoint_model(
+    model_id: Option<&str>,
+    base_url: Option<&str>,
+) -> Option<String> {
+    runtime_resolution::droid_cli_model_id_for_endpoint_model(model_id, base_url)
+}
 
 #[cfg(test)]
 use model_catalog::{

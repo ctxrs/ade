@@ -1,4 +1,5 @@
 use super::*;
+use crate::provider_launch::status as provider_launch_status;
 
 pub(crate) async fn list_providers(
     State(state): State<Arc<AppState>>,
@@ -7,7 +8,7 @@ pub(crate) async fn list_providers(
     let target = installer::parse_install_target(query.target.as_deref())
         .map_err(|_| StatusCode::BAD_REQUEST)?;
     Ok(Json(
-        crate::provider_launch::status::providers_statuses_response(&state, target, false).await,
+        provider_launch_status::providers_statuses_response(&state, target, false).await,
     ))
 }
 
@@ -46,11 +47,10 @@ pub(crate) async fn get_provider(
             })),
         ));
     }
-    let mut status = crate::provider_launch::status::provider_status_for_target(
-        &state, &managed, &matrix, &id, target,
-    )
-    .await;
-    crate::provider_launch::status::apply_install_viability_details(
+    let mut status =
+        provider_launch_status::provider_status_for_target(&state, &managed, &matrix, &id, target)
+            .await;
+    provider_launch_status::apply_install_viability_details(
         &mut status,
         &state.core.data_root,
         &managed,
