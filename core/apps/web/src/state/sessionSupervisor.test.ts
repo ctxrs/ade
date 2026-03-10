@@ -1234,7 +1234,7 @@ describe("SessionSupervisor", () => {
     expect(listSessionSubagentInvocations).toHaveBeenCalledTimes(1);
   });
 
-  it("does not refetch session state when streamed head revisions advance after a warm load", async () => {
+  it("refetches session state when streamed head revisions advance after a warm load", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 
     const sessionId = "session-state-rev-warm-cache";
@@ -1277,7 +1277,12 @@ describe("SessionSupervisor", () => {
     sup.loadSessionState(sessionId);
     await Promise.resolve();
 
-    expect(getSessionState).toHaveBeenCalledTimes(1);
+    await waitForCondition(() => {
+      const entry = internals.entries.get(sessionId);
+      return entry?.stateAppliedRev === 9;
+    });
+
+    expect(getSessionState).toHaveBeenCalledTimes(2);
   });
 
   it("skips /head hydrate for active sessions when snapshot store is bound", async () => {

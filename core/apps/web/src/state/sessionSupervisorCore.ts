@@ -1059,7 +1059,12 @@ export class SessionSupervisor {
 
   private async ensureState(entry: InternalEntry, opts?: { force?: boolean }) {
     const cached = this.stateCacheBySessionId.get(entry.sessionId);
-    if (!opts?.force && cached) {
+    const cachedOrAppliedRev =
+      typeof cached?.stateRev === "number" ? cached.stateRev : entry.stateAppliedRev;
+    const cacheMatchesRequestedRev =
+      typeof entry.stateRev !== "number"
+      || (typeof cachedOrAppliedRev === "number" && cachedOrAppliedRev >= entry.stateRev);
+    if (!opts?.force && cached && cacheMatchesRequestedRev) {
       this.applyState(entry, cached.state);
       entry.updatedAtMs = Date.now();
       this.publish();

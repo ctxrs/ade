@@ -30,8 +30,19 @@ export function shouldFetchSessionState(
   opts?: { force?: boolean },
 ): boolean {
   if (entry.stateLoading) return false;
-  if (entry.stateLoaded && !opts?.force) return false;
-  return true;
+  if (opts?.force) return true;
+  if (!entry.stateLoaded) return true;
+  if (
+    typeof entry.stateRev === "number" &&
+    typeof entry.stateAppliedRev === "number" &&
+    entry.stateAppliedRev < entry.stateRev
+  ) {
+    return true;
+  }
+  if (typeof entry.stateRev === "number" && typeof entry.stateAppliedRev !== "number") {
+    return true;
+  }
+  return false;
 }
 
 export function adoptLoadedStateRevision(
