@@ -22,7 +22,7 @@ pub struct DaemonConfig {
     pub auth_token: Option<String>,
 }
 
-fn normalize_base_url(value: &str) -> Result<String> {
+pub(crate) fn normalize_base_url(value: &str) -> Result<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return Err(anyhow!("daemon base URL is empty"));

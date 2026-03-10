@@ -930,8 +930,38 @@ pub(super) fn normalize_tool_status(status: &str, event_type: SessionEventType) 
     s
 }
 
-pub(super) fn extract_tool_update(payload: &Value) -> &Value {
-    payload
+pub(super) fn merge_tool_status(existing: Option<&str>, next: &str) -> String {
+    match (existing, next) {
+        (Some(current @ ("completed" | "failed")), "pending" | "in_progress") => current.to_string(),
+        _ => next.to_string(),
+    }
+}
+
+pub(super) fn extract_tool_update(payload: &Value) -> &Value { payload }
+
+fn tool_kind_from_update(update: &Value) -> Option<String> {
+    update
+        .get("kind")
+        .and_then(Value::as_str)
+        .or_else(|| update.pointer("/toolCall/kind").and_then(Value::as_str))
+        .map(str::to_owned)
+}
+
+fn tool_title_from_update(update: &Value) -> Option<String> {
+    update
+        .get("title")
+        .and_then(Value::as_str)
+        .or_else(|| update.get("tool_label").and_then(Value::as_str))
+        .or_else(|| update.pointer("/toolCall/title").and_then(Value::as_str))
+        .or_else(|| update.pointer("/toolCall/tool_label").and_then(Value::as_str))
+        .map(str::to_owned)
+}
+
+fn tool_status_from_update<'a>(update: &'a Value) -> Option<&'a str> {
+    update
+        .get("status")
+        .and_then(Value::as_str)
+        .or_else(|| update.pointer("/toolCall/status").and_then(Value::as_str))
 }
 
 pub(super) fn sanitize_tool_event_payload(
@@ -941,21 +971,9 @@ pub(super) fn sanitize_tool_event_payload(
     let update = extract_tool_update(raw_payload);
     let tool_call_id = tool_call_id_from_payload(raw_payload).unwrap_or_default();
 
-    let tool_kind = update
-        .get("kind")
-        .and_then(|v| v.as_str())
-        .or_else(|| update.pointer("/toolCall/kind").and_then(|v| v.as_str()))
-        .map(|v| v.to_string());
-
-    let title = update
-        .get("tool_label")
-        .and_then(|v| v.as_str())
-        .map(|v| v.to_string());
-
-    let raw_status = update
-        .get("status")
-        .and_then(|v| v.as_str())
-        .or_else(|| update.pointer("/toolCall/status").and_then(|v| v.as_str()));
+    let tool_kind = tool_kind_from_update(update);
+    let title = tool_title_from_update(update);
+    let raw_status = tool_status_from_update(update);
     let status = if let Some(raw_status) = raw_status {
         normalize_tool_status(raw_status, event_type.clone())
     } else if matches!(event_type, SessionEventType::ToolResult) {
@@ -1089,21 +1107,9 @@ pub(super) fn build_turn_tool_from_event(
     let tool_call_id = tool_call_id_from_payload(&event.payload_json)?;
     let update = extract_tool_update(&event.payload_json);
 
-    let tool_kind = update
-        .get("kind")
-        .and_then(|v| v.as_str())
-        .or_else(|| update.pointer("/toolCall/kind").and_then(|v| v.as_str()))
-        .map(|v| v.to_string());
-
-    let title = update
-        .get("tool_label")
-        .and_then(|v| v.as_str())
-        .map(|v| v.to_string());
-
-    let raw_status = update
-        .get("status")
-        .and_then(|v| v.as_str())
-        .or_else(|| update.pointer("/toolCall/status").and_then(|v| v.as_str()));
+    let tool_kind = tool_kind_from_update(update);
+    let title = tool_title_from_update(update);
+    let raw_status = tool_status_from_update(update);
     let status = if let Some(raw_status) = raw_status {
         Some(normalize_tool_status(raw_status, event.event_type.clone()))
     } else if matches!(event.event_type, SessionEventType::ToolResult) {
@@ -1311,27 +1317,20 @@ pub(super) fn build_turn_tools_from_events(
             None => ev.seq,
         });
 
-        if let Some(kind) = update
-            .get("kind")
-            .and_then(|v| v.as_str())
-            .or_else(|| update.pointer("/toolCall/kind").and_then(|v| v.as_str()))
-        {
+        if let Some(kind) = tool_kind_from_update(update) {
             entry.tool_kind = Some(kind.to_string());
         }
-        if let Some(title) = update.get("tool_label").and_then(|v| v.as_str()) {
-            entry.title = Some(title.to_string());
+        if let Some(title) = tool_title_from_update(update) {
+            entry.title = Some(title);
         }
-
-        let raw_status = update
-            .get("status")
-            .and_then(|v| v.as_str())
-            .or_else(|| update.pointer("/toolCall/status").and_then(|v| v.as_str()));
+        let raw_status = tool_status_from_update(update);
         if let Some(raw_status) = raw_status {
-            entry.status = Some(normalize_tool_status(raw_status, ev.event_type.clone()));
+            let next_status = normalize_tool_status(raw_status, ev.event_type.clone());
+            entry.status = Some(merge_tool_status(entry.status.as_deref(), &next_status));
         } else if matches!(ev.event_type, SessionEventType::ToolResult) {
-            entry.status = Some("completed".to_string());
+            entry.status = Some(merge_tool_status(entry.status.as_deref(), "completed"));
         } else if matches!(ev.event_type, SessionEventType::ToolCall) {
-            entry.status = entry.status.clone().or(Some("pending".to_string()));
+            entry.status = Some(merge_tool_status(entry.status.as_deref(), "pending"));
         }
 
         let input = update
