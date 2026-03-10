@@ -1,6 +1,6 @@
 {
   "name": "@ctx/openhands-acp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "ACP-compatible OpenHands endpoint adapter",
