@@ -5,6 +5,7 @@ import { buildModelCatalog, formatEffortLabel, parseModelId } from "../../utils/
 import { PROVIDER_INSTALLS_ENABLED } from "../../utils/providerInstallGate";
 import { hasConfiguredHarnessAuth } from "../../utils/providerAuthStatus";
 import { UNSUPPORTED_HARNESS_IDS } from "../../utils/harnessCatalog";
+import { shouldHydrateProviderModels } from "../../pages/workbenchShell/useWorkbenchProviders";
 import { ComposerAutocompleteMenu } from "../ComposerAutocompleteMenu";
 import { useComposerAutocomplete } from "../../state/useComposerAutocomplete";
 import { imageFilesToInlineAttachments } from "../../utils/messageAttachments";
@@ -865,7 +866,19 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                 type="button"
                 className="wb-switcher wb-menu-trigger"
                 ref={modelTriggerRef}
-                onClick={() => setOpenMenu((v) => (v === "model" ? null : "model"))}
+                onClick={() => {
+                  if (variant === "newSession" && openMenu !== "model") {
+                    const ns = props as NewSessionProps;
+                    const providerId = ns.draftHarness?.providerId;
+                    if (providerId) {
+                      const opts = ns.providerOptions[providerId];
+                      if (shouldHydrateProviderModels(providerId, opts, "explicit")) {
+                        ns.ensureProviderAuthSummary(providerId, { trigger: "explicit" }).catch(() => {});
+                      }
+                    }
+                  }
+                  setOpenMenu((v) => (v === "model" ? null : "model"));
+                }}
                 aria-haspopup="menu"
                 aria-expanded={openMenu === "model"}
                 title="Model"

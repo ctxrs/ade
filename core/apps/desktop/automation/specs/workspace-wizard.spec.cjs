@@ -11,7 +11,10 @@ const {
   getConnectionInfo,
 } = require("./helpers/tauri.cjs");
 const { daemonJson, daemonJsonOnce, safeDaemonJson } = require("./helpers/daemon.cjs");
-const { runCodexFirstTurnApiSmoke } = require("./helpers/workspace_wizard_flow.cjs");
+const {
+  assertWorkbenchUsable,
+  runCodexFirstTurnApiSmoke,
+} = require("./helpers/workspace_wizard_flow.cjs");
 const {
   ensureCodexOpenRouterWorkspaceReady,
   getProviderStatus,
@@ -1854,6 +1857,7 @@ const runWizardScenario = async (scenario) => {
   // If connect_local returns before the daemon is reachable, this can flash briefly.
   await assertNoDaemonOverlayFor(2000);
   await assertDesktopConnectionStable(5000, 250);
+  await assertWorkbenchUsable(id, { settleMs: 2000 });
   return id;
 };
 

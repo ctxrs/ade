@@ -8,11 +8,13 @@ use ctx_core::models::{Workspace, Worktree};
 use ctx_fs::worktrees::managed_worktree_path;
 
 use crate::daemon::AppState;
+use crate::disk_isolated;
 use crate::execution_effective;
+use crate::harness_runtime::CTX_CONTAINER_WORKSPACE_ROOT;
 use crate::harness_sources::{self, HarnessSourceKind, ResolvedHarnessSource};
 use crate::logs;
 use crate::provider_accounts;
-use crate::settings::ExecutionMode;
+use crate::settings::{ContainerMountMode, ExecutionMode};
 
 pub(crate) struct WorkspaceRuntimeProbeContext {
     pub(crate) source: ResolvedHarnessSource,
@@ -172,6 +174,31 @@ fn synthetic_probe_worktree(workspace: &Workspace) -> Worktree {
     }
 }
 
+fn probe_cwd_for_workspace_runtime(
+    data_root: &Path,
+    workspace: &Workspace,
+    worktree: &Worktree,
+    mode: ExecutionMode,
+    mount_mode: ContainerMountMode,
+) -> PathBuf {
+    if !matches!(mode, ExecutionMode::Container)
+        || !matches!(mount_mode, ContainerMountMode::DiskIsolated)
+    {
+        return PathBuf::from(&worktree.root_path);
+    }
+
+    if worktree.root_path == workspace.root_path {
+        return PathBuf::from(CTX_CONTAINER_WORKSPACE_ROOT);
+    }
+
+    let managed_root = managed_worktree_path(data_root, workspace.id, worktree.id);
+    if Path::new(&worktree.root_path) == managed_root {
+        return disk_isolated::container_worktree_root(worktree.id);
+    }
+
+    PathBuf::from(CTX_CONTAINER_WORKSPACE_ROOT)
+}
+
 async fn finalize_workspace_probe_env(
     source: &ResolvedHarnessSource,
     provider_id: &str,
@@ -236,7 +263,15 @@ async fn provider_context_for_workspace_runtime(
         })?;
     let worktree = select_probe_worktree(&state.core.data_root, workspace, &worktrees)?
         .unwrap_or_else(|| synthetic_probe_worktree(workspace));
-    let cwd = PathBuf::from(&worktree.root_path);
+    let mode = effective.mode.clone();
+    let mount_mode = effective.container.mount_mode.clone();
+    let cwd = probe_cwd_for_workspace_runtime(
+        &state.core.data_root,
+        workspace,
+        &worktree,
+        mode,
+        mount_mode,
+    );
     let runtime_plan = state
         .execution
         .harness
@@ -292,11 +327,11 @@ pub(crate) async fn provider_probe_env_for_workspace_runtime(
 #[cfg(test)]
 mod tests {
     use super::{
-        finalize_workspace_probe_env, provider_env_with_runtime_root, select_probe_worktree,
-        synthetic_probe_worktree,
+        finalize_workspace_probe_env, probe_cwd_for_workspace_runtime,
+        provider_env_with_runtime_root, select_probe_worktree, synthetic_probe_worktree,
     };
     use std::collections::HashMap;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::sync::Arc;
 
     use chrono::Utc;
@@ -307,9 +342,11 @@ mod tests {
     use uuid::Uuid;
 
     use crate::daemon::AppState;
+    use crate::disk_isolated;
     use crate::harness_sources::{HarnessSourceKind, ResolvedHarnessSource};
     use crate::provider_accounts;
     use crate::provider_accounts::KIMI_SHARE_DIR_ENV;
+    use crate::settings::{ContainerMountMode, ExecutionMode};
 
     async fn test_state(data_root: &Path) -> Arc<AppState> {
         let stores = StoreManager::open(data_root).await.expect("open stores");
@@ -523,6 +560,80 @@ mod tests {
         let synthetic = synthetic_probe_worktree(&workspace);
         assert_eq!(synthetic.workspace_id, workspace.id);
         assert_eq!(synthetic.root_path, workspace.root_path);
+    }
+
+    #[test]
+    fn probe_cwd_uses_container_workspace_root_for_disk_isolated_workspace_root() {
+        let data_root = tempfile::tempdir().expect("tempdir");
+        let workspace = sample_workspace("/host/workspace");
+        let worktree = sample_worktree(workspace.id, "/host/workspace");
+
+        let cwd = probe_cwd_for_workspace_runtime(
+            data_root.path(),
+            &workspace,
+            &worktree,
+            ExecutionMode::Container,
+            ContainerMountMode::DiskIsolated,
+        );
+
+        assert_eq!(cwd, PathBuf::from("/ctx/ws"));
+    }
+
+    #[test]
+    fn probe_cwd_uses_container_managed_worktree_root_for_disk_isolated_worktree() {
+        let data_root = tempfile::tempdir().expect("tempdir");
+        let workspace = sample_workspace("/host/workspace");
+        let worktree_id = WorktreeId(Uuid::new_v4());
+        let worktree = Worktree {
+            id: worktree_id,
+            workspace_id: workspace.id,
+            root_path: managed_worktree_path(data_root.path(), workspace.id, worktree_id)
+                .to_string_lossy()
+                .to_string(),
+            base_commit_sha: String::new(),
+            git_branch: None,
+            vcs_kind: None,
+            base_revision: None,
+            vcs_ref: None,
+            created_at: Utc::now(),
+            bootstrap_status: None,
+            bootstrap_started_at: None,
+            bootstrap_finished_at: None,
+            bootstrap_exit_code: None,
+            bootstrap_timeout_sec: None,
+            bootstrap_error: None,
+            bootstrap_log_path: None,
+            bootstrap_log_truncated: None,
+            bootstrap_command: None,
+            bootstrap_script_path: None,
+        };
+
+        let cwd = probe_cwd_for_workspace_runtime(
+            data_root.path(),
+            &workspace,
+            &worktree,
+            ExecutionMode::Container,
+            ContainerMountMode::DiskIsolated,
+        );
+
+        assert_eq!(cwd, disk_isolated::container_worktree_root(worktree_id));
+    }
+
+    #[test]
+    fn probe_cwd_keeps_host_path_for_host_mounted_container_mode() {
+        let data_root = tempfile::tempdir().expect("tempdir");
+        let workspace = sample_workspace("/host/workspace");
+        let worktree = sample_worktree(workspace.id, "/host/workspace");
+
+        let cwd = probe_cwd_for_workspace_runtime(
+            data_root.path(),
+            &workspace,
+            &worktree,
+            ExecutionMode::Container,
+            ContainerMountMode::HostMounted,
+        );
+
+        assert_eq!(cwd, PathBuf::from("/host/workspace"));
     }
 
     #[tokio::test]

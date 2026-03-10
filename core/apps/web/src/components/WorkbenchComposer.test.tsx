@@ -679,4 +679,90 @@ describe("WorkbenchComposer textarea sizing", () => {
     expect(screen.getByRole("button", { name: "Codex" })).toBeInTheDocument();
   });
 
+  it("retries model hydration only when the user opens the model menu after a failed probe", async () => {
+    const ensureProviderAuthSummary = vi.fn(async () => ({
+      ...baseOptions("codex"),
+      has_active_auth: true,
+      auth_mode: "subscription" as const,
+      probe_ok: false,
+      probe_error: "crp runtime closed before models.list response",
+      source: {
+        provider_id: "codex",
+        selected_source_kind: "subscription" as const,
+        selected_endpoint_id: null,
+        endpoints: [],
+      },
+    }));
+
+    const NewTaskHarness = () => {
+      const [value, setValue] = useState("");
+      const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
+      const [draftHarness, setDraftHarness] = useState<DraftHarness | null>({ providerId: "codex", modelId: "" });
+      const harnessCatalog: HarnessCatalogEntry[] = [{ id: "codex", label: "Codex", logoSrc: "" }];
+      const providersById: Record<string, ProviderStatus> = {
+        codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
+      };
+      const providerOptions: Record<string, ProviderOptions | undefined> = {
+        codex: {
+          ...baseOptions("codex"),
+          has_active_auth: true,
+          auth_mode: "subscription",
+          probe_ok: false,
+          probe_error: "crp runtime closed before models.list response",
+          source: {
+            provider_id: "codex",
+            selected_source_kind: "subscription",
+            selected_endpoint_id: null,
+            endpoints: [],
+          },
+        },
+      };
+
+      return (
+        <WorkbenchComposer
+          variant="newSession"
+          value={value}
+          setValue={setValue}
+          placeholder="@ for context, / for commands"
+          inputDisabled={false}
+          sessionIdForAutocomplete={null}
+          workspaceIdForAutocomplete={null}
+          slashCommands={[]}
+          attachments={attachments}
+          setAttachments={setAttachments}
+          onSend={vi.fn()}
+          sendDisabled={false}
+          sendDisabledReason={null}
+          onInterrupt={null}
+          modeId={modeId}
+          setModeId={setModeId}
+          harnessCatalog={harnessCatalog}
+          providersById={providersById}
+          providerInstallsById={{}}
+          onInstallProvider={vi.fn()}
+          onInstallAllProviders={vi.fn()}
+          providerOptions={providerOptions}
+          ensureProviderAuthSummary={ensureProviderAuthSummary}
+          draftHarness={draftHarness}
+          setDraftHarness={setDraftHarness}
+          defaultProviderId="codex"
+        />
+      );
+    };
+
+    render(<NewTaskHarness />);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(ensureProviderAuthSummary).toHaveBeenNthCalledWith(1, "codex");
+
+    fireEvent.click(screen.getByRole("button", { name: "Model" }));
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(ensureProviderAuthSummary).toHaveBeenNthCalledWith(2, "codex", { trigger: "explicit" });
+  });
+
 });

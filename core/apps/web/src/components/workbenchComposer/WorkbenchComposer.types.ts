@@ -11,6 +11,7 @@ import type { SessionViewVerbosity } from "../../state/uiStateStore";
 import type { HarnessCatalogEntry } from "../../utils/harnessCatalog";
 
 export type WorkbenchModeId = "default" | "research" | "plan" | "review";
+export type ProviderAuthSummaryTrigger = "passive" | "explicit";
 export type ContextWindowInfo = {
   windowTokens?: number;
   usedTokens?: number;
@@ -76,7 +77,10 @@ export type NewSessionProps = SharedProps & {
   onInstallAllProviders: () => void;
   installAllBusy?: boolean;
   providerOptions: Record<string, ProviderOptions | undefined>;
-  ensureProviderAuthSummary: (providerId: string, opts?: { force?: boolean }) => Promise<ProviderOptions | undefined>;
+  ensureProviderAuthSummary: (
+    providerId: string,
+    opts?: { force?: boolean; trigger?: ProviderAuthSummaryTrigger },
+  ) => Promise<ProviderOptions | undefined>;
   onRequestHarnessAuth?: (providerId: string) => void;
 
   draftHarness: DraftHarness | null;

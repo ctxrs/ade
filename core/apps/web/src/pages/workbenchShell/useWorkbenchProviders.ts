@@ -66,6 +66,7 @@ type UseWorkbenchProvidersArgs = {
 };
 
 const MODEL_DISCOVERY_PROVIDER_IDS = new Set(["codex", "claude-crp"]);
+export type ProviderAuthSummaryTrigger = "passive" | "explicit";
 
 const hasProviderModels = (options: ProviderOptions | undefined): boolean => {
   const raw = options?.models;
@@ -77,14 +78,83 @@ const hasProviderModels = (options: ProviderOptions | undefined): boolean => {
   return Array.isArray(list) && list.length > 0;
 };
 
+const hasFailedProviderModelProbe = (options: ProviderOptions | undefined): boolean => {
+  if (!options) return false;
+  if (options.probe_ok === false) return true;
+  return typeof options.probe_error === "string" && options.probe_error.trim().length > 0;
+};
+
+const sameProviderOptionsScope = (
+  lhs: ProviderOptions | undefined,
+  rhs: ProviderOptions | undefined,
+): boolean => {
+  if (!lhs || !rhs) return false;
+  return lhs.provider_id === rhs.provider_id
+    && lhs.workspace_id === rhs.workspace_id
+    && lhs.auth_mode === rhs.auth_mode
+    && lhs.has_active_auth === rhs.has_active_auth
+    && lhs.source?.selected_source_kind === rhs.source?.selected_source_kind
+    && lhs.source?.selected_endpoint_id === rhs.source?.selected_endpoint_id;
+};
+
+const sameProviderOptions = (
+  lhs: ProviderOptions | undefined,
+  rhs: ProviderOptions | undefined,
+): boolean => JSON.stringify(lhs ?? null) === JSON.stringify(rhs ?? null);
+
 export const shouldHydrateProviderModels = (
   providerId: string,
   options: ProviderOptions | undefined,
+  trigger: ProviderAuthSummaryTrigger = "passive",
 ): boolean => {
   if (!MODEL_DISCOVERY_PROVIDER_IDS.has(providerId)) return false;
   if (!options) return false;
   if (options.has_active_auth !== true) return false;
-  return !hasProviderModels(options);
+  if (hasProviderModels(options)) return false;
+  if (trigger === "passive" && hasFailedProviderModelProbe(options)) return false;
+  return true;
+};
+
+export const resolveProviderOptionsUpdate = (
+  previous: ProviderOptions | undefined,
+  next: ProviderOptions | undefined,
+): ProviderOptions | undefined => {
+  if (!next) return previous === undefined ? previous : next;
+  let resolved = next;
+  if (previous && sameProviderOptionsScope(previous, next) && next.has_active_auth === true && !hasProviderModels(next)) {
+    if (hasProviderModels(previous)) {
+      resolved = { ...resolved, models: previous.models };
+    }
+    if (hasFailedProviderModelProbe(previous) && !hasFailedProviderModelProbe(resolved)) {
+      resolved = {
+        ...resolved,
+        probe_ok: previous.probe_ok,
+        probe_error: previous.probe_error ?? resolved.probe_error,
+      };
+    }
+  }
+  return sameProviderOptions(previous, resolved) ? previous : resolved;
+};
+
+const mergeProviderOptionsMap = (
+  previous: Record<string, ProviderOptions | undefined>,
+  next: Record<string, ProviderOptions | undefined>,
+): Record<string, ProviderOptions | undefined> => {
+  const merged = Object.fromEntries(
+    Object.entries(next).map(([providerId, options]) => [
+      providerId,
+      resolveProviderOptionsUpdate(previous[providerId], options),
+    ]),
+  );
+  const previousKeys = Object.keys(previous);
+  const mergedKeys = Object.keys(merged);
+  if (
+    previousKeys.length === mergedKeys.length
+    && mergedKeys.every((providerId) => previous[providerId] === merged[providerId])
+  ) {
+    return previous;
+  }
+  return merged;
 };
 
 const toErrorMessage = (error: unknown): string => {
@@ -136,7 +206,7 @@ export function useWorkbenchProviders({
 
   const applyProvidersBootstrap = useCallback((bootstrap: Awaited<ReturnType<typeof loadProvidersBootstrap>>) => {
     setProviders(bootstrap.providers);
-    setProviderOptions(bootstrap.provider_options);
+    setProviderOptions((prev) => mergeProviderOptionsMap(prev, bootstrap.provider_options));
   }, []);
 
   const providersById = useMemo(
@@ -406,28 +476,36 @@ export function useWorkbenchProviders({
   // For model-capable subscription providers (Codex/Claude), it additionally
   // hydrates detailed provider options once after auth so model catalogs appear.
   const ensureProviderAuthSummary = useCallback(
-    async (providerId: string, opts?: { force?: boolean }): Promise<ProviderOptions | undefined> => {
+    async (
+      providerId: string,
+      opts?: { force?: boolean; trigger?: ProviderAuthSummaryTrigger },
+    ): Promise<ProviderOptions | undefined> => {
       if (!workspaceId) return;
       const ready = providersById[providerId]?.installed === true && providersById[providerId]?.health === "ok";
       if (!ready) return;
 
       const force = opts?.force ?? false;
+      const trigger = opts?.trigger ?? (force ? "explicit" : "passive");
       const existing = providerAuthSummaryInFlightRef.current[providerId];
       if (existing && !force) return existing;
       const cached = providerOptions[providerId];
-      if (!force && cached && !shouldHydrateProviderModels(providerId, cached)) {
+      if (!force && cached && !shouldHydrateProviderModels(providerId, cached, trigger)) {
         return cached;
       }
 
       const request = (force ? refreshProvidersBootstrap(workspaceId) : loadProvidersBootstrap(workspaceId))
         .then(async (bootstrap) => {
           applyProvidersBootstrap(bootstrap);
-          let next = bootstrap.provider_options[providerId];
-          if (shouldHydrateProviderModels(providerId, next)) {
+          let next = resolveProviderOptionsUpdate(cached, bootstrap.provider_options[providerId]);
+          if (shouldHydrateProviderModels(providerId, next, trigger)) {
             try {
               const detailed = await getProviderOptions(workspaceId, providerId);
-              setProviderOptions((prev) => ({ ...prev, [providerId]: detailed }));
-              next = detailed;
+              next = resolveProviderOptionsUpdate(next, detailed);
+              setProviderOptions((prev) => {
+                const resolved = resolveProviderOptionsUpdate(prev[providerId], next);
+                if (prev[providerId] === resolved) return prev;
+                return { ...prev, [providerId]: resolved };
+              });
             } catch {
               // Keep bootstrap options when probe is unavailable; caller still gets auth summary.
             }

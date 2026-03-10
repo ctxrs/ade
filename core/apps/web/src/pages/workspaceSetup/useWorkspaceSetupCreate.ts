@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MutableRefObject } from "react";
+import { startTransition, useEffect, useRef, useState, type MutableRefObject } from "react";
 import type {
   ExecutionLaunchLogLine,
   ExecutionLaunchSnapshot,
@@ -27,6 +27,7 @@ import {
   formatLaunchElapsed,
   parseUtcMs,
   phaseEntryForCurrent,
+  type WorkspaceSetupLaunchLogLine,
 } from "./launchProgress";
 import type { WizardStepKey } from "./wizardFlow";
 import {
@@ -105,7 +106,7 @@ export function useWorkspaceSetupCreate({
 }: UseWorkspaceSetupCreateArgs) {
   const [creating, setCreating] = useState(false);
   const [launchSnapshot, setLaunchSnapshot] = useState<ExecutionLaunchSnapshot | null>(null);
-  const [launchLogs, setLaunchLogs] = useState<ExecutionLaunchLogLine[]>([]);
+  const [launchLogs, setLaunchLogs] = useState<WorkspaceSetupLaunchLogLine[]>([]);
   const [launchTick, setLaunchTick] = useState(0);
   const [launchCopyState, setLaunchCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const [importInitDialog, setImportInitDialog] = useState<ImportInitDialogState | null>(null);
@@ -275,19 +276,25 @@ export function useWorkspaceSetupCreate({
     return true;
   };
 
-  const applyLaunchSnapshot = (snapshot: ExecutionLaunchSnapshot) => {
-    setLaunchSnapshot(snapshot);
-    setLaunchLogs((prev) => mergeWorkspaceSetupLaunchLogs(prev, snapshot.logs ?? []));
+  const mergeLaunchLogBatch = (lines: ExecutionLaunchLogLine[]) => {
+    startTransition(() => {
+      setLaunchLogs((prev) => mergeWorkspaceSetupLaunchLogs(prev, lines));
+    });
   };
 
-  const appendLaunchLine = (line: ExecutionLaunchLogLine) => {
-    setLaunchLogs((prev) => mergeWorkspaceSetupLaunchLogs(prev, [line]));
+  const applyLaunchSnapshot = (snapshot: ExecutionLaunchSnapshot) => {
+    setLaunchSnapshot(snapshot);
+    mergeLaunchLogBatch(snapshot.logs ?? []);
+  };
+
+  const appendLaunchLines = (lines: ExecutionLaunchLogLine[]) => {
+    mergeLaunchLogBatch(lines);
   };
 
   const waitForLaunchTerminal = async (initial: ExecutionLaunchSnapshot) => {
     await waitForLaunchHandoffTerminal(initial, {
       applySnapshot: applyLaunchSnapshot,
-      appendLine: appendLaunchLine,
+      appendLines: appendLaunchLines,
     });
   };
 
@@ -305,7 +312,7 @@ export function useWorkspaceSetupCreate({
     if (!launchSnapshot) return;
     const payload = {
       snapshot: launchSnapshot,
-      logs: launchLogs,
+      logs: launchLogs.map(({ phaseLabel: _phaseLabel, timeLabel: _timeLabel, ...line }) => line),
     };
     try {
       await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));

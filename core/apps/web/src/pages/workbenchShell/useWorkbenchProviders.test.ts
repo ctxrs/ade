@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderOptions } from "../../api/client";
-import { shouldHydrateProviderModels } from "./useWorkbenchProviders";
+import { resolveProviderOptionsUpdate, shouldHydrateProviderModels } from "./useWorkbenchProviders";
 
 const baseOptions = (providerId: string): ProviderOptions => ({
   provider_id: providerId,
@@ -49,5 +49,64 @@ describe("shouldHydrateProviderModels", () => {
 
   it("does not request hydration for providers without CRP model discovery", () => {
     expect(shouldHydrateProviderModels("gemini", baseOptions("gemini"))).toBe(false);
+  });
+
+  it("does not keep passively hydrating after a failed probe", () => {
+    const options: ProviderOptions = {
+      ...baseOptions("codex"),
+      probe_ok: false,
+      probe_error: "crp runtime closed before models.list response",
+    };
+    expect(shouldHydrateProviderModels("codex", options)).toBe(false);
+  });
+
+  it("allows an explicit retry after a failed probe", () => {
+    const options: ProviderOptions = {
+      ...baseOptions("codex"),
+      probe_ok: false,
+      probe_error: "crp runtime closed before models.list response",
+    };
+    expect(shouldHydrateProviderModels("codex", options, "explicit")).toBe(true);
+  });
+});
+
+describe("resolveProviderOptionsUpdate", () => {
+  it("preserves last known models when a later payload drops them for the same source", () => {
+    const previous: ProviderOptions = {
+      ...baseOptions("codex"),
+      models: {
+        models: [{ id: "gpt-5" }],
+        current_model_id: "gpt-5",
+      },
+    };
+    const next: ProviderOptions = {
+      ...baseOptions("codex"),
+      probed_at: "2026-03-09T00:00:05.000Z",
+      probe_ok: false,
+      probe_error: "crp runtime closed before models.list response",
+    };
+
+    expect(resolveProviderOptionsUpdate(previous, next)).toEqual({
+      ...next,
+      models: previous.models,
+    });
+  });
+
+  it("keeps a failed probe sticky across bootstrap summaries until a real retry", () => {
+    const previous: ProviderOptions = {
+      ...baseOptions("codex"),
+      probe_ok: false,
+      probe_error: "crp runtime closed before models.list response",
+    };
+    const next: ProviderOptions = {
+      ...baseOptions("codex"),
+      probed_at: "2026-03-09T00:00:05.000Z",
+    };
+
+    expect(resolveProviderOptionsUpdate(previous, next)).toEqual({
+      ...next,
+      probe_ok: false,
+      probe_error: previous.probe_error,
+    });
   });
 });

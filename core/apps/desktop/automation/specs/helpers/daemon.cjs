@@ -184,6 +184,11 @@ const daemonJson = async (method, apiPath, body) => {
   throw lastError || new Error("daemonJson request failed");
 };
 
+const daemonJsonOnce = async (method, apiPath, body) => {
+  const connection = await getCachedDesktopConnection();
+  return await daemonHttpJson(connection, method, apiPath, body);
+};
+
 const safeDaemonJson = async (method, apiPath, body) => {
   try {
     return await daemonJson(method, apiPath, body);
@@ -223,6 +228,7 @@ const sampleDaemonHealth = async ({ durationMs, intervalMs = 1000 }) => {
 
 module.exports = {
   daemonJson,
+  daemonJsonOnce,
   safeDaemonJson,
   getDesktopConnection,
   checkDaemonHealth,

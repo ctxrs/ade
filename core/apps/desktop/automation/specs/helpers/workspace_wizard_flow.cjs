@@ -1193,6 +1193,84 @@ const assertNoDaemonOverlayFor = async (durationMs = 2000) => {
   }
 };
 
+const readWorkbenchUsabilityState = async () => {
+  return await browser.execute(() => {
+    const composer = document.querySelector("textarea.wb-new-composer-textarea");
+    const overlay = document.querySelector(".daemon-overlay");
+    const root = document.querySelector(".wb-root");
+    return {
+      pathname: String(window.location.pathname || ""),
+      hasWorkbenchRoot: Boolean(root),
+      hasWorkbenchMain: Boolean(document.querySelector(".wb-main")),
+      hasTopbar: Boolean(document.querySelector(".wb-topbar")),
+      usesNativeTitlebar: root instanceof HTMLElement && root.classList.contains("wb-root-native-titlebar"),
+      hasTaskSearch: Boolean(document.querySelector('[data-testid="workbench-task-search"]')),
+      hasComposer: composer instanceof HTMLTextAreaElement,
+      composerValue: composer instanceof HTMLTextAreaElement ? composer.value : "",
+      overlayText: overlay ? String(overlay.textContent || "").trim() : "",
+    };
+  });
+};
+
+const assertWorkbenchUsable = async (workspaceId, { settleMs = 2000 } = {}) => {
+  await waitForSelector(".wb-main", 60000);
+  await waitForSelector("textarea.wb-new-composer-textarea", 60000);
+  await browser.waitUntil(async () => {
+    const state = await readWorkbenchUsabilityState();
+    return state.hasTopbar || state.usesNativeTitlebar;
+  }, {
+    timeout: 60000,
+    interval: 100,
+    timeoutMsg: "workbench never rendered either the HTML topbar or native-titlebar layout",
+  });
+
+  const expectedPath = typeof workspaceId === "string" && workspaceId.trim()
+    ? `/workspaces/${workspaceId}`
+    : null;
+  const smokeValue = `ui-smoke-${Date.now()}`;
+  await setTextareaSelector("textarea.wb-new-composer-textarea", smokeValue);
+
+  let lastState = "{}";
+  await browser.waitUntil(async () => {
+    const state = await readWorkbenchUsabilityState();
+    lastState = JSON.stringify(state);
+    if (state.overlayText) return false;
+    if (expectedPath && state.pathname !== expectedPath) return false;
+    const hasChrome = state.hasTopbar || state.usesNativeTitlebar;
+    return state.hasWorkbenchRoot
+      && state.hasWorkbenchMain
+      && hasChrome
+      && state.hasComposer
+      && state.composerValue === smokeValue;
+  }, {
+    timeout: 15000,
+    interval: 100,
+    timeoutMsg: `workbench did not become usable: ${lastState}`,
+  });
+
+  const started = Date.now();
+  while (Date.now() - started < settleMs) {
+    const state = await readWorkbenchUsabilityState();
+    lastState = JSON.stringify(state);
+    if (state.overlayText) {
+      throw new Error(`daemon overlay rendered after workbench load: ${lastState}`);
+    }
+    if (expectedPath && state.pathname !== expectedPath) {
+      throw new Error(`workspace route drifted after workbench load: ${lastState}`);
+    }
+    if (
+      !state.hasWorkbenchRoot
+      || !state.hasWorkbenchMain
+      || (!state.hasTopbar && !state.usesNativeTitlebar)
+      || !state.hasComposer
+      || state.composerValue !== smokeValue
+    ) {
+      throw new Error(`workbench usability regressed after load: ${lastState}`);
+    }
+    await browser.pause(100);
+  }
+};
+
 const waitForRemoteStepAfterLocation = async (timeoutMs = 60000) => {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
@@ -2115,6 +2193,7 @@ module.exports = {
   assertWorkspaceTerminalCwdPrefix,
   daemonOverlayText,
   assertNoDaemonOverlayFor,
+  assertWorkbenchUsable,
   assertDesktopConnectionStable,
   waitForRemoteStepAfterLocation,
   clickAuthImportSkip,

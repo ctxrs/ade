@@ -1,6 +1,7 @@
 const path = require("path");
 const { waitForTauri, getConnectionInfo } = require("./helpers/tauri.cjs");
 const { daemonJson } = require("./helpers/daemon.cjs");
+const { assertWorkbenchUsable } = require("./helpers/workspace_wizard_flow.cjs");
 
 const DEFAULT_WORKSPACE_PATH = path.resolve(__dirname, "../../../../../");
 const WORKSPACE_PATH = process.env.CTX_AUTOMATION_WORKSPACE_PATH
@@ -54,5 +55,6 @@ describe("desktop automation", () => {
     if (!info || info.kind !== "local") {
       throw new Error(`expected local desktop connection after opening workspace: ${JSON.stringify(info)}`);
     }
+    await assertWorkbenchUsable(workspaceId, { settleMs: 2000 });
   });
 });

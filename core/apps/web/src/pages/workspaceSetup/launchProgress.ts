@@ -7,6 +7,11 @@ import type {
 
 const LAUNCH_LOG_MAX = 400;
 
+export type WorkspaceSetupLaunchLogLine = ExecutionLaunchLogLine & {
+  phaseLabel: string;
+  timeLabel: string;
+};
+
 export const launchPhaseLabel = (phase?: ExecutionLaunchPhase | null): string => {
   if (!phase) return "Preparing";
   switch (phase) {
@@ -47,14 +52,36 @@ export const phaseEntryForCurrent = (snapshot: ExecutionLaunchSnapshot): Executi
   return null;
 };
 
+const decorateLaunchLogLine = (line: ExecutionLaunchLogLine): WorkspaceSetupLaunchLogLine => ({
+  ...line,
+  phaseLabel: launchPhaseLabel(line.phase),
+  timeLabel: formatLaunchTime(line.ts),
+});
+
+const isStrictlyIncreasingBySeq = (lines: ExecutionLaunchLogLine[]): boolean => {
+  for (let i = 1; i < lines.length; i += 1) {
+    if (lines[i].seq <= lines[i - 1].seq) return false;
+  }
+  return true;
+};
+
 export const mergeLaunchLogs = (
-  current: ExecutionLaunchLogLine[],
+  current: WorkspaceSetupLaunchLogLine[],
   incoming: ExecutionLaunchLogLine[],
-): ExecutionLaunchLogLine[] => {
+): WorkspaceSetupLaunchLogLine[] => {
   if (!incoming.length) return current.slice(-LAUNCH_LOG_MAX);
-  const bySeq = new Map<number, ExecutionLaunchLogLine>();
+
+  const lastCurrent = current.length > 0 ? current[current.length - 1] : null;
+  if (
+    isStrictlyIncreasingBySeq(incoming)
+    && (lastCurrent === null || incoming[0].seq > lastCurrent.seq)
+  ) {
+    return current.concat(incoming.map(decorateLaunchLogLine)).slice(-LAUNCH_LOG_MAX);
+  }
+
+  const bySeq = new Map<number, WorkspaceSetupLaunchLogLine>();
   for (const line of current) bySeq.set(line.seq, line);
-  for (const line of incoming) bySeq.set(line.seq, line);
+  for (const line of incoming) bySeq.set(line.seq, decorateLaunchLogLine(line));
   const merged = Array.from(bySeq.values()).sort((a, b) => a.seq - b.seq);
   return merged.slice(-LAUNCH_LOG_MAX);
 };

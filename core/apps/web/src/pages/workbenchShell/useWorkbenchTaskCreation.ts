@@ -14,7 +14,7 @@ import {
   type SessionTurn,
   type Task,
 } from "../../api/client";
-import type { DraftHarness, WorkbenchModeId } from "../../components/WorkbenchComposer";
+import type { DraftHarness, ProviderAuthSummaryTrigger, WorkbenchModeId } from "../../components/WorkbenchComposer";
 import type { SessionSupervisor } from "../../state/sessionSupervisor";
 import { errorMessage } from "../../utils/errorMessage";
 import { randomUuid } from "../../utils/randomUuid";
@@ -34,7 +34,7 @@ type UseWorkbenchTaskCreationArgs = {
   providerOptions: Record<string, ProviderOptions | undefined>;
   ensureProviderAuthSummary: (
     providerId: string,
-    opts?: { force?: boolean },
+    opts?: { force?: boolean; trigger?: ProviderAuthSummaryTrigger },
   ) => Promise<ProviderOptions | undefined>;
   dictationRecording: boolean;
   stopDictation: (opts?: { awaitFinal?: boolean }) => Promise<string>;

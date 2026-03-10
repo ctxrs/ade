@@ -5,21 +5,17 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import LauncherBrand from "../../components/LauncherBrand";
 import type {
-  ExecutionLaunchLogLine,
   ExecutionLaunchSnapshot,
   InstallTarget,
   ProviderAuthImportCandidate,
 } from "../../api/client";
 import type { DesktopSshPathEntry } from "../../utils/desktop";
-import {
-  formatLaunchTime,
-  launchPhaseLabel,
-} from "./launchProgress";
 import type { SessionTitlingMode } from "../WorkspaceSetupPage.logic";
 import {
   AuthImportStepPanel,
   HarnessDownloadsStepPanel,
 } from "./WorkspaceSetupPanels";
+import type { WorkspaceSetupLaunchLogLine } from "./launchProgress";
 import type {
   HarnessInstallProviderRow,
   HarnessInstallRowState,
@@ -48,7 +44,7 @@ type WorkspaceSetupPageViewProps = {
   currentLaunchElapsed: string;
   launchCopyLabel: string;
   onCopyLaunchDiagnostics: () => void;
-  launchLogs: ExecutionLaunchLogLine[];
+  launchLogs: WorkspaceSetupLaunchLogLine[];
   onSelectOption: (stepKey: string, optionId: string) => void;
   containerAdvancedOpen: boolean;
   setContainerAdvancedOpen: Dispatch<SetStateAction<boolean>>;
@@ -426,8 +422,8 @@ export function WorkspaceSetupPageView({
                       ) : (
                         launchLogs.map((line) => (
                           <div key={line.seq} className="wizard-launch-log-line">
-                            <span className="wizard-launch-log-ts">{formatLaunchTime(line.ts)}</span>
-                            <span className="wizard-launch-log-phase">{launchPhaseLabel(line.phase)}</span>
+                            <span className="wizard-launch-log-ts">{line.timeLabel}</span>
+                            <span className="wizard-launch-log-phase">{line.phaseLabel}</span>
                             <span className={`wizard-launch-log-level wizard-launch-log-level--${line.level}`}>{line.level}</span>
                             <span className="wizard-launch-log-msg">{line.message}</span>
                           </div>
