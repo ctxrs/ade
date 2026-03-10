@@ -50,7 +50,8 @@ pub use self::claude::{
     ClaudeAccountEntry, ClaudeAccountRegistry, ClaudeLoginStatus, ClaudeOauthLoginSession,
 };
 pub use self::codex_auth::{
-    codex_env_for_active_account, codex_env_for_runtime_home, ensure_codex_auth_ready,
+    codex_env_for_active_account, codex_env_for_active_account_with_runtime_root,
+    codex_env_for_runtime_home, ensure_codex_auth_ready,
     ensure_codex_endpoint_profile_compatible, host_codex_auth_path,
     hydrate_codex_account_home_from_secret, import_host_codex_auth_to_secret_store,
     ingest_codex_account_auth_to_secret_store, probe_host_codex_auth_candidate,
@@ -356,7 +357,7 @@ pub async fn subscription_env_for_active_account_with_runtime_root(
     }
 
     match provider_id {
-        "codex" => codex_env_for_active_account(data_root).await,
+        "codex" => codex_env_for_active_account_with_runtime_root(data_root, runtime_root).await,
         "claude-crp" => {
             claude_env_for_active_account_with_runtime_root(data_root, runtime_root).await
         }

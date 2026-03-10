@@ -679,6 +679,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn provider_probe_env_projects_codex_subscription_env_into_runtime_root() {
+        let data_root = tempfile::tempdir().expect("tempdir");
+        let runtime_root = tempfile::tempdir().expect("tempdir");
+        let state = test_state(data_root.path()).await;
+
+        let registry = provider_accounts::CodexAccountRegistry {
+            active_account_id: Some("acct-codex".to_string()),
+            accounts: vec![provider_accounts::CodexAccountEntry {
+                id: "acct-codex".to_string(),
+                label: "Codex".to_string(),
+                kind: provider_accounts::CODEX_CREDENTIAL_KIND_API_KEY.to_string(),
+                email: None,
+                plan_type: None,
+                created_at: Utc::now(),
+                last_used_at: None,
+                secret_ref: None,
+                endpoint_profile: provider_accounts::CodexEndpointProfile::default(),
+            }],
+        };
+        provider_accounts::save_codex_registry(data_root.path(), &registry)
+            .await
+            .expect("save codex registry");
+        let account_dir =
+            provider_accounts::ensure_codex_account_dir(data_root.path(), "acct-codex")
+                .await
+                .expect("ensure codex account dir");
+        tokio::fs::write(
+            account_dir.join("auth.json"),
+            br#"{"OPENAI_API_KEY":"codex-test-key"}"#,
+        )
+        .await
+        .expect("write codex auth");
+
+        let (_, env) =
+            provider_env_with_runtime_root(&state, "codex", Some(runtime_root.path()), true)
+                .await
+                .expect("resolve probe env");
+
+        let codex_home = env
+            .get("CODEX_HOME")
+            .map(String::as_str)
+            .expect("missing CODEX_HOME");
+        assert!(
+            Path::new(codex_home).starts_with(runtime_root.path()),
+            "expected runtime-root projected CODEX_HOME, got {codex_home}"
+        );
+        assert!(Path::new(codex_home).join("auth.json").exists());
+    }
+
+    #[tokio::test]
     async fn provider_probe_env_projects_kimi_subscription_env_into_runtime_root() {
         let data_root = tempfile::tempdir().expect("tempdir");
         let runtime_root = tempfile::tempdir().expect("tempdir");

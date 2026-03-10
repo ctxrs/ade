@@ -77,6 +77,51 @@ async fn codex_env_mirrors_active_account_auth_into_runtime_home() {
 }
 
 #[tokio::test]
+async fn codex_env_projects_active_account_auth_into_runtime_root() {
+    let _env_lock = lock_env().await;
+    let _guard = EnvGuard::without("CTX_CODEX_HOME");
+    let dir = tempfile::tempdir().unwrap();
+    let runtime_root = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let registry = CodexAccountRegistry {
+        active_account_id: Some("acct-123".to_string()),
+        accounts: vec![CodexAccountEntry {
+            id: "acct-123".to_string(),
+            label: "Account".to_string(),
+            kind: CODEX_CREDENTIAL_KIND_API_KEY.to_string(),
+            email: None,
+            plan_type: None,
+            created_at: Utc::now(),
+            last_used_at: None,
+            secret_ref: None,
+            endpoint_profile: CodexEndpointProfile::default(),
+        }],
+    };
+    save_codex_registry(root, &registry).await.unwrap();
+    let account_dir = ensure_codex_account_dir(root, "acct-123").await.unwrap();
+    tokio::fs::write(
+        account_dir.join("auth.json"),
+        br#"{"OPENAI_API_KEY":"test-key"}"#,
+    )
+    .await
+    .unwrap();
+
+    let env = codex_env_for_active_account_with_runtime_root(root, runtime_root.path())
+        .await
+        .unwrap();
+    let home = env.get("CODEX_HOME").unwrap();
+    assert_eq!(
+        home,
+        &codex_runtime_home(runtime_root.path()).to_string_lossy()
+    );
+    assert!(codex_runtime_home(runtime_root.path()).exists());
+    let mirrored = tokio::fs::read_to_string(codex_runtime_home(runtime_root.path()).join("auth.json"))
+        .await
+        .unwrap();
+    assert!(mirrored.contains("OPENAI_API_KEY"));
+}
+
+#[tokio::test]
 async fn codex_env_defaults_to_runtime_home() {
     let _env_lock = lock_env().await;
     let _guard = EnvGuard::without("CTX_CODEX_HOME");
@@ -671,6 +716,28 @@ async fn subscription_env_dispatches_to_supported_providers() {
     )
     .await
     .unwrap();
+    let codex_registry = CodexAccountRegistry {
+        active_account_id: Some("acct-codex".to_string()),
+        accounts: vec![CodexAccountEntry {
+            id: "acct-codex".to_string(),
+            label: "Codex".to_string(),
+            kind: CODEX_CREDENTIAL_KIND_API_KEY.to_string(),
+            email: None,
+            plan_type: None,
+            created_at: Utc::now(),
+            last_used_at: None,
+            secret_ref: None,
+            endpoint_profile: CodexEndpointProfile::default(),
+        }],
+    };
+    save_codex_registry(root, &codex_registry).await.unwrap();
+    let codex_account_dir = ensure_codex_account_dir(root, "acct-codex").await.unwrap();
+    tokio::fs::write(
+        codex_account_dir.join("auth.json"),
+        br#"{"OPENAI_API_KEY":"codex-test-key"}"#,
+    )
+    .await
+    .unwrap();
     let _ = add_gemini_account(
         root,
         Some("Gemini".to_string()),
@@ -781,6 +848,28 @@ async fn subscription_env_runtime_root_projects_path_based_providers() {
     )
     .await
     .unwrap();
+    let codex_registry = CodexAccountRegistry {
+        active_account_id: Some("acct-codex".to_string()),
+        accounts: vec![CodexAccountEntry {
+            id: "acct-codex".to_string(),
+            label: "Codex".to_string(),
+            kind: CODEX_CREDENTIAL_KIND_API_KEY.to_string(),
+            email: None,
+            plan_type: None,
+            created_at: Utc::now(),
+            last_used_at: None,
+            secret_ref: None,
+            endpoint_profile: CodexEndpointProfile::default(),
+        }],
+    };
+    save_codex_registry(root, &codex_registry).await.unwrap();
+    let codex_account_dir = ensure_codex_account_dir(root, "acct-codex").await.unwrap();
+    tokio::fs::write(
+        codex_account_dir.join("auth.json"),
+        br#"{"OPENAI_API_KEY":"codex-test-key"}"#,
+    )
+    .await
+    .unwrap();
     let _ = add_gemini_account(
         root,
         Some("Gemini".to_string()),
@@ -845,6 +934,14 @@ async fn subscription_env_runtime_root_projects_path_based_providers() {
             .unwrap();
     let claude_dir = PathBuf::from(claude_env.get("CLAUDE_CONFIG_DIR").unwrap());
     assert!(claude_dir.starts_with(runtime_root));
+
+    let codex_env =
+        subscription_env_for_active_account_with_runtime_root(root, runtime_root, "codex")
+            .await
+            .unwrap();
+    let codex_home = PathBuf::from(codex_env.get("CODEX_HOME").unwrap());
+    assert!(codex_home.starts_with(runtime_root));
+    assert!(codex_home.join("auth.json").exists());
 
     let gemini_env =
         subscription_env_for_active_account_with_runtime_root(root, runtime_root, "gemini")

@@ -33,6 +33,38 @@ pub async fn codex_env_for_runtime_home(state_root: &Path) -> Result<HashMap<Str
     Ok(env)
 }
 
+async fn project_secret_to_runtime_root(
+    data_root: &Path,
+    runtime_root: &Path,
+    account_id: &str,
+    secret_ref: &str,
+) -> Result<bool> {
+    let auth = load_codex_auth_from_secret_store(data_root, secret_ref).await?;
+    let projected = project_auth_value_to_home(&codex_runtime_home(runtime_root), &auth).await?;
+    write_runtime_owner_marker(runtime_root, account_id).await?;
+    Ok(projected)
+}
+
+async fn mirror_account_auth_to_runtime_root(
+    data_root: &Path,
+    runtime_root: &Path,
+    account_id: &str,
+) -> Result<bool> {
+    let src = codex_account_dir(data_root, account_id).join("auth.json");
+    let payload = match tokio::fs::read_to_string(&src).await {
+        Ok(payload) => payload,
+        Err(_) => return Ok(false),
+    };
+    let auth: serde_json::Value = serde_json::from_str(&payload)
+        .with_context(|| format!("invalid codex auth JSON at {}", src.display()))?;
+    if !codex_auth_has_supported_shape(&auth) {
+        return Ok(false);
+    }
+    let projected = project_auth_value_to_home(&codex_runtime_home(runtime_root), &auth).await?;
+    write_runtime_owner_marker(runtime_root, account_id).await?;
+    Ok(projected)
+}
+
 pub fn host_codex_auth_path() -> Result<PathBuf> {
     if let Some(path) = std::env::var(CTX_CODEX_HOST_AUTH_PATH_ENV)
         .ok()
@@ -562,6 +594,53 @@ pub async fn codex_env_for_active_account(data_root: &Path) -> Result<HashMap<St
     let env = codex_env_for_runtime_home(data_root).await?;
     if seeding_codex_auth_from_host_enabled() {
         let runtime_home = codex_runtime_home(data_root);
+        seed_codex_auth_from_host(&runtime_home).await?;
+    }
+    Ok(env)
+}
+
+pub async fn codex_env_for_active_account_with_runtime_root(
+    data_root: &Path,
+    runtime_root: &Path,
+) -> Result<HashMap<String, String>> {
+    if data_root == runtime_root {
+        return codex_env_for_active_account(data_root).await;
+    }
+
+    let registry = load_codex_registry(data_root).await;
+    if let Some(active) = registry
+        .active_account_id
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        let _ = ingest_runtime_home_auth_to_active_secret(data_root, active).await;
+        if let Some(entry) = registry.accounts.iter().find(|a| a.id == active) {
+            ensure_codex_endpoint_profile_compatible(&entry.endpoint_profile)?;
+            if let Some(secret_ref) = entry.secret_ref.as_deref() {
+                if project_secret_to_runtime_root(data_root, runtime_root, active, secret_ref)
+                    .await
+                    .is_ok()
+                {
+                    return codex_env_for_runtime_home(runtime_root).await;
+                }
+            }
+        } else {
+            clear_runtime_auth_projection(runtime_root).await?;
+            return codex_env_for_runtime_home(runtime_root).await;
+        }
+        let mirrored =
+            mirror_account_auth_to_runtime_root(data_root, runtime_root, active).await?;
+        if !mirrored {
+            clear_runtime_auth_projection(runtime_root).await?;
+        }
+        return codex_env_for_runtime_home(runtime_root).await;
+    }
+
+    clear_runtime_auth_projection(runtime_root).await?;
+    let env = codex_env_for_runtime_home(runtime_root).await?;
+    if seeding_codex_auth_from_host_enabled() {
+        let runtime_home = codex_runtime_home(runtime_root);
         seed_codex_auth_from_host(&runtime_home).await?;
     }
     Ok(env)
