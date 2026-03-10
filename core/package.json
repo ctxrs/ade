@@ -56,7 +56,7 @@
     "desktop:provider-auth-matrix:validate": "node scripts/validate_provider_auth_matrix.cjs --check-report",
     "desktop:provider-auth-matrix:report": "node scripts/validate_provider_auth_matrix.cjs --report apps/desktop/automation/docs/provider_auth_matrix.md",
     "desktop:automation:cn:test": "node --test apps/desktop/automation/wdio.cn-shared-backend.test.cjs",
-    "desktop:automation:test": "node --test apps/desktop/automation/wdio.cn-shared-backend.test.cjs apps/desktop/automation/daemon.node-http.test.cjs apps/desktop/automation/wdio.timeout-config.test.cjs apps/desktop/automation/workspace_wizard_flow.trace.test.cjs",
+    "desktop:automation:test": "node --test apps/desktop/automation/wdio.cn-shared-backend.test.cjs apps/desktop/automation/daemon.node-http.test.cjs apps/desktop/automation/wdio.timeout-config.test.cjs apps/desktop/automation/workspace_wizard_flow.trace.test.cjs apps/desktop/automation/container_lifecycle.test.cjs",
     "tauri:tools:lock:refresh": "node scripts/tauri_tools_lock_refresh.mjs",
     "tauri:tools:lock:check": "node scripts/tauri_tools_lock_refresh.mjs --check",
     "tauri:tools:mirror:sync": "node scripts/tauri_tools_mirror_sync.mjs",

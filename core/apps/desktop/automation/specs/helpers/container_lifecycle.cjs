@@ -36,7 +36,8 @@ const desktopArchToken = () => {
 };
 
 const podmanDataRootHash = (dataRoot) => {
-  return crypto.createHash("sha256").update(String(dataRoot || "")).digest("hex").slice(0, 6);
+  // Match ctx-http harness runtime: first 6 bytes of SHA-256 rendered as 12 hex chars.
+  return crypto.createHash("sha256").update(String(dataRoot || "")).digest("hex").slice(0, 12);
 };
 
 const ctxPodmanMachineName = (dataRoot) => `${PODMAN_MACHINE_PREFIX}-${podmanDataRootHash(dataRoot)}`;
