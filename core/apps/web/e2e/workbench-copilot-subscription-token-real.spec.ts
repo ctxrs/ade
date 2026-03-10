@@ -1,0 +1,149 @@
+import type { APIRequestContext } from "playwright/test";
+import { execSync } from "child_process";
+import { mkdtempSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import path from "path";
+import { test, expect } from "./fixtures";
+import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
+import {
+  asArray,
+  asRecord,
+  ensureProviderInstalledAndHealthy,
+  readString,
+  resolveWorkspaceProviderModelId,
+  verifyProviderForWorkspace,
+  waitForTerminalState,
+} from "../src/testing/providerRuntime";
+
+const REQUEST_TIMEOUT_MS = 60_000;
+const INSTALL_TARGET = "host" as const;
+
+async function upsertCopilotAccount(request: APIRequestContext, token: string): Promise<void> {
+  const upsertResp = await request.post("/api/providers/copilot/accounts", {
+    data: {
+      token,
+      label: "Copilot subscription E2E",
+      email: "copilot-e2e@example.com",
+    },
+    timeout: REQUEST_TIMEOUT_MS,
+  });
+  expect(upsertResp.ok(), `copilot account upsert failed (${upsertResp.status()})`).toBe(true);
+  const payload = asRecord(await upsertResp.json());
+  expect(readString(payload.active_account_id)).not.toBe("");
+}
+
+async function readCopilotOptions(
+  request: APIRequestContext,
+  workspaceId: string,
+): Promise<Record<string, unknown>> {
+  const optionsResp = await request.get(`/api/workspaces/${workspaceId}/providers/copilot/options`, {
+    timeout: REQUEST_TIMEOUT_MS,
+  });
+  expect(optionsResp.ok(), `failed to read copilot options (${optionsResp.status()})`).toBe(true);
+  return asRecord(await optionsResp.json());
+}
+
+test("workbench: copilot subscription token auth can run a real task", async ({ page, request }) => {
+  test.setTimeout(10 * 60_000);
+
+  if ((process.env.CTX_E2E_TIER ?? "") !== "provider-api-auth") {
+    test.skip(true, "set CTX_E2E_TIER=provider-api-auth to run copilot subscription token e2e");
+  }
+
+  const copilotToken = (process.env.CTX_E2E_COPILOT_TOKEN ?? "").trim();
+  if (!copilotToken) {
+    test.skip(true, "missing CTX_E2E_COPILOT_TOKEN");
+  }
+
+  await ensureProviderInstalledAndHealthy(request, "copilot", INSTALL_TARGET, {
+    timeoutMs: 10 * 60_000,
+    pollMs: 2_000,
+    requestTimeoutMs: REQUEST_TIMEOUT_MS,
+  });
+
+  const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-copilot-"));
+  execSync("git init -b main", { cwd: repo });
+  execSync("git config user.email test@example.com", { cwd: repo });
+  execSync("git config user.name Test", { cwd: repo });
+  writeFileSync(path.join(repo, "README.md"), "copilot subscription token e2e\n");
+  execSync("git add .", { cwd: repo });
+  execSync("git commit -m init", { cwd: repo });
+
+  const workspaceId = await createWorkspaceAndOpenWorkbench({
+    page,
+    request,
+    repo,
+    workspaceName: `copilot-subscription-auth-${Date.now()}`,
+  });
+
+  await upsertCopilotAccount(request, copilotToken);
+
+  await verifyProviderForWorkspace(request, workspaceId, "copilot", {
+    timeoutMs: 90_000,
+    pollMs: 3_000,
+    requestTimeoutMs: REQUEST_TIMEOUT_MS,
+  });
+
+  const options = await readCopilotOptions(request, workspaceId);
+  const models = asRecord(options.models);
+  expect(readString(models.catalog_source)).toBe("copilot_version_pinned");
+  expect(readString(models.current_model_id)).toBe("gpt-5-mini");
+  expect(readString(models.default_model_id)).toBe("claude-sonnet-4.6");
+  const modelIds = asArray(models.models)
+    .map((entry) => asRecord(entry))
+    .map((entry) => readString(entry.id))
+    .filter((entry) => entry.length > 0);
+  expect(modelIds).toContain("gpt-5-mini");
+  expect(modelIds).toContain("claude-sonnet-4.6");
+
+  const modelId = await resolveWorkspaceProviderModelId(request, workspaceId, "copilot", {
+    timeoutMs: 90_000,
+    pollMs: 3_000,
+    requestTimeoutMs: REQUEST_TIMEOUT_MS,
+  });
+  expect(modelId).toBe("gpt-5-mini");
+
+  const promptMarker = `copilot-subscription-token-${Date.now()}`;
+  const prompt = `${promptMarker}: reply with exactly the word pong`;
+
+  const createTaskResp = await request.post(`/api/workspaces/${workspaceId}/tasks`, {
+    data: {
+      title: promptMarker,
+      create_default_session: false,
+    },
+    timeout: REQUEST_TIMEOUT_MS,
+  });
+  expect(createTaskResp.ok(), `task create failed (${createTaskResp.status()})`).toBe(true);
+  const taskId = readString(asRecord(await createTaskResp.json()).id);
+  expect(taskId).not.toBe("");
+
+  const createSessionResp = await request.post(`/api/tasks/${taskId}/sessions`, {
+    data: {
+      provider_id: "copilot",
+      model_id: modelId,
+      env_target: "worktree",
+    },
+    timeout: REQUEST_TIMEOUT_MS,
+  });
+  expect(createSessionResp.ok(), `session create failed (${createSessionResp.status()})`).toBe(true);
+  const sessionId = readString(asRecord(await createSessionResp.json()).id);
+  expect(sessionId).not.toBe("");
+
+  const messageResp = await request.post(`/api/sessions/${sessionId}/messages`, {
+    data: {
+      content: prompt,
+      delivery: "immediate",
+    },
+    timeout: REQUEST_TIMEOUT_MS,
+  });
+  expect(messageResp.ok(), `message send failed (${messageResp.status()})`).toBe(true);
+
+  const terminal = await waitForTerminalState(request, sessionId, {
+    timeoutMs: 180_000,
+    pollMs: 3_000,
+    requestTimeoutMs: REQUEST_TIMEOUT_MS,
+  });
+  expect(terminal.terminalStatus, terminal.errorMessage ?? "copilot run did not complete").toBe("completed");
+  expect(terminal.assistantMessages).toBeGreaterThan(0);
+  expect(terminal.modelId).toBe("gpt-5-mini");
+});

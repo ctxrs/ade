@@ -74,6 +74,7 @@ pub(super) use login::{
     get_gemini_login, get_mistral_login, get_qwen_login, start_amp_login, start_claude_login,
     start_codex_login, start_gemini_login, start_mistral_login, start_qwen_login,
 };
+pub(crate) use status::provider_status_for_target;
 pub(super) use status::{get_provider, get_provider_usage, list_providers};
 
 #[cfg(test)]

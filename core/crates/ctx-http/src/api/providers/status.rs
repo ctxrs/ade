@@ -142,7 +142,7 @@ pub(super) fn apply_target_aware_provider_status(
     installer::apply_install_target_status(status, target);
 }
 
-pub(super) async fn provider_status_for_target(
+pub(crate) async fn provider_status_for_target(
     state: &Arc<AppState>,
     managed: &installer::AgentServerConfigFile,
     matrix: &crate::provider_matrix::ProviderMatrix,

@@ -3,10 +3,13 @@ import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
-import type { Locator, Page } from "playwright/test";
+import type { APIRequestContext, Locator, Page } from "playwright/test";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 import {
+  asArray,
+  asRecord,
   ensureProviderInstalledAndHealthy,
+  readString,
   resolveWorkspaceProviderModelId,
   verifyProviderForWorkspace,
   waitForTerminalState,
@@ -14,13 +17,82 @@ import {
 
 const REQUEST_TIMEOUT_MS = 60_000;
 const INSTALL_TARGET = "host";
+const GEMINI_DEFAULT_MODEL_ID = "gemini-2.0-flash-lite";
+const GEMINI_ENDPOINT_NAME = "Gemini API key E2E";
 
-const asRecord = (value: unknown): Record<string, unknown> => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  return value as Record<string, unknown>;
+const selectedGeminiEndpointForConfig = (
+  config: Record<string, unknown>,
+): Record<string, unknown> | null => {
+  const selectedEndpointId = readString(config.selected_endpoint_id);
+  if (!selectedEndpointId) return null;
+  return asArray(config.endpoints)
+    .map((entry) => asRecord(entry))
+    .find((entry) => readString(entry.id) === selectedEndpointId) ?? null;
 };
 
-const readString = (value: unknown): string => (typeof value === "string" ? value : "");
+async function readGeminiHarnessConfig(request: APIRequestContext): Promise<Record<string, unknown>> {
+  const response = await request.get("/api/providers/gemini/harness_config", {
+    timeout: REQUEST_TIMEOUT_MS,
+  });
+  expect(response.ok(), `gemini harness config read failed (${response.status()})`).toBe(true);
+  return asRecord(await response.json());
+}
+
+async function ensureGeminiEndpointSelected(
+  request: APIRequestContext,
+  apiKey: string,
+  modelId: string,
+): Promise<Record<string, unknown>> {
+  let config = await readGeminiHarnessConfig(request);
+  let selectedEndpoint = selectedGeminiEndpointForConfig(config);
+  const endpointMatches = selectedEndpoint !== null
+    && readString(selectedEndpoint.name) === GEMINI_ENDPOINT_NAME
+    && readString(selectedEndpoint.auth_type) === "gemini_api_key"
+    && readString(selectedEndpoint.model_override) === modelId;
+  if (readString(config.selected_source_kind) === "endpoint" && endpointMatches) {
+    return config;
+  }
+
+  const existingEndpoint =
+    asArray(config.endpoints)
+      .map((entry) => asRecord(entry))
+      .find((entry) => readString(entry.name) === GEMINI_ENDPOINT_NAME)
+    ?? selectedEndpoint;
+  const endpointId = readString(existingEndpoint?.id) || null;
+
+  const upsertResp = await request.post("/api/providers/gemini/harness_config/endpoints", {
+    data: {
+      endpoint_id: endpointId,
+      name: GEMINI_ENDPOINT_NAME,
+      auth_type: "gemini_api_key",
+      api_key: apiKey,
+      model_override: modelId,
+    },
+    timeout: REQUEST_TIMEOUT_MS,
+  });
+  expect(upsertResp.ok(), `gemini endpoint upsert failed (${upsertResp.status()})`).toBe(true);
+  config = asRecord(await upsertResp.json());
+  selectedEndpoint =
+    asArray(config.endpoints)
+      .map((entry) => asRecord(entry))
+      .find((entry) =>
+        readString(entry.name) === GEMINI_ENDPOINT_NAME
+        && readString(entry.auth_type) === "gemini_api_key"
+        && readString(entry.model_override) === modelId,
+      ) ?? selectedGeminiEndpointForConfig(config);
+  const selectedEndpointId = readString(selectedEndpoint?.id);
+  expect(selectedEndpointId).not.toBe("");
+
+  const selectResp = await request.post("/api/providers/gemini/harness_config/select", {
+    data: {
+      source_kind: "endpoint",
+      endpoint_id: selectedEndpointId,
+    },
+    timeout: REQUEST_TIMEOUT_MS,
+  });
+  expect(selectResp.ok(), `gemini endpoint select failed (${selectResp.status()})`).toBe(true);
+  return asRecord(await selectResp.json());
+}
 
 async function openHarnessMenu(page: Page): Promise<Locator> {
   const harnessButton = page
@@ -115,6 +187,7 @@ test("workbench: gemini provider API key auth can run a real task", async ({ pag
   if (!geminiApiKey) {
     test.skip(true, "missing CTX_E2E_GEMINI_API_KEY");
   }
+  const geminiModelId = (process.env.CTX_E2E_GEMINI_MODEL_ID ?? GEMINI_DEFAULT_MODEL_ID).trim();
 
   const providerStatus = await ensureProviderInstalledAndHealthy(request, "gemini", INSTALL_TARGET, {
     timeoutMs: 10 * 60_000,
@@ -143,6 +216,14 @@ test("workbench: gemini provider API key auth can run a real task", async ({ pag
 
   await configureGeminiApiKeyViaModal(page, geminiApiKey);
   console.warn("[gemini-provider-api-key-real] api key submitted");
+
+  const config = await ensureGeminiEndpointSelected(request, geminiApiKey, geminiModelId);
+  expect(readString(config.selected_source_kind)).toBe("endpoint");
+  const selectedEndpoint = selectedGeminiEndpointForConfig(config);
+  expect(selectedEndpoint).not.toBeNull();
+  expect(readString(selectedEndpoint?.auth_type)).toBe("gemini_api_key");
+  expect(readString(selectedEndpoint?.name)).toBe(GEMINI_ENDPOINT_NAME);
+  expect(readString(selectedEndpoint?.model_override)).toBe(geminiModelId);
 
   await verifyProviderForWorkspace(request, workspaceId, "gemini", {
     timeoutMs: 90_000,

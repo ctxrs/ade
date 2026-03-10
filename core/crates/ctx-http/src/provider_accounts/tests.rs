@@ -808,6 +808,14 @@ async fn subscription_env_runtime_root_projects_path_based_providers() {
     )
     .await
     .unwrap();
+    let _ = add_copilot_account(
+        root,
+        Some("Copilot".to_string()),
+        "gho_runtime_token".to_string(),
+        Some("copilot@example.com".to_string()),
+    )
+    .await
+    .unwrap();
     let _ = add_cursor_account(
         root,
         Some("Cursor".to_string()),
@@ -858,6 +866,19 @@ async fn subscription_env_runtime_root_projects_path_based_providers() {
             .unwrap();
     let kimi_share = PathBuf::from(kimi_env.get(KIMI_SHARE_DIR_ENV).unwrap());
     assert!(kimi_share.starts_with(runtime_root));
+
+    let copilot_env =
+        subscription_env_for_active_account_with_runtime_root(root, runtime_root, "copilot")
+            .await
+            .unwrap();
+    let copilot_home = PathBuf::from(copilot_env.get("HOME").unwrap());
+    assert!(copilot_home.starts_with(runtime_root));
+    let copilot_config = PathBuf::from(copilot_env.get("XDG_CONFIG_HOME").unwrap());
+    assert!(copilot_config.starts_with(runtime_root));
+    assert_eq!(
+        copilot_env.get("COPILOT_MODEL").map(String::as_str),
+        Some("gpt-5-mini")
+    );
 
     let cursor_env =
         subscription_env_for_active_account_with_runtime_root(root, runtime_root, "cursor")

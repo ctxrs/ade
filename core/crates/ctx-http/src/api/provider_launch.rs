@@ -322,6 +322,15 @@ pub(super) fn selected_endpoint_record_from_harness_config(
         .cloned()
 }
 
+fn copilot_models_payload_from_status(
+    provider_status: &ctx_providers::adapters::ProviderStatus,
+) -> Option<serde_json::Value> {
+    provider_status
+        .version
+        .as_deref()
+        .and_then(crate::provider_accounts::copilot_models_value_for_version)
+}
+
 fn endpoint_current_model_id(
     provider_id: &str,
     endpoint: &HarnessEndpointRecord,
@@ -648,6 +657,10 @@ pub(super) async fn get_provider_options(
                     )
                     .await;
                 });
+            }
+        } else if provider_id == "copilot" {
+            if let Some(models) = copilot_models_payload_from_status(&provider_status) {
+                raw_resp["models"] = models;
             }
         }
         if raw_resp.get("models").is_none() || raw_resp.get("models").is_some_and(|v| v.is_null()) {

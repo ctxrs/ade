@@ -499,11 +499,20 @@ case "${suite}" in
     export CTX_E2E_TIER="provider-api-auth"
 
     missing_provider_auth_keys=()
+    if [[ -z "${CTX_E2E_COPILOT_TOKEN:-}" ]]; then
+      missing_provider_auth_keys+=("CTX_E2E_COPILOT_TOKEN")
+    fi
     if [[ -z "${CTX_E2E_CURSOR_API_KEY:-}" ]]; then
       missing_provider_auth_keys+=("CTX_E2E_CURSOR_API_KEY")
     fi
     if [[ -z "${CTX_E2E_GEMINI_API_KEY:-}" ]]; then
       missing_provider_auth_keys+=("CTX_E2E_GEMINI_API_KEY")
+    fi
+    if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+      missing_provider_auth_keys+=("OPENAI_API_KEY")
+    fi
+    if [[ -z "${MISTRAL_API_KEY:-}" ]]; then
+      missing_provider_auth_keys+=("MISTRAL_API_KEY")
     fi
 
     if (( ${#missing_provider_auth_keys[@]} > 0 )); then
@@ -516,7 +525,7 @@ case "${suite}" in
       exit 0
     fi
 
-    export CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS="${CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-${CTX_E2E_PROVIDER_AUTH_BUNDLE_PROVIDERS:-acp-crp-bridge,cursor,gemini}}"
+    export CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS="${CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-${CTX_E2E_PROVIDER_AUTH_BUNDLE_PROVIDERS:-acp-crp-bridge,codex,copilot,cursor,gemini,mistral}}"
     # Provider API-key auth coverage does not require harness image bundling.
     # Keep this lane independent of Docker buildx health by default.
     export CTX_E2E_ENDPOINT_BUNDLE_HARNESS_IMAGE="${CTX_E2E_ENDPOINT_BUNDLE_HARNESS_IMAGE:-0}"
@@ -528,8 +537,11 @@ case "${suite}" in
     (
       cd "${repo_root}/apps/web"
       pnpm exec playwright test -c playwright.config.ts \
+        e2e/workbench-copilot-subscription-token-real.spec.ts \
+        e2e/workbench-codex-provider-endpoint-openai-real.spec.ts \
         e2e/workbench-cursor-provider-api-key-real.spec.ts \
         e2e/workbench-gemini-provider-api-key-real.spec.ts \
+        e2e/workbench-mistral-provider-api-key-real.spec.ts \
         --workers=1
     )
     exit 0

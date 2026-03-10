@@ -23,12 +23,15 @@ const HARNESSES_WITH_SUBSCRIPTION_AUTH = new Set([
   "gemini",
   "kimi",
   "qwen",
-  "mistral",
   "amp",
   "copilot",
-  "cursor",
   "auggie",
 ]);
+
+// Mistral is intentionally API-key / endpoint-only for now. Revisit a
+// first-class subscription/OAuth lane once the product contract is settled.
+// Cursor remains API-key-only on mainline until the managed browser-login
+// capture port is replayed on top of current architecture.
 
 const HARNESSES_WITH_ENDPOINT_BASE_URL = new Set([
   "codex",

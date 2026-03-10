@@ -5,7 +5,23 @@ export type HarnessAuthConfigResult =
   | { ok: true; detail: string }
   | { ok: false; detail: string };
 
+export type EndpointAuthModalOptions = {
+  providerPresetLabel?: string;
+  allowGenericProviderFallback?: boolean;
+  endpointName?: string;
+};
+
 const normalizeText = (value: string | null | undefined): string => (value ?? "").replace(/\s+/g, " ").trim();
+const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+async function readOptionalVisibleText(locator: Locator): Promise<string> {
+  const count = await locator.count().catch(() => 0);
+  if (count === 0) return "";
+  const visible = await locator.isVisible().catch(() => false);
+  if (!visible) return "";
+  const text = await locator.textContent({ timeout: 250 }).catch(() => "");
+  return normalizeText(text);
+}
 
 const harnessTriggerLabel = (page: Page) =>
   page
@@ -54,30 +70,42 @@ async function waitForHarnessRowReady(rowButton: Locator, timeout: number) {
   await expect(rowButton.locator(".wb-harness-auth-dot-active")).toBeVisible({ timeout });
 }
 
-async function chooseOpenRouterPreset(page: Page, modal: Locator) {
-  const providerSelect = modal.locator('[role="combobox"]').first();
+async function chooseEndpointPreset(
+  page: Page,
+  modal: Locator,
+  label: string,
+  allowGenericFallback: boolean,
+) {
+  const providerSelect = modal
+    .locator("label.settings-harness-modal-label")
+    .filter({ hasText: /^Provider$/i })
+    .locator('[role="combobox"]')
+    .first();
   if ((await providerSelect.count()) === 0) return;
   await providerSelect.click();
-  const roleOption = page.getByRole("option", { name: /OpenRouter/i }).first();
+  const roleOption = page.getByRole("option", {
+    name: new RegExp(`^${escapeRegex(label)}$`, "i"),
+  }).first();
   if ((await roleOption.count()) > 0) {
     await roleOption.click();
     return;
   }
-  const textOption = page.locator(".tw-z-\\[1101\\]").getByText("OpenRouter", { exact: true }).first();
+  const textOption = page.locator(".tw-z-\\[1101\\]").getByText(label, { exact: true }).first();
   if ((await textOption.count()) > 0) {
     await textOption.click();
     return;
   }
-  // Some builds expose only a generic endpoint/API-key option. Keep using that path
-  // instead of failing hard when an explicit OpenRouter preset is absent.
-  const genericOption = page
-    .getByRole("option", { name: /(custom|endpoint|api key)/i })
-    .first();
-  if ((await genericOption.count()) > 0) {
-    await genericOption.click();
-    return;
+  if (allowGenericFallback) {
+    const genericOption = page
+      .getByRole("option", { name: /(custom|endpoint|api key)/i })
+      .first();
+    if ((await genericOption.count()) > 0) {
+      await genericOption.click();
+      return;
+    }
   }
   await page.keyboard.press("Escape").catch(() => {});
+  throw new Error(`provider preset option not found: ${label}`);
 }
 
 async function dismissAuthModalIfOpen(page: Page): Promise<void> {
@@ -108,6 +136,7 @@ export async function configureHarnessEndpointAuthViaModal(
   apiKey: string,
   baseUrl: string,
   modelOverride = "",
+  options: EndpointAuthModalOptions = {},
 ): Promise<HarnessAuthConfigResult> {
   await dismissAuthModalIfOpen(page);
   const menu = await openHarnessMenu(page);
@@ -126,16 +155,18 @@ export async function configureHarnessEndpointAuthViaModal(
   }
 
   await modal.getByRole("button", { name: "API Key" }).click();
-  await chooseOpenRouterPreset(page, modal);
+  const providerPresetLabel = options.providerPresetLabel ?? "OpenRouter";
+  await chooseEndpointPreset(page, modal, providerPresetLabel, options.allowGenericProviderFallback ?? true);
 
   const passwordInput = modal.locator("input[type='password']").first();
   await expect(passwordInput).toBeVisible({ timeout: 10_000 });
   await passwordInput.fill(apiKey);
 
-  const endpointName = `${entry.providerId}-openrouter`;
+  const endpointName = options.endpointName
+    ?? `${entry.providerId}-${providerPresetLabel.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
   const nameInput = modal
     .locator("label.settings-harness-modal-label")
-    .filter({ hasText: "Name (optional)" })
+    .filter({ hasText: /Name \(optional\)|Label \(optional\)/i })
     .locator("input")
     .first();
   if ((await nameInput.count()) > 0) {
@@ -182,7 +213,7 @@ export async function configureHarnessEndpointAuthViaModal(
       return { ok: true, detail: "endpoint auth saved via modal" };
     }
 
-    const errorText = normalizeText(await providerError.textContent().catch(() => ""));
+    const errorText = await readOptionalVisibleText(providerError);
     if (errorText) {
       const errorLower = errorText.toLowerCase();
       if (

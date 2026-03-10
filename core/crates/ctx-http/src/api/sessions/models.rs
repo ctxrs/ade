@@ -307,6 +307,34 @@ pub(super) async fn load_provider_model_catalog(
         }
     }
 
+    if provider_id == "copilot" {
+        let managed = crate::installer::load_agent_server_config(&state.core.data_root)
+            .await
+            .unwrap_or_default();
+        let matrix = crate::provider_matrix::load_matrix_cached(
+            &state.core.data_root,
+            &state.providers.matrix_cache,
+        )
+        .await;
+        let provider_status = crate::api::providers::provider_status_for_target(
+            state,
+            &managed,
+            &matrix,
+            provider_id,
+            install_target,
+        )
+        .await;
+        if let Some(version) = provider_status.version.as_deref() {
+            if let Some(models_value) =
+                crate::provider_accounts::copilot_models_value_for_version(version)
+            {
+                if let Some(catalog) = build_model_catalog(&models_value) {
+                    return Ok(Some(catalog));
+                }
+            }
+        }
+    }
+
     let source_config =
         crate::harness_sources::get_provider_source_config(&state.core.data_root, provider_id)
             .await

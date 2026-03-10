@@ -16,6 +16,16 @@ use super::{
     GEMINI_FORCE_FILE_STORAGE_ENV, GEMINI_SECRET_VERSION,
 };
 
+const GEMINI_RUNTIME_AUTH_ENV_KEYS: &[&str] = &[
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "GOOGLE_GENAI_USE_VERTEXAI",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "GOOGLE_CLOUD_PROJECT",
+    "GOOGLE_CLOUD_PROJECT_ID",
+    "GOOGLE_CLOUD_LOCATION",
+];
+
 fn default_gemini_credential_kind() -> String {
     GEMINI_CREDENTIAL_KIND_OAUTH_PERSONAL.to_string()
 }
@@ -211,8 +221,32 @@ pub async fn remove_gemini_account(
     Ok(registry)
 }
 
+pub(crate) fn clear_gemini_runtime_auth_env(env: &mut HashMap<String, String>) {
+    for key in GEMINI_RUNTIME_AUTH_ENV_KEYS {
+        env.insert((*key).to_string(), String::new());
+    }
+}
+
+pub(crate) fn apply_gemini_api_key_runtime_auth_env(
+    env: &mut HashMap<String, String>,
+    api_key: String,
+) {
+    clear_gemini_runtime_auth_env(env);
+    env.insert("GEMINI_API_KEY".to_string(), api_key);
+}
+
+pub(crate) fn apply_gemini_vertex_runtime_auth_env(
+    env: &mut HashMap<String, String>,
+    api_key: String,
+) {
+    clear_gemini_runtime_auth_env(env);
+    env.insert("GOOGLE_API_KEY".to_string(), api_key);
+    env.insert("GOOGLE_GENAI_USE_VERTEXAI".to_string(), "true".to_string());
+}
+
 pub fn gemini_env_for_account(data_root: &Path, account_id: &str) -> HashMap<String, String> {
     let mut env = HashMap::new();
+    clear_gemini_runtime_auth_env(&mut env);
     env.insert(
         "GEMINI_CLI_HOME".to_string(),
         gemini_account_home(data_root, account_id)
@@ -353,10 +387,18 @@ async fn ensure_gemini_account_home(
             Err(err) => return Err(err.into()),
         }
     }
+    write_gemini_auth_settings(&gemini_dir, GEMINI_AUTH_SELECTED_TYPE_OAUTH_PERSONAL).await?;
+    Ok(home)
+}
+
+pub(crate) async fn write_gemini_auth_settings(
+    gemini_dir: &Path,
+    selected_type: &str,
+) -> Result<()> {
     let settings = serde_json::json!({
         "security": {
             "auth": {
-                "selectedType": GEMINI_AUTH_SELECTED_TYPE_OAUTH_PERSONAL
+                "selectedType": selected_type
             }
         }
     });
@@ -364,8 +406,7 @@ async fn ensure_gemini_account_home(
         &gemini_dir.join("settings.json"),
         &serde_json::to_vec_pretty(&settings)?,
     )
-    .await?;
-    Ok(home)
+    .await
 }
 
 #[cfg(test)]

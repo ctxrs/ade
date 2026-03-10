@@ -14,9 +14,84 @@ use super::{
     COPILOT_CREDENTIAL_KIND_GH_TOKEN, COPILOT_SECRET_VERSION,
 };
 
+pub(crate) const COPILOT_BOOTSTRAP_MODEL_ID: &str = "gpt-5-mini";
+
+const COPILOT_CATALOG_VERSION_1_0_0: &str = "1.0.0";
+const COPILOT_CATALOG_VERSION_1_0_3: &str = "1.0.3";
+const COPILOT_DEFAULT_MODEL_ID: &str = "claude-sonnet-4.6";
+
 fn default_copilot_credential_kind() -> String {
     COPILOT_CREDENTIAL_KIND_GH_TOKEN.to_string()
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CopilotKnownModel {
+    pub(crate) id: &'static str,
+    pub(crate) display_name: &'static str,
+    pub(crate) requires_enablement: bool,
+    pub(crate) is_default: bool,
+    pub(crate) bootstrap_safe: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CopilotModelCatalog {
+    pub(crate) version: &'static str,
+    pub(crate) default_model_id: &'static str,
+    pub(crate) bootstrap_model_id: &'static str,
+    pub(crate) models: &'static [CopilotKnownModel],
+}
+
+const COPILOT_MODEL_CATALOG_1_0_X: [CopilotKnownModel; 7] = [
+    CopilotKnownModel {
+        id: "claude-sonnet-4.6",
+        display_name: "Claude Sonnet 4.6 (requires enablement)",
+        requires_enablement: true,
+        is_default: true,
+        bootstrap_safe: false,
+    },
+    CopilotKnownModel {
+        id: "claude-haiku-4.5",
+        display_name: "Claude Haiku 4.5",
+        requires_enablement: false,
+        is_default: false,
+        bootstrap_safe: true,
+    },
+    CopilotKnownModel {
+        id: "claude-opus-4.6",
+        display_name: "Claude Opus 4.6 (requires enablement)",
+        requires_enablement: true,
+        is_default: false,
+        bootstrap_safe: false,
+    },
+    CopilotKnownModel {
+        id: "claude-opus-4.6-fast",
+        display_name: "Claude Opus 4.6 (fast mode) (Preview) (requires enablement)",
+        requires_enablement: true,
+        is_default: false,
+        bootstrap_safe: false,
+    },
+    CopilotKnownModel {
+        id: "gpt-5.2-codex",
+        display_name: "GPT-5.2-Codex (requires enablement)",
+        requires_enablement: true,
+        is_default: false,
+        bootstrap_safe: false,
+    },
+    CopilotKnownModel {
+        id: "gpt-5-mini",
+        display_name: "GPT-5 mini",
+        requires_enablement: false,
+        is_default: false,
+        bootstrap_safe: true,
+    },
+    CopilotKnownModel {
+        id: "gpt-4.1",
+        display_name: "GPT-4.1",
+        requires_enablement: false,
+        is_default: false,
+        bootstrap_safe: true,
+    },
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CopilotAccountEntry {
@@ -61,6 +136,10 @@ pub async fn save_copilot_registry(
 pub async fn ensure_copilot_account_dir(data_root: &Path, account_id: &str) -> Result<PathBuf> {
     let dir = copilot_account_dir(data_root, account_id);
     tokio::fs::create_dir_all(&dir).await?;
+    tokio::fs::create_dir_all(dir.join(".config")).await?;
+    tokio::fs::create_dir_all(dir.join(".cache")).await?;
+    tokio::fs::create_dir_all(dir.join(".local").join("share")).await?;
+    tokio::fs::create_dir_all(dir.join(".local").join("state")).await?;
     Ok(dir)
 }
 
@@ -176,11 +255,38 @@ pub async fn remove_copilot_account(
 }
 
 pub fn copilot_env_for_account(
-    _data_root: &Path,
-    _account_id: &str,
+    data_root: &Path,
+    account_id: &str,
     token: &str,
 ) -> HashMap<String, String> {
+    let home = copilot_account_dir(data_root, account_id);
+    let config = home.join(".config");
+    let cache = home.join(".cache");
+    let data = home.join(".local").join("share");
+    let state = home.join(".local").join("state");
     let mut env = HashMap::new();
+    env.insert("HOME".to_string(), home.to_string_lossy().to_string());
+    env.insert(
+        "XDG_CONFIG_HOME".to_string(),
+        config.to_string_lossy().to_string(),
+    );
+    env.insert(
+        "XDG_CACHE_HOME".to_string(),
+        cache.to_string_lossy().to_string(),
+    );
+    env.insert(
+        "XDG_DATA_HOME".to_string(),
+        data.to_string_lossy().to_string(),
+    );
+    env.insert(
+        "XDG_STATE_HOME".to_string(),
+        state.to_string_lossy().to_string(),
+    );
+    env.insert(
+        "COPILOT_MODEL".to_string(),
+        COPILOT_BOOTSTRAP_MODEL_ID.to_string(),
+    );
+    env.insert("COPILOT_GITHUB_TOKEN".to_string(), token.to_string());
     env.insert("GH_TOKEN".to_string(), token.to_string());
     env.insert("GITHUB_TOKEN".to_string(), token.to_string());
     env
@@ -205,6 +311,73 @@ pub async fn copilot_env_for_active_account(data_root: &Path) -> Result<HashMap<
     let token = read_copilot_secret_for_ref(data_root, secret_ref).await?;
     let _ = ensure_copilot_account_dir(data_root, active).await?;
     Ok(copilot_env_for_account(data_root, active, &token))
+}
+
+pub(crate) async fn copilot_env_for_active_account_with_runtime_root(
+    data_root: &Path,
+    runtime_root: &Path,
+) -> Result<HashMap<String, String>> {
+    let registry = load_copilot_registry(data_root).await;
+    let Some(active) = registry
+        .active_account_id
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    else {
+        return Ok(HashMap::new());
+    };
+    let Some(entry) = registry.accounts.iter().find(|a| a.id == active) else {
+        return Ok(HashMap::new());
+    };
+    let Some(secret_ref) = entry.secret_ref.as_deref() else {
+        bail!("active copilot account has no secret reference");
+    };
+    let token = read_copilot_secret_for_ref(data_root, secret_ref).await?;
+    let _ = ensure_copilot_account_dir(runtime_root, active).await?;
+    Ok(copilot_env_for_account(runtime_root, active, &token))
+}
+
+fn normalize_copilot_cli_version(version: &str) -> Option<String> {
+    let trimmed = version.trim().trim_start_matches('v').trim_end_matches('.');
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
+pub(crate) fn copilot_model_catalog_for_version(version: &str) -> Option<CopilotModelCatalog> {
+    match normalize_copilot_cli_version(version)?.as_str() {
+        COPILOT_CATALOG_VERSION_1_0_0 => Some(CopilotModelCatalog {
+            version: COPILOT_CATALOG_VERSION_1_0_0,
+            default_model_id: COPILOT_DEFAULT_MODEL_ID,
+            bootstrap_model_id: COPILOT_BOOTSTRAP_MODEL_ID,
+            models: &COPILOT_MODEL_CATALOG_1_0_X,
+        }),
+        COPILOT_CATALOG_VERSION_1_0_3 => Some(CopilotModelCatalog {
+            version: COPILOT_CATALOG_VERSION_1_0_3,
+            default_model_id: COPILOT_DEFAULT_MODEL_ID,
+            bootstrap_model_id: COPILOT_BOOTSTRAP_MODEL_ID,
+            models: &COPILOT_MODEL_CATALOG_1_0_X,
+        }),
+        _ => None,
+    }
+}
+
+pub(crate) fn copilot_models_value_for_version(version: &str) -> Option<serde_json::Value> {
+    let catalog = copilot_model_catalog_for_version(version)?;
+    Some(serde_json::json!({
+        "catalog_source": "copilot_version_pinned",
+        "catalog_version": catalog.version,
+        "default_model_id": catalog.default_model_id,
+        "current_model_id": catalog.bootstrap_model_id,
+        "models": catalog.models.iter().map(|model| serde_json::json!({
+            "id": model.id,
+            "name": model.display_name,
+            "requires_enablement": model.requires_enablement,
+            "is_default": model.is_default,
+            "bootstrap_safe": model.bootstrap_safe,
+        })).collect::<Vec<_>>(),
+    }))
 }
 
 pub fn normalize_copilot_label(label: Option<String>, account_id: &str) -> String {
@@ -287,9 +460,99 @@ mod tests {
         .unwrap();
         let active_id = registry.active_account_id.clone().expect("active account");
         let env = copilot_env_for_active_account(root).await.unwrap();
+        let home = PathBuf::from(env.get("HOME").expect("HOME"));
         assert_eq!(env.get("GH_TOKEN"), Some(&"ghp_abc".to_string()));
         assert_eq!(env.get("GITHUB_TOKEN"), Some(&"ghp_abc".to_string()));
+        assert_eq!(
+            env.get("COPILOT_GITHUB_TOKEN"),
+            Some(&"ghp_abc".to_string())
+        );
+        assert_eq!(
+            env.get("COPILOT_MODEL"),
+            Some(&COPILOT_BOOTSTRAP_MODEL_ID.to_string())
+        );
+        assert!(home.starts_with(root));
+        assert_eq!(
+            env.get("XDG_CONFIG_HOME"),
+            Some(&home.join(".config").to_string_lossy().to_string())
+        );
+        assert_eq!(
+            env.get("XDG_STATE_HOME"),
+            Some(
+                &home
+                    .join(".local")
+                    .join("state")
+                    .to_string_lossy()
+                    .to_string()
+            )
+        );
         assert!(copilot_account_dir(root, &active_id).exists());
+    }
+
+    #[tokio::test]
+    async fn copilot_active_account_projects_runtime_root_home() {
+        let dir = tempfile::tempdir().unwrap();
+        let runtime = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let runtime_root = runtime.path();
+        let registry = add_copilot_account(
+            root,
+            Some("Copilot Test".to_string()),
+            "ghp_runtime".to_string(),
+            None,
+        )
+        .await
+        .unwrap();
+        let active_id = registry.active_account_id.clone().expect("active account");
+        let env = copilot_env_for_active_account_with_runtime_root(root, runtime_root)
+            .await
+            .unwrap();
+        let home = PathBuf::from(env.get("HOME").expect("HOME"));
+        assert!(home.starts_with(runtime_root));
+        assert!(home.ends_with(active_id));
+    }
+
+    #[test]
+    fn copilot_model_catalog_returns_pinned_models_for_known_version() {
+        let value = copilot_models_value_for_version("1.0.0").expect("catalog");
+        let current = value
+            .get("current_model_id")
+            .and_then(serde_json::Value::as_str);
+        let default = value
+            .get("default_model_id")
+            .and_then(serde_json::Value::as_str);
+        let catalog_version = value
+            .get("catalog_version")
+            .and_then(serde_json::Value::as_str);
+        let models = value
+            .get("models")
+            .and_then(serde_json::Value::as_array)
+            .expect("models array");
+        assert_eq!(current, Some(COPILOT_BOOTSTRAP_MODEL_ID));
+        assert_eq!(default, Some(COPILOT_DEFAULT_MODEL_ID));
+        assert_eq!(catalog_version, Some(COPILOT_CATALOG_VERSION_1_0_0));
+        assert!(models.iter().any(|model| {
+            model.get("id").and_then(serde_json::Value::as_str) == Some("claude-sonnet-4.6")
+        }));
+        assert!(models.iter().any(|model| {
+            model.get("id").and_then(serde_json::Value::as_str) == Some("gpt-5-mini")
+        }));
+    }
+
+    #[test]
+    fn copilot_model_catalog_aliases_host_cli_version() {
+        let value = copilot_models_value_for_version("1.0.3.").expect("catalog");
+        let catalog_version = value
+            .get("catalog_version")
+            .and_then(serde_json::Value::as_str);
+        assert_eq!(catalog_version, Some(COPILOT_CATALOG_VERSION_1_0_3));
+        let models = value
+            .get("models")
+            .and_then(serde_json::Value::as_array)
+            .expect("models array");
+        assert!(models.iter().any(|model| {
+            model.get("id").and_then(serde_json::Value::as_str) == Some("claude-opus-4.6-fast")
+        }));
     }
 
     #[tokio::test]

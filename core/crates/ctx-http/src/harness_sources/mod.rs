@@ -85,7 +85,8 @@ use model_catalog::{
 use registry::registry_path;
 #[cfg(test)]
 use runtime_resolution::{
-    codex_endpoint_home, droid_endpoint_home, qwen_endpoint_home, seed_droid_auth_from_host_path,
+    codex_endpoint_home, droid_endpoint_home, gemini_endpoint_home, qwen_endpoint_home,
+    seed_droid_auth_from_host_path,
 };
 #[cfg(test)]
 use validation::normalize_manual_model_ids;
@@ -739,6 +740,7 @@ mod tests {
             resolved.env.get("GEMINI_API_KEY"),
             Some(&"gemini-key".to_string())
         );
+        assert_eq!(resolved.env.get("GOOGLE_API_KEY"), Some(&String::new()));
         let home = PathBuf::from(
             resolved
                 .env
@@ -755,6 +757,12 @@ mod tests {
             Some(&"true".to_string())
         );
         assert!(home.join(".gemini").exists());
+        let settings = tokio::fs::read_to_string(
+            gemini_endpoint_home(root.path(), &endpoint.id).join(".gemini/settings.json"),
+        )
+        .await
+        .expect("read gemini settings");
+        assert!(settings.contains("\"selectedType\": \"gemini-api-key\""));
         assert!(!resolved.env.contains_key("OPENAI_API_KEY"));
         assert!(!resolved.env.contains_key("OPENAI_BASE_URL"));
     }
@@ -795,12 +803,19 @@ mod tests {
             resolved.env.get("GOOGLE_API_KEY"),
             Some(&"vertex-key".to_string())
         );
+        assert_eq!(resolved.env.get("GEMINI_API_KEY"), Some(&String::new()));
         assert_eq!(
             resolved.env.get("GOOGLE_GENAI_USE_VERTEXAI"),
             Some(&"true".to_string())
         );
         assert!(resolved.env.contains_key("HOME"));
         assert!(resolved.env.contains_key("GEMINI_CLI_HOME"));
+        let settings = tokio::fs::read_to_string(
+            gemini_endpoint_home(root.path(), &endpoint.id).join(".gemini/settings.json"),
+        )
+        .await
+        .expect("read gemini settings");
+        assert!(settings.contains("\"selectedType\": \"vertex-ai\""));
         assert!(!resolved.env.contains_key("OPENAI_API_KEY"));
         assert!(!resolved.env.contains_key("OPENAI_BASE_URL"));
     }

@@ -66,7 +66,7 @@ type UseWorkbenchProvidersArgs = {
   onStartError: (message: string | null) => void;
 };
 
-const MODEL_DISCOVERY_PROVIDER_IDS = new Set(["codex", "claude-crp"]);
+const MODEL_DISCOVERY_PROVIDER_IDS = new Set(["codex", "claude-crp", "copilot"]);
 export type ProviderAuthSummaryTrigger = "passive" | "explicit";
 
 const hasProviderModels = (options: ProviderOptions | undefined): boolean => {
@@ -532,8 +532,9 @@ export function useWorkbenchProviders({
   }, [defaultProviderId, providers.length, providersById, setDraftHarness]);
 
   // This loads workspace-scoped auth/config summary from providers/bootstrap.
-  // For model-capable subscription providers (Codex/Claude), it additionally
-  // hydrates detailed provider options once after auth so model catalogs appear.
+  // For model-capable subscription providers (Codex/Claude/Copilot), it
+  // additionally hydrates detailed provider options once after auth so model
+  // catalogs appear.
   const ensureProviderAuthSummary = useCallback(
     async (
       providerId: string,

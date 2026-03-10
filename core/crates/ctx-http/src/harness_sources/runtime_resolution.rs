@@ -1,4 +1,9 @@
 use super::*;
+use crate::provider_accounts::{
+    apply_gemini_api_key_runtime_auth_env, apply_gemini_vertex_runtime_auth_env,
+    write_gemini_auth_settings, GEMINI_AUTH_SELECTED_TYPE_API_KEY,
+    GEMINI_AUTH_SELECTED_TYPE_VERTEX_AI,
+};
 
 pub(crate) fn droid_cli_model_id_for_endpoint_model(
     model_id: Option<&str>,
@@ -146,7 +151,8 @@ impl<'a> ProviderRuntimeContext<'a> {
                 validation::ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
                 validation::ensure_safe_endpoint_id(&endpoint.id)?;
                 let gemini_home = gemini_endpoint_home(self.runtime_data_root(), &endpoint.id);
-                tokio::fs::create_dir_all(gemini_home.join(".gemini"))
+                let gemini_dir = gemini_home.join(".gemini");
+                tokio::fs::create_dir_all(&gemini_dir)
                     .await
                     .with_context(|| {
                         format!("creating gemini endpoint home for endpoint {}", endpoint.id)
@@ -162,11 +168,17 @@ impl<'a> ProviderRuntimeContext<'a> {
                 env.insert("GEMINI_FORCE_FILE_STORAGE".to_string(), "true".to_string());
                 match endpoint.auth_type.as_str() {
                     GEMINI_AUTH_TYPE_VERTEX_AI => {
-                        env.insert("GOOGLE_API_KEY".to_string(), api_key.to_string());
-                        env.insert("GOOGLE_GENAI_USE_VERTEXAI".to_string(), "true".to_string());
+                        apply_gemini_vertex_runtime_auth_env(&mut env, api_key.to_string());
+                        write_gemini_auth_settings(
+                            &gemini_dir,
+                            GEMINI_AUTH_SELECTED_TYPE_VERTEX_AI,
+                        )
+                        .await?;
                     }
                     GEMINI_AUTH_TYPE_GEMINI_API_KEY => {
-                        env.insert("GEMINI_API_KEY".to_string(), api_key.to_string());
+                        apply_gemini_api_key_runtime_auth_env(&mut env, api_key.to_string());
+                        write_gemini_auth_settings(&gemini_dir, GEMINI_AUTH_SELECTED_TYPE_API_KEY)
+                            .await?;
                     }
                     _ => {
                         anyhow::bail!(

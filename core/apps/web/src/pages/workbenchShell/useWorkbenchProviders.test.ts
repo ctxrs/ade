@@ -51,6 +51,10 @@ describe("shouldHydrateProviderModels", () => {
     expect(shouldHydrateProviderModels("gemini", baseOptions("gemini"))).toBe(false);
   });
 
+  it("requests hydration for copilot subscription auth when models are missing", () => {
+    expect(shouldHydrateProviderModels("copilot", baseOptions("copilot"))).toBe(true);
+  });
+
   it("does not keep passively hydrating after a failed probe", () => {
     const options: ProviderOptions = {
       ...baseOptions("codex"),

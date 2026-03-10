@@ -10,6 +10,7 @@ use ctx_http::daemon::AppState;
 use ctx_http::installer::{
     save_agent_server_config, AgentServerCommand, AgentServerConfigFile, ManagedInstallMetadata,
 };
+use ctx_http::provider_accounts::add_copilot_account;
 use ctx_providers::adapters::{ProviderAdapter, ProviderHealth, ProviderStatus};
 use ctx_store::StoreManager;
 
@@ -192,6 +193,77 @@ async fn provider_options_probe_uses_managed_dependency_path() {
             .and_then(serde_json::Value::as_str),
         Some("fixture-model"),
         "expected fixture model probe result: {body:#?}"
+    );
+}
+
+#[tokio::test]
+async fn copilot_provider_options_include_pinned_model_catalog() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
+    let state = app_state(data_dir.path()).await;
+    let app = api::router(state.clone());
+
+    add_copilot_account(
+        data_dir.path(),
+        Some("Copilot Test".to_string()),
+        "gho_fixture_token".to_string(),
+        Some("copilot@example.com".to_string()),
+    )
+    .await
+    .expect("add copilot account");
+
+    state.providers.statuses.lock().await.insert(
+        "copilot".to_string(),
+        ProviderStatus {
+            provider_id: "copilot".to_string(),
+            installed: true,
+            detected_path: None,
+            version: Some("1.0.3".to_string()),
+            capabilities: None,
+            health: ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+        },
+    );
+
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let (status, body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::GET,
+        format!("/api/workspaces/{}/providers/copilot/options", ws.id.0),
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "options request failed: {body:#?}");
+    assert_eq!(
+        body.get("probe_ok").and_then(serde_json::Value::as_bool),
+        Some(true),
+        "expected probe_ok=true with active copilot auth: {body:#?}"
+    );
+    assert_eq!(
+        body.get("has_active_auth")
+            .and_then(serde_json::Value::as_bool),
+        Some(true),
+        "expected has_active_auth=true for active copilot account: {body:#?}"
+    );
+    assert_eq!(
+        body.pointer("/models/catalog_source")
+            .and_then(serde_json::Value::as_str),
+        Some("copilot_version_pinned"),
+        "expected pinned copilot model catalog in provider options: {body:#?}"
+    );
+    assert_eq!(
+        body.pointer("/models/current_model_id")
+            .and_then(serde_json::Value::as_str),
+        Some("gpt-5-mini"),
+        "expected bootstrap-safe copilot model in provider options: {body:#?}"
+    );
+    assert_eq!(
+        body.pointer("/models/default_model_id")
+            .and_then(serde_json::Value::as_str),
+        Some("claude-sonnet-4.6"),
+        "expected default copilot model in provider options: {body:#?}"
     );
 }
 

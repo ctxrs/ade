@@ -994,8 +994,11 @@ const resolveSuiteContract = (suiteId, options = {}) => {
         title: "Provider API-key auth suite",
         description: "Real Playwright suite validating provider-native API-key auth flows.",
         requirements: [
+          buildRequirement("CTX_E2E_COPILOT_TOKEN"),
           buildRequirement("CTX_E2E_CURSOR_API_KEY"),
           buildRequirement("CTX_E2E_GEMINI_API_KEY"),
+          buildRequirement("OPENAI_API_KEY"),
+          buildRequirement("MISTRAL_API_KEY"),
         ],
         optionalRequirements: [],
         metadata: {},

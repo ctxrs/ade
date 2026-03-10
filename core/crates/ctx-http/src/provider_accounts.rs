@@ -25,6 +25,7 @@ use self::claude::claude_env_for_active_account_with_runtime_root;
 #[cfg(test)]
 use self::codex_auth::write_runtime_owner_marker;
 use self::codex_auth::{clear_runtime_auth_projection, normalize_endpoint_profile};
+use self::copilot::copilot_env_for_active_account_with_runtime_root;
 use self::cursor::cursor_env_for_active_account_with_runtime_root;
 use self::gemini::gemini_env_for_active_account_with_runtime_root;
 use self::kimi::kimi_env_for_active_account_with_runtime_root;
@@ -55,6 +56,7 @@ pub use self::codex_auth::{
     ingest_codex_account_auth_to_secret_store, probe_host_codex_auth_candidate,
     seed_codex_auth_from_host, seeding_codex_auth_from_host_enabled,
 };
+pub(crate) use self::copilot::copilot_models_value_for_version;
 pub use self::copilot::{
     add_copilot_account, copilot_env_for_account, copilot_env_for_active_account,
     ensure_copilot_account_dir, load_copilot_registry, normalize_copilot_label,
@@ -71,6 +73,10 @@ pub use self::gemini::{
     add_gemini_account, gemini_env_for_account, gemini_env_for_active_account,
     load_gemini_registry, normalize_gemini_label, remove_gemini_account, save_gemini_registry,
     set_active_gemini_account, GeminiAccountEntry, GeminiAccountRegistry, GeminiLoginStatus,
+};
+pub(crate) use self::gemini::{
+    apply_gemini_api_key_runtime_auth_env, apply_gemini_vertex_runtime_auth_env,
+    write_gemini_auth_settings,
 };
 pub use self::kimi::{
     add_kimi_account, kimi_env_for_account, kimi_env_for_active_account, load_kimi_registry,
@@ -114,6 +120,8 @@ pub const COPILOT_CREDENTIAL_KIND_GH_TOKEN: &str = "gh-token";
 pub const CURSOR_CREDENTIAL_KIND_API_KEY: &str = "api-key";
 pub const AMP_CREDENTIAL_KIND_BROWSER_OAUTH: &str = "browser-oauth";
 pub const GEMINI_AUTH_SELECTED_TYPE_OAUTH_PERSONAL: &str = "oauth-personal";
+pub const GEMINI_AUTH_SELECTED_TYPE_API_KEY: &str = "gemini-api-key";
+pub const GEMINI_AUTH_SELECTED_TYPE_VERTEX_AI: &str = "vertex-ai";
 pub const QWEN_AUTH_SELECTED_TYPE_OAUTH: &str = "qwen-oauth";
 pub const GEMINI_FORCE_FILE_STORAGE_ENV: &str = "GEMINI_FORCE_FILE_STORAGE";
 pub const KIMI_SHARE_DIR_ENV: &str = "KIMI_SHARE_DIR";
@@ -357,7 +365,9 @@ pub async fn subscription_env_for_active_account_with_runtime_root(
         "mistral" => {
             mistral_env_for_active_account_with_runtime_root(data_root, runtime_root).await
         }
-        "copilot" => copilot_env_for_active_account(data_root).await,
+        "copilot" => {
+            copilot_env_for_active_account_with_runtime_root(data_root, runtime_root).await
+        }
         "cursor" => cursor_env_for_active_account_with_runtime_root(data_root, runtime_root).await,
         "amp" => amp_env_for_active_account_with_runtime_root(data_root, runtime_root).await,
         _ => Ok(HashMap::new()),
