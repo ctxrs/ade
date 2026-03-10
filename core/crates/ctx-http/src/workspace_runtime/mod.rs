@@ -42,7 +42,6 @@ use self::container::{
     verify_disk_isolated_container_mounts,
 };
 use self::image::ensure_container_image_available;
-pub(crate) use self::image::prefetch_container_startup_artifacts_with_overrides;
 pub(crate) use self::image::resolve_container_image;
 pub use self::image::{
     bundled_default_container_image_tar, container_image_present, container_image_status,

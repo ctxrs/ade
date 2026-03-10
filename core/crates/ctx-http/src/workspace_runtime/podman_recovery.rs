@@ -21,6 +21,14 @@ pub(super) fn podman_machine_singleflight_lock(machine_name: &str) -> Arc<Mutex<
         .clone()
 }
 
+fn podman_machine_heartbeat_interval() -> Duration {
+    if cfg!(test) {
+        Duration::from_millis(100)
+    } else {
+        Duration::from_secs(5)
+    }
+}
+
 pub(super) async fn podman_machine_present(data_root: &Path) -> Result<bool> {
     let mut cmd = podman_command(data_root)?;
     let machine_name = ctx_podman_machine_name(data_root);
@@ -526,7 +534,7 @@ async fn wait_for_podman_machine_ready(
             Err(err) => *last_err = err.to_string(),
         }
         let now = tokio::time::Instant::now();
-        if now.duration_since(last_heartbeat) >= Duration::from_secs(15) {
+        if now.duration_since(last_heartbeat) >= podman_machine_heartbeat_interval() {
             observe_log(
                 observer,
                 HarnessSetupPhase::MachineStartOrInit,
@@ -679,7 +687,7 @@ pub(super) async fn run_podman_machine_init(
         }
 
         let now = tokio::time::Instant::now();
-        if now.duration_since(last_heartbeat) >= Duration::from_secs(15) {
+        if now.duration_since(last_heartbeat) >= podman_machine_heartbeat_interval() {
             observe_log(
                 observer,
                 HarnessSetupPhase::MachineStartOrInit,

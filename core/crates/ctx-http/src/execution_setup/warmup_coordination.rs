@@ -7,7 +7,9 @@ use async_trait::async_trait;
 use ctx_core::ids::WorkspaceId;
 use tokio::sync::{broadcast, watch, Mutex};
 
-use crate::harness_runtime::{self, HarnessSetupLogLevel, HarnessSetupObserver, HarnessSetupPhase};
+use crate::harness_runtime::{
+    self, HarnessSetupLogLevel, HarnessSetupObserver, HarnessSetupPhase, HarnessSetupProgressUpdate,
+};
 use crate::settings::ExecutionSettings;
 
 use super::{
@@ -20,12 +22,6 @@ const SHARED_WARMUP_CHANNEL_CAP: usize = 256;
 
 #[async_trait]
 pub(crate) trait SharedWarmupOperations: Send + Sync {
-    async fn prefetch_runtime_artifacts(
-        &self,
-        settings: ExecutionSettings,
-        observer: Option<&dyn HarnessSetupObserver>,
-    ) -> Result<()>;
-
     async fn warm_runtime(
         &self,
         settings: ExecutionSettings,
@@ -48,21 +44,6 @@ impl DefaultWarmupOperations {
 
 #[async_trait]
 impl SharedWarmupOperations for DefaultWarmupOperations {
-    async fn prefetch_runtime_artifacts(
-        &self,
-        settings: ExecutionSettings,
-        observer: Option<&dyn HarnessSetupObserver>,
-    ) -> Result<()> {
-        let image = harness_runtime::resolve_container_image(&settings.container);
-        harness_runtime::prefetch_container_startup_artifacts_with_overrides(
-            &self.data_root,
-            &image,
-            None,
-            observer,
-        )
-        .await
-    }
-
     async fn warm_runtime(
         &self,
         settings: ExecutionSettings,
@@ -111,17 +92,6 @@ impl LaunchPrewarmCoordinator {
             self.ensure_builder(observer).await?;
         }
         Ok(())
-    }
-
-    pub(crate) async fn prefetch_runtime_artifacts(
-        &self,
-        settings: &ExecutionSettings,
-        observer: Option<&dyn HarnessSetupObserver>,
-    ) -> Result<()> {
-        self.inner
-            .operations
-            .prefetch_runtime_artifacts(settings.clone(), observer)
-            .await
     }
 
     pub(crate) async fn ensure_runtime(
@@ -434,6 +404,9 @@ enum SharedWarmupEventKind {
         level: HarnessSetupLogLevel,
         message: String,
     },
+    Progress {
+        progress: HarnessSetupProgressUpdate,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -451,6 +424,7 @@ impl SharedWarmupEvent {
                 level,
                 message,
             } => observer.on_log(*phase, *level, message),
+            SharedWarmupEventKind::Progress { progress } => observer.on_progress(progress.clone()),
         }
     }
 }
@@ -607,11 +581,17 @@ impl HarnessSetupObserver for SharedWarmupObserver {
             message: message.to_string(),
         });
     }
+
+    fn on_progress(&self, progress: HarnessSetupProgressUpdate) {
+        self.task
+            .push_event(SharedWarmupEventKind::Progress { progress });
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex as StdMutex;
     use std::time::Duration;
 
     use tokio::sync::Notify;
@@ -694,14 +674,6 @@ mod tests {
 
     #[async_trait]
     impl SharedWarmupOperations for FakeWarmupOperations {
-        async fn prefetch_runtime_artifacts(
-            &self,
-            _settings: ExecutionSettings,
-            _observer: Option<&dyn HarnessSetupObserver>,
-        ) -> Result<()> {
-            Ok(())
-        }
-
         async fn warm_runtime(
             &self,
             _settings: ExecutionSettings,
@@ -709,6 +681,15 @@ mod tests {
         ) -> Result<()> {
             self.runtime_runs.fetch_add(1, Ordering::SeqCst);
             observer.on_phase(HarnessSetupPhase::MachineCheck, "warming runtime");
+            observer.on_progress(HarnessSetupProgressUpdate {
+                phase: HarnessSetupPhase::ArtifactDownload,
+                active_download: Some(crate::harness_runtime::HarnessSetupDownloadStatus {
+                    artifact: "Required artifacts".to_string(),
+                    downloaded_bytes: 512,
+                    total_bytes: Some(1024),
+                    bytes_per_sec: Some(128),
+                }),
+            });
             if self.runtime_block {
                 self.runtime_release.notified().await;
             }
@@ -732,6 +713,30 @@ mod tests {
         };
         settings.container.image = Some(image.to_string());
         settings
+    }
+
+    #[derive(Default)]
+    struct RecordingObserver {
+        phases: StdMutex<Vec<(HarnessSetupPhase, String)>>,
+        progress: StdMutex<Vec<HarnessSetupProgressUpdate>>,
+    }
+
+    impl HarnessSetupObserver for RecordingObserver {
+        fn on_phase(&self, phase: HarnessSetupPhase, message: &str) {
+            self.phases
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push((phase, message.to_string()));
+        }
+
+        fn on_log(&self, _phase: HarnessSetupPhase, _level: HarnessSetupLogLevel, _message: &str) {}
+
+        fn on_progress(&self, progress: HarnessSetupProgressUpdate) {
+            self.progress
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(progress);
+        }
     }
 
     #[tokio::test]
@@ -823,6 +828,84 @@ mod tests {
 
         assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 1);
         assert_eq!(ops.builder_runs.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn late_runtime_joiner_replays_progress_updates() {
+        let ops = Arc::new(FakeWarmupOperations::blocking_runtime());
+        let coordinator = LaunchPrewarmCoordinator::new(ops.clone());
+        let settings = container_settings("ghcr.io/ctxrs/ctx-harness:test");
+        let first_observer = Arc::new(RecordingObserver::default());
+
+        let background_coordinator = coordinator.clone();
+        let background_settings = settings.clone();
+        let background_observer = first_observer.clone();
+        let first = tokio::spawn(async move {
+            background_coordinator
+                .ensure_scope(
+                    &background_settings,
+                    RuntimePrewarmScope::Runtime,
+                    Some(background_observer.as_ref()),
+                )
+                .await
+        });
+
+        ops.wait_for_runtime_runs(1).await;
+
+        let second_observer = Arc::new(RecordingObserver::default());
+        let join_coordinator = coordinator.clone();
+        let join_settings = settings.clone();
+        let join_observer = second_observer.clone();
+        let second = tokio::spawn(async move {
+            join_coordinator
+                .ensure_scope(
+                    &join_settings,
+                    RuntimePrewarmScope::Runtime,
+                    Some(join_observer.as_ref()),
+                )
+                .await
+        });
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if !second_observer
+                    .progress
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .is_empty()
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("timed out waiting for replayed progress");
+
+        let replayed = second_observer
+            .progress
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        assert!(replayed.iter().any(|update| {
+            update.phase == HarnessSetupPhase::ArtifactDownload
+                && update
+                    .active_download
+                    .as_ref()
+                    .map(|download| download.downloaded_bytes == 512)
+                    .unwrap_or(false)
+        }));
+
+        ops.release_runtime();
+
+        first
+            .await
+            .expect("first runtime wait failed")
+            .expect("first runtime wait errored");
+        second
+            .await
+            .expect("second runtime wait failed")
+            .expect("second runtime wait errored");
     }
 
     #[tokio::test]

@@ -129,6 +129,9 @@ export const launchEtaRemainingMs = (
   if (snapshot.state === "ready") return 0;
   if (snapshot.state === "error") return null;
   if (snapshot.eta_ms === null || snapshot.eta_ms === undefined) return null;
+  if (!snapshot.active_download) {
+    return snapshot.eta_ms > 0 ? snapshot.eta_ms : null;
+  }
   const updatedAt = parseUtcMs(snapshot.updated_at);
   if (updatedAt === null) return Math.max(0, snapshot.eta_ms);
   return Math.max(0, snapshot.eta_ms - Math.max(0, nowMs - updatedAt));

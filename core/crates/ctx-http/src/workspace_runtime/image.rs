@@ -1,4 +1,32 @@
 use super::*;
+use tokio::io::AsyncReadExt;
+
+fn image_load_heartbeat_interval() -> Duration {
+    if cfg!(test) {
+        Duration::from_millis(100)
+    } else {
+        Duration::from_secs(5)
+    }
+}
+
+fn image_load_poll_interval() -> Duration {
+    if cfg!(test) {
+        Duration::from_millis(25)
+    } else {
+        Duration::from_secs(1)
+    }
+}
+
+fn format_image_load_elapsed(elapsed: Duration) -> String {
+    let secs = elapsed.as_secs();
+    let minutes = secs / 60;
+    let seconds = secs % 60;
+    if minutes == 0 {
+        format!("{seconds}s")
+    } else {
+        format!("{minutes}m {seconds}s")
+    }
+}
 
 pub(crate) fn resolve_container_image(settings: &ContainerExecutionSettings) -> String {
     if let Ok(value) = std::env::var("CTX_HARNESS_CONTAINER_IMAGE") {
@@ -191,7 +219,7 @@ pub(super) async fn ensure_container_image_available(
             );
             managed_tar
         };
-        load_container_image_tar(data_root, &image_tar, image).await?;
+        load_container_image_tar(data_root, &image_tar, image, observer).await?;
         return Ok(());
     }
 
@@ -325,12 +353,111 @@ pub(super) async fn ensure_managed_default_container_image_tar_with_source(
     Ok(final_tar)
 }
 
-async fn load_container_image_tar(data_root: &Path, tar: &Path, image: &str) -> Result<()> {
+async fn read_child_pipe<R>(mut reader: R) -> std::io::Result<Vec<u8>>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    let mut buf = Vec::new();
+    reader.read_to_end(&mut buf).await?;
+    Ok(buf)
+}
+
+async fn load_container_image_tar(
+    data_root: &Path,
+    tar: &Path,
+    image: &str,
+    observer: Option<&dyn HarnessSetupObserver>,
+) -> Result<()> {
     let mut cmd = podman_command(data_root)?;
     cmd.arg("load").arg("-i").arg(tar);
-    let output = command_output_with_timeout(cmd, PODMAN_LOAD_TIMEOUT)
-        .await
-        .with_context(|| format!("podman load failed for {}", tar.display()))?;
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    cmd.kill_on_drop(true);
+    let mut child = cmd
+        .spawn()
+        .with_context(|| format!("spawning podman load for {}", tar.display()))?;
+    let stdout = child
+        .stdout
+        .take()
+        .context("podman load stdout was not captured")?;
+    let stderr = child
+        .stderr
+        .take()
+        .context("podman load stderr was not captured")?;
+    let stdout_task = tokio::spawn(read_child_pipe(stdout));
+    let stderr_task = tokio::spawn(read_child_pipe(stderr));
+    let deadline = tokio::time::Instant::now() + PODMAN_LOAD_TIMEOUT;
+    let started = tokio::time::Instant::now();
+    let mut last_heartbeat = started;
+
+    let output = loop {
+        if let Some(status) = child.try_wait().context("polling podman load process")? {
+            let stdout = stdout_task
+                .await
+                .context("joining podman load stdout capture")??;
+            let stderr = stderr_task
+                .await
+                .context("joining podman load stderr capture")??;
+            break std::process::Output {
+                status,
+                stdout,
+                stderr,
+            };
+        }
+
+        if tokio::time::Instant::now() >= deadline {
+            let _ = child.start_kill();
+            let status = child
+                .wait()
+                .await
+                .context("waiting for timed out podman load")?;
+            let stdout = stdout_task
+                .await
+                .context("joining timed out podman load stdout capture")??;
+            let stderr = stderr_task
+                .await
+                .context("joining timed out podman load stderr capture")??;
+            let output = std::process::Output {
+                status,
+                stdout,
+                stderr,
+            };
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            if stderr.is_empty() {
+                anyhow::bail!(
+                    "podman load timed out after {}s",
+                    PODMAN_LOAD_TIMEOUT.as_secs()
+                );
+            }
+            anyhow::bail!(
+                "podman load timed out after {}s: {stderr}",
+                PODMAN_LOAD_TIMEOUT.as_secs()
+            );
+        }
+
+        let now = tokio::time::Instant::now();
+        if now.duration_since(last_heartbeat) >= image_load_heartbeat_interval() {
+            observe_log(
+                observer,
+                HarnessSetupPhase::ImageLoad,
+                HarnessSetupLogLevel::Info,
+                &format!(
+                    "still loading harness image into podman ({} elapsed)",
+                    format_image_load_elapsed(started.elapsed())
+                ),
+            );
+            observe_progress(
+                observer,
+                HarnessSetupProgressUpdate {
+                    phase: HarnessSetupPhase::ImageLoad,
+                    active_download: None,
+                },
+            );
+            last_heartbeat = now;
+        }
+
+        tokio::time::sleep(image_load_poll_interval()).await;
+    };
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         if stderr.is_empty() {
@@ -400,5 +527,117 @@ pub async fn container_image_status(data_root: &Path, image: &str) -> Result<Con
             available: false,
             error: Some(String::from_utf8_lossy(&output.stderr).trim().to_string()),
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::Mutex as StdMutex;
+
+    use tempfile::tempdir;
+
+    use super::*;
+
+    struct EnvGuard {
+        key: &'static str,
+        prev: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let prev = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(value) = self.prev.take() {
+                std::env::set_var(self.key, value);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    fn env_var_test_lock() -> &'static tokio::sync::Mutex<()> {
+        crate::test_support::podman_env_test_lock()
+    }
+
+    #[derive(Default)]
+    struct RecordingObserver {
+        logs: StdMutex<Vec<(HarnessSetupPhase, HarnessSetupLogLevel, String)>>,
+        progress: StdMutex<Vec<HarnessSetupProgressUpdate>>,
+    }
+
+    impl HarnessSetupObserver for RecordingObserver {
+        fn on_phase(&self, _phase: HarnessSetupPhase, _message: &str) {}
+
+        fn on_log(&self, phase: HarnessSetupPhase, level: HarnessSetupLogLevel, message: &str) {
+            self.logs
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push((phase, level, message.to_string()));
+        }
+
+        fn on_progress(&self, progress: HarnessSetupProgressUpdate) {
+            self.progress
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(progress);
+        }
+    }
+
+    #[tokio::test]
+    async fn load_container_image_emits_heartbeat_logs_and_progress_while_waiting() {
+        let _serial = env_var_test_lock().lock().await;
+        let temp = tempdir().expect("tempdir");
+        let podman_path = temp.path().join("podman.sh");
+        let marker_path = temp.path().join("image-present");
+        let tar_path = temp.path().join("ctx-harness.tar");
+        std::fs::write(&tar_path, b"fake-image-tar").expect("write image tar");
+        std::fs::write(
+            &podman_path,
+            format!(
+                "#!/bin/sh\nset -eu\nmarker='{}'\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  sleep 0.25\n  : > \"$marker\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  if [ -f \"$marker\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nprintf 'unexpected podman invocation: %s\\n' \"$*\" >&2\nexit 1\n",
+                marker_path.display()
+            ),
+        )
+        .expect("write podman shim");
+        std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod podman shim");
+        let _guard = EnvGuard::set(PODMAN_PATH_ENV, &podman_path.to_string_lossy());
+        let observer = RecordingObserver::default();
+
+        load_container_image_tar(
+            temp.path(),
+            &tar_path,
+            "ghcr.io/ctxrs/ctx-harness:test",
+            Some(&observer),
+        )
+        .await
+        .expect("image load should succeed");
+
+        let logs = observer
+            .logs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        assert!(logs.iter().any(|(phase, level, message)| {
+            *phase == HarnessSetupPhase::ImageLoad
+                && *level == HarnessSetupLogLevel::Info
+                && message.contains("still loading harness image into podman")
+        }));
+
+        let progress = observer
+            .progress
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        assert!(progress.iter().any(|update| {
+            update.phase == HarnessSetupPhase::ImageLoad && update.active_download.is_none()
+        }));
     }
 }

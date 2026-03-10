@@ -1091,29 +1091,6 @@ impl ExecutionSetupCoordinator {
             };
         }
 
-        if let Err(err) = self.prewarm.prefetch_runtime_artifacts(&exec, None).await {
-            let message = format_error_chain(&err);
-            tracing::warn!("startup artifact prefetch failed: {message}");
-            let mut event = OpsEvent::new("warn", "execution.startup_prewarm_error");
-            event.meta = Some(json!({"image": image, "error": message}));
-            self.ops_events.emit(event);
-
-            let snapshot = StartupPrewarmSnapshot {
-                state: StartupPrewarmState::Error,
-                target_image: image,
-                needs_prewarm: true,
-                machine_ready: false,
-                image_present: false,
-                image_ref_changed: false,
-                bundled_image_digest_changed: false,
-                last_attempt_at: Some(attempted_at),
-                last_success_at: None,
-                error: Some(err.to_string()),
-            };
-            self.set_startup_snapshot(snapshot).await;
-            return;
-        }
-
         let gate = match self.compute_prewarm_gate(&image).await {
             Ok(gate) => gate,
             Err(err) => {
@@ -1396,24 +1373,40 @@ fn estimate_remaining_ms(inner: &LaunchJobInner, now: DateTime<Utc>) -> Option<u
     }
     let current_phase = inner.current_phase?;
     let elapsed_ms = running_phase_elapsed_ms(inner, now);
-    let current_remaining_ms = if current_phase == HarnessSetupPhase::ArtifactDownload {
+    let current_remaining_ms =
+        estimate_current_phase_remaining_ms(inner, current_phase, elapsed_ms)?;
+    Some(current_remaining_ms + remaining_future_phase_budget_ms(inner.kind, current_phase))
+}
+
+fn estimate_current_phase_remaining_ms(
+    inner: &LaunchJobInner,
+    current_phase: HarnessSetupPhase,
+    elapsed_ms: u64,
+) -> Option<u64> {
+    if current_phase == HarnessSetupPhase::ArtifactDownload {
         if let Some(download) = inner.active_download.as_ref() {
             match (download.total_bytes, download.bytes_per_sec) {
                 (Some(total_bytes), Some(bytes_per_sec)) if bytes_per_sec > 0 => {
-                    total_bytes
-                        .saturating_sub(download.downloaded_bytes)
-                        .saturating_mul(1000)
-                        / bytes_per_sec
+                    return Some(
+                        total_bytes
+                            .saturating_sub(download.downloaded_bytes)
+                            .saturating_mul(1000)
+                            / bytes_per_sec,
+                    );
                 }
-                _ => phase_budget_ms(inner.kind, current_phase).saturating_sub(elapsed_ms),
+                _ => {}
             }
-        } else {
-            phase_budget_ms(inner.kind, current_phase).saturating_sub(elapsed_ms)
         }
-    } else {
-        phase_budget_ms(inner.kind, current_phase).saturating_sub(elapsed_ms)
-    };
-    Some(current_remaining_ms + remaining_future_phase_budget_ms(inner.kind, current_phase))
+    }
+
+    let phase_budget = phase_budget_ms(inner.kind, current_phase);
+    if phase_budget == 0 {
+        return Some(0);
+    }
+    if elapsed_ms >= phase_budget {
+        return None;
+    }
+    Some(phase_budget - elapsed_ms)
 }
 
 fn project_progress_pct(
@@ -1733,14 +1726,6 @@ mod tests {
 
     #[async_trait]
     impl SharedWarmupOperations for UnexpectedRuntimeWarmupOperations {
-        async fn prefetch_runtime_artifacts(
-            &self,
-            _settings: ExecutionSettings,
-            _observer: Option<&dyn HarnessSetupObserver>,
-        ) -> Result<()> {
-            Ok(())
-        }
-
         async fn warm_runtime(
             &self,
             _settings: ExecutionSettings,
@@ -1757,14 +1742,6 @@ mod tests {
 
     #[async_trait]
     impl SharedWarmupOperations for BlockingWarmupOperations {
-        async fn prefetch_runtime_artifacts(
-            &self,
-            _settings: ExecutionSettings,
-            _observer: Option<&dyn HarnessSetupObserver>,
-        ) -> Result<()> {
-            Ok(())
-        }
-
         async fn warm_runtime(
             &self,
             _settings: ExecutionSettings,
@@ -1786,26 +1763,12 @@ mod tests {
 
     #[derive(Default)]
     struct RecordingStartupWarmupOperations {
-        prefetch_runs: AtomicUsize,
         runtime_runs: AtomicUsize,
         steps: StdMutex<Vec<&'static str>>,
     }
 
     #[async_trait]
     impl SharedWarmupOperations for RecordingStartupWarmupOperations {
-        async fn prefetch_runtime_artifacts(
-            &self,
-            _settings: ExecutionSettings,
-            _observer: Option<&dyn HarnessSetupObserver>,
-        ) -> Result<()> {
-            self.prefetch_runs.fetch_add(1, Ordering::SeqCst);
-            self.steps
-                .lock()
-                .unwrap_or_else(|err| err.into_inner())
-                .push("prefetch");
-            Ok(())
-        }
-
         async fn warm_runtime(
             &self,
             _settings: ExecutionSettings,
@@ -1938,6 +1901,24 @@ mod tests {
                 .and_then(|value| value.total_bytes),
             Some(1000)
         );
+    }
+
+    #[test]
+    fn launch_snapshot_drops_expired_non_download_eta() {
+        let job = LaunchJob::new(uuid::Uuid::new_v4().to_string(), WorkspaceId::new());
+        let _ = job.transition_phase(
+            HarnessSetupPhase::ImageLoad,
+            "loading harness image into podman",
+        );
+        {
+            let mut inner = lock_or_recover(&job.inner, "launch job");
+            if let Some(phase) = inner.phases.last_mut() {
+                phase.started_at -= chrono::TimeDelta::milliseconds(6_000);
+            }
+        }
+        let snapshot = job.snapshot();
+        assert_eq!(snapshot.current_phase, Some(HarnessSetupPhase::ImageLoad));
+        assert_eq!(snapshot.eta_ms, None);
     }
 
     #[test]
@@ -2446,7 +2427,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn startup_prewarm_prefetches_artifacts_and_does_not_skip_when_machine_is_not_ready() {
+    async fn startup_prewarm_enters_shared_runtime_warmup_when_machine_is_not_ready() {
         let _serial = env_var_test_lock().lock().await;
         let data_dir = tempfile::tempdir().expect("tempdir");
         let podman_path = write_startup_prewarm_podman_shim(data_dir.path());
@@ -2465,11 +2446,10 @@ mod tests {
         assert!(snapshot.needs_prewarm);
         assert!(snapshot.machine_ready);
         assert!(snapshot.image_present);
-        assert_eq!(ops.prefetch_runs.load(Ordering::SeqCst), 1);
         assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 1);
         assert_eq!(
             *ops.steps.lock().unwrap_or_else(|err| err.into_inner()),
-            vec!["prefetch", "runtime"]
+            vec!["runtime"]
         );
     }
 

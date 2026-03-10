@@ -128,6 +128,34 @@ describe("launchProgress", () => {
     expect(formatLaunchRemaining(remainingMs)).toBe("4:00 remaining");
   });
 
+  it("does not locally count down non-download eta from a stale snapshot", () => {
+    const snapshot = {
+      ...baseSnapshot(),
+      current_phase: "machine_start_or_init" as const,
+      current_step_label: "waiting for podman machine readiness",
+      active_download: null,
+      eta_ms: 18000,
+    };
+    const remainingMs = launchEtaRemainingMs(
+      snapshot,
+      Date.parse("2026-03-10T00:00:19.000Z"),
+    );
+    expect(formatLaunchRemaining(remainingMs)).toBe("18s remaining");
+  });
+
+  it("shows estimating when a running non-download snapshot has no remaining eta", () => {
+    const snapshot = {
+      ...baseSnapshot(),
+      current_phase: "image_load" as const,
+      current_step_label: "loading harness image into podman",
+      active_download: null,
+      eta_ms: 0,
+    };
+    expect(formatLaunchRemaining(launchEtaRemainingMs(snapshot, Date.now()))).toBe(
+      "Estimating remaining…",
+    );
+  });
+
   it("formats aggregate download details for the launch header", () => {
     expect(formatLaunchDownloadSummary(baseSnapshot().active_download)).toBe(
       "Required artifacts · 412.0 MB / 951.0 MB · 21.0 MB/s",
