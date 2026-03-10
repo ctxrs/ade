@@ -490,6 +490,9 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
             update_available: Boolean(native.available),
           };
           if (native.restart_required) {
+            if (latestVersion) {
+              setRestartRequiredVersionState(latestVersion);
+            }
             dispatchUi({
               type: "restart_required",
               message: RESTART_READY_MESSAGE,

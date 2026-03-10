@@ -433,6 +433,7 @@ describe("UpdateNoticeBanner", () => {
       expect(screen.getByRole("button", { name: "Update Now" })).toBeInTheDocument();
     });
     expect(screen.getByText(/Update takes ~1 second and preserves data\. Active agents will be paused\./i)).toBeInTheDocument();
+    expect(window.sessionStorage.getItem(RESTART_REQUIRED_VERSION_STORAGE_KEY)).toBe("2.4.0");
 
     await act(async () => {
       firstRender.unmount();
@@ -886,6 +887,52 @@ describe("UpdateNoticeBanner", () => {
     expect(screen.getByText(/Update takes ~1 second and preserves data\. Active agents will be paused\./i)).toBeInTheDocument();
     expect(vi.mocked(desktopApplyAppUpdate)).not.toHaveBeenCalled();
     expect(vi.mocked(writeCachedUpdateCheck)).not.toHaveBeenCalled();
+  });
+
+  it("restarts on next idle in restart-required desktop state", async () => {
+    window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "0");
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(readCachedUpdateCheck).mockReturnValue({
+      ...baseUpdate,
+      latest_version: "2.2.1",
+      min_supported_version: undefined,
+    });
+    vi.mocked(refreshUpdateCheck).mockResolvedValue({
+      ...baseUpdate,
+      latest_version: "2.2.1",
+      min_supported_version: null,
+    });
+    vi.mocked(desktopGetAppUpdateState).mockResolvedValue({
+      configured: true,
+      available: false,
+      restart_required: true,
+      current_version: "1.0.0",
+      latest_version: "2.2.1",
+      target: "macos-arm64",
+      endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+      message: null,
+    });
+
+    const view = renderBanner({ allTasksIdle: false });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Update on Next Idle" })).toBeInTheDocument();
+    });
+    expect(window.sessionStorage.getItem(RESTART_REQUIRED_VERSION_STORAGE_KEY)).toBe("2.2.1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Update on Next Idle" }));
+
+    await act(async () => {
+      view.rerender(
+        <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <UpdateNoticeBanner allTasksIdle />
+        </MemoryRouter>,
+      );
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(desktopRestartApp)).toHaveBeenCalledTimes(1);
+    });
+    expect(vi.mocked(desktopApplyAppUpdate)).not.toHaveBeenCalled();
   });
 
   it("keeps banner visible with restart-required state after non-forced appimage apply", async () => {
