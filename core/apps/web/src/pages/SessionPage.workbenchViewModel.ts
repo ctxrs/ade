@@ -37,8 +37,9 @@ import {
   collectThoughtBlocks,
   readEventOrderSeq,
 } from "./workbenchViewModel/timelineProjection";
-import type { ContextWindowInfo } from "../components/WorkbenchComposer";
 import type { SessionViewVerbosity } from "../state/uiStateStore";
+import { collectAskUserQuestionAnswers } from "./workbenchViewModel/askUserQuestions";
+import { mergeGroupsWithSystemMessages } from "./workbenchViewModel/systemMessageGroups";
 
 export {
   buildPendingTurns,
@@ -48,6 +49,9 @@ export {
   mergeQueuedMessagesForPanel,
 };
 export { deriveAuthUi, deriveProviderGuardNotice, deriveSessionError };
+export { collectAskUserQuestionAnswers } from "./workbenchViewModel/askUserQuestions";
+export { normalizeContextWindowMetrics } from "./workbenchViewModel/contextWindow";
+export { deriveMessagesKey, deriveTurnsKey } from "./workbenchViewModel/messageKeys";
 
 const devInvariantLogKeys = new Set<string>();
 const telemetryInvariantKeys = new Set<string>();
@@ -113,151 +117,10 @@ function isCrpThoughtEvent(ev: SessionEvent): boolean {
   );
 }
 
-function normalizeAskUserQuestionAnswers(raw: unknown): Record<string, string> {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(raw)) {
-    if (typeof value === "string" && key.trim()) {
-      out[key] = value;
-    }
-  }
-  return out;
-}
-
-function extractAskUserQuestionAnswer(ev: SessionEvent): {
-  toolCallId: string;
-  outcome: "submitted" | "cancelled";
-  answers: Record<string, string>;
-} | null {
-  if (ev.event_type !== "notice") return null;
-  const payload = ev.payload_json ?? {};
-  if (payload.kind !== "ask_user_question_answered") return null;
-  const toolCallId = String(payload.tool_call_id ?? "").trim();
-  if (!toolCallId) return null;
-  const outcomeRaw = String(payload.outcome ?? "").trim();
-  const outcome =
-    outcomeRaw === "cancelled" ? "cancelled" : outcomeRaw === "submitted" ? "submitted" : "submitted";
-  const answers = normalizeAskUserQuestionAnswers(payload.answers ?? payload.answer ?? {});
-  return { toolCallId, outcome, answers };
-}
-
-export function collectAskUserQuestionAnswers(
-  events: SessionEvent[],
-  optimistic: Record<string, AskUserQuestionAnswerState>,
-): Map<string, AskUserQuestionAnswerState> {
-  const map = new Map<string, AskUserQuestionAnswerState>();
-  for (const ev of events) {
-    const parsed = extractAskUserQuestionAnswer(ev);
-    if (!parsed) continue;
-    map.set(parsed.toolCallId, { outcome: parsed.outcome, answers: parsed.answers });
-  }
-  for (const [toolCallId, state] of Object.entries(optimistic)) {
-    if (!toolCallId) continue;
-    const existing = map.get(toolCallId);
-    if (!existing) {
-      map.set(toolCallId, state);
-      continue;
-    }
-    if (Object.keys(existing.answers ?? {}).length === 0 && Object.keys(state.answers ?? {}).length > 0) {
-      map.set(toolCallId, { outcome: existing.outcome, answers: state.answers });
-    }
-  }
-  return map;
-}
-
-
-function coerceNumber(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number.parseFloat(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-}
-
 function readMessageOrderSeq(message: unknown): number {
   const record = asRecord(message);
   const raw = record.order_seq ?? record.turn_sequence;
   return Number(raw ?? Number.NaN);
-}
-
-export function normalizeContextWindowMetrics(metrics: unknown): ContextWindowInfo | null {
-  const record = asRecord(metrics);
-  if (!record) return null;
-  const windowTokens = coerceNumber(record.context_window_tokens);
-  if (!windowTokens || windowTokens <= 0) return null;
-
-  const contextTokensEstimate = coerceNumber(record.context_tokens_estimate);
-
-  let usedTokens: number | null = null;
-  if (contextTokensEstimate != null) {
-    usedTokens = contextTokensEstimate;
-  }
-
-  let remainingTokens = coerceNumber(record.remaining_tokens_estimate);
-  let remainingFraction = coerceNumber(record.remaining_fraction);
-
-  if (remainingFraction != null && remainingFraction > 1) {
-    remainingFraction = remainingFraction <= 100 ? remainingFraction / 100 : null;
-  }
-  if (remainingFraction != null) {
-    remainingFraction = Math.max(0, Math.min(1, remainingFraction));
-  }
-
-  if (remainingTokens == null && usedTokens != null) {
-    remainingTokens = Math.max(0, windowTokens - usedTokens);
-  }
-  if (usedTokens == null && remainingTokens != null) {
-    usedTokens = Math.max(0, windowTokens - remainingTokens);
-  }
-  if (remainingFraction == null && usedTokens != null) {
-    remainingFraction = Math.max(0, Math.min(1, 1 - usedTokens / windowTokens));
-  }
-  if (usedTokens == null && remainingFraction != null) {
-    usedTokens = Math.max(0, Math.round(windowTokens * (1 - remainingFraction)));
-  }
-
-  return {
-    windowTokens,
-    usedTokens: usedTokens ?? undefined,
-    remainingTokens: remainingTokens ?? undefined,
-    remainingFraction: remainingFraction ?? undefined,
-  };
-}
-
-function formatMemoryMb(value?: number | null): string {
-  if (!Number.isFinite(value)) return "—";
-  const mb = value as number;
-  const gb = mb / 1024;
-  if (gb >= 1) {
-    const precision = gb >= 10 ? 0 : 1;
-    return `${gb.toFixed(precision)} GB`;
-  }
-  return `${Math.round(mb)} MB`;
-}
-
-export function deriveMessagesKey(messages: Message[]): string {
-  if (messages.length === 0) return "0";
-  const last = messages[messages.length - 1];
-  const lastId = idToString(last?.id);
-  const lastUpdated = last?.created_at ?? "";
-  const contentHash = hashString(String(last?.content ?? ""));
-  return `${messages.length}:${lastId}:${lastUpdated}:${contentHash}`;
-}
-
-function hashString(value: string): string {
-  let hash = 5381;
-  for (let i = 0; i < value.length; i += 1) {
-    hash = ((hash << 5) + hash) ^ value.charCodeAt(i);
-  }
-  return (hash >>> 0).toString(36);
-}
-
-export function deriveTurnsKey(turns: SessionTurn[]): string {
-  if (turns.length === 0) return "0";
-  const first = turns[0];
-  const last = turns[turns.length - 1];
-  return `${turns.length}:${first.start_seq ?? ""}:${last.start_seq ?? ""}:${last.updated_at ?? ""}`;
 }
 
 export function filterThreadItemsForVerbosity(items: ThreadItem[], verbosity: SessionViewVerbosity): ThreadItem[] {
@@ -271,71 +134,6 @@ type SortableThreadGroup = {
   sort_seq: number;
   group: WorkbenchThreadView["groups"][number];
 };
-
-function buildSystemMessageGroups(messages: Message[]): SortableThreadGroup[] {
-  const systemMessages = messages
-    .filter((m) => m.role === "system")
-    .map((m, idx) => ({
-      message: m,
-      orderSeq: Number(m.turn_sequence ?? Number.NaN),
-      idx,
-    }))
-    .filter((entry) => Number.isFinite(entry.orderSeq))
-    .sort((a, b) => {
-      if (a.orderSeq !== b.orderSeq) return (a.orderSeq as number) - (b.orderSeq as number);
-      return a.idx - b.idx;
-    });
-  return systemMessages.flatMap((entry) => {
-    const m = entry.message;
-    const id = idToString(m.id);
-    if (!id) {
-      if (import.meta.env.DEV) {
-        // eslint-disable-next-line no-console
-        console.error("[WorkbenchThreadViewModel] system message missing id", {
-          created_at: m.created_at ?? null,
-          turn_sequence: m.turn_sequence ?? null,
-        });
-      }
-      return [];
-    }
-    const attachments = Array.isArray(m.attachments)
-      ? m.attachments
-      : [];
-    return [{
-      sort_seq: entry.orderSeq as number,
-      group: {
-        key: `system-${id}`,
-        header: null,
-        items: [
-          {
-            kind: "message",
-            id,
-            role: "system",
-            content: m.content ?? "",
-            attachments,
-            created_at: m.created_at,
-          },
-        ],
-      },
-    }];
-  });
-}
-
-function mergeGroupsWithSystemMessages(
-  groups: SortableThreadGroup[],
-  messages: Message[],
-): WorkbenchThreadView["groups"] {
-  const systemGroups = buildSystemMessageGroups(messages);
-  if (systemGroups.length === 0) {
-    return groups.map((g) => g.group);
-  }
-  const combined = [...groups, ...systemGroups];
-  combined.sort((a, b) => {
-    if (a.sort_seq !== b.sort_seq) return a.sort_seq - b.sort_seq;
-    return String(a.group.key).localeCompare(String(b.group.key));
-  });
-  return combined.map((g) => g.group);
-}
 
 export function buildWorkbenchThreadViewModel(
   turns: SessionTurn[],

@@ -83,6 +83,10 @@ type TestInternalEntry = {
   messages: Message[];
   queue: Message[];
   lastEventSeq?: number;
+  stateLoaded?: boolean;
+  stateRev?: number;
+  stateAppliedRev?: number;
+  subagentInvocationsLoaded?: boolean;
   loadState: "pending_hydration" | "live" | "recovering" | "fatal";
 };
 
@@ -1096,6 +1100,184 @@ describe("SessionSupervisor", () => {
 
     expect(getSessionHead).not.toHaveBeenCalled();
     expect(getSessionSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("starts support loads before open session and reuses them after the active head state rev arrives", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-support-race";
+    const head: SessionHeadSnapshot = {
+      session: mkSession(sessionId),
+      turns: [] as SessionTurn[],
+      events: [] as SessionEvent[],
+      messages: [] as Message[],
+      last_event_seq: 3,
+      state_rev: 7,
+      has_more_turns: false,
+      has_more_history: false,
+      history_cursor: null,
+    };
+
+    const activeState = mkWorkspaceSnapshotState();
+    activeState.activeIds = ["task-1"];
+    activeState.tasksById = {
+      "task-1": mkWorkspaceTaskSummary({
+        taskId: "task-1",
+        primarySessionId: sessionId,
+        sessionIds: [sessionId],
+      }),
+    };
+
+    const store: WorkspaceActiveSnapshotEventSource & {
+      getSessionHeadsSnapshot: () => Record<string, SessionHeadSnapshot>;
+    } = {
+      subscribe: () => () => {},
+      subscribeEvents: (_listener: (evt: WorkspaceActiveSnapshotEvent) => void) => () => {},
+      getSessionHeadSnapshot: (id: string) => (id === sessionId ? head : null),
+      getSessionHeadsSnapshot: () => ({ [sessionId]: head }),
+      getWorktreeRoot: () => null,
+      getWorktreeVcsSnapshot: () => null,
+      setSubscribedSessionIds: () => {},
+      getSnapshot: () => activeState,
+    };
+
+    const sup = new SessionSupervisor();
+    attachWorkspaceStore(sup, store);
+    const internals = asSupervisorInternals(sup);
+
+    sup.loadSessionState(sessionId);
+    sup.loadSubagentInvocations(sessionId);
+
+    await waitForCondition(() => {
+      const entry = internals.entries.get(sessionId);
+      return Boolean(entry?.stateLoaded && entry?.subagentInvocationsLoaded);
+    });
+
+    sup.openSession(sessionId);
+
+    await waitForCondition(() => {
+      const entry = internals.entries.get(sessionId);
+      return entry?.stateRev === 7 && entry?.stateAppliedRev === 7;
+    });
+
+    sup.closeSession(sessionId);
+    internals.entries.delete(sessionId);
+    sup.loadSessionState(sessionId);
+    sup.loadSubagentInvocations(sessionId);
+
+    await waitForCondition(() => {
+      const entry = internals.entries.get(sessionId);
+      return Boolean(entry?.stateLoaded && entry?.subagentInvocationsLoaded);
+    });
+
+    expect(getSessionState).toHaveBeenCalledTimes(1);
+    expect(listSessionSubagentInvocations).toHaveBeenCalledTimes(1);
+    expect(getSessionHead).not.toHaveBeenCalled();
+  });
+
+  it("preserves support-load caches across replica replace patches", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-replace-support-cache";
+    const now = new Date().toISOString();
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+    const entry = internals.ensureEntry(sessionId);
+    entry.stateRev = 7;
+    entry.stateAppliedRev = 7;
+
+    sup.loadSessionState(sessionId);
+    sup.loadSubagentInvocations(sessionId);
+
+    await waitForCondition(() => {
+      const current = internals.entries.get(sessionId);
+      return Boolean(current?.stateLoaded && current?.subagentInvocationsLoaded);
+    });
+
+    internals.handleReplicaPatches([
+      {
+        op: "replace",
+        sessionId,
+        data: {
+          session: mkSession(sessionId),
+          turns: [] as SessionTurn[],
+          events: [] as SessionEvent[],
+          messages: [
+            {
+              id: "m-replace-support-cache",
+              session_id: sessionId,
+              task_id: "task-1",
+              role: "assistant",
+              content: "replacement head",
+              delivery: "immediate",
+              created_at: now,
+            } as Message,
+          ],
+          lastEventSeq: 7,
+          stateRev: 7,
+          hasMoreTurns: false,
+        },
+      },
+    ]);
+
+    const replaced = internals.entries.get(sessionId);
+    expect(replaced?.stateLoaded).toBe(true);
+    expect(replaced?.stateAppliedRev).toBe(7);
+    expect(replaced?.subagentInvocationsLoaded).toBe(true);
+
+    sup.loadSessionState(sessionId);
+    sup.loadSubagentInvocations(sessionId);
+
+    await Promise.resolve();
+
+    expect(getSessionState).toHaveBeenCalledTimes(1);
+    expect(listSessionSubagentInvocations).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not refetch session state when streamed head revisions advance after a warm load", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-state-rev-warm-cache";
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+
+    sup.loadSessionState(sessionId);
+
+    await waitForCondition(() => internals.entries.get(sessionId)?.stateLoaded === true);
+
+    internals.handleReplicaPatches([
+      {
+        op: "append",
+        sessionId,
+        data: {
+          lastEventSeq: 7,
+          stateRev: 7,
+        },
+      },
+    ]);
+
+    await waitForCondition(() => internals.entries.get(sessionId)?.stateRev === 7);
+
+    sup.loadSessionState(sessionId);
+    await Promise.resolve();
+
+    internals.handleReplicaPatches([
+      {
+        op: "append",
+        sessionId,
+        data: {
+          lastEventSeq: 9,
+          stateRev: 9,
+        },
+      },
+    ]);
+
+    await waitForCondition(() => internals.entries.get(sessionId)?.stateRev === 9);
+
+    sup.loadSessionState(sessionId);
+    await Promise.resolve();
+
+    expect(getSessionState).toHaveBeenCalledTimes(1);
   });
 
   it("skips /head hydrate for active sessions when snapshot store is bound", async () => {

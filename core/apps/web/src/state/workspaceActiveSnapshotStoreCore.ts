@@ -21,7 +21,6 @@ import {
   subscribeDaemonConfig,
   idToString,
   listWorkspaceArchivedTaskSummaries,
-  type WorkspaceActiveSnapshotClientMessage,
 } from "../api/client";
 import {
   loadWorkspaceActiveSnapshotV1,
@@ -59,9 +58,9 @@ import {
   readWorkspaceHeadsBatchPayload,
   readWorkspaceSnapshotPayload,
   readWorkspaceStreamRev,
-  shouldRequestWorkspaceSnapshot,
   toWorkspaceHttpBaseUrl,
 } from "./workspaceActiveSnapshot/transport";
+import { buildWorkspaceActiveSubscribeMessage } from "./workspaceActiveSnapshot/subscriptions";
 
 export type WorkspaceActiveSnapshotItem = {
   id: string;
@@ -1410,20 +1409,13 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   private flushSubscriptions(reason = "subscribe") {
     const ws = this.ws;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    const requestSnapshot = shouldRequestWorkspaceSnapshot(reason);
+    const { message, requestSnapshot } = buildWorkspaceActiveSubscribeMessage(
+      reason,
+      this.foregroundTaskId,
+      this.subscribedSessionIds,
+    );
     if (requestSnapshot) {
       this.scheduleSnapshotWarning(reason);
-    }
-    const message: WorkspaceActiveSnapshotClientMessage = {
-      type: "subscribe",
-      scope: "active",
-      include_active_heads: requestSnapshot,
-    };
-    if (this.foregroundTaskId) {
-      message.foreground_task_id = this.foregroundTaskId;
-    }
-    if (this.subscribedSessionIds.length > 0) {
-      message.session_ids = this.subscribedSessionIds.slice();
     }
     try {
       ws.send(JSON.stringify(message));

@@ -61,12 +61,14 @@ type WorkspaceActiveSnapshotStateLike = {
 
 export const resolvePrimarySessionId = (item: WorkspaceActiveTaskLike | null | undefined): string | null => {
   if (!item) return null;
-  const direct = item.primarySessionId || idToString(readString(item.task?.primary_session_id));
+  const direct =
+    item.primarySessionId ||
+    idToString(readString(item.task?.primary_session_id) ?? "");
   if (direct) return direct;
-  const headId = idToString(item.primarySessionHead?.session?.id ?? "");
+  const headId = idToString(readString(item.primarySessionHead?.session?.id) ?? "");
   if (headId) return headId;
   const summary = item.sessions?.[0];
-  const sessionId = idToString(readString(summary?.session?.id));
+  const sessionId = idToString(readString(summary?.session?.id) ?? "");
   return sessionId || null;
 };
 
@@ -78,7 +80,7 @@ export const workspaceTaskIncludesSession = (
   if (!item || !id) return false;
   if (resolvePrimarySessionId(item) === id) return true;
   for (const summary of item.sessions ?? []) {
-    if (idToString(readString(summary.session?.id)) === id) return true;
+    if (idToString(readString(summary.session?.id) ?? "") === id) return true;
   }
   return false;
 };

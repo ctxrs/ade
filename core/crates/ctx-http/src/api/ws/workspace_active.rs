@@ -1,0 +1,694 @@
+use super::*;
+
+pub(crate) async fn workspace_active_snapshot_stream_ws(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let workspace_id = match uuid::Uuid::parse_str(&id) {
+        Ok(v) => WorkspaceId(v),
+        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+    };
+    ws.on_upgrade(move |socket| handle_workspace_active_snapshot_ws(socket, state, workspace_id))
+}
+
+async fn handle_workspace_active_snapshot_ws(
+    socket: WebSocket,
+    state: Arc<AppState>,
+    workspace_id: WorkspaceId,
+) {
+    let (sender, mut receiver) = socket.split();
+    let control = Arc::new(StreamQueue::new(
+        WORKSPACE_STREAM_QUEUE_LIMIT,
+        WORKSPACE_STREAM_QUEUE_MAX_AGE,
+    ));
+    let head_buffer = Arc::new(HeadBatchBuffer::new());
+    let send_control = Arc::new(StreamSendControl::new());
+    let mut rx = state
+        .workspaces
+        .workspace_active_snapshot
+        .subscribe(workspace_id)
+        .await;
+    let mut subscriptions: HashMap<SessionId, SessionCursor> = HashMap::new();
+    let mut subscription_state = WorkspaceActiveSubscriptionState::default();
+    let mut active_worktrees: HashSet<WorktreeId> = HashSet::new();
+    let mut reset_queued = false;
+
+    let (snapshot_rev, archived_rev) =
+        super::super::tasks::load_workspace_active_snapshot_state(&state, workspace_id).await;
+    let ready = WorkspaceActiveSnapshotEvent::Ready {
+        workspace_id,
+        snapshot_rev,
+        archived_rev,
+    };
+    if push_stream_message(
+        &control,
+        workspace_id,
+        None,
+        "ready",
+        WorkspaceActiveSnapshotStreamMessage::Event {
+            rev: 0,
+            event: Box::new(ready),
+        },
+    )
+    .await
+    .is_err()
+    {
+        return;
+    }
+
+    let latest_snapshot_rev = Arc::new(AtomicI64::new(snapshot_rev));
+
+    let send_task = {
+        let control = control.clone();
+        let head_buffer = head_buffer.clone();
+        let send_control = send_control.clone();
+        let latest_snapshot_rev = latest_snapshot_rev.clone();
+        tokio::spawn(async move {
+            let mut sender = sender;
+            let mut stream_seq: i64 = 0;
+            let mut tick = tokio::time::interval(HEAD_BATCH_FLUSH_INTERVAL);
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                if let Some(entry) = control.pop().await {
+                    let message = entry.message;
+                    let queued_ms = entry.enqueued_at.elapsed().as_millis();
+                    let is_snapshot = matches!(
+                        message,
+                        WorkspaceActiveSnapshotStreamMessage::Snapshot { .. }
+                    );
+                    let message = match message {
+                        WorkspaceActiveSnapshotStreamMessage::ResetRequired { .. } => message,
+                        other => {
+                            stream_seq += 1;
+                            with_stream_rev(other, stream_seq)
+                        }
+                    };
+                    let serialize_start = Instant::now();
+                    let Ok(text) = serde_json::to_string(&message) else {
+                        break;
+                    };
+                    let payload_bytes = text.len();
+                    let send_start = Instant::now();
+                    if sender.send(WsMessage::Text(text)).await.is_err() {
+                        break;
+                    }
+                    if is_snapshot {
+                        let encode_ms = serialize_start.elapsed().as_millis();
+                        let send_ms = send_start.elapsed().as_millis();
+                        let (task_count, head_count) = match &message {
+                            WorkspaceActiveSnapshotStreamMessage::Snapshot {
+                                active_snapshot,
+                                active_heads,
+                                ..
+                            } => (
+                                active_snapshot.active.tasks.len(),
+                                active_heads.as_ref().map(|h| h.heads.len()).unwrap_or(0),
+                            ),
+                            _ => (0, 0),
+                        };
+                        tracing::info!(
+                            target: "ctx_http.ws_active_snapshot",
+                            workspace_id = %workspace_id.0,
+                            snapshot_bytes = payload_bytes,
+                            snapshot_queue_ms = queued_ms,
+                            snapshot_encode_ms = encode_ms,
+                            snapshot_send_ms = send_ms,
+                            active_tasks = task_count,
+                            active_heads = head_count,
+                            "workspace snapshot sent",
+                        );
+                    }
+                    if is_snapshot {
+                        send_control.clear_hydrating();
+                    }
+                    if send_control.should_disconnect_after_flush() && control.is_empty().await {
+                        break;
+                    }
+                    continue;
+                }
+                if send_control.should_disconnect_after_flush() {
+                    break;
+                }
+
+                if !send_control.is_hydrating() {
+                    let (snapshot_rev, deltas) = head_buffer.take().await;
+                    if !deltas.is_empty() {
+                        let latest_rev = latest_snapshot_rev.load(Ordering::Relaxed);
+                        let snapshot_rev = snapshot_rev.max(latest_rev);
+                        bump_latest_snapshot_rev(&latest_snapshot_rev, snapshot_rev);
+                        stream_seq += 1;
+                        let message = WorkspaceActiveSnapshotStreamMessage::HeadsBatch {
+                            rev: stream_seq,
+                            snapshot_rev,
+                            deltas,
+                        };
+                        let Ok(text) = serde_json::to_string(&message) else {
+                            break;
+                        };
+                        if sender.send(WsMessage::Text(text)).await.is_err() {
+                            break;
+                        }
+                        continue;
+                    }
+                }
+
+                tokio::select! {
+                    _ = control.notify.notified() => {},
+                    _ = head_buffer.notify.notified() => {},
+                    _ = tick.tick() => {},
+                }
+            }
+        })
+    };
+    let recv_loop = async {
+        loop {
+            tokio::select! {
+                msg = receiver.next() => {
+                    match msg {
+                        Some(Ok(WsMessage::Text(text))) => {
+                            if let Ok(message) =
+                                serde_json::from_str::<WorkspaceActiveSnapshotClientMessage>(&text)
+                            {
+                                handle_subscribe_message(
+                                    &state,
+                                    workspace_id,
+                                    message,
+                                    &control,
+                                    &head_buffer,
+                                    &send_control,
+                                    &mut subscriptions,
+                                    &mut subscription_state,
+                                    &mut active_worktrees,
+                                    &mut reset_queued,
+                                ).await?;
+                            }
+                        }
+                        Some(Ok(WsMessage::Binary(bytes))) => {
+                            if let Ok(text) = String::from_utf8(bytes.to_vec()) {
+                                if let Ok(message) =
+                                    serde_json::from_str::<WorkspaceActiveSnapshotClientMessage>(&text)
+                                {
+                                    handle_subscribe_message(
+                                        &state,
+                                        workspace_id,
+                                        message,
+                                        &control,
+                                        &head_buffer,
+                                        &send_control,
+                                        &mut subscriptions,
+                                        &mut subscription_state,
+                                        &mut active_worktrees,
+                                        &mut reset_queued,
+                                    ).await?;
+                                }
+                            }
+                        }
+                        Some(Ok(WsMessage::Close(_))) => break,
+                        Some(Ok(_)) => {}
+                        Some(Err(_)) => break,
+                        None => break,
+                    }
+                }
+                event = rx.recv() => {
+                    let event = match event {
+                        Ok(event) => event,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(lagged)) => {
+                            if reset_queued {
+                                continue;
+                            }
+                            tracing::error!(
+                                target: "ctx_http.ws_active_snapshot",
+                                workspace_id = %workspace_id.0,
+                                lagged,
+                                "workspace stream lagged",
+                            );
+                            control.clear().await;
+                            head_buffer.clear().await;
+                            if queue_reset_required(&control, &state, workspace_id)
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                            reset_queued = true;
+                            send_control.set_disconnect_after_flush();
+                            continue;
+                        }
+                        Err(_) => break,
+                    };
+
+                    if let Some(rev) = event_snapshot_rev(&event) {
+                        bump_latest_snapshot_rev(&latest_snapshot_rev, rev);
+                    }
+
+                    if reset_queued {
+                        continue;
+                    }
+
+                    let mut refresh_active_worktrees = false;
+                    if subscription_state.active_scope {
+                        match &event {
+                            WorkspaceActiveSnapshotEvent::ActiveTaskUpsert { task, .. } => {
+                                let session_id = task
+                                    .task
+                                    .primary_session_id
+                                    .unwrap_or(task.primary_session.session.id);
+                                subscription_state
+                                    .active_task_sessions
+                                    .insert(task.task.id, session_id);
+                                refresh_active_worktrees = true;
+                                if let std::collections::hash_map::Entry::Vacant(entry) =
+                                    subscriptions.entry(session_id)
+                                {
+                                    let last_sent = state.workspaces.workspace_active_snapshot
+                                        .session_last_event_seq(workspace_id, session_id)
+                                        .await;
+                                    entry.insert(SessionCursor { last_sent });
+                                }
+                            }
+                            WorkspaceActiveSnapshotEvent::ActiveTaskDelete { task_id, .. } => {
+                                if let Some(session_id) =
+                                    subscription_state.active_task_sessions.remove(task_id)
+                                {
+                                    refresh_active_worktrees = true;
+                                    let still_active = subscription_state
+                                        .active_task_sessions
+                                        .values()
+                                        .any(|id| *id == session_id);
+                                    if !still_active
+                                        && !subscription_state
+                                            .explicit_sessions
+                                            .contains(&session_id)
+                                    {
+                                        subscriptions.remove(&session_id);
+                                    }
+                                }
+                            }
+                            WorkspaceActiveSnapshotEvent::TaskDelta { delta, .. }
+                                if matches!(delta.kind, TaskDeltaKind::Archived) =>
+                            {
+                                if let Some(session_id) =
+                                    subscription_state.active_task_sessions.remove(&delta.task.id)
+                                {
+                                    refresh_active_worktrees = true;
+                                    let still_active = subscription_state
+                                        .active_task_sessions
+                                        .values()
+                                        .any(|id| *id == session_id);
+                                    if !still_active
+                                        && !subscription_state
+                                            .explicit_sessions
+                                            .contains(&session_id)
+                                    {
+                                        subscriptions.remove(&session_id);
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    if refresh_active_worktrees {
+                        let session_ids: Vec<SessionId> =
+                            subscriptions.keys().copied().collect();
+                        sync_active_worktrees(
+                            &state,
+                            &mut active_worktrees,
+                            &session_ids,
+                        )
+                        .await;
+                        ensure_worktree_vcs_watchers_for_sessions(
+                            &state,
+                            &session_ids,
+                        )
+                        .await;
+                    }
+
+                    if let Some(foreground_task_id) = subscription_state.foreground_task_id {
+                        match &event {
+                            WorkspaceActiveSnapshotEvent::ActiveTaskUpsert { task, .. }
+                                if task.task.id == foreground_task_id =>
+                            {
+                                subscription_state.foreground_session_ids = Some(
+                                    task.sessions
+                                        .iter()
+                                        .map(|summary| summary.session.id)
+                                        .chain(std::iter::once(task.primary_session.session.id))
+                                        .collect(),
+                                );
+                            }
+                            WorkspaceActiveSnapshotEvent::ActiveTaskDelete { task_id, .. }
+                                if *task_id == foreground_task_id =>
+                            {
+                                subscription_state.foreground_session_ids =
+                                    Some(HashSet::new());
+                            }
+                            WorkspaceActiveSnapshotEvent::SessionSummary { summary, .. }
+                                if summary.session.task_id == foreground_task_id =>
+                            {
+                                if let Some(ids) =
+                                    subscription_state.foreground_session_ids.as_mut()
+                                {
+                                    ids.insert(summary.session.id);
+                                }
+                            }
+                            WorkspaceActiveSnapshotEvent::SessionSummaryDelta { delta, .. }
+                                if delta.task_id == foreground_task_id =>
+                            {
+                                if let Some(ids) =
+                                    subscription_state.foreground_session_ids.as_mut()
+                                {
+                                    ids.insert(delta.session_id);
+                                }
+                            }
+                            WorkspaceActiveSnapshotEvent::SessionHeadSeed { head, .. }
+                                if head.session.task_id == foreground_task_id =>
+                            {
+                                if let Some(ids) =
+                                    subscription_state.foreground_session_ids.as_mut()
+                                {
+                                    ids.insert(head.session.id);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    match &event {
+                        WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } => {
+                            let Some(cursor) = subscriptions.get_mut(&delta.session_id) else {
+                                continue;
+                            };
+                            if let Some(ev) = &delta.event {
+                                if ev.seq >= 0 {
+                                    if ev.seq <= cursor.last_sent {
+                                        continue;
+                                    }
+                                    cursor.last_sent = ev.seq;
+                                }
+                            } else if delta.last_event_seq <= cursor.last_sent {
+                                continue;
+                            } else {
+                                cursor.last_sent = delta.last_event_seq;
+                            }
+                        }
+                        WorkspaceActiveSnapshotEvent::SessionHeadSeed { head, .. } => {
+                            let Some(cursor) = subscriptions.get_mut(&head.session.id) else {
+                                continue;
+                            };
+                            if head.last_event_seq <= cursor.last_sent {
+                                continue;
+                            }
+                            cursor.last_sent = head.last_event_seq;
+                        }
+                        _ => {}
+                    }
+
+                    let session_id = match &event {
+                        WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } => {
+                            Some(delta.session_id)
+                        }
+                        WorkspaceActiveSnapshotEvent::SessionHeadSeed { head, .. } => {
+                            Some(head.session.id)
+                        }
+                        WorkspaceActiveSnapshotEvent::SessionGap { session_id, .. } => {
+                            Some(*session_id)
+                        }
+                        WorkspaceActiveSnapshotEvent::SessionSummaryDelta { delta, .. } => {
+                            Some(delta.session_id)
+                        }
+                        _ => None,
+                    };
+                    match event {
+                        WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                            snapshot_rev,
+                            delta,
+                            ..
+                        } => {
+                            let delta = filter_partial_delta_for_active_tasks(
+                                *delta,
+                                &subscription_state.active_task_sessions,
+                            );
+                            if let Err(err) =
+                                head_buffer.push(snapshot_rev, delta).await
+                            {
+                                log_head_batch_push_error(
+                                    "event",
+                                    workspace_id,
+                                    &err,
+                                );
+                                if reset_queued {
+                                    continue;
+                                }
+                                control.clear().await;
+                                head_buffer.clear().await;
+                                if queue_reset_required(&control, &state, workspace_id)
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                                reset_queued = true;
+                                send_control.set_disconnect_after_flush();
+                            }
+                        }
+                        other => {
+                            if push_stream_message(
+                                &control,
+                                workspace_id,
+                                session_id,
+                                "event",
+                                WorkspaceActiveSnapshotStreamMessage::Event {
+                                    rev: 0,
+                                    event: Box::new(other),
+                                },
+                            )
+                            .await
+                            .is_err()
+                            {
+                                if reset_queued {
+                                    continue;
+                                }
+                                control.clear().await;
+                                head_buffer.clear().await;
+                                if queue_reset_required(&control, &state, workspace_id)
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                                reset_queued = true;
+                                send_control.set_disconnect_after_flush();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok::<(), ()>(())
+    };
+
+    let (send_task, _recv_result) = crate::async_util::race_join_handle(send_task, recv_loop).await;
+
+    send_control.set_disconnect_after_flush();
+    control.notify.notify_one();
+    if let Some(send_task) = send_task {
+        let _ = send_task.await;
+    }
+
+    state
+        .update_worktree_vcs_activity(&active_worktrees, &HashSet::new())
+        .await;
+}
+
+async fn handle_subscribe_message(
+    state: &Arc<AppState>,
+    workspace_id: WorkspaceId,
+    message: WorkspaceActiveSnapshotClientMessage,
+    control: &Arc<StreamQueue<WorkspaceActiveSnapshotStreamMessage>>,
+    head_buffer: &Arc<HeadBatchBuffer>,
+    send_control: &Arc<StreamSendControl>,
+    subscriptions: &mut HashMap<SessionId, SessionCursor>,
+    subscription_state: &mut WorkspaceActiveSubscriptionState,
+    active_worktrees: &mut HashSet<WorktreeId>,
+    reset_queued: &mut bool,
+) -> Result<(), ()> {
+    let include_active_heads = matches!(
+        &message,
+        WorkspaceActiveSnapshotClientMessage::Subscribe {
+            include_active_heads: true,
+            ..
+        }
+    );
+    state
+        .ensure_workspace_active_snapshot_hydrated(workspace_id)
+        .await;
+    let resolved = match resolve_workspace_active_snapshot_subscriptions(
+        state,
+        workspace_id,
+        message,
+        subscriptions,
+    )
+    .await
+    {
+        Ok(next) => next,
+        Err(_) => {
+            tracing::error!(
+                target: "ctx_http.ws_active_snapshot",
+                workspace_id = %workspace_id.0,
+                "workspace stream subscribe resolution failed",
+            );
+            control.clear().await;
+            head_buffer.clear().await;
+            if queue_reset_required(control, state, workspace_id)
+                .await
+                .is_err()
+            {
+                return Err(());
+            }
+            *reset_queued = true;
+            send_control.set_disconnect_after_flush();
+            return Ok(());
+        }
+    };
+    let ResolvedWorkspaceActiveSubscriptions {
+        sessions: resolved_sessions,
+        state: next_state,
+    } = resolved;
+
+    control.clear().await;
+    head_buffer.clear().await;
+    *reset_queued = false;
+    send_control.clear_disconnect_after_flush();
+    if include_active_heads {
+        send_control.set_hydrating();
+    }
+    if include_active_heads
+        && queue_snapshot_payload(control, state, workspace_id)
+            .await
+            .is_err()
+    {
+        return Err(());
+    }
+
+    let mut skip_replay_sessions = HashSet::new();
+    if include_active_heads && next_state.active_scope {
+        for session_id in next_state.active_task_sessions.values() {
+            skip_replay_sessions.insert(*session_id);
+        }
+    }
+
+    let mut next_map = HashMap::new();
+    let mut replay_failed = false;
+    for sub in &resolved_sessions {
+        let after_seq = sub.after_seq.unwrap_or(0);
+        let session_id = sub.session_id;
+        if include_active_heads && skip_replay_sessions.contains(&session_id) {
+            let last_sent = state
+                .workspaces
+                .workspace_active_snapshot
+                .session_last_event_seq(workspace_id, session_id)
+                .await
+                .max(after_seq);
+            next_map.insert(session_id, SessionCursor { last_sent });
+            continue;
+        }
+        let control = control.clone();
+        let head_buffer = head_buffer.clone();
+        let active_task_sessions = next_state.active_task_sessions.clone();
+        let replay = replay_session_events(
+            state,
+            workspace_id,
+            session_id,
+            after_seq,
+            "ctx_http.replay_session_events_active.list",
+            Some("ctx_http.replay_session_events_active.send"),
+            move |event| {
+                let control = control.clone();
+                let head_buffer = head_buffer.clone();
+                let active_task_sessions = active_task_sessions.clone();
+                async move {
+                    match event {
+                        WorkspaceActiveSnapshotStreamMessage::Event { event, .. } => match *event {
+                            WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                                snapshot_rev,
+                                delta,
+                                ..
+                            } => {
+                                let delta = filter_partial_delta_for_active_tasks(
+                                    *delta,
+                                    &active_task_sessions,
+                                );
+                                if let Err(err) = head_buffer.push(snapshot_rev, delta).await {
+                                    log_head_batch_push_error("replay", workspace_id, &err);
+                                    return Err(());
+                                }
+                                Ok(())
+                            }
+                            other => {
+                                push_stream_message(
+                                    &control,
+                                    workspace_id,
+                                    Some(session_id),
+                                    "replay",
+                                    WorkspaceActiveSnapshotStreamMessage::Event {
+                                        rev: 0,
+                                        event: Box::new(other),
+                                    },
+                                )
+                                .await
+                            }
+                        },
+                        other => {
+                            push_stream_message(
+                                &control,
+                                workspace_id,
+                                Some(session_id),
+                                "replay",
+                                other,
+                            )
+                            .await
+                        }
+                    }
+                }
+            },
+        )
+        .await;
+        match replay {
+            Ok(ReplayOutcome::Replay { last_sent }) => {
+                next_map.insert(session_id, SessionCursor { last_sent });
+            }
+            Ok(ReplayOutcome::ResetRequired) | Err(_) => {
+                tracing::error!(
+                    target: "ctx_http.ws_active_snapshot",
+                    workspace_id = %workspace_id.0,
+                    session_id = %session_id.0,
+                    after_seq,
+                    "workspace stream replay failed",
+                );
+                replay_failed = true;
+                break;
+            }
+        };
+    }
+    if replay_failed {
+        control.clear().await;
+        head_buffer.clear().await;
+        if queue_reset_required(control, state, workspace_id)
+            .await
+            .is_err()
+        {
+            return Err(());
+        }
+        *reset_queued = true;
+        send_control.set_disconnect_after_flush();
+        return Ok(());
+    }
+    *subscriptions = next_map;
+    *subscription_state = next_state;
+    let git_status_session_ids: Vec<SessionId> =
+        resolved_sessions.iter().map(|sub| sub.session_id).collect();
+    sync_active_worktrees(state, active_worktrees, &git_status_session_ids).await;
+    ensure_worktree_vcs_watchers_for_sessions(state, &git_status_session_ids).await;
+    Ok(())
+}

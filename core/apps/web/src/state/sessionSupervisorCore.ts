@@ -43,7 +43,6 @@ import {
 import type { PersistedTaskThoughtsV1 } from "./uiStateStore";
 import { SessionReplicaBridge } from "./sessionReplicaBridge";
 import type { SessionReplicaPatch } from "./sessionReplicaProtocol";
-import { errorMessage } from "../utils/errorMessage";
 import { emitUiDiagnostic } from "./diagnosticsChannel";
 import { normalizeGitStatusSummaryInput } from "./sessionSupervisor/gitStatusNormalization";
 import {
@@ -76,6 +75,11 @@ import {
 } from "./sessionSupervisor/toolStateProjection";
 import { buildSessionSubscriptionPlan } from "./sessionSupervisor/sessionSubscriptionPlan";
 import { applyTurnOutcomeEffects } from "./sessionSupervisor/turnOutcomeEffects";
+import {
+  adoptLoadedStateRevision,
+  formatSupportLoadError,
+  shouldFetchSessionState,
+} from "./sessionSupervisor/supportLoads";
 import type {
   SessionSupervisorSubscribedSessionIdsSink,
   SessionSupervisorWorkspaceEvent,
@@ -270,23 +274,6 @@ const HEAD_LIMIT = readTunableInt("contextSessionHeadLimit", TURN_PAGE_LIMIT);
 const MODE_RESOLUTION_MAX_ATTEMPTS = 6;
 const MODE_RESOLUTION_RETRY_MS = 100;
 
-const SUPPORT_LOAD_ERROR_LABELS: Record<SessionSupportLoadErrorKey, string> = {
-  state: "session state",
-  artifacts: "artifacts",
-  subagentInvocations: "subagent invocations",
-};
-
-const formatSupportLoadError = (key: SessionSupportLoadErrorKey, value: unknown): string => {
-  const detail = String(errorMessage(value) ?? "").trim();
-  if (!detail || detail === "undefined" || detail === "null" || detail === "[object Object]") {
-    return `Failed to load ${SUPPORT_LOAD_ERROR_LABELS[key]}.`;
-  }
-  if (detail.startsWith("Failed to load ")) {
-    return detail;
-  }
-  return `Failed to load ${SUPPORT_LOAD_ERROR_LABELS[key]}: ${detail}`;
-};
-
 // The daemon serializes transient events with `seq: null` (see Rust `SessionEvent` Serialize).
 // We assign a stable synthetic seq in a negative JS-safe range so sorting never scrambles
 // streaming partials (assistant chunks), and these events never look durable (seq >= 0).
@@ -305,6 +292,10 @@ export class SessionSupervisor {
   private providerOptionsInFlight = new Map<string, Promise<ProviderOptions | undefined>>();
   private taskThoughtCache = new Map<string, PersistedTaskThoughtsV1>();
   private taskThoughtCacheLoading = new Map<string, Promise<PersistedTaskThoughtsV1>>();
+  private stateCacheBySessionId = new Map<string, { state: SessionState; stateRev?: number }>();
+  private stateRequestsInFlight = new Map<string, Promise<void>>();
+  private subagentInvocationsCacheBySessionId = new Map<string, SubagentInvocation[]>();
+  private subagentInvocationsRequestsInFlight = new Map<string, Promise<void>>();
   private modeResolutionTimers = new Map<string, ReturnType<typeof globalThis.setTimeout>>();
   private modeResolutionAttempts = new Map<string, number>();
   private modeResolutionOptions = new Map<string, OpenOptions | undefined>();
@@ -426,20 +417,23 @@ export class SessionSupervisor {
   };
 
   loadSessionState = (sessionId: string, opts?: { force?: boolean }) => {
-    const entry = this.entries.get(String(sessionId));
-    if (!entry) return;
+    const id = String(sessionId || "").trim();
+    if (!id) return;
+    const entry = this.ensureEntry(id);
     void this.ensureState(entry, opts);
   };
 
   loadArtifacts = (sessionId: string, opts?: { force?: boolean }) => {
-    const entry = this.entries.get(String(sessionId));
-    if (!entry) return;
+    const id = String(sessionId || "").trim();
+    if (!id) return;
+    const entry = this.ensureEntry(id);
     void this.ensureArtifacts(entry, opts);
   };
 
   loadSubagentInvocations = (sessionId: string, opts?: { force?: boolean }) => {
-    const entry = this.entries.get(String(sessionId));
-    if (!entry) return;
+    const id = String(sessionId || "").trim();
+    if (!id) return;
+    const entry = this.ensureEntry(id);
     void this.ensureSubagentInvocations(entry, opts);
   };
 
@@ -715,7 +709,7 @@ export class SessionSupervisor {
           const id = idToString(message.id);
           return id ? !incomingMessageIds.has(id) : false;
         });
-        this.resetEntryForGap(entry, { skipPublish: true });
+        this.resetEntryProjectionForReplace(entry, { skipPublish: true });
       }
       if (patch.op === "evict") {
         const beforeSeq = patch.data.eventsBeforeSeq;
@@ -765,6 +759,7 @@ export class SessionSupervisor {
       }
       if (data.gitStatusSummary !== undefined) {
         entry.gitStatusSummary = data.gitStatusSummary ?? null;
+        this.syncStateCache(entry);
       }
       if (data.artifacts) {
         entry.artifacts = data.artifacts;
@@ -772,6 +767,7 @@ export class SessionSupervisor {
         entry.artifactsLoaded = true;
         entry.artifactsLoading = false;
         this.clearSupportLoadError(entry, "artifacts");
+        this.syncStateCache(entry);
       }
       if (data.artifactsLoaded !== undefined) {
         entry.artifactsLoaded = data.artifactsLoaded;
@@ -791,6 +787,11 @@ export class SessionSupervisor {
       }
       if (data.stateRev !== undefined) {
         entry.stateRev = data.stateRev;
+        entry.stateAppliedRev = adoptLoadedStateRevision(
+          entry.stateLoaded,
+          entry.stateAppliedRev,
+          data.stateRev,
+        );
       }
       if (data.summaryCheckpoint !== undefined) {
         entry.summaryCheckpoint = data.summaryCheckpoint;
@@ -1057,10 +1058,20 @@ export class SessionSupervisor {
   }
 
   private async ensureState(entry: InternalEntry, opts?: { force?: boolean }) {
-    if (entry.stateLoading) return;
-    const hasPendingRevision =
-      typeof entry.stateRev === "number" && entry.stateAppliedRev !== entry.stateRev;
-    if (entry.stateLoaded && !opts?.force && !hasPendingRevision) return;
+    const cached = this.stateCacheBySessionId.get(entry.sessionId);
+    if (!opts?.force && cached) {
+      this.applyState(entry, cached.state);
+      entry.updatedAtMs = Date.now();
+      this.publish();
+      return;
+    }
+    if (this.stateRequestsInFlight.has(entry.sessionId)) {
+      entry.stateLoading = true;
+      entry.updatedAtMs = Date.now();
+      this.publish();
+      return;
+    }
+    if (!shouldFetchSessionState(entry, opts)) return;
     entry.stateLoading = true;
     this.clearSupportLoadError(entry, "state");
     const requestRev = entry.stateRev;
@@ -1068,27 +1079,41 @@ export class SessionSupervisor {
     const fetchToken = entry.stateFetchToken;
     entry.updatedAtMs = Date.now();
     this.publish();
-    try {
-      const state = await getSessionState(entry.sessionId);
-      if (entry.stateFetchToken !== fetchToken) return;
-      if (
-        typeof requestRev === "number" &&
-        typeof entry.stateRev === "number" &&
-        entry.stateRev !== requestRev
-      ) {
-        return;
+    const request = (async () => {
+      try {
+        const state = await getSessionState(entry.sessionId);
+        const liveEntry = this.entries.get(entry.sessionId);
+        if (!liveEntry || liveEntry.stateFetchToken !== fetchToken) return;
+        if (
+          typeof requestRev === "number" &&
+          typeof liveEntry.stateRev === "number" &&
+          liveEntry.stateRev !== requestRev
+        ) {
+          return;
+        }
+        this.stateCacheBySessionId.set(entry.sessionId, {
+          state,
+          stateRev: requestRev ?? liveEntry.stateRev,
+        });
+        this.applyState(liveEntry, state, requestRev ?? liveEntry.stateRev);
+      } catch (err) {
+        const liveEntry = this.entries.get(entry.sessionId);
+        if (!liveEntry || liveEntry.stateFetchToken !== fetchToken) return;
+        this.setSupportLoadError(liveEntry, "state", err);
+      } finally {
+        const liveEntry = this.entries.get(entry.sessionId);
+        if (liveEntry && liveEntry.stateFetchToken === fetchToken) {
+          liveEntry.stateLoading = false;
+          liveEntry.updatedAtMs = Date.now();
+          this.publish();
+        }
       }
-      this.applyState(entry, state, requestRev ?? entry.stateRev);
-    } catch (err) {
-      if (entry.stateFetchToken !== fetchToken) return;
-      this.setSupportLoadError(entry, "state", err);
-    } finally {
-      if (entry.stateFetchToken === fetchToken) {
-        entry.stateLoading = false;
+    })().finally(() => {
+      if (this.stateRequestsInFlight.get(entry.sessionId) === request) {
+        this.stateRequestsInFlight.delete(entry.sessionId);
       }
-      entry.updatedAtMs = Date.now();
-      this.publish();
-    }
+    });
+    this.stateRequestsInFlight.set(entry.sessionId, request);
   }
 
   private async ensureArtifacts(entry: InternalEntry, opts?: { force?: boolean }) {
@@ -1114,25 +1139,57 @@ export class SessionSupervisor {
   }
 
   private async ensureSubagentInvocations(entry: InternalEntry, opts?: { force?: boolean }) {
+    const cached = this.subagentInvocationsCacheBySessionId.get(entry.sessionId);
+    if (!opts?.force && cached) {
+      entry.subagentInvocations = cached.slice();
+      entry.subagentInvocationsLoaded = true;
+      entry.subagentInvocationsLoading = false;
+      entry.subagentInvocationsFetchedAtMs = Date.now();
+      this.clearSupportLoadError(entry, "subagentInvocations");
+      entry.updatedAtMs = Date.now();
+      this.publish();
+      return;
+    }
+    if (this.subagentInvocationsRequestsInFlight.has(entry.sessionId)) {
+      entry.subagentInvocationsLoading = true;
+      entry.updatedAtMs = Date.now();
+      this.publish();
+      return;
+    }
     if (entry.subagentInvocationsLoading) return;
     if (entry.subagentInvocationsLoaded && !opts?.force) return;
     entry.subagentInvocationsLoading = true;
     this.clearSupportLoadError(entry, "subagentInvocations");
     entry.updatedAtMs = Date.now();
     this.publish();
-    try {
-      const invocations = await listSessionSubagentInvocations(entry.sessionId);
-      entry.subagentInvocations = invocations;
-      entry.subagentInvocationsLoaded = true;
-      entry.subagentInvocationsFetchedAtMs = Date.now();
-      this.clearSupportLoadError(entry, "subagentInvocations");
-    } catch (err) {
-      this.setSupportLoadError(entry, "subagentInvocations", err);
-    } finally {
-      entry.subagentInvocationsLoading = false;
-      entry.updatedAtMs = Date.now();
-      this.publish();
-    }
+    const request = (async () => {
+      try {
+        const invocations = await listSessionSubagentInvocations(entry.sessionId);
+        const liveEntry = this.entries.get(entry.sessionId);
+        if (!liveEntry) return;
+        this.subagentInvocationsCacheBySessionId.set(entry.sessionId, invocations.slice());
+        liveEntry.subagentInvocations = invocations;
+        liveEntry.subagentInvocationsLoaded = true;
+        liveEntry.subagentInvocationsFetchedAtMs = Date.now();
+        this.clearSupportLoadError(liveEntry, "subagentInvocations");
+      } catch (err) {
+        const liveEntry = this.entries.get(entry.sessionId);
+        if (!liveEntry) return;
+        this.setSupportLoadError(liveEntry, "subagentInvocations", err);
+      } finally {
+        const liveEntry = this.entries.get(entry.sessionId);
+        if (liveEntry) {
+          liveEntry.subagentInvocationsLoading = false;
+          liveEntry.updatedAtMs = Date.now();
+          this.publish();
+        }
+      }
+    })().finally(() => {
+      if (this.subagentInvocationsRequestsInFlight.get(entry.sessionId) === request) {
+        this.subagentInvocationsRequestsInFlight.delete(entry.sessionId);
+      }
+    });
+    this.subagentInvocationsRequestsInFlight.set(entry.sessionId, request);
   }
 
   private async loadCachedHead(entry: InternalEntry) {
@@ -1405,6 +1462,11 @@ export class SessionSupervisor {
     const headStateRev = headRecord?.state_rev ?? headRecord?.stateRev;
     if (typeof headStateRev === "number") {
       entry.stateRev = headStateRev;
+      entry.stateAppliedRev = adoptLoadedStateRevision(
+        entry.stateLoaded,
+        entry.stateAppliedRev,
+        headStateRev,
+      );
     }
     this.mergeTurns(entry, head.turns ?? []);
     this.mergeEvents(entry, head.events ?? [], { notify: false });
@@ -1543,6 +1605,51 @@ export class SessionSupervisor {
     entry.artifactsFetchedAtMs = Date.now();
     this.clearSupportLoadError(entry, "artifacts");
     entry.gitStatusSummary = state.git_status ?? null;
+    this.syncStateCache(entry, stateRev);
+  }
+
+  private syncStateCache(entry: InternalEntry, stateRev?: number) {
+    const cached = this.stateCacheBySessionId.get(entry.sessionId);
+    this.stateCacheBySessionId.set(entry.sessionId, {
+      state: {
+        artifacts: entry.artifacts.slice(),
+        git_status: this.buildStateGitStatusSummary(entry),
+      },
+      stateRev: typeof stateRev === "number" ? stateRev : cached?.stateRev,
+    });
+  }
+
+  private buildStateGitStatusSummary(entry: InternalEntry): SessionState["git_status"] {
+    const summary = entry.gitStatusSummary;
+    const cached = this.stateCacheBySessionId.get(entry.sessionId)?.state.git_status ?? null;
+    if (!summary && !cached) return null;
+
+    const summaryLine =
+      typeof summary?.summary_line === "string"
+        ? summary.summary_line
+        : typeof summary?.summaryLine === "string"
+          ? summary.summaryLine
+          : typeof summary?.summary === "string"
+            ? summary.summary
+            : cached?.summary_line ?? "";
+    if (!summaryLine) return cached;
+
+    const readNumber = (value: unknown, fallback: number): number => {
+      if (typeof value === "number" && Number.isFinite(value)) return value;
+      return fallback;
+    };
+
+    return {
+      summary_line: summaryLine,
+      branch: typeof summary?.branch === "string" ? summary.branch : cached?.branch ?? null,
+      upstream: typeof summary?.upstream === "string" ? summary.upstream : cached?.upstream ?? null,
+      ahead: readNumber(summary?.ahead, cached?.ahead ?? 0),
+      behind: readNumber(summary?.behind, cached?.behind ?? 0),
+      detached: typeof summary?.detached === "boolean" ? summary.detached : cached?.detached ?? false,
+      staged: readNumber(summary?.staged, cached?.staged ?? 0),
+      unstaged: readNumber(summary?.unstaged, cached?.unstaged ?? 0),
+      untracked: readNumber(summary?.untracked, cached?.untracked ?? 0),
+    };
   }
 
   private async persistHead(entry: InternalEntry) {
@@ -2160,6 +2267,7 @@ export class SessionSupervisor {
     entry.artifactsLoading = false;
     entry.artifactsFetchedAtMs = Date.now();
     this.clearSupportLoadError(entry, "artifacts");
+    this.syncStateCache(entry);
     return true;
   }
 
@@ -2170,6 +2278,7 @@ export class SessionSupervisor {
     const partial = normalizeGitStatusSummaryInput(payload.summary, payload.entries);
     if (Object.keys(partial).length === 0) return false;
     entry.gitStatusSummary = { ...(entry.gitStatusSummary ?? {}), ...partial };
+    this.syncStateCache(entry);
     return true;
   }
 
@@ -2177,6 +2286,7 @@ export class SessionSupervisor {
     if (String(event.event_type) !== "notice") return false;
     const kind = event.payload_json?.kind;
     if (kind !== "subagent_invocation_created" && kind !== "subagent_invocation_updated") return false;
+    this.subagentInvocationsCacheBySessionId.delete(entry.sessionId);
     void this.ensureSubagentInvocations(entry, { force: true });
     return false;
   }
@@ -2283,23 +2393,10 @@ export class SessionSupervisor {
     return true;
   }
 
-  private resetEntryForGap(entry: InternalEntry, opts?: { skipPublish?: boolean }) {
+  private resetEntryProjectionForReplace(entry: InternalEntry, opts?: { skipPublish?: boolean }) {
     entry.turns = [];
     entry.events = [];
     entry.messages = [];
-    entry.artifacts = [];
-    entry.artifactsLoaded = false;
-    entry.artifactsLoading = false;
-    entry.artifactsFetchedAtMs = undefined;
-    entry.stateLoaded = false;
-    entry.stateLoading = false;
-    entry.stateRev = undefined;
-    entry.stateAppliedRev = undefined;
-    entry.subagentInvocations = [];
-    entry.subagentInvocationsLoaded = false;
-    entry.subagentInvocationsLoading = false;
-    entry.subagentInvocationsFetchedAtMs = undefined;
-    entry.loadErrors = {};
     entry.queue = [];
     entry.turnToolsByTurnId = {};
     entry.turnToolsHydratedByTurnId = {};
