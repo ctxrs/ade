@@ -645,7 +645,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gemini_env_candidate_with_google_api_key_and_vertex_markers_imports_vertex_ai() {
+    async fn gemini_env_candidate_with_google_api_key_and_vertex_markers_is_rejected() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         let material = CandidateMaterial {
@@ -673,24 +673,16 @@ mod tests {
             label: Some("Gemini Vertex AI".to_string()),
         };
 
-        let result = import_candidate_to_canonical(root, &material)
-            .await
-            .unwrap();
-        assert_eq!(result.status, "imported");
+        let result = import_candidate_to_canonical(root, &material).await;
+        let error = result.expect_err("vertex env import should require service_account_json");
+        assert!(error
+            .to_string()
+            .contains("Gemini Vertex env imports require service_account_json"));
         let config = harness_sources::get_provider_source_config(root, "gemini")
             .await
             .unwrap();
-        let selected_id = config
-            .selected_endpoint_id
-            .as_deref()
-            .expect("selected endpoint id");
-        let endpoint = config
-            .endpoints
-            .iter()
-            .find(|endpoint| endpoint.id == selected_id)
-            .expect("selected endpoint");
-        assert_eq!(endpoint.auth_type, "vertex_ai");
-        assert!(endpoint.base_url.is_none());
+        assert!(config.selected_endpoint_id.is_none());
+        assert!(config.endpoints.is_empty());
     }
 
     #[tokio::test]
@@ -783,6 +775,9 @@ mod tests {
                 auth_type: None,
                 model_override: None,
                 api_key: Some("key-1".to_string()),
+                service_account_json: None,
+                project_id: None,
+                location: None,
             },
         )
         .await

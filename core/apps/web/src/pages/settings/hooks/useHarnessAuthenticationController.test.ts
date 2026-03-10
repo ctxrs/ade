@@ -528,6 +528,90 @@ describe("resolveHarnessAuthModalInitialStage", () => {
 });
 
 describe("useHarnessAuthenticationController", () => {
+  it("submits Gemini Vertex service-account endpoint auth without a base URL", async () => {
+    let controller: Controller | null = null;
+    const vertexEndpoint = {
+      ...baseEndpoint,
+      id: "gemini-vertex-1",
+      provider_id: "gemini",
+      name: "Gemini Vertex",
+      base_url: null,
+      auth_type: "vertex_ai",
+      model_override: null,
+    };
+    const selectedEndpointConfig: HarnessProviderSourceConfig = {
+      provider_id: "gemini",
+      selected_source_kind: "endpoint",
+      selected_endpoint_id: vertexEndpoint.id,
+      endpoints: [vertexEndpoint],
+    };
+
+    vi.mocked(loadProvidersBootstrap).mockResolvedValue(makeBootstrap({
+      provider_harness_config: {
+        codex: baseCodexConfig,
+        gemini: selectedEndpointConfig,
+      },
+    }));
+    vi.mocked(refreshProvidersBootstrap).mockResolvedValue(makeBootstrap({
+      provider_harness_config: {
+        codex: baseCodexConfig,
+        gemini: selectedEndpointConfig,
+      },
+    }));
+    vi.mocked(upsertProviderHarnessEndpoint).mockResolvedValue(selectedEndpointConfig);
+    vi.mocked(selectProviderHarnessSource).mockResolvedValue(selectedEndpointConfig);
+    vi.mocked(verifyProviderForWorkspace).mockResolvedValue({
+      provider_id: "gemini",
+      workspace_id: "ws-test",
+      status: "ok",
+      message: undefined,
+    });
+
+    render(createElement(ControllerHarness, {
+      onChange: (next) => {
+        controller = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(controller).not.toBeNull();
+    });
+
+    await act(async () => {
+      controller?.openHarnessAuthModal("gemini");
+    });
+    await waitFor(() => {
+      expect(controller?.harnessAuthModal?.provider_id).toBe("gemini");
+      expect(controller?.harnessAuthModal?.base_url).toBe("");
+    });
+
+    await act(async () => {
+      controller?.patchHarnessAuthModal({
+        stage: "api_key",
+        endpoint_provider_id: "google_vertex",
+        gemini_endpoint_auth_type: "vertex_ai",
+        service_account_json:
+          '{"type":"service_account","project_id":"vertex-project","private_key_id":"key-id","private_key":"-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----\\n","client_email":"ctx-vertex@test.iam.gserviceaccount.com","client_id":"1234567890"}',
+        project_id: "vertex-project",
+        location: "global",
+        base_url: "not_used",
+      });
+    });
+    await act(async () => {
+      await controller?.submitHarnessApiKeyModal();
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(upsertProviderHarnessEndpoint)).toHaveBeenCalledWith("gemini", expect.objectContaining({
+        base_url: null,
+        auth_type: "vertex_ai",
+        service_account_json: expect.stringContaining('"type":"service_account"'),
+        project_id: "vertex-project",
+        location: "global",
+      }));
+    });
+  });
+
   it("restores the previous provider source when endpoint verification fails", async () => {
     let controller: Controller | null = null;
     const freshEndpoint = {

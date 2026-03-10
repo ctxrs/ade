@@ -123,28 +123,30 @@ impl<'a> ProviderRuntimeContext<'a> {
     async fn endpoint_env(
         &self,
         endpoint: &HarnessEndpointRecordInternal,
-        api_key: &str,
+        secret: &secrets::EndpointSecretMaterial,
     ) -> Result<HashMap<String, String>> {
         let mut env = HashMap::new();
 
         match self.canonical {
             PROVIDER_CODEX => {
+                let api_key = secrets::endpoint_secret_api_key(secret)?;
                 let base_url = validation::endpoint_base_url_or_err(endpoint)?;
                 validation::ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
                 validation::ensure_safe_endpoint_id(&endpoint.id)?;
                 let codex_home = codex_endpoint_home(self.data_root, &endpoint.id);
-                prepare_codex_home_with_api_key(&codex_home, api_key).await?;
+                prepare_codex_home_with_api_key(&codex_home, &api_key).await?;
                 env.insert(
                     "CODEX_HOME".to_string(),
                     codex_home.to_string_lossy().to_string(),
                 );
-                env.insert("OPENAI_API_KEY".to_string(), api_key.to_string());
+                env.insert("OPENAI_API_KEY".to_string(), api_key);
                 env.insert("OPENAI_BASE_URL".to_string(), base_url);
             }
             PROVIDER_CLAUDE => {
+                let api_key = secrets::endpoint_secret_api_key(secret)?;
                 let base_url = validation::endpoint_base_url_or_err(endpoint)?;
                 validation::ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
-                env.insert("ANTHROPIC_API_KEY".to_string(), api_key.to_string());
+                env.insert("ANTHROPIC_API_KEY".to_string(), api_key);
                 env.insert("ANTHROPIC_BASE_URL".to_string(), base_url);
             }
             PROVIDER_GEMINI => {
@@ -168,7 +170,34 @@ impl<'a> ProviderRuntimeContext<'a> {
                 env.insert("GEMINI_FORCE_FILE_STORAGE".to_string(), "true".to_string());
                 match endpoint.auth_type.as_str() {
                     GEMINI_AUTH_TYPE_VERTEX_AI => {
-                        apply_gemini_vertex_runtime_auth_env(&mut env, api_key.to_string());
+                        let vertex_secret = secrets::endpoint_secret_gemini_vertex(secret)?;
+                        let credentials_path = gemini_dir.join("vertex-service-account.json");
+                        tokio::fs::write(
+                            &credentials_path,
+                            vertex_secret.service_account_json.as_bytes(),
+                        )
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "writing Gemini Vertex service account JSON {}",
+                                credentials_path.display()
+                            )
+                        })?;
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::PermissionsExt;
+                            let _ = tokio::fs::set_permissions(
+                                &credentials_path,
+                                std::fs::Permissions::from_mode(0o600),
+                            )
+                            .await;
+                        }
+                        apply_gemini_vertex_runtime_auth_env(
+                            &mut env,
+                            credentials_path,
+                            vertex_secret.project_id,
+                            vertex_secret.location,
+                        );
                         write_gemini_auth_settings(
                             &gemini_dir,
                             GEMINI_AUTH_SELECTED_TYPE_VERTEX_AI,
@@ -176,7 +205,8 @@ impl<'a> ProviderRuntimeContext<'a> {
                         .await?;
                     }
                     GEMINI_AUTH_TYPE_GEMINI_API_KEY => {
-                        apply_gemini_api_key_runtime_auth_env(&mut env, api_key.to_string());
+                        let api_key = secrets::endpoint_secret_api_key(secret)?;
+                        apply_gemini_api_key_runtime_auth_env(&mut env, api_key);
                         write_gemini_auth_settings(&gemini_dir, GEMINI_AUTH_SELECTED_TYPE_API_KEY)
                             .await?;
                     }
@@ -191,9 +221,10 @@ impl<'a> ProviderRuntimeContext<'a> {
                 }
             }
             PROVIDER_KIMI => {
+                let api_key = secrets::endpoint_secret_api_key(secret)?;
                 let base_url = validation::endpoint_base_url_or_err(endpoint)?;
                 validation::ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
-                env.insert("KIMI_API_KEY".to_string(), api_key.to_string());
+                env.insert("KIMI_API_KEY".to_string(), api_key);
                 env.insert("KIMI_BASE_URL".to_string(), base_url);
                 if let Some(model) = endpoint
                     .model_override
@@ -205,13 +236,14 @@ impl<'a> ProviderRuntimeContext<'a> {
                 }
             }
             PROVIDER_QWEN => {
+                let api_key = secrets::endpoint_secret_api_key(secret)?;
                 let base_url = validation::endpoint_base_url_or_err(endpoint)?;
                 validation::ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
                 validation::ensure_safe_endpoint_id(&endpoint.id)?;
                 let qwen_home = qwen_endpoint_home(self.runtime_data_root(), &endpoint.id);
                 prepare_qwen_home_with_openai_settings(&qwen_home).await?;
                 env.insert("HOME".to_string(), qwen_home.to_string_lossy().to_string());
-                env.insert("OPENAI_API_KEY".to_string(), api_key.to_string());
+                env.insert("OPENAI_API_KEY".to_string(), api_key);
                 env.insert("OPENAI_BASE_URL".to_string(), base_url);
                 if let Some(model) = endpoint
                     .model_override
@@ -223,15 +255,16 @@ impl<'a> ProviderRuntimeContext<'a> {
                 }
             }
             PROVIDER_OPENCODE => {
+                let api_key = secrets::endpoint_secret_api_key(secret)?;
                 let base_url = validation::endpoint_base_url_or_err(endpoint)?;
                 validation::ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
                 let provider_namespace =
                     model_catalog::infer_endpoint_model_provider_namespace(&base_url)
                         .unwrap_or_else(|| "endpoint".to_string());
-                env.insert("OPENAI_API_KEY".to_string(), api_key.to_string());
+                env.insert("OPENAI_API_KEY".to_string(), api_key.clone());
                 env.insert("OPENAI_BASE_URL".to_string(), base_url.clone());
                 if provider_namespace == "openrouter" {
-                    env.insert("OPENROUTER_API_KEY".to_string(), api_key.to_string());
+                    env.insert("OPENROUTER_API_KEY".to_string(), api_key.clone());
                     env.insert("OPENROUTER_BASE_URL".to_string(), base_url.clone());
                 }
 
@@ -272,12 +305,13 @@ impl<'a> ProviderRuntimeContext<'a> {
                 );
             }
             PROVIDER_GOOSE => {
+                let api_key = secrets::endpoint_secret_api_key(secret)?;
                 let base_url = validation::endpoint_base_url_or_err(endpoint)?;
                 validation::ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
-                env.insert("OPENAI_API_KEY".to_string(), api_key.to_string());
+                env.insert("OPENAI_API_KEY".to_string(), api_key.clone());
                 env.insert("OPENAI_BASE_URL".to_string(), base_url.clone());
                 env.insert("OPENAI_HOST".to_string(), base_url.clone());
-                env.insert("OPENROUTER_API_KEY".to_string(), api_key.to_string());
+                env.insert("OPENROUTER_API_KEY".to_string(), api_key);
                 env.insert("OPENROUTER_BASE_URL".to_string(), base_url);
                 env.insert("GOOSE_PROVIDER".to_string(), "openrouter".to_string());
                 env.insert("GOOSE_DISABLE_KEYRING".to_string(), "1".to_string());
@@ -293,18 +327,21 @@ impl<'a> ProviderRuntimeContext<'a> {
                 }
             }
             PROVIDER_MISTRAL => {
+                let api_key = secrets::endpoint_secret_api_key(secret)?;
                 let base_url = validation::endpoint_base_url_or_err(endpoint)?;
                 validation::ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
-                env.insert("MISTRAL_API_KEY".to_string(), api_key.to_string());
+                env.insert("MISTRAL_API_KEY".to_string(), api_key.clone());
                 env.insert("MISTRAL_BASE_URL".to_string(), base_url.clone());
-                env.insert("OPENAI_API_KEY".to_string(), api_key.to_string());
+                env.insert("OPENAI_API_KEY".to_string(), api_key);
                 env.insert("OPENAI_BASE_URL".to_string(), base_url);
             }
             PROVIDER_AMP => {
+                let api_key = secrets::endpoint_secret_api_key(secret)?;
                 validation::ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
-                env.insert("AMP_API_KEY".to_string(), api_key.to_string());
+                env.insert("AMP_API_KEY".to_string(), api_key);
             }
             PROVIDER_DROID => {
+                let api_key = secrets::endpoint_secret_api_key(secret)?;
                 let base_url = validation::endpoint_base_url_or_err(endpoint)?;
                 validation::ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
                 validation::ensure_safe_endpoint_id(&endpoint.id)?;
@@ -314,12 +351,12 @@ impl<'a> ProviderRuntimeContext<'a> {
                 let droid_default_model = prepare_droid_home_with_endpoint_settings(
                     &droid_home,
                     &base_url,
-                    api_key,
+                    &api_key,
                     &model_id,
                 )
                 .await?;
                 env.insert("HOME".to_string(), droid_home.to_string_lossy().to_string());
-                env.insert("OPENAI_API_KEY".to_string(), api_key.to_string());
+                env.insert("OPENAI_API_KEY".to_string(), api_key);
                 env.insert("OPENAI_BASE_URL".to_string(), base_url);
                 if let Ok(factory_api_key) = std::env::var("FACTORY_API_KEY") {
                     let trimmed = factory_api_key.trim();
@@ -332,11 +369,12 @@ impl<'a> ProviderRuntimeContext<'a> {
                 }
             }
             PROVIDER_OPENHANDS => {
+                let api_key = secrets::endpoint_secret_api_key(secret)?;
                 let base_url = validation::endpoint_base_url_or_err(endpoint)?;
                 validation::ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
-                env.insert("LLM_API_KEY".to_string(), api_key.to_string());
+                env.insert("LLM_API_KEY".to_string(), api_key.clone());
                 env.insert("LLM_BASE_URL".to_string(), base_url.clone());
-                env.insert("OPENAI_API_KEY".to_string(), api_key.to_string());
+                env.insert("OPENAI_API_KEY".to_string(), api_key);
                 env.insert("OPENAI_BASE_URL".to_string(), base_url);
                 if let Some(model) = endpoint
                     .model_override
@@ -349,14 +387,16 @@ impl<'a> ProviderRuntimeContext<'a> {
                 }
             }
             PROVIDER_COPILOT => {
+                let api_key = secrets::endpoint_secret_api_key(secret)?;
                 validation::ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
-                env.insert("GH_TOKEN".to_string(), api_key.to_string());
-                env.insert("GITHUB_TOKEN".to_string(), api_key.to_string());
+                env.insert("GH_TOKEN".to_string(), api_key.clone());
+                env.insert("GITHUB_TOKEN".to_string(), api_key);
             }
             PROVIDER_PI => {
+                let api_key = secrets::endpoint_secret_api_key(secret)?;
                 validation::ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
                 env.insert("PI_ACP_PROVIDER".to_string(), "openai".to_string());
-                env.insert("OPENAI_API_KEY".to_string(), api_key.to_string());
+                env.insert("OPENAI_API_KEY".to_string(), api_key);
                 let base_url = endpoint.base_url.trim().to_string();
                 if !base_url.is_empty() {
                     env.insert("OPENAI_BASE_URL".to_string(), base_url);
@@ -371,9 +411,10 @@ impl<'a> ProviderRuntimeContext<'a> {
                 }
             }
             PROVIDER_AUGGIE => {
+                let api_key = secrets::endpoint_secret_api_key(secret)?;
                 validation::ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
-                env.insert("AUGMENT_SESSION_AUTH".to_string(), api_key.to_string());
-                env.insert("AUGMENT_API_TOKEN".to_string(), api_key.to_string());
+                env.insert("AUGMENT_SESSION_AUTH".to_string(), api_key.clone());
+                env.insert("AUGMENT_API_TOKEN".to_string(), api_key);
             }
             _ => {}
         }
@@ -442,8 +483,8 @@ async fn resolve_internal(
         );
     }
 
-    let api_key = secrets::read_endpoint_secret(data_root, &endpoint.secret_ref).await?;
-    let env = runtime.endpoint_env(&endpoint, &api_key).await?;
+    let secret = secrets::read_endpoint_secret(data_root, &endpoint.secret_ref).await?;
+    let env = runtime.endpoint_env(&endpoint, &secret).await?;
 
     let public = selection::public_endpoint_from_internal(&endpoint);
     Ok(ResolvedHarnessSource {

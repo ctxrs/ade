@@ -365,6 +365,12 @@ pub(super) struct UpsertHarnessEndpointReq {
     #[serde(default)]
     api_key: Option<String>,
     #[serde(default)]
+    service_account_json: Option<String>,
+    #[serde(default)]
+    project_id: Option<String>,
+    #[serde(default)]
+    location: Option<String>,
+    #[serde(default)]
     manual_model_ids: Option<Vec<String>>,
 }
 

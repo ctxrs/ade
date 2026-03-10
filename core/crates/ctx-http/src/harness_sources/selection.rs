@@ -95,10 +95,10 @@ pub async fn find_provider_endpoint_import_match(
         if config_match_endpoint_id.is_none() {
             config_match_endpoint_id = Some(endpoint.id.clone());
         }
-        if let Ok(existing_api_key) =
+        if let Ok(existing_secret) =
             secrets::read_endpoint_secret(data_root, &endpoint.secret_ref).await
         {
-            if existing_api_key == api_key {
+            if existing_secret.api_key.as_deref() == Some(api_key) {
                 return Ok(Some(HarnessEndpointImportMatch {
                     endpoint_id: endpoint.id.clone(),
                     kind: HarnessEndpointImportMatchKind::ExactCredentials,
@@ -159,6 +159,9 @@ pub async fn upsert_provider_endpoint(
     };
     validation::ensure_safe_endpoint_id(&endpoint_id)?;
 
+    let auth_type =
+        validation::normalize_auth_type_for_provider(canonical, input.auth_type.as_deref())?;
+
     let existing_index = provider
         .endpoints
         .iter()
@@ -166,17 +169,21 @@ pub async fn upsert_provider_endpoint(
     let secret_ref = existing_index
         .and_then(|idx| provider.endpoints.get(idx).map(|ep| ep.secret_ref.clone()))
         .unwrap_or_else(|| format!("{}-{}.json", canonical, endpoint_id));
-
-    if existing_index.is_none() && input.api_key.is_none() {
-        anyhow::bail!("api_key is required when creating an endpoint");
-    }
-
-    if let Some(api_key) = input.api_key.as_ref() {
-        secrets::write_endpoint_secret(data_root, &secret_ref, api_key).await?;
-    }
-
-    let auth_type =
-        validation::normalize_auth_type_for_provider(canonical, input.auth_type.as_deref())?;
+    let existing_secret = match existing_index {
+        Some(index) => {
+            secrets::read_endpoint_secret(data_root, &provider.endpoints[index].secret_ref)
+                .await
+                .ok()
+        }
+        None => None,
+    };
+    let next_secret = secrets::resolve_endpoint_secret_material(
+        canonical,
+        &auth_type,
+        existing_secret.as_ref(),
+        &input,
+    )?;
+    secrets::write_endpoint_secret(data_root, &secret_ref, &next_secret).await?;
 
     let mut next = HarnessEndpointRecordInternal {
         id: endpoint_id.clone(),
@@ -422,21 +429,30 @@ pub async fn refresh_provider_endpoint_model_catalog(
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("unknown endpoint_id: {}", endpoint_id))?
     };
-    let api_key = secrets::read_endpoint_secret(data_root, &endpoint_snapshot.secret_ref).await?;
-    let discovery_result = if model_catalog::supports_model_discovery(&endpoint_snapshot) {
-        model_catalog::discover_openai_models(
-            &endpoint_snapshot.base_url,
-            &endpoint_snapshot.auth_type,
-            &api_key,
-        )
-        .await
-    } else {
-        Err(anyhow::anyhow!(
+    let secret = secrets::read_endpoint_secret(data_root, &endpoint_snapshot.secret_ref).await?;
+    let discovery_result = match (
+        model_catalog::supports_model_discovery(&endpoint_snapshot),
+        endpoint_snapshot.provider_id.as_str(),
+        endpoint_snapshot.auth_type.as_str(),
+    ) {
+        (true, PROVIDER_GEMINI, GEMINI_AUTH_TYPE_VERTEX_AI) => Err(anyhow::anyhow!(
+            "model discovery is unsupported for Gemini Vertex AI service-account auth"
+        )),
+        (true, _, _) => {
+            let api_key = secrets::endpoint_secret_api_key(&secret)?;
+            model_catalog::discover_openai_models(
+                &endpoint_snapshot.base_url,
+                &endpoint_snapshot.auth_type,
+                &api_key,
+            )
+            .await
+        }
+        (false, _, _) => Err(anyhow::anyhow!(
             "model discovery is unsupported for provider '{}' with api_shape '{}' and base_url '{}'",
             canonical,
             endpoint_snapshot.api_shape.as_str(),
             endpoint_snapshot.base_url
-        ))
+        )),
     };
 
     let _registry_write_guard = REGISTRY_WRITE_LOCK.lock().await;

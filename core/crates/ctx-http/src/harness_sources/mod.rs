@@ -202,6 +202,9 @@ pub struct HarnessEndpointUpsert {
     pub auth_type: Option<String>,
     pub model_override: Option<String>,
     pub api_key: Option<String>,
+    pub service_account_json: Option<String>,
+    pub project_id: Option<String>,
+    pub location: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -495,6 +498,9 @@ mod tests {
                 auth_type: Some(GEMINI_AUTH_TYPE_GEMINI_API_KEY.to_string()),
                 model_override: None,
                 api_key: Some("gemini-key".to_string()),
+                service_account_json: None,
+                project_id: None,
+                location: None,
             },
         )
         .await
@@ -547,6 +553,9 @@ mod tests {
                 auth_type: None,
                 model_override: None,
                 api_key: Some("sk-test".to_string()),
+                service_account_json: None,
+                project_id: None,
+                location: None,
             },
         )
         .await
@@ -601,6 +610,9 @@ mod tests {
                 auth_type: None,
                 model_override: None,
                 api_key: Some("sk-ant-api".to_string()),
+                service_account_json: None,
+                project_id: None,
+                location: None,
             },
         )
         .await
@@ -665,6 +677,9 @@ mod tests {
                 auth_type: None,
                 model_override: Some("anthropic/claude-opus-4.6".to_string()),
                 api_key: Some("sk-or-v1".to_string()),
+                service_account_json: None,
+                project_id: None,
+                location: None,
             },
         )
         .await
@@ -717,6 +732,9 @@ mod tests {
                 auth_type: Some(GEMINI_AUTH_TYPE_GEMINI_API_KEY.to_string()),
                 model_override: None,
                 api_key: Some("gemini-key".to_string()),
+                service_account_json: None,
+                project_id: None,
+                location: None,
             },
         )
         .await
@@ -780,7 +798,13 @@ mod tests {
                 api_shape: Some(HarnessApiShape::OpenaiResponses),
                 auth_type: Some(GEMINI_AUTH_TYPE_VERTEX_AI.to_string()),
                 model_override: None,
-                api_key: Some("vertex-key".to_string()),
+                api_key: None,
+                service_account_json: Some(
+                    r#"{"type":"service_account","project_id":"vertex-project","private_key_id":"key-id","private_key":"-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n","client_email":"ctx-vertex@test.iam.gserviceaccount.com","client_id":"1234567890"}"#
+                        .to_string(),
+                ),
+                project_id: None,
+                location: None,
             },
         )
         .await
@@ -800,14 +824,32 @@ mod tests {
             .expect("resolve run");
         assert_eq!(resolved.source_kind, HarnessSourceKind::Endpoint);
         assert_eq!(
-            resolved.env.get("GOOGLE_API_KEY"),
-            Some(&"vertex-key".to_string())
+            resolved.env.get("GOOGLE_APPLICATION_CREDENTIALS"),
+            Some(
+                &gemini_endpoint_home(root.path(), &endpoint.id)
+                    .join(".gemini/vertex-service-account.json")
+                    .to_string_lossy()
+                    .to_string(),
+            )
         );
-        assert_eq!(resolved.env.get("GEMINI_API_KEY"), Some(&String::new()));
+        assert_eq!(
+            resolved.env.get("GOOGLE_CLOUD_PROJECT"),
+            Some(&"vertex-project".to_string())
+        );
+        assert_eq!(
+            resolved.env.get("GOOGLE_CLOUD_PROJECT_ID"),
+            Some(&"vertex-project".to_string())
+        );
+        assert_eq!(
+            resolved.env.get("GOOGLE_CLOUD_LOCATION"),
+            Some(&"global".to_string())
+        );
         assert_eq!(
             resolved.env.get("GOOGLE_GENAI_USE_VERTEXAI"),
             Some(&"true".to_string())
         );
+        assert_eq!(resolved.env.get("GEMINI_API_KEY"), Some(&String::new()));
+        assert_eq!(resolved.env.get("GOOGLE_API_KEY"), Some(&String::new()));
         assert!(resolved.env.contains_key("HOME"));
         assert!(resolved.env.contains_key("GEMINI_CLI_HOME"));
         let settings = tokio::fs::read_to_string(
@@ -816,6 +858,13 @@ mod tests {
         .await
         .expect("read gemini settings");
         assert!(settings.contains("\"selectedType\": \"vertex-ai\""));
+        let credentials = tokio::fs::read_to_string(
+            gemini_endpoint_home(root.path(), &endpoint.id)
+                .join(".gemini/vertex-service-account.json"),
+        )
+        .await
+        .expect("read vertex credentials");
+        assert!(credentials.contains("\"project_id\":\"vertex-project\""));
         assert!(!resolved.env.contains_key("OPENAI_API_KEY"));
         assert!(!resolved.env.contains_key("OPENAI_BASE_URL"));
     }
@@ -834,6 +883,9 @@ mod tests {
                 auth_type: Some(GEMINI_AUTH_TYPE_GEMINI_API_KEY.to_string()),
                 model_override: Some("openai/gpt-5.2".to_string()),
                 api_key: Some("openrouter-key".to_string()),
+                service_account_json: None,
+                project_id: None,
+                location: None,
             },
         )
         .await
@@ -857,6 +909,9 @@ mod tests {
                 auth_type: Some(CODEX_AUTH_TYPE_BEARER.to_string()),
                 model_override: None,
                 api_key: Some("key".to_string()),
+                service_account_json: None,
+                project_id: None,
+                location: None,
             },
         )
         .await
@@ -880,6 +935,9 @@ mod tests {
                 auth_type: Some("invalid".to_string()),
                 model_override: None,
                 api_key: Some("gemini-key".to_string()),
+                service_account_json: None,
+                project_id: None,
+                location: None,
             },
         )
         .await
@@ -903,6 +961,9 @@ mod tests {
                 auth_type: None,
                 model_override: Some("kimi-k2".to_string()),
                 api_key: Some("kimi-key".to_string()),
+                service_account_json: None,
+                project_id: None,
+                location: None,
             },
         )
         .await
@@ -952,6 +1013,9 @@ mod tests {
                 auth_type: None,
                 model_override: Some(model_override.to_string()),
                 api_key: Some("qwen-key".to_string()),
+                service_account_json: None,
+                project_id: None,
+                location: None,
             },
         )
         .await
@@ -994,6 +1058,9 @@ mod tests {
                 auth_type: None,
                 model_override: Some(model_override.to_string()),
                 api_key: Some("opencode-key".to_string()),
+                service_account_json: None,
+                project_id: None,
+                location: None,
             },
         )
         .await
@@ -1113,6 +1180,9 @@ mod tests {
                     auth_type: None,
                     model_override: Some("test-model".to_string()),
                     api_key: Some("test-key".to_string()),
+                    service_account_json: None,
+                    project_id: None,
+                    location: None,
                 },
             )
             .await
@@ -1153,6 +1223,9 @@ mod tests {
                 auth_type: None,
                 model_override: Some("openai/gpt-5.2-codex".to_string()),
                 api_key: Some("sk-or-test".to_string()),
+                service_account_json: None,
+                project_id: None,
+                location: None,
             },
         )
         .await
@@ -1224,6 +1297,9 @@ mod tests {
                 auth_type: None,
                 model_override: Some("openai/gpt-5.2-codex".to_string()),
                 api_key: Some("sk-test".to_string()),
+                service_account_json: None,
+                project_id: None,
+                location: None,
             },
         )
         .await
@@ -1248,6 +1324,9 @@ mod tests {
                 auth_type: None,
                 model_override: None,
                 api_key: Some("ghp_test".to_string()),
+                service_account_json: None,
+                project_id: None,
+                location: None,
             },
         )
         .await
@@ -1282,6 +1361,9 @@ mod tests {
                 auth_type: None,
                 model_override: Some("gpt-5".to_string()),
                 api_key: Some("pi-key".to_string()),
+                service_account_json: None,
+                project_id: None,
+                location: None,
             },
         )
         .await
@@ -1328,6 +1410,9 @@ mod tests {
                 auth_type: None,
                 model_override: None,
                 api_key: Some("sk-test".to_string()),
+                service_account_json: None,
+                project_id: None,
+                location: None,
             },
         )
         .await
@@ -1370,6 +1455,9 @@ mod tests {
                 auth_type: None,
                 model_override: Some("openai/gpt-5.2-codex".to_string()),
                 api_key: Some("sk-test".to_string()),
+                service_account_json: None,
+                project_id: None,
+                location: None,
             },
         )
         .await
@@ -1412,6 +1500,9 @@ mod tests {
                 auth_type: None,
                 model_override: Some("openai/gpt-5.2-codex".to_string()),
                 api_key: Some("sk-test".to_string()),
+                service_account_json: None,
+                project_id: None,
+                location: None,
             },
         )
         .await
@@ -1457,6 +1548,9 @@ mod tests {
                 auth_type: None,
                 model_override: None,
                 api_key: Some("k".to_string()),
+                service_account_json: None,
+                project_id: None,
+                location: None,
             },
         )
         .await
@@ -1480,6 +1574,9 @@ mod tests {
                 auth_type: None,
                 model_override: None,
                 api_key: Some("k".to_string()),
+                service_account_json: None,
+                project_id: None,
+                location: None,
             },
         )
         .await

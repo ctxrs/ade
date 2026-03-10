@@ -67,6 +67,9 @@ export type HarnessAuthModalState = {
   endpoint_name: string;
   base_url: string;
   api_key: string;
+  service_account_json: string;
+  project_id: string;
+  location: string;
   manual_model_ids: string;
   subscription_label: string;
   subscription_token: string;

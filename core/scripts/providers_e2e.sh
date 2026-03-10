@@ -508,6 +508,12 @@ case "${suite}" in
     if [[ -z "${CTX_E2E_GEMINI_API_KEY:-}" ]]; then
       missing_provider_auth_keys+=("CTX_E2E_GEMINI_API_KEY")
     fi
+    if [[ -z "${GCP_SERVICE_ACCOUNT_JSON:-}" ]]; then
+      missing_provider_auth_keys+=("GCP_SERVICE_ACCOUNT_JSON")
+    fi
+    if [[ -z "${GCP_PROJECT_ID:-}" ]]; then
+      missing_provider_auth_keys+=("GCP_PROJECT_ID")
+    fi
     if [[ -z "${OPENAI_API_KEY:-}" ]]; then
       missing_provider_auth_keys+=("OPENAI_API_KEY")
     fi
@@ -541,6 +547,7 @@ case "${suite}" in
         e2e/workbench-codex-provider-endpoint-openai-real.spec.ts \
         e2e/workbench-cursor-provider-api-key-real.spec.ts \
         e2e/workbench-gemini-provider-api-key-real.spec.ts \
+        e2e/workbench-gemini-vertex-provider-api-key-real.spec.ts \
         e2e/workbench-mistral-provider-api-key-real.spec.ts \
         --workers=1
     )

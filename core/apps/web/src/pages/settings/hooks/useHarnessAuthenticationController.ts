@@ -680,13 +680,14 @@ export function useHarnessAuthenticationController({
         ? nextDefaultEndpointName(modal.endpoint_provider_id, existingNames)
         : nextTokenEndpointName(modal.provider_id, existingNames));
     const geminiAuthType = modal.provider_id === "gemini" ? modal.gemini_endpoint_auth_type : null;
+    const usesGeminiVertexServiceAccount = modal.provider_id === "gemini" && geminiAuthType === "vertex_ai";
     const base = modal.base_url.trim();
     const normalizedBase = normalizeOptionalBaseUrl(base);
-    const defaultPresetBase = modal.provider_id === "gemini"
-      ? normalizeOptionalBaseUrl(getHarnessEndpointProviderPreset(modal.endpoint_provider_id).base_url ?? "")
-      : null;
-    const effectiveBaseUrl = modal.provider_id === "gemini" ? (normalizedBase ?? defaultPresetBase) : normalizedBase;
+    const effectiveBaseUrl = modal.provider_id === "gemini" ? null : normalizedBase;
     const key = modal.api_key.trim();
+    const serviceAccountJson = modal.service_account_json.trim();
+    const projectId = modal.project_id.trim();
+    const location = modal.location.trim();
     const manualModelIds = modal.manual_model_ids
       .split(/[\n,]/)
       .map((value: string) => value.trim())
@@ -696,7 +697,12 @@ export function useHarnessAuthenticationController({
       setProviderError("Endpoint base URL is required.");
       return;
     }
-    if (!key) {
+    if (usesGeminiVertexServiceAccount) {
+      if (!serviceAccountJson) {
+        setProviderError("Service account JSON is required.");
+        return;
+      }
+    } else if (!key) {
       setProviderError("API key is required.");
       return;
     }
@@ -737,7 +743,10 @@ export function useHarnessAuthenticationController({
         base_url: effectiveBaseUrl,
         api_shape: requiresApiShape ? defaultShapeForHarnessProvider(modal.provider_id) : null,
         auth_type: geminiAuthType,
-        api_key: key,
+        api_key: usesGeminiVertexServiceAccount ? null : key,
+        service_account_json: usesGeminiVertexServiceAccount ? serviceAccountJson : null,
+        project_id: usesGeminiVertexServiceAccount ? (projectId || null) : null,
+        location: usesGeminiVertexServiceAccount ? (location || null) : null,
         manual_model_ids: manualModelIds,
       });
       if (!operation.isCurrent()) return;

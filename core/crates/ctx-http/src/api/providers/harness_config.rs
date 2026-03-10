@@ -69,6 +69,9 @@ pub(crate) async fn upsert_provider_harness_endpoint(
             auth_type: req.auth_type,
             model_override: req.model_override,
             api_key: req.api_key,
+            service_account_json: req.service_account_json,
+            project_id: req.project_id,
+            location: req.location,
         },
     )
     .await

@@ -152,6 +152,29 @@ const envSpecs = {
     ],
     minLength: 10,
   },
+  GCP_SERVICE_ACCOUNT_JSON: {
+    kind: "secret",
+    description: "Google Cloud service account JSON used by Gemini Vertex provider auth coverage.",
+    validation: [
+      "trimmed, non-empty secret value",
+      "must not be a placeholder example",
+      "must be valid JSON",
+      "must include a non-empty project_id",
+    ],
+    minLength: 20,
+    allowWhitespace: true,
+    format: "json",
+  },
+  GCP_PROJECT_ID: {
+    kind: "config",
+    description: "Google Cloud project id used by Gemini Vertex provider auth coverage.",
+    validation: [
+      "trimmed, non-empty project identifier",
+      "must not contain whitespace",
+      "minimum length 3",
+    ],
+    minLength: 3,
+  },
   AWS_ACCESS_KEY_ID: {
     kind: "secret",
     description: "AWS access key ID used to provision real remote CI fixture hosts.",
@@ -997,6 +1020,8 @@ const resolveSuiteContract = (suiteId, options = {}) => {
           buildRequirement("CTX_E2E_COPILOT_TOKEN"),
           buildRequirement("CTX_E2E_CURSOR_API_KEY"),
           buildRequirement("CTX_E2E_GEMINI_API_KEY"),
+          buildRequirement("GCP_SERVICE_ACCOUNT_JSON"),
+          buildRequirement("GCP_PROJECT_ID"),
           buildRequirement("OPENAI_API_KEY"),
           buildRequirement("MISTRAL_API_KEY"),
         ],

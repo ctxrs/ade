@@ -8,7 +8,15 @@ export type HarnessAuthConfigResult =
 export type EndpointAuthModalOptions = {
   providerPresetLabel?: string;
   allowGenericProviderFallback?: boolean;
+  geminiAuthMode?: "gemini_api_key" | "vertex_ai";
   endpointName?: string;
+  serviceAccountJson?: string;
+  projectId?: string;
+  location?: string;
+  expectedDocsLink?: {
+    name: string;
+    href: string;
+  };
 };
 
 const normalizeText = (value: string | null | undefined): string => (value ?? "").replace(/\s+/g, " ").trim();
@@ -108,6 +116,33 @@ async function chooseEndpointPreset(
   throw new Error(`provider preset option not found: ${label}`);
 }
 
+async function chooseGeminiAuthMode(
+  page: Page,
+  modal: Locator,
+  mode: "gemini_api_key" | "vertex_ai",
+) {
+  const trigger = modal
+    .locator("label.settings-harness-modal-label")
+    .filter({ hasText: /Gemini auth mode/i })
+    .locator('[role="combobox"]')
+    .first();
+  if ((await trigger.count()) === 0) return;
+  await trigger.click();
+  const optionLabel = mode === "vertex_ai" ? "Vertex AI" : "Gemini API Key";
+  const option = page.getByRole("option", { name: new RegExp(`^${escapeRegex(optionLabel)}$`, "i") }).first();
+  if ((await option.count()) > 0) {
+    await option.click();
+    return;
+  }
+  const textOption = page.locator(".tw-z-\\[1101\\]").getByText(optionLabel, { exact: true }).first();
+  if ((await textOption.count()) > 0) {
+    await textOption.click();
+    return;
+  }
+  await page.keyboard.press("Escape").catch(() => {});
+  throw new Error(`gemini auth mode option not found: ${optionLabel}`);
+}
+
 async function dismissAuthModalIfOpen(page: Page): Promise<void> {
   const modal = page.locator(".settings-harness-modal");
   if (!(await modal.isVisible().catch(() => false))) return;
@@ -155,12 +190,48 @@ export async function configureHarnessEndpointAuthViaModal(
   }
 
   await modal.getByRole("button", { name: "API Key" }).click();
+  if (options.geminiAuthMode) {
+    await chooseGeminiAuthMode(page, modal, options.geminiAuthMode);
+  }
   const providerPresetLabel = options.providerPresetLabel ?? "OpenRouter";
   await chooseEndpointPreset(page, modal, providerPresetLabel, options.allowGenericProviderFallback ?? true);
 
-  const passwordInput = modal.locator("input[type='password']").first();
-  await expect(passwordInput).toBeVisible({ timeout: 10_000 });
-  await passwordInput.fill(apiKey);
+  if (options.expectedDocsLink) {
+    await expect(modal.getByRole("link", { name: options.expectedDocsLink.name })).toHaveAttribute(
+      "href",
+      options.expectedDocsLink.href,
+    );
+  }
+
+  if (options.geminiAuthMode === "vertex_ai") {
+    const serviceAccountInput = modal
+      .locator("label.settings-harness-modal-label")
+      .filter({ hasText: /Service account JSON/i })
+      .locator("textarea")
+      .first();
+    await expect(serviceAccountInput).toBeVisible({ timeout: 10_000 });
+    await serviceAccountInput.fill(options.serviceAccountJson ?? apiKey);
+    const projectIdInput = modal
+      .locator("label.settings-harness-modal-label")
+      .filter({ hasText: /^Project ID \(optional\)$/i })
+      .locator("input")
+      .first();
+    if ((await projectIdInput.count()) > 0 && options.projectId !== undefined) {
+      await projectIdInput.fill(options.projectId);
+    }
+    const locationInput = modal
+      .locator("label.settings-harness-modal-label")
+      .filter({ hasText: /^Location \(optional\)$/i })
+      .locator("input")
+      .first();
+    if ((await locationInput.count()) > 0 && options.location !== undefined) {
+      await locationInput.fill(options.location);
+    }
+  } else {
+    const passwordInput = modal.locator("input[type='password']").first();
+    await expect(passwordInput).toBeVisible({ timeout: 10_000 });
+    await passwordInput.fill(apiKey);
+  }
 
   const endpointName = options.endpointName
     ?? `${entry.providerId}-${providerPresetLabel.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
@@ -203,7 +274,7 @@ export async function configureHarnessEndpointAuthViaModal(
     }
   }
 
-  await modal.getByRole("button", { name: "Add API key" }).click();
+  await modal.getByRole("button", { name: /Add API key|Save/i }).click();
   const providerError = page.locator(".settings-banner.settings-banner-error").first();
   const startedAt = Date.now();
   const timeoutMs = 20_000;

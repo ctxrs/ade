@@ -165,6 +165,9 @@ export type UpsertHarnessEndpointRequest = {
   auth_type?: string | null;
   model_override?: string | null;
   api_key?: string | null;
+  service_account_json?: string | null;
+  project_id?: string | null;
+  location?: string | null;
   manual_model_ids?: string[] | null;
 };
 

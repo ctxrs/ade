@@ -237,10 +237,18 @@ pub(crate) fn apply_gemini_api_key_runtime_auth_env(
 
 pub(crate) fn apply_gemini_vertex_runtime_auth_env(
     env: &mut HashMap<String, String>,
-    api_key: String,
+    credentials_path: PathBuf,
+    project_id: String,
+    location: String,
 ) {
     clear_gemini_runtime_auth_env(env);
-    env.insert("GOOGLE_API_KEY".to_string(), api_key);
+    env.insert(
+        "GOOGLE_APPLICATION_CREDENTIALS".to_string(),
+        credentials_path.to_string_lossy().to_string(),
+    );
+    env.insert("GOOGLE_CLOUD_PROJECT".to_string(), project_id.clone());
+    env.insert("GOOGLE_CLOUD_PROJECT_ID".to_string(), project_id);
+    env.insert("GOOGLE_CLOUD_LOCATION".to_string(), location);
     env.insert("GOOGLE_GENAI_USE_VERTEXAI".to_string(), "true".to_string());
 }
 

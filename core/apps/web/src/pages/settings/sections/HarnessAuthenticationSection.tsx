@@ -207,14 +207,18 @@ export function HarnessAuthenticationSection({
   const modalSupportsSubscription = harnessAuthModal === null
     ? false
     : supportsHarnessSubscriptionAuth(harnessAuthModal.provider_id);
+  const modalUsesGeminiVertexServiceAccount = harnessAuthModal?.provider_id === "gemini"
+    && harnessAuthModal.gemini_endpoint_auth_type === "vertex_ai";
   const modalApiKeyLabel = harnessAuthModal?.provider_id === "gemini"
-      ? harnessAuthModal.gemini_endpoint_auth_type === "vertex_ai"
-        ? "Google API key"
+      ? modalUsesGeminiVertexServiceAccount
+        ? "Service account JSON"
         : "Gemini API key"
       : "API key";
   const modalEndpointNameLabel = modalProviderUsesNativeKeyFlow ? "Label (optional)" : "Name (optional)";
   const modalApiKeyPlaceholder = harnessAuthModal?.provider_id === "gemini"
-      ? "AIza..."
+      ? modalUsesGeminiVertexServiceAccount
+        ? '{"type":"service_account","project_id":"my-project",...}'
+        : "AIza..."
     : harnessAuthModal?.provider_id === "cursor"
       ? "key_..."
     : harnessAuthModal?.provider_id === "auggie"
@@ -979,7 +983,7 @@ export function HarnessAuthenticationSection({
                     >
                       Google AI Studio
                     </a>
-                    . For Vertex AI keys, use{" "}
+                    . For Vertex AI service accounts, use{" "}
                     <a
                       className="settings-harness-help-link"
                       href="https://console.cloud.google.com/apis/credentials"
@@ -1046,16 +1050,49 @@ export function HarnessAuthenticationSection({
                     </Select>
                   </label>
                 ) : null}
-                <label className="settings-harness-modal-label">
-                  {modalApiKeyLabel}
-                  <input
-                    className="settings-control settings-control-wide"
-                    type="password"
-                    placeholder={modalApiKeyPlaceholder}
-                    value={harnessAuthModal.api_key}
-                    onChange={(e) => patchHarnessAuthModal({ api_key: e.target.value })}
-                  />
-                </label>
+                {modalUsesGeminiVertexServiceAccount ? (
+                  <>
+                    <label className="settings-harness-modal-label">
+                      {modalApiKeyLabel}
+                      <textarea
+                        className="settings-control settings-control-wide"
+                        placeholder={modalApiKeyPlaceholder}
+                        value={harnessAuthModal.service_account_json}
+                        onChange={(e) => patchHarnessAuthModal({ service_account_json: e.target.value })}
+                        rows={8}
+                      />
+                    </label>
+                    <label className="settings-harness-modal-label">
+                      Project ID (optional)
+                      <input
+                        className="settings-control settings-control-wide"
+                        placeholder="my-gcp-project"
+                        value={harnessAuthModal.project_id}
+                        onChange={(e) => patchHarnessAuthModal({ project_id: e.target.value })}
+                      />
+                    </label>
+                    <label className="settings-harness-modal-label">
+                      Location (optional)
+                      <input
+                        className="settings-control settings-control-wide"
+                        placeholder="global"
+                        value={harnessAuthModal.location}
+                        onChange={(e) => patchHarnessAuthModal({ location: e.target.value })}
+                      />
+                    </label>
+                  </>
+                ) : (
+                  <label className="settings-harness-modal-label">
+                    {modalApiKeyLabel}
+                    <input
+                      className="settings-control settings-control-wide"
+                      type="password"
+                      placeholder={modalApiKeyPlaceholder}
+                      value={harnessAuthModal.api_key}
+                      onChange={(e) => patchHarnessAuthModal({ api_key: e.target.value })}
+                    />
+                  </label>
+                )}
                 {!modalProviderUsesNativeKeyFlow ? (
                   <label className="settings-harness-modal-label">
                     Manual model slugs (optional)
@@ -1099,6 +1136,9 @@ export function HarnessAuthenticationSection({
                       patchHarnessAuthModal({
                         stage: "choose",
                         api_key: "",
+                        service_account_json: "",
+                        project_id: "",
+                        location: "",
                         manual_model_ids: "",
                         subscription_status: null,
                       });

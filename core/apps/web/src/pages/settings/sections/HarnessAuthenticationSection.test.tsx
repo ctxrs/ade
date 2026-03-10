@@ -23,6 +23,9 @@ function makeGeminiSubscriptionModal(): HarnessAuthModalState {
     endpoint_name: "",
     base_url: "",
     api_key: "",
+    service_account_json: "",
+    project_id: "",
+    location: "",
     manual_model_ids: "",
     subscription_label: "",
     subscription_token: "",
@@ -49,6 +52,11 @@ function makeCopilotSubscriptionModal(): HarnessAuthModalState {
     endpoint_name: "",
     base_url: "",
     api_key: "",
+    service_account_json: "",
+    project_id: "",
+    location: "",
+    endpoint_id: null,
+    manual_model_ids: "",
     subscription_label: "",
     subscription_token: "",
     subscription_email: "",
@@ -75,6 +83,9 @@ function makeApiKeyModal(providerId: "cursor" | "gemini" | "opencode" | "pi"): H
     endpoint_name: "",
     base_url: "",
     api_key: "",
+    service_account_json: "",
+    project_id: "",
+    location: "",
     manual_model_ids: "",
     subscription_label: "",
     subscription_token: "",
@@ -103,6 +114,9 @@ function makeEndpointApiKeyModal(): HarnessAuthModalState {
     endpoint_name: "",
     base_url: "https://api.openai.com/v1",
     api_key: "",
+    service_account_json: "",
+    project_id: "",
+    location: "",
     manual_model_ids: "",
     subscription_label: "",
     subscription_token: "",
@@ -131,6 +145,9 @@ function makeChooseModal(providerId: "amp" | "pi"): HarnessAuthModalState {
     endpoint_name: "",
     base_url: "",
     api_key: "",
+    service_account_json: "",
+    project_id: "",
+    location: "",
     manual_model_ids: "",
     subscription_label: "",
     subscription_token: "",
@@ -315,7 +332,7 @@ describe("HarnessAuthenticationSection Gemini subscription modal", () => {
     expect(screen.queryByText("Base URL (optional)")).not.toBeInTheDocument();
   });
 
-  it("shows Vertex AI key label when Gemini auth mode is vertex_ai", () => {
+  it("shows Vertex AI service-account fields when Gemini auth mode is vertex_ai", () => {
     const vertexModal = makeApiKeyModal("gemini");
     vertexModal.gemini_endpoint_auth_type = "vertex_ai";
     vertexModal.endpoint_provider_id = "google_vertex";
@@ -334,7 +351,9 @@ describe("HarnessAuthenticationSection Gemini subscription modal", () => {
       />,
     );
 
-    expect(screen.getByText("Google API key")).toBeInTheDocument();
+    expect(screen.getByText("Service account JSON")).toBeInTheDocument();
+    expect(screen.getByText("Project ID (optional)")).toBeInTheDocument();
+    expect(screen.getByText("Location (optional)")).toBeInTheDocument();
   });
 
   it("renders provider logos in endpoint provider dropdown", () => {

@@ -316,6 +316,9 @@ async fn import_endpoint_candidate(
             auth_type,
             model_override,
             api_key: Some(api_key),
+            service_account_json: None,
+            project_id: None,
+            location: None,
         },
     )
     .await?;
@@ -587,12 +590,12 @@ async fn import_gemini_env_candidate(
         };
         let env_map = parsers::parse_env_file(&String::from_utf8_lossy(bytes));
         if let Some(key) = parsers::env_value_case_insensitive(&env_map, &["GOOGLE_API_KEY"]) {
-            let auth_type = if parsers::gemini_env_uses_vertex_ai(&env_map) {
-                "vertex_ai"
-            } else {
-                "gemini_api_key"
-            };
-            (key, None, Some(auth_type.to_string()))
+            if parsers::gemini_env_uses_vertex_ai(&env_map) {
+                anyhow::bail!(
+                    "Gemini Vertex env imports require service_account_json; re-enter Vertex AI credentials in Settings"
+                );
+            }
+            (key, None, Some("gemini_api_key".to_string()))
         } else if let Some(key) = parsers::env_value_case_insensitive(&env_map, &["GEMINI_API_KEY"])
         {
             (key, None, Some("gemini_api_key".to_string()))

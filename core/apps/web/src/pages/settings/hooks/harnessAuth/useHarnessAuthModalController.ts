@@ -48,11 +48,14 @@ const createInitialHarnessAuthModal = (providerId: string): HarnessAuthModalStat
     gemini_endpoint_auth_type: "gemini_api_key",
     endpoint_name: "",
     base_url: providerId === "gemini"
-      ? (defaultPreset.base_url ?? "")
+      ? ""
       : requiresBaseUrl
         ? (defaultPreset.base_url ?? defaultEndpointBaseUrlForProvider(providerId))
         : "",
     api_key: "",
+    service_account_json: "",
+    project_id: "",
+    location: "",
     manual_model_ids: "",
     subscription_label: "",
     subscription_token: "",
