@@ -5,6 +5,23 @@ updater_local_smoke_fail() {
   return 1
 }
 
+normalize_local_smoke_app_permissions() {
+  local app_path="${1:?local smoke app path is required}"
+
+  if [[ -f "$app_path" && ! -x "$app_path" ]]; then
+    chmod +x "$app_path" || true
+  fi
+
+  case "$app_path" in
+    *.AppDir/AppRun)
+      local wrapped_path="${app_path}.wrapped"
+      if [[ -f "$wrapped_path" && ! -x "$wrapped_path" ]]; then
+        chmod +x "$wrapped_path" || true
+      fi
+      ;;
+  esac
+}
+
 validate_linux_local_smoke_app_path() {
   local app_path="${1:?linux app path is required}"
 

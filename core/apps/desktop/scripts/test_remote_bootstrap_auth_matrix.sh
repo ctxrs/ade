@@ -62,6 +62,22 @@ else
   mkdir -p "${LOG_DIR}"
 fi
 
+pick_unused_port() {
+  node -e '
+    const net = require("node:net");
+    const server = net.createServer();
+    server.on("error", () => process.exit(1));
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = address && typeof address === "object" ? address.port : 0;
+      server.close(() => {
+        if (!port) process.exit(2);
+        process.stdout.write(String(port));
+      });
+    });
+  '
+}
+
 status=0
 summary_file="${LOG_DIR}/remote-bootstrap-auth-matrix-summary.txt"
 
@@ -95,7 +111,7 @@ classify_failure() {
   if command -v rg >/dev/null 2>&1; then
     grep_cmd=("rg" "-qi")
   fi
-  if "${grep_cmd[@]}" "(ECONNREFUSED|EADDRNOTAVAIL|socket hang up|operation was aborted|Connection refused|WebDriverError|docker is installed but not responding|Cannot connect to the Docker daemon|fixture ssh endpoint did not become ready|no supported container runtime found|xvfb|CN_API_KEY is required)" "${log_file}"; then
+  if "${grep_cmd[@]}" "(ECONNREFUSED|EADDRNOTAVAIL|socket hang up|operation was aborted|Connection refused|WebDriverError|docker is installed but not responding|Cannot connect to the Docker daemon|fixture ssh endpoint did not become ready|no supported container runtime found|xvfb|CN_API_KEY is required|tauri-driver port [0-9]+ is already in use|CrabNebula backend port [0-9]+ is already in use)" "${log_file}"; then
     echo "infra_transient"
     return 0
   fi
@@ -150,8 +166,15 @@ run_case() {
 
   while (( attempt < max_attempts )); do
     attempt=$((attempt + 1))
+    local tauri_driver_port
+    tauri_driver_port="$(pick_unused_port)"
+    local tauri_test_backend_port
+    tauri_test_backend_port="$(pick_unused_port)"
+    local cn_backend_port
+    cn_backend_port="$(pick_unused_port)"
     {
       echo "[remote-bootstrap-matrix] case=${case_name} attempt=${attempt}/${max_attempts} runtime=${RUNTIME}"
+      echo "[remote-bootstrap-matrix] ports: driver=${tauri_driver_port} backend=${tauri_test_backend_port} cn_backend=${cn_backend_port}"
       local cmd=("${WRAPPER}" --runtime "${RUNTIME}" --auth-mode "${auth_mode}" --test-mode "${test_mode}" --log-dir "${case_dir}/fixture")
       if [[ -n "${fixture_password}" ]]; then
         cmd+=(--password "${fixture_password}")
@@ -160,6 +183,9 @@ run_case() {
         cmd+=(-- "${PASSTHROUGH_ARGS[@]}")
       fi
 
+      TAURI_DRIVER_PORT="${tauri_driver_port}" \
+      TAURI_TEST_BACKEND_PORT="${tauri_test_backend_port}" \
+      CTX_AUTOMATION_CN_BACKEND_PORT="${cn_backend_port}" \
       CTX_AUTOMATION_REMOTE_EXPECT_CONNECT_FAILURE="${expect_connect_failure}" \
       CTX_AUTOMATION_REMOTE_FIXTURE_PRESEED_KEY="${fixture_preseed_key}" \
       CTX_AUTOMATION_REMOTE_WRONG_PASSWORD="definitely-wrong-password" \

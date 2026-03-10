@@ -11,12 +11,15 @@ trap 'rm -rf "$tmp"' EXIT
 
 bundle_dir="$tmp/core/apps/desktop/src-tauri/target/release/bundle/appimage"
 apprun_path="$bundle_dir/ctx_0.5.18_amd64.AppDir/AppRun"
+apprun_wrapped_path="${apprun_path}.wrapped"
 appdir_bin="$bundle_dir/ctx_0.5.18_amd64.AppDir/usr/bin/ctx"
 appimage_path="$bundle_dir/ctx_0.5.18_amd64.AppImage"
 
 mkdir -p "$(dirname "$apprun_path")" "$(dirname "$appdir_bin")"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$apprun_path"
-chmod +x "$apprun_path"
+chmod 0644 "$apprun_path"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$apprun_wrapped_path"
+chmod 0644 "$apprun_wrapped_path"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$appdir_bin"
 chmod +x "$appdir_bin"
 printf 'not-a-real-appimage\n' >"$appimage_path"
@@ -27,6 +30,16 @@ if [[ "$resolved_path" != "$apprun_path" ]]; then
   echo "error: expected Linux resolver to return AppDir AppRun launcher" >&2
   echo "expected: $apprun_path" >&2
   echo "actual:   $resolved_path" >&2
+  exit 1
+fi
+
+normalize_local_smoke_app_permissions "$resolved_path"
+if [[ ! -x "$apprun_path" ]]; then
+  echo "error: expected AppRun launcher to be normalized executable" >&2
+  exit 1
+fi
+if [[ ! -x "$apprun_wrapped_path" ]]; then
+  echo "error: expected AppRun.wrapped helper to be normalized executable" >&2
   exit 1
 fi
 

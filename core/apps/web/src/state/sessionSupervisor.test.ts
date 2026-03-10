@@ -711,6 +711,105 @@ describe("SessionSupervisor", () => {
     expect(sup.getSnapshot().sessions[sessionId]?.turns[0]?.status).toBe("completed");
   });
 
+  it("synthesizes assistant messages from assistant_message_inserted deltas", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-inserted-message";
+    getSessionSnapshotMock.mockResolvedValue({
+      summary: {
+        session: mkSession(sessionId),
+      },
+    });
+    getSessionHeadMock.mockResolvedValue({
+      session: mkSession(sessionId),
+      turns: [] as SessionTurn[],
+      events: [] as SessionEvent[],
+      messages: [] as Message[],
+      last_event_seq: 0,
+      has_more_turns: false,
+      has_more_history: false,
+      history_cursor: null,
+    });
+
+    const sup = new SessionSupervisor();
+
+    const listeners = new Set<(evt: WorkspaceActiveSnapshotEvent) => void>();
+    const store: WorkspaceActiveSnapshotEventSource = {
+      subscribe: () => () => {},
+      subscribeEvents: (listener: (evt: WorkspaceActiveSnapshotEvent) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      getSessionHeadSnapshot: () => null,
+      getWorktreeRoot: () => null,
+      getWorktreeVcsSnapshot: () => null,
+      setSubscribedSessionIds: () => {},
+      getSnapshot: () => mkWorkspaceSnapshotState(),
+    };
+
+    attachWorkspaceStore(sup, store);
+    sup.openSession(sessionId, { mode: "active" });
+
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId] != null);
+
+    const now = new Date().toISOString();
+    const turnId = "turn-1";
+    const sendDelta = (seq: number, event_type: SessionEvent["event_type"], payload_json: unknown = {}) => {
+      const event: SessionEvent = {
+        seq,
+        id: `e${seq}`,
+        session_id: sessionId,
+        turn_id: turnId,
+        event_type,
+        payload_json: asRecord(payload_json),
+        created_at: now,
+      };
+      const deltaEvent: WorkspaceActiveSnapshotEvent = {
+        type: "session_head_delta",
+        workspace_id: "ws-1",
+        snapshot_rev: 1,
+        delta: {
+          session_id: sessionId,
+          last_event_seq: seq,
+          state_rev: seq,
+          event,
+        },
+      };
+      listeners.forEach((listener) => listener(deltaEvent));
+    };
+
+    sendDelta(1, "turn_started", { message_id: "user-msg-1" });
+    sendDelta(2, "assistant_complete", {
+      full_content: "Hello. What do you want to work on?",
+      message_id: "provider-msg-1",
+      order_seq: 2,
+    });
+    sendDelta(3, "assistant_message_inserted", {
+      message_id: "assistant-msg-1",
+      content: "Hello. What do you want to work on?",
+      delivery: "immediate",
+      order_seq: 3,
+      turn_sequence: 1,
+      provider_message_id: "provider-msg-1",
+    });
+
+    await waitForCondition(
+      () => (sup.getSnapshot().sessions[sessionId]?.messages.length ?? 0) === 1,
+    );
+
+    const entry = sup.getSnapshot().sessions[sessionId];
+    expect(entry?.messages[0]).toMatchObject({
+      id: "assistant-msg-1",
+      session_id: sessionId,
+      turn_id: turnId,
+      turn_sequence: 1,
+      role: "assistant",
+      content: "Hello. What do you want to work on?",
+      delivery: "immediate",
+    });
+    expect(entry?.turns[0]?.assistant_partial ?? "").toBe("");
+  });
+
   it("applies seeded+deltas without requiring /head hydration", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 

@@ -18,7 +18,7 @@
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/acp-crp-bridge/0.1.0/macos/aarch64/acp-crp-bridge-0.1.0-macos-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "acp-crp-bridge",
-            "sha256": "e21368f9249c47dce41a20bd56773752a5affd27ca7d31dbfbb424b998972125"
+            "sha256": "4426d294ce19f22970f28b27ec84da6e41cbc727574f56ff0a99f33c48297175"
           },
           "darwin-x86_64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/acp-crp-bridge/0.1.0/macos/x86_64/acp-crp-bridge-0.1.0-macos-x86_64.tar.gz",
@@ -42,7 +42,7 @@
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/acp-crp-bridge/0.1.0/macos/aarch64/acp-crp-bridge-0.1.0-macos-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "acp-crp-bridge",
-            "sha256": "e21368f9249c47dce41a20bd56773752a5affd27ca7d31dbfbb424b998972125"
+            "sha256": "4426d294ce19f22970f28b27ec84da6e41cbc727574f56ff0a99f33c48297175"
           },
           "macos-x86_64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/acp-crp-bridge/0.1.0/macos/x86_64/acp-crp-bridge-0.1.0-macos-x86_64.tar.gz",

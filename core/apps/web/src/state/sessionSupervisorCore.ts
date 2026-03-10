@@ -98,6 +98,50 @@ const readPayloadObject = (
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 };
 
+const readPayloadNumber = (payload: unknown, keys: string[]): number | null => {
+  const record = asRecord(payload);
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim()) {
+      const parsed = Number.parseFloat(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return null;
+};
+
+const messageFromEvent = (
+  event: SessionEvent,
+  session: Session | null | undefined,
+): Message | null => {
+  const role =
+    event.event_type === "user_message"
+      ? "user"
+      : event.event_type === "assistant_message_inserted"
+        ? "assistant"
+        : null;
+  if (!role) return null;
+  const payload = asRecord(event.payload_json);
+  const messageId = readPayloadString(payload, ["message_id", "messageId"]);
+  const content = readPayloadString(payload, ["content"]);
+  if (!messageId || !content) return null;
+  const delivery = readPayloadString(payload, ["delivery"]) === "queued" ? "queued" : "immediate";
+  const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+  return {
+    id: messageId,
+    session_id: event.session_id,
+    task_id: session?.task_id ?? "",
+    turn_id: event.turn_id ?? null,
+    turn_sequence: readPayloadNumber(payload, ["turn_sequence", "turnSequence"]),
+    role,
+    content,
+    attachments,
+    delivery,
+    created_at: event.created_at ?? new Date().toISOString(),
+  };
+};
+
 const readTunableInt = (key: string, fallback: number) => {
   try {
     const raw = window.localStorage.getItem(key);
@@ -1998,6 +2042,11 @@ export class SessionSupervisor {
       const turnId = idToString(ev.turn_id);
       if (isPartialEvent(ev) && (!turnId || !entry.startedTurnIds.has(turnId))) {
         continue;
+      }
+      const message = messageFromEvent(ev, entry.session);
+      if (message) {
+        this.mergeMessages(entry, [message]);
+        changed = true;
       }
       this.ensureTurnFromEvent(entry, ev);
       if (this.applyEventToTurns(entry, ev, { notify: shouldNotify })) {
