@@ -385,13 +385,18 @@ async fn save_matrix_fixture(data_root: &Path, matrix: &ProviderMatrix) {
 }
 
 fn archive_targets(url: String) -> HashMap<String, ProviderArchiveTarget> {
-    HashMap::from([
+    let mut targets = HashMap::from([
         (
             "linux-aarch64".to_string(),
             local_archive_entry(url.clone()),
         ),
-        ("linux-x86_64".to_string(), local_archive_entry(url)),
-    ])
+        ("linux-x86_64".to_string(), local_archive_entry(url.clone())),
+    ]);
+    if let Ok(host_target_key) = ctx_http::installer::resolve_matrix_target_key(InstallTarget::Host)
+    {
+        targets.insert(host_target_key.to_string(), local_archive_entry(url));
+    }
+    targets
 }
 
 fn acp_provider_fixture_entry(provider_id: &str, provider_url: String) -> ProviderMatrixEntry {
@@ -423,13 +428,7 @@ fn provider_fixture_matrix_with_providers(
     bridge_url: String,
     providers: Vec<(&str, String)>,
 ) -> ProviderMatrix {
-    let bridge_targets = HashMap::from([
-        (
-            "linux-aarch64".to_string(),
-            local_archive_entry(bridge_url.clone()),
-        ),
-        ("linux-x86_64".to_string(), local_archive_entry(bridge_url)),
-    ]);
+    let bridge_targets = archive_targets(bridge_url);
     let mut entries = vec![ProviderMatrixEntry {
         id: "acp-crp-bridge".to_string(),
         display_name: Some("ACP Bridge".to_string()),
@@ -832,6 +831,95 @@ async fn acp_container_install_surfaces_bridge_as_installable_prerequisite() {
     assert!(
         kimi_status.pointer("/details/install_blocked_code").is_none(),
         "providers list must not mark installable ACP bridge prerequisites as blocked: {kimi_status:#?}"
+    );
+}
+
+#[tokio::test]
+async fn acp_host_install_surfaces_bridge_as_installable_prerequisite() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        HashMap::new(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+
+    state.providers.statuses.lock().await.insert(
+        "kimi".to_string(),
+        ProviderStatus {
+            provider_id: "kimi".to_string(),
+            installed: false,
+            detected_path: None,
+            version: None,
+            capabilities: None,
+            health: ProviderHealth::Missing,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+        },
+    );
+
+    let (provider_status, provider_body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::GET,
+        "/api/providers/kimi?target=host",
+        None,
+    )
+    .await;
+    assert_eq!(
+        provider_status,
+        StatusCode::OK,
+        "provider status failed: {provider_body:#?}"
+    );
+    assert_eq!(
+        provider_body
+            .pointer("/details/install_supported")
+            .and_then(serde_json::Value::as_str),
+        Some("true"),
+        "host ACP installs should remain supported when the bridge is installable: {provider_body:#?}"
+    );
+    assert!(
+        provider_body
+            .pointer("/details/install_blocked_code")
+            .is_none(),
+        "installable bridge prerequisites must not be surfaced as blocked on host: {provider_body:#?}"
+    );
+
+    let (providers_status, providers_body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::GET,
+        "/api/providers?target=host",
+        None,
+    )
+    .await;
+    assert_eq!(
+        providers_status,
+        StatusCode::OK,
+        "providers list failed: {providers_body:#?}"
+    );
+    let kimi_status = providers_body
+        .as_array()
+        .and_then(|providers| {
+            providers.iter().find(|provider| {
+                provider
+                    .get("provider_id")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("kimi")
+            })
+        })
+        .cloned()
+        .expect("kimi must appear in provider list");
+    assert_eq!(
+        kimi_status
+            .pointer("/details/install_supported")
+            .and_then(serde_json::Value::as_str),
+        Some("true"),
+        "providers list should advertise installable ACP host targets: {kimi_status:#?}"
+    );
+    assert!(
+        kimi_status.pointer("/details/install_blocked_code").is_none(),
+        "providers list must not mark installable ACP bridge prerequisites as blocked on host: {kimi_status:#?}"
     );
 }
 

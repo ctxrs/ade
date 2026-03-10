@@ -58,9 +58,6 @@ fn resolve_acp_bridge_prerequisites(
     ) {
         Ok(Some(_)) => Ok(Vec::new()),
         Ok(None) => {
-            if matches!(target, InstallTarget::Host) {
-                return Err(acp_bridge_missing_issue(provider_id, target));
-            }
             if installer::is_supported_managed_provider_for_target(matrix, "acp-crp-bridge", target)
             {
                 return Ok(vec![ProviderInstallPrerequisite {
@@ -147,6 +144,42 @@ mod tests {
     };
 
     fn matrix_with_providers(provider_ids: &[&str]) -> ProviderMatrix {
+        let mut targets = HashMap::from([
+            (
+                "linux-x86_64".to_string(),
+                ProviderArchiveTarget {
+                    url: "https://example.invalid/provider-x86_64.tar.gz".to_string(),
+                    sha256: None,
+                    size_bytes: None,
+                    archive: ProviderArchiveKind::TarGz,
+                    bin_path: "provider".to_string(),
+                },
+            ),
+            (
+                "linux-aarch64".to_string(),
+                ProviderArchiveTarget {
+                    url: "https://example.invalid/provider-aarch64.tar.gz".to_string(),
+                    sha256: None,
+                    size_bytes: None,
+                    archive: ProviderArchiveKind::TarGz,
+                    bin_path: "provider".to_string(),
+                },
+            ),
+        ]);
+        if let Ok(host_target_key) =
+            crate::installer::resolve_matrix_target_key(crate::installs::InstallTarget::Host)
+        {
+            targets.insert(
+                host_target_key.to_string(),
+                ProviderArchiveTarget {
+                    url: "https://example.invalid/provider-host.tar.gz".to_string(),
+                    sha256: None,
+                    size_bytes: None,
+                    archive: ProviderArchiveKind::TarGz,
+                    bin_path: "provider".to_string(),
+                },
+            );
+        }
         ProviderMatrix {
             version: 2,
             generated_at: None,
@@ -160,30 +193,7 @@ mod tests {
                     managed_install: Some(ProviderInstall::Archive {
                         version: "1.0.0".to_string(),
                         args: Vec::new(),
-                        targets: HashMap::from([
-                            (
-                                "linux-x86_64".to_string(),
-                                ProviderArchiveTarget {
-                                    url: "https://example.invalid/provider-x86_64.tar.gz"
-                                        .to_string(),
-                                    sha256: None,
-                                    size_bytes: None,
-                                    archive: ProviderArchiveKind::TarGz,
-                                    bin_path: "provider".to_string(),
-                                },
-                            ),
-                            (
-                                "linux-aarch64".to_string(),
-                                ProviderArchiveTarget {
-                                    url: "https://example.invalid/provider-aarch64.tar.gz"
-                                        .to_string(),
-                                    sha256: None,
-                                    size_bytes: None,
-                                    archive: ProviderArchiveKind::TarGz,
-                                    bin_path: "provider".to_string(),
-                                },
-                            ),
-                        ]),
+                        targets: targets.clone(),
                     }),
                     dependencies: Vec::new(),
                     version_probe: None,
@@ -234,6 +244,27 @@ mod tests {
             crate::installs::InstallTarget::Container,
         )
         .expect("missing installable bridge should become a prerequisite");
+
+        assert_eq!(
+            contract.prerequisites,
+            vec![ProviderInstallPrerequisite {
+                provider_id: "acp-crp-bridge",
+            }]
+        );
+    }
+
+    #[test]
+    fn acp_host_install_plans_bridge_prerequisite_when_bridge_is_installable() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let cfg = AgentServerConfigFile::default();
+        let contract = resolve_provider_install_contract(
+            root.path(),
+            &cfg,
+            &matrix_with_providers(&["kimi", "acp-crp-bridge"]),
+            "kimi",
+            crate::installs::InstallTarget::Host,
+        )
+        .expect("missing installable host bridge should become a prerequisite");
 
         assert_eq!(
             contract.prerequisites,
