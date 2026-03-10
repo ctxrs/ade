@@ -408,6 +408,7 @@ pub(super) struct DevRestartProvidersResult {
 
 #[cfg(test)]
 mod tests {
+    use super::status::apply_target_aware_provider_status;
     use super::*;
     use crate::api::provider_launch::{
         endpoint_catalog_runtime_probe_failure, endpoint_catalog_verify_outcome,
@@ -417,7 +418,6 @@ mod tests {
     };
     use crate::installs::{InstallEventLevel, InstallProgressEvent};
     use crate::provider_launch::install::should_skip_install_for_healthy_provider;
-    use crate::provider_launch::status::apply_target_aware_provider_status;
     use chrono::Utc;
     use ctx_providers::adapters::{
         ProviderAdapter, ProviderHealth, ProviderProcessInfo, ProviderRestartMode, ProviderStatus,

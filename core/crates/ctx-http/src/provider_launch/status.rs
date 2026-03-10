@@ -1,5 +1,4 @@
-use std::collections::{BTreeSet, HashMap, HashSet};
-use std::path::Path;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -12,7 +11,6 @@ use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::installer;
 use crate::installs::InstallTarget;
-use crate::provider_install_contract;
 
 use super::resolver::ensure_provider_adapter_for_target_with_cfg;
 
@@ -204,123 +202,6 @@ pub(crate) async fn provider_status_for_target(
         .await;
     }
     status
-}
-
-pub(crate) fn apply_install_viability_details(
-    status: &mut ProviderStatus,
-    data_root: &Path,
-    managed: &installer::AgentServerConfigFile,
-    matrix: &crate::provider_matrix::ProviderMatrix,
-    target: InstallTarget,
-) {
-    let install_viability = provider_install_contract::provider_install_viability_issue(
-        data_root,
-        managed,
-        matrix,
-        &status.provider_id,
-        target,
-    );
-    status.details.insert(
-        "install_supported".into(),
-        if installer::is_supported_managed_provider_for_target(matrix, &status.provider_id, target)
-            && install_viability.is_none()
-        {
-            "true".into()
-        } else {
-            "false".into()
-        },
-    );
-    if let Some(issue) = install_viability {
-        status
-            .details
-            .insert("install_blocked".into(), "true".into());
-        status
-            .details
-            .insert("install_blocked_code".into(), issue.code.to_string());
-        status
-            .details
-            .insert("install_blocked_reason".into(), issue.message.clone());
-        if !status
-            .diagnostics
-            .iter()
-            .any(|value| value == &issue.message)
-        {
-            status.diagnostics.push(issue.message);
-        }
-    } else {
-        status.details.remove("install_blocked");
-        status.details.remove("install_blocked_code");
-        status.details.remove("install_blocked_reason");
-    }
-}
-
-pub(crate) async fn providers_statuses_response(
-    state: &Arc<AppState>,
-    target: InstallTarget,
-    include_matrix_providers: bool,
-) -> Vec<ProviderStatus> {
-    let managed = installer::load_agent_server_config(&state.core.data_root)
-        .await
-        .unwrap_or_default();
-    let matrix = crate::provider_matrix::load_matrix_cached(
-        &state.core.data_root,
-        &state.providers.matrix_cache,
-    )
-    .await;
-    let mut seen = HashSet::new();
-    let mut provider_ids = Vec::new();
-    {
-        let map = state.providers.statuses.lock().await;
-        for provider_id in map.keys() {
-            if seen.insert(provider_id.clone()) {
-                provider_ids.push(provider_id.clone());
-            }
-        }
-    }
-    if include_matrix_providers {
-        for entry in &matrix.providers {
-            if seen.insert(entry.id.clone()) {
-                provider_ids.push(entry.id.clone());
-            }
-        }
-    }
-    let mut out = Vec::with_capacity(provider_ids.len());
-    for provider_id in provider_ids {
-        out.push(provider_status_for_target(state, &managed, &matrix, &provider_id, target).await);
-    }
-
-    let show_fake = std::env::var("CTX_SHOW_FAKE_PROVIDER").ok().as_deref() == Some("1");
-    for status in &mut out {
-        if status.provider_id == "fake" {
-            status.details.insert(
-                "ui_hidden".into(),
-                if show_fake { "false" } else { "true" }.into(),
-            );
-        }
-        apply_install_viability_details(status, &state.core.data_root, &managed, &matrix, target);
-        status
-            .details
-            .insert("install_target".into(), target.as_str().to_string());
-        if let Some(bytes) =
-            installer::managed_install_download_size_bytes(&matrix, &status.provider_id, target)
-        {
-            status
-                .details
-                .insert("install_download_size_bytes".into(), bytes.to_string());
-        }
-        if let Some(install_id) = state
-            .find_running_install(&status.provider_id, Some(target))
-            .await
-        {
-            status
-                .details
-                .insert("install_running".into(), "true".into());
-            status
-                .details
-                .insert("install_id".into(), install_id.to_string());
-        }
-    }
-    out
 }
 
 pub(crate) async fn install_target_for_workspace(

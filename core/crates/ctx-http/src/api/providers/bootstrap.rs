@@ -1,5 +1,4 @@
 use super::*;
-use crate::provider_launch::status as provider_launch_status;
 
 fn parse_workspace_id(ws_id: &str) -> Result<WorkspaceId, (StatusCode, Json<serde_json::Value>)> {
     Ok(WorkspaceId(uuid::Uuid::parse_str(ws_id).map_err(|_| {
@@ -40,12 +39,11 @@ pub(crate) async fn get_workspace_providers_bootstrap(
     }
     let workspace = workspace.expect("checked workspace exists");
 
-    let install_target = provider_launch_status::install_target_for_workspace(&state, ws_id)
+    let install_target = status::install_target_for_workspace(&state, ws_id)
         .await
-        .map_err(|error| provider_launch_status::workspace_execution_settings_error_json(&error))?;
+        .map_err(|error| status::workspace_execution_settings_error_json(&error))?;
 
-    let providers =
-        provider_launch_status::providers_statuses_response(&state, install_target, true).await;
+    let providers = status::providers_statuses_response(&state, install_target, true).await;
     let mut provider_options = HashMap::new();
     let mut provider_harness_config = HashMap::new();
     let ws_id_str = ws_id.0.to_string();
