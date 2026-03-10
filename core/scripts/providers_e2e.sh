@@ -394,9 +394,10 @@ run_linux_arm_runtime_install_lane() {
   export CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS="${bundle_provider_csv}"
   export CTX_E2E_ENDPOINT_SKIP_BUNDLE_IMAGES="${CTX_E2E_ENDPOINT_SKIP_BUNDLE_IMAGES:-1}"
   export CTX_E2E_ENDPOINT_BUNDLE_HARNESS_IMAGE="${CTX_E2E_ENDPOINT_BUNDLE_HARNESS_IMAGE:-0}"
-  # Keep the legacy local/source bridge path off here. ACP bridge must arrive via the same
-  # managed archive bundling path as the other lane providers.
-  export CTX_E2E_ENDPOINT_BUNDLE_INCLUDE_BRIDGE="${CTX_E2E_ENDPOINT_BUNDLE_INCLUDE_BRIDGE:-0}"
+  # Linux-arm push validation runs before newly versioned managed bridge artifacts are
+  # published, so source the bridge from the local workspace while keeping the other
+  # lane providers on their managed archive paths.
+  export CTX_E2E_ENDPOINT_BUNDLE_INCLUDE_BRIDGE="${CTX_E2E_ENDPOINT_BUNDLE_INCLUDE_BRIDGE:-1}"
   # Native Linux reliability lanes should exercise bundled provider resolution, but
   # use the host Podman install. The runtime lock only vendors Podman artifacts for
   # macOS remote clients, so forcing bundled Podman on Linux makes the lane demand
