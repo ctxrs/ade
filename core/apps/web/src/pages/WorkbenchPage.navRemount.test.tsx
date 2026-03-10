@@ -624,11 +624,6 @@ describe("WorkbenchPage session support load issues", () => {
 
     render(ui);
 
-    await waitFor(() => {
-      expect(sessionSupervisorMock.loadSessionState).toHaveBeenCalledWith(sessionId);
-      expect(sessionSupervisorMock.loadSubagentInvocations).toHaveBeenCalledWith(sessionId);
-    });
-
     expect(await screen.findByText("Some session details failed to load.")).toBeInTheDocument();
     expect(screen.getByText("Failed to load session state: daemon offline")).toBeInTheDocument();
     expect(screen.getByText("Failed to load subagent invocations: query failed")).toBeInTheDocument();
@@ -639,7 +634,7 @@ describe("WorkbenchPage session support load issues", () => {
     expect(sessionSupervisorMock.loadSubagentInvocations).toHaveBeenCalledWith(sessionId, { force: true });
   });
 
-  it("reloads support data when the active session state revision changes", async () => {
+  it("keeps shell support loading passive when the active session state revision changes", async () => {
     const renderWorkbench = () => (
       <VirtuosoMockContext.Provider value={{ itemHeight: 40, viewportHeight: 400 }}>
         <MemoryRouter initialEntries={[`/workspaces/${workspaceId}`]}>
@@ -670,13 +665,12 @@ describe("WorkbenchPage session support load issues", () => {
 
     rendered.rerender(renderWorkbench());
 
-    await waitFor(() => {
-      expect(sessionSupervisorMock.loadSessionState).toHaveBeenCalledWith(sessionId);
-      expect(sessionSupervisorMock.loadSubagentInvocations).toHaveBeenCalledWith(sessionId);
-    });
+    await screen.findAllByText("Starter task");
+    expect(sessionSupervisorMock.loadSessionState).not.toHaveBeenCalled();
+    expect(sessionSupervisorMock.loadSubagentInvocations).not.toHaveBeenCalled();
   });
 
-  it("reloads no-revision support data after remount when the supervisor marks it stale", async () => {
+  it("keeps shell support loading passive after remount when the supervisor marks it stale", async () => {
     sessionSnap = {
       ...sessionSnap,
       sessions: {
@@ -721,10 +715,9 @@ describe("WorkbenchPage session support load issues", () => {
 
     render(renderWorkbench());
 
-    await waitFor(() => {
-      expect(sessionSupervisorMock.loadSessionState).toHaveBeenCalledWith(sessionId);
-      expect(sessionSupervisorMock.loadSubagentInvocations).toHaveBeenCalledWith(sessionId);
-    });
+    await screen.findAllByText("Starter task");
+    expect(sessionSupervisorMock.loadSessionState).not.toHaveBeenCalled();
+    expect(sessionSupervisorMock.loadSubagentInvocations).not.toHaveBeenCalled();
   });
 });
 

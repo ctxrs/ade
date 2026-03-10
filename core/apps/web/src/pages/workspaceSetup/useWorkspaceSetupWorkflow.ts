@@ -14,8 +14,13 @@ import { useWorkspaceSetupRemote } from "./useWorkspaceSetupRemote";
 import {
   createInitialWorkflowDraftState,
   makeDraftFieldSetter,
+  makeTargetDraftFieldSetter,
 } from "./workflowReducer";
-import type { WorkspaceSetupDraftState } from "./workflowTypes";
+import {
+  deriveWorkspaceSetupEffectiveTarget,
+  type WorkspaceSetupDraftState,
+  type WorkspaceSetupTargetDraft,
+} from "./workflowTypes";
 import { workspaceSetupWorkflowReducer } from "./workflowReducer";
 import type { WizardStepKey } from "./wizardFlow";
 
@@ -28,6 +33,10 @@ type UseWorkspaceSetupWorkflowArgs = {
 
 type FieldSetters = {
   [K in keyof WorkspaceSetupDraftState]: (value: SetStateAction<WorkspaceSetupDraftState[K]>) => void;
+};
+
+type TargetDraftSetters = {
+  [K in keyof WorkspaceSetupTargetDraft]: (value: SetStateAction<WorkspaceSetupTargetDraft[K]>) => void;
 };
 
 export function useWorkspaceSetupWorkflow({
@@ -43,6 +52,7 @@ export function useWorkspaceSetupWorkflow({
   );
 
   const setters = useMemo<FieldSetters>(() => ({
+    targetDraft: makeDraftFieldSetter(dispatchDraft, "targetDraft"),
     sourcePath: makeDraftFieldSetter(dispatchDraft, "sourcePath"),
     repoUrl: makeDraftFieldSetter(dispatchDraft, "repoUrl"),
     repoBranch: makeDraftFieldSetter(dispatchDraft, "repoBranch"),
@@ -61,16 +71,32 @@ export function useWorkspaceSetupWorkflow({
     importRepoNote: makeDraftFieldSetter(dispatchDraft, "importRepoNote"),
   }), []);
 
+  const targetDraftSetters = useMemo<TargetDraftSetters>(() => ({
+    remoteHostInput: makeTargetDraftFieldSetter(dispatchDraft, "remoteHostInput"),
+    remotePortInput: makeTargetDraftFieldSetter(dispatchDraft, "remotePortInput"),
+    remoteDataDirInput: makeTargetDraftFieldSetter(dispatchDraft, "remoteDataDirInput"),
+  }), []);
+
   const flow = useWorkspaceSetupFlow({
     sourcePath: draft.sourcePath,
     repoUrl: draft.repoUrl,
   });
+
+  const effectiveTarget = useMemo(
+    () => deriveWorkspaceSetupEffectiveTarget(flow.selections.location, draft.targetDraft),
+    [draft.targetDraft, flow.selections.location],
+  );
 
   const remote = useWorkspaceSetupRemote({
     selections: flow.selections,
     stepKey: flow.currentStepKey,
     needsSourcePath: flow.needsSourcePath,
     sourcePath: draft.sourcePath,
+    targetDraft: draft.targetDraft,
+    effectiveTarget,
+    setRemoteHostInput: targetDraftSetters.remoteHostInput,
+    setRemotePortInput: targetDraftSetters.remotePortInput,
+    setRemoteDataDirInput: targetDraftSetters.remoteDataDirInput,
     setImportRepoStatus: setters.importRepoStatus,
     setImportRepoNote: setters.importRepoNote,
     setTargetBranch: setters.targetBranch,
@@ -89,11 +115,7 @@ export function useWorkspaceSetupWorkflow({
     setRoutePlanningBusy: flow.setRoutePlanningBusy,
     invalidateRoutePlan: flow.invalidateRoutePlan,
     desktopApp: remote.desktopApp,
-    selectedDaemonTargetKey: remote.selectedDaemonTargetKey,
-    parsedRemoteHost: remote.parsedRemote?.host,
-    parsedRemoteUser: remote.parsedRemote?.user,
-    parsedRemotePort: remote.parsedRemotePort,
-    remoteDataDirInput: remote.remoteDataDirInput,
+    effectiveTarget,
     remoteStatus: remote.remoteStatus,
     remoteStatusRef: remote.remoteStatusRef,
     connectDaemonForImport: remote.connectDaemonForImport,
@@ -134,11 +156,8 @@ export function useWorkspaceSetupWorkflow({
     wizardKey,
     trackWizardCompleted,
     desktopApp: remote.desktopApp,
-    parsedRemoteHost: remote.parsedRemote?.host,
-    parsedRemoteUser: remote.parsedRemote?.user,
     remotePasswordOnce: remote.remotePasswordOnce,
-    parsedRemotePort: remote.parsedRemotePort,
-    remoteDataDirInput: remote.remoteDataDirInput,
+    effectiveTarget,
     connectDaemonForImport: remote.connectDaemonForImport,
     ensureOnboardingAfterDaemonConnect: provisioning.ensureOnboardingAfterDaemonConnect,
     waitForDaemonReady: remote.waitForDaemonReady,
@@ -348,7 +367,7 @@ export function useWorkspaceSetupWorkflow({
     && !(flow.step.key === "location" && flow.selections.location === "remote" && (
       !remote.hasRemoteHost
       || remote.remoteStatus === "connecting"
-      || remote.parsedRemotePort === null
+      || effectiveTarget?.kind !== "remote"
     ))
     && !(flow.step.key === "container" && flow.routePlanningBusy)
     && hasSourceStepInputs

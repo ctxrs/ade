@@ -3,6 +3,7 @@ import { emitUiDiagnostic, normalizeDiagnosticErrorMessage } from "../state/diag
 import {
   applyDesktopDaemonConnection,
   getDaemonConnection,
+  hasReadyDaemonConnection,
   type DaemonConnection,
 } from "./daemonConnection";
 
@@ -23,9 +24,6 @@ const DESKTOP_DAEMON_SYNC_THROTTLE_MS = 1000;
 
 let desktopSyncInFlight: Promise<DesktopDaemonConnectionSyncResult> | null = null;
 let desktopLastSyncAtMs = 0;
-
-const hasDesktopDataPlaneConnection = (connection: DaemonConnection): boolean =>
-  Boolean(connection.baseUrl && connection.authToken);
 
 const makeDesktopSyncResult = (
   info: DesktopConnectionInfo | null,
@@ -55,7 +53,7 @@ export const syncDesktopDaemonConnectionFromBridge = async (
   const current = getDaemonConnection();
   if (
     !opts?.force
-    && hasDesktopDataPlaneConnection(current)
+    && hasReadyDaemonConnection(current)
     && now - desktopLastSyncAtMs < DESKTOP_DAEMON_SYNC_THROTTLE_MS
   ) {
     return makeDesktopSyncResult(null, null);
@@ -102,11 +100,11 @@ export const ensureDesktopDaemonConnection = async (
   const current = getDaemonConnection();
   if (!isDesktopApp()) return current;
   const synced = await syncDesktopDaemonConnectionFromBridge({
-    force: !hasDesktopDataPlaneConnection(current),
+    force: !hasReadyDaemonConnection(current),
     connectLocalWhenMissing: opts?.connectLocalWhenMissing ?? true,
     reason: opts?.reason ?? "desktop_transport_bootstrap",
   });
-  if (hasDesktopDataPlaneConnection(synced.connection)) {
+  if (hasReadyDaemonConnection(synced.connection)) {
     return synced.connection;
   }
   throw new Error(synced.error ?? "Desktop daemon connection is not configured.");

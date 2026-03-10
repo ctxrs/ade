@@ -25,6 +25,12 @@ type SessionStateLoadStatus = {
   stateAppliedRev?: number;
 };
 
+type SubagentInvocationsLoadStatus = {
+  subagentInvocationsLoaded: boolean;
+  subagentInvocationsLoading: boolean;
+  subagentInvocationsAppliedRev?: number;
+};
+
 export function shouldFetchSessionState(
   entry: SessionStateLoadStatus,
   opts?: { force?: boolean },
@@ -43,6 +49,40 @@ export function shouldFetchSessionState(
     return true;
   }
   return false;
+}
+
+export function shouldFetchSubagentInvocations(
+  entry: SubagentInvocationsLoadStatus,
+  requestedStateRev: number | undefined,
+  opts?: { force?: boolean },
+): boolean {
+  if (entry.subagentInvocationsLoading) return false;
+  if (opts?.force) return true;
+  if (!entry.subagentInvocationsLoaded) return true;
+  if (
+    typeof requestedStateRev === "number" &&
+    typeof entry.subagentInvocationsAppliedRev === "number" &&
+    entry.subagentInvocationsAppliedRev < requestedStateRev
+  ) {
+    return true;
+  }
+  if (
+    typeof requestedStateRev === "number" &&
+    typeof entry.subagentInvocationsAppliedRev !== "number"
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export function deriveSupportFreshnessKey(
+  requestedStateRev: number | undefined,
+  freshnessEpoch: number,
+): string {
+  if (typeof requestedStateRev === "number") {
+    return `rev:${requestedStateRev}`;
+  }
+  return `epoch:${freshnessEpoch}`;
 }
 
 export function adoptLoadedStateRevision(

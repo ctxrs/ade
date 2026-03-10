@@ -17,6 +17,7 @@ import type {
 import {
   getDaemonClientConfig,
   getDaemonConnection,
+  getDaemonConnectionReadiness,
   syncDesktopDaemonConnectionFromBridge,
   subscribeDaemonConfig,
   idToString,
@@ -128,11 +129,6 @@ const ACTIVE_PAGE_SIZE = 50;
 const SNAPSHOT_WAIT_MS = 1200;
 const FOREGROUND_TASK_DEBOUNCE_MS = 150;
 const WORKSPACE_PATCH_FLUSH_MS = 50;
-
-const hasDesktopCanonicalConnection = (connection: {
-  baseUrl?: string | null;
-  authToken?: string | null;
-}): boolean => Boolean(connection.baseUrl && connection.authToken);
 
 export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSource {
   private listeners = new Set<() => void>();
@@ -458,24 +454,26 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     };
 
     let state = readState();
-    if (isDesktopApp() && !hasDesktopCanonicalConnection(state)) {
+    let readiness = getDaemonConnectionReadiness(state);
+    if (isDesktopApp() && !readiness.isReady) {
       const synced = await syncDesktopDaemonConnectionFromBridge({
         force: true,
         probeHealth: true,
         reason: phase,
       });
-      daemonConfig = synced.config;
+      daemonConfig = getDaemonClientConfig();
       bridgeKind = synced.info?.kind ?? null;
       syncError = synced.error;
       state = readState();
+      readiness = getDaemonConnectionReadiness(state);
     }
 
-    if (isDesktopApp() && !hasDesktopCanonicalConnection(state)) {
+    if (isDesktopApp() && !readiness.isReady) {
       this.emitWorkerConnectionMissingDiagnostic(
         phase,
         bridgeKind,
         syncError,
-        state.baseUrl ? "auth" : "base",
+        readiness.missing ?? "base",
       );
     }
     return state;
@@ -489,7 +487,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       if (this.worker || this.destroyed) {
         return;
       }
-      if (isDesktopApp() && !hasDesktopCanonicalConnection(connection)) {
+      if (isDesktopApp() && !getDaemonConnectionReadiness(connection).isReady) {
         return;
       }
       this.useWorker = true;

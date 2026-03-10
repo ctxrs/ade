@@ -320,11 +320,14 @@ export function SessionView({
   const events: SessionEvent[] = entry?.events ?? [];
   const messages: Message[] = entry?.messages ?? [];
   const queue: Message[] = entry?.queue ?? [];
+  const turnsRev = entry?.turnsRev ?? 0;
+  const messagesRev = entry?.messagesRev ?? 0;
+  const eventsRev = entry?.eventsRev ?? 0;
   const subagentInvocations: SubagentInvocation[] = entry?.subagentInvocations ?? [];
   const subagentInvocationsLoading = entry?.subagentInvocationsLoading ?? false;
-  const eventsKey = `${entry?.lastEventSeq ?? 0}:${events.length}`;
-  const turnsKey = useMemo(() => deriveTurnsKey(turns), [turns, eventsKey]);
-  const messagesKey = useMemo(() => deriveMessagesKey(messages), [messages, queue]);
+  const eventsStamp = `${eventsRev}:${entry?.lastEventSeq ?? 0}:${events.length}`;
+  const turnsKey = useMemo(() => deriveTurnsKey(turns), [turns, turnsRev]);
+  const messagesKey = useMemo(() => deriveMessagesKey(messages), [messages, messagesRev]);
   const optimisticQueueRemovalSet = useMemo(
     () => new Set(optimisticQueueRemovalIds),
     [optimisticQueueRemovalIds],
@@ -445,9 +448,9 @@ export function SessionView({
     () => (pendingTurns.length > 0 ? [...turns, ...pendingTurns] : turns),
     [turnsKey, pendingTurns],
   );
-  const displayTurnsKey = useMemo(() => deriveTurnsKey(displayTurns), [displayTurns, turnsKey]);
+  const displayTurnsKey = useMemo(() => deriveTurnsKey(displayTurns), [displayTurns]);
   const coalescedEvents = useRafCoalesced(events);
-  const coalescedEventsKey = useRafCoalesced(eventsKey);
+  const coalescedEventsStamp = useRafCoalesced(eventsStamp);
   const coalescedDisplayMessages = useRafCoalesced(displayMessages);
   const coalescedDisplayMessagesKey = useRafCoalesced(displayMessagesKey);
   const coalescedDisplayTurns = useRafCoalesced(displayTurns);
@@ -458,8 +461,10 @@ export function SessionView({
   );
   const displayTurnsForThreadKey = useMemo(
     () => deriveTurnsKey(displayTurnsForThread),
-    [displayTurnsForThread, coalescedDisplayTurnsKey],
+    [displayTurnsForThread],
   );
+  const displayTurnsForThreadStamp = `${turnsRev}:${displayTurnsForThreadKey}`;
+  const coalescedDisplayMessagesStamp = `${messagesRev}:${coalescedDisplayMessagesKey}`;
   const computedContextWindow = useMemo<ContextWindowInfo | null>(() => {
     for (let i = turns.length - 1; i >= 0; i -= 1) {
       const metrics = turns[i]?.metrics_json;
@@ -483,11 +488,11 @@ export function SessionView({
   const queuedMessagesEnabled = useFeatureGate("queued_messages_enabled", false);
   const sessionError = useMemo(
     () => deriveSessionError(turns, events),
-    [turnsKey, eventsKey],
+    [turnsKey, eventsStamp],
   );
   const providerGuardNotice = useMemo(
     () => deriveProviderGuardNotice(events),
-    [eventsKey],
+    [eventsStamp],
   );
 
   const providerGuardNoticeKey = providerGuardNotice
@@ -519,11 +524,11 @@ export function SessionView({
       return toolCallId;
     }
     return null;
-  }, [eventsKey, optimisticAskAnswers]);
+  }, [eventsStamp, optimisticAskAnswers]);
 
   const askUserQuestionAnswers = useMemo(
     () => collectAskUserQuestionAnswers(events, optimisticAskAnswers),
-    [eventsKey, optimisticAskAnswers],
+    [eventsStamp, optimisticAskAnswers],
   );
 
   const applyProviderGuardSettings = useCallback(
@@ -596,9 +601,9 @@ export function SessionView({
 
   const { view: workbenchThreadView, listItems: threadListItems } = useWorkbenchThreadViewModelController({
     sessionId: id,
-    turnsKey: displayTurnsForThreadKey,
-    messagesKey: coalescedDisplayMessagesKey,
-    eventsKey: coalescedEventsKey,
+    turnsStamp: displayTurnsForThreadStamp,
+    messagesStamp: coalescedDisplayMessagesStamp,
+    eventsStamp: coalescedEventsStamp,
     verbosity,
     turns: displayTurnsForThread,
     messages: coalescedDisplayMessages,
@@ -698,7 +703,7 @@ export function SessionView({
     applyScroll(0);
   }, [isActive, scrollState, messageListMethodsRef]);
 
-  const authUi = useMemo(() => deriveAuthUi(events), [eventsKey]);
+  const authUi = useMemo(() => deriveAuthUi(events), [eventsStamp]);
   const providerGuardMemoryLimitMb =
     providerGuardNotice?.stage === "high" ? providerGuardNotice?.limitHighMb : providerGuardNotice?.limitMaxMb;
   const providerGuardHeading =

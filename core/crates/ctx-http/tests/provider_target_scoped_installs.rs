@@ -399,6 +399,32 @@ fn archive_targets(url: String) -> HashMap<String, ProviderArchiveTarget> {
     targets
 }
 
+fn bridge_fixture_entry(bridge_url: String) -> ProviderMatrixEntry {
+    let bridge_targets = archive_targets(bridge_url);
+    ProviderMatrixEntry {
+        id: "acp-crp-bridge".to_string(),
+        display_name: Some("ACP Bridge".to_string()),
+        tier: Some("tier2".to_string()),
+        command: None,
+        managed_install: Some(ProviderInstall::Archive {
+            version: "0.1.0".to_string(),
+            args: Vec::new(),
+            targets: bridge_targets,
+        }),
+        dependencies: Vec::new(),
+        version_probe: None,
+        releases: vec![ProviderRelease {
+            version: "0.1.0".to_string(),
+            status: ProviderReleaseStatus::Supported,
+            upstream_version: None,
+            provenance: None,
+            context_min: None,
+            context_max: None,
+            notes: None,
+        }],
+    }
+}
+
 fn acp_provider_fixture_entry(provider_id: &str, provider_url: String) -> ProviderMatrixEntry {
     ProviderMatrixEntry {
         id: provider_id.to_string(),
@@ -428,29 +454,7 @@ fn provider_fixture_matrix_with_providers(
     bridge_url: String,
     providers: Vec<(&str, String)>,
 ) -> ProviderMatrix {
-    let bridge_targets = archive_targets(bridge_url);
-    let mut entries = vec![ProviderMatrixEntry {
-        id: "acp-crp-bridge".to_string(),
-        display_name: Some("ACP Bridge".to_string()),
-        tier: Some("tier2".to_string()),
-        command: None,
-        managed_install: Some(ProviderInstall::Archive {
-            version: "0.1.0".to_string(),
-            args: Vec::new(),
-            targets: bridge_targets,
-        }),
-        dependencies: Vec::new(),
-        version_probe: None,
-        releases: vec![ProviderRelease {
-            version: "0.1.0".to_string(),
-            status: ProviderReleaseStatus::Supported,
-            upstream_version: None,
-            provenance: None,
-            context_min: None,
-            context_max: None,
-            notes: None,
-        }],
-    }];
+    let mut entries = vec![bridge_fixture_entry(bridge_url)];
     entries.extend(
         providers.into_iter().map(|(provider_id, provider_url)| {
             acp_provider_fixture_entry(provider_id, provider_url)
@@ -486,6 +490,27 @@ async fn wait_for_install_completion(
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+}
+
+fn parse_install_ids(body: &serde_json::Value) -> HashMap<String, InstallId> {
+    body.as_array()
+        .cloned()
+        .expect("install response should be an array")
+        .into_iter()
+        .map(|entry| {
+            let provider_id = entry
+                .get("provider_id")
+                .and_then(serde_json::Value::as_str)
+                .expect("provider id")
+                .to_string();
+            let install_id = entry
+                .get("install_id")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|raw| raw.parse::<InstallId>().ok())
+                .expect("install id");
+            (provider_id, install_id)
+        })
+        .collect()
 }
 
 fn install_stage_progress_value(stage: &str) -> Option<u32> {
@@ -526,6 +551,29 @@ async fn get_install_info_api(app: &axum::Router, install_id: InstallId) -> Inst
     .await;
     assert_eq!(status, StatusCode::OK, "install info failed: {body:#?}");
     body
+}
+
+async fn wait_for_prerequisite_visibility(
+    app: &axum::Router,
+    install_id: InstallId,
+    prerequisite_install_id: InstallId,
+) -> InstallInfo {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        let info = get_install_info_api(app, install_id).await;
+        if info.last_event.as_ref().is_some_and(|event| {
+            event.message.contains(&format!(
+                "Prerequisite acp-crp-bridge (install {prerequisite_install_id}"
+            ))
+        }) {
+            return info;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out waiting for prerequisite visibility on install {install_id}: {info:#?}"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
 }
 
 async fn get_install_events_api(
@@ -1088,26 +1136,7 @@ async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_and_
         StatusCode::OK,
         "bulk install should accept the bridge repair flow: {install_body:#?}"
     );
-    let installs = install_body
-        .as_array()
-        .cloned()
-        .expect("bulk install response should be an array");
-    let install_ids = installs
-        .iter()
-        .map(|entry| {
-            let provider_id = entry
-                .get("provider_id")
-                .and_then(serde_json::Value::as_str)
-                .expect("provider id")
-                .to_string();
-            let install_id = entry
-                .get("install_id")
-                .and_then(serde_json::Value::as_str)
-                .and_then(|raw| raw.parse::<InstallId>().ok())
-                .expect("install id");
-            (provider_id, install_id)
-        })
-        .collect::<HashMap<_, _>>();
+    let install_ids = parse_install_ids(&install_body);
     assert_eq!(
         install_ids.len(),
         3,
@@ -1169,6 +1198,148 @@ async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_and_
                 .and_then(serde_json::Value::as_bool),
             Some(true),
             "{provider_id} should be installed by the same bulk repair batch: {provider_body:#?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_when_acp_dependents_precede_bridge_in_matrix(
+) {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let fixture_dir = data_dir.path().join("fixtures");
+    std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
+    let bridge_fixture = fixture_dir.join("acp-crp-bridge");
+    let kimi_fixture = fixture_dir.join("kimi-acp");
+    let qwen_fixture = fixture_dir.join("qwen-acp");
+    write_executable(&bridge_fixture, "#!/bin/sh\nsleep 0.3\nexit 0\n");
+    write_executable(&kimi_fixture, "#!/bin/sh\nexit 0\n");
+    write_executable(&qwen_fixture, "#!/bin/sh\nexit 0\n");
+    let download_server = spawn_download_fixture_server(vec![
+        (
+            "bridge",
+            std::fs::read(&bridge_fixture).expect("read bridge fixture"),
+            1_600,
+        ),
+        (
+            "kimi",
+            std::fs::read(&kimi_fixture).expect("read kimi fixture"),
+            0,
+        ),
+        (
+            "qwen",
+            std::fs::read(&qwen_fixture).expect("read qwen fixture"),
+            0,
+        ),
+    ])
+    .await;
+    save_matrix_fixture(
+        data_dir.path(),
+        &ProviderMatrix {
+            version: 2,
+            generated_at: None,
+            providers: vec![
+                acp_provider_fixture_entry("kimi", fixture_download_url(&download_server, "kimi")),
+                acp_provider_fixture_entry("qwen", fixture_download_url(&download_server, "qwen")),
+                bridge_fixture_entry(fixture_download_url(&download_server, "bridge")),
+            ],
+        },
+    )
+    .await;
+
+    save_invalid_container_bridge_runtime(data_dir.path()).await;
+
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        HashMap::new(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+
+    let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::POST,
+        "/api/providers/install_all?target=container",
+        None,
+    )
+    .await;
+    assert_eq!(
+        install_status,
+        StatusCode::OK,
+        "bulk install should repair an invalid bridge even when ACP providers are listed first: {install_body:#?}"
+    );
+    let install_ids = parse_install_ids(&install_body);
+    assert_eq!(
+        install_ids.len(),
+        3,
+        "install_all should still return the bridge repair plus both ACP dependents: {install_body:#?}"
+    );
+    let bridge_install_id = *install_ids
+        .get("acp-crp-bridge")
+        .expect("missing bridge install id");
+    let kimi_install_id = *install_ids.get("kimi").expect("missing kimi install id");
+    let qwen_install_id = *install_ids.get("qwen").expect("missing qwen install id");
+
+    let (kimi_polled, qwen_polled) = tokio::join!(
+        wait_for_prerequisite_visibility(&app, kimi_install_id, bridge_install_id),
+        wait_for_prerequisite_visibility(&app, qwen_install_id, bridge_install_id)
+    );
+    for (provider_id, polled_info) in [("kimi", kimi_polled), ("qwen", qwen_polled)] {
+        assert!(
+            matches!(polled_info.state, InstallStateKind::Running),
+            "{provider_id} should remain queued behind the shared bridge repair while the prerequisite is active: {polled_info:#?}"
+        );
+        assert_eq!(
+            polled_info
+                .last_event
+                .as_ref()
+                .map(|event| event.stage.as_str()),
+            Some("start"),
+            "{provider_id} should expose bounded prerequisite progress while waiting on the bridge repair: {polled_info:#?}"
+        );
+    }
+
+    for provider_id in ["acp-crp-bridge", "kimi", "qwen"] {
+        let install_info = wait_for_install_completion(
+            &state,
+            *install_ids
+                .get(provider_id)
+                .expect("missing install id from bulk response"),
+        )
+        .await;
+        assert!(
+            matches!(install_info.state, InstallStateKind::Succeeded),
+            "{provider_id} should succeed after the repaired bulk install finishes: {install_info:#?}"
+        );
+    }
+
+    let installs = state.providers.installs.lock().await;
+    let bridge_install_ids = installs
+        .iter()
+        .filter_map(|(id, install)| {
+            (install.provider_id == "acp-crp-bridge"
+                && install.target == Some(InstallTarget::Container))
+            .then_some(*id)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        bridge_install_ids,
+        vec![bridge_install_id],
+        "deferred ACP installs should reuse one tracked bridge repair install even when the bridge is listed after them"
+    );
+    drop(installs);
+
+    for (provider_id, install_id) in [("kimi", kimi_install_id), ("qwen", qwen_install_id)] {
+        let events = get_install_events_api(&app, install_id).await;
+        assert!(
+            events.iter().any(|event| {
+                event.stage == "start"
+                    && event.message.contains(&format!(
+                        "Prerequisite acp-crp-bridge (install {bridge_install_id}"
+                    ))
+            }),
+            "{provider_id} should retain the shared bridge prerequisite in its event history: {events:#?}"
         );
     }
 }

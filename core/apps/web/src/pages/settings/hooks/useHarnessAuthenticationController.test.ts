@@ -47,6 +47,57 @@ import {
 import type { HarnessAuthRow } from "../harnessAuthRows";
 import { openExternalLink } from "../../../utils/desktop";
 
+const bootstrapMockState = vi.hoisted(() => ({
+  bootstrapStateByWorkspace: new Map<string, ProvidersBootstrapResponse>(),
+  bootstrapLoadQueueByWorkspace: new Map<string, Array<ProvidersBootstrapResponse | Error>>(),
+  bootstrapRefreshQueueByWorkspace: new Map<string, Array<ProvidersBootstrapResponse | Error>>(),
+  bootstrapListenersByWorkspace: new Map<string, Set<() => void>>(),
+}));
+
+const getBootstrapListeners = (workspaceId: string): Set<() => void> => {
+  let listeners = bootstrapMockState.bootstrapListenersByWorkspace.get(workspaceId);
+  if (!listeners) {
+    listeners = new Set();
+    bootstrapMockState.bootstrapListenersByWorkspace.set(workspaceId, listeners);
+  }
+  return listeners;
+};
+
+const setBootstrapSnapshot = (workspaceId: string, next: ProvidersBootstrapResponse): ProvidersBootstrapResponse => {
+  bootstrapMockState.bootstrapStateByWorkspace.set(workspaceId, next);
+  for (const listener of getBootstrapListeners(workspaceId)) {
+    listener();
+  }
+  return next;
+};
+
+const queueBootstrapLoad = (workspaceId: string, ...entries: Array<ProvidersBootstrapResponse | Error>): void => {
+  bootstrapMockState.bootstrapLoadQueueByWorkspace.set(workspaceId, entries);
+};
+
+const queueBootstrapRefresh = (workspaceId: string, ...entries: Array<ProvidersBootstrapResponse | Error>): void => {
+  bootstrapMockState.bootstrapRefreshQueueByWorkspace.set(workspaceId, entries);
+};
+
+const consumeBootstrapQueue = (
+  workspaceId: string,
+  queueByWorkspace: Map<string, Array<ProvidersBootstrapResponse | Error>>,
+  empty: ProvidersBootstrapResponse,
+): ProvidersBootstrapResponse => {
+  const queue = queueByWorkspace.get(workspaceId);
+  if (queue && queue.length > 0) {
+    const next = queue.shift()!;
+    if (queue.length === 0) {
+      queueByWorkspace.delete(workspaceId);
+    }
+    if (next instanceof Error) {
+      throw next;
+    }
+    return setBootstrapSnapshot(workspaceId, next);
+  }
+  return bootstrapMockState.bootstrapStateByWorkspace.get(workspaceId) ?? empty;
+};
+
 vi.mock("../../../api/client", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../../api/client")>();
   return {
@@ -69,9 +120,25 @@ vi.mock("../../../state/providersBootstrapStore", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../../state/providersBootstrapStore")>();
   return {
     ...original,
+    getProvidersBootstrapSnapshot: vi.fn((workspaceId: string) =>
+      bootstrapMockState.bootstrapStateByWorkspace.get(workspaceId) ?? original.EMPTY_PROVIDERS_BOOTSTRAP),
     invalidateProvidersBootstrap: vi.fn(),
-    loadProvidersBootstrap: vi.fn(),
-    refreshProvidersBootstrap: vi.fn(),
+    loadProvidersBootstrap: vi.fn(async (workspaceId: string) =>
+      consumeBootstrapQueue(workspaceId, bootstrapMockState.bootstrapLoadQueueByWorkspace, original.EMPTY_PROVIDERS_BOOTSTRAP)),
+    refreshProvidersBootstrap: vi.fn(async (workspaceId: string) =>
+      consumeBootstrapQueue(workspaceId, bootstrapMockState.bootstrapRefreshQueueByWorkspace, original.EMPTY_PROVIDERS_BOOTSTRAP)),
+    subscribeProvidersBootstrap: vi.fn((workspaceId: string, listener: () => void) => {
+      const listeners = getBootstrapListeners(workspaceId);
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    }),
+    updateProvidersBootstrap: vi.fn((workspaceId: string, updater: (current: ProvidersBootstrapResponse) => ProvidersBootstrapResponse) =>
+      setBootstrapSnapshot(
+        workspaceId,
+        updater(bootstrapMockState.bootstrapStateByWorkspace.get(workspaceId) ?? original.EMPTY_PROVIDERS_BOOTSTRAP),
+      )),
   };
 });
 
@@ -214,6 +281,10 @@ function ControllerHarness({ onChange }: { onChange: (controller: Controller) =>
 }
 
 beforeEach(() => {
+  bootstrapMockState.bootstrapStateByWorkspace.clear();
+  bootstrapMockState.bootstrapLoadQueueByWorkspace.clear();
+  bootstrapMockState.bootstrapRefreshQueueByWorkspace.clear();
+  bootstrapMockState.bootstrapListenersByWorkspace.clear();
   vi.clearAllMocks();
   vi.mocked(deleteAmpAccount).mockReset();
   vi.mocked(getCodexLogin).mockReset();
@@ -231,8 +302,11 @@ beforeEach(() => {
   vi.mocked(refreshProvidersBootstrap).mockReset();
   vi.mocked(openExternalLink).mockReset();
   vi.mocked(listProviders).mockResolvedValue([]);
-  vi.mocked(loadProvidersBootstrap).mockResolvedValue(makeBootstrap());
-  vi.mocked(refreshProvidersBootstrap).mockResolvedValue(makeBootstrap());
+  setBootstrapSnapshot("ws-test", makeBootstrap());
+  vi.mocked(loadProvidersBootstrap).mockImplementation(async (workspaceId: string) =>
+    consumeBootstrapQueue(workspaceId, bootstrapMockState.bootstrapLoadQueueByWorkspace, makeBootstrap()));
+  vi.mocked(refreshProvidersBootstrap).mockImplementation(async (workspaceId: string) =>
+    consumeBootstrapQueue(workspaceId, bootstrapMockState.bootstrapRefreshQueueByWorkspace, makeBootstrap()));
 });
 
 describe("Claude polling duration", () => {
@@ -547,13 +621,13 @@ describe("useHarnessAuthenticationController", () => {
       endpoints: [vertexEndpoint],
     };
 
-    vi.mocked(loadProvidersBootstrap).mockResolvedValue(makeBootstrap({
+    setBootstrapSnapshot("ws-test", makeBootstrap({
       provider_harness_config: {
         codex: baseCodexConfig,
         gemini: selectedEndpointConfig,
       },
     }));
-    vi.mocked(refreshProvidersBootstrap).mockResolvedValue(makeBootstrap({
+    queueBootstrapRefresh("ws-test", makeBootstrap({
       provider_harness_config: {
         codex: baseCodexConfig,
         gemini: selectedEndpointConfig,
@@ -641,13 +715,15 @@ describe("useHarnessAuthenticationController", () => {
     vi.mocked(selectProviderHarnessSource)
       .mockResolvedValueOnce(selectedEndpointConfig)
       .mockResolvedValueOnce(baseCodexConfig);
-    vi.mocked(refreshProvidersBootstrap)
-      .mockResolvedValueOnce(makeBootstrap({
+    queueBootstrapRefresh(
+      "ws-test",
+      makeBootstrap({
         provider_harness_config: {
           codex: selectedEndpointConfig,
         },
-      }))
-      .mockResolvedValueOnce(makeBootstrap());
+      }),
+      makeBootstrap(),
+    );
     vi.mocked(verifyProviderForWorkspace).mockResolvedValue(verifyFailure);
 
     render(createElement(ControllerHarness, {
@@ -700,7 +776,7 @@ describe("useHarnessAuthenticationController", () => {
       active_account_id: "amp-2",
       accounts: baseAmpAccounts.accounts,
     });
-    vi.mocked(refreshProvidersBootstrap).mockResolvedValue(makeBootstrap({
+    queueBootstrapRefresh("ws-test", makeBootstrap({
       providers: [
         {
           provider_id: "codex",
@@ -767,10 +843,10 @@ describe("useHarnessAuthenticationController", () => {
       },
     };
 
-    vi.mocked(loadProvidersBootstrap).mockResolvedValue(makeBootstrap({
+    setBootstrapSnapshot("ws-test", makeBootstrap({
       providers: [workspaceProvider],
     }));
-    vi.mocked(refreshProvidersBootstrap).mockRejectedValue(new Error("workspace refresh failed"));
+    queueBootstrapRefresh("ws-test", new Error("workspace refresh failed"));
     vi.mocked(listProviders).mockResolvedValue([hostProvider]);
     vi.mocked(deleteAmpAccount).mockResolvedValue({
       active_account_id: "amp-2",
@@ -1057,13 +1133,15 @@ describe("useHarnessAuthenticationController", () => {
     vi.mocked(selectProviderHarnessSource)
       .mockResolvedValueOnce(selectedEndpointConfig)
       .mockResolvedValueOnce(baseCodexConfig);
-    vi.mocked(refreshProvidersBootstrap)
-      .mockResolvedValueOnce(makeBootstrap({
+    queueBootstrapRefresh(
+      "ws-test",
+      makeBootstrap({
         provider_harness_config: {
           codex: selectedEndpointConfig,
         },
-      }))
-      .mockResolvedValueOnce(makeBootstrap());
+      }),
+      makeBootstrap(),
+    );
     vi.mocked(verifyProviderForWorkspace).mockReturnValue(
       verifyDeferred.promise as ReturnType<typeof verifyProviderForWorkspace>,
     );
@@ -1148,9 +1226,12 @@ describe("useHarnessAuthenticationController", () => {
 
     expect(vi.mocked(startAmpLogin)).toHaveBeenCalledTimes(1);
 
-    startAmpLoginDeferred.resolve({
-      login_id: "amp-login-1",
-      auth_url: "https://example.com/amp-login",
+    await act(async () => {
+      startAmpLoginDeferred.resolve({
+        login_id: "amp-login-1",
+        auth_url: "https://example.com/amp-login",
+      });
+      await Promise.resolve();
     });
   });
 });

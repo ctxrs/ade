@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import {
   cancelInstall,
   getProviderOptions,
@@ -7,12 +16,14 @@ import {
   type InstallInfo,
   type InstallTarget,
   type ProviderOptions,
-  type ProvidersBootstrapResponse,
-  type ProviderStatus,
 } from "../../api/client";
 import {
+  getProvidersBootstrapSnapshot,
   loadProvidersBootstrap,
   refreshProvidersBootstrap,
+  resolveProviderOptionsUpdate,
+  subscribeProvidersBootstrap,
+  updateProvidersBootstrap,
 } from "../../state/providersBootstrapStore";
 import {
   getProviderInstallProgressSnapshot,
@@ -85,41 +96,6 @@ const hasFailedProviderModelProbe = (options: ProviderOptions | undefined): bool
   return typeof options.probe_error === "string" && options.probe_error.trim().length > 0;
 };
 
-const selectedEndpointScopeVersion = (options: ProviderOptions | undefined): string | null => {
-  if (!options || options.source?.selected_source_kind !== "endpoint") return null;
-  const endpointId = options.source.selected_endpoint_id;
-  if (!endpointId) return null;
-  const endpoint = options.source.endpoints.find((candidate) => candidate.id === endpointId);
-  if (!endpoint) return endpointId;
-  return [
-    endpoint.id,
-    endpoint.updated_at,
-    endpoint.base_url ?? "",
-    endpoint.has_api_key ? "1" : "0",
-    endpoint.model_override ?? "",
-  ].join(":");
-};
-
-const sameProviderOptionsScope = (
-  lhs: ProviderOptions | undefined,
-  rhs: ProviderOptions | undefined,
-): boolean => {
-  if (!lhs || !rhs) return false;
-  return lhs.provider_id === rhs.provider_id
-    && lhs.workspace_id === rhs.workspace_id
-    && lhs.auth_mode === rhs.auth_mode
-    && lhs.account_identity === rhs.account_identity
-    && lhs.has_active_auth === rhs.has_active_auth
-    && lhs.source?.selected_source_kind === rhs.source?.selected_source_kind
-    && lhs.source?.selected_endpoint_id === rhs.source?.selected_endpoint_id
-    && selectedEndpointScopeVersion(lhs) === selectedEndpointScopeVersion(rhs);
-};
-
-const sameProviderOptions = (
-  lhs: ProviderOptions | undefined,
-  rhs: ProviderOptions | undefined,
-): boolean => JSON.stringify(lhs ?? null) === JSON.stringify(rhs ?? null);
-
 export const shouldHydrateProviderModels = (
   providerId: string,
   options: ProviderOptions | undefined,
@@ -133,87 +109,19 @@ export const shouldHydrateProviderModels = (
   return true;
 };
 
-export const resolveProviderOptionsUpdate = (
-  previous: ProviderOptions | undefined,
+export { resolveProviderOptionsUpdate } from "../../state/providersBootstrapStore";
+
+const withScopedProviderAccountIdentity = (
+  scoped: ProviderOptions | undefined,
   next: ProviderOptions | undefined,
 ): ProviderOptions | undefined => {
-  if (!next) return previous === undefined ? previous : next;
-  let resolved = next;
-  if (previous && sameProviderOptionsScope(previous, next) && next.has_active_auth === true && !hasProviderModels(next)) {
-    if (hasProviderModels(previous)) {
-      resolved = { ...resolved, models: previous.models };
-    }
-    if (hasFailedProviderModelProbe(previous) && !hasFailedProviderModelProbe(resolved)) {
-      resolved = {
-        ...resolved,
-        probe_ok: previous.probe_ok,
-        probe_error: previous.probe_error ?? resolved.probe_error,
-      };
-    }
-  }
-  return sameProviderOptions(previous, resolved) ? previous : resolved;
-};
-
-const mergeProviderOptionsMap = (
-  previous: Record<string, ProviderOptions | undefined>,
-  next: Record<string, ProviderOptions | undefined>,
-): Record<string, ProviderOptions | undefined> => {
-  const merged = Object.fromEntries(
-    Object.entries(next).map(([providerId, options]) => [
-      providerId,
-      resolveProviderOptionsUpdate(previous[providerId], options),
-    ]),
-  );
-  const previousKeys = Object.keys(previous);
-  const mergedKeys = Object.keys(merged);
-  if (
-    previousKeys.length === mergedKeys.length
-    && mergedKeys.every((providerId) => previous[providerId] === merged[providerId])
-  ) {
-    return previous;
-  }
-  return merged;
-};
-
-const deriveProviderAccountIdentityById = (
-  bootstrap: ProvidersBootstrapResponse,
-): Record<string, string | null | undefined> => ({
-  codex: bootstrap.codex_accounts.active_account_id,
-  "claude-crp": bootstrap.claude_accounts.active_account_id,
-  gemini: bootstrap.gemini_accounts.active_account_id,
-  qwen: bootstrap.qwen_accounts.active_account_id,
-  kimi: bootstrap.kimi_accounts.active_account_id,
-  mistral: bootstrap.mistral_accounts.active_account_id,
-  copilot: bootstrap.copilot_accounts.active_account_id,
-  cursor: bootstrap.cursor_accounts.active_account_id,
-  amp: bootstrap.amp_accounts.active_account_id,
-  auggie: bootstrap.auggie_accounts?.active_account_id,
-});
-
-const withProviderAccountIdentity = (
-  providerId: string,
-  options: ProviderOptions | undefined,
-  accountIdentityById: Record<string, string | null | undefined>,
-): ProviderOptions | undefined => {
-  if (!options) return options;
-  const accountIdentity = accountIdentityById[providerId] ?? null;
-  if (options.account_identity === accountIdentity) return options;
+  if (!next || !scoped) return next;
+  const accountIdentity = scoped.account_identity ?? null;
+  if (next.account_identity === accountIdentity) return next;
   return {
-    ...options,
+    ...next,
     account_identity: accountIdentity,
   };
-};
-
-const normalizeBootstrapProviderOptions = (
-  bootstrap: ProvidersBootstrapResponse,
-): Record<string, ProviderOptions | undefined> => {
-  const accountIdentityById = deriveProviderAccountIdentityById(bootstrap);
-  return Object.fromEntries(
-    Object.entries(bootstrap.provider_options).map(([providerId, options]) => [
-      providerId,
-      withProviderAccountIdentity(providerId, options, accountIdentityById),
-    ]),
-  );
 };
 
 const toErrorMessage = (error: unknown): string => {
@@ -244,11 +152,9 @@ export function useWorkbenchProviders({
   setDraftHarness,
   onStartError,
 }: UseWorkbenchProvidersArgs) {
-  const [providers, setProviders] = useState<ProviderStatus[]>([]);
   const [providerInstallsById, setProviderInstallsById] = useState<Record<string, ProviderInstallState | undefined>>(
     () => providerInstallsFromSnapshot(getProviderInstallProgressSnapshot()),
   );
-  const [providerOptions, setProviderOptions] = useState<Record<string, ProviderOptions | undefined>>({});
   const [installAllBusy, setInstallAllBusy] = useState(false);
   const postInstallHandledRef = useRef<Set<string>>(new Set());
   const postInstallInFlightRef = useRef<Set<string>>(new Set());
@@ -256,16 +162,19 @@ export function useWorkbenchProviders({
   const installObserversRef = useRef<Record<string, () => void>>({});
   const previousInstallsRef = useRef<Record<string, ProviderInstallState | undefined>>({});
 
+  const bootstrap = useSyncExternalStore(
+    useCallback((onStoreChange) => subscribeProvidersBootstrap(workspaceId, onStoreChange), [workspaceId]),
+    useCallback(() => getProvidersBootstrapSnapshot(workspaceId), [workspaceId]),
+    useCallback(() => getProvidersBootstrapSnapshot(workspaceId), [workspaceId]),
+  );
+  const providers = bootstrap.providers;
+  const providerOptions = bootstrap.provider_options;
+
   useEffect(() => {
     return subscribeProviderInstallProgress((snapshot) => {
       const next = providerInstallsFromSnapshot(snapshot);
       setProviderInstallsById((prev) => (sameProviderInstallStateMap(prev, next) ? prev : next));
     });
-  }, []);
-
-  const applyProvidersBootstrap = useCallback((bootstrap: ProvidersBootstrapResponse) => {
-    setProviders(bootstrap.providers);
-    setProviderOptions((prev) => mergeProviderOptionsMap(prev, normalizeBootstrapProviderOptions(bootstrap)));
   }, []);
 
   const providersById = useMemo(
@@ -289,43 +198,13 @@ export function useWorkbenchProviders({
     return installed[0] ?? "codex";
   }, [providers]);
 
-  const refreshProviders = useCallback(async () => {
-    if (!workspaceId) {
-      setProviders([]);
-      setProviderOptions({});
-      return;
-    }
-    try {
-      const next = await refreshProvidersBootstrap(workspaceId);
-      applyProvidersBootstrap(next);
-    } catch {
-      setProviders([]);
-      setProviderOptions({});
-    }
-  }, [applyProvidersBootstrap, workspaceId]);
+  useEffect(() => {
+    loadProvidersBootstrap(workspaceId).catch(() => {});
+  }, [workspaceId]);
 
   useEffect(() => {
-    if (!workspaceId) {
-      setProviders([]);
-      setProviderOptions({});
-      return;
-    }
-    refreshProvidersBootstrap(workspaceId)
-      .then((bootstrap) => {
-        applyProvidersBootstrap(bootstrap);
-      })
-      .catch(() => {
-        setProviders([]);
-        setProviderOptions({});
-      });
-  }, [applyProvidersBootstrap, workspaceId]);
-
-  useEffect(() => {
-    if (!workspaceId) return;
     const refreshOnForeground = () => {
-      refreshProvidersBootstrap(workspaceId)
-        .then((bootstrap) => applyProvidersBootstrap(bootstrap))
-        .catch(() => {});
+      refreshProvidersBootstrap(workspaceId).catch(() => {});
     };
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") {
@@ -341,7 +220,7 @@ export function useWorkbenchProviders({
       window.removeEventListener("online", refreshOnForeground);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [applyProvidersBootstrap, workspaceId]);
+  }, [workspaceId]);
 
   const attachProviderInstall = useCallback((providerId: string, installId: string) => {
     const existingInstallId = providerInstallsById[providerId]?.installId;
@@ -392,12 +271,10 @@ export function useWorkbenchProviders({
 
   const runPostInstallAuthVerify = useCallback(
     async (providerId: string) => {
-      if (!workspaceId) return;
-      const bootstrap = await refreshProvidersBootstrap(workspaceId);
-      applyProvidersBootstrap(bootstrap);
-      return bootstrap.provider_options[providerId];
+      const refreshed = await refreshProvidersBootstrap(workspaceId);
+      return refreshed.provider_options[providerId];
     },
-    [applyProvidersBootstrap, workspaceId],
+    [workspaceId],
   );
 
   useEffect(() => {
@@ -417,13 +294,12 @@ export function useWorkbenchProviders({
     }
 
     previousInstallsRef.current = providerInstallsById;
-    if (!needsProviderRefresh || !workspaceId) return;
+    if (!needsProviderRefresh) return;
 
     let cancelled = false;
     void refreshProvidersBootstrap(workspaceId)
-      .then((next) => {
+      .then(() => {
         if (cancelled) return;
-        applyProvidersBootstrap(next);
         for (const providerId of completedProviders) {
           if (postInstallInFlightRef.current.has(providerId)) continue;
           postInstallInFlightRef.current.add(providerId);
@@ -437,7 +313,7 @@ export function useWorkbenchProviders({
     return () => {
       cancelled = true;
     };
-  }, [applyProvidersBootstrap, providerInstallsById, runPostInstallAuthVerify, workspaceId]);
+  }, [providerInstallsById, runPostInstallAuthVerify, workspaceId]);
 
   const installProviderFromMenu = useCallback(
     async (providerId: string) => {
@@ -531,16 +407,11 @@ export function useWorkbenchProviders({
     });
   }, [defaultProviderId, providers.length, providersById, setDraftHarness]);
 
-  // This loads workspace-scoped auth/config summary from providers/bootstrap.
-  // For model-capable subscription providers (Codex/Claude/Copilot), it
-  // additionally hydrates detailed provider options once after auth so model
-  // catalogs appear.
   const ensureProviderAuthSummary = useCallback(
     async (
       providerId: string,
       opts?: { force?: boolean; trigger?: ProviderAuthSummaryTrigger },
     ): Promise<ProviderOptions | undefined> => {
-      if (!workspaceId) return;
       const ready = providersById[providerId]?.installed === true && providersById[providerId]?.health === "ok";
       if (!ready) return;
 
@@ -548,36 +419,45 @@ export function useWorkbenchProviders({
       const trigger = opts?.trigger ?? (force ? "explicit" : "passive");
       const existing = providerAuthSummaryInFlightRef.current[providerId];
       if (existing && !force) return existing;
-      const cached = providerOptions[providerId];
+
+      const cached = getProvidersBootstrapSnapshot(workspaceId).provider_options[providerId];
       if (!force && cached && !shouldHydrateProviderModels(providerId, cached, trigger)) {
         return cached;
       }
 
       const request = (force ? refreshProvidersBootstrap(workspaceId) : loadProvidersBootstrap(workspaceId))
-        .then(async (bootstrap) => {
-          applyProvidersBootstrap(bootstrap);
-          const accountIdentityById = deriveProviderAccountIdentityById(bootstrap);
+        .then(async (latestBootstrap) => {
           let next = resolveProviderOptionsUpdate(
             cached,
-            withProviderAccountIdentity(providerId, bootstrap.provider_options[providerId], accountIdentityById),
+            latestBootstrap.provider_options[providerId],
           );
+
           if (shouldHydrateProviderModels(providerId, next, trigger)) {
             try {
-              const detailed = withProviderAccountIdentity(
-                providerId,
-                await getProviderOptions(workspaceId, providerId),
-                accountIdentityById,
-              );
-              next = resolveProviderOptionsUpdate(next, detailed);
-              setProviderOptions((prev) => {
-                const resolved = resolveProviderOptionsUpdate(prev[providerId], next);
-                if (prev[providerId] === resolved) return prev;
-                return { ...prev, [providerId]: resolved };
+              const detailedResponse = await getProviderOptions(workspaceId, providerId);
+              const detailed = withScopedProviderAccountIdentity(
+                getProvidersBootstrapSnapshot(workspaceId).provider_options[providerId],
+                detailedResponse,
+              ) ?? detailedResponse;
+              const updated = updateProvidersBootstrap(workspaceId, (current) => {
+                const resolved = resolveProviderOptionsUpdate(current.provider_options[providerId], detailed)
+                  ?? detailed;
+                if (current.provider_options[providerId] === resolved) return current;
+                const nextProviderOptions: Record<string, ProviderOptions> = {
+                  ...current.provider_options,
+                  [providerId]: resolved,
+                };
+                return {
+                  ...current,
+                  provider_options: nextProviderOptions,
+                };
               });
+              next = updated.provider_options[providerId];
             } catch {
               // Keep bootstrap options when probe is unavailable; caller still gets auth summary.
             }
           }
+
           return next;
         })
         .finally(() => {
@@ -589,7 +469,7 @@ export function useWorkbenchProviders({
       providerAuthSummaryInFlightRef.current[providerId] = request;
       return request;
     },
-    [applyProvidersBootstrap, providerOptions, providersById, workspaceId],
+    [providersById, workspaceId],
   );
 
   return {

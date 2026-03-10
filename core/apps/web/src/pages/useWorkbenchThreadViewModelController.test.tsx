@@ -14,6 +14,10 @@ const isToolItem = (
   item: ControllerResult["listItems"][number],
 ): item is Extract<ControllerResult["listItems"][number], { kind: "tool" }> => item.kind === "tool";
 
+const isTurnStatusItem = (
+  item: ControllerResult["listItems"][number],
+): item is Extract<ControllerResult["listItems"][number], { kind: "turn_status" }> => item.kind === "turn_status";
+
 function Harness(props: ControllerProps) {
   latestResult = useWorkbenchThreadViewModelController(props);
   return null;
@@ -99,14 +103,17 @@ const toolsByTurnId: Record<string, SessionTurnTool[]> = {
   ],
 };
 
+const buildTurnsStamp = (value: SessionTurn[], rev = 0) => `${rev}:${deriveTurnsKey(value)}`;
+const buildMessagesStamp = (value: Message[], rev = 0) => `${rev}:${deriveMessagesKey(value)}`;
+
 function renderController(
   overrides: Partial<ControllerProps> = {},
 ): ReturnType<typeof render> {
   const baseProps: ControllerProps = {
     sessionId: "session-1",
-    turnsKey: deriveTurnsKey(turns),
-    messagesKey: deriveMessagesKey(messages),
-    eventsKey: "1:1",
+    turnsStamp: buildTurnsStamp(turns),
+    messagesStamp: buildMessagesStamp(messages),
+    eventsStamp: "0:1",
     verbosity: "default",
     turns,
     messages,
@@ -119,8 +126,56 @@ function renderController(
   return render(<Harness {...baseProps} {...overrides} />);
 }
 
+function expectGroup(key: string) {
+  const group = latestResult?.view.groups.find((candidate) => candidate.key === key);
+  expect(group).toBeTruthy();
+  return group!;
+}
+
+function expectListItem(id: string) {
+  const item = latestResult?.listItems.find((candidate) => candidate.id === id);
+  expect(item).toBeTruthy();
+  return item!;
+}
+
 describe("useWorkbenchThreadViewModelController", () => {
-  it("rebuilds when tool summaries become ready without transcript key changes", async () => {
+  it("rebuilds when explicit message stamps change without structural length changes", async () => {
+    const { rerender } = renderController();
+
+    await waitFor(() => {
+      expect(latestResult?.view.groups[0]?.header?.content).toBe("Run the check");
+    });
+
+    const nextMessages = [
+      {
+        ...messages[0],
+        content: "Run the build",
+      },
+    ] as unknown as Message[];
+
+    rerender(
+      <Harness
+        sessionId="session-1"
+        turnsStamp={buildTurnsStamp(turns)}
+        messagesStamp={buildMessagesStamp(nextMessages, 1)}
+        eventsStamp="0:1"
+        verbosity="default"
+        turns={turns}
+        messages={nextMessages}
+        events={events}
+        toolsByTurnId={toolsByTurnId}
+        toolSummariesReady
+        askUserQuestionAnswers={new Map<string, AskUserQuestionAnswerState>()}
+        enableDebugEvents={false}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(latestResult?.view.groups[0]?.header?.content).toBe("Run the build");
+    });
+  });
+
+  it("rebuilds when tool summaries become ready without transcript stamp changes", async () => {
     const { rerender } = renderController({ toolSummariesReady: false });
 
     await waitFor(() => {
@@ -131,9 +186,9 @@ describe("useWorkbenchThreadViewModelController", () => {
     rerender(
       <Harness
         sessionId="session-1"
-        turnsKey={deriveTurnsKey(turns)}
-        messagesKey={deriveMessagesKey(messages)}
-        eventsKey="1:1"
+        turnsStamp={buildTurnsStamp(turns)}
+        messagesStamp={buildMessagesStamp(messages)}
+        eventsStamp="0:1"
         verbosity="default"
         turns={turns}
         messages={messages}
@@ -151,7 +206,7 @@ describe("useWorkbenchThreadViewModelController", () => {
     });
   });
 
-  it("rebuilds filtered thread items when verbosity changes without transcript key changes", async () => {
+  it("rebuilds filtered thread items when verbosity changes without transcript stamp changes", async () => {
     const { rerender } = renderController();
 
     await waitFor(() => {
@@ -161,9 +216,9 @@ describe("useWorkbenchThreadViewModelController", () => {
     rerender(
       <Harness
         sessionId="session-1"
-        turnsKey={deriveTurnsKey(turns)}
-        messagesKey={deriveMessagesKey(messages)}
-        eventsKey="1:1"
+        turnsStamp={buildTurnsStamp(turns)}
+        messagesStamp={buildMessagesStamp(messages)}
+        eventsStamp="0:1"
         verbosity="terse"
         turns={turns}
         messages={messages}
@@ -178,5 +233,261 @@ describe("useWorkbenchThreadViewModelController", () => {
     await waitFor(() => {
       expect(latestResult?.listItems.some(isToolItem)).toBe(false);
     });
+  });
+
+  it("updates only the dirty turn group on event-only appends when transcript stamps stay stable", async () => {
+    const askUserQuestionAnswers = new Map<string, AskUserQuestionAnswerState>();
+    const emptyToolsByTurnId: Record<string, SessionTurnTool[]> = {};
+    const multiTurns = [
+      {
+        turn_id: "turn-1",
+        session_id: "session-1",
+        run_id: null,
+        user_message_id: "message-1",
+        status: "running",
+        start_seq: 1,
+        end_seq: 2,
+        started_at: "2025-12-15T00:00:00.000Z",
+        updated_at: "2025-12-15T00:00:01.000Z",
+        assistant_partial: "",
+        thought_partial: "",
+        metrics_json: null,
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      },
+      {
+        turn_id: "turn-2",
+        session_id: "session-1",
+        run_id: null,
+        user_message_id: "message-2",
+        status: "completed",
+        start_seq: 3,
+        end_seq: 4,
+        started_at: "2025-12-15T00:00:02.000Z",
+        updated_at: "2025-12-15T00:00:03.000Z",
+        assistant_partial: "",
+        thought_partial: "",
+        metrics_json: null,
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      },
+    ] as SessionTurn[];
+    const multiMessages = [
+      {
+        id: "message-1",
+        session_id: "session-1",
+        task_id: "task-1",
+        turn_id: "turn-1",
+        turn_sequence: 1,
+        role: "user",
+        content: "First turn",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:00.000Z",
+        order_seq: 1,
+      },
+      {
+        id: "message-2",
+        session_id: "session-1",
+        task_id: "task-1",
+        turn_id: "turn-2",
+        turn_sequence: 2,
+        role: "user",
+        content: "Second turn",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:02.000Z",
+        order_seq: 3,
+      },
+    ] as unknown as Message[];
+    const turnsStamp = buildTurnsStamp(multiTurns);
+    const messagesStamp = buildMessagesStamp(multiMessages);
+    const { rerender } = renderController({
+      turns: multiTurns,
+      messages: multiMessages,
+      events: [],
+      eventsStamp: "0:0",
+      turnsStamp,
+      messagesStamp,
+      toolsByTurnId: emptyToolsByTurnId,
+      askUserQuestionAnswers,
+    });
+
+    await waitFor(() => {
+      expect(latestResult?.view.groups.map((group) => group.key)).toEqual(["turn-turn-1", "turn-turn-2"]);
+    });
+
+    const firstGroupBefore = expectGroup("turn-turn-1");
+    const secondGroupBefore = expectGroup("turn-turn-2");
+    const secondHeaderBefore = expectListItem("turn-header-turn-2");
+
+    const appendedEvents: SessionEvent[] = [
+      {
+        seq: 1,
+        id: "event-tool-1",
+        session_id: "session-1",
+        run_id: "run-1",
+        turn_id: "turn-1",
+        event_type: "tool_call",
+        payload_json: {
+          tool_call_id: "tool-1",
+          title: "ls -la",
+          order_seq: 2,
+        },
+        created_at: "2025-12-15T00:00:01.500Z",
+      },
+    ];
+
+    rerender(
+      <Harness
+        sessionId="session-1"
+        turnsStamp={turnsStamp}
+        messagesStamp={messagesStamp}
+        eventsStamp="1:1"
+        verbosity="default"
+        turns={multiTurns}
+        messages={multiMessages}
+        events={appendedEvents}
+        toolsByTurnId={emptyToolsByTurnId}
+        toolSummariesReady
+        askUserQuestionAnswers={askUserQuestionAnswers}
+        enableDebugEvents={false}
+      />,
+    );
+
+    await waitFor(() => {
+      const firstGroup = expectGroup("turn-turn-1");
+      expect(firstGroup.items.some(isToolItem)).toBe(true);
+    });
+
+    expect(expectGroup("turn-turn-1")).not.toBe(firstGroupBefore);
+    expect(expectGroup("turn-turn-2")).toBe(secondGroupBefore);
+    expect(expectListItem("turn-header-turn-2")).toBe(secondHeaderBefore);
+  });
+
+  it("fully rebuilds when turnsStamp changes for a same-length in-place turn update", async () => {
+    const askUserQuestionAnswers = new Map<string, AskUserQuestionAnswerState>();
+    const emptyToolsByTurnId: Record<string, SessionTurnTool[]> = {};
+    const multiTurns = [
+      {
+        turn_id: "turn-1",
+        session_id: "session-1",
+        run_id: null,
+        user_message_id: "message-1",
+        status: "running",
+        start_seq: 1,
+        end_seq: 2,
+        started_at: "2025-12-15T00:00:00.000Z",
+        updated_at: "2025-12-15T00:00:01.000Z",
+        assistant_partial: "",
+        thought_partial: "",
+        metrics_json: null,
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      },
+      {
+        turn_id: "turn-2",
+        session_id: "session-1",
+        run_id: null,
+        user_message_id: "message-2",
+        status: "completed",
+        start_seq: 3,
+        end_seq: 4,
+        started_at: "2025-12-15T00:00:02.000Z",
+        updated_at: "2025-12-15T00:00:03.000Z",
+        assistant_partial: "",
+        thought_partial: "",
+        metrics_json: null,
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      },
+    ] as SessionTurn[];
+    const multiMessages = [
+      {
+        id: "message-1",
+        session_id: "session-1",
+        task_id: "task-1",
+        turn_id: "turn-1",
+        turn_sequence: 1,
+        role: "user",
+        content: "First turn",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:00.000Z",
+        order_seq: 1,
+      },
+      {
+        id: "message-2",
+        session_id: "session-1",
+        task_id: "task-1",
+        turn_id: "turn-2",
+        turn_sequence: 2,
+        role: "user",
+        content: "Second turn",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:02.000Z",
+        order_seq: 3,
+      },
+    ] as unknown as Message[];
+    const { rerender } = renderController({
+      turns: multiTurns,
+      messages: multiMessages,
+      events: [],
+      eventsStamp: "0:0",
+      turnsStamp: buildTurnsStamp(multiTurns),
+      messagesStamp: buildMessagesStamp(multiMessages),
+      toolsByTurnId: emptyToolsByTurnId,
+      askUserQuestionAnswers,
+    });
+
+    await waitFor(() => {
+      expect(expectGroup("turn-turn-1").items.some(isTurnStatusItem)).toBe(true);
+    });
+
+    const secondGroupBefore = expectGroup("turn-turn-2");
+    const updatedTurns = [
+      multiTurns[0],
+      {
+        ...multiTurns[1],
+        status: "running",
+      },
+    ] as SessionTurn[];
+
+    rerender(
+      <Harness
+        sessionId="session-1"
+        turnsStamp={buildTurnsStamp(updatedTurns, 1)}
+        messagesStamp={buildMessagesStamp(multiMessages)}
+        eventsStamp="0:0"
+        verbosity="default"
+        turns={updatedTurns}
+        messages={multiMessages}
+        events={[]}
+        toolsByTurnId={emptyToolsByTurnId}
+        toolSummariesReady
+        askUserQuestionAnswers={askUserQuestionAnswers}
+        enableDebugEvents={false}
+      />,
+    );
+
+    await waitFor(() => {
+      const secondGroup = expectGroup("turn-turn-2");
+      expect(secondGroup.items.some(isTurnStatusItem)).toBe(true);
+    });
+
+    expect(expectGroup("turn-turn-2")).not.toBe(secondGroupBefore);
   });
 });

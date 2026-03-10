@@ -20,6 +20,8 @@ export type {
 } from "./clientBase";
 export {
   getDaemonConnection,
+  getDaemonConnectionReadiness,
+  hasReadyDaemonConnection,
   subscribeDaemonConnection,
   setDaemonConnection,
   clearDaemonConnection,
@@ -29,7 +31,12 @@ export {
   getDaemonWsUrl,
   getDaemonHttpUrl,
 } from "./daemonConnection";
-export type { DaemonConnection, DaemonConnectionUpdate, SetDaemonConnectionOptions } from "./daemonConnection";
+export type {
+  DaemonConnection,
+  DaemonConnectionReadiness,
+  DaemonConnectionUpdate,
+  SetDaemonConnectionOptions,
+} from "./daemonConnection";
 export * from "./clientWorkspaces";
 export * from "./clientSessions";
 export * from "./clientProviders";

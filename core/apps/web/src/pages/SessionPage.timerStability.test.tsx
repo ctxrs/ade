@@ -6,6 +6,25 @@ import { SessionView } from "./SessionPage";
 const sessionEntries = vi.hoisted(() => ({ map: {} as Record<string, unknown> }));
 const focusTaskSpy = vi.hoisted(() => vi.fn());
 const updateSettingsSpy = vi.hoisted(() => vi.fn());
+const workbenchKeySpies = vi.hoisted(() => ({
+  deriveTurnsKey: vi.fn(),
+  deriveMessagesKey: vi.fn(),
+}));
+
+vi.mock("./SessionPage.workbenchViewModel", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./SessionPage.workbenchViewModel")>();
+  return {
+    ...actual,
+    deriveTurnsKey: vi.fn((...args: Parameters<typeof actual.deriveTurnsKey>) => {
+      workbenchKeySpies.deriveTurnsKey(...args);
+      return actual.deriveTurnsKey(...args);
+    }),
+    deriveMessagesKey: vi.fn((...args: Parameters<typeof actual.deriveMessagesKey>) => {
+      workbenchKeySpies.deriveMessagesKey(...args);
+      return actual.deriveMessagesKey(...args);
+    }),
+  };
+});
 
 vi.mock("../api/client", () => ({
   deleteMessage: vi.fn(async () => ({})),
@@ -131,6 +150,9 @@ const buildSessionEntry = (sessionId: string, taskId: string, startedAtMs: numbe
     subagentInvocationsLoading: false,
     stateLoaded: true,
     stateLoading: false,
+    turnsRev: 0,
+    messagesRev: 0,
+    eventsRev: 0,
     queue: [],
     loading: false,
     subscribed: true,
@@ -195,6 +217,8 @@ afterEach(() => {
   vi.useRealTimers();
   focusTaskSpy.mockClear();
   updateSettingsSpy.mockClear();
+  workbenchKeySpies.deriveTurnsKey.mockClear();
+  workbenchKeySpies.deriveMessagesKey.mockClear();
 });
 
 describe("SessionPage timer stability", () => {
@@ -269,5 +293,48 @@ describe("SessionPage timer stability", () => {
       .map((node) => node.textContent)
       .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
     expect(new Set(times)).toEqual(new Set(["13s"]));
+  });
+
+  it("does not rehash turns or messages when only events append", async () => {
+    const { rerender } = render(
+      <SessionView sessionId={sessionIdA} isActive autoOpenSession={false} />,
+    );
+
+    await act(async () => {
+      vi.advanceTimersByTime(16);
+    });
+
+    const initialTurnsKeyCalls = workbenchKeySpies.deriveTurnsKey.mock.calls.length;
+    const initialMessagesKeyCalls = workbenchKeySpies.deriveMessagesKey.mock.calls.length;
+    expect(initialTurnsKeyCalls).toBeGreaterThan(0);
+    expect(initialMessagesKeyCalls).toBeGreaterThan(0);
+    const initialEntry = sessionEntries.map[sessionIdA] as ReturnType<typeof buildSessionEntry>;
+    sessionEntries.map[sessionIdA] = {
+      ...initialEntry,
+      lastEventSeq: 1,
+      eventsRev: 1,
+      events: [
+        {
+          seq: 1,
+          id: "event-1",
+          session_id: sessionIdA,
+          run_id: "run-1",
+          turn_id: `${sessionIdA}-turn-1`,
+          event_type: "notice",
+          payload_json: { kind: "context.compacted", message: "Compacted." },
+          created_at: new Date(baseMs + 1_000).toISOString(),
+        },
+      ],
+      updatedAtMs: 1,
+    };
+
+    rerender(<SessionView sessionId={sessionIdA} isActive autoOpenSession={false} />);
+
+    await act(async () => {
+      vi.advanceTimersByTime(16);
+    });
+
+    expect(workbenchKeySpies.deriveTurnsKey.mock.calls).toHaveLength(initialTurnsKeyCalls);
+    expect(workbenchKeySpies.deriveMessagesKey.mock.calls).toHaveLength(initialMessagesKeyCalls);
   });
 });

@@ -19,6 +19,13 @@ export type SetDaemonConnectionOptions = {
   clearPersistedBaseUrl?: boolean;
 };
 
+export type DaemonConnectionReadiness = {
+  hasBaseUrl: boolean;
+  hasAuthToken: boolean;
+  isReady: boolean;
+  missing: "base" | "auth" | null;
+};
+
 type StoredDaemonConnectionV1 = {
   v: 1;
   baseUrl: string | null;
@@ -324,6 +331,23 @@ export const getDaemonConnection = (): DaemonConnection => {
   return { ...state };
 };
 
+export const getDaemonConnectionReadiness = (
+  connection: Pick<DaemonConnection, "baseUrl" | "authToken"> = getDaemonConnection(),
+): DaemonConnectionReadiness => {
+  const hasBaseUrl = Boolean(connection.baseUrl);
+  const hasAuthToken = Boolean(connection.authToken);
+  return {
+    hasBaseUrl,
+    hasAuthToken,
+    isReady: hasBaseUrl && hasAuthToken,
+    missing: !hasBaseUrl ? "base" : !hasAuthToken ? "auth" : null,
+  };
+};
+
+export const hasReadyDaemonConnection = (
+  connection: Pick<DaemonConnection, "baseUrl" | "authToken"> = getDaemonConnection(),
+): boolean => getDaemonConnectionReadiness(connection).isReady;
+
 export const subscribeDaemonConnection = (listener: DaemonConnectionListener): (() => void) => {
   listeners.add(listener);
   return () => {
@@ -429,12 +453,12 @@ export const bootstrapDaemonConnectionFromRuntime = () => {
 };
 
 export const applyDesktopDaemonConnection = (
-  info: { base_url?: string | null; token?: string | null },
+  info: { base_url?: string | null; token?: string | null } | null | undefined,
 ): DaemonConnection => {
   return setDaemonConnection(
     {
-      baseUrl: info.base_url ?? null,
-      authToken: info.token ?? null,
+      baseUrl: info?.base_url ?? null,
+      authToken: info?.token ?? null,
       source: "desktop",
     },
     { persistBaseUrl: true },

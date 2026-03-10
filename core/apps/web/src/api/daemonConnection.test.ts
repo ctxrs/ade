@@ -25,6 +25,24 @@ describe("daemonConnection", () => {
     expect(mod.deriveDaemonWsBaseUrl("http://127.0.0.1:4399")).toBe("ws://127.0.0.1:4399");
   });
 
+  it("derives canonical readiness from the shared base-plus-token rule", async () => {
+    const mod = await import("./daemonConnection");
+
+    expect(mod.getDaemonConnectionReadiness({ baseUrl: null, authToken: null })).toMatchObject({
+      hasBaseUrl: false,
+      hasAuthToken: false,
+      isReady: false,
+      missing: "base",
+    });
+    expect(mod.getDaemonConnectionReadiness({ baseUrl: "http://127.0.0.1:4399", authToken: null })).toMatchObject({
+      hasBaseUrl: true,
+      hasAuthToken: false,
+      isReady: false,
+      missing: "auth",
+    });
+    expect(mod.hasReadyDaemonConnection({ baseUrl: "http://127.0.0.1:4399", authToken: "abc" })).toBe(true);
+  });
+
   it("restores canonical base from persisted canonical storage", async () => {
     localStorage.setItem(
       LOCAL_PERSISTED_BASE_KEY,
@@ -84,6 +102,26 @@ describe("daemonConnection", () => {
     expect(connection.baseUrl).toBeNull();
     expect(connection.wsBaseUrl).toBeNull();
     expect(connection.authToken).toBeNull();
+    expect(localStorage.getItem(LOCAL_PERSISTED_BASE_KEY)).toBeNull();
+  });
+
+  it("republishes missing desktop bridge state by clearing canonical connection", async () => {
+    const mod = await import("./daemonConnection");
+    mod.setDaemonConnection(
+      {
+        baseUrl: "http://127.0.0.1:4399",
+        authToken: "abc",
+      },
+      { persistBaseUrl: true },
+    );
+
+    mod.applyDesktopDaemonConnection(null);
+    const connection = mod.getDaemonConnection();
+
+    expect(connection.baseUrl).toBeNull();
+    expect(connection.wsBaseUrl).toBeNull();
+    expect(connection.authToken).toBeNull();
+    expect(connection.source).toBe("desktop");
     expect(localStorage.getItem(LOCAL_PERSISTED_BASE_KEY)).toBeNull();
   });
 

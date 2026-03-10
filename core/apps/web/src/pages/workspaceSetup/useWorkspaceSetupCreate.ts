@@ -51,7 +51,10 @@ import {
   startWorkspaceSetupLaunchHandoff,
   waitForLaunchHandoffTerminal,
 } from "./launchHandoff";
-import type { RoutePlanInsertionStep } from "./workflowTypes";
+import type {
+  RoutePlanInsertionStep,
+  WorkspaceSetupEffectiveTarget,
+} from "./workflowTypes";
 
 type UseWorkspaceSetupCreateArgs = {
   currentStepKey: WizardStepKey;
@@ -67,11 +70,8 @@ type UseWorkspaceSetupCreateArgs = {
   wizardKey: string;
   trackWizardCompleted: (payload: { wizardKey: string; workspaceKind: string }) => void;
   desktopApp: boolean;
-  parsedRemoteHost: string | undefined;
-  parsedRemoteUser: string | null | undefined;
   remotePasswordOnce: string | null;
-  parsedRemotePort: number | null;
-  remoteDataDirInput: string;
+  effectiveTarget: WorkspaceSetupEffectiveTarget | null;
   connectDaemonForImport: (locationOverride?: "local" | "remote") => Promise<void>;
   ensureOnboardingAfterDaemonConnect: (options?: { allowTitlingInsertion?: boolean }) => Promise<{
     insertionStep: RoutePlanInsertionStep | null;
@@ -96,11 +96,8 @@ export function useWorkspaceSetupCreate({
   wizardKey,
   trackWizardCompleted,
   desktopApp,
-  parsedRemoteHost,
-  parsedRemoteUser,
   remotePasswordOnce,
-  parsedRemotePort,
-  remoteDataDirInput,
+  effectiveTarget,
   connectDaemonForImport,
   ensureOnboardingAfterDaemonConnect,
   waitForDaemonReady,
@@ -136,6 +133,11 @@ export function useWorkspaceSetupCreate({
     titlingRemoteValid,
     titlingPersistError,
   } = createIntent;
+  const remoteTarget = effectiveTarget?.kind === "remote" ? effectiveTarget : null;
+  const parsedRemoteHost = remoteTarget?.host;
+  const parsedRemoteUser = remoteTarget?.user;
+  const parsedRemotePort = remoteTarget?.port ?? null;
+  const remoteDataDir = remoteTarget?.dataDir ?? null;
 
   useEffect(() => {
     if (!creating || !launchSnapshot || launchSnapshot.state !== "running") return;
@@ -346,7 +348,7 @@ export function useWorkspaceSetupCreate({
             password_once: remotePasswordOnce,
             remote_port: parsedRemotePort,
             start_remote: true,
-            remote_data_dir: remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null,
+            remote_data_dir: remoteDataDir,
           })
           : await desktopConnectLocal();
         applyConnection(info);
@@ -556,7 +558,6 @@ export function useWorkspaceSetupCreate({
       await waitForDaemonReady(15000);
       try {
         if (selections.location === "remote" && parsedRemoteHost) {
-          const normalizedDataDir = remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null;
           await upsertLauncherRecent({
             kind: "ssh",
             label: workspaceName.trim() || lastPathSegment(rootPath) || parsedRemoteHost,
@@ -564,7 +565,7 @@ export function useWorkspaceSetupCreate({
             user: parsedRemoteUser ?? null,
             remote_port: parsedRemotePort ?? 4399,
             start_remote: true,
-            remote_data_dir: normalizedDataDir,
+            remote_data_dir: remoteDataDir,
             workspace_root_path: rootPath,
             execution_environment: environment,
             updated_at_ms: Date.now(),

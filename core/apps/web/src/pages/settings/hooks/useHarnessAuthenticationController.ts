@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import {
   cancelInstall,
   completeClaudeLogin,
@@ -53,9 +61,13 @@ import {
 } from "../../../api/client";
 import { desktopStartCodexLoginRelay, isDesktopApp, openExternalLink } from "../../../utils/desktop";
 import {
+  EMPTY_PROVIDERS_BOOTSTRAP,
+  getProvidersBootstrapSnapshot,
   invalidateProvidersBootstrap,
   loadProvidersBootstrap,
   refreshProvidersBootstrap,
+  subscribeProvidersBootstrap,
+  updateProvidersBootstrap,
 } from "../../../state/providersBootstrapStore";
 import {
   getProviderInstallProgressSnapshot,
@@ -182,7 +194,11 @@ type WorkspaceProviderVerification = {
 };
 
 type StateSetter<T> = Dispatch<SetStateAction<T>>;
-type NullableStateSetter<T> = Dispatch<SetStateAction<T | null>>;
+
+const resolveNextNullableState = <T,>(update: SetStateAction<T | null>, current: T | null): T | null =>
+  typeof update === "function"
+    ? (update as (previous: T | null) => T | null)(current)
+    : update;
 
 const toInstallSession = (session: ProviderInstallProgressSnapshot[string]): InstallSession => ({
   installId: session.installId,
@@ -220,7 +236,7 @@ const verifyWorkspaceProviderSelection = async (
 const refreshAccountCollection = async <TResponse>(params: {
   silent?: boolean;
   list: () => Promise<TResponse>;
-  setData: NullableStateSetter<TResponse>;
+  applyData: (next: TResponse) => void;
   setBusy: StateSetter<boolean>;
   setProviderError: StateSetter<string | null>;
 }): Promise<TResponse | null> => {
@@ -229,7 +245,7 @@ const refreshAccountCollection = async <TResponse>(params: {
   }
   try {
     const next = await params.list();
-    params.setData(next);
+    params.applyData(next);
     return next;
   } catch (error) {
     params.setProviderError(messageFromError(error));
@@ -243,7 +259,7 @@ const refreshAccountCollection = async <TResponse>(params: {
 
 const mutateAccountCollection = async <TResponse>(params: {
   mutate: () => Promise<TResponse>;
-  setData: NullableStateSetter<TResponse>;
+  applyData: (next: TResponse) => void;
   setBusy: StateSetter<boolean>;
   setProviderError: StateSetter<string | null>;
   onMutationComplete: () => Promise<void>;
@@ -252,7 +268,7 @@ const mutateAccountCollection = async <TResponse>(params: {
   params.setProviderError(null);
   try {
     const next = await params.mutate();
-    params.setData(next);
+    params.applyData(next);
     await params.onMutationComplete();
   } catch (error) {
     params.setProviderError(messageFromError(error));
@@ -292,9 +308,11 @@ export function useHarnessAuthenticationController({
   workspaceId,
   enabled,
 }: UseHarnessAuthenticationControllerArgs): HarnessAuthenticationController {
-  const [providers, setProviders] = useState<ProviderStatus[]>([]);
+  const [hostProviders, setHostProviders] = useState<ProviderStatus[]>([]);
   const [providerError, setProviderError] = useState<string | null>(null);
-  const [providerHarnessConfig, setProviderHarnessConfig] = useState<Record<string, HarnessProviderSourceConfig | undefined>>({});
+  const [hostProviderHarnessConfig, setHostProviderHarnessConfig] = useState<
+    Record<string, HarnessProviderSourceConfig | undefined>
+  >({});
   const [providerHarnessBusy, setProviderHarnessBusy] = useState<Record<string, boolean>>({});
   const [providerEndpointUnsupported, setProviderEndpointUnsupported] = useState<Record<string, boolean>>({});
   const {
@@ -315,24 +333,47 @@ export function useHarnessAuthenticationController({
     () => installsFromProgressSnapshot(getProviderInstallProgressSnapshot()),
   );
 
-  const [codexAccounts, setCodexAccounts] = useState<CodexAccountsResponse | null>(null);
+  const [hostCodexAccounts, setHostCodexAccounts] = useState<CodexAccountsResponse | null>(null);
   const [codexAccountsBusy, setCodexAccountsBusy] = useState(false);
-  const [claudeAccounts, setClaudeAccounts] = useState<ClaudeAccountsResponse | null>(null);
+  const [hostClaudeAccounts, setHostClaudeAccounts] = useState<ClaudeAccountsResponse | null>(null);
   const [claudeAccountsBusy, setClaudeAccountsBusy] = useState(false);
-  const [geminiAccounts, setGeminiAccounts] = useState<GeminiAccountsResponse | null>(null);
+  const [hostGeminiAccounts, setHostGeminiAccounts] = useState<GeminiAccountsResponse | null>(null);
   const [geminiAccountsBusy, setGeminiAccountsBusy] = useState(false);
-  const [qwenAccounts, setQwenAccounts] = useState<QwenAccountsResponse | null>(null);
+  const [hostQwenAccounts, setHostQwenAccounts] = useState<QwenAccountsResponse | null>(null);
   const [qwenAccountsBusy, setQwenAccountsBusy] = useState(false);
-  const [kimiAccounts, setKimiAccounts] = useState<KimiAccountsResponse | null>(null);
+  const [hostKimiAccounts, setHostKimiAccounts] = useState<KimiAccountsResponse | null>(null);
   const [kimiAccountsBusy, setKimiAccountsBusy] = useState(false);
-  const [mistralAccounts, setMistralAccounts] = useState<MistralAccountsResponse | null>(null);
+  const [hostMistralAccounts, setHostMistralAccounts] = useState<MistralAccountsResponse | null>(null);
   const [mistralAccountsBusy, setMistralAccountsBusy] = useState(false);
-  const [copilotAccounts, setCopilotAccounts] = useState<CopilotAccountsResponse | null>(null);
+  const [hostCopilotAccounts, setHostCopilotAccounts] = useState<CopilotAccountsResponse | null>(null);
   const [copilotAccountsBusy, setCopilotAccountsBusy] = useState(false);
-  const [cursorAccounts, setCursorAccounts] = useState<CursorAccountsResponse | null>(null);
+  const [hostCursorAccounts, setHostCursorAccounts] = useState<CursorAccountsResponse | null>(null);
   const [cursorAccountsBusy, setCursorAccountsBusy] = useState(false);
-  const [ampAccounts, setAmpAccounts] = useState<AmpAccountsResponse | null>(null);
+  const [hostAmpAccounts, setHostAmpAccounts] = useState<AmpAccountsResponse | null>(null);
   const [ampAccountsBusy, setAmpAccountsBusy] = useState(false);
+
+  const workspaceBootstrap = useSyncExternalStore(
+    useCallback(
+      (onStoreChange) => (workspaceId ? subscribeProvidersBootstrap(workspaceId, onStoreChange) : () => {}),
+      [workspaceId],
+    ),
+    useCallback(
+      () => (workspaceId ? getProvidersBootstrapSnapshot(workspaceId) : EMPTY_PROVIDERS_BOOTSTRAP),
+      [workspaceId],
+    ),
+    useCallback(() => EMPTY_PROVIDERS_BOOTSTRAP, []),
+  );
+  const providers = workspaceId ? workspaceBootstrap.providers : hostProviders;
+  const providerHarnessConfig = workspaceId ? workspaceBootstrap.provider_harness_config : hostProviderHarnessConfig;
+  const codexAccounts = workspaceId ? workspaceBootstrap.codex_accounts : hostCodexAccounts;
+  const claudeAccounts = workspaceId ? workspaceBootstrap.claude_accounts : hostClaudeAccounts;
+  const geminiAccounts = workspaceId ? workspaceBootstrap.gemini_accounts : hostGeminiAccounts;
+  const qwenAccounts = workspaceId ? workspaceBootstrap.qwen_accounts : hostQwenAccounts;
+  const kimiAccounts = workspaceId ? workspaceBootstrap.kimi_accounts : hostKimiAccounts;
+  const mistralAccounts = workspaceId ? workspaceBootstrap.mistral_accounts : hostMistralAccounts;
+  const copilotAccounts = workspaceId ? workspaceBootstrap.copilot_accounts : hostCopilotAccounts;
+  const cursorAccounts = workspaceId ? workspaceBootstrap.cursor_accounts : hostCursorAccounts;
+  const ampAccounts = workspaceId ? workspaceBootstrap.amp_accounts : hostAmpAccounts;
 
   const installObserversRef = useRef<Record<string, () => void>>({});
   const installsRef = useRef<Record<string, InstallSession>>({});
@@ -382,13 +423,24 @@ export function useHarnessAuthenticationController({
 
   const setProviderHarnessConfigForProvider = useCallback(
     (providerId: string, nextConfig: HarnessProviderSourceConfig) => {
-      setProviderHarnessConfig((prev) => {
+      if (workspaceId) {
+        const next = updateProvidersBootstrap(workspaceId, (current) => ({
+          ...current,
+          provider_harness_config: {
+            ...current.provider_harness_config,
+            [providerId]: nextConfig,
+          },
+        }));
+        providerHarnessConfigRef.current = next.provider_harness_config;
+        return;
+      }
+      setHostProviderHarnessConfig((prev) => {
         const next = { ...prev, [providerId]: nextConfig };
         providerHarnessConfigRef.current = next;
         return next;
       });
     },
-    [],
+    [workspaceId],
   );
 
   const setSubscriptionSourceFallback = useCallback(
@@ -407,36 +459,19 @@ export function useHarnessAuthenticationController({
     setProviderHarnessBusy((prev) => ({ ...prev, [providerId]: busy }));
   }, []);
 
-  const applyProvidersBootstrap = useCallback((bootstrap: Awaited<ReturnType<typeof loadProvidersBootstrap>>) => {
-    setProviders(bootstrap.providers);
-    setProviderHarnessConfig(bootstrap.provider_harness_config);
-    providerHarnessConfigRef.current = bootstrap.provider_harness_config;
-    setCodexAccounts(bootstrap.codex_accounts);
-    setClaudeAccounts(bootstrap.claude_accounts);
-    setGeminiAccounts(bootstrap.gemini_accounts);
-    setQwenAccounts(bootstrap.qwen_accounts);
-    setKimiAccounts(bootstrap.kimi_accounts);
-    setMistralAccounts(bootstrap.mistral_accounts);
-    setCopilotAccounts(bootstrap.copilot_accounts);
-    setCursorAccounts(bootstrap.cursor_accounts);
-    setAmpAccounts(bootstrap.amp_accounts);
-  }, []);
-
   const refreshProvidersBootstrapState = useCallback(async (opts?: { force?: boolean; silent?: boolean }) => {
     if (!workspaceId) return null;
     try {
-      const bootstrap = opts?.force
+      return opts?.force
         ? await refreshProvidersBootstrap(workspaceId)
         : await loadProvidersBootstrap(workspaceId);
-      applyProvidersBootstrap(bootstrap);
-      return bootstrap;
     } catch (error) {
       if (!opts?.silent) {
         setProviderError(messageFromError(error));
       }
       return null;
     }
-  }, [applyProvidersBootstrap, workspaceId]);
+  }, [workspaceId]);
 
   const refreshProviderSlicesAfterMutation = useCallback(async () => {
     if (workspaceId) {
@@ -446,7 +481,7 @@ export function useHarnessAuthenticationController({
     }
     try {
       const nextProviders = await listProviders("host");
-      setProviders(nextProviders);
+      setHostProviders(nextProviders);
     } catch (error) {
       setProviderError(messageFromError(error));
     }
@@ -459,7 +494,7 @@ export function useHarnessAuthenticationController({
     }
     try {
       const next = await listProviders("host");
-      setProviders(next);
+      setHostProviders(next);
       return next;
     } catch (error) {
       setProviderError(messageFromError(error));
@@ -467,112 +502,262 @@ export function useHarnessAuthenticationController({
     }
   }, [refreshProvidersBootstrapState, workspaceId]);
 
+  const applyCodexAccounts = useCallback((next: CodexAccountsResponse) => {
+    if (workspaceId) {
+      updateProvidersBootstrap(workspaceId, (current) => ({ ...current, codex_accounts: next }));
+      return;
+    }
+    setHostCodexAccounts(next);
+  }, [workspaceId]);
+
+  const applyClaudeAccounts = useCallback((next: ClaudeAccountsResponse) => {
+    if (workspaceId) {
+      updateProvidersBootstrap(workspaceId, (current) => ({ ...current, claude_accounts: next }));
+      return;
+    }
+    setHostClaudeAccounts(next);
+  }, [workspaceId]);
+
+  const applyGeminiAccounts = useCallback((next: GeminiAccountsResponse) => {
+    if (workspaceId) {
+      updateProvidersBootstrap(workspaceId, (current) => ({ ...current, gemini_accounts: next }));
+      return;
+    }
+    setHostGeminiAccounts(next);
+  }, [workspaceId]);
+
+  const applyQwenAccounts = useCallback((next: QwenAccountsResponse) => {
+    if (workspaceId) {
+      updateProvidersBootstrap(workspaceId, (current) => ({ ...current, qwen_accounts: next }));
+      return;
+    }
+    setHostQwenAccounts(next);
+  }, [workspaceId]);
+
+  const applyKimiAccounts = useCallback((next: KimiAccountsResponse) => {
+    if (workspaceId) {
+      updateProvidersBootstrap(workspaceId, (current) => ({ ...current, kimi_accounts: next }));
+      return;
+    }
+    setHostKimiAccounts(next);
+  }, [workspaceId]);
+
+  const applyMistralAccounts = useCallback((next: MistralAccountsResponse) => {
+    if (workspaceId) {
+      updateProvidersBootstrap(workspaceId, (current) => ({ ...current, mistral_accounts: next }));
+      return;
+    }
+    setHostMistralAccounts(next);
+  }, [workspaceId]);
+
+  const applyCopilotAccounts = useCallback((next: CopilotAccountsResponse) => {
+    if (workspaceId) {
+      updateProvidersBootstrap(workspaceId, (current) => ({ ...current, copilot_accounts: next }));
+      return;
+    }
+    setHostCopilotAccounts(next);
+  }, [workspaceId]);
+
+  const applyCursorAccounts = useCallback((next: CursorAccountsResponse) => {
+    if (workspaceId) {
+      updateProvidersBootstrap(workspaceId, (current) => ({ ...current, cursor_accounts: next }));
+      return;
+    }
+    setHostCursorAccounts(next);
+  }, [workspaceId]);
+
+  const applyAmpAccounts = useCallback((next: AmpAccountsResponse) => {
+    if (workspaceId) {
+      updateProvidersBootstrap(workspaceId, (current) => ({ ...current, amp_accounts: next }));
+      return;
+    }
+    setHostAmpAccounts(next);
+  }, [workspaceId]);
+
+  const setScopedClaudeAccounts = useCallback((update: SetStateAction<ClaudeAccountsResponse | null>) => {
+    const next = resolveNextNullableState(update, claudeAccounts);
+    if (next) {
+      applyClaudeAccounts(next);
+      return;
+    }
+    if (!workspaceId) {
+      setHostClaudeAccounts(null);
+    }
+  }, [applyClaudeAccounts, claudeAccounts, workspaceId]);
+
+  const setScopedKimiAccounts = useCallback((update: SetStateAction<KimiAccountsResponse | null>) => {
+    const next = resolveNextNullableState(update, kimiAccounts);
+    if (next) {
+      applyKimiAccounts(next);
+      return;
+    }
+    if (!workspaceId) {
+      setHostKimiAccounts(null);
+    }
+  }, [applyKimiAccounts, kimiAccounts, workspaceId]);
+
+  const setScopedCopilotAccounts = useCallback((update: SetStateAction<CopilotAccountsResponse | null>) => {
+    const next = resolveNextNullableState(update, copilotAccounts);
+    if (next) {
+      applyCopilotAccounts(next);
+      return;
+    }
+    if (!workspaceId) {
+      setHostCopilotAccounts(null);
+    }
+  }, [applyCopilotAccounts, copilotAccounts, workspaceId]);
+
   const refreshCodexAccounts = useCallback(
-    (opts?: RefreshOptions) =>
-      refreshAccountCollection({
+    async (opts?: RefreshOptions) => {
+      if (workspaceId) {
+        const bootstrap = await refreshProvidersBootstrapState({ force: true, silent: opts?.silent });
+        return bootstrap?.codex_accounts ?? null;
+      }
+      return refreshAccountCollection({
         silent: opts?.silent,
         list: listCodexAccounts,
-        setData: setCodexAccounts,
+        applyData: applyCodexAccounts,
         setBusy: setCodexAccountsBusy,
         setProviderError,
-      }),
-    [],
+      });
+    },
+    [applyCodexAccounts, refreshProvidersBootstrapState, workspaceId],
   );
 
   const refreshClaudeAccounts = useCallback(
-    (opts?: RefreshOptions) =>
-      refreshAccountCollection({
+    async (opts?: RefreshOptions) => {
+      if (workspaceId) {
+        const bootstrap = await refreshProvidersBootstrapState({ force: true, silent: opts?.silent });
+        return bootstrap?.claude_accounts ?? null;
+      }
+      return refreshAccountCollection({
         silent: opts?.silent,
         list: listClaudeAccounts,
-        setData: setClaudeAccounts,
+        applyData: applyClaudeAccounts,
         setBusy: setClaudeAccountsBusy,
         setProviderError,
-      }),
-    [],
+      });
+    },
+    [applyClaudeAccounts, refreshProvidersBootstrapState, workspaceId],
   );
 
   const refreshGeminiAccounts = useCallback(
-    (opts?: RefreshOptions) =>
-      refreshAccountCollection({
+    async (opts?: RefreshOptions) => {
+      if (workspaceId) {
+        const bootstrap = await refreshProvidersBootstrapState({ force: true, silent: opts?.silent });
+        return bootstrap?.gemini_accounts ?? null;
+      }
+      return refreshAccountCollection({
         silent: opts?.silent,
         list: listGeminiAccounts,
-        setData: setGeminiAccounts,
+        applyData: applyGeminiAccounts,
         setBusy: setGeminiAccountsBusy,
         setProviderError,
-      }),
-    [],
+      });
+    },
+    [applyGeminiAccounts, refreshProvidersBootstrapState, workspaceId],
   );
 
   const refreshQwenAccounts = useCallback(
-    (opts?: RefreshOptions) =>
-      refreshAccountCollection({
+    async (opts?: RefreshOptions) => {
+      if (workspaceId) {
+        const bootstrap = await refreshProvidersBootstrapState({ force: true, silent: opts?.silent });
+        return bootstrap?.qwen_accounts ?? null;
+      }
+      return refreshAccountCollection({
         silent: opts?.silent,
         list: listQwenAccounts,
-        setData: setQwenAccounts,
+        applyData: applyQwenAccounts,
         setBusy: setQwenAccountsBusy,
         setProviderError,
-      }),
-    [],
+      });
+    },
+    [applyQwenAccounts, refreshProvidersBootstrapState, workspaceId],
   );
 
   const refreshKimiAccounts = useCallback(
-    (opts?: RefreshOptions) =>
-      refreshAccountCollection({
+    async (opts?: RefreshOptions) => {
+      if (workspaceId) {
+        const bootstrap = await refreshProvidersBootstrapState({ force: true, silent: opts?.silent });
+        return bootstrap?.kimi_accounts ?? null;
+      }
+      return refreshAccountCollection({
         silent: opts?.silent,
         list: listKimiAccounts,
-        setData: setKimiAccounts,
+        applyData: applyKimiAccounts,
         setBusy: setKimiAccountsBusy,
         setProviderError,
-      }),
-    [],
+      });
+    },
+    [applyKimiAccounts, refreshProvidersBootstrapState, workspaceId],
   );
 
   const refreshMistralAccounts = useCallback(
-    (opts?: RefreshOptions) =>
-      refreshAccountCollection({
+    async (opts?: RefreshOptions) => {
+      if (workspaceId) {
+        const bootstrap = await refreshProvidersBootstrapState({ force: true, silent: opts?.silent });
+        return bootstrap?.mistral_accounts ?? null;
+      }
+      return refreshAccountCollection({
         silent: opts?.silent,
         list: listMistralAccounts,
-        setData: setMistralAccounts,
+        applyData: applyMistralAccounts,
         setBusy: setMistralAccountsBusy,
         setProviderError,
-      }),
-    [],
+      });
+    },
+    [applyMistralAccounts, refreshProvidersBootstrapState, workspaceId],
   );
 
   const refreshCopilotAccounts = useCallback(
-    (opts?: RefreshOptions) =>
-      refreshAccountCollection({
+    async (opts?: RefreshOptions) => {
+      if (workspaceId) {
+        const bootstrap = await refreshProvidersBootstrapState({ force: true, silent: opts?.silent });
+        return bootstrap?.copilot_accounts ?? null;
+      }
+      return refreshAccountCollection({
         silent: opts?.silent,
         list: listCopilotAccounts,
-        setData: setCopilotAccounts,
+        applyData: applyCopilotAccounts,
         setBusy: setCopilotAccountsBusy,
         setProviderError,
-      }),
-    [],
+      });
+    },
+    [applyCopilotAccounts, refreshProvidersBootstrapState, workspaceId],
   );
 
   const refreshCursorAccounts = useCallback(
-    (opts?: RefreshOptions) =>
-      refreshAccountCollection({
+    async (opts?: RefreshOptions) => {
+      if (workspaceId) {
+        const bootstrap = await refreshProvidersBootstrapState({ force: true, silent: opts?.silent });
+        return bootstrap?.cursor_accounts ?? null;
+      }
+      return refreshAccountCollection({
         silent: opts?.silent,
         list: listCursorAccounts,
-        setData: setCursorAccounts,
+        applyData: applyCursorAccounts,
         setBusy: setCursorAccountsBusy,
         setProviderError,
-      }),
-    [],
+      });
+    },
+    [applyCursorAccounts, refreshProvidersBootstrapState, workspaceId],
   );
 
   const refreshAmpAccounts = useCallback(
-    (opts?: RefreshOptions) =>
-      refreshAccountCollection({
+    async (opts?: RefreshOptions) => {
+      if (workspaceId) {
+        const bootstrap = await refreshProvidersBootstrapState({ force: true, silent: opts?.silent });
+        return bootstrap?.amp_accounts ?? null;
+      }
+      return refreshAccountCollection({
         silent: opts?.silent,
         list: listAmpAccounts,
-        setData: setAmpAccounts,
+        applyData: applyAmpAccounts,
         setBusy: setAmpAccountsBusy,
         setProviderError,
-      }),
-    [],
+      });
+    },
+    [applyAmpAccounts, refreshProvidersBootstrapState, workspaceId],
   );
 
   const onDeleteProviderEndpoint = useCallback(async (providerId: string, endpointId: string) => {
@@ -725,7 +910,7 @@ export function useHarnessAuthenticationController({
         const next = await upsertCursorAccount(key, label ? { label } : undefined);
         await refreshProviderSlicesAfterMutation();
         if (!operation.isCurrent()) return;
-        setCursorAccounts(next);
+        applyCursorAccounts(next);
         await selectSubscriptionSourceIfSupported(modal.provider_id);
         if (!operation.isCurrent()) return;
         setSubscriptionSourceFallback(modal.provider_id);
@@ -920,9 +1105,9 @@ export function useHarnessAuthenticationController({
         refreshQwenAccounts,
         refreshAmpAccounts,
         refreshMistralAccounts,
-        setClaudeAccounts,
-        setKimiAccounts,
-        setCopilotAccounts,
+        setClaudeAccounts: setScopedClaudeAccounts,
+        setKimiAccounts: setScopedKimiAccounts,
+        setCopilotAccounts: setScopedCopilotAccounts,
         openCodexAuthUrl,
       });
     } finally {
@@ -944,6 +1129,9 @@ export function useHarnessAuthenticationController({
     refreshGeminiAccounts,
     refreshMistralAccounts,
     refreshQwenAccounts,
+    setScopedClaudeAccounts,
+    setScopedCopilotAccounts,
+    setScopedKimiAccounts,
     selectSubscriptionSourceIfSupported,
     setClaudePendingLoginIdForOperation,
     startHarnessAuthModalOperation,
@@ -953,182 +1141,182 @@ export function useHarnessAuthenticationController({
   const onCodexDelete = useCallback(async (accountId: string) => {
     await mutateAccountCollection({
       mutate: () => deleteCodexAccount(accountId),
-      setData: setCodexAccounts,
+      applyData: applyCodexAccounts,
       setBusy: setCodexAccountsBusy,
       setProviderError,
       onMutationComplete: refreshProviderSlicesAfterMutation,
     });
-  }, [refreshProviderSlicesAfterMutation]);
+  }, [applyCodexAccounts, refreshProviderSlicesAfterMutation]);
 
   const onCodexSetActive = useCallback(async (accountId: string | null) => {
     await mutateAccountCollection({
       mutate: () => setCodexActiveAccount(accountId),
-      setData: setCodexAccounts,
+      applyData: applyCodexAccounts,
       setBusy: setCodexAccountsBusy,
       setProviderError,
       onMutationComplete: refreshProviderSlicesAfterMutation,
     });
-  }, [refreshProviderSlicesAfterMutation]);
+  }, [applyCodexAccounts, refreshProviderSlicesAfterMutation]);
 
   const onClaudeDelete = useCallback(async (accountId: string) => {
     await mutateAccountCollection({
       mutate: () => deleteClaudeAccount(accountId),
-      setData: setClaudeAccounts,
+      applyData: applyClaudeAccounts,
       setBusy: setClaudeAccountsBusy,
       setProviderError,
       onMutationComplete: refreshProviderSlicesAfterMutation,
     });
-  }, [refreshProviderSlicesAfterMutation]);
+  }, [applyClaudeAccounts, refreshProviderSlicesAfterMutation]);
 
   const onClaudeSetActive = useCallback(async (accountId: string | null) => {
     await mutateAccountCollection({
       mutate: () => setClaudeActiveAccount(accountId),
-      setData: setClaudeAccounts,
+      applyData: applyClaudeAccounts,
       setBusy: setClaudeAccountsBusy,
       setProviderError,
       onMutationComplete: refreshProviderSlicesAfterMutation,
     });
-  }, [refreshProviderSlicesAfterMutation]);
+  }, [applyClaudeAccounts, refreshProviderSlicesAfterMutation]);
 
   const onGeminiDelete = useCallback(async (accountId: string) => {
     await mutateAccountCollection({
       mutate: () => deleteGeminiAccount(accountId),
-      setData: setGeminiAccounts,
+      applyData: applyGeminiAccounts,
       setBusy: setGeminiAccountsBusy,
       setProviderError,
       onMutationComplete: refreshProviderSlicesAfterMutation,
     });
-  }, [refreshProviderSlicesAfterMutation]);
+  }, [applyGeminiAccounts, refreshProviderSlicesAfterMutation]);
 
   const onGeminiSetActive = useCallback(async (accountId: string | null) => {
     await mutateAccountCollection({
       mutate: () => setGeminiActiveAccount(accountId),
-      setData: setGeminiAccounts,
+      applyData: applyGeminiAccounts,
       setBusy: setGeminiAccountsBusy,
       setProviderError,
       onMutationComplete: refreshProviderSlicesAfterMutation,
     });
-  }, [refreshProviderSlicesAfterMutation]);
+  }, [applyGeminiAccounts, refreshProviderSlicesAfterMutation]);
 
   const onQwenDelete = useCallback(async (accountId: string) => {
     await mutateAccountCollection({
       mutate: () => deleteQwenAccount(accountId),
-      setData: setQwenAccounts,
+      applyData: applyQwenAccounts,
       setBusy: setQwenAccountsBusy,
       setProviderError,
       onMutationComplete: refreshProviderSlicesAfterMutation,
     });
-  }, [refreshProviderSlicesAfterMutation]);
+  }, [applyQwenAccounts, refreshProviderSlicesAfterMutation]);
 
   const onQwenSetActive = useCallback(async (accountId: string | null) => {
     await mutateAccountCollection({
       mutate: () => setQwenActiveAccount(accountId),
-      setData: setQwenAccounts,
+      applyData: applyQwenAccounts,
       setBusy: setQwenAccountsBusy,
       setProviderError,
       onMutationComplete: refreshProviderSlicesAfterMutation,
     });
-  }, [refreshProviderSlicesAfterMutation]);
+  }, [applyQwenAccounts, refreshProviderSlicesAfterMutation]);
 
   const onKimiDelete = useCallback(async (accountId: string) => {
     await mutateAccountCollection({
       mutate: () => deleteKimiAccount(accountId),
-      setData: setKimiAccounts,
+      applyData: applyKimiAccounts,
       setBusy: setKimiAccountsBusy,
       setProviderError,
       onMutationComplete: refreshProviderSlicesAfterMutation,
     });
-  }, [refreshProviderSlicesAfterMutation]);
+  }, [applyKimiAccounts, refreshProviderSlicesAfterMutation]);
 
   const onKimiSetActive = useCallback(async (accountId: string | null) => {
     await mutateAccountCollection({
       mutate: () => setKimiActiveAccount(accountId),
-      setData: setKimiAccounts,
+      applyData: applyKimiAccounts,
       setBusy: setKimiAccountsBusy,
       setProviderError,
       onMutationComplete: refreshProviderSlicesAfterMutation,
     });
-  }, [refreshProviderSlicesAfterMutation]);
+  }, [applyKimiAccounts, refreshProviderSlicesAfterMutation]);
 
   const onMistralDelete = useCallback(async (accountId: string) => {
     await mutateAccountCollection({
       mutate: () => deleteMistralAccount(accountId),
-      setData: setMistralAccounts,
+      applyData: applyMistralAccounts,
       setBusy: setMistralAccountsBusy,
       setProviderError,
       onMutationComplete: refreshProviderSlicesAfterMutation,
     });
-  }, [refreshProviderSlicesAfterMutation]);
+  }, [applyMistralAccounts, refreshProviderSlicesAfterMutation]);
 
   const onMistralSetActive = useCallback(async (accountId: string | null) => {
     await mutateAccountCollection({
       mutate: () => setMistralActiveAccount(accountId),
-      setData: setMistralAccounts,
+      applyData: applyMistralAccounts,
       setBusy: setMistralAccountsBusy,
       setProviderError,
       onMutationComplete: refreshProviderSlicesAfterMutation,
     });
-  }, [refreshProviderSlicesAfterMutation]);
+  }, [applyMistralAccounts, refreshProviderSlicesAfterMutation]);
 
   const onCopilotDelete = useCallback(async (accountId: string) => {
     await mutateAccountCollection({
       mutate: () => deleteCopilotAccount(accountId),
-      setData: setCopilotAccounts,
+      applyData: applyCopilotAccounts,
       setBusy: setCopilotAccountsBusy,
       setProviderError,
       onMutationComplete: refreshProviderSlicesAfterMutation,
     });
-  }, [refreshProviderSlicesAfterMutation]);
+  }, [applyCopilotAccounts, refreshProviderSlicesAfterMutation]);
 
   const onCopilotSetActive = useCallback(async (accountId: string | null) => {
     await mutateAccountCollection({
       mutate: () => setCopilotActiveAccount(accountId),
-      setData: setCopilotAccounts,
+      applyData: applyCopilotAccounts,
       setBusy: setCopilotAccountsBusy,
       setProviderError,
       onMutationComplete: refreshProviderSlicesAfterMutation,
     });
-  }, [refreshProviderSlicesAfterMutation]);
+  }, [applyCopilotAccounts, refreshProviderSlicesAfterMutation]);
 
   const onCursorDelete = useCallback(async (accountId: string) => {
     await mutateAccountCollection({
       mutate: () => deleteCursorAccount(accountId),
-      setData: setCursorAccounts,
+      applyData: applyCursorAccounts,
       setBusy: setCursorAccountsBusy,
       setProviderError,
       onMutationComplete: refreshProviderSlicesAfterMutation,
     });
-  }, [refreshProviderSlicesAfterMutation]);
+  }, [applyCursorAccounts, refreshProviderSlicesAfterMutation]);
 
   const onCursorSetActive = useCallback(async (accountId: string | null) => {
     await mutateAccountCollection({
       mutate: () => setCursorActiveAccount(accountId),
-      setData: setCursorAccounts,
+      applyData: applyCursorAccounts,
       setBusy: setCursorAccountsBusy,
       setProviderError,
       onMutationComplete: refreshProviderSlicesAfterMutation,
     });
-  }, [refreshProviderSlicesAfterMutation]);
+  }, [applyCursorAccounts, refreshProviderSlicesAfterMutation]);
 
   const onAmpDelete = useCallback(async (accountId: string) => {
     await mutateAccountCollection({
       mutate: () => deleteAmpAccount(accountId),
-      setData: setAmpAccounts,
+      applyData: applyAmpAccounts,
       setBusy: setAmpAccountsBusy,
       setProviderError,
       onMutationComplete: refreshProviderSlicesAfterMutation,
     });
-  }, [refreshProviderSlicesAfterMutation]);
+  }, [applyAmpAccounts, refreshProviderSlicesAfterMutation]);
 
   const onAmpSetActive = useCallback(async (accountId: string | null) => {
     await mutateAccountCollection({
       mutate: () => setAmpActiveAccount(accountId),
-      setData: setAmpAccounts,
+      applyData: applyAmpAccounts,
       setBusy: setAmpAccountsBusy,
       setProviderError,
       onMutationComplete: refreshProviderSlicesAfterMutation,
     });
-  }, [refreshProviderSlicesAfterMutation]);
+  }, [applyAmpAccounts, refreshProviderSlicesAfterMutation]);
 
   const onSelectHarnessAuthRow = useCallback(async (providerId: string, row: HarnessAuthRow) => {
     try {

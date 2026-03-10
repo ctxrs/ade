@@ -937,6 +937,101 @@ describe("WorkspaceSetupPage", () => {
     ]);
   });
 
+  it("uses the latest visible remote host draft for downstream connects and create", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue(configuredTitlingSettingsFixture() as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+
+    fireEvent.click(screen.getByTestId("wizard-option-location-remote"));
+    const hostInput = await screen.findByTestId("wizard-remote-host");
+    fireEvent.change(hostInput, {
+      target: { value: "first.example" },
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+      expect(desktopTestSsh).toHaveBeenLastCalledWith({
+        host: "first.example",
+        user: null,
+        password_once: null,
+      });
+    });
+    const firstTargetConnectCallCount = vi.mocked(desktopConnectSsh).mock.calls.length;
+
+    fireEvent.click(screen.getByTestId("wizard-back"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("location");
+    });
+
+    fireEvent.change(await screen.findByTestId("wizard-remote-host"), {
+      target: { value: "second.example" },
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("container");
+      expect(desktopTestSsh).toHaveBeenLastCalledWith({
+        host: "second.example",
+        user: null,
+        password_once: null,
+      });
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-option-container-no-container"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("source");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-option-source-new"));
+    fireEvent.change(screen.getByTestId("wizard-source-path"), {
+      target: { value: "/remote/latest-visible-target" },
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("setup");
+    });
+
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("merge-queue");
+    });
+    fireEvent.click(screen.getByTestId("wizard-next"));
+    await waitFor(() => {
+      expect(wizardStepKey()).toBe("confirm");
+    });
+    fireEvent.click(screen.getByTestId("wizard-create"));
+
+    await waitFor(() => {
+      expect(createWorkspace).toHaveBeenCalledWith(
+        "/remote/latest-visible-target",
+        "latest-visible-target",
+        "remote",
+        "wizard",
+      );
+      expect(upsertLauncherRecent).toHaveBeenCalledWith(expect.objectContaining({
+        kind: "ssh",
+        host: "second.example",
+        user: null,
+        remote_port: 4399,
+        remote_data_dir: null,
+      }));
+    });
+
+    const retargetedCalls = vi.mocked(desktopConnectSsh).mock.calls.slice(firstTargetConnectCallCount);
+    expect(retargetedCalls.length).toBeGreaterThan(0);
+    for (const [request] of retargetedCalls) {
+      expect(request).toEqual(expect.objectContaining({
+        host: "second.example",
+        user: null,
+        remote_port: 4399,
+        remote_data_dir: null,
+      }));
+    }
+  });
+
   it("asks for one-time SSH password only after key-auth failure", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(desktopTestSsh)

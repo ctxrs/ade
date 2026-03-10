@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const desktopGetConnectionMock = vi.hoisted(() => vi.fn());
 const desktopConnectLocalMock = vi.hoisted(() => vi.fn());
 const fetchMock = vi.hoisted(() => vi.fn());
+const SESSION_CONNECTION_KEY = "ctxDaemonConnectionV1";
 const PERSISTED_BASE_KEY = "ctxDaemonConnectionBaseV1";
 
 const okJsonResponse = (body: unknown = { ok: true }): Response =>
@@ -49,6 +50,43 @@ describe("clientBase desktop connection sync", () => {
     expect(result.config.baseUrl).toBe("http://127.0.0.1:4399");
     expect(result.config.wsBaseUrl).toBe("ws://127.0.0.1:4399");
     expect(result.config.authToken).toBe("abc");
+  });
+
+  it("republishes canonical desktop state when a bridge read clears a stale connection", async () => {
+    desktopGetConnectionMock.mockResolvedValue({
+      kind: "none",
+      base_url: null,
+      token: null,
+    });
+
+    const mod = await import("./clientBase");
+    mod.applyDaemonDesktopConnection({
+      base_url: "http://127.0.0.1:4399",
+      token: "stale-token",
+    });
+    expect(mod.getDaemonClientConfig()).toMatchObject({
+      baseUrl: "http://127.0.0.1:4399",
+      authToken: "stale-token",
+    });
+
+    const result = await mod.syncDesktopDaemonConnectionFromBridge({
+      force: true,
+      probeHealth: false,
+      reason: "test_clear_stale_connection",
+    });
+
+    expect(desktopGetConnectionMock).toHaveBeenCalledTimes(1);
+    expect(desktopConnectLocalMock).not.toHaveBeenCalled();
+    expect(result.config).toMatchObject({
+      baseUrl: null,
+      wsBaseUrl: null,
+      authToken: null,
+    });
+    expect(mod.getDaemonClientConfig()).toMatchObject({
+      baseUrl: null,
+      wsBaseUrl: null,
+      authToken: null,
+    });
   });
 
   it("uses direct daemon fetches after one desktop bridge sync", async () => {
@@ -134,6 +172,63 @@ describe("clientBase desktop connection sync", () => {
     } finally {
       dateNowSpy.mockRestore();
     }
+  });
+
+  it("repopulates canonical session and persisted base storage after a later bridge rotation", async () => {
+    sessionStorage.setItem(
+      SESSION_CONNECTION_KEY,
+      JSON.stringify({
+        v: 1,
+        baseUrl: "http://127.0.0.1:4399",
+        wsBaseUrl: "ws://127.0.0.1:4399",
+        authToken: "token-old",
+        source: "desktop",
+      }),
+    );
+    localStorage.setItem(
+      PERSISTED_BASE_KEY,
+      JSON.stringify({
+        v: 1,
+        baseUrl: "http://127.0.0.1:4399",
+        wsBaseUrl: "ws://127.0.0.1:4399",
+      }),
+    );
+    desktopGetConnectionMock.mockResolvedValue({
+      kind: "local",
+      base_url: "http://127.0.0.1:4400",
+      token: "token-new",
+    });
+
+    const mod = await import("./clientBase");
+    expect(mod.getDaemonClientConfig()).toMatchObject({
+      baseUrl: "http://127.0.0.1:4399",
+      wsBaseUrl: "ws://127.0.0.1:4399",
+      authToken: "token-old",
+    });
+
+    const result = await mod.syncDesktopDaemonConnectionFromBridge({
+      force: true,
+      reason: "test_rotation",
+    });
+
+    expect(desktopGetConnectionMock).toHaveBeenCalledTimes(1);
+    expect(result.config).toMatchObject({
+      baseUrl: "http://127.0.0.1:4400",
+      wsBaseUrl: "ws://127.0.0.1:4400",
+      authToken: "token-new",
+    });
+    expect(JSON.parse(sessionStorage.getItem(SESSION_CONNECTION_KEY) ?? "{}")).toMatchObject({
+      v: 1,
+      baseUrl: "http://127.0.0.1:4400",
+      wsBaseUrl: "ws://127.0.0.1:4400",
+      authToken: "token-new",
+      source: "desktop",
+    });
+    expect(JSON.parse(localStorage.getItem(PERSISTED_BASE_KEY) ?? "{}")).toMatchObject({
+      v: 1,
+      baseUrl: "http://127.0.0.1:4400",
+      wsBaseUrl: "ws://127.0.0.1:4400",
+    });
   });
 
   it("re-syncs desktop auth when restore only has a persisted base URL", async () => {

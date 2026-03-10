@@ -1,5 +1,7 @@
 import type { Message, SessionTurn } from "../../api/client";
 
+// Runtime thread invalidation now uses explicit supervisor/view stamps.
+// These hash helpers remain as a narrow test/debug seam.
 const HASH_SEED = 5381;
 
 function hashString(hash: number, value: string | null | undefined): number {

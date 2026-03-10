@@ -2,6 +2,7 @@ import type { Dispatch, SetStateAction } from "react";
 import {
   createInitialWorkspaceSetupDraftState,
   type WorkspaceSetupDraftState,
+  type WorkspaceSetupTargetDraft,
 } from "./workflowTypes";
 
 type WorkspaceSetupWorkflowAction = {
@@ -34,6 +35,23 @@ export const makeDraftFieldSetter = <K extends keyof WorkspaceSetupDraftState>(
       updater: (state) => ({
         ...state,
         [field]: resolveStateAction(state[field], value),
+      }),
+    });
+  };
+
+export const makeTargetDraftFieldSetter = <K extends keyof WorkspaceSetupTargetDraft>(
+  dispatch: Dispatch<WorkspaceSetupWorkflowAction>,
+  field: K,
+) =>
+  (value: SetStateAction<WorkspaceSetupTargetDraft[K]>) => {
+    dispatch({
+      type: "update",
+      updater: (state) => ({
+        ...state,
+        targetDraft: {
+          ...state.targetDraft,
+          [field]: resolveStateAction(state.targetDraft[field], value),
+        },
       }),
     });
   };

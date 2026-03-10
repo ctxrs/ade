@@ -1334,12 +1334,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   // TODO: Re-enable web sessions once the feature is ready to ship again.
   const webSessionsEnabled = false;
   const lastSessionSwitchRef = useRef<string | null>(null);
-  const activeSessionVisitCountsRef = useRef<Map<string, number>>(new Map());
-  const lastVisitedSessionIdRef = useRef<string | null>(null);
-  const autoLoadedSessionStateKeysRef = useRef<Map<string, string>>(new Map());
-  const autoLoadedSubagentInvocationKeysRef = useRef<Map<string, string>>(new Map());
-  const pendingSessionStateKeysRef = useRef<Map<string, string>>(new Map());
-  const pendingSubagentInvocationKeysRef = useRef<Map<string, string>>(new Map());
   const loadTestTelemetry = getLoadTestTelemetry();
 
   useEffect(() => {
@@ -1351,104 +1345,10 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [activeSessionId, loadTestTelemetry]);
 
   useEffect(() => {
-    const nextId = activeSessionId ?? null;
-    if (lastVisitedSessionIdRef.current === nextId) return;
-    lastVisitedSessionIdRef.current = nextId;
-    if (!nextId) return;
-    activeSessionVisitCountsRef.current.set(
-      nextId,
-      (activeSessionVisitCountsRef.current.get(nextId) ?? 0) + 1,
-    );
-  }, [activeSessionId]);
-
-  useEffect(() => {
     if (!loadTestTelemetry?.enabled) return;
     if (!activeSessionId || !activeEntry || activeEntry.loading) return;
     loadTestTelemetry.finishSessionSwitch(activeSessionId);
   }, [activeEntry?.loading, activeEntry?.updatedAtMs, activeSessionId, loadTestTelemetry]);
-
-  useEffect(() => {
-    if (!activeSessionId || isOptimisticSessionId) return;
-    const visitCount = activeSessionVisitCountsRef.current.get(activeSessionId) ?? 1;
-    const revisionKey = `rev:${typeof activeEntry?.stateRev === "number" ? activeEntry.stateRev : "none"}`;
-    const retryKey = `${revisionKey}:visit:${visitCount}`;
-    const stateSuccessKey = typeof activeEntry?.stateRev === "number" ? revisionKey : "loaded";
-    const subagentSuccessKey = typeof activeEntry?.stateRev === "number" ? revisionKey : "loaded";
-
-    let loadedStateKey = autoLoadedSessionStateKeysRef.current.get(activeSessionId);
-    const pendingStateKey = pendingSessionStateKeysRef.current.get(activeSessionId);
-    if (!activeEntry?.stateLoading && activeEntry?.stateLoaded && !activeEntry?.loadErrors?.state) {
-      if (pendingStateKey || !loadedStateKey) {
-        autoLoadedSessionStateKeysRef.current.set(activeSessionId, stateSuccessKey);
-        loadedStateKey = stateSuccessKey;
-      }
-      if (pendingStateKey) {
-        pendingSessionStateKeysRef.current.delete(activeSessionId);
-      }
-    }
-
-    let loadedSubagentKey = autoLoadedSubagentInvocationKeysRef.current.get(activeSessionId);
-    const pendingSubagentKey = pendingSubagentInvocationKeysRef.current.get(activeSessionId);
-    if (
-      !activeEntry?.subagentInvocationsLoading
-      && activeEntry?.subagentInvocationsLoaded
-      && !activeEntry?.loadErrors?.subagentInvocations
-    ) {
-      if (pendingSubagentKey || !loadedSubagentKey) {
-        autoLoadedSubagentInvocationKeysRef.current.set(activeSessionId, subagentSuccessKey);
-        loadedSubagentKey = subagentSuccessKey;
-      }
-      if (pendingSubagentKey) {
-        pendingSubagentInvocationKeysRef.current.delete(activeSessionId);
-      }
-    }
-
-    const nextStateLoadKey = activeEntry?.loadErrors?.state
-      ? retryKey
-      : typeof activeEntry?.stateRev === "number"
-        ? revisionKey
-        : !activeEntry?.stateLoaded
-          ? retryKey
-          : null;
-    if (
-      nextStateLoadKey
-      && nextStateLoadKey !== loadedStateKey
-      && nextStateLoadKey !== pendingStateKey
-      && !activeEntry?.stateLoading
-    ) {
-      pendingSessionStateKeysRef.current.set(activeSessionId, nextStateLoadKey);
-      supervisor.loadSessionState(activeSessionId);
-    }
-
-    const nextSubagentLoadKey = activeEntry?.loadErrors?.subagentInvocations
-      ? retryKey
-      : typeof activeEntry?.stateRev === "number"
-        ? revisionKey
-        : !activeEntry?.subagentInvocationsLoaded
-          ? retryKey
-          : null;
-    if (
-      nextSubagentLoadKey
-      && nextSubagentLoadKey !== loadedSubagentKey
-      && nextSubagentLoadKey !== pendingSubagentKey
-      && !activeEntry?.subagentInvocationsLoading
-    ) {
-      pendingSubagentInvocationKeysRef.current.set(activeSessionId, nextSubagentLoadKey);
-      supervisor.loadSubagentInvocations(activeSessionId);
-    }
-  }, [
-    activeEntry?.stateLoaded,
-    activeEntry?.stateLoading,
-    activeEntry?.stateRev,
-    activeEntry?.loadErrors?.state,
-    activeEntry?.loadErrors?.subagentInvocations,
-    activeEntry?.subagentInvocations,
-    activeEntry?.subagentInvocationsLoaded,
-    activeEntry?.subagentInvocationsLoading,
-    activeSessionId,
-    isOptimisticSessionId,
-    supervisor,
-  ]);
 
   useEffect(() => {
     if (!activeWorktreeId) {

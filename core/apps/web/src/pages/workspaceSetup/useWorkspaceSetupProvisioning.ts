@@ -68,7 +68,10 @@ import {
   subscribeProviderInstallProgress,
   upsertProviderInstallProgress,
 } from "../../state/providerInstallProgressStore";
-import type { EnsureOnboardingAfterDaemonConnectResult } from "./workflowTypes";
+import type {
+  EnsureOnboardingAfterDaemonConnectResult,
+  WorkspaceSetupEffectiveTarget,
+} from "./workflowTypes";
 
 type UseWorkspaceSetupProvisioningArgs = {
   currentStepKey: WizardStepKey;
@@ -79,11 +82,7 @@ type UseWorkspaceSetupProvisioningArgs = {
   setRoutePlanningBusy: (busy: boolean) => void;
   invalidateRoutePlan: () => void;
   desktopApp: boolean;
-  selectedDaemonTargetKey: string | null;
-  parsedRemoteHost: string | undefined;
-  parsedRemoteUser: string | null | undefined;
-  parsedRemotePort: number | null;
-  remoteDataDirInput: string;
+  effectiveTarget: WorkspaceSetupEffectiveTarget | null;
   remoteStatus: RemoteStatus;
   remoteStatusRef: MutableRefObject<RemoteStatus>;
   connectDaemonForImport: (locationOverride?: "local" | "remote") => Promise<void>;
@@ -98,11 +97,7 @@ export function useWorkspaceSetupProvisioning({
   setRoutePlanningBusy,
   invalidateRoutePlan,
   desktopApp,
-  selectedDaemonTargetKey,
-  parsedRemoteHost,
-  parsedRemoteUser,
-  parsedRemotePort,
-  remoteDataDirInput,
+  effectiveTarget,
   remoteStatus,
   remoteStatusRef,
   connectDaemonForImport,
@@ -164,6 +159,12 @@ export function useWorkspaceSetupProvisioning({
     return new Map(HARNESS_CATALOG.map((entry) => [entry.id, entry]));
   }, []);
 
+  const selectedDaemonTargetKey = effectiveTarget?.targetKey ?? null;
+  const remoteTarget = effectiveTarget?.kind === "remote" ? effectiveTarget : null;
+  const parsedRemoteHost = remoteTarget?.host;
+  const parsedRemoteUser = remoteTarget?.user;
+  const parsedRemotePort = remoteTarget?.port ?? null;
+  const remoteDataDirInput = remoteTarget?.dataDirInput ?? "";
   const authImportStepVisible = Boolean(routePlan?.includeAuthImport);
   const harnessInstallStepVisible = Boolean(routePlan?.includeHarnessDownloads);
   const titlingStepVisible = Boolean(routePlan?.includeTitling);

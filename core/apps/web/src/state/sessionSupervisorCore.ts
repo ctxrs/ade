@@ -77,8 +77,10 @@ import { buildSessionSubscriptionPlan } from "./sessionSupervisor/sessionSubscri
 import { applyTurnOutcomeEffects } from "./sessionSupervisor/turnOutcomeEffects";
 import {
   adoptLoadedStateRevision,
+  deriveSupportFreshnessKey,
   formatSupportLoadError,
   shouldFetchSessionState,
+  shouldFetchSubagentInvocations,
 } from "./sessionSupervisor/supportLoads";
 import type {
   SessionSupervisorSubscribedSessionIdsSink,
@@ -183,6 +185,9 @@ export type SessionCacheEntry = {
   hasMoreTurns: boolean;
   events: SessionEvent[];
   messages: Message[];
+  messagesRev?: number;
+  turnsRev?: number;
+  eventsRev?: number;
   artifacts: Artifact[];
   artifactsLoading: boolean;
   subagentInvocations: SubagentInvocation[];
@@ -282,6 +287,9 @@ type InternalEntry = SessionCacheEntry & {
   toolIdsByTurn: Map<string, Set<string>>;
   turnToolsLoadingSet: Set<string>;
   turnToolsHydratedByTurnId: Record<string, boolean>;
+  turnsRev: number;
+  messagesRev: number;
+  eventsRev: number;
   artifactsLoaded: boolean;
   artifactsFetchedAtMs?: number;
   subagentInvocationsLoaded: boolean;
@@ -302,6 +310,9 @@ type InternalEntry = SessionCacheEntry & {
   thoughtCacheDirty: boolean;
   thoughtCacheTaskId?: string;
   thoughtCacheLoadToken: number;
+  supportFreshnessEpoch: number;
+  stateAutoLoadKey?: string;
+  subagentAutoLoadKey?: string;
   fetching: {
     head: boolean;
     history: boolean;
@@ -399,6 +410,9 @@ export class SessionSupervisor {
 
   setWorkspaceSessionHeads = (heads: SessionSupervisorWorkspaceSessionHeads) => {
     this.workspaceSessionHeadsById = new Map(Object.entries(heads));
+    for (const entry of this.entries.values()) {
+      this.syncSupportLoadsForOpenSession(entry);
+    }
   };
 
   handleWorkspaceEvent = (evt: SessionSupervisorWorkspaceEvent) => {
@@ -418,6 +432,13 @@ export class SessionSupervisor {
     }
     if (reopeningSession) {
       this.invalidateSupportLoadsWithoutAuthoritativeRevision(entry);
+      const requestedStateRev = this.resolveRequestedStateRev(entry);
+      if (shouldFetchSessionState(entry)) {
+        entry.stateAutoLoadKey = undefined;
+      }
+      if (shouldFetchSubagentInvocations(entry, requestedStateRev)) {
+        entry.subagentAutoLoadKey = undefined;
+      }
     }
     this.setSessionLoadState(entry, "pending_hydration");
     const mode = this.resolveSessionMode(sessionId, entry, opts?.mode);
@@ -528,6 +549,7 @@ export class SessionSupervisor {
     if (opts?.replace) {
       entry.messages = [];
       entry.queue = [];
+      this.bumpMessagesRev(entry);
     }
     this.mergeMessages(entry, messages);
     entry.updatedAtMs = Date.now();
@@ -540,6 +562,7 @@ export class SessionSupervisor {
     const entry = this.ensureEntry(id);
     if (opts?.replace) {
       entry.turns = [];
+      this.bumpTurnsRev(entry);
     }
 
     if (turns.length > 0) {
@@ -565,6 +588,7 @@ export class SessionSupervisor {
         return String(a.turn_id ?? "").localeCompare(String(b.turn_id ?? ""));
       });
       entry.turns = merged;
+      this.bumpTurnsRev(entry);
       entry.turnsHydrated = true;
     }
 
@@ -715,7 +739,10 @@ export class SessionSupervisor {
         toolSummariesReady: e.toolSummariesReady,
         hasMoreTurns: e.hasMoreTurns,
         events: e.events,
+        eventsRev: e.eventsRev,
         messages: e.messages,
+        messagesRev: e.messagesRev,
+        turnsRev: e.turnsRev,
         artifacts: e.artifacts,
         artifactsLoading: e.artifactsLoading,
         subagentInvocations: e.subagentInvocations,
@@ -771,6 +798,7 @@ export class SessionSupervisor {
           entry.events = entry.events.filter(
             (event) => typeof event.seq === "number" && event.seq >= beforeSeq,
           );
+          this.bumpEventsRev(entry);
           entry.seqSet = new Set(
             entry.events
               .map((event) => (typeof event.seq === "number" ? event.seq : Number.NaN))
@@ -901,6 +929,7 @@ export class SessionSupervisor {
         void this.ensureProviderOptions(entry);
       }
       entry.queue = entry.messages.filter((m) => m.delivery === "queued");
+      this.syncSupportLoadsForOpenSession(entry);
       entry.updatedAtMs = Date.now();
       changed = true;
     }
@@ -942,7 +971,10 @@ export class SessionSupervisor {
       toolSummariesReady: false,
       hasMoreTurns: true,
       events: [],
+      eventsRev: 0,
       messages: [],
+      messagesRev: 0,
+      turnsRev: 0,
       artifacts: [],
       artifactsLoading: false,
       subagentInvocations: [],
@@ -989,6 +1021,9 @@ export class SessionSupervisor {
       thoughtCacheDirty: false,
       thoughtCacheTaskId: undefined,
       thoughtCacheLoadToken: 0,
+      supportFreshnessEpoch: 0,
+      stateAutoLoadKey: undefined,
+      subagentAutoLoadKey: undefined,
       fetching: {
         head: false,
         history: false,
@@ -1123,7 +1158,7 @@ export class SessionSupervisor {
       && typeof cachedOrAppliedRev === "number"
       && cachedOrAppliedRev >= requestedStateRev;
     if (!opts?.force && cached && cacheMatchesRequestedRev) {
-      this.applyState(entry, cached.state);
+      this.applyState(entry, cached.state, cached.stateRev ?? requestedStateRev);
       entry.updatedAtMs = Date.now();
       this.publish();
       return;
@@ -1167,6 +1202,7 @@ export class SessionSupervisor {
         const liveEntry = this.entries.get(entry.sessionId);
         if (liveEntry && liveEntry.stateFetchToken === fetchToken) {
           liveEntry.stateLoading = false;
+          this.syncSupportLoadsForOpenSession(liveEntry);
           liveEntry.updatedAtMs = Date.now();
           this.publish();
         }
@@ -1238,8 +1274,7 @@ export class SessionSupervisor {
       this.publish();
       return;
     }
-    if (entry.subagentInvocationsLoading) return;
-    if (entry.subagentInvocationsLoaded && !opts?.force) return;
+    if (!shouldFetchSubagentInvocations(entry, requestedStateRev, opts)) return;
     entry.subagentInvocationsLoading = true;
     this.clearSupportLoadError(entry, "subagentInvocations");
     entry.updatedAtMs = Date.now();
@@ -1281,6 +1316,7 @@ export class SessionSupervisor {
         const liveEntry = this.entries.get(entry.sessionId);
         if (liveEntry) {
           liveEntry.subagentInvocationsLoading = false;
+          this.syncSupportLoadsForOpenSession(liveEntry);
           liveEntry.updatedAtMs = Date.now();
           this.publish();
         }
@@ -1373,13 +1409,16 @@ export class SessionSupervisor {
         silent: opts?.silent,
       });
       this.setSessionLoadState(entry, "pending_hydration");
+      this.syncSupportLoadsForOpenSession(entry);
       return;
     }
     if (seededHead || entry.turnsHydrated || entry.messages.length > 0 || entry.events.length > 0) {
       this.setSessionLoadState(entry, "live");
+      this.syncSupportLoadsForOpenSession(entry);
       return;
     }
     this.setSessionLoadState(entry, "pending_hydration");
+    this.syncSupportLoadsForOpenSession(entry);
   }
 
   private resolveSessionMode(
@@ -1488,10 +1527,41 @@ export class SessionSupervisor {
     entry.loadState = next;
   }
 
+  private bumpTurnsRev(entry: InternalEntry) {
+    entry.turnsRev += 1;
+  }
+
+  private bumpMessagesRev(entry: InternalEntry) {
+    entry.messagesRev += 1;
+  }
+
+  private bumpEventsRev(entry: InternalEntry) {
+    entry.eventsRev += 1;
+  }
+
+  private syncSupportLoadsForOpenSession(entry: InternalEntry) {
+    if (entry.refCount <= 0) return;
+    const requestedStateRev = this.resolveRequestedStateRev(entry);
+    const freshnessKey = deriveSupportFreshnessKey(requestedStateRev, entry.supportFreshnessEpoch);
+    if (entry.stateAutoLoadKey !== freshnessKey && shouldFetchSessionState(entry)) {
+      entry.stateAutoLoadKey = freshnessKey;
+      void this.ensureState(entry);
+    }
+    if (
+      entry.subagentAutoLoadKey !== freshnessKey &&
+      shouldFetchSubagentInvocations(entry, requestedStateRev)
+    ) {
+      entry.subagentAutoLoadKey = freshnessKey;
+      void this.ensureSubagentInvocations(entry);
+    }
+  }
+
   private invalidateSupportLoadsWithoutAuthoritativeRevision(entry: InternalEntry) {
     if (typeof this.resolveRequestedStateRev(entry) === "number") return;
+    entry.supportFreshnessEpoch += 1;
     if (!entry.stateLoading) {
       entry.stateLoaded = false;
+      entry.stateAppliedRev = undefined;
     }
     if (!entry.subagentInvocationsLoading) {
       entry.subagentInvocationsLoaded = false;
@@ -1646,6 +1716,7 @@ export class SessionSupervisor {
     entry.toolSummariesReady = true;
     entry.error = undefined;
     this.setSessionLoadState(entry, "live");
+    this.syncSupportLoadsForOpenSession(entry);
     void this.ensureThoughtCache(entry);
     entry.updatedAtMs = Date.now();
     this.publish();
@@ -1827,6 +1898,7 @@ export class SessionSupervisor {
       const overlayed = this.overlayThoughtCacheOnEvents(entry, entry.events);
       if (overlayed !== entry.events) {
         entry.events = overlayed;
+        this.bumpEventsRev(entry);
         entry.seqSet = new Set(
           overlayed
             .map((ev) => (typeof ev.seq === "number" ? ev.seq : Number.NaN))
@@ -1856,6 +1928,7 @@ export class SessionSupervisor {
       const overlayed = this.overlayThoughtCacheOnEvents(entry, entry.events);
       if (overlayed !== entry.events) {
         entry.events = overlayed;
+        this.bumpEventsRev(entry);
         entry.seqSet = new Set(
           overlayed
             .map((ev) => (typeof ev.seq === "number" ? ev.seq : Number.NaN))
@@ -1916,11 +1989,13 @@ export class SessionSupervisor {
           return { ...turn, thought_partial: "" };
         });
         entry.turns = nextTurns;
+        this.bumpTurnsRev(entry);
       }
       if (entry.events.length > 0) {
         const nextEvents = entry.events.filter((ev) => ev.event_type !== "thought_chunk");
         if (nextEvents.length !== entry.events.length) {
           entry.events = nextEvents;
+          this.bumpEventsRev(entry);
           entry.seqSet = new Set(
             nextEvents
               .map((ev) => (typeof ev.seq === "number" ? ev.seq : Number.NaN))
@@ -2030,6 +2105,7 @@ export class SessionSupervisor {
       entry.updatedAtMs = Date.now();
     }
     entry.turns = next;
+    this.bumpTurnsRev(entry);
     entry.oldestTurnSeq = next[0]?.start_seq ?? entry.oldestTurnSeq;
   }
 
@@ -2038,6 +2114,7 @@ export class SessionSupervisor {
     const next = mergeSessionMessages(entry.messages, incoming);
     entry.messages = next;
     entry.queue = next.filter((message) => message.delivery === "queued");
+    this.bumpMessagesRev(entry);
   }
 
   private ensureEventSeq(entry: InternalEntry, event: SessionEvent): SessionEvent {
@@ -2055,6 +2132,7 @@ export class SessionSupervisor {
     const normalizedIncoming = incoming.map((ev) => this.ensureEventSeq(entry, ev));
     if (normalizedExisting !== entry.events) {
       entry.events = normalizedExisting;
+      this.bumpEventsRev(entry);
     }
     const newEvents: SessionEvent[] = [];
     for (const ev of normalizedIncoming) {
@@ -2082,6 +2160,7 @@ export class SessionSupervisor {
       }
     }
     entry.events = trimmed;
+    this.bumpEventsRev(entry);
     entry.seqSet = new Set(
       trimmed
         .map((ev) => (typeof ev.seq === "number" ? ev.seq : Number.NaN))
@@ -2183,6 +2262,7 @@ export class SessionSupervisor {
       tool_failed: 0,
     };
     entry.turns = [...entry.turns, turn].sort(compareSessionTurnOrder);
+    this.bumpTurnsRev(entry);
     entry.oldestTurnSeq = entry.turns[0]?.start_seq ?? entry.oldestTurnSeq;
     return turn;
   }
@@ -2323,6 +2403,7 @@ export class SessionSupervisor {
     if (!changed) return false;
     turn.updated_at = event.created_at ?? turn.updated_at;
     entry.turns[idx] = { ...turn };
+    this.bumpTurnsRev(entry);
     applyTurnOutcomeEffects({
       notify: opts?.notify ?? true,
       sessionId: idToString(entry.session?.id ?? turn.session_id ?? ""),
@@ -2346,6 +2427,7 @@ export class SessionSupervisor {
         if (msg.delivery === "queued") return false;
         entry.messages[idx] = { ...msg, delivery: "queued" };
         entry.queue = entry.messages.filter((m) => m.delivery === "queued");
+        this.bumpMessagesRev(entry);
         return true;
       }
       case "message_queue_updated": {
@@ -2353,6 +2435,7 @@ export class SessionSupervisor {
           return false;
         }
         entry.queue = entry.messages.filter((m) => m.delivery === "queued");
+        this.bumpMessagesRev(entry);
         return true;
       }
       case "message_queue_removed": {
@@ -2360,6 +2443,9 @@ export class SessionSupervisor {
         const prevQueue = entry.queue.length;
         entry.messages = entry.messages.filter((msg) => idToString(msg.id) !== messageId);
         entry.queue = entry.queue.filter((msg) => idToString(msg.id) !== messageId);
+        if (entry.messages.length !== prevMessages || entry.queue.length !== prevQueue) {
+          this.bumpMessagesRev(entry);
+        }
         return entry.messages.length !== prevMessages || entry.queue.length !== prevQueue;
       }
       case "message_queue_promoted": {
@@ -2378,6 +2464,7 @@ export class SessionSupervisor {
         }
         if (changed) {
           entry.queue = entry.messages.filter((m) => m.delivery === "queued");
+          this.bumpMessagesRev(entry);
         }
         return changed;
       }
@@ -2527,6 +2614,9 @@ export class SessionSupervisor {
     entry.events = [];
     entry.messages = [];
     entry.queue = [];
+    this.bumpTurnsRev(entry);
+    this.bumpEventsRev(entry);
+    this.bumpMessagesRev(entry);
     entry.turnToolsByTurnId = {};
     entry.turnToolsHydratedByTurnId = {};
     entry.turnToolsLoadingSet.clear();

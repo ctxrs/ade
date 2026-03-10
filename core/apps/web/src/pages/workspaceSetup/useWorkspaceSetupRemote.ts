@@ -21,13 +21,10 @@ import {
   type DesktopSshPathEntry,
 } from "../../utils/desktop";
 import {
-  loadRemoteProfiles,
   loadSshRecents,
   parseUserHost,
-  remoteProfileKey,
   upsertRemoteProfile,
   upsertSshRecent,
-  type RemoteProfile,
   type SshRecent,
 } from "./remoteProfiles";
 import type { WizardSelections } from "./wizardFlowReducer";
@@ -38,6 +35,11 @@ import {
   type RemoteStatus,
   type SshSuggestion,
 } from "./wizardTypes";
+import {
+  parseWorkspaceSetupRemotePort,
+  type WorkspaceSetupEffectiveTarget,
+  type WorkspaceSetupTargetDraft,
+} from "./workflowTypes";
 
 type ImportRepoStatus = "idle" | "checking" | "ok" | "error";
 
@@ -46,6 +48,11 @@ type UseWorkspaceSetupRemoteParams = {
   stepKey: WizardStepKey;
   needsSourcePath: boolean;
   sourcePath: string;
+  targetDraft: WorkspaceSetupTargetDraft;
+  effectiveTarget: WorkspaceSetupEffectiveTarget | null;
+  setRemoteHostInput: Dispatch<SetStateAction<string>>;
+  setRemotePortInput: Dispatch<SetStateAction<string>>;
+  setRemoteDataDirInput: Dispatch<SetStateAction<string>>;
   setImportRepoStatus: Dispatch<SetStateAction<ImportRepoStatus>>;
   setImportRepoNote: Dispatch<SetStateAction<string | null>>;
   setTargetBranch: Dispatch<SetStateAction<string>>;
@@ -62,6 +69,11 @@ export function useWorkspaceSetupRemote({
   stepKey,
   needsSourcePath,
   sourcePath,
+  targetDraft,
+  effectiveTarget,
+  setRemoteHostInput,
+  setRemotePortInput,
+  setRemoteDataDirInput,
   setImportRepoStatus,
   setImportRepoNote,
   setTargetBranch,
@@ -72,39 +84,27 @@ export function useWorkspaceSetupRemote({
 }: UseWorkspaceSetupRemoteParams) {
   const [sshHosts, setSshHosts] = useState<DesktopSshHost[]>([]);
   const [sshRecents, setSshRecents] = useState<SshRecent[]>(() => loadSshRecents());
-  const [remoteHostInput, setRemoteHostInput] = useState("");
   const [remotePasswordInput, setRemotePasswordInput] = useState("");
   const [remotePasswordPromptVisible, setRemotePasswordPromptVisible] = useState(false);
   const [remoteStatus, setRemoteStatus] = useState<RemoteStatus>("idle");
   const [remoteError, setRemoteError] = useState<string | null>(null);
-  const [remotePortInput, setRemotePortInput] = useState("4399");
-  const [remoteDataDirInput, setRemoteDataDirInput] = useState("");
-  const [remoteProfiles, setRemoteProfiles] = useState<RemoteProfile[]>(() => loadRemoteProfiles());
   const [remotePathSuggestions, setRemotePathSuggestions] = useState<DesktopSshPathEntry[]>([]);
   const [remotePathStatus, setRemotePathStatus] = useState<"idle" | "loading" | "error">("idle");
   const [remotePathError, setRemotePathError] = useState<string | null>(null);
-  const remoteProfileAutoAppliedKeyRef = useRef<string | null>(null);
   const remoteStatusRef = useRef<RemoteStatus>("idle");
 
+  const remoteHostInput = targetDraft.remoteHostInput;
+  const remotePortInput = targetDraft.remotePortInput;
+  const remoteDataDirInput = targetDraft.remoteDataDirInput;
   const desktopApp = isDesktopApp();
-  const parsedRemote = useMemo(() => parseUserHost(remoteHostInput), [remoteHostInput]);
+  const parsedRemote = effectiveTarget?.kind === "remote"
+    ? { host: effectiveTarget.host, user: effectiveTarget.user }
+    : parseUserHost(remoteHostInput);
   const remotePasswordOnce = remotePasswordInput.length > 0 ? remotePasswordInput : null;
-  const parsedRemotePort = useMemo(() => {
-    const raw = remotePortInput.trim();
-    if (!raw) return null;
-    const value = Number(raw);
-    if (!Number.isFinite(value)) return null;
-    const port = Math.trunc(value);
-    if (port < 1 || port > 65535) return null;
-    return port;
-  }, [remotePortInput]);
-  const selectedDaemonTargetKey = selections.location === "remote"
-    ? (parsedRemote?.host
-      ? `ssh:${parsedRemote.user ?? ""}@${parsedRemote.host}:${parsedRemotePort ?? 4399}:${remoteDataDirInput.trim()}`
-      : null)
-    : selections.location === "local"
-      ? "local"
-      : null;
+  const parsedRemotePort = effectiveTarget?.kind === "remote"
+    ? effectiveTarget.port
+    : parseWorkspaceSetupRemotePort(remotePortInput);
+  const selectedDaemonTargetKey = effectiveTarget?.targetKey ?? null;
   const hasRemoteHost = Boolean(parsedRemote?.host);
 
   const applyConnection = useCallback((info: DesktopConnectionInfo) => {
@@ -120,7 +120,6 @@ export function useWorkspaceSetupRemote({
   }, []);
 
   const onRemoteInputChange = useCallback((value: string) => {
-    remoteProfileAutoAppliedKeyRef.current = null;
     setRemoteHostInput(value);
     setRemotePasswordInput("");
     setRemotePasswordPromptVisible(false);
@@ -171,8 +170,7 @@ export function useWorkspaceSetupRemote({
       throw new Error("Auth import requires the desktop app.");
     }
     if (location === "remote") {
-      const parsed = parseUserHost(remoteHostInput);
-      if (!parsed?.host) {
+      if (effectiveTarget?.kind !== "remote") {
         throw new Error("Remote host is required before scanning auth.");
       }
       if (remoteStatusRef.current !== "connected") {
@@ -181,12 +179,12 @@ export function useWorkspaceSetupRemote({
       // Wizard scans may reuse an already-running remote daemon, but they must not
       // cold-start it before the explicit Create action.
       const info = await desktopConnectSsh({
-        host: parsed.host,
-        user: parsed.user ?? null,
+        host: effectiveTarget.host,
+        user: effectiveTarget.user,
         password_once: remotePasswordOnce,
-        remote_port: parsedRemotePort,
+        remote_port: effectiveTarget.port,
         start_remote: false,
-        remote_data_dir: remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null,
+        remote_data_dir: effectiveTarget.dataDir,
       });
       applyConnection(info);
       await waitForDaemonReady(15000);
@@ -198,33 +196,29 @@ export function useWorkspaceSetupRemote({
     await waitForDaemonReady(15000);
   }, [
     applyConnection,
-    parsedRemotePort,
-    remoteDataDirInput,
-    remoteHostInput,
+    effectiveTarget,
     remotePasswordOnce,
     selections.location,
     waitForDaemonReady,
   ]);
 
   const rememberCurrentRemoteProfile = useCallback(() => {
-    if (!parsedRemote?.host) return;
-    const normalizedDataDir = remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null;
-    setRemoteProfiles(upsertRemoteProfile(parsedRemote.host, parsedRemote.user ?? null, {
-      remote_port: parsedRemotePort ?? 4399,
-      remote_data_dir: normalizedDataDir,
-    }));
-    remoteProfileAutoAppliedKeyRef.current = remoteProfileKey(parsedRemote.host, parsedRemote.user ?? null);
-  }, [parsedRemote?.host, parsedRemote?.user, parsedRemotePort, remoteDataDirInput]);
+    if (effectiveTarget?.kind !== "remote") return;
+    upsertRemoteProfile(effectiveTarget.host, effectiveTarget.user, {
+      remote_port: effectiveTarget.port,
+      remote_data_dir: effectiveTarget.dataDir,
+    });
+  }, [effectiveTarget]);
 
   const rememberRemoteProfile = useCallback((host: string, user: string | null) => {
     if (!host) return;
-    const normalizedDataDir = remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null;
-    setRemoteProfiles(upsertRemoteProfile(host, user, {
-      remote_port: parsedRemotePort ?? 4399,
-      remote_data_dir: normalizedDataDir,
-    }));
-    remoteProfileAutoAppliedKeyRef.current = remoteProfileKey(host, user);
-  }, [parsedRemotePort, remoteDataDirInput]);
+    upsertRemoteProfile(host, user, {
+      remote_port: effectiveTarget?.kind === "remote" ? effectiveTarget.port : (parsedRemotePort ?? 4399),
+      remote_data_dir: effectiveTarget?.kind === "remote"
+        ? effectiveTarget.dataDir
+        : (remoteDataDirInput.trim() ? remoteDataDirInput.trim() : null),
+    });
+  }, [effectiveTarget, parsedRemotePort, remoteDataDirInput]);
 
   const verifyRemoteConnection = useCallback(async () => {
     if (!parsedRemote?.host) return false;
@@ -286,22 +280,6 @@ export function useWorkspaceSetupRemote({
       .then((hosts) => setSshHosts(hosts))
       .catch(() => setSshHosts([]));
   }, []);
-
-  useEffect(() => {
-    if (selections.location !== "remote") return;
-    const parsed = parseUserHost(remoteHostInput);
-    if (!parsed?.host) {
-      remoteProfileAutoAppliedKeyRef.current = null;
-      return;
-    }
-    const key = remoteProfileKey(parsed.host, parsed.user ?? null);
-    if (remoteProfileAutoAppliedKeyRef.current === key) return;
-    const profile = remoteProfiles.find((entry) => remoteProfileKey(entry.host, entry.user) === key);
-    if (!profile) return;
-    // The advanced remote target controls are currently hidden, so saved overrides
-    // must not silently change the effective daemon target.
-    remoteProfileAutoAppliedKeyRef.current = key;
-  }, [remoteHostInput, remoteProfiles, selections.location]);
 
   useEffect(() => {
     const shouldSuggest = needsSourcePath

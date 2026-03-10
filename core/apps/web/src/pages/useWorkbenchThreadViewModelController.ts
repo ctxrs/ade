@@ -10,9 +10,9 @@ import {
 
 type Params = {
   sessionId: string;
-  turnsKey: string;
-  messagesKey: string;
-  eventsKey: string;
+  turnsStamp: string;
+  messagesStamp: string;
+  eventsStamp: string;
   verbosity: SessionViewVerbosity;
   turns: SessionTurn[];
   messages: Message[];
@@ -86,9 +86,9 @@ export function useWorkbenchThreadViewModelController(
 ): { view: WorkbenchThreadView; listItems: WorkbenchListItem[] } {
   const {
     sessionId,
-    turnsKey,
-    messagesKey,
-    eventsKey,
+    turnsStamp,
+    messagesStamp,
+    eventsStamp,
     verbosity,
     turns,
     messages,
@@ -118,14 +118,14 @@ export function useWorkbenchThreadViewModelController(
       if (tid) map.set(tid, t);
     }
     return map;
-  }, [turns, turnsKey]);
+  }, [turns, turnsStamp]);
 
   const messagesByTurnIdRef = useRef<Map<string, Message[]>>(new Map());
   const eventsByTurnIdRef = useRef<Map<string, SessionEvent[]>>(new Map());
   const lastSessionIdRef = useRef(sessionId);
-  const lastTurnsKeyRef = useRef(turnsKey);
-  const lastMessagesKeyRef = useRef(messagesKey);
-  const lastEventsKeyRef = useRef(eventsKey);
+  const lastTurnsStampRef = useRef(turnsStamp);
+  const lastMessagesStampRef = useRef(messagesStamp);
+  const lastEventsStampRef = useRef(eventsStamp);
   const lastEnableDebugEventsRef = useRef(enableDebugEvents);
   const lastVerbosityRef = useRef(verbosity);
   const lastAskUserQuestionAnswersRef = useRef(askUserQuestionAnswers);
@@ -177,9 +177,9 @@ export function useWorkbenchThreadViewModelController(
 
   useLayoutEffect(() => {
     const syncInvalidationRefs = () => {
-      lastTurnsKeyRef.current = turnsKey;
-      lastMessagesKeyRef.current = messagesKey;
-      lastEventsKeyRef.current = eventsKey;
+      lastTurnsStampRef.current = turnsStamp;
+      lastMessagesStampRef.current = messagesStamp;
+      lastEventsStampRef.current = eventsStamp;
       lastEnableDebugEventsRef.current = enableDebugEvents;
       lastVerbosityRef.current = verbosity;
       lastAskUserQuestionAnswersRef.current = askUserQuestionAnswers;
@@ -218,9 +218,10 @@ export function useWorkbenchThreadViewModelController(
 
     // If turns/messages changed in a non-append-only way, do a full rebuild.
     // These are structural changes and should be rare compared to streaming events.
-    const turnsStructural = turnsKey !== lastTurnsKeyRef.current || turns.length !== state.turnsLen;
-    const messagesStructural = messagesKey !== lastMessagesKeyRef.current || messages.length !== state.messagesLen;
-    const eventsKeyChanged = eventsKey !== lastEventsKeyRef.current;
+    const turnsStructural = turnsStamp !== lastTurnsStampRef.current || turns.length !== state.turnsLen;
+    const messagesStructural =
+      messagesStamp !== lastMessagesStampRef.current || messages.length !== state.messagesLen;
+    const eventsStampChanged = eventsStamp !== lastEventsStampRef.current;
     if (turnsStructural || messagesStructural) {
       syncInvalidationRefs();
       fullRebuild.current();
@@ -234,8 +235,8 @@ export function useWorkbenchThreadViewModelController(
       return;
     }
     if (events.length === state.eventsLen) {
-      // If the key changed but length didn't, we can't assume append-only.
-      if (eventsKeyChanged) {
+      // If the stamp changed but length didn't, we can't assume append-only.
+      if (eventsStampChanged) {
         syncInvalidationRefs();
         fullRebuild.current();
       }
@@ -356,10 +357,10 @@ export function useWorkbenchThreadViewModelController(
     askUserQuestionAnswers,
     enableDebugEvents,
     events,
-    eventsKey,
+    eventsStamp,
     fullRebuild,
     messages,
-    messagesKey,
+    messagesStamp,
     sessionId,
     verbosity,
     state.eventsLen,
@@ -371,7 +372,7 @@ export function useWorkbenchThreadViewModelController(
     toolSummariesReady,
     toolsByTurnId,
     turns,
-    turnsKey,
+    turnsStamp,
     turnsById,
   ]);
 

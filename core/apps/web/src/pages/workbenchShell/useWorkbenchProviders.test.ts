@@ -1,6 +1,38 @@
-import { describe, expect, it } from "vitest";
-import type { ProviderOptions } from "../../api/client";
+import { act, render, waitFor } from "@testing-library/react";
+import { createElement, useEffect, type Dispatch, type SetStateAction } from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { DraftHarness } from "../../components/WorkbenchComposer";
+import type { ProviderOptions, ProvidersBootstrapResponse } from "../../api/client";
+import { getProviderOptions, getProvidersBootstrap } from "../../api/client";
+import { refreshProvidersBootstrap } from "../../state/providersBootstrapStore";
 import { resolveProviderOptionsUpdate, shouldHydrateProviderModels } from "./useWorkbenchProviders";
+import { useWorkbenchProviders } from "./useWorkbenchProviders";
+
+vi.mock("../../api/client", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../../api/client")>();
+  return {
+    ...original,
+    getProviderOptions: vi.fn(),
+    getProvidersBootstrap: vi.fn(),
+  };
+});
+
+vi.mock("../../state/providerInstallProgressStore", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../../state/providerInstallProgressStore")>();
+  return {
+    ...original,
+    getProviderInstallProgressSnapshot: vi.fn(() => ({})),
+    subscribeProviderInstallProgress: vi.fn(() => () => {}),
+  };
+});
+
+vi.mock("../../state/installProgressMonitor", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../../state/installProgressMonitor")>();
+  return {
+    ...original,
+    observeInstall: vi.fn(() => () => {}),
+  };
+});
 
 const baseOptions = (providerId: string): ProviderOptions => ({
   provider_id: providerId,
@@ -16,6 +48,95 @@ const baseOptions = (providerId: string): ProviderOptions => ({
     endpoints: [],
   },
   probed_at: new Date().toISOString(),
+});
+
+const requireHookValue = (value: HookValue | null): HookValue => {
+  if (!value) {
+    throw new Error("hook value not ready");
+  }
+  return value;
+};
+
+const makeBootstrap = (
+  providerOptions: Record<string, ProviderOptions>,
+): ProvidersBootstrapResponse => ({
+  providers: [
+    {
+      provider_id: "codex",
+      display_name: "Codex",
+      installed: true,
+      health: "ok",
+      diagnostics: [],
+      details: {},
+    } as never,
+  ],
+  provider_options: providerOptions,
+  provider_harness_config: {},
+  codex_accounts: {
+    active_account_id: "acct-a",
+    accounts: [],
+    logins: [],
+  },
+  claude_accounts: {
+    active_account_id: null,
+    accounts: [],
+  },
+  gemini_accounts: {
+    active_account_id: null,
+    accounts: [],
+  },
+  qwen_accounts: {
+    active_account_id: null,
+    accounts: [],
+  },
+  kimi_accounts: {
+    active_account_id: null,
+    accounts: [],
+  },
+  mistral_accounts: {
+    active_account_id: null,
+    accounts: [],
+  },
+  copilot_accounts: {
+    active_account_id: null,
+    accounts: [],
+  },
+  cursor_accounts: {
+    active_account_id: null,
+    accounts: [],
+  },
+  amp_accounts: {
+    active_account_id: null,
+    accounts: [],
+  },
+});
+
+type HookValue = ReturnType<typeof useWorkbenchProviders>;
+
+const noopSetDraftHarness: Dispatch<SetStateAction<DraftHarness | null>> = () => undefined;
+
+function WorkbenchProvidersHarness({
+  workspaceId,
+  onChange,
+}: {
+  workspaceId: string;
+  onChange: (value: HookValue) => void;
+}) {
+  const value = useWorkbenchProviders({
+    workspaceId,
+    setDraftHarness: noopSetDraftHarness,
+    onStartError: () => {},
+  });
+
+  useEffect(() => {
+    onChange(value);
+  }, [onChange, value]);
+
+  return null;
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
 });
 
 describe("shouldHydrateProviderModels", () => {
@@ -181,5 +302,136 @@ describe("resolveProviderOptionsUpdate", () => {
     };
 
     expect(resolveProviderOptionsUpdate(previous, next)).toEqual(next);
+  });
+});
+
+describe("useWorkbenchProviders", () => {
+  it("hydrates provider details into the shared scoped resource without losing account identity", async () => {
+    const workspaceId = "ws-auth-summary";
+    let currentBootstrap = makeBootstrap({
+      codex: {
+        ...baseOptions("codex"),
+        workspace_id: workspaceId,
+      },
+    });
+    let hookValue: HookValue | null = null;
+
+    vi.mocked(getProvidersBootstrap).mockImplementation(async () => currentBootstrap);
+    vi.mocked(getProviderOptions).mockResolvedValue({
+      ...baseOptions("codex"),
+      workspace_id: workspaceId,
+      models: {
+        models: [{ id: "gpt-5" }],
+        current_model_id: "gpt-5",
+      },
+    });
+
+    render(createElement(WorkbenchProvidersHarness, {
+      workspaceId,
+      onChange: (next) => {
+        hookValue = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(hookValue?.providerOptions.codex?.account_identity).toBe("acct-a");
+    });
+
+    await act(async () => {
+      await hookValue?.ensureProviderAuthSummary("codex");
+    });
+
+    await waitFor(() => {
+      expect(hookValue?.providerOptions.codex?.models).toEqual({
+        models: [{ id: "gpt-5" }],
+        current_model_id: "gpt-5",
+      });
+      expect(hookValue?.providerOptions.codex?.account_identity).toBe("acct-a");
+    });
+
+    currentBootstrap = makeBootstrap({
+      codex: {
+        ...baseOptions("codex"),
+        workspace_id: workspaceId,
+        probed_at: "2026-03-10T00:00:05.000Z",
+      },
+    });
+
+    await act(async () => {
+      await refreshProvidersBootstrap(workspaceId);
+    });
+
+    await waitFor(() => {
+      expect(hookValue?.providerOptions.codex?.models).toEqual({
+        models: [{ id: "gpt-5" }],
+        current_model_id: "gpt-5",
+      });
+      expect(hookValue?.providerOptions.codex?.account_identity).toBe("acct-a");
+    });
+  });
+
+  it("drops preserved models when the workspace-scoped auth identity changes", async () => {
+    const workspaceId = "ws-auth-identity-change";
+    let currentBootstrap = makeBootstrap({
+      codex: {
+        ...baseOptions("codex"),
+        workspace_id: workspaceId,
+      },
+    });
+    let hookValue: HookValue | null = null;
+
+    vi.mocked(getProvidersBootstrap).mockImplementation(async () => currentBootstrap);
+    vi.mocked(getProviderOptions).mockResolvedValue({
+      ...baseOptions("codex"),
+      workspace_id: workspaceId,
+      models: {
+        models: [{ id: "gpt-5" }],
+        current_model_id: "gpt-5",
+      },
+    });
+
+    render(createElement(WorkbenchProvidersHarness, {
+      workspaceId,
+      onChange: (next) => {
+        hookValue = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(hookValue?.providerOptions.codex?.account_identity).toBe("acct-a");
+    });
+
+    await act(async () => {
+      await hookValue?.ensureProviderAuthSummary("codex");
+    });
+
+    await waitFor(() => {
+      expect(hookValue?.providerOptions.codex?.models).toBeDefined();
+    });
+
+    currentBootstrap = {
+      ...makeBootstrap({
+        codex: {
+          ...baseOptions("codex"),
+          workspace_id: workspaceId,
+          probed_at: "2026-03-10T00:00:05.000Z",
+        },
+      }),
+      codex_accounts: {
+        active_account_id: "acct-b",
+        accounts: [],
+        logins: [],
+      },
+    };
+
+    await act(async () => {
+      await refreshProvidersBootstrap(workspaceId);
+    });
+
+    await waitFor(() => {
+      expect(hookValue?.providerOptions.codex?.account_identity).toBe("acct-b");
+    });
+
+    expect(requireHookValue(hookValue).providerOptions.codex?.models).toBeUndefined();
   });
 });
