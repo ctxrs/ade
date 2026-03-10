@@ -49,7 +49,6 @@ import { TerminalPanel, type TerminalPanelHandle } from "../components/TerminalP
 import { TitleGenerationInstallBanner } from "../components/TitleGenerationInstallBanner";
 import { WorktreeBootstrapSnackbar } from "../components/WorktreeBootstrapSnackbar";
 import { DictationOnboardingModal } from "../components/dictation/DictationOnboardingModal";
-import { buildWorkbenchThreadViewModel } from "./SessionPage";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
 import { WorkbenchComposer, type DraftHarness, type WorkbenchModeId } from "../components/WorkbenchComposer";
 import type { SlashCommandDescriptor } from "../state/useComposerAutocomplete";
@@ -105,6 +104,7 @@ import { useWorkbenchChromeIntegration } from "./workbenchShell/useWorkbenchChro
 import { useWorkbenchSessionBridge } from "./workbenchShell/useWorkbenchSessionBridge";
 import { useWorkbenchTaskCreation } from "./workbenchShell/useWorkbenchTaskCreation";
 import { useWorkbenchTaskScrollbar } from "./workbenchShell/useWorkbenchTaskScrollbar";
+import { useWorkbenchSessionActions } from "./workbenchShell/useWorkbenchSessionActions";
 import type {
   AnchorRect,
   ArchiveConfirmState,
@@ -120,14 +120,10 @@ import {
   clampNum,
   deriveManagedWorktreeRoot,
   formatWorktreeLabel,
-  formatWorktreePath,
   isOptimisticTask,
   lastRoleMessageMs,
   normalizeAnchorRect,
   parseMs,
-  sanitizeFileName,
-  saveMarkdownExport,
-  spinnerDelayForNow,
 } from "./WorkbenchPage.utils";
 
 export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
@@ -206,10 +202,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const renameDraftsRef = useRef<Map<string, string>>(new Map());
   const [convoMenu, setConvoMenu] = useState<{ style: React.CSSProperties } | null>(null);
   const convoMenuRef = useRef<HTMLDivElement | null>(null);
-  const [copyTranscriptBusy, setCopyTranscriptBusy] = useState(false);
-  const copyTranscriptBusyRef = useRef(false);
-  const transcriptSpinnerDelayRef = useRef<number>(spinnerDelayForNow());
-  const [transcriptNotice, setTranscriptNotice] = useState<string | null>(null);
 
   const getRenameDraft = useCallback((taskId: string, fallback: string) => {
     return renameDraftsRef.current.get(taskId) ?? fallback;
@@ -884,10 +876,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     setArchiveCleanupNotice(false);
   }, []);
 
-  const dismissTranscriptNotice = useCallback(() => {
-    setTranscriptNotice(null);
-  }, []);
-
   const dismissDesktopStorageNotice = useCallback(() => {
     setDesktopStorageNotice(null);
   }, []);
@@ -914,17 +902,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         </div>
       </div>
       <button type="button" className="wb-snackbar-close" onClick={dismissArchiveCleanupNotice} aria-label="Dismiss">
-        <X size={14} aria-hidden="true" />
-      </button>
-    </div>
-  ) : null;
-
-  const transcriptNoticeSnackbar = transcriptNotice ? (
-    <div className="wb-snackbar" role="status" aria-live="polite">
-      <div className="wb-snackbar-body">
-        <div className="wb-snackbar-title">{transcriptNotice}</div>
-      </div>
-      <button type="button" className="wb-snackbar-close" onClick={dismissTranscriptNotice} aria-label="Dismiss">
         <X size={14} aria-hidden="true" />
       </button>
     </div>
@@ -1351,6 +1328,8 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   // TODO: Re-enable web sessions once the feature is ready to ship again.
   const webSessionsEnabled = false;
   const lastSessionSwitchRef = useRef<string | null>(null);
+  const autoLoadedSessionStateIdsRef = useRef<Set<string>>(new Set());
+  const autoLoadedSubagentInvocationIdsRef = useRef<Set<string>>(new Set());
   const loadTestTelemetry = getLoadTestTelemetry();
 
   useEffect(() => {
@@ -1369,9 +1348,41 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
 
   useEffect(() => {
     if (!activeSessionId || isOptimisticSessionId) return;
-    supervisor.loadSessionState(activeSessionId);
-    supervisor.loadSubagentInvocations(activeSessionId);
-  }, [activeEntry?.stateRev, activeSessionId, isOptimisticSessionId, supervisor]);
+    if (activeEntry?.stateLoaded && !activeEntry?.loadErrors?.state) {
+      autoLoadedSessionStateIdsRef.current.add(activeSessionId);
+    }
+    if (activeEntry?.subagentInvocations.length && !activeEntry?.loadErrors?.subagentInvocations) {
+      autoLoadedSubagentInvocationIdsRef.current.add(activeSessionId);
+    }
+
+    if (
+      !autoLoadedSessionStateIdsRef.current.has(activeSessionId) &&
+      (!activeEntry?.stateLoaded || Boolean(activeEntry?.loadErrors?.state)) &&
+      !activeEntry?.stateLoading
+    ) {
+      autoLoadedSessionStateIdsRef.current.add(activeSessionId);
+      supervisor.loadSessionState(activeSessionId);
+    }
+
+    if (
+      !autoLoadedSubagentInvocationIdsRef.current.has(activeSessionId) &&
+      (!activeEntry?.subagentInvocations.length || Boolean(activeEntry?.loadErrors?.subagentInvocations)) &&
+      !activeEntry?.subagentInvocationsLoading
+    ) {
+      autoLoadedSubagentInvocationIdsRef.current.add(activeSessionId);
+      supervisor.loadSubagentInvocations(activeSessionId);
+    }
+  }, [
+    activeEntry?.stateLoaded,
+    activeEntry?.stateLoading,
+    activeEntry?.loadErrors?.state,
+    activeEntry?.loadErrors?.subagentInvocations,
+    activeEntry?.subagentInvocations,
+    activeEntry?.subagentInvocationsLoading,
+    activeSessionId,
+    isOptimisticSessionId,
+    supervisor,
+  ]);
 
   useEffect(() => {
     if (!activeWorktreeId) {
@@ -1994,296 +2005,49 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [activeTask?.title, activeTaskId, singleSessionHeader]);
 
   const showSingleSessionHeader = Boolean(activeTaskId && singleSessionHeaderForRender);
-
-  const [worktreeCopied, setWorktreeCopied] = useState(false);
-  const worktreeCopiedTimerRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    if (!worktreeCopied) return;
-    if (worktreeCopiedTimerRef.current) {
-      window.clearTimeout(worktreeCopiedTimerRef.current);
-    }
-    worktreeCopiedTimerRef.current = window.setTimeout(() => {
-      setWorktreeCopied(false);
-      worktreeCopiedTimerRef.current = null;
-    }, 1100);
-    return () => {
-      if (worktreeCopiedTimerRef.current) {
-        window.clearTimeout(worktreeCopiedTimerRef.current);
-        worktreeCopiedTimerRef.current = null;
-      }
-    };
-  }, [worktreeCopied]);
-
-  const copyWorktreeLocation = useCallback(async () => {
-    const path = String(worktreeChip.copyPath ?? "").trim();
-    if (!path || !worktreeChip.canCopyWorktree) return;
-    const ok = await copyTextToClipboard(path);
-    if (!ok) {
-      window.alert("Clipboard access is blocked; use HTTPS/desktop app or copy manually.");
-      return;
-    }
-    setWorktreeCopied(true);
-  }, [worktreeChip.worktreePath]);
-
-  const openWorktreeTerminal = useCallback(async () => {
-    const path = String(worktreeChip.worktreePath ?? "").trim();
-    if (!path || !worktreeChip.canOpenTerminal) return;
-    if (!terminalPanelRef.current) return;
-    terminalPanelRef.current.setScope("task");
-    setTerminalOpen(true);
-    const createdId = await terminalPanelRef.current.createTerminal({
-      cwd: path,
-      taskId: activeTaskId ?? null,
-      sessionId: activeSessionId ?? null,
-      worktreeId: activeWorktreeId || null,
-      scope: "task",
-    });
-    if (createdId) terminalPanelRef.current.focusTerminal(createdId);
-  }, [activeSessionId, activeTaskId, activeWorktreeId, worktreeChip.worktreePath]);
-
-  const buildSessionLogExport = useCallback(() => {
-    if (!activeEntry?.session) return;
-    const sess = activeEntry.session;
-
-    const harness =
-      HARNESS_CATALOG.find((h) => h.id === (sess?.provider_id ?? ""))?.label ??
-      (sess?.provider_id ?? "Provider");
-    const parsedModel = parseModelId(sess?.model_id ?? "");
-
-    const thread = buildWorkbenchThreadViewModel(
-      activeEntry.turns ?? [],
-      activeEntry.messages ?? [],
-      activeEntry.turnToolsByTurnId ?? {},
-      activeEntry.events ?? [],
-    );
-    const exportedAt = new Date().toISOString();
-
-    const title = singleSessionHeader?.title ?? "Conversation";
-    const lines: string[] = [];
-    lines.push(`# ${title}`);
-    lines.push("");
-    lines.push(`- Exported: ${exportedAt}`);
-    lines.push(`- Harness: ${harness}`);
-    lines.push(`- Model: ${parsedModel.base || String(sess.model_id ?? "")}`);
-    if (parsedModel.effort) lines.push(`- Effort: ${parsedModel.effort}`);
-    if (worktreeChip.worktreePath) lines.push(`- Worktree: ${formatWorktreePath(worktreeChip.worktreePath)}`);
-    lines.push(`- Session ID: ${idToString(sess.id)}`);
-    lines.push("");
-    lines.push("---");
-    lines.push("");
-
-    const attachmentLine = (atts: MessageAttachment[]): string => {
-      const names = (atts ?? [])
-        .map((a) => String(a.name ?? ("blob_id" in a ? a.blob_id : a.kind) ?? "").trim())
-        .filter(Boolean);
-      if (names.length === 0) return "";
-      return `Attachments: ${names.join(", ")}`;
-    };
-
-    for (let i = 0; i < thread.groups.length; i++) {
-      const g = thread.groups[i];
-      if (!g) continue;
-      lines.push(`## Turn ${i + 1}`);
-      lines.push("");
-
-      if (g?.header) {
-        lines.push(`### User (${String(g.header.created_at ?? "").trim() || "unknown time"})`);
-        lines.push("");
-        const attsLine = attachmentLine(g.header.attachments ?? []);
-        if (attsLine) {
-          lines.push(`_${attsLine}_`);
-          lines.push("");
-        }
-        lines.push(String(g.header.content ?? ""));
-        lines.push("");
-      }
-
-      const items = Array.isArray(g.items) ? g.items : [];
-      for (const item of items) {
-        if (!item || item.kind === "spacer") continue;
-        if (item.kind === "tool") {
-          const title = String(item.title ?? "Tool");
-          const status = String(item.status ?? "").trim();
-          lines.push(`### Tool: ${title}${status ? ` (${status})` : ""}`);
-          lines.push("");
-          const kind = String(item.tool_kind ?? "").trim();
-          if (kind) {
-            lines.push(`**Kind:** \`${kind}\``);
-            lines.push("");
-          }
-          if (item.input != null) {
-            lines.push("**Input:**");
-            lines.push("");
-            lines.push("```json");
-            try {
-              lines.push(JSON.stringify(item.input, null, 2));
-            } catch {
-              lines.push(String(item.input));
-            }
-            lines.push("```");
-            lines.push("");
-          }
-          const out = String(item.output_text ?? "").trim();
-          if (out) {
-            lines.push("**Output:**");
-            lines.push("");
-            lines.push("```");
-            lines.push(out);
-            lines.push("```");
-            lines.push("");
-          }
-          continue;
-        }
-        if (item.kind === "assistant") {
-          lines.push(`### Assistant (${String(item.created_at ?? "").trim() || "unknown time"})`);
-          lines.push("");
-          lines.push(String(item.content ?? ""));
-          lines.push("");
-          continue;
-        }
-      }
-
-      lines.push("---");
-      lines.push("");
-    }
-
-    return { title, markdown: lines.join("\n") };
-  }, [activeEntry, singleSessionHeader?.title, worktreeChip.worktreePath]);
-
-  const buildTranscriptExportFromEntry = useCallback(
-    (entry: SessionCacheEntry | null) => {
-      if (!entry?.session) return;
-      const thread = buildWorkbenchThreadViewModel(
-        entry.turns ?? [],
-        entry.messages ?? [],
-        entry.turnToolsByTurnId ?? {},
-        entry.events ?? [],
-      );
-
-      const title = singleSessionHeader?.title ?? "Conversation";
-      const lines: string[] = [];
-      lines.push(`# ${title}`);
-      lines.push("");
-
-      for (const g of thread.groups ?? []) {
-        if (g?.header) {
-          lines.push("User:");
-          lines.push("");
-          lines.push(String(g.header.content ?? ""));
-          lines.push("");
-        }
-
-        const items = Array.isArray(g.items) ? g.items : [];
-        for (const item of items) {
-          if (!item || item.kind !== "assistant") continue;
-          lines.push("Assistant:");
-          lines.push("");
-          lines.push(String(item.content ?? ""));
-          lines.push("");
-        }
-      }
-
-      return { title, markdown: lines.join("\n") };
+  const {
+    copyTranscriptBusy,
+    transcriptNotice,
+    setTranscriptNotice,
+    transcriptSpinnerDelayMs,
+    worktreeCopied,
+    copyWorktreeLocation,
+    openWorktreeTerminal,
+    exportSessionLog,
+    copySessionLog,
+    exportTranscript,
+    copyTranscript,
+  } = useWorkbenchSessionActions({
+    activeEntry,
+    activeSessionId,
+    activeTaskId,
+    activeWorktreeId,
+    singleSessionTitle: singleSessionHeader?.title ?? null,
+    worktreePath: worktreeChip.worktreePath,
+    canCopyWorktree: worktreeChip.canCopyWorktree,
+    canOpenTerminal: worktreeChip.canOpenTerminal,
+    terminalPanelRef,
+    setTerminalOpen,
+    getSupervisorSnapshot: () => supervisor.getSnapshot(),
+    loadMoreTurns: async (sessionId) => {
+      await supervisor.loadMoreTurns(sessionId);
     },
-    [singleSessionHeader?.title],
-  );
+  });
 
-  const buildTranscriptExport = useCallback(() => {
-    return buildTranscriptExportFromEntry(activeEntry ?? null);
-  }, [activeEntry, buildTranscriptExportFromEntry]);
-
-  const hydrateTranscriptHistory = useCallback(
-    async (sessionId: string): Promise<{ ok: boolean; partial: boolean }> => {
-      let lastCursor: number | null = null;
-      let stalledCount = 0;
-      while (true) {
-        const entry = supervisor.getSnapshot().sessions[String(sessionId)];
-        if (!entry) return { ok: false, partial: true };
-        if (!entry.hasMoreTurns) return { ok: true, partial: false };
-        if (entry.fetching?.history) {
-          await new Promise((resolve) => setTimeout(resolve, 40));
-          continue;
-        }
-        const beforeCursor = entry.oldestTurnSeq ?? null;
-        await supervisor.loadMoreTurns(sessionId);
-        const nextEntry = supervisor.getSnapshot().sessions[String(sessionId)];
-        if (!nextEntry) return { ok: false, partial: true };
-        if (!nextEntry.hasMoreTurns) return { ok: true, partial: false };
-        const afterCursor = nextEntry.oldestTurnSeq ?? null;
-        if (afterCursor === beforeCursor && afterCursor === lastCursor) {
-          stalledCount += 1;
-          if (stalledCount >= 2) return { ok: false, partial: true };
-        } else {
-          stalledCount = 0;
-        }
-        lastCursor = afterCursor;
-      }
-    },
-    [supervisor],
-  );
-
-  const exportSessionLog = useCallback(async () => {
-    const payload = buildSessionLogExport();
-    if (!payload) return;
-    try {
-      const fileBase = `${sanitizeFileName(payload.title)}-session-log`;
-      await saveMarkdownExport(fileBase, payload.markdown);
-    } catch (e: unknown) {
-      window.alert(errorMessage(e) || "Failed to export session log.");
-    }
-  }, [buildSessionLogExport]);
-
-  const copySessionLog = useCallback(async () => {
-    const payload = buildSessionLogExport();
-    if (!payload) return;
-    const ok = await copyTextToClipboard(payload.markdown);
-    if (!ok) {
-      window.alert("Clipboard access is blocked; use HTTPS/desktop app or copy manually.");
-    }
-  }, [buildSessionLogExport]);
-
-  const exportTranscript = useCallback(async () => {
-    const payload = buildTranscriptExport();
-    if (!payload) return;
-    try {
-      const fileBase = `${sanitizeFileName(payload.title)}-transcript`;
-      await saveMarkdownExport(fileBase, payload.markdown);
-    } catch (e: unknown) {
-      window.alert(errorMessage(e) || "Failed to export transcript.");
-    }
-  }, [buildTranscriptExport]);
-
-  const copyTranscript = useCallback(async () => {
-    const sessionId = activeSessionId;
-    if (!sessionId || copyTranscriptBusyRef.current) return;
-    copyTranscriptBusyRef.current = true;
-    setCopyTranscriptBusy(true);
+  const dismissTranscriptNotice = useCallback(() => {
     setTranscriptNotice(null);
-    try {
-      let hydrationResult = { ok: true, partial: false };
-      try {
-        hydrationResult = await hydrateTranscriptHistory(sessionId);
-      } catch {
-        hydrationResult = { ok: false, partial: true };
-      }
-      const entry = supervisor.getSnapshot().sessions[String(sessionId)] ?? null;
-      const payload = buildTranscriptExportFromEntry(entry);
-      if (!payload) return;
-      const ok = await copyTextToClipboard(payload.markdown);
-      if (!ok) {
-        setTranscriptNotice("Clipboard access is blocked; use HTTPS/desktop app or copy manually.");
-        return;
-      }
-      if (!hydrationResult.ok || hydrationResult.partial) {
-        setTranscriptNotice("Couldn't load full history. Copied what's already loaded.");
-      }
-    } finally {
-      copyTranscriptBusyRef.current = false;
-      setCopyTranscriptBusy(false);
-      setConvoMenu(null);
-    }
-  }, [activeSessionId, buildTranscriptExportFromEntry, hydrateTranscriptHistory, supervisor]);
+  }, [setTranscriptNotice]);
+
+  const transcriptNoticeSnackbar = transcriptNotice ? (
+    <div className="wb-snackbar" role="status" aria-live="polite">
+      <div className="wb-snackbar-body">
+        <div className="wb-snackbar-title">{transcriptNotice}</div>
+      </div>
+      <button type="button" className="wb-snackbar-close" onClick={dismissTranscriptNotice} aria-label="Dismiss">
+        <X size={14} aria-hidden="true" />
+      </button>
+    </div>
+  ) : null;
 
   const activeSessionStatus = String(activeEntry?.session?.status ?? "").toLowerCase();
   const canInterruptSession =
@@ -2885,6 +2649,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             className="wb-menu-item"
             disabled={!activeSessionId || copyTranscriptBusy}
             onClick={() => {
+              setConvoMenu(null);
               void copyTranscript();
             }}
             role="menuitem"
@@ -2894,7 +2659,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
               {copyTranscriptBusy ? (
                 <span
                   className="wb-task-spinner wb-menu-item-spinner"
-                  style={{ animationDelay: `${transcriptSpinnerDelayRef.current}ms` }}
+                  style={{ animationDelay: `${transcriptSpinnerDelayMs}ms` }}
                   aria-hidden="true"
                 />
               ) : null}

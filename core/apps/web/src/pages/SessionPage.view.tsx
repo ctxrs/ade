@@ -6,7 +6,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { ChevronDown, CornerUpRight, Pencil, Trash2 } from "lucide-react";
 import {
   deleteMessage,
   Message,
@@ -14,7 +13,7 @@ import {
   postMessage,
   Session,
   SessionEvent,
-  SubagentInvocation,
+  type SubagentInvocation,
   setSessionModel,
   authenticateSession,
   type ProviderOptions,
@@ -28,13 +27,6 @@ import { useOpenSession, useSessionEntry, useSessionSupervisor } from "../state/
 import { loadSessionViewPrefsV1, saveSessionViewPrefsV1, type SessionViewVerbosity } from "../state/uiStateStore";
 import { AskUserQuestionCard } from "../components/AskUserQuestionCard";
 import { DictationOnboardingModal } from "../components/dictation/DictationOnboardingModal";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "../components/ui/select";
 import { type SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 import { HARNESS_CATALOG } from "../utils/harnessCatalog";
 import { useSettingsSnapshot, useSettingsStore } from "../state/settingsStore";
@@ -46,7 +38,6 @@ import {
 } from "../components/WorkbenchComposer";
 import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
 import { registerDropScope } from "../utils/dragDropScopes";
-import { useRelativeNowMs } from "../utils/useRelativeNowMs";
 import { useFeatureGate } from "../utils/analytics";
 import { useDictationController } from "../utils/useDictationController";
 import { useWorkbenchStore } from "../workbench/store";
@@ -68,15 +59,7 @@ import type {
   ThreadItem,
   WorkbenchListItem,
 } from "./SessionPage.types";
-import {
-  appendSegment,
-  attachmentDisplayName,
-  formatElapsedMs,
-  formatSubagentChildMeta,
-  humanToolStatus,
-  markdownToPlainText,
-  subagentChildLabel,
-} from "./SessionPage.helpers";
+import { markdownToPlainText } from "./SessionPage.helpers";
 import {
   buildPendingTurns,
   collectAskUserQuestionAnswers,
@@ -97,177 +80,18 @@ import { useSessionMessageListController } from "./useSessionMessageListControll
 import { useWorkbenchThreadViewModelController } from "./useWorkbenchThreadViewModelController";
 import { errorMessage } from "../utils/errorMessage";
 import { defaultSessionVerbosityForProvider } from "./sessionVerbosity";
-
-type PendingMessageEntry = {
-  clientId: string;
-  message: Message;
-};
+import { appendSegment } from "./SessionPage.helpers";
+import { isSameContextWindow } from "./sessionView/estimateHeuristics";
+import { PendingMessageEntry, shouldDropPendingMessage } from "./sessionView/pendingMessages";
+import { ProviderGuardBanner } from "./sessionView/ProviderGuardBanner";
+import { SessionAuthBanner } from "./sessionView/SessionAuthBanner";
+import { SessionDebugPanel } from "./sessionView/SessionDebugPanel";
+import { getQueuedAttachments, SessionQueuePanel } from "./sessionView/SessionQueuePanel";
+import { SessionSubagentInvocationsCard } from "./sessionView/SessionSubagentInvocationsCard";
 
 // Edge case: the workspace stream can deliver the real message before the
 // POST response updates the optimistic entry. We drop pending entries once
 // the real message with the same id is observed.
-
-const getEstimateBucket = (length: number): string => {
-  if (length > 8000) return "xxl";
-  if (length > 4000) return "xl";
-  if (length > 2000) return "l";
-  if (length > 800) return "m";
-  if (length > 200) return "s";
-  return "xs";
-};
-
-const estimateTextHeight = (text: string, attachments = 0): number => {
-  const lineBreaks = text.split("\n").length;
-  const lengthLines = Math.ceil(text.length / 80);
-  const lines = Math.max(1, Math.max(lineBreaks, lengthLines));
-  const base = 28;
-  const lineHeight = 18;
-  const attachmentExtra = attachments > 0 ? 120 * attachments : 0;
-  return base + lines * lineHeight + attachmentExtra;
-};
-
-const estimateItemHeight = (item: WorkbenchListItem): number => {
-  const kind = item.kind ?? "unknown";
-  switch (kind) {
-    case "message": {
-      const msg = item as Extract<WorkbenchListItem, { kind: "message" }>;
-      return estimateTextHeight(msg.content ?? "", msg.attachments?.length ?? 0);
-    }
-    case "assistant":
-    case "thought": {
-      const text = (item as Extract<WorkbenchListItem, { kind: "assistant" | "thought" }>).content ?? "";
-      return estimateTextHeight(text);
-    }
-    case "turn_header": {
-      const header = (item as Extract<WorkbenchListItem, { kind: "turn_header" }>).header;
-      const text = header?.plain_text ?? header?.content ?? "";
-      return estimateTextHeight(text, header?.attachments?.length ?? 0);
-    }
-    case "tool": {
-      const toolItem = item as Extract<WorkbenchListItem, { kind: "tool" }>;
-      const text = `${toolItem.title ?? ""}\n${toolItem.output_text ?? ""}`;
-      return Math.min(900, estimateTextHeight(text));
-    }
-    case "tool_group": {
-      const group = item as Extract<WorkbenchListItem, { kind: "tool_group" }>;
-      const text = String(group.thought ?? "");
-      const toolCount = group.tool_total ?? group.tools?.length ?? 0;
-      return estimateTextHeight(text) + toolCount * 28;
-    }
-    case "turn_status": {
-      return 44;
-    }
-    case "ask_user_question": {
-      const input = String((item as Extract<WorkbenchListItem, { kind: "ask_user_question" }>).input ?? "");
-      return estimateTextHeight(input) + 60;
-    }
-    case "spacer":
-      return 24;
-    default:
-      return 56;
-  }
-};
-
-const shouldLockItem = (item: WorkbenchListItem): boolean => {
-  if (!item) return false;
-  if (item.kind === "turn_header") return true;
-  if (item.kind === "spacer") return true;
-  if (item.kind === "message") {
-    return true;
-  }
-  if (item.kind === "assistant") {
-    return item.is_complete;
-  }
-  if (item.kind === "tool_group") {
-    return item.tool_pending === 0 && item.tool_running === 0;
-  }
-  if (item.kind === "tool") {
-    const status = String(item.status ?? "").toLowerCase();
-    if (!status) return true;
-    if (status.includes("running") || status.includes("pending") || status.includes("queued") || status.includes("starting")) {
-      return false;
-    }
-    return true;
-  }
-  if (item.kind === "turn_status") {
-    const status = String(item.status ?? "").toLowerCase();
-    if (!status) return true;
-    if (status.includes("running") || status.includes("queued")) return false;
-    return true;
-  }
-  if (item.kind === "ask_user_question") {
-    return item.answered;
-  }
-  return true;
-};
-
-const getItemEstimateKey = (item: WorkbenchListItem): string => {
-  const kind = item.kind ?? "unknown";
-  switch (kind) {
-    case "message":
-    case "assistant":
-    case "thought": {
-      const text = (item as Extract<WorkbenchListItem, { kind: "message" | "assistant" | "thought" }>).content ?? "";
-      return `${kind}:${getEstimateBucket(text.length)}`;
-    }
-    case "tool": {
-      const toolItem = item as Extract<WorkbenchListItem, { kind: "tool" }>;
-      const text = String(toolItem.output_text ?? "").length + String(toolItem.title ?? "").length * 2;
-      return `${kind}:${getEstimateBucket(text)}`;
-    }
-    case "tool_group": {
-      const group = item as Extract<WorkbenchListItem, { kind: "tool_group" }>;
-      const text = String(group.thought ?? "");
-      const toolCount = group.tool_total ?? group.tools?.length ?? 0;
-      const len = text.length + toolCount * 60;
-      return `${kind}:${getEstimateBucket(len)}`;
-    }
-    case "ask_user_question": {
-      const input = String((item as Extract<WorkbenchListItem, { kind: "ask_user_question" }>).input ?? "");
-      return `${kind}:${getEstimateBucket(input.length)}`;
-    }
-    case "turn_header": {
-      const header = (item as Extract<WorkbenchListItem, { kind: "turn_header" }>).header;
-      const text = header?.plain_text ?? header?.content ?? "";
-      return `${kind}:${getEstimateBucket(text.length)}`;
-    }
-    default:
-      return `${kind}:base`;
-  }
-};
-
-const shouldDropPendingMessage = (pending: Message, realIds: Set<string>): boolean => {
-  const pid = idToString(pending.id);
-  return Boolean(pid && realIds.has(pid));
-};
-
-function isSameContextWindow(a: ContextWindowInfo | null, b: ContextWindowInfo | null): boolean {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  return (
-    a.windowTokens === b.windowTokens &&
-    a.usedTokens === b.usedTokens &&
-    a.remainingTokens === b.remainingTokens &&
-    a.remainingFraction === b.remainingFraction
-  );
-}
-
-function ProviderGuardCountdownLine({
-  notice,
-}: {
-  notice: NonNullable<ReturnType<typeof deriveProviderGuardNotice>>;
-}) {
-  const enabled = notice.kind === "provider_guard_warning" && notice.stage === "max" && notice.killAtMs != null;
-  const nowMs = useRelativeNowMs(1000, enabled);
-  if (!enabled || notice.killAtMs == null) return null;
-
-  const remainingMs = notice.killAtMs - nowMs;
-  const text =
-    remainingMs > 0
-      ? `Kill in ${formatElapsedMs(remainingMs)} unless memory drops.`
-      : "Kill imminent unless memory drops.";
-  return <div className="muted">{text}</div>;
-}
 
 export function SessionView({
   sessionId,
@@ -922,31 +746,6 @@ export function SessionView({
     return String(session?.model_id ?? "").trim();
   }, [entry?.acpCurrentModelId, session?.model_id]);
 
-  const getQueuedAttachments = (message: Message): MessageAttachment[] => {
-    return Array.isArray(message.attachments) ? message.attachments : [];
-  };
-
-  const formatQueuedPreview = (message: Message, attachments: MessageAttachment[]): string => {
-    const base = markdownToPlainText(message.content ?? "");
-    const compact = base.replace(/\s+/g, " ").trim();
-    if (compact) return compact;
-    if (attachments.length > 0) return "Message with attachments";
-    return "Queued message";
-  };
-
-  const formatQueuedAttachmentMeta = (attachments: MessageAttachment[]) => {
-    if (attachments.length === 0) return null;
-    const names = attachments.map((a) => attachmentDisplayName(a.name));
-    const label = attachments.length === 1 ? "1 attachment" : `${attachments.length} attachments`;
-    const preview = names.slice(0, 2).join(", ");
-    const overflow = names.length > 2 ? ` +${names.length - 2}` : "";
-    return {
-      label,
-      detail: preview ? `${preview}${overflow}` : null,
-      title: names.join(", "),
-    };
-  };
-
   const setSendBusySafe = (next: boolean) => {
     sendBusyRef.current = next;
     setSendBusy(next);
@@ -1455,177 +1254,67 @@ export function SessionView({
             </div>
           </div>
         )}
-        {providerGuardNotice && (
-          <div className="banner" role="alert">
-            <div className="row" style={{ justifyContent: "space-between" }}>
-              <strong>{providerGuardHeading}</strong>
-              {providerGuardProviderLabel ? <span className="muted">{providerGuardProviderLabel}</span> : null}
-            </div>
-            <div
-              className={providerGuardNotice.kind === "provider_guard_kill" ? "error" : "muted"}
-              style={{ whiteSpace: "pre-wrap" }}
-            >
-              {providerGuardMessage}
-            </div>
-            <div className="row" style={{ flexWrap: "wrap", gap: 12 }}>
-              {providerGuardNotice.memoryMb != null ? (
-                <span className="muted">
-                  Memory {formatMemoryMb(providerGuardNotice.memoryMb)}
-                  {providerGuardMemoryLimitMb != null
+        <ProviderGuardBanner
+          heading={providerGuardHeading}
+          message={providerGuardMessage}
+          providerLabel={providerGuardProviderLabel}
+          pidLabel={providerGuardPidLabel}
+          memoryLabel={
+            providerGuardNotice?.memoryMb != null
+              ? `Memory ${formatMemoryMb(providerGuardNotice.memoryMb)}${
+                  providerGuardMemoryLimitMb != null
                     ? ` / ${formatMemoryMb(providerGuardMemoryLimitMb)} (${providerGuardLimitLabel})`
-                    : ""}
-                </span>
-              ) : null}
-              {providerGuardNotice.systemUsedMb != null && providerGuardNotice.systemTotalMb != null ? (
-                <span className="muted">
-                  System {formatMemoryMb(providerGuardNotice.systemUsedMb)} / {formatMemoryMb(providerGuardNotice.systemTotalMb)}
-                </span>
-              ) : null}
-              {providerGuardPidLabel ? <span className="muted">{providerGuardPidLabel}</span> : null}
-            </div>
-            <ProviderGuardCountdownLine notice={providerGuardNotice} />
-            <div className="row" style={{ flexWrap: "wrap", gap: 8 }}>
-              <button
-                type="button"
-                disabled={providerGuardActionBusy || !canRaiseProviderGuard}
-                onClick={raiseProviderGuardLimit}
-                title={!canRaiseProviderGuard ? "System memory total is unavailable." : undefined}
-              >
-                Raise limit to 90%
-              </button>
-              <button
-                type="button"
-                disabled={providerGuardActionBusy}
-                onClick={disableProviderGuard}
-              >
-                Disable guard
-              </button>
-              {providerGuardActionError && <span className="error">{providerGuardActionError}</span>}
-            </div>
-          </div>
-        )}
+                    : ""
+                }`
+              : null
+          }
+          systemLabel={
+            providerGuardNotice?.systemUsedMb != null && providerGuardNotice.systemTotalMb != null
+              ? `System ${formatMemoryMb(providerGuardNotice.systemUsedMb)} / ${formatMemoryMb(providerGuardNotice.systemTotalMb)}`
+              : null
+          }
+          notice={providerGuardNotice}
+          actionBusy={providerGuardActionBusy}
+          actionError={providerGuardActionError}
+          canRaiseLimit={canRaiseProviderGuard}
+          onRaiseLimit={raiseProviderGuardLimit}
+          onDisableGuard={disableProviderGuard}
+        />
         {showDebug && (
           <div className="wb-muted" style={{ fontFamily: "var(--mono)" }}>
             debug: events={events.length} messages={messages.length} userMessages={messages.filter((m) => m.role === "user").length} items={listItems.length}
           </div>
         )}
-        {(authUi.status === "required" || authUi.status === "failed") && (
-          <div className="banner">
-            <div className="row" style={{ justifyContent: "space-between" }}>
-              <strong>Authentication required</strong>
-              <span className="muted">{authUi.provider ?? session?.provider_id}</span>
-            </div>
-            <div className="muted">
-              {authUi.message ??
-                "This provider requires authentication before it can run."}
-            </div>
-            {authUi.methods.length > 0 ? (
-              <div className="row" style={{ flexWrap: "wrap" }}>
-                {authUi.methods.length > 1 && (
-                  <label>
-                    Method
-                    <Select value={authMethodId} onValueChange={setAuthMethodId}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {authUi.methods.map((m) => (
-                          <SelectItem key={m.id} value={m.id}>
-                            {m.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </label>
-                )}
-                <button
-                  type="button"
-                  disabled={authBusy || !id || !authMethodId}
-                  onClick={async () => {
-                    if (!id) return;
-                    setAuthBusy(true);
-                    setAuthError(null);
-                    try {
-                      await authenticateSession(id, authMethodId);
-                      await refreshAll();
-                    } catch (e: unknown) {
-                      setAuthError(errorMessage(e));
-                    } finally {
-                      setAuthBusy(false);
-                    }
-                  }}
-                >
-                  {authBusy ? "Authenticating..." : "Authenticate"}
-                </button>
-              </div>
-            ) : (
-              <div className="muted">
-                No authentication methods were advertised by the provider.
-              </div>
-            )}
-            {(authError || authUi.status === "failed") && (
-              <div className="muted">
-                {authError ??
-                  "Authentication attempt failed. Check provider logs and try again."}
-              </div>
-            )}
-          </div>
-        )}
-        {subagentInvocations.length > 0 && (
-          <div className="subagent-invocations card">
-            <div className="row" style={{ justifyContent: "space-between" }}>
-              <strong>Subagent invocations</strong>
-              <span className="muted">{subagentInvocations.length}</span>
-            </div>
-            <div className="subagent-invocation-list">
-              {subagentInvocations.map((invocation) => {
-                const children = invocation.children ?? [];
-                const countLabel = `${children.length}/${invocation.requested_count}`;
-                return (
-                  <div key={invocation.id} className="subagent-invocation-row">
-                    <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
-                      <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-                        <span className="badge">{humanToolStatus(invocation.status)}</span>
-                        <span className="muted">Subagents {countLabel}</span>
-                      </div>
-                    </div>
-                    {children.length > 0 ? (
-                      <ul className="sublist subagent-invocation-children">
-                        {children.map((child) => {
-                          const childId = idToString(child.child_session_id);
-                          const label = subagentChildLabel(child);
-                          const meta = formatSubagentChildMeta(child);
-                          return (
-                            <li key={`${invocation.id}:${childId || child.position}`} className="row subagent-child-row">
-                              <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-                                <span className="badge">{humanToolStatus(child.status)}</span>
-                                <button
-                                  type="button"
-                                  className="subagent-child-link"
-                                  onClick={() => childId && openChildSession(childId)}
-                                  disabled={!childId}
-                                >
-                                  {label}
-                                </button>
-                              </div>
-                              <span className="muted">{meta}</span>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    ) : (
-                      <div className="muted">No child sessions yet.</div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
+        <SessionAuthBanner
+          visible={authUi.status === "required" || authUi.status === "failed"}
+          status={authUi.status}
+          provider={authUi.provider ?? session?.provider_id}
+          message={authUi.message}
+          methods={authUi.methods}
+          authMethodId={authMethodId}
+          onAuthMethodChange={setAuthMethodId}
+          authBusy={authBusy}
+          authError={authError}
+          onAuthenticate={async () => {
+            if (!id) return;
+            setAuthBusy(true);
+            setAuthError(null);
+            try {
+              await authenticateSession(id, authMethodId);
+              await refreshAll();
+            } catch (error: unknown) {
+              setAuthError(errorMessage(error));
+            } finally {
+              setAuthBusy(false);
+            }
+          }}
+        />
+        <SessionSubagentInvocationsCard
+          subagentInvocations={subagentInvocations}
+          onOpenChildSession={openChildSession}
+        />
 
-        {showDebug && debugEvents.length > 0 && (
-          <DebugPanel events={debugEvents} />
-        )}
+        {showDebug && debugEvents.length > 0 ? <SessionDebugPanel events={debugEvents} /> : null}
 
         <SessionThreadPane
           style={virtuosoStyle}
@@ -1642,78 +1331,15 @@ export function SessionView({
           // as the list transitions from short->tall.
           shortSizeAlign={atBottom ? "bottom" : "top"}
         >
-          {showQueuePanel && (
-            <div className="queue-panel card" aria-label="Queued messages">
-              <div className="queue-header">
-                <ChevronDown size={14} aria-hidden="true" />
-                <span className="queue-header-title">{queueForPanel.length} Queued</span>
-              </div>
-              <ul className="queue-list" role="list">
-                {queueForPanel.map((m, index) => {
-                  const messageId = idToString(m.id);
-                  const rowKey = messageId || `queued-${index}`;
-                  const attachments = getQueuedAttachments(m);
-                  const preview = formatQueuedPreview(m, attachments);
-                  const attachmentMeta = formatQueuedAttachmentMeta(attachments);
-                  const isPending = !!messageId && pendingQueueMessageIdSet.has(messageId);
-                  const canInteract = !!messageId && !isPending;
-                  const canSendNow = index === 0 && canInteract;
-                  return (
-                    <li key={rowKey} className="queue-item">
-                      <span className="queue-item-dot" aria-hidden="true" />
-                      <div className="queue-item-body">
-                        <div className="queue-item-content" title={preview}>
-                          {preview}
-                        </div>
-                        {attachmentMeta && (
-                          <div className="queue-item-meta" title={attachmentMeta.title}>
-                            <span>{attachmentMeta.label}</span>
-                            {attachmentMeta.detail && (
-                              <span className="queue-item-meta-detail">{attachmentMeta.detail}</span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                      <div className="queue-item-actions">
-                        {canSendNow && (
-                          <button
-                            type="button"
-                            className="queue-action"
-                            disabled={queueActionBusy || sendBusy}
-                            onClick={() => onSendQueuedNow(m)}
-                            aria-label="Send now"
-                            title="Send now"
-                          >
-                            <CornerUpRight size={14} aria-hidden="true" />
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          className="queue-action"
-                          disabled={queueActionBusy || !canInteract}
-                          onClick={() => onEditQueued(m)}
-                          aria-label="Edit queued message"
-                          title="Edit"
-                        >
-                          <Pencil size={14} aria-hidden="true" />
-                        </button>
-                        <button
-                          type="button"
-                          className="queue-action"
-                          disabled={queueActionBusy || !canInteract}
-                          onClick={() => onRemoveQueued(messageId)}
-                          aria-label="Cancel queued message"
-                          title="Cancel"
-                        >
-                          <Trash2 size={14} aria-hidden="true" />
-                        </button>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          )}
+          <SessionQueuePanel
+            queue={queueForPanel}
+            pendingQueueMessageIdSet={pendingQueueMessageIdSet}
+            queueActionBusy={queueActionBusy}
+            sendBusy={sendBusy}
+            onSendQueuedNow={onSendQueuedNow}
+            onEditQueued={onEditQueued}
+            onRemoveQueued={onRemoveQueued}
+          />
 
           <UnifiedWorkbenchComposer
             variant="activeSession"
@@ -1782,57 +1408,6 @@ export function SessionView({
         </div>
       </div>
 
-    </div>
-  );
-}
-
-function DebugPanel({ events }: { events: SessionEvent[] }) {
-  const [open, setOpen] = useState(false);
-  const kinds = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const e of events) {
-      counts[e.event_type] = (counts[e.event_type] ?? 0) + 1;
-    }
-    return counts;
-  }, [events.length]);
-
-  return (
-    <div className="debug card">
-      <button type="button" className="debug-header" onClick={() => setOpen((v) => !v)}>
-        <strong>Debug</strong>
-        <span className="muted">
-          {Object.entries(kinds)
-            .map(([k, v]) => `${k}:${v}`)
-            .join(" · ")}
-        </span>
-        <span className="thinking-chev">{open ? "▴" : "▾"}</span>
-      </button>
-      {open && (
-        <div className="debug-body">
-          {events.map((e) => {
-            const key = idToString(e.id);
-            if (!key) {
-              if (import.meta.env.DEV) {
-                // eslint-disable-next-line no-console
-                console.error("[DebugPanel] event missing id", {
-                  event_type: e.event_type,
-                  created_at: e.created_at,
-                });
-              }
-              return null;
-            }
-            return (
-              <details key={key} className="debug-event">
-                <summary>
-                  <span className="muted">{new Date(e.created_at).toLocaleTimeString()}</span>{" "}
-                  <strong>{e.event_type}</strong>
-                </summary>
-                <pre className="json">{JSON.stringify(e.payload_json, null, 2)}</pre>
-              </details>
-            );
-          })}
-        </div>
-      )}
     </div>
   );
 }

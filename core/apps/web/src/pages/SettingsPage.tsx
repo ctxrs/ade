@@ -1,11 +1,10 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import type { User } from "@supabase/supabase-js";
-import { QRCodeSVG } from "qrcode.react";
 import {
   DevRestartProvidersResult,
-  MobileAccessStatus,
   EnableMobileAccessResponse,
+  MobileAccessStatus,
   ResourceGovernanceLimits,
   ResourceGovernanceSettings,
   ResourceGovernanceStatus,
@@ -64,42 +63,17 @@ import {
 import {
   SECTIONS,
 } from "./SettingsPage.constants";
-import { Card, Metric, Row, Toggle } from "./SettingsPage.components";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "../components/ui/select";
-import { GeneralSection } from "./settings/sections/GeneralSection";
-import { GeneralSettingsSection } from "./settings/sections/GeneralSettingsSection";
-import { NotificationsSettingsSection } from "./settings/sections/NotificationsSettingsSection";
-import { AnalyticsSettingsSection } from "./settings/sections/AnalyticsSettingsSection";
-import { DevToolsSection } from "./settings/sections/DevToolsSection";
-import { WorktreeBootstrapSection } from "./settings/sections/WorktreeBootstrapSection";
-import { AgentSystemPromptSection } from "./settings/sections/AgentSystemPromptSection";
-import { ContainerNetworkSection } from "./settings/sections/ContainerNetworkSection";
-import { MergeQueueSection } from "./settings/sections/MergeQueueSection";
-import { DictationSection } from "./settings/sections/DictationSection";
-import { TitleGenerationSection } from "./settings/sections/TitleGenerationSection";
-import { WorkspaceAttachmentsSection } from "./settings/sections/WorkspaceAttachmentsSection";
-import { HarnessAuthenticationSection } from "./settings/sections/HarnessAuthenticationSection";
-import { CodexAccountsSection } from "./settings/sections/CodexAccountsSection";
+import { SettingsContentRouter } from "./settings/SettingsContentRouter";
+import { SettingsShell } from "./settings/SettingsShell";
 import { useSettingsActions } from "./settings/useSettingsActions";
 import { useSettingsState } from "./settings/useSettingsState";
-import type { SectionId } from "./SettingsPage.types";
+import type { SectionId, SettingsSectionMeta } from "./SettingsPage.types";
 import { runBillingCheckoutFlow } from "./settings/billingCheckoutFlow";
 import { shouldTrackEntitlementActivated } from "./settings/entitlementAnalytics";
 import {
-  formatAge,
-  formatBytes,
   formatGiB,
-  formatPct,
-  isLinuxPlatform,
   parseGiB,
   sectionFromHash,
-  truncateText,
 } from "./SettingsPage.utils";
 
 export default function SettingsPage() {
@@ -689,7 +663,7 @@ export default function SettingsPage() {
     };
   }, [active, workspaceId]);
 
-  const sidebarSections = useMemo(() => {
+  const sidebarSections = useMemo<SettingsSectionMeta[]>(() => {
     const q = query.trim().toLowerCase();
     const all = SECTIONS.filter(
       (section) => !section.navHidden && (devToolsEnabled || section.id !== "dev_tools"),
@@ -794,911 +768,210 @@ export default function SettingsPage() {
     setStoredTheme(next);
   }, []);
 
-  const renderMain = () => {
-    if (!loaded) return <div className="settings-empty">Loading…</div>;
-    if (loadError) return <div className="settings-empty settings-empty-error">{loadError}</div>;
-
-    if (active === "general") {
-      return (
-        <GeneralSettingsSection
-          theme={theme}
-          onThemeChange={onThemeChange}
-          editorSettings={editorSettings}
-          setEditorSettings={setEditorSettings}
-          editorLoaded={editorLoaded}
-          editorError={editorError}
-          clientSettingsError={clientSettingsError}
-          showRemoteAuthority={showRemoteAuthority}
-          isDesktopApp={isDesktopApp}
-        />
-      );
+  const doSignIn = useCallback(async () => {
+    if (!supabase) return;
+    setBillingBusy(true);
+    setBillingError(null);
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: billingEmail.trim(),
+        password: billingPassword,
+      });
+      if (error) throw error;
+    } catch (error: unknown) {
+      setBillingError(errorMessage(error));
+    } finally {
+      setBillingBusy(false);
     }
+  }, [billingEmail, billingPassword, supabase]);
 
-    if (active === "notifications") {
-      return (
-        <NotificationsSettingsSection
-          isDesktopApp={isDesktopApp}
-          desktopTurnNotifications={desktopTurnNotifications}
-          clientSettingsState={clientSettingsState}
-          clientSettingsSaving={clientSettingsSaving}
-          clientSettingsError={clientSettingsError}
-          onToggleTurnNotifications={handleToggleTurnNotifications}
-        />
-      );
+  const doSignUp = useCallback(async () => {
+    if (!supabase) return;
+    setBillingBusy(true);
+    setBillingError(null);
+    try {
+      const { error } = await supabase.auth.signUp({
+        email: billingEmail.trim(),
+        password: billingPassword,
+      });
+      if (error) throw error;
+    } catch (error: unknown) {
+      setBillingError(errorMessage(error));
+    } finally {
+      setBillingBusy(false);
     }
+  }, [billingEmail, billingPassword, supabase]);
 
-    if (active === "analytics") {
-      return (
-        <AnalyticsSettingsSection
-          telemetryEnabled={telemetryEnabled}
-          loaded={loaded}
-          setTelemetryEnabled={setTelemetryEnabled}
-        />
-      );
+  const doSignOut = useCallback(async () => {
+    if (!supabase) return;
+    setBillingBusy(true);
+    setBillingError(null);
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+    } catch (error: unknown) {
+      setBillingError(errorMessage(error));
+    } finally {
+      setBillingBusy(false);
     }
+  }, [supabase]);
 
-    if (active === "worktree_bootstrap") {
-      return (
-        <WorktreeBootstrapSection
-          workspaceId={workspaceId}
-          active={active === "worktree_bootstrap"}
-        />
-      );
-    }
-
-    if (active === "agent_system_prompt") {
-      return (
-        <AgentSystemPromptSection
-          workspaceId={workspaceId}
-          active={active === "agent_system_prompt"}
-          themeVariant={themeVariant}
-        />
-      );
-    }
-
-    if (active === "workspace_attachments") {
-      return (
-        <WorkspaceAttachmentsSection
-          workspaceId={workspaceId}
-          active={active === "workspace_attachments"}
-        />
-      );
-    }
-
-    if (active === "container_network") {
-      return (
-        <ContainerNetworkSection
-          workspaceId={workspaceId}
-          active={active === "container_network"}
-          themeVariant={themeVariant}
-        />
-      );
-    }
-
-    if (active === "merge_queue") {
-      return (
-        <MergeQueueSection
-          workspaceId={workspaceId}
-          active={active === "merge_queue"}
-        />
-      );
-    }
-
-    if (active === "resource_governance") {
-      const effectiveCpu = resourceEffective?.cpu_quota_pct ?? null;
-      const effectiveHigh = resourceEffective?.memory_high_mb ?? null;
-      const effectiveMax = resourceEffective?.memory_max_mb ?? null;
-      const statusState = resourceStatus?.state ?? (resourceGovernanceEnabled ? "pending" : "disabled");
-      const statusLabel =
-        statusState === "disabled"
-          ? "Disabled"
-          : statusState === "applied"
-            ? "Applied"
-            : statusState === "unsupported"
-              ? "Unsupported"
-              : statusState === "error"
-                ? "Error"
-                : "Pending";
-      const statusMessage = resourceStatus?.message ?? null;
-      const showApplyNow = statusState === "pending" && Boolean(resourceStatus?.can_apply_now);
-      const showRestart = Boolean(resourceStatus?.requires_restart);
-
-      return (
-        <>
-          <Card title="Resource Governance">
-            <Row
-              title="Enable resource limits"
-              description="Keep the host responsive by throttling agent workloads."
-              control={
-                <Toggle
-                  checked={resourceGovernanceEnabled}
-                  disabled={!loaded}
-                  onChange={setResourceGovernanceEnabled}
-                  ariaLabel="Enable resource limits"
-                />
-              }
-            />
-            <Row
-              title="Mode"
-              description="Auto picks safe limits for this machine."
-              control={
-                <Select
-                  value={resourceGovernanceMode}
-                  onValueChange={(value) =>
-                    setResourceGovernanceMode(value as ResourceGovernanceSettings["mode"])
-                  }
-                  disabled={!resourceGovernanceEnabled}
-                >
-                  <SelectTrigger className="tw-min-w-[10rem]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="auto">Auto (recommended)</SelectItem>
-                    <SelectItem value="custom">Custom</SelectItem>
-                  </SelectContent>
-                </Select>
-              }
-            />
-            {resourceGovernanceMode === "custom" ? (
-              <>
-                <Row
-                  title="CPU quota (%)"
-                  description="100% = 1 core. Leave empty to use auto."
-                  control={
-                    <input
-                      className="settings-control"
-                      type="number"
-                      min={50}
-                      step={10}
-                      value={resourceCpuQuotaPct}
-                      onChange={(e) => setResourceCpuQuotaPct(e.target.value)}
-                      disabled={!resourceGovernanceEnabled}
-                      placeholder="300"
-                    />
-                  }
-                />
-                <Row
-                  title="Memory high (GiB)"
-                  description="Soft limit for reclaim pressure."
-                  control={
-                    <input
-                      className="settings-control"
-                      type="number"
-                      min={0}
-                      step={0.5}
-                      value={resourceMemoryHighGb}
-                      onChange={(e) => setResourceMemoryHighGb(e.target.value)}
-                      disabled={!resourceGovernanceEnabled}
-                      placeholder="48"
-                    />
-                  }
-                />
-                <Row
-                  title="Memory max (GiB)"
-                  description="Hard limit; processes are killed when exceeded."
-                  control={
-                    <input
-                      className="settings-control"
-                      type="number"
-                      min={0}
-                      step={0.5}
-                      value={resourceMemoryMaxGb}
-                      onChange={(e) => setResourceMemoryMaxGb(e.target.value)}
-                      disabled={!resourceGovernanceEnabled}
-                      placeholder="54"
-                    />
-                  }
-                />
-              </>
-            ) : null}
-          </Card>
-
-          <Card title="Effective limits">
-            <Row
-              title="CPU quota"
-              description="Applied to the daemon and its child processes."
-              control={
-                <span className="settings-pill wb-mono">
-                  {effectiveCpu ? `${effectiveCpu}%` : "—"}
-                </span>
-              }
-            />
-            <Row
-              title="Memory high / max"
-              description="High is the soft threshold; max is the hard cap."
-              control={
-                <span className="settings-pill wb-mono">
-                  {effectiveHigh ? `${formatGiB(effectiveHigh)} GiB` : "—"} /{" "}
-                  {effectiveMax ? `${formatGiB(effectiveMax)} GiB` : "—"}
-                </span>
-              }
-            />
-            <Row
-              title="Apply status"
-              description={statusMessage ?? "Apply changes to update live limits."}
-              control={
-                <div className="row" style={{ gap: 8 }}>
-                  <span className="settings-pill">{statusLabel}</span>
-                  {showRestart ? <span className="settings-pill settings-pill-warn">Restart required</span> : null}
-                  {showApplyNow ? (
-                    <button
-                      type="button"
-                      className="settings-btn settings-btn-secondary"
-                      onClick={() => savePatch({ resource_governance: resourceGovernancePayload })}
-                      disabled={saving || !resourceGovernanceCanSave}
-                    >
-                      Apply now
-                    </button>
-                  ) : null}
-                </div>
-              }
-            />
-          </Card>
-
-          {!resourceGovernanceCanSave && resourceGovernanceMode === "custom" ? (
-            <div className="settings-banner settings-banner-error">Memory high must be less than or equal to memory max.</div>
-          ) : null}
-        </>
-      );
-    }
-
-    if (active === "mobile_access") {
-      if (!supabase) {
-        return (
-          <div className="settings-empty">
-            Mobile access requires Supabase config. Set <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code>.
-          </div>
-        );
+  const startCheckout = useCallback(
+    async (interval: "month" | "year") => {
+      if (!supabase) return;
+      setBillingBusy(true);
+      setBillingError(null);
+      try {
+        const url = await runBillingCheckoutFlow({
+          interval,
+          returnPath: billingReturnPath,
+          invokeCheckout: ({ interval: nextInterval, returnPath }) =>
+            supabase.functions.invoke("billing-checkout", {
+              body: { interval: nextInterval, return_path: returnPath },
+            }),
+          trackSubscribeCtaClicked,
+          trackCheckoutStarted,
+        });
+        window.location.href = url;
+      } catch (error: unknown) {
+        setBillingError(errorMessage(error));
+        setBillingBusy(false);
       }
+    },
+    [billingReturnPath, supabase],
+  );
 
-      const proEnabled = entitlements?.features?.remote_mobile_access === "enabled";
-      const status = mobileStatus;
-      const statusLabel = mobileStatusBusy ? "Loading" : status?.enabled ? "Enabled" : "Disabled";
-      const tunnelState = status?.tunnel_state ?? "idle";
-
-      return (
-        <>
-          <Card title="Remote Mobile Access">
-            <Row
-              title="Entitlement"
-              description={entitlementsBusy ? "Loading…" : proEnabled ? "Pro enabled" : "Pro required"}
-              control={<div className="settings-pill">{proEnabled ? "Enabled" : "Disabled"}</div>}
-            />
-            <Row
-              title="Status"
-              description="Mobile access tunnel status on this daemon."
-              control={<div className="settings-pill">{statusLabel}</div>}
-            />
-            <Row
-              title="Tunnel state"
-              description={status?.last_error ?? "Router tunnel lifecycle state."}
-              control={<div className="settings-pill">{tunnelState}</div>}
-            />
-            {status?.public_base_url ? (
-              <Row title="Public URL" control={<span className="settings-pill wb-mono">{status.public_base_url}</span>} />
-            ) : null}
-            {status?.tunnel_id ? (
-              <Row title="Tunnel ID" control={<span className="settings-pill wb-mono">{status.tunnel_id}</span>} />
-            ) : null}
-            <Row
-              title="Actions"
-              description={!billingUser ? "Sign in to enable or revoke mobile access." : "Manage remote tunnel access."}
-              control={
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                  <button
-                    type="button"
-                    className="settings-btn settings-btn-secondary"
-                    onClick={handleEnableMobile}
-                    disabled={!billingUser || !proEnabled || mobileEnableBusy}
-                  >
-                    {status?.enabled ? "Show QR" : "Enable"}
-                  </button>
-                  {status?.enabled ? (
-                    <button
-                      type="button"
-                      className="settings-btn"
-                      onClick={handleDisableMobile}
-                      disabled={!billingUser || mobileEnableBusy}
-                    >
-                      Disable
-                    </button>
-                  ) : null}
-                </div>
-              }
-            />
-            {!proEnabled ? (
-              <Row
-                title="Upgrade"
-                description="Remote mobile access is a Pro feature."
-                control={<Link to="#billing">Go to billing</Link>}
-              />
-            ) : null}
-          </Card>
-
-          {mobileStatusBusy ? <div className="settings-banner">Loading mobile access status…</div> : null}
-          {mobileStatusError ? <div className="settings-banner settings-banner-error">{mobileStatusError}</div> : null}
-          {mobileEnableError ? <div className="settings-banner settings-banner-error">{mobileEnableError}</div> : null}
-
-          {mobileQr ? (
-            <Card title="Pair a mobile device">
-              <div className="settings-card-block" style={{ display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap" }}>
-                <QRCodeSVG
-                  value={JSON.stringify(mobileQr.qr_payload)}
-                  size={220}
-                  bgColor="transparent"
-                  fgColor={qrFgColor}
-                />
-                <div style={{ minWidth: 240 }}>
-                  <div className="settings-row-title" style={{ marginBottom: 6 }}>Scan with ctx mobile</div>
-                  <div className="settings-row-desc">
-                    This QR code pairs a device using end-to-end encryption. It expires at {new Date(mobileQr.pairing_expires_at).toLocaleString()}.
-                  </div>
-                </div>
-              </div>
-            </Card>
-          ) : null}
-        </>
-      );
+  const openPortal = useCallback(async () => {
+    if (!supabase) return;
+    setBillingBusy(true);
+    setBillingError(null);
+    try {
+      const response = await supabase.functions.invoke("billing-portal", {
+        body: { return_path: billingReturnPath },
+      });
+      if (response.error) throw response.error;
+      const data =
+        response.data && typeof response.data === "object" ? (response.data as Record<string, unknown>) : null;
+      const url = typeof data?.url === "string" ? data.url.trim() : "";
+      if (!url) throw new Error("Portal URL missing.");
+      window.location.href = url;
+    } catch (error: unknown) {
+      setBillingError(errorMessage(error));
+      setBillingBusy(false);
     }
+  }, [billingReturnPath, supabase]);
 
-    if (active === "resource_utilization") {
-      if (!workspaceId) {
-        return <div className="settings-empty">No workspace selected.</div>;
-      }
+  const toggleExpandedProcess = useCallback((pid: number) => {
+    setExpandedProcessPids((prev) => ({ ...prev, [pid]: !prev[pid] }));
+  }, []);
 
-      const snapshot = resourceSnapshot;
-      const system = snapshot?.system;
-      const disk = snapshot?.workspace?.disk;
-      const workspaceName =
-        workspaces.find((ws) => idToString(ws.id) === workspaceId)?.name ?? "Workspace";
-
-      const memoryPct =
-        system && system.memory_total_bytes > 0
-          ? (system.memory_used_bytes / system.memory_total_bytes) * 100
-          : null;
-      const swapPct =
-        system && system.swap_total_bytes > 0
-          ? (system.swap_used_bytes / system.swap_total_bytes) * 100
-          : null;
-      const diskPct =
-        disk && disk.total_bytes > 0
-          ? ((disk.total_bytes - disk.available_bytes) / disk.total_bytes) * 100
-          : null;
-
-      const overviewUpdated =
-        snapshot && Number.isFinite(snapshot.cache_age_ms)
-          ? `Updated ${formatAge(snapshot.cache_age_ms)} ago`
-          : "Awaiting resource data…";
-      const diskUpdated =
-        snapshot && Number.isFinite(snapshot.workspace.size_cache_age_ms)
-          ? `Disk scan ${formatAge(snapshot.workspace.size_cache_age_ms)} ago`
-          : "Disk scan pending…";
-
-      const processRows = (() => {
-        if (!snapshot?.processes) return [];
-        const rows = [];
-        if (snapshot.processes.daemon) {
-          rows.push(snapshot.processes.daemon);
-        }
-        const providers = [...snapshot.processes.providers].sort((a, b) => a.label.localeCompare(b.label));
-        rows.push(...providers);
-        return rows;
-      })();
-
-      const worktreeRows = snapshot?.workspace.worktrees ?? [];
-
-      const toggleExpanded = (pid: number) => {
-        setExpandedProcessPids((prev) => ({ ...prev, [pid]: !prev[pid] }));
-      };
-
-      return (
-        <>
-          <Card title="Overview">
-            <div className="settings-card-block">
-              <div className="settings-metrics-grid">
-                <Metric
-                  label="CPU"
-                  value={formatPct(system?.cpu_pct)}
-                  sublabel="System CPU usage"
-                  pct={system?.cpu_pct ?? null}
-                />
-                <Metric
-                  label="Memory"
-                  value={
-                    system
-                      ? `${formatBytes(system.memory_used_bytes)} / ${formatBytes(system.memory_total_bytes)}`
-                      : "—"
-                  }
-                  sublabel="Physical memory"
-                  pct={memoryPct}
-                />
-                <Metric
-                  label="Swap"
-                  value={
-                    system
-                      ? `${formatBytes(system.swap_used_bytes)} / ${formatBytes(system.swap_total_bytes)}`
-                      : "—"
-                  }
-                  sublabel="Swap usage"
-                  pct={swapPct}
-                />
-                <Metric
-                  label="Disk"
-                  value={
-                    disk
-                      ? `${formatBytes(disk.available_bytes)} free / ${formatBytes(disk.total_bytes)}`
-                      : "—"
-                  }
-                  sublabel={disk ? `${disk.mount_point} · ${disk.file_system}` : "Workspace volume"}
-                  pct={diskPct}
-                />
-              </div>
-              <div className="settings-meta-line">{resourceLoading ? "Refreshing…" : overviewUpdated}</div>
-            </div>
-          </Card>
-
-          <Card title="Processes">
-            <div className="settings-card-block">
-              {processRows.length === 0 ? (
-                <div className="settings-empty">No process metrics yet.</div>
-              ) : (
-                <div className="settings-table settings-table-processes">
-                  <div className="settings-table-head">
-                    <div>Process</div>
-                    <div>CPU</div>
-                    <div>Memory</div>
-                    <div>PID</div>
-                  </div>
-                  {processRows.map((p) => {
-                    const expanded = !!expandedProcessPids[p.pid];
-                    const hasChildren = (p.children?.length ?? 0) > 0 || p.child_count > 0;
-                    const childCountLabel = `${p.child_count} child process${p.child_count === 1 ? "" : "es"}`;
-                    return (
-                      <Fragment key={`${p.label}-${p.pid}`}>
-                        <div className="settings-table-row">
-                          <div className="settings-process-cell">
-                            <button
-                              type="button"
-                              className="settings-process-expand"
-                              onClick={() => toggleExpanded(p.pid)}
-                              disabled={!hasChildren}
-                              aria-label={expanded ? "Collapse process children" : "Expand process children"}
-                              aria-expanded={expanded}
-                            >
-                              {hasChildren ? (expanded ? "▾" : "▸") : "·"}
-                            </button>
-                            <div>
-                              <div className="settings-table-title">{p.label}</div>
-                              <div className="settings-table-sub">
-                                {childCountLabel}
-                                {p.children_truncated ? " (truncated)" : ""}
-                              </div>
-                            </div>
-                          </div>
-                          <div>{formatPct(p.cpu_pct)}</div>
-                          <div>{formatBytes(p.memory_bytes)}</div>
-                          <div className="settings-table-mono">{p.pid}</div>
-                        </div>
-                        {expanded ? (
-                          <div className="settings-process-children">
-                            {p.child_count === 0 ? (
-                              <div className="settings-empty settings-empty-compact">No child processes.</div>
-                            ) : (
-                              <>
-                                <div className="settings-process-children-meta">
-                                  {p.children_truncated
-                                    ? `Showing ${p.children.length} of ${p.child_count} descendants (sorted by memory)`
-                                    : `${p.children.length} descendants`}
-                                </div>
-                                <div className="settings-table settings-table-process-children">
-                                  <div className="settings-table-head">
-                                    <div>Child process</div>
-                                    <div>CPU</div>
-                                    <div>Memory</div>
-                                    <div>PID</div>
-                                  </div>
-                                  {p.children.map((c) => (
-                                    <div key={`${p.pid}-${c.pid}`} className="settings-table-row">
-                                      <div>
-                                        <div className="settings-table-title">{c.name}</div>
-                                        <div className="settings-table-sub">
-                                          {c.cmdline
-                                            ? `ppid ${c.parent_pid ?? "—"} · ${truncateText(c.cmdline, 120)}`
-                                            : `ppid ${c.parent_pid ?? "—"}`}
-                                        </div>
-                                      </div>
-                                      <div>{formatPct(c.cpu_pct)}</div>
-                                      <div>{formatBytes(c.memory_bytes)}</div>
-                                      <div className="settings-table-mono">{c.pid}</div>
-                                    </div>
-                                  ))}
-                                </div>
-                              </>
-                            )}
-                          </div>
-                        ) : null}
-                      </Fragment>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </Card>
-
-          <Card title="Workspace Disk">
-            <div className="settings-card-block">
-              <div className="settings-workspace-header">
-                <div className="settings-workspace-title">{workspaceName}</div>
-                <div className="settings-workspace-path">{snapshot?.workspace.root_path ?? "—"}</div>
-                <div className="settings-workspace-meta">
-                  {snapshot ? `${formatBytes(snapshot.workspace.size_bytes)} total · ${diskUpdated}` : "Sizing…"}
-                </div>
-              </div>
-
-              {worktreeRows.length === 0 ? (
-                <div className="settings-empty">No worktrees found.</div>
-              ) : (
-                <div className="settings-table settings-table-worktrees">
-                  <div className="settings-table-head">
-                    <div>Worktree</div>
-                    <div>Size</div>
-                  </div>
-                  {worktreeRows.map((wt) => (
-                    <div key={wt.worktree_id} className="settings-table-row">
-                      <div>
-                        <div className="settings-table-title">{wt.worktree_id}</div>
-                        <div className="settings-table-sub">{wt.root_path}</div>
-                      </div>
-                      <div>{formatBytes(wt.size_bytes)}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </Card>
-
-          {resourceError ? <div className="settings-banner settings-banner-error">{resourceError}</div> : null}
-        </>
-      );
-    }
-
-    if (active === "dictation") {
-      return <DictationSection active={active === "dictation"} />;
-    }
-
-    if (active === "title_generation") {
-      return <TitleGenerationSection active={active === "title_generation"} />;
-    }
-
-    if (active === "billing") {
-      if (!supabase) {
-        return (
-          <div className="settings-empty">
-            Billing is not configured. Set <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code> for the web app.
-          </div>
-        );
-      }
-
-      const plan = entitlements?.plan_type ?? "free_local";
-      const proEnabled = entitlements?.features?.remote_mobile_access === "enabled";
-      const doSignIn = async () => {
-        setBillingBusy(true);
-        setBillingError(null);
-        try {
-          const { error } = await supabase.auth.signInWithPassword({
-            email: billingEmail.trim(),
-            password: billingPassword,
-          });
-          if (error) throw error;
-        } catch (e: unknown) {
-          setBillingError(errorMessage(e));
-        } finally {
-          setBillingBusy(false);
-        }
-      };
-
-      const doSignUp = async () => {
-        setBillingBusy(true);
-        setBillingError(null);
-        try {
-          const { error } = await supabase.auth.signUp({
-            email: billingEmail.trim(),
-            password: billingPassword,
-          });
-          if (error) throw error;
-        } catch (e: unknown) {
-          setBillingError(errorMessage(e));
-        } finally {
-          setBillingBusy(false);
-        }
-      };
-
-      const doSignOut = async () => {
-        setBillingBusy(true);
-        setBillingError(null);
-        try {
-          const { error } = await supabase.auth.signOut();
-          if (error) throw error;
-        } catch (e: unknown) {
-          setBillingError(errorMessage(e));
-        } finally {
-          setBillingBusy(false);
-        }
-      };
-
-      const startCheckout = async (interval: "month" | "year") => {
-        setBillingBusy(true);
-        setBillingError(null);
-        try {
-          const url = await runBillingCheckoutFlow({
-            interval,
-            returnPath: billingReturnPath,
-            invokeCheckout: ({ interval: nextInterval, returnPath }) => supabase.functions.invoke(
-              "billing-checkout",
-              {
-                body: { interval: nextInterval, return_path: returnPath },
-              },
-            ),
-            trackSubscribeCtaClicked,
-            trackCheckoutStarted,
-          });
-          window.location.href = url;
-        } catch (e: unknown) {
-          setBillingError(errorMessage(e));
-          setBillingBusy(false);
-        }
-      };
-
-      const openPortal = async () => {
-        setBillingBusy(true);
-        setBillingError(null);
-        try {
-          const res = await supabase.functions.invoke("billing-portal", {
-            body: { return_path: billingReturnPath },
-          });
-          if (res.error) throw res.error;
-          const data = (res.data && typeof res.data === "object") ? (res.data as Record<string, unknown>) : null;
-          const url = typeof data?.url === "string" ? data.url.trim() : "";
-          if (!url) throw new Error("Portal URL missing.");
-          window.location.href = url;
-        } catch (e: unknown) {
-          setBillingError(errorMessage(e));
-          setBillingBusy(false);
-        }
-      };
-
-      return (
-        <>
-          {checkoutStatus === "success" ? (
-            <div className="settings-banner">Checkout complete. Confirming subscription…</div>
-          ) : null}
-          {checkoutStatus === "cancel" ? (
-            <div className="settings-banner settings-banner-error">Checkout canceled.</div>
-          ) : null}
-          <Card title="Account">
-            {billingUser ? (
-              <Row
-                title="Signed in"
-                description={billingUser.email ?? "Signed in"}
-                control={
-                  <button type="button" className="settings-btn settings-btn-secondary" onClick={doSignOut} disabled={billingBusy}>
-                    Sign out
-                  </button>
-                }
-              />
-            ) : (
-              <>
-                <Row
-                  title="Email"
-                  control={
-                    <input
-                      className="settings-control settings-control-wide"
-                      value={billingEmail}
-                      onChange={(e) => setBillingEmail(e.target.value)}
-                      placeholder="you@company.com"
-                    />
-                  }
-                />
-                <Row
-                  title="Password"
-                  control={
-                    <input
-                      className="settings-control settings-control-wide"
-                      value={billingPassword}
-                      onChange={(e) => setBillingPassword(e.target.value)}
-                      type="password"
-                      placeholder="••••••••"
-                    />
-                  }
-                />
-                <Row
-                  title="Sign in / Create account"
-                  description="Subscriptions are purchased via Stripe on desktop; mobile devices inherit access when connected."
-                  control={
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button type="button" className="settings-btn settings-btn-secondary" onClick={doSignIn} disabled={billingBusy}>
-                        Sign in
-                      </button>
-                      <button type="button" className="settings-btn" onClick={doSignUp} disabled={billingBusy}>
-                        Create account
-                      </button>
-                    </div>
-                  }
-                />
-              </>
-            )}
-          </Card>
-
-          <Card title="Subscription">
-            <Row
-              title="Plan"
-              description={entitlementsBusy ? "Loading…" : proEnabled ? "Pro enabled" : "Free/Local"}
-              control={<div className="settings-pill">{plan}</div>}
-            />
-            <Row
-              title="Remote mobile access"
-              description="Stable remote access + push notifications are Pro features. Purchase on desktop."
-              control={<div className="settings-pill">{proEnabled ? "Enabled" : "Disabled"}</div>}
-            />
-            <Row
-              title="Subscribe"
-              description="USD only. CTX Pro is $20/month or $200/year."
-              control={
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                  <button type="button" className="settings-btn settings-btn-secondary" onClick={() => startCheckout("month")} disabled={!billingUser || billingBusy}>
-                    $20 / month
-                  </button>
-                  <button type="button" className="settings-btn settings-btn-secondary" onClick={() => startCheckout("year")} disabled={!billingUser || billingBusy}>
-                    $200 / year
-                  </button>
-                  <button type="button" className="settings-btn" onClick={openPortal} disabled={!billingUser || billingBusy}>
-                    Manage
-                  </button>
-                </div>
-              }
-            />
-          </Card>
-
-          {billingError ? <div className="settings-banner settings-banner-error">{billingError}</div> : null}
-        </>
-      );
-    }
-
-    if (active === "agent_harnesses") {
-      return (
-        <HarnessAuthenticationSection
-          workspaceId={workspaceId}
-          active={active === "agent_harnesses"}
-        />
-      );
-    }
-
-    if (active === "harness_subscriptions") {
-      return <CodexAccountsSection active={active === "harness_subscriptions"} />;
-    }
-
-    if (active === "dev_tools") {
-      return (
-        <DevToolsSection
-          devToolsEnabled={devToolsEnabled}
-          devRestartBusy={devRestartBusy}
-          devRestartError={devRestartError}
-          devRestartResults={devRestartResults}
-          onRestart={handleDevRestart}
-        />
-      );
-    }
-
-    if (active === "sandboxing") {
-      return (
-        <>
-          <Card title="Sandboxing">
-            <Row
-              title="Provider control"
-              description="Default is full capability. Switch to honor the harness's native permission settings."
-              control={
-                <Select
-                  value={providerControlMode}
-                  onValueChange={(value) => setProviderControlMode(value as SandboxingSettings["provider_control_mode"])}
-                  disabled={!loaded}
-                >
-                  <SelectTrigger className="tw-min-w-[10rem]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="full">Full capability</SelectItem>
-                    <SelectItem value="harness_native">Harness-native permissions</SelectItem>
-                    <SelectItem value="ctx_enforced">ctx-enforced (coming soon)</SelectItem>
-                  </SelectContent>
-                </Select>
-              }
-            />
-          </Card>
-        </>
-      );
-    }
-
-    if (
-      active === "models_routing" ||
-      active === "context_pack" ||
-      active === "team_enterprise" ||
-      active === "usage_analytics"
-    ) {
-      return null;
-    }
-
-    return <div className="settings-empty">No settings yet.</div>;
-  };
-
-  const headerLabel = SECTIONS.find((s) => s.id === active)?.label ?? "Settings";
+  const headerLabel = SECTIONS.find((section) => section.id === active)?.label ?? "Settings";
+  const supabaseConfigured = Boolean(supabase);
+  const plan = entitlements?.plan_type ?? "free_local";
+  const proEnabled = entitlements?.features?.remote_mobile_access === "enabled";
 
   return (
-    <div className="settings-root">
-      <div className="settings-shell">
-        <aside className="settings-sidebar">
-          <div className="settings-sidebar-header">
-            <Link className="settings-backlink" to={backLink.to}>
-              {backLink.label}
-            </Link>
-            <div className="settings-sidebar-title">Settings</div>
-          </div>
-
-          <div className="settings-search">
-            <input
-              className="settings-search-input"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search settings ⌘F"
-            />
-          </div>
-
-          <nav className="settings-nav" aria-label="Settings sections">
-            <div className="settings-nav-group">
-              {sidebarSections
-                .filter((s) => s.group === "main")
-                .map((s) => (
-                  <button
-                    key={s.id}
-                    type="button"
-                    className={`settings-nav-item ${active === s.id ? "settings-nav-item-active" : ""}`}
-                    onClick={() => handleSectionChange(s.id)}
-                  >
-                    {s.label}
-                  </button>
-                ))}
-            </div>
-            <div className="settings-nav-sep" aria-hidden="true" />
-            <div className="settings-nav-group">
-              {sidebarSections
-                .filter((s) => s.group === "advanced")
-                .map((s) => (
-                  <button
-                    key={s.id}
-                    type="button"
-                    className={`settings-nav-item ${active === s.id ? "settings-nav-item-active" : ""}`}
-                    onClick={() => handleSectionChange(s.id)}
-                  >
-                    {s.label}
-                  </button>
-                ))}
-            </div>
-          </nav>
-        </aside>
-
-        <main className="settings-main">
-          <div className="settings-main-inner">
-            <div className="settings-main-header">
-              <div className="settings-main-title">{headerLabel}</div>
-              {anySaving || saveError ? (
-                <div className="settings-main-sub">{anySaving ? "Saving…" : "Not saved"}</div>
-              ) : null}
-            </div>
-
-            {saveError ? <div className="settings-banner settings-banner-error">{saveError}</div> : null}
-            {renderMain()}
-          </div>
-        </main>
-      </div>
-    </div>
+    <SettingsShell
+      backLink={backLink}
+      query={query}
+      onQueryChange={setQuery}
+      sidebarSections={sidebarSections}
+      active={active}
+      onSectionChange={handleSectionChange}
+      headerLabel={headerLabel}
+      anySaving={anySaving}
+      saveError={saveError}
+    >
+      <SettingsContentRouter
+        active={active}
+        loaded={loaded}
+        loadError={loadError}
+        theme={theme}
+        onThemeChange={onThemeChange}
+        editorSettings={editorSettings}
+        setEditorSettings={setEditorSettings}
+        editorLoaded={editorLoaded}
+        editorError={editorError}
+        clientSettingsError={clientSettingsError}
+        showRemoteAuthority={showRemoteAuthority}
+        isDesktopApp={isDesktopApp}
+        desktopTurnNotifications={desktopTurnNotifications}
+        clientSettingsState={clientSettingsState}
+        clientSettingsSaving={clientSettingsSaving}
+        onToggleTurnNotifications={handleToggleTurnNotifications}
+        telemetryEnabled={telemetryEnabled}
+        setTelemetryEnabled={setTelemetryEnabled}
+        workspaceId={workspaceId}
+        themeVariant={themeVariant}
+        resourceGovernance={{
+          enabled: resourceGovernanceEnabled,
+          setEnabled: setResourceGovernanceEnabled,
+          mode: resourceGovernanceMode,
+          setMode: setResourceGovernanceMode,
+          cpuQuotaPct: resourceCpuQuotaPct,
+          setCpuQuotaPct: setResourceCpuQuotaPct,
+          memoryHighGb: resourceMemoryHighGb,
+          setMemoryHighGb: setResourceMemoryHighGb,
+          memoryMaxGb: resourceMemoryMaxGb,
+          setMemoryMaxGb: setResourceMemoryMaxGb,
+          effective: resourceEffective,
+          status: resourceStatus,
+          canSave: resourceGovernanceCanSave,
+          payload: resourceGovernancePayload,
+          onApplyNow: (payload) => savePatch({ resource_governance: payload }),
+        }}
+        saving={saving}
+        supabaseConfigured={supabaseConfigured}
+        billing={{
+          checkoutStatus,
+          billingUser,
+          billingEmail,
+          setBillingEmail,
+          billingPassword,
+          setBillingPassword,
+          billingBusy,
+          billingError,
+          entitlementsBusy,
+          plan,
+          proEnabled,
+          onSignIn: doSignIn,
+          onSignUp: doSignUp,
+          onSignOut: doSignOut,
+          onStartCheckout: startCheckout,
+          onOpenPortal: openPortal,
+        }}
+        mobileAccess={{
+          billingUser,
+          entitlementsBusy,
+          proEnabled,
+          mobileStatus,
+          mobileStatusBusy,
+          mobileStatusError,
+          mobileEnableBusy,
+          mobileEnableError,
+          mobileQr,
+          qrFgColor,
+          onEnable: handleEnableMobile,
+          onDisable: handleDisableMobile,
+        }}
+        resourceUtilization={{
+          workspaces,
+          snapshot: resourceSnapshot,
+          loading: resourceLoading,
+          error: resourceError,
+          expandedProcessPids,
+          onToggleExpanded: toggleExpandedProcess,
+        }}
+        providerControlMode={providerControlMode}
+        setProviderControlMode={setProviderControlMode}
+        devTools={{
+          enabled: devToolsEnabled,
+          restartBusy: devRestartBusy,
+          restartError: devRestartError,
+          restartResults: devRestartResults,
+          onRestart: handleDevRestart,
+        }}
+      />
+    </SettingsShell>
   );
 }
