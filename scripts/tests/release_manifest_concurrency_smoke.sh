@@ -12,6 +12,8 @@ version="9.9.9"
 download_base="https://example.test/functions/v1"
 latest_json="$tmp_root/latest.json"
 latest_tauri_json="$tmp_root/latest-tauri.json"
+version_json="$tmp_root/${version}.json"
+version_tauri_json="$tmp_root/${version}-tauri.json"
 lock_dir="$tmp_root/manifest.lock"
 
 cat >"$latest_json" <<'JSON'
@@ -47,6 +49,9 @@ cat >"$latest_tauri_json" <<'JSON'
   }
 }
 JSON
+
+printf '{}\n' >"$version_json"
+printf '{}\n' >"$version_tauri_json"
 
 platforms=(
   "linux-x64"
@@ -116,8 +121,8 @@ NODE
 
   acquire_lock
   CHANNEL="$channel" VERSION="$version" PLATFORM="$platform" PUBLISHED_AT="2026-02-19T00:00:00Z" \
-  EXISTING_MANIFEST_FILE="$latest_json" PLATFORM_ENTRY_JSON="$platform_entry_json" \
-  node - <<'NODE' >"$latest_json.next"
+  EXISTING_MANIFEST_FILE="$version_json" PLATFORM_ENTRY_JSON="$platform_entry_json" \
+  node - <<'NODE' >"$version_json.next"
 const fs = require("fs");
 const channel = process.env.CHANNEL;
 const version = process.env.VERSION;
@@ -185,11 +190,11 @@ const merged = {
 };
 process.stdout.write(`${JSON.stringify(merged, null, 2)}\n`);
 NODE
-  mv "$latest_json.next" "$latest_json"
+  mv "$version_json.next" "$version_json"
 
   CHANNEL="$channel" VERSION="$version" PLATFORM="$platform" PUBLISHED_AT="2026-02-19T00:00:00Z" DOWNLOAD_BASE="$download_base" \
-  EXISTING_TAURI_MANIFEST_FILE="$latest_tauri_json" TAURI_PLATFORM_ENTRY_JSON="$tauri_entry_json" \
-  node - <<'NODE' >"$latest_tauri_json.next"
+  EXISTING_TAURI_MANIFEST_FILE="$version_tauri_json" TAURI_PLATFORM_ENTRY_JSON="$tauri_entry_json" \
+  node - <<'NODE' >"$version_tauri_json.next"
 const fs = require("fs");
 const channel = process.env.CHANNEL;
 const version = process.env.VERSION;
@@ -259,7 +264,7 @@ const merged = {
 };
 process.stdout.write(`${JSON.stringify(merged, null, 2)}\n`);
 NODE
-  mv "$latest_tauri_json.next" "$latest_tauri_json"
+  mv "$version_tauri_json.next" "$version_tauri_json"
   release_lock
 }
 
@@ -268,7 +273,7 @@ for platform in "${platforms[@]}"; do
 done
 wait
 
-LATEST_JSON_PATH="$latest_json" LATEST_TAURI_JSON_PATH="$latest_tauri_json" EXPECTED_PLATFORMS="$(IFS=,; echo "${platforms[*]}")" DOWNLOAD_BASE="$download_base" \
+LATEST_JSON_PATH="$latest_json" LATEST_TAURI_JSON_PATH="$latest_tauri_json" VERSION_JSON_PATH="$version_json" VERSION_TAURI_JSON_PATH="$version_tauri_json" EXPECTED_PLATFORMS="$(IFS=,; echo "${platforms[*]}")" DOWNLOAD_BASE="$download_base" \
 node - <<'NODE'
 const fs = require("fs");
 
@@ -279,44 +284,49 @@ const expectedPlatforms = String(process.env.EXPECTED_PLATFORMS || "")
   .filter(Boolean);
 const latest = JSON.parse(fs.readFileSync(process.env.LATEST_JSON_PATH, "utf8"));
 const tauri = JSON.parse(fs.readFileSync(process.env.LATEST_TAURI_JSON_PATH, "utf8"));
+const versioned = JSON.parse(fs.readFileSync(process.env.VERSION_JSON_PATH, "utf8"));
+const versionedTauri = JSON.parse(fs.readFileSync(process.env.VERSION_TAURI_JSON_PATH, "utf8"));
 
-if (latest.latest_version !== "9.9.9") {
-  throw new Error(`unexpected latest.json version: ${latest.latest_version}`);
+if (latest.latest_version !== "8.8.8") {
+  throw new Error(`latest.json changed before promotion: ${latest.latest_version}`);
 }
-if (tauri.version !== "9.9.9") {
-  throw new Error(`unexpected latest-tauri.json version: ${tauri.version}`);
+if (tauri.version !== "8.8.8") {
+  throw new Error(`latest-tauri.json changed before promotion: ${tauri.version}`);
 }
-if (latest.latest_version !== tauri.version) {
-  throw new Error("latest.json and latest-tauri.json versions diverged");
+if (versioned.latest_version !== "9.9.9") {
+  throw new Error(`unexpected versioned manifest version: ${versioned.latest_version}`);
+}
+if (versionedTauri.version !== "9.9.9") {
+  throw new Error(`unexpected versioned tauri manifest version: ${versionedTauri.version}`);
 }
 
 for (const platform of expectedPlatforms) {
-  if (!latest.platforms || !latest.platforms[platform]) {
-    throw new Error(`latest.json missing platform ${platform}`);
+  if (!versioned.platforms || !versioned.platforms[platform]) {
+    throw new Error(`versioned manifest missing platform ${platform}`);
   }
-  if (!tauri.platforms || !tauri.platforms[platform]) {
-    throw new Error(`latest-tauri.json missing platform ${platform}`);
+  if (!versionedTauri.platforms || !versionedTauri.platforms[platform]) {
+    throw new Error(`versioned tauri manifest missing platform ${platform}`);
   }
 }
 
-if (latest.platforms["linux-x64"]?.desktop?.url_path?.includes("/8.8.8/")) {
+if (versioned.platforms["linux-x64"]?.desktop?.url_path?.includes("/8.8.8/")) {
   throw new Error("stale prior-version platform artifact survived merge");
 }
 
 const expectedUpdaterPrefix = `${downloadBase}/download/stable/9.9.9/`;
 for (const platform of expectedPlatforms) {
-  const updater = tauri.platforms[platform];
+  const updater = versionedTauri.platforms[platform];
   if (typeof updater.url !== "string" || !updater.url.startsWith(expectedUpdaterPrefix)) {
     throw new Error(`updater URL not absolute/current for ${platform}: ${updater?.url}`);
   }
 }
 
 const invalidRelative = {
-  ...tauri,
+  ...versionedTauri,
   platforms: {
-    ...tauri.platforms,
+    ...versionedTauri.platforms,
     "linux-x64": {
-      ...tauri.platforms["linux-x64"],
+      ...versionedTauri.platforms["linux-x64"],
       url: "/download/stable/9.9.9/ctx_9.9.9_linux-x64_updater.AppImage.tar.gz",
     },
   },
@@ -334,5 +344,25 @@ if (!rejectedRelative) {
   throw new Error("relative updater URL unexpectedly accepted");
 }
 
-console.log("ok: release manifest concurrent merge smoke passed");
+fs.copyFileSync(process.env.VERSION_JSON_PATH, process.env.LATEST_JSON_PATH);
+fs.copyFileSync(process.env.VERSION_TAURI_JSON_PATH, process.env.LATEST_TAURI_JSON_PATH);
+
+const promotedLatest = JSON.parse(fs.readFileSync(process.env.LATEST_JSON_PATH, "utf8"));
+const promotedTauri = JSON.parse(fs.readFileSync(process.env.LATEST_TAURI_JSON_PATH, "utf8"));
+if (promotedLatest.latest_version !== "9.9.9") {
+  throw new Error(`promotion did not update latest.json: ${promotedLatest.latest_version}`);
+}
+if (promotedTauri.version !== "9.9.9") {
+  throw new Error(`promotion did not update latest-tauri.json: ${promotedTauri.version}`);
+}
+for (const platform of expectedPlatforms) {
+  if (!promotedLatest.platforms?.[platform]) {
+    throw new Error(`promoted latest.json missing platform ${platform}`);
+  }
+  if (!promotedTauri.platforms?.[platform]) {
+    throw new Error(`promoted latest-tauri.json missing platform ${platform}`);
+  }
+}
+
+console.log("ok: release manifest concurrent merge + promotion smoke passed");
 NODE
