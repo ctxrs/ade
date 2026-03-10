@@ -394,17 +394,17 @@ run_linux_arm_runtime_install_lane() {
   export CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS="${bundle_provider_csv}"
   export CTX_E2E_ENDPOINT_SKIP_BUNDLE_IMAGES="${CTX_E2E_ENDPOINT_SKIP_BUNDLE_IMAGES:-1}"
   export CTX_E2E_ENDPOINT_BUNDLE_HARNESS_IMAGE="${CTX_E2E_ENDPOINT_BUNDLE_HARNESS_IMAGE:-0}"
-  # Linux-arm push validation runs before newly versioned managed bridge artifacts are
-  # published, so source the bridge from the local workspace while keeping the other
-  # lane providers on their managed archive paths.
+  # Linux-arm push validation runs before newly versioned repo-owned adapter artifacts
+  # are published, so source local adapters from the workspace while external lane
+  # providers continue using their managed archive paths.
   export CTX_E2E_ENDPOINT_BUNDLE_INCLUDE_BRIDGE="${CTX_E2E_ENDPOINT_BUNDLE_INCLUDE_BRIDGE:-1}"
   # Native Linux reliability lanes should exercise bundled provider resolution, but
   # use the host Podman install. The runtime lock only vendors Podman artifacts for
   # macOS remote clients, so forcing bundled Podman on Linux makes the lane demand
   # an archive that does not exist.
   export CTX_E2E_ENDPOINT_BUNDLE_PODMAN="${CTX_E2E_ENDPOINT_BUNDLE_PODMAN:-0}"
-  export CTX_E2E_ENDPOINT_BUNDLE_LOCAL_ADAPTERS="${CTX_E2E_ENDPOINT_BUNDLE_LOCAL_ADAPTERS:-off}"
-  export CTX_E2E_ENDPOINT_BUNDLE_BUILD_LOCAL_ADAPTERS="${CTX_E2E_ENDPOINT_BUNDLE_BUILD_LOCAL_ADAPTERS:-0}"
+  export CTX_E2E_ENDPOINT_BUNDLE_LOCAL_ADAPTERS="${CTX_E2E_ENDPOINT_BUNDLE_LOCAL_ADAPTERS:-true}"
+  export CTX_E2E_ENDPOINT_BUNDLE_BUILD_LOCAL_ADAPTERS="${CTX_E2E_ENDPOINT_BUNDLE_BUILD_LOCAL_ADAPTERS:-1}"
   export CTX_E2E_ENDPOINT_BUNDLE_APPEND_LOCAL_ADAPTERS="${CTX_E2E_ENDPOINT_BUNDLE_APPEND_LOCAL_ADAPTERS:-off}"
   export CTX_E2E_ENDPOINT_BUNDLE_APPEND_BUILD_LOCAL_ADAPTERS="${CTX_E2E_ENDPOINT_BUNDLE_APPEND_BUILD_LOCAL_ADAPTERS:-0}"
   export CTX_BUNDLE_BUILD_CODEX_CRP="${CTX_BUNDLE_BUILD_CODEX_CRP:-0}"
