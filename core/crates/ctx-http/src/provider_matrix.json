@@ -256,41 +256,41 @@
       },
       "managed_install": {
         "kind": "archive",
-        "version": "0.2.7-ctx.1",
+        "version": "0.2.7-ctx.2",
         "args": [],
         "targets": {
           "darwin-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.1/macos/aarch64/claude-crp-0.2.7-ctx.1-darwin-aarch64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.2/macos/aarch64/claude-crp-0.2.7-ctx.2-darwin-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "bin/claude-crp",
             "sha256": "6be4d85427c51a311a48edda838459504d3dcaf2533d4023a84ec1d2919faea0"
           },
           "darwin-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.1/macos/x86_64/claude-crp-0.2.7-ctx.1-darwin-x86_64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.2/macos/x86_64/claude-crp-0.2.7-ctx.2-darwin-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "bin/claude-crp",
             "sha256": "7fe890b1519ed5f0df12b2b28e4694c74e9572cd887fe4810ca49d07d1d83af1"
           },
           "linux-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.1/linux/aarch64/claude-crp-0.2.7-ctx.1-linux-aarch64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.2/linux/aarch64/claude-crp-0.2.7-ctx.2-linux-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "bin/claude-crp",
             "sha256": "5786a3bdda2dd7282db5b00a8ca56518a8ca04898742bf8424d6d64ba87243f0"
           },
           "linux-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.1/linux/x86_64/claude-crp-0.2.7-ctx.1-linux-x86_64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.2/linux/x86_64/claude-crp-0.2.7-ctx.2-linux-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "bin/claude-crp",
             "sha256": "7e9ead21c9cf6cd212d7097b9f9fde4bf1f2dc1014e103ea8fe0212fade66364"
           },
           "macos-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.1/macos/aarch64/claude-crp-0.2.7-ctx.1-darwin-aarch64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.2/macos/aarch64/claude-crp-0.2.7-ctx.2-darwin-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "bin/claude-crp",
             "sha256": "6be4d85427c51a311a48edda838459504d3dcaf2533d4023a84ec1d2919faea0"
           },
           "macos-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.1/macos/x86_64/claude-crp-0.2.7-ctx.1-darwin-x86_64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.2/macos/x86_64/claude-crp-0.2.7-ctx.2-darwin-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "bin/claude-crp",
             "sha256": "7fe890b1519ed5f0df12b2b28e4694c74e9572cd887fe4810ca49d07d1d83af1"
@@ -305,7 +305,7 @@
       },
       "releases": [
         {
-          "version": "0.2.7-ctx.1",
+          "version": "0.2.7-ctx.2",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned workspace adapter source (external-harnesses/claude-crp/package.json)",
@@ -491,41 +491,41 @@
       },
       "managed_install": {
         "kind": "archive",
-        "version": "0.1.0",
+        "version": "0.1.1",
         "args": [],
         "targets": {
           "darwin-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/droid/0.1.0/macos/aarch64/droid-0.1.0-macos-aarch64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/droid/0.1.1/macos/aarch64/droid-0.1.1-macos-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "droid-acp",
             "sha256": "fd0de041c360b5fc08a0b124688552b0723e655ca5f0ea6e4601e18fcaeb99e9"
           },
           "darwin-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/droid/0.1.0/macos/x86_64/droid-0.1.0-macos-x86_64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/droid/0.1.1/macos/x86_64/droid-0.1.1-macos-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "droid-acp",
             "sha256": "e51b9e0039a81cdd0167f596ede77815dc2073dc4b458022aae732e059066a0f"
           },
           "linux-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/droid/0.1.0/linux/aarch64/droid-0.1.0-linux-aarch64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/droid/0.1.1/linux/aarch64/droid-0.1.1-linux-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "droid-acp",
             "sha256": "7beeab0da629cb14592f0037b34a5f6526089853f6b44a8f69c54bd729dd3256"
           },
           "linux-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/droid/0.1.0/linux/x86_64/droid-0.1.0-linux-x86_64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/droid/0.1.1/linux/x86_64/droid-0.1.1-linux-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "droid-acp",
             "sha256": "1853226f944e162c136f41778a84464df5358c35c8a9d6bf86c5160f8a1343c8"
           },
           "macos-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/droid/0.1.0/macos/aarch64/droid-0.1.0-macos-aarch64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/droid/0.1.1/macos/aarch64/droid-0.1.1-macos-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "droid-acp",
             "sha256": "fd0de041c360b5fc08a0b124688552b0723e655ca5f0ea6e4601e18fcaeb99e9"
           },
           "macos-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/droid/0.1.0/macos/x86_64/droid-0.1.0-macos-x86_64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/droid/0.1.1/macos/x86_64/droid-0.1.1-macos-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "droid-acp",
             "sha256": "e51b9e0039a81cdd0167f596ede77815dc2073dc4b458022aae732e059066a0f"
@@ -644,7 +644,7 @@
       },
       "releases": [
         {
-          "version": "0.1.0",
+          "version": "0.1.1",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned workspace adapter source (harness-adapters/droid-acp/Cargo.toml)"
