@@ -214,6 +214,7 @@ impl Store {
     }
 
     pub(super) async fn session_last_event_seq(&self, session_id: SessionId) -> Result<i64> {
+        self.flush_event_log_for_reads().await;
         let seq = self
             .query_scalar::<Option<i64>>(
                 r#"SELECT MAX(seq) FROM session_events WHERE session_id = ?"#,

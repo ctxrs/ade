@@ -972,6 +972,155 @@ describe("SessionSupervisor", () => {
     alertSpy.mockRestore();
   });
 
+  it("recovers active session gap from stream seed without /head hydrate and preserves local queued drafts", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-gap-queue-recovery";
+    const now = new Date().toISOString();
+    const activeState = mkWorkspaceSnapshotState();
+    activeState.activeIds = ["task-gap-queue"];
+    activeState.tasksById = {
+      "task-gap-queue": {
+        id: "task-gap-queue",
+        task: {
+          id: "task-gap-queue",
+          workspace_id: "ws-1",
+          title: "Gap queue recovery",
+          status: "running",
+          primary_session_id: sessionId,
+          created_at: now,
+          updated_at: now,
+          archived_at: null,
+        },
+        sessions: [{ session: mkSession(sessionId) }],
+        primarySessionHead: null,
+        sortAtMs: Date.parse(now),
+      },
+    };
+
+    const listeners = new Set<(evt: WorkspaceActiveSnapshotEvent) => void>();
+    const store: WorkspaceActiveSnapshotEventSource = {
+      subscribe: () => () => {},
+      subscribeEvents: (listener: (evt: WorkspaceActiveSnapshotEvent) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      getSessionHeadSnapshot: () => null,
+      getWorktreeRoot: () => null,
+      getWorktreeVcsSnapshot: () => null,
+      setSubscribedSessionIds: () => {},
+      getSnapshot: () => activeState,
+    };
+
+    const sup = new SessionSupervisor();
+    attachWorkspaceStore(sup, store);
+    sup.openSession(sessionId, { mode: "active" });
+
+    const serverMessage: Message = {
+      id: "m-server",
+      session_id: sessionId,
+      task_id: "task-gap-queue",
+      turn_id: "turn-server",
+      role: "assistant",
+      content: "baseline server copy",
+      delivery: "immediate",
+      created_at: now,
+    };
+    listeners.forEach((listener) =>
+      listener({
+        type: "session_head_seed",
+        workspace_id: "ws-1",
+        snapshot_rev: 1,
+        head: {
+          session: mkSession(sessionId),
+          turns: [] as SessionTurn[],
+          events: [] as SessionEvent[],
+          messages: [serverMessage],
+          last_event_seq: 1,
+          state_rev: 1,
+          has_more_turns: false,
+          has_more_history: false,
+          history_cursor: null,
+        },
+      }),
+    );
+
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.loadState === "live");
+
+    const internals = asSupervisorInternals(sup);
+    const internalEntry = internals.entries.get(sessionId);
+    expect(internalEntry).toBeDefined();
+    if (!internalEntry) throw new Error("Expected internal entry to exist");
+
+    const queuedLocalMessage: Message = {
+      id: "m-local",
+      session_id: sessionId,
+      task_id: "task-gap-queue",
+      turn_id: "turn-local",
+      role: "user",
+      content: "queued local draft",
+      delivery: "queued",
+      created_at: new Date(Date.parse(now) + 1).toISOString(),
+    };
+    internalEntry.messages = [serverMessage, queuedLocalMessage];
+    internalEntry.queue = [queuedLocalMessage];
+
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+    listeners.forEach((listener) =>
+      listener({
+        type: "session_gap",
+        workspace_id: "ws-1",
+        snapshot_rev: 2,
+        session_id: sessionId,
+        after_seq: 50,
+      }),
+    );
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.loadState === "recovering");
+
+    listeners.forEach((listener) =>
+      listener({
+        type: "session_head_seed",
+        workspace_id: "ws-1",
+        snapshot_rev: 3,
+        head: {
+          session: mkSession(sessionId),
+          turns: [] as SessionTurn[],
+          events: [] as SessionEvent[],
+          messages: [
+            {
+              ...serverMessage,
+              content: "fresh server copy",
+            },
+          ],
+          last_event_seq: 2,
+          state_rev: 2,
+          has_more_turns: false,
+          has_more_history: false,
+          history_cursor: null,
+        },
+      }),
+    );
+
+    await waitForCondition(() => {
+      const entry = sup.getSnapshot().sessions[sessionId];
+      return (
+        entry?.loadState === "live" &&
+        entry.messages.some((message) => message.id === "m-server" && message.content === "fresh server copy") &&
+        entry.messages.some((message) => message.id === "m-local" && message.content === "queued local draft") &&
+        entry.queue.some((message) => message.id === "m-local")
+      );
+    });
+
+    const entry = sup.getSnapshot().sessions[sessionId];
+    expect(entry?.messages.map((message) => message.id)).toEqual(["m-server", "m-local"]);
+    expect(entry?.queue.map((message) => message.id)).toEqual(["m-local"]);
+    expect(entry?.loadState).toBe("live");
+    expect(entry?.error).toBeUndefined();
+    expect(getSessionHead).toHaveBeenCalledTimes(0);
+
+    alertSpy.mockRestore();
+  });
+
   it("preserves local-only queued messages across replica replace patches", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 

@@ -790,17 +790,61 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DaemonConfig;
 
     #[test]
-    fn workspace_stream_url_builds() {
+    fn workspace_stream_url_builds_without_token_query() {
+        let client = Client::new(DaemonConfig {
+            base_url: "https://example.com/base/".to_string(),
+            auth_token: Some("secret-token".to_string()),
+        })
+        .unwrap();
+        let workspace_id = WorkspaceId::new();
+        let url = client.workspace_stream_url(workspace_id).unwrap();
+        assert_eq!(
+            url,
+            format!(
+                "wss://example.com/base/api/workspaces/{}/active_snapshot/stream",
+                workspace_id.0
+            )
+        );
+        assert!(!url.contains("token="));
+    }
+
+    #[test]
+    fn terminal_stream_url_uses_query_token_for_browser_compatibility() {
+        let client = Client::new(DaemonConfig {
+            base_url: "https://example.com/base/".to_string(),
+            auth_token: Some("secret-token".to_string()),
+        })
+        .unwrap();
+        let terminal_id = TerminalId::new();
+        let url = client.terminal_stream_url(terminal_id).unwrap();
+        assert_eq!(
+            url,
+            format!(
+                "wss://example.com/base/api/terminals/{}/stream?token=secret-token",
+                terminal_id.0
+            )
+        );
+    }
+
+    #[test]
+    fn websocket_urls_reject_unsupported_base_scheme() {
         let client = Client {
-            base_url: "https://example.com/base".to_string(),
+            base_url: "ftp://example.com".to_string(),
             auth_token: None,
             http: reqwest::Client::new(),
         };
-        let workspace_id = WorkspaceId::new();
-        let url = client.workspace_stream_url(workspace_id).unwrap();
-        assert!(url.starts_with("wss://example.com/base/api/workspaces/"));
-        assert!(url.ends_with("/active_snapshot/stream"));
+
+        let workspace_err = client.workspace_stream_url(WorkspaceId::new()).unwrap_err();
+        assert!(workspace_err
+            .to_string()
+            .contains("unsupported base url scheme: ftp"));
+
+        let terminal_err = client.terminal_stream_url(TerminalId::new()).unwrap_err();
+        assert!(terminal_err
+            .to_string()
+            .contains("unsupported base url scheme: ftp"));
     }
 }

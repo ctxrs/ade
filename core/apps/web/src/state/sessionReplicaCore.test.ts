@@ -90,6 +90,108 @@ describe("SessionReplicaCore", () => {
     alertSpy.mockRestore();
   });
 
+  it("recovers from session_gap via stream seed and delta without extra /head fetches", async () => {
+    const sessionId = "session-gap-recovery";
+    const head = mkHead(sessionId, "before-gap");
+    const getSessionHead = vi.fn(async () => head);
+    const patches: SessionReplicaPatch[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead },
+      emit: (next) => patches.push(...next),
+    });
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 50 } });
+    core.handleCommand({ type: "open_session", sessionId });
+    core.handleCommand({ type: "hydrate_session_head", sessionId });
+
+    await waitForCondition(() => getSessionHead.mock.calls.length === 1);
+
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_gap",
+        workspace_id: "ws-1",
+        snapshot_rev: 2,
+        session_id: sessionId,
+        after_seq: 5,
+      },
+    });
+
+    const recoveredHead = {
+      ...mkHead(sessionId, "recovered-from-seed"),
+      last_event_seq: 2,
+      state_rev: 2,
+    };
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_head_seed",
+        workspace_id: "ws-1",
+        snapshot_rev: 2,
+        head: recoveredHead,
+      },
+    });
+
+    const now = new Date().toISOString();
+    const deltaMessage: Message = {
+      id: "m-delta",
+      session_id: sessionId,
+      task_id: "task-1",
+      turn_id: "turn-delta",
+      role: "assistant",
+      content: "recovered-from-delta",
+      delivery: "immediate",
+      created_at: now,
+    };
+    const deltaEvent: SessionEvent = {
+      seq: 3,
+      id: "e-delta",
+      session_id: sessionId,
+      turn_id: "turn-delta",
+      event_type: "assistant_message_inserted",
+      payload_json: {
+        message_id: deltaMessage.id,
+        content: deltaMessage.content,
+        delivery: deltaMessage.delivery,
+      },
+      created_at: now,
+    };
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_head_delta",
+        workspace_id: "ws-1",
+        snapshot_rev: 3,
+        delta: {
+          session_id: sessionId,
+          last_event_seq: 3,
+          state_rev: 3,
+          event: deltaEvent,
+          message: deltaMessage,
+        },
+      },
+    });
+
+    await waitForCondition(() => {
+      const seedPatch = patches.find(
+        (patch) =>
+          patch.sessionId === sessionId &&
+          patch.op !== "evict" &&
+          patch.data?.messages?.some((message) => message.content === "recovered-from-seed"),
+      );
+      const deltaPatch = patches.find(
+        (patch) =>
+          patch.sessionId === sessionId &&
+          patch.op === "append" &&
+          patch.data?.messages?.some((message) => message.content === "recovered-from-delta") &&
+          patch.data?.lastEventSeq === 3,
+      );
+      return Boolean(seedPatch && deltaPatch);
+    });
+
+    expect(getSessionHead).toHaveBeenCalledTimes(1);
+  });
+
   it("hydrates /head only when explicitly requested", async () => {
     const head = mkHead("session-archived");
     const getSessionHead = vi.fn(async () => head);
