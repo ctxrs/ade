@@ -35,7 +35,7 @@ mod toolchains;
 pub(crate) use self::artifacts::{
     download_to_file, ensure_executable, extract_zip_to_dir, find_unique_path_ending_with,
     install_agent_server_url_binary, install_url_binary, resolve_command_path,
-    run_command_with_timeout,
+    resolve_download_resume, run_command_with_timeout,
 };
 use self::provider_install::{
     classify_install_error, emit_install, emit_install_with_code, ensure_install_not_cancelled,

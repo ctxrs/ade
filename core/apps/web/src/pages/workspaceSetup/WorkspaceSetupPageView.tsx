@@ -43,7 +43,6 @@ type WorkspaceSetupPageViewProps = {
   currentLaunchStepLabel: string;
   currentLaunchElapsed: string;
   currentLaunchEtaLabel: string;
-  currentLaunchDownloadLabel: string | null;
   launchCopyLabel: string;
   onCopyLaunchDiagnostics: () => void;
   launchLogs: WorkspaceSetupLaunchLogLine[];
@@ -176,7 +175,6 @@ export function WorkspaceSetupPageView({
   currentLaunchStepLabel,
   currentLaunchElapsed,
   currentLaunchEtaLabel,
-  currentLaunchDownloadLabel,
   launchCopyLabel,
   onCopyLaunchDiagnostics,
   launchLogs,
@@ -410,9 +408,6 @@ export function WorkspaceSetupPageView({
                           <span>{currentLaunchElapsed} elapsed</span>
                           <span>{currentLaunchEtaLabel}</span>
                         </div>
-                        {currentLaunchDownloadLabel && (
-                          <div className="wizard-launch-log-meta">{currentLaunchDownloadLabel}</div>
-                        )}
                       </div>
                       <button
                         type="button"

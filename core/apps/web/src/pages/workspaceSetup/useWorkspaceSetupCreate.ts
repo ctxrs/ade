@@ -27,7 +27,6 @@ import {
 import {
   currentLaunchStepLabel as deriveCurrentLaunchStepLabel,
   formatLaunchElapsed,
-  formatLaunchDownloadSummary,
   formatLaunchRemaining,
   launchEtaRemainingMs,
   parseUtcMs,
@@ -637,7 +636,6 @@ export function useWorkspaceSetupCreate({
     : launchSnapshot?.state === "error"
       ? "Launch failed"
       : formatLaunchRemaining(launchEtaRemainingMs(launchSnapshot, Date.now()));
-  const currentLaunchDownloadLabel = formatLaunchDownloadSummary(launchSnapshot?.active_download);
 
   return {
     creating,
@@ -652,7 +650,6 @@ export function useWorkspaceSetupCreate({
     currentLaunchStepLabel,
     currentLaunchElapsed,
     currentLaunchEtaLabel,
-    currentLaunchDownloadLabel,
     launchCopyLabel: launchCopyState === "copied"
       ? "Copied"
       : launchCopyState === "failed"

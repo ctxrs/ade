@@ -1,5 +1,4 @@
 import type {
-  ExecutionLaunchDownloadStatus,
   ExecutionLaunchLogLine,
   ExecutionLaunchPhase,
   ExecutionLaunchPhaseStatus,
@@ -150,25 +149,4 @@ export const formatLaunchRemaining = (ms: number | null): string => {
     return `${minutes}:${String(seconds).padStart(2, "0")} remaining`;
   }
   return `${seconds}s remaining`;
-};
-
-const formatByteCount = (value: number): string => {
-  if (!Number.isFinite(value) || value < 0) return "0 B";
-  if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(1)} GB`;
-  if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(1)} MB`;
-  if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
-  return `${Math.floor(value)} B`;
-};
-
-export const formatLaunchDownloadSummary = (
-  download: ExecutionLaunchDownloadStatus | null | undefined,
-): string | null => {
-  if (!download) return null;
-  const bytes = download.total_bytes && download.total_bytes > 0
-    ? `${formatByteCount(download.downloaded_bytes)} / ${formatByteCount(download.total_bytes)}`
-    : formatByteCount(download.downloaded_bytes);
-  const rate = download.bytes_per_sec && download.bytes_per_sec > 0
-    ? ` · ${formatByteCount(download.bytes_per_sec)}/s`
-    : "";
-  return `${download.artifact} · ${bytes}${rate}`;
 };

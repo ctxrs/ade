@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { ExecutionLaunchSnapshot } from "../../api/client";
 import {
   currentLaunchStepLabel,
-  formatLaunchDownloadSummary,
   formatLaunchRemaining,
   formatLaunchTime,
   launchEtaRemainingMs,
@@ -153,12 +152,6 @@ describe("launchProgress", () => {
     };
     expect(formatLaunchRemaining(launchEtaRemainingMs(snapshot, Date.now()))).toBe(
       "Estimating remaining…",
-    );
-  });
-
-  it("formats aggregate download details for the launch header", () => {
-    expect(formatLaunchDownloadSummary(baseSnapshot().active_download)).toBe(
-      "Required artifacts · 412.0 MB / 951.0 MB · 21.0 MB/s",
     );
   });
 });

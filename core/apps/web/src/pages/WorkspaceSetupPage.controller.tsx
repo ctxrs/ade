@@ -141,7 +141,6 @@ export function WorkspaceSetupPageController() {
       currentLaunchStepLabel={workflow.create.currentLaunchStepLabel}
       currentLaunchElapsed={workflow.create.currentLaunchElapsed}
       currentLaunchEtaLabel={workflow.create.currentLaunchEtaLabel}
-      currentLaunchDownloadLabel={workflow.create.currentLaunchDownloadLabel}
       launchCopyLabel={workflow.create.launchCopyLabel}
       onCopyLaunchDiagnostics={() => {
         void workflow.create.onCopyLaunchDiagnostics();
