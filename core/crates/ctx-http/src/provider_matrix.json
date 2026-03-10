@@ -263,37 +263,37 @@
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.1/macos/aarch64/claude-crp-0.2.7-ctx.1-darwin-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "bin/claude-crp",
-            "sha256": "c589412dd8ea171dbc97c3ec09aad21f99577404c6997fa53230154374464d38"
+            "sha256": "0a27e9ffc45fac3819b9be82c02a882a4b12372f985ec1bf6806b3baa5e32fc1"
           },
           "darwin-x86_64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.1/macos/x86_64/claude-crp-0.2.7-ctx.1-darwin-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "bin/claude-crp",
-            "sha256": "ab4a12b5f41e33a6db53a8581689b4c373e6c89fcde2279f43d651b20fd92c4e"
+            "sha256": "76f08b42abb901118349cd65d4b1582ed1a433e7802ca84646e23da4da208d63"
           },
           "linux-aarch64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.1/linux/aarch64/claude-crp-0.2.7-ctx.1-linux-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "bin/claude-crp",
-            "sha256": "9ee4d2d3a9c0cfee854bdb19725a8a3e7a88455b16ae43349054f942870808c6"
+            "sha256": "d3ecd5ea50c8da717c7bfcf53fed8131526c40b165b0fb20ebc57c03375989b4"
           },
           "linux-x86_64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.1/linux/x86_64/claude-crp-0.2.7-ctx.1-linux-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "bin/claude-crp",
-            "sha256": "e05911a934ad681b956cd5ddb43afacd867900a617501d26bec27a8a7186fdff"
+            "sha256": "5ad553913f36e911878d4aab4753bab2ad5d62420ba0074731907534b3e7cc5c"
           },
           "macos-aarch64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.1/macos/aarch64/claude-crp-0.2.7-ctx.1-darwin-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "bin/claude-crp",
-            "sha256": "c589412dd8ea171dbc97c3ec09aad21f99577404c6997fa53230154374464d38"
+            "sha256": "0a27e9ffc45fac3819b9be82c02a882a4b12372f985ec1bf6806b3baa5e32fc1"
           },
           "macos-x86_64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.1/macos/x86_64/claude-crp-0.2.7-ctx.1-darwin-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "bin/claude-crp",
-            "sha256": "ab4a12b5f41e33a6db53a8581689b4c373e6c89fcde2279f43d651b20fd92c4e"
+            "sha256": "76f08b42abb901118349cd65d4b1582ed1a433e7802ca84646e23da4da208d63"
           }
         }
       },
