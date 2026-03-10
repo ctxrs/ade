@@ -40,8 +40,10 @@ type WorkspaceSetupPageViewProps = {
   setCreateError: Dispatch<SetStateAction<string | null>>;
   showLaunchPanel: boolean;
   launchSnapshot: ExecutionLaunchSnapshot | null;
-  currentLaunchPhaseLabel: string;
+  currentLaunchStepLabel: string;
   currentLaunchElapsed: string;
+  currentLaunchEtaLabel: string;
+  currentLaunchDownloadLabel: string | null;
   launchCopyLabel: string;
   onCopyLaunchDiagnostics: () => void;
   launchLogs: WorkspaceSetupLaunchLogLine[];
@@ -171,8 +173,10 @@ export function WorkspaceSetupPageView({
   setCreateError,
   showLaunchPanel,
   launchSnapshot,
-  currentLaunchPhaseLabel,
+  currentLaunchStepLabel,
   currentLaunchElapsed,
+  currentLaunchEtaLabel,
+  currentLaunchDownloadLabel,
   launchCopyLabel,
   onCopyLaunchDiagnostics,
   launchLogs,
@@ -402,10 +406,13 @@ export function WorkspaceSetupPageView({
                       <div>
                         <div className="wizard-launch-log-title">Workspace Launch Logs</div>
                         <div className="wizard-launch-log-meta">
-                          <span>{currentLaunchPhaseLabel}</span>
-                          <span>{currentLaunchElapsed}</span>
-                          <span>{launchSnapshot.state}</span>
+                          <span>{currentLaunchStepLabel}</span>
+                          <span>{currentLaunchElapsed} elapsed</span>
+                          <span>{currentLaunchEtaLabel}</span>
                         </div>
+                        {currentLaunchDownloadLabel && (
+                          <div className="wizard-launch-log-meta">{currentLaunchDownloadLabel}</div>
+                        )}
                       </div>
                       <button
                         type="button"

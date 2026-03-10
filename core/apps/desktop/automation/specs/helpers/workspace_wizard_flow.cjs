@@ -1661,15 +1661,24 @@ const waitForLaunchLogsOrWorkspaceRoute = async (timeoutMs = 15000) => {
       const root = document.querySelector('[data-testid="workspace-setup"]');
       const step = root ? root.getAttribute("data-step-key") : null;
       const lines = document.querySelectorAll(".wizard-launch-log-line").length;
+      const meta = Array.from(document.querySelectorAll(".wizard-launch-log-meta"))
+        .map((node) => String(node.textContent || "").trim())
+        .filter(Boolean);
       const note = document.querySelector(".wizard-launch-log-body .wizard-note");
       const noteText = note ? String(note.textContent || "").trim() : "";
-      return { pathname, step, lines, noteText };
+      return { pathname, step, lines, noteText, meta };
     });
     const pathname = String(state?.pathname || "");
     if (pathname.startsWith("/workspaces/")) {
       return { kind: "workspace" };
     }
-    if (state?.step === "confirm" && Number(state?.lines || 0) > 0) {
+    const metaText = Array.isArray(state?.meta) ? state.meta.join(" ") : "";
+    if (
+      state?.step === "confirm"
+      && Number(state?.lines || 0) > 0
+      && /elapsed/i.test(metaText)
+      && /(remaining|ready|launch failed)/i.test(metaText)
+    ) {
       return { kind: "logs" };
     }
     await browser.pause(150);

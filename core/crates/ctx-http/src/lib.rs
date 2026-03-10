@@ -73,6 +73,9 @@ pub mod fault_injection {
 }
 
 #[cfg(test)]
+// EXCEPTION: these tests intentionally serialize env-var mutations with a sync lock
+// that spans async calls so process-global state cannot interleave across test cases.
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use std::collections::HashMap;
     use std::path::Path;

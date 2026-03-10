@@ -23,7 +23,6 @@ import {
   repoStatus,
   repoValidateDestination,
   startWorkspaceSetupLaunchHandoff,
-  startWorkspaceSetupRuntimePrewarm,
   updateSettings,
   updateWorkspaceExecutionConfig,
   updateWorkspaceMergeQueueConfig,
@@ -45,12 +44,14 @@ const {
   trackWizardStepCompletedMock,
   trackWizardCompletedMock,
   trackWizardAbandonedMock,
+  trackWorkspaceLaunchCompletedMock,
 } = vi.hoisted(() => ({
   trackWizardStartedMock: vi.fn(),
   trackWizardStepViewedMock: vi.fn(),
   trackWizardStepCompletedMock: vi.fn(),
   trackWizardCompletedMock: vi.fn(),
   trackWizardAbandonedMock: vi.fn(),
+  trackWorkspaceLaunchCompletedMock: vi.fn(),
 }));
 const getInstallMock = vi.hoisted(() => vi.fn());
 
@@ -94,7 +95,6 @@ vi.mock("../api/client", async () => {
     repoValidateDestination: vi.fn(),
     repoStagingPath: vi.fn(),
     startWorkspaceSetupLaunchHandoff: vi.fn(),
-    startWorkspaceSetupRuntimePrewarm: vi.fn(),
     updateSettings: vi.fn(),
     updateWorkspaceExecutionConfig: vi.fn(),
     updateWorkspaceMergeQueueConfig: vi.fn(),
@@ -111,6 +111,7 @@ vi.mock("../utils/analytics", async () => {
     trackWizardStepCompleted: trackWizardStepCompletedMock,
     trackWizardCompleted: trackWizardCompletedMock,
     trackWizardAbandoned: trackWizardAbandonedMock,
+    trackWorkspaceLaunchCompleted: trackWorkspaceLaunchCompletedMock,
   };
 });
 
@@ -233,6 +234,7 @@ describe("WorkspaceSetupPage", () => {
     trackWizardStepCompletedMock.mockReset();
     trackWizardCompletedMock.mockReset();
     trackWizardAbandonedMock.mockReset();
+    trackWorkspaceLaunchCompletedMock.mockReset();
     vi.mocked(buildExecutionLaunchWsUrl).mockReturnValue("ws://127.0.0.1:1/launch");
     vi.mocked(isDesktopApp).mockReturnValue(false);
     vi.mocked(listProviderAuthImportCandidates).mockResolvedValue({ candidates: [] });
@@ -283,16 +285,6 @@ describe("WorkspaceSetupPage", () => {
       job_id: "job_test",
       workspace_id: "ws_test",
       kind: "workspace_launch",
-      state: "ready",
-      current_phase: "ready",
-      phases: [],
-      logs: [],
-      error: null,
-    } as never);
-    vi.mocked(startWorkspaceSetupRuntimePrewarm).mockResolvedValue({
-      job_id: "job_prewarm_test",
-      workspace_id: "00000000-0000-0000-0000-000000000000",
-      kind: "startup_prewarm",
       state: "ready",
       current_phase: "ready",
       phases: [],
@@ -842,7 +834,6 @@ describe("WorkspaceSetupPage", () => {
       expect(req.start_remote).toBe(false);
     }
     expect(desktopKickoffRemotePrewarm).not.toHaveBeenCalled();
-    expect(startWorkspaceSetupRuntimePrewarm).not.toHaveBeenCalled();
     expect(startWorkspaceSetupLaunchHandoff).not.toHaveBeenCalled();
     expect(repoValidateDestination).not.toHaveBeenCalled();
   });
@@ -2044,8 +2035,15 @@ describe("WorkspaceSetupPage", () => {
 
     await waitFor(() => {
       expect(createWorkspace).toHaveBeenCalled();
-      expect(startWorkspaceSetupRuntimePrewarm).toHaveBeenCalled();
       expect(startWorkspaceSetupLaunchHandoff).toHaveBeenCalled();
+      expect(trackWorkspaceLaunchCompletedMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaceId: "ws_test",
+          workspaceKind: "local",
+          executionMode: "container",
+          result: "ready",
+        }),
+      );
     });
   });
 });

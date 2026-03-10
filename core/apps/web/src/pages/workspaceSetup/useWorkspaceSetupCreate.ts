@@ -17,6 +17,7 @@ import {
   updateWorkspaceWorktreeBootstrapConfig,
 } from "../../api/client";
 import { desktopConnectLocal, desktopConnectSsh, desktopPickFolder } from "../../utils/desktop";
+import { trackWorkspaceLaunchCompleted } from "../../utils/analytics";
 import { upsertLauncherRecent } from "../../state/launcherRecentsStore";
 import {
   deriveRepoNameFromUrl,
@@ -24,7 +25,11 @@ import {
   resolveWorkspaceName,
 } from "../WorkspaceSetupPage.logic";
 import {
+  currentLaunchStepLabel as deriveCurrentLaunchStepLabel,
   formatLaunchElapsed,
+  formatLaunchDownloadSummary,
+  formatLaunchRemaining,
+  launchEtaRemainingMs,
   parseUtcMs,
   phaseEntryForCurrent,
   type WorkspaceSetupLaunchLogLine,
@@ -44,7 +49,6 @@ import {
 import {
   mergeWorkspaceSetupLaunchLogs,
   startWorkspaceSetupLaunchHandoff,
-  startWorkspaceSetupRuntimePrewarm,
   waitForLaunchHandoffTerminal,
 } from "./launchHandoff";
 import type { RoutePlanInsertionStep } from "./workflowTypes";
@@ -303,11 +307,6 @@ export function useWorkspaceSetupCreate({
     await waitForLaunchTerminal(initial);
   };
 
-  const waitForRuntimePrewarm = async () => {
-    const initial = await startWorkspaceSetupRuntimePrewarm();
-    await waitForLaunchTerminal(initial);
-  };
-
   const onCopyLaunchDiagnostics = async () => {
     if (!launchSnapshot) return;
     const payload = {
@@ -329,6 +328,7 @@ export function useWorkspaceSetupCreate({
     setLaunchCopyState("idle");
     setLaunchTick(0);
     setCreating(true);
+    const launchStartedAtMs = Date.now();
     try {
       if (selections.location === "remote" && !desktopApp) {
         throw new Error("Workspace creation from the wizard requires the desktop app.");
@@ -364,11 +364,6 @@ export function useWorkspaceSetupCreate({
         onOnboardingInsertionRequested(onboardingResult.insertionStep);
         return;
       }
-      const containerEnabled = selections.container !== "no-container";
-      if (containerEnabled) {
-        await waitForRuntimePrewarm();
-      }
-
       if (titlingStepVisible && titlingMode !== "skip") {
         if (titlingMode !== "remote" && titlingMode !== "local") {
           throw new Error("Choose a session titling option or skip for now.");
@@ -496,6 +491,7 @@ export function useWorkspaceSetupCreate({
       }
 
       const workspaceKind = selections.location === "remote" ? "remote" : "local";
+      const executionMode = selections.container === "no-container" ? "host" : "container";
       if (!workspaceId) {
         const created = await createWorkspace(rootPath, name, workspaceKind, "wizard");
         workspaceId = idToString(created.id);
@@ -519,7 +515,27 @@ export function useWorkspaceSetupCreate({
       });
 
       if (selections.container !== "no-container") {
-        await waitForLaunchCompletion(workspaceId);
+        try {
+          await waitForLaunchCompletion(workspaceId);
+          trackWorkspaceLaunchCompleted({
+            workspaceId,
+            workspaceKind,
+            executionMode,
+            source: "wizard",
+            startedAtMs: launchStartedAtMs,
+            result: "ready",
+          });
+        } catch (error) {
+          trackWorkspaceLaunchCompleted({
+            workspaceId,
+            workspaceKind,
+            executionMode,
+            source: "wizard",
+            startedAtMs: launchStartedAtMs,
+            result: "error",
+          });
+          throw error;
+        }
       }
 
       if (!mergeQueueSkipped) {
@@ -592,6 +608,13 @@ export function useWorkspaceSetupCreate({
     if (started === null) return "0s";
     return formatLaunchElapsed(Date.now() - started);
   })();
+  const currentLaunchStepLabel = deriveCurrentLaunchStepLabel(launchSnapshot);
+  const currentLaunchEtaLabel = launchSnapshot?.state === "ready"
+    ? "Ready"
+    : launchSnapshot?.state === "error"
+      ? "Launch failed"
+      : formatLaunchRemaining(launchEtaRemainingMs(launchSnapshot, Date.now()));
+  const currentLaunchDownloadLabel = formatLaunchDownloadSummary(launchSnapshot?.active_download);
 
   return {
     creating,
@@ -603,17 +626,16 @@ export function useWorkspaceSetupCreate({
     launchSnapshot,
     launchLogs,
     showLaunchPanel: Boolean(launchSnapshot) && (creating || launchSnapshot?.state === "error"),
+    currentLaunchStepLabel,
     currentLaunchElapsed,
+    currentLaunchEtaLabel,
+    currentLaunchDownloadLabel,
     launchCopyLabel: launchCopyState === "copied"
       ? "Copied"
       : launchCopyState === "failed"
         ? "Copy failed"
         : "Copy diagnostics",
-    createButtonLabel: creating && launchSnapshot?.kind === "startup_prewarm"
-      ? "Preparing runtime…"
-      : creating
-        ? "Creating…"
-        : "Create workspace",
+    createButtonLabel: creating ? "Creating…" : "Create workspace",
     onCopyLaunchDiagnostics,
     onCreate,
   };

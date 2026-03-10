@@ -1,5 +1,36 @@
 import { describe, expect, it } from "vitest";
-import { formatLaunchTime, mergeLaunchLogs } from "./launchProgress";
+import type { ExecutionLaunchSnapshot } from "../../api/client";
+import {
+  currentLaunchStepLabel,
+  formatLaunchDownloadSummary,
+  formatLaunchRemaining,
+  formatLaunchTime,
+  launchEtaRemainingMs,
+  mergeLaunchLogs,
+} from "./launchProgress";
+
+const baseSnapshot = (): ExecutionLaunchSnapshot => ({
+  job_id: "job_123",
+  workspace_id: "ws_123",
+  kind: "workspace_launch",
+  state: "running",
+  created_at: "2026-03-10T00:00:00.000Z",
+  started_at: "2026-03-10T00:00:00.000Z",
+  updated_at: "2026-03-10T00:00:04.000Z",
+  current_phase: "artifact_download",
+  current_step_label: "downloading required artifacts",
+  progress_pct: 12,
+  eta_ms: 245000,
+  active_download: {
+    artifact: "Required artifacts",
+    downloaded_bytes: 412 * 1024 * 1024,
+    total_bytes: 951 * 1024 * 1024,
+    bytes_per_sec: 21 * 1024 * 1024,
+  },
+  phases: [],
+  logs: [],
+  error: null,
+});
 
 describe("launchProgress", () => {
   it("preformats and appends monotonic launch-log batches", () => {
@@ -83,5 +114,23 @@ describe("launchProgress", () => {
     expect(merged).toHaveLength(400);
     expect(merged[0]?.seq).toBe(6);
     expect(merged.at(-1)?.seq).toBe(405);
+  });
+
+  it("prefers the current step label over the coarse phase label", () => {
+    expect(currentLaunchStepLabel(baseSnapshot())).toBe("Downloading required artifacts");
+  });
+
+  it("counts down remaining time from the latest snapshot timestamp", () => {
+    const remainingMs = launchEtaRemainingMs(
+      baseSnapshot(),
+      Date.parse("2026-03-10T00:00:09.000Z"),
+    );
+    expect(formatLaunchRemaining(remainingMs)).toBe("4:00 remaining");
+  });
+
+  it("formats aggregate download details for the launch header", () => {
+    expect(formatLaunchDownloadSummary(baseSnapshot().active_download)).toBe(
+      "Required artifacts · 412.0 MB / 951.0 MB · 21.0 MB/s",
+    );
   });
 });

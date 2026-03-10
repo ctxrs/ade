@@ -3,7 +3,11 @@ import { useParams } from "react-router-dom";
 import { WorkbenchStoreProvider } from "../workbench/store";
 import { WorkspaceActiveSnapshotProvider } from "../state/workspaceActiveSnapshotStore";
 import { WorkbenchPageInner } from "./WorkbenchPage.shell";
-import { trackFeatureUsed, trackWorkspaceOpened } from "../utils/analytics";
+import {
+  trackFeatureUsed,
+  trackWorkspaceOpened,
+  trackWorkspaceRouteOpenedFromPending,
+} from "../utils/analytics";
 import { desktopGetConnection, isDesktopApp } from "../utils/desktop";
 
 export { TaskRow } from "./WorkbenchPage.taskRow";
@@ -15,6 +19,7 @@ export default function WorkbenchPage() {
     let cancelled = false;
 
     const emitOpened = (workspaceKind: "local" | "remote") => {
+      trackWorkspaceRouteOpenedFromPending(workspaceId);
       trackWorkspaceOpened(workspaceKind);
       trackFeatureUsed("workbench_opened", { workspace_kind: workspaceKind });
     };

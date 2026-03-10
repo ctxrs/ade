@@ -148,6 +148,7 @@ export const ensureWorkspaceHarnessContainer = (workspaceId: string) =>
   });
 
 export type ExecutionLaunchPhase =
+  | "artifact_download"
   | "machine_check"
   | "machine_start_or_init"
   | "image_check"
@@ -169,6 +170,13 @@ export type ExecutionLaunchLogLine = {
   message: string;
 };
 
+export type ExecutionLaunchDownloadStatus = {
+  artifact: string;
+  downloaded_bytes: number;
+  total_bytes?: number | null;
+  bytes_per_sec?: number | null;
+};
+
 export type ExecutionLaunchPhaseStatus = {
   phase: ExecutionLaunchPhase;
   started_at: string;
@@ -183,8 +191,13 @@ export type ExecutionLaunchSnapshot = {
   state: ExecutionLaunchState;
   created_at: string;
   started_at: string;
+  updated_at?: string | null;
   finished_at?: string | null;
   current_phase?: ExecutionLaunchPhase | null;
+  current_step_label?: string | null;
+  progress_pct?: number | null;
+  eta_ms?: number | null;
+  active_download?: ExecutionLaunchDownloadStatus | null;
   phases: ExecutionLaunchPhaseStatus[];
   logs: ExecutionLaunchLogLine[];
   error?: string | null;
@@ -202,17 +215,8 @@ export const startExecutionLaunch = (workspaceId: string) =>
     body: JSON.stringify({ workspace_id: workspaceId }),
   });
 
-export const startExecutionRuntimePrewarm = () =>
-  apiAny<ExecutionLaunchSnapshot>("/api/execution/launch/start", {
-    method: "POST",
-    body: JSON.stringify({ kind: "startup_prewarm", prewarm_scope: "all" }),
-  });
-
 export const startWorkspaceSetupLaunchHandoff = (workspaceId: string) =>
   startExecutionLaunch(workspaceId);
-
-export const startWorkspaceSetupRuntimePrewarm = () =>
-  startExecutionRuntimePrewarm();
 
 export const getExecutionLaunchStatus = (jobId: string) =>
   apiAny<ExecutionLaunchSnapshot>(

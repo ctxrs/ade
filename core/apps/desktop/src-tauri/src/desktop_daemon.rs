@@ -810,6 +810,8 @@ struct RuntimeLockRequiredTargets {
     runtime: Vec<String>,
     #[serde(default)]
     image: Vec<String>,
+    #[serde(default)]
+    machine_cache: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -820,6 +822,8 @@ struct RuntimeLockRequired {
     runtime_ids: Vec<String>,
     #[serde(default)]
     image_ids: Vec<String>,
+    #[serde(default)]
+    machine_cache_ids: Vec<String>,
     #[serde(default)]
     targets: RuntimeLockRequiredTargets,
 }
@@ -940,9 +944,10 @@ fn lock_component_has_managed_source(
     })
 }
 
-fn required_image_has_managed_source(
+fn required_component_has_managed_source(
     lock: &RuntimeLockV2,
-    image_id: &str,
+    kind: &str,
+    id: &str,
     target: &RuntimeTarget,
     allowed_sources: &std::collections::HashSet<String>,
 ) -> bool {
@@ -953,8 +958,8 @@ fn required_image_has_managed_source(
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .unwrap_or("default");
-        component.kind == "image"
-            && component.id == image_id
+        component.kind == kind
+            && component.id == id
             && component.os == target.os
             && component.arch == target.arch
             && variant == "default"
@@ -1064,6 +1069,16 @@ fn host_default_image_targets() -> Vec<RuntimeTarget> {
     }]
 }
 
+fn host_default_machine_cache_targets() -> Vec<RuntimeTarget> {
+    if std::env::consts::OS != "macos" {
+        return Vec::new();
+    }
+    vec![RuntimeTarget {
+        os: "macos".to_string(),
+        arch: std::env::consts::ARCH.to_string(),
+    }]
+}
+
 fn host_relevant_targets(
     all_targets: &[RuntimeTarget],
     fallback: &[RuntimeTarget],
@@ -1142,6 +1157,7 @@ pub(super) fn enforce_desktop_parity_bundle_preflight(app: &tauri::AppHandle) ->
     let provider_default_targets = host_default_provider_targets();
     let runtime_default_targets = host_default_runtime_targets();
     let image_default_targets = host_default_image_targets();
+    let machine_cache_default_targets = host_default_machine_cache_targets();
     let host_os = std::env::consts::OS;
     let host_arch = std::env::consts::ARCH;
     let provider_targets = host_relevant_targets(
@@ -1171,7 +1187,16 @@ pub(super) fn enforce_desktop_parity_bundle_preflight(app: &tauri::AppHandle) ->
         ),
         &image_default_targets,
     );
-    let allowed_image_sources = allowed_source_types_for_profile(&lock);
+    let machine_cache_targets = host_relevant_targets(
+        &required_targets_or_default(
+            &lock.required.targets.machine_cache,
+            &machine_cache_default_targets,
+            host_os,
+            host_arch,
+        ),
+        &machine_cache_default_targets,
+    );
+    let allowed_managed_sources = allowed_source_types_for_profile(&lock);
 
     let mut failures = Vec::<String>::new();
 
@@ -1237,7 +1262,13 @@ pub(super) fn enforce_desktop_parity_bundle_preflight(app: &tauri::AppHandle) ->
     for image_id in &lock.required.image_ids {
         for target in &image_targets {
             let managed_source_available =
-                required_image_has_managed_source(&lock, image_id, target, &allowed_image_sources);
+                required_component_has_managed_source(
+                    &lock,
+                    "image",
+                    image_id,
+                    target,
+                    &allowed_managed_sources,
+                );
             let Some(entry) = manifest.images.iter().find(|entry| {
                 entry.id == *image_id && entry.os == target.os && entry.arch == target.arch
             }) else {
@@ -1260,6 +1291,23 @@ pub(super) fn enforce_desktop_parity_bundle_preflight(app: &tauri::AppHandle) ->
                         tar_path.display()
                     ));
                 }
+            }
+        }
+    }
+
+    for machine_cache_id in &lock.required.machine_cache_ids {
+        for target in &machine_cache_targets {
+            if !required_component_has_managed_source(
+                &lock,
+                "machine_cache",
+                machine_cache_id,
+                target,
+                &allowed_managed_sources,
+            ) {
+                failures.push(format!(
+                    "missing machine-cache managed source: {} ({}/{})",
+                    machine_cache_id, target.os, target.arch
+                ));
             }
         }
     }

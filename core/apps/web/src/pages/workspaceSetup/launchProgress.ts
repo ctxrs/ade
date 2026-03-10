@@ -1,4 +1,5 @@
 import type {
+  ExecutionLaunchDownloadStatus,
   ExecutionLaunchLogLine,
   ExecutionLaunchPhase,
   ExecutionLaunchPhaseStatus,
@@ -15,6 +16,8 @@ export type WorkspaceSetupLaunchLogLine = ExecutionLaunchLogLine & {
 export const launchPhaseLabel = (phase?: ExecutionLaunchPhase | null): string => {
   if (!phase) return "Preparing";
   switch (phase) {
+    case "artifact_download":
+      return "Downloading required artifacts";
     case "machine_check":
       return "Machine check";
     case "machine_start_or_init":
@@ -35,6 +38,9 @@ export const launchPhaseLabel = (phase?: ExecutionLaunchPhase | null): string =>
       return phase;
   }
 };
+
+const capitalizeLabel = (value: string): string =>
+  value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
 
 export const parseUtcMs = (value?: string | null): number | null => {
   if (!value) return null;
@@ -93,6 +99,12 @@ export const launchErrorFromSnapshot = (snapshot: ExecutionLaunchSnapshot): stri
   return `${phase}: ${message}`;
 };
 
+export const currentLaunchStepLabel = (snapshot: ExecutionLaunchSnapshot | null): string => {
+  const raw = String(snapshot?.current_step_label ?? "").trim();
+  if (raw) return capitalizeLabel(raw);
+  return launchPhaseLabel(snapshot?.current_phase);
+};
+
 export const formatLaunchElapsed = (ms: number | null): string => {
   if (ms === null || !Number.isFinite(ms) || ms < 0) return "0s";
   const rounded = Math.floor(ms / 1000);
@@ -107,4 +119,53 @@ export const formatLaunchTime = (ts: string): string => {
   if (value === null) return ts;
   const date = new Date(value);
   return date.toLocaleTimeString([], { hour12: false });
+};
+
+export const launchEtaRemainingMs = (
+  snapshot: ExecutionLaunchSnapshot | null,
+  nowMs: number,
+): number | null => {
+  if (!snapshot) return null;
+  if (snapshot.state === "ready") return 0;
+  if (snapshot.state === "error") return null;
+  if (snapshot.eta_ms === null || snapshot.eta_ms === undefined) return null;
+  const updatedAt = parseUtcMs(snapshot.updated_at);
+  if (updatedAt === null) return Math.max(0, snapshot.eta_ms);
+  return Math.max(0, snapshot.eta_ms - Math.max(0, nowMs - updatedAt));
+};
+
+export const formatLaunchRemaining = (ms: number | null): string => {
+  if (ms === null || !Number.isFinite(ms) || ms < 0) return "Estimating remaining…";
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")} remaining`;
+  }
+  if (minutes > 0) {
+    return `${minutes}:${String(seconds).padStart(2, "0")} remaining`;
+  }
+  return `${seconds}s remaining`;
+};
+
+const formatByteCount = (value: number): string => {
+  if (!Number.isFinite(value) || value < 0) return "0 B";
+  if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(1)} GB`;
+  if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(1)} MB`;
+  if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${Math.floor(value)} B`;
+};
+
+export const formatLaunchDownloadSummary = (
+  download: ExecutionLaunchDownloadStatus | null | undefined,
+): string | null => {
+  if (!download) return null;
+  const bytes = download.total_bytes && download.total_bytes > 0
+    ? `${formatByteCount(download.downloaded_bytes)} / ${formatByteCount(download.total_bytes)}`
+    : formatByteCount(download.downloaded_bytes);
+  const rate = download.bytes_per_sec && download.bytes_per_sec > 0
+    ? ` · ${formatByteCount(download.bytes_per_sec)}/s`
+    : "";
+  return `${download.artifact} · ${bytes}${rate}`;
 };

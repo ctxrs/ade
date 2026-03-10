@@ -13,7 +13,8 @@ use ctx_core::models::Workspace;
 use ctx_store::Store;
 
 use crate::harness_runtime::{
-    self, HarnessRuntimeManager, HarnessSetupLogLevel, HarnessSetupObserver, HarnessSetupPhase,
+    self, HarnessRuntimeManager, HarnessSetupDownloadStatus, HarnessSetupLogLevel,
+    HarnessSetupObserver, HarnessSetupPhase, HarnessSetupProgressUpdate,
 };
 use crate::ops_events::{OpsEvent, OpsEvents};
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
@@ -101,10 +102,19 @@ pub struct ExecutionLaunchSnapshot {
     pub state: ExecutionLaunchState,
     pub created_at: String,
     pub started_at: String,
+    pub updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finished_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_phase: Option<HarnessSetupPhase>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_step_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress_pct: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub eta_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_download: Option<HarnessSetupDownloadStatus>,
     pub phases: Vec<ExecutionLaunchPhaseStatus>,
     pub logs: Vec<ExecutionLaunchLogLine>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -205,6 +215,8 @@ struct LaunchJobInner {
     started_at: DateTime<Utc>,
     finished_at: Option<DateTime<Utc>>,
     current_phase: Option<HarnessSetupPhase>,
+    current_step_label: Option<String>,
+    active_download: Option<HarnessSetupDownloadStatus>,
     phases: Vec<LaunchPhaseRecord>,
     logs: VecDeque<ExecutionLaunchLogLine>,
     next_seq: u64,
@@ -221,6 +233,8 @@ impl LaunchJobInner {
             started_at: now,
             finished_at: None,
             current_phase: None,
+            current_step_label: None,
+            active_download: None,
             phases: Vec::new(),
             logs: VecDeque::new(),
             next_seq: 0,
@@ -269,6 +283,9 @@ impl LaunchJobInner {
     }
 
     fn snapshot(&self, job_id: &str, workspace_id: WorkspaceId) -> ExecutionLaunchSnapshot {
+        let now = Utc::now();
+        let eta_ms = estimate_remaining_ms(self, now);
+        let progress_pct = project_progress_pct(self, now, eta_ms);
         ExecutionLaunchSnapshot {
             job_id: job_id.to_string(),
             workspace_id: workspace_id.0.to_string(),
@@ -276,8 +293,13 @@ impl LaunchJobInner {
             state: self.state,
             created_at: format_ts(self.created_at),
             started_at: format_ts(self.started_at),
+            updated_at: format_ts(now),
             finished_at: self.finished_at.map(format_ts),
             current_phase: self.current_phase,
+            current_step_label: self.current_step_label.clone(),
+            progress_pct,
+            eta_ms,
+            active_download: self.active_download.clone(),
             phases: self
                 .phases
                 .iter()
@@ -340,24 +362,45 @@ impl LaunchJob {
         let now = Utc::now();
         let mut inner = lock_or_recover(&self.inner, "launch job");
         let mut completed_phase = None;
-        let mut phase_changed = false;
+        let mut snapshot_changed = false;
+        let previous_phase = inner.current_phase;
+        let previous_label = inner.current_step_label.clone();
         if inner.current_phase != Some(phase) {
             completed_phase = inner.close_current_phase(now);
             inner.current_phase = Some(phase);
+            if phase != HarnessSetupPhase::ArtifactDownload {
+                inner.active_download = None;
+            }
             inner.phases.push(LaunchPhaseRecord {
                 phase,
                 started_at: now,
                 finished_at: None,
                 elapsed_ms: None,
             });
-            phase_changed = true;
+            snapshot_changed = true;
         }
-        let line = inner.push_log(phase, HarnessSetupLogLevel::Info, message, now);
+        let next_label = message.trim();
+        let label = if next_label.is_empty() {
+            None
+        } else {
+            Some(next_label.to_string())
+        };
+        if inner.current_step_label != label {
+            inner.current_step_label = label;
+            snapshot_changed = true;
+        }
+        let should_log = previous_phase != Some(phase)
+            || previous_label.as_deref().map(str::trim) != Some(next_label);
+        let line = if should_log {
+            Some(inner.push_log(phase, HarnessSetupLogLevel::Info, message, now))
+        } else {
+            None
+        };
         let snapshot = inner.snapshot(&self.job_id, self.workspace_id);
         LaunchMutation {
-            line: Some(line),
+            line,
             snapshot,
-            phase_changed,
+            snapshot_changed,
             completed_phase,
         }
     }
@@ -375,7 +418,19 @@ impl LaunchJob {
         LaunchMutation {
             line: Some(line),
             snapshot,
-            phase_changed: false,
+            snapshot_changed: false,
+            completed_phase: None,
+        }
+    }
+
+    fn set_progress(&self, progress: HarnessSetupProgressUpdate) -> LaunchMutation {
+        let mut inner = lock_or_recover(&self.inner, "launch job");
+        inner.active_download = progress.active_download;
+        let snapshot = inner.snapshot(&self.job_id, self.workspace_id);
+        LaunchMutation {
+            line: None,
+            snapshot,
+            snapshot_changed: true,
             completed_phase: None,
         }
     }
@@ -391,6 +446,7 @@ impl LaunchJob {
         inner.state = state;
         inner.finished_at = Some(now);
         inner.error = error;
+        inner.active_download = None;
         let snapshot = inner.snapshot(&self.job_id, self.workspace_id);
         LaunchTerminalMutation {
             snapshot,
@@ -409,7 +465,7 @@ struct CompletedPhase {
 struct LaunchMutation {
     line: Option<ExecutionLaunchLogLine>,
     snapshot: ExecutionLaunchSnapshot,
-    phase_changed: bool,
+    snapshot_changed: bool,
     completed_phase: Option<CompletedPhase>,
 }
 
@@ -640,15 +696,40 @@ impl ExecutionSetupCoordinator {
         let run_result = if is_host_mode {
             Ok(())
         } else {
-            self.harness
-                .ensure_workspace_container_with_observer(
-                    &workspace,
-                    &settings,
-                    &daemon_url,
-                    Some(&observer),
-                )
-                .await
-                .context("container runtime failed")
+            let startup_running = {
+                let inner = self.inner.lock().await;
+                inner.startup.state == StartupPrewarmState::Running
+            };
+            if startup_running {
+                match self
+                    .prewarm
+                    .ensure_runtime(&settings, Some(&observer))
+                    .await
+                    .context("container runtime warmup failed")
+                {
+                    Ok(()) => self
+                        .harness
+                        .ensure_workspace_container_after_runtime_ready_with_observer(
+                            &workspace,
+                            &settings,
+                            &daemon_url,
+                            Some(&observer),
+                        )
+                        .await
+                        .context("container runtime failed"),
+                    Err(err) => Err(err),
+                }
+            } else {
+                self.harness
+                    .ensure_workspace_container_with_observer(
+                        &workspace,
+                        &settings,
+                        &daemon_url,
+                        Some(&observer),
+                    )
+                    .await
+                    .context("container runtime failed")
+            }
         };
 
         match run_result {
@@ -833,7 +914,7 @@ impl ExecutionSetupCoordinator {
         if let Some(completed) = update.completed_phase {
             self.record_phase_metric(completed.phase, completed.elapsed_ms, "running");
         }
-        if update.phase_changed {
+        if update.snapshot_changed {
             let _ = job.tx.send(ExecutionLaunchStreamEvent::LaunchSnapshot {
                 snapshot: update.snapshot,
             });
@@ -842,6 +923,18 @@ impl ExecutionSetupCoordinator {
             let _ = job.tx.send(ExecutionLaunchStreamEvent::LaunchLog {
                 job_id: job.job_id.clone(),
                 line,
+            });
+        }
+    }
+
+    fn emit_progress(&self, job: &Arc<LaunchJob>, progress: HarnessSetupProgressUpdate) {
+        if job.is_terminal() {
+            return;
+        }
+        let update = job.set_progress(progress);
+        if update.snapshot_changed {
+            let _ = job.tx.send(ExecutionLaunchStreamEvent::LaunchSnapshot {
+                snapshot: update.snapshot,
             });
         }
     }
@@ -1170,10 +1263,15 @@ impl HarnessSetupObserver for LaunchObserver {
     fn on_log(&self, phase: HarnessSetupPhase, level: HarnessSetupLogLevel, message: &str) {
         self.coordinator.emit_log(&self.job, phase, level, message);
     }
+
+    fn on_progress(&self, progress: HarnessSetupProgressUpdate) {
+        self.coordinator.emit_progress(&self.job, progress);
+    }
 }
 
 fn phase_label(phase: HarnessSetupPhase) -> &'static str {
     match phase {
+        HarnessSetupPhase::ArtifactDownload => "artifact_download",
         HarnessSetupPhase::MachineCheck => "machine_check",
         HarnessSetupPhase::MachineStartOrInit => "machine_start_or_init",
         HarnessSetupPhase::ImageCheck => "image_check",
@@ -1183,6 +1281,165 @@ fn phase_label(phase: HarnessSetupPhase) -> &'static str {
         HarnessSetupPhase::RuntimeNetworkSetup => "runtime_network_setup",
         HarnessSetupPhase::Ready => "ready",
     }
+}
+
+fn phase_budget_ms(kind: ExecutionSetupJobKind, phase: HarnessSetupPhase) -> u64 {
+    match phase {
+        HarnessSetupPhase::ArtifactDownload => 150_000,
+        HarnessSetupPhase::MachineCheck => 2_000,
+        HarnessSetupPhase::MachineStartOrInit => 25_000,
+        HarnessSetupPhase::ImageCheck => 1_000,
+        HarnessSetupPhase::ImageLoad => 5_000,
+        HarnessSetupPhase::ContainerCheck => {
+            if kind == ExecutionSetupJobKind::WorkspaceLaunch {
+                500
+            } else {
+                0
+            }
+        }
+        HarnessSetupPhase::ContainerStartOrCreate => {
+            if kind == ExecutionSetupJobKind::WorkspaceLaunch {
+                800
+            } else {
+                0
+            }
+        }
+        HarnessSetupPhase::RuntimeNetworkSetup => {
+            if kind == ExecutionSetupJobKind::WorkspaceLaunch {
+                1_000
+            } else {
+                0
+            }
+        }
+        HarnessSetupPhase::Ready => 0,
+    }
+}
+
+fn remaining_future_phase_budget_ms(kind: ExecutionSetupJobKind, phase: HarnessSetupPhase) -> u64 {
+    match kind {
+        ExecutionSetupJobKind::StartupPrewarm => match phase {
+            HarnessSetupPhase::ArtifactDownload | HarnessSetupPhase::MachineCheck => {
+                phase_budget_ms(kind, HarnessSetupPhase::MachineStartOrInit)
+                    + phase_budget_ms(kind, HarnessSetupPhase::ImageCheck)
+                    + phase_budget_ms(kind, HarnessSetupPhase::ImageLoad)
+            }
+            HarnessSetupPhase::MachineStartOrInit => {
+                phase_budget_ms(kind, HarnessSetupPhase::ImageCheck)
+                    + phase_budget_ms(kind, HarnessSetupPhase::ImageLoad)
+            }
+            HarnessSetupPhase::ImageCheck => phase_budget_ms(kind, HarnessSetupPhase::ImageLoad),
+            HarnessSetupPhase::ImageLoad
+            | HarnessSetupPhase::ContainerCheck
+            | HarnessSetupPhase::ContainerStartOrCreate
+            | HarnessSetupPhase::RuntimeNetworkSetup
+            | HarnessSetupPhase::Ready => 0,
+        },
+        ExecutionSetupJobKind::WorkspaceLaunch => match phase {
+            HarnessSetupPhase::ArtifactDownload | HarnessSetupPhase::MachineCheck => {
+                phase_budget_ms(kind, HarnessSetupPhase::MachineStartOrInit)
+                    + phase_budget_ms(kind, HarnessSetupPhase::ImageCheck)
+                    + phase_budget_ms(kind, HarnessSetupPhase::ImageLoad)
+                    + phase_budget_ms(kind, HarnessSetupPhase::ContainerCheck)
+                    + phase_budget_ms(kind, HarnessSetupPhase::ContainerStartOrCreate)
+                    + phase_budget_ms(kind, HarnessSetupPhase::RuntimeNetworkSetup)
+            }
+            HarnessSetupPhase::MachineStartOrInit => {
+                phase_budget_ms(kind, HarnessSetupPhase::ImageCheck)
+                    + phase_budget_ms(kind, HarnessSetupPhase::ImageLoad)
+                    + phase_budget_ms(kind, HarnessSetupPhase::ContainerCheck)
+                    + phase_budget_ms(kind, HarnessSetupPhase::ContainerStartOrCreate)
+                    + phase_budget_ms(kind, HarnessSetupPhase::RuntimeNetworkSetup)
+            }
+            HarnessSetupPhase::ImageCheck => {
+                phase_budget_ms(kind, HarnessSetupPhase::ImageLoad)
+                    + phase_budget_ms(kind, HarnessSetupPhase::ContainerCheck)
+                    + phase_budget_ms(kind, HarnessSetupPhase::ContainerStartOrCreate)
+                    + phase_budget_ms(kind, HarnessSetupPhase::RuntimeNetworkSetup)
+            }
+            HarnessSetupPhase::ImageLoad => {
+                phase_budget_ms(kind, HarnessSetupPhase::ContainerCheck)
+                    + phase_budget_ms(kind, HarnessSetupPhase::ContainerStartOrCreate)
+                    + phase_budget_ms(kind, HarnessSetupPhase::RuntimeNetworkSetup)
+            }
+            HarnessSetupPhase::ContainerCheck => {
+                phase_budget_ms(kind, HarnessSetupPhase::ContainerStartOrCreate)
+                    + phase_budget_ms(kind, HarnessSetupPhase::RuntimeNetworkSetup)
+            }
+            HarnessSetupPhase::ContainerStartOrCreate => {
+                phase_budget_ms(kind, HarnessSetupPhase::RuntimeNetworkSetup)
+            }
+            HarnessSetupPhase::RuntimeNetworkSetup | HarnessSetupPhase::Ready => 0,
+        },
+    }
+}
+
+fn running_phase_elapsed_ms(inner: &LaunchJobInner, now: DateTime<Utc>) -> u64 {
+    let Some(current_phase) = inner.current_phase else {
+        return 0;
+    };
+    let started_at = inner
+        .phases
+        .iter()
+        .rev()
+        .find(|phase| phase.phase == current_phase && phase.finished_at.is_none())
+        .map(|phase| phase.started_at)
+        .unwrap_or(inner.started_at);
+    now.signed_duration_since(started_at)
+        .num_milliseconds()
+        .max(0) as u64
+}
+
+fn estimate_remaining_ms(inner: &LaunchJobInner, now: DateTime<Utc>) -> Option<u64> {
+    match inner.state {
+        ExecutionLaunchState::Ready | ExecutionLaunchState::Error => return Some(0),
+        ExecutionLaunchState::Running => {}
+    }
+    let current_phase = inner.current_phase?;
+    let elapsed_ms = running_phase_elapsed_ms(inner, now);
+    let current_remaining_ms = if current_phase == HarnessSetupPhase::ArtifactDownload {
+        if let Some(download) = inner.active_download.as_ref() {
+            match (download.total_bytes, download.bytes_per_sec) {
+                (Some(total_bytes), Some(bytes_per_sec)) if bytes_per_sec > 0 => {
+                    total_bytes
+                        .saturating_sub(download.downloaded_bytes)
+                        .saturating_mul(1000)
+                        / bytes_per_sec
+                }
+                _ => phase_budget_ms(inner.kind, current_phase).saturating_sub(elapsed_ms),
+            }
+        } else {
+            phase_budget_ms(inner.kind, current_phase).saturating_sub(elapsed_ms)
+        }
+    } else {
+        phase_budget_ms(inner.kind, current_phase).saturating_sub(elapsed_ms)
+    };
+    Some(current_remaining_ms + remaining_future_phase_budget_ms(inner.kind, current_phase))
+}
+
+fn project_progress_pct(
+    inner: &LaunchJobInner,
+    now: DateTime<Utc>,
+    eta_ms: Option<u64>,
+) -> Option<u8> {
+    match inner.state {
+        ExecutionLaunchState::Ready => return Some(100),
+        ExecutionLaunchState::Error => return Some(100),
+        ExecutionLaunchState::Running => {}
+    }
+    let eta_ms = eta_ms?;
+    let elapsed_ms = now
+        .signed_duration_since(inner.started_at)
+        .num_milliseconds()
+        .max(0) as u64;
+    let total = elapsed_ms.saturating_add(eta_ms);
+    if total == 0 {
+        return Some(0);
+    }
+    Some(
+        ((elapsed_ms as f64 / total as f64) * 100.0)
+            .round()
+            .clamp(0.0, 99.0) as u8,
+    )
 }
 
 fn format_error_chain(err: &anyhow::Error) -> String {
@@ -1289,6 +1546,9 @@ fn normalize_podman_engine_ready_for_gate(result: anyhow::Result<bool>) -> anyho
 }
 
 #[cfg(test)]
+// EXCEPTION: these tests intentionally serialize env-var mutations with a sync lock
+// that spans async calls so process-global state cannot interleave across test cases.
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1303,7 +1563,7 @@ mod tests {
     use crate::harness_runtime::HarnessRuntimeManager;
     use crate::ops_events::OpsEvents;
     use crate::perf_telemetry::PerfTelemetry;
-    use crate::settings::{ExecutionMode, ExecutionSettings};
+    use crate::settings::{ExecutionMode, ExecutionSettings, Settings};
 
     struct EnvVarGuard {
         key: &'static str,
@@ -1408,6 +1668,20 @@ mod tests {
         path
     }
 
+    async fn save_test_execution_settings(data_root: &Path, execution: ExecutionSettings) {
+        let db_path = data_root.join("db").join("db.sqlite");
+        let store = Store::open_sqlite(&db_path, None)
+            .await
+            .expect("open settings store");
+        let settings = Settings {
+            execution: Some(execution),
+            ..Settings::default()
+        };
+        crate::settings::save_settings(&store, &settings)
+            .await
+            .expect("save settings");
+        store.close().await;
+    }
     #[derive(Default)]
     struct BlockingWarmupOperations {
         runtime_runs: AtomicUsize,
@@ -1418,7 +1692,7 @@ mod tests {
 
     impl BlockingWarmupOperations {
         async fn wait_for_runtime_runs(&self, expected: usize) {
-            tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::time::timeout(Duration::from_secs(3), async {
                 loop {
                     if self.runtime_runs.load(Ordering::SeqCst) >= expected {
                         break;
@@ -1431,7 +1705,7 @@ mod tests {
         }
 
         async fn wait_for_builder_runs(&self, expected: usize) {
-            tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::time::timeout(Duration::from_secs(3), async {
                 loop {
                     if self.builder_runs.load(Ordering::SeqCst) >= expected {
                         break;
@@ -1612,6 +1886,61 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_phase_updates_do_not_append_duplicate_logs() {
+        let job = LaunchJob::new(uuid::Uuid::new_v4().to_string(), WorkspaceId::new());
+        let _ = job.transition_phase(
+            HarnessSetupPhase::ArtifactDownload,
+            "downloading required artifacts",
+        );
+        let _ = job.transition_phase(
+            HarnessSetupPhase::ArtifactDownload,
+            "downloading required artifacts",
+        );
+        let snapshot = job.snapshot();
+        assert_eq!(snapshot.logs.len(), 1);
+        assert_eq!(
+            snapshot.current_step_label.as_deref(),
+            Some("downloading required artifacts")
+        );
+    }
+
+    #[test]
+    fn launch_snapshot_projects_download_eta_and_progress() {
+        let job = LaunchJob::new(uuid::Uuid::new_v4().to_string(), WorkspaceId::new());
+        let _ = job.transition_phase(
+            HarnessSetupPhase::ArtifactDownload,
+            "downloading required artifacts",
+        );
+        let _ = job.set_progress(HarnessSetupProgressUpdate {
+            phase: HarnessSetupPhase::ArtifactDownload,
+            active_download: Some(HarnessSetupDownloadStatus {
+                artifact: "Required artifacts".to_string(),
+                downloaded_bytes: 400,
+                total_bytes: Some(1000),
+                bytes_per_sec: Some(100),
+            }),
+        });
+        let snapshot = job.snapshot();
+        assert_eq!(
+            snapshot.current_phase,
+            Some(HarnessSetupPhase::ArtifactDownload)
+        );
+        assert_eq!(
+            snapshot.current_step_label.as_deref(),
+            Some("downloading required artifacts")
+        );
+        assert!(snapshot.eta_ms.unwrap_or(0) >= 39_000);
+        assert!(snapshot.progress_pct.unwrap_or(0) < 100);
+        assert_eq!(
+            snapshot
+                .active_download
+                .as_ref()
+                .and_then(|value| value.total_bytes),
+            Some(1000)
+        );
+    }
+
+    #[test]
     fn format_error_chain_includes_context_and_cause() {
         let err = anyhow::anyhow!("inner").context("outer");
         assert_eq!(format_error_chain(&err), "outer: inner");
@@ -1685,6 +2014,53 @@ mod tests {
         assert_eq!(second.workspace_id, workspace.id.0.to_string());
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn startup_prewarm_runs_runtime_warmup_for_cold_container_settings() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _serial = env_var_test_lock().lock().await;
+        let data_dir = tempfile::tempdir().expect("tempdir");
+        let podman_path = data_dir.path().join("podman.sh");
+        std::fs::write(
+            &podman_path,
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nexit 0\n",
+        )
+        .expect("write podman shim");
+        std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod podman shim");
+        let _podman = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+        let _podman_available = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "1");
+        let ops = Arc::new(BlockingWarmupOperations::default());
+        let settings = ExecutionSettings {
+            mode: ExecutionMode::Container,
+            ..ExecutionSettings::default()
+        };
+        save_test_execution_settings(data_dir.path(), settings).await;
+
+        let coordinator =
+            test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
+        let coordinator_task = Arc::clone(&coordinator);
+        let startup = tokio::spawn(async move {
+            coordinator_task.run_startup_prewarm().await;
+        });
+
+        ops.wait_for_runtime_runs(1).await;
+
+        let running = coordinator.startup_status().await;
+        assert_eq!(running.state, StartupPrewarmState::Running);
+        assert!(!running.machine_ready);
+
+        ops.release_runtime();
+        startup.await.expect("startup prewarm task");
+
+        let ready = coordinator.startup_status().await;
+        assert_eq!(ready.state, StartupPrewarmState::Ready);
+        assert!(ready.needs_prewarm);
+        assert!(ready.machine_ready);
+        assert!(ready.image_present);
+    }
+
     #[tokio::test]
     async fn runtime_prewarm_reuses_background_all_job_and_waits_for_builder_tail_when_runtime_joins(
     ) {
@@ -1742,6 +2118,97 @@ mod tests {
 
         assert_eq!(ready.job_id, background.job_id);
         assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 1);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn workspace_launch_waits_for_running_startup_prewarm_without_duplicate_runtime_warmup() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _serial = env_var_test_lock().lock().await;
+        let data_dir = tempfile::tempdir().expect("tempdir");
+        let workspace_root = data_dir.path().join("ws");
+        std::fs::create_dir_all(&workspace_root).expect("create workspace root");
+        let log_path = data_dir.path().join("podman-invocations.log");
+        let podman_path = data_dir.path().join("podman.sh");
+        let workspace = Workspace {
+            id: WorkspaceId::new(),
+            name: "ws".to_string(),
+            root_path: workspace_root.to_string_lossy().to_string(),
+            created_at: Utc::now(),
+            vcs_kind: None,
+        };
+        let container_name = format!("ctx-harness-{}", workspace.id.0);
+        std::fs::write(
+            &podman_path,
+            format!(
+                "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+                log = log_path.display(),
+                container = container_name,
+            ),
+        )
+        .expect("write podman shim");
+        std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod podman shim");
+        let _podman = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+        let _podman_available = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "1");
+        let ops = Arc::new(BlockingWarmupOperations::default());
+        let settings = ExecutionSettings {
+            mode: ExecutionMode::Container,
+            container: crate::settings::ContainerExecutionSettings {
+                network_mode: crate::settings::ContainerNetworkMode::All,
+                ..Default::default()
+            },
+        };
+        save_test_execution_settings(data_dir.path(), settings.clone()).await;
+
+        let coordinator =
+            test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
+        let coordinator_task = Arc::clone(&coordinator);
+        let startup = tokio::spawn(async move {
+            coordinator_task.run_startup_prewarm().await;
+        });
+
+        ops.wait_for_runtime_runs(1).await;
+
+        let snapshot = coordinator
+            .start_workspace_launch(workspace, settings, "http://127.0.0.1:4399".to_string())
+            .await;
+        assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 1);
+
+        ops.release_runtime();
+        startup.await.expect("startup prewarm task");
+
+        let ready = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let latest = coordinator
+                    .launch_status(&snapshot.job_id)
+                    .await
+                    .expect("missing workspace launch job");
+                if latest.state == ExecutionLaunchState::Ready {
+                    break latest;
+                }
+                if latest.state == ExecutionLaunchState::Error {
+                    panic!("workspace launch failed unexpectedly: {:?}", latest.error);
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("timed out waiting for joined launch readiness");
+
+        assert_eq!(ready.state, ExecutionLaunchState::Ready);
+        assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 1);
+
+        let log = std::fs::read_to_string(&log_path).expect("read podman invocation log");
+        assert!(
+            log.contains(&format!("container exists {container_name}")),
+            "expected reusable container check in log:\n{log}"
+        );
+        assert!(
+            !log.contains("image exists"),
+            "joined launch should not restart runtime/image probes for reusable containers:\n{log}"
+        );
     }
 
     #[tokio::test]

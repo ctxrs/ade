@@ -31,12 +31,19 @@
       "image": [
         "linux/aarch64",
         "linux/x86_64"
+      ],
+      "machine_cache": [
+        "macos/aarch64",
+        "macos/x86_64"
       ]
     },
     "provider_ids": [],
     "runtime_ids": [],
     "image_ids": [
       "ctx-harness"
+    ],
+    "machine_cache_ids": [
+      "podman-machine"
     ]
   },
   "components": [
@@ -1294,6 +1301,36 @@
           "source_type": "vendor",
           "uri": "https://github.com/containers/podman/releases/download/v5.8.0/podman-remote-release-darwin_amd64.zip",
           "sha256": "a4d68a7be94d2c6f9c752731736ab0ec5145bc5b5ac5909d6b5bc36badd73f44"
+        }
+      ]
+    },
+    {
+      "kind": "machine_cache",
+      "id": "podman-machine",
+      "os": "macos",
+      "arch": "aarch64",
+      "variant": "default",
+      "version": "5.8.0",
+      "sources": [
+        {
+          "source_type": "vendor",
+          "uri": "https://github.com/containers/podman-machine-os/releases/download/v5.8.0/podman-machine.aarch64.applehv.raw.zst",
+          "sha256": "f73f222eb4027e1d97c8c3e7f30da80c159da9fc97848af72de816ac3992599c"
+        }
+      ]
+    },
+    {
+      "kind": "machine_cache",
+      "id": "podman-machine",
+      "os": "macos",
+      "arch": "x86_64",
+      "variant": "default",
+      "version": "5.8.0",
+      "sources": [
+        {
+          "source_type": "vendor",
+          "uri": "https://github.com/containers/podman-machine-os/releases/download/v5.8.0/podman-machine.x86_64.applehv.raw.zst",
+          "sha256": "63dca13a105c7b1a2630aebe1d1ff7070a1c36e43bac9b208542a0caea6cde6b"
         }
       ]
     },

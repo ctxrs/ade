@@ -498,6 +498,29 @@ pub fn managed_image_source(id: &str, os: &str, arch: &str) -> Option<ManagedArt
     select_managed_source(component, &allowed_source_types)
 }
 
+pub fn managed_machine_cache_source(
+    id: &str,
+    os: &str,
+    arch: &str,
+) -> Option<ManagedArtifactSource> {
+    let lock = load_runtime_lock()?;
+    let allowed_source_types = allowed_source_types_for_profile(&lock);
+    let component = lock.components.iter().find(|component| {
+        let variant = component
+            .variant
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("default");
+        component.kind == "machine_cache"
+            && component.id == id
+            && component.os == os
+            && component.arch == arch
+            && variant == "default"
+    })?;
+    select_managed_source(component, &allowed_source_types)
+}
+
 pub fn managed_runtime_source(id: &str, os: &str, arch: &str) -> Option<ManagedRuntimeSource> {
     let lock = load_runtime_lock()?;
     let allowed_source_types = allowed_source_types_for_profile(&lock);
@@ -519,6 +542,54 @@ pub fn managed_runtime_source(id: &str, os: &str, arch: &str) -> Option<ManagedR
 
 pub fn managed_ctx_harness_image_source(_expected_image: &str) -> Option<ManagedArtifactSource> {
     managed_image_source("ctx-harness", "linux", current_arch())
+}
+
+pub fn managed_podman_machine_cache_source() -> Option<ManagedArtifactSource> {
+    #[cfg(test)]
+    if let Some(source) = test_managed_podman_machine_cache_source_override()
+        .lock()
+        .expect("test managed machine cache override lock poisoned")
+        .clone()
+    {
+        return Some(source);
+    }
+
+    managed_machine_cache_source("podman-machine", current_platform().0, current_platform().1)
+}
+
+#[cfg(test)]
+fn test_managed_podman_machine_cache_source_override(
+) -> &'static std::sync::Mutex<Option<ManagedArtifactSource>> {
+    static OVERRIDE: std::sync::OnceLock<std::sync::Mutex<Option<ManagedArtifactSource>>> =
+        std::sync::OnceLock::new();
+    OVERRIDE.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+#[cfg(test)]
+pub(crate) struct TestManagedPodmanMachineCacheSourceGuard {
+    previous: Option<ManagedArtifactSource>,
+}
+
+#[cfg(test)]
+impl Drop for TestManagedPodmanMachineCacheSourceGuard {
+    fn drop(&mut self) {
+        let mut guard = test_managed_podman_machine_cache_source_override()
+            .lock()
+            .expect("test managed machine cache override lock poisoned");
+        *guard = self.previous.take();
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn override_managed_podman_machine_cache_source_for_test(
+    source: ManagedArtifactSource,
+) -> TestManagedPodmanMachineCacheSourceGuard {
+    let mut guard = test_managed_podman_machine_cache_source_override()
+        .lock()
+        .expect("test managed machine cache override lock poisoned");
+    let previous = guard.clone();
+    *guard = Some(source);
+    TestManagedPodmanMachineCacheSourceGuard { previous }
 }
 
 #[cfg(test)]
@@ -650,5 +721,24 @@ mod tests {
             .expect("gvproxy helper should be present");
         assert_eq!(helper.uri, "https://example.test/gvproxy");
         assert_eq!(helper.sha256, "1234");
+    }
+
+    #[test]
+    fn managed_podman_machine_cache_source_can_be_overridden_for_tests() {
+        let override_source = ManagedArtifactSource {
+            uri: "https://example.test/podman-machine.raw.zst".to_string(),
+            sha256: "cafebabe".to_string(),
+        };
+        let guard = override_managed_podman_machine_cache_source_for_test(override_source.clone());
+        let resolved = managed_podman_machine_cache_source().expect("override should resolve");
+        assert_eq!(resolved.uri, override_source.uri);
+        assert_eq!(resolved.sha256, override_source.sha256);
+        drop(guard);
+        if let Some(restored) = managed_podman_machine_cache_source() {
+            assert!(
+                restored.uri != override_source.uri || restored.sha256 != override_source.sha256,
+                "dropping the guard should restore the prior source"
+            );
+        }
     }
 }

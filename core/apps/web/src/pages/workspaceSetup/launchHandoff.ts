@@ -7,7 +7,6 @@ import {
   buildExecutionLaunchWsUrl,
   getExecutionLaunchStatus,
   startWorkspaceSetupLaunchHandoff as requestWorkspaceSetupLaunchHandoff,
-  startWorkspaceSetupRuntimePrewarm as requestWorkspaceSetupRuntimePrewarm,
 } from "../../api/client";
 import {
   launchErrorFromSnapshot as formatLaunchErrorFromSnapshot,
@@ -80,9 +79,6 @@ export const createLaunchLogBatcher = (
 
 export const startWorkspaceSetupLaunchHandoff = (workspaceId: string) =>
   requestWorkspaceSetupLaunchHandoff(workspaceId);
-
-export const startWorkspaceSetupRuntimePrewarm = () =>
-  requestWorkspaceSetupRuntimePrewarm();
 
 export const launchErrorFromSnapshot = (snapshot: ExecutionLaunchSnapshot): string =>
   formatLaunchErrorFromSnapshot(snapshot);

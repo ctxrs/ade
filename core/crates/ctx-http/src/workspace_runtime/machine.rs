@@ -1,4 +1,8 @@
 use super::*;
+use std::collections::BTreeMap;
+use std::sync::Mutex as StdMutex;
+
+const PODMAN_MACHINE_CACHE_ID: &str = "podman-machine";
 
 pub(super) fn ctx_podman_machine_name(data_root: &Path) -> String {
     let hash = podman_data_root_hash(data_root);
@@ -60,6 +64,38 @@ fn shared_podman_machine_cache_root() -> Option<PathBuf> {
             .join(std::env::consts::OS)
             .join(std::env::consts::ARCH)
     })
+}
+
+fn managed_podman_machine_cache_root(data_root: &Path) -> PathBuf {
+    shared_podman_machine_cache_root()
+        .unwrap_or_else(|| data_root.join("managed").join("machine-cache"))
+}
+
+fn managed_artifact_file_name(url: &str, sha256: &str, fallback_prefix: &str) -> String {
+    let basename = Url::parse(url)
+        .ok()
+        .and_then(|parsed| {
+            Path::new(parsed.path())
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_string)
+        })
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| format!("{fallback_prefix}-{sha256}.bin"));
+    format!("sha256-{}-{}", sha256.trim().to_ascii_lowercase(), basename)
+}
+
+fn managed_podman_machine_cache_path(
+    data_root: &Path,
+    source: &bundled_assets::ManagedArtifactSource,
+) -> PathBuf {
+    managed_podman_machine_cache_root(data_root)
+        .join("managed")
+        .join(managed_artifact_file_name(
+            &source.uri,
+            &source.sha256,
+            PODMAN_MACHINE_CACHE_ID,
+        ))
 }
 
 fn collect_podman_machine_cache_file_relpaths(root: &Path) -> Result<Vec<PathBuf>> {
@@ -400,6 +436,95 @@ pub(super) async fn persist_podman_machine_cache_to_shared_best_effort(
     }
 }
 
+fn managed_podman_machine_cache_install_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+pub(super) async fn ensure_managed_podman_machine_cache(
+    data_root: &Path,
+    observer: Option<&dyn HarnessSetupObserver>,
+    download_aggregate: Option<ManagedDownloadAggregate>,
+) -> Result<PathBuf> {
+    let _install_guard = managed_podman_machine_cache_install_lock().lock().await;
+    let source = bundled_assets::managed_podman_machine_cache_source().ok_or_else(|| {
+        anyhow::anyhow!(
+            "managed podman machine cache source is not available for {}/{}",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        )
+    })?;
+    let final_path = managed_podman_machine_cache_path(data_root, &source);
+    if final_path.exists() {
+        let digest = updates::sha256_hex_file(&final_path)
+            .await
+            .with_context(|| format!("computing sha256 for {}", final_path.display()))?;
+        if digest.eq_ignore_ascii_case(source.sha256.trim()) {
+            return Ok(final_path);
+        }
+        observe_log(
+            observer,
+            HarnessSetupPhase::ArtifactDownload,
+            HarnessSetupLogLevel::Warn,
+            &format!(
+                "managed podman machine cache checksum mismatch for {}; re-downloading",
+                final_path.display()
+            ),
+        );
+        let _ = fs::remove_file(&final_path).await;
+    }
+
+    let Some(parent) = final_path.parent() else {
+        anyhow::bail!(
+            "managed podman machine cache path has no parent: {}",
+            final_path.display()
+        );
+    };
+    fs::create_dir_all(parent)
+        .await
+        .with_context(|| format!("creating {}", parent.display()))?;
+    let tmp_path = final_path.with_extension("download");
+    observe_log(
+        observer,
+        HarnessSetupPhase::ArtifactDownload,
+        HarnessSetupLogLevel::Info,
+        &format!(
+            "downloading managed podman machine cache into {}",
+            final_path.display()
+        ),
+    );
+    download_managed_artifact(
+        &source.uri,
+        &tmp_path,
+        Some(ManagedArtifactDownloadReporter::new(
+            observer,
+            download_aggregate,
+            HarnessSetupPhase::ArtifactDownload,
+            "Podman machine cache",
+        )),
+    )
+    .await?;
+    let digest = updates::sha256_hex_file(&tmp_path)
+        .await
+        .with_context(|| format!("computing sha256 for {}", tmp_path.display()))?;
+    if !digest.eq_ignore_ascii_case(source.sha256.trim()) {
+        let _ = fs::remove_file(&tmp_path).await;
+        anyhow::bail!(
+            "managed podman machine cache checksum mismatch: expected {}, got {}",
+            source.sha256.trim(),
+            digest
+        );
+    }
+    fs::rename(&tmp_path, &final_path).await.with_context(|| {
+        format!(
+            "moving managed podman machine cache into place: {} -> {}",
+            tmp_path.display(),
+            final_path.display()
+        )
+    })?;
+    Ok(final_path)
+}
+
 pub(super) fn managed_podman_runtime_source() -> Option<bundled_assets::ManagedRuntimeSource> {
     let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
     bundled_assets::managed_runtime_source("podman", os, arch)
@@ -587,14 +712,16 @@ async fn mark_managed_podman_runtime_ready(runtime_root: &Path) -> Result<()> {
 pub(super) async fn ensure_managed_podman_runtime(
     data_root: &Path,
     observer: Option<&dyn HarnessSetupObserver>,
+    download_aggregate: Option<ManagedDownloadAggregate>,
 ) -> Result<PathBuf> {
-    ensure_managed_podman_runtime_with_override(data_root, None, observer).await
+    ensure_managed_podman_runtime_with_override(data_root, None, observer, download_aggregate).await
 }
 
 pub(super) async fn ensure_managed_podman_runtime_with_override(
     data_root: &Path,
     source_override: Option<&bundled_assets::ManagedRuntimeSource>,
     observer: Option<&dyn HarnessSetupObserver>,
+    download_aggregate: Option<ManagedDownloadAggregate>,
 ) -> Result<PathBuf> {
     if source_override.is_none() {
         if let Ok(raw) = std::env::var(PODMAN_PATH_ENV) {
@@ -629,7 +756,7 @@ pub(super) async fn ensure_managed_podman_runtime_with_override(
 
     observe_log(
         observer,
-        HarnessSetupPhase::MachineCheck,
+        HarnessSetupPhase::ArtifactDownload,
         HarnessSetupLogLevel::Info,
         &format!("installing managed podman runtime {}", source.version),
     );
@@ -654,7 +781,17 @@ pub(super) async fn ensure_managed_podman_runtime_with_override(
             .await
             .with_context(|| format!("creating {}", parent.display()))?;
         let tmp_archive = final_archive.with_extension("download");
-        download_managed_artifact(&source.uri, &tmp_archive).await?;
+        download_managed_artifact(
+            &source.uri,
+            &tmp_archive,
+            Some(ManagedArtifactDownloadReporter::new(
+                observer,
+                download_aggregate.clone(),
+                HarnessSetupPhase::ArtifactDownload,
+                "Podman runtime",
+            )),
+        )
+        .await?;
         let digest = updates::sha256_hex_file(&tmp_archive)
             .await
             .with_context(|| format!("computing sha256 for {}", tmp_archive.display()))?;
@@ -730,45 +867,66 @@ pub(super) async fn ensure_managed_podman_runtime_with_override(
         })?;
     let _ = fs::remove_dir_all(&staging_dir).await;
 
+    let mut helper_downloads = Vec::new();
     for (name, helper) in &source.helpers {
         let Some(path) = managed_podman_helper_path(&runtime_root, name) else {
             continue;
         };
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .await
-                .with_context(|| format!("creating {}", parent.display()))?;
-        }
-        if path.exists() {
-            let digest = updates::sha256_hex_file(&path)
-                .await
-                .with_context(|| format!("computing sha256 for {}", path.display()))?;
-            if digest.eq_ignore_ascii_case(helper.sha256.trim()) {
-                continue;
+        let helper_name = name.to_string();
+        let helper_source = helper.clone();
+        let helper_path = path.clone();
+        let aggregate = download_aggregate.clone();
+        helper_downloads.push(async move {
+            if let Some(parent) = helper_path.parent() {
+                fs::create_dir_all(parent)
+                    .await
+                    .with_context(|| format!("creating {}", parent.display()))?;
             }
-            let _ = fs::remove_file(&path).await;
-        }
-        let tmp = path.with_extension("download");
-        download_managed_artifact(&helper.uri, &tmp).await?;
-        let digest = updates::sha256_hex_file(&tmp)
-            .await
-            .with_context(|| format!("computing sha256 for {}", tmp.display()))?;
-        if !digest.eq_ignore_ascii_case(helper.sha256.trim()) {
-            let _ = fs::remove_file(&tmp).await;
-            anyhow::bail!(
-                "managed podman helper checksum mismatch ({}): expected {}, got {}",
-                name,
-                helper.sha256.trim(),
-                digest
-            );
-        }
-        fs::rename(&tmp, &path).await.with_context(|| {
-            format!(
-                "moving managed podman helper into place: {} -> {}",
-                tmp.display(),
-                path.display()
+            if helper_path.exists() {
+                let digest = updates::sha256_hex_file(&helper_path)
+                    .await
+                    .with_context(|| format!("computing sha256 for {}", helper_path.display()))?;
+                if digest.eq_ignore_ascii_case(helper_source.sha256.trim()) {
+                    return Ok(()) as Result<()>;
+                }
+                let _ = fs::remove_file(&helper_path).await;
+            }
+            let tmp = helper_path.with_extension("download");
+            download_managed_artifact(
+                &helper_source.uri,
+                &tmp,
+                Some(ManagedArtifactDownloadReporter::new(
+                    observer,
+                    aggregate,
+                    HarnessSetupPhase::ArtifactDownload,
+                    format!("Podman helper ({helper_name})"),
+                )),
             )
-        })?;
+            .await?;
+            let digest = updates::sha256_hex_file(&tmp)
+                .await
+                .with_context(|| format!("computing sha256 for {}", tmp.display()))?;
+            if !digest.eq_ignore_ascii_case(helper_source.sha256.trim()) {
+                let _ = fs::remove_file(&tmp).await;
+                anyhow::bail!(
+                    "managed podman helper checksum mismatch ({}): expected {}, got {}",
+                    helper_name,
+                    helper_source.sha256.trim(),
+                    digest
+                );
+            }
+            fs::rename(&tmp, &helper_path).await.with_context(|| {
+                format!(
+                    "moving managed podman helper into place: {} -> {}",
+                    tmp.display(),
+                    helper_path.display()
+                )
+            })?;
+            Ok(())
+        });
+    }
+    for result in futures::future::join_all(helper_downloads).await {
+        result?;
     }
 
     if !runtime_bin.exists() {
@@ -806,7 +964,151 @@ pub(super) async fn ensure_managed_podman_runtime_with_override(
     Ok(runtime_bin)
 }
 
-pub(super) async fn download_managed_artifact(url: &str, dest: &Path) -> Result<()> {
+fn format_byte_count(bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+    let value = bytes as f64;
+    if value >= GB {
+        format!("{:.1} GB", value / GB)
+    } else if value >= MB {
+        format!("{:.1} MB", value / MB)
+    } else if value >= KB {
+        format!("{:.1} KB", value / KB)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+#[derive(Debug, Default)]
+struct ManagedDownloadAggregateState {
+    downloads: BTreeMap<String, ManagedDownloadArtifactState>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(super) struct ManagedDownloadAggregate {
+    inner: Arc<StdMutex<ManagedDownloadAggregateState>>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ManagedDownloadArtifactState {
+    downloaded_bytes: u64,
+    total_bytes: Option<u64>,
+    bytes_per_sec: Option<u64>,
+    finished: bool,
+}
+
+impl ManagedDownloadAggregate {
+    fn update(
+        &self,
+        artifact: &str,
+        downloaded_bytes: u64,
+        total_bytes: Option<u64>,
+        bytes_per_sec: Option<u64>,
+        finished: bool,
+    ) -> Option<HarnessSetupDownloadStatus> {
+        let mut inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let entry = inner.downloads.entry(artifact.to_string()).or_default();
+        entry.downloaded_bytes = downloaded_bytes;
+        entry.total_bytes = total_bytes;
+        entry.bytes_per_sec = bytes_per_sec;
+        entry.finished = finished;
+
+        let all_finished = inner.downloads.values().all(|download| download.finished);
+        if all_finished {
+            return None;
+        }
+
+        let downloaded_total = inner
+            .downloads
+            .values()
+            .map(|download| download.downloaded_bytes)
+            .sum();
+        let total_bytes = inner.downloads.values().try_fold(0u64, |acc, download| {
+            download.total_bytes.map(|value| acc.saturating_add(value))
+        });
+        let bytes_per_sec = inner
+            .downloads
+            .values()
+            .filter_map(|download| download.bytes_per_sec)
+            .fold(None, |acc: Option<u64>, value| {
+                Some(acc.unwrap_or(0u64).saturating_add(value))
+            });
+        Some(HarnessSetupDownloadStatus {
+            artifact: "Required artifacts".to_string(),
+            downloaded_bytes: downloaded_total,
+            total_bytes,
+            bytes_per_sec,
+        })
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct ManagedArtifactDownloadReporter<'a> {
+    observer: Option<&'a dyn HarnessSetupObserver>,
+    aggregate: Option<ManagedDownloadAggregate>,
+    phase: HarnessSetupPhase,
+    artifact: String,
+}
+
+impl<'a> ManagedArtifactDownloadReporter<'a> {
+    pub(super) fn new(
+        observer: Option<&'a dyn HarnessSetupObserver>,
+        aggregate: Option<ManagedDownloadAggregate>,
+        phase: HarnessSetupPhase,
+        artifact: impl Into<String>,
+    ) -> Self {
+        Self {
+            observer,
+            aggregate,
+            phase,
+            artifact: artifact.into(),
+        }
+    }
+
+    fn emit_progress(
+        &self,
+        downloaded_bytes: u64,
+        total_bytes: Option<u64>,
+        bytes_per_sec: Option<u64>,
+        finished: bool,
+    ) {
+        let active_download = if let Some(aggregate) = &self.aggregate {
+            aggregate.update(
+                &self.artifact,
+                downloaded_bytes,
+                total_bytes,
+                bytes_per_sec,
+                finished,
+            )
+        } else if finished {
+            None
+        } else {
+            Some(HarnessSetupDownloadStatus {
+                artifact: self.artifact.clone(),
+                downloaded_bytes,
+                total_bytes,
+                bytes_per_sec,
+            })
+        };
+        observe_progress(
+            self.observer,
+            HarnessSetupProgressUpdate {
+                phase: self.phase,
+                active_download,
+            },
+        );
+    }
+}
+
+pub(super) async fn download_managed_artifact(
+    url: &str,
+    dest: &Path,
+    reporter: Option<ManagedArtifactDownloadReporter<'_>>,
+) -> Result<()> {
     let Some(parent) = dest.parent() else {
         anyhow::bail!("download destination missing parent: {}", dest.display());
     };
@@ -825,25 +1127,170 @@ pub(super) async fn download_managed_artifact(url: &str, dest: &Path) -> Result<
         .with_context(|| format!("downloading managed artifact: {url}"))?
         .error_for_status()
         .with_context(|| format!("managed artifact download http error: {url}"))?;
+    let total_bytes = response.content_length();
+    if let Some(reporter) = reporter.as_ref() {
+        observe_phase(
+            reporter.observer,
+            reporter.phase,
+            "downloading required artifacts",
+        );
+        let size_suffix = total_bytes
+            .map(format_byte_count)
+            .map(|value| format!(" ({value})"))
+            .unwrap_or_default();
+        observe_log(
+            reporter.observer,
+            reporter.phase,
+            HarnessSetupLogLevel::Info,
+            &format!("starting {} download{}", reporter.artifact, size_suffix),
+        );
+        reporter.emit_progress(0, total_bytes, None, false);
+    }
     let mut stream = response.bytes_stream();
     let mut file = fs::File::create(dest)
         .await
         .with_context(|| format!("creating {}", dest.display()))?;
+    let started = tokio::time::Instant::now();
+    let mut downloaded_bytes = 0u64;
+    let mut next_progress_pct = 10u64;
+    let mut last_progress_snapshot = tokio::time::Instant::now();
+    let mut last_progress_log = tokio::time::Instant::now();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.with_context(|| format!("reading download stream from {url}"))?;
         file.write_all(&chunk)
             .await
             .with_context(|| format!("writing {}", dest.display()))?;
+        downloaded_bytes = downloaded_bytes.saturating_add(chunk.len() as u64);
+
+        let elapsed = started.elapsed();
+        let bytes_per_sec = if elapsed.as_secs_f64() > 0.0 {
+            Some((downloaded_bytes as f64 / elapsed.as_secs_f64()).round() as u64)
+        } else {
+            None
+        };
+
+        if let Some(reporter) = reporter.as_ref() {
+            let now = tokio::time::Instant::now();
+            let should_emit_snapshot = now.duration_since(last_progress_snapshot)
+                >= Duration::from_secs(1)
+                || total_bytes
+                    .map(|total| downloaded_bytes >= total)
+                    .unwrap_or(false);
+            if should_emit_snapshot {
+                reporter.emit_progress(downloaded_bytes, total_bytes, bytes_per_sec, false);
+                last_progress_snapshot = now;
+            }
+
+            let should_emit_log = if let Some(total) = total_bytes {
+                let pct = if total == 0 {
+                    100
+                } else {
+                    ((downloaded_bytes as f64 / total as f64) * 100.0).floor() as u64
+                };
+                if pct >= next_progress_pct {
+                    next_progress_pct = ((pct / 10) + 1) * 10;
+                    true
+                } else {
+                    now.duration_since(last_progress_log) >= Duration::from_secs(15)
+                }
+            } else {
+                now.duration_since(last_progress_log) >= Duration::from_secs(15)
+            };
+
+            if should_emit_log {
+                let message = if let Some(total) = total_bytes {
+                    let pct = if total == 0 {
+                        100
+                    } else {
+                        ((downloaded_bytes as f64 / total as f64) * 100.0).floor() as u64
+                    };
+                    format!(
+                        "{} download {}% ({} / {})",
+                        reporter.artifact,
+                        pct.min(100),
+                        format_byte_count(downloaded_bytes),
+                        format_byte_count(total),
+                    )
+                } else {
+                    format!(
+                        "{} download in progress ({})",
+                        reporter.artifact,
+                        format_byte_count(downloaded_bytes),
+                    )
+                };
+                observe_log(
+                    reporter.observer,
+                    reporter.phase,
+                    HarnessSetupLogLevel::Info,
+                    &message,
+                );
+                last_progress_log = now;
+            }
+        }
     }
     file.flush()
         .await
         .with_context(|| format!("flushing {}", dest.display()))?;
+    if let Some(reporter) = reporter.as_ref() {
+        let elapsed = started.elapsed();
+        let bytes_per_sec = if elapsed.as_secs_f64() > 0.0 {
+            Some((downloaded_bytes as f64 / elapsed.as_secs_f64()).round() as u64)
+        } else {
+            None
+        };
+        reporter.emit_progress(downloaded_bytes, total_bytes, bytes_per_sec, true);
+        let complete_suffix = total_bytes
+            .map(format_byte_count)
+            .unwrap_or_else(|| format_byte_count(downloaded_bytes));
+        observe_log(
+            reporter.observer,
+            reporter.phase,
+            HarnessSetupLogLevel::Info,
+            &format!(
+                "{} download complete ({complete_suffix})",
+                reporter.artifact
+            ),
+        );
+    }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn managed_download_aggregate_combines_parallel_artifact_progress() {
+        let aggregate = ManagedDownloadAggregate::default();
+
+        let first = aggregate
+            .update("Podman runtime", 10, Some(40), Some(3), false)
+            .expect("first aggregate snapshot");
+        assert_eq!(first.artifact, "Required artifacts");
+        assert_eq!(first.downloaded_bytes, 10);
+        assert_eq!(first.total_bytes, Some(40));
+        assert_eq!(first.bytes_per_sec, Some(3));
+
+        let combined = aggregate
+            .update("Harness image", 5, Some(20), Some(2), false)
+            .expect("combined aggregate snapshot");
+        assert_eq!(combined.downloaded_bytes, 15);
+        assert_eq!(combined.total_bytes, Some(60));
+        assert_eq!(combined.bytes_per_sec, Some(5));
+
+        let still_running = aggregate
+            .update("Podman runtime", 40, Some(40), Some(4), true)
+            .expect("remaining artifact should keep aggregate active");
+        assert_eq!(still_running.downloaded_bytes, 45);
+        assert_eq!(still_running.total_bytes, Some(60));
+        assert_eq!(still_running.bytes_per_sec, Some(6));
+
+        let finished = aggregate.update("Harness image", 20, Some(20), Some(2), true);
+        assert!(
+            finished.is_none(),
+            "aggregate should clear once all downloads finish"
+        );
+    }
 
     #[tokio::test]
     async fn partial_managed_podman_runtime_triggers_repair_instead_of_reuse() {
@@ -871,9 +1318,10 @@ mod tests {
             .await
             .expect("write partial runtime binary");
 
-        let err = ensure_managed_podman_runtime_with_override(temp.path(), Some(&source), None)
-            .await
-            .expect_err("partial runtime should trigger repair attempt");
+        let err =
+            ensure_managed_podman_runtime_with_override(temp.path(), Some(&source), None, None)
+                .await
+                .expect_err("partial runtime should trigger repair attempt");
 
         assert!(
             !managed_podman_runtime_is_ready(&runtime_root, &runtime_bin, &source),

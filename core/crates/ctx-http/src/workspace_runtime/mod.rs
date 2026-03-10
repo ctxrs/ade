@@ -54,10 +54,11 @@ use self::image::{
     ensure_managed_default_container_image_tar_with_source, managed_default_image_install_lock,
 };
 use self::machine::{
-    ctx_podman_machine_name, download_managed_artifact, ensure_managed_podman_runtime,
-    managed_podman_runtime_bin_path, managed_podman_runtime_source,
+    ctx_podman_machine_name, download_managed_artifact, ensure_managed_podman_machine_cache,
+    ensure_managed_podman_runtime, managed_podman_runtime_bin_path, managed_podman_runtime_source,
     persist_podman_machine_cache_to_shared_best_effort, podman_home_root, podman_runtime_root,
     podman_temp_root, seed_shared_podman_machine_cache_best_effort,
+    ManagedArtifactDownloadReporter, ManagedDownloadAggregate,
 };
 #[cfg(test)]
 use self::machine::{
@@ -144,6 +145,7 @@ fn podman_machine_ready_poll_interval() -> Duration {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum HarnessSetupPhase {
+    ArtifactDownload,
     MachineCheck,
     MachineStartOrInit,
     ImageCheck,
@@ -162,6 +164,23 @@ pub enum HarnessSetupLogLevel {
     Error,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HarnessSetupDownloadStatus {
+    pub artifact: String,
+    pub downloaded_bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bytes_per_sec: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HarnessSetupProgressUpdate {
+    pub phase: HarnessSetupPhase,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_download: Option<HarnessSetupDownloadStatus>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ManagedContainerBootstrapOverrides {
     pub(crate) podman_runtime_source: Option<bundled_assets::ManagedRuntimeSource>,
@@ -171,6 +190,7 @@ pub(crate) struct ManagedContainerBootstrapOverrides {
 pub trait HarnessSetupObserver: Send + Sync {
     fn on_phase(&self, phase: HarnessSetupPhase, message: &str);
     fn on_log(&self, phase: HarnessSetupPhase, level: HarnessSetupLogLevel, message: &str);
+    fn on_progress(&self, _progress: HarnessSetupProgressUpdate) {}
 }
 
 fn observe_phase(
@@ -191,6 +211,15 @@ fn observe_log(
 ) {
     if let Some(observer) = observer {
         observer.on_log(phase, level, message);
+    }
+}
+
+fn observe_progress(
+    observer: Option<&dyn HarnessSetupObserver>,
+    progress: HarnessSetupProgressUpdate,
+) {
+    if let Some(observer) = observer {
+        observer.on_progress(progress);
     }
 }
 
@@ -342,7 +371,12 @@ impl HarnessRuntimeManager {
         if !podman_machine_required() {
             return Ok(());
         }
-        ensure_managed_podman_runtime(&self.data_root, None).await?;
+        ensure_managed_podman_runtime(&self.data_root, None, None).await?;
+        let machine_image = if cfg!(target_os = "macos") {
+            Some(ensure_managed_podman_machine_cache(&self.data_root, None, None).await?)
+        } else {
+            None
+        };
         let machine_name = ctx_podman_machine_name(&self.data_root);
         let machine_lock = podman_machine_singleflight_lock(&machine_name);
         let _machine_guard = match machine_lock.try_lock() {
@@ -354,7 +388,13 @@ impl HarnessRuntimeManager {
             persist_podman_machine_cache_to_shared_best_effort(&self.data_root, None).await;
             return Ok(());
         }
-        let init_outcome = run_podman_machine_init(&self.data_root, &machine_name, None).await?;
+        let init_outcome = run_podman_machine_init(
+            &self.data_root,
+            &machine_name,
+            machine_image.as_deref(),
+            None,
+        )
+        .await?;
         let output = init_outcome.output;
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -387,7 +427,7 @@ impl HarnessRuntimeManager {
                 env_overrides,
             });
         }
-        let podman_bin = ensure_managed_podman_runtime(&self.data_root, None)
+        let podman_bin = ensure_managed_podman_runtime(&self.data_root, None, None)
             .await
             .context("podman unavailable and execution mode is container")?;
         env_overrides.insert(
@@ -524,7 +564,7 @@ impl HarnessRuntimeManager {
             HarnessSetupPhase::MachineCheck,
             "checking container runtime",
         );
-        ensure_managed_podman_runtime(&self.data_root, observer).await?;
+        ensure_managed_podman_runtime(&self.data_root, observer, None).await?;
         ensure_podman_machine_running_with_observer(&self.data_root, observer).await?;
         Ok(())
     }
@@ -1005,6 +1045,27 @@ mod tests {
         (format!("http://{addr}/image.tar"), task)
     }
 
+    async fn install_test_managed_machine_cache_source(
+        body: Vec<u8>,
+    ) -> (
+        crate::bundled_assets::TestManagedPodmanMachineCacheSourceGuard,
+        JoinHandle<()>,
+    ) {
+        let digest = {
+            let mut hasher = Sha256::new();
+            hasher.update(&body);
+            hex::encode(hasher.finalize())
+        };
+        let (url, server) = spawn_static_http_server(body).await;
+        let guard = crate::bundled_assets::override_managed_podman_machine_cache_source_for_test(
+            bundled_assets::ManagedArtifactSource {
+                uri: url,
+                sha256: digest,
+            },
+        );
+        (guard, server)
+    }
+
     #[tokio::test]
     async fn container_mode_errors_when_podman_unavailable() {
         let _serial = env_var_test_lock().lock().await;
@@ -1201,6 +1262,8 @@ mod tests {
         std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
             .expect("chmod podman shim");
         let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+        let (_machine_cache_guard, machine_cache_server) =
+            install_test_managed_machine_cache_source(b"machine-cache".to_vec()).await;
 
         let manager = HarnessRuntimeManager::new(temp.path().to_path_buf());
         let machine_name = ctx_podman_machine_name(temp.path());
@@ -1214,6 +1277,7 @@ mod tests {
 
         let log = std::fs::read_to_string(&log_path).unwrap_or_default();
         assert!(log.trim().is_empty());
+        machine_cache_server.abort();
     }
 
     #[test]
@@ -1512,6 +1576,8 @@ mod tests {
         std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
             .expect("chmod podman shim");
         let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+        let (_machine_cache_guard, machine_cache_server) =
+            install_test_managed_machine_cache_source(b"machine-cache".to_vec()).await;
 
         ensure_podman_machine_running_with_observer(temp.path(), None)
             .await
@@ -1524,6 +1590,7 @@ mod tests {
         assert!(log.contains("machine rm -f "));
         assert!(log.contains("machine init "));
         assert!(!log.contains("machine stop "));
+        machine_cache_server.abort();
     }
 
     #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -1578,6 +1645,8 @@ mod tests {
         std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
             .expect("chmod podman shim");
         let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+        let (_machine_cache_guard, machine_cache_server) =
+            install_test_managed_machine_cache_source(b"machine-cache".to_vec()).await;
 
         let mut last_err = String::new();
         initialize_podman_machine(temp.path(), "ctx-test-machine", None, &mut last_err)
@@ -1589,6 +1658,7 @@ mod tests {
         assert!(log.contains("machine start ctx-test-machine"));
         assert!(!log.contains("--now"));
         assert!(last_err.is_empty());
+        machine_cache_server.abort();
     }
 
     #[tokio::test]
@@ -1610,6 +1680,8 @@ mod tests {
         std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
             .expect("chmod podman shim");
         let _guard = EnvGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+        let (_machine_cache_guard, machine_cache_server) =
+            install_test_managed_machine_cache_source(b"machine-cache".to_vec()).await;
 
         let mut last_err = String::new();
         let result = tokio::time::timeout(
@@ -1627,6 +1699,7 @@ mod tests {
         assert!(log.contains("machine inspect "));
         assert!(log.contains("machine start ctx-test-machine"));
         assert!(!log.contains("--now"));
+        machine_cache_server.abort();
     }
 
     #[test]
@@ -2266,12 +2339,16 @@ mod tests {
         let source_b = source.clone();
         let (res_a, res_b) = tokio::join!(
             tokio::spawn(async move {
-                ensure_managed_default_container_image_tar_with_source(&root_a, &source_a, None)
-                    .await
+                ensure_managed_default_container_image_tar_with_source(
+                    &root_a, &source_a, None, None,
+                )
+                .await
             }),
             tokio::spawn(async move {
-                ensure_managed_default_container_image_tar_with_source(&root_b, &source_b, None)
-                    .await
+                ensure_managed_default_container_image_tar_with_source(
+                    &root_b, &source_b, None, None,
+                )
+                .await
             })
         );
         server.abort();

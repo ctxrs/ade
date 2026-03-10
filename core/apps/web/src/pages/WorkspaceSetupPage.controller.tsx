@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { launchPhaseLabel } from "./workspaceSetup/launchProgress";
 import { WorkspaceSetupPageView } from "./workspaceSetup/WorkspaceSetupPageView";
 import { useWorkspaceSetupWorkflow } from "./workspaceSetup/useWorkspaceSetupWorkflow";
 import {
@@ -139,8 +138,10 @@ export function WorkspaceSetupPageController() {
       setCreateError={workflow.setters.createError}
       showLaunchPanel={workflow.create.showLaunchPanel}
       launchSnapshot={workflow.create.launchSnapshot}
-      currentLaunchPhaseLabel={launchPhaseLabel(workflow.create.launchSnapshot?.current_phase)}
+      currentLaunchStepLabel={workflow.create.currentLaunchStepLabel}
       currentLaunchElapsed={workflow.create.currentLaunchElapsed}
+      currentLaunchEtaLabel={workflow.create.currentLaunchEtaLabel}
+      currentLaunchDownloadLabel={workflow.create.currentLaunchDownloadLabel}
       launchCopyLabel={workflow.create.launchCopyLabel}
       onCopyLaunchDiagnostics={() => {
         void workflow.create.onCopyLaunchDiagnostics();

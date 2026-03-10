@@ -3,6 +3,7 @@ import type { AnalyticsEnvTarget, AnalyticsProperties } from "./types";
 
 const FIRST_TURN_SUBMITTED_ONCE_KEY = "ctx.analytics.first_turn_submitted.install_once.v1";
 const FIRST_TURN_COMPLETED_ONCE_KEY = "ctx.analytics.first_turn_completed.install_once.v1";
+const PENDING_WORKSPACE_LAUNCH_KEY_PREFIX = "ctx.analytics.pending_workspace_launch.v1.";
 
 const markOnce = (key: string): boolean => {
   if (typeof window === "undefined") return true;
@@ -63,6 +64,92 @@ export const trackWorkspaceCreateFailed = (props: {
 
 export const trackWorkspaceOpened = (workspaceKind: "local" | "remote"): void => {
   capture("workspace_opened", { workspace_kind: workspaceKind });
+};
+
+type PendingWorkspaceLaunch = {
+  workspace_id: string;
+  workspace_kind: "local" | "remote";
+  execution_mode: "host" | "container";
+  source: "wizard" | "launcher" | "api" | "unknown";
+  started_at_ms: number;
+};
+
+const pendingWorkspaceLaunchKey = (workspaceId: string): string =>
+  `${PENDING_WORKSPACE_LAUNCH_KEY_PREFIX}${workspaceId}`;
+
+const readPendingWorkspaceLaunch = (workspaceId: string): PendingWorkspaceLaunch | null => {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(pendingWorkspaceLaunchKey(workspaceId));
+    if (!raw) return null;
+    return JSON.parse(raw) as PendingWorkspaceLaunch;
+  } catch {
+    return null;
+  }
+};
+
+const writePendingWorkspaceLaunch = (pending: PendingWorkspaceLaunch): void => {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(
+      pendingWorkspaceLaunchKey(pending.workspace_id),
+      JSON.stringify(pending),
+    );
+  } catch {
+    // ignore
+  }
+};
+
+const clearPendingWorkspaceLaunch = (workspaceId: string): void => {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(pendingWorkspaceLaunchKey(workspaceId));
+  } catch {
+    // ignore
+  }
+};
+
+export const trackWorkspaceLaunchCompleted = (props: {
+  workspaceId: string;
+  workspaceKind: "local" | "remote";
+  executionMode: "host" | "container";
+  source: "wizard" | "launcher" | "api" | "unknown";
+  startedAtMs: number;
+  result: "ready" | "error";
+}): void => {
+  const clickToLaunchReadyMs = Math.max(0, Date.now() - props.startedAtMs);
+  capture("workspace_launch_completed", {
+    workspace_id: props.workspaceId,
+    workspace_kind: props.workspaceKind,
+    execution_mode: props.executionMode,
+    source: props.source,
+    result: props.result,
+    click_to_launch_ready_ms: clickToLaunchReadyMs,
+  });
+  if (props.result === "ready") {
+    writePendingWorkspaceLaunch({
+      workspace_id: props.workspaceId,
+      workspace_kind: props.workspaceKind,
+      execution_mode: props.executionMode,
+      source: props.source,
+      started_at_ms: props.startedAtMs,
+    });
+    return;
+  }
+  clearPendingWorkspaceLaunch(props.workspaceId);
+};
+
+export const trackWorkspaceRouteOpenedFromPending = (workspaceId: string): void => {
+  const pending = readPendingWorkspaceLaunch(workspaceId);
+  if (!pending) return;
+  clearPendingWorkspaceLaunch(workspaceId);
+  capture("workspace_route_opened", {
+    workspace_id: pending.workspace_id,
+    workspace_kind: pending.workspace_kind,
+    execution_mode: pending.execution_mode,
+    source: pending.source,
+    click_to_workspace_route_ms: Math.max(0, Date.now() - pending.started_at_ms),
+  });
 };
 
 export const trackWizardStarted = (props: {

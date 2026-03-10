@@ -13,7 +13,7 @@ const defaultOverridesPath = path.join(coreRoot, "..", ".ctx", "local", "runtime
 
 const PROFILE_VALUES = new Set(["parity", "override", "source-all"]);
 const SOURCE_TYPES = new Set(["ci", "vendor", "local"]);
-const COMPONENT_KINDS = new Set(["provider", "runtime", "image"]);
+const COMPONENT_KINDS = new Set(["provider", "runtime", "image", "machine_cache"]);
 
 const isNonEmptyString = (value) => typeof value === "string" && value.trim().length > 0;
 
@@ -166,6 +166,13 @@ const defaultImageTargets = (hostOs, hostArch) => {
   return [{ os: "linux", arch: hostArch, label: `linux/${hostArch}` }];
 };
 
+const defaultMachineCacheTargets = (hostOs, hostArch) => {
+  if (hostOs !== "macos") {
+    return [];
+  }
+  return [{ os: "macos", arch: hostArch, label: `macos/${hostArch}` }];
+};
+
 const parseRequiredTargetEntry = (value, hostOs, hostArch, kind, errors) => {
   if (!isNonEmptyString(value)) {
     errors.push(`runtime lock required.targets.${kind} entries must be non-empty strings`);
@@ -196,6 +203,7 @@ const resolveRequiredTargets = ({ lock, hostOs, hostArch, kind, errors, allowEmp
     if (kind === "provider") return defaultProviderTargets(hostOs, hostArch);
     if (kind === "runtime") return defaultRuntimeTargets(hostOs, hostArch);
     if (kind === "image") return defaultImageTargets(hostOs, hostArch);
+    if (kind === "machine_cache") return defaultMachineCacheTargets(hostOs, hostArch);
     return [];
   }
   if (configuredTargets.length === 0) {
@@ -335,6 +343,10 @@ const applyOverridesToManifest = ({ manifest, overrides, hostOs, hostArch, error
       entry.tar = absPath;
       continue;
     }
+
+    if (kind === "machine_cache") {
+      continue;
+    }
   }
 
   return next;
@@ -363,7 +375,7 @@ const loadOverrides = ({ profile, overridesPath, errors }) => {
     const variant = isNonEmptyString(override?.variant) ? override.variant.trim() : "default";
     const absPath = String(override?.path || "").trim();
     if (!COMPONENT_KINDS.has(kind)) {
-      errors.push(`override kind must be provider|runtime|image (got ${JSON.stringify(override?.kind)})`);
+      errors.push(`override kind must be provider|runtime|image|machine_cache (got ${JSON.stringify(override?.kind)})`);
       continue;
     }
     if (!id || !os || !arch || !absPath) {
@@ -378,7 +390,7 @@ const loadOverrides = ({ profile, overridesPath, errors }) => {
       errors.push(`override path missing: ${absPath}`);
       continue;
     }
-    if (kind === "provider" || kind === "image") {
+    if (kind === "provider" || kind === "image" || kind === "machine_cache") {
       if (!fs.statSync(absPath).isFile()) {
         errors.push(`override path must be a file for ${kind}: ${absPath}`);
         continue;
@@ -553,7 +565,7 @@ const validateLockV2 = ({ lock, manifest, manifestPath, profile, overridesPath, 
     const version = String(component?.version || "").trim();
 
     if (!COMPONENT_KINDS.has(kind)) {
-      errors.push(`component kind must be provider|runtime|image (got ${JSON.stringify(component?.kind)})`);
+      errors.push(`component kind must be provider|runtime|image|machine_cache (got ${JSON.stringify(component?.kind)})`);
       continue;
     }
     if (!id || !os || !arch || !version) {
@@ -607,6 +619,12 @@ const validateLockV2 = ({ lock, manifest, manifestPath, profile, overridesPath, 
     errors,
     { allowEmpty: true },
   );
+  const requiredMachineCacheIds = validateRequiredArray(
+    lock?.required?.machine_cache_ids ?? [],
+    "runtime lock required.machine_cache_ids",
+    errors,
+    { allowEmpty: true },
+  );
   const providerTargets = resolveRequiredTargets({
     lock,
     hostOs,
@@ -630,6 +648,14 @@ const validateLockV2 = ({ lock, manifest, manifestPath, profile, overridesPath, 
     kind: "image",
     errors,
     allowEmpty: requiredImageIds.length === 0,
+  });
+  const machineCacheTargets = resolveRequiredTargets({
+    lock,
+    hostOs,
+    hostArch,
+    kind: "machine_cache",
+    errors,
+    allowEmpty: requiredMachineCacheIds.length === 0,
   });
 
   const requiredComponents = [];
@@ -685,6 +711,25 @@ const validateLockV2 = ({ lock, manifest, manifestPath, profile, overridesPath, 
       });
       if (!component) {
         errors.push(`runtime lock missing image component ${imageId} for ${target.label}`);
+      } else {
+        requiredComponents.push(component);
+      }
+    }
+  }
+
+  for (const machineCacheId of requiredMachineCacheIds) {
+    for (const target of machineCacheTargets) {
+      const component = findComponent({
+        components,
+        kind: "machine_cache",
+        id: machineCacheId,
+        os: target.os,
+        arch: target.arch,
+        hostOs,
+        hostArch,
+      });
+      if (!component) {
+        errors.push(`runtime lock missing machine_cache component ${machineCacheId} for ${target.label}`);
       } else {
         requiredComponents.push(component);
       }

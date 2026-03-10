@@ -4,10 +4,17 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import WorkbenchPage from "./WorkbenchPage";
 
-const { trackWorkspaceOpenedMock, trackFeatureUsedMock, isDesktopAppMock, desktopGetConnectionMock } =
+const {
+  trackWorkspaceOpenedMock,
+  trackFeatureUsedMock,
+  trackWorkspaceRouteOpenedFromPendingMock,
+  isDesktopAppMock,
+  desktopGetConnectionMock,
+} =
   vi.hoisted(() => ({
     trackWorkspaceOpenedMock: vi.fn(),
     trackFeatureUsedMock: vi.fn(),
+    trackWorkspaceRouteOpenedFromPendingMock: vi.fn(),
     isDesktopAppMock: vi.fn(),
     desktopGetConnectionMock: vi.fn(),
   }));
@@ -18,6 +25,7 @@ vi.mock("../utils/analytics", async () => {
     ...actual,
     trackWorkspaceOpened: trackWorkspaceOpenedMock,
     trackFeatureUsed: trackFeatureUsedMock,
+    trackWorkspaceRouteOpenedFromPending: trackWorkspaceRouteOpenedFromPendingMock,
   };
 });
 
@@ -55,6 +63,7 @@ describe("WorkbenchPage analytics", () => {
   beforeEach(() => {
     trackWorkspaceOpenedMock.mockReset();
     trackFeatureUsedMock.mockReset();
+    trackWorkspaceRouteOpenedFromPendingMock.mockReset();
     isDesktopAppMock.mockReset();
     desktopGetConnectionMock.mockReset();
   });
@@ -67,6 +76,7 @@ describe("WorkbenchPage analytics", () => {
     await waitFor(() => {
       expect(trackWorkspaceOpenedMock).toHaveBeenCalledWith("local");
     });
+    expect(trackWorkspaceRouteOpenedFromPendingMock).toHaveBeenCalledWith("ws-1");
     expect(trackFeatureUsedMock).toHaveBeenCalledWith("workbench_opened", { workspace_kind: "local" });
   });
 
@@ -79,6 +89,7 @@ describe("WorkbenchPage analytics", () => {
     await waitFor(() => {
       expect(trackWorkspaceOpenedMock).toHaveBeenCalledWith("remote");
     });
+    expect(trackWorkspaceRouteOpenedFromPendingMock).toHaveBeenCalledWith("ws-1");
     expect(trackFeatureUsedMock).toHaveBeenCalledWith("workbench_opened", { workspace_kind: "remote" });
   });
 });

@@ -35,29 +35,51 @@ pub(crate) async fn prefetch_container_startup_artifacts_with_overrides(
     if image.is_empty() {
         anyhow::bail!("image is required");
     }
-    observe_phase(
-        observer,
-        HarnessSetupPhase::MachineCheck,
-        "checking container runtime",
-    );
-    super::machine::ensure_managed_podman_runtime_with_override(
+    let download_aggregate = ManagedDownloadAggregate::default();
+    let prefetch_default_image_tar =
+        image == DEFAULT_CONTAINER_IMAGE && bundled_default_container_image_tar().is_none();
+    let runtime_download = super::machine::ensure_managed_podman_runtime_with_override(
         data_root,
         overrides.and_then(|value| value.podman_runtime_source.as_ref()),
         observer,
-    )
-    .await?;
-    if image == DEFAULT_CONTAINER_IMAGE && bundled_default_container_image_tar().is_none() {
-        observe_phase(
+        Some(download_aggregate.clone()),
+    );
+    let machine_cache_download = async {
+        if podman_machine_required() {
+            let _ = ensure_managed_podman_machine_cache(
+                data_root,
+                observer,
+                Some(download_aggregate.clone()),
+            )
+            .await?;
+        }
+        Ok::<(), anyhow::Error>(())
+    };
+    let image_tar_download = async {
+        if prefetch_default_image_tar {
+            return ensure_managed_default_container_image_tar_with_override(
+                data_root,
+                overrides.and_then(|value| value.default_image_source.as_ref()),
+                observer,
+                Some(download_aggregate.clone()),
+            )
+            .await
+            .map(Some);
+        }
+        Ok(None)
+    };
+    let (_, _, prefetched_image_tar) =
+        tokio::try_join!(runtime_download, machine_cache_download, image_tar_download)?;
+    if let Some(prefetched_image_tar) = prefetched_image_tar {
+        observe_log(
             observer,
             HarnessSetupPhase::ImageCheck,
-            "checking harness image artifact availability",
+            HarnessSetupLogLevel::Info,
+            &format!(
+                "prefetched default harness image tar at {}",
+                prefetched_image_tar.display()
+            ),
         );
-        let _ = ensure_managed_default_container_image_tar_with_override(
-            data_root,
-            overrides.and_then(|value| value.default_image_source.as_ref()),
-            observer,
-        )
-        .await?;
     }
     Ok(())
 }
@@ -198,13 +220,14 @@ async fn ensure_managed_default_container_image_tar(
     data_root: &Path,
     observer: Option<&dyn HarnessSetupObserver>,
 ) -> Result<PathBuf> {
-    ensure_managed_default_container_image_tar_with_override(data_root, None, observer).await
+    ensure_managed_default_container_image_tar_with_override(data_root, None, observer, None).await
 }
 
 pub(super) async fn ensure_managed_default_container_image_tar_with_override(
     data_root: &Path,
     source_override: Option<&bundled_assets::ManagedArtifactSource>,
     observer: Option<&dyn HarnessSetupObserver>,
+    download_aggregate: Option<ManagedDownloadAggregate>,
 ) -> Result<PathBuf> {
     let source = match source_override.cloned() {
         Some(source) => source,
@@ -215,13 +238,20 @@ pub(super) async fn ensure_managed_default_container_image_tar_with_override(
                 )
             })?,
     };
-    ensure_managed_default_container_image_tar_with_source(data_root, &source, observer).await
+    ensure_managed_default_container_image_tar_with_source(
+        data_root,
+        &source,
+        observer,
+        download_aggregate,
+    )
+    .await
 }
 
 pub(super) async fn ensure_managed_default_container_image_tar_with_source(
     data_root: &Path,
     source: &bundled_assets::ManagedArtifactSource,
     observer: Option<&dyn HarnessSetupObserver>,
+    download_aggregate: Option<ManagedDownloadAggregate>,
 ) -> Result<PathBuf> {
     let _install_guard = managed_default_image_install_lock().lock().await;
 
@@ -258,11 +288,21 @@ pub(super) async fn ensure_managed_default_container_image_tar_with_source(
 
     observe_log(
         observer,
-        HarnessSetupPhase::ImageLoad,
+        HarnessSetupPhase::ArtifactDownload,
         HarnessSetupLogLevel::Info,
         &format!("downloading default harness image from {}", source.uri),
     );
-    download_managed_artifact(&source.uri, &tmp_tar).await?;
+    download_managed_artifact(
+        &source.uri,
+        &tmp_tar,
+        Some(ManagedArtifactDownloadReporter::new(
+            observer,
+            download_aggregate,
+            HarnessSetupPhase::ArtifactDownload,
+            "Harness image",
+        )),
+    )
+    .await?;
 
     let digest = updates::sha256_hex_file(&tmp_tar)
         .await

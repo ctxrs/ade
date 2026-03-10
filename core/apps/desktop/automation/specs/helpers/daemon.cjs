@@ -83,13 +83,11 @@ const getDesktopConnection = async () => {
 };
 
 const getCachedDesktopConnection = async () => {
-  const current = await getDesktopConnection();
-
-  if (cachedConnection && connectionSignature(cachedConnection) === connectionSignature(current)) {
+  if (cachedConnection) {
     return cachedConnection;
   }
 
-  cachedConnection = current;
+  cachedConnection = await getDesktopConnection();
   return cachedConnection;
 };
 
@@ -143,6 +141,17 @@ const shouldRetryDaemonHttpError = (error) => {
   );
 };
 
+const daemonJsonOnce = async (method, apiPath, body) => {
+  let connection = await getCachedDesktopConnection();
+  const response = await daemonHttpJson(connection, method, apiPath, body);
+  if (Number(response.status) === 401 || Number(response.status) === 403) {
+    cachedConnection = null;
+    connection = await getCachedDesktopConnection();
+    return await daemonHttpJson(connection, method, apiPath, body);
+  }
+  return response;
+};
+
 const daemonJson = async (method, apiPath, body) => {
   let connection = await getCachedDesktopConnection();
   let lastError = null;
@@ -182,11 +191,6 @@ const daemonJson = async (method, apiPath, body) => {
   }
 
   throw lastError || new Error("daemonJson request failed");
-};
-
-const daemonJsonOnce = async (method, apiPath, body) => {
-  const connection = await getCachedDesktopConnection();
-  return await daemonHttpJson(connection, method, apiPath, body);
 };
 
 const safeDaemonJson = async (method, apiPath, body) => {

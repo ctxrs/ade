@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { captureProductEventMock } = vi.hoisted(() => ({
   captureProductEventMock: vi.fn(),
@@ -20,12 +20,21 @@ import {
   trackWorkspaceCreateFailed,
   trackWorkspaceCreateSubmitted,
   trackWorkspaceCreateSucceeded,
+  trackWorkspaceLaunchCompleted,
+  trackWorkspaceRouteOpenedFromPending,
 } from "./activity";
 
 describe("analytics events", () => {
   beforeEach(() => {
     captureProductEventMock.mockReset();
     window.localStorage.clear();
+    window.sessionStorage.clear();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-10T00:00:10.000Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("deduplicates first_turn_submitted per install scope", () => {
@@ -83,6 +92,38 @@ describe("analytics events", () => {
         panel_key: "terminal",
         open: true,
         source: "header_button",
+      }),
+    );
+  });
+
+  it("tracks click-to-ready and click-to-route metrics for workspace launch", () => {
+    trackWorkspaceLaunchCompleted({
+      workspaceId: "ws_123",
+      workspaceKind: "local",
+      executionMode: "container",
+      source: "wizard",
+      startedAtMs: Date.parse("2026-03-10T00:00:00.000Z"),
+      result: "ready",
+    });
+    trackWorkspaceRouteOpenedFromPending("ws_123");
+
+    expect(captureProductEventMock).toHaveBeenCalledWith(
+      "workspace_launch_completed",
+      1,
+      expect.objectContaining({
+        workspace_id: "ws_123",
+        click_to_launch_ready_ms: 10000,
+        execution_mode: "container",
+        result: "ready",
+      }),
+    );
+    expect(captureProductEventMock).toHaveBeenCalledWith(
+      "workspace_route_opened",
+      1,
+      expect.objectContaining({
+        workspace_id: "ws_123",
+        click_to_workspace_route_ms: 10000,
+        execution_mode: "container",
       }),
     );
   });
