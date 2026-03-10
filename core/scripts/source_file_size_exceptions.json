@@ -1,0 +1,192 @@
+[
+  {
+    "path": "apps/desktop/src-tauri/src/desktop_daemon.rs",
+    "maxLines": 2844,
+    "reason": "Existing oversized launch-path module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "apps/web/src/pages/WorkbenchPage.shell.tsx",
+    "maxLines": 2692,
+    "reason": "Existing oversized workbench shell. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "crates/ctx-http/src/api/providers/login.rs",
+    "maxLines": 2673,
+    "reason": "Existing oversized provider login module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "crates/ctx-http/src/execution_setup.rs",
+    "maxLines": 2639,
+    "reason": "Existing oversized execution setup module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "apps/web/src/state/sessionSupervisorCore.ts",
+    "maxLines": 2637,
+    "reason": "Existing oversized session supervisor core. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "crates/ctx-http/src/api/lsp.rs",
+    "maxLines": 2625,
+    "reason": "Existing oversized LSP API module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "crates/ctx-http/src/merge_queue.rs",
+    "maxLines": 2522,
+    "reason": "Existing oversized merge queue module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "crates/ctx-http/src/workspace_runtime/mod.rs",
+    "maxLines": 2470,
+    "reason": "Existing oversized workspace runtime module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "crates/ctx-http/src/api/sessions/subagents.rs",
+    "maxLines": 2302,
+    "reason": "Existing oversized session subagents API module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "crates/ctx-store/src/store/messages.rs",
+    "maxLines": 2082,
+    "reason": "Existing oversized message store module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "apps/web/src/state/workspaceActiveSnapshotStoreCore.ts",
+    "maxLines": 2056,
+    "reason": "Existing oversized active snapshot store core. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "crates/ctx-http/src/api/tasks.rs",
+    "maxLines": 1911,
+    "reason": "Existing oversized tasks API module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "crates/ctx-mcp/src/main/02_main.rs",
+    "maxLines": 1837,
+    "reason": "Existing oversized MCP main module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "crates/ctx-http/src/scheduler/runtime.rs",
+    "maxLines": 1836,
+    "reason": "Existing oversized scheduler runtime module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "crates/ctx-http/src/api/workspaces.rs",
+    "maxLines": 1762,
+    "reason": "Existing oversized workspaces API module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "crates/ctx-http/src/installer.rs",
+    "maxLines": 1724,
+    "reason": "Existing oversized installer module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "apps/web/src/pages/SessionPage.workbenchViewModel.ts",
+    "maxLines": 1679,
+    "reason": "Existing oversized session workbench view-model module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "apps/web/src/pages/settings/hooks/useHarnessAuthenticationController.ts",
+    "maxLines": 1603,
+    "reason": "Existing oversized harness authentication controller. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "crates/ctx-http/src/harness_sources/mod.rs",
+    "maxLines": 1588,
+    "reason": "Existing oversized harness sources module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "crates/ctx-http/src/daemon/state.rs",
+    "maxLines": 1551,
+    "reason": "Existing oversized daemon state module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "crates/ctx-http/src/api/providers.rs",
+    "maxLines": 1463,
+    "reason": "Existing oversized providers API module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "crates/ctx-http/src/workspace_runtime/machine.rs",
+    "maxLines": 1438,
+    "reason": "Existing oversized machine runtime module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "crates/ctx-store/src/store/conversions.rs",
+    "maxLines": 1430,
+    "reason": "Existing oversized store conversions module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "apps/web/src/pages/SessionPage.view.tsx",
+    "maxLines": 1418,
+    "reason": "Existing oversized session view module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "crates/ctx-http/src/settings.rs",
+    "maxLines": 1414,
+    "reason": "Existing oversized settings module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "apps/web/src/pages/workspaceSetup/useWorkspaceSetupProvisioning.ts",
+    "maxLines": 1397,
+    "reason": "Existing oversized workspace setup provisioning module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "crates/ctx-http/src/daemon.rs",
+    "maxLines": 1354,
+    "reason": "Existing oversized daemon module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "crates/ctx-http/src/api/provider_launch.rs",
+    "maxLines": 1345,
+    "reason": "Existing oversized provider launch API module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "crates/ctx-http/src/api/mod.rs",
+    "maxLines": 1337,
+    "reason": "Existing oversized API router module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "crates/ctx-http/src/installer/config.rs",
+    "maxLines": 1327,
+    "reason": "Existing oversized installer config module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "crates/ctx-http/src/scheduler/tools.rs",
+    "maxLines": 1313,
+    "reason": "Existing oversized scheduler tools module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "crates/ctx-http/src/attachments.rs",
+    "maxLines": 1282,
+    "reason": "Existing oversized attachments module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "crates/ctx-fs/src/vcs.rs",
+    "maxLines": 1268,
+    "reason": "Existing oversized VCS module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "crates/ctx-mcp/src/main/03_tools.rs",
+    "maxLines": 1265,
+    "reason": "Existing oversized MCP tools module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "crates/ctx-core/src/models.rs",
+    "maxLines": 1246,
+    "reason": "Existing oversized models module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "crates/ctx-store/src/store/turns.rs",
+    "maxLines": 1217,
+    "reason": "Existing oversized turn store module. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "apps/web/src/pages/workspaceSetup/WorkspaceSetupPageView.tsx",
+    "maxLines": 1214,
+    "reason": "Existing oversized workspace setup page view. Keep stable until a dedicated breakup."
+  },
+  {
+    "path": "crates/ctx-http/src/api/ws.rs",
+    "maxLines": 1210,
+    "reason": "Existing oversized websocket API module. Keep stable until a dedicated breakup."
+  }
+]
