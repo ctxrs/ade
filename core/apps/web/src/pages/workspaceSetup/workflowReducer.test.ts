@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createDesktopSshDaemonTargetScope } from "../../state/scopeIdentity";
 import {
   createInitialWorkflowDraftState,
   makeTargetDraftFieldSetter,
@@ -71,6 +72,12 @@ describe("workflowReducer", () => {
     expect(deriveWorkspaceSetupEffectiveTarget("remote", next.targetDraft)).toEqual({
       kind: "remote",
       targetKey: "ssh:user@devbox.example:4411:/srv/ctx",
+      daemonScope: createDesktopSshDaemonTargetScope({
+        host: "devbox.example",
+        user: "user",
+        port: 4411,
+        dataDir: "/srv/ctx",
+      }),
       hostInput: "user@devbox.example",
       host: "devbox.example",
       user: "user",

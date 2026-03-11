@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ProvidersBootstrapResponse } from "../api/client";
 
 const clientMocks = vi.hoisted(() => ({
   getProviderHarnessConfig: vi.fn(),
@@ -21,6 +22,46 @@ const emptyAccounts = {
   active_account_id: null,
   accounts: [],
 };
+
+const makeWorkspaceBootstrap = (
+  workspaceId: string,
+  overrides?: Partial<ProvidersBootstrapResponse>,
+): ProvidersBootstrapResponse => ({
+  providers: [],
+  provider_options: {
+    codex: {
+      provider_id: "codex",
+      workspace_id: workspaceId,
+      supports_load: false,
+      auth_required: false,
+      has_active_auth: true,
+      auth_mode: "subscription" as const,
+      account_identity: "acct-codex",
+      source: {
+        provider_id: "codex",
+        selected_source_kind: "subscription" as const,
+        selected_endpoint_id: null,
+        endpoints: [],
+      },
+      probed_at: "2026-03-10T00:00:00.000Z",
+    },
+  },
+  provider_harness_config: {},
+  codex_accounts: {
+    active_account_id: "acct-codex",
+    accounts: [],
+    logins: [],
+  },
+  claude_accounts: emptyAccounts,
+  gemini_accounts: emptyAccounts,
+  qwen_accounts: emptyAccounts,
+  kimi_accounts: emptyAccounts,
+  mistral_accounts: emptyAccounts,
+  copilot_accounts: emptyAccounts,
+  cursor_accounts: emptyAccounts,
+  amp_accounts: emptyAccounts,
+  ...overrides,
+});
 
 beforeEach(() => {
   vi.resetModules();
@@ -101,5 +142,138 @@ describe("providersBootstrapStore", () => {
 
     expect(refreshed.codex_accounts.active_account_id).toBe("acct-codex-next");
     expect(store.getHostProvidersBootstrapSnapshot().codex_accounts.active_account_id).toBe("acct-codex-next");
+  });
+
+  it("keeps same workspace ids isolated across daemon target scopes", async () => {
+    const store = await import("./providersBootstrapStore");
+    const daemonConnection = await import("../api/daemonConnection");
+
+    daemonConnection.setDaemonConnection({
+      baseUrl: "https://daemon-a.example",
+      source: "test",
+    });
+    clientMocks.getProvidersBootstrap.mockResolvedValueOnce(makeWorkspaceBootstrap("ws-same-scope", {
+      provider_options: {
+        codex: {
+          ...makeWorkspaceBootstrap("ws-same-scope").provider_options.codex,
+          probed_at: "2026-03-10T00:00:01.000Z",
+          models: {
+            models: [{ id: "gpt-5" }],
+            current_model_id: "gpt-5",
+          },
+        },
+      },
+    }));
+    await store.loadProvidersBootstrap("ws-same-scope");
+
+    daemonConnection.setDaemonConnection({
+      baseUrl: "https://daemon-b.example",
+      source: "test",
+    });
+    clientMocks.getProvidersBootstrap.mockResolvedValueOnce(makeWorkspaceBootstrap("ws-same-scope", {
+      provider_options: {
+        codex: {
+          ...makeWorkspaceBootstrap("ws-same-scope").provider_options.codex,
+          probed_at: "2026-03-10T00:00:02.000Z",
+          account_identity: "acct-daemon-b",
+        },
+      },
+      codex_accounts: {
+        active_account_id: "acct-daemon-b",
+        accounts: [],
+        logins: [],
+      },
+    }));
+    await store.loadProvidersBootstrap("ws-same-scope");
+
+    expect(store.getProvidersBootstrapSnapshot("ws-same-scope").provider_options.codex?.account_identity).toBe("acct-daemon-b");
+    expect(store.getProvidersBootstrapSnapshot("ws-same-scope").provider_options.codex?.probed_at).toBe("2026-03-10T00:00:02.000Z");
+
+    daemonConnection.setDaemonConnection({
+      baseUrl: "https://daemon-a.example",
+      source: "test",
+    });
+
+    expect(store.getProvidersBootstrapSnapshot("ws-same-scope").provider_options.codex?.models).toEqual({
+      models: [{ id: "gpt-5" }],
+      current_model_id: "gpt-5",
+    });
+    expect(store.getProvidersBootstrapSnapshot("ws-same-scope").provider_options.codex?.account_identity).toBe("acct-codex");
+  });
+
+  it("keeps host and workspace bootstrap caches distinct on the same daemon target", async () => {
+    const store = await import("./providersBootstrapStore");
+    const daemonConnection = await import("../api/daemonConnection");
+
+    daemonConnection.setDaemonConnection({
+      baseUrl: "https://daemon-host.example",
+      source: "test",
+    });
+
+    store.updateHostProvidersBootstrap((current) => ({
+      ...current,
+      codex_accounts: {
+        active_account_id: "acct-host",
+        accounts: [],
+        logins: [],
+      },
+    }));
+    store.updateProvidersBootstrap("ws-owner-scope", (current) => ({
+      ...current,
+      codex_accounts: {
+        active_account_id: "acct-workspace",
+        accounts: [],
+        logins: [],
+      },
+      provider_options: makeWorkspaceBootstrap("ws-owner-scope").provider_options,
+    }));
+
+    expect(store.getHostProvidersBootstrapSnapshot().codex_accounts.active_account_id).toBe("acct-host");
+    expect(store.getProvidersBootstrapSnapshot("ws-owner-scope").codex_accounts.active_account_id).toBe("acct-workspace");
+    expect(store.getHostProvidersBootstrapSnapshot().provider_options.codex).toBeUndefined();
+    expect(store.getProvidersBootstrapSnapshot("ws-owner-scope").provider_options.codex?.workspace_id).toBe("ws-owner-scope");
+  });
+
+  it("preserves a live model catalog when bootstrap only has a pinned placeholder catalog", async () => {
+    const store = await import("./providersBootstrapStore");
+
+    const previous = {
+      provider_id: "codex",
+      workspace_id: "ws-test",
+      supports_load: false,
+      auth_required: false,
+      has_active_auth: true,
+      auth_mode: "subscription" as const,
+      account_identity: "acct-codex",
+      source: {
+        provider_id: "codex",
+        selected_source_kind: "subscription" as const,
+        selected_endpoint_id: null,
+        endpoints: [],
+      },
+      probed_at: "2026-03-10T00:00:00.000Z",
+      probe_ok: true,
+      models: {
+        models: [{ id: "gpt-5.4/low" }, { id: "gpt-5.4/medium" }],
+        current_model_id: "gpt-5.4/medium",
+      },
+    };
+    const next = {
+      ...previous,
+      probed_at: "2026-03-10T00:05:00.000Z",
+      models: {
+        models: [{ id: "gpt-5.3-codex/low" }, { id: "gpt-5.3-codex/medium" }],
+        current_model_id: "gpt-5.3-codex/medium",
+        meta: {
+          source_kind: "subscription",
+          catalog_source: "codex_bundle_pinned",
+          refresh_pending: true,
+        },
+      },
+    };
+
+    const resolved = store.resolveProviderOptionsUpdate(previous, next);
+
+    expect(resolved?.models).toEqual(previous.models);
   });
 });

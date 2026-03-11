@@ -1,4 +1,14 @@
 import type { SetStateAction } from "react";
+import type { InstallTarget } from "../../api/client";
+import {
+  createDesktopLocalDaemonTargetScope,
+  createDesktopSshDaemonTargetScope,
+  createProvisioningScope,
+  sameProvisioningScope,
+  serializeProvisioningScope,
+  type DaemonTargetScope,
+  type ProvisioningScope,
+} from "../../state/scopeIdentity";
 import type { SessionTitlingMode } from "../WorkspaceSetupPage.logic";
 import type { WizardRoutePlan, WizardStepKey } from "./wizardFlow";
 import { parseUserHost } from "./remoteProfiles";
@@ -15,10 +25,12 @@ export type WorkspaceSetupEffectiveTarget =
   | {
       kind: "local";
       targetKey: "local";
+      daemonScope: DaemonTargetScope;
     }
   | {
       kind: "remote";
       targetKey: string;
+      daemonScope: DaemonTargetScope;
       hostInput: string;
       host: string;
       user: string | null;
@@ -89,9 +101,11 @@ export const deriveWorkspaceSetupEffectiveTarget = (
   targetDraft: WorkspaceSetupTargetDraft,
 ): WorkspaceSetupEffectiveTarget | null => {
   if (location === "local") {
+    const daemonScope = createDesktopLocalDaemonTargetScope();
     return {
       kind: "local",
       targetKey: "local",
+      daemonScope,
     };
   }
   if (location !== "remote") {
@@ -105,9 +119,16 @@ export const deriveWorkspaceSetupEffectiveTarget = (
   }
 
   const normalizedDataDir = targetDraft.remoteDataDirInput.trim();
+  const daemonScope = createDesktopSshDaemonTargetScope({
+    host: parsedRemote.host,
+    user: parsedRemote.user ?? null,
+    port: parsedRemotePort,
+    dataDir: normalizedDataDir || null,
+  });
   return {
     kind: "remote",
     targetKey: `ssh:${parsedRemote.user ?? ""}@${parsedRemote.host}:${parsedRemotePort}:${normalizedDataDir}`,
+    daemonScope,
     hostInput: targetDraft.remoteHostInput,
     host: parsedRemote.host,
     user: parsedRemote.user ?? null,
@@ -120,11 +141,20 @@ export const deriveWorkspaceSetupEffectiveTarget = (
 
 export type WorkspaceSetupDraftSetter<T> = (value: SetStateAction<T>) => void;
 
-export type WorkspaceSetupProvisioningSnapshot = {
-  targetKey: string;
+export type WorkspaceSetupRouteScope = {
+  provisioningScope: ProvisioningScope;
   containerSelection: string;
+};
+
+export type WorkspaceSetupProvisioningTerminalStatus = "ready" | "error";
+
+export type WorkspaceSetupProvisioningSnapshot = {
+  routeScope: WorkspaceSetupRouteScope;
+  authImportStatus: WorkspaceSetupProvisioningTerminalStatus;
   authImportCandidateCount: number;
+  harnessCandidatesStatus: WorkspaceSetupProvisioningTerminalStatus;
   missingHarnessCount: number;
+  titlingProbeStatus: WorkspaceSetupProvisioningTerminalStatus;
   titlingRequired: boolean;
   titlingMode: SessionTitlingMode;
 };
@@ -138,3 +168,49 @@ export type EnsureOnboardingAfterDaemonConnectResult = {
   routePlan: WizardRoutePlan;
   insertionStep: RoutePlanInsertionStep | null;
 };
+
+const normalizeContainerSelection = (value: string): string => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error("containerSelection must be a non-empty string.");
+  }
+  return trimmed;
+};
+
+export const installTargetForWorkspaceSetupContainerSelection = (
+  containerSelection: string | null | undefined,
+): InstallTarget => (
+  containerSelection && containerSelection !== "no-container" ? "container" : "host"
+);
+
+export const createWorkspaceSetupProvisioningScope = (
+  effectiveTarget: WorkspaceSetupEffectiveTarget,
+  containerSelection: string | null | undefined,
+): ProvisioningScope =>
+  createProvisioningScope(
+    effectiveTarget.daemonScope,
+    installTargetForWorkspaceSetupContainerSelection(containerSelection),
+  );
+
+export const createWorkspaceSetupRouteScope = (
+  effectiveTarget: WorkspaceSetupEffectiveTarget,
+  containerSelection: string,
+): WorkspaceSetupRouteScope => ({
+  provisioningScope: createWorkspaceSetupProvisioningScope(effectiveTarget, containerSelection),
+  containerSelection: normalizeContainerSelection(containerSelection),
+});
+
+export const sameWorkspaceSetupRouteScope = (
+  lhs: WorkspaceSetupRouteScope,
+  rhs: WorkspaceSetupRouteScope,
+): boolean =>
+  sameProvisioningScope(lhs.provisioningScope, rhs.provisioningScope)
+  && lhs.containerSelection === rhs.containerSelection;
+
+export const serializeWorkspaceSetupRouteScope = (
+  scope: WorkspaceSetupRouteScope,
+): string => JSON.stringify([
+  "workspace_setup_route",
+  JSON.parse(serializeProvisioningScope(scope.provisioningScope)),
+  normalizeContainerSelection(scope.containerSelection),
+]);

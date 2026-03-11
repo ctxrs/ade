@@ -9,8 +9,8 @@ import type {
 export type WorkspaceSetupMachineCommandHandlers = {
   verifyRemoteConnection: () => Promise<boolean>;
   ensureRoutePlanForSelection: (containerSelectionOverride?: string) => Promise<WizardRoutePlan | null>;
-  advanceFromAuthImportStep: (options?: { clearSelections?: boolean }) => Promise<WizardStepKey | null>;
-  advanceFromHarnessDownloadsStep: (options?: { clearSelections?: boolean }) => Promise<WizardStepKey | null>;
+  advanceFromAuthImportStep: (options?: { clearSelections?: boolean }) => Promise<WizardRoutePlan | null>;
+  advanceFromHarnessDownloadsStep: (options?: { clearSelections?: boolean }) => Promise<WizardRoutePlan | null>;
   onSelectTitlingLocal: () => boolean;
   ensureTitlingPersistedForCurrentTarget: () => Promise<boolean>;
   preflightSourceStep: () => Promise<boolean>;
@@ -43,14 +43,14 @@ export const executeWorkspaceSetupMachineCommand = async (
     case "advance_auth_import":
       return {
         kind: command.kind,
-        nextStep: await handlers.advanceFromAuthImportStep({
+        routePlan: await handlers.advanceFromAuthImportStep({
           clearSelections: command.clearSelections,
         }),
       };
     case "advance_harness_downloads":
       return {
         kind: command.kind,
-        nextStep: await handlers.advanceFromHarnessDownloadsStep({
+        routePlan: await handlers.advanceFromHarnessDownloadsStep({
           clearSelections: command.clearSelections,
         }),
       };

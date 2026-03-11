@@ -1,49 +1,63 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, test } from "vitest";
-
+import { afterEach, describe, expect, it } from "vitest";
 import { createCtxPlaywrightConfig } from "./playwright.shared";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const ORIGINAL_ENV = { ...process.env };
 
-const restoreEnv = (snapshot: Record<string, string | undefined>) => {
-  for (const [key, value] of Object.entries(snapshot)) {
-    if (value === undefined) {
-      delete process.env[key];
-      continue;
-    }
-    process.env[key] = value;
-  }
+type ReporterTuple = readonly [string, Record<string, unknown>?];
+
+const restoreEnv = () => {
+  process.env = { ...ORIGINAL_ENV };
+  delete process.env.CTX_E2E_ARGOS;
+  delete process.env.ARGOS_TOKEN;
+  delete process.env.CTX_E2E_REPORTER;
 };
 
-test("playwright shared config writes reports under e2e artifact roots", async () => {
-  const trackedKeys = [
-    "CTX_E2E_PORT",
-    "CTX_E2E_DATA_DIR",
-    "CTX_E2E_AUTH_TOKEN",
-    "CTX_BUNDLE_DIR",
-    "CTX_E2E_BUNDLED_ONLY",
-  ];
-  const snapshot = Object.fromEntries(trackedKeys.map((key) => [key, process.env[key]]));
+const getReporterTuples = (reporter: unknown): ReporterTuple[] => {
+  if (!Array.isArray(reporter)) return [];
+  return reporter.filter((entry): entry is ReporterTuple => {
+    return Array.isArray(entry) && typeof entry[0] === "string";
+  });
+};
 
-  try {
-    delete process.env.CTX_E2E_PORT;
-    delete process.env.CTX_E2E_DATA_DIR;
-    delete process.env.CTX_E2E_AUTH_TOKEN;
+afterEach(() => {
+  restoreEnv();
+});
 
+describe("createCtxPlaywrightConfig", () => {
+  it("writes reports under e2e artifact roots", async () => {
+    restoreEnv();
     const config = await createCtxPlaywrightConfig("all");
     expect(config.outputDir).toBe(path.resolve(__dirname, "e2e/test-results/all"));
 
-    const reporters = Array.isArray(config.reporter) ? config.reporter : [];
-    const htmlReporter = reporters.find(
-      (entry) => Array.isArray(entry) && entry[0] === "html",
-    );
-    expect(Array.isArray(htmlReporter)).toBe(true);
-    expect((htmlReporter as [string, { outputFolder?: string }])[1]?.outputFolder).toBe(
-      path.resolve(__dirname, "e2e/playwright-report/all"),
-    );
-  } finally {
-    restoreEnv(snapshot);
-  }
+    const reporters = getReporterTuples(config.reporter);
+    const htmlReporter = reporters.find((entry) => entry[0] === "html");
+    expect(htmlReporter?.[1]).toMatchObject({
+      outputFolder: path.resolve(__dirname, "e2e/playwright-report/all"),
+      open: "never",
+    });
+  });
+
+  it("does not add Argos by default", async () => {
+    restoreEnv();
+    const config = await createCtxPlaywrightConfig("premerge_required");
+    const reporters = getReporterTuples(config.reporter);
+    expect(reporters.map((entry) => entry[0])).not.toContain("@argos-ci/playwright/reporter");
+  });
+
+  it("adds the Argos reporter when an Argos token is present", async () => {
+    restoreEnv();
+    process.env.ARGOS_TOKEN = "test-token";
+    const config = await createCtxPlaywrightConfig("premerge_required");
+    const reporters = getReporterTuples(config.reporter);
+    const argosReporter = reporters.find((entry) => entry[0] === "@argos-ci/playwright/reporter");
+    expect(argosReporter).toBeTruthy();
+    expect(argosReporter?.[1]).toMatchObject({
+      uploadToArgos: true,
+      buildName: "ctx-web-premerge_required",
+    });
+  });
 });

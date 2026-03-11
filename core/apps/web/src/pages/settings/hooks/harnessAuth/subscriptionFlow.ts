@@ -86,7 +86,7 @@ type SubscriptionFlowDeps = {
     loginId: string | null,
   ) => boolean;
   setProviderError: Dispatch<SetStateAction<string | null>>;
-  refreshBootstrapAfterMutation: () => Promise<void>;
+  refreshBootstrapAfterMutation: (providerId?: string) => Promise<void>;
   selectSubscriptionSourceIfSupported: (providerId: string) => Promise<void>;
   refreshCodexAccounts: (opts?: RefreshAccountsOptions) => Promise<CodexAccountsResponse | null>;
   refreshClaudeAccounts: (opts?: RefreshAccountsOptions) => Promise<ClaudeAccountsResponse | null>;
@@ -271,6 +271,8 @@ const runBrowserSubscriptionFlow = async (
   if (!deps.flow.isCurrent()) return;
 
   if (outcome.status === "success") {
+    await deps.refreshBootstrapAfterMutation(definition.providerId);
+    if (!deps.flow.isCurrent()) return;
     await finalizeSuccessfulSubscription(deps, definition.providerId);
     return;
   }
@@ -314,6 +316,8 @@ const runCodexSubscriptionFlow = async (deps: SubscriptionFlowDeps): Promise<voi
   if (!deps.flow.isCurrent()) return;
 
   if (outcome === "success") {
+    await deps.refreshBootstrapAfterMutation("codex");
+    if (!deps.flow.isCurrent()) return;
     await finalizeSuccessfulSubscription(deps, "codex");
     return;
   }
@@ -335,7 +339,7 @@ const runClaudeSubscriptionFlow = async (deps: SubscriptionFlowDeps): Promise<vo
 
   if (token) {
     const next = await upsertClaudeAccount(token, label ? label : undefined);
-    await deps.refreshBootstrapAfterMutation();
+    await deps.refreshBootstrapAfterMutation("claude-crp");
     if (!deps.flow.isCurrent()) return;
     deps.setClaudeAccounts(next);
     await finalizeSuccessfulSubscription(deps, "claude-crp");
@@ -381,6 +385,8 @@ const runClaudeSubscriptionFlow = async (deps: SubscriptionFlowDeps): Promise<vo
   if (!deps.flow.isCurrent()) return;
 
   if (outcome === "success") {
+    await deps.refreshBootstrapAfterMutation("claude-crp");
+    if (!deps.flow.isCurrent()) return;
     await finalizeSuccessfulSubscription(deps, "claude-crp");
     return;
   }
@@ -410,7 +416,7 @@ const runKimiSubscriptionFlow = async (deps: SubscriptionFlowDeps): Promise<void
     ...(email ? { email } : {}),
   });
 
-  await deps.refreshBootstrapAfterMutation();
+  await deps.refreshBootstrapAfterMutation("kimi");
   if (!deps.flow.isCurrent()) return;
 
   deps.setKimiAccounts(next);
@@ -430,7 +436,7 @@ const runCopilotSubscriptionFlow = async (deps: SubscriptionFlowDeps): Promise<v
     ...(email ? { email } : {}),
   });
 
-  await deps.refreshBootstrapAfterMutation();
+  await deps.refreshBootstrapAfterMutation("copilot");
   if (!deps.flow.isCurrent()) return;
 
   deps.setCopilotAccounts(next);
@@ -443,7 +449,7 @@ const runWorkspaceSubscriptionFlow = async (deps: SubscriptionFlowDeps): Promise
   }
 
   await authenticateProviderForWorkspace(deps.workspaceId, deps.modal.provider_id);
-  await deps.refreshBootstrapAfterMutation();
+  await deps.refreshBootstrapAfterMutation(deps.modal.provider_id);
 
   if (!deps.flow.isCurrent()) return;
   await finalizeSuccessfulSubscription(deps, deps.modal.provider_id);

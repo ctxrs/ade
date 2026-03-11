@@ -27,6 +27,7 @@ import {
   updateSettings,
 } from "../../api/client";
 import { HARNESS_CATALOG } from "../../utils/harnessCatalog";
+import { isVisibleHarnessProviderStatus } from "../../utils/providerInventory";
 import {
   computeInstallPct,
   parseInstallTarget,
@@ -43,15 +44,24 @@ import {
   sessionTitlingPayloadHash,
   type SessionTitlingMode,
 } from "../WorkspaceSetupPage.logic";
-import { isCurrentFlowRunToken, nextFlowRunToken, type FlowRunToken } from "./flowController";
 import {
-  nextAfterAuthImport,
-  nextAfterHarnessDownloads,
   type WizardRoutePlan,
   type WizardStepKey,
 } from "./wizardFlow";
-import { buildOnboardingAfterConnectResult, buildWizardRoutePlan } from "./routePlanner";
 import type { WizardSelections } from "./wizardFlowReducer";
+import {
+  beginWorkspaceSetupProvisioningRefresh,
+  completeWorkspaceSetupAuthImportRefresh,
+  completeWorkspaceSetupHarnessCandidatesRefresh,
+  completeWorkspaceSetupTitlingProbeRefresh,
+  createInitialWorkspaceSetupProvisioningMachineState,
+  failWorkspaceSetupAuthImportRefresh,
+  failWorkspaceSetupHarnessCandidatesRefresh,
+  failWorkspaceSetupTitlingProbeRefresh,
+  type WorkspaceSetupProvisioningMachineState,
+  type WorkspaceSetupProvisioningRefreshReason,
+  type WorkspaceSetupProvisioningRequest,
+} from "./workspaceSetupProvisioningMachine";
 import {
   messageFromError,
   resolveHarnessInstallCandidateStatus,
@@ -65,6 +75,7 @@ import {
   subscribeInstallProgress,
   type InstallProgressSnapshot,
 } from "../../state/installProgressMonitor";
+import { sameProvisioningScope } from "../../state/scopeIdentity";
 import {
   resolveProviderInstallProgressSession,
   subscribeProviderInstallProgress,
@@ -73,10 +84,16 @@ import {
 import type {
   EnsureOnboardingAfterDaemonConnectResult,
   WorkspaceSetupEffectiveTarget,
+  WorkspaceSetupRouteScope,
+} from "./workflowTypes";
+import {
+  createWorkspaceSetupRouteScope,
+  installTargetForWorkspaceSetupContainerSelection,
+  sameWorkspaceSetupRouteScope,
+  serializeWorkspaceSetupRouteScope,
 } from "./workflowTypes";
 
 type UseWorkspaceSetupProvisioningArgs = {
-  currentStepKey: WizardStepKey;
   currentStepKeyRef: MutableRefObject<WizardStepKey>;
   selections: WizardSelections;
   routePlan: WizardRoutePlan | null;
@@ -90,34 +107,7 @@ type UseWorkspaceSetupProvisioningArgs = {
   connectDaemonForImport: (locationOverride?: "local" | "remote") => Promise<void>;
 };
 
-type RemoteScanKeyInput = {
-  user?: string | null;
-  host?: string | null;
-  port?: number | null;
-  dataDir?: string | null;
-};
-
-export const buildWorkspaceSetupAuthImportScanKey = (
-  target: "local" | "remote",
-  remote: RemoteScanKeyInput,
-): string => (
-  target === "local"
-    ? "local|@"
-    : `remote|${remote.user ?? ""}@${remote.host ?? ""}:${remote.port ?? 4399}:${remote.dataDir?.trim() ?? ""}`
-);
-
-export const buildWorkspaceSetupHarnessInstallScanKey = (
-  target: "local" | "remote",
-  installTarget: InstallTarget,
-  remote: RemoteScanKeyInput,
-): string => (
-  target === "local"
-    ? `local|@|${installTarget}`
-    : `remote|${remote.user ?? ""}@${remote.host ?? ""}:${remote.port ?? 4399}:${remote.dataDir?.trim() ?? ""}|${installTarget}`
-);
-
 export function useWorkspaceSetupProvisioning({
-  currentStepKey,
   currentStepKeyRef,
   selections,
   routePlan,
@@ -134,14 +124,10 @@ export function useWorkspaceSetupProvisioning({
   const [authImportSelected, setAuthImportSelected] = useState<Record<string, boolean>>({});
   const [authImportBusy, setAuthImportBusy] = useState(false);
   const [authImportError, setAuthImportError] = useState<string | null>(null);
-  const [authImportScannedKey, setAuthImportScannedKey] = useState<string | null>(null);
-  const [authImportDeferredKey, setAuthImportDeferredKey] = useState<string | null>(null);
   const [harnessInstallCandidates, setHarnessInstallCandidates] = useState<HarnessInstallProviderRow[]>([]);
   const [harnessInstallSelected, setHarnessInstallSelected] = useState<Record<string, boolean>>({});
   const [harnessInstallBusy, setHarnessInstallBusy] = useState(false);
   const [harnessInstallError, setHarnessInstallError] = useState<string | null>(null);
-  const [harnessInstallScannedKey, setHarnessInstallScannedKey] = useState<string | null>(null);
-  const [harnessInstallDeferredKey, setHarnessInstallDeferredKey] = useState<string | null>(null);
   const [harnessInstallRows, setHarnessInstallRows] = useState<Record<string, HarnessInstallRowState>>({});
   const [titlingProbeBusy, setTitlingProbeBusy] = useState(false);
   const [titlingProbeError, setTitlingProbeError] = useState<string | null>(null);
@@ -167,17 +153,14 @@ export function useWorkspaceSetupProvisioning({
   const [titlingPersistedTargetKey, setTitlingPersistedTargetKey] = useState<string | null>(null);
   const [titlingPersistedHash, setTitlingPersistedHash] = useState<string | null>(null);
   const [titlingExistingSettings, setTitlingExistingSettings] = useState<TitleGenerationSettings | null>(null);
+  const provisioningMachineStateRef = useRef<WorkspaceSetupProvisioningMachineState>(
+    createInitialWorkspaceSetupProvisioningMachineState(),
+  );
+  const [, setProvisioningMachineState] = useState<WorkspaceSetupProvisioningMachineState>(
+    () => provisioningMachineStateRef.current,
+  );
 
   const selectedDaemonTargetKeyRef = useRef<string | null>(null);
-  const authImportScanPromiseRef = useRef<Promise<ProviderAuthImportCandidate[]> | null>(null);
-  const authImportScanKeyRef = useRef<string | null>(null);
-  const authImportScanRunRef = useRef<FlowRunToken | null>(null);
-  const harnessInstallScanPromiseRef = useRef<Promise<HarnessInstallProviderRow[]> | null>(null);
-  const harnessInstallScanKeyRef = useRef<string | null>(null);
-  const harnessInstallScanRunRef = useRef<FlowRunToken | null>(null);
-  const routePlanRunRef = useRef<FlowRunToken | null>(null);
-  const titlingProbePromiseRef = useRef<Promise<boolean | null> | null>(null);
-  const titlingProbePromiseTargetKeyRef = useRef<string | null>(null);
   const titlingInstallObserverRef = useRef<{ installId: string; stop: () => void } | null>(null);
   const titlingInstallStateRef = useRef<LocalInstallState | null>(null);
   const harnessInstallObserversRef = useRef<Record<string, { installId: string; stop: () => void }>>({});
@@ -190,9 +173,13 @@ export function useWorkspaceSetupProvisioning({
   const selectedDaemonTargetKey = effectiveTarget?.targetKey ?? null;
   const remoteTarget = effectiveTarget?.kind === "remote" ? effectiveTarget : null;
   const parsedRemoteHost = remoteTarget?.host;
-  const parsedRemoteUser = remoteTarget?.user;
-  const parsedRemotePort = remoteTarget?.port ?? null;
-  const remoteDataDirInput = remoteTarget?.dataDirInput ?? "";
+  const currentRouteScope = useMemo<WorkspaceSetupRouteScope | null>(() => {
+    const containerSelection = (selections.container ?? "").trim();
+    if (!effectiveTarget || !containerSelection) {
+      return null;
+    }
+    return createWorkspaceSetupRouteScope(effectiveTarget, containerSelection);
+  }, [effectiveTarget, selections.container]);
   const authImportStepVisible = Boolean(routePlan?.includeAuthImport);
   const harnessInstallStepVisible = Boolean(routePlan?.includeHarnessDownloads);
   const titlingStepVisible = Boolean(routePlan?.includeTitling);
@@ -204,32 +191,32 @@ export function useWorkspaceSetupProvisioning({
       && remoteStatus === "connected"
     )
   );
-  const selectedHarnessInstallTarget: InstallTarget =
-    selections.container && selections.container !== "no-container" ? "container" : "host";
+  const selectedHarnessInstallTarget: InstallTarget = installTargetForWorkspaceSetupContainerSelection(
+    selections.container,
+  );
 
-  const authImportScanKeyForTarget = useCallback((target: "local" | "remote"): string => (
-    buildWorkspaceSetupAuthImportScanKey(target, {
-      user: parsedRemoteUser,
-      host: parsedRemoteHost,
-      port: parsedRemotePort,
-      dataDir: remoteDataDirInput,
-    })
-  ), [parsedRemoteHost, parsedRemotePort, parsedRemoteUser, remoteDataDirInput]);
+  const commitProvisioningMachineState = useCallback((
+    updater:
+      | WorkspaceSetupProvisioningMachineState
+      | ((current: WorkspaceSetupProvisioningMachineState) => WorkspaceSetupProvisioningMachineState),
+  ): WorkspaceSetupProvisioningMachineState => {
+    const nextState = typeof updater === "function"
+      ? updater(provisioningMachineStateRef.current)
+      : updater;
+    provisioningMachineStateRef.current = nextState;
+    setProvisioningMachineState(nextState);
+    return nextState;
+  }, []);
 
-  const harnessInstallScanKeyForTarget = useCallback((
-    target: "local" | "remote",
-    containerSelectionOverride?: string,
-  ): string => {
-    const containerSelection = containerSelectionOverride ?? selections.container;
-    const installTarget: InstallTarget =
-      containerSelection && containerSelection !== "no-container" ? "container" : "host";
-    return buildWorkspaceSetupHarnessInstallScanKey(target, installTarget, {
-      user: parsedRemoteUser,
-      host: parsedRemoteHost,
-      port: parsedRemotePort,
-      dataDir: remoteDataDirInput,
-    });
-  }, [parsedRemoteHost, parsedRemotePort, parsedRemoteUser, remoteDataDirInput, selections.container]);
+  const isCurrentProvisioningRequest = useCallback((
+    resource: WorkspaceSetupProvisioningRequest["resource"],
+    request: WorkspaceSetupProvisioningRequest,
+  ): boolean => {
+    const current = provisioningMachineStateRef.current[resource];
+    return current.requestId === request.requestId
+      && Boolean(current.scope)
+      && sameProvisioningScope(current.scope!, request.scope);
+  }, []);
 
   const resetTitlingDraft = () => {
     setTitlingMode("unset");
@@ -266,29 +253,18 @@ export function useWorkspaceSetupProvisioning({
   };
 
   const resetProvisioningState = useCallback(() => {
-    authImportScanPromiseRef.current = null;
-    authImportScanKeyRef.current = null;
-    authImportScanRunRef.current = null;
-    harnessInstallScanPromiseRef.current = null;
-    harnessInstallScanKeyRef.current = null;
-    harnessInstallScanRunRef.current = null;
-    titlingProbePromiseRef.current = null;
-    titlingProbePromiseTargetKeyRef.current = null;
     clearHarnessInstallObserver();
     clearTitlingInstallObserver();
+    commitProvisioningMachineState(createInitialWorkspaceSetupProvisioningMachineState());
     setAuthImportBusy(false);
     setAuthImportCandidates([]);
     setAuthImportSelected({});
     setAuthImportError(null);
-    setAuthImportScannedKey(null);
-    setAuthImportDeferredKey(null);
     setHarnessInstallBusy(false);
     setHarnessInstallCandidates([]);
     setHarnessInstallSelected({});
     setHarnessInstallRows({});
     setHarnessInstallError(null);
-    setHarnessInstallScannedKey(null);
-    setHarnessInstallDeferredKey(null);
     setTitlingProbeBusy(false);
     setTitlingProbeError(null);
     setTitlingProbeDone(false);
@@ -302,13 +278,13 @@ export function useWorkspaceSetupProvisioning({
     setTitlingExistingSettings(null);
     invalidateTitlingPersisted();
     resetTitlingDraft();
-  }, []);
+  }, [commitProvisioningMachineState]);
 
   const mapHarnessInstallCandidate = (
     provider: ProviderStatus,
     fallbackInstallTarget: InstallTarget = selectedHarnessInstallTarget,
   ): HarnessInstallProviderRow | null => {
-    if (providerDetailFlag(provider.details, "ui_hidden")) return null;
+    if (!isVisibleHarnessProviderStatus(provider)) return null;
     const installSupported = providerDetailFlag(provider.details, "install_supported");
     if (!installSupported) return null;
     const harness = harnessByProviderId.get(provider.provider_id);
@@ -419,7 +395,10 @@ export function useWorkspaceSetupProvisioning({
     };
   };
 
-  const probeTitlingForTarget = async (targetKey: string): Promise<boolean | null> => {
+  const probeTitlingForTarget = async (
+    request: WorkspaceSetupProvisioningRequest,
+    targetKey: string,
+  ): Promise<boolean | null> => {
     setTitlingProbeBusy(true);
     setTitlingProbeTargetKey(targetKey);
     setTitlingProbeDone(false);
@@ -427,10 +406,14 @@ export function useWorkspaceSetupProvisioning({
     setTitlingStatusError(null);
     try {
       await connectDaemonForImport();
-      if (selectedDaemonTargetKeyRef.current !== targetKey) return null;
+      if (!isCurrentProvisioningRequest("titlingProbe", request) || selectedDaemonTargetKeyRef.current !== targetKey) {
+        return null;
+      }
 
       const settings = await getSettings();
-      if (selectedDaemonTargetKeyRef.current !== targetKey) return null;
+      if (!isCurrentProvisioningRequest("titlingProbe", request) || selectedDaemonTargetKeyRef.current !== targetKey) {
+        return null;
+      }
 
       setTitlingExistingSettings(settings.title_generation ?? null);
       const draft = buildSessionTitlingDraft(settings);
@@ -444,7 +427,9 @@ export function useWorkspaceSetupProvisioning({
       let localStatus: TitleGenerationLocalStatus | null = null;
       if (!settings.title_generation || settings.title_generation.mode === "local") {
         localStatus = await refreshTitlingLocalStatus({ silent: true });
-        if (selectedDaemonTargetKeyRef.current !== targetKey) return null;
+        if (!isCurrentProvisioningRequest("titlingProbe", request) || selectedDaemonTargetKeyRef.current !== targetKey) {
+          return null;
+        }
       } else {
         setTitlingLocalStatus(null);
         setTitlingStatusError(null);
@@ -460,48 +445,18 @@ export function useWorkspaceSetupProvisioning({
       }
       return !readiness.ready;
     } catch (error) {
-      if (selectedDaemonTargetKeyRef.current !== targetKey) return null;
+      if (!isCurrentProvisioningRequest("titlingProbe", request) || selectedDaemonTargetKeyRef.current !== targetKey) {
+        return null;
+      }
       setTitlingProbeTargetKey(targetKey);
       setTitlingProbeDone(true);
       setTitlingConfiguredReady(false);
       setTitlingStepRequired(true);
       setTitlingProbeError(messageFromError(error));
-      return true;
+      throw error;
     } finally {
-      if (selectedDaemonTargetKeyRef.current === targetKey) {
+      if (isCurrentProvisioningRequest("titlingProbe", request) && selectedDaemonTargetKeyRef.current === targetKey) {
         setTitlingProbeBusy(false);
-      }
-    }
-  };
-
-  const ensureTitlingProbeForCurrentTarget = async (
-    options?: { force?: boolean },
-  ): Promise<boolean | null> => {
-    if (!selectedDaemonTargetKey || !desktopApp) return null;
-    if (selections.location === "remote") {
-      if (!parsedRemoteHost) return null;
-      if (remoteStatusRef.current !== "connected") return null;
-    }
-    if (!options?.force && titlingProbeDone && titlingProbeTargetKey === selectedDaemonTargetKey) {
-      return titlingStepRequired;
-    }
-    const targetKey = selectedDaemonTargetKey;
-    if (
-      !options?.force
-      && titlingProbePromiseRef.current
-      && titlingProbePromiseTargetKeyRef.current === targetKey
-    ) {
-      return await titlingProbePromiseRef.current;
-    }
-    const probePromise = probeTitlingForTarget(targetKey);
-    titlingProbePromiseRef.current = probePromise;
-    titlingProbePromiseTargetKeyRef.current = targetKey;
-    try {
-      return await probePromise;
-    } finally {
-      if (titlingProbePromiseRef.current === probePromise) {
-        titlingProbePromiseRef.current = null;
-        titlingProbePromiseTargetKeyRef.current = null;
       }
     }
   };
@@ -594,301 +549,469 @@ export function useWorkspaceSetupProvisioning({
     return true;
   };
 
-  const scanAuthImportCandidatesForTarget = useCallback(async (
-    target: "local" | "remote",
-    options?: { force?: boolean },
-  ): Promise<ProviderAuthImportCandidate[]> => {
-    if (!desktopApp) return [];
-    if (target === "remote") {
-      if (!parsedRemoteHost) return [];
-      if (remoteStatusRef.current !== "connected") return [];
+  const shouldDeferSpeculativeLocalRefresh = useCallback((location: "local" | "remote"): boolean => {
+    if (location !== "local") {
+      return false;
     }
+    const refreshReason = provisioningMachineStateRef.current.refreshReason;
+    return refreshReason === "refresh_auth_import" || refreshReason === "ensure_route_plan";
+  }, []);
 
-    const scanKey = authImportScanKeyForTarget(target);
-    if (!options?.force && authImportScannedKey === scanKey) return authImportCandidates;
-
-    if (
-      !options?.force
-      && authImportScanPromiseRef.current
-      && authImportScanKeyRef.current === scanKey
-    ) {
-      return await authImportScanPromiseRef.current;
+  const scanAuthImportCandidatesForRequest = useCallback(async (
+    location: "local" | "remote",
+    request: WorkspaceSetupProvisioningRequest,
+  ): Promise<void> => {
+    if (!desktopApp) {
+      if (!isCurrentProvisioningRequest("authImport", request)) {
+        return;
+      }
+      setAuthImportBusy(false);
+      setAuthImportCandidates([]);
+      setAuthImportSelected({});
+      setAuthImportError(null);
+      commitProvisioningMachineState((current) => completeWorkspaceSetupAuthImportRefresh(current, {
+        scope: request.scope,
+        requestId: request.requestId,
+        data: [],
+      }));
+      return;
+    }
+    if (location === "remote") {
+      if (!parsedRemoteHost || remoteStatusRef.current !== "connected") {
+        return;
+      }
     }
 
     setAuthImportBusy(true);
     setAuthImportError(null);
-    const scanRun = nextFlowRunToken(authImportScanRunRef.current?.runId ?? 0, scanKey);
-    authImportScanRunRef.current = scanRun;
-
-    const scanPromise = (async () => {
-      try {
-        await connectDaemonForImport(target);
-        const response = await listProviderAuthImportCandidates();
-        const candidates = (response.candidates ?? [])
-          .filter((candidate) => candidate.parse_status === "parsed");
-        if (!isCurrentFlowRunToken(authImportScanRunRef.current, scanRun)) {
-          return [];
-        }
-        setAuthImportCandidates(candidates);
-        setAuthImportSelected(
-          Object.fromEntries(candidates.map((candidate) => [candidate.id, true])),
-        );
-        setAuthImportScannedKey(scanKey);
-        setAuthImportDeferredKey(null);
-        return candidates;
-      } catch (error) {
-        if (!isCurrentFlowRunToken(authImportScanRunRef.current, scanRun)) {
-          return [];
-        }
-        setAuthImportCandidates([]);
-        setAuthImportSelected({});
-        setAuthImportError(messageFromError(error));
-        setAuthImportScannedKey(scanKey);
-        setAuthImportDeferredKey(scanKey);
-        return [];
-      } finally {
-        if (isCurrentFlowRunToken(authImportScanRunRef.current, scanRun)) {
-          setAuthImportBusy(false);
-        }
-      }
-    })();
-
-    authImportScanPromiseRef.current = scanPromise;
-    authImportScanKeyRef.current = scanKey;
     try {
-      return await scanPromise;
+      try {
+        await connectDaemonForImport(location);
+      } catch (error) {
+        if (shouldDeferSpeculativeLocalRefresh(location)) {
+          if (!isCurrentProvisioningRequest("authImport", request)) {
+            return;
+          }
+          setAuthImportCandidates([]);
+          setAuthImportSelected({});
+          setAuthImportError(null);
+          commitProvisioningMachineState((current) => completeWorkspaceSetupAuthImportRefresh(current, {
+            scope: request.scope,
+            requestId: request.requestId,
+            data: [],
+          }));
+          return;
+        }
+        throw error;
+      }
+      const response = await listProviderAuthImportCandidates();
+      const candidates = (response.candidates ?? [])
+        .filter((candidate) => candidate.parse_status === "parsed");
+      if (!isCurrentProvisioningRequest("authImport", request)) {
+        return;
+      }
+      setAuthImportCandidates(candidates);
+      setAuthImportSelected((prev) =>
+        Object.fromEntries(
+          candidates.map((candidate) => [
+            candidate.id,
+            Object.prototype.hasOwnProperty.call(prev, candidate.id) ? Boolean(prev[candidate.id]) : true,
+          ]),
+        ),
+      );
+      commitProvisioningMachineState((current) => completeWorkspaceSetupAuthImportRefresh(current, {
+        scope: request.scope,
+        requestId: request.requestId,
+        data: candidates,
+      }));
+    } catch (error) {
+      const message = messageFromError(error);
+      if (!isCurrentProvisioningRequest("authImport", request)) {
+        return;
+      }
+      setAuthImportError(message);
+      commitProvisioningMachineState((current) => failWorkspaceSetupAuthImportRefresh(current, {
+        scope: request.scope,
+        requestId: request.requestId,
+        error: message,
+      }));
     } finally {
-      if (authImportScanPromiseRef.current === scanPromise) {
-        authImportScanPromiseRef.current = null;
-        authImportScanKeyRef.current = null;
+      if (isCurrentProvisioningRequest("authImport", request)) {
+        setAuthImportBusy(false);
       }
     }
   }, [
-    authImportCandidates,
-    authImportDeferredKey,
-    authImportScannedKey,
-    authImportScanKeyForTarget,
+    commitProvisioningMachineState,
     connectDaemonForImport,
     desktopApp,
+    isCurrentProvisioningRequest,
     parsedRemoteHost,
     remoteStatusRef,
+    shouldDeferSpeculativeLocalRefresh,
   ]);
 
-  const scanHarnessInstallCandidatesForTarget = useCallback(async (
-    target: "local" | "remote",
-    containerSelectionOverride?: string,
-    options?: { force?: boolean },
-  ): Promise<HarnessInstallProviderRow[]> => {
-    if (!desktopApp) return [];
-    if (target === "remote") {
-      if (!parsedRemoteHost) return [];
-      if (remoteStatusRef.current !== "connected") return [];
+  const scanHarnessInstallCandidatesForRequest = useCallback(async (
+    location: "local" | "remote",
+    request: WorkspaceSetupProvisioningRequest,
+  ): Promise<void> => {
+    if (!desktopApp) {
+      if (!isCurrentProvisioningRequest("harnessCandidates", request)) {
+        return;
+      }
+      setHarnessInstallBusy(false);
+      setHarnessInstallCandidates([]);
+      setHarnessInstallSelected({});
+      setHarnessInstallRows({});
+      setHarnessInstallError(null);
+      commitProvisioningMachineState((current) => completeWorkspaceSetupHarnessCandidatesRefresh(current, {
+        scope: request.scope,
+        requestId: request.requestId,
+        data: [],
+      }));
+      return;
+    }
+    if (location === "remote") {
+      if (!parsedRemoteHost || remoteStatusRef.current !== "connected") {
+        return;
+      }
     }
 
-    const containerSelection = containerSelectionOverride ?? selections.container;
-    const installTarget: InstallTarget =
-      containerSelection && containerSelection !== "no-container" ? "container" : "host";
-    const scanKey = harnessInstallScanKeyForTarget(target, containerSelectionOverride);
-    if (!options?.force && harnessInstallScannedKey === scanKey) return harnessInstallCandidates;
-
-    if (
-      !options?.force
-      && harnessInstallScanPromiseRef.current
-      && harnessInstallScanKeyRef.current === scanKey
-    ) {
-      return await harnessInstallScanPromiseRef.current;
-    }
-
+    const installTarget = request.scope.installTarget;
     setHarnessInstallBusy(true);
     setHarnessInstallError(null);
-    const scanRun = nextFlowRunToken(harnessInstallScanRunRef.current?.runId ?? 0, scanKey);
-    harnessInstallScanRunRef.current = scanRun;
-
-    const scanPromise = (async () => {
-      try {
-        await connectDaemonForImport(target);
-        const providers = await listProviders(installTarget);
-        if (!isCurrentFlowRunToken(harnessInstallScanRunRef.current, scanRun)) return [];
-        const rows = providers
-          .map((provider) => mapHarnessInstallCandidate(provider, installTarget))
-          .filter((row): row is HarnessInstallProviderRow => row !== null)
-          .sort((a, b) => a.label.localeCompare(b.label));
-        setHarnessInstallCandidates(rows);
-        setHarnessInstallSelected((prev) =>
-          Object.fromEntries(
-            rows.map((row) => {
-              if (row.installed && row.healthy) {
-                return [row.providerId, false];
-              }
-              if (Object.prototype.hasOwnProperty.call(prev, row.providerId)) {
-                return [row.providerId, Boolean(prev[row.providerId])];
-              }
-              return [row.providerId, row.installSupported];
-            }),
-          ),
-        );
-        const runningRows = rows.filter((row) => row.installRunning && row.installId);
-        for (const row of runningRows) {
-          await attachHarnessInstall(row.providerId, row.installId!);
-        }
-        setHarnessInstallScannedKey(scanKey);
-        setHarnessInstallDeferredKey(null);
-        return rows;
-      } catch (error) {
-        if (!isCurrentFlowRunToken(harnessInstallScanRunRef.current, scanRun)) return [];
-        setHarnessInstallCandidates([]);
-        setHarnessInstallSelected({});
-        setHarnessInstallRows({});
-        setHarnessInstallError(messageFromError(error));
-        setHarnessInstallScannedKey(scanKey);
-        setHarnessInstallDeferredKey(scanKey);
-        return [];
-      } finally {
-        if (isCurrentFlowRunToken(harnessInstallScanRunRef.current, scanRun)) {
-          setHarnessInstallBusy(false);
-        }
-      }
-    })();
-
-    harnessInstallScanPromiseRef.current = scanPromise;
-    harnessInstallScanKeyRef.current = scanKey;
     try {
-      return await scanPromise;
+      try {
+        await connectDaemonForImport(location);
+      } catch (error) {
+        if (shouldDeferSpeculativeLocalRefresh(location)) {
+          if (!isCurrentProvisioningRequest("harnessCandidates", request)) {
+            return;
+          }
+          setHarnessInstallCandidates([]);
+          setHarnessInstallSelected({});
+          setHarnessInstallRows({});
+          setHarnessInstallError(null);
+          commitProvisioningMachineState((current) => completeWorkspaceSetupHarnessCandidatesRefresh(current, {
+            scope: request.scope,
+            requestId: request.requestId,
+            data: [],
+          }));
+          return;
+        }
+        throw error;
+      }
+      const providers = await listProviders(installTarget);
+      if (!isCurrentProvisioningRequest("harnessCandidates", request)) {
+        return;
+      }
+      const rows = providers
+        .map((provider) => mapHarnessInstallCandidate(provider, installTarget))
+        .filter((row): row is HarnessInstallProviderRow => row !== null)
+        .sort((a, b) => a.label.localeCompare(b.label));
+      setHarnessInstallCandidates(rows);
+      setHarnessInstallSelected((prev) =>
+        Object.fromEntries(
+          rows.map((row) => {
+            if (row.installed && row.healthy) {
+              return [row.providerId, false];
+            }
+            if (Object.prototype.hasOwnProperty.call(prev, row.providerId)) {
+              return [row.providerId, Boolean(prev[row.providerId])];
+            }
+            return [row.providerId, row.installSupported];
+          }),
+        ),
+      );
+      const runningRows = rows.filter((row) => row.installRunning && row.installId);
+      if (runningRows.length > 0) {
+        setHarnessInstallRows((prev) => ({
+          ...prev,
+          ...Object.fromEntries(
+            runningRows.map((row) => [
+              row.providerId,
+              {
+                installId: row.installId!,
+                state: "running" as const,
+                pct: prev[row.providerId]?.pct ?? null,
+                target: row.installTarget,
+                errorCode: undefined,
+                error: undefined,
+              },
+            ]),
+          ),
+        }));
+      }
+      for (const row of runningRows) {
+        await attachHarnessInstall(row.providerId, row.installId!);
+      }
+      commitProvisioningMachineState((current) => completeWorkspaceSetupHarnessCandidatesRefresh(current, {
+        scope: request.scope,
+        requestId: request.requestId,
+        data: rows,
+      }));
+    } catch (error) {
+      const message = messageFromError(error);
+      if (!isCurrentProvisioningRequest("harnessCandidates", request)) {
+        return;
+      }
+      setHarnessInstallError(message);
+      commitProvisioningMachineState((current) => failWorkspaceSetupHarnessCandidatesRefresh(current, {
+        scope: request.scope,
+        requestId: request.requestId,
+        error: message,
+      }));
     } finally {
-      if (harnessInstallScanPromiseRef.current === scanPromise) {
-        harnessInstallScanPromiseRef.current = null;
-        harnessInstallScanKeyRef.current = null;
+      if (isCurrentProvisioningRequest("harnessCandidates", request)) {
+        setHarnessInstallBusy(false);
       }
     }
   }, [
+    commitProvisioningMachineState,
     connectDaemonForImport,
     desktopApp,
-    harnessInstallScanKeyForTarget,
-    harnessInstallCandidates,
-    harnessInstallDeferredKey,
-    harnessInstallScannedKey,
+    isCurrentProvisioningRequest,
     parsedRemoteHost,
     remoteStatusRef,
-    selections.container,
+    shouldDeferSpeculativeLocalRefresh,
+  ]);
+
+  const scanTitlingProbeForRequest = useCallback(async (
+    request: WorkspaceSetupProvisioningRequest,
+  ): Promise<void> => {
+    if (!desktopApp) {
+      if (!isCurrentProvisioningRequest("titlingProbe", request)) {
+        return;
+      }
+      setTitlingProbeBusy(false);
+      setTitlingProbeError(null);
+      setTitlingProbeDone(true);
+      setTitlingConfiguredReady(false);
+      setTitlingStepRequired(false);
+      setTitlingProbeTargetKey(selectedDaemonTargetKeyRef.current);
+      commitProvisioningMachineState((current) => completeWorkspaceSetupTitlingProbeRefresh(current, {
+        scope: request.scope,
+        requestId: request.requestId,
+        data: { required: false },
+      }));
+      return;
+    }
+    const targetKey = selectedDaemonTargetKeyRef.current;
+    if (!targetKey) return;
+    try {
+      const required = await probeTitlingForTarget(request, targetKey);
+      if (!isCurrentProvisioningRequest("titlingProbe", request)) {
+        return;
+      }
+      commitProvisioningMachineState((current) => completeWorkspaceSetupTitlingProbeRefresh(current, {
+        scope: request.scope,
+        requestId: request.requestId,
+        data: { required: required === true },
+      }));
+    } catch (error) {
+      const message = messageFromError(error);
+      if (!isCurrentProvisioningRequest("titlingProbe", request)) {
+        return;
+      }
+      commitProvisioningMachineState((current) => failWorkspaceSetupTitlingProbeRefresh(current, {
+        scope: request.scope,
+        requestId: request.requestId,
+        error: message,
+      }));
+    }
+  }, [
+    commitProvisioningMachineState,
+    desktopApp,
+    isCurrentProvisioningRequest,
+    probeTitlingForTarget,
+  ]);
+
+  const refreshProvisioningForRouteScope = useCallback(async (
+    location: "local" | "remote",
+    routeScope: WorkspaceSetupRouteScope,
+    refreshReason: WorkspaceSetupProvisioningRefreshReason,
+    options?: {
+      allowTitlingInsertion?: boolean;
+      resources?: WorkspaceSetupProvisioningRequest["resource"][];
+      force?: boolean;
+    },
+  ): Promise<WorkspaceSetupProvisioningMachineState | null> => {
+    const refreshStart = beginWorkspaceSetupProvisioningRefresh(provisioningMachineStateRef.current, {
+      routeScope,
+      refreshReason,
+      titlingMode,
+      previousPlan: routePlan,
+      allowTitlingInsertion: options?.allowTitlingInsertion,
+      resources: options?.resources,
+      force: options?.force,
+    });
+    const started = commitProvisioningMachineState(refreshStart.state);
+    const { requests } = refreshStart;
+    if (requests.length === 0) {
+      if (started.routeScope && sameWorkspaceSetupRouteScope(started.routeScope, routeScope)) {
+        setRoutePlan(started.routePlan);
+        return started;
+      }
+      return null;
+    }
+
+    await Promise.all(requests.map(async (request) => {
+      switch (request.resource) {
+        case "authImport":
+          await scanAuthImportCandidatesForRequest(location, request);
+          return;
+        case "harnessCandidates":
+          await scanHarnessInstallCandidatesForRequest(location, request);
+          return;
+        case "titlingProbe":
+          await scanTitlingProbeForRequest(request);
+          return;
+        default: {
+          const exhaustiveCheck: never = request.resource;
+          return exhaustiveCheck;
+        }
+      }
+    }));
+
+    const current = provisioningMachineStateRef.current;
+    if (!current.routeScope || !sameWorkspaceSetupRouteScope(current.routeScope, routeScope)) {
+      return null;
+    }
+    setRoutePlan(current.routePlan);
+    return current;
+  }, [
+    commitProvisioningMachineState,
+    routePlan,
+    scanAuthImportCandidatesForRequest,
+    scanHarnessInstallCandidatesForRequest,
+    scanTitlingProbeForRequest,
+    setRoutePlan,
+    titlingMode,
+  ]);
+
+  const refreshAuthImportForRouteScope = useCallback(async (
+    location: "local" | "remote",
+    routeScope: WorkspaceSetupRouteScope,
+    options?: { force?: boolean },
+  ): Promise<void> => {
+    await refreshProvisioningForRouteScope(
+      location,
+      routeScope,
+      "refresh_auth_import",
+      {
+        force: options?.force,
+        resources: ["authImport"],
+      },
+    );
+  }, [refreshProvisioningForRouteScope]);
+
+  const ensureTitlingProbeForCurrentTarget = useCallback(async (
+    options?: { force?: boolean },
+  ): Promise<boolean | null> => {
+    const location = selections.location;
+    if (!currentRouteScope || (location !== "local" && location !== "remote")) {
+      return null;
+    }
+    if (location === "remote") {
+      if (!parsedRemoteHost || remoteStatusRef.current !== "connected") {
+        return null;
+      }
+    }
+    const nextState = await refreshProvisioningForRouteScope(
+      location,
+      currentRouteScope,
+      "refresh_titling_probe",
+      {
+        force: options?.force,
+        resources: ["titlingProbe"],
+      },
+    );
+    if (!nextState) return null;
+    return nextState.titlingProbe.status === "error"
+      ? true
+      : nextState.titlingProbe.data?.required === true;
+  }, [
+    currentRouteScope,
+    parsedRemoteHost,
+    refreshProvisioningForRouteScope,
+    remoteStatusRef,
+    selections.location,
   ]);
 
   const resetRoutePlan = useCallback(() => {
     invalidateRoutePlan();
-    routePlanRunRef.current = nextFlowRunToken(routePlanRunRef.current?.runId ?? 0, "reset");
   }, [invalidateRoutePlan]);
 
   const ensureOnboardingAfterDaemonConnect = useCallback(async (
     options?: { allowTitlingInsertion?: boolean },
   ): Promise<EnsureOnboardingAfterDaemonConnectResult | null> => {
     const location = selections.location;
-    if (location !== "local" && location !== "remote") return null;
-    const targetKey = selectedDaemonTargetKeyRef.current;
-    const containerSelection = (selections.container ?? "").trim();
-    if (!targetKey || !containerSelection) return null;
-    const allowTitlingInsertion = options?.allowTitlingInsertion ?? true;
-
-    const authScanKey = authImportScanKeyForTarget(location);
-    const harnessScanKey = harnessInstallScanKeyForTarget(location, containerSelection);
-    const needsAuthRefresh = authImportScannedKey !== authScanKey || authImportDeferredKey === authScanKey;
-    const needsHarnessRefresh =
-      harnessInstallScannedKey !== harnessScanKey || harnessInstallDeferredKey === harnessScanKey;
-
-    const [authCandidates, harnessRows, titlingRequired] = await Promise.all([
-      needsAuthRefresh
-        ? scanAuthImportCandidatesForTarget(location, { force: true })
-        : Promise.resolve(authImportCandidates),
-      needsHarnessRefresh
-        ? scanHarnessInstallCandidatesForTarget(location, containerSelection, { force: true })
-        : Promise.resolve(harnessInstallCandidates),
-      ensureTitlingProbeForCurrentTarget({ force: true }),
-    ]);
-
-    const result = buildOnboardingAfterConnectResult({
-      targetKey,
-      containerSelection,
-      authImportCandidateCount: authCandidates.length,
-      missingHarnessCount: harnessRows.filter(
-        (candidate) => candidate.installSupported && !(candidate.installed && candidate.healthy),
-      ).length,
-      titlingRequired: titlingRequired === true,
-      titlingMode,
-    }, routePlan, { allowTitlingInsertion });
-    setRoutePlan(result.routePlan);
-    return result;
+    if (!currentRouteScope || (location !== "local" && location !== "remote")) {
+      return null;
+    }
+    const nextState = await refreshProvisioningForRouteScope(
+      location,
+      currentRouteScope,
+      "ensure_onboarding_after_connect",
+      {
+        allowTitlingInsertion: options?.allowTitlingInsertion,
+        force: true,
+      },
+    );
+    if (!nextState?.routePlan) {
+      return null;
+    }
+    return {
+      routePlan: nextState.routePlan,
+      insertionStep: nextState.insertionStep,
+    };
   }, [
-    authImportCandidates,
-    authImportDeferredKey,
-    authImportScannedKey,
-    ensureTitlingProbeForCurrentTarget,
-    harnessInstallCandidates,
-    harnessInstallDeferredKey,
-    harnessInstallScannedKey,
-    routePlan,
-    scanAuthImportCandidatesForTarget,
-    scanHarnessInstallCandidatesForTarget,
-    selections.container,
+    currentRouteScope,
+    refreshProvisioningForRouteScope,
     selections.location,
-    setRoutePlan,
-    titlingMode,
   ]);
 
   const ensureRoutePlanForSelection = useCallback(async (
     containerSelectionOverride?: string,
   ): Promise<WizardRoutePlan | null> => {
     const location = selections.location;
-    if (location !== "local" && location !== "remote") return null;
-    const targetKey = selectedDaemonTargetKeyRef.current ?? (location === "local" ? "local" : null);
     const containerSelection = (containerSelectionOverride ?? selections.container ?? "").trim();
-    if (!targetKey || !containerSelection) return null;
-
-    const routeKey = `${targetKey}|${containerSelection}`;
-    if (routePlan?.targetKey === routeKey) {
+    if (!effectiveTarget || !containerSelection || (location !== "local" && location !== "remote")) {
+      return null;
+    }
+    const requestedRouteScope = createWorkspaceSetupRouteScope(effectiveTarget, containerSelection);
+    const requestedRouteKey = serializeWorkspaceSetupRouteScope(requestedRouteScope);
+    if (routePlan?.targetKey === requestedRouteKey) {
       return routePlan;
     }
 
-    const run = nextFlowRunToken(routePlanRunRef.current?.runId ?? 0, routeKey);
-    routePlanRunRef.current = run;
     setRoutePlanningBusy(true);
     try {
-      const [authCandidates, titlingRequired, harnessRows] = await Promise.all([
-        scanAuthImportCandidatesForTarget(location),
-        ensureTitlingProbeForCurrentTarget(),
-        scanHarnessInstallCandidatesForTarget(location, containerSelection),
-      ]);
-      if (!isCurrentFlowRunToken(routePlanRunRef.current, run)) return null;
-
-      const nextPlan = buildWizardRoutePlan({
-        targetKey,
-        containerSelection,
-        authImportCandidateCount: authCandidates.length,
-        missingHarnessCount: harnessRows.filter(
-          (candidate) => candidate.installSupported && !(candidate.installed && candidate.healthy),
-        ).length,
-        titlingRequired: titlingRequired === true,
-        titlingMode,
-      });
-      setRoutePlan(nextPlan);
-      return nextPlan;
+      const nextState = await refreshProvisioningForRouteScope(
+        location,
+        requestedRouteScope,
+        "ensure_route_plan",
+      );
+      return nextState?.routePlan ?? null;
     } finally {
-      if (isCurrentFlowRunToken(routePlanRunRef.current, run)) {
-        setRoutePlanningBusy(false);
-      }
+      setRoutePlanningBusy(false);
     }
   }, [
-    ensureTitlingProbeForCurrentTarget,
+    effectiveTarget,
+    refreshProvisioningForRouteScope,
     routePlan,
-    scanAuthImportCandidatesForTarget,
-    scanHarnessInstallCandidatesForTarget,
     selections.container,
     selections.location,
-    setRoutePlan,
     setRoutePlanningBusy,
-    titlingMode,
   ]);
+
+  const getCurrentRoutePlan = useCallback(
+    (): WizardRoutePlan | null => provisioningMachineStateRef.current.routePlan ?? routePlan,
+    [routePlan],
+  );
 
   const advanceFromAuthImportStep = async (
     options?: { clearSelections?: boolean },
-  ): Promise<WizardStepKey | null> => {
+  ): Promise<WizardRoutePlan | null> => {
     if (authImportBusy) return null;
     const selectionSnapshot = options?.clearSelections ? {} : authImportSelected;
     if (options?.clearSelections) {
@@ -924,24 +1047,14 @@ export function useWorkspaceSetupProvisioning({
       }
       setAuthImportBusy(false);
     }
-    const titlingRequired = await ensureTitlingProbeForCurrentTarget();
+    await ensureTitlingProbeForCurrentTarget();
     if (currentStepKeyRef.current !== "auth-import") return null;
-    if (
-      titlingRequired === true
-      && titlingMode !== "skip"
-      && routePlan?.includeTitling !== true
-    ) {
-      if (routePlan) {
-        setRoutePlan({ ...routePlan, includeTitling: true });
-      }
-      return "session-titling";
-    }
-    return nextAfterAuthImport(routePlan);
+    return getCurrentRoutePlan();
   };
 
   const advanceFromHarnessDownloadsStep = async (
     options?: { clearSelections?: boolean },
-  ): Promise<WizardStepKey | null> => {
+  ): Promise<WizardRoutePlan | null> => {
     if (harnessInstallBusy) return null;
     const selectionSnapshot = options?.clearSelections ? {} : harnessInstallSelected;
     if (options?.clearSelections) {
@@ -962,20 +1075,21 @@ export function useWorkspaceSetupProvisioning({
       ({ status }) => status === "failed" || status === "cancelled",
     );
     const runningRows = selectedRows.filter(({ status }) => status === "running");
+    const currentRoutePlan = getCurrentRoutePlan();
 
     if (selectedRows.length === 0 || selectedRows.every(({ status }) => status === "installed" || status === "succeeded")) {
       setHarnessInstallError(null);
       if (currentStepKeyRef.current !== "harness-downloads") return null;
-      return nextAfterHarnessDownloads(routePlan);
+      return currentRoutePlan;
     }
     if (runningRows.length > 0 && startableRows.length === 0) {
       setHarnessInstallError(null);
       if (currentStepKeyRef.current !== "harness-downloads") return null;
-      return nextAfterHarnessDownloads(routePlan);
+      return currentRoutePlan;
     }
     if (blockingRows.length > 0 && startableRows.length === 0) {
       if (currentStepKeyRef.current !== "harness-downloads") return null;
-      return nextAfterHarnessDownloads(routePlan);
+      return currentRoutePlan;
     }
 
     setHarnessInstallBusy(true);
@@ -1072,7 +1186,7 @@ export function useWorkspaceSetupProvisioning({
     }
     if (!shouldAdvance) return null;
     if (currentStepKeyRef.current !== "harness-downloads") return null;
-    return nextAfterHarnessDownloads(routePlan);
+    return getCurrentRoutePlan();
   };
 
   const harnessCandidateStatuses = harnessInstallCandidates.map((candidate) => {
@@ -1281,8 +1395,6 @@ export function useWorkspaceSetupProvisioning({
     }
 
     if (titlingProbeTargetKey !== selectedDaemonTargetKey) {
-      titlingProbePromiseRef.current = null;
-      titlingProbePromiseTargetKeyRef.current = null;
       setTitlingProbeError(null);
       setTitlingProbeDone(false);
       setTitlingConfiguredReady(false);
@@ -1333,47 +1445,16 @@ export function useWorkspaceSetupProvisioning({
   ]);
 
   useEffect(() => {
-    if (!desktopApp) return;
-    if (currentStepKey !== "location") return;
-    if (selections.location) return;
-    void scanAuthImportCandidatesForTarget("local");
-  }, [
-    currentStepKey,
-    desktopApp,
-    scanAuthImportCandidatesForTarget,
-    selections.location,
-  ]);
-
-  useEffect(() => {
-    if (!desktopApp) return;
-    if (!selectedDaemonTargetKey) return;
-    if (selections.location !== "local" && selections.location !== "remote") return;
-    if (selections.location === "remote") {
-      if (!parsedRemoteHost) return;
-      if (remoteStatus !== "connected") return;
-    }
-    void scanHarnessInstallCandidatesForTarget(selections.location).catch(() => {});
-  }, [
-    desktopApp,
-    parsedRemoteHost,
-    remoteStatus,
-    scanHarnessInstallCandidatesForTarget,
-    selections.location,
-    selectedDaemonTargetKey,
-  ]);
-
-  useEffect(() => {
     if (!routePlan) return;
-    const activeTargetKey = selectedDaemonTargetKey
-      ? `${selectedDaemonTargetKey}|${(selections.container ?? "").trim()}`
+    const activeTargetKey = currentRouteScope
+      ? serializeWorkspaceSetupRouteScope(currentRouteScope)
       : null;
     if (activeTargetKey === routePlan.targetKey) return;
     resetRoutePlan();
   }, [
+    currentRouteScope,
     resetRoutePlan,
     routePlan,
-    selectedDaemonTargetKey,
-    selections.container,
   ]);
 
   return {
@@ -1429,6 +1510,7 @@ export function useWorkspaceSetupProvisioning({
     ensureTitlingProbeForCurrentTarget,
     ensureTitlingPersistedForCurrentTarget,
     ensureOnboardingAfterDaemonConnect,
+    refreshAuthImportForRouteScope,
     onSelectTitlingLocal,
     ensureRoutePlanForSelection,
     resetRoutePlan,

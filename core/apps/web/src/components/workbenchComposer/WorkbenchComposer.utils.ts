@@ -3,6 +3,7 @@ import type { SessionViewVerbosity } from "../../state/uiStateStore";
 import type { WorkbenchModeId } from "./WorkbenchComposer.types";
 import type { buildModelCatalog } from "../../utils/modelEffort";
 import { composeModelId } from "../../utils/modelEffort";
+import { hasProviderModels, isEndpointProviderSourceSelected } from "../../utils/providerModelCatalog";
 
 export const MENU_DESCRIPTIONS = {
   harness: `Agent harnesses are the low-level wrappers around models that provide the basic plumbing to allow the model to interact with the workspace. This normally includes features like filesystem access, shell access, configurations to set up MCP servers, and more. Despite similiarities between them, different harnesses will have varying tools, capabilities, and performance - even if used with the same underlying models. From here, you can install agent harnesses you haven't used before and switch which harness powers your next task.`,
@@ -109,10 +110,20 @@ const FALLBACK_MODELS_BY_PROVIDER: Record<string, Array<{ id: string; name?: str
   ],
 };
 
+const SUBSCRIPTION_MODEL_DISCOVERY_PROVIDER_IDS = new Set(["codex", "claude-crp", "copilot"]);
+
 export function buildModelsForProvider(providerId: string, opts?: ProviderOptions): Array<{ id: string; name?: string }> {
   const models = buildModelsFromProviderOptions(opts);
   if (models.length > 0) return models;
   return FALLBACK_MODELS_BY_PROVIDER[providerId] ?? [];
+}
+
+export function shouldShowLoadingProviderModels(providerId: string, opts?: ProviderOptions): boolean {
+  if (!opts) return true;
+  if (hasProviderModels(opts)) return false;
+  if (isEndpointProviderSourceSelected(opts)) return false;
+  if (!SUBSCRIPTION_MODEL_DISCOVERY_PROVIDER_IDS.has(providerId)) return false;
+  return opts.has_active_auth === true;
 }
 
 export function pickDefaultEffort(efforts: string[]): string | null {

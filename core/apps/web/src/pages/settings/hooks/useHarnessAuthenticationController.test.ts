@@ -12,8 +12,10 @@ import {
   deleteAmpAccount,
   getCodexLogin,
   getGeminiLogin,
+  getProviderOptions,
   selectProviderHarnessSource,
   setAmpActiveAccount,
+  setCodexActiveAccount,
   startAmpLogin,
   startCodexLogin,
   startGeminiLogin,
@@ -27,6 +29,7 @@ import {
   loadProvidersBootstrap,
   refreshHostProvidersBootstrap,
   refreshProvidersBootstrap,
+  refreshProvidersBootstrapForScope,
 } from "../../../state/providersBootstrapStore";
 import {
   CLAUDE_LOGIN_COMPLETION_TIMEOUT_MS,
@@ -143,8 +146,10 @@ vi.mock("../../../api/client", async (importOriginal) => {
     deleteAmpAccount: vi.fn(),
     getCodexLogin: vi.fn(),
     getGeminiLogin: vi.fn(),
+    getProviderOptions: vi.fn(),
     selectProviderHarnessSource: vi.fn(),
     setAmpActiveAccount: vi.fn(),
+    setCodexActiveAccount: vi.fn(),
     startAmpLogin: vi.fn(),
     startCodexLogin: vi.fn(),
     startGeminiLogin: vi.fn(),
@@ -161,6 +166,10 @@ vi.mock("../../../state/providersBootstrapStore", async (importOriginal) => {
       bootstrapMockState.hostBootstrapState ?? original.EMPTY_PROVIDERS_BOOTSTRAP),
     getProvidersBootstrapSnapshot: vi.fn((workspaceId: string) =>
       bootstrapMockState.bootstrapStateByWorkspace.get(workspaceId) ?? original.EMPTY_PROVIDERS_BOOTSTRAP),
+    getProvidersBootstrapSnapshotForScope: vi.fn((ownerScope: { kind: "host" | "workspace"; workspaceId?: string }) =>
+      ownerScope.kind === "workspace"
+        ? bootstrapMockState.bootstrapStateByWorkspace.get(ownerScope.workspaceId ?? "") ?? original.EMPTY_PROVIDERS_BOOTSTRAP
+        : bootstrapMockState.hostBootstrapState ?? original.EMPTY_PROVIDERS_BOOTSTRAP),
     hasCachedHostProvidersBootstrap: vi.fn(() => bootstrapMockState.hostBootstrapState !== null),
     invalidateHostProvidersBootstrap: vi.fn(),
     invalidateProvidersBootstrap: vi.fn(),
@@ -168,10 +177,26 @@ vi.mock("../../../state/providersBootstrapStore", async (importOriginal) => {
       consumeHostBootstrapQueue("hostBootstrapLoadQueue", original.EMPTY_PROVIDERS_BOOTSTRAP)),
     loadProvidersBootstrap: vi.fn(async (workspaceId: string) =>
       consumeBootstrapQueue(workspaceId, bootstrapMockState.bootstrapLoadQueueByWorkspace, original.EMPTY_PROVIDERS_BOOTSTRAP)),
+    loadProvidersBootstrapForScope: vi.fn(async (ownerScope: { kind: "host" | "workspace"; workspaceId?: string }) =>
+      ownerScope.kind === "workspace"
+        ? consumeBootstrapQueue(
+          ownerScope.workspaceId ?? "",
+          bootstrapMockState.bootstrapLoadQueueByWorkspace,
+          original.EMPTY_PROVIDERS_BOOTSTRAP,
+        )
+        : consumeHostBootstrapQueue("hostBootstrapLoadQueue", original.EMPTY_PROVIDERS_BOOTSTRAP)),
     refreshHostProvidersBootstrap: vi.fn(async () =>
       consumeHostBootstrapQueue("hostBootstrapRefreshQueue", original.EMPTY_PROVIDERS_BOOTSTRAP)),
     refreshProvidersBootstrap: vi.fn(async (workspaceId: string) =>
       consumeBootstrapQueue(workspaceId, bootstrapMockState.bootstrapRefreshQueueByWorkspace, original.EMPTY_PROVIDERS_BOOTSTRAP)),
+    refreshProvidersBootstrapForScope: vi.fn(async (ownerScope: { kind: "host" | "workspace"; workspaceId?: string }) =>
+      ownerScope.kind === "workspace"
+        ? consumeBootstrapQueue(
+          ownerScope.workspaceId ?? "",
+          bootstrapMockState.bootstrapRefreshQueueByWorkspace,
+          original.EMPTY_PROVIDERS_BOOTSTRAP,
+        )
+        : consumeHostBootstrapQueue("hostBootstrapRefreshQueue", original.EMPTY_PROVIDERS_BOOTSTRAP)),
     subscribeHostProvidersBootstrap: vi.fn((listener: () => void) => {
       bootstrapMockState.hostBootstrapListeners.add(listener);
       return () => {
@@ -185,6 +210,19 @@ vi.mock("../../../state/providersBootstrapStore", async (importOriginal) => {
         listeners.delete(listener);
       };
     }),
+    subscribeProvidersBootstrapForScope: vi.fn((ownerScope: { kind: "host" | "workspace"; workspaceId?: string }, listener: () => void) => {
+      if (ownerScope.kind === "workspace") {
+        const listeners = getBootstrapListeners(ownerScope.workspaceId ?? "");
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      }
+      bootstrapMockState.hostBootstrapListeners.add(listener);
+      return () => {
+        bootstrapMockState.hostBootstrapListeners.delete(listener);
+      };
+    }),
     updateHostProvidersBootstrap: vi.fn((updater: (current: ProvidersBootstrapResponse) => ProvidersBootstrapResponse) =>
       setHostBootstrapSnapshot(
         updater(bootstrapMockState.hostBootstrapState ?? original.EMPTY_PROVIDERS_BOOTSTRAP),
@@ -194,6 +232,17 @@ vi.mock("../../../state/providersBootstrapStore", async (importOriginal) => {
         workspaceId,
         updater(bootstrapMockState.bootstrapStateByWorkspace.get(workspaceId) ?? original.EMPTY_PROVIDERS_BOOTSTRAP),
       )),
+    updateProvidersBootstrapForScope: vi.fn((
+      ownerScope: { kind: "host" | "workspace"; workspaceId?: string },
+      updater: (current: ProvidersBootstrapResponse) => ProvidersBootstrapResponse,
+    ) => ownerScope.kind === "workspace"
+      ? setBootstrapSnapshot(
+        ownerScope.workspaceId ?? "",
+        updater(bootstrapMockState.bootstrapStateByWorkspace.get(ownerScope.workspaceId ?? "") ?? original.EMPTY_PROVIDERS_BOOTSTRAP),
+      )
+      : setHostBootstrapSnapshot(
+        updater(bootstrapMockState.hostBootstrapState ?? original.EMPTY_PROVIDERS_BOOTSTRAP),
+      )),
   };
 });
 
@@ -202,8 +251,11 @@ vi.mock("../../../state/providerInstallProgressStore", async (importOriginal) =>
   return {
     ...original,
     getProviderInstallProgressSnapshot: vi.fn(() => ({})),
+    getProviderInstallProgressSnapshotForScope: vi.fn(() => ({})),
     subscribeProviderInstallProgress: vi.fn(() => () => {}),
+    subscribeProviderInstallProgressForScope: vi.fn(() => () => {}),
     upsertProviderInstallProgress: vi.fn(),
+    upsertProviderInstallProgressForScope: vi.fn(),
   };
 });
 
@@ -355,8 +407,10 @@ beforeEach(() => {
   vi.mocked(deleteAmpAccount).mockReset();
   vi.mocked(getCodexLogin).mockReset();
   vi.mocked(getGeminiLogin).mockReset();
+  vi.mocked(getProviderOptions).mockReset();
   vi.mocked(selectProviderHarnessSource).mockReset();
   vi.mocked(setAmpActiveAccount).mockReset();
+  vi.mocked(setCodexActiveAccount).mockReset();
   vi.mocked(startAmpLogin).mockReset();
   vi.mocked(startCodexLogin).mockReset();
   vi.mocked(startGeminiLogin).mockReset();
@@ -368,6 +422,7 @@ beforeEach(() => {
   vi.mocked(loadProvidersBootstrap).mockReset();
   vi.mocked(refreshHostProvidersBootstrap).mockReset();
   vi.mocked(refreshProvidersBootstrap).mockReset();
+  vi.mocked(refreshProvidersBootstrapForScope).mockReset();
   vi.mocked(openExternalLink).mockReset();
   setBootstrapSnapshot("ws-test", makeBootstrap());
   setHostBootstrapSnapshot(makeBootstrap());
@@ -379,6 +434,15 @@ beforeEach(() => {
     consumeHostBootstrapQueue("hostBootstrapRefreshQueue", makeBootstrap()));
   vi.mocked(refreshProvidersBootstrap).mockImplementation(async (workspaceId: string) =>
     consumeBootstrapQueue(workspaceId, bootstrapMockState.bootstrapRefreshQueueByWorkspace, makeBootstrap()));
+  vi.mocked(refreshProvidersBootstrapForScope).mockImplementation(async (
+    ownerScope: { kind: "host" | "workspace"; workspaceId?: string },
+  ) => ownerScope.kind === "workspace"
+    ? consumeBootstrapQueue(
+      ownerScope.workspaceId ?? "",
+      bootstrapMockState.bootstrapRefreshQueueByWorkspace,
+      makeBootstrap(),
+    )
+    : consumeHostBootstrapQueue("hostBootstrapRefreshQueue", makeBootstrap()));
 });
 
 describe("Claude polling duration", () => {
@@ -876,11 +940,11 @@ describe("useHarnessAuthenticationController", () => {
       await controller?.onAmpDelete("amp-1");
     });
     await waitFor(() => {
-      expect(vi.mocked(refreshProvidersBootstrap)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(refreshProvidersBootstrapForScope)).toHaveBeenCalledTimes(1);
       expect(vi.mocked(invalidateProvidersBootstrap)).toHaveBeenCalledTimes(1);
       expect(requireController(controller).providers[0]?.details?.install_target).toBe("container");
     });
-    const refreshCallsAfterDelete = vi.mocked(refreshProvidersBootstrap).mock.calls.length;
+    const refreshCallsAfterDelete = vi.mocked(refreshProvidersBootstrapForScope).mock.calls.length;
     const invalidateCallsAfterDelete = vi.mocked(invalidateProvidersBootstrap).mock.calls.length;
 
     await act(async () => {
@@ -888,9 +952,126 @@ describe("useHarnessAuthenticationController", () => {
     });
     await waitFor(() => {
       expect(vi.mocked(setAmpActiveAccount)).toHaveBeenCalledWith("amp-2");
-      expect(vi.mocked(refreshProvidersBootstrap).mock.calls.length).toBeGreaterThan(refreshCallsAfterDelete);
+      expect(vi.mocked(refreshProvidersBootstrapForScope).mock.calls.length).toBeGreaterThan(refreshCallsAfterDelete);
       expect(vi.mocked(invalidateProvidersBootstrap).mock.calls.length).toBeGreaterThan(invalidateCallsAfterDelete);
       expect(requireController(controller).providers[0]?.details?.install_target).toBe("container");
+    });
+  });
+
+  it("warms Codex provider options after a workspace-scoped auth change", async () => {
+    let controller: Controller | null = null;
+    const codexRow: HarnessAuthRow = {
+      key: "codex:acct-next",
+      kind: "subscription",
+      label: "Codex Next",
+      active: false,
+      selectable: true,
+      account_id: "acct-next",
+    };
+    const pinnedCodexOptions = {
+      provider_id: "codex",
+      workspace_id: "ws-test",
+      supports_load: false,
+      auth_required: false,
+      has_active_auth: true,
+      auth_mode: "subscription" as const,
+      source: {
+        provider_id: "codex",
+        selected_source_kind: "subscription" as const,
+        selected_endpoint_id: null,
+        endpoints: [],
+      },
+      probed_at: "2026-03-10T00:00:00.000Z",
+      models: {
+        models: [{ id: "gpt-5.3-codex/low" }, { id: "gpt-5.3-codex/medium" }],
+        current_model_id: "gpt-5.3-codex/medium",
+        meta: {
+          source_kind: "subscription",
+          catalog_source: "codex_bundle_pinned",
+          refresh_pending: true,
+        },
+      },
+    };
+
+    setBootstrapSnapshot("ws-test", makeBootstrap({
+      providers: [
+        {
+          provider_id: "codex",
+          display_name: "Codex",
+          installed: true,
+          health: "ok",
+          diagnostics: [],
+          details: {},
+        } as never,
+      ],
+      provider_options: {
+        codex: pinnedCodexOptions,
+      },
+      codex_accounts: {
+        active_account_id: "acct-current",
+        accounts: [
+          { id: "acct-current", label: "Current", created_at: "2026-03-10T00:00:00.000Z" },
+          { id: "acct-next", label: "Next", created_at: "2026-03-10T00:00:00.000Z" },
+        ],
+        logins: [],
+      },
+    }));
+    queueBootstrapRefresh("ws-test", makeBootstrap({
+      providers: [
+        {
+          provider_id: "codex",
+          display_name: "Codex",
+          installed: true,
+          health: "ok",
+          diagnostics: [],
+          details: {},
+        } as never,
+      ],
+      provider_options: {
+        codex: pinnedCodexOptions,
+      },
+      codex_accounts: {
+        active_account_id: "acct-next",
+        accounts: [
+          { id: "acct-current", label: "Current", created_at: "2026-03-10T00:00:00.000Z" },
+          { id: "acct-next", label: "Next", created_at: "2026-03-10T00:00:00.000Z" },
+        ],
+        logins: [],
+      },
+    }));
+    vi.mocked(setCodexActiveAccount).mockResolvedValue({
+      active_account_id: "acct-next",
+      accounts: [
+        { id: "acct-current", label: "Current", created_at: "2026-03-10T00:00:00.000Z" },
+        { id: "acct-next", label: "Next", created_at: "2026-03-10T00:00:00.000Z" },
+      ],
+      logins: [],
+    });
+    vi.mocked(getProviderOptions).mockResolvedValue({
+      ...pinnedCodexOptions,
+      models: {
+        models: [{ id: "gpt-5.4/low" }, { id: "gpt-5.4/medium" }],
+        current_model_id: "gpt-5.4/medium",
+      },
+    });
+
+    render(createElement(ControllerHarness, {
+      onChange: (next) => {
+        controller = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(controller).not.toBeNull();
+    });
+
+    await act(async () => {
+      await controller?.onSelectHarnessAuthRow("codex", codexRow);
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(setCodexActiveAccount)).toHaveBeenCalledWith("acct-next");
+      expect(vi.mocked(getProviderOptions)).toHaveBeenCalledWith("ws-test", "codex");
     });
   });
 
@@ -937,6 +1118,10 @@ describe("useHarnessAuthenticationController", () => {
     expect(requireController(controller).providers[0]?.details?.install_target).toBe("container");
     expect(vi.mocked(loadHostProvidersBootstrap)).not.toHaveBeenCalled();
     expect(vi.mocked(refreshHostProvidersBootstrap)).not.toHaveBeenCalled();
+    expect(vi.mocked(refreshProvidersBootstrapForScope)).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "workspace",
+      workspaceId: "ws-test",
+    }));
     expect(vi.mocked(invalidateHostProvidersBootstrap)).not.toHaveBeenCalled();
     expect(vi.mocked(invalidateProvidersBootstrap)).toHaveBeenCalledWith("ws-test");
   });
@@ -996,7 +1181,10 @@ describe("useHarnessAuthenticationController", () => {
     });
 
     expect(vi.mocked(invalidateHostProvidersBootstrap)).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(refreshHostProvidersBootstrap)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(refreshProvidersBootstrapForScope)).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "host",
+    }));
+    expect(vi.mocked(refreshHostProvidersBootstrap)).not.toHaveBeenCalled();
     expect(vi.mocked(invalidateProvidersBootstrap)).not.toHaveBeenCalled();
     expect(vi.mocked(refreshProvidersBootstrap)).not.toHaveBeenCalled();
   });

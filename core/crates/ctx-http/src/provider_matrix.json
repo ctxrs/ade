@@ -3,6 +3,7 @@
   "providers": [
     {
       "id": "acp-crp-bridge",
+      "kind": "dependency",
       "display_name": "ACP CRP Bridge",
       "tier": "tier2",
       "command": {
@@ -166,61 +167,8 @@
       ]
     },
     {
-      "id": "cagent",
-      "display_name": "cagent",
-      "tier": "tier2",
-      "command": {
-        "command": "cagent",
-        "args": []
-      },
-      "managed_install": {
-        "kind": "archive",
-        "version": "1.29.0",
-        "args": [],
-        "targets": {
-          "darwin-aarch64": {
-            "url": "https://github.com/docker/cagent/releases/download/v1.27.0/cagent-darwin-arm64",
-            "archive": "none",
-            "sha256": "eacbb1d56fb5b164fe4889884635d229a1b6fe5b008bf974b848debd039bbe13",
-            "bin_path": "cagent"
-          },
-          "darwin-x86_64": {
-            "url": "https://github.com/docker/cagent/releases/download/v1.27.0/cagent-darwin-amd64",
-            "archive": "none",
-            "sha256": "8eff433559850de3bc3eaa0f65ebebae8ead3bc4e539a25ba0616955d2d4b7db",
-            "bin_path": "cagent"
-          },
-          "linux-aarch64": {
-            "url": "https://github.com/docker/cagent/releases/download/v1.27.0/cagent-linux-arm64",
-            "archive": "none",
-            "sha256": "4aaaf1ffec9501a0a67cb3986bcb62f7a6bc1dce196d628afbde938fabc7d3bf",
-            "bin_path": "cagent"
-          },
-          "linux-x86_64": {
-            "url": "https://github.com/docker/cagent/releases/download/v1.27.0/cagent-linux-amd64",
-            "archive": "none",
-            "sha256": "a7e3f845afdd2304adaae89a120598c3310bdfe6498ae0a4f2546deb64a10f8f",
-            "bin_path": "cagent"
-          }
-        }
-      },
-      "version_probe": {
-        "kind": "command",
-        "args": [
-          "--version"
-        ]
-      },
-      "releases": [
-        {
-          "version": "1.29.0",
-          "status": "supported",
-          "context_min": "0.1.0",
-          "notes": "Pinned Docker cagent release"
-        }
-      ]
-    },
-    {
       "id": "claude-cli",
+      "kind": "dependency",
       "display_name": "Claude CLI",
       "tier": "tier2",
       "command": {

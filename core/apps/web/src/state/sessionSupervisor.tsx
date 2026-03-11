@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { SessionLifecycleCoordinator } from "./sessionLifecycleCoordinator";
 import {
   SessionSupervisor,
   type SessionCacheEntry,
@@ -13,17 +14,22 @@ export type { SessionCacheEntry, SessionLoadState, SessionMode, SessionSuperviso
 type OpenOptions = Parameters<SessionSupervisor["openSession"]>[1];
 
 const SessionSupervisorContext = createContext<SessionSupervisor | null>(null);
+const SessionLifecycleCoordinatorContext = createContext<SessionLifecycleCoordinator | null>(null);
 
 export function SessionSupervisorProvider({ children }: { children: React.ReactNode }) {
   const supRef = useRef<SessionSupervisor | null>(null);
+  const lifecycleRef = useRef<SessionLifecycleCoordinator | null>(null);
   if (!supRef.current) {
     supRef.current = new SessionSupervisor();
+    lifecycleRef.current = new SessionLifecycleCoordinator(supRef.current);
   }
 
   return (
-    <SessionSupervisorContext.Provider value={supRef.current}>
-      {children}
-    </SessionSupervisorContext.Provider>
+    <SessionLifecycleCoordinatorContext.Provider value={lifecycleRef.current}>
+      <SessionSupervisorContext.Provider value={supRef.current}>
+        {children}
+      </SessionSupervisorContext.Provider>
+    </SessionLifecycleCoordinatorContext.Provider>
   );
 }
 
@@ -31,6 +37,12 @@ export function useSessionSupervisor() {
   const sup = useContext(SessionSupervisorContext);
   if (!sup) throw new Error("SessionSupervisorProvider missing");
   return sup;
+}
+
+export function useSessionLifecycleCoordinator() {
+  const coordinator = useContext(SessionLifecycleCoordinatorContext);
+  if (!coordinator) throw new Error("SessionSupervisorProvider missing");
+  return coordinator;
 }
 
 export function useSessionCacheSnapshot(): SessionSupervisorSnapshot {
@@ -44,7 +56,7 @@ export function useSessionEntry(sessionId: string): SessionCacheEntry | null {
 }
 
 export function useOpenSession(sessionId: string, opts?: OpenOptions) {
-  const sup = useSessionSupervisor();
+  const coordinator = useSessionLifecycleCoordinator();
   const isOptimisticSessionId = useMemo(() => String(sessionId || "").startsWith("optimistic-session-"), [sessionId]);
   const stableOpts = useMemo(
     () => ({
@@ -58,6 +70,6 @@ export function useOpenSession(sessionId: string, opts?: OpenOptions) {
   useEffect(() => {
     if (!sessionId) return;
     if (isOptimisticSessionId) return;
-    return sup.openSession(String(sessionId), stableOpts);
-  }, [sup, sessionId, stableOpts, isOptimisticSessionId]);
+    return coordinator.registerRouteOpen(String(sessionId), stableOpts);
+  }, [coordinator, sessionId, stableOpts, isOptimisticSessionId]);
 }

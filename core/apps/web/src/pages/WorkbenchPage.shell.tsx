@@ -1272,7 +1272,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       activeSessionId.startsWith("optimistic-") ||
       (optimisticStartingSessionId && optimisticStartingSessionId === activeSessionId));
   const openSessionId = activeSessionId && !isOptimisticSessionId ? activeSessionId : "";
-  useOpenSession(openSessionId, { watchDiff: diffOpen, mode: activeTaskArchived ? "archived" : "active" });
+  useOpenSession(openSessionId, { watchDiff: diffOpen });
 
   const showDebugIds = useMemo(() => {
     const params = new URLSearchParams(window.location.search);

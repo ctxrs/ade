@@ -267,6 +267,80 @@ async fn copilot_provider_options_include_pinned_model_catalog() {
     );
 }
 
+#[tokio::test]
+async fn providers_bootstrap_includes_pinned_codex_and_claude_catalogs() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
+    let state = app_state(data_dir.path()).await;
+    let app = api::router(state.clone());
+
+    state.providers.statuses.lock().await.insert(
+        "codex".to_string(),
+        ProviderStatus {
+            provider_id: "codex".to_string(),
+            installed: true,
+            detected_path: None,
+            version: Some("0.98.0".to_string()),
+            capabilities: None,
+            health: ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+        },
+    );
+    state.providers.statuses.lock().await.insert(
+        "claude-crp".to_string(),
+        ProviderStatus {
+            provider_id: "claude-crp".to_string(),
+            installed: true,
+            detected_path: None,
+            version: Some("2.1.47".to_string()),
+            capabilities: None,
+            health: ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+        },
+    );
+
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let (status, body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::GET,
+        format!("/api/workspaces/{}/providers/bootstrap", ws.id.0),
+        None,
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "bootstrap request failed: {body:#?}"
+    );
+    assert_eq!(
+        body.pointer("/provider_options/codex/models/meta/catalog_source")
+            .and_then(serde_json::Value::as_str),
+        Some("codex_bundle_pinned"),
+        "expected pinned codex bootstrap catalog: {body:#?}"
+    );
+    assert_eq!(
+        body.pointer("/provider_options/codex/models/current_model_id")
+            .and_then(serde_json::Value::as_str),
+        Some("gpt-5.4/medium"),
+        "expected pinned codex bootstrap current model: {body:#?}"
+    );
+    assert_eq!(
+        body.pointer("/provider_options/claude-crp/models/meta/catalog_source")
+            .and_then(serde_json::Value::as_str),
+        Some("claude_subscription_pinned"),
+        "expected pinned claude bootstrap catalog: {body:#?}"
+    );
+    assert_eq!(
+        body.pointer("/provider_options/claude-crp/models/current_model_id")
+            .and_then(serde_json::Value::as_str),
+        Some("default/medium"),
+        "expected pinned claude bootstrap current model: {body:#?}"
+    );
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn provider_verify_probe_uses_managed_dependency_path() {

@@ -1,18 +1,36 @@
 import { describe, expect, it } from "vitest";
 import {
+  createDesktopLocalDaemonTargetScope,
+  createProvisioningScope,
+} from "../../state/scopeIdentity";
+import {
   buildOnboardingAfterConnectResult,
   buildWizardRoutePlan,
   resolveRoutePlanInsertionStep,
 } from "./routePlanner";
-import type { WorkspaceSetupProvisioningSnapshot } from "./workflowTypes";
+import {
+  serializeWorkspaceSetupRouteScope,
+  type WorkspaceSetupProvisioningSnapshot,
+  type WorkspaceSetupRouteScope,
+} from "./workflowTypes";
+
+const routeScope = (
+  overrides?: Partial<WorkspaceSetupRouteScope>,
+): WorkspaceSetupRouteScope => ({
+  provisioningScope: createProvisioningScope(createDesktopLocalDaemonTargetScope(), "container"),
+  containerSelection: "disk-isolated",
+  ...overrides,
+});
 
 const snapshot = (
   overrides?: Partial<WorkspaceSetupProvisioningSnapshot>,
 ): WorkspaceSetupProvisioningSnapshot => ({
-  targetKey: "local",
-  containerSelection: "disk-isolated",
+  routeScope: routeScope(),
+  authImportStatus: "ready",
   authImportCandidateCount: 0,
+  harnessCandidatesStatus: "ready",
   missingHarnessCount: 0,
+  titlingProbeStatus: "ready",
   titlingRequired: false,
   titlingMode: "unset",
   ...overrides,
@@ -26,7 +44,7 @@ describe("routePlanner", () => {
       titlingRequired: true,
       titlingMode: "remote",
     }))).toEqual({
-      targetKey: "local|disk-isolated",
+      targetKey: serializeWorkspaceSetupRouteScope(routeScope()),
       containerSelection: "disk-isolated",
       includeHarnessDownloads: true,
       includeAuthImport: true,
@@ -53,7 +71,7 @@ describe("routePlanner", () => {
 
   it("reuses prior onboarding insertions only for the same route key", () => {
     const previousPlan = {
-      targetKey: "local|disk-isolated",
+      targetKey: serializeWorkspaceSetupRouteScope(routeScope()),
       containerSelection: "disk-isolated",
       includeHarnessDownloads: true,
       includeAuthImport: false,
@@ -69,14 +87,17 @@ describe("routePlanner", () => {
 
   it("does not suppress onboarding insertions when the route key changes", () => {
     const previousPlan = {
-      targetKey: "local|disk-isolated",
+      targetKey: serializeWorkspaceSetupRouteScope(routeScope()),
       containerSelection: "disk-isolated",
       includeHarnessDownloads: true,
       includeAuthImport: true,
       includeTitling: true,
     };
     const plan = buildWizardRoutePlan(snapshot({
-      targetKey: "ssh:user@devbox.example:4399:/srv/ctx",
+      routeScope: {
+        provisioningScope: createProvisioningScope(createDesktopLocalDaemonTargetScope(), "container"),
+        containerSelection: "host-mounted",
+      },
       authImportCandidateCount: 1,
       missingHarnessCount: 1,
       titlingRequired: true,
@@ -93,5 +114,18 @@ describe("routePlanner", () => {
     }), null, { allowTitlingInsertion: false });
     expect(result.insertionStep).toBeNull();
     expect(result.routePlan.includeTitling).toBe(true);
+  });
+
+  it("keeps onboarding steps visible when a scoped refresh fails", () => {
+    const plan = buildWizardRoutePlan(snapshot({
+      authImportStatus: "error",
+      harnessCandidatesStatus: "error",
+      titlingProbeStatus: "error",
+      titlingMode: "remote",
+    }));
+
+    expect(plan.includeAuthImport).toBe(true);
+    expect(plan.includeHarnessDownloads).toBe(true);
+    expect(plan.includeTitling).toBe(true);
   });
 });

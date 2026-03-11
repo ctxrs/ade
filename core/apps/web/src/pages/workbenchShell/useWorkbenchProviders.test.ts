@@ -1,10 +1,13 @@
 import { act, render, waitFor } from "@testing-library/react";
-import { createElement, useEffect, type Dispatch, type SetStateAction } from "react";
+import { createElement, useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DraftHarness } from "../../components/WorkbenchComposer";
-import type { ProviderOptions, ProvidersBootstrapResponse } from "../../api/client";
+import type { ProviderOptions, ProviderStatus, ProvidersBootstrapResponse } from "../../api/client";
 import { getProviderOptions, getProvidersBootstrap } from "../../api/client";
-import { getProviderInstallProgressSnapshot } from "../../state/providerInstallProgressStore";
+import { setDaemonConnection } from "../../api/daemonConnection";
+import {
+  getProviderInstallProgressSnapshotForScope,
+} from "../../state/providerInstallProgressStore";
 import { resetProviderOnboardingCoordinatorForTests } from "../../state/providerOnboardingCoordinator";
 import { refreshProvidersBootstrap } from "../../state/providersBootstrapStore";
 import { resolveProviderOptionsUpdate, shouldHydrateProviderModels } from "./useWorkbenchProviders";
@@ -24,7 +27,9 @@ vi.mock("../../state/providerInstallProgressStore", async (importOriginal) => {
   return {
     ...original,
     getProviderInstallProgressSnapshot: vi.fn(() => ({})),
+    getProviderInstallProgressSnapshotForScope: vi.fn(() => ({})),
     subscribeProviderInstallProgress: vi.fn(() => () => {}),
+    subscribeProviderInstallProgressForScope: vi.fn(() => () => {}),
   };
 });
 
@@ -69,19 +74,23 @@ const deferred = <T,>() => {
   return { promise, resolve, reject };
 };
 
+const providerStatus = (
+  provider_id: string,
+  opts?: Partial<ProviderStatus>,
+): ProviderStatus => ({
+  provider_id,
+  installed: true,
+  health: "ok",
+  diagnostics: [],
+  details: {},
+  ...opts,
+});
+
 const makeBootstrap = (
   providerOptions: Record<string, ProviderOptions>,
+  providers: ProviderStatus[] = [providerStatus("codex")],
 ): ProvidersBootstrapResponse => ({
-  providers: [
-    {
-      provider_id: "codex",
-      display_name: "Codex",
-      installed: true,
-      health: "ok",
-      diagnostics: [],
-      details: {},
-    } as never,
-  ],
+  providers,
   provider_options: providerOptions,
   provider_harness_config: {},
   codex_accounts: {
@@ -147,9 +156,36 @@ function WorkbenchProvidersHarness({
   return null;
 }
 
+function WorkbenchProvidersDraftHarness({
+  workspaceId,
+  initialDraftHarness,
+  onChange,
+}: {
+  workspaceId: string;
+  initialDraftHarness: DraftHarness | null;
+  onChange: (value: { hookValue: HookValue; draftHarness: DraftHarness | null }) => void;
+}) {
+  const [draftHarness, setDraftHarness] = useState<DraftHarness | null>(initialDraftHarness);
+  const hookValue = useWorkbenchProviders({
+    workspaceId,
+    setDraftHarness,
+    onStartError: () => {},
+  });
+
+  useEffect(() => {
+    onChange({ hookValue, draftHarness });
+  }, [draftHarness, hookValue, onChange]);
+
+  return null;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   resetProviderOnboardingCoordinatorForTests();
+  setDaemonConnection({
+    baseUrl: "https://daemon-a.example",
+    source: "test",
+  });
 });
 
 describe("shouldHydrateProviderModels", () => {
@@ -157,7 +193,7 @@ describe("shouldHydrateProviderModels", () => {
     expect(shouldHydrateProviderModels("claude-crp", baseOptions("claude-crp"))).toBe(true);
   });
 
-  it("requests hydration for endpoint-selected sources when models are missing", () => {
+  it("does not request subscription hydration for endpoint-selected sources when models are missing", () => {
     const options: ProviderOptions = {
       ...baseOptions("claude-crp"),
       source: {
@@ -167,7 +203,7 @@ describe("shouldHydrateProviderModels", () => {
         endpoints: [],
       },
     };
-    expect(shouldHydrateProviderModels("claude-crp", options)).toBe(true);
+    expect(shouldHydrateProviderModels("claude-crp", options)).toBe(false);
   });
 
   it("does not request hydration when models already exist", () => {
@@ -529,11 +565,84 @@ describe("useWorkbenchProviders", () => {
     });
   });
 
+  it("scopes in-flight provider auth-summary requests by daemon target for the same workspace id", async () => {
+    const workspaceId = "ws-daemon-scope";
+    const pendingA = deferred<ProviderOptions>();
+    const pendingB = deferred<ProviderOptions>();
+    let hookValue: HookValue | null = null;
+
+    vi.mocked(getProvidersBootstrap).mockImplementation(async () => makeBootstrap({
+      codex: {
+        ...baseOptions("codex"),
+        workspace_id: workspaceId,
+      },
+    }));
+    vi.mocked(getProviderOptions)
+      .mockImplementationOnce(() => pendingA.promise)
+      .mockImplementationOnce(() => pendingB.promise);
+
+    render(createElement(WorkbenchProvidersHarness, {
+      workspaceId,
+      onChange: (next) => {
+        hookValue = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(hookValue?.providerOptions.codex?.workspace_id).toBe(workspaceId);
+    });
+
+    void requireHookValue(hookValue).ensureProviderAuthSummary("codex");
+    await Promise.resolve();
+
+    await waitFor(() => {
+      expect(vi.mocked(getProviderOptions)).toHaveBeenCalledTimes(1);
+    });
+
+    act(() => {
+      setDaemonConnection({
+        baseUrl: "https://daemon-b.example",
+        source: "test",
+      });
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(getProvidersBootstrap).mock.calls.length).toBeGreaterThan(1);
+    });
+
+    void requireHookValue(hookValue).ensureProviderAuthSummary("codex");
+    await Promise.resolve();
+
+    await waitFor(() => {
+      expect(vi.mocked(getProviderOptions)).toHaveBeenCalledTimes(2);
+    });
+
+    pendingB.resolve({
+      ...baseOptions("codex"),
+      workspace_id: workspaceId,
+      models: {
+        models: [{ id: "gpt-5" }],
+        current_model_id: "gpt-5",
+      },
+    });
+    pendingA.resolve({
+      ...baseOptions("codex"),
+      workspace_id: workspaceId,
+    });
+
+    await waitFor(() => {
+      expect(hookValue?.providerOptions.codex?.models).toEqual({
+        models: [{ id: "gpt-5" }],
+        current_model_id: "gpt-5",
+      });
+    });
+  });
+
   it("selects provider install progress for the provider target", async () => {
     const workspaceId = "ws-target-install";
     let hookValue: HookValue | null = null;
 
-    vi.mocked(getProviderInstallProgressSnapshot).mockReturnValue({
+    vi.mocked(getProviderInstallProgressSnapshotForScope).mockReturnValue({
       codex: {
         host: {
           installId: "install-host",
@@ -586,6 +695,36 @@ describe("useWorkbenchProviders", () => {
     await waitFor(() => {
       expect(hookValue?.providerInstallsById.codex?.installId).toBe("install-container");
       expect(hookValue?.providerInstallsById.codex?.target).toBe("container");
+    });
+  });
+
+  it("applies extracted draft-harness replacement policy through the hook", async () => {
+    const workspaceId = "ws-default-remap";
+    let draftHarness: DraftHarness | null = null;
+    let hookValue: HookValue | null = null;
+
+    vi.mocked(getProvidersBootstrap).mockResolvedValue(makeBootstrap(
+      {
+        "claude-crp": {
+          ...baseOptions("claude-crp"),
+          workspace_id: workspaceId,
+        },
+      },
+      [providerStatus("claude-crp")],
+    ));
+
+    render(createElement(WorkbenchProvidersDraftHarness, {
+      workspaceId,
+      initialDraftHarness: { providerId: "codex", modelId: "" },
+      onChange: (next) => {
+        hookValue = next.hookValue;
+        draftHarness = next.draftHarness;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(hookValue?.defaultProviderId).toBe("claude-crp");
+      expect(draftHarness).toEqual({ providerId: "claude-crp", modelId: "" });
     });
   });
 });

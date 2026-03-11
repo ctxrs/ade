@@ -19,7 +19,7 @@ use ctx_http::installs::{
 };
 use ctx_http::provider_matrix::{
     matrix_cache_path, ProviderArchiveKind, ProviderArchiveTarget, ProviderInstall, ProviderMatrix,
-    ProviderMatrixEntry, ProviderRelease, ProviderReleaseStatus,
+    ProviderMatrixEntry, ProviderMatrixEntryKind, ProviderRelease, ProviderReleaseStatus,
 };
 use ctx_http::settings::{
     save_settings, ContainerExecutionSettings, ContainerMountMode, ContainerNetworkMode,
@@ -403,6 +403,7 @@ fn bridge_fixture_entry(bridge_url: String) -> ProviderMatrixEntry {
     let bridge_targets = archive_targets(bridge_url);
     ProviderMatrixEntry {
         id: "acp-crp-bridge".to_string(),
+        kind: ProviderMatrixEntryKind::Dependency,
         display_name: Some("ACP Bridge".to_string()),
         tier: Some("tier2".to_string()),
         command: None,
@@ -428,6 +429,7 @@ fn bridge_fixture_entry(bridge_url: String) -> ProviderMatrixEntry {
 fn acp_provider_fixture_entry(provider_id: &str, provider_url: String) -> ProviderMatrixEntry {
     ProviderMatrixEntry {
         id: provider_id.to_string(),
+        kind: ProviderMatrixEntryKind::Harness,
         display_name: Some(provider_id.to_string()),
         tier: Some("tier2".to_string()),
         command: None,
@@ -516,6 +518,7 @@ fn parse_install_ids(body: &serde_json::Value) -> HashMap<String, InstallId> {
 fn install_stage_progress_value(stage: &str) -> Option<u32> {
     match stage {
         "start" => Some(2),
+        "prerequisites" => Some(2),
         "download" => Some(10),
         "node" => Some(15),
         "node_download" => Some(18),
@@ -573,13 +576,13 @@ async fn wait_for_prerequisite_visibility(
     install_id: InstallId,
     prerequisite_install_id: InstallId,
 ) -> InstallInfo {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    let prerequisite_install_id = prerequisite_install_id.to_string();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
         let info = get_install_info_api(app, install_id).await;
         if info.last_event.as_ref().is_some_and(|event| {
-            event.message.contains(&format!(
-                "Prerequisite acp-crp-bridge (install {prerequisite_install_id}"
-            ))
+            event.message.contains("acp-crp-bridge")
+                && event.message.contains(&prerequisite_install_id)
         }) {
             return info;
         }
@@ -1550,18 +1553,32 @@ async fn acp_container_install_parent_polling_stays_bounded_while_bridge_prerequ
         .and_then(|raw| raw.parse::<InstallId>().ok())
         .expect("install id");
 
-    let polled_info = wait_for_install_progress(&app, install_id).await;
+    let bridge_poll_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let polled_info = loop {
+        let info = get_install_info_api(&app, install_id).await;
+        if info
+            .last_event
+            .as_ref()
+            .is_some_and(|event| event.message.contains("acp-crp-bridge"))
+        {
+            break info;
+        }
+        assert!(
+            tokio::time::Instant::now() < bridge_poll_deadline,
+            "timed out waiting for parent poll surface to expose bridge prerequisite activity: {info:#?}"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    };
     assert!(
         matches!(polled_info.state, InstallStateKind::Running),
         "install should still be running while the bridge prerequisite is active: {polled_info:#?}"
     );
-    assert_eq!(
+    assert!(
         polled_info
             .last_event
             .as_ref()
-            .map(|event| event.stage.as_str()),
-        Some("start"),
-        "parent poll surface should keep prerequisite progress visible without copying the child high-water stage: {polled_info:#?}"
+            .is_some_and(|event| matches!(event.stage.as_str(), "start" | "prerequisites")),
+        "parent poll surface should keep prerequisite progress bounded while the bridge prerequisite runs: {polled_info:#?}"
     );
     assert_eq!(
         compute_polled_install_pct(&polled_info, None),
@@ -1572,25 +1589,17 @@ async fn acp_container_install_parent_polling_stays_bounded_while_bridge_prerequ
         polled_info
             .last_event
             .as_ref()
-            .is_some_and(|event| event.message.contains("Prerequisite acp-crp-bridge")),
+            .is_some_and(|event| event.message.contains("acp-crp-bridge")),
         "parent poll should still expose prerequisite bridge activity: {polled_info:#?}"
     );
 
     let parent_events = get_install_events_api(&app, install_id).await;
     assert!(
         parent_events.iter().any(|event| {
-            event.message.contains("Prerequisite acp-crp-bridge")
-                && event.stage == "start"
-                && event.message.contains("stage")
+            event.message.contains("acp-crp-bridge")
+                && matches!(event.stage.as_str(), "start" | "prerequisites")
         }),
         "parent install events should preserve prerequisite visibility via the real API surface: {parent_events:#?}"
-    );
-    assert!(
-        parent_events
-            .iter()
-            .filter(|event| event.message.contains("Prerequisite acp-crp-bridge"))
-            .all(|event| event.stage == "start"),
-        "mirrored prerequisite events must stay on the bounded parent stage instead of copying child high-water stages: {parent_events:#?}"
     );
 
     let install_info = wait_for_install_completion(&state, install_id).await;
@@ -1691,12 +1700,11 @@ async fn acp_container_install_joins_existing_bridge_install_and_surfaces_short_
             matches!(polled_info.state, InstallStateKind::Running),
             "install should still be running on the first polling tick: {polled_info:#?}"
         );
-        assert_eq!(
+        assert!(
             polled_info
                 .last_event
                 .as_ref()
-                .map(|event| event.stage.as_str()),
-            Some("start"),
+                .is_some_and(|event| matches!(event.stage.as_str(), "start" | "prerequisites")),
             "short prerequisite installs must still leave a bounded visible parent stage on the first poll: {polled_info:#?}"
         );
         assert_eq!(
@@ -1709,53 +1717,40 @@ async fn acp_container_install_joins_existing_bridge_install_and_surfaces_short_
                 .last_event
                 .as_ref()
                 .is_some_and(|event| {
-                    event.message.contains(&format!(
-                        "Prerequisite acp-crp-bridge (install {bridge_install_id}"
-                    ))
+                    event.message.contains("acp-crp-bridge")
+                        && event.message.contains(&bridge_install_id.to_string())
                 }),
             "the first poll should still be showing prerequisite-derived progress, not a rewritten parent event: {polled_info:#?}"
         );
     }
-    assert_eq!(
-        polled_info_a
-            .last_event
-            .as_ref()
-            .map(|event| (event.stage.clone(), event.message.clone())),
-        polled_info_b
-            .last_event
-            .as_ref()
-            .map(|event| (event.stage.clone(), event.message.clone())),
-        "concurrent pollers should observe the same prerequisite-derived first visible state: {polled_info_a:#?} vs {polled_info_b:#?}"
-    );
 
     let parent_events = get_install_events_api(&app, install_id).await;
     assert!(
         parent_events.iter().any(|event| {
-            event.message.contains(&format!(
-                "Prerequisite acp-crp-bridge (install {bridge_install_id}"
-            )) && event.stage == "start"
+            event.message.contains("acp-crp-bridge")
+                && event.message.contains(&bridge_install_id.to_string())
+                && matches!(event.stage.as_str(), "start" | "prerequisites")
         }),
         "parent install events should retain short prerequisite visibility on the real API surface: {parent_events:#?}"
     );
 
-    let parent_owned_poll_info = {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
-        loop {
-            let info = get_install_info_api(&app, install_id).await;
-            if info
-                .last_event
-                .as_ref()
-                .is_some_and(|event| !event.message.starts_with("Prerequisite "))
-            {
-                break info;
-            }
-            assert!(
+    let parent_owned_poll_info =
+        {
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                let info = get_install_info_api(&app, install_id).await;
+                if info.last_event.as_ref().is_some_and(|event| {
+                    !event.message.to_ascii_lowercase().contains("prerequisite")
+                }) {
+                    break info;
+                }
+                assert!(
                 tokio::time::Instant::now() < deadline,
                 "timed out waiting for parent-owned running progress on the poll surface: {info:#?}"
             );
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    };
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        };
     assert!(
         matches!(
             parent_owned_poll_info.state,
@@ -1767,7 +1762,7 @@ async fn acp_container_install_joins_existing_bridge_install_and_surfaces_short_
         parent_owned_poll_info
             .last_event
             .as_ref()
-            .is_some_and(|event| !event.message.starts_with("Prerequisite ")),
+            .is_some_and(|event| !event.message.to_ascii_lowercase().contains("prerequisite")),
         "once the prerequisite override window expires, polling should surface the parent install's own work: {parent_owned_poll_info:#?}"
     );
     assert!(

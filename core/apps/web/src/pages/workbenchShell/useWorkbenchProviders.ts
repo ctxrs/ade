@@ -10,13 +10,16 @@ import {
   type ProviderOptions,
 } from "../../api/client";
 import type { DraftHarness } from "../../components/WorkbenchComposer";
-import { providerDetailFlag } from "../../utils/boolish";
 import {
   resolveProviderOptionsUpdate,
   shouldHydrateProviderModels,
   useProviderOnboardingCoordinator,
   type ProviderAuthSummaryTrigger,
 } from "../../state/providerOnboardingCoordinator";
+import {
+  resolveDefaultHarnessProviderId,
+  resolveDraftHarnessReplacement,
+} from "./harnessSelection";
 
 type UseWorkbenchProvidersArgs = {
   workspaceId: string;
@@ -46,35 +49,16 @@ export function useWorkbenchProviders({
   const providersById = onboarding.providersById;
   const providerInstallsById = onboarding.installsById;
 
-  const defaultProviderId = useMemo(() => {
-    const installed = providers
-      .filter((provider) => provider.installed && provider.health === "ok" && !providerDetailFlag(provider.details, "ui_hidden"))
-      .map((provider) => provider.provider_id);
-    if (installed.includes("codex")) return "codex";
-    if (installed.includes("claude-crp")) return "claude-crp";
-    if (installed.includes("gemini")) return "gemini";
-    if (installed.includes("qwen")) return "qwen";
-    if (installed.includes("opencode")) return "opencode";
-    if (installed.includes("mistral")) return "mistral";
-    if (installed.includes("goose")) return "goose";
-    if (installed.includes("kimi")) return "kimi";
-    if (installed.includes("auggie")) return "auggie";
-    return installed[0] ?? "codex";
-  }, [providers]);
+  const defaultProviderId = useMemo(() => resolveDefaultHarnessProviderId(providers), [providers]);
 
   useEffect(() => {
     if (!providers.length) return;
-    const codexInstalled =
-      providersById.codex?.installed === true &&
-      providersById.codex?.health === "ok" &&
-      !providerDetailFlag(providersById.codex?.details, "ui_hidden");
-    if (codexInstalled || defaultProviderId === "codex") return;
-    setDraftHarness((prev) => {
-      if (!prev) return prev;
-      const isDefault = prev.providerId === "codex" && prev.modelId.trim().length === 0;
-      if (!isDefault) return prev;
-      return { ...prev, providerId: defaultProviderId };
-    });
+    setDraftHarness((prev) =>
+      resolveDraftHarnessReplacement({
+        draftHarness: prev,
+        providersById,
+        defaultProviderId,
+      }));
   }, [defaultProviderId, providers.length, providersById, setDraftHarness]);
 
   const installProviderFromMenu = useCallback(

@@ -6,6 +6,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 mod amp;
+mod bootstrap_models;
 mod claude;
 mod codex_auth;
 mod copilot;
@@ -43,6 +44,7 @@ pub use self::amp::{
     save_amp_registry, set_active_amp_account, upsert_amp_account, AmpAccountEntry,
     AmpAccountRegistry, AmpLoginStatus,
 };
+pub(crate) use self::bootstrap_models::pinned_subscription_models_value;
 pub use self::claude::{
     add_claude_account, add_claude_oauth_account, claude_env_for_account,
     claude_env_for_active_account, ensure_claude_account_dir, load_claude_registry,

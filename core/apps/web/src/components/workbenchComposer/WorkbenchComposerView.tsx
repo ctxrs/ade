@@ -4,6 +4,7 @@ import { providerDetailFlag } from "../../utils/boolish";
 import { shouldSendOnEnter } from "../../utils/keyboard";
 import { buildModelCatalog, formatEffortLabel, parseModelId } from "../../utils/modelEffort";
 import { PROVIDER_INSTALLS_ENABLED } from "../../utils/providerInstallGate";
+import { isVisibleHarnessProviderStatus } from "../../utils/providerInventory";
 import { hasConfiguredHarnessAuth } from "../../utils/providerAuthStatus";
 import { UNSUPPORTED_HARNESS_IDS } from "../../utils/harnessCatalog";
 import { shouldHydrateProviderModels } from "../../pages/workbenchShell/useWorkbenchProviders";
@@ -27,6 +28,7 @@ import {
   labelForVerbosity,
   modelIdFromProviderOptions,
   pickDefaultEffort,
+  shouldShowLoadingProviderModels,
 } from "./WorkbenchComposer.utils";
 import type {
   ActiveSessionProps,
@@ -339,7 +341,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     const models = buildModelsForProvider(primary.providerId, opts);
     const catalog = buildModelCatalog(models);
     const parsed = parseModelId(primary.modelId, catalog);
-    const loading = !opts;
+    const loading = shouldShowLoadingProviderModels(primary.providerId, opts);
     return { models, catalog, parsed, loading, fromProviderOptions: true };
   }, [newSession, props, variant]);
 
@@ -435,13 +437,15 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
       ) : (
         <div className="wb-menu-empty">
           <div style={{ marginBottom: 6 }}>{activeModelData.loading ? "Loading models…" : "Enter model id"}</div>
-          <input
-            className="wb-menu-search"
-            value={activeModelData.parsed.full}
-            onChange={(e) => setActiveModelId(e.target.value)}
-            placeholder="model_id"
-            aria-label="Model id"
-          />
+          {!activeModelData.loading ? (
+            <input
+              className="wb-menu-search"
+              value={activeModelData.parsed.full}
+              onChange={(e) => setActiveModelId(e.target.value)}
+              placeholder="model_id"
+              aria-label="Model id"
+            />
+          ) : null}
         </div>
       )}
     </div>
@@ -573,7 +577,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             const q = harnessSearch.trim().toLowerCase();
             const catalog = ns.harnessCatalog.filter(
               (h) =>
-                !providerDetailFlag(ns.providersById[h.id]?.details, "ui_hidden")
+                isVisibleHarnessProviderStatus(ns.providersById[h.id])
                 && !UNSUPPORTED_HARNESS_IDS.has(String(h.id)),
             );
             type HarnessOption = NewSessionProps["harnessCatalog"][number];
@@ -582,7 +586,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
               .filter(
                 (id) =>
                   !order.has(id)
-                  && !providerDetailFlag(ns.providersById[id]?.details, "ui_hidden")
+                  && isVisibleHarnessProviderStatus(ns.providersById[id])
                   && !UNSUPPORTED_HARNESS_IDS.has(String(id)),
               )
               .map((id): HarnessOption => ({ id, label: id, logoSrc: "" }))

@@ -1,4 +1,7 @@
 import type { InstallInfo } from "../api/client";
+import type { OwnerScope } from "./scopeIdentity";
+import { serializeOwnerScope } from "./scopeIdentity";
+import { getProviderHostOwnerScope } from "./providerScopeAdapters";
 
 export type ProviderInstallProgressSession = {
   installId: string;
@@ -24,9 +27,15 @@ export type ProviderInstallProgressSnapshot = Record<
 >;
 
 type Listener = (snapshot: ProviderInstallProgressSnapshot) => void;
+type ProviderInstallProgressOwnerState = Map<
+  string,
+  Map<ProviderInstallProgressTargetKey, ProviderInstallProgressSession>
+>;
 
-const installsByProviderId = new Map<string, Map<ProviderInstallProgressTargetKey, ProviderInstallProgressSession>>();
-const listeners = new Set<Listener>();
+const installsByOwnerScope = new Map<string, ProviderInstallProgressOwnerState>();
+const listenersByOwnerScope = new Map<string, Set<Listener>>();
+
+const scopeKeyForOwner = (ownerScope: OwnerScope): string => serializeOwnerScope(ownerScope);
 
 const toTargetKey = (
   target: InstallInfo["target"] | undefined,
@@ -50,50 +59,89 @@ function sameSession(
     && lhs.error === rhs.error;
 }
 
-function cloneSnapshot(): ProviderInstallProgressSnapshot {
+const cloneOwnerSnapshot = (ownerScope: OwnerScope): ProviderInstallProgressSnapshot => {
   const snapshot: ProviderInstallProgressSnapshot = {};
-  for (const [providerId, sessionsByTarget] of installsByProviderId.entries()) {
+  const ownerState = installsByOwnerScope.get(scopeKeyForOwner(ownerScope));
+  if (!ownerState) return snapshot;
+  for (const [providerId, sessionsByTarget] of ownerState.entries()) {
     snapshot[providerId] = Object.fromEntries(
       Array.from(sessionsByTarget.entries()).map(([targetKey, session]) => [targetKey, { ...session }]),
     ) as Partial<Record<ProviderInstallProgressTargetKey, ProviderInstallProgressSession>>;
   }
   return snapshot;
-}
+};
 
-function emitChange() {
-  if (listeners.size === 0) return;
-  const snapshot = cloneSnapshot();
+const emitChangeForOwner = (ownerScope: OwnerScope): void => {
+  const listeners = listenersByOwnerScope.get(scopeKeyForOwner(ownerScope));
+  if (!listeners || listeners.size === 0) return;
+  const snapshot = cloneOwnerSnapshot(ownerScope);
   for (const listener of listeners) {
     listener(snapshot);
   }
+};
+
+const getOrCreateOwnerState = (ownerScope: OwnerScope): ProviderInstallProgressOwnerState => {
+  const ownerKey = scopeKeyForOwner(ownerScope);
+  let ownerState = installsByOwnerScope.get(ownerKey);
+  if (!ownerState) {
+    ownerState = new Map<string, Map<ProviderInstallProgressTargetKey, ProviderInstallProgressSession>>();
+    installsByOwnerScope.set(ownerKey, ownerState);
+  }
+  return ownerState;
+};
+
+export function getProviderInstallProgressSnapshotForScope(
+  ownerScope: OwnerScope,
+): ProviderInstallProgressSnapshot {
+  return cloneOwnerSnapshot(ownerScope);
 }
 
 export function getProviderInstallProgressSnapshot(): ProviderInstallProgressSnapshot {
-  return cloneSnapshot();
+  return getProviderInstallProgressSnapshotForScope(getProviderHostOwnerScope());
 }
 
-export function subscribeProviderInstallProgress(listener: Listener): () => void {
+export function subscribeProviderInstallProgressForScope(
+  ownerScope: OwnerScope,
+  listener: Listener,
+): () => void {
+  const ownerKey = scopeKeyForOwner(ownerScope);
+  let listeners = listenersByOwnerScope.get(ownerKey);
+  if (!listeners) {
+    listeners = new Set<Listener>();
+    listenersByOwnerScope.set(ownerKey, listeners);
+  }
   listeners.add(listener);
-  listener(cloneSnapshot());
+  listener(cloneOwnerSnapshot(ownerScope));
   return () => {
-    listeners.delete(listener);
+    const current = listenersByOwnerScope.get(ownerKey);
+    if (!current) return;
+    current.delete(listener);
+    if (current.size === 0) {
+      listenersByOwnerScope.delete(ownerKey);
+    }
   };
 }
 
-export function upsertProviderInstallProgress(
+export function subscribeProviderInstallProgress(listener: Listener): () => void {
+  return subscribeProviderInstallProgressForScope(getProviderHostOwnerScope(), listener);
+}
+
+export function upsertProviderInstallProgressForScope(
+  ownerScope: OwnerScope,
   providerId: string,
   session: Omit<ProviderInstallProgressSession, "updatedAtMs"> & { updatedAtMs?: number },
 ): void {
   if (!providerId || !session.installId) return;
+  const ownerState = getOrCreateOwnerState(ownerScope);
   const targetKey = toTargetKey(session.target);
   const nextSession: ProviderInstallProgressSession = {
     ...session,
     updatedAtMs: session.updatedAtMs ?? Date.now(),
   };
-  let sessionsByTarget = installsByProviderId.get(providerId);
+  let sessionsByTarget = ownerState.get(providerId);
   if (!sessionsByTarget) {
     sessionsByTarget = new Map<ProviderInstallProgressTargetKey, ProviderInstallProgressSession>();
-    installsByProviderId.set(providerId, sessionsByTarget);
+    ownerState.set(providerId, sessionsByTarget);
   }
 
   let changed = false;
@@ -110,7 +158,14 @@ export function upsertProviderInstallProgress(
     return;
   }
   sessionsByTarget.set(targetKey, nextSession);
-  emitChange();
+  emitChangeForOwner(ownerScope);
+}
+
+export function upsertProviderInstallProgress(
+  providerId: string,
+  session: Omit<ProviderInstallProgressSession, "updatedAtMs"> & { updatedAtMs?: number },
+): void {
+  upsertProviderInstallProgressForScope(getProviderHostOwnerScope(), providerId, session);
 }
 
 export function resolveProviderInstallProgressSession(
@@ -138,12 +193,16 @@ export function resolveProviderInstallProgressSession(
   ));
 }
 
-export function removeProviderInstallProgress(
+export function removeProviderInstallProgressForScope(
+  ownerScope: OwnerScope,
   providerId: string,
   options?: { target?: InstallInfo["target"]; installId?: string },
 ): void {
   if (!providerId) return;
-  const sessionsByTarget = installsByProviderId.get(providerId);
+  const ownerKey = scopeKeyForOwner(ownerScope);
+  const ownerState = installsByOwnerScope.get(ownerKey);
+  if (!ownerState) return;
+  const sessionsByTarget = ownerState.get(providerId);
   if (!sessionsByTarget) return;
 
   const hasTargetFilter = Boolean(options && "target" in options);
@@ -160,15 +219,29 @@ export function removeProviderInstallProgress(
   }
 
   if (sessionsByTarget.size === 0) {
-    installsByProviderId.delete(providerId);
+    ownerState.delete(providerId);
+  }
+  if (ownerState.size === 0) {
+    installsByOwnerScope.delete(ownerKey);
   }
   if (changed) {
-    emitChange();
+    emitChangeForOwner(ownerScope);
   }
 }
 
+export function removeProviderInstallProgress(
+  providerId: string,
+  options?: { target?: InstallInfo["target"]; installId?: string },
+): void {
+  removeProviderInstallProgressForScope(getProviderHostOwnerScope(), providerId, options);
+}
+
 export function clearProviderInstallProgress(): void {
-  if (installsByProviderId.size === 0) return;
-  installsByProviderId.clear();
-  emitChange();
+  if (installsByOwnerScope.size === 0) return;
+  installsByOwnerScope.clear();
+  for (const listeners of listenersByOwnerScope.values()) {
+    for (const listener of listeners) {
+      listener({});
+    }
+  }
 }
