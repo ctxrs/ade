@@ -121,7 +121,7 @@ test("workbench: copilot subscription token auth can run a real task", async ({ 
     data: {
       provider_id: "copilot",
       model_id: modelId,
-      env_target: "worktree",
+      execution_environment: "host",
     },
     timeout: REQUEST_TIMEOUT_MS,
   });

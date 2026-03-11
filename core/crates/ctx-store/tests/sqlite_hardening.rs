@@ -114,6 +114,7 @@ async fn sqlite_pragmas_and_integrity_hold_after_reopen() -> Result<()> {
             task.id,
             workspace.id,
             worktree.id,
+            ctx_core::models::ExecutionEnvironment::Host,
             "fake".into(),
             "model".into(),
             "assistant".into(),

@@ -47,6 +47,7 @@ async fn session_head_rehydrates_after_cache_eviction() {
             task.id,
             workspace.id,
             worktree.id,
+            ctx_core::models::ExecutionEnvironment::Host,
             "fake".to_string(),
             "model".to_string(),
             "implementer".to_string(),

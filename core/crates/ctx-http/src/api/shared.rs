@@ -6,9 +6,9 @@ use std::time::{Duration, Instant};
 use axum::http::StatusCode;
 use axum::Json;
 use ctx_core::ids::WorkspaceId;
-use ctx_core::models::{Session, Worktree};
+use ctx_core::models::{ExecutionEnvironment, Worktree};
 use ctx_fs::git::{list_tracked_files, list_untracked_files};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use super::errors::ApiErrorResp;
 use crate::container_fs::is_container_path;
@@ -18,17 +18,10 @@ use crate::harness_runtime;
 use crate::logs;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 
-#[derive(Debug, Serialize)]
-pub(super) struct SessionWithEnv {
-    #[serde(flatten)]
-    pub(super) session: Session,
-    pub(super) env_target: String, // "worktree" | "local"
-}
-
-pub(super) fn env_target_for_worktree(wt: Option<&Worktree>) -> String {
+pub(super) fn session_root_kind_for_worktree(wt: Option<&Worktree>) -> &'static str {
     match wt.and_then(|w| w.git_branch.as_ref()) {
-        Some(_) => "worktree".to_string(),
-        None => "local".to_string(),
+        Some(_) => "worktree",
+        None => "workspace_root",
     }
 }
 
@@ -60,12 +53,13 @@ pub(super) struct FileCompletionsQuery {
 pub(super) async fn load_and_cache_worktree_files(
     state: &Arc<AppState>,
     worktree: &Worktree,
+    execution_environment: ExecutionEnvironment,
     now: Instant,
 ) -> Result<Arc<Vec<String>>, StatusCode> {
     let started_at = Instant::now();
     let root = PathBuf::from(&worktree.root_path);
     let files = if is_container_path(&root) {
-        Arc::new(list_container_worktree_files(state, worktree).await?)
+        Arc::new(list_container_worktree_files(state, worktree, execution_environment).await?)
     } else {
         let mut files = list_tracked_files(&root)
             .await
@@ -114,6 +108,7 @@ pub(super) async fn load_and_cache_worktree_files(
 async fn list_container_worktree_files(
     state: &Arc<AppState>,
     worktree: &Worktree,
+    execution_environment: ExecutionEnvironment,
 ) -> Result<Vec<String>, StatusCode> {
     // Run git inside the harness container.
     let workspace_id = worktree.workspace_id;
@@ -124,9 +119,13 @@ async fn list_container_worktree_files(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let settings = execution_effective::effective_execution_settings(state, workspace_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let settings = execution_effective::effective_execution_settings_for_environment(
+        state,
+        workspace_id,
+        execution_environment,
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     state
         .execution
         .harness

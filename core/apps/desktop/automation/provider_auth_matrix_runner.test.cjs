@@ -18,16 +18,18 @@ const writeFixture = (dir) => {
     summary: "test fixture",
     providers: [{ id: "gemini", owner: "provider-gemini" }],
     auth_modes: [{ id: "subscription_oauth", description: "Managed subscription" }],
-    env_targets: [{ id: "local_host", description: "Local host" }],
+    daemon_locations: [{ id: "local", description: "Local daemon" }],
+    execution_environments: [{ id: "host", description: "Host execution" }],
     assertion_definitions: {
       probe_success: "ok",
     },
     cells: [
       {
-        id: "gemini.subscription_oauth.local_host",
+        id: "gemini.subscription_oauth.local.host",
         provider_id: "gemini",
         auth_mode: "subscription_oauth",
-        env_target: "local_host",
+        daemon_location: "local",
+        execution_environment: "host",
         support: "deferred",
         lane: "nightly",
         required_assertions: ["probe_success"],

@@ -1484,6 +1484,7 @@ pub(crate) async fn mcp_agent_init(
                     parent.task_id,
                     parent.workspace_id,
                     worktree_id,
+                    parent.execution_environment,
                     provider_id.clone(),
                     resolved.model_id.clone(),
                     "subagent".into(),

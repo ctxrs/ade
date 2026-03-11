@@ -33,7 +33,8 @@ const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const DEFAULT_MODEL_OVERRIDE = "openai/gpt-5.2-codex";
 const DEFAULT_PROVIDER_ID = "codex";
 const DEFAULT_AUTH_MODE = "endpoint_api_key";
-const DEFAULT_ENV_TARGET = "local_container";
+const DEFAULT_DAEMON_LOCATION = "local";
+const DEFAULT_EXECUTION_ENVIRONMENT = "container_host_mounted";
 
 const parsePositiveInt = (raw, fallback) => {
   const parsed = Number.parseInt(String(raw || ""), 10);
@@ -46,7 +47,8 @@ const waitMs = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, 
 const createWorkspaceAndLaunchExecution = async ({
   dest,
   name,
-  envTarget,
+  daemonLocation,
+  executionEnvironment,
   timeoutMs = 15 * 60_000,
   onLaunchStart = null,
 }) => {
@@ -63,12 +65,15 @@ const createWorkspaceAndLaunchExecution = async ({
     throw new Error(`workspace create response missing id: ${JSON.stringify(create.payload || null)}`);
   }
 
-  if (envTarget === "remote_host" || envTarget === "remote_container") {
-    throw new Error(`remote env target is not supported by this spec: ${envTarget}`);
+  if (daemonLocation === "remote") {
+    throw new Error(`remote daemon location is not supported by this spec: ${daemonLocation}`);
+  }
+  if (executionEnvironment !== "host" && executionEnvironment !== "container_host_mounted") {
+    throw new Error(`unsupported execution environment for this spec: ${executionEnvironment}`);
   }
 
-  const environment = envTarget === "local_container" ? "container_host_mounted" : "host";
-  const networkMode = envTarget === "local_container" ? "llm_only" : "all";
+  const environment = executionEnvironment;
+  const networkMode = executionEnvironment === "container_host_mounted" ? "llm_only" : "all";
 
   const setExec = await daemonJson("POST", `/api/workspaces/${workspaceId}/execution_config`, {
     environment,
@@ -137,8 +142,14 @@ describe("provider auth matrix cell (desktop e2e)", () => {
   const runId = `${Date.now()}`;
   const providerId = normalizeText(process.env.CTX_PROVIDER_AUTH_MATRIX_PROVIDER_ID || DEFAULT_PROVIDER_ID);
   const authMode = normalizeText(process.env.CTX_PROVIDER_AUTH_MATRIX_AUTH_MODE || DEFAULT_AUTH_MODE);
-  const envTarget = normalizeText(process.env.CTX_PROVIDER_AUTH_MATRIX_ENV_TARGET || DEFAULT_ENV_TARGET);
-  const cellId = normalizeText(process.env.CTX_PROVIDER_AUTH_MATRIX_CELL_ID || `${providerId}.${authMode}.${envTarget}`);
+  const daemonLocation = normalizeText(process.env.CTX_PROVIDER_AUTH_MATRIX_DAEMON_LOCATION || DEFAULT_DAEMON_LOCATION);
+  const executionEnvironment = normalizeText(
+    process.env.CTX_PROVIDER_AUTH_MATRIX_EXECUTION_ENVIRONMENT || DEFAULT_EXECUTION_ENVIRONMENT,
+  );
+  const cellId = normalizeText(
+    process.env.CTX_PROVIDER_AUTH_MATRIX_CELL_ID
+      || `${providerId}.${authMode}.${daemonLocation}.${executionEnvironment}`,
+  );
   const reportPath = normalizeText(process.env.CTX_PROVIDER_AUTH_MATRIX_REPORT)
     || path.join("/tmp", `ctx-provider-auth-matrix-${cellId.replace(/[^a-zA-Z0-9._-]+/g, "_")}-${runId}.json`);
   const localBase = mkTempDir(`ctx-provider-auth-matrix-${runId}-`);
@@ -164,7 +175,8 @@ describe("provider auth matrix cell (desktop e2e)", () => {
         cellId,
         providerId,
         authMode,
-        envTarget,
+        daemonLocation,
+        executionEnvironment,
       }),
     )) this.skip();
 
@@ -173,7 +185,8 @@ describe("provider auth matrix cell (desktop e2e)", () => {
       cell: cellId,
       providerId,
       authMode,
-      envTarget,
+      daemonLocation,
+      executionEnvironment,
     });
 
     let currentAssertion = "workspace_launch_success";
@@ -187,7 +200,8 @@ describe("provider auth matrix cell (desktop e2e)", () => {
       const workspace = await createWorkspaceAndLaunchExecution({
         dest: workspaceDest,
         name: `provider-auth-${providerId}-${Date.now()}`,
-        envTarget,
+        daemonLocation,
+        executionEnvironment,
         onLaunchStart: async (launchInfo) => {
           workspaceLaunch = launchInfo;
           recorder.recordArtifact("workspace_launch_started", launchInfo);
@@ -196,7 +210,7 @@ describe("provider auth matrix cell (desktop e2e)", () => {
       recorder.recordArtifact("workspace", workspace);
       recorder.recordAssertion("workspace_launch_success", "pass", "workspace launch reached ready state");
 
-      if (envTarget === "local_container") {
+      if (executionEnvironment === "container_host_mounted") {
         await assertLocalWorkspaceConfig(workspace.workspaceId, {
           environment: "container_host_mounted",
           networkMode: "llm_only",
@@ -204,7 +218,7 @@ describe("provider auth matrix cell (desktop e2e)", () => {
       }
 
       currentAssertion = "install_success";
-      const installTarget = envTarget === "local_container" ? "container" : "host";
+      const installTarget = executionEnvironment === "container_host_mounted" ? "container" : "host";
       await installProviderAndWait(providerId, installTarget);
       const providerStatus = await getProviderStatus(providerId, installTarget);
       recorder.recordArtifact("provider_status_after_install", providerStatus);
@@ -217,7 +231,8 @@ describe("provider auth matrix cell (desktop e2e)", () => {
         currentAssertion = "subscription_auth_setup";
         const authSetup = await prepareSubscriptionAuth({
           providerId,
-          envTarget,
+          daemonLocation,
+          executionEnvironment,
         });
         recorder.recordArtifact("subscription_auth_setup", authSetup.artifacts || null);
         if (authSetup.status === "skip") {
@@ -292,6 +307,7 @@ describe("provider auth matrix cell (desktop e2e)", () => {
         {
           providerId,
           modelId,
+          executionEnvironment,
           prompt: `provider-auth-matrix-${Date.now()}: reply with exactly pong`,
         },
         240_000,

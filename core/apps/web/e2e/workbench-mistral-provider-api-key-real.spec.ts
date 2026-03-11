@@ -156,7 +156,7 @@ test("workbench: mistral provider API key can run a real task", async ({ page, r
     data: {
       provider_id: "mistral",
       model_id: modelId,
-      env_target: "worktree",
+      execution_environment: "host",
     },
     timeout: REQUEST_TIMEOUT_MS,
   });

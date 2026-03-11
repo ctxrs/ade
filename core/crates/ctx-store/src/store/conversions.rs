@@ -103,6 +103,7 @@ pub(super) fn session_metadata_from_session(session: &Session) -> SessionMetadat
         task_id: session.task_id,
         workspace_id: session.workspace_id,
         worktree_id: session.worktree_id,
+        execution_environment: session.execution_environment,
         parent_session_id: session.parent_session_id,
         relationship: session.relationship.clone(),
         provider_id: session.provider_id.clone(),
@@ -180,6 +181,20 @@ pub(super) fn parse_task_status(value: &str) -> TaskStatus {
         "failed" => TaskStatus::Failed,
         "cancelled" => TaskStatus::Cancelled,
         _ => TaskStatus::Pending,
+    }
+}
+
+pub(super) fn execution_environment_to_str(
+    execution_environment: ExecutionEnvironment,
+) -> &'static str {
+    execution_environment.as_str()
+}
+
+pub(super) fn parse_execution_environment(value: &str) -> ExecutionEnvironment {
+    match value {
+        "container_host_mounted" => ExecutionEnvironment::ContainerHostMounted,
+        "container_disk_isolated" => ExecutionEnvironment::ContainerDiskIsolated,
+        _ => ExecutionEnvironment::Host,
     }
 }
 

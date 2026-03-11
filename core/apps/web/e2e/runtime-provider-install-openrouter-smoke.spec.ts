@@ -601,7 +601,7 @@ async function runProvider(
       data: {
         provider_id: providerId,
         model_id: modelId,
-        env_target: "worktree",
+        execution_environment: environment,
       },
     });
     if (!sessionResp.ok()) {

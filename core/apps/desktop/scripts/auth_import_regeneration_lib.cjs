@@ -479,7 +479,7 @@ const runProviderFirstTurnApiSmoke = async (
   const session = await expectOk(client, "POST", `/api/tasks/${taskId}/sessions`, {
     provider_id: providerId,
     model_id: modelId,
-    env_target: "worktree",
+    execution_environment: environment,
   }, `session create for ${providerId}`);
   const sessionId = normalizeText(session.id);
   if (!sessionId) {

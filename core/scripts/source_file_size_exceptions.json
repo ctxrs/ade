@@ -41,13 +41,13 @@
   },
   {
     "path": "crates/ctx-http/src/api/sessions/subagents.rs",
-    "maxLines": 2302,
-    "reason": "Existing oversized session subagents API module. Keep stable until a dedicated breakup."
+    "maxLines": 2303,
+    "reason": "Existing oversized session subagents API module. The execution-environment cutover touched its session projections; keep stable until a dedicated breakup."
   },
   {
     "path": "crates/ctx-store/src/store/messages.rs",
-    "maxLines": 2082,
-    "reason": "Existing oversized message store module. Keep stable until a dedicated breakup."
+    "maxLines": 2101,
+    "reason": "Existing oversized message store module. The execution-environment persistence cutover touched multiple session hydration paths; keep stable until a dedicated breakup."
   },
   {
     "path": "apps/web/src/state/workspaceActiveSnapshotStoreCore.ts",
@@ -66,8 +66,8 @@
   },
   {
     "path": "crates/ctx-http/src/scheduler/runtime.rs",
-    "maxLines": 1836,
-    "reason": "Existing oversized scheduler runtime module. Keep stable until a dedicated breakup."
+    "maxLines": 1894,
+    "reason": "Existing oversized scheduler runtime module. The execution-environment and session-root telemetry cutover touched runtime labels and session-scoped settings; keep stable until a dedicated breakup."
   },
   {
     "path": "crates/ctx-http/src/api/workspaces.rs",
@@ -111,8 +111,8 @@
   },
   {
     "path": "crates/ctx-store/src/store/conversions.rs",
-    "maxLines": 1440,
-    "reason": "Existing oversized store conversions module. A nearby mainline change grew it slightly; keep stable until a dedicated breakup."
+    "maxLines": 1452,
+    "reason": "Existing oversized store conversions module. The execution-environment persistence cutover added session conversion helpers; keep stable until a dedicated breakup."
   },
   {
     "path": "apps/web/src/pages/SessionPage.view.tsx",
@@ -131,8 +131,8 @@
   },
   {
     "path": "crates/ctx-http/src/daemon.rs",
-    "maxLines": 1359,
-    "reason": "Existing oversized daemon module. Allow the shared boolish cleanup to land, then break it up deliberately."
+    "maxLines": 1360,
+    "reason": "Existing oversized daemon module. The execution-environment cutover updated daemon-side session fixtures; keep stable until a dedicated breakup."
   },
   {
     "path": "crates/ctx-http/src/api/provider_launch.rs",
@@ -171,8 +171,8 @@
   },
   {
     "path": "crates/ctx-core/src/models.rs",
-    "maxLines": 1246,
-    "reason": "Existing oversized models module. Keep stable until a dedicated breakup."
+    "maxLines": 1268,
+    "reason": "Existing oversized models module. The canonical execution-environment field now lives in the shared session domain; keep stable until a dedicated breakup."
   },
   {
     "path": "crates/ctx-store/src/store/turns.rs",

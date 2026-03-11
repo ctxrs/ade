@@ -42,7 +42,8 @@ const waitMs = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, 
 const createWorkspaceAndLaunchExecution = async ({
   dest,
   name,
-  envTarget,
+  daemonLocation,
+  executionEnvironment,
   timeoutMs = 15 * 60_000,
   onLaunchStart = null,
 }) => {
@@ -59,12 +60,15 @@ const createWorkspaceAndLaunchExecution = async ({
     throw new Error(`workspace create response missing id: ${JSON.stringify(create.payload || null)}`);
   }
 
-  if (envTarget === "remote_host" || envTarget === "remote_container") {
-    throw new Error(`remote env target is not supported by this spec: ${envTarget}`);
+  if (daemonLocation === "remote") {
+    throw new Error(`remote daemon location is not supported by this spec: ${daemonLocation}`);
+  }
+  if (executionEnvironment !== "host" && executionEnvironment !== "container_host_mounted") {
+    throw new Error(`unsupported execution environment for this spec: ${executionEnvironment}`);
   }
 
-  const environment = envTarget === "local_container" ? "container_host_mounted" : "host";
-  const networkMode = envTarget === "local_container" ? "llm_only" : "all";
+  const environment = executionEnvironment;
+  const networkMode = executionEnvironment === "container_host_mounted" ? "llm_only" : "all";
 
   const setExec = await daemonJson("POST", `/api/workspaces/${workspaceId}/execution_config`, {
     environment,
@@ -126,8 +130,14 @@ describe("provider auth import matrix cell (desktop e2e)", () => {
   const runId = `${Date.now()}`;
   const providerId = normalizeText(process.env.CTX_PROVIDER_AUTH_MATRIX_PROVIDER_ID || "codex");
   const authMode = normalizeText(process.env.CTX_PROVIDER_AUTH_MATRIX_AUTH_MODE || "auth_import");
-  const envTarget = normalizeText(process.env.CTX_PROVIDER_AUTH_MATRIX_ENV_TARGET || "local_container");
-  const cellId = normalizeText(process.env.CTX_PROVIDER_AUTH_MATRIX_CELL_ID || `${providerId}.${authMode}.${envTarget}`);
+  const daemonLocation = normalizeText(process.env.CTX_PROVIDER_AUTH_MATRIX_DAEMON_LOCATION || "local");
+  const executionEnvironment = normalizeText(
+    process.env.CTX_PROVIDER_AUTH_MATRIX_EXECUTION_ENVIRONMENT || "container_host_mounted",
+  );
+  const cellId = normalizeText(
+    process.env.CTX_PROVIDER_AUTH_MATRIX_CELL_ID
+      || `${providerId}.${authMode}.${daemonLocation}.${executionEnvironment}`,
+  );
   const reportPath = normalizeText(process.env.CTX_PROVIDER_AUTH_MATRIX_REPORT)
     || path.join("/tmp", `ctx-provider-auth-import-${cellId.replace(/[^a-zA-Z0-9._-]+/g, "_")}-${runId}.json`);
   const localBase = mkTempDir(`ctx-provider-auth-import-${runId}-`);
@@ -157,7 +167,8 @@ describe("provider auth import matrix cell (desktop e2e)", () => {
       cell: cellId,
       providerId,
       authMode,
-      envTarget,
+      daemonLocation,
+      executionEnvironment,
     });
 
     let currentAssertion = "auth_import_success";
@@ -183,7 +194,8 @@ describe("provider auth import matrix cell (desktop e2e)", () => {
       const workspace = await createWorkspaceAndLaunchExecution({
         dest: workspaceDest,
         name: `provider-auth-import-${providerId}-${Date.now()}`,
-        envTarget,
+        daemonLocation,
+        executionEnvironment,
         onLaunchStart: async (launchInfo) => {
           workspaceLaunch = launchInfo;
           recorder.recordArtifact("workspace_launch_started", launchInfo);
@@ -192,7 +204,7 @@ describe("provider auth import matrix cell (desktop e2e)", () => {
       recorder.recordArtifact("workspace", workspace);
       recorder.recordAssertion("candidate_detected", "pass", "staged auth import candidate was detected");
 
-      if (envTarget === "local_container") {
+      if (executionEnvironment === "container_host_mounted") {
         await assertLocalWorkspaceConfig(workspace.workspaceId, {
           environment: "container_host_mounted",
           networkMode: "llm_only",
@@ -200,7 +212,7 @@ describe("provider auth import matrix cell (desktop e2e)", () => {
       }
 
       currentAssertion = "install_success";
-      const installTarget = envTarget === "local_container" ? "container" : "host";
+      const installTarget = executionEnvironment === "container_host_mounted" ? "container" : "host";
       await installProviderAndWait(providerId, installTarget);
       const providerStatus = await getProviderStatus(providerId, installTarget);
       recorder.recordArtifact("provider_status_after_install", providerStatus);
@@ -256,6 +268,7 @@ describe("provider auth import matrix cell (desktop e2e)", () => {
         {
           providerId,
           modelId,
+          executionEnvironment,
           prompt: `provider-auth-import-${cellId}-${Date.now()}: reply with exactly pong`,
         },
         240_000,

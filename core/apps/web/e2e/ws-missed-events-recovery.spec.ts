@@ -40,7 +40,7 @@ test("workbench: recovers when workspace stream misses events", async ({ page })
     const taskId = String(task?.id ?? "");
     expect(taskId).toBeTruthy();
     const sessionResp = await page.request.post(`/api/tasks/${taskId}/sessions`, {
-      data: { provider_id: "fake", model_id: "fake-model" },
+      data: { provider_id: "fake", model_id: "fake-model", execution_environment: "host" },
     });
     expect(sessionResp.ok()).toBe(true);
     const session = (await sessionResp.json()) as { id?: string };

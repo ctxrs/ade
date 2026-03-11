@@ -1,4 +1,5 @@
 use ctx_core::ids::WorkspaceId;
+use ctx_core::models::ExecutionEnvironment as SessionExecutionEnvironment;
 
 use crate::daemon::AppState;
 use crate::installs::InstallTarget;
@@ -64,6 +65,46 @@ pub async fn effective_install_target(
     workspace_id: WorkspaceId,
 ) -> anyhow::Result<InstallTarget> {
     let effective = effective_execution_settings(state, workspace_id).await?;
+    Ok(install_target_for_settings(&effective))
+}
+
+pub fn apply_execution_environment(
+    settings: &mut ExecutionSettings,
+    execution_environment: SessionExecutionEnvironment,
+) {
+    match execution_environment {
+        SessionExecutionEnvironment::Host => {
+            settings.mode = crate::settings::ExecutionMode::Host;
+        }
+        SessionExecutionEnvironment::ContainerHostMounted => {
+            settings.mode = crate::settings::ExecutionMode::Container;
+            settings.container.mount_mode = crate::settings::ContainerMountMode::HostMounted;
+        }
+        SessionExecutionEnvironment::ContainerDiskIsolated => {
+            settings.mode = crate::settings::ExecutionMode::Container;
+            settings.container.mount_mode = crate::settings::ContainerMountMode::DiskIsolated;
+        }
+    }
+}
+
+pub async fn effective_execution_settings_for_environment(
+    state: &AppState,
+    workspace_id: WorkspaceId,
+    execution_environment: SessionExecutionEnvironment,
+) -> anyhow::Result<ExecutionSettings> {
+    let mut effective = effective_execution_settings(state, workspace_id).await?;
+    apply_execution_environment(&mut effective, execution_environment);
+    Ok(effective)
+}
+
+pub async fn effective_install_target_for_environment(
+    state: &AppState,
+    workspace_id: WorkspaceId,
+    execution_environment: SessionExecutionEnvironment,
+) -> anyhow::Result<InstallTarget> {
+    let effective =
+        effective_execution_settings_for_environment(state, workspace_id, execution_environment)
+            .await?;
     Ok(install_target_for_settings(&effective))
 }
 

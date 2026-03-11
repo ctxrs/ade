@@ -216,7 +216,7 @@ impl Client {
         &self,
         task_id: TaskId,
         req: &CreateSessionRequest,
-    ) -> Result<SessionWithEnv> {
+    ) -> Result<Session> {
         let path = format!("/api/tasks/{}/sessions", task_id.0);
         self.request_json(Method::POST, &path, Some(req)).await
     }

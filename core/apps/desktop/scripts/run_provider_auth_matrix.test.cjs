@@ -19,10 +19,11 @@ const createFixture = (tmpDir) => {
       {
         cells: [
           {
-            id: "codex.endpoint_api_key.local_container",
+            id: "codex.endpoint_api_key.local.container_host_mounted",
             provider_id: "codex",
             auth_mode: "endpoint_api_key",
-            env_target: "local_container",
+            daemon_location: "local",
+            execution_environment: "container_host_mounted",
             support: "supported",
             lane: "required",
             prerequisites: ["OPENROUTER_API_KEY"],
@@ -50,10 +51,11 @@ const createDeferredGeminiFixture = (tmpDir) => {
       {
         cells: [
           {
-            id: "gemini.subscription_oauth.local_host",
+            id: "gemini.subscription_oauth.local.host",
             provider_id: "gemini",
             auth_mode: "subscription_oauth",
-            env_target: "local_host",
+            daemon_location: "local",
+            execution_environment: "host",
             support: "deferred",
             lane: "nightly",
             prerequisites: ["CTX_E2E_GEMINI_OAUTH_CREDS_JSON"],
@@ -157,7 +159,7 @@ const runMatrixScript = ({
   smokeOut,
   artifactsDir,
   lane = "required",
-  cellId = "codex.endpoint_api_key.local_container",
+  cellId = "codex.endpoint_api_key.local.container_host_mounted",
   extraArgs = [],
   extraEnv = {},
 }) =>
@@ -215,7 +217,7 @@ test("run_provider_auth_matrix hydrates preflight and runner through infisical w
   assert.equal(fs.readFileSync(preflightOut, "utf8").trim(), "set");
   assert.equal(fs.readFileSync(smokeOut, "utf8").trim(), "set");
   const summary = fs.readFileSync(path.join(artifactsDir, "summary.tsv"), "utf8");
-  assert.match(summary, /codex\.endpoint_api_key\.local_container\tpass\t0\t/);
+  assert.match(summary, /codex\.endpoint_api_key\.local\.container_host_mounted\tpass\t0\t/);
 });
 
 test("run_provider_auth_matrix leaves preflight strict when infisical auto-hydration is disabled", () => {
@@ -268,7 +270,7 @@ test("run_provider_auth_matrix accepts file-backed deferred oauth prerequisites 
     smokeOut: path.join(tmpDir, "smoke.out"),
     artifactsDir,
     lane: "nightly",
-    cellId: "gemini.subscription_oauth.local_host",
+    cellId: "gemini.subscription_oauth.local.host",
     extraArgs: ["--include-deferred", "--dry-run"],
     extraEnv: {
       CTX_PROVIDER_AUTH_MATRIX_USE_INFISICAL: "0",
@@ -280,6 +282,6 @@ test("run_provider_auth_matrix accepts file-backed deferred oauth prerequisites 
 
   assert.equal(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
   const summary = fs.readFileSync(path.join(artifactsDir, "summary.tsv"), "utf8");
-  assert.match(summary, /gemini\.subscription_oauth\.local_host\tdry-run\t0\t/);
+  assert.match(summary, /gemini\.subscription_oauth\.local\.host\tdry-run\t0\t/);
   assert.doesNotMatch(summary, /missing_env:/);
 });

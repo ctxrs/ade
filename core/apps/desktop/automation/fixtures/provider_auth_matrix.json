@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-03-09",
+  "generated_at": "2026-03-11",
   "summary": "Provider auth matrix contract for desktop/web e2e lane coverage. Support=covered now, deferred=known coverage gap, unsupported=explicitly out of product auth support.",
   "providers": [
     {
@@ -82,26 +82,28 @@
       "description": "Create workspace without auth, configure auth later, then run first successful turn."
     }
   ],
-  "env_targets": [
+  "daemon_locations": [
     {
-      "id": "local_host",
-      "description": "Local daemon, host execution environment."
+      "id": "local",
+      "description": "Local daemon location."
     },
     {
-      "id": "local_container",
-      "description": "Local daemon, container execution environment."
+      "id": "remote",
+      "description": "Remote daemon location."
+    }
+  ],
+  "execution_environments": [
+    {
+      "id": "host",
+      "description": "Host execution environment."
     },
     {
-      "id": "remote_host",
-      "description": "Remote daemon, host execution environment."
-    },
-    {
-      "id": "remote_container",
-      "description": "Remote daemon, container execution environment."
+      "id": "container_host_mounted",
+      "description": "Container execution environment with host-mounted workspace/worktree paths."
     }
   ],
   "assertion_definitions": {
-    "install_success": "Managed/provider runtime installation succeeds for the requested execution target.",
+    "install_success": "Managed/provider runtime installation succeeds for the requested daemon location and execution environment.",
     "probe_success": "Provider verify/probe reports status=ok for the workspace/provider cell.",
     "model_list_population": "Provider options include at least one resolved model id after auth configuration.",
     "first_turn_success": "A first user turn reaches completed terminal status with non-empty assistant output.",
@@ -111,10 +113,11 @@
   },
   "cells": [
     {
-      "id": "codex.subscription_oauth.local_host",
+      "id": "codex.subscription_oauth.local.host",
       "provider_id": "codex",
       "auth_mode": "subscription_oauth",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "supported",
       "lane": "nightly",
       "required_assertions": [
@@ -136,10 +139,11 @@
       "skip_reason": null
     },
     {
-      "id": "codex.subscription_oauth.local_container",
+      "id": "codex.subscription_oauth.local.container_host_mounted",
       "provider_id": "codex",
       "auth_mode": "subscription_oauth",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "supported",
       "lane": "nightly",
       "required_assertions": [
@@ -161,10 +165,11 @@
       "skip_reason": null
     },
     {
-      "id": "codex.subscription_oauth.remote_host",
+      "id": "codex.subscription_oauth.remote.host",
       "provider_id": "codex",
       "auth_mode": "subscription_oauth",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -180,10 +185,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "codex.subscription_oauth.remote_container",
+      "id": "codex.subscription_oauth.remote.container_host_mounted",
       "provider_id": "codex",
       "auth_mode": "subscription_oauth",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -199,10 +205,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "codex.endpoint_api_key.local_host",
+      "id": "codex.endpoint_api_key.local.host",
       "provider_id": "codex",
       "auth_mode": "endpoint_api_key",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "supported",
       "lane": "required",
       "required_assertions": [
@@ -223,10 +230,11 @@
       "skip_reason": null
     },
     {
-      "id": "codex.endpoint_api_key.local_container",
+      "id": "codex.endpoint_api_key.local.container_host_mounted",
       "provider_id": "codex",
       "auth_mode": "endpoint_api_key",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "supported",
       "lane": "required",
       "required_assertions": [
@@ -247,10 +255,11 @@
       "skip_reason": null
     },
     {
-      "id": "codex.endpoint_api_key.remote_host",
+      "id": "codex.endpoint_api_key.remote.host",
       "provider_id": "codex",
       "auth_mode": "endpoint_api_key",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -267,10 +276,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "codex.endpoint_api_key.remote_container",
+      "id": "codex.endpoint_api_key.remote.container_host_mounted",
       "provider_id": "codex",
       "auth_mode": "endpoint_api_key",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -287,10 +297,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "codex.auth_import.local_host",
+      "id": "codex.auth_import.local.host",
       "provider_id": "codex",
       "auth_mode": "auth_import",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -307,10 +318,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "codex.auth_import.local_container",
+      "id": "codex.auth_import.local.container_host_mounted",
       "provider_id": "codex",
       "auth_mode": "auth_import",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "supported",
       "lane": "nightly",
       "required_assertions": [
@@ -331,10 +343,11 @@
       "skip_reason": null
     },
     {
-      "id": "codex.auth_import.remote_host",
+      "id": "codex.auth_import.remote.host",
       "provider_id": "codex",
       "auth_mode": "auth_import",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -351,10 +364,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "codex.auth_import.remote_container",
+      "id": "codex.auth_import.remote.container_host_mounted",
       "provider_id": "codex",
       "auth_mode": "auth_import",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -371,10 +385,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "codex.configure_later_then_connect.local_host",
+      "id": "codex.configure_later_then_connect.local.host",
       "provider_id": "codex",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "supported",
       "lane": "required",
       "required_assertions": [
@@ -396,10 +411,11 @@
       "skip_reason": null
     },
     {
-      "id": "codex.configure_later_then_connect.local_container",
+      "id": "codex.configure_later_then_connect.local.container_host_mounted",
       "provider_id": "codex",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "supported",
       "lane": "required",
       "required_assertions": [
@@ -421,10 +437,11 @@
       "skip_reason": null
     },
     {
-      "id": "codex.configure_later_then_connect.remote_host",
+      "id": "codex.configure_later_then_connect.remote.host",
       "provider_id": "codex",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -442,10 +459,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "codex.configure_later_then_connect.remote_container",
+      "id": "codex.configure_later_then_connect.remote.container_host_mounted",
       "provider_id": "codex",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -463,10 +481,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "claude-crp.subscription_oauth.local_host",
+      "id": "claude-crp.subscription_oauth.local.host",
       "provider_id": "claude-crp",
       "auth_mode": "subscription_oauth",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -486,10 +505,11 @@
       "skip_reason": "missing_ci_secret_contract"
     },
     {
-      "id": "claude-crp.subscription_oauth.local_container",
+      "id": "claude-crp.subscription_oauth.local.container_host_mounted",
       "provider_id": "claude-crp",
       "auth_mode": "subscription_oauth",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -509,10 +529,11 @@
       "skip_reason": "missing_ci_secret_contract"
     },
     {
-      "id": "claude-crp.subscription_oauth.remote_host",
+      "id": "claude-crp.subscription_oauth.remote.host",
       "provider_id": "claude-crp",
       "auth_mode": "subscription_oauth",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -528,10 +549,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "claude-crp.subscription_oauth.remote_container",
+      "id": "claude-crp.subscription_oauth.remote.container_host_mounted",
       "provider_id": "claude-crp",
       "auth_mode": "subscription_oauth",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -547,10 +569,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "claude-crp.endpoint_api_key.local_host",
+      "id": "claude-crp.endpoint_api_key.local.host",
       "provider_id": "claude-crp",
       "auth_mode": "endpoint_api_key",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -567,10 +590,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "claude-crp.endpoint_api_key.local_container",
+      "id": "claude-crp.endpoint_api_key.local.container_host_mounted",
       "provider_id": "claude-crp",
       "auth_mode": "endpoint_api_key",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -587,10 +611,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "claude-crp.endpoint_api_key.remote_host",
+      "id": "claude-crp.endpoint_api_key.remote.host",
       "provider_id": "claude-crp",
       "auth_mode": "endpoint_api_key",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -607,10 +632,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "claude-crp.endpoint_api_key.remote_container",
+      "id": "claude-crp.endpoint_api_key.remote.container_host_mounted",
       "provider_id": "claude-crp",
       "auth_mode": "endpoint_api_key",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -627,10 +653,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "claude-crp.auth_import.local_host",
+      "id": "claude-crp.auth_import.local.host",
       "provider_id": "claude-crp",
       "auth_mode": "auth_import",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -644,10 +671,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "claude-crp.auth_import.local_container",
+      "id": "claude-crp.auth_import.local.container_host_mounted",
       "provider_id": "claude-crp",
       "auth_mode": "auth_import",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -661,10 +689,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "claude-crp.auth_import.remote_host",
+      "id": "claude-crp.auth_import.remote.host",
       "provider_id": "claude-crp",
       "auth_mode": "auth_import",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -678,10 +707,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "claude-crp.auth_import.remote_container",
+      "id": "claude-crp.auth_import.remote.container_host_mounted",
       "provider_id": "claude-crp",
       "auth_mode": "auth_import",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -695,10 +725,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "claude-crp.configure_later_then_connect.local_host",
+      "id": "claude-crp.configure_later_then_connect.local.host",
       "provider_id": "claude-crp",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -716,10 +747,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "claude-crp.configure_later_then_connect.local_container",
+      "id": "claude-crp.configure_later_then_connect.local.container_host_mounted",
       "provider_id": "claude-crp",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -737,10 +769,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "claude-crp.configure_later_then_connect.remote_host",
+      "id": "claude-crp.configure_later_then_connect.remote.host",
       "provider_id": "claude-crp",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -758,10 +791,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "claude-crp.configure_later_then_connect.remote_container",
+      "id": "claude-crp.configure_later_then_connect.remote.container_host_mounted",
       "provider_id": "claude-crp",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -779,10 +813,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "gemini.subscription_oauth.local_host",
+      "id": "gemini.subscription_oauth.local.host",
       "provider_id": "gemini",
       "auth_mode": "subscription_oauth",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -802,10 +837,11 @@
       "skip_reason": "missing_ci_secret_contract"
     },
     {
-      "id": "gemini.subscription_oauth.local_container",
+      "id": "gemini.subscription_oauth.local.container_host_mounted",
       "provider_id": "gemini",
       "auth_mode": "subscription_oauth",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -825,10 +861,11 @@
       "skip_reason": "missing_ci_secret_contract"
     },
     {
-      "id": "gemini.subscription_oauth.remote_host",
+      "id": "gemini.subscription_oauth.remote.host",
       "provider_id": "gemini",
       "auth_mode": "subscription_oauth",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -844,10 +881,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "gemini.subscription_oauth.remote_container",
+      "id": "gemini.subscription_oauth.remote.container_host_mounted",
       "provider_id": "gemini",
       "auth_mode": "subscription_oauth",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -863,10 +901,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "gemini.endpoint_api_key.local_host",
+      "id": "gemini.endpoint_api_key.local.host",
       "provider_id": "gemini",
       "auth_mode": "endpoint_api_key",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -883,10 +922,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "gemini.endpoint_api_key.local_container",
+      "id": "gemini.endpoint_api_key.local.container_host_mounted",
       "provider_id": "gemini",
       "auth_mode": "endpoint_api_key",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -903,10 +943,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "gemini.endpoint_api_key.remote_host",
+      "id": "gemini.endpoint_api_key.remote.host",
       "provider_id": "gemini",
       "auth_mode": "endpoint_api_key",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -923,10 +964,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "gemini.endpoint_api_key.remote_container",
+      "id": "gemini.endpoint_api_key.remote.container_host_mounted",
       "provider_id": "gemini",
       "auth_mode": "endpoint_api_key",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -943,10 +985,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "gemini.auth_import.local_host",
+      "id": "gemini.auth_import.local.host",
       "provider_id": "gemini",
       "auth_mode": "auth_import",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -963,10 +1006,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "gemini.auth_import.local_container",
+      "id": "gemini.auth_import.local.container_host_mounted",
       "provider_id": "gemini",
       "auth_mode": "auth_import",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "supported",
       "lane": "nightly",
       "required_assertions": [
@@ -987,10 +1031,11 @@
       "skip_reason": null
     },
     {
-      "id": "gemini.auth_import.remote_host",
+      "id": "gemini.auth_import.remote.host",
       "provider_id": "gemini",
       "auth_mode": "auth_import",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1007,10 +1052,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "gemini.auth_import.remote_container",
+      "id": "gemini.auth_import.remote.container_host_mounted",
       "provider_id": "gemini",
       "auth_mode": "auth_import",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1027,10 +1073,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "gemini.configure_later_then_connect.local_host",
+      "id": "gemini.configure_later_then_connect.local.host",
       "provider_id": "gemini",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1048,10 +1095,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "gemini.configure_later_then_connect.local_container",
+      "id": "gemini.configure_later_then_connect.local.container_host_mounted",
       "provider_id": "gemini",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1069,10 +1117,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "gemini.configure_later_then_connect.remote_host",
+      "id": "gemini.configure_later_then_connect.remote.host",
       "provider_id": "gemini",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1090,10 +1139,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "gemini.configure_later_then_connect.remote_container",
+      "id": "gemini.configure_later_then_connect.remote.container_host_mounted",
       "provider_id": "gemini",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1111,10 +1161,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "cursor.subscription_oauth.local_host",
+      "id": "cursor.subscription_oauth.local.host",
       "provider_id": "cursor",
       "auth_mode": "subscription_oauth",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "supported",
       "lane": "nightly",
       "required_assertions": [
@@ -1134,10 +1185,11 @@
       "skip_reason": null
     },
     {
-      "id": "cursor.subscription_oauth.local_container",
+      "id": "cursor.subscription_oauth.local.container_host_mounted",
       "provider_id": "cursor",
       "auth_mode": "subscription_oauth",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "supported",
       "lane": "nightly",
       "required_assertions": [
@@ -1157,10 +1209,11 @@
       "skip_reason": null
     },
     {
-      "id": "cursor.subscription_oauth.remote_host",
+      "id": "cursor.subscription_oauth.remote.host",
       "provider_id": "cursor",
       "auth_mode": "subscription_oauth",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1176,10 +1229,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "cursor.subscription_oauth.remote_container",
+      "id": "cursor.subscription_oauth.remote.container_host_mounted",
       "provider_id": "cursor",
       "auth_mode": "subscription_oauth",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1195,10 +1249,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "cursor.endpoint_api_key.local_host",
+      "id": "cursor.endpoint_api_key.local.host",
       "provider_id": "cursor",
       "auth_mode": "endpoint_api_key",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1215,10 +1270,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "cursor.endpoint_api_key.local_container",
+      "id": "cursor.endpoint_api_key.local.container_host_mounted",
       "provider_id": "cursor",
       "auth_mode": "endpoint_api_key",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1235,10 +1291,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "cursor.endpoint_api_key.remote_host",
+      "id": "cursor.endpoint_api_key.remote.host",
       "provider_id": "cursor",
       "auth_mode": "endpoint_api_key",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1255,10 +1312,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "cursor.endpoint_api_key.remote_container",
+      "id": "cursor.endpoint_api_key.remote.container_host_mounted",
       "provider_id": "cursor",
       "auth_mode": "endpoint_api_key",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1275,10 +1333,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "cursor.auth_import.local_host",
+      "id": "cursor.auth_import.local.host",
       "provider_id": "cursor",
       "auth_mode": "auth_import",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -1292,10 +1351,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "cursor.auth_import.local_container",
+      "id": "cursor.auth_import.local.container_host_mounted",
       "provider_id": "cursor",
       "auth_mode": "auth_import",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -1309,10 +1369,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "cursor.auth_import.remote_host",
+      "id": "cursor.auth_import.remote.host",
       "provider_id": "cursor",
       "auth_mode": "auth_import",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -1326,10 +1387,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "cursor.auth_import.remote_container",
+      "id": "cursor.auth_import.remote.container_host_mounted",
       "provider_id": "cursor",
       "auth_mode": "auth_import",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -1343,10 +1405,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "cursor.configure_later_then_connect.local_host",
+      "id": "cursor.configure_later_then_connect.local.host",
       "provider_id": "cursor",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1364,10 +1427,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "cursor.configure_later_then_connect.local_container",
+      "id": "cursor.configure_later_then_connect.local.container_host_mounted",
       "provider_id": "cursor",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1385,10 +1449,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "cursor.configure_later_then_connect.remote_host",
+      "id": "cursor.configure_later_then_connect.remote.host",
       "provider_id": "cursor",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1406,10 +1471,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "cursor.configure_later_then_connect.remote_container",
+      "id": "cursor.configure_later_then_connect.remote.container_host_mounted",
       "provider_id": "cursor",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1427,10 +1493,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "qwen.subscription_oauth.local_host",
+      "id": "qwen.subscription_oauth.local.host",
       "provider_id": "qwen",
       "auth_mode": "subscription_oauth",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1450,10 +1517,11 @@
       "skip_reason": "missing_ci_secret_contract"
     },
     {
-      "id": "qwen.subscription_oauth.local_container",
+      "id": "qwen.subscription_oauth.local.container_host_mounted",
       "provider_id": "qwen",
       "auth_mode": "subscription_oauth",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1473,10 +1541,11 @@
       "skip_reason": "missing_ci_secret_contract"
     },
     {
-      "id": "qwen.subscription_oauth.remote_host",
+      "id": "qwen.subscription_oauth.remote.host",
       "provider_id": "qwen",
       "auth_mode": "subscription_oauth",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1492,10 +1561,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "qwen.subscription_oauth.remote_container",
+      "id": "qwen.subscription_oauth.remote.container_host_mounted",
       "provider_id": "qwen",
       "auth_mode": "subscription_oauth",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1511,10 +1581,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "qwen.endpoint_api_key.local_host",
+      "id": "qwen.endpoint_api_key.local.host",
       "provider_id": "qwen",
       "auth_mode": "endpoint_api_key",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1531,10 +1602,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "qwen.endpoint_api_key.local_container",
+      "id": "qwen.endpoint_api_key.local.container_host_mounted",
       "provider_id": "qwen",
       "auth_mode": "endpoint_api_key",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1551,10 +1623,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "qwen.endpoint_api_key.remote_host",
+      "id": "qwen.endpoint_api_key.remote.host",
       "provider_id": "qwen",
       "auth_mode": "endpoint_api_key",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1571,10 +1644,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "qwen.endpoint_api_key.remote_container",
+      "id": "qwen.endpoint_api_key.remote.container_host_mounted",
       "provider_id": "qwen",
       "auth_mode": "endpoint_api_key",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1591,10 +1665,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "qwen.auth_import.local_host",
+      "id": "qwen.auth_import.local.host",
       "provider_id": "qwen",
       "auth_mode": "auth_import",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1611,10 +1686,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "qwen.auth_import.local_container",
+      "id": "qwen.auth_import.local.container_host_mounted",
       "provider_id": "qwen",
       "auth_mode": "auth_import",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "supported",
       "lane": "nightly",
       "required_assertions": [
@@ -1635,10 +1711,11 @@
       "skip_reason": null
     },
     {
-      "id": "qwen.auth_import.remote_host",
+      "id": "qwen.auth_import.remote.host",
       "provider_id": "qwen",
       "auth_mode": "auth_import",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1655,10 +1732,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "qwen.auth_import.remote_container",
+      "id": "qwen.auth_import.remote.container_host_mounted",
       "provider_id": "qwen",
       "auth_mode": "auth_import",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1675,10 +1753,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "qwen.configure_later_then_connect.local_host",
+      "id": "qwen.configure_later_then_connect.local.host",
       "provider_id": "qwen",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1696,10 +1775,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "qwen.configure_later_then_connect.local_container",
+      "id": "qwen.configure_later_then_connect.local.container_host_mounted",
       "provider_id": "qwen",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1717,10 +1797,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "qwen.configure_later_then_connect.remote_host",
+      "id": "qwen.configure_later_then_connect.remote.host",
       "provider_id": "qwen",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1738,10 +1819,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "qwen.configure_later_then_connect.remote_container",
+      "id": "qwen.configure_later_then_connect.remote.container_host_mounted",
       "provider_id": "qwen",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1759,10 +1841,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "kimi.subscription_oauth.local_host",
+      "id": "kimi.subscription_oauth.local.host",
       "provider_id": "kimi",
       "auth_mode": "subscription_oauth",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1782,10 +1865,11 @@
       "skip_reason": "missing_ci_secret_contract"
     },
     {
-      "id": "kimi.subscription_oauth.local_container",
+      "id": "kimi.subscription_oauth.local.container_host_mounted",
       "provider_id": "kimi",
       "auth_mode": "subscription_oauth",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1805,10 +1889,11 @@
       "skip_reason": "missing_ci_secret_contract"
     },
     {
-      "id": "kimi.subscription_oauth.remote_host",
+      "id": "kimi.subscription_oauth.remote.host",
       "provider_id": "kimi",
       "auth_mode": "subscription_oauth",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1824,10 +1909,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "kimi.subscription_oauth.remote_container",
+      "id": "kimi.subscription_oauth.remote.container_host_mounted",
       "provider_id": "kimi",
       "auth_mode": "subscription_oauth",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1843,10 +1929,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "kimi.endpoint_api_key.local_host",
+      "id": "kimi.endpoint_api_key.local.host",
       "provider_id": "kimi",
       "auth_mode": "endpoint_api_key",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1863,10 +1950,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "kimi.endpoint_api_key.local_container",
+      "id": "kimi.endpoint_api_key.local.container_host_mounted",
       "provider_id": "kimi",
       "auth_mode": "endpoint_api_key",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1883,10 +1971,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "kimi.endpoint_api_key.remote_host",
+      "id": "kimi.endpoint_api_key.remote.host",
       "provider_id": "kimi",
       "auth_mode": "endpoint_api_key",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1903,10 +1992,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "kimi.endpoint_api_key.remote_container",
+      "id": "kimi.endpoint_api_key.remote.container_host_mounted",
       "provider_id": "kimi",
       "auth_mode": "endpoint_api_key",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -1923,10 +2013,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "kimi.auth_import.local_host",
+      "id": "kimi.auth_import.local.host",
       "provider_id": "kimi",
       "auth_mode": "auth_import",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -1940,10 +2031,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "kimi.auth_import.local_container",
+      "id": "kimi.auth_import.local.container_host_mounted",
       "provider_id": "kimi",
       "auth_mode": "auth_import",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -1957,10 +2049,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "kimi.auth_import.remote_host",
+      "id": "kimi.auth_import.remote.host",
       "provider_id": "kimi",
       "auth_mode": "auth_import",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -1974,10 +2067,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "kimi.auth_import.remote_container",
+      "id": "kimi.auth_import.remote.container_host_mounted",
       "provider_id": "kimi",
       "auth_mode": "auth_import",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -1991,10 +2085,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "kimi.configure_later_then_connect.local_host",
+      "id": "kimi.configure_later_then_connect.local.host",
       "provider_id": "kimi",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2012,10 +2107,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "kimi.configure_later_then_connect.local_container",
+      "id": "kimi.configure_later_then_connect.local.container_host_mounted",
       "provider_id": "kimi",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2033,10 +2129,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "kimi.configure_later_then_connect.remote_host",
+      "id": "kimi.configure_later_then_connect.remote.host",
       "provider_id": "kimi",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2054,10 +2151,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "kimi.configure_later_then_connect.remote_container",
+      "id": "kimi.configure_later_then_connect.remote.container_host_mounted",
       "provider_id": "kimi",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2075,10 +2173,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "mistral.subscription_oauth.local_host",
+      "id": "mistral.subscription_oauth.local.host",
       "provider_id": "mistral",
       "auth_mode": "subscription_oauth",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2098,10 +2197,11 @@
       "skip_reason": "missing_seed_fixture"
     },
     {
-      "id": "mistral.subscription_oauth.local_container",
+      "id": "mistral.subscription_oauth.local.container_host_mounted",
       "provider_id": "mistral",
       "auth_mode": "subscription_oauth",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2121,10 +2221,11 @@
       "skip_reason": "missing_seed_fixture"
     },
     {
-      "id": "mistral.subscription_oauth.remote_host",
+      "id": "mistral.subscription_oauth.remote.host",
       "provider_id": "mistral",
       "auth_mode": "subscription_oauth",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2140,10 +2241,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "mistral.subscription_oauth.remote_container",
+      "id": "mistral.subscription_oauth.remote.container_host_mounted",
       "provider_id": "mistral",
       "auth_mode": "subscription_oauth",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2159,10 +2261,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "mistral.endpoint_api_key.local_host",
+      "id": "mistral.endpoint_api_key.local.host",
       "provider_id": "mistral",
       "auth_mode": "endpoint_api_key",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2179,10 +2282,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "mistral.endpoint_api_key.local_container",
+      "id": "mistral.endpoint_api_key.local.container_host_mounted",
       "provider_id": "mistral",
       "auth_mode": "endpoint_api_key",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2199,10 +2303,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "mistral.endpoint_api_key.remote_host",
+      "id": "mistral.endpoint_api_key.remote.host",
       "provider_id": "mistral",
       "auth_mode": "endpoint_api_key",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2219,10 +2324,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "mistral.endpoint_api_key.remote_container",
+      "id": "mistral.endpoint_api_key.remote.container_host_mounted",
       "provider_id": "mistral",
       "auth_mode": "endpoint_api_key",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2239,10 +2345,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "mistral.auth_import.local_host",
+      "id": "mistral.auth_import.local.host",
       "provider_id": "mistral",
       "auth_mode": "auth_import",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -2256,10 +2363,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "mistral.auth_import.local_container",
+      "id": "mistral.auth_import.local.container_host_mounted",
       "provider_id": "mistral",
       "auth_mode": "auth_import",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -2273,10 +2381,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "mistral.auth_import.remote_host",
+      "id": "mistral.auth_import.remote.host",
       "provider_id": "mistral",
       "auth_mode": "auth_import",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -2290,10 +2399,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "mistral.auth_import.remote_container",
+      "id": "mistral.auth_import.remote.container_host_mounted",
       "provider_id": "mistral",
       "auth_mode": "auth_import",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -2307,10 +2417,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "mistral.configure_later_then_connect.local_host",
+      "id": "mistral.configure_later_then_connect.local.host",
       "provider_id": "mistral",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2328,10 +2439,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "mistral.configure_later_then_connect.local_container",
+      "id": "mistral.configure_later_then_connect.local.container_host_mounted",
       "provider_id": "mistral",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2349,10 +2461,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "mistral.configure_later_then_connect.remote_host",
+      "id": "mistral.configure_later_then_connect.remote.host",
       "provider_id": "mistral",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2370,10 +2483,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "mistral.configure_later_then_connect.remote_container",
+      "id": "mistral.configure_later_then_connect.remote.container_host_mounted",
       "provider_id": "mistral",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2391,10 +2505,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "amp.subscription_oauth.local_host",
+      "id": "amp.subscription_oauth.local.host",
       "provider_id": "amp",
       "auth_mode": "subscription_oauth",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2414,10 +2529,11 @@
       "skip_reason": "missing_seed_fixture"
     },
     {
-      "id": "amp.subscription_oauth.local_container",
+      "id": "amp.subscription_oauth.local.container_host_mounted",
       "provider_id": "amp",
       "auth_mode": "subscription_oauth",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2437,10 +2553,11 @@
       "skip_reason": "missing_seed_fixture"
     },
     {
-      "id": "amp.subscription_oauth.remote_host",
+      "id": "amp.subscription_oauth.remote.host",
       "provider_id": "amp",
       "auth_mode": "subscription_oauth",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2456,10 +2573,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "amp.subscription_oauth.remote_container",
+      "id": "amp.subscription_oauth.remote.container_host_mounted",
       "provider_id": "amp",
       "auth_mode": "subscription_oauth",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2475,10 +2593,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "amp.endpoint_api_key.local_host",
+      "id": "amp.endpoint_api_key.local.host",
       "provider_id": "amp",
       "auth_mode": "endpoint_api_key",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2495,10 +2614,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "amp.endpoint_api_key.local_container",
+      "id": "amp.endpoint_api_key.local.container_host_mounted",
       "provider_id": "amp",
       "auth_mode": "endpoint_api_key",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2515,10 +2635,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "amp.endpoint_api_key.remote_host",
+      "id": "amp.endpoint_api_key.remote.host",
       "provider_id": "amp",
       "auth_mode": "endpoint_api_key",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2535,10 +2656,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "amp.endpoint_api_key.remote_container",
+      "id": "amp.endpoint_api_key.remote.container_host_mounted",
       "provider_id": "amp",
       "auth_mode": "endpoint_api_key",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2555,10 +2677,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "amp.auth_import.local_host",
+      "id": "amp.auth_import.local.host",
       "provider_id": "amp",
       "auth_mode": "auth_import",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2575,10 +2698,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "amp.auth_import.local_container",
+      "id": "amp.auth_import.local.container_host_mounted",
       "provider_id": "amp",
       "auth_mode": "auth_import",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "supported",
       "lane": "nightly",
       "required_assertions": [
@@ -2599,10 +2723,11 @@
       "skip_reason": null
     },
     {
-      "id": "amp.auth_import.remote_host",
+      "id": "amp.auth_import.remote.host",
       "provider_id": "amp",
       "auth_mode": "auth_import",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2619,10 +2744,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "amp.auth_import.remote_container",
+      "id": "amp.auth_import.remote.container_host_mounted",
       "provider_id": "amp",
       "auth_mode": "auth_import",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2639,10 +2765,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "amp.configure_later_then_connect.local_host",
+      "id": "amp.configure_later_then_connect.local.host",
       "provider_id": "amp",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2660,10 +2787,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "amp.configure_later_then_connect.local_container",
+      "id": "amp.configure_later_then_connect.local.container_host_mounted",
       "provider_id": "amp",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2681,10 +2809,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "amp.configure_later_then_connect.remote_host",
+      "id": "amp.configure_later_then_connect.remote.host",
       "provider_id": "amp",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2702,10 +2831,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "amp.configure_later_then_connect.remote_container",
+      "id": "amp.configure_later_then_connect.remote.container_host_mounted",
       "provider_id": "amp",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2723,10 +2853,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "copilot.subscription_oauth.local_host",
+      "id": "copilot.subscription_oauth.local.host",
       "provider_id": "copilot",
       "auth_mode": "subscription_oauth",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2746,10 +2877,11 @@
       "skip_reason": "missing_ci_secret_contract"
     },
     {
-      "id": "copilot.subscription_oauth.local_container",
+      "id": "copilot.subscription_oauth.local.container_host_mounted",
       "provider_id": "copilot",
       "auth_mode": "subscription_oauth",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2769,10 +2901,11 @@
       "skip_reason": "missing_ci_secret_contract"
     },
     {
-      "id": "copilot.subscription_oauth.remote_host",
+      "id": "copilot.subscription_oauth.remote.host",
       "provider_id": "copilot",
       "auth_mode": "subscription_oauth",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2788,10 +2921,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "copilot.subscription_oauth.remote_container",
+      "id": "copilot.subscription_oauth.remote.container_host_mounted",
       "provider_id": "copilot",
       "auth_mode": "subscription_oauth",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2807,10 +2941,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "copilot.endpoint_api_key.local_host",
+      "id": "copilot.endpoint_api_key.local.host",
       "provider_id": "copilot",
       "auth_mode": "endpoint_api_key",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2827,10 +2962,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "copilot.endpoint_api_key.local_container",
+      "id": "copilot.endpoint_api_key.local.container_host_mounted",
       "provider_id": "copilot",
       "auth_mode": "endpoint_api_key",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2847,10 +2983,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "copilot.endpoint_api_key.remote_host",
+      "id": "copilot.endpoint_api_key.remote.host",
       "provider_id": "copilot",
       "auth_mode": "endpoint_api_key",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2867,10 +3004,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "copilot.endpoint_api_key.remote_container",
+      "id": "copilot.endpoint_api_key.remote.container_host_mounted",
       "provider_id": "copilot",
       "auth_mode": "endpoint_api_key",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2887,10 +3025,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "copilot.auth_import.local_host",
+      "id": "copilot.auth_import.local.host",
       "provider_id": "copilot",
       "auth_mode": "auth_import",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -2904,10 +3043,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "copilot.auth_import.local_container",
+      "id": "copilot.auth_import.local.container_host_mounted",
       "provider_id": "copilot",
       "auth_mode": "auth_import",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -2921,10 +3061,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "copilot.auth_import.remote_host",
+      "id": "copilot.auth_import.remote.host",
       "provider_id": "copilot",
       "auth_mode": "auth_import",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -2938,10 +3079,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "copilot.auth_import.remote_container",
+      "id": "copilot.auth_import.remote.container_host_mounted",
       "provider_id": "copilot",
       "auth_mode": "auth_import",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -2955,10 +3097,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "copilot.configure_later_then_connect.local_host",
+      "id": "copilot.configure_later_then_connect.local.host",
       "provider_id": "copilot",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2976,10 +3119,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "copilot.configure_later_then_connect.local_container",
+      "id": "copilot.configure_later_then_connect.local.container_host_mounted",
       "provider_id": "copilot",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -2997,10 +3141,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "copilot.configure_later_then_connect.remote_host",
+      "id": "copilot.configure_later_then_connect.remote.host",
       "provider_id": "copilot",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3018,10 +3163,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "copilot.configure_later_then_connect.remote_container",
+      "id": "copilot.configure_later_then_connect.remote.container_host_mounted",
       "provider_id": "copilot",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3039,10 +3185,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "auggie.subscription_oauth.local_host",
+      "id": "auggie.subscription_oauth.local.host",
       "provider_id": "auggie",
       "auth_mode": "subscription_oauth",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3058,10 +3205,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "auggie.subscription_oauth.local_container",
+      "id": "auggie.subscription_oauth.local.container_host_mounted",
       "provider_id": "auggie",
       "auth_mode": "subscription_oauth",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3077,10 +3225,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "auggie.subscription_oauth.remote_host",
+      "id": "auggie.subscription_oauth.remote.host",
       "provider_id": "auggie",
       "auth_mode": "subscription_oauth",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3096,10 +3245,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "auggie.subscription_oauth.remote_container",
+      "id": "auggie.subscription_oauth.remote.container_host_mounted",
       "provider_id": "auggie",
       "auth_mode": "subscription_oauth",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3115,10 +3265,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "auggie.endpoint_api_key.local_host",
+      "id": "auggie.endpoint_api_key.local.host",
       "provider_id": "auggie",
       "auth_mode": "endpoint_api_key",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3135,10 +3286,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "auggie.endpoint_api_key.local_container",
+      "id": "auggie.endpoint_api_key.local.container_host_mounted",
       "provider_id": "auggie",
       "auth_mode": "endpoint_api_key",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3155,10 +3307,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "auggie.endpoint_api_key.remote_host",
+      "id": "auggie.endpoint_api_key.remote.host",
       "provider_id": "auggie",
       "auth_mode": "endpoint_api_key",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3175,10 +3328,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "auggie.endpoint_api_key.remote_container",
+      "id": "auggie.endpoint_api_key.remote.container_host_mounted",
       "provider_id": "auggie",
       "auth_mode": "endpoint_api_key",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3195,10 +3349,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "auggie.auth_import.local_host",
+      "id": "auggie.auth_import.local.host",
       "provider_id": "auggie",
       "auth_mode": "auth_import",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -3212,10 +3367,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "auggie.auth_import.local_container",
+      "id": "auggie.auth_import.local.container_host_mounted",
       "provider_id": "auggie",
       "auth_mode": "auth_import",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -3229,10 +3385,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "auggie.auth_import.remote_host",
+      "id": "auggie.auth_import.remote.host",
       "provider_id": "auggie",
       "auth_mode": "auth_import",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -3246,10 +3403,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "auggie.auth_import.remote_container",
+      "id": "auggie.auth_import.remote.container_host_mounted",
       "provider_id": "auggie",
       "auth_mode": "auth_import",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -3263,10 +3421,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "auggie.configure_later_then_connect.local_host",
+      "id": "auggie.configure_later_then_connect.local.host",
       "provider_id": "auggie",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3284,10 +3443,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "auggie.configure_later_then_connect.local_container",
+      "id": "auggie.configure_later_then_connect.local.container_host_mounted",
       "provider_id": "auggie",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3305,10 +3465,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "auggie.configure_later_then_connect.remote_host",
+      "id": "auggie.configure_later_then_connect.remote.host",
       "provider_id": "auggie",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3326,10 +3487,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "auggie.configure_later_then_connect.remote_container",
+      "id": "auggie.configure_later_then_connect.remote.container_host_mounted",
       "provider_id": "auggie",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3347,10 +3509,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "opencode.subscription_oauth.local_host",
+      "id": "opencode.subscription_oauth.local.host",
       "provider_id": "opencode",
       "auth_mode": "subscription_oauth",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -3364,10 +3527,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "opencode.subscription_oauth.local_container",
+      "id": "opencode.subscription_oauth.local.container_host_mounted",
       "provider_id": "opencode",
       "auth_mode": "subscription_oauth",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -3381,10 +3545,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "opencode.subscription_oauth.remote_host",
+      "id": "opencode.subscription_oauth.remote.host",
       "provider_id": "opencode",
       "auth_mode": "subscription_oauth",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -3398,10 +3563,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "opencode.subscription_oauth.remote_container",
+      "id": "opencode.subscription_oauth.remote.container_host_mounted",
       "provider_id": "opencode",
       "auth_mode": "subscription_oauth",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -3415,10 +3581,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "opencode.endpoint_api_key.local_host",
+      "id": "opencode.endpoint_api_key.local.host",
       "provider_id": "opencode",
       "auth_mode": "endpoint_api_key",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3435,10 +3602,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "opencode.endpoint_api_key.local_container",
+      "id": "opencode.endpoint_api_key.local.container_host_mounted",
       "provider_id": "opencode",
       "auth_mode": "endpoint_api_key",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3455,10 +3623,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "opencode.endpoint_api_key.remote_host",
+      "id": "opencode.endpoint_api_key.remote.host",
       "provider_id": "opencode",
       "auth_mode": "endpoint_api_key",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3475,10 +3644,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "opencode.endpoint_api_key.remote_container",
+      "id": "opencode.endpoint_api_key.remote.container_host_mounted",
       "provider_id": "opencode",
       "auth_mode": "endpoint_api_key",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3495,10 +3665,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "opencode.auth_import.local_host",
+      "id": "opencode.auth_import.local.host",
       "provider_id": "opencode",
       "auth_mode": "auth_import",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3515,10 +3686,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "opencode.auth_import.local_container",
+      "id": "opencode.auth_import.local.container_host_mounted",
       "provider_id": "opencode",
       "auth_mode": "auth_import",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "supported",
       "lane": "nightly",
       "required_assertions": [
@@ -3539,10 +3711,11 @@
       "skip_reason": null
     },
     {
-      "id": "opencode.auth_import.remote_host",
+      "id": "opencode.auth_import.remote.host",
       "provider_id": "opencode",
       "auth_mode": "auth_import",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3559,10 +3732,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "opencode.auth_import.remote_container",
+      "id": "opencode.auth_import.remote.container_host_mounted",
       "provider_id": "opencode",
       "auth_mode": "auth_import",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3579,10 +3753,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "opencode.configure_later_then_connect.local_host",
+      "id": "opencode.configure_later_then_connect.local.host",
       "provider_id": "opencode",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3600,10 +3775,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "opencode.configure_later_then_connect.local_container",
+      "id": "opencode.configure_later_then_connect.local.container_host_mounted",
       "provider_id": "opencode",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3621,10 +3797,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "opencode.configure_later_then_connect.remote_host",
+      "id": "opencode.configure_later_then_connect.remote.host",
       "provider_id": "opencode",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3642,10 +3819,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "opencode.configure_later_then_connect.remote_container",
+      "id": "opencode.configure_later_then_connect.remote.container_host_mounted",
       "provider_id": "opencode",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3663,10 +3841,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "goose.subscription_oauth.local_host",
+      "id": "goose.subscription_oauth.local.host",
       "provider_id": "goose",
       "auth_mode": "subscription_oauth",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -3680,10 +3859,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "goose.subscription_oauth.local_container",
+      "id": "goose.subscription_oauth.local.container_host_mounted",
       "provider_id": "goose",
       "auth_mode": "subscription_oauth",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -3697,10 +3877,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "goose.subscription_oauth.remote_host",
+      "id": "goose.subscription_oauth.remote.host",
       "provider_id": "goose",
       "auth_mode": "subscription_oauth",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -3714,10 +3895,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "goose.subscription_oauth.remote_container",
+      "id": "goose.subscription_oauth.remote.container_host_mounted",
       "provider_id": "goose",
       "auth_mode": "subscription_oauth",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -3731,10 +3913,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "goose.endpoint_api_key.local_host",
+      "id": "goose.endpoint_api_key.local.host",
       "provider_id": "goose",
       "auth_mode": "endpoint_api_key",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3751,10 +3934,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "goose.endpoint_api_key.local_container",
+      "id": "goose.endpoint_api_key.local.container_host_mounted",
       "provider_id": "goose",
       "auth_mode": "endpoint_api_key",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3771,10 +3955,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "goose.endpoint_api_key.remote_host",
+      "id": "goose.endpoint_api_key.remote.host",
       "provider_id": "goose",
       "auth_mode": "endpoint_api_key",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3791,10 +3976,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "goose.endpoint_api_key.remote_container",
+      "id": "goose.endpoint_api_key.remote.container_host_mounted",
       "provider_id": "goose",
       "auth_mode": "endpoint_api_key",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3811,10 +3997,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "goose.auth_import.local_host",
+      "id": "goose.auth_import.local.host",
       "provider_id": "goose",
       "auth_mode": "auth_import",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -3828,10 +4015,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "goose.auth_import.local_container",
+      "id": "goose.auth_import.local.container_host_mounted",
       "provider_id": "goose",
       "auth_mode": "auth_import",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -3845,10 +4033,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "goose.auth_import.remote_host",
+      "id": "goose.auth_import.remote.host",
       "provider_id": "goose",
       "auth_mode": "auth_import",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -3862,10 +4051,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "goose.auth_import.remote_container",
+      "id": "goose.auth_import.remote.container_host_mounted",
       "provider_id": "goose",
       "auth_mode": "auth_import",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -3879,10 +4069,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "goose.configure_later_then_connect.local_host",
+      "id": "goose.configure_later_then_connect.local.host",
       "provider_id": "goose",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3900,10 +4091,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "goose.configure_later_then_connect.local_container",
+      "id": "goose.configure_later_then_connect.local.container_host_mounted",
       "provider_id": "goose",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3921,10 +4113,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "goose.configure_later_then_connect.remote_host",
+      "id": "goose.configure_later_then_connect.remote.host",
       "provider_id": "goose",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3942,10 +4135,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "goose.configure_later_then_connect.remote_container",
+      "id": "goose.configure_later_then_connect.remote.container_host_mounted",
       "provider_id": "goose",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -3963,10 +4157,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "droid.subscription_oauth.local_host",
+      "id": "droid.subscription_oauth.local.host",
       "provider_id": "droid",
       "auth_mode": "subscription_oauth",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -3980,10 +4175,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "droid.subscription_oauth.local_container",
+      "id": "droid.subscription_oauth.local.container_host_mounted",
       "provider_id": "droid",
       "auth_mode": "subscription_oauth",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -3997,10 +4193,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "droid.subscription_oauth.remote_host",
+      "id": "droid.subscription_oauth.remote.host",
       "provider_id": "droid",
       "auth_mode": "subscription_oauth",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -4014,10 +4211,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "droid.subscription_oauth.remote_container",
+      "id": "droid.subscription_oauth.remote.container_host_mounted",
       "provider_id": "droid",
       "auth_mode": "subscription_oauth",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -4031,10 +4229,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "droid.endpoint_api_key.local_host",
+      "id": "droid.endpoint_api_key.local.host",
       "provider_id": "droid",
       "auth_mode": "endpoint_api_key",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -4051,10 +4250,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "droid.endpoint_api_key.local_container",
+      "id": "droid.endpoint_api_key.local.container_host_mounted",
       "provider_id": "droid",
       "auth_mode": "endpoint_api_key",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -4071,10 +4271,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "droid.endpoint_api_key.remote_host",
+      "id": "droid.endpoint_api_key.remote.host",
       "provider_id": "droid",
       "auth_mode": "endpoint_api_key",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -4091,10 +4292,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "droid.endpoint_api_key.remote_container",
+      "id": "droid.endpoint_api_key.remote.container_host_mounted",
       "provider_id": "droid",
       "auth_mode": "endpoint_api_key",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -4111,10 +4313,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "droid.auth_import.local_host",
+      "id": "droid.auth_import.local.host",
       "provider_id": "droid",
       "auth_mode": "auth_import",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -4128,10 +4331,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "droid.auth_import.local_container",
+      "id": "droid.auth_import.local.container_host_mounted",
       "provider_id": "droid",
       "auth_mode": "auth_import",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -4145,10 +4349,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "droid.auth_import.remote_host",
+      "id": "droid.auth_import.remote.host",
       "provider_id": "droid",
       "auth_mode": "auth_import",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -4162,10 +4367,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "droid.auth_import.remote_container",
+      "id": "droid.auth_import.remote.container_host_mounted",
       "provider_id": "droid",
       "auth_mode": "auth_import",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -4179,10 +4385,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "droid.configure_later_then_connect.local_host",
+      "id": "droid.configure_later_then_connect.local.host",
       "provider_id": "droid",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -4200,10 +4407,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "droid.configure_later_then_connect.local_container",
+      "id": "droid.configure_later_then_connect.local.container_host_mounted",
       "provider_id": "droid",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -4221,10 +4429,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "droid.configure_later_then_connect.remote_host",
+      "id": "droid.configure_later_then_connect.remote.host",
       "provider_id": "droid",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -4242,10 +4451,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "droid.configure_later_then_connect.remote_container",
+      "id": "droid.configure_later_then_connect.remote.container_host_mounted",
       "provider_id": "droid",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -4263,10 +4473,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "openhands.subscription_oauth.local_host",
+      "id": "openhands.subscription_oauth.local.host",
       "provider_id": "openhands",
       "auth_mode": "subscription_oauth",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -4280,10 +4491,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "openhands.subscription_oauth.local_container",
+      "id": "openhands.subscription_oauth.local.container_host_mounted",
       "provider_id": "openhands",
       "auth_mode": "subscription_oauth",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -4297,10 +4509,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "openhands.subscription_oauth.remote_host",
+      "id": "openhands.subscription_oauth.remote.host",
       "provider_id": "openhands",
       "auth_mode": "subscription_oauth",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -4314,10 +4527,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "openhands.subscription_oauth.remote_container",
+      "id": "openhands.subscription_oauth.remote.container_host_mounted",
       "provider_id": "openhands",
       "auth_mode": "subscription_oauth",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -4331,10 +4545,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "openhands.endpoint_api_key.local_host",
+      "id": "openhands.endpoint_api_key.local.host",
       "provider_id": "openhands",
       "auth_mode": "endpoint_api_key",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -4351,10 +4566,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "openhands.endpoint_api_key.local_container",
+      "id": "openhands.endpoint_api_key.local.container_host_mounted",
       "provider_id": "openhands",
       "auth_mode": "endpoint_api_key",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -4371,10 +4587,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "openhands.endpoint_api_key.remote_host",
+      "id": "openhands.endpoint_api_key.remote.host",
       "provider_id": "openhands",
       "auth_mode": "endpoint_api_key",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -4391,10 +4608,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "openhands.endpoint_api_key.remote_container",
+      "id": "openhands.endpoint_api_key.remote.container_host_mounted",
       "provider_id": "openhands",
       "auth_mode": "endpoint_api_key",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -4411,10 +4629,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "openhands.auth_import.local_host",
+      "id": "openhands.auth_import.local.host",
       "provider_id": "openhands",
       "auth_mode": "auth_import",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -4428,10 +4647,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "openhands.auth_import.local_container",
+      "id": "openhands.auth_import.local.container_host_mounted",
       "provider_id": "openhands",
       "auth_mode": "auth_import",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -4445,10 +4665,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "openhands.auth_import.remote_host",
+      "id": "openhands.auth_import.remote.host",
       "provider_id": "openhands",
       "auth_mode": "auth_import",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -4462,10 +4683,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "openhands.auth_import.remote_container",
+      "id": "openhands.auth_import.remote.container_host_mounted",
       "provider_id": "openhands",
       "auth_mode": "auth_import",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -4479,10 +4701,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "openhands.configure_later_then_connect.local_host",
+      "id": "openhands.configure_later_then_connect.local.host",
       "provider_id": "openhands",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -4500,10 +4723,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "openhands.configure_later_then_connect.local_container",
+      "id": "openhands.configure_later_then_connect.local.container_host_mounted",
       "provider_id": "openhands",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -4521,10 +4745,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "openhands.configure_later_then_connect.remote_host",
+      "id": "openhands.configure_later_then_connect.remote.host",
       "provider_id": "openhands",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -4542,10 +4767,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "openhands.configure_later_then_connect.remote_container",
+      "id": "openhands.configure_later_then_connect.remote.container_host_mounted",
       "provider_id": "openhands",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -4563,10 +4789,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "pi.subscription_oauth.local_host",
+      "id": "pi.subscription_oauth.local.host",
       "provider_id": "pi",
       "auth_mode": "subscription_oauth",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -4580,10 +4807,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "pi.subscription_oauth.local_container",
+      "id": "pi.subscription_oauth.local.container_host_mounted",
       "provider_id": "pi",
       "auth_mode": "subscription_oauth",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -4597,10 +4825,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "pi.subscription_oauth.remote_host",
+      "id": "pi.subscription_oauth.remote.host",
       "provider_id": "pi",
       "auth_mode": "subscription_oauth",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -4614,10 +4843,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "pi.subscription_oauth.remote_container",
+      "id": "pi.subscription_oauth.remote.container_host_mounted",
       "provider_id": "pi",
       "auth_mode": "subscription_oauth",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -4631,10 +4861,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "pi.endpoint_api_key.local_host",
+      "id": "pi.endpoint_api_key.local.host",
       "provider_id": "pi",
       "auth_mode": "endpoint_api_key",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -4651,10 +4882,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "pi.endpoint_api_key.local_container",
+      "id": "pi.endpoint_api_key.local.container_host_mounted",
       "provider_id": "pi",
       "auth_mode": "endpoint_api_key",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -4671,10 +4903,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "pi.endpoint_api_key.remote_host",
+      "id": "pi.endpoint_api_key.remote.host",
       "provider_id": "pi",
       "auth_mode": "endpoint_api_key",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -4691,10 +4924,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "pi.endpoint_api_key.remote_container",
+      "id": "pi.endpoint_api_key.remote.container_host_mounted",
       "provider_id": "pi",
       "auth_mode": "endpoint_api_key",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -4711,10 +4945,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "pi.auth_import.local_host",
+      "id": "pi.auth_import.local.host",
       "provider_id": "pi",
       "auth_mode": "auth_import",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -4728,10 +4963,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "pi.auth_import.local_container",
+      "id": "pi.auth_import.local.container_host_mounted",
       "provider_id": "pi",
       "auth_mode": "auth_import",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -4745,10 +4981,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "pi.auth_import.remote_host",
+      "id": "pi.auth_import.remote.host",
       "provider_id": "pi",
       "auth_mode": "auth_import",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -4762,10 +4999,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "pi.auth_import.remote_container",
+      "id": "pi.auth_import.remote.container_host_mounted",
       "provider_id": "pi",
       "auth_mode": "auth_import",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "unsupported",
       "lane": "none",
       "required_assertions": [
@@ -4779,10 +5017,11 @@
       "skip_reason": "provider_auth_mode_not_supported"
     },
     {
-      "id": "pi.configure_later_then_connect.local_host",
+      "id": "pi.configure_later_then_connect.local.host",
       "provider_id": "pi",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "local_host",
+      "daemon_location": "local",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -4800,10 +5039,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "pi.configure_later_then_connect.local_container",
+      "id": "pi.configure_later_then_connect.local.container_host_mounted",
       "provider_id": "pi",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "local_container",
+      "daemon_location": "local",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -4821,10 +5061,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "pi.configure_later_then_connect.remote_host",
+      "id": "pi.configure_later_then_connect.remote.host",
       "provider_id": "pi",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "remote_host",
+      "daemon_location": "remote",
+      "execution_environment": "host",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
@@ -4842,10 +5083,11 @@
       "skip_reason": "coverage_not_implemented_yet"
     },
     {
-      "id": "pi.configure_later_then_connect.remote_container",
+      "id": "pi.configure_later_then_connect.remote.container_host_mounted",
       "provider_id": "pi",
       "auth_mode": "configure_later_then_connect",
-      "env_target": "remote_container",
+      "daemon_location": "remote",
+      "execution_environment": "container_host_mounted",
       "support": "deferred",
       "lane": "nightly",
       "required_assertions": [

@@ -891,6 +891,7 @@ impl Store {
                           s.task_id,
                           s.workspace_id,
                           s.worktree_id,
+                          s.execution_environment,
                           s.parent_session_id,
                           s.relationship,
                           s.provider_id,
@@ -934,6 +935,9 @@ impl Store {
                 task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
                 workspace_id: WorkspaceId(uuid::Uuid::parse_str(&workspace_id_value)?),
                 worktree_id: WorktreeId(uuid::Uuid::parse_str(&worktree_id)?),
+                execution_environment: parse_execution_environment(
+                    row.try_get::<String, _>("execution_environment")?.as_str(),
+                ),
                 parent_session_id: parse_optional_session_id(row.try_get("parent_session_id")?),
                 relationship: row.try_get("relationship")?,
                 provider_id: row.try_get("provider_id")?,
@@ -1497,7 +1501,7 @@ impl Store {
             let mut session_sql = String::from(
                 "
                 SELECT id, task_id, workspace_id, parent_session_id, relationship,
-                       provider_id, model_id, title, status, created_at, updated_at
+                       execution_environment, provider_id, model_id, title, status, created_at, updated_at
                 FROM (
                     SELECT
                         s.*,
@@ -1543,6 +1547,9 @@ impl Store {
                     id: SessionId(uuid::Uuid::parse_str(&id)?),
                     task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
                     workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
+                    execution_environment: parse_execution_environment(
+                        r.try_get::<String, _>("execution_environment")?.as_str(),
+                    ),
                     parent_session_id: parse_optional_session_id(r.try_get("parent_session_id")?),
                     relationship: r.try_get("relationship")?,
                     provider_id: r.try_get("provider_id")?,
@@ -1584,6 +1591,7 @@ impl Store {
                 s.task_id,
                 s.workspace_id,
                 s.worktree_id,
+                s.execution_environment,
                 s.parent_session_id,
                 s.relationship,
                 s.provider_id,
@@ -1640,6 +1648,9 @@ impl Store {
                 task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
                 workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
                 worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
+                execution_environment: parse_execution_environment(
+                    r.try_get::<String, _>("execution_environment")?.as_str(),
+                ),
                 provider_id: r.try_get("provider_id")?,
                 model_id: r.try_get("model_id")?,
                 title: r.try_get("title")?,
@@ -1750,6 +1761,7 @@ impl Store {
                 s.task_id,
                 s.workspace_id,
                 s.worktree_id,
+                s.execution_environment,
                 s.parent_session_id,
                 s.relationship,
                 s.provider_id,
@@ -1800,6 +1812,9 @@ impl Store {
                 task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
                 workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
                 worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
+                execution_environment: parse_execution_environment(
+                    r.try_get::<String, _>("execution_environment")?.as_str(),
+                ),
                 provider_id: r.try_get("provider_id")?,
                 model_id: r.try_get("model_id")?,
                 title: r.try_get("title")?,
@@ -1851,6 +1866,7 @@ impl Store {
                 s.task_id,
                 s.workspace_id,
                 s.worktree_id,
+                s.execution_environment,
                 s.parent_session_id,
                 s.relationship,
                 s.provider_id,
@@ -1898,6 +1914,9 @@ impl Store {
             task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
             workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
             worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
+            execution_environment: parse_execution_environment(
+                r.try_get::<String, _>("execution_environment")?.as_str(),
+            ),
             provider_id: r.try_get("provider_id")?,
             model_id: r.try_get("model_id")?,
             title: r.try_get("title")?,

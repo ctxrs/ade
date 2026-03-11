@@ -126,7 +126,8 @@ test("prepareSubscriptionAuth returns skip with blocker artifacts when codex oau
 
   const result = await prepareSubscriptionAuth({
     providerId: "codex",
-    envTarget: "local_host",
+    daemonLocation: "local",
+    executionEnvironment: "host",
   });
 
   assert.equal(oauthCalls, 1);

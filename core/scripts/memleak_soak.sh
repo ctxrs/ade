@@ -87,7 +87,7 @@ ws = post(f"{base}/api/workspaces", {"root_path": repo_dir, "name": "memleak-soa
 task = post(f"{base}/api/workspaces/{ws['id']}/tasks", {"title": "memleak-soak"})
 session = post(
     f"{base}/api/tasks/{task['id']}/sessions",
-    {"provider_id": "fake", "model_id": "fake-model"},
+    {"provider_id": "fake", "model_id": "fake-model", "execution_environment": "host"},
 )
 
 print(ws["id"], task["id"], session["id"], session["worktree_id"])

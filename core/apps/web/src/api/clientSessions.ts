@@ -1,5 +1,6 @@
 import type {
   Artifact,
+  ExecutionEnvironment,
   Message,
   MessageAttachment,
   Session,
@@ -69,7 +70,7 @@ export const createSession = (
     id?: string;
     parent_session_id?: string | null;
     relationship?: string | null;
-    env_target?: "worktree" | "local" | "cloud";
+    execution_environment?: ExecutionEnvironment;
     worktree_id?: string | null;
     initial_prompt?: string | null;
     initial_message_id?: string | null;
@@ -89,7 +90,7 @@ export const createSession = (
       model_id,
       ...(opts?.parent_session_id ? { parent_session_id: opts.parent_session_id } : {}),
       ...(opts?.relationship ? { relationship: opts.relationship } : {}),
-      ...(opts?.env_target ? { env_target: opts.env_target } : {}),
+      ...(opts?.execution_environment ? { execution_environment: opts.execution_environment } : {}),
       ...(opts?.worktree_id ? { worktree_id: opts.worktree_id } : {}),
       ...(opts?.initial_prompt ? { initial_prompt: opts.initial_prompt } : {}),
       ...(opts?.initial_message_id && opts?.initial_turn_id
@@ -97,10 +98,17 @@ export const createSession = (
         : {}),
     }),
   }).then((session) => {
+    const connection = getDaemonConnection();
     trackSessionCreated({
       providerId: provider_id,
       modelId: model_id,
-      envTarget: opts?.env_target === "cloud" ? "remote" : opts?.env_target,
+      executionEnvironment: opts?.execution_environment,
+      sessionRootKind: "worktree",
+      sessionLocation: connection.targetScope?.kind === "desktop_ssh"
+        ? "remote"
+        : connection.targetScope?.kind === "desktop_local"
+          ? "local"
+          : daemonBaseUrlLocation(connection.baseUrl),
     });
     trackFeatureUsed("session_created");
     trackProviderSelected({
@@ -120,6 +128,21 @@ export const createSession = (
     return session;
   });
 };
+
+function daemonBaseUrlLocation(baseUrl: string | null): "local" | "remote" | undefined {
+  if (!baseUrl) return undefined;
+  try {
+    const url = new URL(baseUrl);
+    const hostname = url.hostname.trim().toLowerCase();
+    if (!hostname) return undefined;
+    if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]") {
+      return "local";
+    }
+    return "remote";
+  } catch {
+    return undefined;
+  }
+}
 
 export type SessionDiffSummary = {
   base_commit_sha?: string;

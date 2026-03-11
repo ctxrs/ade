@@ -14,21 +14,21 @@ use tokio::process::Command;
 
 use super::errors::ApiErrorResp;
 use super::sessions::schedule_session_title_generation;
-use super::shared::{env_target_for_worktree, SessionWithEnv};
+use super::shared::session_root_kind_for_worktree;
 use crate::attachments;
 use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::logs;
 use crate::ops_events::OpsEvent;
 use crate::scheduler::SchedulerCommand;
-use crate::settings::{ContainerMountMode, ExecutionMode};
+use crate::settings::{ContainerMountMode, ExecutionMode, ExecutionSettings};
 use crate::telemetry::TelemetryEvent;
 use crate::vcs_hooks;
 use crate::worktree_bootstrap;
 use ctx_core::ids::{MessageId, RunId, SessionId, TaskId, TurnId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
-    Message, MessageDelivery, MessageRole, Session, SessionEventType, SessionTurn,
-    SessionTurnStatus, Task, TaskDeltaKind, VcsKind, Workspace, WorkspaceArchivedPage,
+    ExecutionEnvironment, Message, MessageDelivery, MessageRole, Session, SessionEventType,
+    SessionTurn, SessionTurnStatus, Task, TaskDeltaKind, VcsKind, Workspace, WorkspaceArchivedPage,
     WorkspaceIndexCursor, Worktree,
 };
 use ctx_fs::git::delete_branch;
@@ -38,6 +38,16 @@ use ctx_store::is_unique_constraint_violation;
 
 const GLOBAL_INDEX_WRITE_RETRY_LIMIT: usize = 3;
 const GLOBAL_INDEX_WRITE_RETRY_BASE_MS: u64 = 40;
+
+fn execution_environment_from_settings(settings: &ExecutionSettings) -> ExecutionEnvironment {
+    match settings.mode {
+        ExecutionMode::Host => ExecutionEnvironment::Host,
+        ExecutionMode::Container => match settings.container.mount_mode {
+            ContainerMountMode::HostMounted => ExecutionEnvironment::ContainerHostMounted,
+            ContainerMountMode::DiskIsolated => ExecutionEnvironment::ContainerDiskIsolated,
+        },
+    }
+}
 
 fn is_transient_store_error(err: &anyhow::Error) -> bool {
     let msg = err.to_string().to_lowercase();
@@ -1341,6 +1351,7 @@ retry after checking container runtime health.",
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct CreateSessionReq {
     #[serde(default)]
     id: Option<String>,
@@ -1356,8 +1367,8 @@ pub(super) struct CreateSessionReq {
     initial_turn_id: Option<String>,
     #[serde(default)]
     worktree_id: Option<String>,
-    #[serde(default, alias = "env_target")]
-    execution_environment: Option<String>, // legacy wire values: "worktree" | "local" | "cloud"
+    #[serde(default)]
+    execution_environment: Option<ExecutionEnvironment>,
 }
 
 pub(super) async fn create_session_for_task(
@@ -1365,7 +1376,7 @@ pub(super) async fn create_session_for_task(
     Path(id): Path<String>,
     headers: HeaderMap,
     Json(req): Json<CreateSessionReq>,
-) -> Result<Json<SessionWithEnv>, StatusCode> {
+) -> Result<Json<Session>, StatusCode> {
     let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let store = state
         .store_for_task(task_id)
@@ -1407,6 +1418,19 @@ pub(super) async fn create_session_for_task(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| value.to_string());
+    let effective = execution_effective::effective_execution_settings(&state, workspace.id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let effective_execution_environment = execution_environment_from_settings(&effective);
+    let execution_environment = match req.execution_environment {
+        Some(requested) => {
+            if requested != effective_execution_environment {
+                return Err(StatusCode::BAD_REQUEST);
+            }
+            requested
+        }
+        None => effective_execution_environment,
+    };
     let requested_relationship = relationship.clone();
     if parent_session_id.is_some() != relationship.is_some() {
         return Err(StatusCode::BAD_REQUEST);
@@ -1425,12 +1449,6 @@ pub(super) async fn create_session_for_task(
     } else if let Some(primary) = task.primary_worktree_id {
         primary
     } else {
-        let env_target = req
-            .execution_environment
-            .as_deref()
-            .unwrap_or("local")
-            .trim()
-            .to_lowercase();
         let workspace_root = StdPath::new(&workspace.root_path);
         let vcs = vcs::driver_for_path(workspace_root)
             .await
@@ -1444,128 +1462,116 @@ pub(super) async fn create_session_for_task(
             }
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-        let effective = execution_effective::effective_execution_settings(&state, workspace.id)
+        let worktree_id = WorktreeId::new();
+        let branch_name = format!("ctx/{}/{}", task.id.0, worktree_id.0);
+        let wt_path = if matches!(effective.mode, ExecutionMode::Container)
+            && matches!(
+                effective.container.mount_mode,
+                ContainerMountMode::DiskIsolated
+            ) {
+            state
+                .execution
+                .harness
+                .ensure_workspace_container(&workspace, &effective, &state.core.daemon_url)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            crate::disk_isolated::ensure_worktree_from_host_copy(
+                &state.core.data_root,
+                task.workspace_id,
+                worktree_id,
+                workspace_root,
+                &base_commit_sha,
+                &branch_name,
+            )
+            .await
+            .map_err(|e| {
+                tracing::warn!(
+                    task_id = %task.id.0,
+                    worktree_id = %worktree_id.0,
+                    "disk-isolated worktree provisioning failed: {e:#}"
+                );
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?
+        } else {
+            let wt_path =
+                managed_worktree_path(&state.core.data_root, task.workspace_id, worktree_id);
+            if let Some(parent) = wt_path.parent() {
+                tokio::fs::create_dir_all(parent)
+                    .await
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            }
+            create_worktree(
+                &workspace.root_path,
+                &wt_path,
+                &base_commit_sha,
+                &branch_name,
+            )
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        match env_target.as_str() {
-            "worktree" | "cloud" => {
-                let worktree_id = WorktreeId::new();
-                let branch_name = format!("ctx/{}/{}", task.id.0, worktree_id.0);
-                let wt_path = if matches!(effective.mode, ExecutionMode::Container)
-                    && matches!(
-                        effective.container.mount_mode,
-                        ContainerMountMode::DiskIsolated
-                    ) {
-                    state
-                        .execution
-                        .harness
-                        .ensure_workspace_container(&workspace, &effective, &state.core.daemon_url)
-                        .await
-                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-                    crate::disk_isolated::ensure_worktree_from_host_copy(
-                        &state.core.data_root,
-                        task.workspace_id,
-                        worktree_id,
-                        workspace_root,
-                        &base_commit_sha,
-                        &branch_name,
-                    )
-                    .await
-                    .map_err(|e| {
-                        tracing::warn!(
-                            task_id = %task.id.0,
-                            worktree_id = %worktree_id.0,
-                            "disk-isolated worktree provisioning failed: {e:#}"
-                        );
-                        StatusCode::INTERNAL_SERVER_ERROR
-                    })?
-                } else {
-                    let wt_path = managed_worktree_path(
-                        &state.core.data_root,
-                        task.workspace_id,
-                        worktree_id,
-                    );
-                    if let Some(parent) = wt_path.parent() {
-                        tokio::fs::create_dir_all(parent)
-                            .await
-                            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-                    }
-                    create_worktree(
-                        &workspace.root_path,
-                        &wt_path,
-                        &base_commit_sha,
-                        &branch_name,
-                    )
-                    .await
-                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-                    wt_path
-                };
+            wt_path
+        };
 
-                let worktree = Worktree {
-                    id: worktree_id,
-                    workspace_id: task.workspace_id,
-                    root_path: wt_path.to_string_lossy().to_string(),
-                    base_commit_sha: base_commit_sha.clone(),
-                    git_branch: (vcs.kind() == VcsKind::Git).then(|| branch_name.clone()),
-                    vcs_kind: Some(vcs.kind()),
-                    base_revision: Some(base_commit_sha.clone()),
-                    vcs_ref: Some(branch_name.clone()),
-                    created_at: chrono::Utc::now(),
-                    bootstrap_status: None,
-                    bootstrap_started_at: None,
-                    bootstrap_finished_at: None,
-                    bootstrap_exit_code: None,
-                    bootstrap_timeout_sec: None,
-                    bootstrap_error: None,
-                    bootstrap_log_path: None,
-                    bootstrap_log_truncated: None,
-                    bootstrap_command: None,
-                    bootstrap_script_path: None,
-                };
-                store
-                    .insert_worktree(worktree.clone())
-                    .await
-                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-                if let Err(e) = retry_global_index_write(|| async {
-                    state
-                        .global_store()
-                        .upsert_workspace_worktree_index(worktree_id, task.workspace_id)
-                        .await
-                })
+        let worktree = Worktree {
+            id: worktree_id,
+            workspace_id: task.workspace_id,
+            root_path: wt_path.to_string_lossy().to_string(),
+            base_commit_sha: base_commit_sha.clone(),
+            git_branch: (vcs.kind() == VcsKind::Git).then(|| branch_name.clone()),
+            vcs_kind: Some(vcs.kind()),
+            base_revision: Some(base_commit_sha.clone()),
+            vcs_ref: Some(branch_name.clone()),
+            created_at: chrono::Utc::now(),
+            bootstrap_status: None,
+            bootstrap_started_at: None,
+            bootstrap_finished_at: None,
+            bootstrap_exit_code: None,
+            bootstrap_timeout_sec: None,
+            bootstrap_error: None,
+            bootstrap_log_path: None,
+            bootstrap_log_truncated: None,
+            bootstrap_command: None,
+            bootstrap_script_path: None,
+        };
+        store
+            .insert_worktree(worktree.clone())
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        if let Err(e) = retry_global_index_write(|| async {
+            state
+                .global_store()
+                .upsert_workspace_worktree_index(worktree_id, task.workspace_id)
                 .await
-                {
-                    tracing::warn!(
-                        worktree_id = %worktree_id.0,
-                        "failed to update worktree index: {e:?}"
-                    );
-                    return Err(StatusCode::INTERNAL_SERVER_ERROR);
-                }
-                if let Err(e) = worktree_bootstrap::spawn_worktree_bootstrap(
-                    Arc::clone(&state),
-                    workspace.clone(),
-                    worktree.clone(),
-                )
-                .await
-                {
-                    tracing::warn!(task_id = %task.id.0, "worktree bootstrap failed: {e:?}");
-                }
-                if let Err(e) =
-                    attachments::sync_workspace_attachments(Arc::clone(&state), &workspace, false)
-                        .await
-                {
-                    tracing::warn!(task_id = %task.id.0, "attachment sync failed: {e:?}");
-                }
-                if let Err(e) = attachments::ensure_worktree_attachment_mounts_if_materialized(
-                    &state, &workspace, &worktree,
-                )
-                .await
-                {
-                    tracing::warn!(task_id = %task.id.0, "attachment mounts failed: {e:?}");
-                }
-                worktree_id
-            }
-            _ => return Err(StatusCode::BAD_REQUEST),
+        })
+        .await
+        {
+            tracing::warn!(
+                worktree_id = %worktree_id.0,
+                "failed to update worktree index: {e:?}"
+            );
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
+        if let Err(e) = worktree_bootstrap::spawn_worktree_bootstrap(
+            Arc::clone(&state),
+            workspace.clone(),
+            worktree.clone(),
+        )
+        .await
+        {
+            tracing::warn!(task_id = %task.id.0, "worktree bootstrap failed: {e:?}");
+        }
+        if let Err(e) =
+            attachments::sync_workspace_attachments(Arc::clone(&state), &workspace, false).await
+        {
+            tracing::warn!(task_id = %task.id.0, "attachment sync failed: {e:?}");
+        }
+        if let Err(e) = attachments::ensure_worktree_attachment_mounts_if_materialized(
+            &state, &workspace, &worktree,
+        )
+        .await
+        {
+            tracing::warn!(task_id = %task.id.0, "attachment mounts failed: {e:?}");
+        }
+        worktree_id
     };
 
     if let Some(session_id) = session_id {
@@ -1586,6 +1592,7 @@ pub(super) async fn create_session_for_task(
                 if existing.task_id != task_id
                     || existing.workspace_id != task.workspace_id
                     || existing.worktree_id != worktree_id
+                    || existing.execution_environment != execution_environment
                     || existing.provider_id != provider_id
                     || existing.model_id != model_id
                     || existing.parent_session_id != parent_session_id
@@ -1594,19 +1601,7 @@ pub(super) async fn create_session_for_task(
                     return Err(StatusCode::CONFLICT);
                 }
                 state.remember_session_meta(&existing).await;
-                let worktree = match state.store_for_session(existing.id).await {
-                    Ok(store) => store
-                        .get_worktree(existing.worktree_id)
-                        .await
-                        .ok()
-                        .flatten(),
-                    Err(_) => None,
-                };
-                let env_target = env_target_for_worktree(worktree.as_ref());
-                return Ok(Json(SessionWithEnv {
-                    env_target,
-                    session: existing,
-                }));
+                return Ok(Json(existing));
             }
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
@@ -1639,6 +1634,7 @@ pub(super) async fn create_session_for_task(
                 task_id,
                 task.workspace_id,
                 worktree_id,
+                execution_environment,
                 provider_id.clone(),
                 model_id.clone(),
                 "implementer".to_string(),
@@ -1654,6 +1650,7 @@ pub(super) async fn create_session_for_task(
                 task_id,
                 task.workspace_id,
                 worktree_id,
+                execution_environment,
                 provider_id.clone(),
                 model_id.clone(),
                 "implementer".to_string(),
@@ -1669,6 +1666,7 @@ pub(super) async fn create_session_for_task(
             || session.task_id != task_id
             || session.workspace_id != task.workspace_id
             || session.worktree_id != worktree_id
+            || session.execution_environment != execution_environment
             || session.provider_id != provider_id
             || session.model_id != model_id
             || session.parent_session_id != parent_session_id
@@ -1868,14 +1866,15 @@ pub(super) async fn create_session_for_task(
         Ok(store) => store.get_worktree(session.worktree_id).await.ok().flatten(),
         Err(_) => None,
     };
-    let env_target = env_target_for_worktree(worktree.as_ref());
+    let session_root_kind = session_root_kind_for_worktree(worktree.as_ref()).to_string();
     state
         .telemetry
         .telemetry
         .emit(TelemetryEvent::session_started(
             session.provider_id.clone(),
             session.model_id.clone(),
-            Some(env_target.clone()),
+            Some(session.execution_environment.as_str().to_string()),
+            Some(session_root_kind.clone()),
         ))
         .await;
     let mut ops_event = OpsEvent::new("info", "session_started");
@@ -1884,7 +1883,8 @@ pub(super) async fn create_session_for_task(
     ops_event.provider_id = Some(session.provider_id.clone());
     ops_event.meta = Some(serde_json::json!({
         "model_id": session.model_id.clone(),
-        "env_target": env_target.clone(),
+        "execution_environment": session.execution_environment.as_str(),
+        "session_root_kind": session_root_kind.clone(),
         "parent_session_id": session.parent_session_id.map(|id| id.0.to_string()),
         "relationship": session.relationship.clone(),
     }));
@@ -1893,10 +1893,7 @@ pub(super) async fn create_session_for_task(
         tracing::warn!(task_id = %session.task_id.0, "workspace active snapshot refresh failed: {e:?}");
     }
 
-    Ok(Json(SessionWithEnv {
-        env_target,
-        session,
-    }))
+    Ok(Json(session))
 }
 
 mod snapshot_state;

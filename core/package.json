@@ -118,7 +118,7 @@
     "verify:desktop:break-matrix": "apps/desktop/scripts/run_macos_break_matrix.sh",
     "verify:desktop:provider-auth-matrix:required": "apps/desktop/scripts/run_provider_auth_matrix.sh --lane required",
     "verify:desktop:provider-auth-matrix:nightly": "apps/desktop/scripts/run_provider_auth_matrix.sh --lane nightly",
-    "verify:desktop:provider-auth-matrix:oauth-subscription": "apps/desktop/scripts/run_provider_auth_matrix.sh --lane nightly --include-deferred --auth-mode subscription_oauth --provider codex,claude-crp,gemini,qwen,mistral,amp,copilot,cursor,kimi --env-target local_host,local_container",
+    "verify:desktop:provider-auth-matrix:oauth-subscription": "apps/desktop/scripts/run_provider_auth_matrix.sh --lane nightly --include-deferred --auth-mode subscription_oauth --provider codex,claude-crp,gemini,qwen,mistral,amp,copilot,cursor,kimi --daemon-location local --execution-environment host,container_host_mounted",
     "verify:anomaly": "bash -lc 'scripts/run-anomaly-suite.sh'",
     "verify:fuzz:regression": "bash -lc 'scripts/run-fuzz-regression.sh'",
     "verify:mutation:critical": "bash -lc 'scripts/mutation_pilot.sh'",

@@ -1023,6 +1023,7 @@ const runProviderFirstTurnApiSmoke = async (
   {
     providerId = "codex",
     modelId = "default",
+    executionEnvironment = "",
     prompt = "hello",
   } = {},
   timeoutMs = 240000,
@@ -1040,10 +1041,28 @@ const runProviderFirstTurnApiSmoke = async (
     throw new Error(`task create response missing id: ${JSON.stringify(taskResp.payload || null)}`);
   }
 
+  let sessionExecutionEnvironment = normalizeText(executionEnvironment);
+  if (!sessionExecutionEnvironment) {
+    const executionConfigResp = await daemonJson("GET", `/api/workspaces/${workspaceId}/execution_config`);
+    if (executionConfigResp.status !== 200) {
+      throw new Error(
+        `execution config read failed (${executionConfigResp.status}): ${JSON.stringify(executionConfigResp.payload || null)}`,
+      );
+    }
+    sessionExecutionEnvironment = normalizeText(executionConfigResp.payload?.environment);
+  }
+  if (
+    sessionExecutionEnvironment !== "host"
+    && sessionExecutionEnvironment !== "container_host_mounted"
+    && sessionExecutionEnvironment !== "container_disk_isolated"
+  ) {
+    throw new Error(`unsupported execution environment for session create: ${sessionExecutionEnvironment || "<missing>"}`);
+  }
+
   const sessionResp = await daemonJson("POST", `/api/tasks/${taskId}/sessions`, {
     provider_id: providerId,
     model_id: modelId,
-    env_target: "worktree",
+    execution_environment: sessionExecutionEnvironment,
   });
   if (sessionResp.status !== 200) {
     throw new Error(`session create failed (${sessionResp.status}): ${JSON.stringify(sessionResp.payload || null)}`);

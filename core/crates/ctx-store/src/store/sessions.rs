@@ -8,6 +8,7 @@ impl Store {
         task_id: TaskId,
         workspace_id: WorkspaceId,
         worktree_id: WorktreeId,
+        execution_environment: ExecutionEnvironment,
         provider_id: String,
         model_id: String,
         agent_role: String,
@@ -20,6 +21,7 @@ impl Store {
             task_id,
             workspace_id,
             worktree_id,
+            execution_environment,
             provider_id,
             model_id,
             agent_role,
@@ -37,6 +39,7 @@ impl Store {
         task_id: TaskId,
         workspace_id: WorkspaceId,
         worktree_id: WorktreeId,
+        execution_environment: ExecutionEnvironment,
         provider_id: String,
         model_id: String,
         agent_role: String,
@@ -69,6 +72,7 @@ impl Store {
             task_id,
             workspace_id,
             worktree_id,
+            execution_environment,
             parent_session_id,
             relationship,
             provider_id,
@@ -82,8 +86,8 @@ impl Store {
         };
         let result = self.query(
             r#"INSERT INTO sessions (id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
-               provider_id, model_id, title, agent_role, status, provider_session_ref, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               execution_environment, provider_id, model_id, title, agent_role, status, provider_session_ref, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(id) DO NOTHING"#,
         )
         .bind(session.id.0.to_string())
@@ -92,6 +96,7 @@ impl Store {
         .bind(session.worktree_id.0.to_string())
         .bind(session.parent_session_id.map(|id| id.0.to_string()))
         .bind(&session.relationship)
+        .bind(execution_environment_to_str(session.execution_environment))
         .bind(&session.provider_id)
         .bind(&session.model_id)
         .bind(&session.title)
@@ -118,7 +123,7 @@ impl Store {
     pub async fn get_session(&self, id: SessionId) -> Result<Option<Session>> {
         let row = self.query(
             r#"SELECT id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
-               provider_id, model_id, agent_role, title, status, provider_session_ref, created_at, updated_at
+               execution_environment, provider_id, model_id, agent_role, title, status, provider_session_ref, created_at, updated_at
                FROM sessions WHERE id = ?"#,
         )
         .bind(id.0.to_string())
@@ -137,6 +142,11 @@ impl Store {
                 task_id: TaskId(uuid::Uuid::parse_str(&task_id).ok()?),
                 workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id).ok()?),
                 worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id).ok()?),
+                execution_environment: parse_execution_environment(
+                    r.try_get::<String, _>("execution_environment")
+                        .ok()?
+                        .as_str(),
+                ),
                 parent_session_id: parse_optional_session_id(r.try_get("parent_session_id").ok()?),
                 relationship: r.try_get("relationship").ok()?,
                 provider_id: r.try_get("provider_id").ok()?,
@@ -204,7 +214,7 @@ impl Store {
     pub async fn list_sessions_for_task(&self, task_id: TaskId) -> Result<Vec<Session>> {
         let rows = self.query(
             r#"SELECT id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
-               provider_id, model_id, agent_role, title, status, provider_session_ref, created_at, updated_at
+               execution_environment, provider_id, model_id, agent_role, title, status, provider_session_ref, created_at, updated_at
                FROM sessions WHERE task_id = ? ORDER BY created_at ASC"#,
         )
         .bind(task_id.0.to_string())
@@ -224,6 +234,9 @@ impl Store {
                 task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
                 workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
                 worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
+                execution_environment: parse_execution_environment(
+                    r.try_get::<String, _>("execution_environment")?.as_str(),
+                ),
                 parent_session_id: parse_optional_session_id(r.try_get("parent_session_id")?),
                 relationship: r.try_get("relationship")?,
                 provider_id: r.try_get("provider_id")?,
@@ -245,7 +258,7 @@ impl Store {
     ) -> Result<Vec<Session>> {
         let rows = self.query(
             r#"SELECT id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
-               provider_id, model_id, agent_role, title, status, provider_session_ref, created_at, updated_at
+               execution_environment, provider_id, model_id, agent_role, title, status, provider_session_ref, created_at, updated_at
                FROM sessions WHERE worktree_id = ? ORDER BY created_at ASC"#,
         )
         .bind(worktree_id.0.to_string())
@@ -265,6 +278,9 @@ impl Store {
                 task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
                 workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
                 worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id)?),
+                execution_environment: parse_execution_environment(
+                    r.try_get::<String, _>("execution_environment")?.as_str(),
+                ),
                 parent_session_id: parse_optional_session_id(r.try_get("parent_session_id")?),
                 relationship: r.try_get("relationship")?,
                 provider_id: r.try_get("provider_id")?,
@@ -287,7 +303,7 @@ impl Store {
         let rows = self
             .query(
                 r#"SELECT id, task_id, workspace_id, parent_session_id, relationship,
-               provider_id, model_id, title, status, created_at, updated_at
+               execution_environment, provider_id, model_id, title, status, created_at, updated_at
                FROM sessions
                WHERE parent_session_id = ? AND relationship = 'sub_agent'
                ORDER BY created_at ASC"#,
@@ -307,6 +323,9 @@ impl Store {
                 id: SessionId(uuid::Uuid::parse_str(&id)?),
                 task_id: TaskId(uuid::Uuid::parse_str(&task_id)?),
                 workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id)?),
+                execution_environment: parse_execution_environment(
+                    r.try_get::<String, _>("execution_environment")?.as_str(),
+                ),
                 parent_session_id: r
                     .try_get::<Option<String>, _>("parent_session_id")?
                     .and_then(|value| uuid::Uuid::parse_str(&value).ok())
@@ -331,7 +350,7 @@ impl Store {
         let row = self
             .query(
                 r#"SELECT id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
-               provider_id, model_id, agent_role, title, status, provider_session_ref, created_at, updated_at
+               execution_environment, provider_id, model_id, agent_role, title, status, provider_session_ref, created_at, updated_at
                FROM sessions
                WHERE parent_session_id = ? AND relationship = 'sub_agent' AND title = ?
                LIMIT 1"#,
@@ -353,6 +372,11 @@ impl Store {
                 task_id: TaskId(uuid::Uuid::parse_str(&task_id).ok()?),
                 workspace_id: WorkspaceId(uuid::Uuid::parse_str(&ws_id).ok()?),
                 worktree_id: WorktreeId(uuid::Uuid::parse_str(&wt_id).ok()?),
+                execution_environment: parse_execution_environment(
+                    r.try_get::<String, _>("execution_environment")
+                        .ok()?
+                        .as_str(),
+                ),
                 parent_session_id: parse_optional_session_id(r.try_get("parent_session_id").ok()?),
                 relationship: r.try_get("relationship").ok()?,
                 provider_id: r.try_get("provider_id").ok()?,

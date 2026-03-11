@@ -58,7 +58,7 @@ pub(crate) async fn start_turn(
     state: &Arc<AppState>,
     session: &Session,
     workdir: &Path,
-    env_target: &str,
+    session_root_kind: &str,
     queued: QueuedMessage,
     order_seq_state: Arc<Mutex<OrderSeqState>>,
 ) -> Result<RunningTurn> {
@@ -69,6 +69,7 @@ pub(crate) async fn start_turn(
     let workdir_root = workdir.to_path_buf();
     let workdir_canonical = tokio::fs::canonicalize(&workdir_root).await.ok();
     let workdir_str = workdir_root.to_string_lossy().to_string();
+    let execution_environment = session.execution_environment;
 
     let mut message = queued.message;
     let message_id = message.id;
@@ -77,7 +78,14 @@ pub(crate) async fn start_turn(
     let mut queue_labels = HashMap::new();
     queue_labels.insert("provider_id".to_string(), session.provider_id.clone());
     queue_labels.insert("model_id".to_string(), session.model_id.clone());
-    queue_labels.insert("env_target".to_string(), env_target.to_string());
+    queue_labels.insert(
+        "execution_environment".to_string(),
+        execution_environment.as_str().to_string(),
+    );
+    queue_labels.insert(
+        "session_root_kind".to_string(),
+        session_root_kind.to_string(),
+    );
     queue_labels.insert("event".to_string(), "queue_wait".to_string());
     let queue_metric = PerfMetric {
         name: "scheduler.queue_wait_ms".to_string(),
@@ -104,7 +112,8 @@ pub(crate) async fn start_turn(
     run_event.worktree_root = Some(workdir_str.clone());
     run_event.meta = Some(json!({
         "model_id": session.model_id.clone(),
-        "env_target": env_target,
+        "execution_environment": execution_environment.as_str(),
+        "session_root_kind": session_root_kind,
     }));
     state.telemetry.ops_events.emit(run_event);
 
@@ -253,7 +262,12 @@ pub(crate) async fn start_turn(
         }
     };
     let execution_settings =
-        match execution_effective::effective_execution_settings(state.as_ref(), workspace.id).await
+        match execution_effective::effective_execution_settings_for_environment(
+            state.as_ref(),
+            workspace.id,
+            execution_environment,
+        )
+        .await
         {
             Ok(settings) => settings,
             Err(err) => {
@@ -480,7 +494,8 @@ pub(crate) async fn start_turn(
     run_env_event.worktree_root = Some(workdir_str.clone());
     run_env_event.meta = Some(json!({
         "model_id": session.model_id.clone(),
-        "env_target": env_target,
+        "execution_environment": execution_environment.as_str(),
+        "session_root_kind": session_root_kind,
         "runtime_provider_id": runtime_provider_id,
         "source_kind": if using_endpoint_source { "endpoint" } else { "subscription" },
         "is_container": is_container,
@@ -545,7 +560,14 @@ pub(crate) async fn start_turn(
             let mut spawn_labels = HashMap::new();
             spawn_labels.insert("provider_id".to_string(), session.provider_id.clone());
             spawn_labels.insert("model_id".to_string(), session.model_id.clone());
-            spawn_labels.insert("env_target".to_string(), env_target.to_string());
+            spawn_labels.insert(
+                "execution_environment".to_string(),
+                execution_environment.as_str().to_string(),
+            );
+            spawn_labels.insert(
+                "session_root_kind".to_string(),
+                session_root_kind.to_string(),
+            );
             spawn_labels.insert("event".to_string(), "spawn".to_string());
             let spawn_metric = PerfMetric {
                 name: "provider.spawn_ms".to_string(),
@@ -569,7 +591,8 @@ pub(crate) async fn start_turn(
                 .emit(TelemetryEvent::provider_call(
                     session.provider_id.clone(),
                     session.model_id.clone(),
-                    Some(env_target.to_string()),
+                    Some(execution_environment.as_str().to_string()),
+                    Some(session_root_kind.to_string()),
                     false,
                     duration_ms,
                 ))
@@ -584,7 +607,8 @@ pub(crate) async fn start_turn(
             fail_event.worktree_root = Some(workdir_str.clone());
             fail_event.meta = Some(json!({
                 "model_id": session.model_id.clone(),
-                "env_target": env_target,
+                "execution_environment": execution_environment.as_str(),
+                "session_root_kind": session_root_kind,
                 "error": err.to_string(),
             }));
             state.telemetry.ops_events.emit(fail_event);
@@ -636,7 +660,7 @@ pub(crate) async fn start_turn(
     let worktree_id = session.worktree_id;
     let provider_id = session.provider_id.clone();
     let model_id = session.model_id.clone();
-    let env_target = env_target.to_string();
+    let session_root_kind = session_root_kind.to_string();
     let perf_run_id = perf_run_id.clone();
     let workdir_root = workdir_root.clone();
     let workdir_canonical = workdir_canonical.clone();
@@ -664,7 +688,11 @@ pub(crate) async fn start_turn(
                 let mut first_labels = HashMap::new();
                 first_labels.insert("provider_id".to_string(), provider_id.clone());
                 first_labels.insert("model_id".to_string(), model_id.clone());
-                first_labels.insert("env_target".to_string(), env_target.clone());
+                first_labels.insert(
+                    "execution_environment".to_string(),
+                    execution_environment.as_str().to_string(),
+                );
+                first_labels.insert("session_root_kind".to_string(), session_root_kind.clone());
                 first_labels.insert("event".to_string(), "first_event".to_string());
                 let first_metric = PerfMetric {
                     name: "provider.first_event_ms".to_string(),
@@ -1110,7 +1138,12 @@ pub(crate) async fn start_turn(
                         let mut run_labels = HashMap::new();
                         run_labels.insert("provider_id".to_string(), provider_id.clone());
                         run_labels.insert("model_id".to_string(), model_id.clone());
-                        run_labels.insert("env_target".to_string(), env_target.clone());
+                        run_labels.insert(
+                            "execution_environment".to_string(),
+                            execution_environment.as_str().to_string(),
+                        );
+                        run_labels
+                            .insert("session_root_kind".to_string(), session_root_kind.clone());
                         run_labels.insert("event".to_string(), "run_complete".to_string());
                         let run_metric = PerfMetric {
                             name: "scheduler.run_total_ms".to_string(),
@@ -1130,7 +1163,8 @@ pub(crate) async fn start_turn(
                             .emit(TelemetryEvent::provider_call(
                                 provider_id.clone(),
                                 model_id.clone(),
-                                Some(env_target.clone()),
+                                Some(execution_environment.as_str().to_string()),
+                                Some(session_root_kind.clone()),
                                 true,
                                 duration_ms,
                             ))
@@ -1141,7 +1175,8 @@ pub(crate) async fn start_turn(
                             .emit(TelemetryEvent::session_completed(
                                 provider_id.clone(),
                                 model_id.clone(),
-                                Some(env_target.clone()),
+                                Some(execution_environment.as_str().to_string()),
+                                Some(session_root_kind.clone()),
                                 "completed".to_string(),
                                 duration_ms,
                             ))
@@ -1187,7 +1222,12 @@ pub(crate) async fn start_turn(
                         let mut run_labels = HashMap::new();
                         run_labels.insert("provider_id".to_string(), provider_id.clone());
                         run_labels.insert("model_id".to_string(), model_id.clone());
-                        run_labels.insert("env_target".to_string(), env_target.clone());
+                        run_labels.insert(
+                            "execution_environment".to_string(),
+                            execution_environment.as_str().to_string(),
+                        );
+                        run_labels
+                            .insert("session_root_kind".to_string(), session_root_kind.clone());
                         run_labels.insert("event".to_string(), "run_interrupt".to_string());
                         let run_metric = PerfMetric {
                             name: "scheduler.run_total_ms".to_string(),
@@ -1207,7 +1247,8 @@ pub(crate) async fn start_turn(
                             .emit(TelemetryEvent::provider_call(
                                 provider_id.clone(),
                                 model_id.clone(),
-                                Some(env_target.clone()),
+                                Some(execution_environment.as_str().to_string()),
+                                Some(session_root_kind.clone()),
                                 false,
                                 duration_ms,
                             ))
@@ -1218,7 +1259,8 @@ pub(crate) async fn start_turn(
                             .emit(TelemetryEvent::session_completed(
                                 provider_id.clone(),
                                 model_id.clone(),
-                                Some(env_target.clone()),
+                                Some(execution_environment.as_str().to_string()),
+                                Some(session_root_kind.clone()),
                                 "interrupted".to_string(),
                                 duration_ms,
                             ))
@@ -1276,7 +1318,12 @@ pub(crate) async fn start_turn(
                         let mut run_labels = HashMap::new();
                         run_labels.insert("provider_id".to_string(), provider_id.clone());
                         run_labels.insert("model_id".to_string(), model_id.clone());
-                        run_labels.insert("env_target".to_string(), env_target.clone());
+                        run_labels.insert(
+                            "execution_environment".to_string(),
+                            execution_environment.as_str().to_string(),
+                        );
+                        run_labels
+                            .insert("session_root_kind".to_string(), session_root_kind.clone());
                         run_labels.insert("event".to_string(), "run_failed".to_string());
                         let run_metric = PerfMetric {
                             name: "scheduler.run_total_ms".to_string(),
@@ -1296,7 +1343,8 @@ pub(crate) async fn start_turn(
                             .emit(TelemetryEvent::provider_call(
                                 provider_id.clone(),
                                 model_id.clone(),
-                                Some(env_target.clone()),
+                                Some(execution_environment.as_str().to_string()),
+                                Some(session_root_kind.clone()),
                                 false,
                                 duration_ms,
                             ))
@@ -1307,7 +1355,8 @@ pub(crate) async fn start_turn(
                             .emit(TelemetryEvent::session_completed(
                                 provider_id.clone(),
                                 model_id.clone(),
-                                Some(env_target.clone()),
+                                Some(execution_environment.as_str().to_string()),
+                                Some(session_root_kind.clone()),
                                 "failed".to_string(),
                                 duration_ms,
                             ))
@@ -1323,7 +1372,8 @@ pub(crate) async fn start_turn(
                     fail_event.worktree_root = Some(workdir_str.clone());
                     fail_event.meta = Some(json!({
                         "model_id": model_id.clone(),
-                        "env_target": env_target.clone(),
+                        "execution_environment": execution_environment.as_str(),
+                        "session_root_kind": session_root_kind.clone(),
                         "error": error_message,
                         "details": event.payload_json.get("details").cloned(),
                         "kind": event.payload_json.get("kind").cloned(),

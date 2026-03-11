@@ -130,7 +130,7 @@ test("workbench: gemini Vertex AI service account auth can run a real task", asy
     data: {
       provider_id: "gemini",
       model_id: geminiModelId,
-      env_target: "worktree",
+      execution_environment: "host",
     },
     timeout: REQUEST_TIMEOUT_MS,
   });

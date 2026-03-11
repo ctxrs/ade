@@ -478,7 +478,7 @@ const getJson = async (apiPath) => {
   return response.payload || null;
 };
 
-const prepareSubscriptionAuth = async ({ providerId, envTarget }) => {
+const prepareSubscriptionAuth = async ({ providerId, daemonLocation, executionEnvironment }) => {
   const resolved = resolveSubscriptionAuthPlan(providerId);
   if (resolved.status !== "ready") {
     return resolved;
@@ -493,10 +493,17 @@ const prepareSubscriptionAuth = async ({ providerId, envTarget }) => {
     },
   };
 
-  if (envTarget !== "local_host" && envTarget !== "local_container") {
+  if (daemonLocation !== "local") {
     return {
       status: "skip",
-      reason: `subscription auth matrix automation currently supports local env targets only (got ${envTarget})`,
+      reason: `subscription auth matrix automation currently supports local daemon locations only (got ${daemonLocation})`,
+      artifacts,
+    };
+  }
+  if (executionEnvironment !== "host" && executionEnvironment !== "container_host_mounted") {
+    return {
+      status: "skip",
+      reason: `subscription auth matrix automation currently supports host or host-mounted container execution only (got ${executionEnvironment})`,
       artifacts,
     };
   }

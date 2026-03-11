@@ -1,5 +1,10 @@
 import { captureProductEvent } from "./client";
-import type { AnalyticsEnvTarget, AnalyticsProperties } from "./types";
+import type { ExecutionEnvironment } from "@ctx/types";
+import type {
+  AnalyticsProperties,
+  AnalyticsSessionLocation,
+  AnalyticsSessionRootKind,
+} from "./types";
 
 const FIRST_TURN_SUBMITTED_ONCE_KEY = "ctx.analytics.first_turn_submitted.install_once.v1";
 const FIRST_TURN_COMPLETED_ONCE_KEY = "ctx.analytics.first_turn_completed.install_once.v1";
@@ -213,12 +218,16 @@ export const trackWizardAbandoned = (props: {
 export const trackSessionCreated = (props: {
   providerId: string;
   modelId?: string;
-  envTarget?: AnalyticsEnvTarget;
+  executionEnvironment?: ExecutionEnvironment;
+  sessionRootKind?: AnalyticsSessionRootKind;
+  sessionLocation?: AnalyticsSessionLocation;
 }): void => {
   capture("session_created", {
     provider_id: props.providerId,
     ...(props.modelId ? { model_id: props.modelId } : {}),
-    ...(props.envTarget ? { env_target: props.envTarget } : {}),
+    ...(props.executionEnvironment ? { execution_environment: props.executionEnvironment } : {}),
+    ...(props.sessionRootKind ? { session_root_kind: props.sessionRootKind } : {}),
+    ...(props.sessionLocation ? { session_location: props.sessionLocation } : {}),
   });
 };
 

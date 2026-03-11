@@ -17,7 +17,7 @@ fi
 usage() {
   cat <<'USAGE'
 Usage:
-  run_provider_auth_matrix.sh [--list] [--lane required|nightly|all] [--cell ID[,ID...]] [--provider ID[,ID...]] [--auth-mode ID[,ID...]] [--env-target ID[,ID...]] [--artifacts-dir DIR] [--dry-run] [--include-deferred]
+  run_provider_auth_matrix.sh [--list] [--lane required|nightly|all] [--cell ID[,ID...]] [--provider ID[,ID...]] [--auth-mode ID[,ID...]] [--daemon-location ID[,ID...]] [--execution-environment ID[,ID...]] [--artifacts-dir DIR] [--dry-run] [--include-deferred]
 
 Options:
   --list                 Print selected matrix cell IDs and exit.
@@ -25,7 +25,8 @@ Options:
   --cell ID[,ID...]      Run only the given cell ID(s). Can be repeated.
   --provider ID[,ID...]  Filter by provider_id. Can be repeated.
   --auth-mode ID[,ID...] Filter by auth_mode. Can be repeated.
-  --env-target ID[,ID...] Filter by env_target. Can be repeated.
+  --daemon-location ID[,ID...]       Filter by daemon_location. Can be repeated.
+  --execution-environment ID[,ID...] Filter by execution_environment. Can be repeated.
   --artifacts-dir DIR    Output root for cell artifacts.
   --dry-run              Print resolved commands without running them.
   --include-deferred     Execute `support=deferred` cells that define a concrete runner.
@@ -42,7 +43,8 @@ RETRY_DELAY_SECONDS_RAW="${CTX_PROVIDER_AUTH_MATRIX_RETRY_DELAY_SECONDS:-15}"
 declare -a REQUESTED_CELLS=()
 declare -a REQUESTED_PROVIDERS=()
 declare -a REQUESTED_AUTH_MODES=()
-declare -a REQUESTED_ENV_TARGETS=()
+declare -a REQUESTED_DAEMON_LOCATIONS=()
+declare -a REQUESTED_EXECUTION_ENVIRONMENTS=()
 
 if [[ ! "${RETRY_LIMIT_RAW}" =~ ^[0-9]+$ ]]; then
   echo "error: CTX_PROVIDER_AUTH_MATRIX_RETRY_LIMIT must be a non-negative integer (got '${RETRY_LIMIT_RAW}')" >&2
@@ -128,15 +130,27 @@ while [[ $# -gt 0 ]]; do
       done
       shift 2
       ;;
-    --env-target)
+    --daemon-location)
       if [[ $# -lt 2 ]]; then
-        echo "error: --env-target requires a value" >&2
+        echo "error: --daemon-location requires a value" >&2
         exit 1
       fi
-      IFS=',' read -r -a ENV_TARGETS <<<"$2"
-      for target in "${ENV_TARGETS[@]}"; do
-        trimmed="$(printf "%s" "$target" | tr -d '[:space:]')"
-        [[ -n "${trimmed}" ]] && REQUESTED_ENV_TARGETS+=("${trimmed}")
+      IFS=',' read -r -a DAEMON_LOCATIONS <<<"$2"
+      for location in "${DAEMON_LOCATIONS[@]}"; do
+        trimmed="$(printf "%s" "$location" | tr -d '[:space:]')"
+        [[ -n "${trimmed}" ]] && REQUESTED_DAEMON_LOCATIONS+=("${trimmed}")
+      done
+      shift 2
+      ;;
+    --execution-environment)
+      if [[ $# -lt 2 ]]; then
+        echo "error: --execution-environment requires a value" >&2
+        exit 1
+      fi
+      IFS=',' read -r -a EXECUTION_ENVIRONMENTS <<<"$2"
+      for environment in "${EXECUTION_ENVIRONMENTS[@]}"; do
+        trimmed="$(printf "%s" "$environment" | tr -d '[:space:]')"
+        [[ -n "${trimmed}" ]] && REQUESTED_EXECUTION_ENVIRONMENTS+=("${trimmed}")
       done
       shift 2
       ;;
@@ -237,11 +251,18 @@ for (const cell of cells) {
   const runner = cell.runner && typeof cell.runner === "object" ? cell.runner : {};
   const extraEnv = runner.extra_env && typeof runner.extra_env === "object" ? runner.extra_env : {};
   const prerequisites = Array.isArray(cell.prerequisites) ? cell.prerequisites : [];
+  const daemonLocation = String(cell.daemon_location || "");
+  const executionEnvironment = String(cell.execution_environment || "");
+  const executionTopology = daemonLocation && executionEnvironment
+    ? `${daemonLocation}_${executionEnvironment}`
+    : "";
   process.stdout.write([
     String(cell.id || ""),
     String(cell.provider_id || ""),
     String(cell.auth_mode || ""),
-    String(cell.env_target || ""),
+    daemonLocation,
+    executionEnvironment,
+    executionTopology,
     String(cell.support || ""),
     String(cell.lane || ""),
     String(runner.kind || "none"),
@@ -294,7 +315,8 @@ is_selected_row() {
   local id="$1"
   local provider_id="$2"
   local auth_mode="$3"
-  local env_target="$4"
+  local daemon_location="$4"
+  local execution_environment="$5"
   if ! is_selected_cell "${id}"; then
     return 1
   fi
@@ -308,8 +330,13 @@ is_selected_row() {
       return 1
     fi
   fi
-  if [[ "${#REQUESTED_ENV_TARGETS[@]}" -gt 0 ]]; then
-    if ! matches_requested_value "${env_target}" "${REQUESTED_ENV_TARGETS[@]}"; then
+  if [[ "${#REQUESTED_DAEMON_LOCATIONS[@]}" -gt 0 ]]; then
+    if ! matches_requested_value "${daemon_location}" "${REQUESTED_DAEMON_LOCATIONS[@]}"; then
+      return 1
+    fi
+  fi
+  if [[ "${#REQUESTED_EXECUTION_ENVIRONMENTS[@]}" -gt 0 ]]; then
+    if ! matches_requested_value "${execution_environment}" "${REQUESTED_EXECUTION_ENVIRONMENTS[@]}"; then
       return 1
     fi
   fi
@@ -318,33 +345,35 @@ is_selected_row() {
 
 if [[ "${LIST_ONLY}" -eq 1 ]]; then
   for line in "${CELL_LINES[@]}"; do
-    IFS=$'\t' read -r id provider_id auth_mode env_target support lane runner_kind _ _ _ _ skip_reason <<<"${line}"
-    if ! is_selected_row "${id}" "${provider_id}" "${auth_mode}" "${env_target}"; then
+    IFS=$'\t' read -r id provider_id auth_mode daemon_location execution_environment execution_topology support lane runner_kind _ _ _ _ skip_reason <<<"${line}"
+    if ! is_selected_row "${id}" "${provider_id}" "${auth_mode}" "${daemon_location}" "${execution_environment}"; then
       continue
     fi
-    printf "%s\tprovider=%s\tauth=%s\tenv=%s\tsupport=%s\tlane=%s\trunner=%s\tskip=%s\n" \
-      "${id}" "${provider_id}" "${auth_mode}" "${env_target}" "${support}" "${lane}" "${runner_kind}" "${skip_reason:-"-"}"
+    printf "%s\tprovider=%s\tauth=%s\tlocation=%s\texecution_environment=%s\ttopology=%s\tsupport=%s\tlane=%s\trunner=%s\tskip=%s\n" \
+      "${id}" "${provider_id}" "${auth_mode}" "${daemon_location}" "${execution_environment}" "${execution_topology}" "${support}" "${lane}" "${runner_kind}" "${skip_reason:-"-"}"
   done
   exit 0
 fi
 
 mkdir -p "${ARTIFACTS_DIR}"
 SUMMARY="${ARTIFACTS_DIR}/summary.tsv"
-printf "cell_id\tstatus\texit_code\tartifact_dir\tprovider_id\tauth_mode\tenv_target\tlane\tsupport\treason\n" >"${SUMMARY}"
+printf "cell_id\tstatus\texit_code\tartifact_dir\tprovider_id\tauth_mode\tdaemon_location\texecution_environment\texecution_topology\tlane\tsupport\treason\n" >"${SUMMARY}"
 
 run_cell() {
   local id="$1"
   local provider_id="$2"
   local auth_mode="$3"
-  local env_target="$4"
-  local support="$5"
-  local lane="$6"
-  local runner_kind="$7"
-  local spec="$8"
-  local scenarios="$9"
-  local extra_env_json="${10}"
-  local prerequisites_json="${11}"
-  local skip_reason="${12}"
+  local daemon_location="$4"
+  local execution_environment="$5"
+  local execution_topology="$6"
+  local support="$7"
+  local lane="$8"
+  local runner_kind="$9"
+  local spec="${10}"
+  local scenarios="${11}"
+  local extra_env_json="${12}"
+  local prerequisites_json="${13}"
+  local skip_reason="${14}"
 
   local cell_dir="${ARTIFACTS_DIR}/${id}"
   mkdir -p "${cell_dir}"
@@ -366,8 +395,8 @@ fs.writeFileSync(process.argv[3], JSON.stringify(cell, null, 2) + "\n");
     allow_execution=1
   fi
   if [[ "${allow_execution}" -ne 1 ]]; then
-    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
-      "${id}" "skip" "0" "${cell_dir}" "${provider_id}" "${auth_mode}" "${env_target}" "${lane}" "${support}" "${support}:${effective_skip_reason}" >>"${SUMMARY}"
+    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+      "${id}" "skip" "0" "${cell_dir}" "${provider_id}" "${auth_mode}" "${daemon_location}" "${execution_environment}" "${execution_topology}" "${lane}" "${support}" "${support}:${effective_skip_reason}" >>"${SUMMARY}"
     return 0
   fi
 
@@ -391,8 +420,8 @@ for (const key of prereq) {
 process.stdout.write(missing.join(","));
 ' "${prerequisites_json}" "${ROOT}/core/scripts/desktop_e2e_secret_contract_lib.cjs")"
   if [[ -n "${missing_env}" ]]; then
-    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
-      "${id}" "skip" "0" "${cell_dir}" "${provider_id}" "${auth_mode}" "${env_target}" "${lane}" "${support}" "missing_env:${missing_env}" >>"${SUMMARY}"
+    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+      "${id}" "skip" "0" "${cell_dir}" "${provider_id}" "${auth_mode}" "${daemon_location}" "${execution_environment}" "${execution_topology}" "${lane}" "${support}" "missing_env:${missing_env}" >>"${SUMMARY}"
     return 0
   fi
 
@@ -402,7 +431,8 @@ process.stdout.write(missing.join(","));
     "CTX_PROVIDER_AUTH_MATRIX_CELL_ID=${id}"
     "CTX_PROVIDER_AUTH_MATRIX_PROVIDER_ID=${provider_id}"
     "CTX_PROVIDER_AUTH_MATRIX_AUTH_MODE=${auth_mode}"
-    "CTX_PROVIDER_AUTH_MATRIX_ENV_TARGET=${env_target}"
+    "CTX_PROVIDER_AUTH_MATRIX_DAEMON_LOCATION=${daemon_location}"
+    "CTX_PROVIDER_AUTH_MATRIX_EXECUTION_ENVIRONMENT=${execution_environment}"
     "CTX_PROVIDER_AUTH_MATRIX_REPORT=${report_path}"
   )
 
@@ -500,7 +530,7 @@ for (const [k, v] of Object.entries(extra)) {
   if [[ "${DRY_RUN}" -eq 1 ]]; then
     echo
     echo "==> ${id}"
-    echo "    provider=${provider_id} auth=${auth_mode} env=${env_target} lane=${lane}"
+    echo "    provider=${provider_id} auth=${auth_mode} location=${daemon_location} execution_environment=${execution_environment} topology=${execution_topology} lane=${lane}"
     echo "    artifacts=${cell_dir}"
     if [[ "${runner_kind}" == "desktop_wdio" ]]; then
       printf "dry-run env: %s\n" "${env_kv[*]}"
@@ -511,8 +541,8 @@ for (const [k, v] of Object.entries(extra)) {
     else
       printf "dry-run: unsupported runner kind '%s'\n" "${runner_kind}"
     fi
-    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
-      "${id}" "dry-run" "0" "${cell_dir}" "${provider_id}" "${auth_mode}" "${env_target}" "${lane}" "${support}" "dry-run" >>"${SUMMARY}"
+    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+      "${id}" "dry-run" "0" "${cell_dir}" "${provider_id}" "${auth_mode}" "${daemon_location}" "${execution_environment}" "${execution_topology}" "${lane}" "${support}" "dry-run" >>"${SUMMARY}"
     return 0
   fi
 
@@ -528,7 +558,7 @@ for (const [k, v] of Object.entries(extra)) {
     else
       echo "==> ${id}"
     fi
-    echo "    provider=${provider_id} auth=${auth_mode} env=${env_target} lane=${lane}"
+    echo "    provider=${provider_id} auth=${auth_mode} location=${daemon_location} execution_environment=${execution_environment} topology=${execution_topology} lane=${lane}"
     echo "    artifacts=${cell_dir}"
 
     set +e
@@ -606,8 +636,8 @@ process.stdout.write(`${normalize(report.result)}\t${normalize(report.reason)}\n
     break
   done
 
-  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
-    "${id}" "${status}" "${exit_code}" "${cell_dir}" "${provider_id}" "${auth_mode}" "${env_target}" "${lane}" "${support}" "${reason}" >>"${SUMMARY}"
+  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+    "${id}" "${status}" "${exit_code}" "${cell_dir}" "${provider_id}" "${auth_mode}" "${daemon_location}" "${execution_environment}" "${execution_topology}" "${lane}" "${support}" "${reason}" >>"${SUMMARY}"
 
   [[ "${status}" == "pass" || "${status}" == "skip" ]]
 }
@@ -615,15 +645,15 @@ process.stdout.write(`${normalize(report.result)}\t${normalize(report.reason)}\n
 fail_count=0
 run_count=0
 for line in "${CELL_LINES[@]}"; do
-  IFS=$'\t' read -r id provider_id auth_mode env_target support lane runner_kind spec scenarios extra_env_json prerequisites_json skip_reason <<<"${line}"
+  IFS=$'\t' read -r id provider_id auth_mode daemon_location execution_environment execution_topology support lane runner_kind spec scenarios extra_env_json prerequisites_json skip_reason <<<"${line}"
   [[ "${spec}" == "__EMPTY__" ]] && spec=""
   [[ "${scenarios}" == "__EMPTY__" ]] && scenarios=""
   [[ "${skip_reason}" == "__EMPTY__" ]] && skip_reason=""
-  if ! is_selected_row "${id}" "${provider_id}" "${auth_mode}" "${env_target}"; then
+  if ! is_selected_row "${id}" "${provider_id}" "${auth_mode}" "${daemon_location}" "${execution_environment}"; then
     continue
   fi
   run_count=$((run_count + 1))
-  if ! run_cell "${id}" "${provider_id}" "${auth_mode}" "${env_target}" "${support}" "${lane}" "${runner_kind}" "${spec}" "${scenarios}" "${extra_env_json}" "${prerequisites_json}" "${skip_reason}"; then
+  if ! run_cell "${id}" "${provider_id}" "${auth_mode}" "${daemon_location}" "${execution_environment}" "${execution_topology}" "${support}" "${lane}" "${runner_kind}" "${spec}" "${scenarios}" "${extra_env_json}" "${prerequisites_json}" "${skip_reason}"; then
     fail_count=$((fail_count + 1))
   fi
 done

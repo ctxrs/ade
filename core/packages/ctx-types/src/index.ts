@@ -123,6 +123,8 @@ export type MergeQueueRun = {
   result_commit_sha?: string | null;
 };
 
+export type ExecutionEnvironment = "host" | "container_host_mounted" | "container_disk_isolated";
+
 export type Session = {
   id: string;
   task_id: string;
@@ -136,7 +138,7 @@ export type Session = {
   agent_role: string;
   status: string;
   provider_session_ref?: string | null;
-  env_target?: "worktree" | "local" | string;
+  execution_environment?: ExecutionEnvironment | null;
   created_at?: string;
   updated_at?: string;
 };
@@ -170,6 +172,7 @@ export type SessionSummary = {
   model_id: string;
   title: string;
   status: string;
+  execution_environment?: ExecutionEnvironment | null;
   created_at: string;
   updated_at: string;
 };

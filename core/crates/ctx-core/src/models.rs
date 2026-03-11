@@ -390,12 +390,32 @@ pub enum SessionStatus {
     Cancelled,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionEnvironment {
+    #[default]
+    Host,
+    ContainerHostMounted,
+    ContainerDiskIsolated,
+}
+
+impl ExecutionEnvironment {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Host => "host",
+            Self::ContainerHostMounted => "container_host_mounted",
+            Self::ContainerDiskIsolated => "container_disk_isolated",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub id: SessionId,
     pub task_id: TaskId,
     pub workspace_id: WorkspaceId,
     pub worktree_id: WorktreeId,
+    pub execution_environment: ExecutionEnvironment,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_session_id: Option<SessionId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -416,6 +436,7 @@ pub struct SessionMetadata {
     pub task_id: TaskId,
     pub workspace_id: WorkspaceId,
     pub worktree_id: WorktreeId,
+    pub execution_environment: ExecutionEnvironment,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_session_id: Option<SessionId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -658,6 +679,7 @@ pub struct SessionSummary {
     pub id: SessionId,
     pub task_id: TaskId,
     pub workspace_id: WorkspaceId,
+    pub execution_environment: ExecutionEnvironment,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_session_id: Option<SessionId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

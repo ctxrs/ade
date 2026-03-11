@@ -74,17 +74,18 @@ pub async fn session_worker(
     };
     let workdir = PathBuf::from(worktree.root_path.clone());
     let is_worktree = worktree.vcs_ref.is_some() || worktree.git_branch.is_some();
-    let env_target = if is_worktree {
+    let session_root_kind = if is_worktree {
         "worktree".to_string()
     } else {
-        "local".to_string()
+        "workspace_root".to_string()
     };
     let mut worktree_event = OpsEvent::new("info", "worktree_resolved");
     worktree_event.session_id = Some(session.id.0.to_string());
     worktree_event.worktree_id = Some(session.worktree_id.0.to_string());
     worktree_event.worktree_root = Some(workdir.to_string_lossy().to_string());
     worktree_event.meta = Some(json!({
-        "env_target": env_target.clone(),
+        "execution_environment": session.execution_environment.as_str(),
+        "session_root_kind": session_root_kind.clone(),
         "vcs_kind": worktree.vcs_kind,
         "vcs_ref": worktree.vcs_ref,
         "git_branch": worktree.git_branch,
@@ -124,7 +125,7 @@ pub async fn session_worker(
                     &state,
                     &session_for_turn,
                     &workdir,
-                    &env_target,
+                    &session_root_kind,
                     msg,
                     Arc::clone(&order_seq_state),
                 )

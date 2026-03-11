@@ -1,6 +1,7 @@
+import type { ExecutionEnvironment } from "@ctx/types";
 import { getWebappStorage } from "./storage";
 
-export type LauncherExecutionEnvironment = "host" | "container_host_mounted" | "container_disk_isolated";
+export type LauncherExecutionEnvironment = ExecutionEnvironment;
 
 export type LauncherRecentEntry =
   | {

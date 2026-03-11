@@ -1,4 +1,5 @@
 use anyhow::{bail, Context, Result};
+pub use ctx_core::models::ExecutionEnvironment;
 use ctx_store::Store;
 use serde::{Deserialize, Serialize};
 
@@ -188,24 +189,6 @@ struct WorkspaceWorktreeBootstrapConfig {
 pub struct ExecutionSettingsOverride {
     pub mode: Option<ExecutionMode>,
     pub container: ContainerExecutionSettingsOverride,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ExecutionEnvironment {
-    Host,
-    ContainerHostMounted,
-    ContainerDiskIsolated,
-}
-
-impl ExecutionEnvironment {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Host => "host",
-            Self::ContainerHostMounted => "container_host_mounted",
-            Self::ContainerDiskIsolated => "container_disk_isolated",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Default)]

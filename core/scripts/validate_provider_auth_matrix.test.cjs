@@ -23,7 +23,8 @@ const baseManifest = () => ({
   summary: "test manifest",
   providers: [{ id: "codex", owner: "provider-codex" }],
   auth_modes: [{ id: "endpoint_api_key", description: "api key auth" }],
-  env_targets: [{ id: "local_container", description: "local container" }],
+  daemon_locations: [{ id: "local", description: "local daemon" }],
+  execution_environments: [{ id: "container_host_mounted", description: "host-mounted container" }],
   assertion_definitions: {
     install_success: "install ok",
     probe_success: "probe ok",
@@ -33,10 +34,11 @@ const baseManifest = () => ({
   },
   cells: [
     {
-      id: "codex.endpoint_api_key.local_container",
+      id: "codex.endpoint_api_key.local.container_host_mounted",
       provider_id: "codex",
       auth_mode: "endpoint_api_key",
-      env_target: "local_container",
+      daemon_location: "local",
+      execution_environment: "container_host_mounted",
       support: "supported",
       lane: "required",
       required_assertions: [
@@ -76,7 +78,7 @@ test("validate script fails when required cross-product cell is missing", () => 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-auth-matrix-fail-missing-"));
   const manifestPath = path.join(tmp, "provider_auth_matrix.json");
   const manifest = baseManifest();
-  manifest.env_targets.push({ id: "local_host", description: "local host" });
+  manifest.execution_environments.push({ id: "host", description: "host" });
   writeJson(manifestPath, manifest);
 
   const result = run(["--manifest", manifestPath]);
@@ -131,5 +133,5 @@ test("validate script fails when a required Codex container cell loses the conta
 
   const result = run(["--manifest", manifestPath]);
   assert.notEqual(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
-  assert.match(result.stderr, /local_container Codex required coverage must include local-codex-smoke/i);
+  assert.match(result.stderr, /local container_host_mounted Codex required coverage must include local-codex-smoke/i);
 });

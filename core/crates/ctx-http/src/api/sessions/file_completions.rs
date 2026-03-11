@@ -38,11 +38,13 @@ pub(crate) async fn session_file_completions(
                 entry.value.files.clone()
             } else {
                 drop(cache);
-                load_and_cache_worktree_files(&state, &worktree, now).await?
+                load_and_cache_worktree_files(&state, &worktree, session.execution_environment, now)
+                    .await?
             }
         } else {
             drop(cache);
-            load_and_cache_worktree_files(&state, &worktree, now).await?
+            load_and_cache_worktree_files(&state, &worktree, session.execution_environment, now)
+                .await?
         }
     };
 

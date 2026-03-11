@@ -1901,24 +1901,24 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const worktreeChip = useMemo(() => {
     const sess = activeEntry?.session ?? null;
     const worktreeRoot = String(activeWorktree?.root_path ?? "");
-    const workspaceRoot = String(workspace?.root_path ?? "");
-    const envTarget = String(sess?.env_target ?? "").trim().toLowerCase();
-    const inferredWorktree =
-      Boolean(worktreeRoot) &&
-      (Boolean(activeWorktree?.git_branch) || (Boolean(workspaceRoot) && worktreeRoot !== workspaceRoot));
-    const isCloud = envTarget === "cloud";
-    const isWorktree = envTarget === "worktree" || (!isCloud && envTarget !== "local" && inferredWorktree);
-    const worktreePath = (isWorktree || isCloud) ? worktreeRoot : "";
-    const worktreeLabel = isCloud ? "Cloud worker" : worktreePath ? formatWorktreeLabel(worktreePath) : "";
+    const executionEnvironment = String(sess?.execution_environment ?? "").trim();
+    const worktreePath = worktreeRoot;
+    const worktreeLabel = worktreePath
+      ? formatWorktreeLabel(worktreePath)
+      : executionEnvironment === "container_host_mounted" || executionEnvironment === "container_disk_isolated"
+        ? "Container worktree"
+        : executionEnvironment === "host"
+          ? "Session worktree"
+          : "";
 
     return {
       worktreeLabel,
       worktreePath,
-      canCopyWorktree: Boolean(worktreePath) && !isCloud,
+      canCopyWorktree: Boolean(worktreePath),
       canOpenTerminal: Boolean(worktreePath),
-      copyPath: isCloud ? "" : worktreePath,
+      copyPath: worktreePath,
     };
-  }, [activeEntry, activeWorktree?.git_branch, activeWorktree?.root_path, workspace?.root_path]);
+  }, [activeEntry, activeWorktree?.root_path]);
   const singleSessionHeader = useMemo(() => {
     const sess = activeEntry?.session ?? null;
     if (!sess) return null;

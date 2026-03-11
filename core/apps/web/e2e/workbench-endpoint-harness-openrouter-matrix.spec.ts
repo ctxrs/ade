@@ -852,7 +852,7 @@ test("workbench: endpoint harness OpenRouter matrix first pass", async ({ page, 
         data: {
           provider_id: entry.providerId,
           model_id: modelSelection.modelId,
-          env_target: "worktree",
+          execution_environment: "host",
         },
       });
       if (!createSessionResp.ok()) {

@@ -391,6 +391,7 @@ mod tests {
                 task.id,
                 workspace.id,
                 worktree.id,
+                ctx_core::models::ExecutionEnvironment::Host,
                 "fake".to_string(),
                 "fake-model".to_string(),
                 "assistant".to_string(),

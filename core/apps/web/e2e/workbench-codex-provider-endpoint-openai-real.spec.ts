@@ -183,7 +183,7 @@ test("workbench: codex OpenAI endpoint auth can run a real task", async ({ page,
     data: {
       provider_id: "codex",
       model_id: modelId,
-      env_target: "worktree",
+      execution_environment: "host",
     },
     timeout: REQUEST_TIMEOUT_MS,
   });

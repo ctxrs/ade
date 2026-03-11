@@ -49,7 +49,9 @@ pub struct TelemetryEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub env_target: Option<String>,
+    pub execution_environment: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_root_kind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -65,7 +67,8 @@ impl TelemetryEvent {
             occurred_at: Utc::now(),
             provider_id: None,
             model_id: None,
-            env_target: None,
+            execution_environment: None,
+            session_root_kind: None,
             duration_ms: None,
             status: None,
             success: None,
@@ -78,7 +81,8 @@ impl TelemetryEvent {
             occurred_at: Utc::now(),
             provider_id: None,
             model_id: None,
-            env_target: None,
+            execution_environment: None,
+            session_root_kind: None,
             duration_ms: None,
             status: None,
             success: None,
@@ -88,14 +92,16 @@ impl TelemetryEvent {
     pub fn session_started(
         provider_id: String,
         model_id: String,
-        env_target: Option<String>,
+        execution_environment: Option<String>,
+        session_root_kind: Option<String>,
     ) -> Self {
         Self {
             name: TelemetryEventKind::SessionStarted,
             occurred_at: Utc::now(),
             provider_id: Some(provider_id),
             model_id: Some(model_id),
-            env_target,
+            execution_environment,
+            session_root_kind,
             duration_ms: None,
             status: None,
             success: None,
@@ -105,7 +111,8 @@ impl TelemetryEvent {
     pub fn session_completed(
         provider_id: String,
         model_id: String,
-        env_target: Option<String>,
+        execution_environment: Option<String>,
+        session_root_kind: Option<String>,
         status: String,
         duration_ms: u64,
     ) -> Self {
@@ -114,7 +121,8 @@ impl TelemetryEvent {
             occurred_at: Utc::now(),
             provider_id: Some(provider_id),
             model_id: Some(model_id),
-            env_target,
+            execution_environment,
+            session_root_kind,
             duration_ms: Some(duration_ms),
             status: Some(status),
             success: None,
@@ -124,7 +132,8 @@ impl TelemetryEvent {
     pub fn provider_call(
         provider_id: String,
         model_id: String,
-        env_target: Option<String>,
+        execution_environment: Option<String>,
+        session_root_kind: Option<String>,
         success: bool,
         duration_ms: u64,
     ) -> Self {
@@ -133,7 +142,8 @@ impl TelemetryEvent {
             occurred_at: Utc::now(),
             provider_id: Some(provider_id),
             model_id: Some(model_id),
-            env_target,
+            execution_environment,
+            session_root_kind,
             duration_ms: Some(duration_ms),
             status: None,
             success: Some(success),

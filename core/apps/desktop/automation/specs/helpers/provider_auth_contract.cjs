@@ -8,16 +8,25 @@ const normalizeText = (value) =>
 
 const nowIso = () => new Date().toISOString();
 
+const deriveExecutionTopology = (daemonLocation, executionEnvironment) => {
+  const normalizedDaemonLocation = normalizeText(daemonLocation);
+  const normalizedExecutionEnvironment = normalizeText(executionEnvironment);
+  if (!normalizedDaemonLocation || !normalizedExecutionEnvironment) return "";
+  return `${normalizedDaemonLocation}_${normalizedExecutionEnvironment}`;
+};
+
 const createProviderAuthContractRecorder = ({
   outputPath,
   cell,
   providerId,
   authMode,
-  envTarget,
+  daemonLocation,
+  executionEnvironment,
 }) => {
   const startedAt = nowIso();
   const assertions = [];
   const artifacts = {};
+  const executionTopology = deriveExecutionTopology(daemonLocation, executionEnvironment);
 
   const recordAssertion = (name, status, detail = "", payload = null) => {
     assertions.push({
@@ -41,7 +50,9 @@ const createProviderAuthContractRecorder = ({
       cell: normalizeText(cell),
       provider_id: normalizeText(providerId),
       auth_mode: normalizeText(authMode),
-      env_target: normalizeText(envTarget),
+      daemon_location: normalizeText(daemonLocation),
+      execution_environment: normalizeText(executionEnvironment),
+      execution_topology: executionTopology,
       result: normalizeText(result).toLowerCase() || "unknown",
       reason: normalizeText(reason),
       error: normalizeText(error),
@@ -65,5 +76,6 @@ const createProviderAuthContractRecorder = ({
 
 module.exports = {
   createProviderAuthContractRecorder,
+  deriveExecutionTopology,
   normalizeText,
 };

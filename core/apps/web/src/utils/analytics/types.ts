@@ -4,4 +4,6 @@ export type AnalyticsProperties = Record<string, AnalyticsScalar>;
 
 export type AnalyticsSurface = "web" | "desktop" | "mobile_shell";
 
-export type AnalyticsEnvTarget = "local" | "worktree" | "remote";
+export type AnalyticsSessionRootKind = "workspace_root" | "worktree";
+
+export type AnalyticsSessionLocation = "local" | "remote";

@@ -3,6 +3,7 @@ export type {
   AttachmentMode,
   AttachmentUpdatePolicy,
   Diagnostics,
+  ExecutionEnvironment,
   Message,
   MessageAttachment,
   MergeQueueEntry,

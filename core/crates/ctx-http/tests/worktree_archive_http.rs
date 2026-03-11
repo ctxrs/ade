@@ -114,15 +114,8 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
         .json(&json!({
             "provider_id":"fake",
             "model_id":"fake-model",
-            "execution_environment":"worktree"
+            "execution_environment":"host"
         }))
-        .send()
-        .await
-        .unwrap();
-
-    client
-        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({"provider_id":"fake","model_id":"fake-model","env_target":"worktree"}))
         .send()
         .await
         .unwrap();
@@ -132,7 +125,18 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
         .json(&json!({
             "provider_id":"fake",
             "model_id":"fake-model",
-            "execution_environment":"local"
+            "execution_environment":"host"
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    client
+        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
+        .json(&json!({
+            "provider_id":"fake",
+            "model_id":"fake-model",
+            "execution_environment":"host"
         }))
         .send()
         .await
@@ -141,7 +145,6 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
     let store = state.store_for_task(task.id).await.unwrap();
     let sessions = store.list_sessions_for_task(task.id).await.unwrap();
     let mut managed = Vec::new();
-    let mut local_roots = Vec::new();
     for session in sessions {
         let worktree = store
             .get_worktree(session.worktree_id)
@@ -152,11 +155,9 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
         let expected = managed_worktree_path(data_dir.path(), ws.id, worktree.id);
         if root == expected {
             managed.push(worktree);
-        } else {
-            local_roots.push(root);
         }
     }
-    assert!(managed.len() >= 2);
+    assert_eq!(managed.len(), 3);
 
     let managed_roots: Vec<PathBuf> = managed
         .iter()
@@ -195,10 +196,6 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
         let root_str = root.to_string_lossy();
         assert!(!list_archived.contains(root_str.as_ref()));
     }
-    for local_root in local_roots {
-        assert!(tokio::fs::metadata(local_root).await.is_ok());
-    }
-
     for branch in &managed_branches {
         assert!(!branch_exists(repo.path(), branch).await);
     }

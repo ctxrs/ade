@@ -2,10 +2,9 @@ use anyhow::{anyhow, Context, Result};
 use rand::rngs::StdRng;
 use rand::Rng;
 
-use ctx_client::{Client, CreateSessionRequest, CreateTaskRequest, EnvTarget};
-use ctx_core::ids::{SessionId, TaskId, WorkspaceId};
-
 use crate::scenario::{Cli, ScenarioSpec};
+use ctx_client::{Client, CreateSessionRequest, CreateTaskRequest};
+use ctx_core::ids::{SessionId, TaskId, WorkspaceId};
 
 pub(crate) async fn resolve_workspace(client: &Client, id: Option<&str>) -> Result<WorkspaceId> {
     if let Some(id) = id {
@@ -56,9 +55,7 @@ pub(crate) async fn setup_tasks_and_sessions(
                         model_id: cli.model_id.clone(),
                         parent_session_id: None,
                         relationship: None,
-                        // Tasks are created without a default session, so first session must
-                        // request a managed worktree explicitly.
-                        env_target: Some(EnvTarget::Worktree),
+                        execution_environment: None,
                         worktree_id: None,
                         initial_prompt: None,
                         initial_message_id: None,
@@ -67,7 +64,7 @@ pub(crate) async fn setup_tasks_and_sessions(
                 )
                 .await
                 .with_context(|| "creating session (ensure CTX_SHOW_FAKE_PROVIDER=1)")?;
-            sessions.push(session.session.id);
+            sessions.push(session.id);
         }
     }
     Ok((tasks, sessions))

@@ -25,6 +25,7 @@
               "task_id": "22222222-2222-4222-8222-222222222222",
               "workspace_id": "11111111-1111-4111-8111-111111111111",
               "worktree_id": "33333333-3333-4333-8333-333333333333",
+              "execution_environment": "host",
               "provider_id": "codex",
               "model_id": "gpt-5.4",
               "title": "Stream D",
@@ -50,6 +51,7 @@
                 "task_id": "22222222-2222-4222-8222-222222222222",
                 "workspace_id": "11111111-1111-4111-8111-111111111111",
                 "worktree_id": "33333333-3333-4333-8333-333333333333",
+                "execution_environment": "host",
                 "provider_id": "codex",
                 "model_id": "gpt-5.4",
                 "title": "Stream D",
@@ -80,12 +82,13 @@
     "snapshot_rev": 42,
     "heads": [
       {
-        "session": {
-          "id": "44444444-4444-4444-8444-444444444444",
-          "task_id": "22222222-2222-4222-8222-222222222222",
-          "workspace_id": "11111111-1111-4111-8111-111111111111",
-          "worktree_id": "33333333-3333-4333-8333-333333333333",
-          "provider_id": "codex",
+          "session": {
+            "id": "44444444-4444-4444-8444-444444444444",
+            "task_id": "22222222-2222-4222-8222-222222222222",
+            "workspace_id": "11111111-1111-4111-8111-111111111111",
+            "worktree_id": "33333333-3333-4333-8333-333333333333",
+            "execution_environment": "host",
+            "provider_id": "codex",
           "model_id": "gpt-5.4",
           "title": "Stream D",
           "agent_role": "implementation",

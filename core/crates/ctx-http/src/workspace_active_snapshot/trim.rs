@@ -20,6 +20,7 @@ pub(super) fn session_metadata_from_session(session: &Session) -> SessionMetadat
         task_id: session.task_id,
         workspace_id: session.workspace_id,
         worktree_id: session.worktree_id,
+        execution_environment: session.execution_environment,
         parent_session_id: session.parent_session_id,
         relationship: session.relationship.clone(),
         provider_id: session.provider_id.clone(),

@@ -104,7 +104,7 @@ test("workbench: claude subscription browser OAuth can run a real task", async (
     data: {
       provider_id: "claude-crp",
       model_id: modelId,
-      env_target: "worktree",
+      execution_environment: "host",
     },
     timeout: REQUEST_TIMEOUT_MS,
   });

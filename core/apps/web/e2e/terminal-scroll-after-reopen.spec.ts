@@ -214,7 +214,7 @@ async function createTaskAndSessionForWorkspace(page: Page, workspaceId: string)
     data: {
       provider_id: "fake",
       model_id: "fake-model",
-      env_target: "worktree",
+      execution_environment: "host",
     },
   });
   expect(sessionResp.ok()).toBeTruthy();

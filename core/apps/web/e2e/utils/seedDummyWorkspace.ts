@@ -162,6 +162,7 @@ export async function seedDummyWorkspace(
       const session = await apiPost<{ id: string }>(request, `/api/tasks/${task.id}/sessions`, {
         provider_id: "fake",
         model_id: "fake-model",
+        execution_environment: "host",
       });
       sessionIdsByTask[task.id].push(session.id);
 

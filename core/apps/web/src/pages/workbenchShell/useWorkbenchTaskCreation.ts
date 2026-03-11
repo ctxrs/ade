@@ -3,8 +3,10 @@ import { flushSync } from "react-dom";
 import {
   createSession,
   createTask,
+  getWorkspaceExecutionConfig,
   idToString,
   postMessage,
+  type ExecutionEnvironment,
   type Message,
   MessageAttachment,
   type ProviderOptions,
@@ -116,6 +118,14 @@ export function useWorkbenchTaskCreation({
       primaryTrack.modelId ||
       modelIdsFromOptions(providerOptions[primaryTrack.providerId])[0] ||
       (primaryTrack.providerId === "fake" ? "fake-model" : "default");
+    let executionEnvironment: ExecutionEnvironment;
+    try {
+      executionEnvironment = (await getWorkspaceExecutionConfig(workspaceId)).environment;
+    } catch (e: unknown) {
+      setStartBusy(false);
+      onStartError(errorMessage(e));
+      return;
+    }
 
     const optimisticTask: Task = {
       id: optimisticTaskId,
@@ -139,7 +149,7 @@ export function useWorkbenchTaskCreation({
       title: "Session 1",
       agent_role: "assistant",
       status: "starting",
-      env_target: "worktree",
+      execution_environment: executionEnvironment,
       created_at: nowIso,
       updated_at: nowIso,
     };
@@ -263,7 +273,6 @@ export function useWorkbenchTaskCreation({
             : `Harness “${primaryTrack.providerId}” unavailable.`,
         );
       }
-      const env_target = "worktree";
       const opts = await ensureProviderAuthSummary(primaryTrack.providerId, {
         force: true,
         trigger: "explicit",
@@ -276,7 +285,7 @@ export function useWorkbenchTaskCreation({
       const turnId = optimisticTurnId;
       const shouldSendInitialPrompt = attachmentsToSend.length === 0;
       const session = await createSession(currentTaskId, primaryTrack.providerId, modelId, {
-        env_target,
+        execution_environment: executionEnvironment,
         id: clientSessionId,
         initial_message_id: messageId,
         initial_turn_id: turnId,

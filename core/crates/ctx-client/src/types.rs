@@ -5,8 +5,8 @@ use serde_json::Value;
 
 use ctx_core::ids::{MessageId, SessionId, TaskId, TurnId, WorktreeId};
 use ctx_core::models::{
-    AttachmentMode, AttachmentUpdatePolicy, MessageAttachment, MessageDelivery, Session,
-    WorkspaceAttachmentKind, WorkspaceIndexCursor,
+    AttachmentMode, AttachmentUpdatePolicy, ExecutionEnvironment, MessageAttachment,
+    MessageDelivery, WorkspaceAttachmentKind, WorkspaceIndexCursor,
 };
 
 #[derive(Debug, Clone, Deserialize)]
@@ -64,15 +64,6 @@ pub struct TelemetrySummaryParams {
     pub limit: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum EnvTarget {
-    Worktree,
-    Local,
-    #[serde(other)]
-    Unknown,
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateTaskRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -100,7 +91,7 @@ pub struct CreateSessionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub relationship: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub env_target: Option<EnvTarget>,
+    pub execution_environment: Option<ExecutionEnvironment>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub worktree_id: Option<WorktreeId>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -277,14 +268,6 @@ pub struct WorkspaceActiveSnapshotParams {
 pub struct WorkspaceArchivedPageParams {
     pub limit: Option<u32>,
     pub cursor: Option<WorkspaceIndexCursor>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionWithEnv {
-    #[serde(flatten)]
-    pub session: Session,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub env_target: Option<EnvTarget>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -840,12 +823,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_with_env_parses() {
+    fn session_parses_execution_environment() {
         let payload = serde_json::json!({
             "id": "11111111-1111-1111-1111-111111111111",
             "task_id": "33333333-3333-3333-3333-333333333333",
             "workspace_id": "44444444-4444-4444-4444-444444444444",
             "worktree_id": "55555555-5555-5555-5555-555555555555",
+            "execution_environment": "container_host_mounted",
             "provider_id": "codex",
             "model_id": "gpt-4",
             "title": "Main session",
@@ -853,12 +837,14 @@ mod tests {
             "status": "active",
             "provider_session_ref": null,
             "created_at": "2024-01-01T00:00:00Z",
-            "updated_at": "2024-01-01T00:00:00Z",
-            "env_target": "worktree"
+            "updated_at": "2024-01-01T00:00:00Z"
         });
 
-        let parsed: SessionWithEnv = serde_json::from_value(payload).unwrap();
-        assert_eq!(parsed.env_target, Some(EnvTarget::Worktree));
-        assert_eq!(parsed.session.provider_id, "codex");
+        let parsed: ctx_core::models::Session = serde_json::from_value(payload).unwrap();
+        assert_eq!(
+            parsed.execution_environment,
+            ExecutionEnvironment::ContainerHostMounted
+        );
+        assert_eq!(parsed.provider_id, "codex");
     }
 }

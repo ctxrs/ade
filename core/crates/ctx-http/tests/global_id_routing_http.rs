@@ -72,6 +72,7 @@ async fn create_workspace_session(
             task.id,
             workspace.id,
             worktree.id,
+            ctx_core::models::ExecutionEnvironment::Host,
             "fake".into(),
             "fake-model".into(),
             "assistant".into(),

@@ -258,7 +258,7 @@ test("workbench: gemini provider API key auth can run a real task", async ({ pag
     data: {
       provider_id: "gemini",
       model_id: modelId,
-      env_target: "worktree",
+      execution_environment: "host",
     },
     timeout: REQUEST_TIMEOUT_MS,
   });

@@ -45,7 +45,7 @@ test("preflight accepts a selected required codex host cell with the existing re
     "--platform",
     "darwin",
     "--cell",
-    "codex.endpoint_api_key.local_host",
+    "codex.endpoint_api_key.local.host",
   ], {
     CN_API_KEY: "cn_secret_value_12345",
     OPENROUTER_API_KEY: "openrouter_secret_value_12345",
@@ -106,7 +106,7 @@ test("preflight resolves codex oauth credentials from selected nightly matrix ce
     "--platform",
     "darwin",
     "--cell",
-    "codex.subscription_oauth.local_host",
+    "codex.subscription_oauth.local.host",
   ], {
     CN_API_KEY: "cn_secret_value_12345",
     CTX_E2E_CODEX_OAUTH_EMAIL: "user@example.com",
@@ -130,7 +130,7 @@ test("preflight trims newline-terminated deferred PATH-backed payloads before va
     "--platform",
     "darwin",
     "--cell",
-    "gemini.subscription_oauth.local_host",
+    "gemini.subscription_oauth.local.host",
     "--include-deferred",
   ], {
     CN_API_KEY: "cn_secret_value_12345",
@@ -154,7 +154,7 @@ test("preflight reports unreadable deferred secret files as invalid instead of c
     "--platform",
     "darwin",
     "--cell",
-    "gemini.subscription_oauth.local_host",
+    "gemini.subscription_oauth.local.host",
     "--include-deferred",
   ], {
     CN_API_KEY: "cn_secret_value_12345",
@@ -179,7 +179,7 @@ test("preflight prefers AMP seed dir over stale JSON env when both are set", () 
     "--platform",
     "darwin",
     "--cell",
-    "amp.subscription_oauth.local_host",
+    "amp.subscription_oauth.local.host",
     "--include-deferred",
   ], {
     CN_API_KEY: "cn_secret_value_12345",
@@ -203,7 +203,7 @@ test("preflight blocks on an invalid AMP seed dir instead of falling back to low
     "--platform",
     "darwin",
     "--cell",
-    "amp.subscription_oauth.local_host",
+    "amp.subscription_oauth.local.host",
     "--include-deferred",
   ], {
     CN_API_KEY: "cn_secret_value_12345",

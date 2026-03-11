@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { act, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MessageAttachment, ProviderOptions, ProviderStatus, Session, Task } from "../../api/client";
-import { createSession, createTask, postMessage } from "../../api/client";
+import { createSession, createTask, getWorkspaceExecutionConfig, postMessage } from "../../api/client";
 import type { DraftHarness } from "../../components/WorkbenchComposer";
 import type { SessionSupervisor } from "../../state/sessionSupervisor";
 import type { WorkspaceActiveSnapshotItem } from "../../state/workspaceActiveSnapshotStore";
@@ -17,6 +17,7 @@ vi.mock("../../api/client", async (importOriginal) => {
     ...original,
     createTask: vi.fn(),
     createSession: vi.fn(),
+    getWorkspaceExecutionConfig: vi.fn(),
     postMessage: vi.fn(),
   };
 });
@@ -27,6 +28,7 @@ vi.mock("../../utils/randomUuid", () => ({
 
 const mockedCreateTask = vi.mocked(createTask);
 const mockedCreateSession = vi.mocked(createSession);
+const mockedGetWorkspaceExecutionConfig = vi.mocked(getWorkspaceExecutionConfig);
 const mockedPostMessage = vi.mocked(postMessage);
 
 const now = "2026-03-10T00:00:00.000Z";
@@ -89,6 +91,7 @@ function makeSession(sessionId: string, taskId: string): Session {
     title: "Session 1",
     agent_role: "assistant",
     status: "starting",
+    execution_environment: "container_disk_isolated",
     created_at: now,
     updated_at: now,
   };
@@ -195,6 +198,10 @@ function Harness({
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  mockedGetWorkspaceExecutionConfig.mockResolvedValue({
+    source: "workspace",
+    environment: "container_disk_isolated",
+  });
   const { randomUuid } = await import("../../utils/randomUuid");
   vi.mocked(randomUuid).mockImplementationOnce(() => "task-1");
   vi.mocked(randomUuid).mockImplementationOnce(() => "session-1");
@@ -240,7 +247,10 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
       create_default_session: false,
       id: "task-1",
     });
-    expect(mockedCreateSession).toHaveBeenCalled();
+    expect(mockedGetWorkspaceExecutionConfig).toHaveBeenCalledWith("workspace-1");
+    expect(mockedCreateSession).toHaveBeenCalledWith("task-1", "codex", "gpt-5", expect.objectContaining({
+      execution_environment: "container_disk_isolated",
+    }));
     expect(mockedPostMessage).not.toHaveBeenCalled();
     expect(onStartError).toHaveBeenCalledWith(null);
   });
@@ -278,5 +288,29 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     expect(requireValue(current).optimisticStartingTaskRef.current).toBeNull();
     expect(mockedCreateSession).not.toHaveBeenCalled();
     expect(onStartError).toHaveBeenLastCalledWith("task create failed");
+  });
+
+  it("fails cleanly when the workspace execution config cannot be loaded", async () => {
+    let current: FlowValue | null = null;
+    mockedGetWorkspaceExecutionConfig.mockRejectedValue(new Error("config unavailable"));
+    const onStartError = vi.fn();
+
+    render(
+      <Harness
+        onChange={(value) => {
+          current = value;
+        }}
+        onStartError={onStartError}
+      />,
+    );
+
+    await act(async () => {
+      await requireValue(current).startNewTask();
+    });
+
+    expect(requireValue(current).optimisticTasks).toEqual([]);
+    expect(mockedCreateTask).not.toHaveBeenCalled();
+    expect(mockedCreateSession).not.toHaveBeenCalled();
+    expect(onStartError).toHaveBeenLastCalledWith("config unavailable");
   });
 });

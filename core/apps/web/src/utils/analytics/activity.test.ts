@@ -11,6 +11,7 @@ vi.mock("./client", () => ({
 import {
   trackFirstTurnCompleted,
   trackFirstTurnSubmitted,
+  trackSessionCreated,
   trackWizardAbandoned,
   trackWizardCompleted,
   trackWizardStarted,
@@ -93,6 +94,28 @@ describe("analytics events", () => {
         open: true,
         source: "header_button",
       }),
+    );
+  });
+
+  it("tracks session_created with split topology and canonical runtime fields", () => {
+    trackSessionCreated({
+      providerId: "codex",
+      modelId: "gpt-5-codex",
+      executionEnvironment: "container_host_mounted",
+      sessionRootKind: "worktree",
+      sessionLocation: "remote",
+    });
+
+    expect(captureProductEventMock).toHaveBeenCalledWith(
+      "session_created",
+      1,
+      {
+        provider_id: "codex",
+        model_id: "gpt-5-codex",
+        execution_environment: "container_host_mounted",
+        session_root_kind: "worktree",
+        session_location: "remote",
+      },
     );
   });
 

@@ -53,7 +53,8 @@ const REMOTE_LABEL_ALLOWLIST: &[&str] = &[
     "success",
     "provider_id",
     "model_id",
-    "env_target",
+    "execution_environment",
+    "session_root_kind",
     "source",
     "event",
 ];

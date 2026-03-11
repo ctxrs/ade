@@ -8,8 +8,8 @@ use axum::Json;
 use serde::Deserialize;
 
 use super::super::errors::ApiErrorResp;
-use super::super::shared::{env_target_for_worktree, SessionWithEnv};
 use crate::daemon::AppState;
+use crate::execution_effective;
 use crate::logs;
 use crate::settings as user_settings;
 use crate::title_generation;
@@ -201,7 +201,7 @@ pub(crate) async fn set_session_model(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     Json(req): Json<SetSessionModelReq>,
-) -> Result<Json<SessionWithEnv>, StatusCode> {
+) -> Result<Json<Session>, StatusCode> {
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
 
     let store = state
@@ -218,16 +218,19 @@ pub(crate) async fn set_session_model(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    let install_target =
-        crate::execution_effective::effective_install_target(state.as_ref(), worktree.workspace_id)
-            .await
-            .map_err(|err| {
-                tracing::warn!(
-                    workspace_id = %worktree.workspace_id.0,
-                    "set_session_model failed to load execution settings: {err:#}",
-                );
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
+    let install_target = execution_effective::effective_install_target_for_environment(
+        state.as_ref(),
+        worktree.workspace_id,
+        session.execution_environment,
+    )
+    .await
+    .map_err(|err| {
+        tracing::warn!(
+            workspace_id = %worktree.workspace_id.0,
+            "set_session_model failed to load execution settings: {err:#}",
+        );
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     let adapter = crate::daemon::ensure_provider_adapter_for_target(
         state.as_ref(),
@@ -252,10 +255,7 @@ pub(crate) async fn set_session_model(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    Ok(Json(SessionWithEnv {
-        env_target: env_target_for_worktree(Some(&worktree)),
-        session: updated,
-    }))
+    Ok(Json(updated))
 }
 
 #[derive(Debug, Deserialize)]
@@ -284,16 +284,19 @@ pub(crate) async fn set_session_mode(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    let install_target =
-        crate::execution_effective::effective_install_target(state.as_ref(), worktree.workspace_id)
-            .await
-            .map_err(|err| {
-                tracing::warn!(
-                    workspace_id = %worktree.workspace_id.0,
-                    "set_session_mode failed to load execution settings: {err:#}",
-                );
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
+    let install_target = crate::execution_effective::effective_install_target_for_environment(
+        state.as_ref(),
+        worktree.workspace_id,
+        session.execution_environment,
+    )
+    .await
+    .map_err(|err| {
+        tracing::warn!(
+            workspace_id = %worktree.workspace_id.0,
+            "set_session_mode failed to load execution settings: {err:#}",
+        );
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     let adapter = crate::daemon::ensure_provider_adapter_for_target(
         state.as_ref(),

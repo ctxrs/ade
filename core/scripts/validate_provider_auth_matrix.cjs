@@ -31,7 +31,8 @@ const DEFERRED_RUNNER_SKIP_REASONS = new Set([
 ]);
 const REQUIRED_PROVIDER_IDS = new Set(["codex"]);
 const REQUIRED_AUTH_MODES = new Set(["endpoint_api_key", "configure_later_then_connect"]);
-const REQUIRED_ENV_TARGETS = new Set(["local_host", "local_container"]);
+const REQUIRED_DAEMON_LOCATIONS = new Set(["local"]);
+const REQUIRED_EXECUTION_ENVIRONMENTS = new Set(["host", "container_host_mounted"]);
 const REQUIRED_ALLOWED_PREREQUISITES = new Set(["OPENROUTER_API_KEY"]);
 
 const resolveInputPath = (raw, { fallbackPath = "", mustExist = false } = {}) => {
@@ -112,13 +113,24 @@ const ensureUniqueIds = (items, label, errors) => {
   return seen;
 };
 
+const deriveExecutionTopology = (daemonLocation, executionEnvironment) => {
+  const normalizedDaemonLocation = readString(daemonLocation).trim();
+  const normalizedExecutionEnvironment = readString(executionEnvironment).trim();
+  if (!normalizedDaemonLocation || !normalizedExecutionEnvironment) return "";
+  return `${normalizedDaemonLocation}_${normalizedExecutionEnvironment}`;
+};
+
+const buildCellId = (providerId, authMode, daemonLocation, executionEnvironment) =>
+  `${providerId}.${authMode}.${daemonLocation}.${executionEnvironment}`;
+
 const validateManifest = (manifest) => {
   const errors = [];
   const warnings = [];
 
   const providers = asArray(manifest.providers).map(asRecord);
   const authModes = asArray(manifest.auth_modes).map(asRecord);
-  const envTargets = asArray(manifest.env_targets).map(asRecord);
+  const daemonLocations = asArray(manifest.daemon_locations).map(asRecord);
+  const executionEnvironments = asArray(manifest.execution_environments).map(asRecord);
   const cells = asArray(manifest.cells).map(asRecord);
   const assertionDefs = asRecord(manifest.assertion_definitions);
   const assertionIds = new Set(Object.keys(assertionDefs));
@@ -134,24 +146,29 @@ const validateManifest = (manifest) => {
   }
   if (providers.length === 0) errors.push("providers must be non-empty");
   if (authModes.length === 0) errors.push("auth_modes must be non-empty");
-  if (envTargets.length === 0) errors.push("env_targets must be non-empty");
+  if (daemonLocations.length === 0) errors.push("daemon_locations must be non-empty");
+  if (executionEnvironments.length === 0) errors.push("execution_environments must be non-empty");
   if (cells.length === 0) errors.push("cells must be non-empty");
   if (assertionIds.size === 0) errors.push("assertion_definitions must be non-empty");
 
   const providerIdSet = ensureUniqueIds(providers, "providers", errors);
   const authModeSet = ensureUniqueIds(authModes, "auth_modes", errors);
-  const envTargetSet = ensureUniqueIds(envTargets, "env_targets", errors);
+  const daemonLocationSet = ensureUniqueIds(daemonLocations, "daemon_locations", errors);
+  const executionEnvironmentSet = ensureUniqueIds(executionEnvironments, "execution_environments", errors);
 
   const expectedIds = new Set();
   for (const providerId of providerIdSet) {
     for (const authMode of authModeSet) {
-      for (const envTarget of envTargetSet) {
-        expectedIds.add(`${providerId}.${authMode}.${envTarget}`);
+      for (const daemonLocation of daemonLocationSet) {
+        for (const executionEnvironment of executionEnvironmentSet) {
+          expectedIds.add(buildCellId(providerId, authMode, daemonLocation, executionEnvironment));
+        }
       }
     }
   }
 
   const seenCellIds = new Set();
+  const executionTopologySet = new Set();
   const laneCounts = { required: 0, nightly: 0, none: 0 };
   const supportCounts = { supported: 0, deferred: 0, unsupported: 0 };
   const providerCounts = new Map();
@@ -170,7 +187,9 @@ const validateManifest = (manifest) => {
 
     const providerId = readString(cell.provider_id).trim();
     const authMode = readString(cell.auth_mode).trim();
-    const envTarget = readString(cell.env_target).trim();
+    const daemonLocation = readString(cell.daemon_location).trim();
+    const executionEnvironment = readString(cell.execution_environment).trim();
+    const executionTopology = deriveExecutionTopology(daemonLocation, executionEnvironment);
     const support = readString(cell.support).trim();
     const lane = readString(cell.lane).trim();
     const owner = readString(cell.owner).trim();
@@ -182,7 +201,15 @@ const validateManifest = (manifest) => {
 
     if (!providerIdSet.has(providerId)) errors.push(`cell ${id} has unknown provider_id '${providerId}'`);
     if (!authModeSet.has(authMode)) errors.push(`cell ${id} has unknown auth_mode '${authMode}'`);
-    if (!envTargetSet.has(envTarget)) errors.push(`cell ${id} has unknown env_target '${envTarget}'`);
+    if (!daemonLocationSet.has(daemonLocation)) {
+      errors.push(`cell ${id} has unknown daemon_location '${daemonLocation}'`);
+    }
+    if (!executionEnvironmentSet.has(executionEnvironment)) {
+      errors.push(`cell ${id} has unknown execution_environment '${executionEnvironment}'`);
+    }
+    if (buildCellId(providerId, authMode, daemonLocation, executionEnvironment) !== id) {
+      errors.push(`cell ${id} does not match provider/auth/location/environment tuple`);
+    }
 
     if (!SUPPORT_VALUES.has(support)) errors.push(`cell ${id} has invalid support '${support}'`);
     if (!LANE_VALUES.has(lane)) errors.push(`cell ${id} has invalid lane '${lane}'`);
@@ -231,20 +258,22 @@ const validateManifest = (manifest) => {
     if (
       providerId === "codex"
       && REQUIRED_AUTH_MODES.has(authMode)
-      && envTarget === "local_host"
+      && daemonLocation === "local"
+      && executionEnvironment === "host"
       && runnerKind === "desktop_wdio"
       && !readString(runner.scenarios).split(",").map((entry) => entry.trim()).includes("local-codex-host-smoke")
     ) {
-      errors.push(`cell ${id} local_host Codex required coverage must include local-codex-host-smoke`);
+      errors.push(`cell ${id} local host Codex required coverage must include local-codex-host-smoke`);
     }
     if (
       providerId === "codex"
       && REQUIRED_AUTH_MODES.has(authMode)
-      && envTarget === "local_container"
+      && daemonLocation === "local"
+      && executionEnvironment === "container_host_mounted"
       && runnerKind === "desktop_wdio"
       && !readString(runner.scenarios).split(",").map((entry) => entry.trim()).includes("local-codex-smoke")
     ) {
-      errors.push(`cell ${id} local_container Codex required coverage must include local-codex-smoke`);
+      errors.push(`cell ${id} local container_host_mounted Codex required coverage must include local-codex-smoke`);
     }
     if (runnerKind === "web_playwright" && !readString(runner.spec).trim()) {
       errors.push(`cell ${id} web_playwright runner requires spec`);
@@ -261,8 +290,15 @@ const validateManifest = (manifest) => {
       if (!REQUIRED_AUTH_MODES.has(authMode)) {
         errors.push(`cell ${id} lane=required requires auth_mode in ${JSON.stringify([...REQUIRED_AUTH_MODES])}`);
       }
-      if (!REQUIRED_ENV_TARGETS.has(envTarget)) {
-        errors.push(`cell ${id} lane=required requires env_target in ${JSON.stringify([...REQUIRED_ENV_TARGETS])}`);
+      if (!REQUIRED_DAEMON_LOCATIONS.has(daemonLocation)) {
+        errors.push(
+          `cell ${id} lane=required requires daemon_location in ${JSON.stringify([...REQUIRED_DAEMON_LOCATIONS])}`,
+        );
+      }
+      if (!REQUIRED_EXECUTION_ENVIRONMENTS.has(executionEnvironment)) {
+        errors.push(
+          `cell ${id} lane=required requires execution_environment in ${JSON.stringify([...REQUIRED_EXECUTION_ENVIRONMENTS])}`,
+        );
       }
       if (runnerKind !== "desktop_wdio") {
         errors.push(`cell ${id} lane=required requires desktop_wdio runner`);
@@ -279,6 +315,7 @@ const validateManifest = (manifest) => {
       }
     }
 
+    executionTopologySet.add(executionTopology);
     if (supportCounts[support] !== undefined) supportCounts[support] += 1;
     if (laneCounts[lane] !== undefined) laneCounts[lane] += 1;
     const existingProviderCounts = providerCounts.get(providerId) || {
@@ -309,7 +346,9 @@ const validateManifest = (manifest) => {
     summary: {
       providers: providerIdSet.size,
       auth_modes: authModeSet.size,
-      env_targets: envTargetSet.size,
+      daemon_locations: daemonLocationSet.size,
+      execution_environments: executionEnvironmentSet.size,
+      execution_topologies: executionTopologySet.size,
       expected_cells: expectedIds.size,
       actual_cells: seenCellIds.size,
       support_counts: supportCounts,
@@ -338,7 +377,9 @@ const buildReport = (manifest, validationSummary) => {
   lines.push(`- Generated at: ${readString(manifest.generated_at)}`);
   lines.push(`- Providers: ${summary.providers}`);
   lines.push(`- Auth modes: ${summary.auth_modes}`);
-  lines.push(`- Env targets: ${summary.env_targets}`);
+  lines.push(`- Daemon locations: ${summary.daemon_locations}`);
+  lines.push(`- Execution environments: ${summary.execution_environments}`);
+  lines.push(`- Execution topologies: ${summary.execution_topologies}`);
   lines.push(`- Cells: ${summary.actual_cells}`);
   lines.push("");
   lines.push("## Support Counts");
@@ -355,32 +396,32 @@ const buildReport = (manifest, validationSummary) => {
   lines.push("");
   lines.push("## Required Lane Cells");
   lines.push("");
-  lines.push("| cell_id | provider | auth_mode | env_target | runner | prerequisites |");
-  lines.push("| --- | --- | --- | --- | --- | --- |");
+  lines.push("| cell_id | provider | auth_mode | daemon_location | execution_environment | execution_topology | runner | prerequisites |");
+  lines.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
   for (const cell of requiredCells) {
     const runner = asRecord(cell.runner);
     const prereq = asArray(cell.prerequisites).map((entry) => readString(entry)).filter(Boolean).join(", ");
     lines.push(
-      `| ${readString(cell.id)} | ${readString(cell.provider_id)} | ${readString(cell.auth_mode)} | ${readString(cell.env_target)} | ${readString(runner.kind)} | ${prereq || "-"} |`,
+      `| ${readString(cell.id)} | ${readString(cell.provider_id)} | ${readString(cell.auth_mode)} | ${readString(cell.daemon_location)} | ${readString(cell.execution_environment)} | ${deriveExecutionTopology(cell.daemon_location, cell.execution_environment)} | ${readString(runner.kind)} | ${prereq || "-"} |`,
     );
   }
   if (requiredCells.length === 0) {
-    lines.push("| _none_ | - | - | - | - | - |");
+    lines.push("| _none_ | - | - | - | - | - | - | - |");
   }
   lines.push("");
   lines.push("## Deferred Cells With Concrete Runners");
   lines.push("");
-  lines.push("| cell_id | provider | auth_mode | env_target | runner | blocker | prerequisites |");
-  lines.push("| --- | --- | --- | --- | --- | --- | --- |");
+  lines.push("| cell_id | provider | auth_mode | daemon_location | execution_environment | execution_topology | runner | blocker | prerequisites |");
+  lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- |");
   for (const cell of deferredRunnerCells) {
     const runner = asRecord(cell.runner);
     const prereq = asArray(cell.prerequisites).map((entry) => readString(entry)).filter(Boolean).join(", ");
     lines.push(
-      `| ${readString(cell.id)} | ${readString(cell.provider_id)} | ${readString(cell.auth_mode)} | ${readString(cell.env_target)} | ${readString(runner.kind)} | ${readString(cell.skip_reason) || "-"} | ${prereq || "-"} |`,
+      `| ${readString(cell.id)} | ${readString(cell.provider_id)} | ${readString(cell.auth_mode)} | ${readString(cell.daemon_location)} | ${readString(cell.execution_environment)} | ${deriveExecutionTopology(cell.daemon_location, cell.execution_environment)} | ${readString(runner.kind)} | ${readString(cell.skip_reason) || "-"} | ${prereq || "-"} |`,
     );
   }
   if (deferredRunnerCells.length === 0) {
-    lines.push("| _none_ | - | - | - | - | - | - |");
+    lines.push("| _none_ | - | - | - | - | - | - | - | - |");
   }
   lines.push("");
   lines.push("## Provider Coverage Summary");
@@ -398,6 +439,7 @@ const buildReport = (manifest, validationSummary) => {
   lines.push("- `supported` means the cell currently has automated execution coverage.");
   lines.push("- `deferred` means provider/auth behavior is expected, but automated coverage is still a known gap.");
   lines.push("- `unsupported` means the provider/auth combination is intentionally out of supported product behavior.");
+  lines.push("- `execution_topology` is derived from `daemon_location` and `execution_environment` for human-readable reports only.");
   lines.push("- Deferred cells with concrete runners must carry a blocker classification in `skip_reason`.");
   lines.push("");
 
@@ -448,7 +490,9 @@ const main = () => {
 
   console.log(`providers=${validation.summary.providers}`);
   console.log(`auth_modes=${validation.summary.auth_modes}`);
-  console.log(`env_targets=${validation.summary.env_targets}`);
+  console.log(`daemon_locations=${validation.summary.daemon_locations}`);
+  console.log(`execution_environments=${validation.summary.execution_environments}`);
+  console.log(`execution_topologies=${validation.summary.execution_topologies}`);
   console.log(`cells=${validation.summary.actual_cells}/${validation.summary.expected_cells}`);
   console.log(`support_counts=${JSON.stringify(validation.summary.support_counts)}`);
   console.log(`lane_counts=${JSON.stringify(validation.summary.lane_counts)}`);
