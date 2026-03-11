@@ -60,10 +60,8 @@ pub(crate) async fn refresh_provider_matrix(
 fn dev_tools_enabled() -> bool {
     std::env::var("CTX_DEV_MODE")
         .ok()
-        .map(|raw| {
-            let v = raw.trim();
-            v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
-        })
+        .as_deref()
+        .and_then(ctx_core::boolish::parse_boolish)
         .unwrap_or(false)
 }
 

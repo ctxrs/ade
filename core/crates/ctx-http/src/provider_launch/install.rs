@@ -233,14 +233,10 @@ async fn seed_running_prerequisite_progress(
 
 fn has_provider_update_available(status: &ctx_providers::adapters::ProviderStatus) -> bool {
     let matrix_update = status
-        .details
-        .get("matrix_update_available")
-        .map(|value| value == "true")
+        .detail_flag("matrix_update_available")
         .unwrap_or(false);
     let dependency_update = status
-        .details
-        .get("managed_dependency_update_available")
-        .map(|value| value == "true")
+        .detail_flag("managed_dependency_update_available")
         .unwrap_or(false);
     matrix_update || dependency_update
 }

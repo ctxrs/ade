@@ -32,6 +32,7 @@ import {
   parseInstallTarget,
   providerInstallSizeBytes,
 } from "../../utils/providerInstallUi";
+import { providerDetailFlag } from "../../utils/boolish";
 import {
   buildSessionTitlingDraft,
   buildSessionTitlingPayload,
@@ -307,8 +308,8 @@ export function useWorkspaceSetupProvisioning({
     provider: ProviderStatus,
     fallbackInstallTarget: InstallTarget = selectedHarnessInstallTarget,
   ): HarnessInstallProviderRow | null => {
-    if (provider.details?.ui_hidden === "true") return null;
-    const installSupported = provider.details?.install_supported === "true";
+    if (providerDetailFlag(provider.details, "ui_hidden")) return null;
+    const installSupported = providerDetailFlag(provider.details, "install_supported");
     if (!installSupported) return null;
     const harness = harnessByProviderId.get(provider.provider_id);
     const installTarget = parseInstallTarget(provider.details?.install_target) ?? fallbackInstallTarget;
@@ -318,7 +319,7 @@ export function useWorkspaceSetupProvisioning({
       installed: provider.installed === true,
       healthy: provider.health === "ok",
       installSupported,
-      installRunning: provider.details?.install_running === "true",
+      installRunning: providerDetailFlag(provider.details, "install_running"),
       installId: provider.details?.install_id,
       installTarget,
       installSizeBytes: providerInstallSizeBytes(provider),

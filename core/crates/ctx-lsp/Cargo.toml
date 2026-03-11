@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+ctx-core = { path = "../ctx-core" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

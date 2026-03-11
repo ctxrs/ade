@@ -1514,6 +1514,7 @@ name = "ctx-lsp"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ctx-core",
  "lsp-types",
  "serde",
  "serde_json",
@@ -1530,6 +1531,7 @@ dependencies = [
  "anyhow",
  "axum 0.7.9",
  "clap",
+ "ctx-core",
  "rand 0.8.5",
  "reqwest 0.12.28",
  "serde_json",

@@ -72,11 +72,9 @@ fn env_trim(key: &str) -> Option<String> {
 }
 
 fn env_bool(key: &str) -> Option<bool> {
-    env_trim(key).and_then(|value| match value.to_ascii_lowercase().as_str() {
-        "1" | "true" | "yes" => Some(true),
-        "0" | "false" | "no" => Some(false),
-        _ => None,
-    })
+    env_trim(key)
+        .as_deref()
+        .and_then(ctx_core::boolish::parse_boolish)
 }
 
 fn e2e_tier_enabled() -> bool {

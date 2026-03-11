@@ -3,6 +3,7 @@ const fs = require("fs");
 const crypto = require("crypto");
 const { spawnSync, spawn } = require("child_process");
 const os = require("os");
+const { resolveBoolishFlag } = require("../../../scripts/lib/boolish.cjs");
 
 const { waitTestRunnerBackendReady } = require("@crabnebula/test-runner-backend");
 const { waitTauriDriverReady } = require("@crabnebula/tauri-driver");
@@ -71,17 +72,25 @@ if (!String(process.env.TAURI_DRIVER_PORT || "").trim()) {
 const CTX_BIN = process.env.CTX_AUTOMATION_CTX_BIN ||
   path.resolve(ROOT, "src-tauri/bin/ctx");
 
-const USE_EXTERNAL_DAEMON = !["0", "false", "no"].includes(
-  String(process.env.CTX_AUTOMATION_USE_EXTERNAL_DAEMON || "0").trim().toLowerCase(),
+const USE_EXTERNAL_DAEMON = resolveBoolishFlag(
+  process.env.CTX_AUTOMATION_USE_EXTERNAL_DAEMON,
+  false,
+  "CTX_AUTOMATION_USE_EXTERNAL_DAEMON",
 );
-const SSH_NO_START_REMOTE = !["0", "false", "no"].includes(
-  String(process.env.CTX_AUTOMATION_SSH_NO_START_REMOTE || "1").trim().toLowerCase(),
+const SSH_NO_START_REMOTE = resolveBoolishFlag(
+  process.env.CTX_AUTOMATION_SSH_NO_START_REMOTE,
+  true,
+  "CTX_AUTOMATION_SSH_NO_START_REMOTE",
 );
-const SKIP_PREP_RELEASE = ["1", "true", "yes"].includes(
-  String(process.env.CTX_AUTOMATION_SKIP_DESKTOP_PREP_RELEASE || "0").trim().toLowerCase(),
+const SKIP_PREP_RELEASE = resolveBoolishFlag(
+  process.env.CTX_AUTOMATION_SKIP_DESKTOP_PREP_RELEASE,
+  false,
+  "CTX_AUTOMATION_SKIP_DESKTOP_PREP_RELEASE",
 );
-const SKIP_APP_BUILD = ["1", "true", "yes"].includes(
-  String(process.env.CTX_AUTOMATION_SKIP_APP_BUILD || "0").trim().toLowerCase(),
+const SKIP_APP_BUILD = resolveBoolishFlag(
+  process.env.CTX_AUTOMATION_SKIP_APP_BUILD,
+  false,
+  "CTX_AUTOMATION_SKIP_APP_BUILD",
 );
 const REMOTE_CTX_BIN = String(process.env.CTX_AUTOMATION_REMOTE_CTX_BIN || "").trim();
 const REMOTE_SSH_KEY_PATH = String(
@@ -90,8 +99,10 @@ const REMOTE_SSH_KEY_PATH = String(
 const REMOTE_SSH_CONFIG_PATH = String(
   process.env.CTX_DESKTOP_SSH_CONFIG_PATH || process.env.CTX_AUTOMATION_REMOTE_FIXTURE_SSH_CONFIG || "",
 ).trim();
-const SKIP_REMOTE_CTX_PROVISION = ["1", "true", "yes"].includes(
-  String(process.env.CTX_AUTOMATION_SKIP_REMOTE_CTX_PROVISION || "0").trim().toLowerCase(),
+const SKIP_REMOTE_CTX_PROVISION = resolveBoolishFlag(
+  process.env.CTX_AUTOMATION_SKIP_REMOTE_CTX_PROVISION,
+  false,
+  "CTX_AUTOMATION_SKIP_REMOTE_CTX_PROVISION",
 );
 const requestedWdioLogLevel = String(process.env.CTX_AUTOMATION_WDIO_LOG_LEVEL || "info").trim() || "info";
 const REAL_AUTH_LOG_LEVEL_ENV_NAMES = Object.freeze([
@@ -124,8 +135,10 @@ const WDIO_LOG_LEVEL = (() => {
 const INTERNAL_DAEMON_DATA_DIR_OVERRIDE = String(
   process.env.CTX_AUTOMATION_INTERNAL_DAEMON_DATA_DIR || "",
 ).trim();
-const PRESERVE_INTERNAL_DAEMON_DATA_DIR = ["1", "true", "yes"].includes(
-  String(process.env.CTX_AUTOMATION_PRESERVE_INTERNAL_DAEMON_DATA_DIR || "0").trim().toLowerCase(),
+const PRESERVE_INTERNAL_DAEMON_DATA_DIR = resolveBoolishFlag(
+  process.env.CTX_AUTOMATION_PRESERVE_INTERNAL_DAEMON_DATA_DIR,
+  false,
+  "CTX_AUTOMATION_PRESERVE_INTERNAL_DAEMON_DATA_DIR",
 );
 const parsePositiveInt = (raw, fallback) => {
   const n = Number.parseInt(String(raw ?? ""), 10);
@@ -171,14 +184,20 @@ const CONTAINER_SCENARIO_TOKENS = new Set([
 ]);
 const RUNS_CONTAINER_SCENARIOS = SCENARIO_FILTER.length === 0
   || SCENARIO_FILTER.some((token) => CONTAINER_SCENARIO_TOKENS.has(token));
-const ALLOW_CN_PORT_REUSE = ["1", "true", "yes"].includes(
-  String(process.env.CTX_AUTOMATION_CN_ALLOW_PORT_REUSE || "0").trim().toLowerCase(),
+const ALLOW_CN_PORT_REUSE = resolveBoolishFlag(
+  process.env.CTX_AUTOMATION_CN_ALLOW_PORT_REUSE,
+  false,
+  "CTX_AUTOMATION_CN_ALLOW_PORT_REUSE",
 );
-const SHARED_CN_BACKEND = ["0", "false", "no"].includes(
-  String(process.env.CTX_AUTOMATION_CN_SHARED_BACKEND || "1").trim().toLowerCase(),
-) ? false : process.platform === "darwin";
-const STOP_SHARED_CN_BACKEND_WHEN_IDLE = ["1", "true", "yes"].includes(
-  String(process.env.CTX_AUTOMATION_CN_STOP_SHARED_BACKEND_WHEN_IDLE || "0").trim().toLowerCase(),
+const SHARED_CN_BACKEND = resolveBoolishFlag(
+  process.env.CTX_AUTOMATION_CN_SHARED_BACKEND,
+  true,
+  "CTX_AUTOMATION_CN_SHARED_BACKEND",
+) && process.platform === "darwin";
+const STOP_SHARED_CN_BACKEND_WHEN_IDLE = resolveBoolishFlag(
+  process.env.CTX_AUTOMATION_CN_STOP_SHARED_BACKEND_WHEN_IDLE,
+  false,
+  "CTX_AUTOMATION_CN_STOP_SHARED_BACKEND_WHEN_IDLE",
 );
 const defaultCnBackendStateDir = (() => {
   if (process.platform === "darwin") {
@@ -204,11 +223,15 @@ const SHARED_CN_BACKEND_ENV_KEYS = new Set([
   "CTX_BUNDLE_DIR",
   "CTX_SEED_CODEX_AUTH_FROM_HOST",
 ]);
-const ALLOW_STALE_HELPER_SWEEP = ["1", "true", "yes"].includes(
-  String(process.env.CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP || "0").trim().toLowerCase(),
+const ALLOW_STALE_HELPER_SWEEP = resolveBoolishFlag(
+  process.env.CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP,
+  false,
+  "CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP",
 );
-const ALLOW_PREP_APP_PROCESS_SWEEP = ["1", "true", "yes"].includes(
-  String(process.env.CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP || "0").trim().toLowerCase(),
+const ALLOW_PREP_APP_PROCESS_SWEEP = resolveBoolishFlag(
+  process.env.CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP,
+  false,
+  "CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP",
 );
 
 let daemonProcess = null;
@@ -1242,8 +1265,10 @@ exports.config = {
 
     // Launch the app directly into the wizard route to reduce test flakiness.
     process.env.CTX_DESKTOP_START_PATH = "/workspace-setup";
-    const codexOauthFlowEnabled = ["1", "true", "yes"].includes(
-      String(process.env.CTX_AUTOMATION_CODEX_OAUTH_ENABLE || "").trim().toLowerCase(),
+    const codexOauthFlowEnabled = resolveBoolishFlag(
+      process.env.CTX_AUTOMATION_CODEX_OAUTH_ENABLE,
+      false,
+      "CTX_AUTOMATION_CODEX_OAUTH_ENABLE",
     );
     process.env.CTX_SEED_CODEX_AUTH_FROM_HOST = process.env.CTX_SEED_CODEX_AUTH_FROM_HOST
       || (codexOauthFlowEnabled ? "0" : "1");

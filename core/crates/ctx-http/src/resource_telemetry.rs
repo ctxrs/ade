@@ -381,9 +381,8 @@ fn resource_utilization_disabled() -> bool {
 }
 
 fn env_bool(key: &str) -> Option<bool> {
-    std::env::var(key).ok().and_then(|v| match v.trim() {
-        "1" | "true" | "TRUE" | "yes" | "YES" => Some(true),
-        "0" | "false" | "FALSE" | "no" | "NO" => Some(false),
-        _ => None,
-    })
+    std::env::var(key)
+        .ok()
+        .as_deref()
+        .and_then(ctx_core::boolish::parse_boolish)
 }

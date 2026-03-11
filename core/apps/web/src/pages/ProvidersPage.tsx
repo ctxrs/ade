@@ -27,6 +27,7 @@ import {
   type InstallProgressEntry,
   type InstallProgressSnapshot,
 } from "../state/installProgressMonitor";
+import { providerDetailFlag } from "../utils/boolish";
 import { copyTextToClipboard } from "../utils/clipboard";
 import { errorMessage } from "../utils/errorMessage";
 import { PROVIDER_INSTALLS_ENABLED } from "../utils/providerInstallGate";
@@ -142,7 +143,7 @@ export default function ProvidersPage() {
   useEffect(() => {
     for (const p of providers) {
       const installId = p.details?.install_id;
-      const running = p.details?.install_running === "true";
+      const running = providerDetailFlag(p.details, "install_running");
       const tracked = installs[p.provider_id];
       if (
         running
@@ -267,7 +268,7 @@ export default function ProvidersPage() {
 
       <ul className="list">
         {providers.map((p) => {
-          const installSupported = p.details?.install_supported === "true";
+          const installSupported = providerDetailFlag(p.details, "install_supported");
           const installRunning = installs[p.provider_id]?.state === "running";
           const installDisabled = busy !== null || installRunning || !installSupported;
           const detectedVersionLabel = formatProviderVersionDisplay(p);
@@ -340,14 +341,14 @@ export default function ProvidersPage() {
             {(detectedVersionLabel ||
               recommendedVersionLabel ||
               latestVersionLabel ||
-              p.details?.matrix_update_available === "true" ||
-              p.details?.matrix_update_requires_context === "true") && (
+              providerDetailFlag(p.details, "matrix_update_available") ||
+              providerDetailFlag(p.details, "matrix_update_requires_context")) && (
               <div className="muted">
                 {detectedVersionLabel ? `Detected: ${detectedVersionLabel}` : "Detected: unknown"}
                 {recommendedVersionLabel ? ` · Recommended: ${recommendedVersionLabel}` : ""}
-                {p.details?.matrix_update_available === "true" ? " · Update available" : ""}
-                {p.details?.managed_dependency_update_available === "true" ? " · Dependency update available" : ""}
-                {p.details?.matrix_update_requires_context === "true" ? " · Requires ctx update" : ""}
+                {providerDetailFlag(p.details, "matrix_update_available") ? " · Update available" : ""}
+                {providerDetailFlag(p.details, "managed_dependency_update_available") ? " · Dependency update available" : ""}
+                {providerDetailFlag(p.details, "matrix_update_requires_context") ? " · Requires ctx update" : ""}
               </div>
             )}
 

@@ -353,7 +353,8 @@ impl HarnessRuntimeManager {
         // The launcher wizard should provision eagerly when the user selects container execution.
         let enabled = std::env::var("CTX_PODMAN_MACHINE_PREFETCH")
             .ok()
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes"))
+            .as_deref()
+            .and_then(ctx_core::boolish::parse_boolish)
             .unwrap_or(false);
         if !enabled {
             return;

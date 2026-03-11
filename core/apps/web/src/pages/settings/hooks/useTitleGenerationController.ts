@@ -7,6 +7,7 @@ import {
   type TitleGenerationLocalStatus,
   type TitleGenerationSettings,
 } from "../../../api/client";
+import { readBoolish } from "../../../utils/boolish";
 import type { InstallSession } from "../../SettingsPage.types";
 import { observeInstall, subscribeInstallProgress } from "../../../state/installProgressMonitor";
 
@@ -157,9 +158,9 @@ export function useTitleGenerationController(enabled: boolean): TitleGenerationC
           setTitleGenBaseUrl(tg.remote?.base_url ?? "");
           setTitleGenApiKey(tg.remote?.api_key ?? "");
           setTitleGenModel(tg.remote?.model ?? "");
-          setTitleGenUseJson(Boolean(tg.remote?.use_json));
+          setTitleGenUseJson(readBoolish(tg.remote?.use_json) ?? false);
           setTitleGenLocalModelId(tg.local?.model_id ?? "ggml-org/Qwen3-1.7B-GGUF");
-          setTitleGenLocalUseJson(Boolean(tg.local?.use_json));
+          setTitleGenLocalUseJson(readBoolish(tg.local?.use_json) ?? false);
         }
         setLoaded(true);
       })

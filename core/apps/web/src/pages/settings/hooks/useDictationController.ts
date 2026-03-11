@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getSettings, updateSettings, type DictationSettings } from "../../../api/client";
+import { readBoolish } from "../../../utils/boolish";
 import { isDesktopApp } from "../../../utils/desktop";
 import { useTauriSttModelStatus } from "../../../utils/useTauriSttModelStatus";
 
@@ -99,7 +100,7 @@ export function useDictationController(enabled: boolean): DictationController {
           setLanguage(d.livekit?.language ?? "en");
           setBaseUrl(d.livekit?.base_url ?? "https://agent-gateway.livekit.cloud/v1");
           setApiKey(d.livekit?.api_key ?? "");
-          setApiSecretSet(Boolean(d.livekit?.api_secret_set));
+          setApiSecretSet(readBoolish(d.livekit?.api_secret_set) ?? false);
         }
         setLoaded(true);
       })

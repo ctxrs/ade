@@ -2580,6 +2580,22 @@ mod tests {
 
         assert_eq!(ready.state, ExecutionLaunchState::Ready);
         assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 0);
+        assert!(
+            ready.phases.iter().all(|phase| {
+                phase.phase != HarnessSetupPhase::ImageCheck
+                    && phase.phase != HarnessSetupPhase::ImageLoad
+            }),
+            "workspace launch should not emit image phases for reusable containers: {:?}",
+            ready.phases
+        );
+        assert!(
+            ready.logs.iter().all(|line| {
+                line.phase != HarnessSetupPhase::ImageCheck
+                    && line.phase != HarnessSetupPhase::ImageLoad
+            }),
+            "workspace launch should not emit image logs for reusable containers: {:?}",
+            ready.logs
+        );
 
         let log = std::fs::read_to_string(&log_path).expect("read podman invocation log");
         assert!(
@@ -2591,10 +2607,6 @@ mod tests {
                 "container inspect --format {{{{.State.Running}}}} {container_name}"
             )),
             "expected running-container inspect in log:\n{log}"
-        );
-        assert!(
-            !log.contains("image exists"),
-            "workspace launch should not front-load image checks for reusable containers:\n{log}"
         );
     }
 

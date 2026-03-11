@@ -3,17 +3,12 @@ const path = require("path");
 const childProcess = require("child_process");
 const crypto = require("crypto");
 const { shouldBundleRemoteDaemons } = require("./desktop_sync_resources_remote_daemon_policy.cjs");
+const { parseBoolish, resolveBoolishFlag } = require("./lib/boolish.cjs");
 
 const args = process.argv.slice(2);
 const profileIdx = args.indexOf("--profile");
 const profile = profileIdx !== -1 ? args[profileIdx + 1] : "debug";
-const syncBundlesEnabled = !["0", "false", "no", "off"].includes(
-  String(process.env.CTX_DESKTOP_SYNC_BUNDLES || "1").trim().toLowerCase(),
-);
-const is_truthy = (value) => {
-  if (value == null) return false;
-  return !["0", "false", "no", "off", ""].includes(String(value).trim().toLowerCase());
-};
+const syncBundlesEnabled = resolveBoolishFlag(process.env.CTX_DESKTOP_SYNC_BUNDLES, true, "CTX_DESKTOP_SYNC_BUNDLES");
 
 const coreRoot = path.resolve(__dirname, "..");
 const desktopTauriRoot = path.join(coreRoot, "apps", "desktop", "src-tauri");
@@ -566,17 +561,23 @@ const syncBundles = () => {
   if (!env.CTX_BUNDLE_HARNESS_IMAGE) {
     env.CTX_BUNDLE_HARNESS_IMAGE = profile === "source-all" && requiresHarnessImage ? "both" : "0";
   }
-  const bundleHarnessImages = is_truthy(env.CTX_BUNDLE_HARNESS_IMAGE)
-    || env.CTX_BUNDLE_HARNESS_IMAGE === "both"
-    || env.CTX_BUNDLE_HARNESS_IMAGE === "all";
+  const bundleHarnessImageMode = String(env.CTX_BUNDLE_HARNESS_IMAGE || "").trim().toLowerCase();
+  const bundleHarnessImages = parseBoolish(bundleHarnessImageMode) === true
+    || bundleHarnessImageMode === "both"
+    || bundleHarnessImageMode === "all";
   if (requiredImageIds.length === 0 || !bundleHarnessImages) {
     env.CTX_BUNDLE_SKIP_IMAGES = env.CTX_BUNDLE_SKIP_IMAGES || "1";
   }
   // Podman bundling is opt-in for minimal startup bundles. If runtime lock explicitly
   // requires podman, keep bundling by default; otherwise default to lazy/system path.
   if (process.platform === "darwin") {
-    env.CTX_BUNDLE_PODMAN = env.CTX_BUNDLE_PODMAN || (requiredRuntimeIds.includes("podman") ? "1" : "0");
-    if (env.CTX_BUNDLE_PODMAN === "1") {
+    const bundlePodman = resolveBoolishFlag(
+      env.CTX_BUNDLE_PODMAN ?? (requiredRuntimeIds.includes("podman") ? "1" : "0"),
+      false,
+      "CTX_BUNDLE_PODMAN",
+    );
+    env.CTX_BUNDLE_PODMAN = bundlePodman ? "1" : "0";
+    if (bundlePodman) {
       // Podman is represented as a runtime artifact; force runtime lane on when explicitly bundling it.
       env.CTX_BUNDLE_SKIP_RUNTIMES = "0";
       const pinnedPodman = readPinnedPodmanConfig({ os: hostManifestOs, arch: hostManifestArch });
@@ -649,7 +650,7 @@ const syncBundles = () => {
     for (const runtimeId of requiredRuntimeIds) {
       assertBundledRuntimeTargets(destBundleDir, runtimeId, requiredRuntimeTargets);
     }
-    if (env.CTX_BUNDLE_PODMAN === "1") {
+    if (parseBoolish(env.CTX_BUNDLE_PODMAN) === true) {
       assertBundledRuntimeTargets(destBundleDir, "podman", [{ os: hostManifestOs, arch: hostManifestArch }]);
     }
   }

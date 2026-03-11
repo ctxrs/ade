@@ -282,7 +282,11 @@ pub(super) async fn providers_statuses_response(
         out.push(provider_status_for_target(state, &managed, &matrix, &provider_id, target).await);
     }
 
-    let show_fake = std::env::var("CTX_SHOW_FAKE_PROVIDER").ok().as_deref() == Some("1");
+    let show_fake = std::env::var("CTX_SHOW_FAKE_PROVIDER")
+        .ok()
+        .as_deref()
+        .and_then(ctx_core::boolish::parse_boolish)
+        .unwrap_or(false);
     for status in &mut out {
         if status.provider_id == "fake" {
             status.details.insert(

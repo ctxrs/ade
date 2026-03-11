@@ -967,19 +967,8 @@ pub(crate) struct SessionGitStatusResponse {
 
 fn parse_boolish_flag(raw: Option<&str>, label: &str) -> Result<bool, String> {
     match raw {
-        Some(value) => {
-            let normalized = value.trim();
-            if normalized.eq_ignore_ascii_case("true") || normalized == "1" {
-                Ok(true)
-            } else if normalized.is_empty()
-                || normalized.eq_ignore_ascii_case("false")
-                || normalized == "0"
-            {
-                Ok(false)
-            } else {
-                Err(format!("{label} must be true/false or 1/0"))
-            }
-        }
+        Some(value) => ctx_core::boolish::parse_boolish(value)
+            .ok_or_else(|| format!("{label} must be one of: 1/true/yes/on or 0/false/no/off")),
         None => Ok(false),
     }
 }

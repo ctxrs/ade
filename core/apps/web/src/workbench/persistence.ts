@@ -13,6 +13,7 @@ import type {
   TerminalLayoutNode,
   TerminalPanelScopeState,
   TerminalScope,
+  WorkbenchTab,
   WorkbenchDraft,
   WorkbenchScrollState,
 } from "./types";

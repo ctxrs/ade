@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import path from "path";
 import { execSync } from "child_process";
 import type { APIRequestContext, Page } from "playwright/test";
+import { parseBoolishString } from "../src/utils/boolish";
 import {
   configureHarnessEndpointAuthViaModal,
   selectHarnessForComposer,
@@ -94,7 +95,7 @@ const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : [
 
 const readString = (value: unknown): string => (typeof value === "string" ? value : "");
 const envTruthy = (value: string | undefined): boolean =>
-  ["1", "true", "yes", "on"].includes((value ?? "").trim().toLowerCase());
+  parseBoolishString(value) === true;
 
 const envInt = (value: string | undefined, fallback: number): number => {
   const parsed = Number.parseInt((value ?? "").trim(), 10);

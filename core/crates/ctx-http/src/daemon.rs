@@ -880,7 +880,12 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
 
     // codex/claude CRP adapters are always registered now (legacy ACP bridge removed).
 
-    if std::env::var("CTX_SHOW_FAKE_PROVIDER").ok().as_deref() == Some("1") {
+    if std::env::var("CTX_SHOW_FAKE_PROVIDER")
+        .ok()
+        .as_deref()
+        .and_then(ctx_core::boolish::parse_boolish)
+        .unwrap_or(false)
+    {
         providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
     }
 

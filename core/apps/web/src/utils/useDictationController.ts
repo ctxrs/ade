@@ -12,6 +12,7 @@ import {
   loadSttApi,
   normalizeTauriLanguage,
 } from "./tauriStt";
+import { readBoolish } from "./boolish";
 import { parseWsJson } from "./wsJson";
 import { errorMessage } from "./errorMessage";
 import { useTauriSttModelStatus, type TauriModelStatus } from "./useTauriSttModelStatus";
@@ -78,7 +79,7 @@ const seedCloudDraft = (settings: DictationSettings | null | undefined): Dictati
     baseUrl: String(livekit?.base_url ?? DEFAULT_LIVEKIT_BASE_URL),
     apiKey: String(livekit?.api_key ?? ""),
     apiSecret: "",
-    apiSecretSet: Boolean(livekit?.api_secret_set) || Boolean(String(livekit?.api_secret ?? "").trim()),
+    apiSecretSet: (readBoolish(livekit?.api_secret_set) ?? false) || Boolean(String(livekit?.api_secret ?? "").trim()),
     model: String(livekit?.model ?? DEFAULT_LIVEKIT_MODEL),
     language: String(livekit?.language ?? DEFAULT_LIVEKIT_LANGUAGE),
   };
@@ -137,7 +138,7 @@ const needsDictationOnboarding = (settings: DictationSettings | null | undefined
   if (provider === "livekit_inference") {
     const livekit = settings.livekit;
     const hasKey = Boolean(livekit?.api_key?.trim());
-    const hasSecret = Boolean(livekit?.api_secret?.trim() || livekit?.api_secret_set);
+    const hasSecret = Boolean(livekit?.api_secret?.trim()) || (readBoolish(livekit?.api_secret_set) ?? false);
     return !hasKey || !hasSecret;
   }
 

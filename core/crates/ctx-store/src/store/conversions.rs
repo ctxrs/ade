@@ -965,7 +965,7 @@ fn tool_title_from_update(update: &Value) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn tool_status_from_update<'a>(update: &'a Value) -> Option<&'a str> {
+fn tool_status_from_update(update: &Value) -> Option<&str> {
     update
         .get("status")
         .and_then(Value::as_str)

@@ -10,6 +10,7 @@ import {
   type ProviderOptions,
 } from "../../api/client";
 import type { DraftHarness } from "../../components/WorkbenchComposer";
+import { providerDetailFlag } from "../../utils/boolish";
 import {
   resolveProviderOptionsUpdate,
   shouldHydrateProviderModels,
@@ -47,7 +48,7 @@ export function useWorkbenchProviders({
 
   const defaultProviderId = useMemo(() => {
     const installed = providers
-      .filter((provider) => provider.installed && provider.health === "ok" && provider.details?.ui_hidden !== "true")
+      .filter((provider) => provider.installed && provider.health === "ok" && !providerDetailFlag(provider.details, "ui_hidden"))
       .map((provider) => provider.provider_id);
     if (installed.includes("codex")) return "codex";
     if (installed.includes("claude-crp")) return "claude-crp";
@@ -66,7 +67,7 @@ export function useWorkbenchProviders({
     const codexInstalled =
       providersById.codex?.installed === true &&
       providersById.codex?.health === "ok" &&
-      providersById.codex?.details?.ui_hidden !== "true";
+      !providerDetailFlag(providersById.codex?.details, "ui_hidden");
     if (codexInstalled || defaultProviderId === "codex") return;
     setDraftHarness((prev) => {
       if (!prev) return prev;

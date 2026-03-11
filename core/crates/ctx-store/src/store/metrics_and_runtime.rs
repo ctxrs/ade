@@ -1,4 +1,5 @@
 use super::*;
+use ctx_core::boolish::parse_boolish;
 
 pub(super) const DEFAULT_EVENT_LOG_FLUSH_MS: u64 = 250;
 pub(super) const DEFAULT_EVENT_LOG_BATCH_SIZE: usize = 256;
@@ -187,13 +188,11 @@ pub(super) async fn flush_event_batch(store: &Store, buffer: &mut Vec<SessionEve
 }
 
 pub(super) fn snapshot_timing_enabled() -> bool {
-    match std::env::var("CTX_SNAPSHOT_TIMING") {
-        Ok(value) => {
-            let value = value.trim();
-            value == "1" || value.eq_ignore_ascii_case("true")
-        }
-        Err(_) => false,
-    }
+    std::env::var("CTX_SNAPSHOT_TIMING")
+        .ok()
+        .as_deref()
+        .and_then(parse_boolish)
+        .unwrap_or(false)
 }
 
 pub(super) const WRITE_METRICS_INTERVAL_SECS: u64 = 10;
@@ -309,12 +308,12 @@ impl WriteMetricsSnapshot {
 
 pub(super) fn write_metrics_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| match std::env::var("CTX_WRITE_METRICS") {
-        Ok(value) => {
-            let value = value.trim();
-            value == "1" || value.eq_ignore_ascii_case("true")
-        }
-        Err(_) => false,
+    *ENABLED.get_or_init(|| {
+        std::env::var("CTX_WRITE_METRICS")
+            .ok()
+            .as_deref()
+            .and_then(parse_boolish)
+            .unwrap_or(false)
     })
 }
 
@@ -430,13 +429,11 @@ pub(super) fn env_usize(name: &str) -> Option<usize> {
 }
 
 pub(super) fn env_flag_enabled(name: &str) -> bool {
-    match std::env::var(name) {
-        Ok(value) => {
-            let value = value.trim();
-            value == "1" || value.eq_ignore_ascii_case("true")
-        }
-        Err(_) => false,
-    }
+    std::env::var(name)
+        .ok()
+        .as_deref()
+        .and_then(parse_boolish)
+        .unwrap_or(false)
 }
 
 pub(super) fn disable_head_materialization_writes() -> bool {

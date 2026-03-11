@@ -1,4 +1,5 @@
 import type { ProviderUsageSnapshot } from "../api/client";
+import { readBoolish } from "../utils/boolish";
 import { desktopSaveTextFile, isDesktopApp } from "../utils/desktop";
 import { SECTIONS } from "./SettingsPage.constants";
 import type { SectionId } from "./SettingsPage.types";
@@ -47,7 +48,7 @@ export function worktreeBootstrapFormFromConfig(
   return {
     setup_command: setupCommand,
     timeout_sec: timeoutSec,
-    wait_for_completion: Boolean(cfg?.wait_for_completion),
+    wait_for_completion: readBoolish(cfg?.wait_for_completion) ?? false,
   };
 }
 

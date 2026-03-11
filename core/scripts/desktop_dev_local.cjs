@@ -6,6 +6,7 @@ const path = require("node:path");
 const fs = require("node:fs");
 const net = require("node:net");
 
+const { resolveBoolishFlag } = require("./lib/boolish.cjs");
 const { resolveLaunchMode } = require("./desktop_mode.cjs");
 const { readDesktopVersion } = require("./desktop_version.cjs");
 
@@ -42,9 +43,7 @@ const resolveCargoTargetDir = () => {
 };
 
 const envFlagEnabled = (value, defaultValue = false) => {
-  const normalized = String(value ?? "").trim().toLowerCase();
-  if (!normalized) return defaultValue;
-  return !["0", "false", "no", "off"].includes(normalized);
+  return resolveBoolishFlag(value, defaultValue, "desktop dev flag");
 };
 
 const portIsAvailable = (host, port) =>

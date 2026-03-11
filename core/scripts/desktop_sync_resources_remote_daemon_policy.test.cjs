@@ -15,8 +15,15 @@ test("remote daemon bundling can be disabled with explicit toggle values", () =>
   }
 });
 
-test("remote daemon bundling remains enabled for non-disable values", () => {
-  for (const value of ["1", "true", "yes", "on", "random"]) {
+test("remote daemon bundling remains enabled for explicit true values", () => {
+  for (const value of ["1", "true", "yes", "on"]) {
     assert.equal(shouldBundleRemoteDaemons({ CTX_BUNDLE_REMOTE_DAEMONS: value }), true);
   }
+});
+
+test("remote daemon bundling rejects invalid values", () => {
+  assert.throws(
+    () => shouldBundleRemoteDaemons({ CTX_BUNDLE_REMOTE_DAEMONS: "random" }),
+    /Invalid CTX_BUNDLE_REMOTE_DAEMONS/,
+  );
 });

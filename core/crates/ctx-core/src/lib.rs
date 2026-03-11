@@ -1,3 +1,4 @@
+pub mod boolish;
 pub mod ids;
 pub mod models;
 

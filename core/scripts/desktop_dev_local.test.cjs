@@ -17,3 +17,7 @@ test("envFlagEnabled treats non-false-y values as enabled", () => {
   assert.equal(envFlagEnabled("true", false), true);
   assert.equal(envFlagEnabled("yes", false), true);
 });
+
+test("envFlagEnabled rejects invalid values", () => {
+  assert.throws(() => envFlagEnabled("maybe", false), /Invalid desktop dev flag/);
+});

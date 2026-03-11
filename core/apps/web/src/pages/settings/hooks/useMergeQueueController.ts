@@ -4,6 +4,7 @@ import {
   updateWorkspaceMergeQueueConfig,
   type WorkspaceMergeQueueConfig,
 } from "../../../api/client";
+import { readBoolish } from "../../../utils/boolish";
 
 type MergeQueueFormState = {
   target_branch: string;
@@ -33,7 +34,7 @@ const mergeQueueFormFromConfig = (cfg: WorkspaceMergeQueueConfig): MergeQueueFor
   return {
     target_branch: targetBranch,
     verify_command: (cfg.verify_command || "").trim(),
-    push_on_success: Boolean(cfg.push_on_success),
+    push_on_success: readBoolish(cfg.push_on_success) ?? false,
     push_remote: pushRemote,
     push_branch: pushBranch,
   };

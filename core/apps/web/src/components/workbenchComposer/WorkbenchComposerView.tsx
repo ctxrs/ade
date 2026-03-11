@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, ChevronDown, Ellipsis, Image, Square } from "lucide-react";
+import { providerDetailFlag } from "../../utils/boolish";
 import { shouldSendOnEnter } from "../../utils/keyboard";
 import { buildModelCatalog, formatEffortLabel, parseModelId } from "../../utils/modelEffort";
 import { PROVIDER_INSTALLS_ENABLED } from "../../utils/providerInstallGate";
@@ -547,7 +548,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                 const ns = props as NewSessionProps;
                 const hasSupportedMissing = Object.values(ns.providersById).some(
                   (st) =>
-                    st.details?.install_supported === "true" &&
+                    providerDetailFlag(st.details, "install_supported") &&
                     (!(st.installed ?? false) || st.health !== "ok"),
                 );
                 const busy = ns.installAllBusy ?? false;
@@ -572,7 +573,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             const q = harnessSearch.trim().toLowerCase();
             const catalog = ns.harnessCatalog.filter(
               (h) =>
-                ns.providersById[h.id]?.details?.ui_hidden !== "true"
+                !providerDetailFlag(ns.providersById[h.id]?.details, "ui_hidden")
                 && !UNSUPPORTED_HARNESS_IDS.has(String(h.id)),
             );
             type HarnessOption = NewSessionProps["harnessCatalog"][number];
@@ -581,7 +582,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
               .filter(
                 (id) =>
                   !order.has(id)
-                  && ns.providersById[id]?.details?.ui_hidden !== "true"
+                  && !providerDetailFlag(ns.providersById[id]?.details, "ui_hidden")
                   && !UNSUPPORTED_HARNESS_IDS.has(String(id)),
               )
               .map((id): HarnessOption => ({ id, label: id, logoSrc: "" }))
@@ -607,10 +608,10 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
               const label = String(h.label ?? id);
               const providerStatus = ns.providersById[id];
               const installed = providerStatus?.installed === true && providerStatus?.health === "ok";
-              const installSupported = providerStatus?.details?.install_supported === "true";
+              const installSupported = providerDetailFlag(providerStatus?.details, "install_supported");
               const installUi = ns.providerInstallsById[id];
               const installRunning =
-                installUi?.state === "running" || ns.providersById[id]?.details?.install_running === "true";
+                installUi?.state === "running" || providerDetailFlag(ns.providersById[id]?.details, "install_running");
               const installFinishing = installUi?.state === "succeeded" && !installed;
               const installBusy = installRunning || installFinishing;
               const installPct =

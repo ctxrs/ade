@@ -1,13 +1,12 @@
 const fs = require("node:fs");
 const path = require("node:path");
-
-const TRUTHY_VALUES = new Set(["1", "true", "yes", "on"]);
+const { parseBoolish, resolveBoolishFlag } = require("../../../../scripts/lib/boolish.cjs");
 
 const normalizeText = (value) => String(value || "").trim();
 
 const normalizeLowerText = (value) => normalizeText(value).toLowerCase();
 
-const parseBoolean = (value) => TRUTHY_VALUES.has(normalizeLowerText(value));
+const parseBoolean = (value) => parseBoolish(value) === true;
 
 const parsePort = (value, fallback = 0) => {
   const text = normalizeText(value);
@@ -126,8 +125,16 @@ const resolveRemoteFixtureEnv = ({
   const user = userMatch.value || parsedHost.user;
   const port = parsePort(portMatch.value, defaultPort);
   const sshPort = parsePort(sshPortMatch.value, 0);
-  const strictRequested = parseBoolean(env.CTX_AUTOMATION_REMOTE_STRICT || "0");
-  const allowSkip = parseBoolean(env.CTX_AUTOMATION_REMOTE_ALLOW_SKIP || "0");
+  const strictRequested = resolveBoolishFlag(
+    env.CTX_AUTOMATION_REMOTE_STRICT,
+    false,
+    "CTX_AUTOMATION_REMOTE_STRICT",
+  );
+  const allowSkip = resolveBoolishFlag(
+    env.CTX_AUTOMATION_REMOTE_ALLOW_SKIP,
+    false,
+    "CTX_AUTOMATION_REMOTE_ALLOW_SKIP",
+  );
 
   const missingRequirements = [];
   if (!host) {

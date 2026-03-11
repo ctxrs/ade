@@ -8,6 +8,7 @@ use serde_json::Value;
 use tokio::sync::oneshot;
 use tokio::task::AbortHandle;
 
+use ctx_core::boolish::parse_boolish;
 use ctx_core::models::MessageAttachment;
 
 use crate::events::NormalizedEvent;
@@ -59,6 +60,12 @@ pub struct ProviderStatus {
     pub diagnostics: Vec<String>,
     #[serde(default)]
     pub details: HashMap<String, String>,
+}
+
+impl ProviderStatus {
+    pub fn detail_flag(&self, key: &str) -> Option<bool> {
+        self.details.get(key).and_then(|value| parse_boolish(value))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use base64::Engine;
+use ctx_core::boolish::parse_boolish;
 use serde_json::{json, Value};
 use tokio::time::Duration;
 
@@ -19,7 +20,8 @@ pub(super) fn build_crp_session_config(
 ) -> CrpSessionConfig {
     let mcp_enabled = env
         .get("CTX_MCP_DISABLED")
-        .map(|v| v != "1" && v.to_lowercase() != "true")
+        .and_then(|value| parse_boolish(value))
+        .map(|disabled| !disabled)
         .unwrap_or(true);
 
     let (model, reasoning_effort) = env

@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use ctx_core::boolish::parse_boolish;
+
 fn ctx_env(name: &str) -> std::result::Result<String, std::env::VarError> {
     std::env::var(format!("CTX_{name}"))
 }
@@ -51,7 +53,9 @@ pub struct LspManagerConfig {
 impl Default for LspManagerConfig {
     fn default() -> Self {
         let enabled = ctx_env("LSP_ENABLED")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .ok()
+            .as_deref()
+            .and_then(parse_boolish)
             .unwrap_or(false);
 
         let rust_command =
@@ -115,7 +119,9 @@ impl Default for LspManagerConfig {
         );
 
         let execute_commands_enabled = ctx_env("LSP_EXECUTE_COMMANDS_ENABLED")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .ok()
+            .as_deref()
+            .and_then(parse_boolish)
             .unwrap_or(false);
         let execute_command_allowlist = ctx_env("LSP_EXECUTE_COMMAND_ALLOWLIST")
             .ok()

@@ -16,8 +16,8 @@
   },
   {
     "path": "crates/ctx-http/src/execution_setup.rs",
-    "maxLines": 2639,
-    "reason": "Existing oversized execution setup module. Keep stable until a dedicated breakup."
+    "maxLines": 2654,
+    "reason": "Existing oversized execution setup module. Allow the reusable-container test hardening to land, then break it up deliberately."
   },
   {
     "path": "apps/web/src/state/sessionSupervisorCore.ts",
@@ -36,8 +36,8 @@
   },
   {
     "path": "crates/ctx-http/src/workspace_runtime/mod.rs",
-    "maxLines": 2470,
-    "reason": "Existing oversized workspace runtime module. Keep stable until a dedicated breakup."
+    "maxLines": 2471,
+    "reason": "Existing oversized workspace runtime module. Allow the shared boolish cleanup to land, then break it up deliberately."
   },
   {
     "path": "crates/ctx-http/src/api/sessions/subagents.rs",
@@ -96,8 +96,8 @@
   },
   {
     "path": "crates/ctx-http/src/daemon/state.rs",
-    "maxLines": 1554,
-    "reason": "Existing oversized daemon state module. A nearby mainline change grew it slightly; keep stable until a dedicated breakup."
+    "maxLines": 1558,
+    "reason": "Existing oversized daemon state module. Allow the shared boolish cleanup to land, then break it up deliberately."
   },
   {
     "path": "crates/ctx-http/src/api/providers.rs",
@@ -111,8 +111,8 @@
   },
   {
     "path": "crates/ctx-store/src/store/conversions.rs",
-    "maxLines": 1430,
-    "reason": "Existing oversized store conversions module. Keep stable until a dedicated breakup."
+    "maxLines": 1437,
+    "reason": "Existing oversized store conversions module. Allow the shared boolish cleanup to land, then break it up deliberately."
   },
   {
     "path": "apps/web/src/pages/SessionPage.view.tsx",
@@ -126,13 +126,13 @@
   },
   {
     "path": "apps/web/src/pages/workspaceSetup/useWorkspaceSetupProvisioning.ts",
-    "maxLines": 1435,
-    "reason": "Existing oversized workspace setup provisioning module. Allow the remote scan-key and install-target fixes for beta, then break it up deliberately."
+    "maxLines": 1436,
+    "reason": "Existing oversized workspace setup provisioning module. Allow the shared provider-detail boolish cleanup to land, then break it up deliberately."
   },
   {
     "path": "crates/ctx-http/src/daemon.rs",
-    "maxLines": 1354,
-    "reason": "Existing oversized daemon module. Keep stable until a dedicated breakup."
+    "maxLines": 1359,
+    "reason": "Existing oversized daemon module. Allow the shared boolish cleanup to land, then break it up deliberately."
   },
   {
     "path": "crates/ctx-http/src/api/provider_launch.rs",

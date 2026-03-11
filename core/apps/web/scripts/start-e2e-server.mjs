@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const parseBool = (value) => ["1", "true", "yes", "on"].includes(String(value ?? "").toLowerCase());
+const parseBool = (value) => ["1", "true", "yes", "on"].includes(String(value ?? "").trim().toLowerCase());
 
 const requireEnv = (key) => {
   const value = String(process.env[key] ?? "").trim();

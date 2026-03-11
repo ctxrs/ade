@@ -13,6 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../../components/ui/select";
+import { providerDetailFlag } from "../../../utils/boolish";
 import { HARNESS_CATALOG, type HarnessCatalogEntry, UNSUPPORTED_HARNESS_IDS } from "../../../utils/harnessCatalog";
 import { PROVIDER_INSTALLS_ENABLED } from "../../../utils/providerInstallGate";
 import { Card, Row } from "../../SettingsPage.components";
@@ -158,7 +159,7 @@ export function HarnessAuthenticationSection({
   });
 
   const visibleProviders = providers
-    .filter((provider) => provider.details?.ui_hidden !== "true")
+    .filter((provider) => !providerDetailFlag(provider.details, "ui_hidden"))
     .filter((provider) => !UNSUPPORTED_HARNESS_IDS.has(provider.provider_id))
     .slice();
   const installControlsEnabled = PROVIDER_INSTALLS_ENABLED;
@@ -302,12 +303,12 @@ export function HarnessAuthenticationSection({
 
             const installed = provider.installed === true && provider.health === "ok";
             const updateAvailable =
-              provider.details?.matrix_update_available === "true"
-              || provider.details?.managed_dependency_update_available === "true";
+              providerDetailFlag(provider.details, "matrix_update_available")
+              || providerDetailFlag(provider.details, "managed_dependency_update_available");
             const showInstallActions = !installed || updateAvailable;
-            const installSupported = provider.details?.install_supported === "true";
+            const installSupported = providerDetailFlag(provider.details, "install_supported");
             const installUi = installs[id];
-            const installRunning = installUi?.state === "running" || provider.details?.install_running === "true";
+            const installRunning = installUi?.state === "running" || providerDetailFlag(provider.details, "install_running");
             const installBusyLocal = installBusy !== null || installRunning;
             const installPct = typeof installUi?.pct === "number" ? clampPct(installUi.pct) : null;
             const installLabel =

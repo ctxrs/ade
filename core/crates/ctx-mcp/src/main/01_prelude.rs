@@ -28,19 +28,15 @@ fn ctx_env_opt(name: &str) -> Option<String> {
 
 fn lsp_tools_enabled() -> bool {
     ctx_env_opt("MCP_ENABLE_LSP_TOOLS")
-        .map(|raw| {
-            let v = raw.trim();
-            v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
-        })
+        .as_deref()
+        .and_then(ctx_core::boolish::parse_boolish)
         .unwrap_or(false)
 }
 
 fn dev_tools_enabled() -> bool {
     ctx_env_opt("MCP_DEV_MODE")
-        .map(|raw| {
-            let v = raw.trim();
-            v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
-        })
+        .as_deref()
+        .and_then(ctx_core::boolish::parse_boolish)
         .unwrap_or(false)
 }
 

@@ -32,6 +32,7 @@ import {
   type ProviderInstallProgressSnapshot,
 } from "./providerInstallProgressStore";
 import { observeInstall } from "./installProgressMonitor";
+import { providerDetailFlag } from "../utils/boolish";
 
 const HOST_PROVIDER_ONBOARDING_SCOPE_KEY = "__host__";
 const MODEL_DISCOVERY_PROVIDER_IDS = new Set(["codex", "claude-crp", "copilot"]);
@@ -388,7 +389,7 @@ const attachInstallObserver = (
 const reconcileRunningInstalls = (entry: ProviderOnboardingEntry): void => {
   for (const provider of entry.snapshot.bootstrap.providers) {
     const installId = provider.details?.install_id;
-    const running = provider.details?.install_running === "true";
+    const running = providerDetailFlag(provider.details, "install_running");
     const tracked = entry.snapshot.installsById[provider.provider_id];
     if (
       running
@@ -410,7 +411,7 @@ const cleanupSucceededInstalls = (entry: ProviderOnboardingEntry): void => {
 
   for (const [providerId, install] of Object.entries(entry.snapshot.installsById)) {
     const provider = entry.snapshot.providersById[providerId];
-    const stillRunning = provider?.details?.install_running === "true";
+    const stillRunning = providerDetailFlag(provider?.details, "install_running");
     if (install.state === "succeeded" && provider?.installed && provider.health === "ok" && !stillRunning) {
       detachInstallObserver(entry, providerId);
     }

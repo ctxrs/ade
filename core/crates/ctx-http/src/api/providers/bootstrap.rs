@@ -49,7 +49,7 @@ pub(crate) async fn get_workspace_providers_bootstrap(
     let ws_id_str = ws_id.0.to_string();
     let visible_providers = providers
         .iter()
-        .filter(|provider| provider.details.get("ui_hidden").map(String::as_str) != Some("true"))
+        .filter(|provider| !provider.detail_flag("ui_hidden").unwrap_or(false))
         .cloned()
         .collect::<Vec<_>>();
 

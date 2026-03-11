@@ -20,6 +20,7 @@ const {
 const {
   completeCodexOauthWithBrowserCredentials,
 } = require("./helpers/provider_oauth_flow.cjs");
+const { resolveBoolishFlag } = require("../../../../scripts/lib/boolish.cjs");
 
 const DEFAULT_CASE_TIMEOUT_MS = 20 * 60_000;
 const DEFAULT_LOGIN_TIMEOUT_MS = 15 * 60_000;
@@ -171,8 +172,10 @@ describe("codex oauth harness framework (desktop e2e)", () => {
 
     if (!scenarioEnabled("local-codex-smoke", ["local", "provider", "oauth"])) this.skip();
 
-    const enabled = ["1", "true", "yes"].includes(
-      normalizeText(process.env.CTX_AUTOMATION_CODEX_OAUTH_ENABLE).toLowerCase(),
+    const enabled = resolveBoolishFlag(
+      process.env.CTX_AUTOMATION_CODEX_OAUTH_ENABLE,
+      false,
+      "CTX_AUTOMATION_CODEX_OAUTH_ENABLE",
     );
     if (!enabled) {
       const reason =

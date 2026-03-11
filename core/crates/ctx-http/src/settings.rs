@@ -1065,11 +1065,7 @@ pub async fn load_settings(store: &Store) -> anyhow::Result<Settings> {
         }
     }
 
-    let parse_bool = |value: &str| match value.trim().to_ascii_lowercase().as_str() {
-        "1" | "true" | "yes" | "on" => Some(true),
-        "0" | "false" | "no" | "off" => Some(false),
-        _ => None,
-    };
+    let parse_bool = ctx_core::boolish::parse_boolish;
     let parse_mode = |value: &str| match value.trim().to_ascii_lowercase().as_str() {
         "auto" => Some(ResourceGovernanceMode::Auto),
         "custom" => Some(ResourceGovernanceMode::Custom),

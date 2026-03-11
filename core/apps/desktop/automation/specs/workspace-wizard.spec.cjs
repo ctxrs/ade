@@ -20,6 +20,7 @@ const {
   getProviderStatus,
   waitForProviderInstallCompletion,
 } = require("./helpers/provider_runtime.cjs");
+const { resolveBoolishFlag, stringMapFlag } = require("../../../../scripts/lib/boolish.cjs");
 
 const REMOTE_HOST_RAW = process.env.CTX_AUTOMATION_REMOTE_HOST || "";
 const REMOTE_HOST = REMOTE_HOST_RAW.trim();
@@ -52,8 +53,10 @@ const parsePort = (raw, fallback) => {
 };
 const REMOTE_PORT = parsePort(process.env.CTX_AUTOMATION_REMOTE_PORT || "44099", 44099);
 const REMOTE_DATA_DIR_RAW = process.env.CTX_AUTOMATION_REMOTE_DATA_DIR || "";
-const SSH_NO_START_REMOTE = !["0", "false", "no"].includes(
-  String(process.env.CTX_AUTOMATION_SSH_NO_START_REMOTE || "1").trim().toLowerCase(),
+const SSH_NO_START_REMOTE = resolveBoolishFlag(
+  process.env.CTX_AUTOMATION_SSH_NO_START_REMOTE,
+  true,
+  "CTX_AUTOMATION_SSH_NO_START_REMOTE",
 );
 const CONTAINER_WORKSPACE_TIMEOUT_MS = 480000;
 const RETRIABLE_WEBDRIVER_ERROR_PATTERNS = [
@@ -114,7 +117,7 @@ const waitForProviderInstallOrAcpBridgeObservation = async (
       };
     }
 
-    const installRunning = lastProviderStatus.details.install_running === "true";
+    const installRunning = stringMapFlag(lastProviderStatus.details, "install_running");
     if (!installRunning && Date.now() - startedAt >= settleMs) {
       const detail = lastProviderStatus.diagnostics[0]
         || lastBridgeStatus.diagnostics[0]
@@ -1052,7 +1055,7 @@ const waitForSelectedHarnessInstallsToKickOff = async (providerIds, target = "ho
         const details = provider && typeof provider.details === "object" && provider.details
           ? provider.details
           : {};
-        return provider.installed === true || details.install_running === "true";
+        return provider.installed === true || stringMapFlag(details, "install_running");
       });
     if (startedAll && lastProviders.length === selected.length) {
       return;
@@ -1085,7 +1088,7 @@ const waitForWizardAdvanceWhileSelectedHarnessInstallsRun = async (
       const details = provider && typeof provider.details === "object" && provider.details
         ? provider.details
         : {};
-      return provider.installed !== true && details.install_running === "true";
+      return provider.installed !== true && stringMapFlag(details, "install_running");
     });
     lastSnapshot = {
       step,

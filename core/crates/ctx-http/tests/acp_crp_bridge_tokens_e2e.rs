@@ -221,7 +221,9 @@ fn token_tests_enabled() -> bool {
         .map(|v| v.eq_ignore_ascii_case("tokens"))
         .unwrap_or(false)
         || std::env::var("CTX_TOKEN_TESTS")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .ok()
+            .as_deref()
+            .and_then(ctx_core::boolish::parse_boolish)
             .unwrap_or(false)
 }
 
@@ -387,7 +389,9 @@ fn create_qwen_settings_home() -> std::io::Result<tempfile::TempDir> {
 
 fn env_truthy(name: &str) -> bool {
     std::env::var(name)
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .ok()
+        .as_deref()
+        .and_then(ctx_core::boolish::parse_boolish)
         .unwrap_or(false)
 }
 

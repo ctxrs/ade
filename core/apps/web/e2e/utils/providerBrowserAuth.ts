@@ -4,6 +4,7 @@ import { createServer } from "net";
 import { tmpdir } from "os";
 import path from "path";
 import { chromium, type APIRequestContext, type BrowserContext, type Locator, type Page } from "playwright/test";
+import { parseBoolishString } from "../../src/utils/boolish";
 
 type ClaudeLoginStartResponse = {
   login_id?: unknown;
@@ -146,8 +147,7 @@ const CLAUDE_LOGIN_ERROR_PATTERNS = Object.freeze([
   /problem persists contact support/i,
 ]);
 
-const parseBool = (value?: string): boolean =>
-  ["1", "true", "yes", "on"].includes(String(value ?? "").trim().toLowerCase());
+const parseBool = (value?: string): boolean => parseBoolishString(value) === true;
 
 const asRecord = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};

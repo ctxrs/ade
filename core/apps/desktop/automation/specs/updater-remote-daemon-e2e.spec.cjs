@@ -1,6 +1,7 @@
 const { execFileSync } = require("child_process");
 
 const { waitForTauri } = require("./helpers/tauri.cjs");
+const { resolveBoolishFlag } = require("../../../../scripts/lib/boolish.cjs");
 
 const REMOTE_HOST = String(
   process.env.CTX_AUTOMATION_REMOTE_HOST || process.env.CTX_UPDATER_E2E_REMOTE_HOST || "",
@@ -15,8 +16,10 @@ const REMOTE_CHANNEL = String(
 const SSH_KEY_PATH = String(
   process.env.CTX_UPDATER_E2E_SSH_KEY_PATH || process.env.CTX_AUTOMATION_REMOTE_SSH_KEY_PATH || "",
 ).trim();
-const EXPECT_VERSION_CHANGE = ["1", "true", "yes"].includes(
-  String(process.env.CTX_UPDATER_E2E_EXPECT_VERSION_CHANGE || "0").toLowerCase(),
+const EXPECT_VERSION_CHANGE = resolveBoolishFlag(
+  process.env.CTX_UPDATER_E2E_EXPECT_VERSION_CHANGE,
+  false,
+  "CTX_UPDATER_E2E_EXPECT_VERSION_CHANGE",
 );
 const SSH_CONFIG_PATH = String(process.env.CTX_AUTOMATION_REMOTE_FIXTURE_SSH_CONFIG || "").trim();
 const SSH_PORT = Number.parseInt(String(process.env.CTX_AUTOMATION_REMOTE_SSH_PORT || "0"), 10) || 0;

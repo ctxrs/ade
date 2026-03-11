@@ -1,5 +1,6 @@
 const { daemonJson } = require("./daemon.cjs");
 const { providerStatusPath } = require("../../../../../test-support/provider_status_path.cjs");
+const { stringMapFlag } = require("../../../../../scripts/lib/boolish.cjs");
 
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const DEFAULT_CODEX_OPENROUTER_MODEL_OVERRIDE = "openai/gpt-5.2-codex";
@@ -106,7 +107,7 @@ const waitForProviderInstallCompletion = async (
   while (Date.now() - startedAt < timeoutMs) {
     lastStatus = await getProviderStatus(providerId, target);
     if (lastStatus.installed) return lastStatus;
-    const installRunning = lastStatus.details.install_running === "true";
+    const installRunning = stringMapFlag(lastStatus.details, "install_running");
     if (!installRunning && Date.now() - startedAt >= settleMs) {
       const detail = lastStatus.diagnostics[0]
         || `health=${lastStatus.health || "unknown"} details=${JSON.stringify(lastStatus.details)}`;

@@ -446,7 +446,9 @@ impl AppState {
         lsp_cfg: LspManagerConfig,
     ) -> Self {
         let lsp_edit_plans_enabled = std::env::var("CTX_LSP_EDITPLANS_ENABLED")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .ok()
+            .as_deref()
+            .and_then(ctx_core::boolish::parse_boolish)
             .unwrap_or(false);
         Self::new_with_lsp_config_and_flags(
             data_root,
@@ -471,7 +473,9 @@ impl AppState {
         // Internal/experimental only: tool output disk spooling is not a supported
         // v1 product surface and must not be treated as a stable client contract.
         let tool_output_spool_enabled = std::env::var("CTX_TOOL_OUTPUT_DISK_SPOOL")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes"))
+            .ok()
+            .as_deref()
+            .and_then(ctx_core::boolish::parse_boolish)
             .unwrap_or(false);
         let tool_output_spool_dir = data_root.join("tool-output-spool");
         if tool_output_spool_enabled {

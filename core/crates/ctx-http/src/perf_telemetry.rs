@@ -835,14 +835,10 @@ fn parse_headers(raw: String) -> HashMap<String, String> {
 }
 
 fn env_bool(key: &str) -> Option<bool> {
-    std::env::var(key).ok().and_then(|v| {
-        let v = v.trim().to_ascii_lowercase();
-        match v.as_str() {
-            "1" | "true" | "yes" => Some(true),
-            "0" | "false" | "no" => Some(false),
-            _ => None,
-        }
-    })
+    std::env::var(key)
+        .ok()
+        .as_deref()
+        .and_then(ctx_core::boolish::parse_boolish)
 }
 
 async fn append_local_log(data_root: &std::path::Path, event: &PerfEvent) -> Result<()> {

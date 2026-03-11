@@ -553,6 +553,21 @@ async fn get_install_info_api(app: &axum::Router, install_id: InstallId) -> Inst
     body
 }
 
+async fn wait_for_install_progress(app: &axum::Router, install_id: InstallId) -> InstallInfo {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let info = get_install_info_api(app, install_id).await;
+        if info.last_event.is_some() {
+            return info;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out waiting for install {install_id} to expose visible progress: {info:#?}"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
 async fn wait_for_prerequisite_visibility(
     app: &axum::Router,
     install_id: InstallId,
@@ -1535,8 +1550,7 @@ async fn acp_container_install_parent_polling_stays_bounded_while_bridge_prerequ
         .and_then(|raw| raw.parse::<InstallId>().ok())
         .expect("install id");
 
-    tokio::time::sleep(Duration::from_millis(950)).await;
-    let polled_info = get_install_info_api(&app, install_id).await;
+    let polled_info = wait_for_install_progress(&app, install_id).await;
     assert!(
         matches!(polled_info.state, InstallStateKind::Running),
         "install should still be running while the bridge prerequisite is active: {polled_info:#?}"
@@ -1644,18 +1658,8 @@ async fn acp_container_install_joins_existing_bridge_install_and_surfaces_short_
         .and_then(serde_json::Value::as_str)
         .and_then(|raw| raw.parse::<InstallId>().ok())
         .expect("bridge install id");
-    let bridge_poll_deadline = tokio::time::Instant::now() + Duration::from_secs(2);
-    loop {
-        let bridge_info = get_install_info_api(&app, bridge_install_id).await;
-        if bridge_info.last_event.is_some() {
-            break;
-        }
-        assert!(
-            tokio::time::Instant::now() < bridge_poll_deadline,
-            "timed out waiting for bridge install to expose running progress: {bridge_info:#?}"
-        );
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
+    // The throttled fixture server can delay the first observable progress event under full-suite load.
+    let _ = wait_for_install_progress(&app, bridge_install_id).await;
 
     let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -1675,7 +1679,7 @@ async fn acp_container_install_joins_existing_bridge_install_and_surfaces_short_
         .and_then(|raw| raw.parse::<InstallId>().ok())
         .expect("install id");
 
-    tokio::time::sleep(Duration::from_millis(950)).await;
+    let _ = wait_for_prerequisite_visibility(&app, install_id, bridge_install_id).await;
     let reader_a = app.clone();
     let reader_b = app.clone();
     let (polled_info_a, polled_info_b) = tokio::join!(

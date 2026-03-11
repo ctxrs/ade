@@ -86,7 +86,9 @@ fn pick_free_port() -> u16 {
 }
 
 fn parse_bool_env(key: &str) -> Option<bool> {
-    env_trim(key).map(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true"))
+    env_trim(key)
+        .as_deref()
+        .and_then(ctx_core::boolish::parse_boolish)
 }
 
 fn parse_scopes_env() -> Option<Vec<String>> {

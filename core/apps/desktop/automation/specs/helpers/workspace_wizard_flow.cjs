@@ -11,6 +11,7 @@ const {
   getConnectionInfo,
 } = require("./tauri.cjs");
 const { daemonJson, daemonJsonOnce, safeDaemonJson } = require("./daemon.cjs");
+const { resolveBoolishFlag, stringMapFlag } = require("../../../../../scripts/lib/boolish.cjs");
 
 const REMOTE_HOST_RAW = process.env.CTX_AUTOMATION_REMOTE_HOST || "";
 const REMOTE_HOST = REMOTE_HOST_RAW.trim();
@@ -56,8 +57,10 @@ const REMOTE_LAUNCH_TIMEOUT_MS = parsePositiveInt(
   process.env.CTX_AUTOMATION_REMOTE_LAUNCH_TIMEOUT_MS || "300000",
   300000,
 );
-const SSH_NO_START_REMOTE = !["0", "false", "no"].includes(
-  String(process.env.CTX_AUTOMATION_SSH_NO_START_REMOTE || "1").trim().toLowerCase(),
+const SSH_NO_START_REMOTE = resolveBoolishFlag(
+  process.env.CTX_AUTOMATION_SSH_NO_START_REMOTE,
+  true,
+  "CTX_AUTOMATION_SSH_NO_START_REMOTE",
 );
 const RETRIABLE_WEBDRIVER_ERROR_PATTERNS = [
   "WebDriverError: Request failed with error code EADDRNOTAVAIL",
@@ -626,7 +629,7 @@ const waitForSelectedHarnessInstallsToKickOff = async (providerIds, target = "ho
         const details = provider && typeof provider.details === "object" && provider.details
           ? provider.details
           : {};
-        return provider.installed === true || details.install_running === "true";
+        return provider.installed === true || stringMapFlag(details, "install_running");
       });
     if (startedAll && lastProviders.length === selected.length) {
       return;
@@ -659,7 +662,7 @@ const waitForWizardAdvanceWhileSelectedHarnessInstallsRun = async (
       const details = provider && typeof provider.details === "object" && provider.details
         ? provider.details
         : {};
-      return provider.installed !== true && details.install_running === "true";
+      return provider.installed !== true && stringMapFlag(details, "install_running");
     });
     lastSnapshot = {
       step,

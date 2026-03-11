@@ -5,6 +5,7 @@ import net from "net";
 import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
+import { parseBoolishString } from "./src/utils/boolish";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -12,8 +13,7 @@ const __dirname = path.dirname(__filename);
 const HOST = "127.0.0.1";
 const DEFAULT_PORT = 4401;
 
-const parseBool = (value?: string) =>
-  ["1", "true", "yes", "on"].includes(value?.toLowerCase() ?? "");
+const parseBool = (value?: string) => parseBoolishString(value) === true;
 
 const resolveWorkers = (defaultWorkers: number | undefined) => {
   const raw = String(process.env.CTX_E2E_WORKERS ?? process.env.PW_WORKERS ?? "").trim();

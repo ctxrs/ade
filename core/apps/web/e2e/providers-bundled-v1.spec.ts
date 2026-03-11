@@ -1,9 +1,5 @@
 import { test, expect } from "./fixtures";
-
-const asRecord = (value: unknown): Record<string, unknown> => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  return value as Record<string, unknown>;
-};
+import { providerDetailFlag } from "../src/utils/boolish";
 
 type ProviderSummary = {
   provider_id: string;
@@ -30,7 +26,7 @@ test("providers: bundled v1 shows ready providers without install controls", asy
   const providersResp = await request.get("/api/providers");
   expect(providersResp.ok()).toBeTruthy();
   const providers = (await providersResp.json()) as ProviderSummary[];
-  const visibleProviders = providers.filter((provider) => asRecord(provider.details).ui_hidden !== "true");
+  const visibleProviders = providers.filter((provider) => !providerDetailFlag(provider.details, "ui_hidden"));
   const readyProviders = visibleProviders.filter((p) => p.installed && p.health === "ok");
   expect(readyProviders.length).toBeGreaterThan(0);
 
