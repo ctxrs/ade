@@ -1,6 +1,5 @@
 # Long-running/stability-oriented soak suite (non pre-merge).
 e2e/meaningful-repaints.spec.ts
-e2e/theme-screenshots.spec.ts
 e2e/workbench-composer-jank.spec.ts
 e2e/workbench-scrollback-jank-video.spec.ts
 e2e/workbench-scroll-restore.spec.ts

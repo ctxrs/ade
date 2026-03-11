@@ -62,6 +62,7 @@ export type E2ESuiteProfile =
   | "premerge_required"
   | "release_required"
   | "cross_platform"
+  | "visual"
   | "soak"
   | "load";
 
