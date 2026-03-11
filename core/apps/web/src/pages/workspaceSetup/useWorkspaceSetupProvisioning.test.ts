@@ -1,13 +1,23 @@
 import { act, render } from "@testing-library/react";
 import { createElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { InstallTarget } from "../../api/client";
 import {
   getSettings,
   listProviderAuthImportCandidates,
   listProviders,
 } from "../../api/client";
+import {
+  type ProviderInstallProgressSession,
+  type ProviderInstallProgressSnapshot,
+  resolveProviderInstallProgressSession,
+  subscribeProviderInstallProgress,
+} from "../../state/providerInstallProgressStore";
 import { useWorkspaceSetupProvisioning } from "./useWorkspaceSetupProvisioning";
-import { deriveWorkspaceSetupEffectiveTarget } from "./workflowTypes";
+import {
+  createWorkspaceSetupRouteScope,
+  deriveWorkspaceSetupEffectiveTarget,
+} from "./workflowTypes";
 import type { WizardRoutePlan } from "./wizardFlow";
 
 vi.mock("../../api/client", () => ({
@@ -65,9 +75,207 @@ const configuredTitlingSettings = {
   },
 };
 
+const authImportCandidateFixture = {
+  id: "acct-1",
+  provider_id: "codex",
+  provider_label: "Codex",
+  kind: "file",
+  path: "/tmp/codex.json",
+  signal_strength: "high",
+  confidence: "high",
+  parse_status: "parsed",
+} as const;
+
+type MockProviderInstallProgressSnapshot = Record<string, ProviderInstallProgressSession>;
+
 describe("useWorkspaceSetupProvisioning", () => {
+  let providerProgressSnapshot: ProviderInstallProgressSnapshot;
+  let providerProgressListeners: Set<(snapshot: ProviderInstallProgressSnapshot) => void>;
+
+  const emitProviderProgressSnapshot = (snapshot: MockProviderInstallProgressSnapshot) => {
+    providerProgressSnapshot = snapshot as unknown as ProviderInstallProgressSnapshot;
+    for (const listener of providerProgressListeners) {
+      listener(providerProgressSnapshot);
+    }
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
+    providerProgressSnapshot = {};
+    providerProgressListeners = new Set();
+    vi.mocked(subscribeProviderInstallProgress).mockImplementation((listener) => {
+      const typedListener = listener as (snapshot: ProviderInstallProgressSnapshot) => void;
+      providerProgressListeners.add(typedListener);
+      typedListener(providerProgressSnapshot);
+      return () => {
+        providerProgressListeners.delete(typedListener);
+      };
+    });
+    vi.mocked(resolveProviderInstallProgressSession).mockImplementation((snapshot, providerId, target) => {
+      const typedSnapshot = snapshot as unknown as MockProviderInstallProgressSnapshot;
+      const session = typedSnapshot[providerId];
+      if (!session) return undefined;
+      if (target && session.target && session.target !== target) {
+        return undefined;
+      }
+      return session;
+    });
+  });
+
+  it("retries same-target route planning after a transient refresh failure", async () => {
+    vi.mocked(listProviderAuthImportCandidates)
+      .mockResolvedValue({ candidates: [] } as never);
+    vi.mocked(listProviders)
+      .mockRejectedValueOnce(new Error("Harness scan failed."))
+      .mockResolvedValueOnce([] as never);
+    vi.mocked(getSettings)
+      .mockResolvedValue(configuredTitlingSettings as never);
+
+    const currentStepKeyRef = { current: "container" as const };
+    const setRoutePlan = vi.fn();
+    const setRoutePlanningBusy = vi.fn();
+    const invalidateRoutePlan = vi.fn();
+    const connectDaemonForImport = vi.fn(async () => {});
+
+    const localEffectiveTarget = deriveWorkspaceSetupEffectiveTarget("local", {
+      remoteHostInput: "",
+      remotePortInput: "4399",
+      remoteDataDirInput: "",
+    });
+
+    let latest: ReturnType<typeof useWorkspaceSetupProvisioning> | null = null;
+
+    const Harness = ({ routePlan }: { routePlan: WizardRoutePlan | null }) => {
+      latest = useWorkspaceSetupProvisioning({
+        currentStepKeyRef,
+        selections: {
+          location: "local",
+          container: "disk-isolated",
+        },
+        routePlan,
+        setRoutePlan,
+        setRoutePlanningBusy,
+        invalidateRoutePlan,
+        desktopApp: true,
+        effectiveTarget: localEffectiveTarget,
+        remoteStatus: "connected",
+        remoteStatusRef: { current: "connected" },
+        connectDaemonForImport,
+      });
+      return null;
+    };
+
+    const { rerender } = render(createElement(Harness, { routePlan: null }));
+
+    let staleRoutePlan: WizardRoutePlan | null = null;
+    await act(async () => {
+      staleRoutePlan = await latest!.ensureRoutePlanForSelection("disk-isolated");
+    });
+
+    expect(staleRoutePlan).toEqual({
+      targetKey: expect.stringContaining("\"disk-isolated\""),
+      containerSelection: "disk-isolated",
+      includeHarnessDownloads: true,
+      includeAuthImport: false,
+      includeTitling: false,
+    });
+    expect(listProviderAuthImportCandidates).toHaveBeenCalledTimes(1);
+    expect(listProviders).toHaveBeenCalledTimes(1);
+    expect(getSettings).toHaveBeenCalledTimes(1);
+
+    rerender(createElement(Harness, { routePlan: staleRoutePlan }));
+
+    let recoveredRoutePlan: WizardRoutePlan | null = null;
+    await act(async () => {
+      recoveredRoutePlan = await latest!.ensureRoutePlanForSelection("disk-isolated");
+    });
+
+    expect(recoveredRoutePlan).toEqual({
+      targetKey: staleRoutePlan!.targetKey,
+      containerSelection: "disk-isolated",
+      includeHarnessDownloads: false,
+      includeAuthImport: false,
+      includeTitling: false,
+    });
+    expect(listProviderAuthImportCandidates).toHaveBeenCalledTimes(1);
+    expect(listProviders).toHaveBeenCalledTimes(2);
+    expect(getSettings).toHaveBeenCalledTimes(1);
+    expect(setRoutePlan).toHaveBeenLastCalledWith(recoveredRoutePlan);
+  });
+
+  it("keeps ready same-target route planning on the fast path", async () => {
+    vi.mocked(listProviderAuthImportCandidates)
+      .mockResolvedValue({ candidates: [] } as never);
+    vi.mocked(listProviders)
+      .mockResolvedValue([] as never);
+    vi.mocked(getSettings)
+      .mockResolvedValue(configuredTitlingSettings as never);
+
+    const currentStepKeyRef = { current: "container" as const };
+    const setRoutePlan = vi.fn();
+    const setRoutePlanningBusy = vi.fn();
+    const invalidateRoutePlan = vi.fn();
+    const connectDaemonForImport = vi.fn(async () => {});
+
+    const localEffectiveTarget = deriveWorkspaceSetupEffectiveTarget("local", {
+      remoteHostInput: "",
+      remotePortInput: "4399",
+      remoteDataDirInput: "",
+    });
+
+    let latest: ReturnType<typeof useWorkspaceSetupProvisioning> | null = null;
+
+    const Harness = ({ routePlan }: { routePlan: WizardRoutePlan | null }) => {
+      latest = useWorkspaceSetupProvisioning({
+        currentStepKeyRef,
+        selections: {
+          location: "local",
+          container: "disk-isolated",
+        },
+        routePlan,
+        setRoutePlan,
+        setRoutePlanningBusy,
+        invalidateRoutePlan,
+        desktopApp: true,
+        effectiveTarget: localEffectiveTarget,
+        remoteStatus: "connected",
+        remoteStatusRef: { current: "connected" },
+        connectDaemonForImport,
+      });
+      return null;
+    };
+
+    const { rerender } = render(createElement(Harness, { routePlan: null }));
+
+    let readyRoutePlan: WizardRoutePlan | null = null;
+    await act(async () => {
+      readyRoutePlan = await latest!.ensureRoutePlanForSelection("disk-isolated");
+    });
+
+    expect(readyRoutePlan).toEqual({
+      targetKey: expect.stringContaining("\"disk-isolated\""),
+      containerSelection: "disk-isolated",
+      includeHarnessDownloads: false,
+      includeAuthImport: false,
+      includeTitling: false,
+    });
+    expect(listProviderAuthImportCandidates).toHaveBeenCalledTimes(1);
+    expect(listProviders).toHaveBeenCalledTimes(1);
+    expect(getSettings).toHaveBeenCalledTimes(1);
+    expect(setRoutePlanningBusy).toHaveBeenCalledTimes(2);
+
+    rerender(createElement(Harness, { routePlan: readyRoutePlan }));
+
+    let secondRoutePlan: WizardRoutePlan | null = null;
+    await act(async () => {
+      secondRoutePlan = await latest!.ensureRoutePlanForSelection("disk-isolated");
+    });
+
+    expect(secondRoutePlan).toEqual(readyRoutePlan);
+    expect(listProviderAuthImportCandidates).toHaveBeenCalledTimes(1);
+    expect(listProviders).toHaveBeenCalledTimes(1);
+    expect(getSettings).toHaveBeenCalledTimes(1);
+    expect(setRoutePlanningBusy).toHaveBeenCalledTimes(2);
   });
 
   it("ignores old refresh completions after the provisioning scope switches", async () => {
@@ -102,7 +310,7 @@ describe("useWorkspaceSetupProvisioning", () => {
       location: "local" | "remote";
       container: string;
       effectiveTarget: ReturnType<typeof deriveWorkspaceSetupEffectiveTarget>;
-      routePlan: null;
+      routePlan: WizardRoutePlan | null;
     }) => {
       latest = useWorkspaceSetupProvisioning({
         currentStepKeyRef,
@@ -198,5 +406,168 @@ describe("useWorkspaceSetupProvisioning", () => {
     });
     expect(setRoutePlan).toHaveBeenLastCalledWith(remoteRoutePlan);
     expect(connectDaemonForImport).toHaveBeenCalledTimes(6);
+  });
+
+  it("clears stale auth-import candidates after a same-scope refresh failure", async () => {
+    vi.mocked(listProviderAuthImportCandidates)
+      .mockResolvedValueOnce({ candidates: [authImportCandidateFixture] } as never)
+      .mockRejectedValueOnce(new Error("Auth refresh failed."));
+    vi.mocked(listProviders).mockResolvedValue([] as never);
+    vi.mocked(getSettings).mockResolvedValue(configuredTitlingSettings as never);
+
+    const currentStepKeyRef = { current: "auth-import" as const };
+    const setRoutePlan = vi.fn();
+    const setRoutePlanningBusy = vi.fn();
+    const invalidateRoutePlan = vi.fn();
+    const connectDaemonForImport = vi.fn(async () => {});
+    const effectiveTarget = deriveWorkspaceSetupEffectiveTarget("local", {
+      remoteHostInput: "",
+      remotePortInput: "4399",
+      remoteDataDirInput: "",
+    });
+    if (!effectiveTarget) {
+      throw new Error("Expected a local workspace setup target.");
+    }
+
+    let latest: ReturnType<typeof useWorkspaceSetupProvisioning> | null = null;
+
+    const Harness = () => {
+      latest = useWorkspaceSetupProvisioning({
+        currentStepKeyRef,
+        selections: {
+          location: "local",
+          container: "disk-isolated",
+        },
+        routePlan: null,
+        setRoutePlan,
+        setRoutePlanningBusy,
+        invalidateRoutePlan,
+        desktopApp: true,
+        effectiveTarget,
+        remoteStatus: "connected",
+        remoteStatusRef: { current: "connected" },
+        connectDaemonForImport,
+      });
+      return null;
+    };
+
+    render(createElement(Harness));
+
+    await act(async () => {
+      await latest!.ensureRoutePlanForSelection("disk-isolated");
+    });
+
+    expect(latest!.authImportCandidates).toEqual([authImportCandidateFixture]);
+    expect(latest!.authImportSelected).toEqual({ [authImportCandidateFixture.id]: true });
+
+    await act(async () => {
+      await latest!.refreshAuthImportForRouteScope(
+        "local",
+        createWorkspaceSetupRouteScope(effectiveTarget, "disk-isolated"),
+        { force: true },
+      );
+    });
+
+    expect(latest!.authImportCandidates).toEqual([]);
+    expect(latest!.authImportSelected).toEqual({});
+    expect(latest!.authImportError).toBe("Auth refresh failed.");
+  });
+
+  it("clears stale harness rows when a same-scope harness refresh fails", async () => {
+    vi.mocked(listProviderAuthImportCandidates)
+      .mockResolvedValueOnce({ candidates: [] } as never)
+      .mockResolvedValueOnce({ candidates: [] } as never);
+    vi.mocked(listProviders)
+      .mockResolvedValueOnce([
+        {
+          provider_id: "codex",
+          installed: false,
+          health: "error",
+          diagnostics: [],
+          details: {
+            install_supported: "true",
+            install_running: "true",
+            install_id: "install-1",
+            install_target: "container",
+          },
+        },
+      ] as never)
+      .mockRejectedValueOnce(new Error("Harness scan failed."));
+    vi.mocked(getSettings)
+      .mockResolvedValueOnce(configuredTitlingSettings as never)
+      .mockResolvedValueOnce(configuredTitlingSettings as never);
+
+    const currentStepKeyRef = { current: "container" as const };
+    const setRoutePlan = vi.fn();
+    const setRoutePlanningBusy = vi.fn();
+    const invalidateRoutePlan = vi.fn();
+    const connectDaemonForImport = vi.fn(async () => {});
+
+    let latest: ReturnType<typeof useWorkspaceSetupProvisioning> | null = null;
+
+    const Harness = () => {
+      latest = useWorkspaceSetupProvisioning({
+        currentStepKeyRef,
+        selections: {
+          location: "local",
+          container: "disk-isolated",
+        },
+        routePlan: null,
+        setRoutePlan,
+        setRoutePlanningBusy,
+        invalidateRoutePlan,
+        desktopApp: true,
+        effectiveTarget: deriveWorkspaceSetupEffectiveTarget("local", {
+          remoteHostInput: "",
+          remotePortInput: "4399",
+          remoteDataDirInput: "",
+        }),
+        remoteStatus: "connected",
+        remoteStatusRef: { current: "connected" },
+        connectDaemonForImport,
+      });
+      return null;
+    };
+
+    render(createElement(Harness));
+
+    await act(async () => {
+      await latest!.ensureRoutePlanForSelection("disk-isolated");
+    });
+
+    expect(latest!.harnessInstallCandidates).toEqual([
+      expect.objectContaining({
+        providerId: "codex",
+        installId: "install-1",
+        installRunning: true,
+      }),
+    ]);
+    expect(latest!.harnessInstallRows).toEqual({
+      codex: expect.objectContaining({
+        installId: "install-1",
+        state: "running",
+        target: "container",
+      }),
+    });
+
+    await act(async () => {
+      emitProviderProgressSnapshot({
+        codex: {
+          installId: "install-1",
+          state: "running",
+          pct: null,
+          target: "container" satisfies InstallTarget,
+          updatedAtMs: 1,
+        },
+      });
+    });
+
+    await act(async () => {
+      await latest!.ensureOnboardingAfterDaemonConnect();
+    });
+
+    expect(latest!.harnessInstallCandidates).toEqual([]);
+    expect(latest!.harnessInstallRows).toEqual({});
+    expect(latest!.harnessInstallError).toContain("Harness scan failed.");
   });
 });

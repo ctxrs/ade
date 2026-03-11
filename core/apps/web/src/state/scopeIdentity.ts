@@ -2,8 +2,8 @@ import type { HarnessSourceKind, InstallTarget, ProviderOptions } from "../api/c
 import type { DesktopConnectionInfo } from "../utils/desktop";
 
 export type DaemonTargetScope =
-  | { kind: "browser"; baseUrl: string }
-  | { kind: "desktop_local" }
+  | { kind: "browser"; baseUrl: string; authTokenFingerprint?: string | null }
+  | { kind: "desktop_local"; baseUrl?: string | null }
   | { kind: "desktop_ssh"; host: string; user: string | null; port: number; dataDir: string | null };
 
 export type HostOwnerScope = {
@@ -43,7 +43,9 @@ export type ProvisioningScope = {
 
 type DaemonTargetScopeTuple =
   | ["browser", string]
+  | ["browser", string, string | null]
   | ["desktop_local"]
+  | ["desktop_local", string | null]
   | ["desktop_ssh", string, string | null, number, string | null];
 
 type OwnerScopeTuple =
@@ -137,9 +139,13 @@ const readPositiveInteger = (value: unknown): number | null => {
 const daemonTargetScopeToTuple = (scope: DaemonTargetScope): DaemonTargetScopeTuple => {
   switch (scope.kind) {
     case "browser":
-      return ["browser", scope.baseUrl];
+      return scope.authTokenFingerprint === undefined
+        ? ["browser", scope.baseUrl]
+        : ["browser", scope.baseUrl, scope.authTokenFingerprint ?? null];
     case "desktop_local":
-      return ["desktop_local"];
+      return scope.baseUrl === undefined
+        ? ["desktop_local"]
+        : ["desktop_local", scope.baseUrl ?? null];
     case "desktop_ssh":
       return ["desktop_ssh", scope.host, scope.user, scope.port, scope.dataDir];
   }
@@ -150,10 +156,27 @@ const daemonTargetScopeFromTuple = (value: unknown): DaemonTargetScope | null =>
   const kind = value[0];
   if (kind === "browser") {
     const baseUrl = readRequiredString(value[1]);
-    return baseUrl ? createBrowserDaemonTargetScope(baseUrl) : null;
+    if (!baseUrl) return null;
+    if (value.length === 2) {
+      return createBrowserDaemonTargetScope(baseUrl);
+    }
+    if (value.length === 3) {
+      const authTokenFingerprint = readOptionalString(value[2]);
+      return authTokenFingerprint === undefined
+        ? null
+        : createBrowserDaemonTargetScope(baseUrl, authTokenFingerprint);
+    }
+    return null;
   }
   if (kind === "desktop_local") {
-    return value.length === 1 ? createDesktopLocalDaemonTargetScope() : null;
+    if (value.length === 1) {
+      return createDesktopLocalDaemonTargetScope();
+    }
+    if (value.length === 2) {
+      const baseUrl = readOptionalString(value[1]);
+      return baseUrl === undefined ? null : createDesktopLocalDaemonTargetScope(baseUrl);
+    }
+    return null;
   }
   if (kind === "desktop_ssh") {
     const host = readRequiredString(value[1]);
@@ -201,14 +224,35 @@ const parseSerialized = <T>(value: string | null | undefined, parser: (raw: unkn
   }
 };
 
-export const createBrowserDaemonTargetScope = (baseUrl: string): DaemonTargetScope => ({
-  kind: "browser",
-  baseUrl: normalizeRequiredString(baseUrl, "baseUrl"),
-});
+export const createBrowserDaemonTargetScope = (
+  baseUrl: string,
+  authTokenFingerprint?: string | null,
+): DaemonTargetScope => {
+  const normalizedBaseUrl = normalizeRequiredString(baseUrl, "baseUrl");
+  const normalizedFingerprint = normalizeOptionalString(authTokenFingerprint);
+  return normalizedFingerprint
+    ? {
+      kind: "browser",
+      baseUrl: normalizedBaseUrl,
+      authTokenFingerprint: normalizedFingerprint,
+    }
+    : {
+      kind: "browser",
+      baseUrl: normalizedBaseUrl,
+    };
+};
 
-export const createDesktopLocalDaemonTargetScope = (): DaemonTargetScope => ({
-  kind: "desktop_local",
-});
+export const createDesktopLocalDaemonTargetScope = (baseUrl?: string | null): DaemonTargetScope => {
+  const normalizedBaseUrl = normalizeOptionalString(baseUrl);
+  return normalizedBaseUrl
+    ? {
+      kind: "desktop_local",
+      baseUrl: normalizedBaseUrl,
+    }
+    : {
+      kind: "desktop_local",
+    };
+};
 
 export const createDesktopSshDaemonTargetScope = (args: {
   host: string;
@@ -226,9 +270,9 @@ export const createDesktopSshDaemonTargetScope = (args: {
 export const cloneDaemonTargetScope = (scope: DaemonTargetScope): DaemonTargetScope => {
   switch (scope.kind) {
     case "browser":
-      return createBrowserDaemonTargetScope(scope.baseUrl);
+      return createBrowserDaemonTargetScope(scope.baseUrl, scope.authTokenFingerprint);
     case "desktop_local":
-      return createDesktopLocalDaemonTargetScope();
+      return createDesktopLocalDaemonTargetScope(scope.baseUrl);
     case "desktop_ssh":
       return createDesktopSshDaemonTargetScope(scope);
   }
@@ -259,9 +303,12 @@ export const sameDaemonTargetScope = (lhs: DaemonTargetScope, rhs: DaemonTargetS
   if (lhs.kind !== rhs.kind) return false;
   switch (lhs.kind) {
     case "browser":
-      return rhs.kind === "browser" && lhs.baseUrl === rhs.baseUrl;
+      return rhs.kind === "browser"
+        && lhs.baseUrl === rhs.baseUrl
+        && (lhs.authTokenFingerprint ?? null) === (rhs.authTokenFingerprint ?? null);
     case "desktop_local":
-      return true;
+      return rhs.kind === "desktop_local"
+        && (lhs.baseUrl ?? null) === (rhs.baseUrl ?? null);
     case "desktop_ssh":
       return rhs.kind === "desktop_ssh"
         && lhs.host === rhs.host

@@ -55,7 +55,11 @@ import {
   submitProviderEndpointAuth,
   type ProviderAccountMutationProviderId,
 } from "../../../state/providerOnboardingActions";
-import { getProviderOwnerScope, getProviderOwnerScopeKey } from "../../../state/providerScopeAdapters";
+import {
+  createMissingProviderOwnerScopeError,
+  getProviderOwnerScopeKeyOrNull,
+  getProviderOwnerScopeOrNull,
+} from "../../../state/providerScopeAdapters";
 import type { HarnessAuthModalState, InstallSession } from "../../SettingsPage.types";
 import type { HarnessAuthRow } from "../harnessAuthRows";
 import {
@@ -254,13 +258,19 @@ export function useHarnessAuthenticationController({
   const [ampAccountsBusy, setAmpAccountsBusy] = useState(false);
   const ownerScopeKey = useSyncExternalStore(
     useCallback((listener) => subscribeDaemonConnection((_connection) => listener()), []),
-    useCallback(() => getProviderOwnerScopeKey(workspaceId), [workspaceId]),
-    useCallback(() => getProviderOwnerScopeKey(workspaceId), [workspaceId]),
+    useCallback(() => getProviderOwnerScopeKeyOrNull(workspaceId), [workspaceId]),
+    useCallback(() => getProviderOwnerScopeKeyOrNull(workspaceId), [workspaceId]),
   );
   const ownerScope = useMemo(
-    () => getProviderOwnerScope(workspaceId),
+    () => getProviderOwnerScopeOrNull(workspaceId),
     [ownerScopeKey, workspaceId],
   );
+  const requireOwnerScope = useCallback(() => {
+    if (!ownerScope) {
+      throw createMissingProviderOwnerScopeError();
+    }
+    return ownerScope;
+  }, [ownerScope]);
   const handleOnboardingLoadError = useCallback((error: unknown) => {
     setProviderError(messageFromError(error));
   }, []);
@@ -675,13 +685,13 @@ export function useHarnessAuthenticationController({
     ) => {
       await mutateProviderAccount({
         mutate: async () => {
-          await executeDeleteProviderAccount(ownerScope, providerId, accountId);
+          await executeDeleteProviderAccount(requireOwnerScope(), providerId, accountId);
         },
         setBusy,
         setProviderError,
       });
     },
-    [ownerScope],
+    [requireOwnerScope],
   );
 
   const runSelectProviderSubscriptionAccount = useCallback(
@@ -693,7 +703,7 @@ export function useHarnessAuthenticationController({
       await mutateProviderAccount({
         mutate: async () => {
           await executeSelectProviderSubscriptionAccount({
-            ownerScope,
+            ownerScope: requireOwnerScope(),
             providerId,
             accountId,
             supportsEndpointConfig: supportsHarnessEndpointConfig(providerId),
@@ -704,41 +714,41 @@ export function useHarnessAuthenticationController({
         setProviderError,
       });
     },
-    [onboarding, ownerScope, supportsHarnessEndpointConfig],
+    [onboarding, requireOwnerScope, supportsHarnessEndpointConfig],
   );
 
   const onDeleteProviderEndpoint = useCallback(async (providerId: string, endpointId: string) => {
     setProviderHarnessBusyForProvider(providerId, true);
     setProviderError(null);
     try {
-      await executeDeleteProviderEndpoint(ownerScope, providerId, endpointId);
+      await executeDeleteProviderEndpoint(requireOwnerScope(), providerId, endpointId);
       await refreshProviderSlicesAfterMutation(providerId);
     } catch (error) {
       setProviderError(messageFromError(error));
     } finally {
       setProviderHarnessBusyForProvider(providerId, false);
     }
-  }, [ownerScope, setProviderHarnessBusyForProvider]);
+  }, [refreshProviderSlicesAfterMutation, requireOwnerScope, setProviderHarnessBusyForProvider]);
 
   const onRefreshProviderEndpointModels = useCallback(async (providerId: string, endpointId: string) => {
     setProviderHarnessBusyForProvider(providerId, true);
     setProviderError(null);
     try {
-      await executeRefreshProviderEndpointModels(ownerScope, providerId, endpointId);
+      await executeRefreshProviderEndpointModels(requireOwnerScope(), providerId, endpointId);
       await refreshProviderSlicesAfterMutation(providerId);
     } catch (error) {
       setProviderError(messageFromError(error));
     } finally {
       setProviderHarnessBusyForProvider(providerId, false);
     }
-  }, [ownerScope, setProviderHarnessBusyForProvider]);
+  }, [refreshProviderSlicesAfterMutation, requireOwnerScope, setProviderHarnessBusyForProvider]);
 
   const onSelectProviderSource = useCallback(
     async (providerId: string, sourceKind: "subscription" | "endpoint", endpointId?: string | null) => {
       setProviderHarnessBusyForProvider(providerId, true);
       setProviderError(null);
       try {
-        await executeSelectProviderSource(ownerScope, providerId, {
+        await executeSelectProviderSource(requireOwnerScope(), providerId, {
           sourceKind,
           endpointId: endpointId ?? null,
         });
@@ -749,13 +759,13 @@ export function useHarnessAuthenticationController({
         setProviderHarnessBusyForProvider(providerId, false);
       }
     },
-    [ownerScope, setProviderHarnessBusyForProvider],
+    [requireOwnerScope, setProviderHarnessBusyForProvider],
   );
 
   const selectSubscriptionSourceIfSupported = useCallback(
     async (providerId: string) => {
       await executeSelectSubscriptionSourceIfSupported({
-        ownerScope,
+        ownerScope: requireOwnerScope(),
         providerId,
         supportsEndpointConfig: supportsHarnessEndpointConfig(providerId),
         onEndpointUnsupported: () => {
@@ -765,7 +775,7 @@ export function useHarnessAuthenticationController({
     },
     [
       markProviderEndpointUnsupported,
-      ownerScope,
+      requireOwnerScope,
       supportsHarnessEndpointConfig,
     ],
   );
@@ -855,7 +865,7 @@ export function useHarnessAuthenticationController({
       }
 
       const result = await submitProviderEndpointAuth({
-        ownerScope,
+        ownerScope: requireOwnerScope(),
         providerId: modal.provider_id,
         requestedEndpointId: modal.endpoint_id?.trim() || null,
         name,
@@ -912,9 +922,9 @@ export function useHarnessAuthenticationController({
     harnessAuthModal,
     closeHarnessAuthModalForOperation,
     finishHarnessAuthModalOperation,
-    ownerScope,
     patchHarnessAuthModalForOperation,
     refreshProviderSlicesAfterMutation,
+    requireOwnerScope,
     selectSubscriptionSourceIfSupported,
     setSubscriptionSourceFallback,
     startHarnessAuthModalOperation,

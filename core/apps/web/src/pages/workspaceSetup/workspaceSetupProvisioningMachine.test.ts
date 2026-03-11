@@ -209,4 +209,61 @@ describe("workspaceSetupProvisioningMachine", () => {
     expect(recovered.routePlan?.includeHarnessDownloads).toBe(true);
     expect(recovered.refreshError).toBeNull();
   });
+
+  it("clears stale auth-import data when a same-scope refresh fails", () => {
+    const scope = routeScopeFixture();
+    const started = beginWorkspaceSetupProvisioningRefresh(
+      createInitialWorkspaceSetupProvisioningMachineState(),
+      {
+        routeScope: scope,
+        refreshReason: "ensure_route_plan",
+        titlingMode: "unset",
+        previousPlan: null,
+      },
+    );
+
+    const authRequest = started.requests.find((request) => request.resource === "authImport")!;
+    const harnessRequest = started.requests.find((request) => request.resource === "harnessCandidates")!;
+    const titlingRequest = started.requests.find((request) => request.resource === "titlingProbe")!;
+
+    const withAuth = completeWorkspaceSetupAuthImportRefresh(started.state, {
+      scope: authRequest.scope,
+      requestId: authRequest.requestId,
+      data: [authImportCandidate()],
+    });
+    const withHarness = completeWorkspaceSetupHarnessCandidatesRefresh(withAuth, {
+      scope: harnessRequest.scope,
+      requestId: harnessRequest.requestId,
+      data: [],
+    });
+    const settled = completeWorkspaceSetupTitlingProbeRefresh(withHarness, {
+      scope: titlingRequest.scope,
+      requestId: titlingRequest.requestId,
+      data: { required: false },
+    });
+
+    const retried = beginWorkspaceSetupProvisioningRefresh(settled, {
+      routeScope: scope,
+      refreshReason: "refresh_auth_import",
+      titlingMode: "unset",
+      previousPlan: settled.routePlan,
+      resources: ["authImport"],
+      force: true,
+    });
+    const retriedAuthRequest = retried.requests[0]!;
+
+    expect(retried.state.authImport.status).toBe("loading");
+    expect(retried.state.authImport.data).toEqual([authImportCandidate()]);
+
+    const failed = failWorkspaceSetupAuthImportRefresh(retried.state, {
+      scope: retriedAuthRequest.scope,
+      requestId: retriedAuthRequest.requestId,
+      error: "Auth refresh failed.",
+    });
+
+    expect(failed.authImport.status).toBe("error");
+    expect(failed.authImport.data).toBeNull();
+    expect(failed.routePlan?.includeAuthImport).toBe(true);
+    expect(failed.refreshError).toContain("Auth refresh failed.");
+  });
 });

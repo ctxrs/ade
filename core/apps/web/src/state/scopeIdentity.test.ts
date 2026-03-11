@@ -38,8 +38,8 @@ const baseProviderOptions = (overrides?: Partial<ProviderOptions>): ProviderOpti
 
 describe("scopeIdentity", () => {
   it("round-trips daemon target scopes and compares SSH identity structurally", () => {
-    const browser = createBrowserDaemonTargetScope("https://example.com");
-    const desktopLocal = createDesktopLocalDaemonTargetScope();
+    const browser = createBrowserDaemonTargetScope("https://example.com", "tok_deadbeef");
+    const desktopLocal = createDesktopLocalDaemonTargetScope("http://127.0.0.1:4399");
     const ssh = createDesktopSshDaemonTargetScope({
       host: "host-a.example",
       user: "user",

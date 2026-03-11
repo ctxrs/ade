@@ -44,10 +44,7 @@ import {
   sessionTitlingPayloadHash,
   type SessionTitlingMode,
 } from "../WorkspaceSetupPage.logic";
-import {
-  type WizardRoutePlan,
-  type WizardStepKey,
-} from "./wizardFlow";
+import { type WizardRoutePlan, type WizardStepKey } from "./wizardFlow";
 import type { WizardSelections } from "./wizardFlowReducer";
 import {
   beginWorkspaceSetupProvisioningRefresh,
@@ -58,6 +55,7 @@ import {
   failWorkspaceSetupAuthImportRefresh,
   failWorkspaceSetupHarnessCandidatesRefresh,
   failWorkspaceSetupTitlingProbeRefresh,
+  hasReadyWorkspaceSetupProvisioningStateForRouteScope,
   type WorkspaceSetupProvisioningMachineState,
   type WorkspaceSetupProvisioningRefreshReason,
   type WorkspaceSetupProvisioningRequest,
@@ -70,11 +68,7 @@ import {
   type LocalInstallState,
   type RemoteStatus,
 } from "./wizardTypes";
-import {
-  observeInstall,
-  subscribeInstallProgress,
-  type InstallProgressSnapshot,
-} from "../../state/installProgressMonitor";
+import { observeInstall, subscribeInstallProgress, type InstallProgressSnapshot } from "../../state/installProgressMonitor";
 import { sameProvisioningScope } from "../../state/scopeIdentity";
 import {
   resolveProviderInstallProgressSession,
@@ -629,6 +623,8 @@ export function useWorkspaceSetupProvisioning({
       if (!isCurrentProvisioningRequest("authImport", request)) {
         return;
       }
+      setAuthImportCandidates([]);
+      setAuthImportSelected({});
       setAuthImportError(message);
       commitProvisioningMachineState((current) => failWorkspaceSetupAuthImportRefresh(current, {
         scope: request.scope,
@@ -754,6 +750,9 @@ export function useWorkspaceSetupProvisioning({
       if (!isCurrentProvisioningRequest("harnessCandidates", request)) {
         return;
       }
+      setHarnessInstallCandidates([]);
+      setHarnessInstallSelected({});
+      setHarnessInstallRows({});
       setHarnessInstallError(message);
       commitProvisioningMachineState((current) => failWorkspaceSetupHarnessCandidatesRefresh(current, {
         scope: request.scope,
@@ -980,17 +979,20 @@ export function useWorkspaceSetupProvisioning({
     }
     const requestedRouteScope = createWorkspaceSetupRouteScope(effectiveTarget, containerSelection);
     const requestedRouteKey = serializeWorkspaceSetupRouteScope(requestedRouteScope);
-    if (routePlan?.targetKey === requestedRouteKey) {
-      return routePlan;
+    const currentPlan = provisioningMachineStateRef.current.routePlan ?? routePlan;
+    if (
+      currentPlan?.targetKey === requestedRouteKey
+      && hasReadyWorkspaceSetupProvisioningStateForRouteScope(
+        provisioningMachineStateRef.current,
+        requestedRouteScope,
+      )
+    ) {
+      return currentPlan;
     }
 
     setRoutePlanningBusy(true);
     try {
-      const nextState = await refreshProvisioningForRouteScope(
-        location,
-        requestedRouteScope,
-        "ensure_route_plan",
-      );
+      const nextState = await refreshProvisioningForRouteScope(location, requestedRouteScope, "ensure_route_plan");
       return nextState?.routePlan ?? null;
     } finally {
       setRoutePlanningBusy(false);
@@ -1252,7 +1254,6 @@ export function useWorkspaceSetupProvisioning({
   useEffect(() => {
     return subscribeProviderInstallProgress((snapshot) => {
       const providerIds = new Set([
-        ...Object.keys(snapshot),
         ...Object.keys(harnessInstallRows),
         ...harnessInstallCandidates.map((candidate) => candidate.providerId),
       ]);

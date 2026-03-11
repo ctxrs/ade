@@ -10,7 +10,7 @@ import {
   removeProviderInstallProgressForScope,
   upsertProviderInstallProgressForScope,
 } from "./providerInstallProgressStore";
-import { getProviderHostOwnerScope } from "./providerScopeAdapters";
+import { getProviderHostOwnerScopeOrNull } from "./providerScopeAdapters";
 import { serializeOwnerScope, type OwnerScope } from "./scopeIdentity";
 
 const INSTALL_POLL_MS = 900;
@@ -116,8 +116,8 @@ const appendInstallEvent = (
 const aliasKey = (ownerScope: OwnerScope, providerId: string): string =>
   `${serializeOwnerScope(ownerScope)}|${providerId}`;
 
-const resolveAliasOwnerScope = (options?: ObserveInstallOptions): OwnerScope =>
-  options?.ownerScope ?? getProviderHostOwnerScope();
+const resolveAliasOwnerScope = (options?: ObserveInstallOptions): OwnerScope | null =>
+  options?.ownerScope ?? getProviderHostOwnerScopeOrNull();
 
 const clearProviderAliases = (entry: InstallProgressInternalEntry): void => {
   for (const alias of entry.providerAliases.values()) {
@@ -254,10 +254,13 @@ const ensureEntry = (
   if (existing) {
     existing.refCount += 1;
     if (options?.providerId) {
-      existing.providerAliases.set(aliasKey(aliasOwnerScope!, options.providerId), {
-        ownerScope: aliasOwnerScope!,
-        providerId: options.providerId,
-      });
+      existing.providerId = options.providerId;
+      if (aliasOwnerScope) {
+        existing.providerAliases.set(aliasKey(aliasOwnerScope, options.providerId), {
+          ownerScope: aliasOwnerScope,
+          providerId: options.providerId,
+        });
+      }
       syncProviderAliases(existing);
     }
     if (options?.initialState) {

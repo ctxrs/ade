@@ -2,7 +2,21 @@ import { act, render, waitFor } from "@testing-library/react";
 import { Fragment, createElement, useEffect } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderOptions, ProvidersBootstrapResponse } from "../api/client";
-import { getProviderOptions, getProvidersBootstrap } from "../api/client";
+import {
+  getProviderHarnessConfig,
+  getProviderOptions,
+  getProvidersBootstrap,
+  listAmpAccounts,
+  listClaudeAccounts,
+  listCodexAccounts,
+  listCopilotAccounts,
+  listCursorAccounts,
+  listGeminiAccounts,
+  listKimiAccounts,
+  listMistralAccounts,
+  listProviders,
+  listQwenAccounts,
+} from "../api/client";
 import { setDaemonConnection } from "../api/daemonConnection";
 import { observeInstall } from "./installProgressMonitor";
 import {
@@ -10,6 +24,7 @@ import {
   upsertProviderInstallProgressForScope,
 } from "./providerInstallProgressStore";
 import { getProviderOwnerScope } from "./providerScopeAdapters";
+import { createDesktopLocalDaemonTargetScope } from "./scopeIdentity";
 import {
   resetProviderOnboardingCoordinatorForTests,
   useProviderOnboardingCoordinator,
@@ -19,8 +34,19 @@ vi.mock("../api/client", async (importOriginal) => {
   const original = await importOriginal<typeof import("../api/client")>();
   return {
     ...original,
+    getProviderHarnessConfig: vi.fn(),
     getProviderOptions: vi.fn(),
     getProvidersBootstrap: vi.fn(),
+    listAmpAccounts: vi.fn(),
+    listClaudeAccounts: vi.fn(),
+    listCodexAccounts: vi.fn(),
+    listCopilotAccounts: vi.fn(),
+    listCursorAccounts: vi.fn(),
+    listGeminiAccounts: vi.fn(),
+    listKimiAccounts: vi.fn(),
+    listMistralAccounts: vi.fn(),
+    listProviders: vi.fn(),
+    listQwenAccounts: vi.fn(),
   };
 });
 
@@ -33,6 +59,17 @@ vi.mock("./installProgressMonitor", async (importOriginal) => {
 });
 
 type HookValue = ReturnType<typeof useProviderOnboardingCoordinator>;
+
+const EMPTY_ACCOUNTS = Object.freeze({
+  active_account_id: null,
+  accounts: [],
+});
+
+const EMPTY_CODEX_ACCOUNTS = Object.freeze({
+  active_account_id: null,
+  accounts: [],
+  logins: [],
+});
 
 const requireHookValue = (value: HookValue | null): HookValue => {
   if (!value) {
@@ -129,11 +166,31 @@ const makeBootstrap = (
   ...overrides,
 });
 
+const makeHostHarnessConfig = (providerId: string) => ({
+  provider_id: providerId,
+  selected_source_kind: "subscription" as const,
+  selected_endpoint_id: null,
+  endpoints: [],
+});
+
+const makeHostProvider = (overrides?: Record<string, unknown>) => ({
+  provider_id: "codex",
+  display_name: "Codex",
+  installed: false,
+  health: "ok",
+  diagnostics: [],
+  details: {
+    install_running: "false",
+    install_target: "host",
+  },
+  ...overrides,
+}) as never;
+
 function CoordinatorHarness({
   workspaceId,
   onChange,
 }: {
-  workspaceId: string;
+  workspaceId: string | null;
   onChange: (value: HookValue) => void;
 }) {
   const value = useProviderOnboardingCoordinator({
@@ -152,6 +209,18 @@ beforeEach(() => {
   vi.clearAllMocks();
   resetProviderOnboardingCoordinatorForTests();
   clearProviderInstallProgress();
+  vi.mocked(getProviderHarnessConfig).mockImplementation(async (providerId: string) =>
+    makeHostHarnessConfig(providerId));
+  vi.mocked(listProviders).mockResolvedValue([]);
+  vi.mocked(listCodexAccounts).mockResolvedValue({ ...EMPTY_CODEX_ACCOUNTS });
+  vi.mocked(listClaudeAccounts).mockResolvedValue({ ...EMPTY_ACCOUNTS });
+  vi.mocked(listGeminiAccounts).mockResolvedValue({ ...EMPTY_ACCOUNTS });
+  vi.mocked(listQwenAccounts).mockResolvedValue({ ...EMPTY_ACCOUNTS });
+  vi.mocked(listKimiAccounts).mockResolvedValue({ ...EMPTY_ACCOUNTS });
+  vi.mocked(listMistralAccounts).mockResolvedValue({ ...EMPTY_ACCOUNTS });
+  vi.mocked(listCopilotAccounts).mockResolvedValue({ ...EMPTY_ACCOUNTS });
+  vi.mocked(listCursorAccounts).mockResolvedValue({ ...EMPTY_ACCOUNTS });
+  vi.mocked(listAmpAccounts).mockResolvedValue({ ...EMPTY_ACCOUNTS });
   setDaemonConnection({
     baseUrl: "https://daemon-a.example",
     source: "test",
@@ -200,6 +269,47 @@ describe("providerOnboardingCoordinator", () => {
 
     await waitFor(() => {
       expect(vi.mocked(getProvidersBootstrap)).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("refreshes host-scoped bootstrap on focus and online", async () => {
+    let hookValue: HookValue | null = null;
+    let currentProviders = [makeHostProvider()];
+
+    vi.mocked(listProviders).mockImplementation(async () => currentProviders);
+
+    render(createElement(CoordinatorHarness, {
+      workspaceId: null,
+      onChange: (value) => {
+        hookValue = value;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(hookValue?.bootstrap.providers[0]?.installed).toBe(false);
+      expect(vi.mocked(listProviders)).toHaveBeenCalledTimes(1);
+    });
+
+    currentProviders = [makeHostProvider({ installed: true })];
+    vi.mocked(listProviders).mockClear();
+
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+
+    await waitFor(() => {
+      expect(hookValue?.bootstrap.providers[0]?.installed).toBe(true);
+      expect(vi.mocked(listProviders)).toHaveBeenCalledTimes(1);
+    });
+
+    vi.mocked(listProviders).mockClear();
+
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(listProviders)).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -296,7 +406,49 @@ describe("providerOnboardingCoordinator", () => {
     });
   });
 
-  it("does not share running installs or auth-summary dedupe across daemon target scopes", async () => {
+  it("waits for a daemon target scope before loading workspace onboarding state", async () => {
+    const workspaceId = "ws-target-scope-pending";
+    let hookValue: HookValue | null = null;
+
+    setDaemonConnection({
+      baseUrl: "https://desktop-daemon.example",
+      source: "desktop",
+      targetScope: null,
+    });
+    vi.mocked(observeInstall).mockReturnValue(() => {});
+    vi.mocked(getProvidersBootstrap).mockImplementation(async () => makeBootstrap(workspaceId));
+
+    render(createElement(CoordinatorHarness, {
+      workspaceId,
+      onChange: (value) => {
+        hookValue = value;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(hookValue).not.toBeNull();
+    });
+
+    expect(requireHookValue(hookValue).bootstrap.providers).toEqual([]);
+    expect(vi.mocked(getProvidersBootstrap)).not.toHaveBeenCalled();
+    expect(vi.mocked(observeInstall)).not.toHaveBeenCalled();
+
+    act(() => {
+      setDaemonConnection({
+        baseUrl: "https://desktop-daemon.example",
+        source: "desktop",
+        targetScope: createDesktopLocalDaemonTargetScope(),
+      });
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(getProvidersBootstrap)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(observeInstall)).toHaveBeenCalledTimes(1);
+      expect(hookValue?.bootstrap.provider_options.codex?.workspace_id).toBe(workspaceId);
+    });
+  });
+
+  it("does not share running installs or auth-summary dedupe across same-origin browser token changes", async () => {
     const workspaceId = "ws-daemon-target-scope";
     const pendingA = deferred<ProviderOptions>();
     const pendingB = deferred<ProviderOptions>();
@@ -318,6 +470,11 @@ describe("providerOnboardingCoordinator", () => {
       ],
     });
 
+    setDaemonConnection({
+      baseUrl: "https://daemon-a.example",
+      authToken: "token-a",
+      source: "same_origin_bootstrap",
+    });
     vi.mocked(observeInstall).mockReturnValue(() => {});
     vi.mocked(getProvidersBootstrap).mockImplementation(async () => installedBootstrap);
     vi.mocked(getProviderOptions)
@@ -345,8 +502,9 @@ describe("providerOnboardingCoordinator", () => {
 
     act(() => {
       setDaemonConnection({
-        baseUrl: "https://daemon-b.example",
-        source: "test",
+        baseUrl: "https://daemon-a.example",
+        authToken: "token-b",
+        source: "same_origin_bootstrap",
       });
     });
 
@@ -377,4 +535,5 @@ describe("providerOnboardingCoordinator", () => {
       });
     });
   });
+
 });

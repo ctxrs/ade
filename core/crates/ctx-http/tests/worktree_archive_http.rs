@@ -111,7 +111,11 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
 
     client
         .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({"provider_id":"fake","model_id":"fake-model","env_target":"worktree"}))
+        .json(&json!({
+            "provider_id":"fake",
+            "model_id":"fake-model",
+            "execution_environment":"worktree"
+        }))
         .send()
         .await
         .unwrap();
@@ -125,7 +129,11 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
 
     client
         .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .json(&json!({"provider_id":"fake","model_id":"fake-model","env_target":"local"}))
+        .json(&json!({
+            "provider_id":"fake",
+            "model_id":"fake-model",
+            "execution_environment":"local"
+        }))
         .send()
         .await
         .unwrap();

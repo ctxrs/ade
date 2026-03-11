@@ -1,13 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createBrowserDaemonTargetScope,
+  createDesktopLocalDaemonTargetScope,
   createDesktopSshDaemonTargetScope,
   serializeDaemonTargetScope,
 } from "../state/scopeIdentity";
 
 const getDaemonConnectionMock = vi.hoisted(() => vi.fn());
 
-vi.mock("../api/client", () => ({
+vi.mock("../api/daemonConnection", () => ({
   getDaemonConnection: getDaemonConnectionMock,
 }));
 
@@ -77,5 +78,33 @@ describe("workbench persistence daemon scope keys", () => {
     expect(mod.workbenchDaemonKey()).toBe(serializeDaemonTargetScope(firstTarget));
     expect(mod.workbenchDaemonKey()).toBe(serializeDaemonTargetScope(secondTarget));
     expect(serializeDaemonTargetScope(firstTarget)).not.toBe(serializeDaemonTargetScope(secondTarget));
+  });
+
+  it("distinguishes desktop-local daemons by baseUrl", async () => {
+    getDaemonConnectionMock
+      .mockReturnValueOnce({
+        baseUrl: "http://127.0.0.1:4399",
+        wsBaseUrl: "ws://127.0.0.1:4399",
+        authToken: "token-a",
+        runId: null,
+        source: "desktop",
+        targetScope: createDesktopLocalDaemonTargetScope(),
+      })
+      .mockReturnValueOnce({
+        baseUrl: "http://127.0.0.1:4400",
+        wsBaseUrl: "ws://127.0.0.1:4400",
+        authToken: "token-b",
+        runId: null,
+        source: "desktop",
+        targetScope: createDesktopLocalDaemonTargetScope(),
+      });
+
+    const mod = await import("./persistence");
+    const firstKey = mod.workbenchDaemonKey();
+    const secondKey = mod.workbenchDaemonKey();
+
+    expect(firstKey).toBe(serializeDaemonTargetScope(createDesktopLocalDaemonTargetScope("http://127.0.0.1:4399")));
+    expect(secondKey).toBe(serializeDaemonTargetScope(createDesktopLocalDaemonTargetScope("http://127.0.0.1:4400")));
+    expect(firstKey).not.toBe(secondKey);
   });
 });

@@ -128,6 +128,16 @@ const scopeMatches = (
   scope: WorkspaceSetupRouteScope["provisioningScope"],
 ): boolean => Boolean(state.scope) && sameProvisioningScope(state.scope!, scope);
 
+export const hasReadyWorkspaceSetupProvisioningStateForRouteScope = (
+  state: WorkspaceSetupProvisioningMachineState,
+  routeScope: WorkspaceSetupRouteScope,
+): boolean =>
+  Boolean(state.routeScope)
+  && sameWorkspaceSetupRouteScope(state.routeScope!, routeScope)
+  && [state.authImport, state.harnessCandidates, state.titlingProbe].every((resource) =>
+    resource.status === "ready" && scopeMatches(resource, routeScope.provisioningScope)
+  );
+
 const shouldRefreshResource = (
   state: WorkspaceSetupProvisioningResourceState<unknown>,
   scope: WorkspaceSetupRouteScope["provisioningScope"],
@@ -381,6 +391,7 @@ export const failWorkspaceSetupAuthImportRefresh = (
       ...state.authImport,
       scope: args.scope,
       status: "error",
+      data: null,
       error: args.error,
       requestId: args.requestId,
     },

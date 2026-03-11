@@ -31,6 +31,7 @@ import {
   refreshProvidersBootstrap,
   refreshProvidersBootstrapForScope,
 } from "../../../state/providersBootstrapStore";
+import { setDaemonConnection } from "../../../api/daemonConnection";
 import {
   CLAUDE_LOGIN_COMPLETION_TIMEOUT_MS,
   CLAUDE_LOGIN_POLL_ATTEMPTS,
@@ -50,6 +51,7 @@ import {
   useHarnessAuthenticationController,
 } from "./useHarnessAuthenticationController";
 import { resetProviderOnboardingCoordinatorForTests } from "../../../state/providerOnboardingCoordinator";
+import { createDesktopLocalDaemonTargetScope } from "../../../state/scopeIdentity";
 import type { HarnessAuthRow } from "../harnessAuthRows";
 import { openExternalLink } from "../../../utils/desktop";
 
@@ -443,6 +445,10 @@ beforeEach(() => {
       makeBootstrap(),
     )
     : consumeHostBootstrapQueue("hostBootstrapRefreshQueue", makeBootstrap()));
+  setDaemonConnection({
+    baseUrl: "https://daemon-a.example",
+    source: "test",
+  });
 });
 
 describe("Claude polling duration", () => {
@@ -739,6 +745,52 @@ describe("resolveHarnessAuthModalInitialStage", () => {
 });
 
 describe("useHarnessAuthenticationController", () => {
+  it("waits for a daemon target scope before loading workspace provider state", async () => {
+    let controller: Controller | null = null;
+    queueBootstrapLoad("ws-test", makeBootstrap({
+      providers: [
+        {
+          provider_id: "codex",
+          installed: true,
+          health: "ok",
+          diagnostics: [],
+          details: {},
+        } satisfies ProviderStatus,
+      ],
+    }));
+    setDaemonConnection({
+      baseUrl: "https://desktop-daemon.example",
+      source: "desktop",
+      targetScope: null,
+    });
+
+    render(createElement(ControllerHarness, {
+      onChange: (next) => {
+        controller = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(controller).not.toBeNull();
+    });
+
+    expect(requireController(controller).providers).toEqual([]);
+    expect(vi.mocked(loadProvidersBootstrap)).not.toHaveBeenCalled();
+
+    act(() => {
+      setDaemonConnection({
+        baseUrl: "https://desktop-daemon.example",
+        source: "desktop",
+        targetScope: createDesktopLocalDaemonTargetScope(),
+      });
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(loadProvidersBootstrap)).toHaveBeenCalledWith("ws-test");
+      expect(controller?.providers[0]?.provider_id).toBe("codex");
+    });
+  });
+
   it("submits Gemini Vertex service-account endpoint auth without a base URL", async () => {
     let controller: Controller | null = null;
     const vertexEndpoint = {

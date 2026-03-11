@@ -15,6 +15,7 @@ import { subscribeDaemonConnection } from "../api/daemonConnection";
 import { computeInstallPct, parseInstallTarget } from "../utils/providerInstallUi";
 import { isReadyVisibleHarnessProviderStatus } from "../utils/providerInventory";
 import {
+  EMPTY_PROVIDERS_BOOTSTRAP,
   loadHostProvidersBootstrap,
   loadProvidersBootstrap,
   refreshHostProvidersBootstrap,
@@ -37,8 +38,10 @@ import {
 import { observeInstall } from "./installProgressMonitor";
 import { providerDetailFlag } from "../utils/boolish";
 import {
+  createMissingProviderOwnerScopeError,
   getProviderOwnerScope,
-  getProviderOwnerScopeKey,
+  getProviderOwnerScopeKeyOrNull,
+  getProviderOwnerScopeOrNull,
 } from "./providerScopeAdapters";
 import {
   createProviderAuthScopeFromOptions,
@@ -73,6 +76,15 @@ export type ProviderOnboardingSnapshot = {
   providersById: Record<string, ProviderStatus>;
   installsById: Record<string, ProviderOnboardingInstallState>;
 };
+
+const EMPTY_PROVIDERS_BY_ID: Record<string, ProviderStatus> = {};
+const EMPTY_INSTALLS_BY_ID: Record<string, ProviderOnboardingInstallState> = {};
+
+const EMPTY_PROVIDER_ONBOARDING_SNAPSHOT: ProviderOnboardingSnapshot = Object.freeze({
+  bootstrap: EMPTY_PROVIDERS_BOOTSTRAP,
+  providersById: EMPTY_PROVIDERS_BY_ID,
+  installsById: EMPTY_INSTALLS_BY_ID,
+});
 
 type ProviderOnboardingListener = () => void;
 
@@ -569,10 +581,8 @@ const startEntry = (entry: ProviderOnboardingEntry): void => {
   if (entry.refCount <= 0) return;
 
   entry.disposed = false;
-  if (entry.workspaceOwnerScope) {
-    foregroundRefreshScopeKeys.add(entry.scopeKey);
-    syncForegroundRefreshListeners();
-  }
+  foregroundRefreshScopeKeys.add(entry.scopeKey);
+  syncForegroundRefreshListeners();
 
   entry.bootstrapUnsubscribe = subscribeProvidersBootstrapForScope(entry.ownerScope, () => {
     updateEntrySnapshot(entry);
@@ -605,10 +615,8 @@ const stopEntry = (entry: ProviderOnboardingEntry): void => {
   entry.providerAuthSummaryInFlightByKey = {};
   entry.postInstallInFlightProviderIds.clear();
 
-  if (entry.workspaceOwnerScope) {
-    foregroundRefreshScopeKeys.delete(entry.scopeKey);
-    syncForegroundRefreshListeners();
-  }
+  foregroundRefreshScopeKeys.delete(entry.scopeKey);
+  syncForegroundRefreshListeners();
 };
 
 const retainEntry = (ownerScope: OwnerScope): (() => void) => {
@@ -750,43 +758,54 @@ export const useProviderOnboardingCoordinator = ({
 }) => {
   const ownerScopeKey = useSyncExternalStore(
     useCallback((listener) => subscribeDaemonConnection((_connection) => listener()), []),
-    useCallback(() => getProviderOwnerScopeKey(workspaceId), [workspaceId]),
-    useCallback(() => getProviderOwnerScopeKey(workspaceId), [workspaceId]),
+    useCallback(() => getProviderOwnerScopeKeyOrNull(workspaceId), [workspaceId]),
+    useCallback(() => getProviderOwnerScopeKeyOrNull(workspaceId), [workspaceId]),
   );
   const ownerScope = useMemo(
-    () => getProviderOwnerScope(workspaceId),
+    () => getProviderOwnerScopeOrNull(workspaceId),
     [ownerScopeKey, workspaceId],
   );
 
   const snapshot = useSyncExternalStore(
-    useCallback((listener) => subscribeProviderOnboardingForOwner(ownerScope, listener), [ownerScope]),
-    useCallback(() => getProviderOnboardingSnapshotForOwner(ownerScope), [ownerScope]),
-    useCallback(() => getProviderOnboardingSnapshotForOwner(ownerScope), [ownerScope]),
+    useCallback(
+      (listener) => ownerScope ? subscribeProviderOnboardingForOwner(ownerScope, listener) : () => {},
+      [ownerScope],
+    ),
+    useCallback(
+      () => ownerScope ? getProviderOnboardingSnapshotForOwner(ownerScope) : EMPTY_PROVIDER_ONBOARDING_SNAPSHOT,
+      [ownerScope],
+    ),
+    useCallback(
+      () => ownerScope ? getProviderOnboardingSnapshotForOwner(ownerScope) : EMPTY_PROVIDER_ONBOARDING_SNAPSHOT,
+      [ownerScope],
+    ),
   );
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || !ownerScope) return;
     return retainEntry(ownerScope);
   }, [enabled, ownerScope]);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || !ownerScope) return;
     loadProviderOnboardingBootstrap(workspaceId).catch((error) => {
       onLoadError?.(error);
     });
-  }, [enabled, onLoadError, workspaceId, ownerScopeKey]);
+  }, [enabled, onLoadError, ownerScope, ownerScopeKey, workspaceId]);
 
   const loadBootstrap = useCallback(
-    () => loadProviderOnboardingBootstrap(workspaceId),
-    [ownerScopeKey, workspaceId],
+    () => ownerScope ? loadProviderOnboardingBootstrap(workspaceId) : Promise.reject(createMissingProviderOwnerScopeError()),
+    [ownerScope, ownerScopeKey, workspaceId],
   );
   const refreshBootstrap = useCallback(
-    () => refreshProviderOnboardingBootstrap(workspaceId),
-    [ownerScopeKey, workspaceId],
+    () => ownerScope ? refreshProviderOnboardingBootstrap(workspaceId) : Promise.reject(createMissingProviderOwnerScopeError()),
+    [ownerScope, ownerScopeKey, workspaceId],
   );
   const ensureAuthSummary = useCallback(
     (providerId: string, opts?: { force?: boolean; trigger?: ProviderAuthSummaryTrigger }) =>
-      ensureProviderAuthSummaryForOwner(ownerScope, providerId, opts),
+      ownerScope
+        ? ensureProviderAuthSummaryForOwner(ownerScope, providerId, opts)
+        : Promise.reject(createMissingProviderOwnerScopeError()),
     [ownerScope],
   );
   const onInstallProvider = useCallback(

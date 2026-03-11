@@ -1356,8 +1356,8 @@ pub(super) struct CreateSessionReq {
     initial_turn_id: Option<String>,
     #[serde(default)]
     worktree_id: Option<String>,
-    #[serde(default)]
-    env_target: Option<String>, // "worktree" | "local"
+    #[serde(default, alias = "env_target")]
+    execution_environment: Option<String>, // legacy wire values: "worktree" | "local" | "cloud"
 }
 
 pub(super) async fn create_session_for_task(
@@ -1426,7 +1426,7 @@ pub(super) async fn create_session_for_task(
         primary
     } else {
         let env_target = req
-            .env_target
+            .execution_environment
             .as_deref()
             .unwrap_or("local")
             .trim()
@@ -1899,13 +1899,8 @@ pub(super) async fn create_session_for_task(
     }))
 }
 
-pub(super) async fn load_workspace_active_snapshot_state(
-    state: &Arc<AppState>,
-    workspace_id: WorkspaceId,
-) -> (i64, i64) {
-    state
-        .workspaces
-        .workspace_active_snapshot
-        .snapshot_state(workspace_id)
-        .await
-}
+mod snapshot_state;
+pub(super) use snapshot_state::load_workspace_active_snapshot_state;
+
+#[cfg(test)]
+mod tests;
