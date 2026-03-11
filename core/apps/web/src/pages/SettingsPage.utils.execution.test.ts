@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  desktopEditorSettingsEqual,
   isContainerizedEnvironment,
+  normalizeDesktopEditorSettings,
   promptAutosaveStatusLabel,
   worktreeBootstrapFormFromConfig,
 } from "./SettingsPage.utils";
@@ -22,10 +24,45 @@ describe("isContainerizedEnvironment", () => {
 describe("promptAutosaveStatusLabel", () => {
   it("maps statuses to user-facing labels", () => {
     expect(promptAutosaveStatusLabel("pending")).toBe("Pending changes");
-    expect(promptAutosaveStatusLabel("saving")).toBe("Saving...");
+    expect(promptAutosaveStatusLabel("saving")).toBe("");
     expect(promptAutosaveStatusLabel("saved")).toBe("Saved");
     expect(promptAutosaveStatusLabel("error")).toBe("Save failed");
     expect(promptAutosaveStatusLabel("idle")).toBe("");
+  });
+});
+
+describe("normalizeDesktopEditorSettings", () => {
+  it("trims fields and clears custom commands for non-custom targets", () => {
+    expect(
+      normalizeDesktopEditorSettings({
+        target: "cursor",
+        custom_command: " code --goto {path}:{line}:{col} ",
+        remote_authority: " ssh-remote+ctx ",
+      }),
+    ).toEqual({
+      target: "cursor",
+      custom_command: null,
+      remote_authority: "ssh-remote+ctx",
+    });
+  });
+});
+
+describe("desktopEditorSettingsEqual", () => {
+  it("compares editor settings by their normalized persisted values", () => {
+    expect(
+      desktopEditorSettingsEqual(
+        {
+          target: "cursor",
+          custom_command: " code --goto {path}:{line}:{col} ",
+          remote_authority: " ssh-remote+ctx ",
+        },
+        {
+          target: "cursor",
+          custom_command: null,
+          remote_authority: "ssh-remote+ctx",
+        },
+      ),
+    ).toBe(true);
   });
 });
 

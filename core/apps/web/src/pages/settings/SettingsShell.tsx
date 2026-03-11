@@ -10,7 +10,6 @@ export function SettingsShell({
   active,
   onSectionChange,
   headerLabel,
-  anySaving,
   saveError,
   children,
 }: {
@@ -21,7 +20,6 @@ export function SettingsShell({
   active: SectionId;
   onSectionChange: (section: SectionId) => void;
   headerLabel: string;
-  anySaving: boolean;
   saveError: string | null;
   children: ReactNode;
 }) {
@@ -82,9 +80,7 @@ export function SettingsShell({
           <div className="settings-main-inner">
             <div className="settings-main-header">
               <div className="settings-main-title">{headerLabel}</div>
-              {anySaving || saveError ? (
-                <div className="settings-main-sub">{anySaving ? "Saving…" : "Not saved"}</div>
-              ) : null}
+              {saveError ? <div className="settings-main-sub">Not saved</div> : null}
             </div>
 
             {saveError ? <div className="settings-banner settings-banner-error">{saveError}</div> : null}

@@ -1,6 +1,6 @@
 import type { ProviderUsageSnapshot } from "../api/client";
 import { readBoolish } from "../utils/boolish";
-import { desktopSaveTextFile, isDesktopApp } from "../utils/desktop";
+import { desktopSaveTextFile, isDesktopApp, type DesktopEditorSettings } from "../utils/desktop";
 import { SECTIONS } from "./SettingsPage.constants";
 import type { SectionId } from "./SettingsPage.types";
 
@@ -26,7 +26,7 @@ export function promptAutosaveStatusLabel(status: PromptAutosaveStatus): string 
     case "pending":
       return "Pending changes";
     case "saving":
-      return "Saving...";
+      return "";
     case "saved":
       return "Saved";
     case "error":
@@ -50,6 +50,28 @@ export function worktreeBootstrapFormFromConfig(
     timeout_sec: timeoutSec,
     wait_for_completion: readBoolish(cfg?.wait_for_completion) ?? false,
   };
+}
+
+export function normalizeDesktopEditorSettings(settings: DesktopEditorSettings): DesktopEditorSettings {
+  return {
+    target: settings.target,
+    custom_command: settings.target === "custom" ? settings.custom_command?.trim() || null : null,
+    remote_authority: settings.remote_authority?.trim() || null,
+  };
+}
+
+export function desktopEditorSettingsEqual(
+  left: DesktopEditorSettings | null | undefined,
+  right: DesktopEditorSettings | null | undefined,
+): boolean {
+  if (!left || !right) return left === right;
+  const normalizedLeft = normalizeDesktopEditorSettings(left);
+  const normalizedRight = normalizeDesktopEditorSettings(right);
+  return (
+    normalizedLeft.target === normalizedRight.target
+    && normalizedLeft.custom_command === normalizedRight.custom_command
+    && normalizedLeft.remote_authority === normalizedRight.remote_authority
+  );
 }
 
 export const saveTextFile = async (name: string, contents: string) => {

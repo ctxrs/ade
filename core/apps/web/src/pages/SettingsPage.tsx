@@ -25,8 +25,6 @@ import {
 } from "../api/client";
 import {
   type DesktopEditorSettings,
-  desktopGetEditorSettings,
-  desktopUpdateEditorSettings,
   isDesktopApp,
 } from "../utils/desktop";
 import { ensureDesktopNotificationPermission } from "../utils/desktopNotifications";
@@ -65,6 +63,7 @@ import {
 } from "./SettingsPage.constants";
 import { SettingsContentRouter } from "./settings/SettingsContentRouter";
 import { SettingsShell } from "./settings/SettingsShell";
+import { useDesktopEditorSettingsController } from "./settings/hooks/useDesktopEditorSettingsController";
 import { useSettingsActions } from "./settings/useSettingsActions";
 import { useSettingsState } from "./settings/useSettingsState";
 import type { SectionId, SettingsSectionMeta } from "./SettingsPage.types";
@@ -159,15 +158,12 @@ export default function SettingsPage() {
   const [resourceEffective, setResourceEffective] = useState<ResourceGovernanceLimits | null>(null);
   const [resourceStatus, setResourceStatus] = useState<ResourceGovernanceStatus | null>(null);
 
-  const [editorSettings, setEditorSettings] = useState<DesktopEditorSettings>({
-    target: "system",
-    custom_command: "",
-    remote_authority: "",
-  });
-  const [editorLoaded, setEditorLoaded] = useState(false);
-  const [editorSaving, setEditorSaving] = useState(false);
-  const [editorError, setEditorError] = useState<string | null>(null);
-  const editorHydrated = useRef(false);
+  const {
+    editorSettings,
+    setEditorSettings,
+    editorLoaded,
+    editorError,
+  } = useDesktopEditorSettingsController(isDesktopApp());
 
   const clientSettingsState = useSyncExternalStore(
     subscribeClientSettings,
@@ -450,25 +446,6 @@ export default function SettingsPage() {
   }, []);
 
   useEffect(() => {
-    if (!isDesktopApp()) return;
-    let cancelled = false;
-    desktopGetEditorSettings()
-      .then((settings) => {
-        if (cancelled) return;
-        setEditorSettings(settings);
-        setEditorLoaded(true);
-      })
-      .catch((e: unknown) => {
-        if (cancelled) return;
-        setEditorError(errorMessage(e));
-        setEditorLoaded(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
     if (clientSettingsState.loaded) return;
     loadClientSettings().catch((err) => {
       setClientSettingsError(err?.message ?? String(err));
@@ -582,32 +559,6 @@ export default function SettingsPage() {
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, resourceGovernancePayload, resourceGovernanceCanSave]);
-
-  useEffect(() => {
-    if (!isDesktopApp()) return;
-    if (!editorLoaded) return;
-    if (!editorHydrated.current) {
-      editorHydrated.current = true;
-      return;
-    }
-    const t = window.setTimeout(() => {
-      setEditorSaving(true);
-      setEditorError(null);
-      const next: DesktopEditorSettings = {
-        target: editorSettings.target,
-        custom_command:
-          editorSettings.target === "custom"
-            ? editorSettings.custom_command?.trim() || null
-            : null,
-        remote_authority: editorSettings.remote_authority?.trim() || null,
-      };
-      desktopUpdateEditorSettings(next)
-        .then((next) => setEditorSettings(next))
-        .catch((e: unknown) => setEditorError(errorMessage(e)))
-        .finally(() => setEditorSaving(false));
-    }, 350);
-    return () => window.clearTimeout(t);
-  }, [editorSettings, editorLoaded]);
 
   useEffect(() => {
     listWorkspaces()
@@ -724,11 +675,6 @@ export default function SettingsPage() {
       setWorkspaceId(workspaceFromQuery);
     }
   }, [workspaceFromQuery, workspaceId]);
-
-  const anySaving =
-    saving
-    || editorSaving
-    || clientSettingsSaving;
 
   const vscodeRemoteTargets: DesktopEditorSettings["target"][] = [
     "vscode",
@@ -879,7 +825,6 @@ export default function SettingsPage() {
       active={active}
       onSectionChange={handleSectionChange}
       headerLabel={headerLabel}
-      anySaving={anySaving}
       saveError={saveError}
     >
       <SettingsContentRouter
