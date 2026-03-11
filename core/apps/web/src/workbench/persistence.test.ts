@@ -12,8 +12,6 @@ vi.mock("../api/client", () => ({
 }));
 
 vi.mock("../state/uiStateStore", () => ({
-  clearWorkbenchSelectionV1: vi.fn(),
-  loadWorkbenchSelectionV1: vi.fn(),
   uiStateBatch: vi.fn(),
   uiStateDelete: vi.fn(),
   uiStateGet: vi.fn(),

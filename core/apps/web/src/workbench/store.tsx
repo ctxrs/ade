@@ -7,7 +7,6 @@ import {
   loadWorkbenchDraftV1,
   loadWorkbenchWindowV1,
   decodePersistedWorkbenchWindowV1,
-  migrateLegacySelectionToWindowV1,
   saveWorkbenchDraftV1,
   saveWorkbenchWindowV1,
   saveWorkbenchWindowV1Immediate,
@@ -337,16 +336,6 @@ export class WorkbenchStore {
       const loaded = await loadWorkbenchWindowV1(workspaceId, windowId);
       if (loaded && !this.layoutDirtyBeforeHydrate && !this.seededFromSessionStorage) {
         this.snapshot = { ...this.snapshot, window: loaded };
-      }
-      if (!this.layoutDirtyBeforeHydrate) {
-        const migrated = await migrateLegacySelectionToWindowV1({
-          workspaceId,
-          windowId,
-          defaultWindow: this.snapshot.window,
-        });
-        if (migrated.migrated) {
-          this.snapshot = { ...this.snapshot, window: migrated.window };
-        }
       }
       const normalized = this.pruneScrollByKey(this.snapshot.window.scrollByKey);
       if (!this.scrollByKeyEquals(this.snapshot.window.scrollByKey, normalized)) {

@@ -40,45 +40,6 @@ export async function uiStateDelete(key: string): Promise<void> {
   await storage.deleteKv(key);
 }
 
-export type PersistedWorkbenchSelectionV1 = {
-  v: 1;
-  taskId: string | null;
-  sessionId: string | null;
-};
-
-export function workbenchSelectionKeyV1(workspaceId: string) {
-  return `wb.selection.v1.${workspaceId}`;
-}
-
-function isStringOrNull(v: unknown): v is string | null {
-  return v === null || typeof v === "string";
-}
-
-export function decodeWorkbenchSelectionV1(raw: unknown): PersistedWorkbenchSelectionV1 | null {
-  if (!raw || typeof raw !== "object") return null;
-  const rec = raw as Record<string, unknown>;
-  if (rec.v !== 1) return null;
-  if (!isStringOrNull(rec.taskId)) return null;
-  if (!isStringOrNull(rec.sessionId)) return null;
-
-  const taskId = rec.taskId;
-  const sessionId = taskId ? rec.sessionId : null;
-  return { v: 1, taskId, sessionId };
-}
-
-export async function loadWorkbenchSelectionV1(workspaceId: string): Promise<PersistedWorkbenchSelectionV1 | null> {
-  const raw = await uiStateGet(workbenchSelectionKeyV1(workspaceId));
-  return decodeWorkbenchSelectionV1(raw);
-}
-
-export async function saveWorkbenchSelectionV1(workspaceId: string, sel: PersistedWorkbenchSelectionV1): Promise<void> {
-  await uiStateSet(workbenchSelectionKeyV1(workspaceId), sel);
-}
-
-export async function clearWorkbenchSelectionV1(workspaceId: string): Promise<void> {
-  await uiStateDelete(workbenchSelectionKeyV1(workspaceId));
-}
-
 export type PersistedWorkspaceActiveTaskSummaryV1 = {
   task: import("@ctx/types").Task;
   primary_session: import("@ctx/types").SessionSnapshotSummary | null;

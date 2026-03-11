@@ -1,7 +1,6 @@
 import { getDaemonConnection } from "../api/client";
-import { clearWorkbenchSelectionV1, loadWorkbenchSelectionV1, uiStateBatch, uiStateDelete, uiStateGet, uiStateSet } from "../state/uiStateStore";
+import { uiStateBatch, uiStateDelete, uiStateGet, uiStateSet } from "../state/uiStateStore";
 import { serializeDaemonTargetScope } from "../state/scopeIdentity";
-import { randomUuid } from "../utils/randomUuid";
 import type {
   LayoutNode,
   PersistedWorkbenchDraftV1,
@@ -16,7 +15,6 @@ import type {
   TerminalScope,
   WorkbenchDraft,
   WorkbenchScrollState,
-  WorkbenchTab,
 } from "./types";
 
 const WINDOW_DB_VERSION = 1 as const;
@@ -445,54 +443,4 @@ export async function saveWorkbenchTerminalTitlesV1(
 }
 export async function deleteWorkbenchDiffPaneOpenV1(workspaceId: string, scopeId: string): Promise<void> {
   await uiStateDelete(workbenchDiffPaneKeyV1(workspaceId, scopeId));
-}
-
-export async function migrateLegacySelectionToWindowV1(opts: {
-  workspaceId: string;
-  windowId: string;
-  defaultWindow: PersistedWorkbenchWindowV1;
-}): Promise<{ migrated: boolean; window: PersistedWorkbenchWindowV1 }> {
-  const { workspaceId, windowId, defaultWindow } = opts;
-  const legacy = await loadWorkbenchSelectionV1(workspaceId).catch(() => null);
-  const legacyTaskId = String(legacy?.taskId ?? "").trim();
-  if (!legacyTaskId) return { migrated: false, window: defaultWindow };
-  const legacySessionId = legacy?.sessionId ?? null;
-
-  const firstLeaf = findFirstLeaf(defaultWindow.layout);
-  if (!firstLeaf) return { migrated: false, window: defaultWindow };
-
-  const next: PersistedWorkbenchWindowV1 = {
-    ...defaultWindow,
-    layout: replaceLeaf(defaultWindow.layout, firstLeaf.id, (leaf) => {
-      const existing = leaf.tabs[0];
-      const tab: WorkbenchTab = {
-        id: existing?.id ?? randomUuid(),
-        kind: "task",
-        ref: { taskId: legacyTaskId, sessionId: legacySessionId },
-      };
-      return { ...leaf, tabs: [tab], activeTabId: tab.id };
-    }),
-    focusedLeafId: firstLeaf.id,
-  };
-
-  await saveWorkbenchWindowV1(workspaceId, windowId, next).catch(() => {});
-  await clearWorkbenchSelectionV1(workspaceId).catch(() => {});
-  return { migrated: true, window: next };
-}
-
-function findFirstLeaf(node: LayoutNode): Extract<LayoutNode, { kind: "leaf" }> | null {
-  if (node.kind === "leaf") return node;
-  return findFirstLeaf(node.first) ?? findFirstLeaf(node.second);
-}
-
-function replaceLeaf(
-  node: LayoutNode,
-  leafId: string,
-  fn: (leaf: Extract<LayoutNode, { kind: "leaf" }>) => Extract<LayoutNode, { kind: "leaf" }>,
-): LayoutNode {
-  if (node.kind === "leaf") {
-    if (node.id !== leafId) return node;
-    return fn(node);
-  }
-  return { ...node, first: replaceLeaf(node.first, leafId, fn), second: replaceLeaf(node.second, leafId, fn) };
 }
