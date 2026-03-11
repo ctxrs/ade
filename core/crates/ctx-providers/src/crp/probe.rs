@@ -111,11 +111,13 @@ pub async fn probe_crp_models(request: CrpModelsProbeRequest) -> Result<CrpModel
             if let CrpEvent::ModelsList {
                 models,
                 current_model_id,
+                catalog_source,
             } = env.event
             {
                 return Ok(CrpModelsProbe {
                     models,
                     current_model_id,
+                    catalog_source,
                 });
             }
         }
@@ -282,7 +284,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let script = write_probe_script(
             &tmp,
-            "read _\necho '{\"seq\":1,\"channel\":\"control\",\"type\":\"models.list\",\"models\":[{\"id\":\"gpt-5\",\"name\":\"GPT-5\"}],\"current_model_id\":\"gpt-5\"}'",
+            "read _\necho '{\"seq\":1,\"channel\":\"control\",\"type\":\"models.list\",\"models\":[{\"id\":\"gpt-5\",\"name\":\"GPT-5\"}],\"current_model_id\":\"gpt-5\",\"catalog_source\":\"live_remote\"}'",
         );
 
         let probe = probe_crp_models(CrpModelsProbeRequest {
@@ -299,6 +301,7 @@ mod tests {
         .expect("models probe should succeed");
 
         assert_eq!(probe.current_model_id.as_deref(), Some("gpt-5"));
+        assert_eq!(probe.catalog_source.as_deref(), Some("live_remote"));
         assert_eq!(probe.models.len(), 1);
         assert_eq!(probe.models[0].id, "gpt-5");
     }

@@ -1,18 +1,13 @@
 use std::collections::{HashMap, HashSet};
-use std::path::{Path as StdPath, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
-use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
-use axum::Json;
-use chrono::Utc;
-use futures::{Stream, StreamExt};
-use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
-
 use super::errors::ApiErrorResp;
+use super::provider_catalog::{
+    provider_options_cache_entry_is_authoritative, runtime_probe_models_payload,
+};
+use super::provider_probe_auth::{provider_auth_mode, provider_has_active_auth_config};
 use super::redact_json_value;
 use crate::daemon::AppState;
 use crate::harness_sources;
@@ -21,7 +16,6 @@ use crate::harness_sources::{
 };
 use crate::installs::{InstallId, InstallInfo, InstallProgressEvent, InstallTarget};
 use crate::logs;
-use crate::provider_accounts;
 use crate::provider_launch::install as provider_launch_install;
 use crate::provider_launch::probe;
 use crate::provider_launch::resolver::{
@@ -32,9 +26,16 @@ use crate::provider_launch::status::{
     install_target_for_workspace, provider_status_for_target,
     workspace_execution_settings_error_json,
 };
+use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
+use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
+use axum::Json;
+use chrono::Utc;
 use ctx_core::ids::WorkspaceId;
 use ctx_providers::crp::{probe_crp_models, probe_crp_runtime_launch};
-
+use futures::{Stream, StreamExt};
+use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
 fn invalid_provider_id_error(
     provider_id: &str,
     canonical_id: &str,
@@ -52,7 +53,6 @@ fn invalid_provider_id_error(
         })),
     )
 }
-
 #[derive(Debug, Deserialize)]
 pub(super) struct InstallTargetQuery {
     target: Option<String>,
@@ -396,19 +396,6 @@ pub(crate) fn endpoint_models_payload(
     })
 }
 
-fn endpoint_selection_is_active(config: &harness_sources::HarnessProviderSourceConfig) -> bool {
-    if config.selected_source_kind != HarnessSourceKind::Endpoint {
-        return false;
-    }
-    let Some(selected_endpoint_id) = config.selected_endpoint_id.as_deref() else {
-        return false;
-    };
-    config
-        .endpoints
-        .iter()
-        .any(|endpoint| endpoint.id == selected_endpoint_id)
-}
-
 pub(super) fn endpoint_supports_model_catalog_verify(endpoint: &HarnessEndpointRecord) -> bool {
     endpoint.api_shape == HarnessApiShape::OpenaiResponses
         && endpoint
@@ -456,41 +443,6 @@ pub(super) fn endpoint_catalog_verify_outcome(
     }
 }
 
-async fn provider_has_active_auth_config(
-    data_root: &StdPath,
-    provider_id: &str,
-    source_config: Option<&harness_sources::HarnessProviderSourceConfig>,
-) -> bool {
-    if let Some(config) = source_config {
-        if endpoint_selection_is_active(config) {
-            return true;
-        }
-        if provider_id == "codex" && config.selected_source_kind == HarnessSourceKind::Subscription
-        {
-            return true;
-        }
-    }
-    match provider_accounts::subscription_env_for_active_account(data_root, provider_id).await {
-        Ok(env) => !env.is_empty(),
-        Err(_) => false,
-    }
-}
-
-fn provider_auth_mode(
-    has_active_auth: bool,
-    source_config: Option<&harness_sources::HarnessProviderSourceConfig>,
-) -> &'static str {
-    if !has_active_auth {
-        return "none";
-    }
-    if let Some(config) = source_config {
-        if endpoint_selection_is_active(config) {
-            return "endpoint";
-        }
-    }
-    "subscription"
-}
-
 pub(super) async fn get_provider_options(
     State(state): State<Arc<AppState>>,
     Path((ws_id, provider_id)): Path<(String, String)>,
@@ -521,7 +473,10 @@ pub(super) async fn get_provider_options(
         .await
         .get(&cache_key)
         .map(|c| (c.cached_at, c.value.clone()));
-    if let Some((cached_at, cached_value)) = cached_entry.as_ref() {
+    let authoritative_cached_entry = cached_entry
+        .as_ref()
+        .filter(|(_, value)| provider_options_cache_entry_is_authoritative(&provider_id, value));
+    if let Some((cached_at, cached_value)) = authoritative_cached_entry {
         if cached_at.elapsed() < CACHE_TTL {
             let mut out = cached_value.clone();
             if let Some((verify_at, verify)) = verify_entry.as_ref() {
@@ -534,12 +489,12 @@ pub(super) async fn get_provider_options(
             return Ok(Json(out));
         }
     }
-    let cached_models = cached_entry
+    let cached_models = authoritative_cached_entry
         .as_ref()
         .and_then(|(_, value)| value.get("models"))
         .cloned()
         .filter(|v| !v.is_null());
-    let cached_modes = cached_entry
+    let cached_modes = authoritative_cached_entry
         .as_ref()
         .and_then(|(_, value)| value.get("modes"))
         .cloned()
@@ -804,7 +759,8 @@ pub(super) async fn get_provider_options(
     };
 
     let mut raw_resp = match probe {
-        Ok(probe) => serde_json::json!({
+        Ok(probe) => {
+            let mut value = serde_json::json!({
             "provider_id": provider_id,
             "workspace_id": ws_id.0,
             "installed": provider_status.installed,
@@ -813,12 +769,13 @@ pub(super) async fn get_provider_options(
             "auth_required": false,
             "has_active_auth": has_active_auth,
             "auth_mode": auth_mode,
-            "models": {
-                "models": probe.models,
-                "current_model_id": probe.current_model_id,
-            },
             "probed_at": chrono::Utc::now().to_rfc3339(),
-        }),
+            });
+            if let Some(models) = runtime_probe_models_payload(&probe) {
+                value["models"] = models;
+            }
+            value
+        }
         Err(e) => {
             let probe_error = logs::redact_sensitive(&e.to_string());
             let (_, auth_required, _) = classify_probe_error(&probe_error);

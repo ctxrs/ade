@@ -88,6 +88,7 @@ import { SessionAuthBanner } from "./sessionView/SessionAuthBanner";
 import { SessionDebugPanel } from "./sessionView/SessionDebugPanel";
 import { getQueuedAttachments, SessionQueuePanel } from "./sessionView/SessionQueuePanel";
 import { SessionSubagentInvocationsCard } from "./sessionView/SessionSubagentInvocationsCard";
+import { useSharedSessionProviderOptions } from "./sessionView/useSharedSessionProviderOptions";
 
 // Edge case: the workspace stream can deliver the real message before the
 // POST response updates the optimistic entry. We drop pending entries once
@@ -776,15 +777,14 @@ export function SessionView({
     }
   }, [authUi.methods, authMethodId]);
 
+  const sharedProviderOptions = useSharedSessionProviderOptions(session);
+
   const modelOptions = useMemo(() => {
-    const models = entry?.acpModels;
-    if (models) {
-      const parsed = buildModelsFromProviderOptions({ models } as ProviderOptions);
-      if (parsed.length > 0) return parsed;
-    }
+    const parsed = buildModelsFromProviderOptions(sharedProviderOptions);
+    if (parsed.length > 0) return parsed;
     const fallbackId = String(session?.model_id ?? "").trim();
     return fallbackId ? [{ id: fallbackId, name: fallbackId }] : [];
-  }, [entry?.acpModels, session?.model_id]);
+  }, [session?.model_id, sharedProviderOptions]);
   const currentModelId = useMemo(() => {
     const fromMeta = String(entry?.acpCurrentModelId ?? "").trim();
     if (fromMeta) return fromMeta;

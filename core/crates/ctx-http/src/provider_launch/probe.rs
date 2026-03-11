@@ -48,6 +48,28 @@ async fn provider_env_with_runtime_root(
         env.insert("CTX_AUTH_TOKEN".to_string(), token.clone());
     }
     if source.source_kind == HarnessSourceKind::Subscription {
+        if require_subscription_account_env && provider_id == "codex" {
+            let has_auth = match runtime_data_root {
+                Some(runtime_root) => {
+                    provider_accounts::codex_has_active_auth_with_runtime_root(
+                        &state.core.data_root,
+                        runtime_root,
+                    )
+                    .await
+                }
+                None => provider_accounts::codex_has_active_auth(&state.core.data_root).await,
+            }
+            .map_err(|err| {
+                logs::redact_sensitive(&format!(
+                    "probe subscription env preparation failed: {err:#}"
+                ))
+            })?;
+            if !has_auth {
+                return Err(format!(
+                    "subscription account env is missing for provider '{provider_id}'; configure an active account or select an endpoint"
+                ));
+            }
+        }
         let extra = match runtime_data_root {
             Some(runtime_root) => {
                 provider_accounts::subscription_env_for_active_account_with_runtime_root(
@@ -345,6 +367,35 @@ mod tests {
     use crate::provider_accounts;
     use crate::provider_accounts::KIMI_SHARE_DIR_ENV;
     use crate::settings::{ContainerMountMode, ExecutionMode};
+
+    static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    async fn lock_env() -> tokio::sync::MutexGuard<'static, ()> {
+        ENV_LOCK.lock().await
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        prev: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn without(key: &'static str) -> Self {
+            let prev = std::env::var(key).ok();
+            std::env::remove_var(key);
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(value) = self.prev.as_deref() {
+                std::env::set_var(self.key, value);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
 
     async fn test_state(data_root: &Path) -> Arc<AppState> {
         let stores = StoreManager::open(data_root).await.expect("open stores");
@@ -680,6 +731,8 @@ mod tests {
 
     #[tokio::test]
     async fn provider_probe_env_projects_codex_subscription_env_into_runtime_root() {
+        let _env_lock = lock_env().await;
+        let _guard = EnvGuard::without("CTX_CODEX_HOME");
         let data_root = tempfile::tempdir().expect("tempdir");
         let runtime_root = tempfile::tempdir().expect("tempdir");
         let state = test_state(data_root.path()).await;

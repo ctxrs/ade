@@ -27,6 +27,7 @@ import {
   getProviderWorkspaceOwnerScope,
 } from "./providerScopeAdapters";
 import {
+  isFinalProviderModelCatalog,
   hasFailedProviderModelProbe,
   hasProviderModels,
   isPinnedSubscriptionBootstrapCatalog,
@@ -137,6 +138,25 @@ export const resolveProviderOptionsUpdateForScope = (
 ): ProviderOptions | undefined => {
   if (!next) return previous === undefined ? previous : next;
   let resolved = next;
+  if (
+    ownerScope
+    && previous
+    && sameProviderOptionsAuthScope(ownerScope, previous, next)
+    && next.has_active_auth === true
+    && hasProviderModels(previous)
+    && hasProviderModels(next)
+    && isFinalProviderModelCatalog(previous)
+    && !isFinalProviderModelCatalog(next)
+  ) {
+    resolved = { ...resolved, models: previous.models };
+    if (hasFailedProviderModelProbe(previous) && !hasFailedProviderModelProbe(resolved)) {
+      resolved = {
+        ...resolved,
+        probe_ok: previous.probe_ok,
+        probe_error: previous.probe_error ?? resolved.probe_error,
+      };
+    }
+  }
   if (
     ownerScope
     && previous

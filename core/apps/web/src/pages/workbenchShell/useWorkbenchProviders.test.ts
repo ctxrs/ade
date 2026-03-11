@@ -212,9 +212,30 @@ describe("shouldHydrateProviderModels", () => {
       models: {
         models: [{ id: "anthropic/claude-sonnet-4.5" }],
         current_model_id: "anthropic/claude-sonnet-4.5",
+        meta: {
+          source_kind: "subscription",
+          catalog_source: "runtime_probe_live",
+          refresh_pending: false,
+        },
       },
     };
     expect(shouldHydrateProviderModels("claude-crp", options)).toBe(false);
+  });
+
+  it("keeps hydrating when discovery models exist but are still provisional", () => {
+    const options: ProviderOptions = {
+      ...baseOptions("codex"),
+      models: {
+        models: [{ id: "gpt-5.4/medium" }],
+        current_model_id: "gpt-5.4/medium",
+        meta: {
+          source_kind: "subscription",
+          catalog_source: "codex_bundle_pinned",
+          refresh_pending: true,
+        },
+      },
+    };
+    expect(shouldHydrateProviderModels("codex", options)).toBe(true);
   });
 
   it("does not request hydration for providers without CRP model discovery", () => {

@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -168,6 +168,8 @@ pub enum CrpEvent {
         models: Vec<CrpModelInfo>,
         #[serde(default)]
         current_model_id: Option<String>,
+        #[serde(default)]
+        catalog_source: Option<String>,
     },
     #[serde(rename = "turn.completed")]
     TurnCompleted {

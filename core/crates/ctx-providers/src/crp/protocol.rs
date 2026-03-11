@@ -112,6 +112,7 @@ pub struct CrpModelInfo {
 pub struct CrpModelsProbe {
     pub models: Vec<CrpModelInfo>,
     pub current_model_id: Option<String>,
+    pub catalog_source: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -265,6 +266,8 @@ pub(super) enum CrpEvent {
         models: Vec<CrpModelInfo>,
         #[serde(default)]
         current_model_id: Option<String>,
+        #[serde(default)]
+        catalog_source: Option<String>,
     },
     #[serde(rename = "turn.completed")]
     TurnCompleted {

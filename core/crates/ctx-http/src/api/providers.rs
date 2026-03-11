@@ -33,6 +33,8 @@ use ctx_providers::adapters::{ProviderRestartMode, ProviderStatus};
 
 mod accounts;
 mod bootstrap;
+#[cfg(test)]
+mod codex_auth_tests;
 mod harness_config;
 mod imports;
 mod install;
@@ -908,19 +910,6 @@ mod tests {
         };
         let active = provider_has_active_auth_config(root.path(), "cursor", Some(&source)).await;
         assert!(!active);
-    }
-
-    #[tokio::test]
-    async fn codex_subscription_selection_counts_as_active_auth_config() {
-        let root = tempfile::tempdir().expect("tempdir");
-        let source = harness_sources::HarnessProviderSourceConfig {
-            provider_id: "codex".to_string(),
-            selected_source_kind: HarnessSourceKind::Subscription,
-            selected_endpoint_id: None,
-            endpoints: vec![],
-        };
-        let active = provider_has_active_auth_config(root.path(), "codex", Some(&source)).await;
-        assert!(active);
     }
 
     #[tokio::test]

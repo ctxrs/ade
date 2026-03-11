@@ -284,6 +284,31 @@ async fn codex_env_seeds_runtime_home_from_host_when_enabled_without_active_acco
 }
 
 #[tokio::test]
+async fn codex_env_uses_host_auth_candidate_without_active_account() {
+    let _env_lock = lock_env().await;
+    let _guard = EnvGuard::without("CTX_CODEX_HOME");
+    let _seed_guard = EnvGuard::without(CTX_SEED_CODEX_AUTH_FROM_HOST_ENV);
+    let host = tempfile::tempdir().unwrap();
+    let host_auth = host.path().join("auth.json");
+    tokio::fs::write(
+        &host_auth,
+        br#"{"tokens":{"access_token":"seeded-access","refresh_token":"seeded-refresh"}}"#,
+    )
+    .await
+    .unwrap();
+    let _path_guard = EnvGuard::set(
+        CTX_CODEX_HOST_AUTH_PATH_ENV,
+        host_auth.to_string_lossy().as_ref(),
+    );
+    let dir = tempfile::tempdir().unwrap();
+
+    let env = codex_env_for_active_account(dir.path()).await.unwrap();
+    let home = env.get("CODEX_HOME").unwrap();
+    assert_eq!(home, &codex_runtime_home(dir.path()).to_string_lossy());
+    ensure_codex_auth_ready(Path::new(home)).await.unwrap();
+}
+
+#[tokio::test]
 async fn codex_env_seed_enabled_fails_when_host_auth_missing() {
     let _env_lock = lock_env().await;
     let _guard = EnvGuard::without("CTX_CODEX_HOME");
@@ -306,6 +331,14 @@ async fn codex_env_seed_enabled_fails_when_host_auth_missing() {
 async fn codex_env_clears_stale_runtime_auth_when_no_active_account() {
     let _env_lock = lock_env().await;
     let _guard = EnvGuard::without("CTX_CODEX_HOME");
+    let missing_host_auth = tempfile::tempdir()
+        .unwrap()
+        .path()
+        .join("missing-auth.json");
+    let _host_guard = EnvGuard::set(
+        CTX_CODEX_HOST_AUTH_PATH_ENV,
+        missing_host_auth.to_string_lossy().as_ref(),
+    );
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     tokio::fs::create_dir_all(codex_runtime_home(root))
