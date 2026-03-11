@@ -4,9 +4,19 @@ const DEFAULT_CHANNEL = "stable";
 export function renderInstallScript({
   functionsBase = DEFAULT_FUNCTIONS_BASE,
   channel = DEFAULT_CHANNEL,
+  downloadId = "",
+  referrerDomain = "",
+  utmSource = "",
+  utmMedium = "",
+  utmCampaign = "",
 } = {}) {
   const normalizedBase = String(functionsBase).replace(/\/+$/, "");
   const normalizedChannel = String(channel);
+  const normalizedDownloadId = String(downloadId).trim();
+  const normalizedReferrerDomain = String(referrerDomain).trim();
+  const normalizedUtmSource = String(utmSource).trim();
+  const normalizedUtmMedium = String(utmMedium).trim();
+  const normalizedUtmCampaign = String(utmCampaign).trim();
   return `#!/bin/sh
 set -eu
 
@@ -31,7 +41,12 @@ need_cmd uname
 
 functions_base="\${CTX_FUNCTIONS_BASE:-${normalizedBase}}"
 channel="\${CTX_CHANNEL:-${normalizedChannel}}"
-manifest_url="\${functions_base%/}/releases/$channel/latest.json"
+download_id="\${CTX_DOWNLOAD_ID:-${normalizedDownloadId}}"
+referrer_domain="\${CTX_INSTALL_REFERRER_DOMAIN:-${normalizedReferrerDomain}}"
+utm_source="\${CTX_INSTALL_UTM_SOURCE:-${normalizedUtmSource}}"
+utm_medium="\${CTX_INSTALL_UTM_MEDIUM:-${normalizedUtmMedium}}"
+utm_campaign="\${CTX_INSTALL_UTM_CAMPAIGN:-${normalizedUtmCampaign}}"
+manifest_url_base="\${functions_base%/}/releases/$channel/latest.json"
 os="$(uname -s)"
 arch="$(uname -m)"
 
@@ -49,6 +64,37 @@ cleanup() {
   rm -rf "$tmp_dir"
 }
 trap cleanup EXIT INT TERM
+
+append_query_param() {
+  input_url="$1"
+  key="$2"
+  value="$3"
+  if [ -z "$value" ]; then
+    printf "%s\\n" "$input_url"
+    return
+  fi
+  separator="?"
+  case "$input_url" in
+    *\\?*) separator="&" ;;
+  esac
+  printf "%s%s%s=%s\\n" "$input_url" "$separator" "$key" "$value"
+}
+
+append_release_attribution() {
+  input_url="$1"
+  output_url="$(append_query_param "$input_url" "ctx_download_id" "$download_id")"
+  output_url="$(append_query_param "$output_url" "referrer_domain" "$referrer_domain")"
+  output_url="$(append_query_param "$output_url" "utm_source" "$utm_source")"
+  output_url="$(append_query_param "$output_url" "utm_medium" "$utm_medium")"
+  output_url="$(append_query_param "$output_url" "utm_campaign" "$utm_campaign")"
+  printf "%s\\n" "$output_url"
+}
+
+first_open_start_path() {
+  output_path="/"
+  output_path="$(append_query_param "$output_path" "ctx_download_id" "$download_id")"
+  printf "%s\\n" "$output_path"
+}
 
 extract_manifest_field_macos() {
   key="$1"
@@ -82,10 +128,11 @@ PY
 resolve_download_url() {
   url_path="$1"
   case "$url_path" in
-    http://*|https://*) printf "%s\\n" "$url_path" ;;
-    /*) printf "%s\\n" "\${functions_base%/}$url_path" ;;
-    *) printf "%s\\n" "\${functions_base%/}/$url_path" ;;
+    http://*|https://*) resolved_url="$url_path" ;;
+    /*) resolved_url="\${functions_base%/}$url_path" ;;
+    *) resolved_url="\${functions_base%/}/$url_path" ;;
   esac
+  append_release_attribution "$resolved_url"
 }
 
 sha256_of_file() {
@@ -114,12 +161,31 @@ verify_artifact_sha() {
   log "Verified artifact sha256"
 }
 
+find_macos_app_binary() {
+  app_path="$1"
+  binary_path="$(find "$app_path/Contents/MacOS" -maxdepth 1 \\( -type f -o -type l \\) | head -n 1)"
+  [ -n "$binary_path" ] || fail "could not find executable inside $app_path"
+  printf "%s\\n" "$binary_path"
+}
+
+launch_macos_app() {
+  app_path="$1"
+  start_path="$2"
+  app_binary="$(find_macos_app_binary "$app_path")"
+  CTX_DESKTOP_START_PATH="$start_path" "$app_binary" >/dev/null 2>&1 &
+}
+
+launch_linux_appimage() {
+  appimage_path="$1"
+  start_path="$2"
+  CTX_DESKTOP_START_PATH="$start_path" "$appimage_path" >/dev/null 2>&1 &
+}
+
 install_macos() {
   local_arch="$1"
   need_cmd hdiutil
   need_cmd plutil
   need_cmd ditto
-  need_cmd open
 
   case "$local_arch" in
     arm64) platform="macos-arm64" ;;
@@ -174,7 +240,7 @@ install_macos() {
 
   log "Installed $app_name to $target_app"
   if [ "\${CTX_INSTALL_NO_OPEN:-0}" != "1" ]; then
-    open "$target_app"
+    launch_macos_app "$target_app" "$(first_open_start_path)"
     log "Launched $app_name"
   fi
 }
@@ -222,11 +288,7 @@ install_linux() {
   log "Created launcher symlink at $bin_dir/ctx-desktop"
 
   if [ "\${CTX_INSTALL_NO_OPEN:-0}" != "1" ]; then
-    if command -v xdg-open >/dev/null 2>&1; then
-      xdg-open "$target_appimage" >/dev/null 2>&1 || "$target_appimage" >/dev/null 2>&1 &
-    else
-      "$target_appimage" >/dev/null 2>&1 &
-    fi
+    launch_linux_appimage "$target_appimage" "$(first_open_start_path)"
     log "Launched ctx desktop"
   fi
 }
@@ -234,6 +296,8 @@ install_linux() {
 install_windows() {
   fail "windows support is coming soon!"
 }
+
+manifest_url="$(append_release_attribution "$manifest_url_base")"
 
 log "Resolving latest release manifest from $manifest_url"
 curl -fsSL "$manifest_url" -o "$manifest_json"

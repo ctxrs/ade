@@ -778,6 +778,11 @@ describe("WorkspaceSetupPage", () => {
     await selectLocalAndContinue();
     await waitFor(() => {
       expect(wizardStepKey()).toBe("container");
+      expect(trackWizardStepCompletedMock).toHaveBeenCalledWith({
+        wizardKey: "workspace_setup",
+        stepKey: "location",
+        stepIndex: 0,
+      });
       expect(trackWizardStepViewedMock).toHaveBeenCalledWith({
         wizardKey: "workspace_setup",
         stepKey: "container",

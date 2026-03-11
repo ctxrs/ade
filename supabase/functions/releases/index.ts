@@ -1,20 +1,14 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
-import { createClient } from "npm:@supabase/supabase-js@2.49.1";
+import {
+  appendAttributionParamsToUrl,
+  attributionProperties,
+  hasAttributionContext,
+  readAcquisitionContext,
+  type DownloadAttributionContext,
+} from "../_shared/acquisition.ts";
 import { corsHeaders } from "../_shared/cors.ts";
 import { sha256Hex } from "../_shared/hash.ts";
 import { capturePostHogEvent } from "../_shared/posthog.ts";
-
-type UpdateCheckEvent = {
-  channel: string;
-  current_version?: string | null;
-  platform?: string | null;
-  result: string;
-  latest_version?: string | null;
-  install_id_hash?: string | null;
-  user_agent?: string | null;
-  ip_hash?: string | null;
-  country?: string | null;
-};
 
 const DOWNLOAD_ID_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/;
 
@@ -31,30 +25,17 @@ function normalizeDownloadId(raw: string | null): string | null {
   return trimmed;
 }
 
-function withDownloadId(urlValue: string, downloadId: string): string {
-  try {
-    const parsed = new URL(urlValue, "https://ctx.invalid");
-    parsed.searchParams.set("ctx_download_id", downloadId);
-    if (/^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(urlValue)) {
-      return parsed.toString();
-    }
-    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
-  } catch {
-    return urlValue;
-  }
-}
-
-function rewriteManifestDownloadUrls(value: unknown, downloadId: string): unknown {
+function rewriteManifestDownloadUrls(value: unknown, attribution: DownloadAttributionContext): unknown {
   if (Array.isArray(value)) {
-    return value.map((entry) => rewriteManifestDownloadUrls(entry, downloadId));
+    return value.map((entry) => rewriteManifestDownloadUrls(entry, attribution));
   }
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
     for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
       if (typeof nested === "string" && (key === "url" || key === "url_path")) {
-        out[key] = withDownloadId(nested, downloadId);
+        out[key] = appendAttributionParamsToUrl(nested, attribution);
       } else {
-        out[key] = rewriteManifestDownloadUrls(nested, downloadId);
+        out[key] = rewriteManifestDownloadUrls(nested, attribution);
       }
     }
     return out;
@@ -69,7 +50,6 @@ serve(async (req) => {
   }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
-  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
   const bucket = Deno.env.get("SUPABASE_STORAGE_BUCKET") ?? "releases";
   const ipSalt = Deno.env.get("IP_HASH_SALT") ?? "local-dev";
 
@@ -101,35 +81,18 @@ serve(async (req) => {
   const latestVersion = url.searchParams.get("latest_version");
   const installIdHash = url.searchParams.get("install_id_hash");
   const requestedDownloadId = normalizeDownloadId(url.searchParams.get("ctx_download_id"));
-  const userAgent = req.headers.get("user-agent");
   const ip = firstIp(req.headers.get("x-forwarded-for"));
   const ipHash = ip ? await sha256Hex(`${ipSalt}:${ip}`) : null;
   const country = req.headers.get("cf-ipcountry") ??
     req.headers.get("x-country") ??
     null;
+  const acquisition = readAcquisitionContext(req, url);
+  const downloadAttribution: DownloadAttributionContext = {
+    downloadId: requestedDownloadId,
+    ...acquisition,
+  };
 
   const emitManifestCheckTelemetry = async (result: "redirected" | "served_json"): Promise<void> => {
-    try {
-      const client = createClient(supabaseUrl, serviceRoleKey, {
-        auth: { persistSession: false },
-      });
-
-      const event: UpdateCheckEvent = {
-        channel,
-        current_version: currentVersion,
-        platform,
-        latest_version: latestVersion,
-        install_id_hash: installIdHash,
-        result,
-        user_agent: userAgent,
-        ip_hash: ipHash,
-        country,
-      };
-      await client.from("update_check_event").insert(event);
-    } catch {
-      // ignore
-    }
-
     try {
       void capturePostHogEvent({
         event: "release_manifest_checked",
@@ -144,6 +107,8 @@ serve(async (req) => {
           country,
           url_path: urlPath,
           download_id: requestedDownloadId,
+          ...(requestedDownloadId ? { download_id_source: "request" } : {}),
+          ...attributionProperties(acquisition),
         },
       }).catch(() => {
         // ignore
@@ -153,7 +118,7 @@ serve(async (req) => {
     }
   };
 
-  if (tail === "latest-tauri.json" && requestedDownloadId) {
+  if (tail === "latest-tauri.json" && hasAttributionContext(downloadAttribution)) {
     try {
       const manifestResp = await fetch(redirectTo, {
         headers: {
@@ -162,7 +127,7 @@ serve(async (req) => {
       });
       if (manifestResp.ok) {
         const manifestJson = await manifestResp.json();
-        const rewritten = rewriteManifestDownloadUrls(manifestJson, requestedDownloadId);
+        const rewritten = rewriteManifestDownloadUrls(manifestJson, downloadAttribution);
         await emitManifestCheckTelemetry("served_json");
         return new Response(JSON.stringify(rewritten), {
           status: 200,

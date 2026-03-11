@@ -2415,6 +2415,11 @@ export class SessionSupervisor {
       sessionId: idToString(entry.session?.id ?? turn.session_id ?? ""), turnId,
       providerId: String(entry.session?.provider_id ?? "").trim() || undefined,
       modelId: String(entry.session?.model_id ?? "").trim() || undefined,
+      sessionKind: entry.session?.parent_session_id || entry.session?.relationship === "sub_agent"
+        ? "subagent"
+        : "primary",
+      startedAt: turn.started_at,
+      completedAt: turn.updated_at,
       title: entry.session?.title ? String(entry.session.title) : undefined,
       previousStatus: prevStatus,
       nextStatus: turn.status,

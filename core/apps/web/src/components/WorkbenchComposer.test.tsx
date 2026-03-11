@@ -6,6 +6,20 @@ import type { MessageAttachment, ProviderOptions, ProviderStatus } from "../api/
 import type { DraftHarness, WorkbenchModeId } from "./WorkbenchComposer";
 import type { HarnessCatalogEntry } from "../utils/harnessCatalog";
 
+const { trackFeatureUsedMock, trackProviderSelectedMock } = vi.hoisted(() => ({
+  trackFeatureUsedMock: vi.fn(),
+  trackProviderSelectedMock: vi.fn(),
+}));
+
+vi.mock("../utils/analytics", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../utils/analytics")>();
+  return {
+    ...actual,
+    trackFeatureUsed: trackFeatureUsedMock,
+    trackProviderSelected: trackProviderSelectedMock,
+  };
+});
+
 function mockRaf() {
   vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb: FrameRequestCallback) => {
     return window.setTimeout(() => cb(performance.now()), 0) as unknown as number;
@@ -48,6 +62,8 @@ describe("WorkbenchComposer textarea sizing", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    trackFeatureUsedMock.mockReset();
+    trackProviderSelectedMock.mockReset();
     if (originalScrollHeight) {
       Object.defineProperty(HTMLTextAreaElement.prototype, "scrollHeight", originalScrollHeight);
     } else {
@@ -1124,7 +1140,75 @@ describe("WorkbenchComposer textarea sizing", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /Cursor/ }));
     expect(onRequestHarnessAuth).toHaveBeenCalledWith("cursor");
+    expect(trackFeatureUsedMock).toHaveBeenCalledWith("harness_auth_requested", {
+      provider_id: "cursor",
+      entry_surface: "workbench_new_task",
+    });
+    expect(trackProviderSelectedMock).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Codex" })).toBeInTheDocument();
+  });
+
+  it("tracks provider_selected when the composer switches harnesses", async () => {
+    const NewTaskHarness = () => {
+      const [value, setValue] = useState("");
+      const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
+      const [draftHarness, setDraftHarness] = useState<DraftHarness | null>({ providerId: "codex", modelId: "" });
+      const harnessCatalog: HarnessCatalogEntry[] = [
+        { id: "codex", label: "Codex", logoSrc: "" },
+        { id: "cursor", label: "Cursor", logoSrc: "" },
+      ];
+      const providersById: Record<string, ProviderStatus> = {
+        codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
+        cursor: { provider_id: "cursor", installed: true, health: "ok", diagnostics: [] },
+      };
+      const providerOptions: Record<string, ProviderOptions | undefined> = {
+        codex: { ...baseOptions("codex"), has_active_auth: true },
+        cursor: { ...baseOptions("cursor"), has_active_auth: true },
+      };
+
+      return (
+        <WorkbenchComposer
+          variant="newSession"
+          value={value}
+          setValue={setValue}
+          placeholder="@ for context, / for commands"
+          inputDisabled={false}
+          sessionIdForAutocomplete={null}
+          workspaceIdForAutocomplete={null}
+          slashCommands={[]}
+          attachments={attachments}
+          setAttachments={setAttachments}
+          onSend={vi.fn()}
+          sendDisabled={false}
+          sendDisabledReason={null}
+          onInterrupt={null}
+          modeId={modeId}
+          setModeId={setModeId}
+          harnessCatalog={harnessCatalog}
+          providersById={providersById}
+          providerInstallsById={{}}
+          onInstallProvider={vi.fn()}
+          onInstallAllProviders={vi.fn()}
+          providerOptions={providerOptions}
+          ensureProviderAuthSummary={async (providerId: string) => providerOptions[providerId]}
+          draftHarness={draftHarness}
+          setDraftHarness={setDraftHarness}
+          defaultProviderId="codex"
+        />
+      );
+    };
+
+    render(<NewTaskHarness />);
+    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Cursor/ }));
+    expect(trackProviderSelectedMock).toHaveBeenCalledWith({
+      providerId: "cursor",
+      source: "provider_switch",
+    });
   });
 
   it("retries model hydration only when the user opens the model menu after a failed probe", async () => {

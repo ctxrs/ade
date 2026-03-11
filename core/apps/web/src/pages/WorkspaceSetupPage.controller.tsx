@@ -6,6 +6,7 @@ import {
   trackWizardAbandoned,
   trackWizardCompleted,
   trackWizardStarted,
+  trackWizardStepCompleted,
   trackWizardStepViewed,
 } from "../utils/analytics";
 
@@ -37,6 +38,7 @@ export function WorkspaceSetupPageController() {
     key: workflow.flow.step.key,
     index: workflow.flow.stepIndex,
   });
+  const lastWizardStepCompletedRef = useRef<{ key: string; index: number } | null>(null);
 
   const infoStep = openInfoKey
     ? workflow.flow.steps.find((step) => step.key === openInfoKey) ?? null
@@ -93,6 +95,18 @@ export function WorkspaceSetupPageController() {
   }, [wizardKey]);
 
   useEffect(() => {
+    const previous = lastWizardStepViewedRef.current;
+    if (workflow.flow.stepIndex > previous.index) {
+      const alreadyCompleted = lastWizardStepCompletedRef.current;
+      if (!alreadyCompleted || alreadyCompleted.key !== previous.key || alreadyCompleted.index !== previous.index) {
+        trackWizardStepCompleted({
+          wizardKey,
+          stepKey: previous.key,
+          stepIndex: previous.index,
+        });
+        lastWizardStepCompletedRef.current = previous;
+      }
+    }
     lastWizardStepViewedRef.current = { key: workflow.flow.step.key, index: workflow.flow.stepIndex };
     trackWizardStepViewed({
       wizardKey,

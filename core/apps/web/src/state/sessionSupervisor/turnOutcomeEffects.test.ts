@@ -60,6 +60,9 @@ describe("turnOutcomeEffects", () => {
       turnId: "turn-1",
       providerId: "codex",
       modelId: "gpt-5",
+      sessionKind: "subagent",
+      startedAt: "2026-03-10T00:00:00.000Z",
+      completedAt: "2026-03-10T00:00:42.000Z",
       title: "Demo session",
       previousStatus: "running",
       nextStatus: "completed",
@@ -69,11 +72,14 @@ describe("turnOutcomeEffects", () => {
       providerId: "codex",
       modelId: "gpt-5",
       status: "completed",
+      durationMs: 42000,
+      sessionKind: "subagent",
     });
     expect(trackFirstTurnCompleted).toHaveBeenCalledWith({
       sessionId: "session-1",
       providerId: "codex",
       status: "completed",
+      sessionKind: "subagent",
     });
     expect(sendDesktopNotification).toHaveBeenCalledWith({
       title: "Turn completed",

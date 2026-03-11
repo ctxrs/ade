@@ -86,6 +86,10 @@ describe("SessionSupervisor analytics tracking", () => {
     expect(changed).toBe(true);
     expect(trackProviderRunCompleted).toHaveBeenCalledTimes(1);
     expect(trackFirstTurnCompleted).toHaveBeenCalledTimes(1);
+    expect(trackProviderRunCompleted).toHaveBeenCalledWith(expect.objectContaining({
+      durationMs: 0,
+      sessionKind: "primary",
+    }));
   });
 
   it("emits terminal analytics for live transitions (notify=true)", () => {
@@ -106,6 +110,34 @@ describe("SessionSupervisor analytics tracking", () => {
     expect(changed).toBe(true);
     expect(trackProviderRunCompleted).toHaveBeenCalledTimes(1);
     expect(trackFirstTurnCompleted).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks nested sessions as subagent runs in analytics", () => {
+    const { supervisor, entry, turnId } = setupEntry();
+    entry.session = {
+      ...(entry.session as Session),
+      parent_session_id: "session-root",
+      relationship: "sub_agent",
+    };
+    const finishEvent: SessionEvent = {
+      seq: 2,
+      id: "ev-2",
+      session_id: "session-1",
+      turn_id: turnId,
+      event_type: "turn_finished",
+      payload_json: {},
+      created_at: baseIso,
+    };
+
+    expect(asSupervisorInternals(supervisor).applyEventToTurns(entry, finishEvent, {
+      notify: false,
+    })).toBe(true);
+    expect(trackProviderRunCompleted).toHaveBeenCalledWith(expect.objectContaining({
+      sessionKind: "subagent",
+    }));
+    expect(trackFirstTurnCompleted).toHaveBeenCalledWith(expect.objectContaining({
+      sessionKind: "subagent",
+    }));
   });
 
   it("does not double count the same terminal turn after replay has already tracked it", () => {

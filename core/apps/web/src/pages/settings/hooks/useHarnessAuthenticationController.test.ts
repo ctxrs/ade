@@ -55,6 +55,16 @@ import { createDesktopLocalDaemonTargetScope } from "../../../state/scopeIdentit
 import type { HarnessAuthRow } from "../harnessAuthRows";
 import { openExternalLink } from "../../../utils/desktop";
 
+const trackFeatureUsed = vi.hoisted(() => vi.fn());
+
+vi.mock("../../../utils/analytics", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../utils/analytics")>();
+  return {
+    ...actual,
+    trackFeatureUsed,
+  };
+});
+
 const bootstrapMockState = vi.hoisted(() => ({
   bootstrapStateByWorkspace: new Map<string, ProvidersBootstrapResponse>(),
   bootstrapLoadQueueByWorkspace: new Map<string, Array<ProvidersBootstrapResponse | Error>>(),
@@ -418,6 +428,7 @@ beforeEach(() => {
   vi.mocked(startGeminiLogin).mockReset();
   vi.mocked(upsertProviderHarnessEndpoint).mockReset();
   vi.mocked(verifyProviderForWorkspace).mockReset();
+  trackFeatureUsed.mockReset();
   vi.mocked(invalidateHostProvidersBootstrap).mockReset();
   vi.mocked(invalidateProvidersBootstrap).mockReset();
   vi.mocked(loadHostProvidersBootstrap).mockReset();
@@ -872,6 +883,49 @@ describe("useHarnessAuthenticationController", () => {
         project_id: "vertex-project",
         location: "global",
       }));
+    });
+  });
+
+  it("tracks provider source selection when choosing an existing endpoint row", async () => {
+    let controller: Controller | null = null;
+    const endpointRow: HarnessAuthRow = {
+      key: "endpoint:ep-old",
+      kind: "api_key",
+      label: "Primary",
+      active: false,
+      selectable: true,
+      endpoint_id: "ep-old",
+    };
+    const selectedEndpointConfig: HarnessProviderSourceConfig = {
+      ...baseCodexConfig,
+      selected_source_kind: "endpoint",
+      selected_endpoint_id: "ep-old",
+    };
+
+    setBootstrapSnapshot("ws-test", makeBootstrap());
+    vi.mocked(selectProviderHarnessSource).mockResolvedValue(selectedEndpointConfig);
+
+    render(createElement(ControllerHarness, {
+      onChange: (next) => {
+        controller = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(controller).not.toBeNull();
+    });
+
+    await act(async () => {
+      await controller?.onSelectHarnessAuthRow("codex", endpointRow);
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(selectProviderHarnessSource)).toHaveBeenCalledWith("codex", "endpoint", "ep-old");
+      expect(trackFeatureUsed).toHaveBeenCalledWith("provider_source_selected", {
+        provider_id: "codex",
+        source_kind: "endpoint",
+        scope_kind: "workspace",
+      });
     });
   });
 

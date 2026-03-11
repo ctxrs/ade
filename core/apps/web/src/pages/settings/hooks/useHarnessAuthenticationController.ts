@@ -34,6 +34,7 @@ import {
 } from "../../../api/client";
 import { subscribeDaemonConnection } from "../../../api/daemonConnection";
 import { desktopStartCodexLoginRelay, isDesktopApp, openExternalLink } from "../../../utils/desktop";
+import { trackFeatureUsed } from "../../../utils/analytics";
 import {
   EMPTY_PROVIDERS_BOOTSTRAP,
   invalidateHostProvidersBootstrap,
@@ -745,12 +746,18 @@ export function useHarnessAuthenticationController({
 
   const onSelectProviderSource = useCallback(
     async (providerId: string, sourceKind: "subscription" | "endpoint", endpointId?: string | null) => {
+      const ownerScope = requireOwnerScope();
       setProviderHarnessBusyForProvider(providerId, true);
       setProviderError(null);
       try {
-        await executeSelectProviderSource(requireOwnerScope(), providerId, {
+        await executeSelectProviderSource(ownerScope, providerId, {
           sourceKind,
           endpointId: endpointId ?? null,
+        });
+        trackFeatureUsed("provider_source_selected", {
+          provider_id: providerId,
+          source_kind: sourceKind,
+          scope_kind: ownerScope.kind,
         });
       } catch (error) {
         setProviderError(messageFromError(error));

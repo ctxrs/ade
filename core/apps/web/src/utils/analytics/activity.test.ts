@@ -11,6 +11,7 @@ vi.mock("./client", () => ({
 import {
   trackFirstTurnCompleted,
   trackFirstTurnSubmitted,
+  trackProviderRunCompleted,
   trackSessionCreated,
   trackWizardAbandoned,
   trackWizardCompleted,
@@ -115,6 +116,28 @@ describe("analytics events", () => {
         execution_environment: "container_host_mounted",
         session_root_kind: "worktree",
         session_location: "remote",
+      },
+    );
+  });
+
+  it("buckets provider run duration and includes session kind", () => {
+    trackProviderRunCompleted({
+      providerId: "codex",
+      modelId: "gpt-5-codex",
+      status: "completed",
+      durationMs: 42_000,
+      sessionKind: "subagent",
+    });
+
+    expect(captureProductEventMock).toHaveBeenCalledWith(
+      "provider_run_completed",
+      1,
+      {
+        provider_id: "codex",
+        model_id: "gpt-5-codex",
+        status: "completed",
+        duration_bucket: "15s_to_60s",
+        session_kind: "subagent",
       },
     );
   });

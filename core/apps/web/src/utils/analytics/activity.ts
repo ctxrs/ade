@@ -2,6 +2,7 @@ import { captureProductEvent } from "./client";
 import type { ExecutionEnvironment } from "@ctx/types";
 import type {
   AnalyticsProperties,
+  AnalyticsSessionKind,
   AnalyticsSessionLocation,
   AnalyticsSessionRootKind,
 } from "./types";
@@ -23,6 +24,17 @@ const markOnce = (key: string): boolean => {
 
 const capture = (eventName: string, properties: AnalyticsProperties): boolean => {
   return captureProductEvent(eventName, 1, properties);
+};
+
+const durationBucketForMs = (durationMs: number | undefined): string => {
+  if (!Number.isFinite(durationMs) || durationMs === undefined || durationMs < 0) {
+    return "unknown";
+  }
+  if (durationMs < 15_000) return "under_15s";
+  if (durationMs < 60_000) return "15s_to_60s";
+  if (durationMs < 5 * 60_000) return "1m_to_5m";
+  if (durationMs < 15 * 60_000) return "5m_to_15m";
+  return "15m_plus";
 };
 
 export const trackAppOpened = (props?: { downloadId?: string }): void => {
@@ -257,12 +269,15 @@ export const trackProviderRunCompleted = (props: {
   providerId?: string;
   modelId?: string;
   status: "completed" | "failed" | "interrupted";
+  durationMs?: number;
+  sessionKind?: AnalyticsSessionKind;
 }): void => {
   capture("provider_run_completed", {
     ...(props.providerId ? { provider_id: props.providerId } : {}),
     ...(props.modelId ? { model_id: props.modelId } : {}),
     status: props.status,
-    duration_bucket: "unknown",
+    duration_bucket: durationBucketForMs(props.durationMs),
+    ...(props.sessionKind ? { session_kind: props.sessionKind } : {}),
   });
 };
 
@@ -270,12 +285,14 @@ export const trackFirstTurnCompleted = (props: {
   sessionId: string;
   providerId?: string;
   status: "completed" | "failed" | "interrupted";
+  sessionKind?: AnalyticsSessionKind;
 }): void => {
   if (props.status !== "completed") return;
   if (!markOnce(FIRST_TURN_COMPLETED_ONCE_KEY)) return;
   capture("first_turn_completed", {
     ...(props.providerId ? { provider_id: props.providerId } : {}),
     status: props.status,
+    ...(props.sessionKind ? { session_kind: props.sessionKind } : {}),
   });
 };
 

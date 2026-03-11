@@ -6,6 +6,7 @@ import { appendSegment } from "../pages/SessionPage.helpers";
 import type { SttApi, SttResult } from "./tauriStt";
 import { useDictationController } from "./useDictationController";
 import { getSettings, updateSettings } from "../api/client";
+import { trackFeatureUsed } from "./analytics";
 import { loadSttApi } from "./tauriStt";
 
 const deferred = <T,>() => {
@@ -39,6 +40,14 @@ vi.mock("./tauriStt", async () => {
   };
 });
 
+vi.mock("./analytics", async () => {
+  const actual = await vi.importActual<typeof import("./analytics")>("./analytics");
+  return {
+    ...actual,
+    trackFeatureUsed: vi.fn(),
+  };
+});
+
 function Harness({ onReady }: { onReady: (controller: ReturnType<typeof useDictationController>) => void }) {
   const [text, setText] = useState("");
   const controller = useDictationController({ text, setText, appendSegment });
@@ -59,11 +68,13 @@ describe("useDictationController integration", () => {
   const getSettingsMock = vi.mocked(getSettings);
   const updateSettingsMock = vi.mocked(updateSettings);
   const loadSttApiMock = vi.mocked(loadSttApi);
+  const trackFeatureUsedMock = vi.mocked(trackFeatureUsed);
 
   beforeEach(() => {
     getSettingsMock.mockReset();
     updateSettingsMock.mockReset();
     loadSttApiMock.mockReset();
+    trackFeatureUsedMock.mockReset();
   });
 
   it("streams Tauri dictation interim/final text and stops cleanly", async () => {
@@ -116,6 +127,10 @@ describe("useDictationController integration", () => {
     });
 
     await waitFor(() => expect(screen.getByTestId("recording").textContent).toBe("on"));
+    expect(trackFeatureUsedMock).toHaveBeenCalledWith("dictation_started", {
+      provider: "tauri_stt",
+      path: "configured",
+    });
 
     await act(async () => {
       resultHandler?.({ transcript: "hello", isFinal: false });
@@ -150,6 +165,10 @@ describe("useDictationController integration", () => {
       expect(controllerRef!.dictationOnboarding?.stage).toBe("choose");
     });
     expect(controllerRef!.dictationError).toBeNull();
+    expect(trackFeatureUsedMock).toHaveBeenCalledWith("dictation_started", {
+      provider: "unknown",
+      path: "onboarding_required",
+    });
   });
 
   it("opens onboarding modal when dictation is disabled", async () => {

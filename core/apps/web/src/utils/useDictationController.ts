@@ -15,6 +15,7 @@ import {
 import { readBoolish } from "./boolish";
 import { parseWsJson } from "./wsJson";
 import { errorMessage } from "./errorMessage";
+import { trackFeatureUsed } from "./analytics";
 import { useTauriSttModelStatus, type TauriModelStatus } from "./useTauriSttModelStatus";
 
 type DictationProvider = DictationSettings["provider"];
@@ -645,10 +646,18 @@ export const useDictationController = (opts: DictationControllerOptions): Dictat
     }
 
     if (needsDictationOnboarding(settings)) {
+      trackFeatureUsed("dictation_started", {
+        provider: settings?.provider ?? "unknown",
+        path: "onboarding_required",
+      });
       openDictationOnboarding(settings);
       return;
     }
 
+    trackFeatureUsed("dictation_started", {
+      provider: settings?.provider ?? "unknown",
+      path: "configured",
+    });
     await startDictationWithSettings(settings as DictationSettings);
   }, [dictationSettings, openDictationOnboarding, startDictationWithSettings]);
 

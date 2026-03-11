@@ -11,6 +11,7 @@ import {
 import { hasConfiguredHarnessAuth } from "../../utils/providerAuthStatus";
 import { UNSUPPORTED_HARNESS_IDS } from "../../utils/harnessCatalog";
 import { shouldHydrateProviderModels } from "../../pages/workbenchShell/useWorkbenchProviders";
+import { trackFeatureUsed, trackProviderSelected } from "../../utils/analytics";
 import { ComposerAutocompleteMenu } from "../ComposerAutocompleteMenu";
 import { useComposerAutocomplete } from "../../state/useComposerAutocomplete";
 import { imageFilesToInlineAttachments } from "../../utils/messageAttachments";
@@ -553,9 +554,19 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
       if (!installed) return;
       const hasActiveAuth = hasConfiguredHarnessAuth(providerId, ns.providerOptions[providerId]);
       if (!hasActiveAuth) {
+        trackFeatureUsed("harness_auth_requested", {
+          provider_id: providerId,
+          entry_surface: "workbench_new_task",
+        });
         ns.onRequestHarnessAuth?.(providerId);
         setOpenMenu(null);
         return;
+      }
+      if (ns.draftHarness?.providerId !== providerId) {
+        trackProviderSelected({
+          providerId,
+          source: "provider_switch",
+        });
       }
       ns.setDraftHarness((prev) => {
         if (prev?.providerId === providerId) return null;

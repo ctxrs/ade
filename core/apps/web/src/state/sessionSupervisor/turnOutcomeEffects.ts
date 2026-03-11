@@ -15,10 +15,19 @@ type TurnOutcomeEffectInput = {
   turnId?: string;
   providerId?: string;
   modelId?: string;
+  sessionKind?: "primary" | "subagent";
+  startedAt?: string;
+  completedAt?: string;
   title?: string;
   previousStatus?: SessionTurn["status"];
   nextStatus?: SessionTurn["status"];
   notify: boolean;
+};
+
+const parseTimestampMs = (value: string | undefined): number | null => {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
 };
 
 export const shouldTrackTurnOutcome = (
@@ -39,11 +48,19 @@ export const applyTurnOutcomeEffects = ({
   turnId,
   providerId,
   modelId,
+  sessionKind,
+  startedAt,
+  completedAt,
   title,
   previousStatus,
   nextStatus,
   notify,
 }: TurnOutcomeEffectInput): void => {
+  const startedAtMs = parseTimestampMs(startedAt);
+  const completedAtMs = parseTimestampMs(completedAt);
+  const durationMs = startedAtMs !== null && completedAtMs !== null && completedAtMs >= startedAtMs
+    ? completedAtMs - startedAtMs
+    : undefined;
   if (
     shouldTrackTurnOutcome(previousStatus, nextStatus)
       && (!turnId || markTurnOutcomeTracked(sessionId, turnId, nextStatus))
@@ -52,11 +69,14 @@ export const applyTurnOutcomeEffects = ({
       providerId,
       modelId,
       status: nextStatus,
+      durationMs,
+      sessionKind,
     });
     trackFirstTurnCompleted({
       sessionId,
       providerId,
       status: nextStatus,
+      sessionKind,
     });
   }
   if (!notify) return;

@@ -1,21 +1,8 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
-import { createClient } from "npm:@supabase/supabase-js@2.49.1";
+import { attributionProperties, readAcquisitionContext } from "../_shared/acquisition.ts";
 import { corsHeaders } from "../_shared/cors.ts";
 import { sha256Hex } from "../_shared/hash.ts";
 import { capturePostHogEvent } from "../_shared/posthog.ts";
-
-type DownloadEvent = {
-  channel: string;
-  version: string;
-  platform?: string | null;
-  artifact?: string | null;
-  status: string;
-  url_path: string;
-  referrer?: string | null;
-  user_agent?: string | null;
-  ip_hash?: string | null;
-  country?: string | null;
-};
 
 const DOWNLOAD_ID_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/;
 
@@ -39,7 +26,6 @@ serve(async (req) => {
   }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
-  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
   const bucket = Deno.env.get("SUPABASE_STORAGE_BUCKET") ?? "releases";
   const ipSalt = Deno.env.get("IP_HASH_SALT") ?? "local-dev";
 
@@ -65,39 +51,14 @@ serve(async (req) => {
   const redirectTo = `${baseUrl}/storage/v1/object/public/${bucket}/${objectPath}`;
   const platform = url.searchParams.get("platform");
   const artifact = url.searchParams.get("artifact") ?? filename;
-  const referrer = req.headers.get("referer");
-  const userAgent = req.headers.get("user-agent");
   const ip = firstIp(req.headers.get("x-forwarded-for"));
   const ipHash = ip ? await sha256Hex(`${ipSalt}:${ip}`) : null;
   const country = req.headers.get("cf-ipcountry") ??
     req.headers.get("x-country") ??
     null;
   const status = "redirected";
+  const acquisition = readAcquisitionContext(req, url);
 
-  // Best-effort analytics insert (never block the redirect on analytics failure).
-  try {
-    const client = createClient(supabaseUrl, serviceRoleKey, {
-      auth: { persistSession: false },
-    });
-
-    const event: DownloadEvent = {
-      channel,
-      version,
-      platform,
-      artifact,
-      status,
-      url_path: urlPath,
-      referrer,
-      user_agent: userAgent,
-      ip_hash: ipHash,
-      country,
-    };
-    await client.from("download_event").insert(event);
-  } catch {
-    // ignore
-  }
-
-  // Best-effort product analytics mirror (never block redirect).
   try {
     void capturePostHogEvent({
       event: "release_download_redirected",
@@ -112,6 +73,7 @@ serve(async (req) => {
         url_path: urlPath,
         download_id: downloadId,
         download_id_source: requestedDownloadId ? "request" : "generated",
+        ...attributionProperties(acquisition),
       },
     }).catch(() => {
       // ignore
