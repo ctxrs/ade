@@ -436,3 +436,61 @@ impl TunnelStore {
             redis::AsyncCommands::set_ex(&mut conn, key, json, self.cache_ttl.as_secs()).await;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_upstream_url_preserves_tunnel_and_query() {
+        assert_eq!(
+            build_upstream_url(
+                "https://relay.example/",
+                "tunnel-1",
+                "/api/health",
+                Some("a=1&b=2"),
+            ),
+            "https://relay.example/t/tunnel-1/api/health?a=1&b=2"
+        );
+        assert_eq!(
+            build_upstream_url("https://relay.example", "tunnel-1", "nested/path", None),
+            "https://relay.example/t/tunnel-1/nested/path"
+        );
+    }
+
+    #[test]
+    fn to_ws_url_converts_http_schemes_only() {
+        assert_eq!(
+            to_ws_url("http://relay.example").unwrap().as_str(),
+            "ws://relay.example/"
+        );
+        assert_eq!(
+            to_ws_url("https://relay.example/path").unwrap().as_str(),
+            "wss://relay.example/path"
+        );
+        assert_eq!(
+            to_ws_url("wss://relay.example/path").unwrap().as_str(),
+            "wss://relay.example/path"
+        );
+    }
+
+    #[test]
+    fn websocket_upgrade_detection_and_header_forwarding_are_narrow() {
+        let mut headers = HeaderMap::new();
+        headers.insert(axum::http::header::UPGRADE, "websocket".parse().unwrap());
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            "Bearer secret".parse().unwrap(),
+        );
+        headers.insert("x-custom", "value".parse().unwrap());
+
+        assert!(is_websocket_upgrade(&headers));
+        let forwarded = extract_ws_forward_headers(&headers);
+        assert_eq!(forwarded.len(), 1);
+        assert_eq!(forwarded[0].0.as_str(), "authorization");
+        assert_eq!(forwarded[0].1.to_str().unwrap(), "Bearer secret");
+
+        headers.insert(axum::http::header::UPGRADE, "h2c".parse().unwrap());
+        assert!(!is_websocket_upgrade(&headers));
+    }
+}

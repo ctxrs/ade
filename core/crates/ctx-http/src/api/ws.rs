@@ -882,7 +882,8 @@ async fn handle_terminal_socket(
     let mut status_rx = session.status_receiver();
 
     let (mut ws_tx, mut ws_rx) = socket.split();
-    let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<WsMessage>();
+    let (event_tx, mut event_rx) =
+        tokio::sync::mpsc::channel::<WsMessage>(TERMINAL_WS_EVENT_QUEUE_LIMIT);
     let event_tx_output = event_tx.clone();
     let event_tx_status = event_tx.clone();
     let event_tx_input = event_tx.clone();
@@ -901,7 +902,13 @@ async fn handle_terminal_socket(
         loop {
             match output_rx.recv().await {
                 Ok(bytes) => {
-                    let _ = event_tx_output.send(WsMessage::Binary(bytes));
+                    match queue_terminal_ws_message(&event_tx_output, WsMessage::Binary(bytes)) {
+                        TerminalWsQueueOutcome::Enqueued => {}
+                        TerminalWsQueueOutcome::Dropped => {
+                            tracing::debug!("dropping terminal output for slow websocket consumer");
+                        }
+                        TerminalWsQueueOutcome::Closed => break,
+                    }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
@@ -918,7 +925,13 @@ async fn handle_terminal_socket(
                         exit_code: ev.exit_code,
                     })
                     .unwrap_or_else(|_| "{\"type\":\"status\",\"status\":\"exited\"}".to_string());
-                    let _ = event_tx_status.send(WsMessage::Text(payload));
+                    match queue_terminal_ws_message(&event_tx_status, WsMessage::Text(payload)) {
+                        TerminalWsQueueOutcome::Enqueued => {}
+                        TerminalWsQueueOutcome::Dropped => {
+                            tracing::debug!("dropping terminal status for slow websocket consumer");
+                        }
+                        TerminalWsQueueOutcome::Closed => break,
+                    }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
@@ -945,7 +958,15 @@ async fn handle_terminal_socket(
                             TerminalClientMessage::Ping => {
                                 let payload = serde_json::to_string(&TerminalServerMessage::Pong)
                                     .unwrap_or_else(|_| "{\"type\":\"pong\"}".to_string());
-                                let _ = event_tx_input.send(WsMessage::Text(payload));
+                                if matches!(
+                                    queue_terminal_ws_message(
+                                        &event_tx_input,
+                                        WsMessage::Text(payload)
+                                    ),
+                                    TerminalWsQueueOutcome::Closed
+                                ) {
+                                    break;
+                                }
                             }
                         }
                     } else {
@@ -954,7 +975,12 @@ async fn handle_terminal_socket(
                 }
                 WsMessage::Close(_) => break,
                 WsMessage::Ping(payload) => {
-                    let _ = event_tx_input.send(WsMessage::Pong(payload));
+                    if matches!(
+                        queue_terminal_ws_message(&event_tx_input, WsMessage::Pong(payload)),
+                        TerminalWsQueueOutcome::Closed
+                    ) {
+                        break;
+                    }
                 }
                 WsMessage::Pong(_) => {}
             }
@@ -966,7 +992,10 @@ async fn handle_terminal_socket(
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             interval.tick().await;
-            if event_tx_ping.send(WsMessage::Ping(Vec::new())).is_err() {
+            if matches!(
+                queue_terminal_ws_message(&event_tx_ping, WsMessage::Ping(Vec::new())),
+                TerminalWsQueueOutcome::Closed
+            ) {
                 break;
             }
         }
@@ -1081,7 +1110,27 @@ const WORKSPACE_STREAM_QUEUE_LIMIT: usize = 256;
 const WORKSPACE_STREAM_QUEUE_MAX_AGE: Duration = Duration::from_secs(10);
 const HEAD_BATCH_FLUSH_INTERVAL: Duration = Duration::from_millis(25);
 const HEAD_BATCH_SESSION_LIMIT: usize = 200;
+// Terminal bytes are lossy; a slow browser should not force unbounded per-connection buffering.
+const TERMINAL_WS_EVENT_QUEUE_LIMIT: usize = 128;
 const TERMINAL_PING_INTERVAL: Duration = Duration::from_secs(25);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TerminalWsQueueOutcome {
+    Enqueued,
+    Dropped,
+    Closed,
+}
+
+fn queue_terminal_ws_message(
+    event_tx: &tokio::sync::mpsc::Sender<WsMessage>,
+    msg: WsMessage,
+) -> TerminalWsQueueOutcome {
+    match event_tx.try_send(msg) {
+        Ok(()) => TerminalWsQueueOutcome::Enqueued,
+        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => TerminalWsQueueOutcome::Dropped,
+        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => TerminalWsQueueOutcome::Closed,
+    }
+}
 
 struct StreamSendControl {
     disconnect_after_flush: AtomicBool,
@@ -1131,80 +1180,6 @@ pub(super) async fn dictation_livekit_stream_ws(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
-    use serde_json::json;
-    use std::collections::HashMap;
-
-    fn make_partial_delta(
-        session_id: SessionId,
-        turn_id: TurnId,
-        fragment: &str,
-    ) -> SessionHeadDelta {
-        let event = SessionEvent {
-            seq: -1,
-            id: SessionEventId::new(),
-            session_id,
-            run_id: None,
-            turn_id: Some(turn_id),
-            event_type: SessionEventType::AssistantChunk,
-            payload_json: json!({ "content_fragment": fragment }),
-            transient: true,
-            created_at: Utc::now(),
-        };
-        SessionHeadDelta {
-            session_id,
-            last_event_seq: 0,
-            state_rev: 0,
-            event: Some(event),
-            turn: None,
-            message: None,
-            tool_summaries: Vec::new(),
-        }
-    }
-
-    fn fragment_from_delta(delta: &SessionHeadDelta) -> String {
-        delta
-            .event
-            .as_ref()
-            .and_then(|event| event.payload_json.get("content_fragment"))
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string()
-    }
-
-    #[tokio::test]
-    async fn head_batch_coalesces_partials_per_session() {
-        let buffer = HeadBatchBuffer::new();
-        let session_a = SessionId::new();
-        let session_b = SessionId::new();
-        let turn_a = TurnId::new();
-        let turn_b = TurnId::new();
-        let limit = HEAD_BATCH_SESSION_LIMIT + 25;
-
-        for i in 0..limit {
-            let fragment = format!("a-{i}-");
-            buffer
-                .push(1, make_partial_delta(session_a, turn_a, &fragment))
-                .await
-                .expect("partial burst should coalesce");
-            if i % 5 == 0 {
-                let fragment_b = format!("b-{i}-");
-                buffer
-                    .push(1, make_partial_delta(session_b, turn_b, &fragment_b))
-                    .await
-                    .expect("partial burst should coalesce");
-            }
-        }
-
-        let (_, deltas) = buffer.take().await;
-        let mut by_session = HashMap::new();
-        for delta in deltas {
-            by_session.insert(delta.session_id, delta);
-        }
-        assert_eq!(by_session.len(), 2);
-
-        let merged_a = fragment_from_delta(by_session.get(&session_a).unwrap());
-        assert!(merged_a.contains("a-0-"));
-        assert!(merged_a.contains(&format!("a-{}-", limit - 1)));
-    }
+    #[path = "ws_queue_tests.rs"]
+    mod ws_queue_tests;
 }
