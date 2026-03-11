@@ -324,7 +324,7 @@ async fn providers_bootstrap_includes_pinned_codex_and_claude_catalogs() {
     assert_eq!(
         body.pointer("/provider_options/codex/models/current_model_id")
             .and_then(serde_json::Value::as_str),
-        Some("gpt-5.3-codex/medium"),
+        Some("gpt-5.4/medium"),
         "expected pinned codex bootstrap current model: {body:#?}"
     );
     assert_eq!(

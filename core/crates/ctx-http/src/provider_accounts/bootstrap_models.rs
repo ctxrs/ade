@@ -12,14 +12,14 @@ struct PinnedReasoningModel {
 
 const CODEX_PINNED_SUBSCRIPTION_MODELS: [PinnedReasoningModel; 6] = [
     PinnedReasoningModel {
-        id: "gpt-5.3-codex",
-        display_name: "gpt-5.3-codex",
+        id: "gpt-5.4",
+        display_name: "gpt-5.4",
         default_effort: "medium",
         efforts: &["low", "medium", "high", "xhigh"],
     },
     PinnedReasoningModel {
-        id: "gpt-5.4",
-        display_name: "gpt-5.4",
+        id: "gpt-5.3-codex",
+        display_name: "gpt-5.3-codex",
         default_effort: "medium",
         efforts: &["low", "medium", "high", "xhigh"],
     },
@@ -144,7 +144,7 @@ mod tests {
             payload
                 .get("current_model_id")
                 .and_then(serde_json::Value::as_str),
-            Some("gpt-5.3-codex/medium")
+            Some("gpt-5.4/medium")
         );
         assert_eq!(
             payload
@@ -156,7 +156,7 @@ mod tests {
             payload
                 .pointer("/models/0/id")
                 .and_then(serde_json::Value::as_str),
-            Some("gpt-5.3-codex/low")
+            Some("gpt-5.4/low")
         );
     }
 
