@@ -2,7 +2,7 @@ import type { DesktopEditorSettings } from "../utils/desktop";
 import type { SectionId } from "./SettingsPage.types";
 
 export const AGENT_PROMPT_DEFAULT = "You are working inside ctx, an agent development environment. Use ctx MCP tools to attach photos/videos as artifacts, start persistent web sessions (Playwright REPL/scripts), and run sub-agents for research or well-scoped implementations. Check `.ctx/attachments/refs/` and `.ctx/attachments/docs/` for extra reference repos and docs." as const;
-export const SUBAGENT_PROMPT_DEFAULT = "Subagents may use rg/grep and other token-heavy commands the main agent avoids." as const;
+export const SUBAGENT_PROMPT_DEFAULT = "You are a subagent. The user messaging you is the primary agent who will provide your instructions." as const;
 
 export const MODEL_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "auto", label: "Default (Deepgram Nova-3)" },

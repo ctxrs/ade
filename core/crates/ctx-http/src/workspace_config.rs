@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 pub use ctx_core::models::ExecutionEnvironment;
 use ctx_store::Store;
 use serde::{Deserialize, Serialize};
@@ -11,8 +11,7 @@ use crate::settings::{
 const WORKSPACE_SETTINGS_SCHEMA_VERSION: i64 = 1;
 
 pub const DEFAULT_SYSTEM_PROMPT_APPEND: &str = "You are working inside ctx, an agent development environment. Use ctx MCP tools to attach photos/videos as artifacts, start persistent web sessions (Playwright REPL/scripts), and run sub-agents for research or well-scoped implementations. Check `.ctx/attachments/refs/` and `.ctx/attachments/docs/` for extra reference repos and docs.";
-pub const DEFAULT_SUBAGENT_SYSTEM_PROMPT_APPEND: &str =
-    "Subagents may use rg/grep and other token-heavy commands the main agent avoids.";
+pub const DEFAULT_SUBAGENT_SYSTEM_PROMPT_APPEND: &str = "You are a subagent. The user messaging you is the primary agent who will provide your instructions.";
 
 #[derive(Debug, Clone)]
 pub struct AgentSystemPromptAppendConfig {
