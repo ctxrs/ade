@@ -42,12 +42,25 @@ const installDesktopHarness = async (page: Page, config: HarnessConfig) => {
       invokeCalls: [],
     };
 
+    const currentDaemonTarget = () => {
+      const parsed = new URL(window.location.origin);
+      const port = parsed.port
+        ? Number(parsed.port)
+        : parsed.protocol === "https:"
+          ? 443
+          : 80;
+      return {
+        base_url: parsed.origin,
+        port,
+      };
+    };
+
     const mkHealth = () => ({
       version: state.config.daemonVersion,
       daemon_version: state.config.daemonVersion,
       pid: 1,
       data_root: "/tmp",
-      daemon_url: "http://127.0.0.1:4399",
+      daemon_url: currentDaemonTarget().base_url,
       auth_required: false,
       compatibility: {
         desktop_exact_version: state.config.daemonVersion,
@@ -64,27 +77,29 @@ const installDesktopHarness = async (page: Page, config: HarnessConfig) => {
         return state.config.desktopVersion;
       }
       if (name === "desktop_get_connection") {
+        const target = currentDaemonTarget();
         if (state.config.connectionKind === "ssh") {
           return {
             kind: "ssh",
-            base_url: "http://127.0.0.1:4450",
+            base_url: target.base_url,
             token: "ssh-token",
             host: "example.test",
             user: "devbox",
-            remote_port: 4450,
+            remote_port: target.port,
             remote_data_dir: "/tmp/ctx-remote",
           };
         }
         return {
           kind: "local",
-          base_url: "http://127.0.0.1:4399",
+          base_url: target.base_url,
           token: "local-token",
         };
       }
       if (name === "desktop_restart_local_daemon") {
+        const target = currentDaemonTarget();
         return {
           kind: "local",
-          base_url: "http://127.0.0.1:4399",
+          base_url: target.base_url,
           token: "local-token",
         };
       }

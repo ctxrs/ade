@@ -86,6 +86,8 @@ const installDesktopHarness = async (page: Page, config: HarnessConfig) => {
       invokeCalls: [],
     };
 
+    const currentDaemonBaseUrl = () => window.location.origin;
+
     const invoke: TauriInvoke = async (cmd, rawArgs) => {
       const name = String(cmd || "");
       state.invokeCalls.push(name);
@@ -95,7 +97,7 @@ const installDesktopHarness = async (page: Page, config: HarnessConfig) => {
       if (name === "desktop_get_connection") {
         return {
           kind: "local",
-          base_url: "http://127.0.0.1:4399",
+          base_url: currentDaemonBaseUrl(),
           token: "local-token",
         };
       }

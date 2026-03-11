@@ -171,6 +171,19 @@ const installDesktopHarness = async (page: Page, config: DesktopHarnessConfig): 
       snapshots: [],
     };
 
+    const currentDaemonTarget = () => {
+      const parsed = new URL(window.location.origin);
+      const port = parsed.port
+        ? Number(parsed.port)
+        : parsed.protocol === "https:"
+          ? 443
+          : 80;
+      return {
+        base_url: parsed.origin,
+        port,
+      };
+    };
+
     const invoke: TauriInvoke = async (cmd, rawArgs) => {
       const name = String(cmd || "");
       perWindow.invokeCalls.push(name);
@@ -178,9 +191,10 @@ const installDesktopHarness = async (page: Page, config: DesktopHarnessConfig): 
         return readState().updateState.current_version;
       }
       if (name === "desktop_get_connection") {
+        const target = currentDaemonTarget();
         return {
           kind: "local",
-          base_url: "http://127.0.0.1:4399",
+          base_url: target.base_url,
           token: "local-token",
         };
       }
