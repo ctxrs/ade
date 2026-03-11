@@ -310,9 +310,14 @@ describe("WorkspaceSetupPage", () => {
       error: undefined,
       last_event: undefined,
     } as never);
-    vi.mocked(repoStatus).mockResolvedValue({ canonical_path: "/tmp/repo", is_repo: true });
+    vi.mocked(repoStatus).mockImplementation((async (req: { path: string }) => ({
+      canonical_path: req.path,
+      is_repo: true,
+    })) as never);
     vi.mocked(repoValidateDestination).mockResolvedValue({ path: "/tmp/repo" });
-    vi.mocked(repoInit).mockResolvedValue({ path: "/tmp/repo" });
+    vi.mocked(repoInit).mockImplementation((async (req: { path: string }) => ({
+      path: req.path,
+    })) as never);
     vi.mocked(repoStagingPath).mockResolvedValue({ path: "/tmp/staging" } as never);
     vi.mocked(repoClone).mockResolvedValue({ path: "/tmp/staging/repo" });
     vi.mocked(createWorkspace).mockResolvedValue({ id: "ws_test", root_path: "/tmp/ws" } as never);
@@ -2151,6 +2156,7 @@ describe("WorkspaceSetupPage", () => {
   it("writes launcher recents on successful local workspace creation", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(getSettings).mockResolvedValue({ title_generation: null } as never);
+    vi.mocked(repoInit).mockResolvedValue({ path: "/private/tmp/new-repo" } as never);
 
     renderPage();
     await screen.findByTestId("workspace-setup");
@@ -2189,10 +2195,10 @@ describe("WorkspaceSetupPage", () => {
     fireEvent.click(screen.getByTestId("wizard-create"));
 
     await waitFor(() => {
-      expect(createWorkspace).toHaveBeenCalled();
+      expect(createWorkspace).toHaveBeenCalledWith("/private/tmp/new-repo", "new-repo", "local", "wizard");
       expect(upsertLauncherRecent).toHaveBeenCalledWith(expect.objectContaining({
         kind: "local",
-        root_path: "/tmp/new-repo",
+        root_path: "/private/tmp/new-repo",
         label: "new-repo",
         updated_at_ms: expect.any(Number),
       }));

@@ -6,6 +6,7 @@ import {
   getWorkspaceExecutionConfig,
   idToString,
   listWorkspaces,
+  repoStatus,
 } from "../api/client";
 import {
   desktopConnectLocal,
@@ -46,11 +47,71 @@ const waitForDaemonReady = async (timeoutMs: number) => {
   throw lastErr ?? new Error("Timed out waiting for daemon health.");
 };
 
-async function existingWorkspaceIdByPath(rootPath: string): Promise<string | null> {
+type WorkspaceSummary = Awaited<ReturnType<typeof listWorkspaces>>[number];
+
+type ResolvedWorkspace = {
+  workspaceId: string;
+  rootPath: string;
+  label: string;
+};
+
+function normalizeWorkspacePathForCompare(path: string): string {
+  const normalized = String(path || "").trim().replace(/\\/g, "/");
+  if (!normalized) return "";
+
+  const windowsDriveRoot = normalized.match(/^([A-Za-z]):\/?$/);
+  if (windowsDriveRoot) {
+    return `${windowsDriveRoot[1].toLowerCase()}:/`;
+  }
+
+  const withoutTrailing = normalized === "/" ? "/" : normalized.replace(/\/+$/, "");
+  const windowsDrivePath = withoutTrailing.match(/^([A-Za-z]):(\/.*)$/);
+  if (windowsDrivePath) {
+    return `${windowsDrivePath[1].toLowerCase()}:${windowsDrivePath[2]}`;
+  }
+
+  return withoutTrailing || "/";
+}
+
+function findWorkspaceByPath(
+  workspaces: WorkspaceSummary[],
+  candidatePath: string,
+): ResolvedWorkspace | null {
+  const normalizedCandidate = normalizeWorkspacePathForCompare(candidatePath);
+  if (!normalizedCandidate) return null;
+
+  for (const workspace of workspaces) {
+    const workspaceId = idToString(workspace.id ?? "").trim();
+    const workspaceRootPath = String(workspace.root_path ?? "").trim();
+    if (!workspaceId || !workspaceRootPath) continue;
+    if (normalizeWorkspacePathForCompare(workspaceRootPath) !== normalizedCandidate) continue;
+    const workspaceLabel = String(workspace.name ?? "").trim();
+    return {
+      workspaceId,
+      rootPath: workspaceRootPath,
+      label: workspaceLabel || lastSegment(workspaceRootPath),
+    };
+  }
+
+  return null;
+}
+
+async function resolveWorkspaceByPath(rootPath: string): Promise<ResolvedWorkspace | null> {
   const all = await listWorkspaces();
-  const hit = all.find((w) => String(w.root_path) === rootPath);
-  if (!hit) return null;
-  return idToString(hit.id ?? "");
+  const directMatch = findWorkspaceByPath(all, rootPath);
+  if (directMatch) return directMatch;
+
+  const trimmedRootPath = String(rootPath || "").trim();
+  if (!trimmedRootPath) return null;
+
+  try {
+    const status = await repoStatus({ path: trimmedRootPath });
+    const canonicalPath = String(status.canonical_path ?? "").trim();
+    if (!canonicalPath) return null;
+    return findWorkspaceByPath(all, canonicalPath);
+  } catch {
+    return null;
+  }
 }
 
 export default function LauncherPage() {
@@ -126,8 +187,8 @@ export default function LauncherPage() {
       // Avoid landing on workspaces while the daemon is still booting.
       await waitForDaemonReady(15000);
       if (rootPath) {
-        const wsId = await existingWorkspaceIdByPath(rootPath);
-        if (!wsId) {
+        const resolvedWorkspace = await resolveWorkspaceByPath(rootPath);
+        if (!resolvedWorkspace) {
           setError("Workspace not found for this path. Re-create it from New Workspace.");
           navigate("/workspace-setup");
           return;
@@ -135,15 +196,15 @@ export default function LauncherPage() {
         try {
           await upsertLauncherRecent({
             kind: "local",
-            label: lastSegment(rootPath),
-            root_path: rootPath,
-            execution_environment: executionEnvironment ?? inferLocalExecutionEnvironment(rootPath),
+            label: resolvedWorkspace.label,
+            root_path: resolvedWorkspace.rootPath,
+            execution_environment: executionEnvironment ?? inferLocalExecutionEnvironment(resolvedWorkspace.rootPath),
             updated_at_ms: Date.now(),
           });
         } catch {
           // best-effort only; do not block workspace open on recents persistence
         }
-        navigate(`/workspaces/${wsId}`, { replace: true });
+        navigate(`/workspaces/${resolvedWorkspace.workspaceId}`, { replace: true });
       } else {
         navigate("/", { replace: true });
       }
@@ -173,12 +234,30 @@ export default function LauncherPage() {
       applyConnection(info);
       // Avoid landing on workspaces while the daemon is still booting / tunnel is coming up.
       await waitForDaemonReady(15000);
+      const targetWorkspaceRootPath = String(r.workspace_root_path ?? "").trim();
+      const resolvedWorkspace = targetWorkspaceRootPath
+        ? await resolveWorkspaceByPath(targetWorkspaceRootPath)
+        : null;
+      if (targetWorkspaceRootPath && !resolvedWorkspace) {
+        setError("Workspace not found on the connected host for this path. Re-create it from New Workspace.");
+        navigate("/workspace-setup");
+        return;
+      }
       try {
-        await upsertLauncherRecent({ ...r, updated_at_ms: Date.now() });
+        await upsertLauncherRecent({
+          ...r,
+          ...(resolvedWorkspace
+            ? {
+                label: resolvedWorkspace.label,
+                workspace_root_path: resolvedWorkspace.rootPath,
+              }
+            : {}),
+          updated_at_ms: Date.now(),
+        });
       } catch {
         // best-effort only; do not block connection flow on recents persistence
       }
-      navigate("/", { replace: true });
+      navigate(resolvedWorkspace ? `/workspaces/${resolvedWorkspace.workspaceId}` : "/", { replace: true });
     } catch (e: unknown) {
       setError(errorMessage(e));
     } finally {

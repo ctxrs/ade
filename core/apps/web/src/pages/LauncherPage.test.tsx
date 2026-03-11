@@ -7,9 +7,11 @@ import {
   getWorkspaceExecutionConfig,
   idToString,
   listWorkspaces,
+  repoStatus,
 } from "../api/client";
 import {
   desktopConnectLocal,
+  desktopConnectSsh,
   desktopGetConnection,
   desktopSetDockRecentLocalWorkspaces,
   isDesktopApp,
@@ -34,6 +36,7 @@ vi.mock("../api/client", async () => {
     getWorkspaceExecutionConfig: vi.fn(),
     idToString: vi.fn((value: unknown) => String(value ?? "")),
     listWorkspaces: vi.fn(),
+    repoStatus: vi.fn(),
   };
 });
 
@@ -42,6 +45,7 @@ vi.mock("../utils/desktop", async () => {
   return {
     ...actual,
     desktopConnectLocal: vi.fn(),
+    desktopConnectSsh: vi.fn(),
     desktopGetConnection: vi.fn(),
     desktopSetDockRecentLocalWorkspaces: vi.fn(),
     isDesktopApp: vi.fn(),
@@ -63,6 +67,10 @@ describe("LauncherPage recents", () => {
     vi.mocked(loadLauncherRecents).mockResolvedValue([]);
     vi.mocked(upsertLauncherRecent).mockResolvedValue([]);
     vi.mocked(listWorkspaces).mockResolvedValue([]);
+    vi.mocked(repoStatus).mockImplementation((async (req: { path: string }) => ({
+      canonical_path: req.path,
+      is_repo: true,
+    })) as never);
     vi.mocked(getWorkspaceExecutionConfig).mockResolvedValue({ environment: "host" } as never);
     vi.mocked(getHealth).mockResolvedValue({
       daemon_version: "0.0.0-test",
@@ -188,6 +196,165 @@ describe("LauncherPage recents", () => {
         updated_at_ms: expect.any(Number),
       }));
       expect(navigateMock).toHaveBeenCalledWith("/workspaces/ws-1", { replace: true });
+    });
+  });
+
+  it("resolves local host recents against canonical workspace paths", async () => {
+    vi.mocked(loadLauncherRecents).mockResolvedValueOnce([
+      {
+        kind: "local",
+        label: "repo-canonical",
+        root_path: "/tmp/repo-canonical",
+        updated_at_ms: 50,
+      },
+    ]);
+    vi.mocked(desktopConnectLocal).mockResolvedValue({
+      kind: "local",
+      base_url: "http://127.0.0.1:4399",
+      token: "test-token",
+    } as never);
+    vi.mocked(listWorkspaces).mockResolvedValue([
+      { id: "ws-canonical", name: "Canonical Repo", root_path: "/private/tmp/repo-canonical" },
+    ] as never);
+    vi.mocked(repoStatus).mockResolvedValue({
+      canonical_path: "/private/tmp/repo-canonical",
+      is_repo: true,
+    } as never);
+
+    render(<LauncherPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /repo-canonical/i }));
+
+    await waitFor(() => {
+      expect(upsertLauncherRecent).toHaveBeenCalledWith(expect.objectContaining({
+        kind: "local",
+        label: "Canonical Repo",
+        root_path: "/private/tmp/repo-canonical",
+        updated_at_ms: expect.any(Number),
+      }));
+      expect(navigateMock).toHaveBeenCalledWith("/workspaces/ws-canonical", { replace: true });
+    });
+  });
+
+  it("opens local container recents directly into the workspace", async () => {
+    vi.mocked(loadLauncherRecents).mockResolvedValueOnce([
+      {
+        kind: "local",
+        label: "sealed-local",
+        root_path: "/Users/example-user/Library/Application Support/rs.ctx.desktop/daemon/workspaces/workspace-abc",
+        execution_environment: "container_disk_isolated",
+        updated_at_ms: 25,
+      },
+    ]);
+    vi.mocked(desktopConnectLocal).mockResolvedValue({
+      kind: "local",
+      base_url: "http://127.0.0.1:4399",
+      token: "test-token",
+    } as never);
+    vi.mocked(listWorkspaces).mockResolvedValue([
+      {
+        id: "ws-container",
+        name: "Sealed Local",
+        root_path: "/Users/example-user/Library/Application Support/rs.ctx.desktop/daemon/workspaces/workspace-abc",
+      },
+    ] as never);
+
+    render(<LauncherPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /sealed-local/i }));
+
+    await waitFor(() => {
+      expect(upsertLauncherRecent).toHaveBeenCalledWith(expect.objectContaining({
+        kind: "local",
+        label: "Sealed Local",
+        root_path: "/Users/example-user/Library/Application Support/rs.ctx.desktop/daemon/workspaces/workspace-abc",
+        execution_environment: "container_disk_isolated",
+        updated_at_ms: expect.any(Number),
+      }));
+      expect(navigateMock).toHaveBeenCalledWith("/workspaces/ws-container", { replace: true });
+    });
+  });
+
+  it("opens remote host recents directly into the workspace after SSH connect", async () => {
+    vi.mocked(loadLauncherRecents).mockResolvedValueOnce([
+      {
+        kind: "ssh",
+        label: "remote-devbox",
+        host: "devbox.example.invalid",
+        user: "user",
+        remote_port: 4399,
+        remote_data_dir: "/tmp/ctx-daemon",
+        workspace_root_path: "/srv/ctx/remote-devbox",
+        execution_environment: "host",
+        updated_at_ms: 40,
+      },
+    ]);
+    vi.mocked(desktopConnectSsh).mockResolvedValue({
+      kind: "ssh",
+      base_url: "http://127.0.0.1:44099",
+      token: "ssh-token",
+      host: "devbox.example.invalid",
+      user: "user",
+      remote_port: 4399,
+    } as never);
+    vi.mocked(listWorkspaces).mockResolvedValue([
+      { id: "ws-remote", name: "Remote Devbox", root_path: "/srv/ctx/remote-devbox" },
+    ] as never);
+
+    render(<LauncherPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /remote-devbox/i }));
+
+    await waitFor(() => {
+      expect(upsertLauncherRecent).toHaveBeenCalledWith(expect.objectContaining({
+        kind: "ssh",
+        label: "Remote Devbox",
+        workspace_root_path: "/srv/ctx/remote-devbox",
+        updated_at_ms: expect.any(Number),
+      }));
+      expect(navigateMock).toHaveBeenCalledWith("/workspaces/ws-remote", { replace: true });
+    });
+  });
+
+  it("opens remote container recents directly into the workspace after SSH connect", async () => {
+    vi.mocked(loadLauncherRecents).mockResolvedValueOnce([
+      {
+        kind: "ssh",
+        label: "sealed-remote",
+        host: "sealed.example.invalid",
+        user: "user",
+        remote_port: 44099,
+        remote_data_dir: "/tmp/ctx-remote",
+        workspace_root_path: "/srv/ctx/remote-container",
+        execution_environment: "container_disk_isolated",
+        updated_at_ms: 30,
+      },
+    ]);
+    vi.mocked(desktopConnectSsh).mockResolvedValue({
+      kind: "ssh",
+      base_url: "http://127.0.0.1:44099",
+      token: "ssh-token",
+      host: "sealed.example.invalid",
+      user: "user",
+      remote_port: 44099,
+    } as never);
+    vi.mocked(listWorkspaces).mockResolvedValue([
+      { id: "ws-remote-container", name: "Sealed Remote", root_path: "/srv/ctx/remote-container" },
+    ] as never);
+
+    render(<LauncherPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /sealed-remote/i }));
+
+    await waitFor(() => {
+      expect(upsertLauncherRecent).toHaveBeenCalledWith(expect.objectContaining({
+        kind: "ssh",
+        label: "Sealed Remote",
+        workspace_root_path: "/srv/ctx/remote-container",
+        execution_environment: "container_disk_isolated",
+        updated_at_ms: expect.any(Number),
+      }));
+      expect(navigateMock).toHaveBeenCalledWith("/workspaces/ws-remote-container", { replace: true });
     });
   });
 

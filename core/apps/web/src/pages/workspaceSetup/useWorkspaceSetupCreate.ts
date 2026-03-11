@@ -476,8 +476,8 @@ export function useWorkspaceSetupCreate({
           destPath = sourcePath.trim().replace(/\/+$/, "");
           if (!destPath) throw new Error("Destination folder is required.");
         }
-        await repoInit({ path: destPath, allow_existing: true });
-        rootPath = destPath;
+        const init = await repoInit({ path: destPath, allow_existing: true });
+        rootPath = String(init.path ?? "").trim() || destPath;
         const existingWorkspaceNames = await getExistingWorkspaceNamesForGenerated();
         name = resolveWorkspaceName({
           source: selections.source,
