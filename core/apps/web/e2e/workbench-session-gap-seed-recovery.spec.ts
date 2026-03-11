@@ -3,6 +3,8 @@ import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
 type E2EWindow = Window & {
   __ctxE2E?: {
+    getSessionHeadMessages?: (sessionId: string) => string[];
+    getSessionLastEventSeq?: (sessionId: string) => number | null;
     workspaceStream?: {
       getConnectionState?: () => string | null;
       dispatchMessage?: (payload: unknown) => void;
@@ -51,8 +53,21 @@ test("workbench: session_gap recovers without active /head refetch", async ({ pa
     .poll(async () => page.evaluate(() => (window as E2EWindow).__ctxE2E?.workspaceStream?.getConnectionState?.()))
     .toBe("connected");
   await expect
+    .poll(async () => page.evaluate(() => typeof (window as E2EWindow).__ctxE2E?.getSessionHeadMessages === "function"))
+    .toBe(true);
+  await expect
+    .poll(async () => page.evaluate(() => typeof (window as E2EWindow).__ctxE2E?.getSessionLastEventSeq === "function"))
+    .toBe(true);
+  await expect
     .poll(async () => page.evaluate(() => typeof (window as E2EWindow).__ctxE2E?.workspaceStream?.dispatchMessage === "function"))
     .toBe(true);
+
+  const baseSeq = await page.evaluate(
+    ({ sessionId }) => (window as E2EWindow).__ctxE2E?.getSessionLastEventSeq?.(sessionId) ?? null,
+    { sessionId: sessionIdB },
+  );
+  const seedLastEventSeq = typeof baseSeq === "number" && Number.isFinite(baseSeq) ? baseSeq + 1 : 1;
+  const marker = `seed-gap-recovery-${seed.workspaceId}-${sessionIdB}-${seedLastEventSeq}`;
 
   requests.length = 0;
   const cutoff = Date.now();
@@ -75,6 +90,78 @@ test("workbench: session_gap recovers without active /head refetch", async ({ pa
     // Only the active session is open (refCount > 0), so inject the gap for the active session.
     { sessionId: sessionIdB, workspaceId: seed.workspaceId },
   );
+
+  await page.evaluate(
+    ({ sessionId, taskId, workspaceId, marker, lastEventSeq }) => {
+      const stream = (window as E2EWindow).__ctxE2E?.workspaceStream;
+      if (!stream?.dispatchMessage) return;
+      const now = new Date().toISOString();
+      const payload = {
+        type: "event",
+        event: {
+          type: "session_head_seed",
+          workspace_id: workspaceId,
+          head: {
+            session: {
+              id: sessionId,
+              task_id: taskId,
+            },
+            turns: [],
+            messages: [
+              {
+                id: `seed-${lastEventSeq}`,
+                role: "user",
+                content: marker,
+                created_at: now,
+                turn_sequence: 1,
+              },
+            ],
+            events: [],
+            tool_summaries: [],
+            last_event_seq: lastEventSeq,
+            state_rev: lastEventSeq,
+            window: {
+              turn_limit: 0,
+              message_limit: 0,
+              event_limit: 0,
+              byte_limit: 0,
+              turn_count: 0,
+              message_count: 0,
+              event_count: 0,
+              bytes: 0,
+              truncated: false,
+            },
+          },
+        },
+      };
+      stream.dispatchMessage(payload);
+    },
+    {
+      sessionId: sessionIdB,
+      taskId: seed.taskIds[1],
+      workspaceId: seed.workspaceId,
+      marker,
+      lastEventSeq: seedLastEventSeq,
+    },
+  );
+
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(
+          ({ sessionId, marker }) => {
+            const api = (window as E2EWindow).__ctxE2E;
+            if (!api?.getSessionHeadMessages || !api.getSessionLastEventSeq) return null;
+            const messages = api.getSessionHeadMessages(sessionId) ?? [];
+            const seq = api.getSessionLastEventSeq(sessionId);
+            return { hasMarker: messages.some((content) => String(content).includes(marker)), seq };
+          },
+          { sessionId: sessionIdB, marker },
+        ),
+      { timeout: 15_000 },
+    )
+    .toEqual({ hasMarker: true, seq: seedLastEventSeq });
+
   await page.waitForTimeout(600);
 
   const after = requests.filter((r) => r.ts >= cutoff);

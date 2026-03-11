@@ -306,3 +306,30 @@ impl fmt::Display for MissingConfig {
 }
 
 impl std::error::Error for MissingConfig {}
+
+#[cfg(test)]
+mod helpers_tests {
+    use super::*;
+
+    #[test]
+    fn shim_websocket_base_normalizes_http_and_https() {
+        assert_eq!(websocket_base("http://example.com"), "ws://example.com");
+        assert_eq!(websocket_base("http://example.com/"), "ws://example.com");
+        assert_eq!(websocket_base("https://example.com"), "wss://example.com");
+        assert_eq!(websocket_base("https://example.com/"), "wss://example.com");
+    }
+
+    #[test]
+    fn shim_websocket_base_preserves_ws_schemes_and_trims_slash() {
+        assert_eq!(websocket_base("ws://example.com"), "ws://example.com");
+        assert_eq!(websocket_base("ws://example.com/"), "ws://example.com");
+        assert_eq!(websocket_base("wss://example.com"), "wss://example.com");
+        assert_eq!(websocket_base("wss://example.com/"), "wss://example.com");
+    }
+
+    #[test]
+    fn shim_websocket_base_defaults_to_ws_when_no_scheme_present() {
+        assert_eq!(websocket_base("example.com"), "ws://example.com");
+        assert_eq!(websocket_base("example.com/"), "ws://example.com");
+    }
+}

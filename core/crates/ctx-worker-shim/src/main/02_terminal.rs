@@ -6,6 +6,57 @@ const TERMINAL_PING_INTERVAL: Duration = Duration::from_secs(25);
 const TERMINAL_RECONNECT_BASE_MS: u64 = 500;
 const TERMINAL_RECONNECT_MAX_MS: u64 = 10_000;
 
+fn resolved_terminal_size(cols: u16, rows: u16) -> PtySize {
+    PtySize {
+        rows: if rows == 0 { DEFAULT_ROWS } else { rows },
+        cols: if cols == 0 { DEFAULT_COLS } else { cols },
+        pixel_width: 0,
+        pixel_height: 0,
+    }
+}
+
+fn resolve_terminal_cwd(
+    workdir: &std::path::Path,
+    requested_cwd: Option<&str>,
+) -> std::path::PathBuf {
+    let canonical_workdir =
+        std::fs::canonicalize(workdir).unwrap_or_else(|_| workdir.to_path_buf());
+    let mut cwd = canonical_workdir.clone();
+    if let Some(rel) = requested_cwd {
+        let candidate = canonical_workdir.join(rel);
+        if let Ok(canon) = std::fs::canonicalize(&candidate) {
+            if canon.starts_with(&canonical_workdir) {
+                cwd = canon;
+            }
+        }
+    }
+    cwd
+}
+
+fn base_terminal_reconnect_backoff() -> Duration {
+    Duration::from_millis(TERMINAL_RECONNECT_BASE_MS)
+}
+
+fn next_terminal_reconnect_backoff(current: Duration) -> Duration {
+    (current + current).min(Duration::from_millis(TERMINAL_RECONNECT_MAX_MS))
+}
+
+fn terminal_status_message(exited: bool, exit_code: Option<i32>) -> TerminalServerMessage {
+    TerminalServerMessage::Status {
+        status: if exited {
+            "exited".to_string()
+        } else {
+            "running".to_string()
+        },
+        exit_code: if exited { exit_code } else { None },
+    }
+}
+
+fn terminal_status_payload(exited: bool, exit_code: Option<i32>) -> String {
+    serde_json::to_string(&terminal_status_message(exited, exit_code))
+        .unwrap_or_else(|_| "{\"type\":\"status\",\"status\":\"running\"}".to_string())
+}
+
 fn lock_or_recover<'a, T>(
     mutex: &'a std::sync::Mutex<T>,
     name: &str,
@@ -26,7 +77,7 @@ enum TerminalClientMessage {
     Input { data: String },
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum TerminalServerMessage {
     Status {
@@ -145,35 +196,11 @@ async fn run_terminal_session(
     spec: TerminalOpenSpec,
     mut shutdown_rx: mpsc::UnboundedReceiver<()>,
 ) -> Result<()> {
-    let cols = if spec.cols == 0 {
-        DEFAULT_COLS
-    } else {
-        spec.cols
-    };
-    let rows = if spec.rows == 0 {
-        DEFAULT_ROWS
-    } else {
-        spec.rows
-    };
+    let size = resolved_terminal_size(spec.cols, spec.rows);
     let pty_system = NativePtySystem::default();
-    let pair = pty_system
-        .openpty(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .context("open pty")?;
+    let pair = pty_system.openpty(size).context("open pty")?;
 
-    let mut cwd = args.workdir.clone();
-    if let Some(rel) = spec.cwd.as_ref() {
-        let candidate = args.workdir.join(rel);
-        if let Ok(canon) = std::fs::canonicalize(&candidate) {
-            if canon.starts_with(&args.workdir) {
-                cwd = canon;
-            }
-        }
-    }
+    let cwd = resolve_terminal_cwd(&args.workdir, spec.cwd.as_deref());
 
     let mut cmd = CommandBuilder::new(spec.shell.clone());
     cmd.cwd(cwd);
@@ -238,18 +265,14 @@ async fn run_terminal_session(
                 *guard = exit_code;
             }
             exited_status.store(true, Ordering::Relaxed);
-            let payload = serde_json::to_string(&TerminalServerMessage::Status {
-                status: "exited".to_string(),
-                exit_code,
-            })
-            .unwrap_or_else(|_| "{\"type\":\"status\",\"status\":\"exited\"}".to_string());
+            let payload = terminal_status_payload(true, exit_code);
             let _ = out_tx_status.send(Message::Text(payload.into()));
             break;
         }
         std::thread::sleep(Duration::from_millis(250));
     });
 
-    let mut backoff = Duration::from_millis(TERMINAL_RECONNECT_BASE_MS);
+    let mut backoff = base_terminal_reconnect_backoff();
     'outer: loop {
         debug!(terminal_id = %spec.terminal_id, url = %url, "connecting terminal session");
         let mut req = url
@@ -278,23 +301,18 @@ async fn run_terminal_session(
                     _ = &mut sleep => {},
                     _ = shutdown_rx.recv() => break,
                 }
-                backoff =
-                    (backoff + backoff).min(Duration::from_millis(TERMINAL_RECONNECT_MAX_MS));
+                backoff = next_terminal_reconnect_backoff(backoff);
                 continue;
             }
         };
         debug!(terminal_id = %spec.terminal_id, "terminal session connected");
-        backoff = Duration::from_millis(TERMINAL_RECONNECT_BASE_MS);
+        backoff = base_terminal_reconnect_backoff();
         let (mut ws_write, mut ws_read) = ws_stream.split();
 
-        let (status, exit_code) = if exited.load(Ordering::Relaxed) {
-            let guard = lock_or_recover(exit_code.as_ref(), "exit code");
-            ("exited".to_string(), *guard)
-        } else {
-            ("running".to_string(), None)
-        };
-        let payload = serde_json::to_string(&TerminalServerMessage::Status { status, exit_code })
-            .unwrap_or_else(|_| "{\"type\":\"status\",\"status\":\"running\"}".to_string());
+        let payload = terminal_status_payload(
+            exited.load(Ordering::Relaxed),
+            *lock_or_recover(exit_code.as_ref(), "exit code"),
+        );
         let _ = ws_write.send(Message::Text(payload.into())).await;
 
         let mut ping = tokio::time::interval(TERMINAL_PING_INTERVAL);
@@ -367,8 +385,7 @@ async fn run_terminal_session(
             _ = &mut sleep => {},
             _ = shutdown_rx.recv() => break,
         }
-        backoff =
-            (backoff + backoff).min(Duration::from_millis(TERMINAL_RECONNECT_MAX_MS));
+        backoff = next_terminal_reconnect_backoff(backoff);
     }
 
     {
@@ -379,4 +396,121 @@ async fn run_terminal_session(
     drop(input_tx);
     drop(out_tx);
     Ok(())
+}
+
+#[cfg(test)]
+mod terminal_tests {
+    use super::*;
+
+    fn test_dir(prefix: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "ctx-worker-shim-{prefix}-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&path).expect("create test dir");
+        path
+    }
+
+    #[test]
+    fn shim_terminal_size_defaults_zero_dimensions() {
+        let size = resolved_terminal_size(0, 0);
+        assert_eq!(size.cols, DEFAULT_COLS);
+        assert_eq!(size.rows, DEFAULT_ROWS);
+        assert_eq!(size.pixel_width, 0);
+        assert_eq!(size.pixel_height, 0);
+    }
+
+    #[test]
+    fn shim_terminal_size_preserves_explicit_dimensions() {
+        let size = resolved_terminal_size(132, 48);
+        assert_eq!(size.cols, 132);
+        assert_eq!(size.rows, 48);
+    }
+
+    #[test]
+    fn shim_resolve_terminal_cwd_confines_to_workdir() {
+        let workdir = test_dir("cwd-confined");
+        let nested = workdir.join("nested");
+        std::fs::create_dir_all(&nested).expect("create nested dir");
+        let canonical_workdir = std::fs::canonicalize(&workdir).expect("canonical workdir");
+
+        let resolved = resolve_terminal_cwd(&workdir, Some("nested"));
+        assert_eq!(
+            resolved,
+            std::fs::canonicalize(&nested).expect("canonical nested")
+        );
+
+        let escaped = resolve_terminal_cwd(&workdir, Some("../"));
+        assert_eq!(escaped, canonical_workdir);
+
+        let missing = resolve_terminal_cwd(&workdir, Some("does-not-exist"));
+        assert_eq!(missing, canonical_workdir);
+
+        let _ = std::fs::remove_dir_all(&workdir);
+    }
+
+    #[test]
+    fn shim_reconnect_backoff_doubles_and_caps() {
+        let mut backoff = base_terminal_reconnect_backoff();
+        assert_eq!(backoff, Duration::from_millis(TERMINAL_RECONNECT_BASE_MS));
+
+        backoff = next_terminal_reconnect_backoff(backoff);
+        assert_eq!(backoff, Duration::from_millis(1_000));
+
+        for _ in 0..8 {
+            backoff = next_terminal_reconnect_backoff(backoff);
+        }
+        assert_eq!(backoff, Duration::from_millis(TERMINAL_RECONNECT_MAX_MS));
+        assert_eq!(
+            next_terminal_reconnect_backoff(backoff),
+            Duration::from_millis(TERMINAL_RECONNECT_MAX_MS)
+        );
+        assert_eq!(
+            base_terminal_reconnect_backoff(),
+            Duration::from_millis(TERMINAL_RECONNECT_BASE_MS)
+        );
+    }
+
+    #[test]
+    fn shim_terminal_status_message_tracks_running_and_exit_state() {
+        assert_eq!(
+            terminal_status_message(false, Some(7)),
+            TerminalServerMessage::Status {
+                status: "running".to_string(),
+                exit_code: None,
+            }
+        );
+        assert_eq!(
+            terminal_status_message(true, Some(7)),
+            TerminalServerMessage::Status {
+                status: "exited".to_string(),
+                exit_code: Some(7),
+            }
+        );
+        let payload = terminal_status_payload(true, Some(3));
+        assert!(payload.contains("\"status\":\"exited\""));
+        assert!(payload.contains("\"exit_code\":3"));
+    }
+
+    #[test]
+    fn shim_lock_or_recover_recovers_poisoned_mutex() {
+        let mutex = Arc::new(std::sync::Mutex::new(123_i32));
+        let mutex_for_poison = mutex.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = mutex_for_poison.lock().expect("lock before poison");
+            panic!("intentional poison for test");
+        })
+        .join();
+
+        let mut guard = lock_or_recover(mutex.as_ref(), "test mutex");
+        assert_eq!(*guard, 123);
+        *guard = 456;
+        drop(guard);
+
+        assert_eq!(*lock_or_recover(mutex.as_ref(), "test mutex"), 456);
+    }
 }

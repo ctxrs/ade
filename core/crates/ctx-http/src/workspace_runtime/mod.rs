@@ -925,19 +925,6 @@ impl HarnessRuntimeManager {
 // that spans async calls so process-global state cannot interleave across test cases.
 #[allow(clippy::await_holding_lock)]
 mod tests {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
-
-    use super::*;
-    use chrono::Utc;
-    use ctx_core::ids::{WorkspaceId, WorktreeId};
-    use sha2::{Digest, Sha256};
-    use tempfile::TempDir;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::TcpListener;
-    use tokio::task::JoinHandle;
-    use tokio::time::{sleep, Duration};
-
     use super::network_policy_transition::transparent_proxy_policy;
     use super::podman_recovery::{
         collect_ctx_managed_podman_helper_pids,
@@ -947,6 +934,19 @@ mod tests {
         looks_like_recoverable_machine_start_error,
         looks_like_running_but_unreachable_machine_start_error, podman_machine_temp_state_paths,
     };
+    use super::*;
+    use chrono::Utc;
+    use ctx_core::ids::{WorkspaceId, WorktreeId};
+    use sha2::{Digest, Sha256};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use tempfile::TempDir;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio::task::JoinHandle;
+    use tokio::time::{sleep, Duration};
+    #[path = "recovery_tests.rs"]
+    mod recovery_tests;
 
     struct EnvGuard {
         key: &'static str,
