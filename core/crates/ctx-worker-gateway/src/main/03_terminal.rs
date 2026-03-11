@@ -19,7 +19,7 @@ fn attach_terminal_side(
     let entry = relay_state
         .sessions
         .entry(terminal_id.to_string())
-        .or_insert_with(TerminalSessionRelay::default);
+        .or_default();
     match side {
         TerminalSide::Daemon => entry.daemon_tx = Some(tx),
         TerminalSide::Worker => entry.worker_tx = Some(tx),
@@ -228,7 +228,7 @@ mod tests {
     use super::*;
 
     fn binary_message(body: &str) -> Message {
-        Message::Binary(body.as_bytes().to_vec().into())
+        Message::Binary(body.as_bytes().to_vec())
     }
 
     fn message_body(msg: &Message) -> String {

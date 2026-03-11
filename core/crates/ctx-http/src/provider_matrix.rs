@@ -311,10 +311,9 @@ pub async fn apply_matrix_to_status(
     entry: &ProviderMatrixEntry,
     status: &mut ctx_providers::adapters::ProviderStatus,
 ) {
-    status.details.insert(
-        "provider_kind".to_string(),
-        entry.kind.as_str().to_string(),
-    );
+    status
+        .details
+        .insert("provider_kind".to_string(), entry.kind.as_str().to_string());
     let context_version = updates::normalize_version_str(env!("CARGO_PKG_VERSION"));
     let context_version = context_version.as_ref();
 

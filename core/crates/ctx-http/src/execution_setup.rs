@@ -1675,6 +1675,30 @@ mod tests {
             .expect("save settings");
         store.close().await;
     }
+
+    async fn wait_for_launch_terminal(
+        coordinator: &Arc<ExecutionSetupCoordinator>,
+        job_id: &str,
+        timeout: Duration,
+    ) -> ExecutionLaunchSnapshot {
+        tokio::time::timeout(timeout, async {
+            loop {
+                let latest = coordinator
+                    .launch_status(job_id)
+                    .await
+                    .expect("missing launch job");
+                if matches!(
+                    latest.state,
+                    ExecutionLaunchState::Ready | ExecutionLaunchState::Error
+                ) {
+                    break latest;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("timed out waiting for terminal launch state")
+    }
     #[derive(Default)]
     struct BlockingWarmupOperations {
         runtime_runs: AtomicUsize,
@@ -2372,6 +2396,9 @@ mod tests {
                 && (line.message == "requesting shared container readiness"
                     || line.message == "checking container runtime")
         }));
+
+        let _terminal =
+            wait_for_launch_terminal(&coordinator, &snapshot.job_id, Duration::from_secs(5)).await;
     }
 
     #[tokio::test]
@@ -2511,6 +2538,11 @@ mod tests {
         assert_ne!(background.job_id, launch.job_id);
 
         ops.release_runtime();
+
+        let background_terminal =
+            wait_for_launch_terminal(&coordinator, &background.job_id, Duration::from_secs(1))
+                .await;
+        assert_eq!(background_terminal.state, ExecutionLaunchState::Ready);
     }
 
     #[cfg(unix)]
@@ -2635,5 +2667,8 @@ mod tests {
                 && (line.message == "requesting shared container readiness"
                     || line.message == "checking container runtime")
         }));
+
+        let _terminal =
+            wait_for_launch_terminal(&coordinator, &snapshot.job_id, Duration::from_secs(5)).await;
     }
 }

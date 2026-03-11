@@ -199,15 +199,16 @@ mod tests {
                 break;
             }
             buf.extend_from_slice(&chunk[..read]);
-            if header_end.is_none() {
-                if let Some(idx) = find_header_end(&buf) {
-                    header_end = Some(idx);
-                    content_length = parse_content_length(&buf[..idx]);
-                    if buf.len() >= idx + content_length {
-                        break;
-                    }
+            if let Some(idx) = header_end {
+                if buf.len() >= idx + content_length {
+                    break;
                 }
-            } else if buf.len() >= header_end.expect("header end") + content_length {
+            } else if let Some(idx) = find_header_end(&buf) {
+                header_end = Some(idx);
+                content_length = parse_content_length(&buf[..idx]);
+                if buf.len() >= idx + content_length {
+                    break;
+                }
                 break;
             }
         }

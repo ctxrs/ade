@@ -15,6 +15,8 @@ const DEFAULT_PORT = 4401;
 const parseBool = (value?: string) =>
   ["1", "true", "yes", "on"].includes(value?.toLowerCase() ?? "");
 
+const hasValue = (value?: string) => Boolean(value?.trim());
+
 const resolveWorkers = (defaultWorkers: number | undefined) => {
   const raw = String(process.env.CTX_E2E_WORKERS ?? process.env.PW_WORKERS ?? "").trim();
   if (!raw) return defaultWorkers;
@@ -102,6 +104,21 @@ export async function createCtxPlaywrightConfig(
   const outputDir = path.resolve(__dirname, `e2e/test-results/${profileSlug}`);
   const reportDir = path.resolve(__dirname, `e2e/playwright-report/${profileSlug}`);
   const primaryReporter = process.env.CTX_E2E_REPORTER ?? "dot";
+  const argosEnabled =
+    parseBool(process.env.CTX_E2E_ARGOS) || hasValue(process.env.ARGOS_TOKEN);
+  const reporter: PlaywrightTestConfig["reporter"] = [
+    [primaryReporter],
+    ["html", { outputFolder: reportDir, open: "never" }],
+  ];
+  if (argosEnabled) {
+    reporter.push([
+      "@argos-ci/playwright/reporter",
+      {
+        uploadToArgos: true,
+        buildName: `ctx-web-${profileSlug}`,
+      },
+    ]);
+  }
   const webServerEnv = {
     ...process.env,
     CTX_E2E_DATA_DIR: dataDir,
@@ -123,10 +140,7 @@ export async function createCtxPlaywrightConfig(
     timeout: 60_000,
     workers: resolveWorkers(1),
     outputDir,
-    reporter: [
-      [primaryReporter],
-      ["html", { outputFolder: reportDir, open: "never" }],
-    ],
+    reporter,
     use: {
       baseURL,
       extraHTTPHeaders: {

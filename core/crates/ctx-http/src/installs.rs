@@ -139,6 +139,11 @@ impl InstallState {
 
     pub fn polling_info(&self, install_id: InstallId) -> InstallInfo {
         let current_last_event = self.events.back().cloned();
+        let synthetic_start_event = if matches!(self.state, InstallStateKind::Running) {
+            self.synthetic_polling_start_event(install_id)
+        } else {
+            None
+        };
         let override_visible = matches!(self.state, InstallStateKind::Running)
             && self
                 .info_event_override_until
@@ -148,10 +153,30 @@ impl InstallState {
             self.info_event_override
                 .clone()
                 .or_else(|| current_last_event.clone())
+                .or(synthetic_start_event)
         } else {
-            current_last_event
+            current_last_event.or(synthetic_start_event)
         };
         self.build_info(install_id, last_event)
+    }
+
+    fn synthetic_polling_start_event(&self, install_id: InstallId) -> Option<InstallProgressEvent> {
+        if self.events.back().is_some() {
+            return None;
+        }
+        Some(InstallProgressEvent {
+            install_id,
+            provider_id: self.provider_id.clone(),
+            target: self.target,
+            at: self.started_at,
+            stage: "start".to_string(),
+            message: "Install started".to_string(),
+            level: InstallEventLevel::Info,
+            bytes: None,
+            total_bytes: None,
+            attempt: None,
+            error_code: None,
+        })
     }
 
     fn should_expose_info_event_override(
@@ -194,4 +219,54 @@ pub fn truncate_for_storage(s: &str, max_len: usize) -> String {
     let mut out = s.chars().take(max_len).collect::<String>();
     out.push('…');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn polling_info_surfaces_synthetic_start_event_for_running_installs_without_progress() {
+        let install_id = InstallId::new_v4();
+        let state = InstallState::new("acp-crp-bridge".to_string(), Some(InstallTarget::Container));
+
+        let info = state.polling_info(install_id);
+
+        assert!(matches!(info.state, InstallStateKind::Running));
+        assert_eq!(
+            info.last_event.as_ref().map(|event| event.stage.as_str()),
+            Some("start")
+        );
+        assert_eq!(
+            info.last_event.as_ref().map(|event| event.message.as_str()),
+            Some("Install started")
+        );
+    }
+
+    #[test]
+    fn polling_info_prefers_real_progress_events_over_synthetic_start() {
+        let install_id = InstallId::new_v4();
+        let mut state =
+            InstallState::new("acp-crp-bridge".to_string(), Some(InstallTarget::Container));
+        state.events.push_back(InstallProgressEvent {
+            install_id,
+            provider_id: "acp-crp-bridge".to_string(),
+            target: Some(InstallTarget::Container),
+            at: Utc::now(),
+            stage: "download".to_string(),
+            message: "Downloading bridge".to_string(),
+            level: InstallEventLevel::Info,
+            bytes: Some(32),
+            total_bytes: Some(64),
+            attempt: Some(1),
+            error_code: None,
+        });
+
+        let info = state.polling_info(install_id);
+
+        assert_eq!(
+            info.last_event.as_ref().map(|event| event.stage.as_str()),
+            Some("download")
+        );
+    }
 }

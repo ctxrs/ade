@@ -1,5 +1,8 @@
+import { argosScreenshot } from "@argos-ci/playwright";
 import { test, expect } from "./fixtures";
 import type { Page } from "playwright/test";
+import os from "os";
+import path from "path";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
 type ThemeMode = "dark" | "light";
@@ -29,6 +32,7 @@ async function openSettings(page: Page, workspaceId: string, mode: ThemeMode) {
 
 test.describe.serial("theme screenshots", () => {
   let workspaceId = "";
+  const argosRoot = path.join(process.env.CTX_E2E_DATA_DIR ?? os.tmpdir(), "argos-screenshots");
 
   test.beforeAll(async ({ request }) => {
     const seed = await seedDummyWorkspace(request, {
@@ -40,16 +44,20 @@ test.describe.serial("theme screenshots", () => {
   });
 
   test("dark theme", async ({ page }) => {
-    const screenshotPath = "/tmp/ctx-theme-dark.png";
     await setTheme(page, "dark");
     await openSettings(page, workspaceId, "dark");
-    await page.screenshot({ path: screenshotPath, fullPage: true });
+    await argosScreenshot(page, "settings-theme-dark", {
+      root: argosRoot,
+      fullPage: true,
+    });
   });
 
   test("light theme", async ({ page }) => {
-    const screenshotPath = "/tmp/ctx-theme-light.png";
     await setTheme(page, "light");
     await openSettings(page, workspaceId, "light");
-    await page.screenshot({ path: screenshotPath, fullPage: true });
+    await argosScreenshot(page, "settings-theme-light", {
+      root: argosRoot,
+      fullPage: true,
+    });
   });
 });
