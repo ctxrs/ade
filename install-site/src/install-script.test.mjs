@@ -206,6 +206,7 @@ test("renderInstallScript includes release resolution, checksum verify, and app 
   assert.doesNotMatch(script, /skipping checksum verification/);
   assert.match(script, /hdiutil attach/);
   assert.match(script, /ditto "\$app_src" "\$target_app"/);
+  assert.match(script, /open "\$target_app"/);
   assert.match(script, /CTX_DESKTOP_START_PATH="\$start_path"/);
   assert.match(script, /ctx\.AppImage/);
   assert.match(script, /ctx-desktop/);

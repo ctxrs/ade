@@ -161,20 +161,6 @@ verify_artifact_sha() {
   log "Verified artifact sha256"
 }
 
-find_macos_app_binary() {
-  app_path="$1"
-  binary_path="$(find "$app_path/Contents/MacOS" -maxdepth 1 \\( -type f -o -type l \\) | head -n 1)"
-  [ -n "$binary_path" ] || fail "could not find executable inside $app_path"
-  printf "%s\\n" "$binary_path"
-}
-
-launch_macos_app() {
-  app_path="$1"
-  start_path="$2"
-  app_binary="$(find_macos_app_binary "$app_path")"
-  CTX_DESKTOP_START_PATH="$start_path" "$app_binary" >/dev/null 2>&1 &
-}
-
 launch_linux_appimage() {
   appimage_path="$1"
   start_path="$2"
@@ -186,6 +172,7 @@ install_macos() {
   need_cmd hdiutil
   need_cmd plutil
   need_cmd ditto
+  need_cmd open
 
   case "$local_arch" in
     arm64) platform="macos-arm64" ;;
@@ -240,7 +227,7 @@ install_macos() {
 
   log "Installed $app_name to $target_app"
   if [ "\${CTX_INSTALL_NO_OPEN:-0}" != "1" ]; then
-    launch_macos_app "$target_app" "$(first_open_start_path)"
+    open "$target_app"
     log "Launched $app_name"
   fi
 }
