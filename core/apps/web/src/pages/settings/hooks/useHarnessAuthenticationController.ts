@@ -698,12 +698,13 @@ export function useHarnessAuthenticationController({
             accountId,
             supportsEndpointConfig: supportsHarnessEndpointConfig(providerId),
           });
+          await onboarding.ensureProviderAuthSummary(providerId, { trigger: "explicit" });
         },
         setBusy,
         setProviderError,
       });
     },
-    [ownerScope, supportsHarnessEndpointConfig],
+    [onboarding, ownerScope, supportsHarnessEndpointConfig],
   );
 
   const onDeleteProviderEndpoint = useCallback(async (providerId: string, endpointId: string) => {

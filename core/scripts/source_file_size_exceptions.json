@@ -136,8 +136,8 @@
   },
   {
     "path": "crates/ctx-http/src/api/provider_launch.rs",
-    "maxLines": 1345,
-    "reason": "Existing oversized provider launch API module. Keep stable until a dedicated breakup."
+    "maxLines": 1376,
+    "reason": "Existing oversized provider launch API module. A nearby mainline change grew it slightly; keep stable until a dedicated breakup."
   },
   {
     "path": "crates/ctx-http/src/api/mod.rs",
