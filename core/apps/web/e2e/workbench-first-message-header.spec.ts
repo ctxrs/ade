@@ -1,7 +1,13 @@
 import { test, expect } from "./fixtures";
+import { mkdtempSync, writeFileSync } from "fs";
+import { execSync } from "child_process";
+import { tmpdir } from "os";
+import path from "path";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 import { clearDiagnostics, expectNoUnexpectedDiagnostics, getDiagnostics } from "./utils/diagnostics";
 import { expectWsPathOnCanonicalOrigin } from "./utils/wsUrls";
+import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
+import { selectHarnessBySearch } from "./utils/harnessEndpointAuth";
 
 const asRecord = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -14,6 +20,13 @@ type E2EWindow = Window & {
       getConnectionState?: () => string | null;
     };
   };
+  __sendClickAt?: number;
+  __optimisticHeaderSeen?: boolean;
+  __optimisticHeaderDisappeared?: boolean;
+  __optimisticHeaderDuplicated?: boolean;
+  __optimisticHeaderItemId?: string | null;
+  __emptyPlaceholderSeen?: boolean;
+  __emptyPlaceholderObserver?: MutationObserver;
 };
 
 test("workbench: first user message renders from stream when head is stale", async ({ page, request }) => {
@@ -92,4 +105,153 @@ test("workbench: first user message renders from stream when head is stale", asy
   expect(streamWarnings).toEqual([]);
 
   forceStaleHead = false;
+});
+
+test("workbench: optimistic first user message survives new-task handoff while the first head is stale", async ({ page }) => {
+  test.setTimeout(120000);
+  await page.setViewportSize({ width: 1400, height: 900 });
+
+  const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-"));
+  execSync("git init", { cwd: repo });
+  execSync("git config user.email test@example.com", { cwd: repo });
+  execSync("git config user.name Test", { cwd: repo });
+  writeFileSync(path.join(repo, "file.txt"), "hello\n");
+  execSync("git add .", { cwd: repo });
+  execSync("git commit -m init", { cwd: repo });
+
+  const workspaceName = `ws-${Date.now()}`;
+  await createWorkspaceAndOpenWorkbench({ page, request: page.request, repo, workspaceName });
+  await selectHarnessBySearch(page, "fake", /fake/i);
+
+  let allowFirstCreateSession: (() => void) | null = null;
+  const firstCreateSessionGate = new Promise<void>((resolve) => {
+    allowFirstCreateSession = resolve;
+  });
+  let stalledCreateSession = true;
+  await page.route("**/api/tasks/*/sessions", async (route) => {
+    if (stalledCreateSession && route.request().method() === "POST") {
+      stalledCreateSession = false;
+      await firstCreateSessionGate;
+    }
+    await route.continue();
+  });
+
+  let forceStaleFirstSnapshot = true;
+  await page.route("**/api/sessions/*/snapshot**", async (route) => {
+    if (!forceStaleFirstSnapshot) {
+      await route.continue();
+      return;
+    }
+
+    forceStaleFirstSnapshot = false;
+    const response = await route.fetch();
+    const snapshot = asRecord(await response.json());
+    const snapshotHead = asRecord(snapshot.head);
+    const staleHead = {
+      ...snapshotHead,
+      turns: [],
+      messages: [],
+      events: [],
+      tool_summaries: [],
+      has_more_turns: false,
+      last_event_seq: 0,
+    };
+    await route.fulfill({
+      response,
+      body: JSON.stringify({ ...snapshot, head: staleHead }),
+    });
+  });
+
+  const prompt = `optimistic-handoff-${Date.now()}`;
+  const composer = page.locator("textarea.wb-composer-textarea").first();
+  await expect(composer).toBeVisible({ timeout: 20000 });
+  await composer.fill(prompt);
+
+  await page.evaluate((promptText: string) => {
+    const w = window as E2EWindow;
+    w.__sendClickAt = performance.now();
+    w.__optimisticHeaderSeen = false;
+    w.__optimisticHeaderDisappeared = false;
+    w.__optimisticHeaderDuplicated = false;
+    w.__optimisticHeaderItemId = null;
+    w.__emptyPlaceholderSeen = false;
+    w.__emptyPlaceholderObserver?.disconnect?.();
+
+    const selector = '.wb-session-slot[aria-hidden="false"] .wb-turn-header-content';
+    const monitorWindowMs = 2000;
+    const startAt = w.__sendClickAt;
+
+    const getMatches = () =>
+      Array.from(document.querySelectorAll(selector))
+        .filter((node) => (node.textContent ?? "").includes(promptText))
+        .map((node) => ({
+          itemId: node.closest("[data-thread-item-id]")?.getAttribute("data-thread-item-id") ?? null,
+        }));
+
+    const hasEmptyPlaceholder = () =>
+      Array.from(document.querySelectorAll('.wb-session-slot[aria-hidden="false"] .wb-muted')).some(
+        (node) => (node.textContent ?? "").trim() === "Empty",
+      );
+
+    const emptyObserver = new MutationObserver(() => {
+      if (hasEmptyPlaceholder()) {
+        w.__emptyPlaceholderSeen = true;
+      }
+    });
+    emptyObserver.observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
+    w.__emptyPlaceholderObserver = emptyObserver;
+
+    const tick = () => {
+      const elapsed = performance.now() - startAt;
+      const matches = getMatches();
+      const itemIds = matches.map((match) => match.itemId).filter(Boolean) as string[];
+      if (!w.__optimisticHeaderSeen && itemIds.length > 0) {
+        w.__optimisticHeaderSeen = true;
+        w.__optimisticHeaderItemId = itemIds[0];
+      }
+      if (w.__optimisticHeaderSeen && w.__optimisticHeaderItemId && !itemIds.includes(w.__optimisticHeaderItemId)) {
+        w.__optimisticHeaderDisappeared = true;
+      }
+      if (new Set(itemIds).size > 1) w.__optimisticHeaderDuplicated = true;
+      if (elapsed < monitorWindowMs) requestAnimationFrame(tick);
+    };
+
+    requestAnimationFrame(tick);
+  }, prompt);
+
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const header = page
+    .locator('.wb-session-slot[aria-hidden="false"] .wb-turn-header-content')
+    .filter({ hasText: prompt })
+    .first();
+  await expect(header).toBeVisible({ timeout: 2000 });
+  const headerItemId = await header.evaluate((node) =>
+    node.closest("[data-thread-item-id]")?.getAttribute("data-thread-item-id"),
+  );
+  expect(headerItemId).toBeTruthy();
+
+  allowFirstCreateSession?.();
+  await page.waitForTimeout(1000);
+
+  if (headerItemId) {
+    await expect(
+      page.locator(`[data-thread-item-id="${headerItemId}"] .wb-turn-header-content`),
+    ).toBeVisible();
+  } else {
+    await expect(header).toBeVisible();
+  }
+
+  const { headerDisappeared, headerDuplicated, emptyPlaceholderSeen } = await page.evaluate(() => {
+    const w = window as E2EWindow;
+    return {
+      headerDisappeared: Boolean(w.__optimisticHeaderDisappeared),
+      headerDuplicated: Boolean(w.__optimisticHeaderDuplicated),
+      emptyPlaceholderSeen: Boolean(w.__emptyPlaceholderSeen),
+    };
+  });
+
+  expect(headerDisappeared).toBe(false);
+  expect(headerDuplicated).toBe(false);
+  expect(emptyPlaceholderSeen).toBe(false);
 });

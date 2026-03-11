@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { idToString } from "../../api/client";
 import type { WorkspaceActiveSnapshotItem } from "../../state/workspaceActiveSnapshotStore";
 import type { OptimisticTaskSummary } from "../WorkbenchPage.types";
 
@@ -6,6 +7,16 @@ type UseWorkbenchOptimisticTasksArgs = {
   activeTaskId: string | null;
   activeTaskIdFromTab: string | null;
   tasksById: Record<string, WorkspaceActiveSnapshotItem>;
+};
+
+const hasRenderablePrimaryHeadMessages = (taskSummary: WorkspaceActiveSnapshotItem | null): boolean => {
+  if (!taskSummary) return false;
+  const primarySessionId =
+    idToString(taskSummary.primarySessionId) || idToString(taskSummary.task.primary_session_id);
+  if (!primarySessionId) return false;
+  const primaryHead = taskSummary.primarySessionHead;
+  if (idToString(primaryHead?.session?.id) !== primarySessionId) return false;
+  return (primaryHead?.messages?.length ?? 0) > 0;
 };
 
 export function useWorkbenchOptimisticTasks({
@@ -27,9 +38,7 @@ export function useWorkbenchOptimisticTasks({
     for (const item of optimisticTasks) {
       if (item.localStatus === "failed") continue;
       const server = tasksById[item.id] ?? null;
-      const serverHasSession =
-        Boolean(server?.task.primary_session_id) || (server?.sessions?.length ?? 0) > 0;
-      if (item.localStatus === "synced" && serverHasSession) continue;
+      if (item.localStatus === "synced" && hasRenderablePrimaryHeadMessages(server)) continue;
       const sessionId = String(item.primarySessionId ?? "");
       if (sessionId) ids.add(sessionId);
     }
@@ -51,11 +60,9 @@ export function useWorkbenchOptimisticTasks({
     if (!activeTaskId) return null;
     const optimistic = optimisticTasksById[activeTaskId];
     const server = tasksById[activeTaskId] ?? null;
-    const serverHasSession =
-      Boolean(server?.task.primary_session_id) || (server?.sessions?.length ?? 0) > 0;
     if (optimistic) {
       if (optimistic.localStatus !== "synced") return optimistic;
-      if (!serverHasSession) return optimistic;
+      if (!hasRenderablePrimaryHeadMessages(server)) return optimistic;
     }
     if (server) return server;
     const fallback = optimisticStartingTaskRef.current;

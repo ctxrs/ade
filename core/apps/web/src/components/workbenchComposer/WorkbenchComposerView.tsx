@@ -168,6 +168,37 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     if (recording) el.scrollTop = el.scrollHeight;
   }, [recording, value, variant]);
 
+  const clearSelectionBeforeSubmit = useCallback(() => {
+    if (variant !== "newSession") return;
+
+    setOpenMenu(null);
+    autocomplete.dismiss();
+
+    const textarea = textareaRef.current;
+    if (textarea) {
+      const cursor =
+        textarea.selectionEnd
+        ?? textarea.selectionStart
+        ?? textarea.value.length;
+      textarea.setSelectionRange(cursor, cursor);
+      if (document.activeElement === textarea) {
+        textarea.blur();
+      }
+    }
+
+    window.getSelection()?.removeAllRanges();
+  }, [autocomplete, variant]);
+
+  const handleSendAction = useCallback(() => {
+    if (showStop) {
+      onInterrupt?.();
+      return;
+    }
+
+    clearSelectionBeforeSubmit();
+    onSend();
+  }, [clearSelectionBeforeSubmit, onInterrupt, onSend, showStop]);
+
   useLayoutEffect(() => {
     resizeTextarea();
   }, [resizeTextarea, value]);
@@ -758,7 +789,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
           if (autocomplete.onKeyDown(e)) return;
           if (shouldSendOnEnter(e)) {
             e.preventDefault();
-            onSend();
+            handleSendAction();
           }
         }}
         onKeyUp={() => autocomplete.syncFromDom()}
@@ -957,13 +988,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
           <button
             type="button"
             className="wb-send"
-            onClick={() => {
-              if (showStop) {
-                onInterrupt?.();
-                return;
-              }
-              onSend();
-            }}
+            onClick={handleSendAction}
             disabled={sendActionDisabled}
             title={sendActionTitle}
             aria-label={sendActionLabel}

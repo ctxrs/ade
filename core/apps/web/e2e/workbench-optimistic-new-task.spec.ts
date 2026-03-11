@@ -186,3 +186,60 @@ test("workbench: optimistic new task message skips queued UI", async ({ page }) 
   await expect(page.locator(".queue-panel")).toHaveCount(0);
   await expect(page.locator(".queue-item-content").filter({ hasText: prompt })).toHaveCount(0);
 });
+
+test("workbench: sending selected new-task text clears lingering selection state", async ({ page }) => {
+  test.setTimeout(120000);
+  await page.setViewportSize({ width: 1400, height: 900 });
+
+  const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-"));
+  execSync("git init", { cwd: repo });
+  execSync("git config user.email test@example.com", { cwd: repo });
+  execSync("git config user.name Test", { cwd: repo });
+  writeFileSync(path.join(repo, "file.txt"), "hello\n");
+  execSync("git add .", { cwd: repo });
+  execSync("git commit -m init", { cwd: repo });
+
+  const workspaceName = `ws-${Date.now()}`;
+  await createWorkspaceAndOpenWorkbench({ page, request: page.request, repo, workspaceName });
+  await selectHarnessBySearch(page, "fake", /fake/i);
+
+  const prompt = `alpha beta gamma ${Date.now()}`;
+  const composer = page.locator("textarea.wb-composer-textarea").first();
+  await expect(composer).toBeVisible({ timeout: 20000 });
+  await composer.fill(prompt);
+  await composer.evaluate((el: HTMLTextAreaElement) => {
+    el.focus();
+    const start = el.value.indexOf("beta");
+    const end = start + "beta".length;
+    el.setSelectionRange(start, end);
+    el.dispatchEvent(new Event("select", { bubbles: true }));
+  });
+
+  await composer.press("Enter");
+
+  const sentHeader = page
+    .locator('.wb-session-slot[aria-hidden="false"] .wb-turn-header-content')
+    .filter({ hasText: prompt })
+    .first();
+  await expect(sentHeader).toBeVisible({ timeout: 10000 });
+
+  const selectionState = await page.evaluate(() => {
+    const selectedTextareas = Array.from(document.querySelectorAll("textarea"))
+      .map((node) => node as HTMLTextAreaElement)
+      .filter((node) => (node.selectionStart ?? 0) !== (node.selectionEnd ?? 0))
+      .map((node) => ({
+        className: node.className,
+        value: node.value,
+        selectionStart: node.selectionStart,
+        selectionEnd: node.selectionEnd,
+        selectedText: node.value.slice(node.selectionStart ?? 0, node.selectionEnd ?? 0),
+      }));
+    return {
+      globalSelection: window.getSelection()?.toString() ?? "",
+      selectedTextareas,
+    };
+  });
+
+  expect(selectionState.globalSelection).toBe("");
+  expect(selectionState.selectedTextareas).toEqual([]);
+});

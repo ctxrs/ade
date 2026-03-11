@@ -23,6 +23,14 @@ function baseOptions(providerId: string): ProviderOptions {
 }
 
 describe("WorkbenchComposer textarea sizing", () => {
+  type SubmitSnapshot = {
+    activeTag: string | null;
+    selectionStart: number | null;
+    selectionEnd: number | null;
+    selectedText: string | null;
+    globalSelection: string;
+  };
+
   const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "scrollHeight");
 
   beforeEach(() => {
@@ -333,6 +341,97 @@ describe("WorkbenchComposer textarea sizing", () => {
       await new Promise((r) => setTimeout(r, 0));
     });
     expect(textarea.style.height).toBe("88px");
+  });
+
+  it("collapses new-task selection before sending on Enter", async () => {
+    let submitSnapshot: SubmitSnapshot | null = null;
+
+    const NewTaskHarness = () => {
+      const [value, setValue] = useState("alpha beta gamma");
+      const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
+      const [draftHarness, setDraftHarness] = useState<DraftHarness | null>({ providerId: "codex", modelId: "o3" });
+      const harnessCatalog: HarnessCatalogEntry[] = [{ id: "codex", label: "Codex", logoSrc: "" }];
+      const providersById: Record<string, ProviderStatus> = {
+        codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
+      };
+
+      return (
+        <WorkbenchComposer
+          variant="newSession"
+          value={value}
+          setValue={setValue}
+          placeholder="@ for context, / for commands"
+          inputDisabled={false}
+          sessionIdForAutocomplete={null}
+          workspaceIdForAutocomplete={null}
+          slashCommands={[]}
+          attachments={attachments}
+          setAttachments={setAttachments}
+          onSend={() => {
+            const textarea = document.querySelector("textarea.wb-new-composer-textarea") as HTMLTextAreaElement | null;
+            submitSnapshot = {
+              activeTag: document.activeElement?.tagName ?? null,
+              selectionStart: textarea?.selectionStart ?? null,
+              selectionEnd: textarea?.selectionEnd ?? null,
+              selectedText:
+                textarea && textarea.selectionStart != null && textarea.selectionEnd != null
+                  ? textarea.value.slice(textarea.selectionStart, textarea.selectionEnd)
+                  : null,
+              globalSelection: window.getSelection()?.toString() ?? "",
+            };
+          }}
+          sendDisabled={false}
+          sendDisabledReason={null}
+          onInterrupt={null}
+          modeId={modeId}
+          setModeId={setModeId}
+          harnessCatalog={harnessCatalog}
+          providersById={providersById}
+          providerInstallsById={{}}
+          onInstallProvider={vi.fn()}
+          onInstallAllProviders={vi.fn()}
+          providerOptions={{}}
+          ensureProviderAuthSummary={async () => undefined}
+          draftHarness={draftHarness}
+          setDraftHarness={setDraftHarness}
+          defaultProviderId="codex"
+        />
+      );
+    };
+
+    render(<NewTaskHarness />);
+    const textarea = screen.getByPlaceholderText("@ for context, / for commands") as HTMLTextAreaElement;
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    await act(async () => {
+      textarea.focus();
+      const start = textarea.value.indexOf("beta");
+      const end = start + "beta".length;
+      textarea.setSelectionRange(start, end);
+      fireEvent.select(textarea);
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(textarea.value.slice(textarea.selectionStart ?? 0, textarea.selectionEnd ?? 0)).toBe("beta");
+
+    await act(async () => {
+      fireEvent.keyDown(textarea, { key: "Enter", code: "Enter" });
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(submitSnapshot).not.toBeNull();
+    if (!submitSnapshot) {
+      throw new Error("expected submit snapshot");
+    }
+    const snapshot = submitSnapshot as SubmitSnapshot;
+    expect(snapshot.selectionStart).toBe(snapshot.selectionEnd);
+    expect(snapshot.selectedText).toBe("");
+    expect(snapshot.globalSelection).toBe("");
+    expect(snapshot.activeTag).not.toBe("TEXTAREA");
   });
 
   it("keeps the textarea scrolled to bottom while recording", async () => {

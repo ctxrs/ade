@@ -1,7 +1,7 @@
 import React, { act, useEffect } from "react";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import type { Session, SessionSnapshotSummary, Task } from "../../api/client";
+import type { Message, Session, SessionHeadSnapshot, SessionSnapshotSummary, Task } from "../../api/client";
 import type { WorkspaceActiveSnapshotItem } from "../../state/workspaceActiveSnapshotStore";
 import type { OptimisticTaskSummary } from "../WorkbenchPage.types";
 import { useWorkbenchOptimisticTasks } from "./useWorkbenchOptimisticTasks";
@@ -56,10 +56,12 @@ function makeTaskSummary({
   taskId,
   primarySessionId,
   sessions,
+  primarySessionHead = null,
 }: {
   taskId: string;
   primarySessionId: string;
   sessions: SessionSnapshotSummary[];
+  primarySessionHead?: SessionHeadSnapshot | null;
 }): WorkspaceActiveSnapshotItem {
   return {
     id: taskId,
@@ -69,9 +71,42 @@ function makeTaskSummary({
     },
     sessions,
     primarySessionId,
-    primarySessionHead: null,
+    primarySessionHead,
     sort_at: now,
     sortAtMs: Date.parse(now),
+  };
+}
+
+function makeMessage(sessionId: string, taskId: string, content: string): Message {
+  return {
+    id: `message-${sessionId}`,
+    session_id: sessionId,
+    task_id: taskId,
+    turn_id: `turn-${sessionId}`,
+    turn_sequence: 1,
+    role: "user",
+    content,
+    delivery: "immediate",
+    created_at: now,
+  };
+}
+
+function makeSessionHead(
+  session: Session,
+  messages: Message[] = [],
+): SessionHeadSnapshot {
+  return {
+    session,
+    turns: [],
+    tool_summaries: [],
+    events: [],
+    messages,
+    last_event_seq: messages.length,
+    state_rev: messages.length,
+    activity: { is_working: false },
+    has_more_turns: false,
+    history_cursor: null,
+    has_more_history: false,
   };
 }
 
@@ -269,7 +304,7 @@ describe("useWorkbenchOptimisticTasks", () => {
     });
   });
 
-  it("keeps a synced optimistic session id marked optimistic until the server task publishes a session", async () => {
+  it("keeps a synced optimistic session id marked optimistic until the server publishes a primary head with messages", async () => {
     let current: HookValue | null = null;
     const optimisticSession = makeSession("session-1", "task-1");
     const optimistic = {
@@ -305,6 +340,9 @@ describe("useWorkbenchOptimisticTasks", () => {
       taskId: "task-1",
       primarySessionId: optimisticSession.id,
       sessions: [makeSessionSummary(optimisticSession)],
+      primarySessionHead: makeSessionHead(optimisticSession, [
+        makeMessage(optimisticSession.id, "task-1", "hello"),
+      ]),
     });
 
     rerender(
@@ -320,6 +358,64 @@ describe("useWorkbenchOptimisticTasks", () => {
 
     await waitFor(() => {
       expect(current?.optimisticSessionIdSet.has("session-1")).toBe(false);
+    });
+  });
+
+  it("keeps a synced optimistic task active until the server publishes a primary head with messages", async () => {
+    let current: HookValue | null = null;
+    const session = makeSession("session-1", "task-1");
+    const optimistic = {
+      ...makeOptimisticTask("task-1", session.id, "synced"),
+      localPrompt: "hello",
+    };
+    const serverTaskWithEmptyHead = makeTaskSummary({
+      taskId: "task-1",
+      primarySessionId: session.id,
+      sessions: [makeSessionSummary(session)],
+      primarySessionHead: makeSessionHead(session),
+    });
+
+    const { rerender } = render(
+      <Harness
+        activeTaskId="task-1"
+        activeTaskIdFromTab="task-1"
+        tasksById={{ "task-1": serverTaskWithEmptyHead }}
+        onChange={(value) => {
+          current = value;
+        }}
+      />,
+    );
+
+    act(() => {
+      current?.setOptimisticTasks([optimistic]);
+    });
+
+    await waitFor(() => {
+      expect(current?.activeTaskSummary).toEqual(optimistic);
+      expect(current?.optimisticSessionIdSet.has(session.id)).toBe(true);
+    });
+
+    const serverTaskWithMessageHead = makeTaskSummary({
+      taskId: "task-1",
+      primarySessionId: session.id,
+      sessions: [makeSessionSummary(session)],
+      primarySessionHead: makeSessionHead(session, [makeMessage(session.id, "task-1", "hello")]),
+    });
+
+    rerender(
+      <Harness
+        activeTaskId="task-1"
+        activeTaskIdFromTab="task-1"
+        tasksById={{ "task-1": serverTaskWithMessageHead }}
+        onChange={(value) => {
+          current = value;
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(current?.activeTaskSummary).toEqual(serverTaskWithMessageHead);
+      expect(current?.optimisticSessionIdSet.has(session.id)).toBe(false);
     });
   });
 });
