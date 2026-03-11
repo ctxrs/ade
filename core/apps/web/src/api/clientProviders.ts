@@ -476,6 +476,19 @@ export type AmpLoginStartResponse = {
   auth_url?: string | null;
 };
 
+export type CursorLoginStatus = {
+  login_id: string;
+  auth_url?: string | null;
+  status: string;
+  account_id?: string | null;
+  error?: string | null;
+};
+
+export type CursorLoginStartResponse = {
+  login_id: string;
+  auth_url?: string | null;
+};
+
 export type MistralLoginStatus = {
   login_id: string;
   auth_url?: string | null;

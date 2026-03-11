@@ -96,8 +96,8 @@
   },
   {
     "path": "crates/ctx-http/src/daemon/state.rs",
-    "maxLines": 1643,
-    "reason": "Existing oversized daemon state module. Nearby mainline growth pushed it past the prior cap; hold the cap at the current size until a dedicated breakup."
+    "maxLines": 1645,
+    "reason": "Existing oversized daemon state module. Cursor login added one session map and initializer; hold the cap at the current size until a dedicated breakup."
   },
   {
     "path": "crates/ctx-http/src/api/providers.rs",
@@ -141,8 +141,8 @@
   },
   {
     "path": "crates/ctx-http/src/api/mod.rs",
-    "maxLines": 1337,
-    "reason": "Existing oversized API router module. Keep stable until a dedicated breakup."
+    "maxLines": 1344,
+    "reason": "Existing oversized API router module. Cursor managed OAuth added two route entries; hold the cap at the current size until a dedicated breakup."
   },
   {
     "path": "crates/ctx-http/src/installer/config.rs",

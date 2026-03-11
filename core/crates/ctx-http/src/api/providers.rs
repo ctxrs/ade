@@ -33,6 +33,7 @@ use ctx_providers::adapters::{ProviderRestartMode, ProviderStatus};
 
 mod accounts;
 mod bootstrap;
+mod cursor_login;
 mod harness_config;
 mod imports;
 mod install;
@@ -55,6 +56,7 @@ pub(super) use accounts::{
     upsert_qwen_account,
 };
 pub(super) use bootstrap::get_workspace_providers_bootstrap;
+pub(super) use cursor_login::{get_cursor_login, start_cursor_login};
 pub(super) use harness_config::{
     delete_provider_harness_endpoint, get_provider_harness_config,
     refresh_provider_harness_endpoint_models, select_provider_harness_source,
@@ -67,9 +69,8 @@ pub(super) use imports::{
 pub(super) use install::{dev_restart_providers, install_lsp_server, refresh_provider_matrix};
 pub(super) use login::{
     complete_claude_login, complete_codex_login, get_amp_login, get_claude_login, get_codex_login,
-    get_cursor_login, get_gemini_login, get_mistral_login, get_qwen_login, start_amp_login,
-    start_claude_login, start_codex_login, start_cursor_login, start_gemini_login,
-    start_mistral_login, start_qwen_login,
+    get_gemini_login, get_mistral_login, get_qwen_login, start_amp_login, start_claude_login,
+    start_codex_login, start_gemini_login, start_mistral_login, start_qwen_login,
 };
 pub(crate) use status::provider_status_for_target;
 pub(super) use status::{get_provider, get_provider_usage, list_providers};
