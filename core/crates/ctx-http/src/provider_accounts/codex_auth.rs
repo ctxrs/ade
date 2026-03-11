@@ -629,8 +629,7 @@ pub async fn codex_env_for_active_account_with_runtime_root(
             clear_runtime_auth_projection(runtime_root).await?;
             return codex_env_for_runtime_home(runtime_root).await;
         }
-        let mirrored =
-            mirror_account_auth_to_runtime_root(data_root, runtime_root, active).await?;
+        let mirrored = mirror_account_auth_to_runtime_root(data_root, runtime_root, active).await?;
         if !mirrored {
             clear_runtime_auth_projection(runtime_root).await?;
         }

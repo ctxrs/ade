@@ -345,11 +345,19 @@ async fn cancel_promotes_queued_turns_in_fifo_order_across_multiple_cancels() {
             .and_then(|value| value.as_i64())
     };
     assert_eq!(
-        payload_i64_for(turn_id_two, SessionEventType::MessageQueueAdded, "queue_position"),
+        payload_i64_for(
+            turn_id_two,
+            SessionEventType::MessageQueueAdded,
+            "queue_position"
+        ),
         Some(0)
     );
     assert_eq!(
-        payload_i64_for(turn_id_three, SessionEventType::MessageQueueAdded, "queue_position"),
+        payload_i64_for(
+            turn_id_three,
+            SessionEventType::MessageQueueAdded,
+            "queue_position"
+        ),
         Some(1)
     );
     assert_eq!(
@@ -357,7 +365,11 @@ async fn cancel_promotes_queued_turns_in_fifo_order_across_multiple_cancels() {
         Some(0)
     );
     assert_eq!(
-        payload_i64_for(turn_id_three, SessionEventType::TurnQueued, "queue_position"),
+        payload_i64_for(
+            turn_id_three,
+            SessionEventType::TurnQueued,
+            "queue_position"
+        ),
         Some(1)
     );
 
@@ -474,7 +486,11 @@ async fn cancel_promotes_queued_turns_in_fifo_order_across_multiple_cancels() {
         .collect();
     assert_eq!(promoted_turns, vec![Some(turn_id_two), Some(turn_id_three)]);
     assert_eq!(
-        payload_i64_for(turn_id_two, SessionEventType::MessageQueuePromoted, "previous_position"),
+        payload_i64_for(
+            turn_id_two,
+            SessionEventType::MessageQueuePromoted,
+            "previous_position"
+        ),
         Some(0)
     );
     assert_eq!(

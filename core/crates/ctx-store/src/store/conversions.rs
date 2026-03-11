@@ -932,12 +932,16 @@ pub(super) fn normalize_tool_status(status: &str, event_type: SessionEventType) 
 
 pub(super) fn merge_tool_status(existing: Option<&str>, next: &str) -> String {
     match (existing, next) {
-        (Some(current @ ("completed" | "failed")), "pending" | "in_progress") => current.to_string(),
+        (Some(current @ ("completed" | "failed")), "pending" | "in_progress") => {
+            current.to_string()
+        }
         _ => next.to_string(),
     }
 }
 
-pub(super) fn extract_tool_update(payload: &Value) -> &Value { payload }
+pub(super) fn extract_tool_update(payload: &Value) -> &Value {
+    payload
+}
 
 fn tool_kind_from_update(update: &Value) -> Option<String> {
     update
@@ -953,7 +957,11 @@ fn tool_title_from_update(update: &Value) -> Option<String> {
         .and_then(Value::as_str)
         .or_else(|| update.get("tool_label").and_then(Value::as_str))
         .or_else(|| update.pointer("/toolCall/title").and_then(Value::as_str))
-        .or_else(|| update.pointer("/toolCall/tool_label").and_then(Value::as_str))
+        .or_else(|| {
+            update
+                .pointer("/toolCall/tool_label")
+                .and_then(Value::as_str)
+        })
         .map(str::to_owned)
 }
 

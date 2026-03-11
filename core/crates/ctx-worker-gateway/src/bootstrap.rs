@@ -601,9 +601,7 @@ mod tests {
 
         assert!(script.contains("CTX_BASE_COMMIT='abc123'"));
         assert!(script.contains("CTX_DIFF_DEBOUNCE_MS='1500'"));
-        assert!(script.contains(
-            "CTX_SHIM_URL='https://gateway.example.test/bin/ctx-worker-shim'"
-        ));
+        assert!(script.contains("CTX_SHIM_URL='https://gateway.example.test/bin/ctx-worker-shim'"));
         assert!(script.contains("shim_url=$(with_gateway_token \"$CTX_SHIM_URL\")"));
         assert!(script.contains(
             "if [ -n \"${CTX_WORKER_GATEWAY_TOKEN:-}\" ]; then export CTX_WORKER_GATEWAY_TOKEN; fi"

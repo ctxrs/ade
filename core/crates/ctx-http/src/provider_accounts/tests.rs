@@ -115,9 +115,10 @@ async fn codex_env_projects_active_account_auth_into_runtime_root() {
         &codex_runtime_home(runtime_root.path()).to_string_lossy()
     );
     assert!(codex_runtime_home(runtime_root.path()).exists());
-    let mirrored = tokio::fs::read_to_string(codex_runtime_home(runtime_root.path()).join("auth.json"))
-        .await
-        .unwrap();
+    let mirrored =
+        tokio::fs::read_to_string(codex_runtime_home(runtime_root.path()).join("auth.json"))
+            .await
+            .unwrap();
     assert!(mirrored.contains("OPENAI_API_KEY"));
 }
 
