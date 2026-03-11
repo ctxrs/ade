@@ -10,6 +10,7 @@ import {
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Check, Copy } from "lucide-react";
+import { ExternalLink } from "../components/ExternalLink";
 import { copyTextToClipboard } from "../utils/clipboard";
 import { stripCitationMarkers } from "../utils/citationMarkers";
 import {
@@ -125,6 +126,7 @@ const buildCodeTokenNodes = (text: string, opts: CodeTokenOptions): ReactNode[] 
           <a
             key={`token-${idx}`}
             className="code-token code-token-url"
+            data-allow-raw-anchor
             href={urlRef.url}
             rel="noreferrer noopener"
             target="_blank"
@@ -363,16 +365,10 @@ export function Markdown({
             const isContextOpen =
               typeof href === "string" && href.startsWith("ctx://open?");
             if (!isContextOpen) {
-              const handleExternalClick = (event: MouseEvent<HTMLAnchorElement>) => {
-                if (!isDesktopApp()) return;
-                if (!href) return;
-                event.preventDefault();
-                void openExternalLink(href);
-              };
               return (
-                <a href={href} className={className} onClick={handleExternalClick} {...rest}>
+                <ExternalLink href={href ?? ""} className={className} {...rest}>
                   {children}
-                </a>
+                </ExternalLink>
               );
             }
 
@@ -411,6 +407,7 @@ export function Markdown({
             const combinedClassName = [className, "ctx-file-link"].filter(Boolean).join(" ");
             return (
               <a
+                data-allow-raw-anchor
                 href={href}
                 className={combinedClassName}
                 title="Cmd/Ctrl+Click to open in editor"

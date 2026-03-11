@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { guessAttachmentName } from "../../SettingsPage.utils";
 import { formatAttachmentStatus } from "../../SettingsPage.helpers";
 import { idToString, type WorkspaceAttachment } from "../../../api/client";
+import { ExternalLink } from "../../../components/ExternalLink";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -189,15 +190,13 @@ export function WorkspaceAttachmentsSection({ workspaceId, active }: WorkspaceAt
             <div className="settings-table-title settings-attachments-title-truncate">{attachment.name}</div>
           </div>
           {openHref ? (
-            <a
+            <ExternalLink
               className="settings-table-mono settings-attachments-source settings-attachments-source-link"
               href={openHref}
-              target="_blank"
-              rel="noopener noreferrer"
               title={attachment.source}
             >
               {attachment.source}
-            </a>
+            </ExternalLink>
           ) : (
             <div className="settings-table-mono settings-attachments-source" title={attachment.source}>
               {attachment.source}

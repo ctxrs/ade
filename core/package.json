@@ -93,7 +93,7 @@
     "crp:claude": "bash -lc '../scripts/build_claude_crp.sh'",
     "source:file-size:report": "node scripts/source_file_size_guard.cjs",
     "source:file-size:enforce": "node scripts/source_file_size_guard.cjs --enforce",
-    "verify:quick": "pnpm source:file-size:enforce && turbo run rust:fmt rust:panic-traps rust:clippy rust:test crp:codex:test supabase:migrations:check supabase:functions:check typecheck any:enforce --filter=ctx-monorepo --filter=ctx-web --cache-dir=${TURBO_CACHE_DIR:-$HOME/.cache/turbo/ctx-monorepo} --output-logs=errors-only --log-order=grouped --concurrency=4 --ui=stream --cache=${TURBO_CACHE_MODE:-local:rw}",
+    "verify:quick": "pnpm source:file-size:enforce && pnpm -C apps/web lint && turbo run rust:fmt rust:panic-traps rust:clippy rust:test crp:codex:test supabase:migrations:check supabase:functions:check typecheck any:enforce --filter=ctx-monorepo --filter=ctx-web --cache-dir=${TURBO_CACHE_DIR:-$HOME/.cache/turbo/ctx-monorepo} --output-logs=errors-only --log-order=grouped --concurrency=4 --ui=stream --cache=${TURBO_CACHE_MODE:-local:rw}",
     "pull-mintlify": "bash -lc '../scripts/mintlify/pull-subtree.sh'",
     "push-mintlify": "bash -lc '../scripts/mintlify/push-subtree.sh'",
     "verify:e2e": "pnpm test:e2e:premerge",

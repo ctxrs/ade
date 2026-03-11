@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Info, X } from "lucide-react";
 import { applyAppImageUpdate, downloadAppImageUpdate, type UpdateCheck } from "../api/client";
+import { ExternalLink } from "./ExternalLink";
 import {
   desktopApplyAppUpdate,
   desktopGetAppUpdateState,
@@ -870,14 +871,12 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
               </button>
             </div>
             <div className="wb-snackbar-subtitle">
-              <a
+              <ExternalLink
                 href={releaseNotesUrl}
-                target="_blank"
-                rel="noopener noreferrer"
                 className="wb-update-release-notes-link"
               >
                 View release notes
-              </a>
+              </ExternalLink>
             </div>
             {updateStatus ? <div className="wb-snackbar-subtitle">{updateStatus}</div> : null}
             {effectiveError ? <div className="wb-snackbar-error">{effectiveError}</div> : null}

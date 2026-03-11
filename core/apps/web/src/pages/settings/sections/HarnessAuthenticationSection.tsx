@@ -1,5 +1,6 @@
 import { useEffect, useRef, type CSSProperties } from "react";
 import { Ellipsis, KeyRound, User as UserIcon, X } from "lucide-react";
+import { ExternalLink } from "../../../components/ExternalLink";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -944,37 +945,31 @@ export function HarnessAuthenticationSection({
                 {harnessAuthModal.provider_id === "cursor" ? (
                   <div className="settings-row-desc">
                     Get your Cursor API key from{" "}
-                    <a
+                    <ExternalLink
                       className="settings-harness-help-link"
                       href="https://cursor.com/dashboard?tab=integrations"
-                      target="_blank"
-                      rel="noreferrer"
                     >
                       Cursor Integrations
-                    </a>
+                    </ExternalLink>
                     .
                   </div>
                 ) : null}
                 {harnessAuthModal.provider_id === "gemini" ? (
                   <div className="settings-row-desc">
                     Create Gemini keys in{" "}
-                    <a
+                    <ExternalLink
                       className="settings-harness-help-link"
                       href="https://aistudio.google.com/app/apikey"
-                      target="_blank"
-                      rel="noreferrer"
                     >
                       Google AI Studio
-                    </a>
+                    </ExternalLink>
                     . For Vertex AI service accounts, use{" "}
-                    <a
+                    <ExternalLink
                       className="settings-harness-help-link"
                       href="https://console.cloud.google.com/apis/credentials"
-                      target="_blank"
-                      rel="noreferrer"
                     >
                       Google Cloud Credentials
-                    </a>
+                    </ExternalLink>
                     .
                   </div>
                 ) : null}

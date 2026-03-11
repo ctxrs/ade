@@ -225,9 +225,6 @@ export function AskUserQuestionCard({
   const canSubmit =
     questions.length > 0 &&
     questions.every((q) => typeof draftAnswers[q.question] === "string" && draftAnswers[q.question].trim());
-
-  if (questions.length === 0) return null;
-
   const submitTabIndex = questions.length;
   const maxTabIndex = submitTabIndex;
   const isSubmitTab = activeIdx >= submitTabIndex;
@@ -242,6 +239,8 @@ export function AskUserQuestionCard({
     if (!otherLabel) return activeQuestion.options;
     return [...activeQuestion.options, { label: otherLabel, isOther: true }];
   }, [activeQuestion, otherByQuestion]);
+
+  if (questions.length === 0) return null;
 
   const cursorIndex = (() => {
     if (!activeQuestion) return 0;

@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { ProviderStatus } from "../../../api/client";
+import { isDesktopApp, openExternalLink } from "../../../utils/desktop";
 import type { HarnessAuthModalState } from "../../SettingsPage.types";
 import type { useHarnessAuthenticationController } from "../hooks/useHarnessAuthenticationController";
 import { HarnessAuthenticationSection } from "./HarnessAuthenticationSection";
@@ -9,6 +10,11 @@ const mockUseHarnessAuthenticationController = vi.fn();
 
 vi.mock("../hooks/useHarnessAuthenticationController", () => ({
   useHarnessAuthenticationController: (...args: unknown[]) => mockUseHarnessAuthenticationController(...args),
+}));
+
+vi.mock("../../../utils/desktop", () => ({
+  isDesktopApp: vi.fn(() => false),
+  openExternalLink: vi.fn(async () => true),
 }));
 
 type HarnessAuthController = ReturnType<typeof useHarnessAuthenticationController>;
@@ -222,6 +228,26 @@ function makeController(
 }
 
 describe("HarnessAuthenticationSection Gemini subscription modal", () => {
+  it("opens Cursor provider help through the desktop browser bridge", () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(openExternalLink).mockResolvedValue(true);
+    mockUseHarnessAuthenticationController.mockReturnValue(
+      makeController({ harnessAuthModal: makeApiKeyModal("cursor") }),
+    );
+
+    render(
+      <HarnessAuthenticationSection
+        workspaceId="ws-1"
+        active
+        modalOnly
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "Cursor Integrations" }));
+
+    expect(openExternalLink).toHaveBeenCalledWith("https://cursor.com/dashboard?tab=integrations");
+  });
+
   it("shows oauth-only sign-in flow without manual JSON fields", () => {
     mockUseHarnessAuthenticationController.mockReturnValue(makeController());
 
