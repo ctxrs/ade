@@ -67,10 +67,10 @@ pub use self::copilot::{
     CopilotAccountRegistry,
 };
 pub use self::cursor::{
-    add_cursor_account, cursor_env_for_account, cursor_env_for_active_account,
-    ensure_cursor_account_home, load_cursor_registry, normalize_cursor_label,
-    remove_cursor_account, save_cursor_registry, set_active_cursor_account, CursorAccountEntry,
-    CursorAccountRegistry,
+    add_cursor_account, add_cursor_oauth_account, cursor_env_for_account,
+    cursor_env_for_active_account, ensure_cursor_account_home, load_cursor_registry,
+    normalize_cursor_label, remove_cursor_account, save_cursor_registry, set_active_cursor_account,
+    CursorAccountEntry, CursorAccountRegistry, CursorLoginStatus,
 };
 pub use self::gemini::{
     add_gemini_account, gemini_env_for_account, gemini_env_for_active_account,
@@ -122,6 +122,7 @@ pub const KIMI_CREDENTIAL_KIND_CREDENTIALS_JSON: &str = "credentials-json";
 pub const MISTRAL_CREDENTIAL_KIND_BROWSER_OAUTH: &str = "browser-oauth";
 pub const COPILOT_CREDENTIAL_KIND_GH_TOKEN: &str = "gh-token";
 pub const CURSOR_CREDENTIAL_KIND_API_KEY: &str = "api-key";
+pub const CURSOR_CREDENTIAL_KIND_OAUTH_TOKEN: &str = "oauth-token";
 pub const AMP_CREDENTIAL_KIND_BROWSER_OAUTH: &str = "browser-oauth";
 pub const GEMINI_AUTH_SELECTED_TYPE_OAUTH_PERSONAL: &str = "oauth-personal";
 pub const GEMINI_AUTH_SELECTED_TYPE_API_KEY: &str = "gemini-api-key";

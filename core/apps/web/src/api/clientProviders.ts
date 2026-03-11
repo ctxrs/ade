@@ -661,6 +661,15 @@ export const startAmpLogin = (label?: string) =>
 export const getAmpLogin = (loginId: string) =>
   apiAny<AmpLoginStatus>(`/api/providers/amp/accounts/login/${loginId}`);
 
+export const startCursorLogin = (label?: string) =>
+  apiAny<CursorLoginStartResponse>(`/api/providers/cursor/accounts/login/start`, {
+    method: "POST",
+    body: JSON.stringify(label ? { label } : {}),
+  });
+
+export const getCursorLogin = (loginId: string) =>
+  apiAny<CursorLoginStatus>(`/api/providers/cursor/accounts/login/${loginId}`);
+
 export const listAmpAccounts = () =>
   apiAny<AmpAccountsResponse>(`/api/providers/amp/accounts`);
 

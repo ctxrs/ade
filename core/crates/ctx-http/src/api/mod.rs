@@ -473,6 +473,14 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             get(list_cursor_accounts).post(upsert_cursor_account),
         )
         .route(
+            "/api/providers/cursor/accounts/login/start",
+            post(start_cursor_login),
+        )
+        .route(
+            "/api/providers/cursor/accounts/login/:id",
+            get(get_cursor_login),
+        )
+        .route(
             "/api/providers/cursor/active-account",
             put(set_cursor_active_account),
         )

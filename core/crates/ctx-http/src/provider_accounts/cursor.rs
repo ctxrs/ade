@@ -12,7 +12,7 @@ use super::shared::{
 };
 use super::{
     cursor_account_home, cursor_registry_path, cursor_secret_path, CURSOR_CREDENTIAL_KIND_API_KEY,
-    CURSOR_SECRET_VERSION,
+    CURSOR_CREDENTIAL_KIND_OAUTH_TOKEN, CURSOR_SECRET_VERSION,
 };
 
 fn default_cursor_credential_kind() -> String {
@@ -45,7 +45,28 @@ pub struct CursorAccountRegistry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CursorSecretEnvelope {
     version: u32,
-    api_key: String,
+    #[serde(alias = "api_key")]
+    auth_token: String,
+    #[serde(default)]
+    refresh_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CursorLoginStatus {
+    pub login_id: String,
+    #[serde(default)]
+    pub auth_url: Option<String>,
+    pub status: String,
+    #[serde(default)]
+    pub account_id: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct CursorSecretRecord {
+    auth_token: String,
+    refresh_token: Option<String>,
 }
 
 pub async fn load_cursor_registry(data_root: &Path) -> CursorAccountRegistry {
@@ -71,7 +92,45 @@ pub async fn add_cursor_account(
     token: String,
     email: Option<String>,
 ) -> Result<CursorAccountRegistry> {
-    let token = normalize_cursor_token(&token)?;
+    upsert_cursor_account_internal(
+        data_root,
+        label,
+        token,
+        None,
+        email,
+        CURSOR_CREDENTIAL_KIND_API_KEY,
+    )
+    .await
+}
+
+pub async fn add_cursor_oauth_account(
+    data_root: &Path,
+    label: Option<String>,
+    auth_token: String,
+    refresh_token: Option<String>,
+    email: Option<String>,
+) -> Result<CursorAccountRegistry> {
+    upsert_cursor_account_internal(
+        data_root,
+        label,
+        auth_token,
+        refresh_token,
+        email,
+        CURSOR_CREDENTIAL_KIND_OAUTH_TOKEN,
+    )
+    .await
+}
+
+async fn upsert_cursor_account_internal(
+    data_root: &Path,
+    label: Option<String>,
+    auth_token: String,
+    refresh_token: Option<String>,
+    email: Option<String>,
+    credential_kind: &str,
+) -> Result<CursorAccountRegistry> {
+    let auth_token = normalize_cursor_auth_token(&auth_token)?;
+    let refresh_token = normalize_optional_cursor_auth_token(refresh_token.as_deref())?;
     let mut registry = load_cursor_registry(data_root).await;
     let mut existing_account_id: Option<String> = None;
 
@@ -79,8 +138,8 @@ pub async fn add_cursor_account(
         let Some(secret_ref) = existing.secret_ref.as_deref() else {
             continue;
         };
-        if let Ok(existing_token) = read_cursor_secret_for_ref(data_root, secret_ref).await {
-            if existing_token == token {
+        if let Ok(existing_secret) = read_cursor_secret_for_ref(data_root, secret_ref).await {
+            if existing_secret.auth_token == auth_token {
                 existing_account_id = Some(existing.id.clone());
                 break;
             }
@@ -88,13 +147,47 @@ pub async fn add_cursor_account(
     }
 
     if let Some(account_id) = existing_account_id {
+        let existing_secret_ref = registry
+            .accounts
+            .iter()
+            .find(|entry| entry.id == account_id)
+            .and_then(|entry| entry.secret_ref.clone());
+        let existing_refresh_token = if let Some(secret_ref) = existing_secret_ref.as_deref() {
+            read_cursor_secret_for_ref(data_root, secret_ref)
+                .await
+                .ok()
+                .and_then(|secret| secret.refresh_token)
+        } else {
+            None
+        };
+        let next_refresh_token = refresh_token.clone().or(existing_refresh_token);
         if let Some(entry) = registry
             .accounts
             .iter_mut()
             .find(|entry| entry.id == account_id)
         {
+            if let Some(secret_ref) = existing_secret_ref {
+                write_cursor_secret_for_ref(
+                    data_root,
+                    &secret_ref,
+                    &auth_token,
+                    next_refresh_token.as_deref(),
+                )
+                .await?;
+            } else {
+                entry.secret_ref = Some(
+                    write_cursor_secret_for_account(
+                        data_root,
+                        &account_id,
+                        &auth_token,
+                        next_refresh_token.as_deref(),
+                    )
+                    .await?,
+                );
+            }
             apply_label_update(label.clone(), &mut entry.label);
             apply_email_update(email.clone(), &mut entry.email);
+            entry.kind = credential_kind.to_string();
             entry.last_used_at = Some(Utc::now());
         }
         registry.active_account_id = Some(account_id);
@@ -103,11 +196,17 @@ pub async fn add_cursor_account(
     }
 
     let account_id = uuid::Uuid::new_v4().to_string();
-    let secret_ref = write_cursor_secret_for_account(data_root, &account_id, &token).await?;
+    let secret_ref = write_cursor_secret_for_account(
+        data_root,
+        &account_id,
+        &auth_token,
+        refresh_token.as_deref(),
+    )
+    .await?;
     let entry = CursorAccountEntry {
         id: account_id.clone(),
         label: normalize_cursor_label(label, &account_id),
-        kind: CURSOR_CREDENTIAL_KIND_API_KEY.to_string(),
+        kind: credential_kind.to_string(),
         email: normalize_optional_email(email),
         created_at: Utc::now(),
         last_used_at: Some(Utc::now()),
@@ -188,7 +287,8 @@ pub async fn remove_cursor_account(
 pub fn cursor_env_for_account(
     data_root: &Path,
     account_id: &str,
-    token: &str,
+    auth_token: &str,
+    credential_kind: &str,
 ) -> HashMap<String, String> {
     let mut env = HashMap::new();
     env.insert(
@@ -197,7 +297,14 @@ pub fn cursor_env_for_account(
             .to_string_lossy()
             .to_string(),
     );
-    env.insert("CURSOR_API_KEY".to_string(), token.to_string());
+    match credential_kind {
+        CURSOR_CREDENTIAL_KIND_OAUTH_TOKEN => {
+            env.insert("CURSOR_AUTH_TOKEN".to_string(), auth_token.to_string());
+        }
+        _ => {
+            env.insert("CURSOR_API_KEY".to_string(), auth_token.to_string());
+        }
+    }
     env
 }
 
@@ -217,9 +324,14 @@ pub async fn cursor_env_for_active_account(data_root: &Path) -> Result<HashMap<S
     let Some(secret_ref) = entry.secret_ref.as_deref() else {
         bail!("active cursor account has no secret reference");
     };
-    let token = read_cursor_secret_for_ref(data_root, secret_ref).await?;
+    let secret = read_cursor_secret_for_ref(data_root, secret_ref).await?;
     let _ = ensure_cursor_account_home(data_root, active).await?;
-    Ok(cursor_env_for_account(data_root, active, &token))
+    Ok(cursor_env_for_account(
+        data_root,
+        active,
+        &secret.auth_token,
+        &entry.kind,
+    ))
 }
 
 pub(crate) async fn cursor_env_for_active_account_with_runtime_root(
@@ -241,9 +353,14 @@ pub(crate) async fn cursor_env_for_active_account_with_runtime_root(
     let Some(secret_ref) = entry.secret_ref.as_deref() else {
         bail!("active cursor account has no secret reference");
     };
-    let token = read_cursor_secret_for_ref(data_root, secret_ref).await?;
+    let secret = read_cursor_secret_for_ref(data_root, secret_ref).await?;
     let _ = ensure_cursor_account_home(runtime_root, active).await?;
-    Ok(cursor_env_for_account(runtime_root, active, &token))
+    Ok(cursor_env_for_account(
+        runtime_root,
+        active,
+        &secret.auth_token,
+        &entry.kind,
+    ))
 }
 
 pub fn normalize_cursor_label(label: Option<String>, account_id: &str) -> String {
@@ -253,31 +370,55 @@ pub fn normalize_cursor_label(label: Option<String>, account_id: &str) -> String
         .unwrap_or_else(|| format!("Cursor Account {account_id}"))
 }
 
-fn normalize_cursor_token(token: &str) -> Result<String> {
+fn normalize_cursor_auth_token(token: &str) -> Result<String> {
     let trimmed = token.trim();
     if trimmed.is_empty() {
-        bail!("token is required");
+        bail!("auth token is required");
     }
     Ok(trimmed.to_string())
+}
+
+fn normalize_optional_cursor_auth_token(token: Option<&str>) -> Result<Option<String>> {
+    match token {
+        Some(value) => normalize_cursor_auth_token(value).map(Some),
+        None => Ok(None),
+    }
 }
 
 async fn write_cursor_secret_for_account(
     data_root: &Path,
     account_id: &str,
-    token: &str,
+    auth_token: &str,
+    refresh_token: Option<&str>,
 ) -> Result<String> {
-    let token = normalize_cursor_token(token)?;
     let secret_ref = format!("{account_id}.json");
-    let path = cursor_secret_path(data_root, &secret_ref);
-    let envelope = CursorSecretEnvelope {
-        version: CURSOR_SECRET_VERSION,
-        api_key: token,
-    };
-    write_secure_file_atomic(&path, &serde_json::to_vec_pretty(&envelope)?).await?;
+    write_cursor_secret_for_ref(data_root, &secret_ref, auth_token, refresh_token).await?;
     Ok(secret_ref)
 }
 
-async fn read_cursor_secret_for_ref(data_root: &Path, secret_ref: &str) -> Result<String> {
+async fn write_cursor_secret_for_ref(
+    data_root: &Path,
+    secret_ref: &str,
+    auth_token: &str,
+    refresh_token: Option<&str>,
+) -> Result<()> {
+    let auth_token = normalize_cursor_auth_token(auth_token)?;
+    let refresh_token =
+        normalize_optional_cursor_auth_token(refresh_token)?.filter(|token| token != &auth_token);
+    let path = cursor_secret_path(data_root, secret_ref);
+    let envelope = CursorSecretEnvelope {
+        version: CURSOR_SECRET_VERSION,
+        auth_token,
+        refresh_token,
+    };
+    write_secure_file_atomic(&path, &serde_json::to_vec_pretty(&envelope)?).await?;
+    Ok(())
+}
+
+async fn read_cursor_secret_for_ref(
+    data_root: &Path,
+    secret_ref: &str,
+) -> Result<CursorSecretRecord> {
     let path = cursor_secret_path(data_root, secret_ref);
     let payload = tokio::fs::read_to_string(&path)
         .await
@@ -291,7 +432,10 @@ async fn read_cursor_secret_for_ref(data_root: &Path, secret_ref: &str) -> Resul
             path.display()
         );
     }
-    normalize_cursor_token(&parsed.api_key)
+    Ok(CursorSecretRecord {
+        auth_token: normalize_cursor_auth_token(&parsed.auth_token)?,
+        refresh_token: normalize_optional_cursor_auth_token(parsed.refresh_token.as_deref())?,
+    })
 }
 
 #[cfg(test)]
@@ -328,6 +472,35 @@ mod tests {
 
         let env = cursor_env_for_active_account(root).await.unwrap();
         assert_eq!(env.get("CURSOR_API_KEY"), Some(&"cursor-key".to_string()));
+        assert!(!env.contains_key("CURSOR_AUTH_TOKEN"));
+        let config_dir = env
+            .get("CURSOR_CONFIG_DIR")
+            .expect("CURSOR_CONFIG_DIR should be set");
+        assert!(config_dir.contains(&active_id));
+        assert!(cursor_account_home(root, &active_id).exists());
+    }
+
+    #[tokio::test]
+    async fn cursor_active_oauth_account_projects_config_dir_and_auth_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let registry = add_cursor_oauth_account(
+            root,
+            Some("Cursor OAuth".to_string()),
+            "cursor-access-token".to_string(),
+            Some("cursor-refresh-token".to_string()),
+            Some("oauth@example.com".to_string()),
+        )
+        .await
+        .unwrap();
+        let active_id = registry.active_account_id.clone().expect("active account");
+
+        let env = cursor_env_for_active_account(root).await.unwrap();
+        assert_eq!(
+            env.get("CURSOR_AUTH_TOKEN"),
+            Some(&"cursor-access-token".to_string())
+        );
+        assert!(!env.contains_key("CURSOR_API_KEY"));
         let config_dir = env
             .get("CURSOR_CONFIG_DIR")
             .expect("CURSOR_CONFIG_DIR should be set");

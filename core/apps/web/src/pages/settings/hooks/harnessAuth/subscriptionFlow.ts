@@ -4,12 +4,14 @@ import {
   getAmpLogin,
   getClaudeLogin,
   getCodexLogin,
+  getCursorLogin,
   getGeminiLogin,
   getMistralLogin,
   getQwenLogin,
   startAmpLogin,
   startClaudeLogin,
   startCodexLogin,
+  startCursorLogin,
   startGeminiLogin,
   startMistralLogin,
   startQwenLogin,
@@ -62,7 +64,7 @@ type BrowserLoginStatus = {
 };
 
 type BrowserLoginDefinition = {
-  providerId: "gemini" | "qwen" | "amp" | "mistral";
+  providerId: "gemini" | "qwen" | "cursor" | "amp" | "mistral";
   waitingMessage: string;
   timeoutMessage: string;
   startLogin: (label?: string) => Promise<{ login_id: string; auth_url?: string | null }>;
@@ -92,6 +94,7 @@ type SubscriptionFlowDeps = {
   refreshClaudeAccounts: (opts?: RefreshAccountsOptions) => Promise<ClaudeAccountsResponse | null>;
   refreshGeminiAccounts: (opts?: RefreshAccountsOptions) => Promise<GeminiAccountsResponse | null>;
   refreshQwenAccounts: (opts?: RefreshAccountsOptions) => Promise<QwenAccountsResponse | null>;
+  refreshCursorAccounts: (opts?: RefreshAccountsOptions) => Promise<unknown>;
   refreshAmpAccounts: (opts?: RefreshAccountsOptions) => Promise<unknown>;
   refreshMistralAccounts: (opts?: RefreshAccountsOptions) => Promise<MistralAccountsResponse | null>;
   setClaudeAccounts: Dispatch<SetStateAction<ClaudeAccountsResponse | null>>;
@@ -486,6 +489,18 @@ export const runHarnessSubscriptionFlow = async (deps: SubscriptionFlowDeps): Pr
           maxAttempts: QWEN_LOGIN_POLL_ATTEMPTS,
           pollIntervalMs: QWEN_LOGIN_POLL_INTERVAL_MS,
           refreshAccounts: deps.refreshQwenAccounts,
+        });
+        return;
+      case "cursor":
+        await runBrowserSubscriptionFlow(deps, {
+          providerId: "cursor",
+          waitingMessage: "Waiting for Cursor sign-in to complete in your browser...",
+          timeoutMessage: "Timed out waiting for Cursor sign-in completion. Retry.",
+          startLogin: startCursorLogin,
+          getLogin: getCursorLogin,
+          maxAttempts: QWEN_LOGIN_POLL_ATTEMPTS,
+          pollIntervalMs: QWEN_LOGIN_POLL_INTERVAL_MS,
+          refreshAccounts: deps.refreshCursorAccounts,
         });
         return;
       case "amp":

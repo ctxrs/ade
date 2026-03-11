@@ -11,6 +11,7 @@ import type {
 import {
   deleteAmpAccount,
   getCodexLogin,
+  getCursorLogin,
   getGeminiLogin,
   getProviderOptions,
   selectProviderHarnessSource,
@@ -18,6 +19,7 @@ import {
   setCodexActiveAccount,
   startAmpLogin,
   startCodexLogin,
+  startCursorLogin,
   startGeminiLogin,
   upsertProviderHarnessEndpoint,
   verifyProviderForWorkspace,
@@ -157,6 +159,7 @@ vi.mock("../../../api/client", async (importOriginal) => {
     ...original,
     deleteAmpAccount: vi.fn(),
     getCodexLogin: vi.fn(),
+    getCursorLogin: vi.fn(),
     getGeminiLogin: vi.fn(),
     getProviderOptions: vi.fn(),
     selectProviderHarnessSource: vi.fn(),
@@ -164,6 +167,7 @@ vi.mock("../../../api/client", async (importOriginal) => {
     setCodexActiveAccount: vi.fn(),
     startAmpLogin: vi.fn(),
     startCodexLogin: vi.fn(),
+    startCursorLogin: vi.fn(),
     startGeminiLogin: vi.fn(),
     upsertProviderHarnessEndpoint: vi.fn(),
     verifyProviderForWorkspace: vi.fn(),
@@ -418,6 +422,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(deleteAmpAccount).mockReset();
   vi.mocked(getCodexLogin).mockReset();
+  vi.mocked(getCursorLogin).mockReset();
   vi.mocked(getGeminiLogin).mockReset();
   vi.mocked(getProviderOptions).mockReset();
   vi.mocked(selectProviderHarnessSource).mockReset();
@@ -425,6 +430,7 @@ beforeEach(() => {
   vi.mocked(setCodexActiveAccount).mockReset();
   vi.mocked(startAmpLogin).mockReset();
   vi.mocked(startCodexLogin).mockReset();
+  vi.mocked(startCursorLogin).mockReset();
   vi.mocked(startGeminiLogin).mockReset();
   vi.mocked(upsertProviderHarnessEndpoint).mockReset();
   vi.mocked(verifyProviderForWorkspace).mockReset();
@@ -734,8 +740,8 @@ describe("supportsHarnessSubscriptionAuth", () => {
     expect(supportsHarnessSubscriptionAuth("gemini")).toBe(true);
   });
 
-  it("keeps cursor API-key-only until managed browser auth is mainlined", () => {
-    expect(supportsHarnessSubscriptionAuth("cursor")).toBe(false);
+  it("returns true for cursor now that managed browser auth is restored", () => {
+    expect(supportsHarnessSubscriptionAuth("cursor")).toBe(true);
   });
 });
 
@@ -750,8 +756,8 @@ describe("resolveHarnessAuthModalInitialStage", () => {
     expect(resolveHarnessAuthModalInitialStage("claude-crp")).toBe("choose");
   });
 
-  it("routes cursor directly to api_key until managed browser auth is ported", () => {
-    expect(resolveHarnessAuthModalInitialStage("cursor")).toBe("api_key");
+  it("keeps cursor on choose stage when both subscription and API-key auth are available", () => {
+    expect(resolveHarnessAuthModalInitialStage("cursor")).toBe("choose");
   });
 });
 
@@ -1408,6 +1414,83 @@ describe("useHarnessAuthenticationController", () => {
     expect(requireController(controller).harnessAuthModal?.subscription_busy).toBe(false);
     expect(vi.mocked(selectProviderHarnessSource)).not.toHaveBeenCalled();
     expect(requireController(controller).providerError).toBeNull();
+  });
+
+  it("starts Cursor browser sign-in and closes the modal on success", async () => {
+    let controller: Controller | null = null;
+
+    vi.mocked(startCursorLogin).mockResolvedValue({
+      login_id: "cursor-login-1",
+      auth_url: "https://cursor.com/login/device?code=test",
+    });
+    vi.mocked(getCursorLogin).mockResolvedValue({
+      login_id: "cursor-login-1",
+      auth_url: "https://cursor.com/login/device?code=test",
+      status: "success",
+      account_id: "cursor-acct-1",
+    });
+    vi.mocked(openExternalLink).mockResolvedValue(true);
+    queueBootstrapRefresh(
+      "ws-test",
+      makeBootstrap({
+        cursor_accounts: {
+          active_account_id: "cursor-acct-1",
+          accounts: [
+            {
+              id: "cursor-acct-1",
+              label: "Cursor OAuth",
+              kind: "oauth-token",
+              email: "cursor@example.com",
+              created_at: "2026-03-11T00:00:00Z",
+            },
+          ],
+        },
+      }),
+      makeBootstrap({
+        cursor_accounts: {
+          active_account_id: "cursor-acct-1",
+          accounts: [
+            {
+              id: "cursor-acct-1",
+              label: "Cursor OAuth",
+              kind: "oauth-token",
+              email: "cursor@example.com",
+              created_at: "2026-03-11T00:00:00Z",
+            },
+          ],
+        },
+      }),
+    );
+
+    render(createElement(ControllerHarness, {
+      onChange: (next) => {
+        controller = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(controller).not.toBeNull();
+    });
+
+    await act(async () => {
+      controller?.openHarnessAuthModal("cursor");
+      controller?.patchHarnessAuthModal({ stage: "subscription" });
+    });
+
+    await act(async () => {
+      await controller?.submitHarnessSubscriptionModal();
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(startCursorLogin)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(openExternalLink)).toHaveBeenCalledWith(
+        "https://cursor.com/login/device?code=test",
+      );
+    });
+
+    expect(requireController(controller).harnessAuthModal).toBeNull();
+    expect(requireController(controller).providerError).toBeNull();
+    expect(vi.mocked(selectProviderHarnessSource)).not.toHaveBeenCalled();
   });
 
   it("suppresses stale api-key submit effects after switching providers", async () => {
