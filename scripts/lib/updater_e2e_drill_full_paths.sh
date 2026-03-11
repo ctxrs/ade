@@ -14,9 +14,18 @@ normalize_local_smoke_app_permissions() {
 
   case "$app_path" in
     *.AppDir/AppRun)
+      local appdir_path="${app_path%/AppRun}"
       local wrapped_path="${app_path}.wrapped"
       if [[ -f "$wrapped_path" && ! -x "$wrapped_path" ]]; then
         chmod +x "$wrapped_path" || true
+      fi
+      if [[ -d "$appdir_path/usr/bin" ]]; then
+        while IFS= read -r bundled_bin; do
+          [[ -n "$bundled_bin" ]] || continue
+          if [[ ! -x "$bundled_bin" ]]; then
+            chmod +x "$bundled_bin" || true
+          fi
+        done < <(find "$appdir_path/usr/bin" -maxdepth 1 -type f 2>/dev/null | LC_ALL=C sort)
       fi
       ;;
   esac

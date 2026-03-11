@@ -21,7 +21,7 @@ chmod 0644 "$apprun_path"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$apprun_wrapped_path"
 chmod 0644 "$apprun_wrapped_path"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$appdir_bin"
-chmod +x "$appdir_bin"
+chmod 0644 "$appdir_bin"
 printf 'not-a-real-appimage\n' >"$appimage_path"
 chmod +x "$appimage_path"
 
@@ -40,6 +40,10 @@ if [[ ! -x "$apprun_path" ]]; then
 fi
 if [[ ! -x "$apprun_wrapped_path" ]]; then
   echo "error: expected AppRun.wrapped helper to be normalized executable" >&2
+  exit 1
+fi
+if [[ ! -x "$appdir_bin" ]]; then
+  echo "error: expected inner AppDir launcher binary to be normalized executable" >&2
   exit 1
 fi
 
