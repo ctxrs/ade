@@ -4,7 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DraftHarness } from "../../components/WorkbenchComposer";
 import type { ProviderOptions, ProvidersBootstrapResponse } from "../../api/client";
 import { getProviderOptions, getProvidersBootstrap } from "../../api/client";
-import { getProviderInstallProgressSnapshot } from "../../state/providerInstallProgressStore";
+import { setDaemonConnection } from "../../api/daemonConnection";
+import {
+  getProviderInstallProgressSnapshotForScope,
+} from "../../state/providerInstallProgressStore";
 import { resetProviderOnboardingCoordinatorForTests } from "../../state/providerOnboardingCoordinator";
 import { refreshProvidersBootstrap } from "../../state/providersBootstrapStore";
 import { resolveProviderOptionsUpdate, shouldHydrateProviderModels } from "./useWorkbenchProviders";
@@ -24,7 +27,9 @@ vi.mock("../../state/providerInstallProgressStore", async (importOriginal) => {
   return {
     ...original,
     getProviderInstallProgressSnapshot: vi.fn(() => ({})),
+    getProviderInstallProgressSnapshotForScope: vi.fn(() => ({})),
     subscribeProviderInstallProgress: vi.fn(() => () => {}),
+    subscribeProviderInstallProgressForScope: vi.fn(() => () => {}),
   };
 });
 
@@ -150,6 +155,10 @@ function WorkbenchProvidersHarness({
 beforeEach(() => {
   vi.clearAllMocks();
   resetProviderOnboardingCoordinatorForTests();
+  setDaemonConnection({
+    baseUrl: "https://daemon-a.example",
+    source: "test",
+  });
 });
 
 describe("shouldHydrateProviderModels", () => {
@@ -529,11 +538,84 @@ describe("useWorkbenchProviders", () => {
     });
   });
 
+  it("scopes in-flight provider auth-summary requests by daemon target for the same workspace id", async () => {
+    const workspaceId = "ws-daemon-scope";
+    const pendingA = deferred<ProviderOptions>();
+    const pendingB = deferred<ProviderOptions>();
+    let hookValue: HookValue | null = null;
+
+    vi.mocked(getProvidersBootstrap).mockImplementation(async () => makeBootstrap({
+      codex: {
+        ...baseOptions("codex"),
+        workspace_id: workspaceId,
+      },
+    }));
+    vi.mocked(getProviderOptions)
+      .mockImplementationOnce(() => pendingA.promise)
+      .mockImplementationOnce(() => pendingB.promise);
+
+    render(createElement(WorkbenchProvidersHarness, {
+      workspaceId,
+      onChange: (next) => {
+        hookValue = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(hookValue?.providerOptions.codex?.workspace_id).toBe(workspaceId);
+    });
+
+    void requireHookValue(hookValue).ensureProviderAuthSummary("codex");
+    await Promise.resolve();
+
+    await waitFor(() => {
+      expect(vi.mocked(getProviderOptions)).toHaveBeenCalledTimes(1);
+    });
+
+    act(() => {
+      setDaemonConnection({
+        baseUrl: "https://daemon-b.example",
+        source: "test",
+      });
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(getProvidersBootstrap).mock.calls.length).toBeGreaterThan(1);
+    });
+
+    void requireHookValue(hookValue).ensureProviderAuthSummary("codex");
+    await Promise.resolve();
+
+    await waitFor(() => {
+      expect(vi.mocked(getProviderOptions)).toHaveBeenCalledTimes(2);
+    });
+
+    pendingB.resolve({
+      ...baseOptions("codex"),
+      workspace_id: workspaceId,
+      models: {
+        models: [{ id: "gpt-5" }],
+        current_model_id: "gpt-5",
+      },
+    });
+    pendingA.resolve({
+      ...baseOptions("codex"),
+      workspace_id: workspaceId,
+    });
+
+    await waitFor(() => {
+      expect(hookValue?.providerOptions.codex?.models).toEqual({
+        models: [{ id: "gpt-5" }],
+        current_model_id: "gpt-5",
+      });
+    });
+  });
+
   it("selects provider install progress for the provider target", async () => {
     const workspaceId = "ws-target-install";
     let hookValue: HookValue | null = null;
 
-    vi.mocked(getProviderInstallProgressSnapshot).mockReturnValue({
+    vi.mocked(getProviderInstallProgressSnapshotForScope).mockReturnValue({
       codex: {
         host: {
           installId: "install-host",

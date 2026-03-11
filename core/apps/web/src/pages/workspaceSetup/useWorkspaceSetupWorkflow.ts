@@ -26,7 +26,9 @@ import {
   makeTargetDraftFieldSetter,
 } from "./workflowReducer";
 import {
+  createWorkspaceSetupRouteScope,
   deriveWorkspaceSetupEffectiveTarget,
+  serializeWorkspaceSetupRouteScope,
   type WorkspaceSetupDraftState,
   type WorkspaceSetupTargetDraft,
 } from "./workflowTypes";
@@ -64,6 +66,7 @@ export function useWorkspaceSetupWorkflow({
     createInitialWorkspaceSetupMachineState,
   );
   const handledMachineEffectIdsRef = useRef<Set<number>>(new Set());
+  const localAuthWarmupRouteKeyRef = useRef<string | null>(null);
 
   const setters = useMemo<FieldSetters>(() => ({
     targetDraft: makeDraftFieldSetter(dispatchDraft, "targetDraft"),
@@ -121,7 +124,6 @@ export function useWorkspaceSetupWorkflow({
   });
 
   const provisioning = useWorkspaceSetupProvisioning({
-    currentStepKey: flow.currentStepKey,
     currentStepKeyRef: flow.currentStepKeyRef,
     selections: flow.selections,
     routePlan: flow.routePlan,
@@ -348,6 +350,32 @@ export function useWorkspaceSetupWorkflow({
     if (!draft.targetBranch.trim()) return;
     setters.pushBranch(draft.targetBranch);
   }, [draft.pushBranchTouched, draft.targetBranch, setters]);
+
+  useEffect(() => {
+    if (!remote.desktopApp || flow.step.key !== "location" || flow.selections.location) {
+      localAuthWarmupRouteKeyRef.current = null;
+      return;
+    }
+
+    const localTarget = deriveWorkspaceSetupEffectiveTarget("local", draft.targetDraft);
+    if (!localTarget) {
+      localAuthWarmupRouteKeyRef.current = null;
+      return;
+    }
+    const routeScope = createWorkspaceSetupRouteScope(localTarget, "no-container");
+    const routeKey = serializeWorkspaceSetupRouteScope(routeScope);
+    if (localAuthWarmupRouteKeyRef.current === routeKey) {
+      return;
+    }
+    localAuthWarmupRouteKeyRef.current = routeKey;
+    void provisioning.refreshAuthImportForRouteScope("local", routeScope).catch(() => {});
+  }, [
+    draft.targetDraft,
+    flow.selections.location,
+    flow.step.key,
+    provisioning.refreshAuthImportForRouteScope,
+    remote.desktopApp,
+  ]);
 
   useEffect(() => {
     dispatchMachine({

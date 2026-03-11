@@ -328,8 +328,6 @@ const MAX_CACHED_SESSIONS = readTunableInt(
 );
 const WARM_TTL_MS = readTunableInt("contextWarmSessionTtlMs", 10 * 60 * 1000);
 const HEAD_LIMIT = readTunableInt("contextSessionHeadLimit", TURN_PAGE_LIMIT);
-const MODE_RESOLUTION_MAX_ATTEMPTS = 6;
-const MODE_RESOLUTION_RETRY_MS = 100;
 
 // The daemon serializes transient events with `seq: null` (see Rust `SessionEvent` Serialize).
 // We assign a stable synthetic seq in a negative JS-safe range so sorting never scrambles
@@ -356,9 +354,6 @@ export class SessionSupervisor {
     { invocations: SubagentInvocation[]; stateRev: number }
   >();
   private subagentInvocationsRequestsInFlight = new Map<string, Promise<void>>();
-  private modeResolutionTimers = new Map<string, ReturnType<typeof globalThis.setTimeout>>();
-  private modeResolutionAttempts = new Map<string, number>();
-  private modeResolutionOptions = new Map<string, OpenOptions | undefined>();
   private workspaceSnapshotState: SessionSupervisorWorkspaceSnapshotState = null;
   private workspaceSessionHeadsById = new Map<string, SessionHeadSnapshot>();
   private workspaceActivePrimarySessionIds: string[] = [];
@@ -386,9 +381,6 @@ export class SessionSupervisor {
     this.workspaceSnapshotState = state;
     if (!state) {
       this.workspaceActivePrimarySessionIds = [];
-      for (const sessionId of [...this.modeResolutionTimers.keys()]) {
-        this.clearModeResolution(sessionId);
-      }
       this.setConnection("disconnected");
       return;
     }
@@ -401,7 +393,6 @@ export class SessionSupervisor {
     const next = this.mapConnection(state.connection);
     this.setConnection(next);
     this.syncActiveSnapshot(state);
-    this.resolvePendingSessionModes(state);
     if (next !== "connected") {
       this.markOpenSessionsRecovering();
     }
@@ -419,8 +410,10 @@ export class SessionSupervisor {
     this.ingestWorkspaceEvent(evt);
   };
 
-  openSession = (sessionId: string, opts?: OpenOptions) => {
-    const entry = this.ensureEntry(sessionId);
+  private beginSessionOpenEntry(sessionId: string, opts?: OpenOptions): InternalEntry | null {
+    const id = String(sessionId ?? "").trim();
+    if (!id) return null;
+    const entry = this.ensureEntry(id);
     const reopeningSession = entry.refCount === 0;
     entry.refCount += 1;
     entry.warmUntilMs = Date.now() + WARM_TTL_MS;
@@ -441,16 +434,52 @@ export class SessionSupervisor {
       }
     }
     this.setSessionLoadState(entry, "pending_hydration");
-    const mode = this.resolveSessionMode(sessionId, entry, opts?.mode);
+    return entry;
+  }
+
+  beginSessionOpen = (sessionId: string, opts?: OpenOptions) => {
+    const entry = this.beginSessionOpenEntry(sessionId, opts);
+    if (!entry) return;
+    this.refreshSubscriptions();
+    this.publish();
+  };
+
+  commitSessionOpenMode = (sessionId: string, mode: SessionMode, opts?: OpenOptions) => {
+    const id = String(sessionId ?? "").trim();
+    if (!id) return;
+    const entry = this.entries.get(id);
+    if (!entry || entry.refCount <= 0) return;
+    this.openSessionWithMode(id, entry, mode, opts);
+    this.refreshSubscriptions();
+    this.publish();
+  };
+
+  failPendingSessionOpen = (sessionId: string, message?: string) => {
+    const id = String(sessionId ?? "").trim();
+    if (!id) return;
+    const entry = this.entries.get(id);
+    if (!entry || entry.refCount <= 0) return;
+    this.setFatalError(entry, message ?? `Session not found in workspace snapshot: ${id}`);
+    entry.updatedAtMs = Date.now();
+    this.refreshSubscriptions();
+    this.publish();
+  };
+
+  openSession = (sessionId: string, opts?: OpenOptions) => {
+    const id = String(sessionId ?? "").trim();
+    if (!id) return () => {};
+    const entry = this.beginSessionOpenEntry(id, opts);
+    if (!entry) return () => this.closeSession(id, opts);
+    const mode = this.resolveSessionMode(id, entry, opts?.mode);
     if (mode) {
-      this.clearModeResolution(sessionId);
-      this.openSessionWithMode(sessionId, entry, mode, opts);
-    } else {
-      this.scheduleModeResolution(sessionId, opts);
+      this.openSessionWithMode(id, entry, mode, opts);
+    } else if (this.shouldFailPendingSessionOpen()) {
+      this.setFatalError(entry, `Session not found in workspace snapshot: ${id}`);
+      entry.updatedAtMs = Date.now();
     }
     this.refreshSubscriptions();
     this.publish();
-    return () => this.closeSession(sessionId, opts);
+    return () => this.closeSession(id, opts);
   };
 
   closeSession = (sessionId: string, opts?: OpenOptions) => {
@@ -458,9 +487,6 @@ export class SessionSupervisor {
     if (!entry) return;
     entry.refCount = Math.max(0, entry.refCount - 1);
     entry.warmUntilMs = Date.now() + WARM_TTL_MS;
-    if (entry.refCount === 0) {
-      this.clearModeResolution(sessionId);
-    }
     this.replica.dispatch({ type: "close_session", sessionId });
     this.refreshSubscriptions();
     this.publish();
@@ -471,10 +497,11 @@ export class SessionSupervisor {
     if (!entry) return;
     const mode = this.resolveSessionMode(sessionId, entry, opts?.mode);
     if (!mode) {
-      this.scheduleModeResolution(sessionId, opts);
+      if (this.shouldFailPendingSessionOpen()) {
+        this.failPendingSessionOpen(sessionId);
+      }
       return;
     }
-    this.clearModeResolution(sessionId);
     this.replica.dispatch({
       type: "refresh_session",
       sessionId,
@@ -614,7 +641,6 @@ export class SessionSupervisor {
     const id = String(sessionId || "").trim();
     if (!id) return;
     if (!this.entries.has(id)) return;
-    this.clearModeResolution(id);
     this.entries.delete(id);
     this.activeTaskSessionIds = this.activeTaskSessionIds.filter((entryId) => entryId !== id);
     this.warmSessionIds = this.warmSessionIds.filter((entryId) => entryId !== id);
@@ -946,7 +972,6 @@ export class SessionSupervisor {
       .sort((a, b) => a.updatedAtMs - b.updatedAtMs);
     for (const c of candidates) {
       if (this.entries.size <= MAX_CACHED_SESSIONS) break;
-      this.clearModeResolution(c.sessionId);
       this.entries.delete(c.sessionId);
     }
   }
@@ -1447,79 +1472,10 @@ export class SessionSupervisor {
     return mode;
   }
 
-  private scheduleModeResolution(sessionId: string, opts?: OpenOptions) {
-    const id = String(sessionId ?? "").trim();
-    if (!id) return;
-    const entry = this.entries.get(id);
-    if (!entry || entry.refCount <= 0) return;
-    this.modeResolutionOptions.set(id, opts ? { ...opts } : undefined);
-    this.setSessionLoadState(entry, "pending_hydration");
-    if (this.modeResolutionTimers.has(id)) return;
-
-    const run = () => {
-      const current = this.entries.get(id);
-      if (!current || current.refCount <= 0) {
-        this.clearModeResolution(id);
-        return;
-      }
-      const mode = this.resolveSessionMode(id, current);
-      if (mode) {
-        const resolvedOpts = this.modeResolutionOptions.get(id);
-        this.clearModeResolution(id);
-        this.openSessionWithMode(id, current, mode, resolvedOpts);
-        this.refreshSubscriptions();
-        this.publish();
-        return;
-      }
-      const attempts = (this.modeResolutionAttempts.get(id) ?? 0) + 1;
-      this.modeResolutionAttempts.set(id, attempts);
-      if (attempts >= MODE_RESOLUTION_MAX_ATTEMPTS) {
-        this.clearModeResolution(id);
-        this.setFatalError(current, `Session not found in workspace snapshot: ${id}`);
-        current.updatedAtMs = Date.now();
-        this.publish();
-        return;
-      }
-      const timer = globalThis.setTimeout(run, MODE_RESOLUTION_RETRY_MS);
-      this.modeResolutionTimers.set(id, timer);
-    };
-
-    const timer = globalThis.setTimeout(run, MODE_RESOLUTION_RETRY_MS);
-    this.modeResolutionTimers.set(id, timer);
-  }
-
-  private resolvePendingSessionModes(state: WorkspaceActiveSnapshotState) {
-    if (this.modeResolutionTimers.size === 0) return;
-    let changed = false;
-    for (const sessionId of [...this.modeResolutionTimers.keys()]) {
-      const entry = this.entries.get(sessionId);
-      if (!entry || entry.refCount <= 0) {
-        this.clearModeResolution(sessionId);
-        continue;
-      }
-      const mode = resolveSessionModeFromWorkspaceState(state, sessionId);
-      if (!mode) continue;
-      const opts = this.modeResolutionOptions.get(sessionId);
-      this.clearModeResolution(sessionId);
-      this.openSessionWithMode(sessionId, entry, mode, opts);
-      changed = true;
-    }
-    if (changed) {
-      this.refreshSubscriptions();
-      this.publish();
-    }
-  }
-
-  private clearModeResolution(sessionId: string) {
-    const id = String(sessionId ?? "").trim();
-    if (!id) return;
-    const timer = this.modeResolutionTimers.get(id);
-    if (timer) {
-      globalThis.clearTimeout(timer);
-    }
-    this.modeResolutionTimers.delete(id);
-    this.modeResolutionAttempts.delete(id);
-    this.modeResolutionOptions.delete(id);
+  private shouldFailPendingSessionOpen() {
+    const state = this.workspaceSnapshotState;
+    if (!state) return false;
+    return state.initialized && state.fetchState.active === "idle";
   }
 
   private setSessionLoadState(entry: InternalEntry, next: SessionLoadState) {

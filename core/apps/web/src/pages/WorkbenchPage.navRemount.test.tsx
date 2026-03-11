@@ -261,6 +261,9 @@ vi.mock("../utils/analytics", async () => {
 
 vi.mock("../state/sessionSupervisor", () => ({
   useSessionSupervisor: () => sessionSupervisorMock,
+  useSessionLifecycleCoordinator: () => ({
+    setWorkspaceSnapshotState: vi.fn(),
+  }),
   useSessionCacheSnapshot: () => sessionSnap,
   useSessionEntry: (id: string) => sessionSnap.sessions[id] ?? null,
   useOpenSession: () => {},

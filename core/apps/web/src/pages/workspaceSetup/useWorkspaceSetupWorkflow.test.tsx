@@ -121,6 +121,7 @@ describe("useWorkspaceSetupWorkflow", () => {
       titlingPersistError: null,
       ensureTitlingPersistedForCurrentTarget: vi.fn().mockResolvedValue(true),
       ensureOnboardingAfterDaemonConnect: vi.fn().mockResolvedValue(null),
+      refreshAuthImportForRouteScope: vi.fn().mockResolvedValue(undefined),
       ensureRoutePlanForSelection: vi.fn().mockResolvedValue(null),
       advanceFromAuthImportStep: vi.fn().mockResolvedValue(null),
       advanceFromHarnessDownloadsStep: vi.fn().mockResolvedValue(null),

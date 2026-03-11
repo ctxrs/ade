@@ -4,6 +4,7 @@ import type {
   RoutePlanInsertionStep,
   WorkspaceSetupProvisioningSnapshot,
 } from "./workflowTypes";
+import { serializeWorkspaceSetupRouteScope } from "./workflowTypes";
 
 type ResolveRoutePlanInsertionOptions = {
   allowTitlingInsertion?: boolean;
@@ -12,11 +13,15 @@ type ResolveRoutePlanInsertionOptions = {
 export const buildWizardRoutePlan = (
   snapshot: WorkspaceSetupProvisioningSnapshot,
 ): WizardRoutePlan => ({
-  targetKey: `${snapshot.targetKey}|${snapshot.containerSelection}`,
-  containerSelection: snapshot.containerSelection,
-  includeHarnessDownloads: snapshot.missingHarnessCount > 0,
-  includeAuthImport: snapshot.authImportCandidateCount > 0,
-  includeTitling: snapshot.titlingMode !== "skip" && snapshot.titlingRequired,
+  targetKey: serializeWorkspaceSetupRouteScope(snapshot.routeScope),
+  containerSelection: snapshot.routeScope.containerSelection,
+  includeHarnessDownloads:
+    snapshot.harnessCandidatesStatus === "error" || snapshot.missingHarnessCount > 0,
+  includeAuthImport:
+    snapshot.authImportStatus === "error" || snapshot.authImportCandidateCount > 0,
+  includeTitling: snapshot.titlingMode !== "skip" && (
+    snapshot.titlingProbeStatus === "error" || snapshot.titlingRequired
+  ),
 });
 
 export const resolveRoutePlanInsertionStep = (

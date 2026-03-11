@@ -126,8 +126,8 @@
   },
   {
     "path": "apps/web/src/pages/workspaceSetup/useWorkspaceSetupProvisioning.ts",
-    "maxLines": 1435,
-    "reason": "Existing oversized workspace setup provisioning module. Allow the remote scan-key and install-target fixes for beta, then break it up deliberately."
+    "maxLines": 1522,
+    "reason": "Existing oversized workspace setup provisioning module. Allow the provisioning-scope refresh owner and explicit scan-error handling for beta, then split it deliberately with the later create-coordinator follow-up."
   },
   {
     "path": "crates/ctx-http/src/daemon.rs",

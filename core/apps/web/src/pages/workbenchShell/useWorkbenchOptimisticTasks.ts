@@ -25,12 +25,16 @@ export function useWorkbenchOptimisticTasks({
   const optimisticSessionIdSet = useMemo(() => {
     const ids = new Set<string>();
     for (const item of optimisticTasks) {
-      if (item.localStatus === "synced") continue;
+      if (item.localStatus === "failed") continue;
+      const server = tasksById[item.id] ?? null;
+      const serverHasSession =
+        Boolean(server?.task.primary_session_id) || (server?.sessions?.length ?? 0) > 0;
+      if (item.localStatus === "synced" && serverHasSession) continue;
       const sessionId = String(item.primarySessionId ?? "");
       if (sessionId) ids.add(sessionId);
     }
     return ids;
-  }, [optimisticTasks]);
+  }, [optimisticTasks, tasksById]);
 
   const optimisticFailureBySessionId = useMemo(() => {
     const out: Record<string, { prompt: string; error: string | null }> = {};
@@ -46,8 +50,13 @@ export function useWorkbenchOptimisticTasks({
   const activeTaskSummary = useMemo(() => {
     if (!activeTaskId) return null;
     const optimistic = optimisticTasksById[activeTaskId];
-    if (optimistic && optimistic.localStatus !== "synced") return optimistic;
     const server = tasksById[activeTaskId] ?? null;
+    const serverHasSession =
+      Boolean(server?.task.primary_session_id) || (server?.sessions?.length ?? 0) > 0;
+    if (optimistic) {
+      if (optimistic.localStatus !== "synced") return optimistic;
+      if (!serverHasSession) return optimistic;
+    }
     if (server) return server;
     const fallback = optimisticStartingTaskRef.current;
     if (fallback && fallback.id === activeTaskId && fallback.localStatus !== "synced") {

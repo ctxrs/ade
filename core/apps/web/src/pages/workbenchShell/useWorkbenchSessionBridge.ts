@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo } from "react";
 import { idToString, type SessionHeadSnapshot } from "../../api/client";
-import type { SessionSupervisor, SessionSupervisorSnapshot } from "../../state/sessionSupervisor";
+import {
+  useSessionLifecycleCoordinator,
+  type SessionSupervisor,
+  type SessionSupervisorSnapshot,
+} from "../../state/sessionSupervisor";
 import type {
   WorkspaceActiveSnapshotEventSource,
   WorkspaceActiveSnapshotItem,
@@ -97,6 +101,7 @@ export function useWorkbenchSessionBridge({
   workspaceSnapshotStore,
   markTaskRead,
 }: TaskBridgeArgs) {
+  const lifecycleCoordinator = useSessionLifecycleCoordinator();
   const { sessionSummaries, sessions, sessionIds, primarySessionId, activeTaskSessionIds } = useMemo(
     () => deriveActiveTaskSessionIds(activeTaskSummary),
     [activeTaskSummary],
@@ -132,6 +137,7 @@ export function useWorkbenchSessionBridge({
       const snapshot = workspaceSnapshotStore.getSnapshot();
       supervisor.setWorkspaceSessionHeads(readWorkspaceSessionHeads(snapshot, workspaceSnapshotStore));
       supervisor.setWorkspaceSnapshotState(snapshot);
+      lifecycleCoordinator.setWorkspaceSnapshotState(snapshot);
     };
     syncWorkspace();
     const unsubState = workspaceSnapshotStore.subscribe(syncWorkspace);
@@ -142,8 +148,9 @@ export function useWorkbenchSessionBridge({
       supervisor.setSubscribedSessionIdsSink(null);
       supervisor.setWorkspaceSessionHeads({});
       supervisor.setWorkspaceSnapshotState(null);
+      lifecycleCoordinator.setWorkspaceSnapshotState(null);
     };
-  }, [supervisor, workspaceSnapshotStore]);
+  }, [lifecycleCoordinator, supervisor, workspaceSnapshotStore]);
 
   const taskLiveInfo = useMemo(
     () =>
@@ -163,6 +170,8 @@ export function useWorkbenchSessionBridge({
     const previousSessionId =
       activeTab?.kind === "task" && activeTab.ref.taskId === activeTaskId ? (activeTab.ref.sessionId ?? null) : null;
     const previousSessionEntry = previousSessionId ? sessionSnap.sessions[previousSessionId] ?? null : null;
+    const optimisticActiveTask = optimisticTasksById[activeTaskId];
+    const optimisticPrimarySessionId = optimisticActiveTask ? (optimisticActiveTask.primarySessionId ?? null) : null;
     if (!activeTaskSummary) {
       if (!snapshotReady) return;
       workbenchStore.setActiveSessionForActiveTask(null, { source: "system" });
@@ -171,6 +180,9 @@ export function useWorkbenchSessionBridge({
     if (sessions.length === 0 && !primarySessionId) {
       if (!snapshotReady) return;
       if (!taskArchived) {
+        if (previousSessionId && optimisticPrimarySessionId && previousSessionId === optimisticPrimarySessionId) {
+          return;
+        }
         workbenchStore.setActiveSessionForActiveTask(null, { source: "system" });
         return;
       }
@@ -190,6 +202,7 @@ export function useWorkbenchSessionBridge({
   }, [
     activeTaskId,
     activeTaskSummary,
+    optimisticTasksById,
     primarySessionId,
     sessions,
     sessionSnap.sessions,

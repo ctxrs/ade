@@ -1024,4 +1024,52 @@ describe("buildWorkbenchThreadViewModel", () => {
     expect(out.groups.length).toBe(1);
     expect(out.groups[0]?.header?.id).toBe("t-live");
   }, 10000);
+
+  it("keeps a turn header visible when the user message loses order_seq but the turn has start_seq", async () => {
+    const { buildWorkbenchThreadViewModelFromTurns } = await import("./SessionPage.workbenchViewModel");
+
+    const turns = [
+      {
+        turn_id: "t1",
+        session_id: "s1",
+        user_message_id: "m1",
+        status: "running",
+        start_seq: 1,
+        end_seq: null,
+        started_at: "2025-12-15T00:00:00.000Z",
+        updated_at: "2025-12-15T00:00:01.000Z",
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      },
+    ];
+
+    const messages = [
+      {
+        id: "m1",
+        session_id: "s1",
+        task_id: "task-1",
+        role: "user",
+        content: "hello",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:00.000Z",
+        turn_id: "t1",
+      },
+    ];
+
+    const out = buildWorkbenchThreadViewModelFromTurns(
+      turns as unknown as SessionTurn[],
+      messages as unknown as Message[],
+      {},
+      [],
+      new Map(),
+    );
+
+    expect(out.groups).toHaveLength(1);
+    expect(out.groups[0]?.header?.id).toBe("t1");
+    expect(out.groups[0]?.header?.content).toBe("hello");
+  }, 10000);
 });

@@ -2,7 +2,7 @@ import React from "react";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Session, SessionSnapshotSummary } from "../../api/client";
-import type { SessionCacheEntry, SessionSupervisorSnapshot } from "../../state/sessionSupervisor";
+import { SessionSupervisorProvider, type SessionCacheEntry, type SessionSupervisorSnapshot } from "../../state/sessionSupervisor";
 import type { WorkspaceActiveSnapshotItem, WorkspaceActiveSnapshotState } from "../../state/workspaceActiveSnapshotStore";
 import { WORKBENCH_TASK_IDLE_EVENT, type WorkbenchTaskIdleDetail } from "../../utils/updaterEvents";
 import type { OptimisticTaskSummary } from "../WorkbenchPage.types";
@@ -156,6 +156,14 @@ type HarnessProps = Parameters<typeof useWorkbenchTaskActivity>[0];
 function Harness(props: HarnessProps) {
   useWorkbenchTaskActivity(props);
   return null;
+}
+
+function renderHarness(props: HarnessProps) {
+  return render(
+    <SessionSupervisorProvider>
+      <Harness {...props} />
+    </SessionSupervisorProvider>,
+  );
 }
 
 afterEach(() => {
@@ -346,28 +354,26 @@ describe("useWorkbenchTaskActivity", () => {
 
     window.addEventListener(WORKBENCH_TASK_IDLE_EVENT, onIdle as EventListener);
     try {
-      render(
-        <Harness
-          activeTaskId="task-1"
-          activeSessionIdFromTab={null}
-          activeTaskSummary={taskSummary}
-          tasksById={tasksById}
-          workspaceSnapshot={workspaceSnapshot}
-          sessionSnap={makeSessionSnapshot({
-            "session-1": makeSessionEntry({ session: activeSession }),
-            "session-2": makeSessionEntry({
-              session: warmSession,
-              updatedAtMs: Date.parse("2026-03-09T00:00:10.000Z"),
-            }),
-          })}
-          optimisticTasks={[] satisfies OptimisticTaskSummary[]}
-          optimisticTasksById={{}}
-          supervisor={supervisor}
-          workbenchStore={workbenchStore}
-          workspaceSnapshotStore={workspaceSnapshotStore}
-          markTaskRead={vi.fn(async () => {})}
-        />,
-      );
+      renderHarness({
+        activeTaskId: "task-1",
+        activeSessionIdFromTab: null,
+        activeTaskSummary: taskSummary,
+        tasksById,
+        workspaceSnapshot,
+        sessionSnap: makeSessionSnapshot({
+          "session-1": makeSessionEntry({ session: activeSession }),
+          "session-2": makeSessionEntry({
+            session: warmSession,
+            updatedAtMs: Date.parse("2026-03-09T00:00:10.000Z"),
+          }),
+        }),
+        optimisticTasks: [] satisfies OptimisticTaskSummary[],
+        optimisticTasksById: {},
+        supervisor,
+        workbenchStore,
+        workspaceSnapshotStore,
+        markTaskRead: vi.fn(async () => {}),
+      });
 
       await waitFor(() => {
         expect(supervisor.setActiveTaskSessionIds).toHaveBeenCalledWith(["session-1"]);
@@ -417,25 +423,23 @@ describe("useWorkbenchTaskActivity", () => {
       setForegroundTaskId: vi.fn(),
     };
 
-    render(
-      <Harness
-        activeTaskId="task-1"
-        activeSessionIdFromTab={null}
-        activeTaskSummary={taskSummary}
-        tasksById={{ "task-1": taskSummary }}
-        workspaceSnapshot={workspaceSnapshot}
-        sessionSnap={makeSessionSnapshot({
-          "session-1": makeSessionEntry({ session: primarySession }),
-          "session-2": makeSessionEntry({ session: secondarySession }),
-        })}
-        optimisticTasks={[] satisfies OptimisticTaskSummary[]}
-        optimisticTasksById={{}}
-        supervisor={supervisor}
-        workbenchStore={makeWorkbenchStore("task-1")}
-        workspaceSnapshotStore={workspaceSnapshotStore}
-        markTaskRead={vi.fn(async () => {})}
-      />,
-    );
+    renderHarness({
+      activeTaskId: "task-1",
+      activeSessionIdFromTab: null,
+      activeTaskSummary: taskSummary,
+      tasksById: { "task-1": taskSummary },
+      workspaceSnapshot,
+      sessionSnap: makeSessionSnapshot({
+        "session-1": makeSessionEntry({ session: primarySession }),
+        "session-2": makeSessionEntry({ session: secondarySession }),
+      }),
+      optimisticTasks: [] satisfies OptimisticTaskSummary[],
+      optimisticTasksById: {},
+      supervisor,
+      workbenchStore: makeWorkbenchStore("task-1"),
+      workspaceSnapshotStore,
+      markTaskRead: vi.fn(async () => {}),
+    });
 
     await waitFor(() => {
       expect(supervisor.setWorkspaceSessionHeads).toHaveBeenCalledWith({ "session-2": secondaryHead });
@@ -475,25 +479,23 @@ describe("useWorkbenchTaskActivity", () => {
       setForegroundTaskId: vi.fn(),
     };
 
-    render(
-      <Harness
-        activeTaskId="task-1"
-        activeSessionIdFromTab="session-2"
-        activeTaskSummary={taskSummary}
-        tasksById={{ "task-1": taskSummary }}
-        workspaceSnapshot={workspaceSnapshot}
-        sessionSnap={makeSessionSnapshot({
-          "session-1": makeSessionEntry({ session: primarySession }),
-          "session-2": makeSessionEntry({ session: secondarySession }),
-        })}
-        optimisticTasks={[] satisfies OptimisticTaskSummary[]}
-        optimisticTasksById={{}}
-        supervisor={supervisor}
-        workbenchStore={makeWorkbenchStore("task-1", "session-2")}
-        workspaceSnapshotStore={workspaceSnapshotStore}
-        markTaskRead={vi.fn(async () => {})}
-      />,
-    );
+    renderHarness({
+      activeTaskId: "task-1",
+      activeSessionIdFromTab: "session-2",
+      activeTaskSummary: taskSummary,
+      tasksById: { "task-1": taskSummary },
+      workspaceSnapshot,
+      sessionSnap: makeSessionSnapshot({
+        "session-1": makeSessionEntry({ session: primarySession }),
+        "session-2": makeSessionEntry({ session: secondarySession }),
+      }),
+      optimisticTasks: [] satisfies OptimisticTaskSummary[],
+      optimisticTasksById: {},
+      supervisor,
+      workbenchStore: makeWorkbenchStore("task-1", "session-2"),
+      workspaceSnapshotStore,
+      markTaskRead: vi.fn(async () => {}),
+    });
 
     await waitFor(() => {
       expect(supervisor.setWorkspaceSessionHeads).toHaveBeenCalledWith({ "session-2": secondaryHead });
@@ -524,27 +526,25 @@ describe("useWorkbenchTaskActivity", () => {
     const workspaceSnapshotStore = makeWorkspaceSnapshotStore(workspaceSnapshot);
     const workbenchStore = makeWorkbenchStore("task-1");
 
-    render(
-      <Harness
-        activeTaskId="task-1"
-        activeSessionIdFromTab={null}
-        activeTaskSummary={taskSummary}
-        tasksById={{ "task-1": taskSummary }}
-        workspaceSnapshot={workspaceSnapshot}
-        sessionSnap={makeSessionSnapshot({
-          "session-1": makeSessionEntry({
-            session,
-            messageCreatedAt: "2026-03-09T00:00:06.000Z",
-          }),
-        })}
-        optimisticTasks={[] satisfies OptimisticTaskSummary[]}
-        optimisticTasksById={{}}
-        supervisor={supervisor}
-        workbenchStore={workbenchStore}
-        workspaceSnapshotStore={workspaceSnapshotStore}
-        markTaskRead={markTaskRead}
-      />,
-    );
+    renderHarness({
+      activeTaskId: "task-1",
+      activeSessionIdFromTab: null,
+      activeTaskSummary: taskSummary,
+      tasksById: { "task-1": taskSummary },
+      workspaceSnapshot,
+      sessionSnap: makeSessionSnapshot({
+        "session-1": makeSessionEntry({
+          session,
+          messageCreatedAt: "2026-03-09T00:00:06.000Z",
+        }),
+      }),
+      optimisticTasks: [] satisfies OptimisticTaskSummary[],
+      optimisticTasksById: {},
+      supervisor,
+      workbenchStore,
+      workspaceSnapshotStore,
+      markTaskRead,
+    });
 
     await waitFor(() => {
       expect(markTaskRead).toHaveBeenCalledWith("task-1");
@@ -572,24 +572,22 @@ describe("useWorkbenchTaskActivity", () => {
       localMessageId: "message-1",
     } as OptimisticTaskSummary;
 
-    render(
-      <Harness
-        activeTaskId="task-1"
-        activeSessionIdFromTab="session-1"
-        activeTaskSummary={taskSummary}
-        tasksById={{}}
-        workspaceSnapshot={workspaceSnapshot}
-        sessionSnap={makeSessionSnapshot({
-          "session-1": makeSessionEntry({ session }),
-        })}
-        optimisticTasks={[taskSummary]}
-        optimisticTasksById={{ "task-1": taskSummary }}
-        supervisor={supervisor}
-        workbenchStore={workbenchStore}
-        workspaceSnapshotStore={workspaceSnapshotStore}
-        markTaskRead={markTaskRead}
-      />,
-    );
+    renderHarness({
+      activeTaskId: "task-1",
+      activeSessionIdFromTab: "session-1",
+      activeTaskSummary: taskSummary,
+      tasksById: {},
+      workspaceSnapshot,
+      sessionSnap: makeSessionSnapshot({
+        "session-1": makeSessionEntry({ session }),
+      }),
+      optimisticTasks: [taskSummary],
+      optimisticTasksById: { "task-1": taskSummary },
+      supervisor,
+      workbenchStore,
+      workspaceSnapshotStore,
+      markTaskRead,
+    });
 
     await waitFor(() => {
       expect(supervisor.setActiveTaskSessionIds).toHaveBeenCalledWith(["session-1"]);
@@ -619,25 +617,23 @@ describe("useWorkbenchTaskActivity", () => {
     const workspaceSnapshotStore = makeWorkspaceSnapshotStore(workspaceSnapshot);
     const workbenchStore = makeWorkbenchStore("task-1", "session-stale");
 
-    render(
-      <Harness
-        activeTaskId="task-1"
-        activeSessionIdFromTab="session-stale"
-        activeTaskSummary={taskSummary}
-        tasksById={{ "task-1": taskSummary }}
-        workspaceSnapshot={workspaceSnapshot}
-        sessionSnap={makeSessionSnapshot({
-          "session-1": makeSessionEntry({ session: olderSession }),
-          "session-2": makeSessionEntry({ session: activeSession }),
-        })}
-        optimisticTasks={[] satisfies OptimisticTaskSummary[]}
-        optimisticTasksById={{}}
-        supervisor={supervisor}
-        workbenchStore={workbenchStore}
-        workspaceSnapshotStore={workspaceSnapshotStore}
-        markTaskRead={vi.fn(async () => {})}
-      />,
-    );
+    renderHarness({
+      activeTaskId: "task-1",
+      activeSessionIdFromTab: "session-stale",
+      activeTaskSummary: taskSummary,
+      tasksById: { "task-1": taskSummary },
+      workspaceSnapshot,
+      sessionSnap: makeSessionSnapshot({
+        "session-1": makeSessionEntry({ session: olderSession }),
+        "session-2": makeSessionEntry({ session: activeSession }),
+      }),
+      optimisticTasks: [] satisfies OptimisticTaskSummary[],
+      optimisticTasksById: {},
+      supervisor,
+      workbenchStore,
+      workspaceSnapshotStore,
+      markTaskRead: vi.fn(async () => {}),
+    });
 
     await waitFor(() => {
       expect(workbenchStore.setActiveSessionForActiveTask).toHaveBeenCalledWith("session-2", { source: "system" });
@@ -659,27 +655,72 @@ describe("useWorkbenchTaskActivity", () => {
     const workspaceSnapshotStore = makeWorkspaceSnapshotStore(workspaceSnapshot);
     const workbenchStore = makeWorkbenchStore("task-1", "session-from-tab");
 
-    render(
-      <Harness
-        activeTaskId="task-1"
-        activeSessionIdFromTab="session-from-tab"
-        activeTaskSummary={taskSummary}
-        tasksById={{ "task-1": taskSummary }}
-        workspaceSnapshot={workspaceSnapshot}
-        sessionSnap={makeSessionSnapshot({})}
-        optimisticTasks={[] satisfies OptimisticTaskSummary[]}
-        optimisticTasksById={{}}
-        supervisor={supervisor}
-        workbenchStore={workbenchStore}
-        workspaceSnapshotStore={workspaceSnapshotStore}
-        markTaskRead={vi.fn(async () => {})}
-      />,
-    );
+    renderHarness({
+      activeTaskId: "task-1",
+      activeSessionIdFromTab: "session-from-tab",
+      activeTaskSummary: taskSummary,
+      tasksById: { "task-1": taskSummary },
+      workspaceSnapshot,
+      sessionSnap: makeSessionSnapshot({}),
+      optimisticTasks: [] satisfies OptimisticTaskSummary[],
+      optimisticTasksById: {},
+      supervisor,
+      workbenchStore,
+      workspaceSnapshotStore,
+      markTaskRead: vi.fn(async () => {}),
+    });
 
     await waitFor(() => {
       expect(supervisor.setActiveTaskSessionIds).toHaveBeenCalledWith([]);
     });
     expect(workbenchStore.setActiveSessionForActiveTask).not.toHaveBeenCalled();
+  });
+
+  it("preserves the optimistic session during the server handoff until the task summary publishes a session", async () => {
+    const optimisticSessionId = "session-optimistic";
+    const taskSummary = makeTaskSummary({
+      taskId: "task-1",
+      primarySessionId: "",
+      sessions: [],
+    });
+    const workspaceSnapshot = makeWorkspaceSnapshot({ "task-1": taskSummary }, ["task-1"]);
+    const supervisor = makeSupervisor();
+    const workspaceSnapshotStore = makeWorkspaceSnapshotStore(workspaceSnapshot);
+    const workbenchStore = makeWorkbenchStore("task-1", optimisticSessionId);
+    const optimisticTask = {
+      ...makeTaskSummary({
+        taskId: "task-1",
+        primarySessionId: optimisticSessionId,
+        sessions: [makeSessionSummary(makeSession(optimisticSessionId, "task-1", "active"))],
+      }),
+      localStatus: "synced",
+      localPrompt: "hello",
+      localMessageId: "message-1",
+    } as OptimisticTaskSummary;
+
+    renderHarness({
+      activeTaskId: "task-1",
+      activeSessionIdFromTab: optimisticSessionId,
+      activeTaskSummary: taskSummary,
+      tasksById: { "task-1": taskSummary },
+      workspaceSnapshot,
+      sessionSnap: makeSessionSnapshot({
+        [optimisticSessionId]: makeSessionEntry({
+          session: makeSession(optimisticSessionId, "task-1", "active"),
+        }),
+      }),
+      optimisticTasks: [optimisticTask],
+      optimisticTasksById: { "task-1": optimisticTask },
+      supervisor,
+      workbenchStore,
+      workspaceSnapshotStore,
+      markTaskRead: vi.fn(async () => {}),
+    });
+
+    await waitFor(() => {
+      expect(supervisor.setActiveTaskSessionIds).toHaveBeenCalledWith([]);
+    });
+    expect(workbenchStore.setActiveSessionForActiveTask).not.toHaveBeenCalledWith(null, { source: "system" });
   });
 
   it("clears a stale remembered session id when an active task is still sessionless after hydration completes", async () => {
@@ -693,27 +734,25 @@ describe("useWorkbenchTaskActivity", () => {
     const workspaceSnapshotStore = makeWorkspaceSnapshotStore(workspaceSnapshot);
     const workbenchStore = makeWorkbenchStore("task-1", "session-stale");
 
-    render(
-      <Harness
-        activeTaskId="task-1"
-        activeSessionIdFromTab="session-stale"
-        activeTaskSummary={taskSummary}
-        tasksById={{ "task-1": taskSummary }}
-        workspaceSnapshot={workspaceSnapshot}
-        sessionSnap={makeSessionSnapshot({
-          "session-stale": {
-            ...makeSessionEntry({ session: makeSession("session-stale", "task-1", "active") }),
-            loadState: "live",
-          },
-        })}
-        optimisticTasks={[] satisfies OptimisticTaskSummary[]}
-        optimisticTasksById={{}}
-        supervisor={supervisor}
-        workbenchStore={workbenchStore}
-        workspaceSnapshotStore={workspaceSnapshotStore}
-        markTaskRead={vi.fn(async () => {})}
-      />,
-    );
+    renderHarness({
+      activeTaskId: "task-1",
+      activeSessionIdFromTab: "session-stale",
+      activeTaskSummary: taskSummary,
+      tasksById: { "task-1": taskSummary },
+      workspaceSnapshot,
+      sessionSnap: makeSessionSnapshot({
+        "session-stale": {
+          ...makeSessionEntry({ session: makeSession("session-stale", "task-1", "active") }),
+          loadState: "live",
+        },
+      }),
+      optimisticTasks: [] satisfies OptimisticTaskSummary[],
+      optimisticTasksById: {},
+      supervisor,
+      workbenchStore,
+      workspaceSnapshotStore,
+      markTaskRead: vi.fn(async () => {}),
+    });
 
     await waitFor(() => {
       expect(workbenchStore.setActiveSessionForActiveTask).toHaveBeenCalledWith(null, { source: "system" });

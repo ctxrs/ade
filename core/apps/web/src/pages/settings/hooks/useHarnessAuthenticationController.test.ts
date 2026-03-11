@@ -161,6 +161,10 @@ vi.mock("../../../state/providersBootstrapStore", async (importOriginal) => {
       bootstrapMockState.hostBootstrapState ?? original.EMPTY_PROVIDERS_BOOTSTRAP),
     getProvidersBootstrapSnapshot: vi.fn((workspaceId: string) =>
       bootstrapMockState.bootstrapStateByWorkspace.get(workspaceId) ?? original.EMPTY_PROVIDERS_BOOTSTRAP),
+    getProvidersBootstrapSnapshotForScope: vi.fn((ownerScope: { kind: "host" | "workspace"; workspaceId?: string }) =>
+      ownerScope.kind === "workspace"
+        ? bootstrapMockState.bootstrapStateByWorkspace.get(ownerScope.workspaceId ?? "") ?? original.EMPTY_PROVIDERS_BOOTSTRAP
+        : bootstrapMockState.hostBootstrapState ?? original.EMPTY_PROVIDERS_BOOTSTRAP),
     hasCachedHostProvidersBootstrap: vi.fn(() => bootstrapMockState.hostBootstrapState !== null),
     invalidateHostProvidersBootstrap: vi.fn(),
     invalidateProvidersBootstrap: vi.fn(),
@@ -168,10 +172,26 @@ vi.mock("../../../state/providersBootstrapStore", async (importOriginal) => {
       consumeHostBootstrapQueue("hostBootstrapLoadQueue", original.EMPTY_PROVIDERS_BOOTSTRAP)),
     loadProvidersBootstrap: vi.fn(async (workspaceId: string) =>
       consumeBootstrapQueue(workspaceId, bootstrapMockState.bootstrapLoadQueueByWorkspace, original.EMPTY_PROVIDERS_BOOTSTRAP)),
+    loadProvidersBootstrapForScope: vi.fn(async (ownerScope: { kind: "host" | "workspace"; workspaceId?: string }) =>
+      ownerScope.kind === "workspace"
+        ? consumeBootstrapQueue(
+          ownerScope.workspaceId ?? "",
+          bootstrapMockState.bootstrapLoadQueueByWorkspace,
+          original.EMPTY_PROVIDERS_BOOTSTRAP,
+        )
+        : consumeHostBootstrapQueue("hostBootstrapLoadQueue", original.EMPTY_PROVIDERS_BOOTSTRAP)),
     refreshHostProvidersBootstrap: vi.fn(async () =>
       consumeHostBootstrapQueue("hostBootstrapRefreshQueue", original.EMPTY_PROVIDERS_BOOTSTRAP)),
     refreshProvidersBootstrap: vi.fn(async (workspaceId: string) =>
       consumeBootstrapQueue(workspaceId, bootstrapMockState.bootstrapRefreshQueueByWorkspace, original.EMPTY_PROVIDERS_BOOTSTRAP)),
+    refreshProvidersBootstrapForScope: vi.fn(async (ownerScope: { kind: "host" | "workspace"; workspaceId?: string }) =>
+      ownerScope.kind === "workspace"
+        ? consumeBootstrapQueue(
+          ownerScope.workspaceId ?? "",
+          bootstrapMockState.bootstrapRefreshQueueByWorkspace,
+          original.EMPTY_PROVIDERS_BOOTSTRAP,
+        )
+        : consumeHostBootstrapQueue("hostBootstrapRefreshQueue", original.EMPTY_PROVIDERS_BOOTSTRAP)),
     subscribeHostProvidersBootstrap: vi.fn((listener: () => void) => {
       bootstrapMockState.hostBootstrapListeners.add(listener);
       return () => {
@@ -185,6 +205,19 @@ vi.mock("../../../state/providersBootstrapStore", async (importOriginal) => {
         listeners.delete(listener);
       };
     }),
+    subscribeProvidersBootstrapForScope: vi.fn((ownerScope: { kind: "host" | "workspace"; workspaceId?: string }, listener: () => void) => {
+      if (ownerScope.kind === "workspace") {
+        const listeners = getBootstrapListeners(ownerScope.workspaceId ?? "");
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      }
+      bootstrapMockState.hostBootstrapListeners.add(listener);
+      return () => {
+        bootstrapMockState.hostBootstrapListeners.delete(listener);
+      };
+    }),
     updateHostProvidersBootstrap: vi.fn((updater: (current: ProvidersBootstrapResponse) => ProvidersBootstrapResponse) =>
       setHostBootstrapSnapshot(
         updater(bootstrapMockState.hostBootstrapState ?? original.EMPTY_PROVIDERS_BOOTSTRAP),
@@ -194,6 +227,17 @@ vi.mock("../../../state/providersBootstrapStore", async (importOriginal) => {
         workspaceId,
         updater(bootstrapMockState.bootstrapStateByWorkspace.get(workspaceId) ?? original.EMPTY_PROVIDERS_BOOTSTRAP),
       )),
+    updateProvidersBootstrapForScope: vi.fn((
+      ownerScope: { kind: "host" | "workspace"; workspaceId?: string },
+      updater: (current: ProvidersBootstrapResponse) => ProvidersBootstrapResponse,
+    ) => ownerScope.kind === "workspace"
+      ? setBootstrapSnapshot(
+        ownerScope.workspaceId ?? "",
+        updater(bootstrapMockState.bootstrapStateByWorkspace.get(ownerScope.workspaceId ?? "") ?? original.EMPTY_PROVIDERS_BOOTSTRAP),
+      )
+      : setHostBootstrapSnapshot(
+        updater(bootstrapMockState.hostBootstrapState ?? original.EMPTY_PROVIDERS_BOOTSTRAP),
+      )),
   };
 });
 
@@ -202,8 +246,11 @@ vi.mock("../../../state/providerInstallProgressStore", async (importOriginal) =>
   return {
     ...original,
     getProviderInstallProgressSnapshot: vi.fn(() => ({})),
+    getProviderInstallProgressSnapshotForScope: vi.fn(() => ({})),
     subscribeProviderInstallProgress: vi.fn(() => () => {}),
+    subscribeProviderInstallProgressForScope: vi.fn(() => () => {}),
     upsertProviderInstallProgress: vi.fn(),
+    upsertProviderInstallProgressForScope: vi.fn(),
   };
 });
 

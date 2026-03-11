@@ -663,10 +663,16 @@ export function buildWorkbenchThreadViewModelFromTurns(
     const timelineOrderSeq = timeline
       .map((entry) => entry.order_seq)
       .filter((seq): seq is number => Number.isFinite(seq));
+    const turnStartOrderSeq = Number(turn.start_seq ?? Number.NaN);
+    const turnEndOrderSeq = Number(turn.end_seq ?? Number.NaN);
     const groupOrderSeq = Number.isFinite(headerOrderSeq)
       ? (headerOrderSeq as number)
+      : Number.isFinite(turnStartOrderSeq)
+        ? turnStartOrderSeq
       : timelineOrderSeq.length > 0
         ? Math.min(...timelineOrderSeq)
+        : Number.isFinite(turnEndOrderSeq)
+          ? turnEndOrderSeq
         : Number.NaN;
     if (!Number.isFinite(groupOrderSeq)) {
       recordThreadInvariantCounter("missing_order_seq_anchor", { turn_id: turnId });

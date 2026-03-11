@@ -3,11 +3,13 @@ import { Fragment, createElement, useEffect } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderOptions, ProvidersBootstrapResponse } from "../api/client";
 import { getProviderOptions, getProvidersBootstrap } from "../api/client";
+import { setDaemonConnection } from "../api/daemonConnection";
 import { observeInstall } from "./installProgressMonitor";
 import {
   clearProviderInstallProgress,
-  upsertProviderInstallProgress,
+  upsertProviderInstallProgressForScope,
 } from "./providerInstallProgressStore";
+import { getProviderOwnerScope } from "./providerScopeAdapters";
 import {
   resetProviderOnboardingCoordinatorForTests,
   useProviderOnboardingCoordinator,
@@ -31,6 +33,23 @@ vi.mock("./installProgressMonitor", async (importOriginal) => {
 });
 
 type HookValue = ReturnType<typeof useProviderOnboardingCoordinator>;
+
+const requireHookValue = (value: HookValue | null): HookValue => {
+  if (!value) {
+    throw new Error("hook value not ready");
+  }
+  return value;
+};
+
+const deferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+};
 
 const baseOptions = (workspaceId: string, providerId: string): ProviderOptions => ({
   provider_id: providerId,
@@ -133,6 +152,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   resetProviderOnboardingCoordinatorForTests();
   clearProviderInstallProgress();
+  setDaemonConnection({
+    baseUrl: "https://daemon-a.example",
+    source: "test",
+  });
 });
 
 describe("providerOnboardingCoordinator", () => {
@@ -226,7 +249,7 @@ describe("providerOnboardingCoordinator", () => {
     });
 
     act(() => {
-      upsertProviderInstallProgress("codex", {
+      upsertProviderInstallProgressForScope(getProviderOwnerScope(workspaceId), "codex", {
         installId: "install-codex",
         state: "succeeded",
         pct: 100,
@@ -241,6 +264,88 @@ describe("providerOnboardingCoordinator", () => {
         current_model_id: "gpt-5",
       });
       expect(stopInstallObservation).toHaveBeenCalled();
+    });
+  });
+
+  it("does not share running installs or auth-summary dedupe across daemon target scopes", async () => {
+    const workspaceId = "ws-daemon-target-scope";
+    const pendingA = deferred<ProviderOptions>();
+    const pendingB = deferred<ProviderOptions>();
+    let hookValue: HookValue | null = null;
+    const installedBootstrap = makeBootstrap(workspaceId, {
+      providers: [
+        {
+          provider_id: "codex",
+          display_name: "Codex",
+          installed: true,
+          health: "ok",
+          diagnostics: [],
+          details: {
+            install_id: "install-codex",
+            install_running: "true",
+            install_target: "container",
+          },
+        } as never,
+      ],
+    });
+
+    vi.mocked(observeInstall).mockReturnValue(() => {});
+    vi.mocked(getProvidersBootstrap).mockImplementation(async () => installedBootstrap);
+    vi.mocked(getProviderOptions)
+      .mockImplementationOnce(() => pendingA.promise)
+      .mockImplementationOnce(() => pendingB.promise);
+
+    render(createElement(CoordinatorHarness, {
+      workspaceId,
+      onChange: (value) => {
+        hookValue = value;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(vi.mocked(observeInstall)).toHaveBeenCalledTimes(1);
+      expect(hookValue?.bootstrap.provider_options.codex?.workspace_id).toBe(workspaceId);
+    });
+
+    void requireHookValue(hookValue).ensureProviderAuthSummary("codex");
+    await Promise.resolve();
+
+    await waitFor(() => {
+      expect(vi.mocked(getProviderOptions)).toHaveBeenCalledTimes(1);
+    });
+
+    act(() => {
+      setDaemonConnection({
+        baseUrl: "https://daemon-b.example",
+        source: "test",
+      });
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(observeInstall)).toHaveBeenCalledTimes(2);
+    });
+
+    void requireHookValue(hookValue).ensureProviderAuthSummary("codex");
+    await Promise.resolve();
+
+    await waitFor(() => {
+      expect(vi.mocked(getProviderOptions)).toHaveBeenCalledTimes(2);
+    });
+
+    pendingB.resolve({
+      ...baseOptions(workspaceId, "codex"),
+      models: {
+        models: [{ id: "gpt-5" }],
+        current_model_id: "gpt-5",
+      },
+    });
+    pendingA.resolve(baseOptions(workspaceId, "codex"));
+
+    await waitFor(() => {
+      expect(hookValue?.bootstrap.provider_options.codex?.models).toEqual({
+        models: [{ id: "gpt-5" }],
+        current_model_id: "gpt-5",
+      });
     });
   });
 });

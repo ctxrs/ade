@@ -1,5 +1,5 @@
-import React, { useEffect } from "react";
-import { act, render, waitFor } from "@testing-library/react";
+import React, { act, useEffect } from "react";
+import { cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Session, SessionSnapshotSummary, Task } from "../../api/client";
 import type { WorkspaceActiveSnapshotItem } from "../../state/workspaceActiveSnapshotStore";
@@ -40,13 +40,38 @@ function makeTask(taskId: string, sessionId: string): Task {
   };
 }
 
-function makeSessionSummary(sessionId: string, taskId: string): SessionSnapshotSummary {
+function makeSessionSummary(session: Session): SessionSnapshotSummary {
   return {
-    session: makeSession(sessionId, taskId),
+    session,
     last_message_at: now,
     last_message_preview: "preview",
-    activity: { is_working: true, last_turn_status: "running" },
+    last_event_seq: 1,
+    state_rev: 1,
+    activity: { is_working: false },
     unread: false,
+  };
+}
+
+function makeTaskSummary({
+  taskId,
+  primarySessionId,
+  sessions,
+}: {
+  taskId: string;
+  primarySessionId: string;
+  sessions: SessionSnapshotSummary[];
+}): WorkspaceActiveSnapshotItem {
+  return {
+    id: taskId,
+    task: {
+      ...makeTask(taskId, primarySessionId),
+      archived_at: null,
+    },
+    sessions,
+    primarySessionId,
+    primarySessionHead: null,
+    sort_at: now,
+    sortAtMs: Date.parse(now),
   };
 }
 
@@ -55,18 +80,15 @@ function makeOptimisticTask(
   sessionId = "session-1",
   localStatus: OptimisticTaskSummary["localStatus"] = "starting",
 ): OptimisticTaskSummary {
-  const base: WorkspaceActiveSnapshotItem = {
-    id: taskId,
-    task: makeTask(taskId, sessionId),
-    sessions: [makeSessionSummary(sessionId, taskId)],
-    primarySessionHead: null,
+  const session = makeSession(sessionId, taskId);
+  const base = makeTaskSummary({
+    taskId,
     primarySessionId: sessionId,
-    sort_at: now,
-    sortAtMs: Date.parse(now),
-    providerIds: ["codex"],
-  };
+    sessions: [makeSessionSummary(session)],
+  });
   return {
     ...base,
+    providerIds: ["codex"],
     localStatus,
     localPrompt: "Write docs",
     localMessageId: "message-1",
@@ -75,7 +97,9 @@ function makeOptimisticTask(
 }
 
 function requireValue(value: HookValue | null): HookValue {
-  if (!value) throw new Error("hook value not ready");
+  if (!value) {
+    throw new Error("hook value not ready");
+  }
   return value;
 }
 
@@ -98,11 +122,11 @@ function Harness({
 }
 
 afterEach(() => {
-  document.body.innerHTML = "";
+  cleanup();
 });
 
 describe("useWorkbenchOptimisticTasks", () => {
-  it("bridges the active task from optimisticStartingTaskRef before optimistic state commits", async () => {
+  it("bridges the active task from optimisticStartingTaskRef before optimistic state commits", () => {
     let current: HookValue | null = null;
     const optimistic = makeOptimisticTask();
     const { rerender } = render(
@@ -210,6 +234,92 @@ describe("useWorkbenchOptimisticTasks", () => {
 
     await waitFor(() => {
       expect(requireValue(current).optimisticStartingTaskRef.current).toBeNull();
+    });
+  });
+
+  it("keeps a synced optimistic summary active until the server task publishes a session", async () => {
+    let current: HookValue | null = null;
+    const optimistic = {
+      ...makeOptimisticTask("task-1", "session-1", "synced"),
+      localPrompt: "hello",
+    };
+    const sessionlessServerTask = makeTaskSummary({
+      taskId: "task-1",
+      primarySessionId: "",
+      sessions: [],
+    });
+
+    render(
+      <Harness
+        activeTaskId="task-1"
+        activeTaskIdFromTab="task-1"
+        tasksById={{ "task-1": sessionlessServerTask }}
+        onChange={(value) => {
+          current = value;
+        }}
+      />,
+    );
+
+    act(() => {
+      current?.setOptimisticTasks([optimistic]);
+    });
+
+    await waitFor(() => {
+      expect(current?.activeTaskSummary).toEqual(optimistic);
+    });
+  });
+
+  it("keeps a synced optimistic session id marked optimistic until the server task publishes a session", async () => {
+    let current: HookValue | null = null;
+    const optimisticSession = makeSession("session-1", "task-1");
+    const optimistic = {
+      ...makeOptimisticTask("task-1", optimisticSession.id, "synced"),
+      localPrompt: "hello",
+    };
+    const sessionlessServerTask = makeTaskSummary({
+      taskId: "task-1",
+      primarySessionId: "",
+      sessions: [],
+    });
+
+    const { rerender } = render(
+      <Harness
+        activeTaskId="task-1"
+        activeTaskIdFromTab="task-1"
+        tasksById={{ "task-1": sessionlessServerTask }}
+        onChange={(value) => {
+          current = value;
+        }}
+      />,
+    );
+
+    act(() => {
+      current?.setOptimisticTasks([optimistic]);
+    });
+
+    await waitFor(() => {
+      expect(current?.optimisticSessionIdSet.has("session-1")).toBe(true);
+    });
+
+    const publishedServerTask = makeTaskSummary({
+      taskId: "task-1",
+      primarySessionId: optimisticSession.id,
+      sessions: [makeSessionSummary(optimisticSession)],
+    });
+
+    rerender(
+      <Harness
+        activeTaskId="task-1"
+        activeTaskIdFromTab="task-1"
+        tasksById={{ "task-1": publishedServerTask }}
+        onChange={(value) => {
+          current = value;
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(current?.optimisticSessionIdSet.has("session-1")).toBe(false);
     });
   });
 });

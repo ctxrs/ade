@@ -1,11 +1,19 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  createBrowserDaemonTargetScope,
+  createHostOwnerScope,
+  createWorkspaceOwnerScope,
+} from "./scopeIdentity";
+import {
   clearProviderInstallProgress,
   getProviderInstallProgressSnapshot,
+  getProviderInstallProgressSnapshotForScope,
   removeProviderInstallProgress,
+  removeProviderInstallProgressForScope,
   resolveProviderInstallProgressSession,
   subscribeProviderInstallProgress,
   upsertProviderInstallProgress,
+  upsertProviderInstallProgressForScope,
 } from "./providerInstallProgressStore";
 
 describe("providerInstallProgressStore", () => {
@@ -100,5 +108,42 @@ describe("providerInstallProgressStore", () => {
     const next = getProviderInstallProgressSnapshot();
     expect(resolveProviderInstallProgressSession(next, "codex", "host")).toBeUndefined();
     expect(resolveProviderInstallProgressSession(next, "codex", "container")?.installId).toBe("install-container");
+  });
+
+  it("keeps install progress isolated across owner scopes", () => {
+    const daemon = createBrowserDaemonTargetScope("https://daemon-a.example");
+    const hostOwner = createHostOwnerScope(daemon);
+    const workspaceOwner = createWorkspaceOwnerScope(daemon, "ws-a");
+
+    upsertProviderInstallProgressForScope(hostOwner, "codex", {
+      installId: "install-host-owner",
+      state: "running",
+      pct: 10,
+      target: "host",
+      errorCode: undefined,
+      error: undefined,
+    });
+    upsertProviderInstallProgressForScope(workspaceOwner, "codex", {
+      installId: "install-workspace-owner",
+      state: "running",
+      pct: 40,
+      target: "host",
+      errorCode: undefined,
+      error: undefined,
+    });
+
+    expect(
+      resolveProviderInstallProgressSession(getProviderInstallProgressSnapshotForScope(hostOwner), "codex", "host")?.installId,
+    ).toBe("install-host-owner");
+    expect(
+      resolveProviderInstallProgressSession(getProviderInstallProgressSnapshotForScope(workspaceOwner), "codex", "host")?.installId,
+    ).toBe("install-workspace-owner");
+
+    removeProviderInstallProgressForScope(hostOwner, "codex", { installId: "install-host-owner" });
+
+    expect(resolveProviderInstallProgressSession(getProviderInstallProgressSnapshotForScope(hostOwner), "codex")).toBeUndefined();
+    expect(
+      resolveProviderInstallProgressSession(getProviderInstallProgressSnapshotForScope(workspaceOwner), "codex", "host")?.installId,
+    ).toBe("install-workspace-owner");
   });
 });
