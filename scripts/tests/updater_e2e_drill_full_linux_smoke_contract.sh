@@ -14,9 +14,10 @@ apprun_path="$bundle_dir/ctx_0.5.18_amd64.AppDir/AppRun"
 apprun_wrapped_path="${apprun_path}.wrapped"
 appdir_app_bin="$bundle_dir/ctx_0.5.18_amd64.AppDir/usr/bin/ctx"
 appdir_daemon_bin="$bundle_dir/ctx_0.5.18_amd64.AppDir/usr/bin/ctx-daemon"
+webkit_network_process="$bundle_dir/ctx_0.5.18_amd64.AppDir/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess"
 appimage_path="$bundle_dir/ctx_0.5.18_amd64.AppImage"
 
-mkdir -p "$(dirname "$apprun_path")" "$(dirname "$appdir_app_bin")"
+mkdir -p "$(dirname "$apprun_path")" "$(dirname "$appdir_app_bin")" "$(dirname "$webkit_network_process")"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$apprun_path"
 chmod 0644 "$apprun_path"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$apprun_wrapped_path"
@@ -25,6 +26,8 @@ printf '#!/usr/bin/env bash\nexit 0\n' >"$appdir_app_bin"
 chmod 0644 "$appdir_app_bin"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$appdir_daemon_bin"
 chmod 0644 "$appdir_daemon_bin"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$webkit_network_process"
+chmod 0644 "$webkit_network_process"
 printf 'not-a-real-appimage\n' >"$appimage_path"
 chmod +x "$appimage_path"
 
@@ -51,6 +54,10 @@ if [[ ! -x "$appdir_app_bin" ]]; then
 fi
 if [[ ! -x "$appdir_daemon_bin" ]]; then
   echo "error: expected AppDir daemon sidecar to be normalized executable" >&2
+  exit 1
+fi
+if [[ ! -x "$webkit_network_process" ]]; then
+  echo "error: expected nested WebKit helper to be normalized executable" >&2
   exit 1
 fi
 

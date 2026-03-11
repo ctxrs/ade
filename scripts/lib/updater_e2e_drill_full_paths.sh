@@ -27,6 +27,14 @@ normalize_local_smoke_app_permissions() {
           fi
         done < <(find "$appdir_path/usr/bin" -maxdepth 1 -type f 2>/dev/null | LC_ALL=C sort)
       fi
+      while IFS= read -r bundled_helper; do
+        [[ -n "$bundled_helper" ]] || continue
+        if [[ ! -x "$bundled_helper" ]]; then
+          chmod +x "$bundled_helper" || true
+        fi
+      done < <(
+        find "$appdir_path" -type f \( -name 'WebKit*Process' -o -name 'chrome-sandbox' \) 2>/dev/null | LC_ALL=C sort
+      )
       ;;
   esac
 }

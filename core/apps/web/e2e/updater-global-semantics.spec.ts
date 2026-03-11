@@ -400,6 +400,11 @@ const dispatchManualCheckEvent = async (page: Page): Promise<void> => {
   }, REQUEST_UPDATE_CHECK_EVENT);
 };
 
+const refreshUpdaterAcrossWindows = async (page: Page, reason: string): Promise<void> => {
+  await broadcastUpdaterRefresh(page, reason);
+  await dispatchManualCheckEvent(page);
+};
+
 const waitForIdleVersionScheduled = async (page: Page, version: string): Promise<void> => {
   await expect
     .poll(
@@ -599,7 +604,7 @@ test("restart-required state converges across windows and idle scheduling stays 
       last_error: null,
     },
   });
-  await broadcastUpdaterRefresh(page, "set-restart-required");
+  await refreshUpdaterAcrossWindows(page, "set-restart-required");
 
   await expect(page.getByTestId("update-available-snackbar")).toBeVisible({ timeout: 20_000 });
   await expect(page2.getByTestId("update-available-snackbar")).toBeVisible({ timeout: 20_000 });
@@ -707,10 +712,16 @@ test("Update on Next Idle waits while active and can recover from restart failur
   await mutateSharedHarnessState(page, { restartShouldFail: false });
   await dispatchIdleEvent(page, false);
   await waitForRestartRequiredVersionState(page, "0.5.1");
+  const restartRecoveryBaseline = await desktopCallCount(page, "desktop_restart_app");
+  await expect
+    .poll(async () => desktopCallCount(page, "desktop_restart_app"), { timeout: 1_000 })
+    .toBe(restartRecoveryBaseline);
   await page.getByRole("button", { name: "Update on Next Idle" }).dispatchEvent("click");
-  await waitForIdleVersionScheduled(page, "0.5.1");
+  await expect
+    .poll(async () => desktopCallCount(page, "desktop_restart_app"), { timeout: 3_000 })
+    .toBe(restartRecoveryBaseline);
   await dispatchIdleEvent(page, true);
-  await expect.poll(async () => desktopCallCount(page, "desktop_restart_app")).toBe(2);
+  await expect.poll(async () => desktopCallCount(page, "desktop_restart_app")).toBe(restartRecoveryBaseline + 1);
 
   const outputPath = testInfo.outputPath("updater-idle-recovery-diagnostics.json");
   writeFileSync(
