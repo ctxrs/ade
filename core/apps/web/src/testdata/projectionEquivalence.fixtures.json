@@ -58,25 +58,5 @@
       "headLastEventSeq": 2005,
       "reason": "replay_buffer_overflow"
     }
-  },
-  "archivedEventsOnlyDegraded": {
-    "userContent": "Open archived task",
-    "assistantContent": "Archived fallback rendered.",
-    "toolCallId": "tool-archive",
-    "toolTitle": "load archive",
-    "toolKind": "tool",
-    "toolOutput": "archive loaded",
-    "orderSeqs": {
-      "user": 1,
-      "tool": 2,
-      "assistant": 3
-    },
-    "expected": {
-      "headerContent": "Open archived task",
-      "renderItemKinds": [
-        "tool",
-        "assistant"
-      ]
-    }
   }
 }

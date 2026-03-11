@@ -55,28 +55,9 @@ type SessionGapSeedFixtureSpec = {
   };
 };
 
-type ArchivedEventsOnlyDegradedFixtureSpec = {
-  userContent: string;
-  assistantContent: string;
-  toolCallId: string;
-  toolTitle: string;
-  toolKind: string;
-  toolOutput: string;
-  orderSeqs: {
-    user: number;
-    tool: number;
-    assistant: number;
-  };
-  expected: {
-    headerContent: string;
-    renderItemKinds: string[];
-  };
-};
-
 type ProjectionFixtureFile = {
   activeProjectionEquivalence: ActiveProjectionFixtureSpec;
   sessionGapSeedRehydrate: SessionGapSeedFixtureSpec;
-  archivedEventsOnlyDegraded: ArchivedEventsOnlyDegradedFixtureSpec;
 };
 
 const fixtures = rawFixtures as ProjectionFixtureFile;
@@ -145,15 +126,6 @@ type SessionGapSeedFixture = {
     head: SessionHeadSnapshot;
   };
   expected: SessionGapSeedFixtureSpec["expected"];
-};
-
-type ArchivedEventsOnlyDegradedFixture = {
-  messages: Message[];
-  events: SessionEvent[];
-  expected: ArchivedEventsOnlyDegradedFixtureSpec["expected"] & {
-    assistantContent: string;
-    toolCallId: string;
-  };
 };
 
 const buildTask = (taskId: string, workspaceId: string): Task => ({
@@ -623,97 +595,5 @@ export function getSessionGapSeedFixture(): SessionGapSeedFixture {
       head,
     },
     expected: spec.expected,
-  };
-}
-
-export function getArchivedEventsOnlyDegradedFixture(): ArchivedEventsOnlyDegradedFixture {
-  const spec = fixtures.archivedEventsOnlyDegraded;
-  const ids = idsFor("archived");
-  const messages: Message[] = [
-    {
-      id: ids.userMessageId,
-      session_id: ids.sessionId,
-      task_id: ids.taskId,
-      turn_id: ids.turnId,
-      turn_sequence: spec.orderSeqs.user,
-      role: "user",
-      content: spec.userContent,
-      attachments: [],
-      delivery: "immediate",
-      created_at: FIXTURE_TIMES.created,
-    },
-  ];
-  const events: SessionEvent[] = [
-    {
-      seq: 1,
-      id: ids.userEventId,
-      session_id: ids.sessionId,
-      run_id: null,
-      turn_id: ids.turnId,
-      event_type: "user_message",
-      payload_json: {
-        message_id: ids.userMessageId,
-        content: spec.userContent,
-        attachments: [],
-        order_seq: spec.orderSeqs.user,
-      },
-      created_at: FIXTURE_TIMES.created,
-    },
-    {
-      seq: 2,
-      id: ids.toolCallEventId,
-      session_id: ids.sessionId,
-      run_id: null,
-      turn_id: ids.turnId,
-      event_type: "tool_call",
-      payload_json: {
-        tool_call_id: spec.toolCallId,
-        title: spec.toolTitle,
-        kind: spec.toolKind,
-        order_seq: spec.orderSeqs.tool,
-      },
-      created_at: FIXTURE_TIMES.tool,
-    },
-    {
-      seq: 3,
-      id: ids.toolResultEventId,
-      session_id: ids.sessionId,
-      run_id: null,
-      turn_id: ids.turnId,
-      event_type: "tool_result",
-      payload_json: {
-        tool_call_id: spec.toolCallId,
-        title: spec.toolTitle,
-        kind: spec.toolKind,
-        outputText: spec.toolOutput,
-        order_seq: spec.orderSeqs.tool,
-      },
-      created_at: FIXTURE_TIMES.assistant,
-    },
-    {
-      seq: 4,
-      id: ids.assistantEventId,
-      session_id: ids.sessionId,
-      run_id: null,
-      turn_id: ids.turnId,
-      event_type: "assistant_complete",
-      payload_json: {
-        message_id: ids.assistantMessageId,
-        content: spec.assistantContent,
-        full_content: spec.assistantContent,
-        order_seq: spec.orderSeqs.assistant,
-      },
-      created_at: FIXTURE_TIMES.updated,
-    },
-  ];
-
-  return {
-    messages,
-    events,
-    expected: {
-      ...spec.expected,
-      assistantContent: spec.assistantContent,
-      toolCallId: spec.toolCallId,
-    },
   };
 }
