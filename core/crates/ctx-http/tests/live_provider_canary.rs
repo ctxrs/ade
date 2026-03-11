@@ -57,6 +57,19 @@ async fn wait_for_terminal(state: &Arc<AppState>, session_id: ctx_core::ids::Ses
     }
 }
 
+fn assistant_messages_from_events(events: &[ctx_core::models::SessionEvent]) -> Vec<String> {
+    events
+        .iter()
+        .filter(|e| matches!(e.event_type, SessionEventType::AssistantMessageInserted))
+        .filter_map(|e| {
+            e.payload_json
+                .get("content")
+                .and_then(Value::as_str)
+                .map(|s| s.to_string())
+        })
+        .collect()
+}
+
 fn resolve_live_claude_crp_command() -> Option<String> {
     if let Ok(raw) = std::env::var("CTX_LIVE_CLAUDE_CRP_COMMAND") {
         let trimmed = raw.trim();
@@ -180,27 +193,85 @@ async fn live_provider_canary_turn_invariants() {
     let task = common::create_task(&app, ws.id.0, "t1").await;
     let session = common::create_session(&app, task.id.0, &provider_id, &model_id).await;
 
-    post_message(&app, session.id.0, "Say hi in one short sentence.").await;
+    let expected_token = format!("CTX_LIVE_PROVIDER_CANARY_OK_{}", uuid::Uuid::new_v4());
+    post_message(
+        &app,
+        session.id.0,
+        &format!("Reply with exactly this token: {expected_token}"),
+    )
+    .await;
     wait_for_terminal(&state, session.id).await;
 
     let store = state.store_for_session(session.id).await.unwrap();
     let events = store.list_session_events(session.id).await.unwrap();
 
-    let assistant_messages: Vec<String> = events
-        .iter()
-        .filter(|e| matches!(e.event_type, SessionEventType::AssistantMessageInserted))
-        .filter_map(|e| {
-            e.payload_json
-                .get("content")
-                .and_then(Value::as_str)
-                .map(|s| s.to_string())
-        })
-        .collect();
+    let assistant_messages = assistant_messages_from_events(&events);
     assert!(
         assistant_messages
             .iter()
-            .any(|message| message.contains("CLAUDE_ENDPOINT_E2E_OK")),
-        "expected assistant message containing CLAUDE_ENDPOINT_E2E_OK; saw {assistant_messages:#?} in events {events:#?}"
+            .any(|message| message.contains(&expected_token)),
+        "expected assistant message containing {expected_token}; saw {assistant_messages:#?} in events {events:#?}"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_codex_canary_can_edit_workspace_file() {
+    let provider_id = std::env::var("CTX_LIVE_PROVIDER_ID")
+        .ok()
+        .filter(|value| matches!(value.as_str(), "codex" | "codex-crp"))
+        .unwrap_or_else(|| "codex".to_string());
+    let model_id = std::env::var("CTX_LIVE_MODEL_ID").ok();
+    if model_id.is_none() {
+        eprintln!("skipping: set CTX_LIVE_MODEL_ID to run the live Codex file-edit canary");
+        return;
+    }
+    let model_id = model_id.unwrap();
+
+    let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
+    let data_dir = tempfile::tempdir().unwrap();
+    let stores = StoreManager::open(data_dir.path()).await.unwrap();
+
+    let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
+    providers.insert(provider_id.clone(), Arc::new(Tier1CrpAdapter::codex()));
+
+    let state = Arc::new(AppState::new(
+        data_dir.path().to_path_buf(),
+        stores,
+        providers,
+        "http://127.0.0.1:0".to_string(),
+        None,
+    ));
+    let app = ctx_http::api::router(state.clone());
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let task = common::create_task(&app, ws.id.0, "codex-write").await;
+    let session = common::create_session(&app, task.id.0, &provider_id, &model_id).await;
+
+    let expected_token = format!("CTX_LIVE_CODEX_WRITE_OK_{}", uuid::Uuid::new_v4());
+    let relative_path = "live-codex-write-proof.txt";
+    let prompt = format!(
+        "Create or overwrite the workspace file {relative_path}. Write exactly this content and nothing else: {expected_token}. After writing the file, reply with exactly this token: {expected_token}"
+    );
+    post_message(&app, session.id.0, &prompt).await;
+    wait_for_terminal(&state, session.id).await;
+
+    let actual = tokio::fs::read_to_string(repo.path().join(relative_path))
+        .await
+        .expect("live Codex canary should create proof file");
+    assert_eq!(
+        actual.trim_end(),
+        expected_token,
+        "live Codex canary wrote unexpected file contents"
+    );
+
+    let store = state.store_for_session(session.id).await.unwrap();
+    let events = store.list_session_events(session.id).await.unwrap();
+    let assistant_messages = assistant_messages_from_events(&events);
+    assert!(
+        assistant_messages
+            .iter()
+            .any(|message| message.contains(&expected_token)),
+        "expected assistant message containing {expected_token}; saw {assistant_messages:#?} in events {events:#?}"
     );
 }
 

@@ -9,6 +9,7 @@ const {
   scenarioEnabled,
   assertConnectedLocalAndListening,
   runProviderFirstTurnApiSmoke,
+  runProviderFileEditApiSmoke,
 } = require("./helpers/workspace_wizard_flow.cjs");
 const {
   getProviderStatus,
@@ -231,6 +232,18 @@ describe("codex oauth harness framework (desktop e2e)", () => {
           providerId: "codex",
           modelId,
           prompt: `codex-oauth-framework-${Date.now()}: reply with exactly pong`,
+        },
+        240_000,
+      );
+      const writeToken = `CTX_CODEX_WRITE_OK_${Date.now()}`;
+      await runProviderFileEditApiSmoke(
+        workspace.workspaceId,
+        workspace.dest,
+        {
+          providerId: "codex",
+          modelId,
+          relativeFilePath: "codex-write-proof.txt",
+          fileContents: writeToken,
         },
         240_000,
       );

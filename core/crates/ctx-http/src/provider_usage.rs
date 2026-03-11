@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, SecondsFormat, Utc};
+use ctx_core::provider_policy::CODEX_APP_SERVER_ARGS;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -417,7 +418,7 @@ async fn fetch_codex_usage_rpc(env: &HashMap<String, String>) -> Result<serde_js
 
 fn spawn_codex_app_server(env: &HashMap<String, String>) -> Result<Child> {
     let mut cmd = Command::new("codex");
-    cmd.args(["-s", "read-only", "-a", "untrusted", "app-server"])
+    cmd.args(CODEX_APP_SERVER_ARGS)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

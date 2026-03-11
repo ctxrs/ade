@@ -1,6 +1,7 @@
 pub mod boolish;
 pub mod ids;
 pub mod models;
+pub mod provider_policy;
 
 #[cfg(test)]
 mod tests {

@@ -1146,6 +1146,65 @@ const runCodexFirstTurnApiSmoke = async (workspaceId, options = {}, timeoutMs = 
   );
 };
 
+const normalizeFileBody = (value) => String(value || "").replace(/\r\n/g, "\n").trimEnd();
+
+const runProviderFileEditApiSmoke = async (
+  workspaceId,
+  workspaceRoot,
+  {
+    providerId = "codex",
+    modelId = "default",
+    executionEnvironment = "",
+    relativeFilePath = "codex-write-proof.txt",
+    fileContents = "CTX_PROVIDER_FILE_EDIT_OK",
+    prompt = "",
+  } = {},
+  timeoutMs = 240000,
+) => {
+  const relativePath = normalizeText(relativeFilePath);
+  if (!relativePath) {
+    throw new Error("relativeFilePath is required for file edit smoke");
+  }
+  const expectedContents = String(fileContents || "");
+  const absolutePath = path.join(workspaceRoot, relativePath);
+  const finalPrompt = normalizeText(prompt) || [
+    `Create or overwrite the workspace file ${relativePath}.`,
+    `Write exactly this content and nothing else: ${JSON.stringify(expectedContents)}`,
+    `After writing the file, reply with exactly this token: ${expectedContents}`,
+  ].join(" ");
+
+  const turnResult = await runProviderFirstTurnApiSmoke(
+    workspaceId,
+    {
+      providerId,
+      modelId,
+      executionEnvironment,
+      prompt: finalPrompt,
+    },
+    timeoutMs,
+  );
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    if (fs.existsSync(absolutePath)) {
+      const actualContents = normalizeFileBody(fs.readFileSync(absolutePath, "utf8"));
+      if (actualContents === normalizeFileBody(expectedContents)) {
+        return {
+          ...turnResult,
+          filePath: absolutePath,
+          fileContents: actualContents,
+        };
+      }
+    }
+    await waitMs(500);
+  }
+
+  const actualContents = fs.existsSync(absolutePath) ? fs.readFileSync(absolutePath, "utf8") : null;
+  throw new Error(
+    `${providerId} file edit smoke timed out waiting for ${absolutePath} to contain ${JSON.stringify(expectedContents)}; actual=${JSON.stringify(actualContents)}`,
+  );
+};
+
 const getWorkspace = async (id) => {
   const resp = await daemonJson("GET", `/api/workspaces/${id}`);
   if (resp.status !== 200) throw new Error(`GET /api/workspaces/${id} failed (${resp.status})`);
@@ -2215,6 +2274,7 @@ module.exports = {
   ensureCodexHarnessSelected,
   runCodexComposerSmoke,
   runCodexFirstTurnApiSmoke,
+  runProviderFileEditApiSmoke,
   runProviderFirstTurnApiSmoke,
   getWorkspace,
   getWorkspaceHarnessContainer,

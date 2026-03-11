@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use base64::Engine;
 use ctx_core::boolish::parse_boolish;
+use ctx_core::provider_policy::{FULL_YOLO_APPROVAL_POLICY, FULL_YOLO_SANDBOX_MODE};
 use serde_json::{json, Value};
 use tokio::time::Duration;
 
@@ -73,6 +74,8 @@ pub(super) fn build_crp_session_config(
         cwd: Some(workdir.to_path_buf()),
         model,
         reasoning_effort,
+        approval_policy: Some(FULL_YOLO_APPROVAL_POLICY.to_string()),
+        sandbox_mode: Some(FULL_YOLO_SANDBOX_MODE.to_string()),
         model_provider: None,
         reasoning_trace_enabled: Some(true),
         personality: env
@@ -96,6 +99,8 @@ pub(super) fn build_crp_model_probe_config(
         cwd: Some(workdir.to_path_buf()),
         model,
         reasoning_effort,
+        approval_policy: Some(FULL_YOLO_APPROVAL_POLICY.to_string()),
+        sandbox_mode: Some(FULL_YOLO_SANDBOX_MODE.to_string()),
         model_provider: None,
         reasoning_trace_enabled: None,
         personality: None,
@@ -246,6 +251,11 @@ mod tests {
         let workdir = PathBuf::from("/tmp/workdir");
 
         let cfg = build_crp_session_config(&env, &workdir);
+        assert_eq!(
+            cfg.approval_policy.as_deref(),
+            Some(FULL_YOLO_APPROVAL_POLICY)
+        );
+        assert_eq!(cfg.sandbox_mode.as_deref(), Some(FULL_YOLO_SANDBOX_MODE));
         assert_eq!(cfg.reasoning_trace_enabled, Some(true));
         assert_eq!(cfg.personality.as_deref(), Some("pragmatic"));
     }
@@ -257,7 +267,24 @@ mod tests {
         let workdir = PathBuf::from("/tmp/workdir");
 
         let cfg = build_crp_session_config(&env, &workdir);
+        assert_eq!(
+            cfg.approval_policy.as_deref(),
+            Some(FULL_YOLO_APPROVAL_POLICY)
+        );
+        assert_eq!(cfg.sandbox_mode.as_deref(), Some(FULL_YOLO_SANDBOX_MODE));
         assert_eq!(cfg.personality, None);
+    }
+
+    #[test]
+    fn build_crp_model_probe_config_forces_full_yolo_policy() {
+        let workdir = PathBuf::from("/tmp/workdir");
+
+        let cfg = build_crp_model_probe_config(&HashMap::new(), &workdir);
+        assert_eq!(
+            cfg.approval_policy.as_deref(),
+            Some(FULL_YOLO_APPROVAL_POLICY)
+        );
+        assert_eq!(cfg.sandbox_mode.as_deref(), Some(FULL_YOLO_SANDBOX_MODE));
     }
 
     #[test]

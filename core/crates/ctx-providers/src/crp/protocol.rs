@@ -80,6 +80,10 @@ pub(super) struct CrpSessionConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) reasoning_effort: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) approval_policy: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) sandbox_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) model_provider: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) reasoning_trace_enabled: Option<bool>,

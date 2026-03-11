@@ -1,5 +1,6 @@
 use super::*;
 use base64::Engine;
+use ctx_core::provider_policy::CODEX_APP_SERVER_ARGS;
 use rand_core::RngCore;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -2234,7 +2235,7 @@ async fn monitor_codex_login(
 
 fn spawn_codex_app_server(account_dir: &PathBuf) -> anyhow::Result<tokio::process::Child> {
     let mut cmd = Command::new("codex");
-    cmd.args(["-s", "read-only", "-a", "untrusted", "app-server"])
+    cmd.args(CODEX_APP_SERVER_ARGS)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
