@@ -16,8 +16,8 @@
   },
   {
     "path": "crates/ctx-http/src/execution_setup.rs",
-    "maxLines": 2686,
-    "reason": "Existing oversized execution setup module. Keep stable until a dedicated breakup; post-merge test cleanup grew it slightly."
+    "maxLines": 2723,
+    "reason": "Existing oversized execution setup module. Allow the async test-hygiene lock coverage and nearby mainline test cleanup until a dedicated breakup."
   },
   {
     "path": "apps/web/src/state/sessionSupervisorCore.ts",

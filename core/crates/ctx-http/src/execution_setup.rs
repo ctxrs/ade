@@ -1557,6 +1557,10 @@ mod tests {
     use crate::ops_events::OpsEvents;
     use crate::perf_telemetry::PerfTelemetry;
     use crate::settings::{ExecutionMode, ExecutionSettings, Settings};
+    use crate::test_support::{
+        wait_for_execution_launch_terminal, write_running_container_podman_shim,
+        TrackedExecutionLaunch,
+    };
 
     struct EnvVarGuard {
         key: &'static str,
@@ -1676,29 +1680,6 @@ mod tests {
         store.close().await;
     }
 
-    async fn wait_for_launch_terminal(
-        coordinator: &Arc<ExecutionSetupCoordinator>,
-        job_id: &str,
-        timeout: Duration,
-    ) -> ExecutionLaunchSnapshot {
-        tokio::time::timeout(timeout, async {
-            loop {
-                let latest = coordinator
-                    .launch_status(job_id)
-                    .await
-                    .expect("missing launch job");
-                if matches!(
-                    latest.state,
-                    ExecutionLaunchState::Ready | ExecutionLaunchState::Error
-                ) {
-                    break latest;
-                }
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("timed out waiting for terminal launch state")
-    }
     #[derive(Default)]
     struct BlockingWarmupOperations {
         runtime_runs: AtomicUsize,
@@ -1969,16 +1950,35 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn concurrent_launch_start_is_deduplicated() {
+        let _serial = env_var_test_lock().lock().await;
         let data_dir = tempfile::tempdir().expect("tempdir");
-        let coordinator = test_coordinator(data_dir.path().to_path_buf());
-        let workspace = test_workspace(WorkspaceId::new());
+        let workspace_root = data_dir.path().join("ws");
+        std::fs::create_dir_all(&workspace_root).expect("create workspace root");
+        let workspace = Workspace {
+            id: WorkspaceId::new(),
+            name: "ws".to_string(),
+            root_path: workspace_root.to_string_lossy().to_string(),
+            created_at: Utc::now(),
+            vcs_kind: None,
+        };
+        let log_path = data_dir.path().join("podman-invocations.log");
+        let container_name = format!("ctx-harness-{}", workspace.id.0);
+        let podman_path =
+            write_running_container_podman_shim(data_dir.path(), &log_path, &container_name);
+        let _podman = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+        let ops = Arc::new(UnexpectedRuntimeWarmupOperations::default());
+        let coordinator =
+            test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
         let settings = ExecutionSettings {
             mode: ExecutionMode::Container,
-            ..ExecutionSettings::default()
+            container: crate::settings::ContainerExecutionSettings {
+                network_mode: crate::settings::ContainerNetworkMode::All,
+                ..Default::default()
+            },
         };
-
         let barrier = Arc::new(Barrier::new(3));
 
         let coordinator_a = Arc::clone(&coordinator);
@@ -2015,8 +2015,41 @@ mod tests {
         let first = start_a.await.expect("first launch task failed");
         let second = start_b.await.expect("second launch task failed");
         assert_eq!(first.job_id, second.job_id);
-        assert_eq!(first.workspace_id, workspace.id.0.to_string());
-        assert_eq!(second.workspace_id, workspace.id.0.to_string());
+        let workspace_id = workspace.id.0.to_string();
+        assert_eq!(first.workspace_id, workspace_id);
+        assert_eq!(second.workspace_id, workspace_id);
+
+        TrackedExecutionLaunch::new(&coordinator, first.clone())
+            .wait_ready(Duration::from_secs(5))
+            .await;
+        assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 0);
+
+        let log = std::fs::read_to_string(&log_path).expect("read podman invocation log");
+        let exists_line = format!("container exists {container_name}");
+        let inspect_line =
+            format!("container inspect --format {{{{.State.Running}}}} {container_name}");
+        assert_eq!(
+            log.matches(&exists_line).count(),
+            1,
+            "expected exactly one existing-container check in log:\n{log}"
+        );
+        assert_eq!(
+            log.matches(&inspect_line).count(),
+            1,
+            "expected exactly one running-container inspect in log:\n{log}"
+        );
+        assert!(
+            !log.contains("image exists"),
+            "deduplicated running-container launch should not front-load image checks:\n{log}"
+        );
+        assert!(
+            !log.contains(&format!("start {container_name}")),
+            "deduplicated running-container launch should not restart an already running container:\n{log}"
+        );
+        assert!(
+            !log.contains("run -d --name"),
+            "deduplicated running-container launch should not create a new container:\n{log}"
+        );
     }
 
     #[cfg(unix)]
@@ -2069,6 +2102,7 @@ mod tests {
     #[tokio::test]
     async fn runtime_prewarm_reuses_background_all_job_and_waits_for_builder_tail_when_runtime_joins(
     ) {
+        let _serial = env_var_test_lock().lock().await;
         let data_dir = tempfile::tempdir().expect("tempdir");
         let _podman = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "1");
         let ops = Arc::new(BlockingWarmupOperations::default());
@@ -2218,6 +2252,7 @@ mod tests {
 
     #[tokio::test]
     async fn builder_prewarm_reuses_background_all_job() {
+        let _serial = env_var_test_lock().lock().await;
         let data_dir = tempfile::tempdir().expect("tempdir");
         let _podman = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "1");
         let ops = Arc::new(BlockingWarmupOperations::default());
@@ -2353,6 +2388,7 @@ mod tests {
 
     #[tokio::test]
     async fn runtime_prewarm_emits_initial_log_before_runtime_work_completes() {
+        let _serial = env_var_test_lock().lock().await;
         let data_dir = tempfile::tempdir().expect("tempdir");
         let coordinator = test_coordinator(data_dir.path().to_path_buf());
         let settings = ExecutionSettings {
@@ -2397,12 +2433,17 @@ mod tests {
                     || line.message == "checking container runtime")
         }));
 
-        let _terminal =
-            wait_for_launch_terminal(&coordinator, &snapshot.job_id, Duration::from_secs(5)).await;
+        let _terminal = wait_for_execution_launch_terminal(
+            &coordinator,
+            &snapshot.job_id,
+            Duration::from_secs(5),
+        )
+        .await;
     }
 
     #[tokio::test]
     async fn builder_only_prewarm_skips_runtime_warmup_and_runtime_availability() {
+        let _serial = env_var_test_lock().lock().await;
         let _podman = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "0");
         let data_dir = tempfile::tempdir().expect("tempdir");
         let ops = Arc::new(BlockingWarmupOperations::default());
@@ -2539,23 +2580,23 @@ mod tests {
 
         ops.release_runtime();
 
-        let background_terminal =
-            wait_for_launch_terminal(&coordinator, &background.job_id, Duration::from_secs(1))
-                .await;
+        let background_terminal = wait_for_execution_launch_terminal(
+            &coordinator,
+            &background.job_id,
+            Duration::from_secs(1),
+        )
+        .await;
         assert_eq!(background_terminal.state, ExecutionLaunchState::Ready);
     }
 
     #[cfg(unix)]
     #[tokio::test]
     async fn workspace_launch_reuses_running_container_without_runtime_prewarm_or_image_checks() {
-        use std::os::unix::fs::PermissionsExt;
-
         let _serial = env_var_test_lock().lock().await;
         let data_dir = tempfile::tempdir().expect("tempdir");
         let workspace_root = data_dir.path().join("ws");
         std::fs::create_dir_all(&workspace_root).expect("create workspace root");
         let log_path = data_dir.path().join("podman-invocations.log");
-        let podman_path = data_dir.path().join("podman.sh");
         let ops = Arc::new(UnexpectedRuntimeWarmupOperations::default());
         let coordinator =
             test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
@@ -2575,42 +2616,18 @@ mod tests {
             },
         };
 
-        std::fs::write(
-            &podman_path,
-            format!(
-                "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  printf '{{}}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  echo 'transient image store failure' >&2\n  exit 125\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
-                log = log_path.display(),
-                container = container_name,
-            ),
-        )
-        .expect("write podman shim");
-        std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
-            .expect("chmod podman shim");
+        let podman_path =
+            write_running_container_podman_shim(data_dir.path(), &log_path, &container_name);
         let _podman = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
 
-        let snapshot = coordinator
-            .start_workspace_launch(workspace, settings, "http://127.0.0.1:4399".to_string())
-            .await;
+        let launch = TrackedExecutionLaunch::new(
+            &coordinator,
+            coordinator
+                .start_workspace_launch(workspace, settings, "http://127.0.0.1:4399".to_string())
+                .await,
+        );
 
-        let ready = tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                let latest = coordinator
-                    .launch_status(&snapshot.job_id)
-                    .await
-                    .expect("missing workspace launch job");
-                if latest.state == ExecutionLaunchState::Ready {
-                    break latest;
-                }
-                if latest.state == ExecutionLaunchState::Error {
-                    panic!("workspace launch failed unexpectedly: {:?}", latest.error);
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("timed out waiting for workspace launch readiness");
-
-        assert_eq!(ready.state, ExecutionLaunchState::Ready);
+        launch.wait_ready(Duration::from_secs(5)).await;
         assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 0);
         assert!(
             ready.phases.iter().all(|phase| {
@@ -2640,10 +2657,23 @@ mod tests {
             )),
             "expected running-container inspect in log:\n{log}"
         );
+        assert!(
+            !log.contains("image exists"),
+            "workspace launch should not front-load image checks for reusable containers:\n{log}"
+        );
+        assert!(
+            !log.contains(&format!("start {container_name}")),
+            "workspace launch should not restart an already running container:\n{log}"
+        );
+        assert!(
+            !log.contains("run -d --name"),
+            "workspace launch should not create a new container when reuse is possible:\n{log}"
+        );
     }
 
     #[tokio::test]
     async fn workspace_launch_emits_initial_log_before_runtime_work_completes() {
+        let _serial = env_var_test_lock().lock().await;
         let data_dir = tempfile::tempdir().expect("tempdir");
         let coordinator = test_coordinator(data_dir.path().to_path_buf());
         let workspace = test_workspace(WorkspaceId::new());
@@ -2680,7 +2710,11 @@ mod tests {
                     || line.message == "checking container runtime")
         }));
 
-        let _terminal =
-            wait_for_launch_terminal(&coordinator, &snapshot.job_id, Duration::from_secs(5)).await;
+        let _terminal = wait_for_execution_launch_terminal(
+            &coordinator,
+            &snapshot.job_id,
+            Duration::from_secs(5),
+        )
+        .await;
     }
 }
