@@ -38,6 +38,8 @@ impl Default for ProviderMatrix {
 pub struct ProviderMatrixEntry {
     pub id: String,
     #[serde(default)]
+    pub kind: ProviderMatrixEntryKind,
+    #[serde(default)]
     pub display_name: Option<String>,
     #[serde(default)]
     pub tier: Option<String>,
@@ -51,6 +53,23 @@ pub struct ProviderMatrixEntry {
     pub version_probe: Option<VersionProbe>,
     #[serde(default)]
     pub releases: Vec<ProviderRelease>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderMatrixEntryKind {
+    #[default]
+    Harness,
+    Dependency,
+}
+
+impl ProviderMatrixEntryKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Harness => "harness",
+            Self::Dependency => "dependency",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -236,6 +255,12 @@ pub fn get_entry<'a>(
     matrix.providers.iter().find(|p| p.id == provider_id)
 }
 
+pub fn is_user_facing_harness_id(matrix: &ProviderMatrix, provider_id: &str) -> bool {
+    get_entry(matrix, provider_id)
+        .map(|entry| entry.kind == ProviderMatrixEntryKind::Harness)
+        .unwrap_or(true)
+}
+
 pub fn is_managed_supported(matrix: &ProviderMatrix, provider_id: &str) -> bool {
     let Some(entry) = get_entry(matrix, provider_id) else {
         return false;
@@ -286,6 +311,10 @@ pub async fn apply_matrix_to_status(
     entry: &ProviderMatrixEntry,
     status: &mut ctx_providers::adapters::ProviderStatus,
 ) {
+    status.details.insert(
+        "provider_kind".to_string(),
+        entry.kind.as_str().to_string(),
+    );
     let context_version = updates::normalize_version_str(env!("CARGO_PKG_VERSION"));
     let context_version = context_version.as_ref();
 
@@ -776,6 +805,7 @@ mod tests {
             generated_at: Some("2026-02-23T00:00:00Z".to_string()),
             providers: vec![ProviderMatrixEntry {
                 id: "cached-provider".to_string(),
+                kind: ProviderMatrixEntryKind::Harness,
                 display_name: Some("Cached Provider".to_string()),
                 tier: Some("tier3".to_string()),
                 command: None,
@@ -802,6 +832,46 @@ mod tests {
         let builtin = builtin_matrix();
         assert_eq!(loaded.version, builtin.version);
         assert_eq!(loaded.providers.len(), builtin.providers.len());
+    }
+
+    #[test]
+    fn provider_matrix_entry_kind_defaults_to_harness_when_missing_from_json() {
+        let entry: ProviderMatrixEntry = serde_json::from_str(
+            r#"{
+              "id": "example-provider",
+              "managed_install": {
+                "kind": "npm",
+                "package": "example",
+                "entrypoint": "bin/example.js",
+                "args": []
+              },
+              "releases": []
+            }"#,
+        )
+        .expect("entry parses");
+
+        assert_eq!(entry.kind, ProviderMatrixEntryKind::Harness);
+    }
+
+    #[test]
+    fn builtin_matrix_marks_dependencies_and_omits_cagent() {
+        let matrix = builtin_matrix();
+        let bridge = get_entry(&matrix, "acp-crp-bridge").expect("bridge entry");
+        let claude_cli = get_entry(&matrix, "claude-cli").expect("claude-cli entry");
+
+        assert_eq!(bridge.kind, ProviderMatrixEntryKind::Dependency);
+        assert_eq!(claude_cli.kind, ProviderMatrixEntryKind::Dependency);
+        assert!(get_entry(&matrix, "cagent").is_none());
+    }
+
+    #[test]
+    fn user_facing_harness_filter_excludes_known_dependencies_only() {
+        let matrix = builtin_matrix();
+
+        assert!(is_user_facing_harness_id(&matrix, "codex"));
+        assert!(!is_user_facing_harness_id(&matrix, "acp-crp-bridge"));
+        assert!(!is_user_facing_harness_id(&matrix, "claude-cli"));
+        assert!(is_user_facing_harness_id(&matrix, "unknown-provider"));
     }
 
     #[test]

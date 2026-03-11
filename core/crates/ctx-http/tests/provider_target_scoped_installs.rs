@@ -19,7 +19,7 @@ use ctx_http::installs::{
 };
 use ctx_http::provider_matrix::{
     matrix_cache_path, ProviderArchiveKind, ProviderArchiveTarget, ProviderInstall, ProviderMatrix,
-    ProviderMatrixEntry, ProviderRelease, ProviderReleaseStatus,
+    ProviderMatrixEntry, ProviderMatrixEntryKind, ProviderRelease, ProviderReleaseStatus,
 };
 use ctx_http::settings::{
     save_settings, ContainerExecutionSettings, ContainerMountMode, ContainerNetworkMode,
@@ -403,6 +403,7 @@ fn bridge_fixture_entry(bridge_url: String) -> ProviderMatrixEntry {
     let bridge_targets = archive_targets(bridge_url);
     ProviderMatrixEntry {
         id: "acp-crp-bridge".to_string(),
+        kind: ProviderMatrixEntryKind::Dependency,
         display_name: Some("ACP Bridge".to_string()),
         tier: Some("tier2".to_string()),
         command: None,
@@ -428,6 +429,7 @@ fn bridge_fixture_entry(bridge_url: String) -> ProviderMatrixEntry {
 fn acp_provider_fixture_entry(provider_id: &str, provider_url: String) -> ProviderMatrixEntry {
     ProviderMatrixEntry {
         id: provider_id.to_string(),
+        kind: ProviderMatrixEntryKind::Harness,
         display_name: Some(provider_id.to_string()),
         tier: Some("tier2".to_string()),
         command: None,

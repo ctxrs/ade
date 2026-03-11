@@ -593,4 +593,44 @@ describe("HarnessAuthenticationSection install row rendering", () => {
     expect(screen.queryByRole("button", { name: "Install" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Update" })).not.toBeInTheDocument();
   });
+
+  it("does not render dependency-only provider ids in harness authentication", () => {
+    const installedProvider: ProviderStatus = {
+      provider_id: "codex",
+      installed: true,
+      health: "ok",
+      diagnostics: [],
+      details: {
+        install_supported: "true",
+      },
+    };
+    const dependencyProvider: ProviderStatus = {
+      provider_id: "acp-crp-bridge",
+      installed: true,
+      health: "ok",
+      diagnostics: [],
+      details: {
+        provider_kind: "dependency",
+      },
+    };
+
+    mockUseHarnessAuthenticationController.mockReturnValue(
+      makeController({
+        harnessAuthModal: null,
+        providers: [installedProvider, dependencyProvider],
+        installs: {},
+        installBusy: null,
+      }),
+    );
+
+    render(
+      <HarnessAuthenticationSection
+        workspaceId="ws-1"
+        active
+      />,
+    );
+
+    expect(screen.getByText("Codex")).toBeInTheDocument();
+    expect(screen.queryByText("acp-crp-bridge")).not.toBeInTheDocument();
+  });
 });

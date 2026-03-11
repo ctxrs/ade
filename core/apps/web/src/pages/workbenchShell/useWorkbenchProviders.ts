@@ -10,6 +10,7 @@ import {
   type ProviderOptions,
 } from "../../api/client";
 import type { DraftHarness } from "../../components/WorkbenchComposer";
+import { isInstalledVisibleHarnessProviderStatus, isVisibleHarnessProviderStatus } from "../../utils/providerInventory";
 import {
   resolveProviderOptionsUpdate,
   shouldHydrateProviderModels,
@@ -47,7 +48,7 @@ export function useWorkbenchProviders({
 
   const defaultProviderId = useMemo(() => {
     const installed = providers
-      .filter((provider) => provider.installed && provider.health === "ok" && provider.details?.ui_hidden !== "true")
+      .filter((provider) => isInstalledVisibleHarnessProviderStatus(provider))
       .map((provider) => provider.provider_id);
     if (installed.includes("codex")) return "codex";
     if (installed.includes("claude-crp")) return "claude-crp";
@@ -64,9 +65,8 @@ export function useWorkbenchProviders({
   useEffect(() => {
     if (!providers.length) return;
     const codexInstalled =
-      providersById.codex?.installed === true &&
-      providersById.codex?.health === "ok" &&
-      providersById.codex?.details?.ui_hidden !== "true";
+      isInstalledVisibleHarnessProviderStatus(providersById.codex)
+      && isVisibleHarnessProviderStatus(providersById.codex);
     if (codexInstalled || defaultProviderId === "codex") return;
     setDraftHarness((prev) => {
       if (!prev) return prev;

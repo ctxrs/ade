@@ -56,6 +56,7 @@ function makeProviderOptions(): ProviderOptions {
 
 function makeProviderStatus(): ProviderStatus {
   return {
+    provider_id: "codex",
     installed: true,
     health: "ok",
     diagnostics: [],

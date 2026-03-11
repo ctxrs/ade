@@ -1,4 +1,5 @@
 import type { ProviderOptions, ProviderStatus } from "../../api/client";
+import { isInstalledVisibleHarnessProviderStatus } from "../../utils/providerInventory";
 import { hasConfiguredHarnessAuth } from "../../utils/providerAuthStatus";
 
 export function getHarnessMruStorageKey(workspaceId: string): string {
@@ -9,12 +10,7 @@ export function collectSelectableHarnessProviderIds(
   providersById: Record<string, ProviderStatus>,
 ): string[] {
   return Object.values(providersById)
-    .filter(
-      (provider) =>
-        provider.installed === true
-        && provider.health === "ok"
-        && provider.details?.ui_hidden !== "true",
-    )
+    .filter((provider) => isInstalledVisibleHarnessProviderStatus(provider))
     .map((provider) => provider.provider_id);
 }
 

@@ -15,6 +15,7 @@ import type {
   TerminalScope,
   WorkbenchDraft,
   WorkbenchScrollState,
+  WorkbenchTab,
 } from "./types";
 
 const WINDOW_DB_VERSION = 1 as const;

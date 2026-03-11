@@ -265,6 +265,9 @@ pub(super) async fn providers_statuses_response(
     {
         let map = state.providers.statuses.lock().await;
         for provider_id in map.keys() {
+            if !crate::provider_matrix::is_user_facing_harness_id(&matrix, provider_id) {
+                continue;
+            }
             if seen.insert(provider_id.clone()) {
                 provider_ids.push(provider_id.clone());
             }
@@ -272,6 +275,9 @@ pub(super) async fn providers_statuses_response(
     }
     if include_matrix_providers {
         for entry in &matrix.providers {
+            if entry.kind != crate::provider_matrix::ProviderMatrixEntryKind::Harness {
+                continue;
+            }
             if seen.insert(entry.id.clone()) {
                 provider_ids.push(entry.id.clone());
             }

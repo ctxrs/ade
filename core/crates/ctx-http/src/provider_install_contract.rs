@@ -135,7 +135,7 @@ mod tests {
     use crate::installer::{AgentServerCommand, AgentServerConfigFile};
     use crate::provider_matrix::{
         ProviderArchiveKind, ProviderArchiveTarget, ProviderInstall, ProviderMatrix,
-        ProviderMatrixEntry, ProviderRelease, ProviderReleaseStatus,
+        ProviderMatrixEntry, ProviderMatrixEntryKind, ProviderRelease, ProviderReleaseStatus,
     };
 
     use super::{
@@ -187,6 +187,11 @@ mod tests {
                 .iter()
                 .map(|provider_id| ProviderMatrixEntry {
                     id: (*provider_id).to_string(),
+                    kind: if *provider_id == "acp-crp-bridge" {
+                        ProviderMatrixEntryKind::Dependency
+                    } else {
+                        ProviderMatrixEntryKind::Harness
+                    },
                     display_name: None,
                     tier: None,
                     command: None,

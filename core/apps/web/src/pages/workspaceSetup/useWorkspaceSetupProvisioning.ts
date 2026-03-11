@@ -27,6 +27,7 @@ import {
   updateSettings,
 } from "../../api/client";
 import { HARNESS_CATALOG } from "../../utils/harnessCatalog";
+import { isVisibleHarnessProviderStatus } from "../../utils/providerInventory";
 import {
   computeInstallPct,
   parseInstallTarget,
@@ -307,7 +308,7 @@ export function useWorkspaceSetupProvisioning({
     provider: ProviderStatus,
     fallbackInstallTarget: InstallTarget = selectedHarnessInstallTarget,
   ): HarnessInstallProviderRow | null => {
-    if (provider.details?.ui_hidden === "true") return null;
+    if (!isVisibleHarnessProviderStatus(provider)) return null;
     const installSupported = provider.details?.install_supported === "true";
     if (!installSupported) return null;
     const harness = harnessByProviderId.get(provider.provider_id);

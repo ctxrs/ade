@@ -15,6 +15,7 @@ import {
 } from "../../../components/ui/select";
 import { HARNESS_CATALOG, type HarnessCatalogEntry, UNSUPPORTED_HARNESS_IDS } from "../../../utils/harnessCatalog";
 import { PROVIDER_INSTALLS_ENABLED } from "../../../utils/providerInstallGate";
+import { isVisibleHarnessProviderStatus } from "../../../utils/providerInventory";
 import { Card, Row } from "../../SettingsPage.components";
 import { clampPct } from "../../SettingsPage.utils";
 import {
@@ -158,7 +159,7 @@ export function HarnessAuthenticationSection({
   });
 
   const visibleProviders = providers
-    .filter((provider) => provider.details?.ui_hidden !== "true")
+    .filter((provider) => isVisibleHarnessProviderStatus(provider))
     .filter((provider) => !UNSUPPORTED_HARNESS_IDS.has(provider.provider_id))
     .slice();
   const installControlsEnabled = PROVIDER_INSTALLS_ENABLED;

@@ -3,6 +3,7 @@ import { ArrowUp, ChevronDown, Ellipsis, Image, Square } from "lucide-react";
 import { shouldSendOnEnter } from "../../utils/keyboard";
 import { buildModelCatalog, formatEffortLabel, parseModelId } from "../../utils/modelEffort";
 import { PROVIDER_INSTALLS_ENABLED } from "../../utils/providerInstallGate";
+import { isVisibleHarnessProviderStatus } from "../../utils/providerInventory";
 import { hasConfiguredHarnessAuth } from "../../utils/providerAuthStatus";
 import { UNSUPPORTED_HARNESS_IDS } from "../../utils/harnessCatalog";
 import { shouldHydrateProviderModels } from "../../pages/workbenchShell/useWorkbenchProviders";
@@ -572,7 +573,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
             const q = harnessSearch.trim().toLowerCase();
             const catalog = ns.harnessCatalog.filter(
               (h) =>
-                ns.providersById[h.id]?.details?.ui_hidden !== "true"
+                isVisibleHarnessProviderStatus(ns.providersById[h.id])
                 && !UNSUPPORTED_HARNESS_IDS.has(String(h.id)),
             );
             type HarnessOption = NewSessionProps["harnessCatalog"][number];
@@ -581,7 +582,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
               .filter(
                 (id) =>
                   !order.has(id)
-                  && ns.providersById[id]?.details?.ui_hidden !== "true"
+                  && isVisibleHarnessProviderStatus(ns.providersById[id])
                   && !UNSUPPORTED_HARNESS_IDS.has(String(id)),
               )
               .map((id): HarnessOption => ({ id, label: id, logoSrc: "" }))
