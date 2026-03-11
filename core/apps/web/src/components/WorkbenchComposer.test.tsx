@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkbenchComposer } from "./WorkbenchComposer";
@@ -501,6 +501,214 @@ describe("WorkbenchComposer textarea sizing", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(screen.getByTitle("Authentication configured")).toBeInTheDocument();
+  });
+
+  it("shows an inactive auth dot for installed harnesses without auth", async () => {
+    const NewTaskHarness = () => {
+      const [value, setValue] = useState("");
+      const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
+      const [draftHarness, setDraftHarness] = useState<DraftHarness | null>({ providerId: "codex", modelId: "o3" });
+      const harnessCatalog: HarnessCatalogEntry[] = [
+        { id: "codex", label: "Codex", logoSrc: "" },
+        { id: "cursor", label: "Cursor", logoSrc: "" },
+      ];
+      const providersById: Record<string, ProviderStatus> = {
+        codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
+        cursor: { provider_id: "cursor", installed: true, health: "ok", diagnostics: [] },
+      };
+      const providerOptions: Record<string, ProviderOptions | undefined> = {
+        codex: { ...baseOptions("codex"), has_active_auth: true },
+        cursor: { ...baseOptions("cursor"), has_active_auth: false },
+      };
+
+      return (
+        <WorkbenchComposer
+          variant="newSession"
+          value={value}
+          setValue={setValue}
+          placeholder="@ for context, / for commands"
+          inputDisabled={false}
+          sessionIdForAutocomplete={null}
+          workspaceIdForAutocomplete={null}
+          slashCommands={[]}
+          attachments={attachments}
+          setAttachments={setAttachments}
+          onSend={vi.fn()}
+          sendDisabled={false}
+          sendDisabledReason={null}
+          onInterrupt={null}
+          modeId={modeId}
+          setModeId={setModeId}
+          harnessCatalog={harnessCatalog}
+          providersById={providersById}
+          providerInstallsById={{}}
+          onInstallProvider={vi.fn()}
+          onInstallAllProviders={vi.fn()}
+          providerOptions={providerOptions}
+          ensureProviderAuthSummary={async (providerId: string) => providerOptions[providerId]}
+          draftHarness={draftHarness}
+          setDraftHarness={setDraftHarness}
+          defaultProviderId="codex"
+        />
+      );
+    };
+
+    render(<NewTaskHarness />);
+    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    const cursorRow = screen.getByText("Cursor").closest(".wb-harness-row");
+    expect(cursorRow).not.toBeNull();
+    expect(within(cursorRow as HTMLElement).getByTitle("Authentication not configured")).toBeInTheDocument();
+  });
+
+  it("shows a simple install button without host or container text for uninstalled harnesses", async () => {
+    const onInstallProvider = vi.fn();
+
+    const NewTaskHarness = () => {
+      const [value, setValue] = useState("");
+      const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
+      const [draftHarness, setDraftHarness] = useState<DraftHarness | null>({ providerId: "codex", modelId: "o3" });
+      const harnessCatalog: HarnessCatalogEntry[] = [
+        { id: "codex", label: "Codex", logoSrc: "" },
+        { id: "cursor", label: "Cursor", logoSrc: "" },
+      ];
+      const providersById: Record<string, ProviderStatus> = {
+        codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
+        cursor: {
+          provider_id: "cursor",
+          installed: false,
+          health: "missing",
+          diagnostics: [],
+          details: {
+            install_supported: "true",
+            install_target: "container",
+          },
+        },
+      };
+
+      return (
+        <WorkbenchComposer
+          variant="newSession"
+          value={value}
+          setValue={setValue}
+          placeholder="@ for context, / for commands"
+          inputDisabled={false}
+          sessionIdForAutocomplete={null}
+          workspaceIdForAutocomplete={null}
+          slashCommands={[]}
+          attachments={attachments}
+          setAttachments={setAttachments}
+          onSend={vi.fn()}
+          sendDisabled={false}
+          sendDisabledReason={null}
+          onInterrupt={null}
+          modeId={modeId}
+          setModeId={setModeId}
+          harnessCatalog={harnessCatalog}
+          providersById={providersById}
+          providerInstallsById={{}}
+          onInstallProvider={onInstallProvider}
+          onInstallAllProviders={vi.fn()}
+          providerOptions={{}}
+          ensureProviderAuthSummary={async () => undefined}
+          draftHarness={draftHarness}
+          setDraftHarness={setDraftHarness}
+          defaultProviderId="codex"
+        />
+      );
+    };
+
+    render(<NewTaskHarness />);
+    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    const cursorRow = screen.getByText("Cursor").closest(".wb-harness-row");
+    expect(cursorRow).not.toBeNull();
+    expect(within(cursorRow as HTMLElement).queryByText(/\b(container|host)\b/i)).not.toBeInTheDocument();
+    expect(within(cursorRow as HTMLElement).queryByTitle("Authentication not configured")).not.toBeInTheDocument();
+    fireEvent.click(within(cursorRow as HTMLElement).getByRole("button", { name: "Install" }));
+    expect(onInstallProvider).toHaveBeenCalledWith("cursor");
+  });
+
+  it("shows install progress as a percentage pill without target text", async () => {
+    const NewTaskHarness = () => {
+      const [value, setValue] = useState("");
+      const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
+      const [draftHarness, setDraftHarness] = useState<DraftHarness | null>({ providerId: "codex", modelId: "o3" });
+      const harnessCatalog: HarnessCatalogEntry[] = [
+        { id: "codex", label: "Codex", logoSrc: "" },
+        { id: "cursor", label: "Cursor", logoSrc: "" },
+      ];
+      const providersById: Record<string, ProviderStatus> = {
+        codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
+        cursor: {
+          provider_id: "cursor",
+          installed: false,
+          health: "missing",
+          diagnostics: [],
+          details: {
+            install_supported: "true",
+            install_target: "host",
+          },
+        },
+      };
+
+      return (
+        <WorkbenchComposer
+          variant="newSession"
+          value={value}
+          setValue={setValue}
+          placeholder="@ for context, / for commands"
+          inputDisabled={false}
+          sessionIdForAutocomplete={null}
+          workspaceIdForAutocomplete={null}
+          slashCommands={[]}
+          attachments={attachments}
+          setAttachments={setAttachments}
+          onSend={vi.fn()}
+          sendDisabled={false}
+          sendDisabledReason={null}
+          onInterrupt={null}
+          modeId={modeId}
+          setModeId={setModeId}
+          harnessCatalog={harnessCatalog}
+          providersById={providersById}
+          providerInstallsById={{
+            cursor: {
+              installId: "install-cursor",
+              state: "running",
+              pct: 42,
+              target: "host",
+            },
+          }}
+          onInstallProvider={vi.fn()}
+          onInstallAllProviders={vi.fn()}
+          providerOptions={{}}
+          ensureProviderAuthSummary={async () => undefined}
+          draftHarness={draftHarness}
+          setDraftHarness={setDraftHarness}
+          defaultProviderId="codex"
+        />
+      );
+    };
+
+    render(<NewTaskHarness />);
+    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    const cursorRow = screen.getByText("Cursor").closest(".wb-harness-row");
+    expect(cursorRow).not.toBeNull();
+    expect(within(cursorRow as HTMLElement).queryByText(/\b(container|host)\b/i)).not.toBeInTheDocument();
+    expect(within(cursorRow as HTMLElement).queryByTitle("Authentication not configured")).not.toBeInTheDocument();
+    const progressButton = within(cursorRow as HTMLElement).getByRole("button", { name: "42%" });
+    expect(progressButton.className).toContain("wb-harness-install-busy");
   });
 
   it("hydrates provider auth summary even when bootstrap options already exist", async () => {

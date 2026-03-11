@@ -10,11 +10,7 @@ import { ComposerAutocompleteMenu } from "../ComposerAutocompleteMenu";
 import { useComposerAutocomplete } from "../../state/useComposerAutocomplete";
 import { imageFilesToInlineAttachments } from "../../utils/messageAttachments";
 import {
-  formatByteSize,
   installErrorSummary,
-  installTargetLabel,
-  parseInstallTarget,
-  providerInstallSizeBytes,
 } from "../../utils/providerInstallUi";
 import type { SessionViewVerbosity } from "../../state/uiStateStore";
 import { MenuTitleRow } from "./WorkbenchComposerMenu";
@@ -613,9 +609,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
               const installed = providerStatus?.installed === true && providerStatus?.health === "ok";
               const installSupported = providerStatus?.details?.install_supported === "true";
               const installUi = ns.providerInstallsById[id];
-              const installTarget = installUi?.target ?? parseInstallTarget(providerStatus?.details?.install_target);
-              const installSize = formatByteSize(providerInstallSizeBytes(providerStatus));
-              const installContextLabel = `${installTargetLabel(installTarget)}${installSize ? ` · ${installSize}` : ""}`;
               const installRunning =
                 installUi?.state === "running" || ns.providersById[id]?.details?.install_running === "true";
               const installFinishing = installUi?.state === "succeeded" && !installed;
@@ -630,6 +623,9 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                 installUi?.state === "failed" || installUi?.state === "cancelled"
                   ? installErrorSummary(installUi.errorCode, installUi.error)
                   : null;
+              const installButtonLabel = installBusy
+                ? `${Math.max(0, Math.min(100, installPct ?? 0))}%`
+                : "Install";
               const checked = ns.draftHarness?.providerId === id;
 
               const opts = ns.providerOptions[id];
@@ -654,61 +650,37 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                       />
                     ) : null}
                     <span className="wb-harness-name">{label}</span>
-                    <span className="wb-harness-status-lights">
-                      <span
-                        className={`wb-harness-auth-dot ${hasActiveAuth ? "wb-harness-auth-dot-active" : "wb-harness-auth-dot-inactive"}`}
-                        aria-label={hasActiveAuth ? "Authentication configured" : "Authentication not configured"}
-                        title={hasActiveAuth ? "Authentication configured" : "Authentication not configured"}
-                      />
-                    </span>
+                    {installed ? (
+                      <span className="wb-harness-status-lights">
+                        <span
+                          className={`wb-harness-auth-dot ${hasActiveAuth ? "wb-harness-auth-dot-active" : "wb-harness-auth-dot-inactive"}`}
+                          aria-label={hasActiveAuth ? "Authentication configured" : "Authentication not configured"}
+                          title={hasActiveAuth ? "Authentication configured" : "Authentication not configured"}
+                        />
+                      </span>
+                    ) : null}
                   </button>
 
                   {!installed && installControlsEnabled ? (
                     <div className="wb-harness-actions">
-                      <span className="wb-harness-install-note" title={installContextLabel}>{installContextLabel}</span>
-                      <div className="wb-harness-install-actions">
-                        <button
-                          type="button"
-                          className="wb-harness-install"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            ns.onInstallProvider(id);
-                          }}
-                          disabled={!installSupported || installBusy}
-                          title={!installSupported ? "Install not supported yet" : `Install this harness (${installContextLabel})`}
-                          style={
-                            installBusy && installPct !== null
-                              ? ({ "--wb-install-pct": `${Math.max(0, Math.min(100, installPct))}%` } as React.CSSProperties)
-                              : undefined
-                          }
-                        >
-                          {installBusy
-                            ? installFinishing
-                              ? "Finalizing…"
-                              : installPct === null
-                                ? "Installing…"
-                                : `${Math.max(0, Math.min(100, installPct))}%`
-                            : installUi?.state === "failed" || installUi?.state === "cancelled"
-                              ? "Retry"
-                              : providerStatus?.installed
-                                ? "Update"
-                                : "Install"}
-                        </button>
-                        {installRunning ? (
-                          <button
-                            type="button"
-                            className="wb-harness-install-cancel"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              ns.onCancelInstallProvider?.(id);
-                            }}
-                            disabled={ns.installAllBusy === true}
-                            title="Cancel install"
-                          >
-                            Cancel
-                          </button>
-                        ) : null}
-                      </div>
+                      <button
+                        type="button"
+                        className={`wb-harness-install${installBusy ? " wb-harness-install-busy" : ""}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (installBusy) return;
+                          ns.onInstallProvider(id);
+                        }}
+                        disabled={!installSupported}
+                        title={!installSupported ? "Install not supported yet" : installBusy ? "Install in progress" : "Install this harness"}
+                        style={
+                          installBusy
+                            ? ({ "--wb-install-pct": `${Math.max(0, Math.min(100, installPct ?? 0))}%` } as React.CSSProperties)
+                            : undefined
+                        }
+                      >
+                        {installButtonLabel}
+                      </button>
                       {installFailureMessage ? (
                         <span className="wb-harness-install-error" title={installFailureMessage}>
                           {installFailureMessage}

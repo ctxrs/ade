@@ -1624,17 +1624,7 @@
   align-items: flex-end;
   gap: 5px;
   justify-content: flex-end;
-}
-
-.wb-harness-install-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.wb-harness-install-note {
-  font-size: 11px;
-  color: var(--text-muted);
+  min-width: 78px;
 }
 
 .wb-harness-install-error {
@@ -1715,28 +1705,6 @@
 }
 
 .wb-harness-install:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.wb-harness-install-cancel {
-  height: 22px;
-  padding: 0 10px;
-  border-radius: 999px;
-  border: 1px solid var(--surface-strong);
-  background: transparent;
-  color: var(--text);
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.wb-harness-install-cancel:hover:not(:disabled) {
-  background: var(--surface-hover);
-  border-color: var(--surface-strongest);
-}
-
-.wb-harness-install-cancel:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }
