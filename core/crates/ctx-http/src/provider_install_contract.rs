@@ -4,7 +4,10 @@ use std::path::Path;
 use crate::daemon;
 use crate::installer::{self, AgentServerConfigFile};
 use crate::installs::InstallTarget;
-use crate::provider_matrix::ProviderMatrix;
+use crate::provider_matrix::{
+    self, ProviderInstallDependencyRole, ProviderInstallDependencyTarget, ProviderMatrix,
+    ProviderMatrixEntry,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProviderInstallViabilityIssue {
@@ -21,14 +24,45 @@ impl fmt::Display for ProviderInstallViabilityIssue {
 impl std::error::Error for ProviderInstallViabilityIssue {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ProviderInstallPrerequisite {
-    pub provider_id: &'static str,
+pub(crate) enum ProviderInstallDependencyRoleKind {
+    Prerequisite,
+    Readiness,
+}
+
+impl ProviderInstallDependencyRoleKind {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Prerequisite => "prerequisite",
+            Self::Readiness => "readiness",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProviderInstallDependency {
+    pub provider_id: String,
+    pub role: ProviderInstallDependencyRoleKind,
+    pub target: InstallTarget,
+    pub satisfied: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProviderInstallContract {
     pub resolved_target_key: &'static str,
-    pub prerequisites: Vec<ProviderInstallPrerequisite>,
+    pub dependencies: Vec<ProviderInstallDependency>,
+}
+
+impl ProviderInstallContract {
+    pub(crate) fn dependencies_for_role(
+        &self,
+        role: ProviderInstallDependencyRoleKind,
+    ) -> Vec<ProviderInstallDependency> {
+        self.dependencies
+            .iter()
+            .filter(|dependency| dependency.role == role)
+            .cloned()
+            .collect()
+    }
 }
 
 fn acp_bridge_missing_issue(
@@ -45,36 +79,167 @@ fn acp_bridge_missing_issue(
     }
 }
 
-fn resolve_acp_bridge_prerequisites(
+fn dependency_target(
+    target: ProviderInstallDependencyTarget,
+    provider_target: InstallTarget,
+) -> InstallTarget {
+    match target {
+        ProviderInstallDependencyTarget::SameAsProvider => provider_target,
+        ProviderInstallDependencyTarget::Host => InstallTarget::Host,
+        ProviderInstallDependencyTarget::Container => InstallTarget::Container,
+        ProviderInstallDependencyTarget::LinuxAarch64 => InstallTarget::LinuxAarch64,
+        ProviderInstallDependencyTarget::LinuxX8664 => InstallTarget::LinuxX8664,
+    }
+}
+
+fn dependency_resolution_issue(
+    provider_id: &str,
+    dependency_id: &str,
+    dependency_target: InstallTarget,
+    dependency_role: ProviderInstallDependencyRoleKind,
+    code: &'static str,
+    detail: impl Into<String>,
+) -> ProviderInstallViabilityIssue {
+    ProviderInstallViabilityIssue {
+        code,
+        message: format!(
+            "Required {} dependency '{}' is not viable for target '{}' required by provider '{}': {}",
+            dependency_role.as_str(),
+            dependency_id,
+            dependency_target.as_str(),
+            provider_id,
+            detail.into()
+        ),
+    }
+}
+
+#[derive(Clone, Copy)]
+struct DependencyResolutionCodes {
+    missing: &'static str,
+    invalid: &'static str,
+}
+
+fn resolve_dependency_viability(
+    cfg: &AgentServerConfigFile,
+    matrix: &ProviderMatrix,
+    provider_id: &str,
+    dependency_id: &str,
+    dependency_target: InstallTarget,
+    dependency_role: ProviderInstallDependencyRoleKind,
+    codes: DependencyResolutionCodes,
+) -> Result<ProviderInstallDependency, ProviderInstallViabilityIssue> {
+    match installer::resolve_runtime_provider_command_for_target(
+        cfg,
+        dependency_id,
+        Some(dependency_target),
+    ) {
+        Ok(Some(_)) => Ok(ProviderInstallDependency {
+            provider_id: dependency_id.to_string(),
+            role: dependency_role,
+            target: dependency_target,
+            satisfied: true,
+        }),
+        Ok(None) => {
+            if installer::is_supported_managed_provider_for_target(
+                matrix,
+                dependency_id,
+                dependency_target,
+            ) {
+                return Ok(ProviderInstallDependency {
+                    provider_id: dependency_id.to_string(),
+                    role: dependency_role,
+                    target: dependency_target,
+                    satisfied: false,
+                });
+            }
+            Err(dependency_resolution_issue(
+                provider_id,
+                dependency_id,
+                dependency_target,
+                dependency_role,
+                codes.missing,
+                format!(
+                    "runtime command is not configured for provider '{}' and ctx cannot managed-install it for that target",
+                    dependency_id
+                ),
+            ))
+        }
+        Err(err) => Err(dependency_resolution_issue(
+            provider_id,
+            dependency_id,
+            dependency_target,
+            dependency_role,
+            codes.invalid,
+            err.to_string(),
+        )),
+    }
+}
+
+fn resolve_acp_bridge_dependencies(
     cfg: &AgentServerConfigFile,
     matrix: &ProviderMatrix,
     provider_id: &str,
     target: InstallTarget,
-) -> Result<Vec<ProviderInstallPrerequisite>, ProviderInstallViabilityIssue> {
-    match installer::resolve_runtime_provider_command_for_target(
+) -> Result<Vec<ProviderInstallDependency>, ProviderInstallViabilityIssue> {
+    match resolve_dependency_viability(
         cfg,
+        matrix,
+        provider_id,
         "acp-crp-bridge",
-        Some(target),
+        target,
+        ProviderInstallDependencyRoleKind::Prerequisite,
+        DependencyResolutionCodes {
+            missing: "acp_bridge_missing",
+            invalid: "acp_bridge_invalid",
+        },
     ) {
-        Ok(Some(_)) => Ok(Vec::new()),
-        Ok(None) => {
-            if installer::is_supported_managed_provider_for_target(matrix, "acp-crp-bridge", target)
-            {
-                return Ok(vec![ProviderInstallPrerequisite {
-                    provider_id: "acp-crp-bridge",
-                }]);
+        Ok(dependency) => {
+            if dependency.satisfied {
+                Ok(Vec::new())
+            } else {
+                Ok(vec![dependency])
             }
+        }
+        Err(err) if err.code == "acp_bridge_missing" => {
             Err(acp_bridge_missing_issue(provider_id, target))
         }
-        Err(err) => Err(ProviderInstallViabilityIssue {
-            code: "acp_bridge_invalid",
-            message: format!(
-                "ACP bridge runtime is invalid for target '{}' required by provider '{}': {err}",
-                target.as_str(),
-                provider_id
-            ),
-        }),
+        Err(err) => Err(err),
     }
+}
+
+fn resolve_matrix_provider_dependencies(
+    cfg: &AgentServerConfigFile,
+    matrix: &ProviderMatrix,
+    entry: &ProviderMatrixEntry,
+    provider_target: InstallTarget,
+) -> Result<Vec<ProviderInstallDependency>, ProviderInstallViabilityIssue> {
+    entry
+        .provider_dependencies
+        .iter()
+        .map(|dependency| {
+            let dependency_target = dependency_target(dependency.target, provider_target);
+            let dependency_role = match dependency.role {
+                ProviderInstallDependencyRole::Prerequisite => {
+                    ProviderInstallDependencyRoleKind::Prerequisite
+                }
+                ProviderInstallDependencyRole::Readiness => {
+                    ProviderInstallDependencyRoleKind::Readiness
+                }
+            };
+            resolve_dependency_viability(
+                cfg,
+                matrix,
+                &entry.id,
+                &dependency.id,
+                dependency_target,
+                dependency_role,
+                DependencyResolutionCodes {
+                    missing: "dependency_missing",
+                    invalid: "dependency_invalid",
+                },
+            )
+        })
+        .collect()
 }
 
 pub(crate) fn resolve_provider_install_contract(
@@ -106,15 +271,30 @@ pub(crate) fn resolve_provider_install_contract(
         }
     })?;
 
-    let prerequisites = if daemon::is_acp_provider_id(provider_id) {
-        resolve_acp_bridge_prerequisites(cfg, matrix, provider_id, target)?
-    } else {
-        Vec::new()
-    };
+    let entry = provider_matrix::get_entry(matrix, provider_id).ok_or_else(|| {
+        ProviderInstallViabilityIssue {
+            code: "install_target_unsupported",
+            message: format!(
+                "provider '{}' does not support managed install target '{}'",
+                provider_id,
+                target.as_str()
+            ),
+        }
+    })?;
+
+    let mut dependencies = resolve_matrix_provider_dependencies(cfg, matrix, entry, target)?;
+    if daemon::is_acp_provider_id(provider_id) {
+        dependencies.extend(resolve_acp_bridge_dependencies(
+            cfg,
+            matrix,
+            provider_id,
+            target,
+        )?);
+    }
 
     Ok(ProviderInstallContract {
         resolved_target_key,
-        prerequisites,
+        dependencies,
     })
 }
 
@@ -130,20 +310,24 @@ pub(crate) fn provider_install_viability_issue(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use std::collections::HashMap;
 
-    use crate::installer::{AgentServerCommand, AgentServerConfigFile};
+    use crate::installer::AgentServerCommand;
     use crate::provider_matrix::{
-        ProviderArchiveKind, ProviderArchiveTarget, ProviderInstall, ProviderMatrix,
-        ProviderMatrixEntry, ProviderMatrixEntryKind, ProviderRelease, ProviderReleaseStatus,
+        ProviderArchiveKind, ProviderArchiveTarget, ProviderInstall, ProviderMatrixEntry,
+        ProviderMatrixEntryKind, ProviderRelease, ProviderReleaseStatus,
     };
 
-    use super::{
-        provider_install_viability_issue, resolve_provider_install_contract,
-        ProviderInstallPrerequisite, ProviderInstallViabilityIssue,
-    };
+    fn matrix_with_entries(entries: Vec<ProviderMatrixEntry>) -> ProviderMatrix {
+        ProviderMatrix {
+            version: 2,
+            generated_at: None,
+            providers: entries,
+        }
+    }
 
-    fn matrix_with_providers(provider_ids: &[&str]) -> ProviderMatrix {
+    fn archive_entry(provider_id: &str, kind: ProviderMatrixEntryKind) -> ProviderMatrixEntry {
         let mut targets = HashMap::from([
             (
                 "linux-x86_64".to_string(),
@@ -166,9 +350,7 @@ mod tests {
                 },
             ),
         ]);
-        if let Ok(host_target_key) =
-            crate::installer::resolve_matrix_target_key(crate::installs::InstallTarget::Host)
-        {
+        if let Ok(host_target_key) = installer::resolve_matrix_target_key(InstallTarget::Host) {
             targets.insert(
                 host_target_key.to_string(),
                 ProviderArchiveTarget {
@@ -180,39 +362,60 @@ mod tests {
                 },
             );
         }
-        ProviderMatrix {
-            version: 2,
-            generated_at: None,
-            providers: provider_ids
-                .iter()
-                .map(|provider_id| ProviderMatrixEntry {
-                    id: (*provider_id).to_string(),
-                    kind: if *provider_id == "acp-crp-bridge" {
-                        ProviderMatrixEntryKind::Dependency
-                    } else {
-                        ProviderMatrixEntryKind::Harness
-                    },
-                    display_name: None,
-                    tier: None,
-                    command: None,
-                    managed_install: Some(ProviderInstall::Archive {
-                        version: "1.0.0".to_string(),
-                        args: Vec::new(),
-                        targets: targets.clone(),
-                    }),
-                    dependencies: Vec::new(),
-                    version_probe: None,
-                    releases: vec![ProviderRelease {
-                        version: "1.0.0".to_string(),
-                        status: ProviderReleaseStatus::Supported,
-                        upstream_version: None,
-                        provenance: None,
-                        context_min: None,
-                        context_max: None,
-                        notes: None,
-                    }],
-                })
-                .collect(),
+        ProviderMatrixEntry {
+            id: provider_id.to_string(),
+            kind,
+            display_name: None,
+            tier: None,
+            command: None,
+            managed_install: Some(ProviderInstall::Archive {
+                version: "1.0.0".to_string(),
+                args: Vec::new(),
+                targets,
+            }),
+            provider_dependencies: Vec::new(),
+            dependencies: Vec::new(),
+            version_probe: None,
+            releases: vec![ProviderRelease {
+                version: "1.0.0".to_string(),
+                status: ProviderReleaseStatus::Supported,
+                upstream_version: None,
+                provenance: None,
+                context_min: None,
+                context_max: None,
+                notes: None,
+            }],
+        }
+    }
+
+    fn npm_entry(
+        provider_id: &str,
+        kind: ProviderMatrixEntryKind,
+        package: &str,
+    ) -> ProviderMatrixEntry {
+        ProviderMatrixEntry {
+            id: provider_id.to_string(),
+            kind,
+            display_name: None,
+            tier: None,
+            command: None,
+            managed_install: Some(ProviderInstall::Npm {
+                package: package.to_string(),
+                entrypoint: "cli.js".to_string(),
+                args: Vec::new(),
+            }),
+            provider_dependencies: Vec::new(),
+            dependencies: Vec::new(),
+            version_probe: None,
+            releases: vec![ProviderRelease {
+                version: "1.0.0".to_string(),
+                status: ProviderReleaseStatus::Supported,
+                upstream_version: None,
+                provenance: None,
+                context_min: None,
+                context_max: None,
+                notes: None,
+            }],
         }
     }
 
@@ -223,9 +426,12 @@ mod tests {
         let err = resolve_provider_install_contract(
             root.path(),
             &cfg,
-            &matrix_with_providers(&["kimi"]),
+            &matrix_with_entries(vec![archive_entry(
+                "kimi",
+                ProviderMatrixEntryKind::Harness,
+            )]),
             "kimi",
-            crate::installs::InstallTarget::Container,
+            InstallTarget::Container,
         )
         .expect_err("missing bridge should block ACP install");
         assert_eq!(
@@ -244,16 +450,22 @@ mod tests {
         let contract = resolve_provider_install_contract(
             root.path(),
             &cfg,
-            &matrix_with_providers(&["kimi", "acp-crp-bridge"]),
+            &matrix_with_entries(vec![
+                archive_entry("kimi", ProviderMatrixEntryKind::Harness),
+                archive_entry("acp-crp-bridge", ProviderMatrixEntryKind::Dependency),
+            ]),
             "kimi",
-            crate::installs::InstallTarget::Container,
+            InstallTarget::Container,
         )
         .expect("missing installable bridge should become a prerequisite");
 
         assert_eq!(
-            contract.prerequisites,
-            vec![ProviderInstallPrerequisite {
-                provider_id: "acp-crp-bridge",
+            contract.dependencies_for_role(ProviderInstallDependencyRoleKind::Prerequisite),
+            vec![ProviderInstallDependency {
+                provider_id: "acp-crp-bridge".to_string(),
+                role: ProviderInstallDependencyRoleKind::Prerequisite,
+                target: InstallTarget::Container,
+                satisfied: false,
             }]
         );
     }
@@ -265,16 +477,22 @@ mod tests {
         let contract = resolve_provider_install_contract(
             root.path(),
             &cfg,
-            &matrix_with_providers(&["kimi", "acp-crp-bridge"]),
+            &matrix_with_entries(vec![
+                archive_entry("kimi", ProviderMatrixEntryKind::Harness),
+                archive_entry("acp-crp-bridge", ProviderMatrixEntryKind::Dependency),
+            ]),
             "kimi",
-            crate::installs::InstallTarget::Host,
+            InstallTarget::Host,
         )
         .expect("missing installable host bridge should become a prerequisite");
 
         assert_eq!(
-            contract.prerequisites,
-            vec![ProviderInstallPrerequisite {
-                provider_id: "acp-crp-bridge",
+            contract.dependencies_for_role(ProviderInstallDependencyRoleKind::Prerequisite),
+            vec![ProviderInstallDependency {
+                provider_id: "acp-crp-bridge".to_string(),
+                role: ProviderInstallDependencyRoleKind::Prerequisite,
+                target: InstallTarget::Host,
+                satisfied: false,
             }]
         );
     }
@@ -286,11 +504,15 @@ mod tests {
         let contract = resolve_provider_install_contract(
             root.path(),
             &cfg,
-            &matrix_with_providers(&["codex"]),
+            &matrix_with_entries(vec![archive_entry(
+                "codex",
+                ProviderMatrixEntryKind::Harness,
+            )]),
             "codex",
-            crate::installs::InstallTarget::Container,
+            InstallTarget::Container,
         )
         .expect("native provider should be viable without ACP bridge");
+        assert!(contract.dependencies.is_empty());
         assert!(matches!(
             contract.resolved_target_key,
             "linux-x86_64" | "linux-aarch64"
@@ -316,12 +538,109 @@ mod tests {
         let issue = provider_install_viability_issue(
             root.path(),
             &cfg,
-            &matrix_with_providers(&["kimi", "acp-crp-bridge"]),
+            &matrix_with_entries(vec![
+                archive_entry("kimi", ProviderMatrixEntryKind::Harness),
+                archive_entry("acp-crp-bridge", ProviderMatrixEntryKind::Dependency),
+            ]),
             "kimi",
-            crate::installs::InstallTarget::Container,
+            InstallTarget::Container,
         )
         .expect("invalid bridge should be reported");
         assert_eq!(issue.code, "acp_bridge_invalid");
         assert!(issue.message.contains("relative-bridge"));
+    }
+
+    #[test]
+    fn claude_install_resolves_host_readiness_dependency() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let cfg = AgentServerConfigFile::default();
+        let mut claude = archive_entry("claude-crp", ProviderMatrixEntryKind::Harness);
+        claude.provider_dependencies = vec![provider_matrix::ProviderInstallDependency {
+            id: "claude-cli".to_string(),
+            role: ProviderInstallDependencyRole::Readiness,
+            target: ProviderInstallDependencyTarget::Host,
+        }];
+        let contract = resolve_provider_install_contract(
+            root.path(),
+            &cfg,
+            &matrix_with_entries(vec![
+                claude,
+                npm_entry(
+                    "claude-cli",
+                    ProviderMatrixEntryKind::Dependency,
+                    "@anthropic-ai/claude-code",
+                ),
+            ]),
+            "claude-crp",
+            InstallTarget::Container,
+        )
+        .expect("claude should plan host claude-cli readiness dependency");
+
+        assert_eq!(
+            contract.dependencies_for_role(ProviderInstallDependencyRoleKind::Readiness),
+            vec![ProviderInstallDependency {
+                provider_id: "claude-cli".to_string(),
+                role: ProviderInstallDependencyRoleKind::Readiness,
+                target: InstallTarget::Host,
+                satisfied: false,
+            }]
+        );
+    }
+
+    #[test]
+    fn claude_readiness_dependency_is_marked_satisfied_when_configured() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let script_path = root.path().join("claude");
+        std::fs::write(&script_path, "#!/bin/sh\nexit 0\n").expect("write script");
+        let mut perms = std::fs::metadata(&script_path)
+            .expect("metadata")
+            .permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms).expect("set perms");
+        }
+        let mut cfg = AgentServerConfigFile::default();
+        cfg.providers.insert(
+            "claude-cli".to_string(),
+            AgentServerCommand {
+                command: script_path.to_string_lossy().to_string(),
+                args: Vec::new(),
+                dependencies: Vec::new(),
+                managed: None,
+            },
+        );
+        let mut claude = archive_entry("claude-crp", ProviderMatrixEntryKind::Harness);
+        claude.provider_dependencies = vec![provider_matrix::ProviderInstallDependency {
+            id: "claude-cli".to_string(),
+            role: ProviderInstallDependencyRole::Readiness,
+            target: ProviderInstallDependencyTarget::Host,
+        }];
+        let contract = resolve_provider_install_contract(
+            root.path(),
+            &cfg,
+            &matrix_with_entries(vec![
+                claude,
+                npm_entry(
+                    "claude-cli",
+                    ProviderMatrixEntryKind::Dependency,
+                    "@anthropic-ai/claude-code",
+                ),
+            ]),
+            "claude-crp",
+            InstallTarget::Host,
+        )
+        .expect("configured claude-cli should satisfy readiness dependency");
+
+        assert_eq!(
+            contract.dependencies_for_role(ProviderInstallDependencyRoleKind::Readiness),
+            vec![ProviderInstallDependency {
+                provider_id: "claude-cli".to_string(),
+                role: ProviderInstallDependencyRoleKind::Readiness,
+                target: InstallTarget::Host,
+                satisfied: true,
+            }]
+        );
     }
 }

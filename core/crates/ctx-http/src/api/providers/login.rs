@@ -1818,65 +1818,22 @@ async fn resolve_runtime_provider_command_from_config(
         .with_context(|| format!("resolving runtime command for {provider_id}"))
 }
 
-pub(super) fn should_attempt_claude_cli_bootstrap(
-    resolution: &anyhow::Result<Option<installer::ProviderRuntimeCommand>>,
-) -> bool {
-    match resolution {
-        Ok(Some(_)) => false,
-        Ok(None) => true,
-        Err(err) => {
-            let msg = err.to_string();
-            msg.contains("runtime_command_missing")
-                || msg.contains("runtime_command_not_found")
-                || msg.contains("runtime_command_not_absolute")
-        }
-    }
-}
-
-pub(super) async fn resolve_claude_login_runtime_with_bootstrap<F, Fut>(
+pub(super) async fn resolve_claude_login_runtime_from_config(
     data_root: &std::path::Path,
-    bootstrap_managed_runtime: F,
-) -> anyhow::Result<installer::ProviderRuntimeCommand>
-where
-    F: Fn() -> Fut,
-    Fut: std::future::Future<Output = anyhow::Result<()>>,
-{
-    let first_resolution =
-        resolve_runtime_provider_command_from_config(data_root, "claude-cli").await;
-    if let Ok(Some(runtime_command)) = first_resolution.as_ref() {
-        return Ok(runtime_command.clone());
-    }
-
-    if should_attempt_claude_cli_bootstrap(&first_resolution) {
-        bootstrap_managed_runtime()
-            .await
-            .context("installing managed claude-cli runtime for subscription login")?;
-        let resolved = resolve_runtime_provider_command_from_config(data_root, "claude-cli")
-            .await?
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "runtime_command_missing: provider=claude-cli (bundle claude-cli or configure an absolute runtime command)"
-                )
-            })?;
-        return Ok(resolved);
-    }
-
-    match first_resolution {
-        Ok(Some(runtime_command)) => Ok(runtime_command),
-        Ok(None) => anyhow::bail!(
-            "runtime_command_missing: provider=claude-cli (bundle claude-cli or configure an absolute runtime command)"
-        ),
-        Err(err) => Err(err),
-    }
+) -> anyhow::Result<installer::ProviderRuntimeCommand> {
+    resolve_runtime_provider_command_from_config(data_root, "claude-cli")
+        .await?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "runtime_command_missing: provider=claude-cli (bundle claude-cli or configure an absolute runtime command)"
+            )
+        })
 }
 
 async fn resolve_claude_login_runtime(
     state: &Arc<AppState>,
 ) -> anyhow::Result<installer::ProviderRuntimeCommand> {
-    resolve_claude_login_runtime_with_bootstrap(&state.core.data_root, || async {
-        installer::install_provider(state.as_ref(), "claude-cli").await
-    })
-    .await
+    resolve_claude_login_runtime_from_config(&state.core.data_root).await
 }
 
 fn strip_ansi_sequences(input: &str) -> String {

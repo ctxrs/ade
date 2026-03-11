@@ -48,6 +48,8 @@ pub struct ProviderMatrixEntry {
     #[serde(default, rename = "managed_install")]
     pub managed_install: Option<ProviderInstall>,
     #[serde(default)]
+    pub provider_dependencies: Vec<ProviderInstallDependency>,
+    #[serde(default)]
     pub dependencies: Vec<ProviderDependency>,
     #[serde(default)]
     pub version_probe: Option<VersionProbe>,
@@ -101,6 +103,34 @@ pub enum ProviderInstall {
         #[serde(default)]
         args: Vec<String>,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderInstallDependency {
+    pub id: String,
+    #[serde(default)]
+    pub role: ProviderInstallDependencyRole,
+    #[serde(default)]
+    pub target: ProviderInstallDependencyTarget,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderInstallDependencyRole {
+    Prerequisite,
+    #[default]
+    Readiness,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderInstallDependencyTarget {
+    #[default]
+    SameAsProvider,
+    Host,
+    Container,
+    LinuxAarch64,
+    LinuxX8664,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -809,6 +839,7 @@ mod tests {
                 tier: Some("tier3".to_string()),
                 command: None,
                 managed_install: None,
+                provider_dependencies: vec![],
                 dependencies: vec![],
                 version_probe: None,
                 releases: vec![],

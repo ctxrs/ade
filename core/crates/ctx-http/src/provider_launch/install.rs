@@ -16,6 +16,57 @@ struct DeferredBulkProviderInstall {
     install_id: InstallId,
 }
 
+async fn start_contract_readiness_dependencies(
+    state: &Arc<AppState>,
+    managed: &installer::AgentServerConfigFile,
+    matrix: &crate::provider_matrix::ProviderMatrix,
+    provider_id: &str,
+    target: InstallTarget,
+    install_id: InstallId,
+) {
+    let Ok(contract) = provider_install_contract::resolve_provider_install_contract(
+        &state.core.data_root,
+        managed,
+        matrix,
+        provider_id,
+        target,
+    ) else {
+        return;
+    };
+    for dependency in contract.dependencies_for_role(
+        provider_install_contract::ProviderInstallDependencyRoleKind::Readiness,
+    ) {
+        if dependency.satisfied {
+            continue;
+        }
+        let (dependency_install_id, started_new) = state
+            .start_install(dependency.provider_id.clone(), Some(dependency.target))
+            .await;
+        let _ = state
+            .register_install_progress_mirror(dependency_install_id, install_id)
+            .await;
+        if !started_new {
+            continue;
+        }
+        let state2 = state.clone();
+        let dependency_provider_id = dependency.provider_id.clone();
+        tokio::spawn(async move {
+            if let Err(error) = installer::install_provider_with_progress(
+                state2.clone(),
+                dependency_install_id,
+                dependency_provider_id.clone(),
+                dependency.target,
+            )
+            .await
+            {
+                tracing::error!(
+                    "provider dependency install failed ({dependency_provider_id}): {error:#}"
+                );
+            }
+        });
+    }
+}
+
 pub(crate) async fn start_provider_install(
     state: &Arc<AppState>,
     provider_id: &str,
@@ -69,6 +120,15 @@ pub(crate) async fn start_provider_install(
             install_id,
         )
         .await;
+        start_contract_readiness_dependencies(
+            state,
+            &managed,
+            &matrix,
+            provider_id,
+            target,
+            install_id,
+        )
+        .await;
         let state2 = state.clone();
         let provider_id = provider_id.to_string();
         tokio::spawn(async move {
@@ -103,6 +163,9 @@ pub(crate) async fn start_all_provider_installs(
         .unwrap_or_default();
     let mut deferred_acp_repairs = Vec::new();
     for entry in &matrix.providers {
+        if entry.kind != crate::provider_matrix::ProviderMatrixEntryKind::Harness {
+            continue;
+        }
         if !installer::is_supported_managed_provider_for_target(&matrix, &entry.id, target) {
             continue;
         }
@@ -131,15 +194,29 @@ pub(crate) async fn start_all_provider_installs(
         return out;
     }
 
+    let mut deferred_bridge_install_id = state
+        .find_running_install("acp-crp-bridge", Some(target))
+        .await;
+    if deferred_bridge_install_id.is_none() {
+        if let Some(bridge_install_id) = start_bulk_provider_install_if_needed(
+            state,
+            &managed,
+            &matrix,
+            "acp-crp-bridge",
+            target,
+        )
+        .await
+        {
+            deferred_bridge_install_id = Some(bridge_install_id);
+            out.push(("acp-crp-bridge".to_string(), bridge_install_id));
+        }
+    }
+
     let refreshed_managed = installer::load_agent_server_config(&state.core.data_root)
         .await
         .unwrap_or_default();
     let mut deferred_queue = Vec::new();
-    let mut deferred_bridge_install_id = None;
     for provider_id in deferred_acp_repairs {
-        let running_bridge_install_id = state
-            .find_running_install("acp-crp-bridge", Some(target))
-            .await;
         let issue = provider_install_contract::provider_install_viability_issue(
             &state.core.data_root,
             &refreshed_managed,
@@ -157,21 +234,7 @@ pub(crate) async fn start_all_provider_installs(
                     issue,
                 ) =>
             {
-                if running_bridge_install_id.is_some() {
-                    true
-                } else {
-                    let latest_managed = installer::load_agent_server_config(&state.core.data_root)
-                        .await
-                        .unwrap_or_default();
-                    provider_install_contract::provider_install_viability_issue(
-                        &state.core.data_root,
-                        &latest_managed,
-                        &matrix,
-                        &provider_id,
-                        target,
-                    )
-                    .is_none()
-                }
+                deferred_bridge_install_id.is_some()
             }
             Some(_) => false,
         };
@@ -179,14 +242,11 @@ pub(crate) async fn start_all_provider_installs(
             continue;
         }
 
-        if let Some(bridge_install_id) = running_bridge_install_id {
-            deferred_bridge_install_id.get_or_insert(bridge_install_id);
-        }
         let install_id = queue_deferred_bulk_provider_install(
             state,
             &provider_id,
             target,
-            running_bridge_install_id,
+            deferred_bridge_install_id,
             &mut deferred_queue,
         )
         .await;
@@ -218,9 +278,12 @@ async fn seed_running_prerequisite_progress(
     ) else {
         return;
     };
-    for prerequisite in &contract.prerequisites {
+    for dependency in &contract.dependencies {
+        if dependency.satisfied {
+            continue;
+        }
         let Some(prerequisite_install_id) = state
-            .find_running_install(prerequisite.provider_id, Some(target))
+            .find_running_install(&dependency.provider_id, Some(dependency.target))
             .await
         else {
             continue;
@@ -246,6 +309,7 @@ pub(crate) fn should_skip_install_for_healthy_provider(
 ) -> bool {
     status.installed
         && matches!(status.health, ctx_providers::adapters::ProviderHealth::Ok)
+        && status.details.get("ready_for_use").map(String::as_str) != Some("false")
         && !has_provider_update_available(status)
 }
 
@@ -271,6 +335,15 @@ async fn start_bulk_provider_install_if_needed(
     if started_new {
         seed_running_prerequisite_progress(state, managed, matrix, provider_id, target, install_id)
             .await;
+        start_contract_readiness_dependencies(
+            state,
+            managed,
+            matrix,
+            provider_id,
+            target,
+            install_id,
+        )
+        .await;
         let state2 = state.clone();
         let provider_id = provider_id.to_string();
         tokio::spawn(async move {

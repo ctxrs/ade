@@ -59,10 +59,13 @@ export const formatByteSize = (bytes: number | null | undefined): string | null 
 };
 
 export const computeInstallPct = (
-  info: Pick<InstallInfo, "state" | "last_event">,
+  info: Pick<InstallInfo, "state" | "last_event" | "progress_pct">,
   previousPct: number | null,
 ): number | null => {
   if (info.state === "succeeded") return 100;
+  if (typeof info.progress_pct === "number" && Number.isFinite(info.progress_pct)) {
+    return clampPct(Math.round(info.progress_pct));
+  }
   const last = info.last_event;
   if (typeof last?.bytes === "number" && typeof last?.total_bytes === "number" && last.total_bytes > 0) {
     const raw = clampPct(Math.round((last.bytes / last.total_bytes) * 100));

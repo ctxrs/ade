@@ -79,8 +79,7 @@ use imports::import_result_requires_provider_restart;
 use login::{
     auth_url_looks_complete, expected_callback_from_auth_url, extract_auth_url,
     extract_auth_url_from_value, normalize_claude_login_line, read_trailing_claude_login_lines,
-    resolve_claude_login_runtime_with_bootstrap, should_attempt_claude_cli_bootstrap,
-    validate_callback_url,
+    resolve_claude_login_runtime_from_config, validate_callback_url,
 };
 #[cfg(test)]
 use probe::*;
@@ -576,69 +575,44 @@ mod tests {
         assert_eq!(lines, vec!["sk-ant-oat01-late-token".to_string()]);
     }
 
-    #[test]
-    fn should_attempt_claude_cli_bootstrap_for_runtime_command_resolution_failures() {
-        let ok_missing: anyhow::Result<Option<installer::ProviderRuntimeCommand>> = Ok(None);
-        assert!(should_attempt_claude_cli_bootstrap(&ok_missing));
-
-        let ok_present: anyhow::Result<Option<installer::ProviderRuntimeCommand>> =
-            Ok(Some(installer::ProviderRuntimeCommand {
-                provider_id: "claude-cli".to_string(),
-                command_abs_path: "/tmp/claude".to_string(),
-                args: Vec::new(),
-                dependencies: Vec::new(),
-                source: installer::ProviderRuntimeCommandSource::UserOverride,
-            }));
-        assert!(!should_attempt_claude_cli_bootstrap(&ok_present));
-
-        let missing_err: anyhow::Result<Option<installer::ProviderRuntimeCommand>> =
-            Err(anyhow::anyhow!(
-                "runtime_command_not_found: provider=claude-cli source=managed_install command=/tmp/missing"
-            ));
-        assert!(should_attempt_claude_cli_bootstrap(&missing_err));
-
-        let unrelated_err: anyhow::Result<Option<installer::ProviderRuntimeCommand>> =
-            Err(anyhow::anyhow!("network timeout"));
-        assert!(!should_attempt_claude_cli_bootstrap(&unrelated_err));
+    #[tokio::test]
+    async fn resolve_claude_login_runtime_requires_prepared_runtime_command() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let data_root = temp.path().to_path_buf();
+        let err = resolve_claude_login_runtime_from_config(&data_root)
+            .await
+            .expect_err("missing runtime should fail");
+        assert!(err
+            .to_string()
+            .contains("runtime_command_missing: provider=claude-cli"));
     }
 
     #[tokio::test]
-    async fn resolve_claude_login_runtime_bootstraps_missing_runtime_command() {
+    async fn resolve_claude_login_runtime_reads_prepared_runtime_command() {
         let temp = tempfile::tempdir().expect("tempdir");
         let data_root = temp.path().to_path_buf();
         let runtime_path = data_root.join("claude-cli-mock.sh");
         std::fs::write(&runtime_path, "#!/bin/sh\nexit 0\n").expect("write runtime");
         let runtime_path_str = runtime_path.to_string_lossy().to_string();
-        let install_called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut cfg = installer::load_agent_server_config(&data_root)
+            .await
+            .expect("load config for runtime resolution test");
+        cfg.providers.insert(
+            "claude-cli".to_string(),
+            installer::AgentServerCommand {
+                command: runtime_path_str,
+                args: vec!["--shim".to_string()],
+                dependencies: Vec::new(),
+                managed: None,
+            },
+        );
+        installer::save_agent_server_config(&data_root, &cfg)
+            .await
+            .expect("save config for runtime resolution test");
 
-        let resolved = resolve_claude_login_runtime_with_bootstrap(&data_root, || {
-            let data_root = data_root.clone();
-            let runtime_path_str = runtime_path_str.clone();
-            let install_called = Arc::clone(&install_called);
-            async move {
-                install_called.store(true, std::sync::atomic::Ordering::SeqCst);
-                let mut cfg = installer::load_agent_server_config(&data_root)
-                    .await
-                    .context("loading config in bootstrap test")?;
-                cfg.providers.insert(
-                    "claude-cli".to_string(),
-                    installer::AgentServerCommand {
-                        command: runtime_path_str.clone(),
-                        args: vec!["--shim".to_string()],
-                        dependencies: Vec::new(),
-                        managed: None,
-                    },
-                );
-                installer::save_agent_server_config(&data_root, &cfg)
-                    .await
-                    .context("saving config in bootstrap test")?;
-                Ok(())
-            }
-        })
-        .await
-        .expect("resolve runtime with bootstrap");
-
-        assert!(install_called.load(std::sync::atomic::Ordering::SeqCst));
+        let resolved = resolve_claude_login_runtime_from_config(&data_root)
+            .await
+            .expect("resolve runtime from config");
         assert!(resolved.command_abs_path.contains("claude-cli-mock.sh"));
         assert_eq!(resolved.args, vec!["--shim".to_string()]);
     }

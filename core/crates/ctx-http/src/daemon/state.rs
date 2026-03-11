@@ -1089,6 +1089,8 @@ impl AppState {
     }
 
     fn push_install_event_locked(st: &mut InstallState, event: InstallProgressEvent) {
+        st.progress_pct =
+            crate::installs::heuristic_progress_pct_from_event(&event, st.progress_pct);
         if st.events.len() >= 256 {
             st.events.pop_front();
         }
@@ -1120,11 +1122,19 @@ impl AppState {
                 source_event.stage, source_event.message
             ),
             level: source_event.level,
-            bytes: None,
-            total_bytes: None,
+            bytes: source_event.bytes,
+            total_bytes: source_event.total_bytes,
             attempt: source_event.attempt,
             error_code: source_event.error_code,
         }
+    }
+
+    pub async fn set_install_progress_pct_override(&self, install_id: InstallId, pct: Option<u8>) {
+        let mut installs = self.providers.installs.lock().await;
+        let Some(state) = installs.get_mut(&install_id) else {
+            return;
+        };
+        state.progress_pct_override = pct;
     }
 
     pub async fn find_running_install(
@@ -1324,6 +1334,10 @@ impl AppState {
             st.error = None;
             st.error_code = None;
         }
+        if ok {
+            st.progress_pct = Some(100);
+        }
+        st.progress_pct_override = None;
         st.info_event_override = None;
         st.info_event_override_until = None;
         st.finished_at = Some(chrono::Utc::now());
@@ -1385,6 +1399,7 @@ impl AppState {
         st.state = InstallStateKind::Cancelled;
         st.error = Some("Install canceled by user".to_string());
         st.error_code = Some(InstallErrorCode::Cancelled);
+        st.progress_pct_override = None;
         st.info_event_override = None;
         st.info_event_override_until = None;
         st.finished_at = Some(chrono::Utc::now());

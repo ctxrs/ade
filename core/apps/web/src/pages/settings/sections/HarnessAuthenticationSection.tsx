@@ -16,7 +16,10 @@ import {
 import { providerDetailFlag } from "../../../utils/boolish";
 import { HARNESS_CATALOG, type HarnessCatalogEntry, UNSUPPORTED_HARNESS_IDS } from "../../../utils/harnessCatalog";
 import { PROVIDER_INSTALLS_ENABLED } from "../../../utils/providerInstallGate";
-import { isVisibleHarnessProviderStatus } from "../../../utils/providerInventory";
+import {
+  isReadyVisibleHarnessProviderStatus,
+  isVisibleHarnessProviderStatus,
+} from "../../../utils/providerInventory";
 import { Card, Row } from "../../SettingsPage.components";
 import { clampPct } from "../../SettingsPage.utils";
 import {
@@ -302,7 +305,7 @@ export function HarnessAuthenticationSection({
             const provider = providersById.get(id);
             if (!provider) return null;
 
-            const installed = provider.installed === true && provider.health === "ok";
+            const installed = isReadyVisibleHarnessProviderStatus(provider);
             const updateAvailable =
               providerDetailFlag(provider.details, "matrix_update_available")
               || providerDetailFlag(provider.details, "managed_dependency_update_available");

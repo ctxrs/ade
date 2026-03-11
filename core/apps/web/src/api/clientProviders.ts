@@ -36,6 +36,7 @@ export type InstallInfo = {
   provider_id: string;
   target?: InstallTarget;
   state: "running" | "succeeded" | "failed" | "cancelled";
+  progress_pct?: number | null;
   started_at: string;
   finished_at?: string;
   error?: string;

@@ -1,14 +1,22 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
 
 use ctx_lsp::LspManagerConfig;
 
 use super::expected_managed_dependency_version;
 use crate::bundled_assets;
 use crate::installs::{truncate_for_storage, InstallErrorCode, InstallTarget};
+
+static AGENT_SERVER_CONFIG_MUTATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn agent_server_config_mutation_lock() -> &'static Mutex<()> {
+    AGENT_SERVER_CONFIG_MUTATION_LOCK.get_or_init(|| Mutex::new(()))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManagedInstallError {
@@ -982,6 +990,17 @@ pub async fn load_agent_server_config(data_root: &Path) -> Result<AgentServerCon
         }
     }
     Ok(cfg)
+}
+
+pub async fn mutate_agent_server_config<T, F>(data_root: &Path, mutate: F) -> Result<T>
+where
+    F: FnOnce(&mut AgentServerConfigFile) -> T,
+{
+    let _guard = agent_server_config_mutation_lock().lock().await;
+    let mut cfg = load_agent_server_config(data_root).await?;
+    let result = mutate(&mut cfg);
+    save_agent_server_config(data_root, &cfg).await?;
+    Ok(result)
 }
 
 pub async fn save_agent_server_config(data_root: &Path, cfg: &AgentServerConfigFile) -> Result<()> {

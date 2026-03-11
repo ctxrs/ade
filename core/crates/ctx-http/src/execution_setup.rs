@@ -2627,7 +2627,7 @@ mod tests {
                 .await,
         );
 
-        launch.wait_ready(Duration::from_secs(5)).await;
+        let ready = launch.wait_ready(Duration::from_secs(5)).await;
         assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 0);
         assert!(
             ready.phases.iter().all(|phase| {
@@ -2658,8 +2658,8 @@ mod tests {
             "expected running-container inspect in log:\n{log}"
         );
         assert!(
-            !log.contains("image exists"),
-            "workspace launch should not front-load image checks for reusable containers:\n{log}"
+            !log.contains("load -i") && !log.contains("pull "),
+            "workspace launch should not materialize or pull a new image for reusable containers:\n{log}"
         );
         assert!(
             !log.contains(&format!("start {container_name}")),

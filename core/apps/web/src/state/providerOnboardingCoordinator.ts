@@ -13,6 +13,7 @@ import {
 } from "../api/client";
 import { subscribeDaemonConnection } from "../api/daemonConnection";
 import { computeInstallPct, parseInstallTarget } from "../utils/providerInstallUi";
+import { isReadyVisibleHarnessProviderStatus } from "../utils/providerInventory";
 import {
   loadHostProvidersBootstrap,
   loadProvidersBootstrap,
@@ -410,7 +411,7 @@ const cleanupSucceededInstalls = (entry: ProviderOnboardingEntry): void => {
   for (const [providerId, install] of Object.entries(entry.snapshot.installsById)) {
     const provider = entry.snapshot.providersById[providerId];
     const stillRunning = providerDetailFlag(provider?.details, "install_running");
-    if (install.state === "succeeded" && provider?.installed && provider.health === "ok" && !stillRunning) {
+    if (install.state === "succeeded" && isReadyVisibleHarnessProviderStatus(provider) && !stillRunning) {
       detachInstallObserver(entry, providerId);
     }
   }
@@ -438,8 +439,7 @@ const ensureProviderAuthSummaryForEntry = async (
 ): Promise<ProviderOptions | undefined> => {
   if (!entry.workspaceOwnerScope || !entry.workspaceId) return undefined;
 
-  const ready = entry.snapshot.providersById[providerId]?.installed === true
-    && entry.snapshot.providersById[providerId]?.health === "ok";
+  const ready = isReadyVisibleHarnessProviderStatus(entry.snapshot.providersById[providerId]);
   if (!ready) return undefined;
 
   const force = opts?.force ?? false;

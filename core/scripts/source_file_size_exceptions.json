@@ -96,8 +96,8 @@
   },
   {
     "path": "crates/ctx-http/src/daemon/state.rs",
-    "maxLines": 1558,
-    "reason": "Existing oversized daemon state module. Allow the shared boolish cleanup to land, then break it up deliberately."
+    "maxLines": 1573,
+    "reason": "Existing oversized daemon state module. Allow the dependency-readiness progress override and mirrored install bookkeeping to land, then break it up deliberately."
   },
   {
     "path": "crates/ctx-http/src/api/providers.rs",
@@ -146,8 +146,8 @@
   },
   {
     "path": "crates/ctx-http/src/installer/config.rs",
-    "maxLines": 1327,
-    "reason": "Existing oversized installer config module. Keep stable until a dedicated breakup."
+    "maxLines": 1346,
+    "reason": "Existing oversized installer config module. Allow the shared agent-server config mutation helper for co-installs to land, then break it up deliberately."
   },
   {
     "path": "crates/ctx-http/src/scheduler/tools.rs",

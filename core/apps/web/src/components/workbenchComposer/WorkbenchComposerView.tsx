@@ -4,7 +4,10 @@ import { providerDetailFlag } from "../../utils/boolish";
 import { shouldSendOnEnter } from "../../utils/keyboard";
 import { buildModelCatalog, formatEffortLabel, parseModelId } from "../../utils/modelEffort";
 import { PROVIDER_INSTALLS_ENABLED } from "../../utils/providerInstallGate";
-import { isVisibleHarnessProviderStatus } from "../../utils/providerInventory";
+import {
+  isReadyVisibleHarnessProviderStatus,
+  isVisibleHarnessProviderStatus,
+} from "../../utils/providerInventory";
 import { hasConfiguredHarnessAuth } from "../../utils/providerAuthStatus";
 import { UNSUPPORTED_HARNESS_IDS } from "../../utils/harnessCatalog";
 import { shouldHydrateProviderModels } from "../../pages/workbenchShell/useWorkbenchProviders";
@@ -355,7 +358,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     if (!newSession) return;
     for (const providerId of providerIdsToEnsure) {
       const st = newSession.providersById[providerId];
-      if (!(st?.installed && st.health === "ok")) continue;
+      if (!isReadyVisibleHarnessProviderStatus(st)) continue;
       newSession.ensureProviderAuthSummary(providerId).catch(() => {});
     }
   }, [newSession?.ensureProviderAuthSummary, newSession?.providerOptions, newSession?.providersById, providerIdsToEnsure]);
@@ -364,7 +367,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     if (!newSession) return;
     if (openMenu !== "harness") return;
     for (const [providerId, status] of Object.entries(newSession.providersById)) {
-      if (!(status?.installed && status.health === "ok")) continue;
+      if (!isReadyVisibleHarnessProviderStatus(status)) continue;
       newSession.ensureProviderAuthSummary(providerId).catch(() => {});
     }
   }, [newSession, openMenu]);
@@ -515,7 +518,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
       if (variant !== "newSession") return;
       const ns = props as NewSessionProps;
       const st = ns.providersById[providerId];
-      const installed = st?.installed === true && st.health === "ok";
+      const installed = isReadyVisibleHarnessProviderStatus(st);
       if (!installed) return;
       const hasActiveAuth = hasConfiguredHarnessAuth(providerId, ns.providerOptions[providerId]);
       if (!hasActiveAuth) {
@@ -553,7 +556,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                 const hasSupportedMissing = Object.values(ns.providersById).some(
                   (st) =>
                     providerDetailFlag(st.details, "install_supported") &&
-                    (!(st.installed ?? false) || st.health !== "ok"),
+                    !isReadyVisibleHarnessProviderStatus(st),
                 );
                 const busy = ns.installAllBusy ?? false;
                 return (
@@ -603,7 +606,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
               ? filtered
               : filtered.filter((h) => {
                   const status = ns.providersById[String(h.id)];
-                  return status?.installed === true && status?.health === "ok";
+                  return isReadyVisibleHarnessProviderStatus(status);
                 });
             if (visible.length === 0) return <div className="wb-menu-empty">No matching agents.</div>;
 
@@ -611,7 +614,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
               const id = String(h.id);
               const label = String(h.label ?? id);
               const providerStatus = ns.providersById[id];
-              const installed = providerStatus?.installed === true && providerStatus?.health === "ok";
+              const installed = isReadyVisibleHarnessProviderStatus(providerStatus);
               const installSupported = providerDetailFlag(providerStatus?.details, "install_supported");
               const installUi = ns.providerInstallsById[id];
               const installRunning =

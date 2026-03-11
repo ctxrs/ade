@@ -47,7 +47,7 @@ pub use config::{
     apply_managed_install_details_for_target, apply_managed_lsp_server_config,
     apply_user_lsp_server_config, load_agent_server_config, load_lsp_server_config,
     load_user_lsp_config, managed_install_metadata_for_target, managed_provider_command_for_target,
-    resolve_provider_command, resolve_runtime_provider_command,
+    mutate_agent_server_config, resolve_provider_command, resolve_runtime_provider_command,
     resolve_runtime_provider_command_for_target, save_agent_server_config, save_lsp_server_config,
     AgentServerCommand, AgentServerConfigFile, LspServerConfigFile, ManagedInstallError,
     ManagedInstallMetadata, ProviderRuntimeCommand, ProviderRuntimeCommandSource,

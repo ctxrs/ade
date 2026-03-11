@@ -14,5 +14,12 @@ export function isInstalledVisibleHarnessProviderStatus(
 ): provider is ProviderStatus {
   return isVisibleHarnessProviderStatus(provider)
     && provider.installed === true
-    && provider.health === "ok";
+    && provider.health === "ok"
+    && provider.details?.ready_for_use !== "false";
+}
+
+export function isReadyVisibleHarnessProviderStatus(
+  provider: ProviderStatus | null | undefined,
+): provider is ProviderStatus {
+  return isInstalledVisibleHarnessProviderStatus(provider);
 }

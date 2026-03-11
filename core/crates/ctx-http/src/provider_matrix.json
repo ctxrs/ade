@@ -245,6 +245,13 @@
           }
         }
       },
+      "provider_dependencies": [
+        {
+          "id": "claude-cli",
+          "role": "readiness",
+          "target": "host"
+        }
+      ],
       "version_probe": {
         "kind": "command",
         "args": [

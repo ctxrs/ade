@@ -1,16 +1,15 @@
 use super::*;
 
-async fn install_provider_prerequisites(
+async fn install_provider_blocking_dependencies(
     state: &AppState,
     provider_id: &str,
-    target: InstallTarget,
-    prerequisites: &[provider_install_contract::ProviderInstallPrerequisite],
+    dependencies: &[provider_install_contract::ProviderInstallDependency],
     install_id: Option<InstallId>,
 ) -> Result<()> {
-    for prerequisite in prerequisites {
+    for dependency in dependencies {
         ensure_install_not_cancelled(state, install_id).await?;
         let (prerequisite_install_id, started_new) = state
-            .start_install(prerequisite.provider_id.to_string(), Some(target))
+            .start_install(dependency.provider_id.clone(), Some(dependency.target))
             .await;
         if let Some(parent_install_id) = install_id {
             anyhow::ensure!(
@@ -19,8 +18,8 @@ async fn install_provider_prerequisites(
                     .await,
                 "tracked prerequisite install {} for provider '{}' target '{}' is missing",
                 prerequisite_install_id,
-                prerequisite.provider_id,
-                target.as_str()
+                dependency.provider_id,
+                dependency.target.as_str()
             );
         }
         emit_install(
@@ -32,12 +31,12 @@ async fn install_provider_prerequisites(
             if started_new {
                 format!(
                     "Installing prerequisite provider {} for {}",
-                    prerequisite.provider_id, provider_id
+                    dependency.provider_id, provider_id
                 )
             } else {
                 format!(
                     "Waiting for prerequisite provider {} install {} for {}",
-                    prerequisite.provider_id, prerequisite_install_id, provider_id
+                    dependency.provider_id, prerequisite_install_id, provider_id
                 )
             },
             None,
@@ -49,29 +48,29 @@ async fn install_provider_prerequisites(
             run_tracked_provider_install(
                 state,
                 prerequisite_install_id,
-                prerequisite.provider_id,
-                target,
+                &dependency.provider_id,
+                dependency.target,
             )
             .await
             .with_context(|| {
                 format!(
                     "installing prerequisite provider '{}' for '{}'",
-                    prerequisite.provider_id, provider_id
+                    dependency.provider_id, provider_id
                 )
             })?;
         } else {
             wait_for_tracked_install(
                 state,
                 prerequisite_install_id,
-                prerequisite.provider_id,
-                target,
+                &dependency.provider_id,
+                dependency.target,
                 install_id,
             )
             .await
             .with_context(|| {
                 format!(
                     "waiting for prerequisite provider '{}' for '{}'",
-                    prerequisite.provider_id, provider_id
+                    dependency.provider_id, provider_id
                 )
             })?;
         }
@@ -83,7 +82,7 @@ async fn install_provider_prerequisites(
             "prerequisites",
             format!(
                 "Prerequisite provider {} install {} completed for {}",
-                prerequisite.provider_id, prerequisite_install_id, provider_id
+                dependency.provider_id, prerequisite_install_id, provider_id
             ),
             None,
             None,
@@ -92,6 +91,143 @@ async fn install_provider_prerequisites(
         .await;
     }
     Ok(())
+}
+
+async fn wait_for_provider_readiness_dependencies(
+    state: &AppState,
+    provider_id: &str,
+    dependencies: &[provider_install_contract::ProviderInstallDependency],
+    install_id: Option<InstallId>,
+) -> Result<()> {
+    for dependency in dependencies {
+        if dependency.satisfied {
+            continue;
+        }
+        ensure_install_not_cancelled(state, install_id).await?;
+        let (dependency_install_id, started_new) = state
+            .start_install(dependency.provider_id.clone(), Some(dependency.target))
+            .await;
+        if let Some(parent_install_id) = install_id {
+            anyhow::ensure!(
+                state
+                    .register_install_progress_mirror(dependency_install_id, parent_install_id)
+                    .await,
+                "tracked readiness dependency install {} for provider '{}' target '{}' is missing",
+                dependency_install_id,
+                dependency.provider_id,
+                dependency.target.as_str()
+            );
+        }
+        emit_install(
+            state,
+            install_id,
+            provider_id,
+            InstallEventLevel::Info,
+            "dependencies",
+            if started_new {
+                format!(
+                    "Installing readiness dependency {} for {}",
+                    dependency.provider_id, provider_id
+                )
+            } else {
+                format!(
+                    "Waiting for readiness dependency {} install {} for {}",
+                    dependency.provider_id, dependency_install_id, provider_id
+                )
+            },
+            None,
+            None,
+            None,
+        )
+        .await;
+        if let Some(parent_install_id) = install_id {
+            state
+                .set_install_progress_pct_override(parent_install_id, Some(99))
+                .await;
+        }
+        if started_new {
+            run_tracked_provider_install(
+                state,
+                dependency_install_id,
+                &dependency.provider_id,
+                dependency.target,
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "installing readiness dependency '{}' for '{}'",
+                    dependency.provider_id, provider_id
+                )
+            })?;
+        } else {
+            wait_for_tracked_install(
+                state,
+                dependency_install_id,
+                &dependency.provider_id,
+                dependency.target,
+                install_id,
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "waiting for readiness dependency '{}' for '{}'",
+                    dependency.provider_id, provider_id
+                )
+            })?;
+        }
+        emit_install(
+            state,
+            install_id,
+            provider_id,
+            InstallEventLevel::Info,
+            "dependencies",
+            format!(
+                "Readiness dependency {} install {} completed for {}",
+                dependency.provider_id, dependency_install_id, provider_id
+            ),
+            None,
+            None,
+            None,
+        )
+        .await;
+    }
+    if let Some(parent_install_id) = install_id {
+        state
+            .set_install_progress_pct_override(parent_install_id, None)
+            .await;
+    }
+    Ok(())
+}
+
+fn apply_managed_provider_install_to_cfg(
+    cfg: &mut AgentServerConfigFile,
+    provider_id: &str,
+    target: InstallTarget,
+    managed: &ManagedProviderInstall,
+    dependency_ids: &[String],
+    implicit_managed_dependencies: &[(String, ManagedInstallMetadata)],
+) {
+    for (dependency_id, metadata) in implicit_managed_dependencies {
+        cfg.managed_installs
+            .insert(dependency_id.clone(), metadata.clone());
+    }
+    cfg.managed_install_targets
+        .entry(provider_id.to_string())
+        .or_default()
+        .insert(target.as_str().to_string(), managed.meta.clone());
+    cfg.managed_provider_targets
+        .entry(provider_id.to_string())
+        .or_default()
+        .insert(
+            target.as_str().to_string(),
+            AgentServerCommand {
+                command: managed.command.clone(),
+                args: managed.args.clone(),
+                dependencies: dependency_ids.to_vec(),
+                managed: Some(managed.meta.clone()),
+            },
+        );
+    cfg.providers.remove(provider_id);
 }
 
 async fn wait_for_tracked_install(
@@ -206,6 +342,12 @@ pub(super) async fn install_provider_impl(
         )
         .map_err(anyhow::Error::new)?;
         let resolved_target_key = install_contract.resolved_target_key;
+        let blocking_dependencies = install_contract.dependencies_for_role(
+            provider_install_contract::ProviderInstallDependencyRoleKind::Prerequisite,
+        );
+        let readiness_dependencies = install_contract.dependencies_for_role(
+            provider_install_contract::ProviderInstallDependencyRoleKind::Readiness,
+        );
 
         ensure_install_not_cancelled(state, install_id).await?;
         emit_install(
@@ -222,11 +364,10 @@ pub(super) async fn install_provider_impl(
             None,
         )
         .await;
-        install_provider_prerequisites(
+        install_provider_blocking_dependencies(
             state,
             &provider_id,
-            target,
-            &install_contract.prerequisites,
+            &blocking_dependencies,
             install_id,
         )
         .await?;
@@ -240,7 +381,11 @@ pub(super) async fn install_provider_impl(
         let release = provider_matrix::recommended_release(entry, context_version.as_ref())
             .ok_or_else(|| anyhow::anyhow!("no compatible release for provider: {provider_id}"))?;
 
-        let mut dependency_ids: Vec<String> = Vec::new();
+        let mut dependency_ids: Vec<String> = install_contract
+            .dependencies
+            .iter()
+            .map(|dependency| dependency.provider_id.clone())
+            .collect();
         let mut implicit_managed_dependencies: Vec<(String, ManagedInstallMetadata)> = Vec::new();
         if !entry.dependencies.is_empty() {
             stage = "dependencies";
@@ -315,12 +460,10 @@ pub(super) async fn install_provider_impl(
                     }
                 };
 
-                let mut cfg = load_agent_server_config(&state.core.data_root)
-                    .await
-                    .unwrap_or_default();
-                cfg.managed_installs
-                    .insert(dep.id.clone(), managed.meta.clone());
-                save_agent_server_config(&state.core.data_root, &cfg)
+                mutate_agent_server_config(&state.core.data_root, |cfg| {
+                    cfg.managed_installs
+                        .insert(dep.id.clone(), managed.meta.clone());
+                })
                     .await
                     .context("saving managed install registry")?;
             }
@@ -540,30 +683,14 @@ pub(super) async fn install_provider_impl(
         let mut status_cfg = load_agent_server_config(&state.core.data_root)
             .await
             .unwrap_or_default();
-        for (dependency_id, metadata) in &implicit_managed_dependencies {
-            status_cfg
-                .managed_installs
-                .insert(dependency_id.clone(), metadata.clone());
-        }
-        status_cfg
-            .managed_install_targets
-            .entry(provider_id.clone())
-            .or_default()
-            .insert(target.as_str().to_string(), managed.meta.clone());
-        status_cfg
-            .managed_provider_targets
-            .entry(provider_id.clone())
-            .or_default()
-            .insert(
-                target.as_str().to_string(),
-                AgentServerCommand {
-                    command: managed.command.clone(),
-                    args: managed.args.clone(),
-                    dependencies: dependency_ids.clone(),
-                    managed: Some(managed.meta.clone()),
-                },
-            );
-        status_cfg.providers.remove(&provider_id);
+        apply_managed_provider_install_to_cfg(
+            &mut status_cfg,
+            &provider_id,
+            target,
+            &managed,
+            &dependency_ids,
+            &implicit_managed_dependencies,
+        );
         let mut verified_status = ctx_providers::adapters::ProviderAdapter::inspect(adapter.as_ref())
             .await
             .context("inspecting provider after managed install")?;
@@ -587,33 +714,18 @@ pub(super) async fn install_provider_impl(
         )
         .await;
 
-        let mut cfg = load_agent_server_config(&state.core.data_root)
-            .await
-            .context("loading managed install registry")?;
-        for (dependency_id, metadata) in &implicit_managed_dependencies {
-            cfg.managed_installs
-                .insert(dependency_id.clone(), metadata.clone());
-        }
-        cfg.managed_install_targets
-            .entry(provider_id.clone())
-            .or_default()
-            .insert(target.as_str().to_string(), managed.meta.clone());
-        cfg.managed_provider_targets
-            .entry(provider_id.clone())
-            .or_default()
-            .insert(
-                target.as_str().to_string(),
-                AgentServerCommand {
-                    command: managed.command.clone(),
-                    args: managed.args.clone(),
-                    dependencies: dependency_ids.clone(),
-                    managed: Some(managed.meta.clone()),
-                },
+        mutate_agent_server_config(&state.core.data_root, |cfg| {
+            apply_managed_provider_install_to_cfg(
+                cfg,
+                &provider_id,
+                target,
+                &managed,
+                &dependency_ids,
+                &implicit_managed_dependencies,
             );
-        cfg.providers.remove(&provider_id);
-        save_agent_server_config(&state.core.data_root, &cfg)
-            .await
-            .context("saving managed install registry")?;
+        })
+        .await
+        .context("saving managed install registry")?;
 
         emit_install(
             state,
@@ -627,6 +739,14 @@ pub(super) async fn install_provider_impl(
             None,
         )
         .await;
+
+        wait_for_provider_readiness_dependencies(
+            state,
+            &provider_id,
+            &readiness_dependencies,
+            install_id,
+        )
+        .await?;
 
         emit_install(
             state,
@@ -818,50 +938,48 @@ async fn update_registry_last_error(
     install_dir_rel: Option<String>,
     target: Option<InstallTarget>,
 ) {
-    let mut cfg = load_agent_server_config(data_root)
-        .await
-        .unwrap_or_default();
     let install_dir_rel_clone = install_dir_rel.clone();
-    let mut meta =
+    let _ = mutate_agent_server_config(data_root, move |cfg| {
+        let mut meta =
+            cfg.managed_installs
+                .get(provider_id)
+                .cloned()
+                .unwrap_or(ManagedInstallMetadata {
+                    package: package.map(|s| s.to_string()),
+                    version: version.map(|s| s.to_string()),
+                    target,
+                    install_dir_rel: install_dir_rel_clone,
+                    bin_dir_rel: None,
+                    last_success_at: None,
+                    last_error: None,
+                });
+        if meta.package.is_none() {
+            meta.package = package.map(|s| s.to_string());
+        }
+        if meta.version.is_none() {
+            meta.version = version.map(|s| s.to_string());
+        }
+        if meta.install_dir_rel.is_none() {
+            meta.install_dir_rel = install_dir_rel;
+        }
+        if meta.target.is_none() {
+            meta.target = target;
+        }
+
+        meta.last_error = Some(ManagedInstallError {
+            at: Utc::now().to_rfc3339(),
+            stage: stage.to_string(),
+            message: truncate_for_storage(&format!("{err:#}"), LAST_ERROR_MAX_LEN),
+            code: Some(code),
+        });
         cfg.managed_installs
-            .get(provider_id)
-            .cloned()
-            .unwrap_or(ManagedInstallMetadata {
-                package: package.map(|s| s.to_string()),
-                version: version.map(|s| s.to_string()),
-                target,
-                install_dir_rel: install_dir_rel_clone,
-                bin_dir_rel: None,
-                last_success_at: None,
-                last_error: None,
-            });
-    if meta.package.is_none() {
-        meta.package = package.map(|s| s.to_string());
-    }
-    if meta.version.is_none() {
-        meta.version = version.map(|s| s.to_string());
-    }
-    if meta.install_dir_rel.is_none() {
-        meta.install_dir_rel = install_dir_rel;
-    }
-    if meta.target.is_none() {
-        meta.target = target;
-    }
+            .insert(provider_id.to_string(), meta.clone());
 
-    meta.last_error = Some(ManagedInstallError {
-        at: Utc::now().to_rfc3339(),
-        stage: stage.to_string(),
-        message: truncate_for_storage(&format!("{err:#}"), LAST_ERROR_MAX_LEN),
-        code: Some(code),
-    });
-    cfg.managed_installs
-        .insert(provider_id.to_string(), meta.clone());
-
-    if let Some(entry) = cfg.providers.get_mut(provider_id) {
-        entry.managed = Some(meta);
-    }
-
-    let _ = save_agent_server_config(data_root, &cfg).await;
+        if let Some(entry) = cfg.providers.get_mut(provider_id) {
+            entry.managed = Some(meta);
+        }
+    })
+    .await;
 }
 
 pub(super) async fn repair_install_dir(

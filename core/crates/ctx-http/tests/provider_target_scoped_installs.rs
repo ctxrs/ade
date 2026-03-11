@@ -18,8 +18,10 @@ use ctx_http::installs::{
     InstallId, InstallInfo, InstallProgressEvent, InstallStateKind, InstallTarget,
 };
 use ctx_http::provider_matrix::{
-    matrix_cache_path, ProviderArchiveKind, ProviderArchiveTarget, ProviderInstall, ProviderMatrix,
-    ProviderMatrixEntry, ProviderMatrixEntryKind, ProviderRelease, ProviderReleaseStatus,
+    matrix_cache_path, ProviderArchiveKind, ProviderArchiveTarget, ProviderInstall,
+    ProviderInstallDependency as MatrixProviderInstallDependency, ProviderInstallDependencyRole,
+    ProviderInstallDependencyTarget, ProviderMatrix, ProviderMatrixEntry, ProviderMatrixEntryKind,
+    ProviderRelease, ProviderReleaseStatus,
 };
 use ctx_http::settings::{
     save_settings, ContainerExecutionSettings, ContainerMountMode, ContainerNetworkMode,
@@ -412,6 +414,7 @@ fn bridge_fixture_entry(bridge_url: String) -> ProviderMatrixEntry {
             args: Vec::new(),
             targets: bridge_targets,
         }),
+        provider_dependencies: Vec::new(),
         dependencies: Vec::new(),
         version_probe: None,
         releases: vec![ProviderRelease {
@@ -438,6 +441,38 @@ fn acp_provider_fixture_entry(provider_id: &str, provider_url: String) -> Provid
             args: vec!["--provider".to_string()],
             targets: archive_targets(provider_url),
         }),
+        provider_dependencies: Vec::new(),
+        dependencies: Vec::new(),
+        version_probe: None,
+        releases: vec![ProviderRelease {
+            version: "0.1.0".to_string(),
+            status: ProviderReleaseStatus::Supported,
+            upstream_version: None,
+            provenance: None,
+            context_min: None,
+            context_max: None,
+            notes: None,
+        }],
+    }
+}
+
+fn archive_fixture_entry(
+    provider_id: &str,
+    kind: ProviderMatrixEntryKind,
+    provider_url: String,
+) -> ProviderMatrixEntry {
+    ProviderMatrixEntry {
+        id: provider_id.to_string(),
+        kind,
+        display_name: Some(provider_id.to_string()),
+        tier: Some("tier2".to_string()),
+        command: None,
+        managed_install: Some(ProviderInstall::Archive {
+            version: "0.1.0".to_string(),
+            args: Vec::new(),
+            targets: archive_targets(provider_url),
+        }),
+        provider_dependencies: Vec::new(),
         dependencies: Vec::new(),
         version_probe: None,
         releases: vec![ProviderRelease {
@@ -1083,7 +1118,10 @@ async fn acp_container_install_is_blocked_before_start_when_bridge_runtime_is_in
         install_body
             .get("error")
             .and_then(serde_json::Value::as_str)
-            .is_some_and(|value| value.contains("ACP bridge runtime")),
+            .is_some_and(|value| {
+                value.contains("Required prerequisite dependency 'acp-crp-bridge'")
+                    && value.contains("target 'container'")
+            }),
         "expected explicit bridge contract error: {install_body:#?}"
     );
     assert!(
@@ -1808,6 +1846,273 @@ async fn acp_container_install_joins_existing_bridge_install_and_surfaces_short_
         bridge_install_ids,
         vec![bridge_install_id],
         "joining ACP installs must reuse the same tracked bridge install id"
+    );
+}
+
+#[tokio::test]
+async fn claude_container_install_starts_host_cli_dependency_and_stays_not_ready_until_it_finishes()
+{
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let fixture_dir = data_dir.path().join("fixtures");
+    std::fs::create_dir_all(&fixture_dir).expect("create fixture dir");
+    let claude_cli_fixture = fixture_dir.join("claude-cli");
+    let claude_crp_fixture = fixture_dir.join("claude-crp");
+    write_executable(&claude_cli_fixture, "#!/bin/sh\nsleep 1.6\nexit 0\n");
+    write_executable(&claude_crp_fixture, "#!/bin/sh\nexit 0\n");
+    let download_server = spawn_download_fixture_server(vec![
+        (
+            "claude-cli",
+            std::fs::read(&claude_cli_fixture).expect("read claude-cli fixture"),
+            3_200,
+        ),
+        (
+            "claude-crp",
+            std::fs::read(&claude_crp_fixture).expect("read claude-crp fixture"),
+            0,
+        ),
+    ])
+    .await;
+    let mut claude_crp = archive_fixture_entry(
+        "claude-crp",
+        ProviderMatrixEntryKind::Harness,
+        fixture_download_url(&download_server, "claude-crp"),
+    );
+    claude_crp.provider_dependencies = vec![MatrixProviderInstallDependency {
+        id: "claude-cli".to_string(),
+        role: ProviderInstallDependencyRole::Readiness,
+        target: ProviderInstallDependencyTarget::Host,
+    }];
+    save_matrix_fixture(
+        data_dir.path(),
+        &ProviderMatrix {
+            version: 2,
+            generated_at: None,
+            providers: vec![
+                claude_crp,
+                archive_fixture_entry(
+                    "claude-cli",
+                    ProviderMatrixEntryKind::Dependency,
+                    fixture_download_url(&download_server, "claude-cli"),
+                ),
+            ],
+        },
+    )
+    .await;
+
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        HashMap::new(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+
+    let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::POST,
+        "/api/providers/claude-crp/install?target=container",
+        None,
+    )
+    .await;
+    assert_eq!(
+        install_status,
+        StatusCode::OK,
+        "claude install should start successfully: {install_body:#?}"
+    );
+    let install_id = install_body
+        .get("install_id")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|raw| raw.parse::<InstallId>().ok())
+        .expect("install id");
+
+    let dependency_deadline = tokio::time::Instant::now() + Duration::from_secs(6);
+    let claude_cli_install_id = loop {
+        if let Some(install_id) = state
+            .find_running_install("claude-cli", Some(InstallTarget::Host))
+            .await
+        {
+            break install_id;
+        }
+        assert!(
+            tokio::time::Instant::now() < dependency_deadline,
+            "timed out waiting for claude-cli dependency install to start"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    };
+
+    let visibility_deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+    let (parent_poll, parent_status_body) = loop {
+        let parent_poll = get_install_info_api(&app, install_id).await;
+        let (provider_status, provider_body): (StatusCode, serde_json::Value) =
+            common::json_request(
+                &app,
+                axum::http::Method::GET,
+                "/api/providers/claude-crp?target=container",
+                None,
+            )
+            .await;
+        assert_eq!(
+            provider_status,
+            StatusCode::OK,
+            "provider status failed while claude-cli was still installing: {provider_body:#?}"
+        );
+        if matches!(parent_poll.state, InstallStateKind::Running)
+            && parent_poll.progress_pct == Some(99)
+        {
+            break (parent_poll, provider_body);
+        }
+        assert!(
+            tokio::time::Instant::now() < visibility_deadline,
+            "timed out waiting for claude readiness gating to surface: {parent_poll:#?}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    assert_eq!(
+        parent_poll.progress_pct,
+        Some(99),
+        "readiness dependency waiting should pin parent polling progress at 99: {parent_poll:#?}"
+    );
+    assert!(
+        parent_poll
+            .last_event
+            .as_ref()
+            .is_some_and(|event| event.message.contains("claude-cli")),
+        "parent poll should expose dependency activity while claude-cli is still installing: {parent_poll:#?}"
+    );
+    assert_eq!(
+        parent_status_body
+            .get("installed")
+            .and_then(serde_json::Value::as_bool),
+        Some(true),
+        "claude-crp should already be installed while waiting on claude-cli readiness: {parent_status_body:#?}"
+    );
+    assert_eq!(
+        parent_status_body
+            .pointer("/details/managed_target")
+            .and_then(serde_json::Value::as_str),
+        Some("container"),
+        "claude-crp should keep its container-managed target while waiting: {parent_status_body:#?}"
+    );
+    assert_eq!(
+        parent_status_body
+            .pointer("/details/ready_for_use")
+            .and_then(serde_json::Value::as_str),
+        Some("false"),
+        "claude-crp should stay not-ready until claude-cli finishes: {parent_status_body:#?}"
+    );
+    assert_eq!(
+        parent_status_body
+            .pointer("/details/required_dependency_ids")
+            .and_then(serde_json::Value::as_str),
+        Some("claude-cli"),
+        "status should expose the declared Claude dependency set: {parent_status_body:#?}"
+    );
+    assert_eq!(
+        parent_status_body
+            .pointer("/details/pending_dependency_ids")
+            .and_then(serde_json::Value::as_str),
+        Some("claude-cli"),
+        "status should keep claude-cli pending until the dependency install completes: {parent_status_body:#?}"
+    );
+    assert_eq!(
+        parent_status_body
+            .pointer("/details/install_target")
+            .and_then(serde_json::Value::as_str),
+        Some("container"),
+        "status should remain target-aware while waiting for the host dependency: {parent_status_body:#?}"
+    );
+
+    let dependency_info = wait_for_install_completion(&state, claude_cli_install_id).await;
+    assert!(
+        matches!(dependency_info.state, InstallStateKind::Succeeded),
+        "claude-cli dependency install should succeed: {dependency_info:#?}"
+    );
+    let parent_info = wait_for_install_completion(&state, install_id).await;
+    assert!(
+        matches!(parent_info.state, InstallStateKind::Succeeded),
+        "claude-crp install should complete after its host dependency finishes: {parent_info:#?}"
+    );
+
+    let cfg = load_agent_server_config(data_dir.path())
+        .await
+        .expect("load agent server config");
+    assert!(
+        cfg.managed_provider_targets
+            .get("claude-crp")
+            .and_then(|targets| targets.get("container"))
+            .is_some(),
+        "claude-crp container runtime should be registered"
+    );
+    assert!(
+        cfg.managed_install_targets
+            .get("claude-crp")
+            .and_then(|targets| targets.get("container"))
+            .is_some(),
+        "claude-crp container install metadata should be registered"
+    );
+    assert!(
+        cfg.managed_provider_targets
+            .get("claude-cli")
+            .and_then(|targets| targets.get("host"))
+            .is_some(),
+        "claude-cli host runtime should be registered"
+    );
+    assert!(
+        cfg.managed_install_targets
+            .get("claude-cli")
+            .and_then(|targets| targets.get("host"))
+            .is_some(),
+        "claude-cli host install metadata should be registered"
+    );
+    let claude_crp_runtime = cfg
+        .managed_provider_targets
+        .get("claude-crp")
+        .and_then(|targets| targets.get("container"))
+        .expect("claude-crp container runtime should exist");
+    assert_eq!(
+        claude_crp_runtime.dependencies,
+        vec!["claude-cli".to_string()],
+        "claude-crp runtime should persist the managed dependency edge"
+    );
+
+    let reloaded_stores = common::setup_store(data_dir.path()).await;
+    let reloaded_state = common::build_state(
+        data_dir.path().to_path_buf(),
+        reloaded_stores,
+        HashMap::new(),
+        "http://127.0.0.1:0",
+    );
+    let reloaded_app = common::router(reloaded_state);
+    let (provider_status, provider_body): (StatusCode, serde_json::Value) = common::json_request(
+        &reloaded_app,
+        axum::http::Method::GET,
+        "/api/providers/claude-crp?target=container",
+        None,
+    )
+    .await;
+    assert_eq!(
+        provider_status,
+        StatusCode::OK,
+        "provider status failed after claude install completion: {provider_body:#?}"
+    );
+    assert_eq!(
+        provider_body
+            .get("installed")
+            .and_then(serde_json::Value::as_bool),
+        Some(true),
+        "claude-crp should remain installed after its dependency completes: {provider_body:#?}"
+    );
+    assert_eq!(
+        provider_body
+            .pointer("/details/ready_for_use")
+            .and_then(serde_json::Value::as_str),
+        Some("true"),
+        "claude-crp should become ready once claude-cli finishes: {provider_body:#?}"
+    );
+    assert!(
+        provider_body.pointer("/details/pending_dependency_ids").is_none(),
+        "pending dependency ids should clear once the host dependency is installed: {provider_body:#?}"
     );
 }
 

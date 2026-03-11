@@ -96,6 +96,8 @@ pub struct InstallInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_code: Option<InstallErrorCode>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress_pct: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_event: Option<InstallProgressEvent>,
 }
 
@@ -109,6 +111,8 @@ pub struct InstallState {
     pub error_code: Option<InstallErrorCode>,
     pub events: VecDeque<InstallProgressEvent>,
     pub mirrors: HashSet<InstallId>,
+    pub progress_pct: Option<u8>,
+    pub progress_pct_override: Option<u8>,
     pub info_event_override: Option<InstallProgressEvent>,
     pub info_event_override_until: Option<DateTime<Utc>>,
     pub tx: broadcast::Sender<InstallProgressEvent>,
@@ -127,6 +131,8 @@ impl InstallState {
             error_code: None,
             events: VecDeque::with_capacity(256),
             mirrors: HashSet::new(),
+            progress_pct: None,
+            progress_pct_override: None,
             info_event_override: None,
             info_event_override_until: None,
             tx,
@@ -207,9 +213,56 @@ impl InstallState {
             finished_at: self.finished_at,
             error: self.error.clone(),
             error_code: self.error_code,
+            progress_pct: self.progress_pct_override.or(self.progress_pct),
             last_event,
         }
     }
+}
+
+fn stage_progress_pct(stage: &str) -> Option<u8> {
+    match stage {
+        "start" => Some(2),
+        "prerequisites" => Some(4),
+        "dependencies" => Some(6),
+        "download" => Some(10),
+        "node" => Some(15),
+        "node_download" => Some(18),
+        "node_extract" => Some(22),
+        "prepare" => Some(25),
+        "venv" => Some(35),
+        "npm_install" => Some(65),
+        "pip_install" => Some(70),
+        "extract" => Some(78),
+        "entrypoint" => Some(80),
+        "inspect" => Some(90),
+        "refresh" => Some(95),
+        "registry" => Some(98),
+        "done" => Some(100),
+        _ => None,
+    }
+}
+
+pub(crate) fn heuristic_progress_pct_from_event(
+    event: &InstallProgressEvent,
+    previous_pct: Option<u8>,
+) -> Option<u8> {
+    if let (Some(bytes), Some(total_bytes)) = (event.bytes, event.total_bytes) {
+        if total_bytes > 0 {
+            let raw =
+                (((bytes as f64 / total_bytes as f64) * 100.0).round() as i64).clamp(0, 100) as u8;
+            if event.stage.contains("download") {
+                let download_scaled =
+                    (((raw as f64 / 100.0) * 75.0).round() as i64).clamp(0, 100) as u8;
+                return Some(
+                    previous_pct.map_or(download_scaled, |prev| prev.max(download_scaled)),
+                );
+            }
+            return Some(previous_pct.map_or(raw, |prev| prev.max(raw)));
+        }
+    }
+    stage_progress_pct(&event.stage)
+        .map(|candidate| previous_pct.map_or(candidate, |prev| prev.max(candidate)))
+        .or(previous_pct)
 }
 
 pub fn truncate_for_storage(s: &str, max_len: usize) -> String {

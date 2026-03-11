@@ -1025,7 +1025,7 @@ async fn claude_login_start_returns_pending_pkce_session() {
 }
 
 #[tokio::test]
-async fn claude_login_start_bootstraps_runtime_resolution() {
+async fn claude_login_start_requires_prepared_runtime_resolution() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
     let state = common::build_state(
@@ -1047,13 +1047,11 @@ async fn claude_login_start_bootstraps_runtime_resolution() {
         .send()
         .await
         .expect("start claude login request");
-    assert_eq!(start_resp.status(), StatusCode::OK);
-    let body: ClaudeLoginStartResponse = start_resp.json().await.expect("start body");
-    assert!(!body.login_id.trim().is_empty());
+    assert_eq!(start_resp.status(), StatusCode::BAD_REQUEST);
+    let body: ErrorResp = start_resp.json().await.expect("start error body");
     assert!(body
-        .auth_url
-        .as_deref()
-        .is_some_and(|auth_url| auth_url.starts_with("https://claude.ai/oauth/authorize?")));
+        .error
+        .contains("runtime_command_missing: provider=claude-cli"));
 }
 
 #[tokio::test]
