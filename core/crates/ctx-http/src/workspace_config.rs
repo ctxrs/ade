@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 pub use ctx_core::models::ExecutionEnvironment;
 use ctx_store::Store;
 use serde::{Deserialize, Serialize};

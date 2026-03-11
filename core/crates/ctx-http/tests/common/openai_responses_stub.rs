@@ -9,7 +9,7 @@ use axum::http::{HeaderValue, StatusCode};
 use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio::task::JoinHandle;
 
 #[derive(Clone)]
