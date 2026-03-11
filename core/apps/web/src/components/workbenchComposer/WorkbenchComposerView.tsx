@@ -664,18 +664,33 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
               const installFinishing = installUi?.state === "succeeded" && !installed;
               const installBusy = installRunning || installFinishing;
               const installPct =
-                installUi?.state === "succeeded"
-                  ? 100
-                  : typeof installUi?.pct === "number"
+                installUi?.state === "running"
+                  ? (typeof installUi?.pct === "number"
                     ? installUi.pct
-                    : null;
+                    : null)
+                  : null;
+              const installButtonLabel =
+                installRunning
+                  ? `${Math.max(0, Math.min(100, installPct ?? 0))}%`
+                  : installFinishing
+                    ? "Finalizing…"
+                    : "Install";
+              const installButtonTitle =
+                !installSupported
+                  ? "Install not supported yet"
+                  : installRunning
+                    ? "Install in progress"
+                    : installFinishing
+                      ? "Install finishing"
+                      : "Install this harness";
+              const installButtonStyle =
+                installRunning
+                  ? ({ "--wb-install-pct": `${Math.max(0, Math.min(100, installPct ?? 0))}%` } as React.CSSProperties)
+                  : undefined;
               const installFailureMessage =
                 installUi?.state === "failed" || installUi?.state === "cancelled"
                   ? installErrorSummary(installUi.errorCode, installUi.error)
                   : null;
-              const installButtonLabel = installBusy
-                ? `${Math.max(0, Math.min(100, installPct ?? 0))}%`
-                : "Install";
               const checked = ns.draftHarness?.providerId === id;
 
               const opts = ns.providerOptions[id];
@@ -722,12 +737,8 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                           ns.onInstallProvider(id);
                         }}
                         disabled={!installSupported}
-                        title={!installSupported ? "Install not supported yet" : installBusy ? "Install in progress" : "Install this harness"}
-                        style={
-                          installBusy
-                            ? ({ "--wb-install-pct": `${Math.max(0, Math.min(100, installPct ?? 0))}%` } as React.CSSProperties)
-                            : undefined
-                        }
+                        title={installButtonTitle}
+                        style={installButtonStyle}
                       >
                         {installButtonLabel}
                       </button>

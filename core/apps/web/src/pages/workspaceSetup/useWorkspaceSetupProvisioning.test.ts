@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { InstallTarget } from "../../api/client";
 import {
   getSettings,
+  installProvider,
   listProviderAuthImportCandidates,
   listProviders,
 } from "../../api/client";
@@ -11,7 +12,8 @@ import {
   type ProviderInstallProgressSession,
   type ProviderInstallProgressSnapshot,
   resolveProviderInstallProgressSession,
-  subscribeProviderInstallProgress,
+  subscribeProviderInstallProgressForScope,
+  upsertProviderInstallProgressForScope,
 } from "../../state/providerInstallProgressStore";
 import { useWorkspaceSetupProvisioning } from "./useWorkspaceSetupProvisioning";
 import {
@@ -19,6 +21,7 @@ import {
   deriveWorkspaceSetupEffectiveTarget,
 } from "./workflowTypes";
 import type { WizardRoutePlan } from "./wizardFlow";
+import { createHostOwnerScope } from "../../state/scopeIdentity";
 
 vi.mock("../../api/client", () => ({
   cancelInstall: vi.fn(),
@@ -39,8 +42,8 @@ vi.mock("../../state/installProgressMonitor", () => ({
 
 vi.mock("../../state/providerInstallProgressStore", () => ({
   resolveProviderInstallProgressSession: vi.fn(() => null),
-  subscribeProviderInstallProgress: vi.fn(() => () => {}),
-  upsertProviderInstallProgress: vi.fn(),
+  subscribeProviderInstallProgressForScope: vi.fn(() => () => {}),
+  upsertProviderInstallProgressForScope: vi.fn(),
 }));
 
 type Deferred<T> = {
@@ -103,7 +106,7 @@ describe("useWorkspaceSetupProvisioning", () => {
     vi.clearAllMocks();
     providerProgressSnapshot = {};
     providerProgressListeners = new Set();
-    vi.mocked(subscribeProviderInstallProgress).mockImplementation((listener) => {
+    vi.mocked(subscribeProviderInstallProgressForScope).mockImplementation((_ownerScope, listener) => {
       const typedListener = listener as (snapshot: ProviderInstallProgressSnapshot) => void;
       providerProgressListeners.add(typedListener);
       typedListener(providerProgressSnapshot);
@@ -569,5 +572,168 @@ describe("useWorkspaceSetupProvisioning", () => {
     expect(latest!.harnessInstallCandidates).toEqual([]);
     expect(latest!.harnessInstallRows).toEqual({});
     expect(latest!.harnessInstallError).toContain("Harness scan failed.");
+  });
+
+  it("subscribes harness progress using the selected daemon scope", async () => {
+    vi.mocked(listProviderAuthImportCandidates)
+      .mockResolvedValue({ candidates: [] } as never);
+    vi.mocked(listProviders)
+      .mockResolvedValue([
+        {
+          provider_id: "codex",
+          installed: false,
+          health: "error",
+          diagnostics: [],
+          details: {
+            install_supported: "true",
+            install_target: "container",
+          },
+        },
+      ] as never);
+    vi.mocked(getSettings)
+      .mockResolvedValue(configuredTitlingSettings as never);
+
+    const currentStepKeyRef = { current: "container" as const };
+    const setRoutePlan = vi.fn();
+    const setRoutePlanningBusy = vi.fn();
+    const invalidateRoutePlan = vi.fn();
+    const connectDaemonForImport = vi.fn(async () => {});
+    const effectiveTarget = deriveWorkspaceSetupEffectiveTarget("remote", {
+      remoteHostInput: "alice@builder.internal",
+      remotePortInput: "4400",
+      remoteDataDirInput: "/srv/ctx-remote",
+    });
+    if (!effectiveTarget) {
+      throw new Error("Expected a remote workspace setup target.");
+    }
+    const expectedOwnerScope = createHostOwnerScope(effectiveTarget.daemonScope);
+
+    let latest: ReturnType<typeof useWorkspaceSetupProvisioning> | null = null;
+
+    const Harness = () => {
+      latest = useWorkspaceSetupProvisioning({
+        currentStepKeyRef,
+        selections: {
+          location: "remote",
+          container: "disk-isolated",
+        },
+        routePlan: null,
+        setRoutePlan,
+        setRoutePlanningBusy,
+        invalidateRoutePlan,
+        desktopApp: true,
+        effectiveTarget,
+        remoteStatus: "connected",
+        remoteStatusRef: { current: "connected" },
+        connectDaemonForImport,
+      });
+      return null;
+    };
+
+    render(createElement(Harness));
+
+    await act(async () => {
+      await latest!.ensureRoutePlanForSelection("disk-isolated");
+    });
+
+    expect(subscribeProviderInstallProgressForScope).toHaveBeenCalledWith(
+      expectedOwnerScope,
+      expect.any(Function),
+    );
+    expect(upsertProviderInstallProgressForScope).not.toHaveBeenCalled();
+  });
+
+  it("writes started harness installs into the selected daemon scope", async () => {
+    vi.mocked(listProviderAuthImportCandidates)
+      .mockResolvedValue({ candidates: [] } as never);
+    vi.mocked(listProviders)
+      .mockResolvedValue([
+        {
+          provider_id: "codex",
+          installed: false,
+          health: "error",
+          diagnostics: [],
+          details: {
+            install_supported: "true",
+            install_target: "container",
+          },
+        },
+      ] as never);
+    vi.mocked(getSettings)
+      .mockResolvedValue(configuredTitlingSettings as never);
+    vi.mocked(installProvider)
+      .mockResolvedValue({
+        install_id: "install-codex",
+        provider_id: "codex",
+        target: "container",
+      } as never);
+
+    const currentStepKeyRef = { current: "harness-downloads" as const };
+    const setRoutePlan = vi.fn();
+    const setRoutePlanningBusy = vi.fn();
+    const invalidateRoutePlan = vi.fn();
+    const connectDaemonForImport = vi.fn(async () => {});
+    const effectiveTarget = deriveWorkspaceSetupEffectiveTarget("remote", {
+      remoteHostInput: "alice@builder.internal",
+      remotePortInput: "4400",
+      remoteDataDirInput: "/srv/ctx-remote",
+    });
+    if (!effectiveTarget) {
+      throw new Error("Expected a remote workspace setup target.");
+    }
+    const expectedOwnerScope = createHostOwnerScope(effectiveTarget.daemonScope);
+
+    let latest: ReturnType<typeof useWorkspaceSetupProvisioning> | null = null;
+
+    const Harness = () => {
+      latest = useWorkspaceSetupProvisioning({
+        currentStepKeyRef,
+        selections: {
+          location: "remote",
+          container: "disk-isolated",
+        },
+        routePlan: {
+          targetKey: "remote-route",
+          containerSelection: "disk-isolated",
+          includeHarnessDownloads: true,
+          includeAuthImport: false,
+          includeTitling: false,
+        },
+        setRoutePlan,
+        setRoutePlanningBusy,
+        invalidateRoutePlan,
+        desktopApp: true,
+        effectiveTarget,
+        remoteStatus: "connected",
+        remoteStatusRef: { current: "connected" },
+        connectDaemonForImport,
+      });
+      return null;
+    };
+
+    render(createElement(Harness));
+
+    await act(async () => {
+      await latest!.ensureRoutePlanForSelection("disk-isolated");
+    });
+
+    await act(async () => {
+      latest!.setHarnessInstallSelected({ codex: true });
+    });
+
+    await act(async () => {
+      await latest!.advanceFromHarnessDownloadsStep();
+    });
+
+    expect(installProvider).toHaveBeenCalledWith("codex", "container");
+    expect(upsertProviderInstallProgressForScope).toHaveBeenCalledWith(
+      expectedOwnerScope,
+      "codex",
+      expect.objectContaining({
+        installId: "install-codex",
+        state: "running",
+        target: "container",
+      }),
+    );
   });
 });

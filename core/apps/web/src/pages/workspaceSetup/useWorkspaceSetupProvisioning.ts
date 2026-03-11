@@ -70,11 +70,11 @@ import {
   type RemoteStatus,
 } from "./wizardTypes";
 import { observeInstall, subscribeInstallProgress, type InstallProgressSnapshot } from "../../state/installProgressMonitor";
-import { sameProvisioningScope } from "../../state/scopeIdentity";
+import { createHostOwnerScope, sameProvisioningScope } from "../../state/scopeIdentity";
 import {
   resolveProviderInstallProgressSession,
-  subscribeProviderInstallProgress,
-  upsertProviderInstallProgress,
+  subscribeProviderInstallProgressForScope,
+  upsertProviderInstallProgressForScope,
 } from "../../state/providerInstallProgressStore";
 import type {
   EnsureOnboardingAfterDaemonConnectResult,
@@ -188,6 +188,10 @@ export function useWorkspaceSetupProvisioning({
   );
   const selectedHarnessInstallTarget: InstallTarget = installTargetForWorkspaceSetupContainerSelection(
     selections.container,
+  );
+  const providerProgressOwnerScope = useMemo(
+    () => (effectiveTarget ? createHostOwnerScope(effectiveTarget.daemonScope) : null),
+    [effectiveTarget],
   );
 
   const commitProvisioningMachineState = useCallback((
@@ -305,6 +309,7 @@ export function useWorkspaceSetupProvisioning({
     harnessInstallObserversRef.current[providerId] = {
       installId,
       stop: observeInstall(installId, {
+        ownerScope: providerProgressOwnerScope ?? undefined,
         providerId,
         initialState: harnessInstallRows[providerId],
       }),
@@ -347,7 +352,9 @@ export function useWorkspaceSetupProvisioning({
       if (info.state !== "running") {
         clearHarnessInstallObserver(providerId);
       }
-      upsertProviderInstallProgress(providerId, nextInstallState);
+      if (providerProgressOwnerScope) {
+        upsertProviderInstallProgressForScope(providerProgressOwnerScope, providerId, nextInstallState);
+      }
     } catch (error) {
       setHarnessInstallError(messageFromError(error));
     }
@@ -1129,7 +1136,13 @@ export function useWorkspaceSetupProvisioning({
                   : candidate,
               ),
             );
-            upsertProviderInstallProgress(row.providerId, nextInstallState);
+            if (providerProgressOwnerScope) {
+              upsertProviderInstallProgressForScope(
+                providerProgressOwnerScope,
+                row.providerId,
+                nextInstallState,
+              );
+            }
             void attachHarnessInstall(row.providerId, installId);
             return {
               providerId: row.providerId,
@@ -1254,7 +1267,10 @@ export function useWorkspaceSetupProvisioning({
   }, [titlingLocalInstall]);
 
   useEffect(() => {
-    return subscribeProviderInstallProgress((snapshot) => {
+    if (!providerProgressOwnerScope) {
+      return () => {};
+    }
+    return subscribeProviderInstallProgressForScope(providerProgressOwnerScope, (snapshot) => {
       const providerIds = new Set([
         ...Object.keys(harnessInstallRows),
         ...harnessInstallCandidates.map((candidate) => candidate.providerId),
@@ -1324,7 +1340,12 @@ export function useWorkspaceSetupProvisioning({
         clearHarnessInstallObserver(providerId);
       }
     });
-  }, [harnessInstallCandidates, harnessInstallRows, selectedHarnessInstallTarget]);
+  }, [
+    harnessInstallCandidates,
+    harnessInstallRows,
+    providerProgressOwnerScope,
+    selectedHarnessInstallTarget,
+  ]);
 
   useEffect(() => {
     return subscribeInstallProgress((snapshot: InstallProgressSnapshot) => {
