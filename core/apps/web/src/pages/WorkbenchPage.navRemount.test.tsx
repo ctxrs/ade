@@ -166,6 +166,9 @@ const workspaceSnapshotStoreMock = {
 const { trackWorkbenchPanelToggledMock } = vi.hoisted(() => ({
   trackWorkbenchPanelToggledMock: vi.fn(),
 }));
+const { useOpenSessionMock } = vi.hoisted(() => ({
+  useOpenSessionMock: vi.fn(),
+}));
 const getInstallMock = vi.hoisted(() =>
   vi.fn(async (_installId?: string): Promise<{ install_id?: string; last_event?: unknown }> => ({})),
 );
@@ -180,10 +183,26 @@ const createDeferred = <T,>() => {
   return { promise, resolve, reject };
 };
 
+const emptyProviderAccounts = {
+  active_account_id: null,
+  accounts: [],
+  logins: [],
+};
+
 vi.mock("../api/client", () => ({
   archiveTask: vi.fn(async () => ({})),
   createSession: vi.fn(async () => ({})),
   createTask: vi.fn(async () => ({})),
+  deleteAmpAccount: vi.fn(async () => emptyProviderAccounts),
+  deleteClaudeAccount: vi.fn(async () => emptyProviderAccounts),
+  deleteCodexAccount: vi.fn(async () => emptyProviderAccounts),
+  deleteCopilotAccount: vi.fn(async () => emptyProviderAccounts),
+  deleteCursorAccount: vi.fn(async () => emptyProviderAccounts),
+  deleteGeminiAccount: vi.fn(async () => emptyProviderAccounts),
+  deleteKimiAccount: vi.fn(async () => emptyProviderAccounts),
+  deleteMistralAccount: vi.fn(async () => emptyProviderAccounts),
+  deleteProviderHarnessEndpoint: vi.fn(async () => ({})),
+  deleteQwenAccount: vi.fn(async () => emptyProviderAccounts),
   deleteTask: vi.fn(async () => ({})),
   getHealth: vi.fn(async () => ({
     version: "0.0.0",
@@ -246,7 +265,19 @@ vi.mock("../api/client", () => ({
   markTaskRead: vi.fn(async () => ({})),
   markTaskUnread: vi.fn(async () => ({})),
   postMessage: vi.fn(async () => ({})),
+  refreshProviderHarnessEndpointModels: vi.fn(async () => []),
+  selectProviderHarnessSource: vi.fn(async () => ({})),
+  setAmpActiveAccount: vi.fn(async () => emptyProviderAccounts),
+  setClaudeActiveAccount: vi.fn(async () => emptyProviderAccounts),
+  setCodexActiveAccount: vi.fn(async () => emptyProviderAccounts),
+  setCopilotActiveAccount: vi.fn(async () => emptyProviderAccounts),
+  setCursorActiveAccount: vi.fn(async () => emptyProviderAccounts),
+  setGeminiActiveAccount: vi.fn(async () => emptyProviderAccounts),
+  setKimiActiveAccount: vi.fn(async () => emptyProviderAccounts),
+  setMistralActiveAccount: vi.fn(async () => emptyProviderAccounts),
+  setQwenActiveAccount: vi.fn(async () => emptyProviderAccounts),
   unarchiveTask: vi.fn(async () => ({})),
+  upsertProviderHarnessEndpoint: vi.fn(async () => ({})),
   updateTaskTitle: vi.fn(async () => ({})),
   verifyProviderForWorkspace: vi.fn(async () => ({})),
 }));
@@ -266,7 +297,7 @@ vi.mock("../state/sessionSupervisor", () => ({
   }),
   useSessionCacheSnapshot: () => sessionSnap,
   useSessionEntry: (id: string) => sessionSnap.sessions[id] ?? null,
-  useOpenSession: () => {},
+  useOpenSession: useOpenSessionMock,
 }));
 
 vi.mock("../state/workspaceActiveSnapshotStore", () => ({
@@ -369,6 +400,7 @@ beforeEach(() => {
   sessionSupervisorMock.loadSessionState.mockReset();
   sessionSupervisorMock.loadArtifacts.mockReset();
   sessionSupervisorMock.loadSubagentInvocations.mockReset();
+  useOpenSessionMock.mockReset();
   workspaceSnapshotStoreMock.ensureArchivedLoaded.mockReset();
   workspaceSnapshotStoreMock.getWorktreeRoot.mockReset();
   workspaceSnapshotStoreMock.getWorktreeRoot.mockReturnValue(null);
@@ -393,6 +425,25 @@ afterEach(() => {
 });
 
 describe("WorkbenchPage task rename selection", () => {
+  it("does not force session mode through WorkbenchPage route-open policy", async () => {
+    render(
+      <VirtuosoMockContext.Provider value={{ itemHeight: 40, viewportHeight: 400 }}>
+        <MemoryRouter initialEntries={[`/workspaces/${workspaceId}`]}>
+          <Routes>
+            <Route path="/workspaces/:id" element={<WorkbenchPage />} />
+          </Routes>
+        </MemoryRouter>
+      </VirtuosoMockContext.Provider>,
+    );
+
+    await waitFor(() => {
+      expect(useOpenSessionMock).toHaveBeenCalledWith(sessionId, expect.objectContaining({ watchDiff: false }));
+    });
+    const latestOptions = useOpenSessionMock.mock.calls.at(-1)?.[1];
+    expect(latestOptions).toBeDefined();
+    expect(latestOptions).not.toHaveProperty("mode");
+  });
+
   it("keeps rename selection stable on session updates", async () => {
     const selectSpy = vi.spyOn(HTMLInputElement.prototype, "select");
     const ui = (

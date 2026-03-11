@@ -1,8 +1,8 @@
 import { act, render, waitFor } from "@testing-library/react";
-import { createElement, useEffect, type Dispatch, type SetStateAction } from "react";
+import { createElement, useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DraftHarness } from "../../components/WorkbenchComposer";
-import type { ProviderOptions, ProvidersBootstrapResponse } from "../../api/client";
+import type { ProviderOptions, ProviderStatus, ProvidersBootstrapResponse } from "../../api/client";
 import { getProviderOptions, getProvidersBootstrap } from "../../api/client";
 import { setDaemonConnection } from "../../api/daemonConnection";
 import {
@@ -74,19 +74,23 @@ const deferred = <T,>() => {
   return { promise, resolve, reject };
 };
 
+const providerStatus = (
+  provider_id: string,
+  opts?: Partial<ProviderStatus>,
+): ProviderStatus => ({
+  provider_id,
+  installed: true,
+  health: "ok",
+  diagnostics: [],
+  details: {},
+  ...opts,
+});
+
 const makeBootstrap = (
   providerOptions: Record<string, ProviderOptions>,
+  providers: ProviderStatus[] = [providerStatus("codex")],
 ): ProvidersBootstrapResponse => ({
-  providers: [
-    {
-      provider_id: "codex",
-      display_name: "Codex",
-      installed: true,
-      health: "ok",
-      diagnostics: [],
-      details: {},
-    } as never,
-  ],
+  providers,
   provider_options: providerOptions,
   provider_harness_config: {},
   codex_accounts: {
@@ -148,6 +152,29 @@ function WorkbenchProvidersHarness({
   useEffect(() => {
     onChange(value);
   }, [onChange, value]);
+
+  return null;
+}
+
+function WorkbenchProvidersDraftHarness({
+  workspaceId,
+  initialDraftHarness,
+  onChange,
+}: {
+  workspaceId: string;
+  initialDraftHarness: DraftHarness | null;
+  onChange: (value: { hookValue: HookValue; draftHarness: DraftHarness | null }) => void;
+}) {
+  const [draftHarness, setDraftHarness] = useState<DraftHarness | null>(initialDraftHarness);
+  const hookValue = useWorkbenchProviders({
+    workspaceId,
+    setDraftHarness,
+    onStartError: () => {},
+  });
+
+  useEffect(() => {
+    onChange({ hookValue, draftHarness });
+  }, [draftHarness, hookValue, onChange]);
 
   return null;
 }
@@ -668,6 +695,36 @@ describe("useWorkbenchProviders", () => {
     await waitFor(() => {
       expect(hookValue?.providerInstallsById.codex?.installId).toBe("install-container");
       expect(hookValue?.providerInstallsById.codex?.target).toBe("container");
+    });
+  });
+
+  it("applies extracted draft-harness replacement policy through the hook", async () => {
+    const workspaceId = "ws-default-remap";
+    let draftHarness: DraftHarness | null = null;
+    let hookValue: HookValue | null = null;
+
+    vi.mocked(getProvidersBootstrap).mockResolvedValue(makeBootstrap(
+      {
+        "claude-crp": {
+          ...baseOptions("claude-crp"),
+          workspace_id: workspaceId,
+        },
+      },
+      [providerStatus("claude-crp")],
+    ));
+
+    render(createElement(WorkbenchProvidersDraftHarness, {
+      workspaceId,
+      initialDraftHarness: { providerId: "codex", modelId: "" },
+      onChange: (next) => {
+        hookValue = next.hookValue;
+        draftHarness = next.draftHarness;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(hookValue?.defaultProviderId).toBe("claude-crp");
+      expect(draftHarness).toEqual({ providerId: "claude-crp", modelId: "" });
     });
   });
 });

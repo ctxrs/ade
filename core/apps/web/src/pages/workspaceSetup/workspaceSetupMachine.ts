@@ -1,5 +1,6 @@
 import type { SessionTitlingMode } from "../WorkspaceSetupPage.logic";
 import {
+  nextAfterAuthImport,
   nextAfterHarnessDownloads,
   nextBoundaryStep,
   type WizardRoutePlan,
@@ -56,11 +57,11 @@ export type WorkspaceSetupMachineCommandResult =
     }
   | {
       kind: "advance_auth_import";
-      nextStep: WizardStepKey | null;
+      routePlan: WizardRoutePlan | null;
     }
   | {
       kind: "advance_harness_downloads";
-      nextStep: WizardStepKey | null;
+      routePlan: WizardRoutePlan | null;
     }
   | {
       kind: "select_titling_local";
@@ -447,12 +448,30 @@ export const workspaceSetupMachineReducer = (
               })
             : nextState;
         case "advance_auth_import":
+          return event.result.routePlan
+            ? appendEffects(nextState, [
+                {
+                  kind: "set_route_plan",
+                  routePlan: event.result.routePlan,
+                },
+                {
+                  kind: "go_to_step",
+                  stepKey: nextAfterAuthImport(event.result.routePlan),
+                },
+              ])
+            : nextState;
         case "advance_harness_downloads":
-          return event.result.nextStep
-            ? appendEffect(nextState, {
-                kind: "go_to_step",
-                stepKey: event.result.nextStep,
-              })
+          return event.result.routePlan
+            ? appendEffects(nextState, [
+                {
+                  kind: "set_route_plan",
+                  routePlan: event.result.routePlan,
+                },
+                {
+                  kind: "go_to_step",
+                  stepKey: nextAfterHarnessDownloads(event.result.routePlan),
+                },
+              ])
             : nextState;
         case "select_titling_local":
           return event.result.started

@@ -21,8 +21,8 @@
   },
   {
     "path": "apps/web/src/state/sessionSupervisorCore.ts",
-    "maxLines": 2637,
-    "reason": "Existing oversized session supervisor core. Keep stable until a dedicated breakup."
+    "maxLines": 2643,
+    "reason": "Existing oversized session supervisor core. Allow the owner-scoped cold-cache slice and keep stable until a dedicated breakup."
   },
   {
     "path": "crates/ctx-http/src/api/lsp.rs",

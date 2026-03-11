@@ -29,6 +29,7 @@ import {
   loadProvidersBootstrap,
   refreshHostProvidersBootstrap,
   refreshProvidersBootstrap,
+  refreshProvidersBootstrapForScope,
 } from "../../../state/providersBootstrapStore";
 import {
   CLAUDE_LOGIN_COMPLETION_TIMEOUT_MS,
@@ -421,6 +422,7 @@ beforeEach(() => {
   vi.mocked(loadProvidersBootstrap).mockReset();
   vi.mocked(refreshHostProvidersBootstrap).mockReset();
   vi.mocked(refreshProvidersBootstrap).mockReset();
+  vi.mocked(refreshProvidersBootstrapForScope).mockReset();
   vi.mocked(openExternalLink).mockReset();
   setBootstrapSnapshot("ws-test", makeBootstrap());
   setHostBootstrapSnapshot(makeBootstrap());
@@ -432,6 +434,15 @@ beforeEach(() => {
     consumeHostBootstrapQueue("hostBootstrapRefreshQueue", makeBootstrap()));
   vi.mocked(refreshProvidersBootstrap).mockImplementation(async (workspaceId: string) =>
     consumeBootstrapQueue(workspaceId, bootstrapMockState.bootstrapRefreshQueueByWorkspace, makeBootstrap()));
+  vi.mocked(refreshProvidersBootstrapForScope).mockImplementation(async (
+    ownerScope: { kind: "host" | "workspace"; workspaceId?: string },
+  ) => ownerScope.kind === "workspace"
+    ? consumeBootstrapQueue(
+      ownerScope.workspaceId ?? "",
+      bootstrapMockState.bootstrapRefreshQueueByWorkspace,
+      makeBootstrap(),
+    )
+    : consumeHostBootstrapQueue("hostBootstrapRefreshQueue", makeBootstrap()));
 });
 
 describe("Claude polling duration", () => {
@@ -929,11 +940,11 @@ describe("useHarnessAuthenticationController", () => {
       await controller?.onAmpDelete("amp-1");
     });
     await waitFor(() => {
-      expect(vi.mocked(refreshProvidersBootstrap)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(refreshProvidersBootstrapForScope)).toHaveBeenCalledTimes(1);
       expect(vi.mocked(invalidateProvidersBootstrap)).toHaveBeenCalledTimes(1);
       expect(requireController(controller).providers[0]?.details?.install_target).toBe("container");
     });
-    const refreshCallsAfterDelete = vi.mocked(refreshProvidersBootstrap).mock.calls.length;
+    const refreshCallsAfterDelete = vi.mocked(refreshProvidersBootstrapForScope).mock.calls.length;
     const invalidateCallsAfterDelete = vi.mocked(invalidateProvidersBootstrap).mock.calls.length;
 
     await act(async () => {
@@ -941,7 +952,7 @@ describe("useHarnessAuthenticationController", () => {
     });
     await waitFor(() => {
       expect(vi.mocked(setAmpActiveAccount)).toHaveBeenCalledWith("amp-2");
-      expect(vi.mocked(refreshProvidersBootstrap).mock.calls.length).toBeGreaterThan(refreshCallsAfterDelete);
+      expect(vi.mocked(refreshProvidersBootstrapForScope).mock.calls.length).toBeGreaterThan(refreshCallsAfterDelete);
       expect(vi.mocked(invalidateProvidersBootstrap).mock.calls.length).toBeGreaterThan(invalidateCallsAfterDelete);
       expect(requireController(controller).providers[0]?.details?.install_target).toBe("container");
     });
@@ -1107,6 +1118,10 @@ describe("useHarnessAuthenticationController", () => {
     expect(requireController(controller).providers[0]?.details?.install_target).toBe("container");
     expect(vi.mocked(loadHostProvidersBootstrap)).not.toHaveBeenCalled();
     expect(vi.mocked(refreshHostProvidersBootstrap)).not.toHaveBeenCalled();
+    expect(vi.mocked(refreshProvidersBootstrapForScope)).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "workspace",
+      workspaceId: "ws-test",
+    }));
     expect(vi.mocked(invalidateHostProvidersBootstrap)).not.toHaveBeenCalled();
     expect(vi.mocked(invalidateProvidersBootstrap)).toHaveBeenCalledWith("ws-test");
   });
@@ -1166,7 +1181,10 @@ describe("useHarnessAuthenticationController", () => {
     });
 
     expect(vi.mocked(invalidateHostProvidersBootstrap)).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(refreshHostProvidersBootstrap)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(refreshProvidersBootstrapForScope)).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "host",
+    }));
+    expect(vi.mocked(refreshHostProvidersBootstrap)).not.toHaveBeenCalled();
     expect(vi.mocked(invalidateProvidersBootstrap)).not.toHaveBeenCalled();
     expect(vi.mocked(refreshProvidersBootstrap)).not.toHaveBeenCalled();
   });

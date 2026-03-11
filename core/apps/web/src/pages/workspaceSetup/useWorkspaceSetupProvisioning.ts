@@ -44,8 +44,6 @@ import {
   type SessionTitlingMode,
 } from "../WorkspaceSetupPage.logic";
 import {
-  nextAfterAuthImport,
-  nextAfterHarnessDownloads,
   type WizardRoutePlan,
   type WizardStepKey,
 } from "./wizardFlow";
@@ -1005,9 +1003,14 @@ export function useWorkspaceSetupProvisioning({
     setRoutePlanningBusy,
   ]);
 
+  const getCurrentRoutePlan = useCallback(
+    (): WizardRoutePlan | null => provisioningMachineStateRef.current.routePlan ?? routePlan,
+    [routePlan],
+  );
+
   const advanceFromAuthImportStep = async (
     options?: { clearSelections?: boolean },
-  ): Promise<WizardStepKey | null> => {
+  ): Promise<WizardRoutePlan | null> => {
     if (authImportBusy) return null;
     const selectionSnapshot = options?.clearSelections ? {} : authImportSelected;
     if (options?.clearSelections) {
@@ -1043,24 +1046,14 @@ export function useWorkspaceSetupProvisioning({
       }
       setAuthImportBusy(false);
     }
-    const titlingRequired = await ensureTitlingProbeForCurrentTarget();
+    await ensureTitlingProbeForCurrentTarget();
     if (currentStepKeyRef.current !== "auth-import") return null;
-    if (
-      titlingRequired === true
-      && titlingMode !== "skip"
-      && routePlan?.includeTitling !== true
-    ) {
-      if (routePlan) {
-        setRoutePlan({ ...routePlan, includeTitling: true });
-      }
-      return "session-titling";
-    }
-    return nextAfterAuthImport(routePlan);
+    return getCurrentRoutePlan();
   };
 
   const advanceFromHarnessDownloadsStep = async (
     options?: { clearSelections?: boolean },
-  ): Promise<WizardStepKey | null> => {
+  ): Promise<WizardRoutePlan | null> => {
     if (harnessInstallBusy) return null;
     const selectionSnapshot = options?.clearSelections ? {} : harnessInstallSelected;
     if (options?.clearSelections) {
@@ -1081,20 +1074,21 @@ export function useWorkspaceSetupProvisioning({
       ({ status }) => status === "failed" || status === "cancelled",
     );
     const runningRows = selectedRows.filter(({ status }) => status === "running");
+    const currentRoutePlan = getCurrentRoutePlan();
 
     if (selectedRows.length === 0 || selectedRows.every(({ status }) => status === "installed" || status === "succeeded")) {
       setHarnessInstallError(null);
       if (currentStepKeyRef.current !== "harness-downloads") return null;
-      return nextAfterHarnessDownloads(routePlan);
+      return currentRoutePlan;
     }
     if (runningRows.length > 0 && startableRows.length === 0) {
       setHarnessInstallError(null);
       if (currentStepKeyRef.current !== "harness-downloads") return null;
-      return nextAfterHarnessDownloads(routePlan);
+      return currentRoutePlan;
     }
     if (blockingRows.length > 0 && startableRows.length === 0) {
       if (currentStepKeyRef.current !== "harness-downloads") return null;
-      return nextAfterHarnessDownloads(routePlan);
+      return currentRoutePlan;
     }
 
     setHarnessInstallBusy(true);
@@ -1191,7 +1185,7 @@ export function useWorkspaceSetupProvisioning({
     }
     if (!shouldAdvance) return null;
     if (currentStepKeyRef.current !== "harness-downloads") return null;
-    return nextAfterHarnessDownloads(routePlan);
+    return getCurrentRoutePlan();
   };
 
   const harnessCandidateStatuses = harnessInstallCandidates.map((candidate) => {

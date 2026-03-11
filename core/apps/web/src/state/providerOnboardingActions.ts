@@ -1,13 +1,40 @@
 import {
+  deleteAmpAccount,
+  deleteClaudeAccount,
+  deleteCodexAccount,
+  deleteCopilotAccount,
+  deleteCursorAccount,
+  deleteGeminiAccount,
+  deleteKimiAccount,
+  deleteMistralAccount,
   deleteProviderHarnessEndpoint,
+  deleteQwenAccount,
   refreshProviderHarnessEndpointModels,
   selectProviderHarnessSource,
+  setAmpActiveAccount,
+  setClaudeActiveAccount,
+  setCodexActiveAccount,
+  setCopilotActiveAccount,
+  setCursorActiveAccount,
+  setGeminiActiveAccount,
+  setKimiActiveAccount,
+  setMistralActiveAccount,
+  setQwenActiveAccount,
   upsertProviderHarnessEndpoint,
   verifyProviderForWorkspace,
+  type AmpAccountsResponse,
+  type ClaudeAccountsResponse,
+  type CodexAccountsResponse,
+  type CopilotAccountsResponse,
+  type CursorAccountsResponse,
+  type GeminiAccountsResponse,
   type HarnessApiShape,
   type HarnessEndpointRecord,
   type HarnessProviderSourceConfig,
   type HarnessSourceKind,
+  type KimiAccountsResponse,
+  type MistralAccountsResponse,
+  type QwenAccountsResponse,
 } from "../api/client";
 import {
   getProvidersBootstrapSnapshotForScope,
@@ -33,11 +60,49 @@ export type ProviderSourceSelection = {
   endpointId: string | null;
 };
 
+export type ProviderAccountMutationProviderId =
+  | "amp"
+  | "claude-crp"
+  | "codex"
+  | "copilot"
+  | "cursor"
+  | "gemini"
+  | "kimi"
+  | "mistral"
+  | "qwen";
+
+type ProviderAccountsResponseById = {
+  amp: AmpAccountsResponse;
+  "claude-crp": ClaudeAccountsResponse;
+  codex: CodexAccountsResponse;
+  copilot: CopilotAccountsResponse;
+  cursor: CursorAccountsResponse;
+  gemini: GeminiAccountsResponse;
+  kimi: KimiAccountsResponse;
+  mistral: MistralAccountsResponse;
+  qwen: QwenAccountsResponse;
+};
+
+type ProviderAccountsResponse = ProviderAccountsResponseById[ProviderAccountMutationProviderId];
+
+type ProviderAccountMutationHandler = {
+  setActive: (accountId: string | null) => Promise<ProviderAccountsResponse>;
+  delete: (accountId: string) => Promise<ProviderAccountsResponse>;
+  apply: (ownerScope: OwnerScope, next: ProviderAccountsResponse) => void;
+};
+
 export type SelectSubscriptionSourceIfSupportedParams = {
   ownerScope: OwnerScope;
   providerId: string;
   supportsEndpointConfig: boolean;
   onEndpointUnsupported?: () => void;
+};
+
+export type SelectProviderSubscriptionAccountParams = {
+  ownerScope: OwnerScope;
+  providerId: ProviderAccountMutationProviderId;
+  accountId: string | null;
+  supportsEndpointConfig: boolean;
 };
 
 export type SubmitProviderEndpointAuthParams = {
@@ -115,6 +180,126 @@ const patchProviderHarnessConfig = (
   }));
   return next.provider_harness_config[providerId] ?? nextConfig;
 };
+
+const patchAmpAccounts = (ownerScope: OwnerScope, next: AmpAccountsResponse): void => {
+  updateProvidersBootstrapForScope(ownerScope, (current) => ({
+    ...current,
+    amp_accounts: next,
+  }));
+};
+
+const patchClaudeAccounts = (ownerScope: OwnerScope, next: ClaudeAccountsResponse): void => {
+  updateProvidersBootstrapForScope(ownerScope, (current) => ({
+    ...current,
+    claude_accounts: next,
+  }));
+};
+
+const patchCodexAccounts = (ownerScope: OwnerScope, next: CodexAccountsResponse): void => {
+  updateProvidersBootstrapForScope(ownerScope, (current) => ({
+    ...current,
+    codex_accounts: next,
+  }));
+};
+
+const patchCopilotAccounts = (ownerScope: OwnerScope, next: CopilotAccountsResponse): void => {
+  updateProvidersBootstrapForScope(ownerScope, (current) => ({
+    ...current,
+    copilot_accounts: next,
+  }));
+};
+
+const patchCursorAccounts = (ownerScope: OwnerScope, next: CursorAccountsResponse): void => {
+  updateProvidersBootstrapForScope(ownerScope, (current) => ({
+    ...current,
+    cursor_accounts: next,
+  }));
+};
+
+const patchGeminiAccounts = (ownerScope: OwnerScope, next: GeminiAccountsResponse): void => {
+  updateProvidersBootstrapForScope(ownerScope, (current) => ({
+    ...current,
+    gemini_accounts: next,
+  }));
+};
+
+const patchKimiAccounts = (ownerScope: OwnerScope, next: KimiAccountsResponse): void => {
+  updateProvidersBootstrapForScope(ownerScope, (current) => ({
+    ...current,
+    kimi_accounts: next,
+  }));
+};
+
+const patchMistralAccounts = (ownerScope: OwnerScope, next: MistralAccountsResponse): void => {
+  updateProvidersBootstrapForScope(ownerScope, (current) => ({
+    ...current,
+    mistral_accounts: next,
+  }));
+};
+
+const patchQwenAccounts = (ownerScope: OwnerScope, next: QwenAccountsResponse): void => {
+  updateProvidersBootstrapForScope(ownerScope, (current) => ({
+    ...current,
+    qwen_accounts: next,
+  }));
+};
+
+const providerAccountMutationHandlers = {
+  amp: {
+    setActive: setAmpActiveAccount,
+    delete: deleteAmpAccount,
+    apply: (ownerScope: OwnerScope, next: ProviderAccountsResponse) =>
+      patchAmpAccounts(ownerScope, next as AmpAccountsResponse),
+  },
+  "claude-crp": {
+    setActive: setClaudeActiveAccount,
+    delete: deleteClaudeAccount,
+    apply: (ownerScope: OwnerScope, next: ProviderAccountsResponse) =>
+      patchClaudeAccounts(ownerScope, next as ClaudeAccountsResponse),
+  },
+  codex: {
+    setActive: setCodexActiveAccount,
+    delete: deleteCodexAccount,
+    apply: (ownerScope: OwnerScope, next: ProviderAccountsResponse) =>
+      patchCodexAccounts(ownerScope, next as CodexAccountsResponse),
+  },
+  copilot: {
+    setActive: setCopilotActiveAccount,
+    delete: deleteCopilotAccount,
+    apply: (ownerScope: OwnerScope, next: ProviderAccountsResponse) =>
+      patchCopilotAccounts(ownerScope, next as CopilotAccountsResponse),
+  },
+  cursor: {
+    setActive: setCursorActiveAccount,
+    delete: deleteCursorAccount,
+    apply: (ownerScope: OwnerScope, next: ProviderAccountsResponse) =>
+      patchCursorAccounts(ownerScope, next as CursorAccountsResponse),
+  },
+  gemini: {
+    setActive: setGeminiActiveAccount,
+    delete: deleteGeminiAccount,
+    apply: (ownerScope: OwnerScope, next: ProviderAccountsResponse) =>
+      patchGeminiAccounts(ownerScope, next as GeminiAccountsResponse),
+  },
+  kimi: {
+    setActive: setKimiActiveAccount,
+    delete: deleteKimiAccount,
+    apply: (ownerScope: OwnerScope, next: ProviderAccountsResponse) =>
+      patchKimiAccounts(ownerScope, next as KimiAccountsResponse),
+  },
+  mistral: {
+    setActive: setMistralActiveAccount,
+    delete: deleteMistralAccount,
+    apply: (ownerScope: OwnerScope, next: ProviderAccountsResponse) =>
+      patchMistralAccounts(ownerScope, next as MistralAccountsResponse),
+  },
+  qwen: {
+    setActive: setQwenActiveAccount,
+    delete: deleteQwenAccount,
+    apply: (ownerScope: OwnerScope, next: ProviderAccountsResponse) =>
+      patchQwenAccounts(ownerScope, next as QwenAccountsResponse),
+  },
+} satisfies Record<ProviderAccountMutationProviderId, ProviderAccountMutationHandler>;
 
 const setSubscriptionSourceFallback = (
   ownerScope: OwnerScope,
@@ -209,6 +394,30 @@ export const deleteProviderEndpoint = async (
   await applyProviderHarnessConfigMutation(ownerScope, providerId, next);
 };
 
+export const deleteProviderAccount = async (
+  ownerScope: OwnerScope,
+  providerId: ProviderAccountMutationProviderId,
+  accountId: string,
+): Promise<ProviderAccountsResponse> => {
+  const handler = providerAccountMutationHandlers[providerId];
+  const next = await handler.delete(accountId);
+  handler.apply(ownerScope, next);
+  await refreshBootstrapAfterMutation(ownerScope);
+  return next;
+};
+
+export const setProviderActiveAccount = async (
+  ownerScope: OwnerScope,
+  providerId: ProviderAccountMutationProviderId,
+  accountId: string | null,
+): Promise<ProviderAccountsResponse> => {
+  const handler = providerAccountMutationHandlers[providerId];
+  const next = await handler.setActive(accountId);
+  handler.apply(ownerScope, next);
+  await refreshBootstrapAfterMutation(ownerScope);
+  return next;
+};
+
 export const refreshProviderEndpointModels = async (
   ownerScope: OwnerScope,
   providerId: string,
@@ -224,6 +433,22 @@ export const selectProviderSource = async (
   selection: ProviderSourceSelection,
 ): Promise<void> => {
   await selectProviderSourceInternal(ownerScope, providerId, selection);
+};
+
+export const selectProviderSubscriptionAccount = async ({
+  ownerScope,
+  providerId,
+  accountId,
+  supportsEndpointConfig,
+}: SelectProviderSubscriptionAccountParams): Promise<ProviderAccountsResponse> => {
+  const next = await setProviderActiveAccount(ownerScope, providerId, accountId);
+  if (supportsEndpointConfig) {
+    await selectProviderSourceInternal(ownerScope, providerId, {
+      sourceKind: "subscription",
+      endpointId: null,
+    });
+  }
+  return next;
 };
 
 export const selectSubscriptionSourceIfSupported = async ({

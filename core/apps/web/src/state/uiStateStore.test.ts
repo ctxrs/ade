@@ -18,16 +18,26 @@ vi.mock("./storage", () => ({
 }));
 
 import {
+  clearTaskThoughtsV1,
   decodeWorkspaceActiveSnapshotV1,
+  loadSessionHistoryPageV1,
   loadSessionHeadV1,
+  loadTaskThoughtsV1,
   loadWorkspaceActiveSnapshotV1,
+  saveSessionHistoryPageV1,
   saveSessionHeadV1,
+  saveTaskThoughtsV1,
   saveWorkspaceActiveSnapshotV1,
+  sessionHistoryPageKeyV2,
   sessionHeadKeyV1,
+  taskThoughtsKeyV2,
   workspaceActiveSnapshotKeyV1,
 } from "./uiStateStore";
+import { createBrowserDaemonTargetScope, createWorkspaceOwnerScope } from "./scopeIdentity";
 
 describe("uiStateStore", () => {
+  const ownerScope = createWorkspaceOwnerScope(createBrowserDaemonTargetScope("http://daemon.test"), "ws-1");
+
   afterEach(() => {
     vi.clearAllMocks();
   });
@@ -143,5 +153,66 @@ describe("uiStateStore", () => {
       }),
     );
     expect(storageMock.setKv).not.toHaveBeenCalled();
+  });
+
+  it("stores task thoughts via owner-scoped snapshot keys", async () => {
+    storageMock.getSnapshot.mockResolvedValue({
+      v: 1,
+      taskId: "task-1",
+      sessions: {},
+      updatedAtMs: 5,
+    });
+
+    const loaded = await loadTaskThoughtsV1(ownerScope, "task-1");
+    expect(storageMock.getSnapshot).toHaveBeenCalledWith(taskThoughtsKeyV2(ownerScope, "task-1"));
+    expect(loaded?.taskId).toBe("task-1");
+
+    await saveTaskThoughtsV1(ownerScope, "task-1", { sessions: {} });
+    expect(storageMock.setSnapshot).toHaveBeenCalledWith(
+      taskThoughtsKeyV2(ownerScope, "task-1"),
+      expect.objectContaining({
+        v: 1,
+        taskId: "task-1",
+        sessions: {},
+        updatedAtMs: expect.any(Number),
+      }),
+    );
+
+    await clearTaskThoughtsV1(ownerScope, "task-1");
+    expect(storageMock.deleteSnapshot).toHaveBeenCalledWith(taskThoughtsKeyV2(ownerScope, "task-1"));
+  });
+
+  it("stores session history pages via owner-scoped history keys", async () => {
+    storageMock.getHistoryPage.mockResolvedValue({
+      v: 1,
+      sessionId: "session-1",
+      beforeSeq: 10,
+      limit: 20,
+      page: { turns: [], messages: [], has_more: false, next_cursor: null },
+      updatedAtMs: 5,
+    });
+    storageMock.getKv.mockResolvedValue({ v: 1, entries: [] });
+
+    const loaded = await loadSessionHistoryPageV1(ownerScope, "session-1", 10, 20);
+    expect(storageMock.getHistoryPage).toHaveBeenCalledWith(sessionHistoryPageKeyV2(ownerScope, "session-1", 10, 20));
+    expect(loaded?.sessionId).toBe("session-1");
+
+    await saveSessionHistoryPageV1(
+      ownerScope,
+      "session-1",
+      10,
+      20,
+      { session_id: "session-1", turns: [], messages: [], has_more: true, next_cursor: 5 },
+    );
+    expect(storageMock.setHistoryPage).toHaveBeenCalledWith(
+      sessionHistoryPageKeyV2(ownerScope, "session-1", 10, 20),
+      expect.objectContaining({
+        v: 1,
+        sessionId: "session-1",
+        beforeSeq: 10,
+        limit: 20,
+        updatedAtMs: expect.any(Number),
+      }),
+    );
   });
 });

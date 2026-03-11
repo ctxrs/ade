@@ -5,7 +5,16 @@ import type {
 } from "../api/client";
 
 const clientMocks = vi.hoisted(() => ({
+  deleteAmpAccount: vi.fn(),
+  deleteClaudeAccount: vi.fn(),
+  deleteCodexAccount: vi.fn(),
+  deleteCopilotAccount: vi.fn(),
+  deleteCursorAccount: vi.fn(),
+  deleteGeminiAccount: vi.fn(),
+  deleteKimiAccount: vi.fn(),
+  deleteMistralAccount: vi.fn(),
   deleteProviderHarnessEndpoint: vi.fn(),
+  deleteQwenAccount: vi.fn(),
   getProviderHarnessConfig: vi.fn(),
   getProvidersBootstrap: vi.fn(),
   listAmpAccounts: vi.fn(),
@@ -20,6 +29,15 @@ const clientMocks = vi.hoisted(() => ({
   listQwenAccounts: vi.fn(),
   refreshProviderHarnessEndpointModels: vi.fn(),
   selectProviderHarnessSource: vi.fn(),
+  setAmpActiveAccount: vi.fn(),
+  setClaudeActiveAccount: vi.fn(),
+  setCodexActiveAccount: vi.fn(),
+  setCopilotActiveAccount: vi.fn(),
+  setCursorActiveAccount: vi.fn(),
+  setGeminiActiveAccount: vi.fn(),
+  setKimiActiveAccount: vi.fn(),
+  setMistralActiveAccount: vi.fn(),
+  setQwenActiveAccount: vi.fn(),
   upsertProviderHarnessEndpoint: vi.fn(),
   verifyProviderForWorkspace: vi.fn(),
 }));
@@ -147,6 +165,15 @@ beforeEach(() => {
   hostSnapshot = makeHostBootstrap();
 
   clientMocks.deleteProviderHarnessEndpoint.mockReset();
+  clientMocks.deleteAmpAccount.mockReset();
+  clientMocks.deleteClaudeAccount.mockReset();
+  clientMocks.deleteCodexAccount.mockReset();
+  clientMocks.deleteCopilotAccount.mockReset();
+  clientMocks.deleteCursorAccount.mockReset();
+  clientMocks.deleteGeminiAccount.mockReset();
+  clientMocks.deleteKimiAccount.mockReset();
+  clientMocks.deleteMistralAccount.mockReset();
+  clientMocks.deleteQwenAccount.mockReset();
   clientMocks.getProviderHarnessConfig.mockImplementation(async (providerId: string) =>
     hostSnapshot.provider_harness_config[providerId] ?? {
       provider_id: providerId,
@@ -168,11 +195,98 @@ beforeEach(() => {
   clientMocks.listQwenAccounts.mockImplementation(async () => hostSnapshot.qwen_accounts);
   clientMocks.refreshProviderHarnessEndpointModels.mockReset();
   clientMocks.selectProviderHarnessSource.mockReset();
+  clientMocks.setAmpActiveAccount.mockReset();
+  clientMocks.setClaudeActiveAccount.mockReset();
+  clientMocks.setCodexActiveAccount.mockReset();
+  clientMocks.setCopilotActiveAccount.mockReset();
+  clientMocks.setCursorActiveAccount.mockReset();
+  clientMocks.setGeminiActiveAccount.mockReset();
+  clientMocks.setKimiActiveAccount.mockReset();
+  clientMocks.setMistralActiveAccount.mockReset();
+  clientMocks.setQwenActiveAccount.mockReset();
   clientMocks.upsertProviderHarnessEndpoint.mockReset();
   clientMocks.verifyProviderForWorkspace.mockReset();
 });
 
 describe("providerOnboardingActions", () => {
+  it("deleteProviderAccount updates the workspace account slice and refreshes bootstrap", async () => {
+    const workspaceId = "ws-delete-account";
+    const nextAccounts = {
+      active_account_id: "acct-next",
+      accounts: [{
+        id: "acct-next",
+        label: "Account Next",
+        created_at: "2026-03-10T00:00:00Z",
+      }],
+      logins: [],
+    };
+    workspaceSnapshots.set(workspaceId, makeWorkspaceBootstrap(workspaceId, {
+      codex_accounts: nextAccounts,
+    }));
+    clientMocks.deleteCodexAccount.mockResolvedValue(nextAccounts);
+
+    const daemonConnection = await import("../api/daemonConnection");
+    daemonConnection.setDaemonConnection({
+      baseUrl: "https://daemon-delete-account.example",
+      source: "test",
+    });
+    const store = await import("./providersBootstrapStore");
+    const actions = await import("./providerOnboardingActions");
+    const scopeAdapters = await import("./providerScopeAdapters");
+
+    store.updateProvidersBootstrap(workspaceId, () => makeWorkspaceBootstrap(workspaceId));
+
+    await actions.deleteProviderAccount(
+      scopeAdapters.getProviderOwnerScope(workspaceId),
+      "codex",
+      "acct-old",
+    );
+
+    expect(clientMocks.deleteCodexAccount).toHaveBeenCalledWith("acct-old");
+    expect(clientMocks.getProvidersBootstrap).toHaveBeenCalledWith(workspaceId);
+    expect(store.getProvidersBootstrapSnapshot(workspaceId).codex_accounts.active_account_id).toBe("acct-next");
+    expect(store.getProvidersBootstrapSnapshot(workspaceId).providers[0]?.details?.install_target).toBe("container");
+  });
+
+  it("deleteProviderAccount updates the host account slice without touching workspace scope", async () => {
+    const workspaceId = "ws-workspace-unchanged";
+    const nextAccounts = {
+      active_account_id: "acct-host-next",
+      accounts: [{
+        id: "acct-host-next",
+        label: "Host Account Next",
+        created_at: "2026-03-10T00:00:00Z",
+      }],
+      logins: [],
+    };
+    hostSnapshot = makeHostBootstrap({
+      codex_accounts: nextAccounts,
+    });
+    clientMocks.deleteCodexAccount.mockResolvedValue(nextAccounts);
+
+    const daemonConnection = await import("../api/daemonConnection");
+    daemonConnection.setDaemonConnection({
+      baseUrl: "https://daemon-host-delete-account.example",
+      source: "test",
+    });
+    const store = await import("./providersBootstrapStore");
+    const actions = await import("./providerOnboardingActions");
+    const scopeAdapters = await import("./providerScopeAdapters");
+
+    store.updateHostProvidersBootstrap(() => makeHostBootstrap());
+    store.updateProvidersBootstrap(workspaceId, () => makeWorkspaceBootstrap(workspaceId));
+
+    await actions.deleteProviderAccount(
+      scopeAdapters.getProviderOwnerScope(null),
+      "codex",
+      "acct-host-old",
+    );
+
+    expect(clientMocks.deleteCodexAccount).toHaveBeenCalledWith("acct-host-old");
+    expect(store.getHostProvidersBootstrapSnapshot().codex_accounts.active_account_id).toBe("acct-host-next");
+    expect(store.getProvidersBootstrapSnapshot(workspaceId).codex_accounts.active_account_id).toBeNull();
+  });
+
   it("deleteProviderEndpoint updates the workspace harness-config slice and refreshes bootstrap", async () => {
     const workspaceId = "ws-delete-endpoint";
     const nextConfig: HarnessProviderSourceConfig = {
@@ -290,6 +404,68 @@ describe("providerOnboardingActions", () => {
     expect(clientMocks.getProvidersBootstrap).toHaveBeenCalledWith(workspaceId);
     expect(store.getProvidersBootstrapSnapshot(workspaceId).provider_harness_config.codex?.selected_source_kind)
       .toBe("endpoint");
+  });
+
+  it("selectProviderSubscriptionAccount updates the active account and restores subscription source", async () => {
+    const workspaceId = "ws-select-account";
+    const nextAccounts = {
+      active_account_id: "acct-b",
+      accounts: [
+        {
+          id: "acct-a",
+          label: "Account A",
+          created_at: "2026-03-10T00:00:00Z",
+        },
+        {
+          id: "acct-b",
+          label: "Account B",
+          created_at: "2026-03-10T00:00:00Z",
+        },
+      ],
+      logins: [],
+    };
+    clientMocks.setCodexActiveAccount.mockResolvedValue(nextAccounts);
+    clientMocks.selectProviderHarnessSource.mockImplementationOnce(async () => {
+      workspaceSnapshots.set(workspaceId, makeWorkspaceBootstrap(workspaceId, {
+        codex_accounts: nextAccounts,
+        provider_harness_config: {
+          codex: baseCodexConfig,
+        },
+      }));
+      return baseCodexConfig;
+    });
+
+    const daemonConnection = await import("../api/daemonConnection");
+    daemonConnection.setDaemonConnection({
+      baseUrl: "https://daemon-select-account.example",
+      source: "test",
+    });
+    const store = await import("./providersBootstrapStore");
+    const actions = await import("./providerOnboardingActions");
+    const scopeAdapters = await import("./providerScopeAdapters");
+
+    store.updateProvidersBootstrap(workspaceId, () => makeWorkspaceBootstrap(workspaceId, {
+      provider_harness_config: {
+        codex: {
+          ...baseCodexConfig,
+          selected_source_kind: "endpoint",
+          selected_endpoint_id: "ep-old",
+        },
+      },
+    }));
+
+    await actions.selectProviderSubscriptionAccount({
+      ownerScope: scopeAdapters.getProviderOwnerScope(workspaceId),
+      providerId: "codex",
+      accountId: "acct-b",
+      supportsEndpointConfig: true,
+    });
+
+    expect(clientMocks.setCodexActiveAccount).toHaveBeenCalledWith("acct-b");
+    expect(clientMocks.selectProviderHarnessSource).toHaveBeenCalledWith("codex", "subscription", null);
+    expect(store.getProvidersBootstrapSnapshot(workspaceId).codex_accounts.active_account_id).toBe("acct-b");
+    expect(store.getProvidersBootstrapSnapshot(workspaceId).provider_harness_config.codex?.selected_source_kind)
+      .toBe("subscription");
   });
 
   it("submitProviderEndpointAuth rolls back to the previous source when verification fails", async () => {

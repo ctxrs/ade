@@ -3,6 +3,8 @@ import type { ProviderOptions, ProviderStatus } from "../../api/client";
 import {
   collectSelectableHarnessProviderIds,
   getHarnessMruStorageKey,
+  resolveDefaultHarnessProviderId,
+  resolveDraftHarnessReplacement,
   resolveInitialHarnessSelection,
   shouldFinalizeInitialHarnessSelection,
 } from "./harnessSelection";
@@ -39,6 +41,53 @@ describe("harnessSelection", () => {
       unhealthy: provider("unhealthy", { health: "error" }),
     };
     expect(collectSelectableHarnessProviderIds(providersById)).toEqual(["codex"]);
+  });
+
+  it("resolves the preferred default harness provider from installed providers", () => {
+    expect(resolveDefaultHarnessProviderId([
+      provider("cursor"),
+      provider("gemini"),
+      provider("claude-crp"),
+    ])).toBe("claude-crp");
+  });
+
+  it("falls back to the first installed provider or codex when no preferred provider exists", () => {
+    expect(resolveDefaultHarnessProviderId([
+      provider("cursor"),
+      provider("fake"),
+    ])).toBe("cursor");
+    expect(resolveDefaultHarnessProviderId([])).toBe("codex");
+  });
+
+  it("replaces a placeholder codex draft when codex is unavailable", () => {
+    expect(resolveDraftHarnessReplacement({
+      draftHarness: { providerId: "codex", modelId: "" },
+      providersById: {
+        "claude-crp": provider("claude-crp"),
+      },
+      defaultProviderId: "claude-crp",
+    })).toEqual({ providerId: "claude-crp", modelId: "" });
+  });
+
+  it("keeps explicit or still-valid drafts unchanged during replacement checks", () => {
+    const explicitDraft = { providerId: "codex", modelId: "gpt-5/xhigh" };
+    expect(resolveDraftHarnessReplacement({
+      draftHarness: explicitDraft,
+      providersById: {
+        "claude-crp": provider("claude-crp"),
+      },
+      defaultProviderId: "claude-crp",
+    })).toEqual(explicitDraft);
+
+    const placeholderDraft = { providerId: "codex", modelId: "" };
+    expect(resolveDraftHarnessReplacement({
+      draftHarness: placeholderDraft,
+      providersById: {
+        codex: provider("codex"),
+        "claude-crp": provider("claude-crp"),
+      },
+      defaultProviderId: "codex",
+    })).toEqual(placeholderDraft);
   });
 
   it("prefers MRU when that provider has active auth", () => {

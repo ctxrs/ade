@@ -110,6 +110,99 @@ describe("workspaceSetupMachine", () => {
     });
   });
 
+  it("uses the returned route plan to update flow state after auth import", () => {
+    const state = workspaceSetupMachineReducer(
+      createInitialWorkspaceSetupMachineState(),
+      {
+        type: "command_completed",
+        effectId: 1,
+        result: {
+          kind: "advance_auth_import",
+          routePlan: routePlanFixture({
+            includeAuthImport: true,
+            includeTitling: true,
+          }),
+        },
+      },
+    );
+
+    expect(state).toEqual(createInitialWorkspaceSetupMachineState());
+
+    const activeState = {
+      ...createInitialWorkspaceSetupMachineState(),
+      activeCommand: {
+        effectId: 1,
+        kind: "advance_auth_import" as const,
+      },
+    };
+
+    const completed = workspaceSetupMachineReducer(activeState, {
+      type: "command_completed",
+      effectId: 1,
+      result: {
+        kind: "advance_auth_import",
+        routePlan: routePlanFixture({
+          includeAuthImport: true,
+          includeTitling: true,
+        }),
+      },
+    });
+
+    expect(completed.pendingEffects).toEqual([
+      {
+        id: 1,
+        kind: "set_route_plan",
+        routePlan: routePlanFixture({
+          includeAuthImport: true,
+          includeTitling: true,
+        }),
+      },
+      {
+        id: 2,
+        kind: "go_to_step",
+        stepKey: "session-titling",
+      },
+    ]);
+  });
+
+  it("uses the returned route plan to advance after harness downloads complete", () => {
+    const completed = workspaceSetupMachineReducer(
+      {
+        ...createInitialWorkspaceSetupMachineState(),
+        activeCommand: {
+          effectId: 3,
+          kind: "advance_harness_downloads",
+        },
+        nextEffectId: 4,
+      },
+      {
+        type: "command_completed",
+        effectId: 3,
+        result: {
+          kind: "advance_harness_downloads",
+          routePlan: routePlanFixture({
+            includeAuthImport: true,
+          }),
+        },
+      },
+    );
+
+    expect(completed.pendingEffects).toEqual([
+      {
+        id: 4,
+        kind: "set_route_plan",
+        routePlan: routePlanFixture({
+          includeAuthImport: true,
+        }),
+      },
+      {
+        id: 5,
+        kind: "go_to_step",
+        stepKey: "auth-import",
+      },
+    ]);
+  });
+
   it("skips harness downloads immediately when nothing remains startable", () => {
     const state = workspaceSetupMachineReducer(
       createInitialWorkspaceSetupMachineState(),

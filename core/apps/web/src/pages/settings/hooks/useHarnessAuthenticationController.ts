@@ -10,15 +10,6 @@ import {
 } from "react";
 import {
   completeClaudeLogin,
-  deleteAmpAccount,
-  deleteClaudeAccount,
-  deleteCopilotAccount,
-  deleteCodexAccount,
-  deleteCursorAccount,
-  deleteGeminiAccount,
-  deleteKimiAccount,
-  deleteMistralAccount,
-  deleteQwenAccount,
   listAmpAccounts,
   listClaudeAccounts,
   listCodexAccounts,
@@ -28,15 +19,6 @@ import {
   listKimiAccounts,
   listMistralAccounts,
   listQwenAccounts,
-  setAmpActiveAccount,
-  setClaudeActiveAccount,
-  setCodexActiveAccount,
-  setCopilotActiveAccount,
-  setCursorActiveAccount,
-  setGeminiActiveAccount,
-  setKimiActiveAccount,
-  setMistralActiveAccount,
-  setQwenActiveAccount,
   upsertCursorAccount,
   type AmpAccountsResponse,
   type ClaudeAccountsResponse,
@@ -64,11 +46,14 @@ import {
   type ProviderOnboardingInstallState,
 } from "../../../state/providerOnboardingCoordinator";
 import {
+  deleteProviderAccount as executeDeleteProviderAccount,
   deleteProviderEndpoint as executeDeleteProviderEndpoint,
   refreshProviderEndpointModels as executeRefreshProviderEndpointModels,
+  selectProviderSubscriptionAccount as executeSelectProviderSubscriptionAccount,
   selectProviderSource as executeSelectProviderSource,
   selectSubscriptionSourceIfSupported as executeSelectSubscriptionSourceIfSupported,
   submitProviderEndpointAuth,
+  type ProviderAccountMutationProviderId,
 } from "../../../state/providerOnboardingActions";
 import { getProviderOwnerScope, getProviderOwnerScopeKey } from "../../../state/providerScopeAdapters";
 import type { HarnessAuthModalState, InstallSession } from "../../SettingsPage.types";
@@ -220,19 +205,15 @@ const refreshAccountCollection = async <TResponse>(params: {
   }
 };
 
-const mutateAccountCollection = async <TResponse>(params: {
-  mutate: () => Promise<TResponse>;
-  applyData: (next: TResponse) => void;
+const mutateProviderAccount = async (params: {
+  mutate: () => Promise<void>;
   setBusy: StateSetter<boolean>;
   setProviderError: StateSetter<string | null>;
-  onMutationComplete: () => Promise<void>;
 }): Promise<void> => {
   params.setBusy(true);
   params.setProviderError(null);
   try {
-    const next = await params.mutate();
-    params.applyData(next);
-    await params.onMutationComplete();
+    await params.mutate();
   } catch (error) {
     params.setProviderError(messageFromError(error));
   } finally {
@@ -686,6 +667,45 @@ export function useHarnessAuthenticationController({
     [applyAmpAccounts, refreshProvidersBootstrapState, workspaceId],
   );
 
+  const runDeleteProviderAccount = useCallback(
+    async <TKey extends ProviderAccountMutationProviderId>(
+      providerId: TKey,
+      accountId: string,
+      setBusy: StateSetter<boolean>,
+    ) => {
+      await mutateProviderAccount({
+        mutate: async () => {
+          await executeDeleteProviderAccount(ownerScope, providerId, accountId);
+        },
+        setBusy,
+        setProviderError,
+      });
+    },
+    [ownerScope],
+  );
+
+  const runSelectProviderSubscriptionAccount = useCallback(
+    async <TKey extends ProviderAccountMutationProviderId>(
+      providerId: TKey,
+      accountId: string | null,
+      setBusy: StateSetter<boolean>,
+    ) => {
+      await mutateProviderAccount({
+        mutate: async () => {
+          await executeSelectProviderSubscriptionAccount({
+            ownerScope,
+            providerId,
+            accountId,
+            supportsEndpointConfig: supportsHarnessEndpointConfig(providerId),
+          });
+        },
+        setBusy,
+        setProviderError,
+      });
+    },
+    [ownerScope, supportsHarnessEndpointConfig],
+  );
+
   const onDeleteProviderEndpoint = useCallback(async (providerId: string, endpointId: string) => {
     setProviderHarnessBusyForProvider(providerId, true);
     setProviderError(null);
@@ -1033,184 +1053,40 @@ export function useHarnessAuthenticationController({
   ]);
 
   const onCodexDelete = useCallback(async (accountId: string) => {
-    await mutateAccountCollection({
-      mutate: () => deleteCodexAccount(accountId),
-      applyData: applyCodexAccounts,
-      setBusy: setCodexAccountsBusy,
-      setProviderError,
-      onMutationComplete: () => refreshProviderSlicesAfterMutation("codex"),
-    });
-  }, [applyCodexAccounts, refreshProviderSlicesAfterMutation]);
-
-  const onCodexSetActive = useCallback(async (accountId: string | null) => {
-    await mutateAccountCollection({
-      mutate: () => setCodexActiveAccount(accountId),
-      applyData: applyCodexAccounts,
-      setBusy: setCodexAccountsBusy,
-      setProviderError,
-      onMutationComplete: () => refreshProviderSlicesAfterMutation("codex"),
-    });
-  }, [applyCodexAccounts, refreshProviderSlicesAfterMutation]);
+    await runDeleteProviderAccount("codex", accountId, setCodexAccountsBusy);
+  }, [runDeleteProviderAccount]);
 
   const onClaudeDelete = useCallback(async (accountId: string) => {
-    await mutateAccountCollection({
-      mutate: () => deleteClaudeAccount(accountId),
-      applyData: applyClaudeAccounts,
-      setBusy: setClaudeAccountsBusy,
-      setProviderError,
-      onMutationComplete: () => refreshProviderSlicesAfterMutation("claude-crp"),
-    });
-  }, [applyClaudeAccounts, refreshProviderSlicesAfterMutation]);
-
-  const onClaudeSetActive = useCallback(async (accountId: string | null) => {
-    await mutateAccountCollection({
-      mutate: () => setClaudeActiveAccount(accountId),
-      applyData: applyClaudeAccounts,
-      setBusy: setClaudeAccountsBusy,
-      setProviderError,
-      onMutationComplete: () => refreshProviderSlicesAfterMutation("claude-crp"),
-    });
-  }, [applyClaudeAccounts, refreshProviderSlicesAfterMutation]);
+    await runDeleteProviderAccount("claude-crp", accountId, setClaudeAccountsBusy);
+  }, [runDeleteProviderAccount]);
 
   const onGeminiDelete = useCallback(async (accountId: string) => {
-    await mutateAccountCollection({
-      mutate: () => deleteGeminiAccount(accountId),
-      applyData: applyGeminiAccounts,
-      setBusy: setGeminiAccountsBusy,
-      setProviderError,
-      onMutationComplete: () => refreshProviderSlicesAfterMutation("gemini"),
-    });
-  }, [applyGeminiAccounts, refreshProviderSlicesAfterMutation]);
-
-  const onGeminiSetActive = useCallback(async (accountId: string | null) => {
-    await mutateAccountCollection({
-      mutate: () => setGeminiActiveAccount(accountId),
-      applyData: applyGeminiAccounts,
-      setBusy: setGeminiAccountsBusy,
-      setProviderError,
-      onMutationComplete: () => refreshProviderSlicesAfterMutation("gemini"),
-    });
-  }, [applyGeminiAccounts, refreshProviderSlicesAfterMutation]);
+    await runDeleteProviderAccount("gemini", accountId, setGeminiAccountsBusy);
+  }, [runDeleteProviderAccount]);
 
   const onQwenDelete = useCallback(async (accountId: string) => {
-    await mutateAccountCollection({
-      mutate: () => deleteQwenAccount(accountId),
-      applyData: applyQwenAccounts,
-      setBusy: setQwenAccountsBusy,
-      setProviderError,
-      onMutationComplete: () => refreshProviderSlicesAfterMutation("qwen"),
-    });
-  }, [applyQwenAccounts, refreshProviderSlicesAfterMutation]);
-
-  const onQwenSetActive = useCallback(async (accountId: string | null) => {
-    await mutateAccountCollection({
-      mutate: () => setQwenActiveAccount(accountId),
-      applyData: applyQwenAccounts,
-      setBusy: setQwenAccountsBusy,
-      setProviderError,
-      onMutationComplete: () => refreshProviderSlicesAfterMutation("qwen"),
-    });
-  }, [applyQwenAccounts, refreshProviderSlicesAfterMutation]);
+    await runDeleteProviderAccount("qwen", accountId, setQwenAccountsBusy);
+  }, [runDeleteProviderAccount]);
 
   const onKimiDelete = useCallback(async (accountId: string) => {
-    await mutateAccountCollection({
-      mutate: () => deleteKimiAccount(accountId),
-      applyData: applyKimiAccounts,
-      setBusy: setKimiAccountsBusy,
-      setProviderError,
-      onMutationComplete: () => refreshProviderSlicesAfterMutation("kimi"),
-    });
-  }, [applyKimiAccounts, refreshProviderSlicesAfterMutation]);
-
-  const onKimiSetActive = useCallback(async (accountId: string | null) => {
-    await mutateAccountCollection({
-      mutate: () => setKimiActiveAccount(accountId),
-      applyData: applyKimiAccounts,
-      setBusy: setKimiAccountsBusy,
-      setProviderError,
-      onMutationComplete: () => refreshProviderSlicesAfterMutation("kimi"),
-    });
-  }, [applyKimiAccounts, refreshProviderSlicesAfterMutation]);
+    await runDeleteProviderAccount("kimi", accountId, setKimiAccountsBusy);
+  }, [runDeleteProviderAccount]);
 
   const onMistralDelete = useCallback(async (accountId: string) => {
-    await mutateAccountCollection({
-      mutate: () => deleteMistralAccount(accountId),
-      applyData: applyMistralAccounts,
-      setBusy: setMistralAccountsBusy,
-      setProviderError,
-      onMutationComplete: () => refreshProviderSlicesAfterMutation("mistral"),
-    });
-  }, [applyMistralAccounts, refreshProviderSlicesAfterMutation]);
-
-  const onMistralSetActive = useCallback(async (accountId: string | null) => {
-    await mutateAccountCollection({
-      mutate: () => setMistralActiveAccount(accountId),
-      applyData: applyMistralAccounts,
-      setBusy: setMistralAccountsBusy,
-      setProviderError,
-      onMutationComplete: () => refreshProviderSlicesAfterMutation("mistral"),
-    });
-  }, [applyMistralAccounts, refreshProviderSlicesAfterMutation]);
+    await runDeleteProviderAccount("mistral", accountId, setMistralAccountsBusy);
+  }, [runDeleteProviderAccount]);
 
   const onCopilotDelete = useCallback(async (accountId: string) => {
-    await mutateAccountCollection({
-      mutate: () => deleteCopilotAccount(accountId),
-      applyData: applyCopilotAccounts,
-      setBusy: setCopilotAccountsBusy,
-      setProviderError,
-      onMutationComplete: () => refreshProviderSlicesAfterMutation("copilot"),
-    });
-  }, [applyCopilotAccounts, refreshProviderSlicesAfterMutation]);
-
-  const onCopilotSetActive = useCallback(async (accountId: string | null) => {
-    await mutateAccountCollection({
-      mutate: () => setCopilotActiveAccount(accountId),
-      applyData: applyCopilotAccounts,
-      setBusy: setCopilotAccountsBusy,
-      setProviderError,
-      onMutationComplete: () => refreshProviderSlicesAfterMutation("copilot"),
-    });
-  }, [applyCopilotAccounts, refreshProviderSlicesAfterMutation]);
+    await runDeleteProviderAccount("copilot", accountId, setCopilotAccountsBusy);
+  }, [runDeleteProviderAccount]);
 
   const onCursorDelete = useCallback(async (accountId: string) => {
-    await mutateAccountCollection({
-      mutate: () => deleteCursorAccount(accountId),
-      applyData: applyCursorAccounts,
-      setBusy: setCursorAccountsBusy,
-      setProviderError,
-      onMutationComplete: () => refreshProviderSlicesAfterMutation("cursor"),
-    });
-  }, [applyCursorAccounts, refreshProviderSlicesAfterMutation]);
-
-  const onCursorSetActive = useCallback(async (accountId: string | null) => {
-    await mutateAccountCollection({
-      mutate: () => setCursorActiveAccount(accountId),
-      applyData: applyCursorAccounts,
-      setBusy: setCursorAccountsBusy,
-      setProviderError,
-      onMutationComplete: () => refreshProviderSlicesAfterMutation("cursor"),
-    });
-  }, [applyCursorAccounts, refreshProviderSlicesAfterMutation]);
+    await runDeleteProviderAccount("cursor", accountId, setCursorAccountsBusy);
+  }, [runDeleteProviderAccount]);
 
   const onAmpDelete = useCallback(async (accountId: string) => {
-    await mutateAccountCollection({
-      mutate: () => deleteAmpAccount(accountId),
-      applyData: applyAmpAccounts,
-      setBusy: setAmpAccountsBusy,
-      setProviderError,
-      onMutationComplete: () => refreshProviderSlicesAfterMutation("amp"),
-    });
-  }, [applyAmpAccounts, refreshProviderSlicesAfterMutation]);
-
-  const onAmpSetActive = useCallback(async (accountId: string | null) => {
-    await mutateAccountCollection({
-      mutate: () => setAmpActiveAccount(accountId),
-      applyData: applyAmpAccounts,
-      setBusy: setAmpAccountsBusy,
-      setProviderError,
-      onMutationComplete: () => refreshProviderSlicesAfterMutation("amp"),
-    });
-  }, [applyAmpAccounts, refreshProviderSlicesAfterMutation]);
+    await runDeleteProviderAccount("amp", accountId, setAmpAccountsBusy);
+  }, [runDeleteProviderAccount]);
 
   const onSelectHarnessAuthRow = useCallback(async (providerId: string, row: HarnessAuthRow) => {
     try {
@@ -1220,42 +1096,30 @@ export function useHarnessAuthenticationController({
         return;
       }
       if (providerId === "codex" && row.account_id) {
-        await onCodexSetActive(row.account_id);
+        await runSelectProviderSubscriptionAccount("codex", row.account_id, setCodexAccountsBusy);
       } else if (providerId === "claude-crp" && row.account_id) {
-        await onClaudeSetActive(row.account_id);
+        await runSelectProviderSubscriptionAccount("claude-crp", row.account_id, setClaudeAccountsBusy);
       } else if (providerId === "gemini" && row.account_id) {
-        await onGeminiSetActive(row.account_id);
+        await runSelectProviderSubscriptionAccount("gemini", row.account_id, setGeminiAccountsBusy);
       } else if (providerId === "qwen" && row.account_id) {
-        await onQwenSetActive(row.account_id);
+        await runSelectProviderSubscriptionAccount("qwen", row.account_id, setQwenAccountsBusy);
       } else if (providerId === "kimi" && row.account_id) {
-        await onKimiSetActive(row.account_id);
+        await runSelectProviderSubscriptionAccount("kimi", row.account_id, setKimiAccountsBusy);
       } else if (providerId === "mistral" && row.account_id) {
-        await onMistralSetActive(row.account_id);
+        await runSelectProviderSubscriptionAccount("mistral", row.account_id, setMistralAccountsBusy);
       } else if (providerId === "copilot" && row.account_id) {
-        await onCopilotSetActive(row.account_id);
+        await runSelectProviderSubscriptionAccount("copilot", row.account_id, setCopilotAccountsBusy);
       } else if (providerId === "cursor" && row.account_id) {
-        await onCursorSetActive(row.account_id);
+        await runSelectProviderSubscriptionAccount("cursor", row.account_id, setCursorAccountsBusy);
       } else if (providerId === "amp" && row.account_id) {
-        await onAmpSetActive(row.account_id);
-      }
-      if (supportsHarnessEndpointConfig(providerId)) {
-        await onSelectProviderSource(providerId, "subscription", null);
+        await runSelectProviderSubscriptionAccount("amp", row.account_id, setAmpAccountsBusy);
       }
     } catch (error) {
       setProviderError(messageFromError(error));
     }
   }, [
-    onClaudeSetActive,
-    onCodexSetActive,
-    onCopilotSetActive,
-    onGeminiSetActive,
-    onMistralSetActive,
-    onKimiSetActive,
-    onQwenSetActive,
-    onCursorSetActive,
-    onAmpSetActive,
     onSelectProviderSource,
-    supportsHarnessEndpointConfig,
+    runSelectProviderSubscriptionAccount,
   ]);
 
   const onInstall = useCallback(async (providerId: string) => {

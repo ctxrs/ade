@@ -21,6 +21,7 @@ import {
   type OwnerScope,
   type WorkspaceOwnerScope,
 } from "./scopeIdentity";
+import { createDaemonResourceStore } from "./daemonResourceStore";
 import {
   getProviderHostOwnerScope,
   getProviderWorkspaceOwnerScope,
@@ -30,15 +31,6 @@ import {
   hasProviderModels,
   isPinnedSubscriptionBootstrapCatalog,
 } from "../utils/providerModelCatalog";
-
-type Listener = () => void;
-
-type ProvidersBootstrapEntry = {
-  data?: ProvidersBootstrapResponse;
-  inFlight?: Promise<ProvidersBootstrapResponse>;
-  stale?: boolean;
-  listeners: Set<Listener>;
-};
 
 type ProvidersBootstrapUpdater = (
   current: ProvidersBootstrapResponse,
@@ -66,8 +58,6 @@ export const EMPTY_PROVIDERS_BOOTSTRAP: ProvidersBootstrapResponse = Object.free
   cursor_accounts: EMPTY_ACCOUNTS,
   amp_accounts: EMPTY_ACCOUNTS,
 });
-
-const providersBootstrapByScope = new Map<string, ProvidersBootstrapEntry>();
 
 type HostProvidersBootstrapSlices = Pick<
   ProvidersBootstrapResponse,
@@ -243,53 +233,11 @@ const normalizeProvidersBootstrap = (
   };
 };
 
-function getOrCreateEntry(scopeKey: string): ProvidersBootstrapEntry {
-  let entry = providersBootstrapByScope.get(scopeKey);
-  if (!entry) {
-    entry = {
-      listeners: new Set(),
-    };
-    providersBootstrapByScope.set(scopeKey, entry);
-  }
-  return entry;
-}
-
-function emit(entry: ProvidersBootstrapEntry): void {
-  for (const listener of entry.listeners) {
-    listener();
-  }
-}
-
-function setEntryData(
-  ownerScope: OwnerScope,
-  entry: ProvidersBootstrapEntry,
-  next: ProvidersBootstrapResponse,
-): ProvidersBootstrapResponse {
-  const scopeKey = scopeKeyForOwner(ownerScope);
-  const normalized = normalizeProvidersBootstrap(next, entry.data, ownerScope);
-  entry.data = normalized;
-  entry.stale = false;
-  providersBootstrapByScope.set(scopeKey, entry);
-  emit(entry);
-  return normalized;
-}
-
-function loadFresh(
-  ownerScope: OwnerScope,
-  entry: ProvidersBootstrapEntry,
-  load: (current: ProvidersBootstrapResponse | undefined) => Promise<ProvidersBootstrapResponse>,
-): Promise<ProvidersBootstrapResponse> {
-  const request = load(entry.data)
-    .then((next) => setEntryData(ownerScope, entry, next))
-    .finally(() => {
-      if (entry.inFlight === request) {
-        entry.inFlight = undefined;
-      }
-    });
-  entry.inFlight = request;
-  entry.stale = false;
-  return request;
-}
+const providersBootstrapStore = createDaemonResourceStore<OwnerScope, ProvidersBootstrapResponse>({
+  defaultData: EMPTY_PROVIDERS_BOOTSTRAP,
+  keyToString: scopeKeyForOwner,
+  normalize: ({ key, next, current }) => normalizeProvidersBootstrap(next, current, key),
+});
 
 async function loadHostBootstrapSlices(): Promise<HostProvidersBootstrapSlices> {
   const providers = await listProviders("host");
@@ -344,7 +292,7 @@ export function getProvidersBootstrapSnapshot(workspaceId: string): ProvidersBoo
   return getProvidersBootstrapSnapshotForScope(getProviderWorkspaceOwnerScope(workspaceId));
 }
 
-export function subscribeProvidersBootstrap(workspaceId: string, listener: Listener): () => void {
+export function subscribeProvidersBootstrap(workspaceId: string, listener: () => void): () => void {
   if (!workspaceId) {
     return () => {};
   }
@@ -392,7 +340,7 @@ export function getHostProvidersBootstrapSnapshot(): ProvidersBootstrapResponse 
   return getProvidersBootstrapSnapshotForScope(getProviderHostOwnerScope());
 }
 
-export function subscribeHostProvidersBootstrap(listener: Listener): () => void {
+export function subscribeHostProvidersBootstrap(listener: () => void): () => void {
   return subscribeProvidersBootstrapForScope(getProviderHostOwnerScope(), listener);
 }
 
@@ -421,54 +369,39 @@ export function invalidateHostProvidersBootstrap(): void {
 export function getCachedProvidersBootstrapForScope(
   ownerScope: OwnerScope,
 ): ProvidersBootstrapResponse | undefined {
-  return providersBootstrapByScope.get(scopeKeyForOwner(ownerScope))?.data;
+  return providersBootstrapStore.getCached(ownerScope);
 }
 
 export function getProvidersBootstrapSnapshotForScope(ownerScope: OwnerScope): ProvidersBootstrapResponse {
-  return getCachedProvidersBootstrapForScope(ownerScope) ?? EMPTY_PROVIDERS_BOOTSTRAP;
+  return providersBootstrapStore.getSnapshot(ownerScope);
 }
 
 export function subscribeProvidersBootstrapForScope(
   ownerScope: OwnerScope,
-  listener: Listener,
+  listener: () => void,
 ): () => void {
-  const scopeKey = scopeKeyForOwner(ownerScope);
-  const entry = getOrCreateEntry(scopeKey);
-  entry.listeners.add(listener);
-  return () => {
-    entry.listeners.delete(listener);
-    if (entry.listeners.size === 0 && !entry.inFlight && !entry.data) {
-      providersBootstrapByScope.delete(scopeKey);
-    }
-  };
+  return providersBootstrapStore.subscribe(ownerScope, listener);
 }
 
 export function updateProvidersBootstrapForScope(
   ownerScope: OwnerScope,
   updater: ProvidersBootstrapUpdater,
 ): ProvidersBootstrapResponse {
-  const entry = getOrCreateEntry(scopeKeyForOwner(ownerScope));
-  const next = updater(entry.data ?? EMPTY_PROVIDERS_BOOTSTRAP);
-  return setEntryData(ownerScope, entry, next);
+  return providersBootstrapStore.update(ownerScope, updater);
 }
 
 export function hasCachedProvidersBootstrapForScope(ownerScope: OwnerScope): boolean {
-  return getCachedProvidersBootstrapForScope(ownerScope) !== undefined;
+  return providersBootstrapStore.hasCached(ownerScope);
 }
 
 export async function loadProvidersBootstrapForScope(ownerScope: OwnerScope): Promise<ProvidersBootstrapResponse> {
-  const scopeKey = scopeKeyForOwner(ownerScope);
-  const entry = getOrCreateEntry(scopeKey);
-  if (entry.data && !entry.stale) {
-    return entry.data;
-  }
-  if (entry.inFlight) {
-    return entry.inFlight;
-  }
   if (ownerScope.kind === "workspace") {
-    return loadFresh(ownerScope, entry, () => getProvidersBootstrap(ownerScope.workspaceId));
+    return providersBootstrapStore.load(
+      ownerScope,
+      () => getProvidersBootstrap(ownerScope.workspaceId),
+    );
   }
-  return loadFresh(ownerScope, entry, async (current) => ({
+  return providersBootstrapStore.load(ownerScope, async (current) => ({
     ...(current ?? EMPTY_PROVIDERS_BOOTSTRAP),
     ...(await loadHostBootstrapSlices()),
   }));
@@ -477,21 +410,18 @@ export async function loadProvidersBootstrapForScope(ownerScope: OwnerScope): Pr
 export async function refreshProvidersBootstrapForScope(
   ownerScope: OwnerScope,
 ): Promise<ProvidersBootstrapResponse> {
-  const entry = getOrCreateEntry(scopeKeyForOwner(ownerScope));
-  if (entry.inFlight) {
-    return entry.inFlight;
-  }
   if (ownerScope.kind === "workspace") {
-    return loadFresh(ownerScope, entry, () => getProvidersBootstrap(ownerScope.workspaceId));
+    return providersBootstrapStore.refresh(
+      ownerScope,
+      () => getProvidersBootstrap(ownerScope.workspaceId),
+    );
   }
-  return loadFresh(ownerScope, entry, async (current) => ({
+  return providersBootstrapStore.refresh(ownerScope, async (current) => ({
     ...(current ?? EMPTY_PROVIDERS_BOOTSTRAP),
     ...(await loadHostBootstrapSlices()),
   }));
 }
 
 export function invalidateProvidersBootstrapForScope(ownerScope: OwnerScope): void {
-  const entry = providersBootstrapByScope.get(scopeKeyForOwner(ownerScope));
-  if (!entry) return;
-  entry.stale = true;
+  providersBootstrapStore.invalidate(ownerScope);
 }

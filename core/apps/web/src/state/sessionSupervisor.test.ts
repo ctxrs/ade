@@ -11,6 +11,7 @@ import type {
 } from "../api/client";
 import type { SessionReplicaPatch } from "./sessionReplicaProtocol";
 import type { WorkspaceActiveSnapshotEventSource, WorkspaceActiveSnapshotState } from "./workspaceActiveSnapshotStore";
+import { loadSessionHistoryPageV1, loadTaskThoughtsV1, saveSessionHistoryPageV1, saveTaskThoughtsV1 } from "./uiStateStore";
 
 vi.mock("../api/client", () => {
   const idToString = (id: string | null | undefined): string => {
@@ -23,6 +24,14 @@ vi.mock("../api/client", () => {
   return {
     authToken: vi.fn(() => null),
     idToString,
+    getDaemonConnection: vi.fn(() => ({
+      baseUrl: "http://daemon.test",
+      wsBaseUrl: "ws://daemon.test",
+      authToken: null,
+      runId: null,
+      source: "test",
+      targetScope: { kind: "browser", baseUrl: "http://daemon.test" },
+    })),
     getDaemonClientConfig: vi.fn(() => ({
       baseUrl: "",
       wsBaseUrl: "",
@@ -54,6 +63,7 @@ vi.mock("./uiStateStore", () => ({
 }));
 
 import {
+  getSessionHistory,
   getSessionHead,
   getSessionSnapshot,
   getSessionState,
@@ -87,7 +97,9 @@ type TestInternalEntry = {
   events: SessionEvent[];
   eventsRev: number;
   queue: Message[];
+  hasMoreTurns: boolean;
   lastEventSeq?: number;
+  oldestTurnSeq?: number;
   stateLoaded?: boolean;
   stateRev?: number;
   stateAppliedRev?: number;
@@ -105,11 +117,16 @@ type SessionSupervisorInternals = {
 
 const asSupervisorInternals = (value: unknown): SessionSupervisorInternals => value as SessionSupervisorInternals;
 
+const getSessionHistoryMock = vi.mocked(getSessionHistory);
 const getSessionHeadMock = vi.mocked(getSessionHead);
 const getSessionSnapshotMock = vi.mocked(getSessionSnapshot);
 const getSessionStateMock = vi.mocked(getSessionState);
 const listSessionArtifactsMock = vi.mocked(listSessionArtifacts);
 const listSessionSubagentInvocationsMock = vi.mocked(listSessionSubagentInvocations);
+const loadSessionHistoryPageV1Mock = vi.mocked(loadSessionHistoryPageV1);
+const saveSessionHistoryPageV1Mock = vi.mocked(saveSessionHistoryPageV1);
+const loadTaskThoughtsV1Mock = vi.mocked(loadTaskThoughtsV1);
+const saveTaskThoughtsV1Mock = vi.mocked(saveTaskThoughtsV1);
 
 const mkWorkspaceSnapshotState = (): WorkspaceActiveSnapshotState => ({
   workspaceId: "ws-1",
@@ -2156,6 +2173,119 @@ describe("SessionSupervisor", () => {
     const recoveredEntry = sup.getSnapshot().sessions[sessionId];
     expect(recoveredEntry?.artifacts).toEqual([]);
     expect(recoveredEntry?.subagentInvocations).toEqual([]);
+  });
+
+  it("loads and saves session history pages with workspace owner scope", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-history-scope";
+    loadSessionHistoryPageV1Mock.mockResolvedValueOnce(null);
+    getSessionHistoryMock.mockResolvedValueOnce({
+      turns: [],
+      messages: [],
+      has_more: false,
+      next_cursor: null,
+    } as never);
+
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+    sup.setSession(mkSession(sessionId));
+    const entry = internals.ensureEntry(sessionId);
+    entry.hasMoreTurns = true;
+    entry.oldestTurnSeq = 10;
+
+    await sup.loadMoreTurns(sessionId);
+
+    expect(loadSessionHistoryPageV1Mock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "workspace",
+        workspaceId: "ws-1",
+        daemon: { kind: "browser", baseUrl: "http://daemon.test" },
+      }),
+      sessionId,
+      10,
+      60,
+    );
+    expect(saveSessionHistoryPageV1Mock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "workspace",
+        workspaceId: "ws-1",
+        daemon: { kind: "browser", baseUrl: "http://daemon.test" },
+      }),
+      sessionId,
+      10,
+      60,
+      expect.objectContaining({ has_more: false }),
+    );
+  });
+
+  it("loads and saves task thought caches with workspace owner scope", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-thought-scope";
+    const createdAt = new Date().toISOString();
+    loadTaskThoughtsV1Mock.mockResolvedValueOnce({
+      v: 1,
+      taskId: "task-1",
+      sessions: {},
+      updatedAtMs: Date.now(),
+    });
+
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+    sup.setSession(mkSession(sessionId));
+
+    internals.handleReplicaPatches([
+      {
+        op: "append",
+        sessionId,
+        data: {
+          session: mkSession(sessionId),
+          events: [
+            {
+              id: "evt-thought-1",
+              session_id: sessionId,
+              turn_id: "turn-1",
+              event_type: "thought_chunk",
+              payload_json: {
+                item_id: "item-1",
+                full_content: "final thought",
+                is_final: true,
+              },
+              created_at: createdAt,
+              seq: 1,
+            },
+          ],
+          lastEventSeq: 1,
+        },
+      },
+    ]);
+
+    await waitForCondition(() => saveTaskThoughtsV1Mock.mock.calls.length > 0);
+
+    expect(loadTaskThoughtsV1Mock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "workspace",
+        workspaceId: "ws-1",
+        daemon: { kind: "browser", baseUrl: "http://daemon.test" },
+      }),
+      "task-1",
+    );
+    expect(saveTaskThoughtsV1Mock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "workspace",
+        workspaceId: "ws-1",
+        daemon: { kind: "browser", baseUrl: "http://daemon.test" },
+      }),
+      "task-1",
+      expect.objectContaining({
+        sessions: expect.objectContaining({
+          [sessionId]: expect.objectContaining({
+            sessionId,
+          }),
+        }),
+      }),
+    );
   });
 
   it("clears cached git status when a fresh state response omits it", async () => {

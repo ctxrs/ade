@@ -1,4 +1,5 @@
 import {
+  getDaemonConnection,
   getProviderOptions,
   getSessionHistory,
   getSessionState,
@@ -44,6 +45,7 @@ import type { PersistedTaskThoughtsV1 } from "./uiStateStore";
 import { SessionReplicaBridge } from "./sessionReplicaBridge";
 import type { SessionReplicaPatch } from "./sessionReplicaProtocol";
 import { emitUiDiagnostic } from "./diagnosticsChannel";
+import { createWorkspaceOwnerScope, serializeOwnerScope, type WorkspaceOwnerScope } from "./scopeIdentity";
 import { normalizeGitStatusSummaryInput } from "./sessionSupervisor/gitStatusNormalization";
 import {
   appendFragment,
@@ -308,7 +310,7 @@ type InternalEntry = SessionCacheEntry & {
   thoughtCacheLoaded: boolean;
   thoughtCacheLoading: boolean;
   thoughtCacheDirty: boolean;
-  thoughtCacheTaskId?: string;
+  thoughtCacheOwnerTaskKey?: string;
   thoughtCacheLoadToken: number;
   supportFreshnessEpoch: number;
   stateAutoLoadKey?: string;
@@ -677,7 +679,10 @@ export class SessionSupervisor {
     entry.fetching.history = true;
     const beforeLen = entry.turns.length;
     try {
-      const cached = await loadSessionHistoryPageV1(sessionId, beforeSeq, TURN_PAGE_LIMIT);
+      const ownerScope = this.resolveEntryWorkspaceOwnerScope(entry);
+      const cached = ownerScope
+        ? await loadSessionHistoryPageV1(ownerScope, sessionId, beforeSeq, TURN_PAGE_LIMIT)
+        : null;
       if (cached?.page) {
         const page = cached.page;
         this.mergeTurns(entry, page.turns);
@@ -696,7 +701,9 @@ export class SessionSupervisor {
       entry.oldestTurnSeq = page.next_cursor ?? entry.oldestTurnSeq;
       entry.updatedAtMs = Date.now();
       this.publish();
-      await saveSessionHistoryPageV1(sessionId, beforeSeq, TURN_PAGE_LIMIT, page);
+      if (ownerScope) {
+        await saveSessionHistoryPageV1(ownerScope, sessionId, beforeSeq, TURN_PAGE_LIMIT, page);
+      }
       await this.persistHead(entry);
       return entry.turns.length - beforeLen;
     } finally {
@@ -1044,7 +1051,7 @@ export class SessionSupervisor {
       thoughtCacheLoaded: false,
       thoughtCacheLoading: false,
       thoughtCacheDirty: false,
-      thoughtCacheTaskId: undefined,
+      thoughtCacheOwnerTaskKey: undefined,
       thoughtCacheLoadToken: 0,
       supportFreshnessEpoch: 0,
       stateAutoLoadKey: undefined,
@@ -1821,13 +1828,47 @@ export class SessionSupervisor {
     await saveSessionHeadV1(entry.sessionId, head);
   }
 
-  private async getTaskThoughtCache(taskId: string): Promise<PersistedTaskThoughtsV1> {
-    const cached = this.taskThoughtCache.get(taskId);
+  private resolveWorkspaceOwnerScope(workspaceId: string | null | undefined): WorkspaceOwnerScope | null {
+    const normalizedWorkspaceId = idToString(workspaceId);
+    const daemonTargetScope = getDaemonConnection().targetScope ?? null;
+    if (!normalizedWorkspaceId || !daemonTargetScope) return null;
+    return createWorkspaceOwnerScope(daemonTargetScope, normalizedWorkspaceId);
+  }
+
+  private resolveEntryWorkspaceOwnerScope(entry: InternalEntry): WorkspaceOwnerScope | null {
+    return this.resolveWorkspaceOwnerScope(
+      idToString(entry.session?.workspace_id) || this.workspaceSnapshotState?.workspaceId || "",
+    );
+  }
+
+  private taskThoughtOwnerKey(ownerScope: WorkspaceOwnerScope, taskId: string): string {
+    return `${serializeOwnerScope(ownerScope)}\u0000${taskId}`;
+  }
+
+  private clearTaskThoughtCachesForTask(taskId: string) {
+    for (const key of Array.from(this.taskThoughtCache.keys())) {
+      if (key.endsWith(`\u0000${taskId}`)) {
+        this.taskThoughtCache.delete(key);
+      }
+    }
+    for (const key of Array.from(this.taskThoughtCacheLoading.keys())) {
+      if (key.endsWith(`\u0000${taskId}`)) {
+        this.taskThoughtCacheLoading.delete(key);
+      }
+    }
+  }
+
+  private async getTaskThoughtCache(
+    ownerScope: WorkspaceOwnerScope,
+    taskId: string,
+  ): Promise<PersistedTaskThoughtsV1> {
+    const cacheKey = this.taskThoughtOwnerKey(ownerScope, taskId);
+    const cached = this.taskThoughtCache.get(cacheKey);
     if (cached) return cached;
-    const inflight = this.taskThoughtCacheLoading.get(taskId);
+    const inflight = this.taskThoughtCacheLoading.get(cacheKey);
     if (inflight) return inflight;
     const loader = (async () => {
-      const existing = await loadTaskThoughtsV1(taskId);
+      const existing = await loadTaskThoughtsV1(ownerScope, taskId);
       return (
         existing ?? {
           v: 1,
@@ -1837,20 +1878,23 @@ export class SessionSupervisor {
         }
       );
     })();
-    this.taskThoughtCacheLoading.set(taskId, loader);
+    this.taskThoughtCacheLoading.set(cacheKey, loader);
     try {
       const resolved = await loader;
-      this.taskThoughtCache.set(taskId, resolved);
+      this.taskThoughtCache.set(cacheKey, resolved);
       return resolved;
     } finally {
-      this.taskThoughtCacheLoading.delete(taskId);
+      this.taskThoughtCacheLoading.delete(cacheKey);
     }
   }
 
   private async ensureThoughtCache(entry: InternalEntry) {
     const taskId = idToString(entry.session?.task_id);
     if (!taskId) return;
-    if (entry.thoughtCacheLoaded && entry.thoughtCacheTaskId === taskId) {
+    const ownerScope = this.resolveEntryWorkspaceOwnerScope(entry);
+    if (!ownerScope) return;
+    const cacheKey = this.taskThoughtOwnerKey(ownerScope, taskId);
+    if (entry.thoughtCacheLoaded && entry.thoughtCacheOwnerTaskKey === cacheKey) {
       const overlayed = this.overlayThoughtCacheOnEvents(entry, entry.events);
       if (overlayed !== entry.events) {
         entry.events = overlayed;
@@ -1872,7 +1916,7 @@ export class SessionSupervisor {
     entry.thoughtCacheLoading = true;
     const token = (entry.thoughtCacheLoadToken += 1);
     try {
-      const cache = await this.getTaskThoughtCache(taskId);
+      const cache = await this.getTaskThoughtCache(ownerScope, taskId);
       if (entry.thoughtCacheLoadToken !== token) return;
       const sessionCache = cache.sessions?.[entry.sessionId]?.thoughts ?? {};
       entry.thoughtCacheByKey = {
@@ -1880,7 +1924,7 @@ export class SessionSupervisor {
         ...entry.thoughtCacheByKey,
       };
       entry.thoughtCacheLoaded = true;
-      entry.thoughtCacheTaskId = taskId;
+      entry.thoughtCacheOwnerTaskKey = cacheKey;
       const overlayed = this.overlayThoughtCacheOnEvents(entry, entry.events);
       if (overlayed !== entry.events) {
         entry.events = overlayed;
@@ -1905,7 +1949,10 @@ export class SessionSupervisor {
     if (!entry.thoughtCacheDirty) return;
     const taskId = idToString(entry.session?.task_id);
     if (!taskId) return;
-    const cache = await this.getTaskThoughtCache(taskId);
+    const ownerScope = this.resolveEntryWorkspaceOwnerScope(entry);
+    if (!ownerScope) return;
+    const cacheKey = this.taskThoughtOwnerKey(ownerScope, taskId);
+    const cache = await this.getTaskThoughtCache(ownerScope, taskId);
     const existingSession = cache.sessions?.[entry.sessionId];
     const mergedThoughts = {
       ...(existingSession?.thoughts ?? {}),
@@ -1919,15 +1966,17 @@ export class SessionSupervisor {
       },
     };
     cache.updatedAtMs = Date.now();
-    this.taskThoughtCache.set(taskId, cache);
+    this.taskThoughtCache.set(cacheKey, cache);
     entry.thoughtCacheDirty = false;
-    await saveTaskThoughtsV1(taskId, { sessions: cache.sessions });
+    await saveTaskThoughtsV1(ownerScope, taskId, { sessions: cache.sessions });
   }
 
   private async clearTaskThoughts(taskId: string) {
-    this.taskThoughtCache.delete(taskId);
-    this.taskThoughtCacheLoading.delete(taskId);
-    await clearTaskThoughtsV1(taskId);
+    this.clearTaskThoughtCachesForTask(taskId);
+    const ownerScope = this.resolveWorkspaceOwnerScope(this.workspaceSnapshotState?.workspaceId ?? "");
+    if (ownerScope) {
+      await clearTaskThoughtsV1(ownerScope, taskId);
+    }
     let changed = false;
     for (const entry of this.entries.values()) {
       if (idToString(entry.session?.task_id) !== taskId) continue;
@@ -1937,6 +1986,7 @@ export class SessionSupervisor {
         entry.thoughtCacheLoaded = true;
         changed = true;
       }
+      entry.thoughtCacheOwnerTaskKey = undefined;
       if (entry.turns.length > 0) {
         const nextTurns = entry.turns.map((turn) => {
           const current = String(turn.thought_partial ?? "");

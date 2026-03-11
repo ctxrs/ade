@@ -1,3 +1,4 @@
+import { serializeOwnerScope, type WorkspaceOwnerScope } from "./scopeIdentity";
 import { getWebappStorage } from "./storage";
 
 export type UiKvRecord = {
@@ -15,6 +16,10 @@ const SESSION_HISTORY_PAGE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const SESSION_HISTORY_TOUCH_GRACE_MS = 30 * 1000;
 
 const storage = getWebappStorage();
+
+const safeKeyPart = (value: string): string => encodeURIComponent(value);
+
+const ownerScopeKeyPart = (ownerScope: WorkspaceOwnerScope): string => safeKeyPart(serializeOwnerScope(ownerScope));
 
 export async function uiStateBatch(ops: UiStateBatchOp[]): Promise<void> {
   if (ops.length === 0) return;
@@ -181,12 +186,15 @@ export type PersistedTaskThoughtsV1 = {
   updatedAtMs: number;
 };
 
-export function taskThoughtsKeyV1(taskId: string) {
-  return `wb.task_thoughts.v1.${taskId}`;
+export function taskThoughtsKeyV2(ownerScope: WorkspaceOwnerScope, taskId: string) {
+  return `wb.task_thoughts.v2.${ownerScopeKeyPart(ownerScope)}.${safeKeyPart(taskId)}`;
 }
 
-export async function loadTaskThoughtsV1(taskId: string): Promise<PersistedTaskThoughtsV1 | null> {
-  const raw = await storage.getSnapshot<PersistedTaskThoughtsV1>(taskThoughtsKeyV1(taskId));
+export async function loadTaskThoughtsV1(
+  ownerScope: WorkspaceOwnerScope,
+  taskId: string,
+): Promise<PersistedTaskThoughtsV1 | null> {
+  const raw = await storage.getSnapshot<PersistedTaskThoughtsV1>(taskThoughtsKeyV2(ownerScope, taskId));
   if (!raw || typeof raw !== "object") return null;
   const rec = raw as PersistedTaskThoughtsV1;
   if (rec.v !== 1 || rec.taskId !== taskId || !rec.sessions || typeof rec.sessions !== "object") {
@@ -196,10 +204,11 @@ export async function loadTaskThoughtsV1(taskId: string): Promise<PersistedTaskT
 }
 
 export async function saveTaskThoughtsV1(
+  ownerScope: WorkspaceOwnerScope,
   taskId: string,
   payload: Omit<PersistedTaskThoughtsV1, "v" | "taskId" | "updatedAtMs">,
 ): Promise<void> {
-  await storage.setSnapshot(taskThoughtsKeyV1(taskId), {
+  await storage.setSnapshot(taskThoughtsKeyV2(ownerScope, taskId), {
     v: 1,
     taskId,
     updatedAtMs: Date.now(),
@@ -207,8 +216,8 @@ export async function saveTaskThoughtsV1(
   } satisfies PersistedTaskThoughtsV1);
 }
 
-export async function clearTaskThoughtsV1(taskId: string): Promise<void> {
-  await storage.deleteSnapshot(taskThoughtsKeyV1(taskId));
+export async function clearTaskThoughtsV1(ownerScope: WorkspaceOwnerScope, taskId: string): Promise<void> {
+  await storage.deleteSnapshot(taskThoughtsKeyV2(ownerScope, taskId));
 }
 
 export type PersistedSessionHistoryPageV1 = {
@@ -229,8 +238,20 @@ function sessionHistoryIndexKeyV1() {
   return "wb.session_history_index.v1";
 }
 
-export function sessionHistoryPageKeyV1(sessionId: string, beforeSeq: number, limit: number) {
-  return "wb.session_history_page.v1." + sessionId + "." + beforeSeq + "." + limit;
+export function sessionHistoryPageKeyV2(
+  ownerScope: WorkspaceOwnerScope,
+  sessionId: string,
+  beforeSeq: number,
+  limit: number,
+) {
+  return "wb.session_history_page.v2."
+    + ownerScopeKeyPart(ownerScope)
+    + "."
+    + safeKeyPart(sessionId)
+    + "."
+    + beforeSeq
+    + "."
+    + limit;
 }
 
 function decodeSessionHistoryIndexV1(raw: unknown): PersistedSessionHistoryIndexV1 {
@@ -301,11 +322,12 @@ async function updateSessionHistoryIndexV1(
 }
 
 export async function loadSessionHistoryPageV1(
+  ownerScope: WorkspaceOwnerScope,
   sessionId: string,
   beforeSeq: number,
   limit: number,
 ): Promise<PersistedSessionHistoryPageV1 | null> {
-  const key = sessionHistoryPageKeyV1(sessionId, beforeSeq, limit);
+  const key = sessionHistoryPageKeyV2(ownerScope, sessionId, beforeSeq, limit);
   const raw = await storage.getHistoryPage<PersistedSessionHistoryPageV1>(key);
   if (!raw || typeof raw !== "object") return null;
   const rec = raw as PersistedSessionHistoryPageV1;
@@ -315,12 +337,13 @@ export async function loadSessionHistoryPageV1(
 }
 
 export async function saveSessionHistoryPageV1(
+  ownerScope: WorkspaceOwnerScope,
   sessionId: string,
   beforeSeq: number,
   limit: number,
   page: PersistedSessionHistoryPageV1["page"],
 ): Promise<void> {
-  const key = sessionHistoryPageKeyV1(sessionId, beforeSeq, limit);
+  const key = sessionHistoryPageKeyV2(ownerScope, sessionId, beforeSeq, limit);
   const now = Date.now();
   const pageValue: PersistedSessionHistoryPageV1 = {
     v: 1,

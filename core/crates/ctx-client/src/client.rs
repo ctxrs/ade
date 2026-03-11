@@ -209,7 +209,6 @@ mod tests {
                 if buf.len() >= idx + content_length {
                     break;
                 }
-                break;
             }
         }
 
