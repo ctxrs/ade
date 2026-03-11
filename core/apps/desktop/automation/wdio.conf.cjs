@@ -70,7 +70,7 @@ if (!String(process.env.TAURI_DRIVER_PORT || "").trim()) {
 }
 
 const CTX_BIN = process.env.CTX_AUTOMATION_CTX_BIN ||
-  path.resolve(ROOT, "src-tauri/bin/ctx");
+  path.resolve(ROOT, "src-tauri/bin/ctx-daemon");
 
 const USE_EXTERNAL_DAEMON = resolveBoolishFlag(
   process.env.CTX_AUTOMATION_USE_EXTERNAL_DAEMON,

@@ -3,7 +3,7 @@ set -euo pipefail
 
 APP_PATH="${CTX_DESKTOP_APP_PATH:-/Users/example-user/code/ctx-monorepo/core/apps/desktop/src-tauri/target/release/bundle/macos/ctx.app}"
 WORKSPACE_PATH="${CTX_DESKTOP_WORKSPACE_PATH:-/Users/example-user/code/ctx-monorepo}"
-CTX_BIN="${CTX_DESKTOP_CTX_BIN:-/Users/example-user/code/ctx-monorepo/core/apps/desktop/src-tauri/bin/ctx}"
+CTX_BIN="${CTX_DESKTOP_CTX_BIN:-/Users/example-user/code/ctx-monorepo/core/apps/desktop/src-tauri/bin/ctx-daemon}"
 DATA_DIR="${CTX_DESKTOP_DAEMON_DATA_DIR:-/tmp/ctx-desktop-automation-$${RANDOM}}"
 
 if [ ! -x "$CTX_BIN" ]; then

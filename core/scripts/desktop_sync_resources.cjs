@@ -700,21 +700,38 @@ const resolveHostTarget = () => {
   }
 };
 
-const copySidecar = (name) => {
-  const src = path.join(resolveCargoTargetDir(), profile, `${name}${binExt}`);
-  const dest = path.join(destBinDir, `${name}${binExt}`);
-  const target = resolveHostTarget();
-  const destTarget = target ? path.join(destBinDir, `${name}-${target}${binExt}`) : null;
+const copySidecarBinary = ({
+  sourceDir,
+  destDir,
+  sourceName,
+  destName = sourceName,
+  targetTriple = null,
+  binExtOverride = binExt,
+}) => {
+  const src = path.join(sourceDir, `${sourceName}${binExtOverride}`);
+  const dest = path.join(destDir, `${destName}${binExtOverride}`);
+  const destTarget = targetTriple ? path.join(destDir, `${destName}-${targetTriple}${binExtOverride}`) : null;
   if (!fs.existsSync(src)) {
     throw new Error(`missing sidecar: ${src} (did you run cargo build?)`);
   }
-  fs.mkdirSync(destBinDir, { recursive: true });
+  fs.mkdirSync(destDir, { recursive: true });
   fs.copyFileSync(src, dest);
   ensureExecutable(dest);
   if (destTarget) {
     fs.copyFileSync(src, destTarget);
     ensureExecutable(destTarget);
   }
+  return { src, dest, destTarget };
+};
+
+const copySidecar = (sourceName, destName = sourceName) => {
+  const { dest } = copySidecarBinary({
+    sourceDir: path.join(resolveCargoTargetDir(), profile),
+    destDir: destBinDir,
+    sourceName,
+    destName,
+    targetTriple: resolveHostTarget(),
+  });
   return dest;
 };
 
@@ -745,7 +762,7 @@ const main = () => {
   }
 
   const copied = {
-    ctx: copySidecar("ctx"),
+    ctxDaemon: copySidecar("ctx", "ctx-daemon"),
     ctxMcp: copySidecar("ctx-mcp"),
     webDist: copyWebDist(),
     bundles: syncBundlesEnabled ? syncBundles() : verifyExistingBundles(),
@@ -754,4 +771,10 @@ const main = () => {
   console.log("desktop_sync_resources:", copied);
 };
 
-main();
+if (require.main === module) {
+  main();
+} else {
+  module.exports = {
+    copySidecarBinary,
+  };
+}

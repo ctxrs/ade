@@ -38,7 +38,7 @@
       "bundles/runtime_lock.v2.json",
       "bundles/lucide-settings.svg"
     ],
-    "externalBin": ["bin/ctx", "bin/ctx-mcp"],
+    "externalBin": ["bin/ctx-daemon", "bin/ctx-mcp"],
     "macOS": {
       "infoPlist": "Info.plist"
     }

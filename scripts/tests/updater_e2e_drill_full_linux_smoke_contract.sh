@@ -12,16 +12,19 @@ trap 'rm -rf "$tmp"' EXIT
 bundle_dir="$tmp/core/apps/desktop/src-tauri/target/release/bundle/appimage"
 apprun_path="$bundle_dir/ctx_0.5.18_amd64.AppDir/AppRun"
 apprun_wrapped_path="${apprun_path}.wrapped"
-appdir_bin="$bundle_dir/ctx_0.5.18_amd64.AppDir/usr/bin/ctx"
+appdir_app_bin="$bundle_dir/ctx_0.5.18_amd64.AppDir/usr/bin/ctx"
+appdir_daemon_bin="$bundle_dir/ctx_0.5.18_amd64.AppDir/usr/bin/ctx-daemon"
 appimage_path="$bundle_dir/ctx_0.5.18_amd64.AppImage"
 
-mkdir -p "$(dirname "$apprun_path")" "$(dirname "$appdir_bin")"
+mkdir -p "$(dirname "$apprun_path")" "$(dirname "$appdir_app_bin")"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$apprun_path"
 chmod 0644 "$apprun_path"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$apprun_wrapped_path"
 chmod 0644 "$apprun_wrapped_path"
-printf '#!/usr/bin/env bash\nexit 0\n' >"$appdir_bin"
-chmod 0644 "$appdir_bin"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$appdir_app_bin"
+chmod 0644 "$appdir_app_bin"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$appdir_daemon_bin"
+chmod 0644 "$appdir_daemon_bin"
 printf 'not-a-real-appimage\n' >"$appimage_path"
 chmod +x "$appimage_path"
 
@@ -42,8 +45,12 @@ if [[ ! -x "$apprun_wrapped_path" ]]; then
   echo "error: expected AppRun.wrapped helper to be normalized executable" >&2
   exit 1
 fi
-if [[ ! -x "$appdir_bin" ]]; then
-  echo "error: expected inner AppDir launcher binary to be normalized executable" >&2
+if [[ ! -x "$appdir_app_bin" ]]; then
+  echo "error: expected AppDir app launcher binary to be normalized executable" >&2
+  exit 1
+fi
+if [[ ! -x "$appdir_daemon_bin" ]]; then
+  echo "error: expected AppDir daemon sidecar to be normalized executable" >&2
   exit 1
 fi
 
@@ -58,7 +65,7 @@ if ! grep -Fq "outer AppImage wrapper" "$stderr_one"; then
   exit 1
 fi
 
-if CTX_DESKTOP_APP_PATH="$appdir_bin" resolve_local_smoke_app_path "$tmp" Linux > /dev/null 2>"$stderr_two"; then
+if CTX_DESKTOP_APP_PATH="$appdir_daemon_bin" resolve_local_smoke_app_path "$tmp" Linux > /dev/null 2>"$stderr_two"; then
   echo "error: expected inner AppDir binary override to be rejected" >&2
   exit 1
 fi

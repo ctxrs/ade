@@ -400,6 +400,30 @@ const dispatchManualCheckEvent = async (page: Page): Promise<void> => {
   }, REQUEST_UPDATE_CHECK_EVENT);
 };
 
+const waitForIdleVersionScheduled = async (page: Page, version: string): Promise<void> => {
+  await expect
+    .poll(
+      async () =>
+        await page.evaluate((idleKey: string) => {
+          return localStorage.getItem(idleKey);
+        }, IDLE_UPDATE_VERSION_STORAGE_KEY),
+      { timeout: 5_000 },
+    )
+    .toContain(version);
+};
+
+const waitForRestartRequiredVersionState = async (page: Page, version: string): Promise<void> => {
+  await expect
+    .poll(
+      async () =>
+        await page.evaluate((restartKey: string) => {
+          return sessionStorage.getItem(restartKey);
+        }, RESTART_REQUIRED_VERSION_STORAGE_KEY),
+      { timeout: 5_000 },
+    )
+    .toBe(version);
+};
+
 test("global updater checks stay app-scoped across launcher, wizard, and workbench", async ({ page }, testInfo) => {
   const sharedStorageKey = `ctx_updater_global_semantics_${Date.now()}`;
   await clearUpdateStorageKeys(page);
@@ -463,7 +487,7 @@ test("global updater checks stay app-scoped across launcher, wizard, and workben
       phase: "staged_ready",
     },
   });
-  await broadcastUpdaterRefresh(page, "stage-transition");
+  await dispatchManualCheckEvent(page);
   await expect.poll(async () => {
     const diagnostics = await readHarnessDiagnostics(page);
     const phases = diagnostics.snapshots.map((entry) => entry.state.phase);
@@ -594,15 +618,7 @@ test("restart-required state converges across windows and idle scheduling stays 
   await expect
     .poll(async () => desktopCallCount(page2, "desktop_restart_app"), { timeout: 3_000 })
     .toBe(restartBaselinePage2);
-  await expect
-    .poll(
-      async () =>
-        await page2.evaluate((idleKey: string) => {
-          return localStorage.getItem(idleKey);
-        }, IDLE_UPDATE_VERSION_STORAGE_KEY),
-      { timeout: 5_000 },
-    )
-    .toContain("0.5.1");
+  await waitForIdleVersionScheduled(page2, "0.5.1");
 
   await dispatchIdleEvent(page, true);
   await dispatchIdleEvent(page2, true);
@@ -674,9 +690,11 @@ test("Update on Next Idle waits while active and can recover from restart failur
   });
 
   await expect(page.getByTestId("update-available-snackbar")).toBeVisible({ timeout: 20_000 });
+  await waitForRestartRequiredVersionState(page, "0.5.1");
   await dispatchIdleEvent(page, false);
   const restartBaseline = await desktopCallCount(page, "desktop_restart_app");
   await page.getByRole("button", { name: "Update on Next Idle" }).dispatchEvent("click");
+  await waitForIdleVersionScheduled(page, "0.5.1");
   await dispatchIdleEvent(page, false);
   await expect
     .poll(async () => desktopCallCount(page, "desktop_restart_app"), { timeout: 3_000 })
@@ -687,7 +705,10 @@ test("Update on Next Idle waits while active and can recover from restart failur
   await expect(page.getByText("Restart test failure.")).toBeVisible({ timeout: 20_000 });
 
   await mutateSharedHarnessState(page, { restartShouldFail: false });
+  await dispatchIdleEvent(page, false);
+  await waitForRestartRequiredVersionState(page, "0.5.1");
   await page.getByRole("button", { name: "Update on Next Idle" }).dispatchEvent("click");
+  await waitForIdleVersionScheduled(page, "0.5.1");
   await dispatchIdleEvent(page, true);
   await expect.poll(async () => desktopCallCount(page, "desktop_restart_app")).toBe(2);
 

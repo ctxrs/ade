@@ -5,6 +5,7 @@ use std::cell::Cell;
 use crate::desktop_local_daemon::ensure_local_connection;
 
 const SSH_CONFIG_OVERRIDE_ENV: &str = "CTX_DESKTOP_SSH_CONFIG_PATH";
+const DESKTOP_DAEMON_BIN_NAME: &str = "ctx-daemon";
 
 fn normalized_ssh_config_override(value: &str) -> Option<String> {
     let trimmed = value.trim();
@@ -1708,16 +1709,14 @@ fn dev_bin(name: &str) -> Option<PathBuf> {
     None
 }
 
-fn resolve_primary_bin(app: &tauri::AppHandle, name: &str) -> Result<PathBuf> {
+fn resolve_daemon_bin(app: &tauri::AppHandle) -> Result<PathBuf> {
     if cfg!(debug_assertions) {
-        return dev_bin(name).with_context(|| {
-            format!(
-                "missing development binary for `{name}` at expected path (build it first, e.g. `cargo build -p ctx-http --bin ctx`)"
-            )
-        });
+        return dev_bin(DESKTOP_DAEMON_BIN_NAME).with_context(|| format!(
+            "missing development binary for `{DESKTOP_DAEMON_BIN_NAME}` at expected path (run `pnpm -C core desktop:prep` or rerun desktop_sync_resources after building `ctx-http`)"
+        ));
     }
-    resource_bin(app, name)
-        .with_context(|| format!("missing bundled binary for `{name}` in application resources"))
+    resource_bin(app, DESKTOP_DAEMON_BIN_NAME)
+        .with_context(|| format!("missing bundled binary for `{DESKTOP_DAEMON_BIN_NAME}` in application resources"))
 }
 
 fn resolve_optional_bin(app: &tauri::AppHandle, name: &str) -> Option<PathBuf> {
@@ -1882,7 +1881,7 @@ fn spawn_daemon_with_mode(
     use_systemd_scope: bool,
     wait_for_health: bool,
 ) -> Result<(String, Child, bool)> {
-    let ctx_bin = resolve_primary_bin(app, "ctx")?;
+    let ctx_bin = resolve_daemon_bin(app)?;
     let mcp_bin = resolve_optional_bin(app, "ctx-mcp");
 
     let web_dist = app
