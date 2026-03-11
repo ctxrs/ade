@@ -32,7 +32,7 @@ describe("uiStateStore", () => {
     vi.clearAllMocks();
   });
 
-  it("decodes legacy active snapshot payloads", () => {
+  it("rejects legacy active snapshot payloads", () => {
     const raw = {
       v: 1,
       workspaceId: "ws-1",
@@ -51,9 +51,7 @@ describe("uiStateStore", () => {
       updatedAtMs: 123,
     };
 
-    const decoded = decodeWorkspaceActiveSnapshotV1(raw, "ws-1");
-    expect(decoded?.active.tasks.length).toBe(1);
-    expect(decoded?.active.totalCount).toBe(1);
+    expect(decodeWorkspaceActiveSnapshotV1(raw, "ws-1")).toBeNull();
   });
 
   it("rejects mismatched workspace ids", () => {

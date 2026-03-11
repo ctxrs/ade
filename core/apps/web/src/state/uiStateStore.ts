@@ -111,24 +111,7 @@ export function decodeWorkspaceActiveSnapshotV1(
   if (!raw || typeof raw !== "object") return null;
   const rec = raw as PersistedWorkspaceActiveSnapshotV1;
   if (rec.v !== 1 || rec.workspaceId !== workspaceId) return null;
-  if (!rec.active || !Array.isArray(rec.active.tasks)) {
-    const legacy = rec as PersistedWorkspaceActiveSnapshotV1 & {
-      tasks?: PersistedWorkspaceActiveTaskSummaryV1[];
-      totalCount?: number;
-    };
-    if (!Array.isArray(legacy.tasks)) return null;
-    return {
-      v: 1,
-      workspaceId,
-      snapshotRev: legacy.snapshotRev,
-      archivedRev: legacy.archivedRev,
-      active: {
-        tasks: legacy.tasks,
-        totalCount: legacy.totalCount,
-      },
-      updatedAtMs: legacy.updatedAtMs,
-    };
-  }
+  if (!rec.active || !Array.isArray(rec.active.tasks)) return null;
   return rec;
 }
 

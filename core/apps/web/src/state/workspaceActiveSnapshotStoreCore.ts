@@ -807,17 +807,6 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     this.snapshot.worktreeVcsById = mapWorktreeVcsSnapshots(cached.worktreeVcsSnapshots ?? []);
     this.snapshot.initialized = true;
     this.publish();
-    if (this.needsCacheMigration(cached)) {
-      this.schedulePersistCache();
-    }
-  }
-
-  private needsCacheMigration(cached: PersistedWorkspaceActiveSnapshotV1): boolean {
-    const legacy = cached as PersistedWorkspaceActiveSnapshotV1 & {
-      tasks?: PersistedWorkspaceActiveTaskSummaryV1[];
-      totalCount?: number;
-    };
-    return Array.isArray(legacy.tasks);
   }
 
   private scheduleSnapshotWarning(reason: string) {
