@@ -233,4 +233,47 @@ describe("providersBootstrapStore", () => {
     expect(store.getHostProvidersBootstrapSnapshot().provider_options.codex).toBeUndefined();
     expect(store.getProvidersBootstrapSnapshot("ws-owner-scope").provider_options.codex?.workspace_id).toBe("ws-owner-scope");
   });
+
+  it("preserves a live model catalog when bootstrap only has a pinned placeholder catalog", async () => {
+    const store = await import("./providersBootstrapStore");
+
+    const previous = {
+      provider_id: "codex",
+      workspace_id: "ws-test",
+      supports_load: false,
+      auth_required: false,
+      has_active_auth: true,
+      auth_mode: "subscription" as const,
+      account_identity: "acct-codex",
+      source: {
+        provider_id: "codex",
+        selected_source_kind: "subscription" as const,
+        selected_endpoint_id: null,
+        endpoints: [],
+      },
+      probed_at: "2026-03-10T00:00:00.000Z",
+      probe_ok: true,
+      models: {
+        models: [{ id: "gpt-5.4/low" }, { id: "gpt-5.4/medium" }],
+        current_model_id: "gpt-5.4/medium",
+      },
+    };
+    const next = {
+      ...previous,
+      probed_at: "2026-03-10T00:05:00.000Z",
+      models: {
+        models: [{ id: "gpt-5.3-codex/low" }, { id: "gpt-5.3-codex/medium" }],
+        current_model_id: "gpt-5.3-codex/medium",
+        meta: {
+          source_kind: "subscription",
+          catalog_source: "codex_bundle_pinned",
+          refresh_pending: true,
+        },
+      },
+    };
+
+    const resolved = store.resolveProviderOptionsUpdate(previous, next);
+
+    expect(resolved?.models).toEqual(previous.models);
+  });
 });

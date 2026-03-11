@@ -45,6 +45,12 @@ import {
   type OwnerScope,
   type WorkspaceOwnerScope,
 } from "./scopeIdentity";
+import {
+  hasFailedProviderModelProbe,
+  hasProviderModels,
+  isEndpointProviderSourceSelected,
+  isPinnedSubscriptionBootstrapCatalog,
+} from "../utils/providerModelCatalog";
 const MODEL_DISCOVERY_PROVIDER_IDS = new Set(["codex", "claude-crp", "copilot"]);
 
 export { resolveProviderOptionsUpdate } from "./providersBootstrapStore";
@@ -90,22 +96,6 @@ const providerOnboardingByScope = new Map<string, ProviderOnboardingEntry>();
 const foregroundRefreshScopeKeys = new Set<string>();
 
 let foregroundRefreshListenersInstalled = false;
-
-const hasProviderModels = (options: ProviderOptions | undefined): boolean => {
-  const raw = options?.models;
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
-  const record = raw as Record<string, unknown>;
-  const current = record.currentModelId ?? record.current_model_id;
-  if (typeof current === "string" && current.trim().length > 0) return true;
-  const list = record.availableModels ?? record.available_models ?? record.models;
-  return Array.isArray(list) && list.length > 0;
-};
-
-const hasFailedProviderModelProbe = (options: ProviderOptions | undefined): boolean => {
-  if (!options) return false;
-  if (options.probe_ok === false) return true;
-  return typeof options.probe_error === "string" && options.probe_error.trim().length > 0;
-};
 
 const sameProviderInstallState = (
   lhs: ProviderOnboardingInstallState | undefined,
@@ -432,9 +422,11 @@ export const shouldHydrateProviderModels = (
 ): boolean => {
   if (!MODEL_DISCOVERY_PROVIDER_IDS.has(providerId)) return false;
   if (!options) return false;
+  if (isEndpointProviderSourceSelected(options)) return false;
   if (options.has_active_auth !== true) return false;
-  if (hasProviderModels(options)) return false;
   if (trigger === "passive" && hasFailedProviderModelProbe(options)) return false;
+  if (isPinnedSubscriptionBootstrapCatalog(options)) return true;
+  if (hasProviderModels(options)) return false;
   return true;
 };
 

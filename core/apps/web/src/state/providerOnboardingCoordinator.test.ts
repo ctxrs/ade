@@ -206,7 +206,22 @@ describe("providerOnboardingCoordinator", () => {
   it("refreshes bootstrap and hydrates provider options after a succeeded install", async () => {
     const workspaceId = "ws-post-install-followup";
     const stopInstallObservation = vi.fn();
-    let currentBootstrap = makeBootstrap(workspaceId);
+    let currentBootstrap = makeBootstrap(workspaceId, {
+      provider_options: {
+        codex: {
+          ...baseOptions(workspaceId, "codex"),
+          models: {
+            models: [{ id: "gpt-5.3-codex/low" }, { id: "gpt-5.3-codex/medium" }],
+            current_model_id: "gpt-5.3-codex/medium",
+            meta: {
+              source_kind: "subscription",
+              catalog_source: "codex_bundle_pinned",
+              refresh_pending: true,
+            },
+          },
+        },
+      },
+    });
     let hookValue: HookValue | null = null;
 
     vi.mocked(observeInstall).mockReturnValue(stopInstallObservation);
@@ -246,6 +261,20 @@ describe("providerOnboardingCoordinator", () => {
           },
         } as never,
       ],
+      provider_options: {
+        codex: {
+          ...baseOptions(workspaceId, "codex"),
+          models: {
+            models: [{ id: "gpt-5.3-codex/low" }, { id: "gpt-5.3-codex/medium" }],
+            current_model_id: "gpt-5.3-codex/medium",
+            meta: {
+              source_kind: "subscription",
+              catalog_source: "codex_bundle_pinned",
+              refresh_pending: true,
+            },
+          },
+        },
+      },
     });
 
     act(() => {

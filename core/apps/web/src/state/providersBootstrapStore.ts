@@ -25,6 +25,11 @@ import {
   getProviderHostOwnerScope,
   getProviderWorkspaceOwnerScope,
 } from "./providerScopeAdapters";
+import {
+  hasFailedProviderModelProbe,
+  hasProviderModels,
+  isPinnedSubscriptionBootstrapCatalog,
+} from "../utils/providerModelCatalog";
 
 type Listener = () => void;
 
@@ -78,22 +83,6 @@ type HostProvidersBootstrapSlices = Pick<
   | "cursor_accounts"
   | "amp_accounts"
 >;
-
-const hasProviderModels = (options: ProviderOptions | undefined): boolean => {
-  const raw = options?.models;
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
-  const record = raw as Record<string, unknown>;
-  const current = record.currentModelId ?? record.current_model_id;
-  if (typeof current === "string" && current.trim().length > 0) return true;
-  const list = record.availableModels ?? record.available_models ?? record.models;
-  return Array.isArray(list) && list.length > 0;
-};
-
-const hasFailedProviderModelProbe = (options: ProviderOptions | undefined): boolean => {
-  if (!options) return false;
-  if (options.probe_ok === false) return true;
-  return typeof options.probe_error === "string" && options.probe_error.trim().length > 0;
-};
 
 const scopeKeyForOwner = (ownerScope: OwnerScope): string => serializeOwnerScope(ownerScope);
 
@@ -168,6 +157,24 @@ export const resolveProviderOptionsUpdateForScope = (
     if (hasProviderModels(previous)) {
       resolved = { ...resolved, models: previous.models };
     }
+    if (hasFailedProviderModelProbe(previous) && !hasFailedProviderModelProbe(resolved)) {
+      resolved = {
+        ...resolved,
+        probe_ok: previous.probe_ok,
+        probe_error: previous.probe_error ?? resolved.probe_error,
+      };
+    }
+  }
+  if (
+    ownerScope
+    && previous
+    && sameProviderOptionsAuthScope(ownerScope, previous, next)
+    && next.has_active_auth === true
+    && isPinnedSubscriptionBootstrapCatalog(next)
+    && hasProviderModels(previous)
+    && !isPinnedSubscriptionBootstrapCatalog(previous)
+  ) {
+    resolved = { ...resolved, models: previous.models };
     if (hasFailedProviderModelProbe(previous) && !hasFailedProviderModelProbe(resolved)) {
       resolved = {
         ...resolved,

@@ -12,8 +12,10 @@ import {
   deleteAmpAccount,
   getCodexLogin,
   getGeminiLogin,
+  getProviderOptions,
   selectProviderHarnessSource,
   setAmpActiveAccount,
+  setCodexActiveAccount,
   startAmpLogin,
   startCodexLogin,
   startGeminiLogin,
@@ -143,8 +145,10 @@ vi.mock("../../../api/client", async (importOriginal) => {
     deleteAmpAccount: vi.fn(),
     getCodexLogin: vi.fn(),
     getGeminiLogin: vi.fn(),
+    getProviderOptions: vi.fn(),
     selectProviderHarnessSource: vi.fn(),
     setAmpActiveAccount: vi.fn(),
+    setCodexActiveAccount: vi.fn(),
     startAmpLogin: vi.fn(),
     startCodexLogin: vi.fn(),
     startGeminiLogin: vi.fn(),
@@ -402,8 +406,10 @@ beforeEach(() => {
   vi.mocked(deleteAmpAccount).mockReset();
   vi.mocked(getCodexLogin).mockReset();
   vi.mocked(getGeminiLogin).mockReset();
+  vi.mocked(getProviderOptions).mockReset();
   vi.mocked(selectProviderHarnessSource).mockReset();
   vi.mocked(setAmpActiveAccount).mockReset();
+  vi.mocked(setCodexActiveAccount).mockReset();
   vi.mocked(startAmpLogin).mockReset();
   vi.mocked(startCodexLogin).mockReset();
   vi.mocked(startGeminiLogin).mockReset();
@@ -938,6 +944,123 @@ describe("useHarnessAuthenticationController", () => {
       expect(vi.mocked(refreshProvidersBootstrap).mock.calls.length).toBeGreaterThan(refreshCallsAfterDelete);
       expect(vi.mocked(invalidateProvidersBootstrap).mock.calls.length).toBeGreaterThan(invalidateCallsAfterDelete);
       expect(requireController(controller).providers[0]?.details?.install_target).toBe("container");
+    });
+  });
+
+  it("warms Codex provider options after a workspace-scoped auth change", async () => {
+    let controller: Controller | null = null;
+    const codexRow: HarnessAuthRow = {
+      key: "codex:acct-next",
+      kind: "subscription",
+      label: "Codex Next",
+      active: false,
+      selectable: true,
+      account_id: "acct-next",
+    };
+    const pinnedCodexOptions = {
+      provider_id: "codex",
+      workspace_id: "ws-test",
+      supports_load: false,
+      auth_required: false,
+      has_active_auth: true,
+      auth_mode: "subscription" as const,
+      source: {
+        provider_id: "codex",
+        selected_source_kind: "subscription" as const,
+        selected_endpoint_id: null,
+        endpoints: [],
+      },
+      probed_at: "2026-03-10T00:00:00.000Z",
+      models: {
+        models: [{ id: "gpt-5.3-codex/low" }, { id: "gpt-5.3-codex/medium" }],
+        current_model_id: "gpt-5.3-codex/medium",
+        meta: {
+          source_kind: "subscription",
+          catalog_source: "codex_bundle_pinned",
+          refresh_pending: true,
+        },
+      },
+    };
+
+    setBootstrapSnapshot("ws-test", makeBootstrap({
+      providers: [
+        {
+          provider_id: "codex",
+          display_name: "Codex",
+          installed: true,
+          health: "ok",
+          diagnostics: [],
+          details: {},
+        } as never,
+      ],
+      provider_options: {
+        codex: pinnedCodexOptions,
+      },
+      codex_accounts: {
+        active_account_id: "acct-current",
+        accounts: [
+          { id: "acct-current", label: "Current", created_at: "2026-03-10T00:00:00.000Z" },
+          { id: "acct-next", label: "Next", created_at: "2026-03-10T00:00:00.000Z" },
+        ],
+        logins: [],
+      },
+    }));
+    queueBootstrapRefresh("ws-test", makeBootstrap({
+      providers: [
+        {
+          provider_id: "codex",
+          display_name: "Codex",
+          installed: true,
+          health: "ok",
+          diagnostics: [],
+          details: {},
+        } as never,
+      ],
+      provider_options: {
+        codex: pinnedCodexOptions,
+      },
+      codex_accounts: {
+        active_account_id: "acct-next",
+        accounts: [
+          { id: "acct-current", label: "Current", created_at: "2026-03-10T00:00:00.000Z" },
+          { id: "acct-next", label: "Next", created_at: "2026-03-10T00:00:00.000Z" },
+        ],
+        logins: [],
+      },
+    }));
+    vi.mocked(setCodexActiveAccount).mockResolvedValue({
+      active_account_id: "acct-next",
+      accounts: [
+        { id: "acct-current", label: "Current", created_at: "2026-03-10T00:00:00.000Z" },
+        { id: "acct-next", label: "Next", created_at: "2026-03-10T00:00:00.000Z" },
+      ],
+      logins: [],
+    });
+    vi.mocked(getProviderOptions).mockResolvedValue({
+      ...pinnedCodexOptions,
+      models: {
+        models: [{ id: "gpt-5.4/low" }, { id: "gpt-5.4/medium" }],
+        current_model_id: "gpt-5.4/medium",
+      },
+    });
+
+    render(createElement(ControllerHarness, {
+      onChange: (next) => {
+        controller = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(controller).not.toBeNull();
+    });
+
+    await act(async () => {
+      await controller?.onSelectHarnessAuthRow("codex", codexRow);
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(setCodexActiveAccount)).toHaveBeenCalledWith("acct-next");
+      expect(vi.mocked(getProviderOptions)).toHaveBeenCalledWith("ws-test", "codex");
     });
   });
 

@@ -100,6 +100,23 @@ pub(crate) async fn get_workspace_providers_bootstrap(
                     options["source"] =
                         serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
                 }
+                if let Some(endpoint) =
+                    crate::api::provider_launch::selected_endpoint_record_from_harness_config(
+                        source_config.as_ref(),
+                    )
+                {
+                    options["models"] = crate::api::provider_launch::endpoint_models_payload(
+                        &provider_id,
+                        &endpoint,
+                        chrono::Utc::now(),
+                    );
+                } else if let Some(models) =
+                    crate::api::provider_launch::subscription_models_payload_from_status(
+                        &provider_status,
+                    )
+                {
+                    options["models"] = models;
+                }
 
                 (provider_id, options, source_config)
             }

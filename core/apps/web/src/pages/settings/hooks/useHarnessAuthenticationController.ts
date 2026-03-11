@@ -384,10 +384,17 @@ export function useHarnessAuthenticationController({
     }
   }, [onboarding, workspaceId]);
 
-  const refreshProviderSlicesAfterMutation = useCallback(async () => {
+  const refreshProviderSlicesAfterMutation = useCallback(async (providerId?: string) => {
     if (workspaceId) {
       invalidateProvidersBootstrap(workspaceId);
       await refreshProvidersBootstrapState({ force: true });
+      if (providerId) {
+        try {
+          await onboarding.ensureProviderAuthSummary(providerId, { trigger: "explicit" });
+        } catch {
+          // Keep the refreshed bootstrap snapshot even when live model hydration fails.
+        }
+      }
       return;
     }
     try {
@@ -684,6 +691,7 @@ export function useHarnessAuthenticationController({
     setProviderError(null);
     try {
       await executeDeleteProviderEndpoint(ownerScope, providerId, endpointId);
+      await refreshProviderSlicesAfterMutation(providerId);
     } catch (error) {
       setProviderError(messageFromError(error));
     } finally {
@@ -696,6 +704,7 @@ export function useHarnessAuthenticationController({
     setProviderError(null);
     try {
       await executeRefreshProviderEndpointModels(ownerScope, providerId, endpointId);
+      await refreshProviderSlicesAfterMutation(providerId);
     } catch (error) {
       setProviderError(messageFromError(error));
     } finally {
@@ -814,7 +823,7 @@ export function useHarnessAuthenticationController({
       if (isCursor) {
         const label = name.trim();
         const next = await upsertCursorAccount(key, label ? { label } : undefined);
-        await refreshProviderSlicesAfterMutation();
+        await refreshProviderSlicesAfterMutation(modal.provider_id);
         if (!operation.isCurrent()) return;
         applyCursorAccounts(next);
         await selectSubscriptionSourceIfSupported(modal.provider_id);
@@ -1029,7 +1038,7 @@ export function useHarnessAuthenticationController({
       applyData: applyCodexAccounts,
       setBusy: setCodexAccountsBusy,
       setProviderError,
-      onMutationComplete: refreshProviderSlicesAfterMutation,
+      onMutationComplete: () => refreshProviderSlicesAfterMutation("codex"),
     });
   }, [applyCodexAccounts, refreshProviderSlicesAfterMutation]);
 
@@ -1039,7 +1048,7 @@ export function useHarnessAuthenticationController({
       applyData: applyCodexAccounts,
       setBusy: setCodexAccountsBusy,
       setProviderError,
-      onMutationComplete: refreshProviderSlicesAfterMutation,
+      onMutationComplete: () => refreshProviderSlicesAfterMutation("codex"),
     });
   }, [applyCodexAccounts, refreshProviderSlicesAfterMutation]);
 
@@ -1049,7 +1058,7 @@ export function useHarnessAuthenticationController({
       applyData: applyClaudeAccounts,
       setBusy: setClaudeAccountsBusy,
       setProviderError,
-      onMutationComplete: refreshProviderSlicesAfterMutation,
+      onMutationComplete: () => refreshProviderSlicesAfterMutation("claude-crp"),
     });
   }, [applyClaudeAccounts, refreshProviderSlicesAfterMutation]);
 
@@ -1059,7 +1068,7 @@ export function useHarnessAuthenticationController({
       applyData: applyClaudeAccounts,
       setBusy: setClaudeAccountsBusy,
       setProviderError,
-      onMutationComplete: refreshProviderSlicesAfterMutation,
+      onMutationComplete: () => refreshProviderSlicesAfterMutation("claude-crp"),
     });
   }, [applyClaudeAccounts, refreshProviderSlicesAfterMutation]);
 
@@ -1069,7 +1078,7 @@ export function useHarnessAuthenticationController({
       applyData: applyGeminiAccounts,
       setBusy: setGeminiAccountsBusy,
       setProviderError,
-      onMutationComplete: refreshProviderSlicesAfterMutation,
+      onMutationComplete: () => refreshProviderSlicesAfterMutation("gemini"),
     });
   }, [applyGeminiAccounts, refreshProviderSlicesAfterMutation]);
 
@@ -1079,7 +1088,7 @@ export function useHarnessAuthenticationController({
       applyData: applyGeminiAccounts,
       setBusy: setGeminiAccountsBusy,
       setProviderError,
-      onMutationComplete: refreshProviderSlicesAfterMutation,
+      onMutationComplete: () => refreshProviderSlicesAfterMutation("gemini"),
     });
   }, [applyGeminiAccounts, refreshProviderSlicesAfterMutation]);
 
@@ -1089,7 +1098,7 @@ export function useHarnessAuthenticationController({
       applyData: applyQwenAccounts,
       setBusy: setQwenAccountsBusy,
       setProviderError,
-      onMutationComplete: refreshProviderSlicesAfterMutation,
+      onMutationComplete: () => refreshProviderSlicesAfterMutation("qwen"),
     });
   }, [applyQwenAccounts, refreshProviderSlicesAfterMutation]);
 
@@ -1099,7 +1108,7 @@ export function useHarnessAuthenticationController({
       applyData: applyQwenAccounts,
       setBusy: setQwenAccountsBusy,
       setProviderError,
-      onMutationComplete: refreshProviderSlicesAfterMutation,
+      onMutationComplete: () => refreshProviderSlicesAfterMutation("qwen"),
     });
   }, [applyQwenAccounts, refreshProviderSlicesAfterMutation]);
 
@@ -1109,7 +1118,7 @@ export function useHarnessAuthenticationController({
       applyData: applyKimiAccounts,
       setBusy: setKimiAccountsBusy,
       setProviderError,
-      onMutationComplete: refreshProviderSlicesAfterMutation,
+      onMutationComplete: () => refreshProviderSlicesAfterMutation("kimi"),
     });
   }, [applyKimiAccounts, refreshProviderSlicesAfterMutation]);
 
@@ -1119,7 +1128,7 @@ export function useHarnessAuthenticationController({
       applyData: applyKimiAccounts,
       setBusy: setKimiAccountsBusy,
       setProviderError,
-      onMutationComplete: refreshProviderSlicesAfterMutation,
+      onMutationComplete: () => refreshProviderSlicesAfterMutation("kimi"),
     });
   }, [applyKimiAccounts, refreshProviderSlicesAfterMutation]);
 
@@ -1129,7 +1138,7 @@ export function useHarnessAuthenticationController({
       applyData: applyMistralAccounts,
       setBusy: setMistralAccountsBusy,
       setProviderError,
-      onMutationComplete: refreshProviderSlicesAfterMutation,
+      onMutationComplete: () => refreshProviderSlicesAfterMutation("mistral"),
     });
   }, [applyMistralAccounts, refreshProviderSlicesAfterMutation]);
 
@@ -1139,7 +1148,7 @@ export function useHarnessAuthenticationController({
       applyData: applyMistralAccounts,
       setBusy: setMistralAccountsBusy,
       setProviderError,
-      onMutationComplete: refreshProviderSlicesAfterMutation,
+      onMutationComplete: () => refreshProviderSlicesAfterMutation("mistral"),
     });
   }, [applyMistralAccounts, refreshProviderSlicesAfterMutation]);
 
@@ -1149,7 +1158,7 @@ export function useHarnessAuthenticationController({
       applyData: applyCopilotAccounts,
       setBusy: setCopilotAccountsBusy,
       setProviderError,
-      onMutationComplete: refreshProviderSlicesAfterMutation,
+      onMutationComplete: () => refreshProviderSlicesAfterMutation("copilot"),
     });
   }, [applyCopilotAccounts, refreshProviderSlicesAfterMutation]);
 
@@ -1159,7 +1168,7 @@ export function useHarnessAuthenticationController({
       applyData: applyCopilotAccounts,
       setBusy: setCopilotAccountsBusy,
       setProviderError,
-      onMutationComplete: refreshProviderSlicesAfterMutation,
+      onMutationComplete: () => refreshProviderSlicesAfterMutation("copilot"),
     });
   }, [applyCopilotAccounts, refreshProviderSlicesAfterMutation]);
 
@@ -1169,7 +1178,7 @@ export function useHarnessAuthenticationController({
       applyData: applyCursorAccounts,
       setBusy: setCursorAccountsBusy,
       setProviderError,
-      onMutationComplete: refreshProviderSlicesAfterMutation,
+      onMutationComplete: () => refreshProviderSlicesAfterMutation("cursor"),
     });
   }, [applyCursorAccounts, refreshProviderSlicesAfterMutation]);
 
@@ -1179,7 +1188,7 @@ export function useHarnessAuthenticationController({
       applyData: applyCursorAccounts,
       setBusy: setCursorAccountsBusy,
       setProviderError,
-      onMutationComplete: refreshProviderSlicesAfterMutation,
+      onMutationComplete: () => refreshProviderSlicesAfterMutation("cursor"),
     });
   }, [applyCursorAccounts, refreshProviderSlicesAfterMutation]);
 
@@ -1189,7 +1198,7 @@ export function useHarnessAuthenticationController({
       applyData: applyAmpAccounts,
       setBusy: setAmpAccountsBusy,
       setProviderError,
-      onMutationComplete: refreshProviderSlicesAfterMutation,
+      onMutationComplete: () => refreshProviderSlicesAfterMutation("amp"),
     });
   }, [applyAmpAccounts, refreshProviderSlicesAfterMutation]);
 
@@ -1199,7 +1208,7 @@ export function useHarnessAuthenticationController({
       applyData: applyAmpAccounts,
       setBusy: setAmpAccountsBusy,
       setProviderError,
-      onMutationComplete: refreshProviderSlicesAfterMutation,
+      onMutationComplete: () => refreshProviderSlicesAfterMutation("amp"),
     });
   }, [applyAmpAccounts, refreshProviderSlicesAfterMutation]);
 

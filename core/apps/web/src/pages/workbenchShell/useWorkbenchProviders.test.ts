@@ -166,7 +166,7 @@ describe("shouldHydrateProviderModels", () => {
     expect(shouldHydrateProviderModels("claude-crp", baseOptions("claude-crp"))).toBe(true);
   });
 
-  it("requests hydration for endpoint-selected sources when models are missing", () => {
+  it("does not request subscription hydration for endpoint-selected sources when models are missing", () => {
     const options: ProviderOptions = {
       ...baseOptions("claude-crp"),
       source: {
@@ -176,7 +176,7 @@ describe("shouldHydrateProviderModels", () => {
         endpoints: [],
       },
     };
-    expect(shouldHydrateProviderModels("claude-crp", options)).toBe(true);
+    expect(shouldHydrateProviderModels("claude-crp", options)).toBe(false);
   });
 
   it("does not request hydration when models already exist", () => {

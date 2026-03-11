@@ -790,6 +790,34 @@ mod tests {
     }
 
     #[test]
+    fn endpoint_models_payload_merges_manual_model_ids() {
+        let now = Utc::now();
+        let mut endpoint = test_endpoint("ep-1");
+        endpoint.model_catalog_models = vec![harness_sources::EndpointModelRecord {
+            id: "openai/gpt-5.2".to_string(),
+            name: Some("GPT-5.2".to_string()),
+        }];
+        endpoint.manual_model_ids = vec![
+            "openai/gpt-5.2".to_string(),
+            "custom/manual-model".to_string(),
+        ];
+        endpoint.model_catalog_source = Some("mixed".to_string());
+        endpoint.model_catalog_status = harness_sources::EndpointModelCatalogStatus::Ready;
+
+        let payload = endpoint_models_payload("codex", &endpoint, now);
+        let models = payload
+            .get("models")
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .expect("models array");
+        assert_eq!(models.len(), 2);
+        assert_eq!(
+            models[1].get("id").and_then(serde_json::Value::as_str),
+            Some("custom/manual-model")
+        );
+    }
+
+    #[test]
     fn endpoint_selection_is_active_requires_selected_endpoint_record() {
         let active = harness_sources::HarnessProviderSourceConfig {
             provider_id: "codex".to_string(),

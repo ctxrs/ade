@@ -27,6 +27,7 @@ import {
   labelForVerbosity,
   modelIdFromProviderOptions,
   pickDefaultEffort,
+  shouldShowLoadingProviderModels,
 } from "./WorkbenchComposer.utils";
 import type {
   ActiveSessionProps,
@@ -339,7 +340,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     const models = buildModelsForProvider(primary.providerId, opts);
     const catalog = buildModelCatalog(models);
     const parsed = parseModelId(primary.modelId, catalog);
-    const loading = !opts;
+    const loading = shouldShowLoadingProviderModels(primary.providerId, opts);
     return { models, catalog, parsed, loading, fromProviderOptions: true };
   }, [newSession, props, variant]);
 
@@ -435,13 +436,15 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
       ) : (
         <div className="wb-menu-empty">
           <div style={{ marginBottom: 6 }}>{activeModelData.loading ? "Loading models…" : "Enter model id"}</div>
-          <input
-            className="wb-menu-search"
-            value={activeModelData.parsed.full}
-            onChange={(e) => setActiveModelId(e.target.value)}
-            placeholder="model_id"
-            aria-label="Model id"
-          />
+          {!activeModelData.loading ? (
+            <input
+              className="wb-menu-search"
+              value={activeModelData.parsed.full}
+              onChange={(e) => setActiveModelId(e.target.value)}
+              placeholder="model_id"
+              aria-label="Model id"
+            />
+          ) : null}
         </div>
       )}
     </div>

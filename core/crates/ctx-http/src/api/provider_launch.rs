@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path as StdPath, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -308,7 +308,7 @@ pub(super) fn selected_endpoint_from_harness_config(
     })
 }
 
-pub(super) fn selected_endpoint_record_from_harness_config(
+pub(crate) fn selected_endpoint_record_from_harness_config(
     config: Option<&harness_sources::HarnessProviderSourceConfig>,
 ) -> Option<HarnessEndpointRecord> {
     let cfg = config?;
@@ -322,13 +322,41 @@ pub(super) fn selected_endpoint_record_from_harness_config(
         .cloned()
 }
 
-fn copilot_models_payload_from_status(
+pub(crate) fn subscription_models_payload_from_status(
     provider_status: &ctx_providers::adapters::ProviderStatus,
 ) -> Option<serde_json::Value> {
-    provider_status
-        .version
-        .as_deref()
-        .and_then(crate::provider_accounts::copilot_models_value_for_version)
+    crate::provider_accounts::pinned_subscription_models_value(
+        &provider_status.provider_id,
+        provider_status.version.as_deref(),
+    )
+}
+
+fn endpoint_model_entries(endpoint: &HarnessEndpointRecord) -> Vec<serde_json::Value> {
+    let mut seen = HashSet::new();
+    let mut entries = Vec::new();
+
+    for model in &endpoint.model_catalog_models {
+        let id = model.id.trim();
+        if id.is_empty() || !seen.insert(id.to_string()) {
+            continue;
+        }
+        entries.push(serde_json::json!({
+            "id": id,
+            "name": model.name.clone(),
+        }));
+    }
+
+    for model_id in &endpoint.manual_model_ids {
+        let id = model_id.trim();
+        if id.is_empty() || !seen.insert(id.to_string()) {
+            continue;
+        }
+        entries.push(serde_json::json!({
+            "id": id,
+        }));
+    }
+
+    entries
 }
 
 fn endpoint_current_model_id(
@@ -348,14 +376,14 @@ fn endpoint_current_model_id(
         .filter(|value| !value.is_empty())
 }
 
-pub(super) fn endpoint_models_payload(
+pub(crate) fn endpoint_models_payload(
     provider_id: &str,
     endpoint: &HarnessEndpointRecord,
     now: chrono::DateTime<chrono::Utc>,
 ) -> serde_json::Value {
     let stale = harness_sources::endpoint_model_catalog_is_stale(endpoint, now);
     serde_json::json!({
-        "models": endpoint.model_catalog_models,
+        "models": endpoint_model_entries(endpoint),
         "current_model_id": endpoint_current_model_id(provider_id, endpoint),
         "meta": {
             "source_kind": "endpoint",
@@ -658,10 +686,8 @@ pub(super) async fn get_provider_options(
                     .await;
                 });
             }
-        } else if provider_id == "copilot" {
-            if let Some(models) = copilot_models_payload_from_status(&provider_status) {
-                raw_resp["models"] = models;
-            }
+        } else if let Some(models) = subscription_models_payload_from_status(&provider_status) {
+            raw_resp["models"] = models;
         }
         if raw_resp.get("models").is_none() || raw_resp.get("models").is_some_and(|v| v.is_null()) {
             if let Some(models) = cached_models {
@@ -811,6 +837,11 @@ pub(super) async fn get_provider_options(
     };
     if let Some(source) = source_config.as_ref() {
         raw_resp["source"] = serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
+    }
+    if raw_resp.get("models").is_none() || raw_resp.get("models").is_some_and(|v| v.is_null()) {
+        if let Some(models) = subscription_models_payload_from_status(&provider_status) {
+            raw_resp["models"] = models;
+        }
     }
     if raw_resp.get("models").is_none() || raw_resp.get("models").is_some_and(|v| v.is_null()) {
         if let Some(models) = cached_models {
