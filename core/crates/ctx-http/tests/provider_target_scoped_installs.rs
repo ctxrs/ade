@@ -606,6 +606,24 @@ async fn wait_for_install_progress(app: &axum::Router, install_id: InstallId) ->
     }
 }
 
+async fn wait_for_running_install_id(
+    state: &AppState,
+    provider_id: &str,
+    target: Option<InstallTarget>,
+) -> InstallId {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(install_id) = state.find_running_install(provider_id, target).await {
+            return install_id;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out waiting for running install {provider_id} with target {target:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
 async fn wait_for_prerequisite_visibility(
     app: &axum::Router,
     install_id: InstallId,
@@ -1591,22 +1609,10 @@ async fn acp_container_install_parent_polling_stays_bounded_while_bridge_prerequ
         .and_then(|raw| raw.parse::<InstallId>().ok())
         .expect("install id");
 
-    let bridge_poll_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    let polled_info = loop {
-        let info = get_install_info_api(&app, install_id).await;
-        if info
-            .last_event
-            .as_ref()
-            .is_some_and(|event| event.message.contains("acp-crp-bridge"))
-        {
-            break info;
-        }
-        assert!(
-            tokio::time::Instant::now() < bridge_poll_deadline,
-            "timed out waiting for parent poll surface to expose bridge prerequisite activity: {info:#?}"
-        );
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    };
+    let bridge_install_id =
+        wait_for_running_install_id(&state, "acp-crp-bridge", Some(InstallTarget::Container)).await;
+    let _ = wait_for_install_progress(&app, bridge_install_id).await;
+    let polled_info = wait_for_prerequisite_visibility(&app, install_id, bridge_install_id).await;
     assert!(
         matches!(polled_info.state, InstallStateKind::Running),
         "install should still be running while the bridge prerequisite is active: {polled_info:#?}"
@@ -1635,6 +1641,7 @@ async fn acp_container_install_parent_polling_stays_bounded_while_bridge_prerequ
     assert!(
         parent_events.iter().any(|event| {
             event.message.contains("acp-crp-bridge")
+                && event.message.contains(&bridge_install_id.to_string())
                 && matches!(event.stage.as_str(), "start" | "prerequisites")
         }),
         "parent install events should preserve prerequisite visibility via the real API surface: {parent_events:#?}"
