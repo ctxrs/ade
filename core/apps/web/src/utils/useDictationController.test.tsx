@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { useEffect, useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { DictationSettings, Settings } from "../api/client";
+import type { DictationSettings, PublicSettings } from "../api/client";
 import { appendSegment } from "../pages/SessionPage.helpers";
 import type { SttApi, SttResult } from "./tauriStt";
 import { useDictationController } from "./useDictationController";
@@ -67,14 +67,14 @@ describe("useDictationController integration", () => {
   });
 
   it("streams Tauri dictation interim/final text and stops cleanly", async () => {
-    const settings: Settings = {
+    const settings: PublicSettings = {
       dictation: {
         enabled: true,
         provider: "tauri_stt",
         livekit: {
           base_url: "",
-          api_key: "",
-          api_secret: "",
+          api_key_set: false,
+          api_secret_set: false,
           model: "auto",
           language: "en",
         },
@@ -153,7 +153,7 @@ describe("useDictationController integration", () => {
   });
 
   it("opens onboarding modal when dictation is disabled", async () => {
-    const settings: Settings = {
+    const settings: PublicSettings = {
       dictation: {
         enabled: false,
         provider: "disabled",
@@ -203,7 +203,7 @@ describe("useDictationController integration", () => {
         provider: "tauri_stt",
         livekit: {
           base_url: "",
-          api_key: "",
+          api_key_set: false,
           api_secret_set: false,
           model: "auto",
           language: "en",
@@ -240,6 +240,85 @@ describe("useDictationController integration", () => {
         }),
       }),
     );
+    await waitFor(() => expect(screen.getByTestId("recording").textContent).toBe("on"));
+    expect(controllerRef!.dictationOnboarding).toBeNull();
+  });
+
+  it("preserves stored cloud credentials when onboarding submits blank redacted fields", async () => {
+    getSettingsMock.mockResolvedValue({
+      dictation: {
+        enabled: false,
+        provider: "disabled",
+        livekit: {
+          base_url: "https://livekit.example",
+          api_key_set: true,
+          api_secret_set: true,
+          model: "auto",
+          language: "en",
+        },
+      },
+    });
+
+    const sttApi: SttApi = {
+      isAvailable: vi.fn(async () => ({ available: true })),
+      getSupportedLanguages: vi.fn(async () => ({ languages: [] })),
+      checkPermission: vi.fn(async () => ({
+        microphone: "granted",
+        speechRecognition: "granted",
+      } as const)),
+      requestPermission: vi.fn(async () => ({
+        microphone: "granted",
+        speechRecognition: "granted",
+      } as const)),
+      startListening: vi.fn(async () => {}),
+      stopListening: vi.fn(async () => {}),
+      onResult: vi.fn(async () => () => {}),
+      onStateChange: vi.fn(async () => () => {}),
+      onError: vi.fn(async () => () => {}),
+    };
+    loadSttApiMock.mockResolvedValue(sttApi);
+    updateSettingsMock.mockResolvedValue({
+      dictation: {
+        enabled: true,
+        provider: "tauri_stt",
+        livekit: {
+          base_url: "https://livekit.example",
+          api_key_set: true,
+          api_secret_set: true,
+          model: "auto",
+          language: "en",
+        },
+      },
+    });
+
+    let controllerRef: ReturnType<typeof useDictationController> | null = null;
+    render(<Harness onReady={(controller) => (controllerRef = controller)} />);
+    await waitFor(() => expect(controllerRef).not.toBeNull());
+
+    await act(async () => {
+      await controllerRef!.startDictation();
+    });
+    await waitFor(() => expect(controllerRef!.dictationOnboarding?.open).toBe(true));
+
+    act(() => {
+      controllerRef!.chooseDictationOnboardingCloud();
+    });
+
+    await act(async () => {
+      await controllerRef!.submitDictationOnboardingCloud();
+    });
+
+    expect(updateSettingsMock).toHaveBeenCalledWith({
+      dictation: {
+        enabled: true,
+        provider: "livekit_inference",
+        livekit: {
+          base_url: "https://livekit.example",
+          model: "auto",
+          language: "en",
+        },
+      },
+    });
     await waitFor(() => expect(screen.getByTestId("recording").textContent).toBe("on"));
     expect(controllerRef!.dictationOnboarding).toBeNull();
   });
@@ -317,7 +396,7 @@ describe("useDictationController integration", () => {
     };
     loadSttApiMock.mockResolvedValue(sttApi);
 
-    const updateDeferred = deferred<Settings>();
+    const updateDeferred = deferred<PublicSettings>();
     updateSettingsMock.mockReturnValue(updateDeferred.promise);
 
     let controllerRef: ReturnType<typeof useDictationController> | null = null;
@@ -354,7 +433,7 @@ describe("useDictationController integration", () => {
           provider: "tauri_stt",
           livekit: {
             base_url: "",
-            api_key: "",
+            api_key_set: false,
             api_secret_set: false,
             model: "auto",
             language: "en",
@@ -403,7 +482,7 @@ describe("useDictationController integration", () => {
         provider: "tauri_stt",
         livekit: {
           base_url: "",
-          api_key: "",
+          api_key_set: false,
           api_secret_set: false,
           model: "auto",
           language: "en",

@@ -142,8 +142,8 @@ vi.mock("./state/launcherRecentsStore", () => ({
 }));
 
 vi.mock("./state/uiStateStore", () => ({
-  loadSettingsV1: vi.fn(async () => null),
-  saveSettingsV1: vi.fn(async () => {}),
+  loadSettingsV2: vi.fn(async () => null),
+  saveSettingsV2: vi.fn(async () => {}),
 }));
 
 beforeEach(() => {

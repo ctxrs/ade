@@ -168,7 +168,8 @@ export function DictationOnboardingModal({
                 className="settings-control settings-control-wide"
                 value={state.cloud.apiKey}
                 onChange={(e) => onCloudChange({ apiKey: e.target.value })}
-                placeholder="lk..."
+                placeholder={state.cloud.apiKeySet ? "(already set, leave blank to keep)" : "lk..."}
+                type="password"
               />
             </label>
             <label className="settings-harness-modal-label">

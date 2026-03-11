@@ -1,4 +1,9 @@
-import type { Settings, TitleGenerationLocalStatus, TitleGenerationSettings } from "../api/client";
+import type {
+  PublicSettings,
+  TitleGenerationLocalStatus,
+  TitleGenerationSettings,
+  UpdateTitleGenerationSettingsRequest,
+} from "../api/client";
 
 type SourceKind = "clone" | "import" | "new";
 
@@ -30,7 +35,7 @@ export const isRemoteTitlingConfigured = (
 ): boolean => {
   if (!titleGeneration || titleGeneration.mode !== "remote") return false;
   return trim(titleGeneration.remote?.base_url) !== ""
-    && trim(titleGeneration.remote?.api_key) !== ""
+    && boolOrDefault(titleGeneration.remote?.api_key_set, false)
     && trim(titleGeneration.remote?.model) !== "";
 };
 
@@ -44,7 +49,7 @@ export const isLocalTitlingConfiguredReady = (
 };
 
 export const resolveSessionTitlingReadiness = (
-  settings: Pick<Settings, "title_generation"> | null | undefined,
+  settings: Pick<PublicSettings, "title_generation"> | null | undefined,
   localStatus: TitleGenerationLocalStatus | null | undefined,
 ): SessionTitlingReadiness => {
   const titleGeneration = settings?.title_generation ?? null;
@@ -77,7 +82,7 @@ export type SessionTitlingDraft = {
 };
 
 export const buildSessionTitlingDraft = (
-  settings: Pick<Settings, "title_generation"> | null | undefined,
+  settings: Pick<PublicSettings, "title_generation"> | null | undefined,
 ): SessionTitlingDraft => {
   const titleGeneration = settings?.title_generation ?? null;
   const mode = titleGeneration?.mode === "remote" || titleGeneration?.mode === "local"
@@ -87,7 +92,7 @@ export const buildSessionTitlingDraft = (
     mode,
     remote: {
       baseUrl: trim(titleGeneration?.remote?.base_url) || DEFAULT_TITLE_REMOTE_BASE_URL,
-      apiKey: trim(titleGeneration?.remote?.api_key),
+      apiKey: "",
       model: trim(titleGeneration?.remote?.model) || DEFAULT_TITLE_REMOTE_MODEL,
       useJson: boolOrDefault(titleGeneration?.remote?.use_json, true),
     },
@@ -108,17 +113,21 @@ export const buildSessionTitlingPayload = ({
   mode,
   draft,
   existing,
-}: BuildSessionTitlingPayloadInput): TitleGenerationSettings => {
+}: BuildSessionTitlingPayloadInput): UpdateTitleGenerationSettingsRequest => {
   const existingRemote = existing?.remote;
   const existingLocal = existing?.local;
+  const remote: UpdateTitleGenerationSettingsRequest["remote"] = {
+    base_url: trim(draft.remote.baseUrl) || trim(existingRemote?.base_url) || DEFAULT_TITLE_REMOTE_BASE_URL,
+    model: trim(draft.remote.model) || trim(existingRemote?.model) || DEFAULT_TITLE_REMOTE_MODEL,
+    use_json: boolOrDefault(draft.remote.useJson, boolOrDefault(existingRemote?.use_json, true)),
+  };
+  const apiKey = trim(draft.remote.apiKey);
+  if (apiKey) {
+    remote.api_key = apiKey;
+  }
   return {
     mode,
-    remote: {
-      base_url: trim(draft.remote.baseUrl) || trim(existingRemote?.base_url) || DEFAULT_TITLE_REMOTE_BASE_URL,
-      api_key: trim(draft.remote.apiKey) || trim(existingRemote?.api_key),
-      model: trim(draft.remote.model) || trim(existingRemote?.model) || DEFAULT_TITLE_REMOTE_MODEL,
-      use_json: boolOrDefault(draft.remote.useJson, boolOrDefault(existingRemote?.use_json, true)),
-    },
+    remote,
     local: {
       model_id: trim(draft.local.modelId) || trim(existingLocal?.model_id) || DEFAULT_TITLE_LOCAL_MODEL_ID,
       use_json: boolOrDefault(draft.local.useJson, boolOrDefault(existingLocal?.use_json, true)),
@@ -126,7 +135,7 @@ export const buildSessionTitlingPayload = ({
   };
 };
 
-export const sessionTitlingPayloadHash = (payload: TitleGenerationSettings): string =>
+export const sessionTitlingPayloadHash = (payload: UpdateTitleGenerationSettingsRequest): string =>
   JSON.stringify(payload);
 
 export type CloneDestination = {

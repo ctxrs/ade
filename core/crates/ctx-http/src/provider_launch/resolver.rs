@@ -3,11 +3,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::{fs, path::Path as StdPath};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use ctx_providers::adapters::{ProviderAdapter, ProviderHealth, ProviderStatus};
 use ctx_providers::crp::Tier1CrpAdapter;
 use ctx_providers::fake::FakeProviderAdapter;
-use which::which;
 
 use crate::daemon::AppState;
 use crate::installer;
@@ -214,110 +213,117 @@ pub(crate) fn acp_bridge_adapter(
     Arc::new(Tier1CrpAdapter::from_raw(id, bridged.command, bridged.args))
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct ExplicitGeminiCliPaths {
+    pub cli_entry_path: PathBuf,
+    pub core_entry_path: PathBuf,
+}
+
+fn file_stem_matches(path: &StdPath, name: &str) -> bool {
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .map(|s| s.eq_ignore_ascii_case(name))
+        .unwrap_or(false)
+}
+
+fn resolve_existing_absolute_path(raw: &str, label: &str) -> Result<PathBuf> {
+    let path = StdPath::new(raw);
+    anyhow::ensure!(
+        path.is_absolute(),
+        "{label} must be an explicit absolute path; got '{}'",
+        raw
+    );
+    anyhow::ensure!(path.exists(), "{label} not found: {}", path.display());
+    Ok(fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()))
+}
+
+fn gemini_cli_root_from_entrypoint(path: &StdPath) -> Option<PathBuf> {
+    if path.file_name().and_then(|s| s.to_str()) != Some("index.js") {
+        return None;
+    }
+    if path
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .and_then(|s| s.to_str())
+        != Some("dist")
+    {
+        return None;
+    }
+    for ancestor in path.ancestors() {
+        if ancestor.file_name().and_then(|s| s.to_str()) != Some("gemini-cli") {
+            continue;
+        }
+        let is_google_scope = ancestor
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|s| s.to_str())
+            == Some("@google");
+        if is_google_scope {
+            return Some(ancestor.to_path_buf());
+        }
+    }
+    None
+}
+
+pub(crate) fn resolve_explicit_gemini_cli_paths(
+    command: &str,
+    args: &[String],
+) -> Result<ExplicitGeminiCliPaths> {
+    let node_path = resolve_existing_absolute_path(command, "Gemini ACP runtime command")?;
+    anyhow::ensure!(
+        file_stem_matches(&node_path, "node"),
+        "Gemini ACP runtime must use an explicit absolute node executable plus @google/gemini-cli/dist/index.js; got command '{}'",
+        command
+    );
+
+    let arg0 = args.first().ok_or_else(|| {
+        anyhow::anyhow!(
+            "Gemini ACP runtime must pass an explicit absolute @google/gemini-cli/dist/index.js entrypoint as the first argument"
+        )
+    })?;
+    let cli_entry_path = resolve_existing_absolute_path(arg0, "Gemini ACP entrypoint")?;
+    let cli_root = gemini_cli_root_from_entrypoint(&cli_entry_path).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Gemini ACP entrypoint must point to @google/gemini-cli/dist/index.js; got '{}'",
+            cli_entry_path.display()
+        )
+    })?;
+    let node_modules_dir = cli_root.parent().and_then(|scope| scope.parent()).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Gemini ACP entrypoint must live under a node_modules/@google/gemini-cli install tree: {}",
+            cli_entry_path.display()
+        )
+    })?;
+    let core_entry_path = node_modules_dir
+        .join("@google")
+        .join("gemini-cli-core")
+        .join("dist")
+        .join("index.js");
+    anyhow::ensure!(
+        core_entry_path.exists(),
+        "Gemini ACP companion package is missing: {}",
+        core_entry_path.display()
+    );
+
+    Ok(ExplicitGeminiCliPaths {
+        cli_entry_path,
+        core_entry_path,
+    })
+}
+
 fn maybe_wrap_gemini_acp_command(
     data_root: &Path,
     mut cmd: installer::AgentServerCommand,
-) -> installer::AgentServerCommand {
-    fn file_stem_matches(path: &StdPath, name: &str) -> bool {
-        path.file_stem()
-            .and_then(|s| s.to_str())
-            .map(|s| s.eq_ignore_ascii_case(name))
-            .unwrap_or(false)
-    }
-
-    fn resolve_path(value: &str) -> Option<PathBuf> {
-        let path = StdPath::new(value);
-        if value.contains(std::path::MAIN_SEPARATOR) || path.is_absolute() {
-            return fs::canonicalize(path)
-                .ok()
-                .or_else(|| Some(path.to_path_buf()));
-        }
-        which(value).ok()
-    }
-
-    fn find_node_modules(path: &StdPath) -> Option<PathBuf> {
-        for ancestor in path.ancestors() {
-            if ancestor.file_name().and_then(|s| s.to_str()) == Some("node_modules") {
-                return Some(ancestor.to_path_buf());
-            }
-        }
-        if let Some(bin_dir) = path.parent() {
-            if bin_dir.file_name().and_then(|s| s.to_str()) == Some("bin") {
-                if let Some(prefix) = bin_dir.parent() {
-                    let candidate = prefix.join("lib").join("node_modules");
-                    if candidate.exists() {
-                        return Some(candidate);
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    fn is_gemini_cli_entrypoint(path: &StdPath) -> bool {
-        if path.file_name().and_then(|s| s.to_str()) != Some("index.js") {
-            return false;
-        }
-        for ancestor in path.ancestors() {
-            if ancestor.file_name().and_then(|s| s.to_str()) != Some("gemini-cli") {
-                continue;
-            }
-            let is_google_scope = ancestor
-                .parent()
-                .and_then(|parent| parent.file_name())
-                .and_then(|s| s.to_str())
-                == Some("@google");
-            if is_google_scope {
-                return true;
-            }
-        }
-        false
-    }
-
-    let mut candidate = None;
-    let cmd_path = StdPath::new(&cmd.command);
-    let cmd_is_gemini = file_stem_matches(cmd_path, "gemini");
-    let cmd_is_node = file_stem_matches(cmd_path, "node");
-    if cmd_is_gemini || cmd_is_node {
-        if cmd_is_gemini {
-            candidate = resolve_path(&cmd.command);
-        }
-        if candidate.is_none() {
-            if let Some(arg0) = cmd.args.first() {
-                let arg0_path = StdPath::new(arg0);
-                if file_stem_matches(arg0_path, "gemini") || is_gemini_cli_entrypoint(arg0_path) {
-                    candidate = resolve_path(arg0);
-                }
-            }
-        }
-    } else if let Some(arg0) = cmd.args.first() {
-        let arg0_path = StdPath::new(arg0);
-        if file_stem_matches(arg0_path, "gemini") || is_gemini_cli_entrypoint(arg0_path) {
-            candidate = resolve_path(arg0);
-        }
-    }
-
-    let bin_path = match candidate {
-        Some(path) => path,
-        None => return cmd,
-    };
-
-    let node_modules_dir = match find_node_modules(&bin_path) {
-        Some(dir) => dir,
-        None => return cmd,
-    };
-    let cli_root = node_modules_dir.join("@google").join("gemini-cli");
-    let core_root = node_modules_dir.join("@google").join("gemini-cli-core");
-    if !cli_root.exists() || !core_root.exists() {
-        return cmd;
-    }
+) -> Result<installer::AgentServerCommand> {
+    let paths = resolve_explicit_gemini_cli_paths(&cmd.command, &cmd.args)?;
 
     let wrapper_path = data_root
         .join("providers")
         .join("agent-servers")
         .join("gemini-acp-wrapper.mjs");
     if let Some(parent) = wrapper_path.parent() {
-        let _ = fs::create_dir_all(parent);
+        fs::create_dir_all(parent)
+            .with_context(|| format!("creating Gemini ACP wrapper dir {}", parent.display()))?;
     }
 
     let wrapper_contents = format!(
@@ -343,30 +349,31 @@ if (!consentDisabled) {{\n\
 }}\n\
 process.env.GEMINI_CLI_NO_RELAUNCH ??= 'true';\n\
 await import('file://{}');\n",
-        core_root.join("dist").join("index.js").to_string_lossy(),
-        cli_root.join("dist").join("index.js").to_string_lossy(),
+        paths.core_entry_path.to_string_lossy(),
+        paths.cli_entry_path.to_string_lossy(),
     );
 
     let write_wrapper = match fs::read_to_string(&wrapper_path) {
         Ok(existing) => existing != wrapper_contents,
-        Err(_) => true,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => true,
+        Err(err) => {
+            return Err(err)
+                .with_context(|| format!("reading Gemini ACP wrapper {}", wrapper_path.display()));
+        }
     };
     if write_wrapper {
-        let _ = fs::write(&wrapper_path, wrapper_contents);
+        fs::write(&wrapper_path, wrapper_contents)
+            .with_context(|| format!("writing Gemini ACP wrapper {}", wrapper_path.display()))?;
     }
 
     let wrapper_arg = wrapper_path.to_string_lossy().to_string();
-    if cmd_is_gemini {
-        let node_path = match which("node") {
-            Ok(path) => path.to_string_lossy().to_string(),
-            Err(_) => return cmd,
-        };
-        cmd.command = node_path;
-        cmd.args.insert(0, wrapper_arg);
-    } else if let Some(first) = cmd.args.first_mut() {
-        *first = wrapper_arg;
-    }
-    cmd
+    let first = cmd.args.first_mut().ok_or_else(|| {
+        anyhow::anyhow!(
+            "Gemini ACP runtime must pass an explicit absolute @google/gemini-cli/dist/index.js entrypoint as the first argument"
+        )
+    })?;
+    *first = wrapper_arg;
+    Ok(cmd)
 }
 
 fn maybe_set_qwen_openai_auth_type(
@@ -394,9 +401,9 @@ pub(crate) fn normalize_acp_provider_command(
     data_root: &Path,
     provider_id: &str,
     cmd: installer::AgentServerCommand,
-) -> installer::AgentServerCommand {
+) -> Result<installer::AgentServerCommand> {
     let cmd = if provider_id == "gemini" {
-        maybe_wrap_gemini_acp_command(data_root, cmd)
+        maybe_wrap_gemini_acp_command(data_root, cmd)?
     } else {
         cmd
     };
@@ -405,11 +412,12 @@ pub(crate) fn normalize_acp_provider_command(
     } else {
         cmd
     };
-    if provider_id == "openhands" {
+    let cmd = if provider_id == "openhands" {
         maybe_set_bridge_env_override(cmd)
     } else {
         cmd
-    }
+    };
+    Ok(cmd)
 }
 
 pub(crate) fn runtime_probe_command_as_agent_command_for_target(
@@ -432,7 +440,7 @@ pub(crate) fn runtime_probe_command_as_agent_command_for_target(
             .ok_or_else(|| {
                 anyhow::anyhow!("runtime command is not configured for provider 'acp-crp-bridge'")
             })?;
-    let normalized = normalize_acp_provider_command(data_root, provider_id, runtime_cmd);
+    let normalized = normalize_acp_provider_command(data_root, provider_id, runtime_cmd)?;
     let mut bridged = acp_bridge_command(&bridge_cmd, normalized.clone());
     let mut dependencies = bridge_cmd.dependencies.clone();
     for dependency in &normalized.dependencies {
@@ -496,8 +504,13 @@ fn build_provider_adapter_for_target(
             Some(bridge) => {
                 match runtime_command_as_agent_command_for_target(cfg, provider_id, Some(target)) {
                     Ok(Some(cmd)) => {
-                        let cmd = normalize_acp_provider_command(data_root, provider_id, cmd);
-                        acp_bridge_adapter(provider_id, bridge, cmd)
+                        match normalize_acp_provider_command(data_root, provider_id, cmd) {
+                            Ok(cmd) => acp_bridge_adapter(provider_id, bridge, cmd),
+                            Err(err) => acp_status_adapter_acp_command_invalid(
+                                provider_id,
+                                format!("invalid ACP command for provider '{provider_id}': {err}"),
+                            ),
+                        }
                     }
                     Ok(None) => acp_status_adapter_acp_command_invalid(
                         provider_id,
@@ -596,7 +609,8 @@ mod tests {
             dependencies: Vec::new(),
             managed: None,
         };
-        let normalized = normalize_acp_provider_command(temp.path(), "qwen", input);
+        let normalized =
+            normalize_acp_provider_command(temp.path(), "qwen", input).expect("normalized qwen");
         assert_eq!(
             normalized.args,
             vec![
@@ -605,6 +619,139 @@ mod tests {
                 "openai".to_string(),
             ]
         );
+    }
+
+    fn create_gemini_runtime_layout(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
+        let node_bin = root
+            .join("bundle")
+            .join("runtimes")
+            .join("node")
+            .join("bin")
+            .join("node");
+        let cli_entry = root
+            .join("bundle")
+            .join("providers")
+            .join("gemini")
+            .join("node_modules")
+            .join("@google")
+            .join("gemini-cli")
+            .join("dist")
+            .join("index.js");
+        let core_entry = root
+            .join("bundle")
+            .join("providers")
+            .join("gemini")
+            .join("node_modules")
+            .join("@google")
+            .join("gemini-cli-core")
+            .join("dist")
+            .join("index.js");
+        std::fs::create_dir_all(node_bin.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(cli_entry.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(core_entry.parent().unwrap()).unwrap();
+        std::fs::write(&node_bin, b"node").unwrap();
+        std::fs::write(&cli_entry, b"cli").unwrap();
+        std::fs::write(&core_entry, b"core").unwrap();
+        (node_bin, cli_entry, core_entry)
+    }
+
+    #[test]
+    fn wraps_explicit_gemini_node_entrypoint_for_acp() {
+        let temp = tempdir().unwrap();
+        let data_root = temp.path().join("data");
+        let (node_bin, cli_entry, core_entry) = create_gemini_runtime_layout(temp.path());
+
+        let input = installer::AgentServerCommand {
+            command: node_bin.to_string_lossy().to_string(),
+            args: vec![
+                cli_entry.to_string_lossy().to_string(),
+                "--experimental-acp".to_string(),
+            ],
+            dependencies: Vec::new(),
+            managed: None,
+        };
+        let wrapped =
+            normalize_acp_provider_command(&data_root, "gemini", input).expect("wrapped gemini");
+
+        assert_eq!(wrapped.command, node_bin.to_string_lossy().to_string());
+        assert_eq!(
+            wrapped.args.get(1).map(String::as_str),
+            Some("--experimental-acp")
+        );
+        let wrapper_arg = wrapped.args.first().expect("wrapper arg");
+        assert!(wrapper_arg.ends_with("gemini-acp-wrapper.mjs"));
+        let wrapper_path = PathBuf::from(wrapper_arg);
+        assert!(wrapper_path.exists());
+        let wrapper_body = std::fs::read_to_string(wrapper_path).unwrap();
+        assert!(wrapper_body.contains("GEMINI_CLI_NO_RELAUNCH"));
+        assert!(wrapper_body.contains(cli_entry.to_string_lossy().as_ref()));
+        assert!(wrapper_body.contains(core_entry.to_string_lossy().as_ref()));
+    }
+
+    #[test]
+    fn rejects_path_style_gemini_command() {
+        let temp = tempdir().unwrap();
+        let data_root = temp.path().join("data");
+        let gemini_bin = temp.path().join("bundle").join("bin").join("gemini");
+        std::fs::create_dir_all(gemini_bin.parent().unwrap()).unwrap();
+        std::fs::write(&gemini_bin, b"gemini").unwrap();
+
+        let input = installer::AgentServerCommand {
+            command: gemini_bin.to_string_lossy().to_string(),
+            args: vec!["--experimental-acp".to_string()],
+            dependencies: Vec::new(),
+            managed: None,
+        };
+        let err = normalize_acp_provider_command(&data_root, "gemini", input).unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("must use an explicit absolute node executable"));
+    }
+
+    #[test]
+    fn rejects_relative_gemini_entrypoint() {
+        let temp = tempdir().unwrap();
+        let data_root = temp.path().join("data");
+        let (node_bin, _, _) = create_gemini_runtime_layout(temp.path());
+
+        let input = installer::AgentServerCommand {
+            command: node_bin.to_string_lossy().to_string(),
+            args: vec![
+                "node_modules/@google/gemini-cli/dist/index.js".to_string(),
+                "--experimental-acp".to_string(),
+            ],
+            dependencies: Vec::new(),
+            managed: None,
+        };
+        let err = normalize_acp_provider_command(&data_root, "gemini", input).unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("Gemini ACP entrypoint must be an explicit absolute path"));
+    }
+
+    #[test]
+    fn rejects_gemini_runtime_when_core_package_is_missing() {
+        let temp = tempdir().unwrap();
+        let data_root = temp.path().join("data");
+        let (node_bin, cli_entry, core_entry) = create_gemini_runtime_layout(temp.path());
+        std::fs::remove_file(core_entry).unwrap();
+
+        let input = installer::AgentServerCommand {
+            command: node_bin.to_string_lossy().to_string(),
+            args: vec![
+                cli_entry.to_string_lossy().to_string(),
+                "--experimental-acp".to_string(),
+            ],
+            dependencies: Vec::new(),
+            managed: None,
+        };
+        let err = normalize_acp_provider_command(&data_root, "gemini", input).unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("Gemini ACP companion package is missing"));
     }
 
     #[test]
@@ -654,5 +801,45 @@ mod tests {
         assert_eq!(resolved.args[0], "--log-level");
         assert_eq!(resolved.args[1], "debug");
         assert_eq!(resolved.dependencies, vec!["bridge-dep", "cursor-dep"]);
+    }
+
+    #[test]
+    fn runtime_probe_command_rejects_path_style_gemini_runtime() {
+        let temp = tempdir().unwrap();
+        let gemini_bin = temp.path().join("bundle").join("bin").join("gemini");
+        let bridge_cmd = temp.path().join("acp-crp-bridge");
+        std::fs::create_dir_all(gemini_bin.parent().unwrap()).unwrap();
+        std::fs::write(&gemini_bin, b"gemini").unwrap();
+        std::fs::write(&bridge_cmd, b"bridge").unwrap();
+        let cfg = installer::AgentServerConfigFile {
+            providers: HashMap::from([
+                (
+                    "gemini".to_string(),
+                    installer::AgentServerCommand {
+                        command: gemini_bin.to_string_lossy().to_string(),
+                        args: vec!["--experimental-acp".to_string()],
+                        dependencies: Vec::new(),
+                        managed: None,
+                    },
+                ),
+                (
+                    "acp-crp-bridge".to_string(),
+                    installer::AgentServerCommand {
+                        command: bridge_cmd.to_string_lossy().to_string(),
+                        args: vec!["--log-level".to_string(), "debug".to_string()],
+                        dependencies: Vec::new(),
+                        managed: None,
+                    },
+                ),
+            ]),
+            managed_installs: HashMap::new(),
+            managed_provider_targets: HashMap::new(),
+            managed_install_targets: HashMap::new(),
+        };
+
+        let err = runtime_probe_command_as_agent_command(temp.path(), &cfg, "gemini").unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("must use an explicit absolute node executable"));
     }
 }

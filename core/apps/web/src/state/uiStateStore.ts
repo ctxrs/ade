@@ -358,30 +358,113 @@ export async function saveSessionHistoryPageV1(
   await updateSessionHistoryIndexV1(key, now, { force: true });
 }
 
-export type PersistedSettingsV1 = {
-  v: 1;
-  settings: import("../api/client").Settings;
+const asRecord = (value: unknown): Record<string, unknown> | null => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+};
+
+const trim = (value: unknown): string => String(value ?? "").trim();
+
+const readBoolish = (value: unknown): boolean | null => {
+  if (typeof value === "boolean") return value;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return null;
+};
+
+function sanitizeSettingsForStorage(
+  settings: unknown,
+): import("../api/client").PublicSettings | null {
+  const rec = asRecord(settings);
+  if (!rec) return null;
+
+  const sanitized: Record<string, unknown> = { ...rec };
+
+  const dictation = asRecord(rec.dictation);
+  if (dictation) {
+    const dictationSanitized: Record<string, unknown> = { ...dictation };
+    const livekit = asRecord(dictation.livekit);
+    if (livekit) {
+      const livekitSanitized: Record<string, unknown> = { ...livekit };
+      livekitSanitized.api_key_set =
+        readBoolish(livekit.api_key_set) ?? trim(livekit.api_key) !== "";
+      livekitSanitized.api_secret_set =
+        readBoolish(livekit.api_secret_set) ?? trim(livekit.api_secret) !== "";
+      delete livekitSanitized.api_key;
+      delete livekitSanitized.api_secret;
+      dictationSanitized.livekit = livekitSanitized;
+    }
+    sanitized.dictation = dictationSanitized;
+  }
+
+  const titleGeneration = asRecord(rec.title_generation);
+  if (titleGeneration) {
+    const titleGenerationSanitized: Record<string, unknown> = { ...titleGeneration };
+    const remote = asRecord(titleGeneration.remote);
+    if (remote) {
+      const remoteSanitized: Record<string, unknown> = { ...remote };
+      remoteSanitized.api_key_set =
+        readBoolish(remote.api_key_set) ?? trim(remote.api_key) !== "";
+      delete remoteSanitized.api_key;
+      titleGenerationSanitized.remote = remoteSanitized;
+    }
+    sanitized.title_generation = titleGenerationSanitized;
+  }
+
+  return sanitized as import("../api/client").PublicSettings;
+}
+
+export type PersistedSettingsV2 = {
+  v: 2;
+  settings: import("../api/client").PublicSettings;
   updatedAtMs: number;
 };
 
-export function settingsKeyV1() {
+export function settingsLegacyKeyV1() {
   return "wb.settings.v1";
 }
 
-export async function loadSettingsV1(): Promise<PersistedSettingsV1 | null> {
-  const raw = await storage.getKv<PersistedSettingsV1>(settingsKeyV1());
-  if (!raw || typeof raw !== "object") return null;
-  const rec = raw as PersistedSettingsV1;
-  if (rec.v !== 1 || !rec.settings) return null;
-  return rec;
+export function settingsKeyV2() {
+  return "wb.settings.v2";
 }
 
-export async function saveSettingsV1(settings: PersistedSettingsV1["settings"]): Promise<void> {
-  await storage.setKv(settingsKeyV1(), {
-    v: 1,
-    settings,
+export async function loadSettingsV2(): Promise<PersistedSettingsV2 | null> {
+  const raw = await storage.getKv<PersistedSettingsV2>(settingsKeyV2());
+  if (raw && typeof raw === "object") {
+    const rec = raw as PersistedSettingsV2;
+    if (rec.v === 2 && rec.settings) return rec;
+  }
+
+  const legacyRaw = await storage.getKv<{ v: 1; settings: unknown; updatedAtMs: number }>(settingsLegacyKeyV1());
+  if (!legacyRaw || typeof legacyRaw !== "object") return null;
+  const legacy = legacyRaw as { v: 1; settings: unknown; updatedAtMs: number };
+  const sanitized = sanitizeSettingsForStorage(legacy.settings);
+  await storage.deleteKv(settingsLegacyKeyV1());
+  if (!sanitized) {
+    await storage.flush();
+    return null;
+  }
+
+  const migrated: PersistedSettingsV2 = {
+    v: 2,
+    settings: sanitized,
+    updatedAtMs: legacy.updatedAtMs ?? Date.now(),
+  };
+  await storage.setKv(settingsKeyV2(), migrated);
+  await storage.flush();
+  return migrated;
+}
+
+export async function saveSettingsV2(settings: PersistedSettingsV2["settings"]): Promise<void> {
+  const sanitized = sanitizeSettingsForStorage(settings);
+  if (!sanitized) return;
+  await storage.setKv(settingsKeyV2(), {
+    v: 2,
+    settings: sanitized,
     updatedAtMs: Date.now(),
-  } satisfies PersistedSettingsV1);
+  } satisfies PersistedSettingsV2);
+  await storage.deleteKv(settingsLegacyKeyV1());
+  await storage.flush();
 }
 
 export type SessionViewVerbosity = "terse" | "default" | "verbose";

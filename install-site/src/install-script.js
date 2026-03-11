@@ -105,8 +105,7 @@ verify_artifact_sha() {
   artifact_path="$1"
   expected_sha="$2"
   if [ -z "$expected_sha" ]; then
-    log "Warning: manifest missing sha256; skipping checksum verification"
-    return 0
+    fail "manifest missing sha256 for selected artifact"
   fi
   actual_sha="$(sha256_of_file "$artifact_path")"
   if [ "$actual_sha" != "$expected_sha" ]; then

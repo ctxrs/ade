@@ -64,7 +64,7 @@ const configuredTitlingSettings = {
     mode: "remote",
     remote: {
       base_url: "https://openrouter.ai/api/v1",
-      api_key: "sk-ready",
+      api_key_set: true,
       model: "google/gemini-3-flash-preview",
       use_json: true,
     },

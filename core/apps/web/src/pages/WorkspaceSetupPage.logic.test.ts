@@ -156,7 +156,7 @@ describe("session titling readiness", () => {
     const incomplete = resolveSessionTitlingReadiness({
       title_generation: {
         mode: "remote",
-        remote: { base_url: "https://openrouter.ai/api/v1", api_key: "", model: "gpt-4o-mini", use_json: true },
+        remote: { base_url: "https://openrouter.ai/api/v1", api_key_set: false, model: "gpt-4o-mini", use_json: true },
         local: { model_id: "ggml-org/Qwen3-1.7B-GGUF", use_json: true },
       },
     }, null);
@@ -165,7 +165,7 @@ describe("session titling readiness", () => {
     const ready = resolveSessionTitlingReadiness({
       title_generation: {
         mode: "remote",
-        remote: { base_url: "https://openrouter.ai/api/v1", api_key: "sk-test", model: "gpt-4o-mini", use_json: true },
+        remote: { base_url: "https://openrouter.ai/api/v1", api_key_set: true, model: "gpt-4o-mini", use_json: true },
         local: { model_id: "ggml-org/Qwen3-1.7B-GGUF", use_json: true },
       },
     }, null);
@@ -176,7 +176,7 @@ describe("session titling readiness", () => {
     const configured = resolveSessionTitlingReadiness({
       title_generation: {
         mode: "local",
-        remote: { base_url: "", api_key: "", model: "", use_json: true },
+        remote: { base_url: "", api_key_set: false, model: "", use_json: true },
         local: { model_id: "ggml-org/Qwen3-1.7B-GGUF", use_json: true },
       },
     }, { ready: false } as never);
@@ -185,7 +185,7 @@ describe("session titling readiness", () => {
     const missingModel = resolveSessionTitlingReadiness({
       title_generation: {
         mode: "local",
-        remote: { base_url: "", api_key: "", model: "", use_json: true },
+        remote: { base_url: "", api_key_set: false, model: "", use_json: true },
         local: { model_id: "", use_json: true },
       },
     }, { ready: true } as never);
@@ -198,14 +198,14 @@ describe("session titling payload", () => {
     const draft = buildSessionTitlingDraft({
       title_generation: {
         mode: "remote",
-        remote: { base_url: "https://api.example", api_key: "sk-existing", model: "gpt-x", use_json: false },
+        remote: { base_url: "https://api.example", api_key_set: true, model: "gpt-x", use_json: false },
         local: { model_id: "local-model", use_json: false },
       },
     });
 
     expect(draft.mode).toBe("remote");
     expect(draft.remote.baseUrl).toBe("https://api.example");
-    expect(draft.remote.apiKey).toBe("sk-existing");
+    expect(draft.remote.apiKey).toBe("");
     expect(draft.remote.model).toBe("gpt-x");
     expect(draft.remote.useJson).toBe(false);
     expect(draft.local.modelId).toBe("local-model");
@@ -242,6 +242,48 @@ describe("session titling payload", () => {
       local: {
         model_id: "ggml-org/Qwen3-1.7B-GGUF",
         use_json: false,
+      },
+    });
+  });
+
+  it("omits unchanged remote API keys so stored secrets are preserved", () => {
+    const payload = buildSessionTitlingPayload({
+      mode: "remote",
+      draft: {
+        mode: "remote",
+        remote: {
+          baseUrl: "https://api.example",
+          apiKey: "",
+          model: "gpt-existing",
+          useJson: true,
+        },
+        local: {
+          modelId: "ggml-org/Qwen3-1.7B-GGUF",
+          useJson: true,
+        },
+      },
+      existing: {
+        mode: "remote",
+        remote: {
+          base_url: "https://api.example",
+          api_key_set: true,
+          model: "gpt-existing",
+          use_json: true,
+        },
+        local: { model_id: "ggml-org/Qwen3-1.7B-GGUF", use_json: true },
+      },
+    });
+
+    expect(payload).toEqual({
+      mode: "remote",
+      remote: {
+        base_url: "https://api.example",
+        model: "gpt-existing",
+        use_json: true,
+      },
+      local: {
+        model_id: "ggml-org/Qwen3-1.7B-GGUF",
+        use_json: true,
       },
     });
   });

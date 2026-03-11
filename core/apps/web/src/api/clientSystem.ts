@@ -58,17 +58,30 @@ export type LspStatus = {
 
 export type LiveKitDictationSettings = {
   base_url: string;
-  api_key: string;
-  api_secret?: string | null;
+  api_key_set?: boolean;
   api_secret_set?: boolean;
   model?: string | null;
   language?: string | null;
+};
+
+export type UpdateLiveKitDictationSettingsRequest = {
+  base_url: string;
+  api_key?: string | null;
+  api_secret?: string | null;
+  model: string;
+  language: string;
 };
 
 export type DictationSettings = {
   enabled: boolean;
   provider: "disabled" | "livekit_inference" | "tauri_stt";
   livekit?: LiveKitDictationSettings | null;
+};
+
+export type UpdateDictationSettingsRequest = {
+  enabled: boolean;
+  provider: DictationSettings["provider"];
+  livekit?: UpdateLiveKitDictationSettingsRequest | null;
 };
 
 export type TelemetrySettings = {
@@ -124,7 +137,14 @@ export type TitleGenerationMode = "remote" | "local";
 
 export type TitleGenerationRemoteSettings = {
   base_url: string;
-  api_key: string;
+  api_key_set?: boolean;
+  model: string;
+  use_json: boolean;
+};
+
+export type UpdateTitleGenerationRemoteSettingsRequest = {
+  base_url: string;
+  api_key?: string | null;
   model: string;
   use_json: boolean;
 };
@@ -137,6 +157,12 @@ export type TitleGenerationLocalSettings = {
 export type TitleGenerationSettings = {
   mode: TitleGenerationMode;
   remote: TitleGenerationRemoteSettings;
+  local: TitleGenerationLocalSettings;
+};
+
+export type UpdateTitleGenerationSettingsRequest = {
+  mode: TitleGenerationMode;
+  remote: UpdateTitleGenerationRemoteSettingsRequest;
   local: TitleGenerationLocalSettings;
 };
 
@@ -164,10 +190,22 @@ export type TitleGenerationLocalStatus = {
   install_running?: boolean;
 };
 
-export type Settings = {
+export type PublicSettings = {
   dictation?: DictationSettings | null;
   telemetry?: TelemetrySettings | null;
   title_generation?: TitleGenerationSettings | null;
+  resource_governance?: ResourceGovernanceSettings | null;
+  provider_guard?: ProviderGuardSettings | null;
+  subagents?: SubagentSettings | null;
+  sandboxing?: SandboxingSettings | null;
+  execution?: ExecutionSettings | null;
+  network_profiles?: NetworkProfilesSettings | null;
+};
+
+export type UpdateSettingsRequest = {
+  dictation?: UpdateDictationSettingsRequest | null;
+  telemetry?: TelemetrySettings | null;
+  title_generation?: UpdateTitleGenerationSettingsRequest | null;
   resource_governance?: ResourceGovernanceSettings | null;
   provider_guard?: ProviderGuardSettings | null;
   subagents?: SubagentSettings | null;
@@ -207,10 +245,10 @@ export type NetworkProfilesSettings = {
 };
 
 export const getSettings = () =>
-  apiAny<Settings>("/api/settings");
+  apiAny<PublicSettings>("/api/settings");
 
-export const updateSettings = (settings: Partial<Settings>) =>
-  apiAny<Settings>("/api/settings", {
+export const updateSettings = (settings: UpdateSettingsRequest) =>
+  apiAny<PublicSettings>("/api/settings", {
     method: "POST",
     body: JSON.stringify(settings),
   });

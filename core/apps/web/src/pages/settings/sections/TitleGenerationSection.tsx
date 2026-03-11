@@ -24,6 +24,7 @@ export function TitleGenerationSection({ active }: TitleGenerationSectionProps) 
     setTitleGenBaseUrl,
     titleGenApiKey,
     setTitleGenApiKey,
+    titleGenApiKeySet,
     titleGenModel,
     setTitleGenModel,
     titleGenUseJson,
@@ -105,13 +106,13 @@ export function TitleGenerationSection({ active }: TitleGenerationSectionProps) 
                 />
                 <Row
                   title="API key"
-                  description="Stored locally in your ctx data dir."
+                  description={titleGenApiKeySet ? "Key is stored; enter a new value to rotate." : "Stored locally in your ctx data dir."}
                   control={
                     <input
                       className="settings-control settings-control-wide"
                       value={titleGenApiKey}
                       onChange={(e) => setTitleGenApiKey(e.target.value)}
-                      placeholder="sk-..."
+                      placeholder={titleGenApiKeySet ? "(already set, leave blank to keep)" : "sk-..."}
                       type="password"
                     />
                   }

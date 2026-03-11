@@ -20,13 +20,17 @@ vi.mock("./storage", () => ({
 import {
   clearTaskThoughtsV1,
   decodeWorkspaceActiveSnapshotV1,
+  loadSettingsV2,
   loadSessionHistoryPageV1,
   loadSessionHeadV1,
   loadTaskThoughtsV1,
   loadWorkspaceActiveSnapshotV1,
+  saveSettingsV2,
   saveSessionHistoryPageV1,
   saveSessionHeadV1,
   saveTaskThoughtsV1,
+  settingsKeyV2,
+  settingsLegacyKeyV1,
   saveWorkspaceActiveSnapshotV1,
   sessionHistoryPageKeyV2,
   sessionHeadKeyV1,
@@ -214,5 +218,153 @@ describe("uiStateStore", () => {
         updatedAtMs: expect.any(Number),
       }),
     );
+  });
+
+  it("migrates legacy cached settings by redacting secret values", async () => {
+    storageMock.getKv
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        v: 1,
+        updatedAtMs: 123,
+        settings: {
+          dictation: {
+            enabled: true,
+            provider: "livekit_inference",
+            livekit: {
+              base_url: "https://livekit.example",
+              api_key: "lk-key",
+              api_secret: "lk-secret",
+              model: "auto",
+              language: "en",
+            },
+          },
+          title_generation: {
+            mode: "remote",
+            remote: {
+              base_url: "https://titles.example",
+              api_key: "title-key",
+              model: "gpt-test",
+              use_json: true,
+            },
+            local: {
+              model_id: "local-model",
+              use_json: false,
+            },
+          },
+        },
+      });
+
+    const loaded = await loadSettingsV2();
+
+    expect(storageMock.getKv).toHaveBeenNthCalledWith(1, settingsKeyV2());
+    expect(storageMock.getKv).toHaveBeenNthCalledWith(2, settingsLegacyKeyV1());
+    expect(loaded).toEqual({
+      v: 2,
+      updatedAtMs: 123,
+      settings: {
+        dictation: {
+          enabled: true,
+          provider: "livekit_inference",
+          livekit: {
+            base_url: "https://livekit.example",
+            api_key_set: true,
+            api_secret_set: true,
+            model: "auto",
+            language: "en",
+          },
+        },
+        title_generation: {
+          mode: "remote",
+          remote: {
+            base_url: "https://titles.example",
+            api_key_set: true,
+            model: "gpt-test",
+            use_json: true,
+          },
+          local: {
+            model_id: "local-model",
+            use_json: false,
+          },
+        },
+      },
+    });
+    expect(storageMock.deleteKv).toHaveBeenCalledWith(settingsLegacyKeyV1());
+    expect(storageMock.setKv).toHaveBeenCalledWith(
+      settingsKeyV2(),
+      expect.objectContaining({
+        v: 2,
+        settings: expect.objectContaining({
+          dictation: expect.objectContaining({
+            livekit: expect.not.objectContaining({ api_key: expect.anything(), api_secret: expect.anything() }),
+          }),
+        }),
+      }),
+    );
+    expect(storageMock.flush).toHaveBeenCalled();
+  });
+
+  it("stores only redacted public settings in the v2 cache", async () => {
+    await saveSettingsV2({
+      dictation: {
+        enabled: true,
+        provider: "livekit_inference",
+        livekit: {
+          base_url: "https://livekit.example",
+          api_key_set: true,
+          api_secret_set: true,
+          model: "auto",
+          language: "en",
+        },
+      },
+      title_generation: {
+        mode: "remote",
+        remote: {
+          base_url: "https://titles.example",
+          api_key_set: true,
+          model: "gpt-test",
+          use_json: true,
+        },
+        local: {
+          model_id: "local-model",
+          use_json: false,
+        },
+      },
+    });
+
+    expect(storageMock.setKv).toHaveBeenCalledWith(
+      settingsKeyV2(),
+      expect.objectContaining({
+        v: 2,
+        settings: {
+          dictation: {
+            enabled: true,
+            provider: "livekit_inference",
+            livekit: {
+              base_url: "https://livekit.example",
+              api_key_set: true,
+              api_secret_set: true,
+              model: "auto",
+              language: "en",
+            },
+          },
+          title_generation: {
+            mode: "remote",
+            remote: {
+              base_url: "https://titles.example",
+              api_key_set: true,
+              model: "gpt-test",
+              use_json: true,
+            },
+            local: {
+              model_id: "local-model",
+              use_json: false,
+            },
+          },
+        },
+        updatedAtMs: expect.any(Number),
+      }),
+    );
+    expect(storageMock.deleteKv).toHaveBeenCalledWith(settingsLegacyKeyV1());
+    expect(storageMock.flush).toHaveBeenCalled();
   });
 });

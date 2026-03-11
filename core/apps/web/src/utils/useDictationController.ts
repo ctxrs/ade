@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getSettings, updateSettings } from "../api/client";
-import type { DictationSettings } from "../api/client";
+import type { DictationSettings, UpdateDictationSettingsRequest } from "../api/client";
 import { getDaemonConnection, getDaemonWsUrl } from "../api/daemonConnection";
 import { isDesktopApp } from "./desktop";
 import { startMicPcmStream } from "./micPcmStream";
@@ -29,6 +29,7 @@ export type DictationOnboardingStage = "choose" | "local_setup" | "cloud_setup";
 export type DictationOnboardingCloudDraft = {
   baseUrl: string;
   apiKey: string;
+  apiKeySet: boolean;
   apiSecret: string;
   apiSecretSet: boolean;
   model: string;
@@ -77,9 +78,10 @@ const seedCloudDraft = (settings: DictationSettings | null | undefined): Dictati
   const livekit = settings?.livekit;
   return {
     baseUrl: String(livekit?.base_url ?? DEFAULT_LIVEKIT_BASE_URL),
-    apiKey: String(livekit?.api_key ?? ""),
+    apiKey: "",
+    apiKeySet: readBoolish(livekit?.api_key_set) ?? false,
     apiSecret: "",
-    apiSecretSet: (readBoolish(livekit?.api_secret_set) ?? false) || Boolean(String(livekit?.api_secret ?? "").trim()),
+    apiSecretSet: readBoolish(livekit?.api_secret_set) ?? false,
     model: String(livekit?.model ?? DEFAULT_LIVEKIT_MODEL),
     language: String(livekit?.language ?? DEFAULT_LIVEKIT_LANGUAGE),
   };
@@ -94,30 +96,58 @@ const normalizeCloudDraft = (draft: DictationOnboardingCloudDraft) => {
   return { baseUrl, apiKey, apiSecret, model, language };
 };
 
-const cloudSettingsFromDraft = (draft: DictationOnboardingCloudDraft): DictationSettings => {
+const cloudSettingsFromDraft = (draft: DictationOnboardingCloudDraft): UpdateDictationSettingsRequest => {
   const normalized = normalizeCloudDraft(draft);
+  const livekit: UpdateDictationSettingsRequest["livekit"] = {
+    base_url: normalized.baseUrl,
+    model: normalized.model,
+    language: normalized.language,
+  };
+  if (normalized.apiKey) {
+    livekit.api_key = normalized.apiKey;
+  }
+  if (normalized.apiSecret) {
+    livekit.api_secret = normalized.apiSecret;
+  }
   return {
     enabled: true,
     provider: "livekit_inference",
-    livekit: {
-      base_url: normalized.baseUrl,
-      api_key: normalized.apiKey,
-      api_secret: normalized.apiSecret || null,
-      model: normalized.model,
-      language: normalized.language,
-    },
+    livekit,
   };
 };
 
-const localSettingsFromDraft = (draft: DictationOnboardingCloudDraft): DictationSettings => {
+const localSettingsFromDraft = (draft: DictationOnboardingCloudDraft): UpdateDictationSettingsRequest => {
   const normalized = normalizeCloudDraft(draft);
+  const livekit: UpdateDictationSettingsRequest["livekit"] = {
+    base_url: normalized.baseUrl,
+    model: normalized.model,
+    language: normalized.language,
+  };
+  if (normalized.apiKey) {
+    livekit.api_key = normalized.apiKey;
+  }
+  if (normalized.apiSecret) {
+    livekit.api_secret = normalized.apiSecret;
+  }
   return {
     enabled: true,
     provider: "tauri_stt",
+    livekit,
+  };
+};
+
+const runtimeSettingsFromDraft = (
+  provider: DictationSettings["provider"],
+  draft: DictationOnboardingCloudDraft,
+): DictationSettings => {
+  const normalized = normalizeCloudDraft(draft);
+  return {
+    enabled: true,
+    provider,
     livekit: {
       base_url: normalized.baseUrl,
-      api_key: normalized.apiKey,
-      api_secret: normalized.apiSecret || null,
+      api_key_set: draft.apiKeySet || Boolean(normalized.apiKey),
+      api_secret_set: draft.apiSecretSet || Boolean(normalized.apiSecret),
       model: normalized.model,
       language: normalized.language,
     },
@@ -137,8 +167,8 @@ const needsDictationOnboarding = (settings: DictationSettings | null | undefined
 
   if (provider === "livekit_inference") {
     const livekit = settings.livekit;
-    const hasKey = Boolean(livekit?.api_key?.trim());
-    const hasSecret = Boolean(livekit?.api_secret?.trim()) || (readBoolish(livekit?.api_secret_set) ?? false);
+    const hasKey = readBoolish(livekit?.api_key_set) ?? false;
+    const hasSecret = readBoolish(livekit?.api_secret_set) ?? false;
     return !hasKey || !hasSecret;
   }
 
@@ -247,9 +277,12 @@ export const useDictationController = (opts: DictationControllerOptions): Dictat
     }
   }, [appendSegment, setText]);
 
-  const persistDictationSettings = useCallback(async (settings: DictationSettings): Promise<DictationSettings> => {
+  const persistDictationSettings = useCallback(async (settings: UpdateDictationSettingsRequest): Promise<DictationSettings> => {
     const next = await updateSettings({ dictation: settings });
-    const persisted = next.dictation ?? settings;
+    const persisted = next.dictation ?? null;
+    if (!persisted) {
+      throw new Error("Daemon returned no dictation settings.");
+    }
     setDictationSettings(persisted);
     return persisted;
   }, []);
@@ -648,7 +681,7 @@ export const useDictationController = (opts: DictationControllerOptions): Dictat
   const finishLocalOnboardingStart = useCallback(
     async (submissionId: number) => {
       const localSettings = localSettingsFromDraft(onboardingCloud);
-      const started = await startDictationWithSettings(localSettings);
+      const started = await startDictationWithSettings(runtimeSettingsFromDraft("tauri_stt", onboardingCloud));
       if (!isOnboardingSubmissionActive(submissionId)) {
         if (started) {
           await stopDictationRef.current().catch(() => {});
@@ -692,7 +725,7 @@ export const useDictationController = (opts: DictationControllerOptions): Dictat
     if (!onboardingOpen || onboardingBusy) return;
 
     const normalized = normalizeCloudDraft(onboardingCloud);
-    if (!normalized.apiKey) {
+    if (!onboardingCloud.apiKeySet && !normalized.apiKey) {
       setOnboardingError("API key is required.");
       return;
     }

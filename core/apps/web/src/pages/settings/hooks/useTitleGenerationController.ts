@@ -6,6 +6,7 @@ import {
   updateSettings,
   type TitleGenerationLocalStatus,
   type TitleGenerationSettings,
+  type UpdateTitleGenerationSettingsRequest,
 } from "../../../api/client";
 import { readBoolish } from "../../../utils/boolish";
 import type { InstallSession } from "../../SettingsPage.types";
@@ -19,6 +20,7 @@ type TitleGenerationController = {
   setTitleGenBaseUrl: (value: string) => void;
   titleGenApiKey: string;
   setTitleGenApiKey: (value: string) => void;
+  titleGenApiKeySet: boolean;
   titleGenModel: string;
   setTitleGenModel: (value: string) => void;
   titleGenUseJson: boolean;
@@ -49,6 +51,7 @@ export function useTitleGenerationController(enabled: boolean): TitleGenerationC
   const [titleGenMode, setTitleGenMode] = useState<TitleGenerationSettings["mode"]>("remote");
   const [titleGenBaseUrl, setTitleGenBaseUrl] = useState("");
   const [titleGenApiKey, setTitleGenApiKey] = useState("");
+  const [titleGenApiKeySet, setTitleGenApiKeySet] = useState(false);
   const [titleGenModel, setTitleGenModel] = useState("");
   const [titleGenUseJson, setTitleGenUseJson] = useState(true);
   const [titleGenLocalModelId, setTitleGenLocalModelId] = useState("ggml-org/Qwen3-1.7B-GGUF");
@@ -64,15 +67,19 @@ export function useTitleGenerationController(enabled: boolean): TitleGenerationC
   const localInstallRef = useRef<InstallSession | undefined>(undefined);
   const previousLocalInstallRef = useRef<InstallSession | undefined>(undefined);
 
-  const titleGenerationPayload = useMemo((): TitleGenerationSettings => {
+  const titleGenerationPayload = useMemo((): UpdateTitleGenerationSettingsRequest => {
+    const remote: UpdateTitleGenerationSettingsRequest["remote"] = {
+      base_url: titleGenBaseUrl.trim(),
+      model: titleGenModel.trim(),
+      use_json: titleGenUseJson,
+    };
+    const apiKey = titleGenApiKey.trim();
+    if (apiKey) {
+      remote.api_key = apiKey;
+    }
     return {
       mode: titleGenMode,
-      remote: {
-        base_url: titleGenBaseUrl.trim(),
-        api_key: titleGenApiKey.trim(),
-        model: titleGenModel.trim(),
-        use_json: titleGenUseJson,
-      },
+      remote,
       local: {
         model_id: titleGenLocalModelId.trim(),
         use_json: titleGenLocalUseJson,
@@ -156,7 +163,8 @@ export function useTitleGenerationController(enabled: boolean): TitleGenerationC
         if (tg) {
           setTitleGenMode(tg.mode ?? "remote");
           setTitleGenBaseUrl(tg.remote?.base_url ?? "");
-          setTitleGenApiKey(tg.remote?.api_key ?? "");
+          setTitleGenApiKey("");
+          setTitleGenApiKeySet(readBoolish(tg.remote?.api_key_set) ?? false);
           setTitleGenModel(tg.remote?.model ?? "");
           setTitleGenUseJson(readBoolish(tg.remote?.use_json) ?? false);
           setTitleGenLocalModelId(tg.local?.model_id ?? "ggml-org/Qwen3-1.7B-GGUF");
@@ -180,7 +188,17 @@ export function useTitleGenerationController(enabled: boolean): TitleGenerationC
       return;
     }
     const timeout = window.setTimeout(() => {
-      updateSettings({ title_generation: titleGenerationPayload }).catch(() => {});
+      updateSettings({ title_generation: titleGenerationPayload })
+        .then((next) => {
+          const remote = next.title_generation?.remote;
+          if (readBoolish(remote?.api_key_set) ?? false) {
+            setTitleGenApiKey("");
+            setTitleGenApiKeySet(true);
+          } else {
+            setTitleGenApiKeySet(false);
+          }
+        })
+        .catch(() => {});
     }, 450);
     return () => window.clearTimeout(timeout);
   }, [enabled, loaded, titleGenerationPayload]);
@@ -257,6 +275,7 @@ export function useTitleGenerationController(enabled: boolean): TitleGenerationC
     setTitleGenBaseUrl,
     titleGenApiKey,
     setTitleGenApiKey,
+    titleGenApiKeySet,
     titleGenModel,
     setTitleGenModel,
     titleGenUseJson,

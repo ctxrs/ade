@@ -349,6 +349,145 @@ mod tests {
         assert!(settings.merge_queue.allowlist.is_empty());
         assert!(settings.worktree_setup.allowlist.is_empty());
     }
+
+    #[test]
+    fn to_public_redacts_secret_values() {
+        let settings = Settings {
+            dictation: Some(DictationSettings {
+                enabled: true,
+                provider: DictationProvider::LiveKitInference,
+                livekit: Some(LiveKitDictationSettings {
+                    base_url: "https://livekit.example".to_string(),
+                    api_key: "lk-key".to_string(),
+                    api_secret: Some("lk-secret".to_string()),
+                    model: "auto".to_string(),
+                    language: "en".to_string(),
+                }),
+            }),
+            title_generation: Some(TitleGenerationSettings {
+                mode: TitleGenerationMode::Remote,
+                remote: TitleGenerationRemoteSettings {
+                    base_url: "https://titles.example".to_string(),
+                    api_key: "title-key".to_string(),
+                    model: "gpt-test".to_string(),
+                    use_json: true,
+                },
+                local: TitleGenerationLocalSettings::default(),
+            }),
+            oracle: Some(OracleSettings {
+                api_key: "oracle-key".to_string(),
+                ..OracleSettings::default()
+            }),
+            ..Settings::default()
+        };
+
+        let public = to_public(&settings);
+        let livekit = public
+            .dictation
+            .as_ref()
+            .and_then(|dictation| dictation.livekit.as_ref())
+            .expect("dictation livekit");
+        assert!(livekit.api_key_set);
+        assert!(livekit.api_secret_set);
+
+        let title_remote = public
+            .title_generation
+            .as_ref()
+            .map(|titling| &titling.remote)
+            .expect("title generation");
+        assert!(title_remote.api_key_set);
+        assert_eq!(title_remote.base_url, "https://titles.example");
+        assert_eq!(title_remote.model, "gpt-test");
+
+        let oracle = public.oracle.as_ref().expect("oracle");
+        assert!(oracle.api_key_set);
+    }
+
+    #[test]
+    fn apply_update_preserves_existing_secret_values_when_omitted() {
+        let current = Settings {
+            dictation: Some(DictationSettings {
+                enabled: true,
+                provider: DictationProvider::LiveKitInference,
+                livekit: Some(LiveKitDictationSettings {
+                    base_url: "https://livekit.example".to_string(),
+                    api_key: "lk-key".to_string(),
+                    api_secret: Some("lk-secret".to_string()),
+                    model: "auto".to_string(),
+                    language: "en".to_string(),
+                }),
+            }),
+            title_generation: Some(TitleGenerationSettings {
+                mode: TitleGenerationMode::Remote,
+                remote: TitleGenerationRemoteSettings {
+                    base_url: "https://titles.example".to_string(),
+                    api_key: "title-key".to_string(),
+                    model: "gpt-test".to_string(),
+                    use_json: false,
+                },
+                local: TitleGenerationLocalSettings::default(),
+            }),
+            ..Settings::default()
+        };
+
+        let next = apply_update(
+            current,
+            UpdateSettingsReq {
+                dictation: Some(UpdateDictationSettingsReq {
+                    enabled: true,
+                    provider: DictationProvider::LiveKitInference,
+                    livekit: Some(UpdateLiveKitDictationSettingsReq {
+                        base_url: "https://livekit.next".to_string(),
+                        api_key: None,
+                        api_secret: None,
+                        model: "new-model".to_string(),
+                        language: "es".to_string(),
+                    }),
+                }),
+                title_generation: Some(UpdateTitleGenerationSettingsReq {
+                    mode: TitleGenerationMode::Remote,
+                    remote: UpdateTitleGenerationRemoteSettingsReq {
+                        base_url: "https://titles.next".to_string(),
+                        api_key: None,
+                        model: "gpt-next".to_string(),
+                        use_json: true,
+                    },
+                    local: TitleGenerationLocalSettings::default(),
+                }),
+                oracle: None,
+                telemetry: None,
+                resource_governance: None,
+                provider_guard: None,
+                tool_limits: None,
+                provider_restart: None,
+                subagents: None,
+                sandboxing: None,
+                execution: None,
+                network_profiles: None,
+            },
+        );
+
+        let livekit = next
+            .dictation
+            .as_ref()
+            .and_then(|dictation| dictation.livekit.as_ref())
+            .expect("dictation livekit");
+        assert_eq!(livekit.api_key, "lk-key");
+        assert_eq!(livekit.api_secret.as_deref(), Some("lk-secret"));
+        assert_eq!(livekit.base_url, "https://livekit.next");
+        assert_eq!(livekit.model, "new-model");
+        assert_eq!(livekit.language, "es");
+
+        let title_remote = &next
+            .title_generation
+            .as_ref()
+            .expect("title generation")
+            .remote;
+        assert_eq!(title_remote.api_key, "title-key");
+        assert_eq!(title_remote.base_url, "https://titles.next");
+        assert_eq!(title_remote.model, "gpt-next");
+        assert!(title_remote.use_json);
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -641,7 +780,7 @@ pub struct PublicDictationSettings {
 #[derive(Debug, Clone, Serialize)]
 pub struct PublicLiveKitDictationSettings {
     pub base_url: String,
-    pub api_key: String,
+    pub api_key_set: bool,
     pub api_secret_set: bool,
     pub model: String,
     pub language: String,
@@ -656,8 +795,16 @@ pub struct PublicTelemetrySettings {
 #[derive(Debug, Clone, Serialize)]
 pub struct PublicTitleGenerationSettings {
     pub mode: TitleGenerationMode,
-    pub remote: TitleGenerationRemoteSettings,
+    pub remote: PublicTitleGenerationRemoteSettings,
     pub local: TitleGenerationLocalSettings,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PublicTitleGenerationRemoteSettings {
+    pub base_url: String,
+    pub api_key_set: bool,
+    pub model: String,
+    pub use_json: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -836,7 +983,9 @@ pub struct UpdateDictationSettingsReq {
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateLiveKitDictationSettingsReq {
     pub base_url: String,
-    pub api_key: String,
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default)]
     pub api_secret: Option<String>,
     pub model: String,
     pub language: String,
@@ -853,9 +1002,19 @@ pub struct UpdateTitleGenerationSettingsReq {
     #[serde(default)]
     pub mode: TitleGenerationMode,
     #[serde(default)]
-    pub remote: TitleGenerationRemoteSettings,
+    pub remote: UpdateTitleGenerationRemoteSettingsReq,
     #[serde(default)]
     pub local: TitleGenerationLocalSettings,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct UpdateTitleGenerationRemoteSettingsReq {
+    pub base_url: String,
+    #[serde(default)]
+    pub api_key: Option<String>,
+    pub model: String,
+    #[serde(default)]
+    pub use_json: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1174,7 +1333,7 @@ pub fn to_public(settings: &Settings) -> PublicSettings {
             provider: d.provider.clone(),
             livekit: d.livekit.as_ref().map(|lk| PublicLiveKitDictationSettings {
                 base_url: lk.base_url.clone(),
-                api_key: lk.api_key.clone(),
+                api_key_set: !lk.api_key.trim().is_empty(),
                 api_secret_set: lk.api_secret.as_ref().is_some_and(|s| !s.trim().is_empty()),
                 model: lk.model.clone(),
                 language: lk.language.clone(),
@@ -1196,7 +1355,12 @@ pub fn to_public(settings: &Settings) -> PublicSettings {
             .as_ref()
             .map(|t| PublicTitleGenerationSettings {
                 mode: t.mode.clone(),
-                remote: t.remote.clone(),
+                remote: PublicTitleGenerationRemoteSettings {
+                    base_url: t.remote.base_url.clone(),
+                    api_key_set: !t.remote.api_key.trim().is_empty(),
+                    model: t.remote.model.clone(),
+                    use_json: t.remote.use_json,
+                },
                 local: t.local.clone(),
             });
     let oracle = settings.oracle.as_ref().map(|o| PublicOracleSettings {
@@ -1310,7 +1474,11 @@ pub fn apply_update(mut current: Settings, req: UpdateSettingsReq) -> Settings {
         if let Some(lk) = d.livekit {
             let mut cur_lk = next.livekit.unwrap_or_default();
             cur_lk.base_url = lk.base_url;
-            cur_lk.api_key = lk.api_key;
+            if let Some(api_key) = lk.api_key {
+                if !api_key.trim().is_empty() {
+                    cur_lk.api_key = api_key;
+                }
+            }
             if let Some(secret) = lk.api_secret {
                 if !secret.trim().is_empty() {
                     cur_lk.api_secret = Some(secret);
@@ -1333,7 +1501,14 @@ pub fn apply_update(mut current: Settings, req: UpdateSettingsReq) -> Settings {
     if let Some(t) = req.title_generation {
         let mut next = current.title_generation.unwrap_or_default();
         next.mode = t.mode;
-        next.remote = t.remote;
+        next.remote.base_url = t.remote.base_url;
+        if let Some(api_key) = t.remote.api_key {
+            if !api_key.trim().is_empty() {
+                next.remote.api_key = api_key;
+            }
+        }
+        next.remote.model = t.remote.model;
+        next.remote.use_json = t.remote.use_json;
         next.local = t.local;
         current.title_generation = Some(next);
     }

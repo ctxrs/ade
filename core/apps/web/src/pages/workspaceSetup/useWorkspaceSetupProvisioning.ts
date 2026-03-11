@@ -13,6 +13,7 @@ import type {
   ProviderAuthImportCandidate,
   TitleGenerationLocalStatus,
   TitleGenerationSettings,
+  UpdateTitleGenerationSettingsRequest,
   ProviderStatus,
 } from "../../api/client";
 import {
@@ -455,7 +456,7 @@ export function useWorkspaceSetupProvisioning({
     }
   };
 
-  const currentTitlingPayload = (modeOverride?: "remote" | "local"): TitleGenerationSettings | null => {
+  const currentTitlingPayload = (modeOverride?: "remote" | "local"): UpdateTitleGenerationSettingsRequest | null => {
     const mode = modeOverride ?? titlingMode;
     if (mode !== "remote" && mode !== "local") return null;
     return buildSessionTitlingPayload({
@@ -496,15 +497,16 @@ export function useWorkspaceSetupProvisioning({
       if (selectedDaemonTargetKeyRef.current !== targetKey) {
         return false;
       }
-      await updateSettings({ title_generation: payload });
-      setTitlingExistingSettings(payload);
+      const next = await updateSettings({ title_generation: payload });
+      setTitlingExistingSettings(next.title_generation ?? null);
       setTitlingPersistedTargetKey(targetKey);
       setTitlingPersistedHash(payloadHash);
-      if (payload.mode === "remote") {
-        setTitlingConfiguredReady(true);
+      if (next.title_generation?.mode === "remote") {
+        const readiness = resolveSessionTitlingReadiness(next, null);
+        setTitlingConfiguredReady(readiness.ready);
       } else {
         const localStatus = await refreshTitlingLocalStatus({ silent: true });
-        const readiness = resolveSessionTitlingReadiness({ title_generation: payload }, localStatus);
+        const readiness = resolveSessionTitlingReadiness(next, localStatus);
         setTitlingConfiguredReady(readiness.ready);
         if (localStatus?.install_running && localStatus.install_id) {
           void attachTitlingInstall(localStatus.install_id).catch(() => {});

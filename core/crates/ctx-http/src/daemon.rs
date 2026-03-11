@@ -9,10 +9,6 @@ use axum::Router;
 use chrono::Utc;
 use directories::BaseDirs;
 use serde_json::json;
-#[cfg(test)]
-use std::fs;
-#[cfg(test)]
-use which::which;
 
 use ctx_core::models::SessionTurnStatus;
 use ctx_lsp::LspManagerConfig;
@@ -269,8 +265,13 @@ fn build_provider_adapter_for_target(
             Some(bridge) => {
                 match runtime_command_as_agent_command_for_target(cfg, provider_id, Some(target)) {
                     Ok(Some(cmd)) => {
-                        let cmd = normalize_acp_provider_command(data_root, provider_id, cmd);
-                        acp_bridge_adapter(provider_id, bridge, cmd)
+                        match normalize_acp_provider_command(data_root, provider_id, cmd) {
+                            Ok(cmd) => acp_bridge_adapter(provider_id, bridge, cmd),
+                            Err(err) => acp_status_adapter_acp_command_invalid(
+                                provider_id,
+                                format!("invalid ACP command for provider '{provider_id}': {err}"),
+                            ),
+                        }
                     }
                     Ok(None) => acp_status_adapter_acp_command_invalid(
                         provider_id,
@@ -352,167 +353,11 @@ pub(crate) async fn ensure_provider_adapter_for_target(
     ensure_provider_adapter_for_target_with_cfg(state, &cfg, provider_id, target).await
 }
 
-#[cfg(test)]
-fn maybe_wrap_gemini_acp_command(
-    data_root: &Path,
-    mut cmd: installer::AgentServerCommand,
-) -> installer::AgentServerCommand {
-    fn file_stem_matches(path: &Path, name: &str) -> bool {
-        path.file_stem()
-            .and_then(|s| s.to_str())
-            .map(|s| s.eq_ignore_ascii_case(name))
-            .unwrap_or(false)
-    }
-
-    fn resolve_path(value: &str) -> Option<PathBuf> {
-        let path = Path::new(value);
-        if value.contains(std::path::MAIN_SEPARATOR) || path.is_absolute() {
-            return fs::canonicalize(path)
-                .ok()
-                .or_else(|| Some(path.to_path_buf()));
-        }
-        which(value).ok()
-    }
-
-    fn find_node_modules(path: &Path) -> Option<PathBuf> {
-        for ancestor in path.ancestors() {
-            if ancestor.file_name().and_then(|s| s.to_str()) == Some("node_modules") {
-                return Some(ancestor.to_path_buf());
-            }
-        }
-        if let Some(bin_dir) = path.parent() {
-            if bin_dir.file_name().and_then(|s| s.to_str()) == Some("bin") {
-                if let Some(prefix) = bin_dir.parent() {
-                    let candidate = prefix.join("lib").join("node_modules");
-                    if candidate.exists() {
-                        return Some(candidate);
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    fn is_gemini_cli_entrypoint(path: &Path) -> bool {
-        if path.file_name().and_then(|s| s.to_str()) != Some("index.js") {
-            return false;
-        }
-        for ancestor in path.ancestors() {
-            if ancestor.file_name().and_then(|s| s.to_str()) != Some("gemini-cli") {
-                continue;
-            }
-            let is_google_scope = ancestor
-                .parent()
-                .and_then(|parent| parent.file_name())
-                .and_then(|s| s.to_str())
-                == Some("@google");
-            if is_google_scope {
-                return true;
-            }
-        }
-        false
-    }
-
-    let mut candidate = None;
-    let cmd_path = Path::new(&cmd.command);
-    let cmd_is_gemini = file_stem_matches(cmd_path, "gemini");
-    let cmd_is_node = file_stem_matches(cmd_path, "node");
-    if cmd_is_gemini || cmd_is_node {
-        if cmd_is_gemini {
-            candidate = resolve_path(&cmd.command);
-        }
-        if candidate.is_none() {
-            if let Some(arg0) = cmd.args.first() {
-                let arg0_path = Path::new(arg0);
-                if file_stem_matches(arg0_path, "gemini") || is_gemini_cli_entrypoint(arg0_path) {
-                    candidate = resolve_path(arg0);
-                }
-            }
-        }
-    } else if let Some(arg0) = cmd.args.first() {
-        let arg0_path = Path::new(arg0);
-        if file_stem_matches(arg0_path, "gemini") || is_gemini_cli_entrypoint(arg0_path) {
-            candidate = resolve_path(arg0);
-        }
-    }
-
-    let bin_path = match candidate {
-        Some(path) => path,
-        None => return cmd,
-    };
-
-    let node_modules_dir = match find_node_modules(&bin_path) {
-        Some(dir) => dir,
-        None => return cmd,
-    };
-    let cli_root = node_modules_dir.join("@google").join("gemini-cli");
-    let core_root = node_modules_dir.join("@google").join("gemini-cli-core");
-    if !cli_root.exists() || !core_root.exists() {
-        return cmd;
-    }
-
-    let wrapper_path = data_root
-        .join("providers")
-        .join("agent-servers")
-        .join("gemini-acp-wrapper.mjs");
-    if let Some(parent) = wrapper_path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-
-    let wrapper_contents = format!(
-        "import {{ coreEvents, CoreEvent, writeToStdout, writeToStderr }} from 'file://{}';\n\
-coreEvents.on(CoreEvent.Output, (payload) => {{\n\
-  if (payload.isStderr) {{\n\
-    writeToStderr(payload.chunk, payload.encoding);\n\
-  }} else {{\n\
-    writeToStdout(payload.chunk, payload.encoding);\n\
-  }}\n\
-}});\n\
-coreEvents.on(CoreEvent.ConsoleLog, (payload) => {{\n\
-  writeToStderr(String(payload?.content ?? '') + '\\n');\n\
-}});\n\
-const consentRaw = process.env.CTX_GEMINI_AUTO_OAUTH_CONSENT ?? '';\n\
-const consentDisabled = consentRaw === '0' || consentRaw.toLowerCase() === 'false';\n\
-if (!consentDisabled) {{\n\
-  coreEvents.on(CoreEvent.ConsentRequest, (payload) => {{\n\
-    if (typeof payload?.onConfirm === 'function') {{\n\
-      payload.onConfirm(true);\n\
-    }}\n\
-  }});\n\
-}}\n\
-process.env.GEMINI_CLI_NO_RELAUNCH ??= 'true';\n\
-await import('file://{}');\n",
-        core_root.join("dist").join("index.js").to_string_lossy(),
-        cli_root.join("dist").join("index.js").to_string_lossy(),
-    );
-
-    let write_wrapper = match fs::read_to_string(&wrapper_path) {
-        Ok(existing) => existing != wrapper_contents,
-        Err(_) => true,
-    };
-    if write_wrapper {
-        let _ = fs::write(&wrapper_path, wrapper_contents);
-    }
-
-    let wrapper_arg = wrapper_path.to_string_lossy().to_string();
-    if cmd_is_gemini {
-        let node_path = match which("node") {
-            Ok(path) => path.to_string_lossy().to_string(),
-            Err(_) => return cmd,
-        };
-        cmd.command = node_path;
-        cmd.args.insert(0, wrapper_arg);
-    } else if let Some(first) = cmd.args.first_mut() {
-        *first = wrapper_arg;
-    }
-    cmd
-}
-
 pub(crate) fn normalize_acp_provider_command(
     data_root: &Path,
     provider_id: &str,
     cmd: installer::AgentServerCommand,
-) -> installer::AgentServerCommand {
+) -> Result<installer::AgentServerCommand> {
     crate::provider_launch::resolver::normalize_acp_provider_command(data_root, provider_id, cmd)
 }
 
@@ -862,8 +707,13 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
             }
             Some(bridge) => match runtime_command_as_agent_command(&agent_cfg, provider_id) {
                 Ok(Some(cmd)) => {
-                    let cmd = normalize_acp_provider_command(&data_root, provider_id, cmd);
-                    acp_bridge_adapter(provider_id, bridge, cmd)
+                    match normalize_acp_provider_command(&data_root, provider_id, cmd) {
+                        Ok(cmd) => acp_bridge_adapter(provider_id, bridge, cmd),
+                        Err(err) => acp_status_adapter_acp_command_invalid(
+                            provider_id,
+                            format!("invalid ACP command for provider '{provider_id}': {err}"),
+                        ),
+                    }
                 }
                 Ok(None) => acp_status_adapter_acp_command_invalid(
                     provider_id,
@@ -1167,71 +1017,6 @@ mod tests {
     }
 
     #[test]
-    fn wraps_bundled_node_gemini_cli_entrypoint_for_acp() {
-        let temp = tempdir().unwrap();
-        let data_root = temp.path().join("data");
-        let node_bin = temp
-            .path()
-            .join("bundle")
-            .join("runtimes")
-            .join("node")
-            .join("bin")
-            .join("node");
-        let cli_entry = temp
-            .path()
-            .join("bundle")
-            .join("providers")
-            .join("gemini")
-            .join("node_modules")
-            .join("@google")
-            .join("gemini-cli")
-            .join("dist")
-            .join("index.js");
-        let core_entry = temp
-            .path()
-            .join("bundle")
-            .join("providers")
-            .join("gemini")
-            .join("node_modules")
-            .join("@google")
-            .join("gemini-cli-core")
-            .join("dist")
-            .join("index.js");
-        std::fs::create_dir_all(node_bin.parent().unwrap()).unwrap();
-        std::fs::create_dir_all(cli_entry.parent().unwrap()).unwrap();
-        std::fs::create_dir_all(core_entry.parent().unwrap()).unwrap();
-        std::fs::create_dir_all(data_root.join("providers").join("agent-servers")).unwrap();
-        std::fs::write(&node_bin, b"node").unwrap();
-        std::fs::write(&cli_entry, b"cli").unwrap();
-        std::fs::write(&core_entry, b"core").unwrap();
-
-        let input = installer::AgentServerCommand {
-            command: node_bin.to_string_lossy().to_string(),
-            args: vec![
-                cli_entry.to_string_lossy().to_string(),
-                "--experimental-acp".to_string(),
-            ],
-            dependencies: Vec::new(),
-            managed: None,
-        };
-        let wrapped = maybe_wrap_gemini_acp_command(&data_root, input);
-
-        assert_eq!(wrapped.command, node_bin.to_string_lossy().to_string());
-        assert_eq!(
-            wrapped.args.get(1).map(String::as_str),
-            Some("--experimental-acp")
-        );
-        let wrapper_arg = wrapped.args.first().expect("wrapper arg");
-        assert!(wrapper_arg.ends_with("gemini-acp-wrapper.mjs"));
-        let wrapper_path = PathBuf::from(wrapper_arg);
-        assert!(wrapper_path.exists());
-        let wrapper_body = std::fs::read_to_string(wrapper_path).unwrap();
-        assert!(wrapper_body.contains("GEMINI_CLI_NO_RELAUNCH"));
-        assert!(wrapper_body.contains("CoreEvent.ConsentRequest"));
-        assert!(wrapper_body.contains("payload.onConfirm(true)"));
-    }
-
-    #[test]
     fn normalizes_qwen_command_with_openai_auth_type() {
         let temp = tempdir().unwrap();
         let input = installer::AgentServerCommand {
@@ -1240,7 +1025,8 @@ mod tests {
             dependencies: Vec::new(),
             managed: None,
         };
-        let normalized = normalize_acp_provider_command(temp.path(), "qwen", input);
+        let normalized =
+            normalize_acp_provider_command(temp.path(), "qwen", input).expect("normalized qwen");
         assert_eq!(
             normalized.args,
             vec![
@@ -1260,7 +1046,8 @@ mod tests {
             dependencies: Vec::new(),
             managed: None,
         };
-        let normalized = normalize_acp_provider_command(temp.path(), "openhands", input);
+        let normalized = normalize_acp_provider_command(temp.path(), "openhands", input)
+            .expect("normalized openhands");
         assert_eq!(
             normalized.args,
             vec!["acp".to_string(), "--override-with-envs".to_string()]

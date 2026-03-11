@@ -31,6 +31,7 @@ export function DictationSection({ active }: DictationSectionProps) {
     setBaseUrl,
     apiKey,
     setApiKey,
+    apiKeySet,
     apiSecret,
     setApiSecret,
     apiSecretSet,
@@ -181,14 +182,15 @@ export function DictationSection({ active }: DictationSectionProps) {
               />
               <Row
                 title="LiveKit API key"
-                description="Stored locally in your ctx data dir."
+                description={apiKeySet ? "Key is stored; enter a new value to rotate." : "Stored locally in your ctx data dir."}
                 control={
                   <input
                     className="settings-control settings-control-wide"
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
                     disabled={!dictationEnabled}
-                    placeholder="APIK…"
+                    placeholder={apiKeySet ? "(set)" : "APIK…"}
+                    type="password"
                   />
                 }
               />

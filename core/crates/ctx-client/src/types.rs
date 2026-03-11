@@ -299,7 +299,7 @@ pub struct PublicDictationSettings {
 #[derive(Debug, Clone, Deserialize)]
 pub struct PublicLiveKitDictationSettings {
     pub base_url: String,
-    pub api_key: String,
+    pub api_key_set: bool,
     pub api_secret_set: bool,
     pub model: String,
     pub language: String,
@@ -318,10 +318,19 @@ pub enum TitleGenerationMode {
     Local,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TitleGenerationRemoteSettings {
+#[derive(Debug, Clone, Deserialize)]
+pub struct PublicTitleGenerationRemoteSettings {
     pub base_url: String,
-    pub api_key: String,
+    pub api_key_set: bool,
+    pub model: String,
+    pub use_json: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateTitleGenerationRemoteSettingsRequest {
+    pub base_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
     pub model: String,
     pub use_json: bool,
 }
@@ -335,7 +344,7 @@ pub struct TitleGenerationLocalSettings {
 #[derive(Debug, Clone, Deserialize)]
 pub struct PublicTitleGenerationSettings {
     pub mode: TitleGenerationMode,
-    pub remote: TitleGenerationRemoteSettings,
+    pub remote: PublicTitleGenerationRemoteSettings,
     pub local: TitleGenerationLocalSettings,
 }
 
@@ -467,7 +476,8 @@ pub struct UpdateDictationSettingsRequest {
 #[derive(Debug, Clone, Serialize)]
 pub struct UpdateLiveKitDictationSettingsRequest {
     pub base_url: String,
-    pub api_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_secret: Option<String>,
     pub model: String,
@@ -483,7 +493,7 @@ pub struct UpdateTelemetrySettingsRequest {
 #[derive(Debug, Clone, Serialize)]
 pub struct UpdateTitleGenerationSettingsRequest {
     pub mode: TitleGenerationMode,
-    pub remote: TitleGenerationRemoteSettings,
+    pub remote: UpdateTitleGenerationRemoteSettingsRequest,
     pub local: TitleGenerationLocalSettings,
 }
 

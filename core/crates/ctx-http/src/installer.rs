@@ -144,7 +144,7 @@ fn managed_provider_runtime_command(
             "ACP bridge runtime is not configured or invalid for provider '{provider_id}'"
         )
     })?;
-    let acp_cmd = daemon::normalize_acp_provider_command(data_root, provider_id, managed_cmd);
+    let acp_cmd = daemon::normalize_acp_provider_command(data_root, provider_id, managed_cmd)?;
     Ok(daemon::acp_bridge_command(bridge_cmd, acp_cmd))
 }
 
@@ -1285,6 +1285,34 @@ mod tests {
             runtime.args.iter().any(|arg| arg == "/tmp/opencode acp"),
             "bridge command should point at the installed ACP command"
         );
+    }
+
+    #[test]
+    fn managed_provider_runtime_command_rejects_path_style_gemini_runtime() {
+        let data_root = tempfile::tempdir().expect("tempdir");
+        let gemini_bin = data_root.path().join("bundle").join("bin").join("gemini");
+        std::fs::create_dir_all(gemini_bin.parent().expect("parent")).expect("mkdir gemini");
+        std::fs::write(&gemini_bin, b"gemini").expect("write gemini");
+        let managed = AgentServerCommand {
+            command: gemini_bin.to_string_lossy().to_string(),
+            args: vec!["--experimental-acp".to_string()],
+            dependencies: Vec::new(),
+            managed: None,
+        };
+        let bridge = AgentServerCommand {
+            command: "/tmp/acp-crp-bridge".to_string(),
+            args: vec!["--stdio".to_string()],
+            dependencies: Vec::new(),
+            managed: None,
+        };
+
+        let err =
+            managed_provider_runtime_command(data_root.path(), "gemini", managed, Some(&bridge))
+                .unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("must use an explicit absolute node executable"));
     }
 
     #[test]

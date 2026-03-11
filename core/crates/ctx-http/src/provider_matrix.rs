@@ -576,17 +576,15 @@ fn probe_node_package_version(
     package: &str,
     data_root: &Path,
 ) -> Option<String> {
-    let script_path = if command.command.ends_with("node") || command.command.ends_with("node.exe")
-    {
-        command.args.first().map(PathBuf::from)
+    let script_path = if package == "@google/gemini-cli" {
+        crate::provider_launch::resolver::resolve_explicit_gemini_cli_paths(
+            &command.command,
+            &command.args,
+        )
+        .ok()
+        .map(|paths| paths.cli_entry_path)
     } else {
-        resolve_command_path(&command.command).or_else(|| {
-            if command.command.contains(std::path::MAIN_SEPARATOR) {
-                Some(PathBuf::from(&command.command))
-            } else {
-                None
-            }
-        })
+        resolve_explicit_node_package_script_path(command)
     };
 
     let script_path = script_path?;
@@ -629,15 +627,24 @@ fn read_package_version(path: &Path, package: &str) -> Option<String> {
     json.get("version")?.as_str().map(|s| s.to_string())
 }
 
-fn resolve_command_path(command: &str) -> Option<PathBuf> {
-    if command.contains(std::path::MAIN_SEPARATOR)
-        || command.contains('/')
-        || command.contains('\\')
+fn resolve_explicit_node_package_script_path(command: &ProviderCommand) -> Option<PathBuf> {
+    let command_path = Path::new(&command.command);
+    if command_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .is_some_and(|stem| stem.eq_ignore_ascii_case("node"))
     {
-        let p = PathBuf::from(command);
-        return if p.exists() { Some(p) } else { None };
+        return command
+            .args
+            .first()
+            .and_then(|arg| resolve_existing_absolute_path(arg));
     }
-    which::which(command).ok()
+    resolve_existing_absolute_path(&command.command)
+}
+
+fn resolve_existing_absolute_path(raw: &str) -> Option<PathBuf> {
+    let path = PathBuf::from(raw);
+    (path.is_absolute() && path.exists()).then_some(path)
 }
 
 fn load_cached_matrix(data_root: &Path) -> Option<ProviderMatrix> {
@@ -881,6 +888,94 @@ mod tests {
         .expect("entry parses");
 
         assert_eq!(entry.kind, ProviderMatrixEntryKind::Harness);
+    }
+
+    fn create_gemini_probe_layout(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
+        let node_bin = root
+            .join("bundle")
+            .join("runtimes")
+            .join("node")
+            .join("bin")
+            .join("node");
+        let cli_entry = root
+            .join("bundle")
+            .join("providers")
+            .join("gemini")
+            .join("node_modules")
+            .join("@google")
+            .join("gemini-cli")
+            .join("dist")
+            .join("index.js");
+        let core_entry = root
+            .join("bundle")
+            .join("providers")
+            .join("gemini")
+            .join("node_modules")
+            .join("@google")
+            .join("gemini-cli-core")
+            .join("dist")
+            .join("index.js");
+        let cli_pkg = cli_entry
+            .parent()
+            .expect("cli dist")
+            .parent()
+            .expect("cli root")
+            .join("package.json");
+
+        std::fs::create_dir_all(node_bin.parent().expect("node parent")).expect("mkdir node");
+        std::fs::create_dir_all(cli_entry.parent().expect("cli parent")).expect("mkdir cli");
+        std::fs::create_dir_all(core_entry.parent().expect("core parent")).expect("mkdir core");
+        std::fs::write(&node_bin, b"node").expect("write node");
+        std::fs::write(&cli_entry, b"cli").expect("write cli");
+        std::fs::write(&core_entry, b"core").expect("write core");
+        std::fs::write(
+            &cli_pkg,
+            r#"{"name":"@google/gemini-cli","version":"0.32.1"}"#,
+        )
+        .expect("write cli package");
+
+        (node_bin, cli_entry, core_entry)
+    }
+
+    #[test]
+    fn probe_node_package_version_uses_explicit_gemini_entrypoint() {
+        let temp = tempdir().expect("tempdir");
+        let (node_bin, cli_entry, _) = create_gemini_probe_layout(temp.path());
+        let command = ProviderCommand {
+            command: node_bin.to_string_lossy().to_string(),
+            args: vec![cli_entry.to_string_lossy().to_string()],
+        };
+
+        let version = probe_node_package_version(&command, "@google/gemini-cli", temp.path());
+
+        assert_eq!(version.as_deref(), Some("0.32.1"));
+    }
+
+    #[test]
+    fn probe_node_package_version_rejects_path_style_gemini_command() {
+        let temp = tempdir().expect("tempdir");
+        let command = ProviderCommand {
+            command: "gemini".to_string(),
+            args: vec!["--experimental-acp".to_string()],
+        };
+
+        let version = probe_node_package_version(&command, "@google/gemini-cli", temp.path());
+
+        assert!(version.is_none());
+    }
+
+    #[test]
+    fn probe_node_package_version_rejects_relative_gemini_entrypoint() {
+        let temp = tempdir().expect("tempdir");
+        let (node_bin, _, _) = create_gemini_probe_layout(temp.path());
+        let command = ProviderCommand {
+            command: node_bin.to_string_lossy().to_string(),
+            args: vec!["node_modules/@google/gemini-cli/dist/index.js".to_string()],
+        };
+
+        let version = probe_node_package_version(&command, "@google/gemini-cli", temp.path());
+
+        assert!(version.is_none());
     }
 
     #[test]

@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getSettings, updateSettings, type DictationSettings } from "../../../api/client";
+import {
+  getSettings,
+  updateSettings,
+  type DictationSettings,
+  type UpdateDictationSettingsRequest,
+} from "../../../api/client";
 import { readBoolish } from "../../../utils/boolish";
 import { isDesktopApp } from "../../../utils/desktop";
 import { useTauriSttModelStatus } from "../../../utils/useTauriSttModelStatus";
@@ -18,6 +23,7 @@ type DictationController = {
   setBaseUrl: (next: string) => void;
   apiKey: string;
   setApiKey: (next: string) => void;
+  apiKeySet: boolean;
   apiSecret: string;
   setApiSecret: (next: string) => void;
   apiSecretSet: boolean;
@@ -46,6 +52,7 @@ export function useDictationController(enabled: boolean): DictationController {
   const [language, setLanguage] = useState("en");
   const [baseUrl, setBaseUrl] = useState("https://agent-gateway.livekit.cloud/v1");
   const [apiKey, setApiKey] = useState("");
+  const [apiKeySet, setApiKeySet] = useState(false);
   const [apiSecret, setApiSecret] = useState("");
   const [apiSecretSet, setApiSecretSet] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -58,22 +65,29 @@ export function useDictationController(enabled: boolean): DictationController {
   const dictationCanSave = useMemo(() => {
     if (!dictationEnabled) return true;
     if (dictationProvider !== "livekit_inference") return true;
-    if (!apiKey.trim()) return false;
+    if (!apiKeySet && !apiKey.trim()) return false;
     if (!apiSecretSet && !apiSecret.trim()) return false;
     return true;
-  }, [apiKey, apiSecret, apiSecretSet, dictationEnabled, dictationProvider]);
+  }, [apiKey, apiKeySet, apiSecret, apiSecretSet, dictationEnabled, dictationProvider]);
 
-  const dictationPayload = useMemo((): DictationSettings => {
+  const dictationPayload = useMemo((): UpdateDictationSettingsRequest => {
+    const livekit: UpdateDictationSettingsRequest["livekit"] = {
+      base_url: baseUrl.trim(),
+      model,
+      language: language.trim() || "en",
+    };
+    const nextApiKey = apiKey.trim();
+    if (nextApiKey) {
+      livekit.api_key = nextApiKey;
+    }
+    const nextSecret = apiSecret.trim();
+    if (nextSecret) {
+      livekit.api_secret = nextSecret;
+    }
     return {
       enabled: dictationEnabled,
       provider: dictationProvider,
-      livekit: {
-        base_url: baseUrl.trim(),
-        api_key: apiKey.trim(),
-        api_secret: apiSecret.trim() ? apiSecret : null,
-        model,
-        language: language.trim() || "en",
-      },
+      livekit,
     };
   }, [apiKey, apiSecret, baseUrl, dictationEnabled, dictationProvider, language, model]);
 
@@ -99,7 +113,8 @@ export function useDictationController(enabled: boolean): DictationController {
           setModel(normalizeModel(d.livekit?.model ?? "auto"));
           setLanguage(d.livekit?.language ?? "en");
           setBaseUrl(d.livekit?.base_url ?? "https://agent-gateway.livekit.cloud/v1");
-          setApiKey(d.livekit?.api_key ?? "");
+          setApiKey("");
+          setApiKeySet(readBoolish(d.livekit?.api_key_set) ?? false);
           setApiSecretSet(readBoolish(d.livekit?.api_secret_set) ?? false);
         }
         setLoaded(true);
@@ -125,9 +140,18 @@ export function useDictationController(enabled: boolean): DictationController {
       setSaveError(null);
       updateSettings({ dictation: dictationPayload })
         .then((next) => {
-          if (next.dictation?.livekit?.api_secret_set) {
+          const livekit = next.dictation?.livekit;
+          if (readBoolish(livekit?.api_key_set) ?? false) {
+            setApiKey("");
+            setApiKeySet(true);
+          } else {
+            setApiKeySet(false);
+          }
+          if (readBoolish(livekit?.api_secret_set) ?? false) {
             setApiSecret("");
             setApiSecretSet(true);
+          } else {
+            setApiSecretSet(false);
           }
         })
         .catch((error) => {
@@ -151,6 +175,7 @@ export function useDictationController(enabled: boolean): DictationController {
     setBaseUrl,
     apiKey,
     setApiKey,
+    apiKeySet,
     apiSecret,
     setApiSecret,
     apiSecretSet,

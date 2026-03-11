@@ -10,8 +10,8 @@ import {
   ResourceGovernanceStatus,
   ResourceUtilization,
   SandboxingSettings,
-  Settings,
   TelemetrySettings,
+  UpdateSettingsRequest,
   devRestartProviders,
   disableMobileAccess,
   enableMobileAccess,
@@ -475,12 +475,12 @@ export default function SettingsPage() {
     });
   }, [clientSettingsState.loaded]);
 
-  const savePatch = async (patch: Partial<Settings>) => {
+  const savePatch = async (patch: UpdateSettingsRequest) => {
     setSaveError(null);
     setSaving(true);
     const seq = ++saveSeq.current;
     try {
-      const next = await updateSettings(patch as Settings);
+      const next = await updateSettings(patch);
       if (seq !== saveSeq.current) return;
       if (next.resource_governance) {
         setResourceGovernanceEnabled(next.resource_governance.enabled);

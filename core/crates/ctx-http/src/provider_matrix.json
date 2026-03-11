@@ -610,12 +610,6 @@
       "id": "gemini",
       "display_name": "Gemini",
       "tier": "tier2",
-      "command": {
-        "command": "gemini",
-        "args": [
-          "--experimental-acp"
-        ]
-      },
       "managed_install": {
         "kind": "npm",
         "package": "@google/gemini-cli",

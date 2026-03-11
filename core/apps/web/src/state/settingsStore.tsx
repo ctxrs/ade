@@ -1,11 +1,11 @@
 import { createContext, useContext, useEffect, useMemo, useSyncExternalStore } from "react";
-import type { Settings } from "../api/client";
+import type { PublicSettings, UpdateSettingsRequest } from "../api/client";
 import { getSettings, updateSettings } from "../api/client";
 import { errorMessage } from "../utils/errorMessage";
-import { loadSettingsV1, saveSettingsV1 } from "./uiStateStore";
+import { loadSettingsV2, saveSettingsV2 } from "./uiStateStore";
 
 type SettingsSnapshot = {
-  settings: Settings | null;
+  settings: PublicSettings | null;
   loaded: boolean;
   loading: boolean;
   error: string | null;
@@ -45,7 +45,7 @@ class SettingsStore {
     return this.loadOnce({ force: true });
   }
 
-  async update(patch: Partial<Settings>) {
+  async update(patch: UpdateSettingsRequest) {
     const next = await updateSettings(patch);
     this.snapshot = {
       ...this.snapshot,
@@ -55,7 +55,7 @@ class SettingsStore {
       error: null,
     };
     this.publish();
-    await saveSettingsV1(next);
+    await saveSettingsV2(next);
   }
 
   private async loadOnce(opts?: { force?: boolean }) {
@@ -63,7 +63,7 @@ class SettingsStore {
     this.snapshot = { ...this.snapshot, loading: true };
     this.publish();
 
-    const cached = await loadSettingsV1();
+    const cached = await loadSettingsV2();
     if (cached && !this.snapshot.loaded) {
       this.snapshot = {
         settings: cached.settings,
@@ -89,7 +89,7 @@ class SettingsStore {
         error: null,
       };
       this.publish();
-      await saveSettingsV1(settings);
+      await saveSettingsV2(settings);
     } catch (e: unknown) {
       this.snapshot = {
         ...this.snapshot,
