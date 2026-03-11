@@ -70,19 +70,16 @@ async fn install_lsp_catalog_server_impl(
     let extra_args = entry.args.clone();
     let extra_extensions = entry.extensions.clone();
     let extra_filenames = entry.filenames.clone();
-
-    emit_install(
-        state,
-        install_id,
-        &provider_id,
-        InstallEventLevel::Info,
-        "start",
-        format!("Installing LSP server: {}", entry.title),
-        None,
-        None,
-        None,
-    )
-    .await;
+    if let Some(install_id) = install_id {
+        let mut installs = state.providers.installs.lock().await;
+        if let Some(install) = installs.get_mut(&install_id) {
+            let _ = install.update_canonical_start_event(
+                &provider_id,
+                None,
+                format!("Installing LSP server: {}", entry.title),
+            );
+        }
+    }
 
     match entry.install.clone() {
         LspCatalogInstall::ManagedNode { server_id } => {
@@ -303,18 +300,18 @@ async fn install_lsp_server_impl(
     let mut stage: &'static str = "start";
 
     let res: Result<()> = async {
-        emit_install(
-            state,
-            install_id,
-            &provider_id,
-            InstallEventLevel::Info,
-            "start",
-            format!("Installing managed LSP server: {server_id}"),
-            None,
-            None,
-            None,
-        )
-        .await;
+        if let Some(install_id) = install_id {
+            let mut installs = state.providers.installs.lock().await;
+            if let Some(install) = installs.get_mut(&install_id) {
+                if install.canonical_start_event_is_default() {
+                    let _ = install.update_canonical_start_event(
+                        &provider_id,
+                        None,
+                        format!("Installing managed LSP server: {server_id}"),
+                    );
+                }
+            }
+        }
 
         stage = "node";
         let node = ensure_node_runtime(

@@ -1845,6 +1845,23 @@ async fn acp_container_install_joins_existing_bridge_install_and_surfaces_short_
         }),
         "the parent install event history should still record the parent-owned download stage after the prerequisite handoff: {final_parent_events:#?}"
     );
+    assert_eq!(
+        final_parent_events
+            .iter()
+            .filter(|event| event.stage == "start" && !event.message.starts_with("Prerequisite "))
+            .count(),
+        1,
+        "the parent install should keep exactly one parent-owned start event in history: {final_parent_events:#?}"
+    );
+    assert!(
+        final_parent_events.iter().any(|event| {
+            event.stage == "start"
+                && !event.message.starts_with("Prerequisite ")
+                && event.message.contains("Installing managed provider: kimi")
+                && event.message.contains("target: container")
+        }),
+        "the parent install should preserve its richer canonical start message: {final_parent_events:#?}"
+    );
 
     let bridge_info = state
         .get_install_info(bridge_install_id)

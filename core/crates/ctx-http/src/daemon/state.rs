@@ -1167,9 +1167,10 @@ impl AppState {
             return (existing, false);
         }
         let install_id = InstallId::new_v4();
-        let state = InstallState::new(provider_id, target);
-        let provider_id = state.provider_id.clone();
-        let target = state.target;
+        let mut state = InstallState::new(provider_id, target);
+        let start_event = state.canonical_start_event(install_id);
+        Self::push_install_event_locked(&mut state, start_event);
+        let (provider_id, target) = (state.provider_id.clone(), state.target);
         self.providers
             .installs
             .lock()
@@ -1538,7 +1539,6 @@ mod tests {
     async fn start_install_dedupes_concurrent_requests_for_same_provider_target() {
         let temp = tempfile::tempdir().expect("tempdir");
         let state = test_state(&temp).await;
-
         let mut tasks = Vec::new();
         for _ in 0..8 {
             let state = state.clone();

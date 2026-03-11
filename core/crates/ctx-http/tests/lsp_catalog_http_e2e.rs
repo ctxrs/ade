@@ -132,6 +132,39 @@ async fn lsp_catalog_install_from_file_url_updates_config() {
         tokio::time::sleep(Duration::from_millis(30)).await;
     }
 
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/api/providers/install/{install_id}/events"))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let events: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let events = events.as_array().expect("install events array");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.get("stage").and_then(|value| value.as_str()) == Some("start"))
+            .count(),
+        1,
+        "LSP catalog installs should keep exactly one canonical start event: {events:#?}"
+    );
+    assert_eq!(
+        events
+            .first()
+            .and_then(|event| event.get("stage"))
+            .and_then(|value| value.as_str()),
+        Some("start")
+    );
+    assert_eq!(
+        events
+            .first()
+            .and_then(|event| event.get("message"))
+            .and_then(|value| value.as_str()),
+        Some("Installing LSP server: Fake LS")
+    );
+
     // Managed config updated (points rust to extracted fake-ls path).
     let cfg_path = lsp_dir.join("lsp_servers.json");
     let txt = tokio::fs::read_to_string(&cfg_path).await.unwrap();

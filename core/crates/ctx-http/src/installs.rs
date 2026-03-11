@@ -139,17 +139,54 @@ impl InstallState {
         }
     }
 
+    pub fn canonical_start_event(&self, install_id: InstallId) -> InstallProgressEvent {
+        InstallProgressEvent {
+            install_id,
+            provider_id: self.provider_id.clone(),
+            target: self.target,
+            at: self.started_at,
+            stage: "start".to_string(),
+            message: format_install_start_message(&self.provider_id, self.target),
+            level: InstallEventLevel::Info,
+            bytes: None,
+            total_bytes: None,
+            attempt: None,
+            error_code: None,
+        }
+    }
+
+    pub fn canonical_start_event_is_default(&self) -> bool {
+        let Some(event) = self.events.front() else {
+            return false;
+        };
+        event.stage == "start"
+            && event.message == format_install_start_message(&self.provider_id, self.target)
+    }
+
+    pub fn update_canonical_start_event(
+        &mut self,
+        provider_id: &str,
+        target: Option<InstallTarget>,
+        message: String,
+    ) -> bool {
+        let Some(event) = self.events.front_mut() else {
+            return false;
+        };
+        if event.stage != "start" {
+            return false;
+        }
+        event.provider_id = provider_id.to_string();
+        event.target = target;
+        event.message = message;
+        true
+    }
+
     pub fn info(&self, install_id: InstallId) -> InstallInfo {
         self.build_info(install_id, self.events.back().cloned())
     }
 
     pub fn polling_info(&self, install_id: InstallId) -> InstallInfo {
         let current_last_event = self.events.back().cloned();
-        let synthetic_start_event = if matches!(self.state, InstallStateKind::Running) {
-            self.synthetic_polling_start_event(install_id)
-        } else {
-            None
-        };
         let override_visible = matches!(self.state, InstallStateKind::Running)
             && self
                 .info_event_override_until
@@ -159,30 +196,10 @@ impl InstallState {
             self.info_event_override
                 .clone()
                 .or_else(|| current_last_event.clone())
-                .or(synthetic_start_event)
         } else {
-            current_last_event.or(synthetic_start_event)
+            current_last_event
         };
         self.build_info(install_id, last_event)
-    }
-
-    fn synthetic_polling_start_event(&self, install_id: InstallId) -> Option<InstallProgressEvent> {
-        if self.events.back().is_some() {
-            return None;
-        }
-        Some(InstallProgressEvent {
-            install_id,
-            provider_id: self.provider_id.clone(),
-            target: self.target,
-            at: self.started_at,
-            stage: "start".to_string(),
-            message: "Install started".to_string(),
-            level: InstallEventLevel::Info,
-            bytes: None,
-            total_bytes: None,
-            attempt: None,
-            error_code: None,
-        })
     }
 
     fn should_expose_info_event_override(
@@ -216,6 +233,13 @@ impl InstallState {
             progress_pct: self.progress_pct_override.or(self.progress_pct),
             last_event,
         }
+    }
+}
+
+fn format_install_start_message(provider_id: &str, target: Option<InstallTarget>) -> String {
+    match target {
+        Some(target) => format!("Starting install for {provider_id} ({})", target.as_str()),
+        None => format!("Starting install for {provider_id}"),
     }
 }
 
@@ -279,9 +303,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn polling_info_surfaces_synthetic_start_event_for_running_installs_without_progress() {
+    fn polling_info_surfaces_real_start_event_for_running_installs() {
         let install_id = InstallId::new_v4();
-        let state = InstallState::new("acp-crp-bridge".to_string(), Some(InstallTarget::Container));
+        let mut state =
+            InstallState::new("acp-crp-bridge".to_string(), Some(InstallTarget::Container));
+        state
+            .events
+            .push_back(state.canonical_start_event(install_id));
 
         let info = state.polling_info(install_id);
 
@@ -292,15 +320,18 @@ mod tests {
         );
         assert_eq!(
             info.last_event.as_ref().map(|event| event.message.as_str()),
-            Some("Install started")
+            Some("Starting install for acp-crp-bridge (container)")
         );
     }
 
     #[test]
-    fn polling_info_prefers_real_progress_events_over_synthetic_start() {
+    fn polling_info_prefers_real_progress_events_over_start_event() {
         let install_id = InstallId::new_v4();
         let mut state =
             InstallState::new("acp-crp-bridge".to_string(), Some(InstallTarget::Container));
+        state
+            .events
+            .push_back(state.canonical_start_event(install_id));
         state.events.push_back(InstallProgressEvent {
             install_id,
             provider_id: "acp-crp-bridge".to_string(),

@@ -350,20 +350,18 @@ pub(super) async fn install_provider_impl(
         );
 
         ensure_install_not_cancelled(state, install_id).await?;
-        emit_install(
-            state,
-            install_id,
-            &provider_id,
-            InstallEventLevel::Info,
-            "start",
-            format!(
-                "Installing managed provider: {provider_id} (target: {requested_target_label}, resolved: {resolved_target_key})"
-            ),
-            None,
-            None,
-            None,
-        )
-        .await;
+        if let Some(install_id) = install_id {
+            let mut installs = state.providers.installs.lock().await;
+            if let Some(install) = installs.get_mut(&install_id) {
+                let _ = install.update_canonical_start_event(
+                    &provider_id,
+                    Some(target),
+                    format!(
+                        "Installing managed provider: {provider_id} (target: {requested_target_label}, resolved: {resolved_target_key})"
+                    ),
+                );
+            }
+        }
         install_provider_blocking_dependencies(
             state,
             &provider_id,
