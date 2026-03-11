@@ -151,6 +151,7 @@ pub(super) fn synthetic_models_probe_for_provider(
             name: Some(model_id.clone()),
         }],
         current_model_id: Some(model_id),
+        catalog_source: None,
     })
 }
 

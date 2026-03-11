@@ -77,7 +77,7 @@ extract_field() {{
 while IFS= read -r line; do
   case "$line" in
     *'"type":"models.list"'*)
-      printf '{{"seq":1,"channel":"control","type":"models.list","models":[{{"id":"{tag}-model"}}],"current_model_id":"{tag}-model"}}\n'
+      printf '{{"seq":1,"channel":"control","type":"models.list","models":[{{"id":"{tag}-model"}}],"current_model_id":"{tag}-model","catalog_source":"live_remote"}}\n'
       ;;
     *'"type":"session.open"'*)
       session_id="$(extract_field "$line" session_id)"

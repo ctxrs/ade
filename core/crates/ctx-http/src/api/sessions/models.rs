@@ -299,7 +299,19 @@ pub(super) async fn load_provider_model_catalog(
         install_target.as_str(),
         provider_id
     );
-    if let Some(entry) = state.providers.options_cache.lock().await.get(&cache_key) {
+    if let Some(entry) = state
+        .providers
+        .options_cache
+        .lock()
+        .await
+        .get(&cache_key)
+        .filter(|entry| {
+            crate::api::provider_catalog::provider_options_cache_entry_is_authoritative(
+                provider_id,
+                &entry.value,
+            )
+        })
+    {
         if let Some(models) = entry.value.get("models") {
             if let Some(catalog) = build_model_catalog(models) {
                 return Ok(Some(catalog));
@@ -468,10 +480,10 @@ pub(super) async fn load_provider_model_catalog(
         }
     };
 
-    let models_value = serde_json::json!({
-        "models": probe.models,
-        "current_model_id": probe.current_model_id,
-    });
+    let Some(models_value) = crate::api::provider_catalog::runtime_probe_models_payload(&probe)
+    else {
+        return Ok(None);
+    };
     if let Some(models) = build_model_catalog(&models_value) {
         let mut value = serde_json::json!({
             "provider_id": provider_id,
@@ -553,7 +565,12 @@ mod tests {
                             { "id": "gpt-5" },
                             { "id": "gpt-5/high" }
                         ],
-                        "current_model_id": "gpt-5"
+                        "current_model_id": "gpt-5",
+                        "meta": {
+                            "source_kind": "subscription",
+                            "catalog_source": "runtime_probe_live",
+                            "refresh_pending": false
+                        }
                     }
                 }),
             },

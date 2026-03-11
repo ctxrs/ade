@@ -89,7 +89,8 @@ impl Client for BridgeClient {
             let events = state.translator.apply_update(args.update);
             if state.active_turn_id.is_some() && !events.is_empty() {
                 state.last_turn_update_at = Some(Instant::now());
-                state.turn_update_count = state.turn_update_count.saturating_add(events.len() as u64);
+                state.turn_update_count =
+                    state.turn_update_count.saturating_add(events.len() as u64);
             }
             for event in events {
                 let _ = self.events_tx.send(event).await;
@@ -420,13 +421,8 @@ async fn handle_command(
                 Ok(response) => response,
                 Err(err) => {
                     if err.code == ErrorCode::AuthRequired {
-                        emit_auth_required_notice(
-                            events_tx,
-                            bridge_state,
-                            &crp_session_id,
-                            err,
-                        )
-                        .await;
+                        emit_auth_required_notice(events_tx, bridge_state, &crp_session_id, err)
+                            .await;
                         return Ok(());
                     }
                     return Err(anyhow!("acp new_session failed: {err}"));
@@ -525,13 +521,8 @@ async fn handle_command(
             let response = acp.prompt(prompt_req).await.context("acp prompt")?;
 
             if wait_for_cline_tail {
-                wait_for_prompt_tail(
-                    sessions,
-                    &acp_session_id,
-                    &turn_id,
-                    initial_update_count,
-                )
-                .await;
+                wait_for_prompt_tail(sessions, &acp_session_id, &turn_id, initial_update_count)
+                    .await;
             }
 
             let mut sessions_guard = sessions.lock().await;
@@ -608,8 +599,7 @@ async fn handle_command(
                         emit_auth_required_notice(events_tx, bridge_state, &crp_session_id, err)
                             .await;
                     } else {
-                        emit_auth_error_notice(events_tx, bridge_state, &crp_session_id, err)
-                            .await;
+                        emit_auth_error_notice(events_tx, bridge_state, &crp_session_id, err).await;
                     }
                 }
             }
@@ -621,6 +611,7 @@ async fn handle_command(
                     event: CrpEvent::ModelsList {
                         models: vec![],
                         current_model_id: None,
+                        catalog_source: None,
                     },
                 })
                 .await;
@@ -630,9 +621,7 @@ async fn handle_command(
     Ok(())
 }
 
-fn crp_mcp_servers_to_acp(
-    servers: HashMap<String, CrpMcpServerConfig>,
-) -> Vec<McpServer> {
+fn crp_mcp_servers_to_acp(servers: HashMap<String, CrpMcpServerConfig>) -> Vec<McpServer> {
     let mut out = Vec::new();
     for (name, config) in servers {
         let Some(command) = config.command else {

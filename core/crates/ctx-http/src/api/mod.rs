@@ -32,7 +32,9 @@ mod extractors;
 mod lsp;
 mod merge_queue_api;
 mod mobile_access;
+mod provider_catalog;
 mod provider_launch;
+mod provider_probe_auth;
 mod providers;
 mod repo;
 pub(crate) mod sessions;
@@ -72,8 +74,7 @@ use ws::{
     web_session_signal, workspace_active_snapshot_stream_ws,
 };
 
-use ctx_core::ids::*;
-use ctx_core::models::*;
+use ctx_core::{ids::*, models::*};
 use ctx_store::store::MobileDeviceUpsert;
 
 use crate::buffers::{

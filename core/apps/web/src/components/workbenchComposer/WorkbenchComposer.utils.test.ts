@@ -78,8 +78,40 @@ describe("shouldShowLoadingProviderModels", () => {
       models: {
         models: [{ id: "default/low" }, { id: "default/medium" }],
         current_model_id: "default/medium",
+        meta: {
+          source_kind: "subscription",
+          catalog_source: "runtime_probe_live",
+          refresh_pending: false,
+        },
       },
       probed_at: "2026-03-10T00:00:00.000Z",
     })).toBe(false);
+  });
+
+  it("keeps showing loading while a subscription catalog is still provisional", () => {
+    expect(shouldShowLoadingProviderModels("codex", {
+      provider_id: "codex",
+      workspace_id: "ws-test",
+      supports_load: false,
+      auth_required: false,
+      has_active_auth: true,
+      auth_mode: "subscription",
+      source: {
+        provider_id: "codex",
+        selected_source_kind: "subscription",
+        selected_endpoint_id: null,
+        endpoints: [],
+      },
+      models: {
+        models: [{ id: "gpt-5.4/medium" }],
+        current_model_id: "gpt-5.4/medium",
+        meta: {
+          source_kind: "subscription",
+          catalog_source: "codex_bundle_pinned",
+          refresh_pending: true,
+        },
+      },
+      probed_at: "2026-03-10T00:00:00.000Z",
+    })).toBe(true);
   });
 });

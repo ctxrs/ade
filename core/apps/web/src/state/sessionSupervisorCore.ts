@@ -58,6 +58,13 @@ import {
 } from "./sessionSupervisor/cachePolicy";
 import { pickFirstString, readPayloadString } from "./sessionSupervisor/eventNormalization";
 import {
+  extractAcpMetaFromEvent,
+  hasModelList,
+  mergeAcpMetaIntoSharedProviderOptions,
+  readAcpCurrentModelId,
+  type AcpMeta,
+} from "./sessionSupervisor/acpMeta";
+import {
   buildThoughtCacheKey,
   isFinalThoughtEvent,
   isFinalThoughtPayload,
@@ -84,16 +91,15 @@ import {
   shouldFetchSessionState,
   shouldFetchSubagentInvocations,
 } from "./sessionSupervisor/supportLoads";
+import { updateProvidersBootstrap } from "./providersBootstrapStore";
 import type {
   SessionSupervisorSubscribedSessionIdsSink,
   SessionSupervisorWorkspaceEvent,
   SessionSupervisorWorkspaceSessionHeads,
   SessionSupervisorWorkspaceSnapshotState,
 } from "./sessionSupervisor/workspaceInputs";
-
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-
 const readPayloadObject = (
   payload: SessionEvent["payload_json"],
   key: string,
@@ -101,7 +107,6 @@ const readPayloadObject = (
   const value = asRecord(payload)[key];
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 };
-
 const readPayloadNumber = (payload: unknown, keys: string[]): number | null => {
   const record = asRecord(payload);
   for (const key of keys) {
@@ -228,52 +233,6 @@ type OpenOptions = {
   force?: boolean;
   silent?: boolean;
   mode?: SessionMode;
-};
-
-type AcpMeta = {
-  models?: unknown;
-  modes?: unknown;
-  currentModelId?: string;
-  commands?: unknown;
-  slashCommands?: unknown;
-};
-
-const readAcpCurrentModelId = (models: unknown): string | undefined => {
-  const record = asRecord(models);
-  if (!record) return;
-  const modelId = record.currentModelId ?? record.current_model_id;
-  return typeof modelId === "string" ? modelId : undefined;
-};
-
-const hasModelList = (models: unknown): boolean => {
-  const record = asRecord(models);
-  if (!record) return false;
-  const list =
-    record.availableModels ??
-    record.available_models ??
-    record.models ??
-    [];
-  return Array.isArray(list) && list.length > 0;
-};
-
-const extractAcpMetaFromEvent = (event: SessionEvent): AcpMeta | null => {
-  if (event.event_type !== "init") return null;
-  const payload = asRecord(event.payload_json);
-  if (!payload) return null;
-  const models = payload.models ?? undefined;
-  const modes = payload.modes ?? undefined;
-  const commands = payload.commands ?? undefined;
-  const slashCommands = payload.slashCommands ?? payload.slash_commands ?? undefined;
-  const currentModelId =
-    pickFirstString(payload.currentModelId, payload.current_model_id) ?? readAcpCurrentModelId(models);
-  if (!models && !modes && !commands && !slashCommands && !currentModelId) return null;
-  return {
-    models,
-    modes,
-    currentModelId,
-    commands,
-    slashCommands,
-  };
 };
 
 type InternalEntry = SessionCacheEntry & {
@@ -1065,7 +1024,11 @@ export class SessionSupervisor {
     return entry;
   }
 
-  private applyAcpMeta(entry: InternalEntry, meta: AcpMeta, opts?: { persist?: boolean }): boolean {
+  private applyAcpMeta(
+    entry: InternalEntry,
+    meta: AcpMeta,
+    opts?: { persist?: boolean; syncSharedProviderCatalog?: boolean },
+  ): boolean {
     const nextModels = meta.models ?? entry.acpModels;
     const nextModes = meta.modes ?? entry.acpModes;
     const nextCurrent =
@@ -1088,6 +1051,9 @@ export class SessionSupervisor {
     entry.acpCommands = nextCommands;
     entry.acpSlashCommands = nextSlashCommands;
     entry.acpMetaUpdatedAtMs = Date.now();
+    if (opts?.syncSharedProviderCatalog !== false) {
+      this.syncSharedProviderCatalogFromAcpMeta(entry, meta);
+    }
     if (opts?.persist !== false && (nextModels || nextModes || nextCurrent || nextCommands || nextSlashCommands)) {
       saveSessionAcpMetaV1(entry.sessionId, {
         models: nextModels,
@@ -1098,6 +1064,35 @@ export class SessionSupervisor {
       }).catch(() => {});
     }
     return true;
+  }
+
+  private syncSharedProviderCatalogFromAcpMeta(entry: InternalEntry, meta: AcpMeta): void {
+    const session = entry.session;
+    if (!session) return;
+    if (!meta.models && !meta.modes) return;
+    const workspaceId = idToString(session.workspace_id);
+    if (!workspaceId) return;
+
+    updateProvidersBootstrap(workspaceId, (current) => {
+      const existing = current.provider_options[session.provider_id];
+      const nextProviderOptions = mergeAcpMetaIntoSharedProviderOptions(
+        existing,
+        meta,
+        session.provider_id,
+        workspaceId,
+      );
+      if (!nextProviderOptions || nextProviderOptions === existing) {
+        return current;
+      }
+
+      return {
+        ...current,
+        provider_options: {
+          ...current.provider_options,
+          [session.provider_id]: nextProviderOptions,
+        },
+      };
+    });
   }
 
   private applyAcpMetaFromEvents(entry: InternalEntry, events: SessionEvent[]): boolean {
@@ -1134,7 +1129,7 @@ export class SessionSupervisor {
       models: opts.models,
       modes: opts.modes,
       currentModelId: readAcpCurrentModelId(opts.models),
-    });
+    }, { syncSharedProviderCatalog: false });
   }
 
   private async ensureProviderOptions(entry: InternalEntry) {

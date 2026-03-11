@@ -53,6 +53,7 @@ import {
 import {
   hasFailedProviderModelProbe,
   hasProviderModels,
+  isFinalProviderModelCatalog,
   isEndpointProviderSourceSelected,
   isPinnedSubscriptionBootstrapCatalog,
 } from "../utils/providerModelCatalog";
@@ -440,7 +441,7 @@ export const shouldHydrateProviderModels = (
   if (options.has_active_auth !== true) return false;
   if (trigger === "passive" && hasFailedProviderModelProbe(options)) return false;
   if (isPinnedSubscriptionBootstrapCatalog(options)) return true;
-  if (hasProviderModels(options)) return false;
+  if (hasProviderModels(options)) return !isFinalProviderModelCatalog(options);
   return true;
 };
 

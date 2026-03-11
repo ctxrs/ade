@@ -75,7 +75,7 @@ fn setup_runtime_command_with_managed_interpreter(
 while IFS= read -r line; do
   case "$line" in
     *'"type":"models.list"'*)
-      echo '{"seq":1,"channel":"control","type":"models.list","models":[{"id":"fixture-model"}],"current_model_id":"fixture-model"}'
+      echo '{"seq":1,"channel":"control","type":"models.list","models":[{"id":"fixture-model"}],"current_model_id":"fixture-model","catalog_source":"live_remote"}'
       exit 0
       ;;
   esac

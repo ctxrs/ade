@@ -294,6 +294,8 @@ pub enum CrpEvent {
         models: Vec<CrpModelInfo>,
         #[serde(skip_serializing_if = "Option::is_none")]
         current_model_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        catalog_source: Option<String>,
     },
 }
 

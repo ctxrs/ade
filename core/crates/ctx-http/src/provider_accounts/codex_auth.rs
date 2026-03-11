@@ -122,6 +122,28 @@ pub async fn seed_codex_auth_from_host(codex_home: &Path) -> Result<bool> {
     Ok(write)
 }
 
+async fn mirror_host_codex_auth_to_runtime_root(runtime_root: &Path) -> Result<bool> {
+    let src = host_codex_auth_path()?;
+    let payload = match tokio::fs::read_to_string(&src).await {
+        Ok(payload) => payload,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err.into()),
+    };
+    let auth: serde_json::Value = serde_json::from_str(&payload)
+        .with_context(|| format!("invalid codex auth JSON at {}", src.display()))?;
+    if !codex_auth_has_supported_shape(&auth) {
+        return Ok(false);
+    }
+    let projected = project_auth_value_to_home(&codex_runtime_home(runtime_root), &auth).await?;
+    let owner_path = codex_runtime_owner_path(runtime_root);
+    match tokio::fs::remove_file(&owner_path).await {
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err.into()),
+    }
+    Ok(projected)
+}
+
 fn codex_auth_has_supported_shape(value: &serde_json::Value) -> bool {
     let has_api_key = value
         .get("OPENAI_API_KEY")
@@ -549,6 +571,85 @@ pub(crate) async fn ingest_runtime_home_auth_to_active_secret(
     ingest_auth_value_for_account(data_root, account_id, &auth).await
 }
 
+async fn prepare_codex_runtime_auth_with_runtime_root(
+    data_root: &Path,
+    runtime_root: &Path,
+) -> Result<bool> {
+    if let Ok(value) = std::env::var("CTX_CODEX_HOME") {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            let dir = PathBuf::from(trimmed);
+            tokio::fs::create_dir_all(&dir).await?;
+            return Ok(ensure_codex_auth_ready(&dir).await.is_ok());
+        }
+    }
+
+    let registry = load_codex_registry(data_root).await;
+    if let Some(active) = registry
+        .active_account_id
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        let _ = ingest_runtime_home_auth_to_active_secret(data_root, active).await;
+        if let Some(entry) = registry.accounts.iter().find(|a| a.id == active) {
+            ensure_codex_endpoint_profile_compatible(&entry.endpoint_profile)?;
+            if let Some(secret_ref) = entry.secret_ref.as_deref() {
+                if if data_root == runtime_root {
+                    project_secret_to_runtime_home(data_root, active, secret_ref)
+                        .await
+                        .is_ok()
+                } else {
+                    project_secret_to_runtime_root(data_root, runtime_root, active, secret_ref)
+                        .await
+                        .is_ok()
+                } {
+                    return Ok(ensure_codex_auth_ready(&codex_runtime_home(runtime_root))
+                        .await
+                        .is_ok());
+                }
+            }
+        } else {
+            clear_runtime_auth_projection(runtime_root).await?;
+            return Ok(false);
+        }
+
+        let runtime_home = codex_runtime_home(runtime_root);
+        let mirrored = if data_root == runtime_root {
+            mirror_account_auth_to_runtime_home(data_root, active).await?
+        } else {
+            mirror_account_auth_to_runtime_root(data_root, runtime_root, active).await?
+        };
+        if !mirrored && ensure_codex_auth_ready(&runtime_home).await.is_err() {
+            clear_runtime_auth_projection(runtime_root).await?;
+            return Ok(false);
+        }
+        return Ok(ensure_codex_auth_ready(&runtime_home).await.is_ok());
+    }
+
+    clear_runtime_auth_projection(runtime_root).await?;
+    let runtime_home = codex_runtime_home(runtime_root);
+    if seeding_codex_auth_from_host_enabled() {
+        seed_codex_auth_from_host(&runtime_home).await?;
+        return Ok(ensure_codex_auth_ready(&runtime_home).await.is_ok());
+    }
+    if mirror_host_codex_auth_to_runtime_root(runtime_root).await? {
+        return Ok(ensure_codex_auth_ready(&runtime_home).await.is_ok());
+    }
+    Ok(false)
+}
+
+pub async fn codex_has_active_auth(data_root: &Path) -> Result<bool> {
+    prepare_codex_runtime_auth_with_runtime_root(data_root, data_root).await
+}
+
+pub async fn codex_has_active_auth_with_runtime_root(
+    data_root: &Path,
+    runtime_root: &Path,
+) -> Result<bool> {
+    prepare_codex_runtime_auth_with_runtime_root(data_root, runtime_root).await
+}
+
 pub async fn codex_env_for_active_account(data_root: &Path) -> Result<HashMap<String, String>> {
     if let Ok(value) = std::env::var("CTX_CODEX_HOME") {
         let trimmed = value.trim();
@@ -561,42 +662,8 @@ pub async fn codex_env_for_active_account(data_root: &Path) -> Result<HashMap<St
         }
     }
 
-    let registry = load_codex_registry(data_root).await;
-    if let Some(active) = registry
-        .active_account_id
-        .as_deref()
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-    {
-        let _ = ingest_runtime_home_auth_to_active_secret(data_root, active).await;
-        if let Some(entry) = registry.accounts.iter().find(|a| a.id == active) {
-            ensure_codex_endpoint_profile_compatible(&entry.endpoint_profile)?;
-            if let Some(secret_ref) = entry.secret_ref.as_deref() {
-                if project_secret_to_runtime_home(data_root, active, secret_ref)
-                    .await
-                    .is_ok()
-                {
-                    return codex_env_for_runtime_home(data_root).await;
-                }
-            }
-        } else {
-            clear_runtime_auth_projection(data_root).await?;
-            return codex_env_for_runtime_home(data_root).await;
-        }
-        let mirrored = mirror_account_auth_to_runtime_home(data_root, active).await?;
-        if !mirrored {
-            clear_runtime_auth_projection(data_root).await?;
-        }
-        return codex_env_for_runtime_home(data_root).await;
-    }
-
-    clear_runtime_auth_projection(data_root).await?;
-    let env = codex_env_for_runtime_home(data_root).await?;
-    if seeding_codex_auth_from_host_enabled() {
-        let runtime_home = codex_runtime_home(data_root);
-        seed_codex_auth_from_host(&runtime_home).await?;
-    }
-    Ok(env)
+    let _ = prepare_codex_runtime_auth_with_runtime_root(data_root, data_root).await?;
+    codex_env_for_runtime_home(data_root).await
 }
 
 pub async fn codex_env_for_active_account_with_runtime_root(
@@ -606,41 +673,6 @@ pub async fn codex_env_for_active_account_with_runtime_root(
     if data_root == runtime_root {
         return codex_env_for_active_account(data_root).await;
     }
-
-    let registry = load_codex_registry(data_root).await;
-    if let Some(active) = registry
-        .active_account_id
-        .as_deref()
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-    {
-        let _ = ingest_runtime_home_auth_to_active_secret(data_root, active).await;
-        if let Some(entry) = registry.accounts.iter().find(|a| a.id == active) {
-            ensure_codex_endpoint_profile_compatible(&entry.endpoint_profile)?;
-            if let Some(secret_ref) = entry.secret_ref.as_deref() {
-                if project_secret_to_runtime_root(data_root, runtime_root, active, secret_ref)
-                    .await
-                    .is_ok()
-                {
-                    return codex_env_for_runtime_home(runtime_root).await;
-                }
-            }
-        } else {
-            clear_runtime_auth_projection(runtime_root).await?;
-            return codex_env_for_runtime_home(runtime_root).await;
-        }
-        let mirrored = mirror_account_auth_to_runtime_root(data_root, runtime_root, active).await?;
-        if !mirrored {
-            clear_runtime_auth_projection(runtime_root).await?;
-        }
-        return codex_env_for_runtime_home(runtime_root).await;
-    }
-
-    clear_runtime_auth_projection(runtime_root).await?;
-    let env = codex_env_for_runtime_home(runtime_root).await?;
-    if seeding_codex_auth_from_host_enabled() {
-        let runtime_home = codex_runtime_home(runtime_root);
-        seed_codex_auth_from_host(&runtime_home).await?;
-    }
-    Ok(env)
+    let _ = prepare_codex_runtime_auth_with_runtime_root(data_root, runtime_root).await?;
+    codex_env_for_runtime_home(runtime_root).await
 }

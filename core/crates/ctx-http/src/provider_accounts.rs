@@ -53,11 +53,11 @@ pub use self::claude::{
 };
 pub use self::codex_auth::{
     codex_env_for_active_account, codex_env_for_active_account_with_runtime_root,
-    codex_env_for_runtime_home, ensure_codex_auth_ready, ensure_codex_endpoint_profile_compatible,
-    host_codex_auth_path, hydrate_codex_account_home_from_secret,
-    import_host_codex_auth_to_secret_store, ingest_codex_account_auth_to_secret_store,
-    probe_host_codex_auth_candidate, seed_codex_auth_from_host,
-    seeding_codex_auth_from_host_enabled,
+    codex_env_for_runtime_home, codex_has_active_auth, codex_has_active_auth_with_runtime_root,
+    ensure_codex_auth_ready, ensure_codex_endpoint_profile_compatible, host_codex_auth_path,
+    hydrate_codex_account_home_from_secret, import_host_codex_auth_to_secret_store,
+    ingest_codex_account_auth_to_secret_store, probe_host_codex_auth_candidate,
+    seed_codex_auth_from_host, seeding_codex_auth_from_host_enabled,
 };
 pub(crate) use self::copilot::copilot_models_value_for_version;
 pub use self::copilot::{

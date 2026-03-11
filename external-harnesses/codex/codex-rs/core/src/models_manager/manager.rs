@@ -42,6 +42,14 @@ pub enum RefreshStrategy {
     OnlineIfUncached,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelCatalogSource {
+    LiveRemote,
+    LocalCache,
+    LocalBundle,
+    CustomCatalog,
+}
+
 /// How the manager's base catalog is sourced for the lifetime of the process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CatalogMode {
@@ -103,11 +111,25 @@ impl ModelsManager {
     ///
     /// Returns model presets sorted by priority and filtered by auth mode and visibility.
     pub async fn list_models(&self, refresh_strategy: RefreshStrategy) -> Vec<ModelPreset> {
-        if let Err(err) = self.refresh_available_models(refresh_strategy).await {
-            error!("failed to refresh available models: {err}");
-        }
+        self.list_models_with_catalog_source(refresh_strategy)
+            .await
+            .0
+    }
+
+    /// List all available models and report where the backing catalog came from.
+    pub async fn list_models_with_catalog_source(
+        &self,
+        refresh_strategy: RefreshStrategy,
+    ) -> (Vec<ModelPreset>, ModelCatalogSource) {
+        let catalog_source = match self.refresh_available_models(refresh_strategy).await {
+            Ok(source) => source,
+            Err(err) => {
+                error!("failed to refresh available models: {err}");
+                ModelCatalogSource::LocalBundle
+            }
+        };
         let remote_models = self.get_remote_models().await;
-        self.build_available_models(remote_models)
+        (self.build_available_models(remote_models), catalog_source)
     }
 
     /// List collaboration mode presets.
@@ -239,40 +261,49 @@ impl ModelsManager {
     }
 
     /// Refresh available models according to the specified strategy.
-    async fn refresh_available_models(&self, refresh_strategy: RefreshStrategy) -> CoreResult<()> {
+    async fn refresh_available_models(
+        &self,
+        refresh_strategy: RefreshStrategy,
+    ) -> CoreResult<ModelCatalogSource> {
         // don't override the custom model catalog if one was provided by the user
         if matches!(self.catalog_mode, CatalogMode::Custom) {
-            return Ok(());
+            return Ok(ModelCatalogSource::CustomCatalog);
         }
 
         if self.auth_manager.auth_mode() != Some(AuthMode::Chatgpt) {
             if matches!(
                 refresh_strategy,
                 RefreshStrategy::Offline | RefreshStrategy::OnlineIfUncached
-            ) {
-                self.try_load_cache().await;
+            ) && self.try_load_cache().await
+            {
+                return Ok(ModelCatalogSource::LocalCache);
             }
-            return Ok(());
+            return Ok(ModelCatalogSource::LocalBundle);
         }
 
         match refresh_strategy {
             RefreshStrategy::Offline => {
                 // Only try to load from cache, never fetch
-                self.try_load_cache().await;
-                Ok(())
+                if self.try_load_cache().await {
+                    Ok(ModelCatalogSource::LocalCache)
+                } else {
+                    Ok(ModelCatalogSource::LocalBundle)
+                }
             }
             RefreshStrategy::OnlineIfUncached => {
                 // Try cache first, fall back to online if unavailable
                 if self.try_load_cache().await {
                     info!("models cache: using cached models for OnlineIfUncached");
-                    return Ok(());
+                    return Ok(ModelCatalogSource::LocalCache);
                 }
                 info!("models cache: cache miss, fetching remote models");
-                self.fetch_and_update_models().await
+                self.fetch_and_update_models().await?;
+                Ok(ModelCatalogSource::LiveRemote)
             }
             RefreshStrategy::Online => {
                 // Always fetch from network
-                self.fetch_and_update_models().await
+                self.fetch_and_update_models().await?;
+                Ok(ModelCatalogSource::LiveRemote)
             }
         }
     }

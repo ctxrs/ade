@@ -268,9 +268,21 @@ impl ThreadManager {
         &self,
         refresh_strategy: crate::models_manager::manager::RefreshStrategy,
     ) -> Vec<ModelPreset> {
+        self.list_models_with_catalog_source(refresh_strategy)
+            .await
+            .0
+    }
+
+    pub async fn list_models_with_catalog_source(
+        &self,
+        refresh_strategy: crate::models_manager::manager::RefreshStrategy,
+    ) -> (
+        Vec<ModelPreset>,
+        crate::models_manager::manager::ModelCatalogSource,
+    ) {
         self.state
             .models_manager
-            .list_models(refresh_strategy)
+            .list_models_with_catalog_source(refresh_strategy)
             .await
     }
 

@@ -1369,16 +1369,33 @@ async fn handle_command(
                 config.model_catalog.clone(),
                 collaboration_modes_config(&config),
             );
-            let presets = thread_manager
-                .list_models(codex_core::models_manager::manager::RefreshStrategy::OnlineIfUncached)
+            let (presets, catalog_source) = thread_manager
+                .list_models_with_catalog_source(
+                    codex_core::models_manager::manager::RefreshStrategy::Online,
+                )
                 .await;
             let models = build_crp_model_infos(&presets);
             let current_model_id = build_current_model_id(&config, &presets);
+            let catalog_source = match catalog_source {
+                codex_core::models_manager::manager::ModelCatalogSource::LiveRemote => {
+                    Some("live_remote".to_string())
+                }
+                codex_core::models_manager::manager::ModelCatalogSource::LocalCache => {
+                    Some("local_cache".to_string())
+                }
+                codex_core::models_manager::manager::ModelCatalogSource::LocalBundle => {
+                    Some("local_bundle".to_string())
+                }
+                codex_core::models_manager::manager::ModelCatalogSource::CustomCatalog => {
+                    Some("custom_catalog".to_string())
+                }
+            };
 
             if router
                 .send_control(CrpEvent::ModelsList {
                     models,
                     current_model_id,
+                    catalog_source,
                 })
                 .is_err()
             {
