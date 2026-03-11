@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { ProviderStatus } from "../../../api/client";
 import type { HarnessAuthModalState } from "../../SettingsPage.types";
@@ -520,8 +520,11 @@ describe("HarnessAuthenticationSection install row rendering", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "Installing…" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    const codexRow = screen.getByText("Codex").closest(".settings-harness-row");
+    expect(codexRow).not.toBeNull();
+    expect(within(codexRow as HTMLElement).getByRole("button", { name: "Installing…" })).toBeInTheDocument();
+    expect(within(codexRow as HTMLElement).queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+    expect(within(codexRow as HTMLElement).queryByText(/\b(container|host)\b/i)).not.toBeInTheDocument();
   });
 
   it("renders update action for installed harnesses when matrix update is available", () => {
@@ -553,7 +556,10 @@ describe("HarnessAuthenticationSection install row rendering", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "Update" })).toBeInTheDocument();
+    const codexRow = screen.getByText("Codex").closest(".settings-harness-row");
+    expect(codexRow).not.toBeNull();
+    expect(within(codexRow as HTMLElement).getByRole("button", { name: "Update" })).toBeInTheDocument();
+    expect(within(codexRow as HTMLElement).queryByText(/\b(container|host)\b/i)).not.toBeInTheDocument();
   });
 
   it("hides install action for installed up-to-date harnesses", () => {
