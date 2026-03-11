@@ -32,6 +32,7 @@ describe("diagnosticsChannel", () => {
     trackRuntimeErrorObservedMock.mockReset();
     trackSessionLoadFatalObservedMock.mockReset();
     trackApiErrorObservedMock.mockReset();
+    vi.useRealTimers();
   });
 
   it("stores structured diagnostics with stable ids", () => {
@@ -117,6 +118,33 @@ describe("diagnosticsChannel", () => {
       method: "GET",
       statusFamily: "5xx",
     }));
+  });
+
+  it("throttles duplicate analytics emissions for the same API diagnostic signature", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-11T00:00:00.000Z"));
+
+    const input = {
+      source: "api" as const,
+      code: "api.http_error",
+      message: "HTTP failure",
+      context: {
+        path: "/api/workspaces/123",
+        method: "get",
+        status: 502,
+      },
+    };
+
+    emitUiDiagnostic(input);
+    emitUiDiagnostic(input);
+
+    expect(getUiDiagnostics()).toHaveLength(2);
+    expect(trackApiErrorObservedMock).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(5 * 60 * 1000 + 1);
+    emitUiDiagnostic(input);
+
+    expect(trackApiErrorObservedMock).toHaveBeenCalledTimes(2);
   });
 
   it("strips query params and normalizes id-like path segments", () => {

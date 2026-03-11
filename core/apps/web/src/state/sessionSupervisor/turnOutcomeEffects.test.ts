@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { applyTurnOutcomeEffects } from "./turnOutcomeEffects";
+import { resetTurnOutcomeTrackingForTests } from "../../utils/analytics/turnOutcomeDedup";
 
 const sendDesktopNotification = vi.hoisted(() => vi.fn());
 const isAppInForeground = vi.hoisted(() => vi.fn());
@@ -27,6 +28,7 @@ vi.mock("../../utils/analytics", () => ({
 describe("turnOutcomeEffects", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetTurnOutcomeTrackingForTests();
     isAppInForeground.mockReturnValue(false);
     getClientSettings.mockReturnValue({
       v: 1,
@@ -34,10 +36,11 @@ describe("turnOutcomeEffects", () => {
     });
   });
 
-  it("skips analytics and notifications during replay", () => {
+  it("tracks analytics during replay but skips notifications", () => {
     applyTurnOutcomeEffects({
       notify: false,
       sessionId: "session-1",
+      turnId: "turn-1",
       providerId: "codex",
       modelId: "gpt-5",
       title: "Demo session",
@@ -45,8 +48,8 @@ describe("turnOutcomeEffects", () => {
       nextStatus: "completed",
     });
 
-    expect(trackProviderRunCompleted).not.toHaveBeenCalled();
-    expect(trackFirstTurnCompleted).not.toHaveBeenCalled();
+    expect(trackProviderRunCompleted).toHaveBeenCalledTimes(1);
+    expect(trackFirstTurnCompleted).toHaveBeenCalledTimes(1);
     expect(sendDesktopNotification).not.toHaveBeenCalled();
   });
 
@@ -54,6 +57,7 @@ describe("turnOutcomeEffects", () => {
     applyTurnOutcomeEffects({
       notify: true,
       sessionId: "session-1",
+      turnId: "turn-1",
       providerId: "codex",
       modelId: "gpt-5",
       title: "Demo session",
@@ -81,6 +85,7 @@ describe("turnOutcomeEffects", () => {
     applyTurnOutcomeEffects({
       notify: true,
       sessionId: "session-1",
+      turnId: "turn-2",
       providerId: "codex",
       modelId: "gpt-5",
       title: "Demo session",
@@ -91,5 +96,32 @@ describe("turnOutcomeEffects", () => {
     expect(trackProviderRunCompleted).toHaveBeenCalledTimes(1);
     expect(trackFirstTurnCompleted).toHaveBeenCalledTimes(1);
     expect(sendDesktopNotification).not.toHaveBeenCalled();
+  });
+
+  it("deduplicates analytics for the same terminal turn across replay and live updates", () => {
+    applyTurnOutcomeEffects({
+      notify: false,
+      sessionId: "session-1",
+      turnId: "turn-3",
+      providerId: "codex",
+      modelId: "gpt-5",
+      title: "Demo session",
+      previousStatus: "running",
+      nextStatus: "completed",
+    });
+    applyTurnOutcomeEffects({
+      notify: true,
+      sessionId: "session-1",
+      turnId: "turn-3",
+      providerId: "codex",
+      modelId: "gpt-5",
+      title: "Demo session",
+      previousStatus: "running",
+      nextStatus: "completed",
+    });
+
+    expect(trackProviderRunCompleted).toHaveBeenCalledTimes(1);
+    expect(trackFirstTurnCompleted).toHaveBeenCalledTimes(1);
+    expect(sendDesktopNotification).toHaveBeenCalledTimes(1);
   });
 });

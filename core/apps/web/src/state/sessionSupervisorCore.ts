@@ -2412,7 +2412,7 @@ export class SessionSupervisor {
     this.bumpTurnsRev(entry);
     applyTurnOutcomeEffects({
       notify: opts?.notify ?? true,
-      sessionId: idToString(entry.session?.id ?? turn.session_id ?? ""),
+      sessionId: idToString(entry.session?.id ?? turn.session_id ?? ""), turnId,
       providerId: String(entry.session?.provider_id ?? "").trim() || undefined,
       modelId: String(entry.session?.model_id ?? "").trim() || undefined,
       title: entry.session?.title ? String(entry.session.title) : undefined,

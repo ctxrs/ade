@@ -2,6 +2,7 @@ import type { SessionTurn } from "../../api/client";
 import { sendDesktopNotification } from "../../utils/desktopNotifications";
 import { isAppInForeground } from "../../utils/windowFocus";
 import { trackFirstTurnCompleted, trackProviderRunCompleted } from "../../utils/analytics";
+import { markTurnOutcomeTracked } from "../../utils/analytics/turnOutcomeDedup";
 import { getClientSettings } from "../clientSettings";
 
 type TerminalTurnStatus = Extract<SessionTurn["status"], "completed" | "failed" | "interrupted">;
@@ -11,6 +12,7 @@ const isTerminalTurnStatus = (status: SessionTurn["status"] | undefined): status
 
 type TurnOutcomeEffectInput = {
   sessionId: string;
+  turnId?: string;
   providerId?: string;
   modelId?: string;
   title?: string;
@@ -34,6 +36,7 @@ export const shouldNotifyTurnCompleted = (
 
 export const applyTurnOutcomeEffects = ({
   sessionId,
+  turnId,
   providerId,
   modelId,
   title,
@@ -41,8 +44,10 @@ export const applyTurnOutcomeEffects = ({
   nextStatus,
   notify,
 }: TurnOutcomeEffectInput): void => {
-  if (!notify) return;
-  if (shouldTrackTurnOutcome(previousStatus, nextStatus)) {
+  if (
+    shouldTrackTurnOutcome(previousStatus, nextStatus)
+      && (!turnId || markTurnOutcomeTracked(sessionId, turnId, nextStatus))
+  ) {
     trackProviderRunCompleted({
       providerId,
       modelId,
@@ -54,6 +59,7 @@ export const applyTurnOutcomeEffects = ({
       status: nextStatus,
     });
   }
+  if (!notify) return;
   if (!shouldNotifyTurnCompleted(previousStatus, nextStatus)) return;
   if (isAppInForeground()) return;
   if (!getClientSettings().desktopNotifications.turnCompleted) return;

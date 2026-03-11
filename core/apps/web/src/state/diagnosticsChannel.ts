@@ -29,6 +29,8 @@ export type UiDiagnosticInput = {
 export type UiDiagnosticPersistenceSink = (event: UiDiagnosticEvent) => void | Promise<void>;
 
 const DEFAULT_MAX_EVENTS = 200;
+const ANALYTICS_DIAGNOSTIC_THROTTLE_MS = 5 * 60 * 1000;
+const MAX_ANALYTICS_THROTTLE_KEYS = 512;
 let maxEvents = DEFAULT_MAX_EVENTS;
 let nextId = 1;
 let events: UiDiagnosticEvent[] = [];
@@ -36,6 +38,7 @@ const listeners = new Set<() => void>();
 let runtimeHandlersInstalled = false;
 let runtimeHandlersCleanup: (() => void) | null = null;
 let persistenceSink: UiDiagnosticPersistenceSink | null = null;
+let analyticsThrottleByKey = new Map<string, number>();
 
 const UUID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const HEX_TOKEN_PATTERN = /\b[0-9a-f]{8,}\b/gi;
@@ -113,8 +116,55 @@ const normalizeStatusFamily = (
   return "none";
 };
 
+const buildAnalyticsThrottleKey = (event: UiDiagnosticEvent, signature: string): string => {
+  if (event.source === "api") {
+    return [
+      event.source,
+      event.code,
+      normalizeEndpoint(event.context?.path),
+      normalizeMethod(event.context?.method),
+      normalizeStatusFamily(event.context?.status),
+      signature,
+    ].join("|");
+  }
+  if (event.source === "session_supervisor") {
+    const mode = event.context && typeof event.context.mode === "string" ? event.context.mode.trim() : "unknown";
+    return [event.source, event.code, mode || "unknown", signature].join("|");
+  }
+  return [event.source, event.code, signature].join("|");
+};
+
+const pruneAnalyticsThrottle = (nowMs: number): void => {
+  for (const [key, ts] of analyticsThrottleByKey.entries()) {
+    if (nowMs - ts > ANALYTICS_DIAGNOSTIC_THROTTLE_MS) {
+      analyticsThrottleByKey.delete(key);
+    }
+  }
+  while (analyticsThrottleByKey.size > MAX_ANALYTICS_THROTTLE_KEYS) {
+    const oldestKey = analyticsThrottleByKey.keys().next().value;
+    if (!oldestKey) break;
+    analyticsThrottleByKey.delete(oldestKey);
+  }
+};
+
+const shouldEmitAnalyticsDiagnostic = (event: UiDiagnosticEvent, signature: string): boolean => {
+  const nowMs = Date.now();
+  const key = buildAnalyticsThrottleKey(event, signature);
+  pruneAnalyticsThrottle(nowMs);
+  const previousTs = analyticsThrottleByKey.get(key);
+  if (typeof previousTs === "number" && nowMs - previousTs <= ANALYTICS_DIAGNOSTIC_THROTTLE_MS) {
+    return false;
+  }
+  analyticsThrottleByKey.delete(key);
+  analyticsThrottleByKey.set(key, nowMs);
+  return true;
+};
+
 const emitAnalyticsDiagnostic = (event: UiDiagnosticEvent) => {
   const signature = buildDiagnosticSignature(event);
+  if (!shouldEmitAnalyticsDiagnostic(event, signature)) {
+    return;
+  }
   if (event.source === "runtime" && event.severity !== "info") {
     trackRuntimeErrorObserved({
       errorKey: event.code,
@@ -266,6 +316,7 @@ export const resetUiDiagnosticsForTests = () => {
   maxEvents = DEFAULT_MAX_EVENTS;
   nextId = 1;
   persistenceSink = null;
+  analyticsThrottleByKey.clear();
   if (runtimeHandlersCleanup) {
     runtimeHandlersCleanup();
   }

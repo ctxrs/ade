@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Session, SessionEvent } from "../api/client";
 import { SessionSupervisor, type SessionCacheEntry } from "./sessionSupervisorCore";
+import { resetTurnOutcomeTrackingForTests } from "../utils/analytics/turnOutcomeDedup";
 
 const trackProviderRunCompleted = vi.hoisted(() => vi.fn());
 const trackFirstTurnCompleted = vi.hoisted(() => vi.fn());
@@ -64,9 +65,10 @@ const setupEntry = () => {
 describe("SessionSupervisor analytics tracking", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetTurnOutcomeTrackingForTests();
   });
 
-  it("does not emit terminal analytics during replay (notify=false)", () => {
+  it("emits terminal analytics during replay when the terminal turn has not been tracked yet", () => {
     const { supervisor, entry, turnId } = setupEntry();
     const finishEvent: SessionEvent = {
       seq: 2,
@@ -82,8 +84,8 @@ describe("SessionSupervisor analytics tracking", () => {
       notify: false,
     });
     expect(changed).toBe(true);
-    expect(trackProviderRunCompleted).not.toHaveBeenCalled();
-    expect(trackFirstTurnCompleted).not.toHaveBeenCalled();
+    expect(trackProviderRunCompleted).toHaveBeenCalledTimes(1);
+    expect(trackFirstTurnCompleted).toHaveBeenCalledTimes(1);
   });
 
   it("emits terminal analytics for live transitions (notify=true)", () => {
@@ -102,6 +104,25 @@ describe("SessionSupervisor analytics tracking", () => {
       notify: true,
     });
     expect(changed).toBe(true);
+    expect(trackProviderRunCompleted).toHaveBeenCalledTimes(1);
+    expect(trackFirstTurnCompleted).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not double count the same terminal turn after replay has already tracked it", () => {
+    const { supervisor, entry, turnId } = setupEntry();
+    const finishEvent: SessionEvent = {
+      seq: 2,
+      id: "ev-2",
+      session_id: "session-1",
+      turn_id: turnId,
+      event_type: "turn_finished",
+      payload_json: {},
+      created_at: baseIso,
+    };
+
+    const internals = asSupervisorInternals(supervisor);
+    expect(internals.applyEventToTurns(entry, finishEvent, { notify: false })).toBe(true);
+    expect(internals.applyEventToTurns(entry, finishEvent, { notify: true })).toBe(true);
     expect(trackProviderRunCompleted).toHaveBeenCalledTimes(1);
     expect(trackFirstTurnCompleted).toHaveBeenCalledTimes(1);
   });
