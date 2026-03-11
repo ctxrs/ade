@@ -591,16 +591,22 @@ async fn get_install_info_api(app: &axum::Router, install_id: InstallId) -> Inst
     body
 }
 
-async fn wait_for_install_progress(app: &axum::Router, install_id: InstallId) -> InstallInfo {
+async fn wait_for_running_install_progress(
+    state: &Arc<AppState>,
+    install_id: InstallId,
+) -> ctx_http::installs::InstallInfo {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
-        let info = get_install_info_api(app, install_id).await;
-        if info.last_event.is_some() {
+        let info = state
+            .get_install_info(install_id)
+            .await
+            .expect("missing install info");
+        if matches!(info.state, InstallStateKind::Running) && info.last_event.is_some() {
             return info;
         }
         assert!(
             tokio::time::Instant::now() < deadline,
-            "timed out waiting for install {install_id} to expose visible progress: {info:#?}"
+            "timed out waiting for running install {install_id} to expose real progress: {info:#?}"
         );
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
@@ -625,23 +631,31 @@ async fn wait_for_running_install_id(
 }
 
 async fn wait_for_prerequisite_visibility(
+    state: &Arc<AppState>,
     app: &axum::Router,
     install_id: InstallId,
     prerequisite_install_id: InstallId,
 ) -> InstallInfo {
-    let prerequisite_install_id = prerequisite_install_id.to_string();
+    let prerequisite_install_id_string = prerequisite_install_id.to_string();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
+        let prerequisite_info = state
+            .get_install_info(prerequisite_install_id)
+            .await
+            .expect("missing prerequisite install info");
         let info = get_install_info_api(app, install_id).await;
-        if info.last_event.as_ref().is_some_and(|event| {
-            event.message.contains("acp-crp-bridge")
-                && event.message.contains(&prerequisite_install_id)
-        }) {
+        if matches!(prerequisite_info.state, InstallStateKind::Running)
+            && prerequisite_info.last_event.is_some()
+            && info.last_event.as_ref().is_some_and(|event| {
+                event.message.contains("acp-crp-bridge")
+                    && event.message.contains(&prerequisite_install_id_string)
+            })
+        {
             return info;
         }
         assert!(
             tokio::time::Instant::now() < deadline,
-            "timed out waiting for prerequisite visibility on install {install_id}: {info:#?}"
+            "timed out waiting for live prerequisite visibility on install {install_id}: prerequisite={prerequisite_info:#?} parent={info:#?}"
         );
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
@@ -1356,8 +1370,8 @@ async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_when
     let qwen_install_id = *install_ids.get("qwen").expect("missing qwen install id");
 
     let (kimi_polled, qwen_polled) = tokio::join!(
-        wait_for_prerequisite_visibility(&app, kimi_install_id, bridge_install_id),
-        wait_for_prerequisite_visibility(&app, qwen_install_id, bridge_install_id)
+        wait_for_prerequisite_visibility(&state, &app, kimi_install_id, bridge_install_id),
+        wait_for_prerequisite_visibility(&state, &app, qwen_install_id, bridge_install_id)
     );
     for (provider_id, polled_info) in [("kimi", kimi_polled), ("qwen", qwen_polled)] {
         assert!(
@@ -1611,8 +1625,9 @@ async fn acp_container_install_parent_polling_stays_bounded_while_bridge_prerequ
 
     let bridge_install_id =
         wait_for_running_install_id(&state, "acp-crp-bridge", Some(InstallTarget::Container)).await;
-    let _ = wait_for_install_progress(&app, bridge_install_id).await;
-    let polled_info = wait_for_prerequisite_visibility(&app, install_id, bridge_install_id).await;
+    let _ = wait_for_running_install_progress(&state, bridge_install_id).await;
+    let polled_info =
+        wait_for_prerequisite_visibility(&state, &app, install_id, bridge_install_id).await;
     assert!(
         matches!(polled_info.state, InstallStateKind::Running),
         "install should still be running while the bridge prerequisite is active: {polled_info:#?}"
@@ -1713,7 +1728,7 @@ async fn acp_container_install_joins_existing_bridge_install_and_surfaces_short_
         .and_then(|raw| raw.parse::<InstallId>().ok())
         .expect("bridge install id");
     // The throttled fixture server can delay the first observable progress event under full-suite load.
-    let _ = wait_for_install_progress(&app, bridge_install_id).await;
+    let _ = wait_for_running_install_progress(&state, bridge_install_id).await;
 
     let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -1733,7 +1748,7 @@ async fn acp_container_install_joins_existing_bridge_install_and_surfaces_short_
         .and_then(|raw| raw.parse::<InstallId>().ok())
         .expect("install id");
 
-    let _ = wait_for_prerequisite_visibility(&app, install_id, bridge_install_id).await;
+    let _ = wait_for_prerequisite_visibility(&state, &app, install_id, bridge_install_id).await;
     let reader_a = app.clone();
     let reader_b = app.clone();
     let (polled_info_a, polled_info_b) = tokio::join!(
