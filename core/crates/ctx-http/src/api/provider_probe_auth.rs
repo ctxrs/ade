@@ -23,6 +23,9 @@ pub(super) async fn provider_has_active_auth_config(
     provider_id: &str,
     source_config: Option<&harness_sources::HarnessProviderSourceConfig>,
 ) -> bool {
+    if provider_id == "fake" {
+        return true;
+    }
     if let Some(config) = source_config {
         if endpoint_selection_is_active(config) {
             return true;

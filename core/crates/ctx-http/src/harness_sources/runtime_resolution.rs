@@ -346,8 +346,13 @@ impl<'a> ProviderRuntimeContext<'a> {
                 validation::ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
                 validation::ensure_safe_endpoint_id(&endpoint.id)?;
                 let droid_home = droid_endpoint_home(self.runtime_data_root(), &endpoint.id);
-                let model_id = endpoint_preferred_model_id(endpoint)
-                    .unwrap_or_else(|| "openai/gpt-5.2-codex".to_string());
+                let model_id = endpoint_preferred_model_id(endpoint).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "selected endpoint '{}' for {} is missing a concrete model id",
+                        endpoint.name,
+                        self.canonical
+                    )
+                })?;
                 let droid_default_model = prepare_droid_home_with_endpoint_settings(
                     &droid_home,
                     &base_url,
@@ -429,6 +434,13 @@ async fn resolve_internal(
     require_verified_endpoint: bool,
     runtime_data_root: Option<&Path>,
 ) -> Result<ResolvedHarnessSource> {
+    if provider_id == "fake" {
+        return Ok(ResolvedHarnessSource {
+            source_kind: HarnessSourceKind::Subscription,
+            endpoint: None,
+            env: HashMap::new(),
+        });
+    }
     let canonical = match validation::normalize_provider_id(provider_id) {
         Some(id) => id,
         None => {

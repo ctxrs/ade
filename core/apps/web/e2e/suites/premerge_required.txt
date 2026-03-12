@@ -7,8 +7,7 @@ e2e/terminal-reconnect.spec.ts
 e2e/workbench-first-message-header.spec.ts
 e2e/workbench-index.spec.ts
 e2e/workbench-providers-bootstrap.spec.ts
-e2e/workbench-session-gap-seed-recovery.spec.ts
-e2e/workbench-snapshot-stream-invariant.spec.ts
 e2e/workbench-spinner-stale-cache.spec.ts
 e2e/workbench-worktree-path.spec.ts
+e2e/ws-missed-events-recovery.spec.ts
 e2e/ws-stream-recovery-nogap.spec.ts

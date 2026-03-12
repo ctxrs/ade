@@ -37,7 +37,6 @@ import type {
 } from "./workspaceActiveSnapshot/storeTypes";
 import {
   closeActiveSnapshotStream,
-  dispatchActiveSnapshotStreamMessage,
   flushSubscriptions as flushActiveSnapshotSubscriptions,
   getCanonicalStreamUrl,
   notifyEventListeners,
@@ -186,9 +185,6 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
 
   e2eSetDropActiveSnapshotMessages = (drop: boolean) =>
     setDropActiveSnapshotMessages(this, drop);
-
-  e2eDispatchActiveSnapshotStreamMessage = (payload: unknown) =>
-    dispatchActiveSnapshotStreamMessage(this, payload);
 
   e2eGetCanonicalStreamUrl = (): string | null => getCanonicalStreamUrl(this);
 

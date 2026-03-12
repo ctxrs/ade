@@ -31,15 +31,6 @@ export type WorkspaceActiveSnapshotControlHost = {
   scheduleWorkerPatchFlush(): void;
 };
 
-export function normalizeE2EStreamPayload(payload: unknown): string | null {
-  if (typeof payload === "string") return payload;
-  try {
-    return JSON.stringify(payload);
-  } catch {
-    return null;
-  }
-}
-
 export function unwrapEvent(value: unknown): unknown {
   if (!value || typeof value !== "object") return value;
   const rec = value as { type?: string; event?: unknown };
@@ -104,20 +95,6 @@ export function setDropActiveSnapshotMessages(
     return;
   }
   host.e2eDropStreamMessages = drop;
-}
-
-export function dispatchActiveSnapshotStreamMessage(
-  host: WorkspaceActiveSnapshotControlHost,
-  payload: unknown,
-) {
-  if (!host.e2eEnabled) return;
-  const normalized = normalizeE2EStreamPayload(payload);
-  if (!normalized) return;
-  if (host.worker) {
-    host.postWorkerCommand({ type: "e2e_dispatch_stream_message", payload: normalized });
-    return;
-  }
-  host.enqueueStreamMessage(normalized);
 }
 
 export function getCanonicalStreamUrl(

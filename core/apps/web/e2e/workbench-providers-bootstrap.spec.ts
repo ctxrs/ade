@@ -28,6 +28,24 @@ test("workbench: providers bootstrap refreshes on reconnect/foreground", async (
     workspaceName: `ws-${Date.now()}`,
   });
 
+  const bootstrapResponse = await request.get(`/api/workspaces/${workspaceId}/providers/bootstrap`);
+  expect(bootstrapResponse.ok()).toBeTruthy();
+  const bootstrapPayload = (await bootstrapResponse.json()) as {
+    providers?: Array<{ provider_id?: string }>;
+    provider_options?: Record<
+      string,
+      {
+        has_active_auth?: boolean;
+        models?: { current_model_id?: string };
+      }
+    >;
+  };
+  expect(
+    (bootstrapPayload.providers ?? []).some((provider) => provider?.provider_id === "fake"),
+  ).toBe(true);
+  expect(bootstrapPayload.provider_options?.fake?.has_active_auth).toBe(true);
+  expect(bootstrapPayload.provider_options?.fake?.models?.current_model_id).toBe("fake-model");
+
   const bootstrapPath = `/api/workspaces/${workspaceId}/providers/bootstrap`;
   const bootstrapCount = () =>
     requests.filter((entry) => entry.method === "GET" && entry.pathname === bootstrapPath).length;

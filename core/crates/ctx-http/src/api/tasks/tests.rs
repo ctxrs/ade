@@ -42,3 +42,40 @@ fn create_session_req_rejects_legacy_execution_environment_values() {
 
     assert!(err.to_string().contains("unknown variant"));
 }
+
+#[test]
+fn create_session_req_rejects_empty_model_id() {
+    let err = serde_json::from_value::<CreateSessionReq>(json!({
+        "provider_id": "fake",
+        "model_id": "   "
+    }))
+    .unwrap_err();
+
+    assert!(err.to_string().contains("model_id must not be empty"));
+}
+
+#[test]
+fn create_session_req_rejects_default_placeholder_model_id() {
+    let err = serde_json::from_value::<CreateSessionReq>(json!({
+        "provider_id": "fake",
+        "model_id": "default"
+    }))
+    .unwrap_err();
+
+    assert!(err
+        .to_string()
+        .contains("model_id must be a concrete model id"));
+}
+
+#[test]
+fn create_session_req_rejects_empty_provider_id() {
+    let err = serde_json::from_value::<CreateSessionReq>(json!({
+        "provider_id": "   ",
+        "model_id": "fake-model"
+    }))
+    .unwrap_err();
+
+    assert!(err
+        .to_string()
+        .contains("provider_id must not be empty"));
+}

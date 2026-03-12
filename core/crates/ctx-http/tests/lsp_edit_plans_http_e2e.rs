@@ -12,7 +12,15 @@ use tower::ServiceExt;
 use ctx_http::api;
 use ctx_http::daemon::AppState;
 use ctx_lsp::LspManagerConfig;
+use ctx_providers::adapters::ProviderAdapter;
+use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
+
+fn fake_providers() -> HashMap<String, Arc<dyn ProviderAdapter>> {
+    let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
+    providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
+    providers
+}
 
 fn file_uri(path: &Path) -> String {
     url::Url::from_file_path(path).unwrap().to_string()
@@ -97,7 +105,7 @@ async fn create_workspace_task_session(
         .uri(format!("/api/tasks/{}/sessions", task.id.0))
         .header("content-type", "application/json")
         .body(Body::from(
-            json!({"provider_id":"fake","model_id":"fake"}).to_string(),
+            json!({"provider_id":"fake","model_id":"fake-model"}).to_string(),
         ))
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
@@ -132,7 +140,7 @@ async fn setup_state_and_app(
     let state = Arc::new(AppState::new_with_lsp_config_and_flags(
         data_dir.path().to_path_buf(),
         stores,
-        HashMap::new(),
+        fake_providers(),
         "http://127.0.0.1:4399".to_string(),
         None,
         LspManagerConfig {
@@ -201,7 +209,7 @@ async fn edit_plan_persists_across_restart_and_discards() {
     let state2 = Arc::new(AppState::new_with_lsp_config_and_flags(
         data_dir.path().to_path_buf(),
         stores,
-        HashMap::new(),
+        fake_providers(),
         "http://127.0.0.1:4399".to_string(),
         None,
         LspManagerConfig {

@@ -13,9 +13,10 @@ function baseOptions(): ProviderOptions {
 }
 
 describe("hasConfiguredHarnessAuth", () => {
-  it("treats fake provider as configured without auth state", () => {
-    expect(hasConfiguredHarnessAuth("fake", undefined)).toBe(true);
-    expect(hasConfiguredHarnessAuth("fake", baseOptions())).toBe(true);
+  it("requires backend auth readiness for fake provider too", () => {
+    expect(hasConfiguredHarnessAuth("fake", undefined)).toBe(false);
+    expect(hasConfiguredHarnessAuth("fake", baseOptions())).toBe(false);
+    expect(hasConfiguredHarnessAuth("fake", { ...baseOptions(), has_active_auth: true })).toBe(true);
   });
 
   it("returns true when has_active_auth is true", () => {
@@ -36,7 +37,7 @@ describe("hasConfiguredHarnessAuth", () => {
     expect(hasConfiguredHarnessAuth("amp", options)).toBe(true);
   });
 
-  it("returns true for codex unmanaged subscription fallback mode only", () => {
+  it("does not treat subscription selection alone as configured auth", () => {
     const sourceSubscription = {
       ...baseOptions(),
       source: {
@@ -50,10 +51,10 @@ describe("hasConfiguredHarnessAuth", () => {
       ...baseOptions(),
       auth_mode: "subscription" as const,
     };
-    expect(hasConfiguredHarnessAuth("codex", sourceSubscription)).toBe(true);
+    expect(hasConfiguredHarnessAuth("codex", sourceSubscription)).toBe(false);
     expect(hasConfiguredHarnessAuth("cursor", sourceSubscription)).toBe(false);
     expect(hasConfiguredHarnessAuth("amp", sourceSubscription)).toBe(false);
-    expect(hasConfiguredHarnessAuth("codex", authModeSubscription)).toBe(true);
+    expect(hasConfiguredHarnessAuth("codex", authModeSubscription)).toBe(false);
     expect(hasConfiguredHarnessAuth("cursor", authModeSubscription)).toBe(false);
     expect(hasConfiguredHarnessAuth("amp", authModeSubscription)).toBe(false);
   });

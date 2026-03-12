@@ -16,7 +16,6 @@ type CtxE2EWorkspaceStream = {
   getConnectionState?: () => WorkspaceActiveSnapshotState["connection"];
   close?: () => void;
   setDropMessages?: (drop: boolean) => void;
-  dispatchMessage?: (payload: unknown) => void;
   getCanonicalUrl?: () => string | null;
 };
 
@@ -94,8 +93,6 @@ export function WorkspaceActiveSnapshotProvider({
     win.__ctxE2E.workspaceStream.close = () => storeRef.current?.e2eCloseActiveSnapshotStream();
     win.__ctxE2E.workspaceStream.setDropMessages = (drop: boolean) =>
       storeRef.current?.e2eSetDropActiveSnapshotMessages(Boolean(drop));
-    win.__ctxE2E.workspaceStream.dispatchMessage = (payload: unknown) =>
-      storeRef.current?.e2eDispatchActiveSnapshotStreamMessage(payload);
     win.__ctxE2E.workspaceStream.getCanonicalUrl = () => storeRef.current?.e2eGetCanonicalStreamUrl?.() ?? null;
     win.__ctxE2E.getDiagnostics = () => getUiDiagnostics();
     win.__ctxE2E.clearDiagnostics = () => clearUiDiagnostics();
@@ -111,7 +108,6 @@ export function WorkspaceActiveSnapshotProvider({
         delete win.__ctxE2E.workspaceStream.getConnectionState;
         delete win.__ctxE2E.workspaceStream.close;
         delete win.__ctxE2E.workspaceStream.setDropMessages;
-        delete win.__ctxE2E.workspaceStream.dispatchMessage;
         delete win.__ctxE2E.workspaceStream.getCanonicalUrl;
       }
     };

@@ -3,7 +3,7 @@ import { act, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MessageAttachment, ProviderOptions, ProviderStatus, Session, Task } from "../../api/client";
 import { createSession, createTask, getWorkspaceExecutionConfig, postMessage } from "../../api/client";
-import type { DraftHarness } from "../../components/WorkbenchComposer";
+import type { DraftHarness, ProviderAuthSummaryTrigger } from "../../components/WorkbenchComposer";
 import type { SessionSupervisor } from "../../state/sessionSupervisor";
 import type { WorkspaceActiveSnapshotItem } from "../../state/workspaceActiveSnapshotStore";
 import type { WorkbenchStore } from "../../workbench/store";
@@ -44,7 +44,7 @@ type FlowValue = {
   optimisticFocus: OptimisticFocus | null;
 };
 
-function makeProviderOptions(): ProviderOptions {
+function makeProviderOptions(overrides: Partial<ProviderOptions> = {}): ProviderOptions {
   return {
     provider_id: "codex",
     workspace_id: "workspace-1",
@@ -53,16 +53,18 @@ function makeProviderOptions(): ProviderOptions {
     has_active_auth: true,
     auth_mode: "subscription",
     probed_at: now,
+    ...overrides,
   };
 }
 
-function makeProviderStatus(): ProviderStatus {
+function makeProviderStatus(overrides: Partial<ProviderStatus> = {}): ProviderStatus {
   return {
     provider_id: "codex",
     installed: true,
     health: "ok",
     diagnostics: [],
     details: {},
+    ...overrides,
   };
 }
 
@@ -106,10 +108,21 @@ function Harness({
   prompt = "Write docs",
   onChange,
   onStartError,
+  draftHarness = { providerId: "codex", modelId: "gpt-5" },
+  providerOptionsById,
+  providersByIdProp,
+  ensureProviderAuthSummary,
 }: {
   prompt?: string;
   onChange: (value: FlowValue) => void;
   onStartError: (message: string | null) => void;
+  draftHarness?: DraftHarness | null;
+  providerOptionsById?: Record<string, ProviderOptions>;
+  providersByIdProp?: Record<string, ProviderStatus>;
+  ensureProviderAuthSummary?: (
+    providerId: string,
+    opts?: { force?: boolean; trigger?: ProviderAuthSummaryTrigger },
+  ) => Promise<ProviderOptions | undefined>;
 }) {
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [activeTaskIdFromTab, setActiveTaskIdFromTab] = useState<string | null>(null);
@@ -122,9 +135,14 @@ function Harness({
     tasksById,
   });
 
-  const draftHarness = useMemo<DraftHarness>(() => ({ providerId: "codex", modelId: "gpt-5" }), []);
-  const providerOptions = useMemo<Record<string, ProviderOptions>>(() => ({ codex: makeProviderOptions() }), []);
-  const providersById = useMemo<Record<string, ProviderStatus>>(() => ({ codex: makeProviderStatus() }), []);
+  const resolvedProviderOptions = useMemo<Record<string, ProviderOptions>>(
+    () => providerOptionsById ?? { codex: makeProviderOptions() },
+    [providerOptionsById],
+  );
+  const resolvedProvidersById = useMemo<Record<string, ProviderStatus>>(
+    () => providersByIdProp ?? { codex: makeProviderStatus() },
+    [providersByIdProp],
+  );
 
   const supervisor = useMemo<Pick<SessionSupervisor, "setSession" | "setTurns" | "setMessages">>(
     () => ({
@@ -152,9 +170,11 @@ function Harness({
     draftAttachments,
     setDraftAttachments,
     draftHarness,
-    providersById,
-    providerOptions,
-    ensureProviderAuthSummary: async () => providerOptions.codex,
+    providersById: resolvedProvidersById,
+    providerOptions: resolvedProviderOptions,
+    ensureProviderAuthSummary:
+      ensureProviderAuthSummary
+      ?? (async (providerId) => resolvedProviderOptions[providerId]),
     dictationRecording: false,
     stopDictation: async () => prompt,
     focusTask: (taskId) => {
@@ -312,5 +332,83 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     expect(mockedCreateTask).not.toHaveBeenCalled();
     expect(mockedCreateSession).not.toHaveBeenCalled();
     expect(onStartError).toHaveBeenLastCalledWith("config unavailable");
+  });
+
+  it("loads the concrete model from provider options before creating the session", async () => {
+    let current: FlowValue | null = null;
+    mockedCreateTask.mockResolvedValue(makeTask("task-1", "session-1"));
+    mockedCreateSession.mockResolvedValue(makeSession("session-1", "task-1"));
+    const onStartError = vi.fn();
+
+    const emptyOptions = makeProviderOptions({
+      provider_id: "fake",
+      has_active_auth: true,
+    });
+    const refreshedOptions = makeProviderOptions({
+      provider_id: "fake",
+      has_active_auth: true,
+      models: {
+        current_model_id: "fake-model",
+        models: [{ id: "fake-model" }],
+      },
+    });
+
+    render(
+      <Harness
+        draftHarness={{ providerId: "fake", modelId: "" }}
+        providerOptionsById={{ fake: emptyOptions }}
+        providersByIdProp={{ fake: makeProviderStatus({ provider_id: "fake" }) }}
+        ensureProviderAuthSummary={async () => refreshedOptions}
+        onChange={(value) => {
+          current = value;
+        }}
+        onStartError={onStartError}
+      />,
+    );
+
+    await act(async () => {
+      await requireValue(current).startNewTask();
+    });
+
+    await waitFor(() => {
+      expect(requireValue(current).optimisticTasks[0]?.localStatus).toBe("synced");
+    });
+    expect(mockedCreateSession).toHaveBeenCalledWith(
+      "task-1",
+      "fake",
+      "fake-model",
+      expect.objectContaining({
+        execution_environment: "container_disk_isolated",
+      }),
+    );
+    expect(onStartError).toHaveBeenCalledWith(null);
+  });
+
+  it("fails before creating optimistic state when no concrete model can be resolved", async () => {
+    let current: FlowValue | null = null;
+    const onStartError = vi.fn();
+
+    render(
+      <Harness
+        draftHarness={{ providerId: "codex", modelId: "" }}
+        providerOptionsById={{ codex: makeProviderOptions({ has_active_auth: true }) }}
+        ensureProviderAuthSummary={async () => makeProviderOptions({ has_active_auth: true })}
+        onChange={(value) => {
+          current = value;
+        }}
+        onStartError={onStartError}
+      />,
+    );
+
+    await act(async () => {
+      await requireValue(current).startNewTask();
+    });
+
+    expect(requireValue(current).optimisticTasks).toEqual([]);
+    expect(mockedCreateTask).not.toHaveBeenCalled();
+    expect(mockedCreateSession).not.toHaveBeenCalled();
+    expect(onStartError).toHaveBeenLastCalledWith(
+      "Harness “codex” did not provide a model. Refresh provider settings and try again.",
+    );
   });
 });

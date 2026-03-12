@@ -36,8 +36,7 @@ export type WorkspaceActiveSnapshotCommand =
   | { type: "apply_task_update"; task: Task }
   | { type: "e2e_set_enabled"; enabled: boolean }
   | { type: "e2e_close_stream" }
-  | { type: "e2e_set_drop_messages"; drop: boolean }
-  | { type: "e2e_dispatch_stream_message"; payload: string };
+  | { type: "e2e_set_drop_messages"; drop: boolean };
 
 export type WorkspaceActiveSnapshotPatch = {
   snapshot: WorkspaceActiveSnapshotState;

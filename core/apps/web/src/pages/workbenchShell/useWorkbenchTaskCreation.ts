@@ -89,6 +89,32 @@ export function useWorkbenchTaskCreation({
     return null;
   }, [draftHarness, draftPrompt, startBusy, providersById]);
 
+  const resolveSessionModelId = async (
+    providerId: string,
+    selectedModelId: string | null | undefined,
+  ): Promise<string> => {
+    const explicitModelId = selectedModelId?.trim();
+    if (explicitModelId) return explicitModelId;
+
+    const cachedModelId = modelIdsFromOptions(providerOptions[providerId])[0];
+    if (cachedModelId) return cachedModelId;
+
+    let refreshedOptions: ProviderOptions | undefined;
+    try {
+      refreshedOptions = await ensureProviderAuthSummary(providerId, {
+        force: true,
+        trigger: "explicit",
+      });
+    } catch (e: unknown) {
+      throw new Error(`Failed to load models for harness “${providerId}”: ${errorMessage(e)}`);
+    }
+
+    const refreshedModelId = modelIdsFromOptions(refreshedOptions ?? providerOptions[providerId])[0];
+    if (refreshedModelId) return refreshedModelId;
+
+    throw new Error(`Harness “${providerId}” did not provide a model. Refresh provider settings and try again.`);
+  };
+
   const startNewTask = async () => {
     if (!workspaceId) return;
     const prompt = (dictationRecording ? await stopDictation({ awaitFinal: true }) : draftPrompt).trim();
@@ -110,14 +136,18 @@ export function useWorkbenchTaskCreation({
       onStartError("Select a harness to start.");
       return;
     }
+    let resolvedModelId: string;
+    try {
+      resolvedModelId = await resolveSessionModelId(primaryTrack.providerId, primaryTrack.modelId);
+    } catch (e: unknown) {
+      setStartBusy(false);
+      onStartError(errorMessage(e));
+      return;
+    }
     const optimisticTaskId = randomUuid();
     const optimisticSessionId = randomUuid();
     const optimisticMessageId = randomUuid();
     const optimisticTurnId = randomUuid();
-    const optimisticModelId =
-      primaryTrack.modelId ||
-      modelIdsFromOptions(providerOptions[primaryTrack.providerId])[0] ||
-      (primaryTrack.providerId === "fake" ? "fake-model" : "default");
     let executionEnvironment: ExecutionEnvironment;
     try {
       executionEnvironment = (await getWorkspaceExecutionConfig(workspaceId)).environment;
@@ -145,7 +175,7 @@ export function useWorkbenchTaskCreation({
       workspace_id: workspaceId,
       worktree_id: "",
       provider_id: primaryTrack.providerId,
-      model_id: optimisticModelId,
+      model_id: resolvedModelId,
       title: "Session 1",
       agent_role: "assistant",
       status: "starting",
@@ -273,18 +303,11 @@ export function useWorkbenchTaskCreation({
             : `Harness “${primaryTrack.providerId}” unavailable.`,
         );
       }
-      const opts = await ensureProviderAuthSummary(primaryTrack.providerId, {
-        force: true,
-        trigger: "explicit",
-      }).catch(() => undefined);
-      const modelIds = modelIdsFromOptions(opts ?? providerOptions[primaryTrack.providerId]);
-      const modelId =
-        primaryTrack.modelId || modelIds[0] || (primaryTrack.providerId === "fake" ? "fake-model" : "default");
       const clientSessionId = optimisticSessionId;
       const messageId = optimisticMessageId;
       const turnId = optimisticTurnId;
       const shouldSendInitialPrompt = attachmentsToSend.length === 0;
-      const session = await createSession(currentTaskId, primaryTrack.providerId, modelId, {
+      const session = await createSession(currentTaskId, primaryTrack.providerId, resolvedModelId, {
         execution_environment: executionEnvironment,
         id: clientSessionId,
         initial_message_id: messageId,

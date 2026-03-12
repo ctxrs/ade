@@ -387,7 +387,9 @@ pub(in crate::api) async fn create_task(
 pub(in crate::api) struct CreateSessionReq {
     #[serde(default)]
     id: Option<String>,
+    #[serde(deserialize_with = "deserialize_provider_id")]
     provider_id: String,
+    #[serde(deserialize_with = "deserialize_concrete_model_id")]
     model_id: String,
     parent_session_id: Option<String>,
     relationship: Option<String>,
@@ -401,6 +403,35 @@ pub(in crate::api) struct CreateSessionReq {
     worktree_id: Option<String>,
     #[serde(default)]
     pub(super) execution_environment: Option<ExecutionEnvironment>,
+}
+
+fn deserialize_concrete_model_id<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = String::deserialize(deserializer)?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(serde::de::Error::custom("model_id must not be empty"));
+    }
+    if trimmed.eq_ignore_ascii_case("default") {
+        return Err(serde::de::Error::custom(
+            "model_id must be a concrete model id",
+        ));
+    }
+    Ok(trimmed.to_string())
+}
+
+fn deserialize_provider_id<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = String::deserialize(deserializer)?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(serde::de::Error::custom("provider_id must not be empty"));
+    }
+    Ok(trimmed.to_string())
 }
 
 pub(in crate::api) async fn create_session_for_task(
@@ -430,6 +461,9 @@ pub(in crate::api) async fn create_session_for_task(
         .and_then(|v| v.to_str().ok())
         .map(|v| v.to_string());
     let provider_id = req.provider_id.clone();
+    if !state.providers.adapters.lock().await.contains_key(&provider_id) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
     let model_id = req.model_id.clone();
 
     let session_id = match req.id.as_deref().map(str::trim) {

@@ -131,9 +131,6 @@ self.onmessage = (event: MessageEvent<WorkspaceActiveSnapshotCommand>) => {
     case "e2e_set_drop_messages":
       store?.e2eSetDropActiveSnapshotMessages(cmd.drop);
       return;
-    case "e2e_dispatch_stream_message":
-      store?.e2eDispatchActiveSnapshotStreamMessage(cmd.payload);
-      return;
     default:
       return;
   }

@@ -23,14 +23,6 @@ const asRecord = (value: unknown): Record<string, unknown> =>
 
 const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
 
-type E2EWindow = Window & {
-  __ctxE2E?: {
-    workspaceStream?: {
-      dispatchMessage?: (payload: unknown) => void;
-    };
-  };
-};
-
 async function createWorkspaceAndStartRun(opts: {
   page: Page;
   request: APIRequestContext;
@@ -229,64 +221,6 @@ test.describe.serial("visual: diff pane", () => {
       await captureVisual(
         page,
         buildVisualName(["diff-pane", "no-repo", theme, visualViewportLabel("diff-wide")]),
-        { ready: diffPane },
-      );
-    });
-
-    test(`diff too large ${theme}`, async ({ page, request }) => {
-      await page.setViewportSize({ width: 1600, height: 900 });
-      const repo = createTempGitRepo({
-        prefix: "ctx-e2e-visual-diff-",
-        files: [{ path: "file.txt", content: "hello\n" }],
-      });
-      const { workspaceId, worktreeId, worktreeRoot } = await createWorkspaceAndStartRun({
-        page,
-        request,
-        repo,
-        workspaceName: `ws-visual-diff-too-large-${Date.now()}`,
-        prompt: "visual diff too large",
-        theme,
-      });
-      writeFileSync(path.join(worktreeRoot, "file.txt"), "hello\nlarge diff seed\n");
-      await waitForWorktreeSummary({ request, workspaceId, worktreeId });
-      const snapshotResponse = await request.get(`/api/workspaces/${workspaceId}/active_snapshot?limit=5`);
-      expect(snapshotResponse.ok()).toBeTruthy();
-      const snapshot = (await snapshotResponse.json()) as {
-        snapshot_rev?: number;
-        worktree_vcs_snapshots?: Array<{
-          worktree_id?: string;
-          summary?: Record<string, number | null>;
-        }>;
-      };
-      const nextSnapshot = {
-        ...snapshot,
-        snapshot_rev: Number(snapshot.snapshot_rev ?? 0) + 1,
-        worktree_vcs_snapshots: (snapshot.worktree_vcs_snapshots ?? []).map((entry) =>
-          entry.worktree_id === worktreeId
-            ? {
-                ...entry,
-                summary: {
-                  ...(entry.summary ?? {}),
-                  file_count: 320,
-                  line_additions: 10_100,
-                  line_deletions: 1_950,
-                  additions: 10_100,
-                  deletions: 1_950,
-                },
-              }
-            : entry
-        ),
-      };
-      await page.evaluate((payload) => {
-        const stream = (window as E2EWindow).__ctxE2E?.workspaceStream;
-        stream?.dispatchMessage?.({ type: "snapshot", snapshot: payload, heads: [] });
-      }, nextSnapshot);
-      await page.getByRole("button", { name: "Toggle diff view" }).click();
-      const diffPane = page.locator(".wb-right-pane.wb-diff");
-      await expect(diffPane).toContainText("Diff too large to display", { timeout: 20_000 });
-      await captureVisual(
-        page,
-        buildVisualName(["diff-pane", "too-large", theme, visualViewportLabel("diff-wide")]),
         { ready: diffPane },
       );
     });

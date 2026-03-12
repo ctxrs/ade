@@ -347,6 +347,130 @@ async fn providers_bootstrap_includes_pinned_codex_and_claude_catalogs() {
     );
 }
 
+#[tokio::test]
+async fn fake_provider_bootstrap_and_options_are_ready_without_browser_rewrite() {
+    let _show_fake = EnvVarGuard::set("CTX_SHOW_FAKE_PROVIDER", "1");
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
+    let state = app_state(data_dir.path()).await;
+    let app = api::router(state.clone());
+
+    state.providers.statuses.lock().await.insert(
+        "fake".to_string(),
+        ProviderStatus {
+            provider_id: "fake".to_string(),
+            installed: true,
+            detected_path: None,
+            version: None,
+            capabilities: None,
+            health: ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+        },
+    );
+
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let (status, options): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::GET,
+        format!("/api/workspaces/{}/providers/fake/options", ws.id.0),
+        None,
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "options request failed: {options:#?}"
+    );
+    assert_eq!(
+        options
+            .get("has_active_auth")
+            .and_then(serde_json::Value::as_bool),
+        Some(true),
+        "expected fake provider to advertise active auth readiness: {options:#?}"
+    );
+    assert_eq!(
+        options.get("probe_ok").and_then(serde_json::Value::as_bool),
+        Some(true),
+        "expected fake provider probe to succeed: {options:#?}"
+    );
+    assert_eq!(
+        options
+            .pointer("/models/current_model_id")
+            .and_then(serde_json::Value::as_str),
+        Some("fake-model"),
+        "expected fake provider to expose a concrete model id: {options:#?}"
+    );
+    assert_eq!(
+        options
+            .pointer("/models/meta/catalog_source")
+            .and_then(serde_json::Value::as_str),
+        Some("fake_provider"),
+        "expected fake provider model catalog metadata: {options:#?}"
+    );
+
+    let (status, bootstrap): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::GET,
+        format!("/api/workspaces/{}/providers/bootstrap", ws.id.0),
+        None,
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "bootstrap request failed: {bootstrap:#?}"
+    );
+    assert!(
+        bootstrap
+            .get("providers")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|providers| providers.iter().any(|provider| {
+                provider
+                    .get("provider_id")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("fake")
+            })),
+        "expected fake provider to be present in bootstrap providers: {bootstrap:#?}"
+    );
+    let fake_provider = bootstrap
+        .get("providers")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|providers| {
+            providers.iter().find(|provider| {
+                provider
+                    .get("provider_id")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("fake")
+            })
+        })
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    assert_eq!(
+        fake_provider
+            .pointer("/details/ready_for_use")
+            .and_then(serde_json::Value::as_str),
+        Some("true"),
+        "expected fake provider to be marked ready_for_use in bootstrap statuses: {bootstrap:#?}"
+    );
+    assert_eq!(
+        bootstrap
+            .pointer("/provider_options/fake/has_active_auth")
+            .and_then(serde_json::Value::as_bool),
+        Some(true),
+        "expected fake bootstrap options to advertise active auth readiness: {bootstrap:#?}"
+    );
+    assert_eq!(
+        bootstrap
+            .pointer("/provider_options/fake/models/current_model_id")
+            .and_then(serde_json::Value::as_str),
+        Some("fake-model"),
+        "expected fake bootstrap options to expose the concrete fake model: {bootstrap:#?}"
+    );
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn provider_verify_probe_uses_managed_dependency_path() {

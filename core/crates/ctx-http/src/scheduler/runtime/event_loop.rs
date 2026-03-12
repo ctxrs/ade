@@ -118,20 +118,6 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                     .update_session_provider_session_ref(session_id, Some(ps.to_string()))
                     .await;
             }
-            if model_id.trim().is_empty() || model_id.eq_ignore_ascii_case("default") {
-                if let Some(current) = payload
-                    .get("models")
-                    .and_then(|m| {
-                        m.get("currentModelId")
-                            .or_else(|| m.get("current_model_id"))
-                    })
-                    .and_then(Value::as_str)
-                {
-                    let _ = store
-                        .update_session_model(session_id, current.to_string())
-                        .await;
-                }
-            }
         }
         if matches!(ev.event_type, SessionEventType::Done) {
             if let Some(obj) = payload.as_object_mut() {

@@ -2,7 +2,6 @@ import { test, expect } from "./fixtures";
 import type { Page, Response } from "@playwright/test";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 import { createTempGitRepo } from "./utils/testRepo";
-import { seedVisualSessionHead, type VisualTurnFixture } from "./utils/visualSessionHeads";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 import {
   buildVisualName,
@@ -24,6 +23,16 @@ import {
 
 const THEMES = ["dark", "light"] as const satisfies VisualTheme[];
 const TRANSCRIPT_VIEWPORTS = ["desktop", "desktop-tight"] as const satisfies VisualViewportName[];
+
+const toolMarkerFor = (seed: string) =>
+  `[[tool_calls]]\n${JSON.stringify([
+    {
+      kind: "execute",
+      title: `Run pwd ${seed}`,
+      input: { command: "pwd" },
+      output_text: "ok",
+    },
+  ])}\n[[/tool_calls]]`;
 
 async function setupRunningSession(page: Page, theme: VisualTheme, opts: { queuedMessages?: boolean } = {}) {
   if (opts.queuedMessages) {
@@ -74,6 +83,26 @@ async function queueMessage(page: Page, text: string) {
   expect(response.ok()).toBeTruthy();
 }
 
+async function ensureToolRows(page: Page, sessionId: string) {
+  const toolRows = page.locator(".wb-tool-row");
+  if ((await toolRows.count()) > 0) {
+    return toolRows;
+  }
+
+  const seed = `${Date.now()}`;
+  const response = await page.request.post(`/api/sessions/${sessionId}/messages`, {
+    data: {
+      content: `visual dense tool seed ${seed}\n${toolMarkerFor(seed)}`,
+      delivery: "immediate",
+    },
+  });
+  expect(response.ok(), `tool seed POST failed: ${response.url()}`).toBeTruthy();
+  await expect
+    .poll(async () => toolRows.count(), { timeout: 30_000 })
+    .toBeGreaterThan(0);
+  return toolRows;
+}
+
 test.describe.serial("visual: workbench thread", () => {
   test.describe.configure({ timeout: 180_000 });
   let transcriptSeed = { workspaceId: "", taskId: "", sessionId: "" };
@@ -84,7 +113,7 @@ test.describe.serial("visual: workbench thread", () => {
     const transcript = await seedDummyWorkspace(request, {
       tasks: 1,
       sessionsPerTask: 1,
-      turnsPerSession: 0,
+      turnsPerSession: 3,
       throttleMs: 0,
     });
     transcriptSeed = {
@@ -96,8 +125,10 @@ test.describe.serial("visual: workbench thread", () => {
     const dense = await seedDummyWorkspace(request, {
       tasks: 1,
       sessionsPerTask: 1,
-      turnsPerSession: 0,
+      turnsPerSession: 3,
       throttleMs: 0,
+      includeToolSummaries: true,
+      toolSummariesPerTurn: 2,
     });
     denseSeed = {
       workspaceId: dense.workspaceId,
@@ -106,109 +137,11 @@ test.describe.serial("visual: workbench thread", () => {
     };
   });
 
-  const transcriptTurns: VisualTurnFixture[] = [
-    {
-      turnId: "visual-transcript-turn-1",
-      userContent: "Summarize the current changes in the worktree.",
-      assistantContent:
-        "I reviewed the updated worktree, grouped the changes by area, and listed the tests that still need to run before the branch is ready.",
-    },
-    {
-      turnId: "visual-transcript-turn-2",
-      userContent: "What is still risky about this rollout?",
-      assistantContent:
-        "The remaining risk is visual drift on narrow layouts, especially where long tool titles and dense banners share the same vertical space.",
-      toolSummaries: [
-        {
-          toolCallId: "visual-transcript-tool-search",
-          title: "Search worktree",
-          kind: "search",
-          inputPreview: { query: "narrow layout regressions" },
-          outputPreview: "Found 4 references to compact layout handling.",
-        },
-      ],
-    },
-    {
-      turnId: "visual-transcript-turn-3",
-      userContent: "Give me the exact follow-up plan.",
-      assistantContent:
-        "Next I will finish the remaining captures, review each diff manually, and flag any surface that looks visually off before asking for approval.",
-    },
-  ];
-
-  const denseTurns: VisualTurnFixture[] = [
-    {
-      turnId: "visual-dense-turn-1",
-      userContent: "Audit the workspace setup wizard for rough edges.",
-      assistantContent:
-        "I found two areas to tighten: the location step auto-advances abruptly, and the merge queue screen needs more breathing room once advanced fields are open.",
-      toolSummaries: [
-        {
-          toolCallId: "visual-dense-tool-1",
-          title: "Read wizard flow",
-          kind: "read",
-          inputPreview: { path: "src/pages/workspaceSetup" },
-          outputPreview: "Inspected setup flow components and routing helpers.",
-        },
-        {
-          toolCallId: "visual-dense-tool-2",
-          title: "Check selectors",
-          kind: "search",
-          inputPreview: { query: "wizard-option-source-import" },
-          outputPreview: "Located stable test ids for source and merge screens.",
-        },
-      ],
-    },
-    {
-      turnId: "visual-dense-turn-2",
-      userContent: "Show me the command output that matters.",
-      assistantContent:
-        "The targeted visual run passed for the settings and diff surfaces, while the thread captures needed deterministic seeded heads instead of live fake-harness completions.",
-      toolSummaries: [
-        {
-          toolCallId: "visual-dense-tool-3",
-          title: "Run targeted visual suite",
-          kind: "execute",
-          inputPreview: { command: "pnpm -C core/apps/web test:e2e:visual" },
-          outputPreview: "Settings and diff surfaces passed; thread seeding required revision.",
-        },
-        {
-          toolCallId: "visual-dense-tool-4",
-          title: "Inspect traces",
-          kind: "read",
-          inputPreview: { path: "e2e/test-results/visual" },
-          outputPreview: "Reviewed failing traces for wizard and thread states.",
-        },
-      ],
-    },
-    {
-      turnId: "visual-dense-turn-3",
-      userContent: "What needs manual design review?",
-      assistantContent:
-        "The merge queue advanced form, updater messaging, and any long assistant transcript on desktop-tight widths should all be reviewed by eye before approval.",
-      toolSummaries: [
-        {
-          toolCallId: "visual-dense-tool-5",
-          title: "Summarize review queue",
-          kind: "execute",
-          inputPreview: { command: "ls argos-screenshots" },
-          outputPreview: "Collected screenshot artifacts for manual review.",
-        },
-      ],
-    },
-  ];
-
   for (const theme of THEMES) {
     for (const viewport of TRANSCRIPT_VIEWPORTS) {
       test(`transcript ${theme} ${viewport}`, async ({ page }) => {
         await openWorkbenchVisualPage(page, transcriptSeed.workspaceId, { theme, viewport });
         await openFirstTaskSession(page);
-        await seedVisualSessionHead(page, {
-          workspaceId: transcriptSeed.workspaceId,
-          taskId: transcriptSeed.taskId,
-          sessionId: transcriptSeed.sessionId,
-          turns: transcriptTurns,
-        });
         await expect
           .poll(async () => page.locator(".wb-turn-header-content").count(), { timeout: 20_000 })
           .toBeGreaterThan(0);
@@ -225,15 +158,7 @@ test.describe.serial("visual: workbench thread", () => {
     test(`dense thread ${theme}`, async ({ page }) => {
       await openWorkbenchVisualPage(page, denseSeed.workspaceId, { theme, viewport: "narrow" });
       await openFirstTaskSession(page);
-      await seedVisualSessionHead(page, {
-        workspaceId: denseSeed.workspaceId,
-        taskId: denseSeed.taskId,
-        sessionId: denseSeed.sessionId,
-        turns: denseTurns,
-      });
-      await expect
-        .poll(async () => page.locator(".wb-tool-row").count(), { timeout: 20_000 })
-        .toBeGreaterThan(0);
+      await ensureToolRows(page, denseSeed.sessionId);
       await captureVisual(
         page,
         buildVisualName(["workbench-thread", "dense", theme, visualViewportLabel("narrow")]),

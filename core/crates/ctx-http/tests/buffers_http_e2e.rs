@@ -12,7 +12,15 @@ use tower::ServiceExt;
 use ctx_http::api;
 use ctx_http::daemon::AppState;
 use ctx_lsp::LspManagerConfig;
+use ctx_providers::adapters::ProviderAdapter;
+use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
+
+fn fake_providers() -> HashMap<String, Arc<dyn ProviderAdapter>> {
+    let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
+    providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
+    providers
+}
 
 async fn run_git(root: &Path, args: &[&str]) {
     let output = Command::new("git")
@@ -60,7 +68,7 @@ async fn setup_state() -> (tempfile::TempDir, Arc<AppState>, axum::Router) {
     let state = Arc::new(AppState::new_with_lsp_config_and_flags(
         data_dir.path().to_path_buf(),
         stores,
-        HashMap::new(),
+        fake_providers(),
         "http://127.0.0.1:4399".to_string(),
         None,
         LspManagerConfig {
@@ -122,7 +130,7 @@ async fn create_session(
         .uri(format!("/api/tasks/{}/sessions", task.id.0))
         .header("content-type", "application/json")
         .body(Body::from(
-            json!({"provider_id":"fake","model_id":"fake"}).to_string(),
+            json!({"provider_id":"fake","model_id":"fake-model"}).to_string(),
         ))
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();

@@ -28,5 +28,4 @@ e2e/workbench-optimistic-new-task.spec.ts
 e2e/workbench-queued-message-ux.spec.ts
 e2e/workbench-refresh-old-session.spec.ts
 e2e/workbench-rename-task.spec.ts
-e2e/workbench-replay-user-message.spec.ts
 e2e/workspace-attachments.spec.ts

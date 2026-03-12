@@ -323,6 +323,23 @@ pub(crate) fn selected_endpoint_record_from_harness_config(
 pub(crate) fn subscription_models_payload_from_status(
     provider_status: &ctx_providers::adapters::ProviderStatus,
 ) -> Option<serde_json::Value> {
+    if provider_status.provider_id == "fake" {
+        return Some(serde_json::json!({
+            "catalog_source": "fake_provider",
+            "current_model_id": "fake-model",
+            "models": [
+                {
+                    "id": "fake-model",
+                    "name": "fake-model",
+                }
+            ],
+            "meta": {
+                "source_kind": "subscription",
+                "catalog_source": "fake_provider",
+                "refresh_pending": false,
+            },
+        }));
+    }
     crate::provider_accounts::pinned_subscription_models_value(
         &provider_status.provider_id,
         provider_status.version.as_deref(),

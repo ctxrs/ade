@@ -36,8 +36,8 @@ mod helpers;
 use self::event_loop::{spawn_turn_event_loop, TurnEventLoop};
 pub(crate) use self::helpers::model_context_window;
 use self::helpers::{
-    compute_context_window_metrics, normalize_session_model_id,
-    provider_supports_system_prompt_append, runtime_provider_id_for_session_provider,
+    compute_context_window_metrics, provider_supports_system_prompt_append,
+    runtime_provider_id_for_session_provider,
 };
 use super::lifecycle::RunningTurn;
 use super::persistence::{append_session_event_with_retry, emit_event, persist_assistant_message};
@@ -548,13 +548,21 @@ pub(crate) async fn start_turn(
 
     let run_started_at = Instant::now();
     let spawn_started_at = Instant::now();
+    let session_model_id = session.model_id.trim();
+    if session_model_id.is_empty() || session_model_id.eq_ignore_ascii_case("default") {
+        anyhow::bail!(
+            "session {} is missing a concrete model id for provider {}",
+            session.id.0,
+            session.provider_id
+        );
+    }
     let handle = match adapter
         .run(
             TurnInput {
                 content: prompt,
                 attachments: message.attachments.clone(),
                 context_blocks,
-                model_id: normalize_session_model_id(&session.model_id),
+                model_id: Some(session_model_id.to_string()),
             },
             workdir.to_path_buf(),
             provider_env,

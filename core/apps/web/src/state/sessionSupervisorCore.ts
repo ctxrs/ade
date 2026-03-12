@@ -44,6 +44,8 @@ import {
   mergeEvents,
   mergeMessages,
   mergeTurns,
+  ensureTurnFromEvent,
+  applyEventToTurns,
 } from "./sessionSupervisor/eventProjection";
 import {
   applyActiveSnapshotHead,
@@ -178,6 +180,8 @@ export class SessionSupervisor {
   mergeTurns = mergeTurns;
   mergeMessages = mergeMessages;
   mergeEvents = mergeEvents;
+  ensureTurnFromEvent = ensureTurnFromEvent;
+  applyEventToTurns = applyEventToTurns;
   seedHeadFromActiveSnapshot = seedHeadFromActiveSnapshot;
   applyHead = applyHead;
   applyToolSummaries = applyToolSummaries;

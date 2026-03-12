@@ -281,7 +281,7 @@ async fn create_session_with_provider(
         .uri(format!("/api/tasks/{}/sessions", task.id.0))
         .header("content-type", "application/json")
         .body(Body::from(
-            json!({"provider_id":provider_id,"model_id":"default"}).to_string(),
+            json!({"provider_id":provider_id,"model_id":"fake-model"}).to_string(),
         ))
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();

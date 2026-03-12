@@ -1,7 +1,6 @@
 import { test, expect } from "./fixtures";
 import type { Page } from "@playwright/test";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
-import { seedVisualSessionHead, seedVisualSessionHeads } from "./utils/visualSessionHeads";
 import {
   buildVisualName,
   captureVisual,
@@ -25,7 +24,6 @@ test.describe.serial("visual: workbench shell", () => {
   let emptyWorkspaceId = "";
   let archivedWorkspaceId = "";
   let activeWorkspaceId = "";
-  let activeTaskId = "";
   let activeSessionId = "";
 
   test.beforeAll(async ({ request }) => {
@@ -52,29 +50,15 @@ test.describe.serial("visual: workbench shell", () => {
     const active = await seedDummyWorkspace(request, {
       tasks: 1,
       sessionsPerTask: 1,
-      turnsPerSession: 0,
+      turnsPerSession: 1,
       throttleMs: 0,
     });
     activeWorkspaceId = active.workspaceId;
-    activeTaskId = active.taskIds[0] ?? "";
     activeSessionId = active.sessionIdsByTask[active.taskIds[0] ?? ""]?.[0] ?? "";
   });
 
   const seedActiveSession = async (page: Page) => {
     await openFirstTaskSession(page);
-    await seedVisualSessionHead(page, {
-      workspaceId: activeWorkspaceId,
-      taskId: activeTaskId,
-      sessionId: activeSessionId,
-      turns: [
-        {
-          turnId: "visual-shell-active-turn-1",
-          userContent: "Show me the active shell layout.",
-          assistantContent:
-            "The shell should expose the session header controls, composer, and any right-pane states without clipping or overlap.",
-        },
-      ],
-    });
     await expect
       .poll(async () => page.locator(".wb-turn-header-content").count(), { timeout: 20_000 })
       .toBeGreaterThan(0);
@@ -165,31 +149,10 @@ test.describe.serial("visual: workbench shell", () => {
       const mixed = await seedDummyWorkspace(request, {
         tasks: 3,
         sessionsPerTask: 1,
-        turnsPerSession: 0,
+        turnsPerSession: 1,
         throttleMs: 0,
       });
-      const mixedTaskSeeds = mixed.taskIds.map((taskId) => ({
-        taskId,
-        sessionId: mixed.sessionIdsByTask[taskId]?.[0] ?? "",
-      }));
       await openWorkbenchVisualPage(page, mixed.workspaceId, { theme, viewport: "desktop" });
-      await seedVisualSessionHeads(
-        page,
-        mixedTaskSeeds
-          .filter((seed) => seed.sessionId)
-          .map((seed, index) => ({
-            workspaceId: mixed.workspaceId,
-            taskId: seed.taskId,
-            sessionId: seed.sessionId,
-            turns: [
-              {
-                turnId: `visual-shell-turn-${index + 1}`,
-                userContent: `Review fixture task ${index + 1}`,
-                assistantContent: `Completed shell summary ${index + 1}`,
-              },
-            ],
-          })),
-      );
       await expect(page.locator(".wb-task-row")).toHaveCount(3, { timeout: 20_000 });
       await selectFakeHarness(page);
       const composer = newTaskComposer(page);

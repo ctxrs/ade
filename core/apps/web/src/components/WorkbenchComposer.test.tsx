@@ -616,7 +616,7 @@ describe("WorkbenchComposer textarea sizing", () => {
     expect(screen.queryByText("acp-crp-bridge")).not.toBeInTheDocument();
   });
 
-  it("treats codex subscription auth mode as configured auth in harness list", async () => {
+  it("does not treat codex subscription mode without active auth as configured", async () => {
     const NewTaskHarness = () => {
       const [value, setValue] = useState("");
       const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
@@ -675,7 +675,7 @@ describe("WorkbenchComposer textarea sizing", () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    expect(screen.getByTitle("Authentication configured")).toBeInTheDocument();
+    expect(screen.getByTitle("Authentication not configured")).toBeInTheDocument();
   });
 
   it("shows an inactive auth dot for installed harnesses without auth", async () => {

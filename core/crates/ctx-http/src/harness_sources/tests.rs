@@ -976,6 +976,44 @@ async fn droid_endpoint_writes_factory_settings_for_generic_endpoint() {
 }
 
 #[tokio::test]
+async fn droid_endpoint_requires_explicit_model() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let endpoint = upsert_provider_endpoint(
+        root.path(),
+        PROVIDER_DROID,
+        HarnessEndpointUpsert {
+            endpoint_id: None,
+            name: "Droid endpoint".to_string(),
+            base_url: Some("https://openrouter.ai/api/v1".to_string()),
+            api_shape: Some(HarnessApiShape::OpenaiResponses),
+            auth_type: None,
+            model_override: None,
+            api_key: Some("sk-or-test".to_string()),
+            service_account_json: None,
+            project_id: None,
+            location: None,
+        },
+    )
+    .await
+    .expect("upsert endpoint");
+    set_provider_source_selection(
+        root.path(),
+        PROVIDER_DROID,
+        HarnessSourceKind::Endpoint,
+        Some(endpoint.id.clone()),
+    )
+    .await
+    .expect("select endpoint");
+
+    let err = resolve_provider_source_for_run(root.path(), PROVIDER_DROID)
+        .await
+        .expect_err("droid endpoint should require explicit model");
+    assert!(err
+        .to_string()
+        .contains("missing a concrete model id"));
+}
+
+#[tokio::test]
 async fn seed_droid_auth_from_host_path_copies_auth_encrypted_into_endpoint_home() {
     let root = tempfile::tempdir().expect("tempdir");
     let host = tempfile::tempdir().expect("tempdir");

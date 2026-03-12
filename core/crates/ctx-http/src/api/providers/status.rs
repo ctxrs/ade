@@ -265,6 +265,14 @@ pub(super) fn apply_ready_for_use_details(
         return;
     }
 
+    if status.provider_id == "fake" {
+        status.details.insert("ready_for_use".into(), "true".into());
+        status.details.remove("required_dependency_ids");
+        status.details.remove("pending_dependency_ids");
+        status.details.remove("managed_dependency_update_available");
+        return;
+    }
+
     let Ok(contract) = provider_install_contract::resolve_provider_install_contract(
         data_root,
         managed,
