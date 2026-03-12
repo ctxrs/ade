@@ -14,7 +14,9 @@ use tokio::sync::{mpsc, Mutex as AsyncMutex};
 use url::Url;
 
 use ctx_core::models::SessionEventType;
-use ctx_http::installer::{save_agent_server_config, AgentServerCommand, AgentServerConfigFile};
+use ctx_http::installer::{
+    load_agent_server_config, save_agent_server_config, AgentServerCommand, AgentServerConfigFile,
+};
 use ctx_providers::adapters::{
     ProviderAdapter, ProviderHealth, ProviderStatus, RunHandle, TurnInput,
 };
@@ -708,27 +710,6 @@ async fn write_mock_cursor_runtime(
     script_path
 }
 
-async fn write_mock_security_runtime(data_root: &std::path::Path) -> std::path::PathBuf {
-    let bin_dir = data_root.join("mock-security-bin");
-    tokio::fs::create_dir_all(&bin_dir)
-        .await
-        .expect("create mock security bin");
-    let script_path = bin_dir.join("security");
-    tokio::fs::write(&script_path, "#!/usr/bin/env bash\nexit 0\n")
-        .await
-        .expect("write mock security script");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&script_path)
-            .expect("mock security metadata")
-            .permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&script_path, perms).expect("set mock security permissions");
-    }
-    bin_dir
-}
-
 const MOCK_CLAUDE_OAUTH_CREDENTIALS_JSON: &str = r#"{"claudeAiOauth":{"accessToken":"access-token","refreshToken":"refresh-token","expiresAt":4102444800000,"scopes":["user:inference","user:profile"],"subscriptionType":"pro"}}"#;
 const MOCK_CLAUDE_CONFIG_JSON: &str = r#"{"oauthAccount":{"emailAddress":"contact-086a332885a5@fixture.example.test","organizationUuid":"org-test","organizationName":"Profound App"}} "#;
 static CLAUDE_TOKEN_ENV_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
@@ -1004,6 +985,7 @@ async fn claude_login_start_returns_pending_pkce_session() {
         write_mock_claude_runtime(data_dir.path(), "#!/usr/bin/env bash\nexit 0\n").await;
     let mut cfg = AgentServerConfigFile {
         providers: HashMap::new(),
+        provider_login_commands: HashMap::new(),
         managed_installs: HashMap::new(),
         managed_provider_targets: HashMap::new(),
         managed_install_targets: HashMap::new(),
@@ -1153,6 +1135,7 @@ async fn claude_login_builds_hosted_pkce_auth_url() {
         write_mock_claude_runtime(data_dir.path(), "#!/usr/bin/env bash\nexit 0\n").await;
     let mut cfg = AgentServerConfigFile {
         providers: HashMap::new(),
+        provider_login_commands: HashMap::new(),
         managed_installs: HashMap::new(),
         managed_provider_targets: HashMap::new(),
         managed_install_targets: HashMap::new(),
@@ -1224,6 +1207,7 @@ async fn claude_login_callback_code_completion_path_succeeds() {
         write_mock_claude_runtime(data_dir.path(), "#!/usr/bin/env bash\nexit 0\n").await;
     let mut cfg = AgentServerConfigFile {
         providers: HashMap::new(),
+        provider_login_commands: HashMap::new(),
         managed_installs: HashMap::new(),
         managed_provider_targets: HashMap::new(),
         managed_install_targets: HashMap::new(),
@@ -1319,6 +1303,7 @@ async fn claude_login_token_exchange_failure_reports_actionable_error() {
         write_mock_claude_runtime(data_dir.path(), "#!/usr/bin/env bash\nexit 0\n").await;
     let mut cfg = AgentServerConfigFile {
         providers: HashMap::new(),
+        provider_login_commands: HashMap::new(),
         managed_installs: HashMap::new(),
         managed_provider_targets: HashMap::new(),
         managed_install_targets: HashMap::new(),
@@ -1443,6 +1428,7 @@ async fn claude_login_without_label_preserves_existing_account_label() {
     let accounts_url = format!("{}/api/providers/claude-crp/accounts", server.base_url);
     let mut cfg = AgentServerConfigFile {
         providers: HashMap::new(),
+        provider_login_commands: HashMap::new(),
         managed_installs: HashMap::new(),
         managed_provider_targets: HashMap::new(),
         managed_install_targets: HashMap::new(),
@@ -1816,30 +1802,30 @@ async fn cursor_login_start_and_status_success_persists_account() {
     let cursor_script = write_mock_cursor_runtime(
         data_dir.path(),
         r#"#!/usr/bin/env node
-const cp = require('child_process');
+const fs = require('fs');
+const capturePath = process.env.CTX_CURSOR_CAPTURE_FILE;
 console.log('https://cursor.com/login/device?code=test');
 console.log('Signed in as cursor-dev@example.com');
-cp.spawnSync('security', ['add-generic-password', '-s', 'cursor-access-token', '-w', 'cursor-access-token'], { stdio: 'ignore' });
-cp.spawnSync('security', ['add-generic-password', '-s', 'cursor-refresh-token', '-w', 'cursor-refresh-token'], { stdio: 'ignore' });
+if (capturePath) {
+  fs.appendFileSync(capturePath, JSON.stringify({ event: 'captured', service: 'cursor-access-token', value: 'cursor-access-token' }) + '\n');
+  fs.appendFileSync(capturePath, JSON.stringify({ event: 'captured', service: 'cursor-refresh-token', value: 'cursor-refresh-token' }) + '\n');
+}
 "#,
     )
     .await;
-    let security_bin = write_mock_security_runtime(data_dir.path()).await;
-    let existing_path = std::env::var("PATH").unwrap_or_default();
-    let combined_path = format!("{}:{}", security_bin.to_string_lossy(), existing_path);
-    let _path_guard = TestEnvVar::set("PATH", &combined_path);
 
     let mut cfg = AgentServerConfigFile {
         providers: HashMap::new(),
+        provider_login_commands: HashMap::new(),
         managed_installs: HashMap::new(),
         managed_provider_targets: HashMap::new(),
         managed_install_targets: HashMap::new(),
     };
-    cfg.providers.insert(
+    cfg.provider_login_commands.insert(
         "cursor".to_string(),
         AgentServerCommand {
             command: cursor_script.to_string_lossy().to_string(),
-            args: vec!["--experimental-acp".to_string()],
+            args: vec![],
             dependencies: vec![],
             managed: None,
         },
@@ -1885,6 +1871,76 @@ cp.spawnSync('security', ['add-generic-password', '-s', 'cursor-refresh-token', 
     assert_eq!(accounts.accounts.len(), 1);
     assert_eq!(accounts.active_account_id, status.account_id);
     assert_eq!(accounts.accounts[0].label.as_deref(), Some("Cursor OAuth"));
+}
+
+#[tokio::test]
+async fn cursor_login_start_discovers_and_persists_login_command() {
+    let _env_lock = CLAUDE_TOKEN_ENV_LOCK.lock().await;
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let server = common::spawn_http_server(common::router(state)).await;
+
+    let cursor_script = write_mock_cursor_runtime(
+        data_dir.path(),
+        r#"#!/usr/bin/env node
+const fs = require('fs');
+const capturePath = process.env.CTX_CURSOR_CAPTURE_FILE;
+console.log('https://cursor.com/login/device?code=discovered');
+console.log('Signed in as discovered-cursor@example.com');
+if (capturePath) {
+  fs.appendFileSync(capturePath, JSON.stringify({ event: 'captured', service: 'cursor-access-token', value: 'cursor-access-token-discovered' }) + '\n');
+  fs.appendFileSync(capturePath, JSON.stringify({ event: 'captured', service: 'cursor-refresh-token', value: 'cursor-refresh-token-discovered' }) + '\n');
+}
+"#,
+    )
+    .await;
+    let existing_path = std::env::var("PATH").unwrap_or_default();
+    let combined_path = format!("{}:{}", data_dir.path().to_string_lossy(), existing_path);
+    let _path_guard = TestEnvVar::set("PATH", &combined_path);
+
+    let start_url = format!(
+        "{}/api/providers/cursor/accounts/login/start",
+        server.base_url
+    );
+    let start_resp = server
+        .client
+        .post(start_url)
+        .json(&json!({ "label": "Cursor OAuth Discovered" }))
+        .send()
+        .await
+        .expect("start cursor login request");
+    assert_eq!(start_resp.status(), StatusCode::OK);
+    let start_body: CursorLoginStartResponse = start_resp.json().await.expect("start body");
+    assert!(!start_body.login_id.is_empty());
+
+    let status = poll_cursor_login_status(&server, &start_body.login_id).await;
+    assert_eq!(status.status, "success");
+    assert_eq!(
+        status.auth_url.as_deref(),
+        Some("https://cursor.com/login/device?code=discovered")
+    );
+    assert!(status.account_id.is_some());
+
+    let cfg = load_agent_server_config(data_dir.path())
+        .await
+        .expect("load persisted agent config");
+    let persisted = cfg
+        .provider_login_commands
+        .get("cursor")
+        .expect("persisted cursor login command");
+    assert_eq!(
+        persisted.command,
+        cursor_script
+            .canonicalize()
+            .expect("canonicalize cursor script")
+            .to_string_lossy()
+    );
 }
 
 #[tokio::test]

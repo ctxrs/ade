@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-03-11",
+  "generated_at": "2026-03-12",
   "summary": "Provider auth matrix contract for desktop/web e2e lane coverage. Support=covered now, deferred=known coverage gap, unsupported=explicitly out of product auth support.",
   "providers": [
     {
@@ -104,9 +104,11 @@
   ],
   "assertion_definitions": {
     "install_success": "Managed/provider runtime installation succeeds for the requested daemon location and execution environment.",
+    "subscription_browser_open_success": "Subscription auth flow opens the provider-issued auth URL through the desktop shell path or other equivalent browser-open contract.",
     "probe_success": "Provider verify/probe reports status=ok for the workspace/provider cell.",
     "model_list_population": "Provider options include at least one resolved model id after auth configuration.",
     "first_turn_success": "A first user turn reaches completed terminal status with non-empty assistant output.",
+    "file_edit_success": "The provider can create a workspace file with exact requested contents during an end-to-end run.",
     "auth_import_success": "Auth import flow stores a usable managed credential profile and selects it active.",
     "configure_later_connect_success": "Configure-later path transitions from no-auth to verified/authenticated state before first turn.",
     "unsupported_contract": "Cell is intentionally unsupported and must be reported as unsupported (not silently skipped)."
@@ -121,9 +123,11 @@
       "support": "supported",
       "lane": "nightly",
       "required_assertions": [
+        "subscription_browser_open_success",
         "probe_success",
         "model_list_population",
-        "first_turn_success"
+        "first_turn_success",
+        "file_edit_success"
       ],
       "owner": "provider-codex",
       "prerequisites": [
@@ -147,9 +151,11 @@
       "support": "supported",
       "lane": "nightly",
       "required_assertions": [
+        "subscription_browser_open_success",
         "probe_success",
         "model_list_population",
-        "first_turn_success"
+        "first_turn_success",
+        "file_edit_success"
       ],
       "owner": "provider-codex",
       "prerequisites": [
@@ -216,7 +222,8 @@
         "install_success",
         "probe_success",
         "model_list_population",
-        "first_turn_success"
+        "first_turn_success",
+        "file_edit_success"
       ],
       "owner": "provider-codex",
       "prerequisites": [
@@ -241,7 +248,8 @@
         "install_success",
         "probe_success",
         "model_list_population",
-        "first_turn_success"
+        "first_turn_success",
+        "file_edit_success"
       ],
       "owner": "provider-codex",
       "prerequisites": [
@@ -308,7 +316,8 @@
         "auth_import_success",
         "probe_success",
         "model_list_population",
-        "first_turn_success"
+        "first_turn_success",
+        "file_edit_success"
       ],
       "owner": "provider-codex",
       "prerequisites": [],
@@ -397,7 +406,8 @@
         "configure_later_connect_success",
         "probe_success",
         "model_list_population",
-        "first_turn_success"
+        "first_turn_success",
+        "file_edit_success"
       ],
       "owner": "provider-codex",
       "prerequisites": [
@@ -423,7 +433,8 @@
         "configure_later_connect_success",
         "probe_success",
         "model_list_population",
-        "first_turn_success"
+        "first_turn_success",
+        "file_edit_success"
       ],
       "owner": "provider-codex",
       "prerequisites": [
@@ -996,7 +1007,8 @@
         "auth_import_success",
         "probe_success",
         "model_list_population",
-        "first_turn_success"
+        "first_turn_success",
+        "file_edit_success"
       ],
       "owner": "provider-gemini",
       "prerequisites": [],
@@ -1017,7 +1029,8 @@
         "auth_import_success",
         "probe_success",
         "model_list_population",
-        "first_turn_success"
+        "first_turn_success",
+        "file_edit_success"
       ],
       "owner": "provider-gemini",
       "prerequisites": [
@@ -1042,7 +1055,8 @@
         "auth_import_success",
         "probe_success",
         "model_list_population",
-        "first_turn_success"
+        "first_turn_success",
+        "file_edit_success"
       ],
       "owner": "provider-gemini",
       "prerequisites": [],
@@ -1063,7 +1077,8 @@
         "auth_import_success",
         "probe_success",
         "model_list_population",
-        "first_turn_success"
+        "first_turn_success",
+        "file_edit_success"
       ],
       "owner": "provider-gemini",
       "prerequisites": [],
@@ -1166,23 +1181,20 @@
       "auth_mode": "subscription_oauth",
       "daemon_location": "local",
       "execution_environment": "host",
-      "support": "supported",
+      "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
+        "subscription_browser_open_success",
         "probe_success",
         "model_list_population",
         "first_turn_success"
       ],
       "owner": "provider-cursor",
-      "prerequisites": [
-        "CTX_E2E_CURSOR_API_KEY"
-      ],
+      "prerequisites": [],
       "runner": {
-        "kind": "desktop_wdio",
-        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
-        "scenarios": "provider,provider-auth-matrix"
+        "kind": "none"
       },
-      "skip_reason": null
+      "skip_reason": "coverage_lives_in_dedicated_cursor_oauth_shell_open_spec"
     },
     {
       "id": "cursor.subscription_oauth.local.container_host_mounted",
@@ -1190,23 +1202,20 @@
       "auth_mode": "subscription_oauth",
       "daemon_location": "local",
       "execution_environment": "container_host_mounted",
-      "support": "supported",
+      "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
+        "subscription_browser_open_success",
         "probe_success",
         "model_list_population",
         "first_turn_success"
       ],
       "owner": "provider-cursor",
-      "prerequisites": [
-        "CTX_E2E_CURSOR_API_KEY"
-      ],
+      "prerequisites": [],
       "runner": {
-        "kind": "desktop_wdio",
-        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
-        "scenarios": "provider,provider-auth-matrix"
+        "kind": "none"
       },
-      "skip_reason": null
+      "skip_reason": "coverage_lives_in_dedicated_cursor_oauth_shell_open_spec"
     },
     {
       "id": "cursor.subscription_oauth.remote.host",
@@ -1586,20 +1595,25 @@
       "auth_mode": "endpoint_api_key",
       "daemon_location": "local",
       "execution_environment": "host",
-      "support": "deferred",
+      "support": "supported",
       "lane": "nightly",
       "required_assertions": [
         "install_success",
         "probe_success",
         "model_list_population",
-        "first_turn_success"
+        "first_turn_success",
+        "file_edit_success"
       ],
       "owner": "provider-qwen",
-      "prerequisites": [],
+      "prerequisites": [
+        "OPENROUTER_API_KEY"
+      ],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": null
     },
     {
       "id": "qwen.endpoint_api_key.local.container_host_mounted",
@@ -1934,20 +1948,25 @@
       "auth_mode": "endpoint_api_key",
       "daemon_location": "local",
       "execution_environment": "host",
-      "support": "deferred",
+      "support": "supported",
       "lane": "nightly",
       "required_assertions": [
         "install_success",
         "probe_success",
         "model_list_population",
-        "first_turn_success"
+        "first_turn_success",
+        "file_edit_success"
       ],
       "owner": "provider-kimi",
-      "prerequisites": [],
+      "prerequisites": [
+        "OPENROUTER_API_KEY"
+      ],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": null
     },
     {
       "id": "kimi.endpoint_api_key.local.container_host_mounted",
@@ -2266,20 +2285,25 @@
       "auth_mode": "endpoint_api_key",
       "daemon_location": "local",
       "execution_environment": "host",
-      "support": "deferred",
+      "support": "supported",
       "lane": "nightly",
       "required_assertions": [
         "install_success",
         "probe_success",
         "model_list_population",
-        "first_turn_success"
+        "first_turn_success",
+        "file_edit_success"
       ],
       "owner": "provider-mistral",
-      "prerequisites": [],
+      "prerequisites": [
+        "OPENROUTER_API_KEY"
+      ],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": null
     },
     {
       "id": "mistral.endpoint_api_key.local.container_host_mounted",
@@ -3586,20 +3610,25 @@
       "auth_mode": "endpoint_api_key",
       "daemon_location": "local",
       "execution_environment": "host",
-      "support": "deferred",
+      "support": "supported",
       "lane": "nightly",
       "required_assertions": [
         "install_success",
         "probe_success",
         "model_list_population",
-        "first_turn_success"
+        "first_turn_success",
+        "file_edit_success"
       ],
       "owner": "provider-opencode",
-      "prerequisites": [],
+      "prerequisites": [
+        "OPENROUTER_API_KEY"
+      ],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": null
     },
     {
       "id": "opencode.endpoint_api_key.local.container_host_mounted",
@@ -3918,20 +3947,25 @@
       "auth_mode": "endpoint_api_key",
       "daemon_location": "local",
       "execution_environment": "host",
-      "support": "deferred",
+      "support": "supported",
       "lane": "nightly",
       "required_assertions": [
         "install_success",
         "probe_success",
         "model_list_population",
-        "first_turn_success"
+        "first_turn_success",
+        "file_edit_success"
       ],
       "owner": "provider-goose",
-      "prerequisites": [],
+      "prerequisites": [
+        "OPENROUTER_API_KEY"
+      ],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": null
     },
     {
       "id": "goose.endpoint_api_key.local.container_host_mounted",
@@ -4234,20 +4268,25 @@
       "auth_mode": "endpoint_api_key",
       "daemon_location": "local",
       "execution_environment": "host",
-      "support": "deferred",
+      "support": "supported",
       "lane": "nightly",
       "required_assertions": [
         "install_success",
         "probe_success",
         "model_list_population",
-        "first_turn_success"
+        "first_turn_success",
+        "file_edit_success"
       ],
       "owner": "provider-droid",
-      "prerequisites": [],
+      "prerequisites": [
+        "OPENROUTER_API_KEY"
+      ],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": null
     },
     {
       "id": "droid.endpoint_api_key.local.container_host_mounted",
@@ -4550,20 +4589,25 @@
       "auth_mode": "endpoint_api_key",
       "daemon_location": "local",
       "execution_environment": "host",
-      "support": "deferred",
+      "support": "supported",
       "lane": "nightly",
       "required_assertions": [
         "install_success",
         "probe_success",
         "model_list_population",
-        "first_turn_success"
+        "first_turn_success",
+        "file_edit_success"
       ],
       "owner": "provider-openhands",
-      "prerequisites": [],
+      "prerequisites": [
+        "OPENROUTER_API_KEY"
+      ],
       "runner": {
-        "kind": "none"
+        "kind": "desktop_wdio",
+        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
+        "scenarios": "provider,provider-auth-matrix"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": null
     },
     {
       "id": "openhands.endpoint_api_key.local.container_host_mounted",

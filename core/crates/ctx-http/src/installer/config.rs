@@ -61,6 +61,8 @@ pub struct AgentServerConfigFile {
     #[serde(default)]
     pub providers: HashMap<String, AgentServerCommand>,
     #[serde(default)]
+    pub provider_login_commands: HashMap<String, AgentServerCommand>,
+    #[serde(default)]
     pub managed_installs: HashMap<String, ManagedInstallMetadata>,
     #[serde(default)]
     pub managed_provider_targets: HashMap<String, HashMap<String, AgentServerCommand>>,
@@ -156,6 +158,13 @@ fn user_override_provider_command(
 ) -> Option<AgentServerCommand> {
     let configured = cfg.providers.get(provider_id)?;
     configured.managed.is_none().then(|| configured.clone())
+}
+
+fn configured_provider_login_command<'a>(
+    cfg: &'a AgentServerConfigFile,
+    provider_id: &str,
+) -> Option<&'a AgentServerCommand> {
+    cfg.provider_login_commands.get(provider_id)
 }
 
 pub fn managed_install_metadata_for_target<'a>(
@@ -355,6 +364,46 @@ fn preserve_raw_bundle_command_path(path: &Path) -> Option<PathBuf> {
         .then(|| path.to_path_buf())
 }
 
+fn resolve_absolute_command_path(provider_id: &str, source: &str, raw: &str) -> Result<PathBuf> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!(
+            "runtime_command_missing: provider={} source={}",
+            provider_id,
+            source
+        );
+    }
+    let path = Path::new(trimmed);
+    if !path.is_absolute() {
+        anyhow::bail!(
+            "runtime_command_not_absolute: provider={} source={} command={}",
+            provider_id,
+            source,
+            trimmed
+        );
+    }
+    if !path.exists() {
+        anyhow::bail!(
+            "runtime_command_not_found: provider={} source={} command={}",
+            provider_id,
+            source,
+            trimmed
+        );
+    }
+    Ok(preserve_raw_bundle_command_path(path)
+        .unwrap_or_else(|| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())))
+}
+
+pub fn resolve_provider_login_command(
+    cfg: &AgentServerConfigFile,
+    provider_id: &str,
+) -> Result<Option<PathBuf>> {
+    let Some(configured) = configured_provider_login_command(cfg, provider_id) else {
+        return Ok(None);
+    };
+    resolve_absolute_command_path(provider_id, "login_command", &configured.command).map(Some)
+}
+
 pub fn resolve_runtime_provider_command_for_target(
     cfg: &AgentServerConfigFile,
     provider_id: &str,
@@ -365,35 +414,10 @@ pub fn resolve_runtime_provider_command_for_target(
         return Ok(None);
     };
 
-    let raw = candidate.command.trim();
-    if raw.is_empty() {
-        anyhow::bail!(
-            "runtime_command_missing: provider={} source={}",
-            provider_id,
-            source.as_str()
-        );
-    }
-    let path = Path::new(raw);
-    if !path.is_absolute() {
-        anyhow::bail!(
-            "runtime_command_not_absolute: provider={} source={} command={}",
-            provider_id,
-            source.as_str(),
-            raw
-        );
-    }
-    if !path.exists() {
-        anyhow::bail!(
-            "runtime_command_not_found: provider={} source={} command={}",
-            provider_id,
-            source.as_str(),
-            raw
-        );
-    }
-    let command_abs_path = preserve_raw_bundle_command_path(path)
-        .unwrap_or_else(|| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()))
-        .to_string_lossy()
-        .to_string();
+    let command_abs_path =
+        resolve_absolute_command_path(provider_id, source.as_str(), &candidate.command)?
+            .to_string_lossy()
+            .to_string();
 
     Ok(Some(ProviderRuntimeCommand {
         provider_id: provider_id.to_string(),
@@ -920,6 +944,52 @@ mod tests {
             resolved.is_none(),
             "container target must not reuse host bundled provider commands"
         );
+    }
+
+    #[test]
+    fn resolve_provider_login_command_reads_prepared_absolute_path() {
+        let temp = tempdir().expect("tempdir");
+        let login_cmd = temp.path().join("cursor-agent");
+        std::fs::write(&login_cmd, b"cursor").expect("write login command");
+
+        let mut cfg = AgentServerConfigFile::default();
+        cfg.provider_login_commands.insert(
+            "cursor".to_string(),
+            AgentServerCommand {
+                command: login_cmd.to_string_lossy().to_string(),
+                args: Vec::new(),
+                dependencies: Vec::new(),
+                managed: None,
+            },
+        );
+
+        let resolved = resolve_provider_login_command(&cfg, "cursor")
+            .expect("resolve login command")
+            .expect("login command");
+        assert_eq!(
+            resolved,
+            std::fs::canonicalize(&login_cmd).expect("canonicalize login command")
+        );
+    }
+
+    #[test]
+    fn resolve_provider_login_command_rejects_relative_paths() {
+        let mut cfg = AgentServerConfigFile::default();
+        cfg.provider_login_commands.insert(
+            "cursor".to_string(),
+            AgentServerCommand {
+                command: "cursor-agent".to_string(),
+                args: Vec::new(),
+                dependencies: Vec::new(),
+                managed: None,
+            },
+        );
+
+        let err = resolve_provider_login_command(&cfg, "cursor")
+            .expect_err("relative login command should fail");
+        assert!(err
+            .to_string()
+            .contains("runtime_command_not_absolute: provider=cursor source=login_command"));
     }
 
     #[test]

@@ -1,4 +1,7 @@
-use super::login::{extract_auth_url, resolve_runtime_provider_command_from_config};
+use super::login::{
+    extract_auth_url, resolve_provider_login_command_from_config,
+    resolve_runtime_provider_command_from_config,
+};
 use super::*;
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 
@@ -177,7 +180,53 @@ fn is_cursor_login_command(path: &StdPath) -> bool {
         .is_some_and(|name| name == "cursor-agent" || name == "cursor-agent.exe")
 }
 
+async fn persist_cursor_login_command(
+    data_root: &StdPath,
+    command_path: &StdPath,
+) -> anyhow::Result<()> {
+    let command = std::fs::canonicalize(command_path)
+        .unwrap_or_else(|_| command_path.to_path_buf())
+        .to_string_lossy()
+        .to_string();
+    installer::mutate_agent_server_config(data_root, move |cfg| {
+        let should_update = cfg
+            .provider_login_commands
+            .get("cursor")
+            .is_none_or(|existing| {
+                existing.command != command
+                    || !existing.args.is_empty()
+                    || !existing.dependencies.is_empty()
+                    || existing.managed.is_some()
+            });
+        if should_update {
+            cfg.provider_login_commands.insert(
+                "cursor".to_string(),
+                installer::AgentServerCommand {
+                    command,
+                    args: Vec::new(),
+                    dependencies: Vec::new(),
+                    managed: None,
+                },
+            );
+        }
+    })
+    .await
+    .context("persisting cursor login command")?;
+    Ok(())
+}
+
 async fn resolve_cursor_login_runtime(state: &Arc<AppState>) -> anyhow::Result<PathBuf> {
+    if let Some(path) =
+        resolve_provider_login_command_from_config(&state.core.data_root, "cursor").await?
+    {
+        if is_cursor_login_command(&path) {
+            return Ok(path);
+        }
+        anyhow::bail!(
+            "runtime_command_invalid: provider=cursor-login (configured login command must point to `cursor-agent`)"
+        );
+    }
+
     if let Some(runtime) =
         resolve_runtime_provider_command_from_config(&state.core.data_root, "cursor").await?
     {
@@ -190,12 +239,18 @@ async fn resolve_cursor_login_runtime(state: &Arc<AppState>) -> anyhow::Result<P
     let (found, resolved) = installer::resolve_command_path("cursor-agent");
     if found {
         if let Some(path) = resolved {
+            if !is_cursor_login_command(&path) {
+                anyhow::bail!(
+                    "runtime_command_invalid: provider=cursor-login (resolved login command must point to `cursor-agent`)"
+                );
+            }
+            persist_cursor_login_command(&state.core.data_root, &path).await?;
             return Ok(path);
         }
     }
 
     anyhow::bail!(
-        "runtime_command_missing: provider=cursor-login (install Cursor CLI and ensure `cursor-agent` is on PATH)"
+        "runtime_command_missing: provider=cursor-login (install Cursor CLI so ctx can register an absolute `cursor-agent` login command)"
     );
 }
 

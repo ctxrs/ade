@@ -25,6 +25,9 @@ const loadHelper = ({
   selectSubscriptionSource = async () => {
     throw new Error("unexpected selectSubscriptionSource call");
   },
+  createProviderOAuthHarness = () => {
+    throw new Error("unexpected createProviderOAuthHarness call");
+  },
   completeCodexOauthWithBrowserCredentials = async () => {
     throw new Error("unexpected completeCodexOauthWithBrowserCredentials call");
   },
@@ -46,7 +49,7 @@ const loadHelper = ({
     id: OAUTH_HELPER_PATH,
     filename: OAUTH_HELPER_PATH,
     loaded: true,
-    exports: { completeCodexOauthWithBrowserCredentials },
+    exports: { createProviderOAuthHarness, completeCodexOauthWithBrowserCredentials },
   };
   return require(HELPER_PATH);
 };
@@ -138,17 +141,28 @@ test("prepareSubscriptionAuth returns skip with blocker artifacts when codex oau
   assert.equal(subscriptionSourceCalled, false);
 });
 
-test("cursor plan resolves managed upsert inputs from env", () => {
+test("cursor plan skips because matrix coverage moved to the dedicated cursor oauth spec", () => {
   const { resolveSubscriptionAuthPlan } = loadHelper();
-  const result = resolveSubscriptionAuthPlan("cursor", {
-    CTX_E2E_CURSOR_API_KEY: "cursor-key",
-    CTX_E2E_CURSOR_EMAIL: "dev@example.com",
+  const result = resolveSubscriptionAuthPlan("cursor", {});
+  assert.equal(result.status, "skip");
+  assert.match(result.reason, /cursor-oauth-shell-open\.spec\.cjs/i);
+});
+
+test("prepareSubscriptionAuth returns skip when cursor matrix oauth is requested", async () => {
+  const { prepareSubscriptionAuth } = loadHelper({
+    selectSubscriptionSource: async () => {
+      throw new Error("selectSubscriptionSource should not run for skipped cursor matrix oauth");
+    },
   });
-  assert.equal(result.status, "ready");
-  assert.equal(result.plan.strategy, "managed_upsert");
-  assert.equal(result.plan.endpoint, "/api/providers/cursor/accounts");
-  assert.equal(result.plan.body.token, "cursor-key");
-  assert.equal(result.plan.body.email, "dev@example.com");
+
+  const result = await prepareSubscriptionAuth({
+    providerId: "cursor",
+    daemonLocation: "local",
+    executionEnvironment: "host",
+  });
+
+  assert.equal(result.status, "skip");
+  assert.match(result.reason, /matrix must not synthesize/i);
 });
 
 test("amp plan accepts secrets JSON file input", () => {

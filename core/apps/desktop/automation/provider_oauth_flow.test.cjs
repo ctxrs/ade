@@ -220,6 +220,148 @@ test("provider oauth harness records redacted artifacts through terminal success
   );
 });
 
+test("provider oauth harness supports cursor login lifecycle without codex-specific callback fields", async () => {
+  const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-provider-oauth-cursor-test-"));
+  const artifactPath = path.join(artifactDir, "artifact.json");
+  const fakeWindow = {
+    __TAURI__: {
+      core: {
+        invoke: async (command) => {
+          if (command === "desktop_get_connection" || command === "desktop_connect_local") {
+            return {
+              kind: "local",
+              base_url: "http://127.0.0.1:4311",
+              token: "desktop-token",
+            };
+          }
+          throw new Error(`unexpected invoke command: ${String(command)}`);
+        },
+      },
+    },
+  };
+  global.window = fakeWindow;
+  globalThis.window = fakeWindow;
+
+  let loginPollCount = 0;
+  global.browser = {
+    execute: async (fn, ...args) => await fn(...args),
+  };
+  global.fetch = async (url, options) => {
+    const href = String(url);
+    if (href.endsWith("/api/providers/cursor/accounts/login/start")) {
+      return new Response(
+        JSON.stringify({
+          login_id: "cursor-login-1",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (href.endsWith("/api/providers/cursor/accounts/login/cursor-login-1")) {
+      loginPollCount += 1;
+      const payload = loginPollCount === 1
+        ? {
+            login_id: "cursor-login-1",
+            auth_url: "https://cursor.com/login/device?code=pending",
+            status: "pending",
+          }
+        : {
+            login_id: "cursor-login-1",
+            account_id: "cursor-account-1",
+            auth_url: "https://cursor.com/login/device?code=done",
+            status: "success",
+          };
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (href.endsWith("/api/providers/cursor/accounts")) {
+      return new Response(
+        JSON.stringify({
+          active_account_id: "cursor-account-1",
+          accounts: [
+            {
+              id: "cursor-account-1",
+              label: "Cursor",
+              email: "cursor@example.com",
+            },
+          ],
+          logins: [],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (href.endsWith("/api/health") || href.endsWith("/api/providers")) {
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    throw new Error(`unexpected fetch: ${href} method=${options?.method || "GET"}`);
+  };
+
+  const { createProviderOAuthHarness } = loadHelper();
+  const harness = createProviderOAuthHarness({
+    outputPath: artifactPath,
+    pollMs: 5,
+    timeoutMs: 1000,
+    urlFallbackGraceMs: 0,
+  });
+
+  const started = await harness.startProviderLogin("cursor", "Cursor Test");
+  assert.equal(started.loginId, "cursor-login-1");
+  assert.equal(started.completionToken, null);
+  const loginUrl = await harness.awaitLoginUrl(started.loginId, 1000);
+  assert.equal(loginUrl.sanitizedAuthUrl.redacted, "https://cursor.com/login/device");
+  const terminal = await harness.awaitLoginTerminal(started.loginId, 1000);
+  assert.equal(terminal.status, "success");
+  const active = await harness.assertAccountActivated("cursor");
+  assert.equal(active.activeAccountId, "cursor-account-1");
+
+  const artifact = JSON.parse(fs.readFileSync(artifactPath, "utf8"));
+  assert.equal(artifact.sessions[0].provider_id, "cursor");
+  assert.equal(artifact.sessions[0].auth_url.redacted, "https://cursor.com/login/device");
+  assert.equal(artifact.sessions[0].completion_token_present, false);
+  assert.equal(artifact.sessions[0].terminal_status, "success");
+});
+
+test("openAuthUrl uses tauri shell invoke and records the desktop-open probe event", async () => {
+  const shellCalls = [];
+  const fakeWindow = {
+    __TAURI__: {
+      core: {
+        invoke: async (command, args) => {
+          shellCalls.push({ command, args });
+          return null;
+        },
+      },
+    },
+  };
+  global.window = fakeWindow;
+  globalThis.window = fakeWindow;
+  global.browser = {
+    execute: async (fn, ...args) => await fn(...args),
+  };
+
+  const { createProviderOAuthHarness } = loadHelper();
+  const harness = createProviderOAuthHarness();
+  await harness.openAuthUrl("https://cursor.com/login/device?code=probe");
+
+  assert.deepEqual(shellCalls, [
+    {
+      command: "plugin:shell|open",
+      args: {
+        path: "https://cursor.com/login/device?code=probe",
+      },
+    },
+  ]);
+
+  const probeEvents = await harness.readDesktopOpenExternalProbe();
+  assert.equal(probeEvents.length, 1);
+  assert.equal(probeEvents[0].command, "plugin:shell|open");
+  assert.equal(probeEvents[0].href, "https://cursor.com/login/device?code=probe");
+});
+
 test("fillBrowserAuthField prefers webdriver element interactions for email entry", async () => {
   let executeCalled = false;
   const setValues = [];

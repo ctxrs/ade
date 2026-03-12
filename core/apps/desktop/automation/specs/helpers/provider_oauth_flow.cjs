@@ -20,6 +20,13 @@ const PROVIDER_OAUTH_DESCRIPTORS = Object.freeze({
     accountsPath: "/api/providers/codex/accounts",
     loginIdField: "account_id",
   },
+  cursor: {
+    providerId: "cursor",
+    startPath: "/api/providers/cursor/accounts/login/start",
+    statusPath: (loginId) => `/api/providers/cursor/accounts/login/${encodeURIComponent(loginId)}`,
+    accountsPath: "/api/providers/cursor/accounts",
+    loginIdField: "login_id",
+  },
   "claude-crp": {
     providerId: "claude-crp",
     startPath: "/api/providers/claude-crp/accounts/login/start",
@@ -1102,18 +1109,80 @@ const openExternalUrlViaDesktop = async (href) => {
   if (!hasBrowserExecute()) {
     throw new Error("browser.execute is required to open an external browser");
   }
-  const result = await browser.execute(async (authUrl) => {
+  const result = await browser.execute(async (authUrl, probeKey) => {
     try {
-      const mod = await import("@tauri-apps/plugin-shell");
-      await mod.open(authUrl);
-      return { ok: true };
+      const root = window;
+      const state = root[probeKey] || {
+        events: [],
+        installed_at_ms: Date.now(),
+        wrapped_paths: [],
+      };
+      root[probeKey] = state;
+
+      const wrapInvoke = (holder, pathLabel) => {
+        if (!holder || typeof holder.invoke !== "function") return false;
+        if (holder.invoke.__ctxOauthProbeWrapped) return true;
+        const originalInvoke = holder.invoke;
+        const wrappedInvoke = async function wrappedInvoke(command, ...rest) {
+          try {
+            if (typeof command === "string" && command.includes("plugin:shell|open")) {
+              const args = rest[0];
+              const href =
+                typeof args?.path === "string" ? args.path
+                  : typeof args?.url === "string" ? args.url
+                    : typeof args?.href === "string" ? args.href
+                      : "";
+              state.events.push({
+                at_ms: Date.now(),
+                command,
+                source: pathLabel,
+                href,
+              });
+            }
+          } catch {
+            // ignore probe failures
+          }
+          return await originalInvoke.apply(this, [command, ...rest]);
+        };
+        wrappedInvoke.__ctxOauthProbeWrapped = true;
+        holder.invoke = wrappedInvoke;
+        state.wrapped_paths.push(pathLabel);
+        return true;
+      };
+
+      const installedCore = wrapInvoke(root.__TAURI__?.core, "__TAURI__.core");
+      const installedInternals = wrapInvoke(root.__TAURI_INTERNALS__, "__TAURI_INTERNALS__");
+      const invokeHolder = typeof root.__TAURI_INTERNALS__?.invoke === "function"
+        ? root.__TAURI_INTERNALS__
+        : root.__TAURI__?.core;
+      if (typeof invokeHolder?.invoke !== "function") {
+        return {
+          ok: false,
+          error: "Tauri invoke is unavailable",
+          probe: {
+            installed: installedCore || installedInternals,
+            wrapped_paths: Array.from(new Set(state.wrapped_paths)),
+            event_count: Array.isArray(state.events) ? state.events.length : 0,
+          },
+        };
+      }
+      await invokeHolder.invoke("plugin:shell|open", { path: authUrl });
+      return {
+        ok: true,
+        probe: {
+          installed: installedCore || installedInternals,
+          wrapped_paths: Array.from(new Set(state.wrapped_paths)),
+          event_count: Array.isArray(state.events) ? state.events.length : 0,
+        },
+      };
     } catch (error) {
       return { ok: false, error: String(error) };
     }
-  }, target);
+  }, target, PROBE_GLOBAL_KEY);
   if (!result || result.ok !== true) {
     throw new Error(readString(result?.error) || "failed to open external auth URL");
   }
+  return result.probe || null;
 };
 
 const createProviderOAuthHarness = ({
@@ -1505,12 +1574,12 @@ const createProviderOAuthHarness = ({
 
   const openAuthUrl = async (href) => {
     const probeInfo = await installDesktopOpenExternalProbe();
-    await openExternalUrlViaDesktop(href);
+    const runtimeProbe = await openExternalUrlViaDesktop(href);
     recordStage(
       "open_auth_url",
       "opened auth URL through desktop shell path",
       { auth_url: href },
-      { desktop_open_probe: probeInfo },
+      { desktop_open_probe: probeInfo, desktop_open_runtime_probe: runtimeProbe },
     );
   };
 

@@ -1,11 +1,13 @@
 use super::*;
 
+use crate::desktop_local_daemon::ensure_local_connection;
 #[cfg(test)]
 use std::cell::Cell;
-use crate::desktop_local_daemon::ensure_local_connection;
 
 const SSH_CONFIG_OVERRIDE_ENV: &str = "CTX_DESKTOP_SSH_CONFIG_PATH";
 const DESKTOP_DAEMON_BIN_NAME: &str = "ctx-daemon";
+const DAEMON_PATH_SENTINEL_BEGIN: &str = "__CTX_DAEMON_PATH_BEGIN__";
+const DAEMON_PATH_SENTINEL_END: &str = "__CTX_DAEMON_PATH_END__";
 
 fn normalized_ssh_config_override(value: &str) -> Option<String> {
     let trimmed = value.trim();
@@ -28,6 +30,127 @@ fn new_ssh_command() -> Command {
         cmd.arg("-F").arg(path);
     }
     cmd
+}
+
+fn append_unique_path_entry(
+    entries: &mut Vec<PathBuf>,
+    seen: &mut std::collections::HashSet<PathBuf>,
+    entry: PathBuf,
+) {
+    if entry.as_os_str().is_empty() {
+        return;
+    }
+    if seen.insert(entry.clone()) {
+        entries.push(entry);
+    }
+}
+
+fn append_path_entries_from_raw(
+    entries: &mut Vec<PathBuf>,
+    seen: &mut std::collections::HashSet<PathBuf>,
+    raw: &std::ffi::OsStr,
+) {
+    for entry in std::env::split_paths(raw) {
+        append_unique_path_entry(entries, seen, entry);
+    }
+}
+
+fn append_common_tool_dirs(
+    entries: &mut Vec<PathBuf>,
+    seen: &mut std::collections::HashSet<PathBuf>,
+    home_dir: Option<&Path>,
+) {
+    if let Some(home) = home_dir {
+        append_unique_path_entry(entries, seen, home.join(".local").join("bin"));
+        append_unique_path_entry(entries, seen, home.join("bin"));
+    }
+    for raw in [
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+    ] {
+        append_unique_path_entry(entries, seen, PathBuf::from(raw));
+    }
+}
+
+fn build_effective_daemon_path(
+    current_path: Option<&std::ffi::OsStr>,
+    shell_path: Option<&std::ffi::OsStr>,
+    home_dir: Option<&Path>,
+) -> Option<std::ffi::OsString> {
+    let mut entries = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    if let Some(raw) = current_path {
+        append_path_entries_from_raw(&mut entries, &mut seen, raw);
+    }
+    if let Some(raw) = shell_path {
+        append_path_entries_from_raw(&mut entries, &mut seen, raw);
+    }
+    append_common_tool_dirs(&mut entries, &mut seen, home_dir);
+    if entries.is_empty() {
+        return None;
+    }
+    std::env::join_paths(entries).ok()
+}
+
+fn extract_shell_path(stdout: &[u8]) -> Option<std::ffi::OsString> {
+    let output = String::from_utf8_lossy(stdout);
+    let start = output.find(DAEMON_PATH_SENTINEL_BEGIN)?;
+    let tail = &output[start + DAEMON_PATH_SENTINEL_BEGIN.len()..];
+    let end = tail.find(DAEMON_PATH_SENTINEL_END)?;
+    let path = tail[..end].trim();
+    (!path.is_empty()).then_some(std::ffi::OsString::from(path))
+}
+
+fn read_login_shell_path(shell_path: &Path) -> Option<std::ffi::OsString> {
+    if !shell_path.is_absolute() || !shell_path.exists() {
+        return None;
+    }
+    let output = Command::new(shell_path)
+        .arg("-lc")
+        .arg(format!(
+            "printf '{DAEMON_PATH_SENTINEL_BEGIN}%s{DAEMON_PATH_SENTINEL_END}' \"$PATH\""
+        ))
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    extract_shell_path(&output.stdout)
+}
+
+fn candidate_login_shell_paths() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(shell) = std::env::var_os("SHELL").filter(|value| !value.is_empty()) {
+        let path = PathBuf::from(shell);
+        if path.is_absolute() {
+            candidates.push(path);
+        }
+    }
+    for raw in ["/bin/zsh", "/bin/bash", "/bin/sh"] {
+        let path = PathBuf::from(raw);
+        if !candidates.contains(&path) {
+            candidates.push(path);
+        }
+    }
+    candidates
+}
+
+fn resolve_daemon_path_env() -> Option<std::ffi::OsString> {
+    let shell_path = candidate_login_shell_paths()
+        .into_iter()
+        .find_map(|shell| read_login_shell_path(&shell));
+    let home_dir = std::env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    build_effective_daemon_path(
+        std::env::var_os("PATH").as_deref(),
+        shell_path.as_deref(),
+        home_dir.as_deref(),
+    )
 }
 
 #[derive(Debug, Deserialize)]
@@ -1262,14 +1385,13 @@ pub(super) fn enforce_desktop_parity_bundle_preflight(app: &tauri::AppHandle) ->
 
     for image_id in &lock.required.image_ids {
         for target in &image_targets {
-            let managed_source_available =
-                required_component_has_managed_source(
-                    &lock,
-                    "image",
-                    image_id,
-                    target,
-                    &allowed_managed_sources,
-                );
+            let managed_source_available = required_component_has_managed_source(
+                &lock,
+                "image",
+                image_id,
+                target,
+                &allowed_managed_sources,
+            );
             let Some(entry) = manifest.images.iter().find(|entry| {
                 entry.id == *image_id && entry.os == target.os && entry.arch == target.arch
             }) else {
@@ -1341,14 +1463,13 @@ fn daemon_health_client_build_count() -> usize {
     DAEMON_HEALTH_CLIENT_BUILD_COUNT.with(Cell::get)
 }
 
-fn daemon_health_client(
-    timeout: Duration,
-) -> Result<reqwest::blocking::Client> {
+fn daemon_health_client(timeout: Duration) -> Result<reqwest::blocking::Client> {
     static DAEMON_HEALTH_CLIENTS: std::sync::OnceLock<
         std::sync::Mutex<std::collections::HashMap<u64, reqwest::blocking::Client>>,
     > = std::sync::OnceLock::new();
     let timeout_key = timeout.as_millis() as u64;
-    let clients = DAEMON_HEALTH_CLIENTS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    let clients = DAEMON_HEALTH_CLIENTS
+        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
     let mut guard = clients
         .lock()
         .map_err(|err| anyhow!("daemon health client cache poisoned: {err}"))?;
@@ -1713,8 +1834,9 @@ fn resolve_daemon_bin(app: &tauri::AppHandle) -> Result<PathBuf> {
             "missing development binary for `{DESKTOP_DAEMON_BIN_NAME}` at expected path (run `pnpm -C core desktop:prep` or rerun desktop_sync_resources after building `ctx-http`)"
         ));
     }
-    resource_bin(app, DESKTOP_DAEMON_BIN_NAME)
-        .with_context(|| format!("missing bundled binary for `{DESKTOP_DAEMON_BIN_NAME}` in application resources"))
+    resource_bin(app, DESKTOP_DAEMON_BIN_NAME).with_context(|| {
+        format!("missing bundled binary for `{DESKTOP_DAEMON_BIN_NAME}` in application resources")
+    })
 }
 
 fn resolve_optional_bin(app: &tauri::AppHandle, name: &str) -> Option<PathBuf> {
@@ -1853,6 +1975,77 @@ pub(super) fn systemd_scope_for_local_daemon_url(base_url: &str) -> Option<Strin
     Some(format!("ctx-daemon-{port}"))
 }
 
+const LOCAL_DAEMON_PATH_PROBE_START: &str = "__CTX_DAEMON_PATH_START__";
+const LOCAL_DAEMON_PATH_PROBE_END: &str = "__CTX_DAEMON_PATH_END__";
+
+fn trim_non_empty(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn local_daemon_login_shell_path() -> Option<PathBuf> {
+    let shell_from_env = std::env::var_os("SHELL")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute() && path.exists());
+    shell_from_env.or_else(|| {
+        if cfg!(target_os = "macos") {
+            let fallback = PathBuf::from("/bin/zsh");
+            if fallback.exists() {
+                return Some(fallback);
+            }
+        }
+        None
+    })
+}
+
+fn parse_local_daemon_path_probe_output(stdout: &str) -> Option<String> {
+    let start = stdout.find(LOCAL_DAEMON_PATH_PROBE_START)?;
+    let after_start = start + LOCAL_DAEMON_PATH_PROBE_START.len();
+    let end_rel = stdout[after_start..].find(LOCAL_DAEMON_PATH_PROBE_END)?;
+    trim_non_empty(&stdout[after_start..after_start + end_rel])
+}
+
+fn probe_local_daemon_path_via_shell(shell_path: &Path) -> Option<String> {
+    let probe_command = format!(
+        "printf '%s' '{start}'; printenv PATH; printf '%s' '{end}'",
+        start = LOCAL_DAEMON_PATH_PROBE_START,
+        end = LOCAL_DAEMON_PATH_PROBE_END,
+    );
+    let output = Command::new(shell_path)
+        .arg("-l")
+        .arg("-c")
+        .arg(&probe_command)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_local_daemon_path_probe_output(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn resolve_local_daemon_path_env() -> Option<String> {
+    // Finder-launched macOS apps often miss user shell PATH entries like ~/.local/bin. Probe the
+    // login shell once at desktop daemon spawn so downstream CLI discovery resolves the same tools
+    // a user expects in Terminal, then pass that PATH explicitly to the daemon process.
+    if cfg!(target_os = "macos") {
+        if let Some(shell_path) = local_daemon_login_shell_path() {
+            if let Some(shell_path_env) = probe_local_daemon_path_via_shell(&shell_path) {
+                return Some(shell_path_env);
+            }
+        }
+    }
+    std::env::var("PATH")
+        .ok()
+        .and_then(|value| trim_non_empty(&value))
+}
+
 pub(super) fn spawn_daemon(
     app: &tauri::AppHandle,
     data_dir: &Path,
@@ -1881,6 +2074,7 @@ fn spawn_daemon_with_mode(
 ) -> Result<(String, Child, bool)> {
     let ctx_bin = resolve_daemon_bin(app)?;
     let mcp_bin = resolve_optional_bin(app, "ctx-mcp");
+    let daemon_path_env = resolve_daemon_path_env();
 
     let web_dist = app
         .path()
@@ -1902,6 +2096,7 @@ fn spawn_daemon_with_mode(
         .map(|p| p.join("bundles"))
         .filter(|p| p.exists())
         .or_else(dev_bundle_dir);
+    let resolved_path_env = resolve_local_daemon_path_env();
 
     // Container-mode Codex sessions need a CODEX_HOME available inside the Linux harness.
     // The daemon can seed `~/.codex/auth.json` into a daemon-managed location, but only if the
@@ -1927,6 +2122,9 @@ fn spawn_daemon_with_mode(
             .arg("--unit")
             .arg(&systemd_unit)
             .arg("--same-dir");
+        if let Some(path_env) = resolved_path_env.as_ref() {
+            cmd.arg("--setenv").arg(format!("PATH={path_env}"));
+        }
         if let Some(dist) = web_dist.as_ref() {
             cmd.arg("--setenv")
                 .arg(format!("CTX_WEB_DIST={}", dist.to_string_lossy()));
@@ -1946,6 +2144,10 @@ fn spawn_daemon_with_mode(
             cmd.arg("--setenv")
                 .arg(format!("CTX_APPIMAGE_PATH={appimage}"));
         }
+        if let Some(path_value) = daemon_path_env.as_deref() {
+            cmd.arg("--setenv")
+                .arg(format!("PATH={}", path_value.to_string_lossy()));
+        }
         for key in DAEMON_ENV_PASSTHROUGH {
             if let Ok(value) = std::env::var(key) {
                 cmd.arg("--setenv").arg(format!("{key}={value}"));
@@ -1955,6 +2157,9 @@ fn spawn_daemon_with_mode(
         cmd
     } else {
         let mut cmd = Command::new(&ctx_bin);
+        if let Some(path_env) = resolved_path_env.as_ref() {
+            cmd.env("PATH", path_env);
+        }
         if let Some(dist) = web_dist.as_ref() {
             cmd.env("CTX_WEB_DIST", dist.to_string_lossy().to_string());
         }
@@ -1969,6 +2174,9 @@ fn spawn_daemon_with_mode(
         }
         if let Ok(appimage) = std::env::var("APPIMAGE") {
             cmd.env("CTX_APPIMAGE_PATH", appimage.clone());
+        }
+        if let Some(path_value) = daemon_path_env.as_deref() {
+            cmd.env("PATH", path_value);
         }
         for key in DAEMON_ENV_PASSTHROUGH {
             if let Ok(value) = std::env::var(key) {
@@ -2157,6 +2365,29 @@ mod desktop_daemon_tests {
         apply_validated_local_connection, connect_local_with_sources, lock_local_connect_gate,
     };
 
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = self.previous.as_ref() {
+                std::env::set_var(self.key, previous);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
     #[test]
     fn ssh_config_override_normalization() {
         assert_eq!(
@@ -2164,6 +2395,59 @@ mod desktop_daemon_tests {
             Some("/tmp/ctx-fixture-ssh-config".to_string())
         );
         assert_eq!(normalized_ssh_config_override("   "), None);
+    }
+
+    #[test]
+    fn parse_local_daemon_path_probe_output_extracts_marker_payload() {
+        let output = format!(
+            "noise before\n{start}/Users/test/.local/bin:/usr/bin{end}\nnoise after\n",
+            start = LOCAL_DAEMON_PATH_PROBE_START,
+            end = LOCAL_DAEMON_PATH_PROBE_END,
+        );
+        assert_eq!(
+            parse_local_daemon_path_probe_output(&output),
+            Some("/Users/test/.local/bin:/usr/bin".to_string())
+        );
+        assert_eq!(
+            parse_local_daemon_path_probe_output("missing markers"),
+            None
+        );
+    }
+
+    #[cfg(unix)]
+    fn write_shell_probe_script(contents: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = std::env::temp_dir().join(format!("ctx-shell-probe-{}", uuid::Uuid::new_v4()));
+        std::fs::write(&path, contents).expect("write shell probe script");
+        let mut perms = std::fs::metadata(&path)
+            .expect("stat shell probe script")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms).expect("chmod shell probe script");
+        path
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn probe_local_daemon_path_via_shell_reads_marker_payload() {
+        let shell_path = write_shell_probe_script(&format!(
+            "#!/bin/sh\nprintf 'boot noise\\n'\nprintf '%s/tmp/ctx-user-bin:%s%s\\n' '{start}' '/usr/bin' '{end}'\n",
+            start = LOCAL_DAEMON_PATH_PROBE_START,
+            end = LOCAL_DAEMON_PATH_PROBE_END,
+        ));
+        let parsed = probe_local_daemon_path_via_shell(&shell_path);
+        assert_eq!(parsed, Some("/tmp/ctx-user-bin:/usr/bin".to_string()));
+        std::fs::remove_file(shell_path).ok();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn probe_local_daemon_path_via_shell_returns_none_without_marker() {
+        let shell_path = write_shell_probe_script("#!/bin/sh\nprintf '/usr/bin\\n'\n");
+        let parsed = probe_local_daemon_path_via_shell(&shell_path);
+        assert_eq!(parsed, None);
+        std::fs::remove_file(shell_path).ok();
     }
 
     #[test]
@@ -2272,6 +2556,103 @@ mod desktop_daemon_tests {
     }
 
     #[test]
+    fn build_effective_daemon_path_merges_current_shell_and_common_dirs() {
+        let home_dir =
+            std::env::temp_dir().join(format!("ctx-daemon-path-home-{}", uuid::Uuid::new_v4()));
+        let current = std::ffi::OsString::from("/usr/bin:/bin");
+        let shell = std::ffi::OsString::from("/tmp/custom/bin:/usr/bin");
+
+        let merged = build_effective_daemon_path(
+            Some(current.as_os_str()),
+            Some(shell.as_os_str()),
+            Some(home_dir.as_path()),
+        )
+        .expect("merged path");
+        let parts = std::env::split_paths(&merged).collect::<Vec<_>>();
+
+        assert_eq!(parts[0], PathBuf::from("/usr/bin"));
+        assert_eq!(parts[1], PathBuf::from("/bin"));
+        assert!(parts.contains(&PathBuf::from("/tmp/custom/bin")));
+        assert!(parts.contains(&home_dir.join(".local").join("bin")));
+        assert!(parts.contains(&PathBuf::from("/opt/homebrew/bin")));
+        assert_eq!(
+            parts
+                .iter()
+                .filter(|entry| **entry == PathBuf::from("/usr/bin"))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn extract_shell_path_reads_sentinel_payload() {
+        let raw = b"noise before __CTX_DAEMON_PATH_BEGIN__/tmp/alpha:/tmp/beta__CTX_DAEMON_PATH_END__ trailing";
+        let parsed = extract_shell_path(raw).expect("parsed path");
+        assert_eq!(parsed, std::ffi::OsString::from("/tmp/alpha:/tmp/beta"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn read_login_shell_path_uses_shell_output_markers() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp =
+            std::env::temp_dir().join(format!("ctx-daemon-shell-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp).expect("create temp dir");
+        let shell_path = temp.join("fake-shell");
+        std::fs::write(
+            &shell_path,
+            format!(
+                "#!/bin/sh\nprintf 'prefix {DAEMON_PATH_SENTINEL_BEGIN}/tmp/fake-cursor:/usr/bin{DAEMON_PATH_SENTINEL_END} suffix'\n"
+            ),
+        )
+        .expect("write fake shell");
+        let mut perms = std::fs::metadata(&shell_path)
+            .expect("stat fake shell")
+            .permissions();
+        perms.set_mode(perms.mode() | 0o111);
+        std::fs::set_permissions(&shell_path, perms).expect("chmod fake shell");
+
+        let resolved = read_login_shell_path(&shell_path).expect("resolved shell path");
+        assert_eq!(resolved, std::ffi::OsString::from("/tmp/fake-cursor:/usr/bin"));
+        std::fs::remove_dir_all(&temp).ok();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn resolve_daemon_path_env_prefers_current_path_and_shell_discovery() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp =
+            std::env::temp_dir().join(format!("ctx-daemon-shell-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp).expect("create temp dir");
+        let shell_path = temp.join("fake-shell");
+        std::fs::write(
+            &shell_path,
+            format!(
+                "#!/bin/sh\nprintf '{DAEMON_PATH_SENTINEL_BEGIN}/tmp/fake-cursor:/usr/bin{DAEMON_PATH_SENTINEL_END}'\n"
+            ),
+        )
+        .expect("write fake shell");
+        let mut perms = std::fs::metadata(&shell_path)
+            .expect("stat fake shell")
+            .permissions();
+        perms.set_mode(perms.mode() | 0o111);
+        std::fs::set_permissions(&shell_path, perms).expect("chmod fake shell");
+
+        let _shell = EnvVarGuard::set("SHELL", shell_path.as_os_str());
+        let _path = EnvVarGuard::set("PATH", "/usr/bin:/bin");
+        let _home = EnvVarGuard::set("HOME", temp.as_os_str());
+
+        let resolved = resolve_daemon_path_env().expect("resolved daemon path");
+        let parts = std::env::split_paths(&resolved).collect::<Vec<_>>();
+        assert_eq!(parts[0], PathBuf::from("/usr/bin"));
+        assert_eq!(parts[1], PathBuf::from("/bin"));
+        assert!(parts.contains(&PathBuf::from("/tmp/fake-cursor")));
+        std::fs::remove_dir_all(&temp).ok();
+    }
+
+    #[test]
     fn daemon_health_reuses_cached_client_for_same_timeout() {
         reset_daemon_health_client_build_count();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind test listener");
@@ -2288,7 +2669,8 @@ mod desktop_daemon_tests {
                     body.len(),
                     body,
                 );
-                std::io::Write::write_all(&mut stream, response.as_bytes()).expect("write response");
+                std::io::Write::write_all(&mut stream, response.as_bytes())
+                    .expect("write response");
             }
         });
 

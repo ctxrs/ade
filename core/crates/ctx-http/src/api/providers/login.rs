@@ -1819,6 +1819,17 @@ pub(super) async fn resolve_runtime_provider_command_from_config(
         .with_context(|| format!("resolving runtime command for {provider_id}"))
 }
 
+pub(super) async fn resolve_provider_login_command_from_config(
+    data_root: &std::path::Path,
+    provider_id: &str,
+) -> anyhow::Result<Option<std::path::PathBuf>> {
+    let cfg = installer::load_agent_server_config(data_root)
+        .await
+        .context("loading agent server config")?;
+    installer::resolve_provider_login_command(&cfg, provider_id)
+        .with_context(|| format!("resolving prepared login command for {provider_id}"))
+}
+
 pub(super) async fn resolve_claude_login_runtime_from_config(
     data_root: &std::path::Path,
 ) -> anyhow::Result<installer::ProviderRuntimeCommand> {

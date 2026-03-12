@@ -3,10 +3,12 @@ const path = require("node:path");
 
 const { daemonJson } = require("./daemon.cjs");
 const { selectSubscriptionSource } = require("./provider_runtime.cjs");
-const { completeCodexOauthWithBrowserCredentials } = require("./provider_oauth_flow.cjs");
+const {
+  completeCodexOauthWithBrowserCredentials,
+} = require("./provider_oauth_flow.cjs");
 
 const trimText = (value) => String(value || "").trim();
-const DEFAULT_CODEX_OAUTH_TIMEOUT_MS = 15 * 60_000;
+const DEFAULT_BROWSER_OAUTH_TIMEOUT_MS = 15 * 60_000;
 
 const normalizeProviderLabel = (providerId) => {
   const normalized = trimText(providerId);
@@ -300,28 +302,9 @@ const resolveSubscriptionAuthPlan = (providerId, env = process.env) => {
       };
     }
     case "cursor": {
-      const apiKey = readRequiredText({
-        rawEnv: "CTX_E2E_CURSOR_API_KEY",
-        pathEnv: "CTX_E2E_CURSOR_API_KEY_PATH",
-        label: "Cursor API key",
-        env,
-      });
-      if (!apiKey.ok) return { status: "skip", reason: apiKey.reason };
       return {
-        status: "ready",
-        plan: {
-          providerId,
-          strategy: "managed_upsert",
-          endpoint: `/api/providers/${providerId}/accounts`,
-          body: {
-            label: `${providerLabel} Matrix`,
-            token: apiKey.value,
-            email: trimText(env.CTX_E2E_CURSOR_EMAIL) || null,
-          },
-          sources: {
-            token: apiKey.source_ref,
-          },
-        },
+        status: "skip",
+        reason: "Cursor browser OAuth coverage lives in cursor-oauth-shell-open.spec.cjs; provider auth matrix must not synthesize it with managed API-key upsert",
       };
     }
     case "amp": {
@@ -515,9 +498,9 @@ const prepareSubscriptionAuth = async ({ providerId, daemonLocation, executionEn
       password: plan.password,
       totpSecret: plan.totpSecret,
       timeoutMs: Number.parseInt(
-        String(process.env.CTX_AUTOMATION_CODEX_OAUTH_TIMEOUT_MS || `${DEFAULT_CODEX_OAUTH_TIMEOUT_MS}`),
+        String(process.env.CTX_AUTOMATION_CODEX_OAUTH_TIMEOUT_MS || `${DEFAULT_BROWSER_OAUTH_TIMEOUT_MS}`),
         10,
-      ) || DEFAULT_CODEX_OAUTH_TIMEOUT_MS,
+      ) || DEFAULT_BROWSER_OAUTH_TIMEOUT_MS,
     });
     if (artifacts.oauth_login?.status === "blocked") {
       const blockedReason = trimText(artifacts.oauth_login.browserFlow?.blocked_reason) || "blocked";
