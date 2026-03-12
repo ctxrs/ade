@@ -646,7 +646,7 @@ mod tests {
                 provider_id: "gemini".to_string(),
                 installed: true,
                 detected_path: None,
-                version: Some("0.32.1".to_string()),
+                version: Some("0.33.0".to_string()),
                 capabilities: None,
                 health: ctx_providers::adapters::ProviderHealth::Ok,
                 diagnostics: Vec::new(),

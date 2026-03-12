@@ -155,7 +155,7 @@ fn create_gemini_probe_layout(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
     std::fs::write(&core_entry, b"core").expect("write core");
     std::fs::write(
         &cli_pkg,
-        r#"{"name":"@google/gemini-cli","version":"0.32.1"}"#,
+        r#"{"name":"@google/gemini-cli","version":"0.33.0"}"#,
     )
     .expect("write cli package");
 
@@ -173,7 +173,7 @@ fn probe_node_package_version_uses_explicit_gemini_entrypoint() {
 
     let version = probe_node_package_version(&command, "@google/gemini-cli", temp.path());
 
-    assert_eq!(version.as_deref(), Some("0.32.1"));
+    assert_eq!(version.as_deref(), Some("0.33.0"));
 }
 
 #[test]
