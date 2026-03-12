@@ -89,11 +89,14 @@ import {
 import { summarizeToolPayload } from "./sessionSupervisor/toolStateProjection";
 import { buildSessionSubscriptionPlan } from "./sessionSupervisor/sessionSubscriptionPlan";
 import {
+  adoptLoadedSubagentInvocationsRevision,
   adoptLoadedStateRevision,
-  deriveSupportFreshnessKey,
-  formatSupportLoadError,
+  clearSupportLoadError,
+  invalidateSupportLoadsWithoutAuthoritativeRevision,
+  setSupportLoadError,
   shouldFetchSessionState,
   shouldFetchSubagentInvocations,
+  syncSupportLoadsForOpenSession,
 } from "./sessionSupervisor/supportLoads";
 import type {
   SessionSupervisorSubscribedSessionIdsSink,
@@ -194,6 +197,25 @@ export class SessionSupervisor {
   mapConnection = mapConnection;
   publish = publish;
   setConnection = setConnection;
+  syncSupportLoadsForOpenSession = (entry: InternalEntry) =>
+    syncSupportLoadsForOpenSession(entry, {
+      resolveRequestedStateRev: (nextEntry) => this.resolveRequestedStateRev(nextEntry),
+      ensureState: (nextEntry) => this.ensureState(nextEntry),
+      ensureSubagentInvocations: (nextEntry) => this.ensureSubagentInvocations(nextEntry),
+    });
+  private invalidateSupportLoadsWithoutAuthoritativeRevision = (entry: InternalEntry) =>
+    invalidateSupportLoadsWithoutAuthoritativeRevision(entry, {
+      resolveRequestedStateRev: (nextEntry) => this.resolveRequestedStateRev(nextEntry),
+      subagentInvocationsCacheBySessionId: this.subagentInvocationsCacheBySessionId,
+    });
+  adoptLoadedSubagentInvocationsRevision = (entry: InternalEntry, stateRev: number) =>
+    adoptLoadedSubagentInvocationsRevision(
+      entry,
+      stateRev,
+      this.subagentInvocationsCacheBySessionId,
+    );
+  clearSupportLoadError = clearSupportLoadError;
+  setSupportLoadError = setSupportLoadError;
 
   constructor() {
     this.replica = new SessionReplicaBridge(this.handleReplicaPatches, {
@@ -829,47 +851,6 @@ export class SessionSupervisor {
     entry.eventsRev += 1;
   }
 
-  syncSupportLoadsForOpenSession(entry: InternalEntry) {
-    if (entry.refCount <= 0) return;
-    const requestedStateRev = this.resolveRequestedStateRev(entry);
-    const freshnessKey = deriveSupportFreshnessKey(requestedStateRev, entry.supportFreshnessEpoch);
-    if (entry.stateAutoLoadKey !== freshnessKey && shouldFetchSessionState(entry)) {
-      entry.stateAutoLoadKey = freshnessKey;
-      void this.ensureState(entry);
-    }
-    if (
-      entry.subagentAutoLoadKey !== freshnessKey &&
-      shouldFetchSubagentInvocations(entry, requestedStateRev)
-    ) {
-      entry.subagentAutoLoadKey = freshnessKey;
-      void this.ensureSubagentInvocations(entry);
-    }
-  }
-
-  private invalidateSupportLoadsWithoutAuthoritativeRevision(entry: InternalEntry) {
-    if (typeof this.resolveRequestedStateRev(entry) === "number") return;
-    entry.supportFreshnessEpoch += 1;
-    if (!entry.stateLoading) {
-      entry.stateLoaded = false;
-      entry.stateAppliedRev = undefined;
-    }
-    if (!entry.subagentInvocationsLoading) {
-      entry.subagentInvocationsLoaded = false;
-      entry.subagentInvocationsAppliedRev = undefined;
-    }
-    this.subagentInvocationsCacheBySessionId.delete(entry.sessionId);
-  }
-
-  adoptLoadedSubagentInvocationsRevision(entry: InternalEntry, stateRev: number) {
-    if (!entry.subagentInvocationsLoaded) return;
-    if (typeof entry.subagentInvocationsAppliedRev === "number") return;
-    entry.subagentInvocationsAppliedRev = stateRev;
-    this.subagentInvocationsCacheBySessionId.set(entry.sessionId, {
-      invocations: entry.subagentInvocations.slice(),
-      stateRev,
-    });
-  }
-
   private setFatalError(entry: InternalEntry, message: string) {
     emitUiDiagnostic({
       source: "session_supervisor",
@@ -884,28 +865,6 @@ export class SessionSupervisor {
     });
     entry.error = message;
     this.setSessionLoadState(entry, "fatal");
-  }
-
-  clearSupportLoadError(entry: InternalEntry, key: SessionSupportLoadErrorKey) {
-    if (!entry.loadErrors[key]) return;
-    delete entry.loadErrors[key];
-  }
-
-  setSupportLoadError(entry: InternalEntry, key: SessionSupportLoadErrorKey, value: unknown) {
-    const message = formatSupportLoadError(key, value);
-    emitUiDiagnostic({
-      source: "session_supervisor",
-      code: `session.${key}_load_failed`,
-      severity: "error",
-      fatal: false,
-      message,
-      context: {
-        sessionId: entry.sessionId,
-        mode: entry.mode ?? null,
-        target: key,
-      },
-    });
-    entry.loadErrors[key] = message;
   }
 
   private markOpenSessionsRecovering() {

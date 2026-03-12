@@ -75,7 +75,5 @@ fn create_session_req_rejects_empty_provider_id() {
     }))
     .unwrap_err();
 
-    assert!(err
-        .to_string()
-        .contains("provider_id must not be empty"));
+    assert!(err.to_string().contains("provider_id must not be empty"));
 }

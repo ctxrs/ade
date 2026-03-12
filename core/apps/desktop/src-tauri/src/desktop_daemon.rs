@@ -19,10 +19,7 @@ pub(super) use health::{
 pub(super) use login_relay::desktop_start_codex_login_relay;
 use login_relay::is_loopback_host_name;
 use path_env::{
-    build_effective_daemon_path, extract_shell_path, parse_local_daemon_path_probe_output,
-    probe_local_daemon_path_via_shell, read_login_shell_path, resolve_daemon_path_env,
-    resolve_local_daemon_path_env, DAEMON_PATH_SENTINEL_BEGIN, DAEMON_PATH_SENTINEL_END,
-    LOCAL_DAEMON_PATH_PROBE_END, LOCAL_DAEMON_PATH_PROBE_START,
+    resolve_daemon_path_env, resolve_local_daemon_path_env,
 };
 
 const SSH_CONFIG_OVERRIDE_ENV: &str = "CTX_DESKTOP_SSH_CONFIG_PATH";

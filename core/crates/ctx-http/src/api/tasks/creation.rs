@@ -461,7 +461,13 @@ pub(in crate::api) async fn create_session_for_task(
         .and_then(|v| v.to_str().ok())
         .map(|v| v.to_string());
     let provider_id = req.provider_id.clone();
-    if !state.providers.adapters.lock().await.contains_key(&provider_id) {
+    if !state
+        .providers
+        .adapters
+        .lock()
+        .await
+        .contains_key(&provider_id)
+    {
         return Err(StatusCode::BAD_REQUEST);
     }
     let model_id = req.model_id.clone();

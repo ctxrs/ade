@@ -1008,9 +1008,7 @@ async fn droid_endpoint_requires_explicit_model() {
     let err = resolve_provider_source_for_run(root.path(), PROVIDER_DROID)
         .await
         .expect_err("droid endpoint should require explicit model");
-    assert!(err
-        .to_string()
-        .contains("missing a concrete model id"));
+    assert!(err.to_string().contains("missing a concrete model id"));
 }
 
 #[tokio::test]
