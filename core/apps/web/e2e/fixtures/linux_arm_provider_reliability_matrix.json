@@ -7,21 +7,13 @@
   "critical_providers": [
     {
       "provider_id": "codex",
-      "openrouter_model_override": "openai/gpt-4.1"
-    },
-    {
-      "provider_id": "opencode",
-      "openrouter_model_override": "google/gemini-3-flash-preview"
-    },
-    {
-      "provider_id": "goose",
       "openrouter_model_override": "google/gemini-3-flash-preview"
     }
   ],
   "full_nightly_providers": [
     {
       "provider_id": "codex",
-      "openrouter_model_override": "openai/gpt-4.1"
+      "openrouter_model_override": "google/gemini-3-flash-preview"
     },
     {
       "provider_id": "opencode",

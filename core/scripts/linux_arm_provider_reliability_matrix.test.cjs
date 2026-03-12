@@ -25,6 +25,7 @@ test("loadMatrix validates default fixture and exposes critical/nightly ids", ()
 
   assert.ok(critical.length > 0);
   assert.ok(nightly.length >= critical.length);
+  assert.deepEqual(critical, ["codex"]);
   assert.equal(matrix.expected_environment, "host");
   assert.equal(matrix.expected_network_mode, "llm_only");
   for (const providerId of critical) {
@@ -46,12 +47,10 @@ test("default fixture carries explicit linux-arm OpenRouter model overrides", ()
   const { matrix } = loadMatrix();
 
   assert.deepEqual(modelOverrideMapForLane(matrix, "critical"), {
-    codex: "openai/gpt-4.1",
-    opencode: "google/gemini-3-flash-preview",
-    goose: "google/gemini-3-flash-preview",
+    codex: "google/gemini-3-flash-preview",
   });
   assert.deepEqual(modelOverrideMapForLane(matrix, "nightly"), {
-    codex: "openai/gpt-4.1",
+    codex: "google/gemini-3-flash-preview",
     opencode: "google/gemini-3-flash-preview",
     goose: "google/gemini-3-flash-preview",
     openhands: "google/gemini-3-flash-preview",

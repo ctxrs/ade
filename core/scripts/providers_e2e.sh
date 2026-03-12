@@ -380,9 +380,12 @@ run_linux_arm_runtime_install_lane() {
     [[ -z "${override_entry}" ]] && continue
     local override_key="${override_entry%%=*}"
     local override_value="${override_entry#*=}"
-    if [[ -n "${override_key}" && -z "${!override_key:-}" ]]; then
-      export "${override_key}=${override_value}"
+    [[ -z "${override_key}" ]] && continue
+    if [[ -n "${!override_key:-}" && "${!override_key}" != "${override_value}" ]]; then
+      echo "linux-arm provider matrix override conflict for ${override_key}: existing='${!override_key}' matrix='${override_value}'" >&2
+      exit 1
     fi
+    export "${override_key}=${override_value}"
   done <<< "${model_override_lines}"
 
   local preflight_args=(
