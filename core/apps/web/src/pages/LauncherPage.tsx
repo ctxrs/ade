@@ -328,7 +328,7 @@ function isDaemonManagedLocalContainerPath(path: string): boolean {
     .trim()
     .replace(/\\/g, "/")
     .toLowerCase();
-  return normalized.includes("/daemon/workspaces/") || normalized.includes("/workspaces/staging/");
+  return normalized.includes("/.ctx/workspaces/") || normalized.includes("/workspaces/staging/");
 }
 
 function normalizeExecutionEnvironment(value: unknown): LauncherExecutionEnvironment | undefined {

@@ -7,7 +7,6 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use axum::Router;
 use chrono::Utc;
-use directories::BaseDirs;
 use serde_json::json;
 
 use ctx_core::models::SessionTurnStatus;
@@ -550,10 +549,7 @@ fn cache_key_matches_provider(cache_key: &str, provider_id: &str) -> bool {
 pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
     let data_root = match data_dir {
         Some(p) => PathBuf::from(p),
-        None => {
-            let base = BaseDirs::new().context("resolving home dir")?;
-            base.home_dir().join(".ctx")
-        }
+        None => ctx_fs::paths::default_ctx_home()?,
     };
     tokio::fs::create_dir_all(&data_root).await?;
     // Canonicalize so Podman machine mount sources resolve under shared roots on macOS

@@ -118,7 +118,7 @@ describe("LauncherPage recents", () => {
       {
         kind: "local",
         label: "workspace-abc",
-        root_path: "/Users/example-user/Library/Application Support/rs.ctx.desktop/daemon/workspaces/workspace-abc",
+        root_path: "/Users/example-user/.ctx/workspaces/staging/workspace-abc",
         updated_at_ms: 1000,
       },
     ]);
@@ -241,7 +241,7 @@ describe("LauncherPage recents", () => {
       {
         kind: "local",
         label: "sealed-local",
-        root_path: "/Users/example-user/Library/Application Support/rs.ctx.desktop/daemon/workspaces/workspace-abc",
+        root_path: "/Users/example-user/.ctx/workspaces/staging/workspace-abc",
         execution_environment: "container_disk_isolated",
         updated_at_ms: 25,
       },
@@ -255,7 +255,7 @@ describe("LauncherPage recents", () => {
       {
         id: "ws-container",
         name: "Sealed Local",
-        root_path: "/Users/example-user/Library/Application Support/rs.ctx.desktop/daemon/workspaces/workspace-abc",
+        root_path: "/Users/example-user/.ctx/workspaces/staging/workspace-abc",
       },
     ] as never);
 
@@ -267,7 +267,7 @@ describe("LauncherPage recents", () => {
       expect(upsertLauncherRecent).toHaveBeenCalledWith(expect.objectContaining({
         kind: "local",
         label: "Sealed Local",
-        root_path: "/Users/example-user/Library/Application Support/rs.ctx.desktop/daemon/workspaces/workspace-abc",
+        root_path: "/Users/example-user/.ctx/workspaces/staging/workspace-abc",
         execution_environment: "container_disk_isolated",
         updated_at_ms: expect.any(Number),
       }));

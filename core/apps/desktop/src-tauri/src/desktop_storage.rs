@@ -400,10 +400,7 @@ pub(super) async fn desktop_storage_consume_notice(
     consume_desktop_storage_notice(pool).await.map_err(to_err)
 }
 
-fn desktop_storage_path(app: &tauri::AppHandle) -> Result<PathBuf> {
-    let root = app
-        .path()
-        .app_data_dir()
-        .context("resolving app_data_dir")?;
-    Ok(root.join("web").join("ui_state.sqlite"))
+fn desktop_storage_path(_app: &tauri::AppHandle) -> Result<PathBuf> {
+    let root = ctx_fs::paths::default_ctx_home().context("resolving ctx home")?;
+    Ok(ctx_fs::paths::ui_root(root).join("desktop-ui-state.sqlite"))
 }

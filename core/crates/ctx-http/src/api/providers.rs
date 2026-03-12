@@ -33,9 +33,9 @@ use ctx_providers::adapters::{ProviderRestartMode, ProviderStatus};
 
 mod accounts;
 mod bootstrap;
-mod cursor_login;
 #[cfg(test)]
 mod codex_auth_tests;
+mod cursor_login;
 mod harness_config;
 mod imports;
 mod install;

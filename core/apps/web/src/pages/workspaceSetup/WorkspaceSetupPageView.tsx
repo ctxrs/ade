@@ -846,7 +846,7 @@ export function WorkspaceSetupPageView({
                     </label>
                     {useDiskIsolatedStaging && (
                       <div className="wizard-note">
-                        Ctx will clone into a managed staging path. Your workspace will live in the container.
+                        Ctx will clone into a managed staging path under <code>~/.ctx/workspaces/staging/</code> by default. Your workspace will live in the container.
                       </div>
                     )}
                     {!useDiskIsolatedStaging && (

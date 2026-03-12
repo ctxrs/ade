@@ -1588,7 +1588,7 @@ fn daemon_stderr_snippet(path: Option<&Path>) -> String {
     }
 }
 
-pub(super) fn daemon_data_dir(app: &tauri::AppHandle) -> Result<PathBuf> {
+pub(super) fn daemon_data_dir(_app: &tauri::AppHandle) -> Result<PathBuf> {
     if let Ok(raw) = std::env::var(DESKTOP_DAEMON_DATA_DIR_ENV) {
         let raw = raw.trim();
         if !raw.is_empty() {
@@ -1599,11 +1599,9 @@ pub(super) fn daemon_data_dir(app: &tauri::AppHandle) -> Result<PathBuf> {
             return Ok(p);
         }
     }
-    let root = app
-        .path()
-        .app_data_dir()
-        .context("resolving app_data_dir")?;
-    Ok(root.join("daemon"))
+    let root = ctx_fs::paths::default_ctx_home().context("resolving ctx home")?;
+    std::fs::create_dir_all(&root).context("creating ctx home dir")?;
+    Ok(root)
 }
 
 fn current_arch_token() -> &'static str {

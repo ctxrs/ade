@@ -1408,13 +1408,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ctx-core",
+ "directories",
  "tempfile",
  "tokio",
 ]
 
 [[package]]
 name = "ctx-http"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "anyhow",
  "async-trait",

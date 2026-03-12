@@ -4,7 +4,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{anyhow, Result};
+#[cfg(feature = "daemon-heap-prof")]
+use anyhow::anyhow;
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 use tokio::time::MissedTickBehavior;
@@ -293,9 +295,7 @@ async fn main() -> Result<()> {
             let data_root = if let Some(p) = data_dir {
                 std::path::PathBuf::from(p)
             } else {
-                let base =
-                    directories::BaseDirs::new().ok_or_else(|| anyhow!("resolving home dir"))?;
-                base.home_dir().join(".ctx")
+                ctx_fs::paths::default_ctx_home()?
             };
             Some(data_root.join("logs"))
         }
