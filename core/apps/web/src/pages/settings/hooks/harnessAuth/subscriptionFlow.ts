@@ -41,6 +41,7 @@ import {
   QWEN_LOGIN_POLL_ATTEMPTS,
   QWEN_LOGIN_POLL_INTERVAL_MS,
   messageFromError,
+  shouldAutoOpenAmpAuthUrl,
   shouldAutoOpenKimiAuthUrl,
   shouldOpenPolledAuthUrlForStatus,
   shouldOpenPolledClaudeAuthUrl,
@@ -261,17 +262,19 @@ const runBrowserSubscriptionFlow = async (
     deviceCode: normalizeOptionalString(login.device_code),
   });
   let initialAuthOpened = false;
+  let attemptedInitialAuthOpen = false;
   const shouldAutoOpenInitialAuthUrl = initialAuthUrl
     ? (definition.shouldAutoOpenAuthUrl?.(initialAuthUrl) ?? true)
     : false;
   if (initialAuthUrl && shouldAutoOpenInitialAuthUrl) {
+    attemptedInitialAuthOpen = true;
     initialAuthOpened = await openExternalAuthUrlForFlow(deps, initialAuthUrl);
     deps.flow.throwIfCancelled();
   }
 
   setFlowStatus(
     deps,
-    initialAuthUrl && !initialAuthOpened
+    attemptedInitialAuthOpen && !initialAuthOpened && initialAuthUrl
       ? `Couldn't open browser automatically. Open this URL manually: ${initialAuthUrl}`
       : definition.waitingMessage,
   );
@@ -517,6 +520,13 @@ export const runHarnessSubscriptionFlow = async (deps: SubscriptionFlowDeps): Pr
           maxAttempts: AMP_LOGIN_POLL_ATTEMPTS,
           pollIntervalMs: AMP_LOGIN_POLL_INTERVAL_MS,
           refreshAccounts: deps.refreshAmpAccounts,
+          shouldAutoOpenAuthUrl: shouldAutoOpenAmpAuthUrl,
+          syncBrowserLoginState: ({ authUrl, deviceCode }) => {
+            deps.patchHarnessAuthModalForOperation(deps.flow, {
+              subscription_auth_url: authUrl,
+              subscription_device_code: deviceCode,
+            });
+          },
         });
         return;
       case "mistral":
@@ -534,7 +544,7 @@ export const runHarnessSubscriptionFlow = async (deps: SubscriptionFlowDeps): Pr
       case "kimi":
         await runBrowserSubscriptionFlow(deps, {
           providerId: "kimi",
-          waitingMessage: "Open the Kimi sign-in link below and complete authentication in your browser...",
+          waitingMessage: "Waiting for Kimi sign-in to complete in your browser...",
           timeoutMessage: "Timed out waiting for Kimi sign-in completion. Retry.",
           startLogin: startKimiLogin,
           getLogin: getKimiLogin,

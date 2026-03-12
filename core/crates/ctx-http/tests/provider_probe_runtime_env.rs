@@ -73,21 +73,17 @@ exit 1
 }
 
 #[cfg(unix)]
-fn setup_runtime_command_with_managed_interpreter(
+fn setup_runtime_command_with_managed_interpreter_response(
     data_root: &Path,
     provider_id: &str,
+    models_list_response: &str,
 ) -> (String, String) {
+    let probe_response: serde_json::Value =
+        serde_json::from_str(models_list_response).expect("parse probe response");
     setup_runtime_command_with_managed_interpreter_and_probe_response(
         data_root,
         provider_id,
-        &serde_json::json!({
-            "seq": 1,
-            "channel": "control",
-            "type": "models.list",
-            "models": [{ "id": "fixture-model" }],
-            "current_model_id": "fixture-model",
-            "catalog_source": "live_remote",
-        }),
+        &probe_response,
     )
 }
 
@@ -124,6 +120,7 @@ while IFS= read -r line; do
 done
 exit 1
 "#,
+            probe_response_path.to_string_lossy()
             probe_response_path.to_string_lossy()
         ),
     );
@@ -225,6 +222,18 @@ exit 1
         dependencies: Vec::new(),
         managed: None,
     }
+}
+
+#[cfg(unix)]
+fn setup_runtime_command_with_managed_interpreter(
+    data_root: &Path,
+    provider_id: &str,
+) -> (String, String) {
+    setup_runtime_command_with_managed_interpreter_response(
+        data_root,
+        provider_id,
+        r#"{"seq":1,"channel":"control","type":"models.list","models":[{"id":"fixture-model"}],"current_model_id":"fixture-model","catalog_source":"live_remote"}"#,
+    )
 }
 
 async fn app_state(data_root: &Path) -> Arc<AppState> {
@@ -568,6 +577,61 @@ async fn amp_provider_options_include_live_runtime_model_catalog() {
             .and_then(serde_json::Value::as_str),
         Some("subscription"),
         "expected bootstrap to keep amp on the subscription discovery path: {bootstrap:#?}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn amp_provider_options_fail_when_runtime_probe_returns_no_live_model_catalog() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
+    let state = app_state(data_dir.path()).await;
+    let app = api::router(state.clone());
+
+    upsert_amp_account(
+        data_dir.path(),
+        Some("Amp Test".to_string()),
+        Some("amp@example.com".to_string()),
+    )
+    .await
+    .expect("upsert amp account");
+
+    let (bridge_cmd, bridge_dep_bin_rel) = setup_runtime_command_with_managed_interpreter_response(
+        data_dir.path(),
+        "acp-crp-bridge",
+        r#"{"seq":1,"channel":"control","type":"models.list","models":[],"current_model_id":null}"#,
+    );
+    seed_runtime_and_status(&state, "acp-crp-bridge", bridge_cmd, bridge_dep_bin_rel).await;
+    let (runtime_cmd, dep_bin_rel) =
+        setup_runtime_command_with_managed_interpreter(data_dir.path(), "amp");
+    seed_runtime_and_status(&state, "amp", runtime_cmd, dep_bin_rel).await;
+
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let (status, body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::GET,
+        format!("/api/workspaces/{}/providers/amp/options", ws.id.0),
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "options request failed: {body:#?}");
+    assert_eq!(
+        body.get("probe_ok").and_then(serde_json::Value::as_bool),
+        Some(false),
+        "expected probe_ok=false when amp returns no live model catalog: {body:#?}"
+    );
+    assert!(
+        body.get("probe_error")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|message| {
+                message.contains("runtime_model_catalog_missing: provider=amp")
+            }),
+        "expected explicit missing model catalog probe error for amp: {body:#?}"
+    );
+    assert!(
+        body.get("models").is_none() || body.get("models").is_some_and(serde_json::Value::is_null),
+        "expected amp options without a live model catalog to omit models: {body:#?}"
     );
 }
 

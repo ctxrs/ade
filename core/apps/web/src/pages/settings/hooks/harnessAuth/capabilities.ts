@@ -158,6 +158,8 @@ export const shouldAutoOpenCopilotAuthUrl = (authUrl: string): boolean => {
   return false;
 };
 
+export const shouldAutoOpenAmpAuthUrl = (): boolean => false;
+
 export const shouldOpenPolledClaudeAuthUrl = (params: {
   loginStartedAtMs: number;
   initialAuthUrl: string | null | undefined;
@@ -173,4 +175,4 @@ export const shouldOpenPolledClaudeAuthUrl = (params: {
   return polled !== initial;
 };
 
-export const shouldAutoOpenKimiAuthUrl = (): boolean => false;
+export const shouldAutoOpenKimiAuthUrl = (): boolean => true;

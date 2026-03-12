@@ -127,11 +127,11 @@
       },
       "releases": [
         {
-          "version": "0.1.1",
+          "version": "0.1.2",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned workspace adapter source (harness-adapters/example-acp/package.json)",
-          "upstream_version": "0.1.0-20260306201404-gde51277"
+          "upstream_version": "0.1.0-20260312163036-g664c3e0"
         }
       ]
     },

@@ -263,7 +263,7 @@ export function HarnessAuthenticationModal({
                     : harnessAuthModal.provider_id === "qwen"
                       ? "Sign in with Qwen in your browser to capture managed OAuth credentials automatically."
                       : harnessAuthModal.provider_id === "amp"
-                        ? "Sign in with Amp in your browser to complete OAuth on this host."
+                        ? "Start Amp sign-in here, then complete the provider flow in your browser with the link below."
                           : harnessAuthModal.provider_id === "mistral"
                             ? "Sign in with Mistral in your browser to complete managed OAuth on this host."
                           : harnessAuthModal.provider_id === "kimi"
@@ -303,7 +303,7 @@ export function HarnessAuthenticationModal({
                 </label>
               </>
             ) : null}
-            {harnessAuthModal.provider_id === "kimi" ? (
+            {harnessAuthModal.provider_id === "kimi" || harnessAuthModal.provider_id === "amp" ? (
               <>
                 <label className="settings-harness-modal-label">
                   Label (optional)
@@ -311,23 +311,27 @@ export function HarnessAuthenticationModal({
                     className="settings-control"
                     value={harnessAuthModal.subscription_label}
                     onChange={(e) => patchHarnessAuthModal({ subscription_label: e.target.value })}
-                    placeholder="Kimi subscription"
+                    placeholder={
+                      harnessAuthModal.provider_id === "amp"
+                        ? "Amp subscription"
+                        : "Kimi subscription"
+                    }
                     autoFocus
                   />
                 </label>
                 {harnessAuthModal.subscription_auth_url ? (
                   <div className="settings-row-desc">
-                    Continue the Kimi sign-in flow here:{" "}
+                    Continue the {harnessAuthModal.provider_id === "amp" ? "Amp" : "Kimi"} sign-in flow here:{" "}
                     <ExternalLink
                       className="settings-harness-help-link"
                       href={harnessAuthModal.subscription_auth_url}
                     >
-                      Open Kimi sign-in
+                      Open {harnessAuthModal.provider_id === "amp" ? "Amp" : "Kimi"} sign-in
                     </ExternalLink>
                     .
                   </div>
                 ) : null}
-                {harnessAuthModal.subscription_device_code ? (
+                {harnessAuthModal.provider_id === "kimi" && harnessAuthModal.subscription_device_code ? (
                   <label className="settings-harness-modal-label">
                     Kimi device code
                     <input

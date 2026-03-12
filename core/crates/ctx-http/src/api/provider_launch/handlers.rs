@@ -343,6 +343,29 @@ pub(in crate::api) async fn get_provider_options(
                 fallback_current_model_id.as_deref(),
             ) {
                 value["models"] = models;
+            } else {
+                let probed_at = value
+                    .get("probed_at")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                let catalog_source = probe.catalog_source.as_deref().unwrap_or("missing");
+                let current_model_id = probe.current_model_id.as_deref().unwrap_or("missing");
+                let model_count = probe.models.len();
+                value = serde_json::json!({
+                    "provider_id": provider_id,
+                    "workspace_id": ws_id.0,
+                    "installed": provider_status.installed,
+                    "probe_ok": false,
+                    "probe_error": format!(
+                        "runtime_model_catalog_missing: provider={provider_id} catalog_source={catalog_source} current_model_id={current_model_id} model_count={model_count}"
+                    ),
+                    "auth_required": false,
+                    "has_active_auth": has_active_auth,
+                    "auth_mode": auth_mode,
+                    "probed_at": probed_at,
+                    "supports_load": false,
+                });
             }
             value
         }

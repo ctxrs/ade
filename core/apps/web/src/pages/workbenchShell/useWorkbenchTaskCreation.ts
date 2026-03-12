@@ -1,4 +1,4 @@
-import { useMemo, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
+import { useEffect, useMemo, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import { flushSync } from "react-dom";
 import {
   createSession,
@@ -72,6 +72,7 @@ export function useWorkbenchTaskCreation({
   onStartError,
 }: UseWorkbenchTaskCreationArgs) {
   const [startBusy, setStartBusy] = useState(false);
+  const lastDraftProviderIdRef = useRef<string | null>(draftHarness?.providerId ?? null);
 
   const startBlockedReason = useMemo(() => {
     if (draftPrompt.trim().length === 0) return "Enter a prompt to start.";
@@ -88,6 +89,13 @@ export function useWorkbenchTaskCreation({
     }
     return null;
   }, [draftHarness, draftPrompt, startBusy, providersById]);
+
+  useEffect(() => {
+    const nextProviderId = draftHarness?.providerId ?? null;
+    if (lastDraftProviderIdRef.current === nextProviderId) return;
+    lastDraftProviderIdRef.current = nextProviderId;
+    onStartError(null);
+  }, [draftHarness?.providerId, onStartError]);
 
   const resolveSessionModelId = async (
     providerId: string,

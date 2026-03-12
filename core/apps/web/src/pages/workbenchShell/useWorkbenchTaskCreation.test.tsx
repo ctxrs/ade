@@ -411,4 +411,64 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
       "Harness “codex” did not provide a model. Refresh provider settings and try again.",
     );
   });
+
+  it("clears the previous start error when the selected harness provider changes", async () => {
+    let current: FlowValue | null = null;
+    const onStartError = vi.fn();
+
+    const view = render(
+      <Harness
+        draftHarness={{ providerId: "amp", modelId: "" }}
+        providerOptionsById={{ amp: makeProviderOptions({ provider_id: "amp", has_active_auth: true }) }}
+        providersByIdProp={{ amp: makeProviderStatus({ provider_id: "amp" }) }}
+        ensureProviderAuthSummary={async () => makeProviderOptions({ provider_id: "amp", has_active_auth: true })}
+        onChange={(value) => {
+          current = value;
+        }}
+        onStartError={onStartError}
+      />,
+    );
+
+    await act(async () => {
+      await requireValue(current).startNewTask();
+    });
+
+    expect(onStartError).toHaveBeenLastCalledWith(
+      "Harness “amp” did not provide a model. Refresh provider settings and try again.",
+    );
+
+    view.rerender(
+      <Harness
+        draftHarness={{ providerId: "kimi", modelId: "kimi-model" }}
+        providerOptionsById={{
+          kimi: makeProviderOptions({
+            provider_id: "kimi",
+            has_active_auth: true,
+            models: {
+              current_model_id: "kimi-model",
+              models: [{ id: "kimi-model" }],
+            },
+          }),
+        }}
+        providersByIdProp={{ kimi: makeProviderStatus({ provider_id: "kimi" }) }}
+        ensureProviderAuthSummary={async () =>
+          makeProviderOptions({
+            provider_id: "kimi",
+            has_active_auth: true,
+            models: {
+              current_model_id: "kimi-model",
+              models: [{ id: "kimi-model" }],
+            },
+          })}
+        onChange={(value) => {
+          current = value;
+        }}
+        onStartError={onStartError}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(onStartError).toHaveBeenLastCalledWith(null);
+    });
+  });
 });

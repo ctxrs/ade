@@ -10,6 +10,7 @@ import type {
 } from "../../../api/client";
 import {
   deleteAmpAccount,
+  getAmpLogin,
   getCodexLogin,
   getCursorLogin,
   getGeminiLogin,
@@ -160,6 +161,7 @@ vi.mock("../../../api/client", async (importOriginal) => {
   return {
     ...original,
     deleteAmpAccount: vi.fn(),
+    getAmpLogin: vi.fn(),
     getCodexLogin: vi.fn(),
     getCursorLogin: vi.fn(),
     getGeminiLogin: vi.fn(),
@@ -425,6 +427,7 @@ beforeEach(() => {
   bootstrapMockState.hostBootstrapListeners.clear();
   vi.clearAllMocks();
   vi.mocked(deleteAmpAccount).mockReset();
+  vi.mocked(getAmpLogin).mockReset();
   vi.mocked(getCodexLogin).mockReset();
   vi.mocked(getCursorLogin).mockReset();
   vi.mocked(getGeminiLogin).mockReset();
@@ -728,8 +731,8 @@ describe("shouldOpenPolledClaudeAuthUrl", () => {
 });
 
 describe("shouldAutoOpenKimiAuthUrl", () => {
-  it("keeps Kimi browser open behavior single-source to avoid duplicate tabs", () => {
-    expect(shouldAutoOpenKimiAuthUrl()).toBe(false);
+  it("opens Kimi browser auth automatically", () => {
+    expect(shouldAutoOpenKimiAuthUrl()).toBe(true);
   });
 });
 
@@ -1504,7 +1507,7 @@ describe("useHarnessAuthenticationController", () => {
     expect(vi.mocked(selectProviderHarnessSource)).not.toHaveBeenCalled();
   });
 
-  it("starts Kimi sign-in without auto-opening the browser and surfaces auth state while polling", async () => {
+  it("starts Kimi sign-in by opening the browser and surfaces auth state while polling", async () => {
     let controller: Controller | null = null;
     const loginPoll = deferred<{
       login_id: string;
@@ -1518,6 +1521,7 @@ describe("useHarnessAuthenticationController", () => {
       login_id: "kimi-login-1",
       auth_url: "https://kimi.example.com/login/device",
     });
+    vi.mocked(openExternalLink).mockResolvedValue(true);
     vi.mocked(getKimiLogin).mockReturnValue(loginPoll.promise as ReturnType<typeof getKimiLogin>);
     queueBootstrapRefresh(
       "ws-test",
@@ -1563,7 +1567,9 @@ describe("useHarnessAuthenticationController", () => {
       expect(vi.mocked(startKimiLogin)).toHaveBeenCalledWith("Kimi Login");
     });
 
-    expect(vi.mocked(openExternalLink)).not.toHaveBeenCalled();
+    expect(vi.mocked(openExternalLink)).toHaveBeenCalledWith(
+      "https://kimi.example.com/login/device",
+    );
     expect(requireController(controller).harnessAuthModal?.subscription_auth_url).toBe(
       "https://kimi.example.com/login/device",
     );
@@ -1582,6 +1588,88 @@ describe("useHarnessAuthenticationController", () => {
     expect(requireController(controller).harnessAuthModal).toBeNull();
     expect(requireController(controller).providerError).toBeNull();
     expect(vi.mocked(selectProviderHarnessSource)).toHaveBeenCalledWith("kimi", "subscription", null);
+  });
+
+  it("starts Amp sign-in without auto-opening the browser and surfaces auth state while polling", async () => {
+    let controller: Controller | null = null;
+    const loginPoll = deferred<{
+      login_id: string;
+      auth_url?: string | null;
+      device_code?: string | null;
+      status: string;
+      error?: string | null;
+    }>();
+
+    vi.mocked(startAmpLogin).mockResolvedValue({
+      login_id: "amp-login-1",
+      auth_url: "https://ampcode.com/auth/cli-login?authToken=test&callbackPort=35789",
+    });
+    vi.mocked(getAmpLogin).mockReturnValue(loginPoll.promise as ReturnType<typeof getAmpLogin>);
+    queueBootstrapRefresh(
+      "ws-test",
+      makeBootstrap({
+        amp_accounts: {
+          active_account_id: "amp-acct-1",
+          accounts: [
+            {
+              id: "amp-acct-1",
+              label: "Amp OAuth",
+              email: "amp@example.com",
+              created_at: "2026-03-11T00:00:00Z",
+            },
+          ],
+        },
+      }),
+    );
+
+    render(createElement(ControllerHarness, {
+      onChange: (next) => {
+        controller = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(controller).not.toBeNull();
+    });
+
+    await act(async () => {
+      controller?.openHarnessAuthModal("amp");
+      controller?.patchHarnessAuthModal({
+        stage: "subscription",
+        subscription_label: "Amp Login",
+      });
+    });
+
+    let submitPromise: Promise<void> | undefined;
+    await act(async () => {
+      submitPromise = controller?.submitHarnessSubscriptionModal();
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(startAmpLogin)).toHaveBeenCalledWith("Amp Login");
+    });
+
+    expect(vi.mocked(openExternalLink)).not.toHaveBeenCalled();
+    expect(requireController(controller).harnessAuthModal?.subscription_status).toBe(
+      "Waiting for Amp sign-in to complete in your browser...",
+    );
+    expect(requireController(controller).harnessAuthModal?.subscription_auth_url).toBe(
+      "https://ampcode.com/auth/cli-login?authToken=test&callbackPort=35789",
+    );
+
+    loginPoll.resolve({
+      login_id: "amp-login-1",
+      auth_url: "https://ampcode.com/auth/cli-login?authToken=test&callbackPort=35789",
+      status: "success",
+    });
+
+    await act(async () => {
+      await submitPromise;
+    });
+
+    expect(requireController(controller).harnessAuthModal).toBeNull();
+    expect(requireController(controller).providerError).toBeNull();
+    expect(vi.mocked(selectProviderHarnessSource)).toHaveBeenCalledWith("amp", "subscription", null);
   });
 
   it("suppresses stale api-key submit effects after switching providers", async () => {
