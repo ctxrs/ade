@@ -11,6 +11,7 @@ import {
   selectHarnessForComposer,
 } from "./utils/harnessEndpointAuth";
 import {
+  OPENROUTER_ENDPOINT_FOCUSED_DEFERRED_HARNESSES,
   OPENROUTER_ENDPOINT_FIRST_PASS_HARNESSES,
 } from "./utils/harnessEndpointMatrix";
 
@@ -75,7 +76,7 @@ const DEFAULT_RUN_CONTEXT_TIMEOUT_MS = 30_000;
 const DEFAULT_TERMINAL_TIMEOUT_MS = 120_000;
 const DEFAULT_PI_TERMINAL_TIMEOUT_MS = 240_000;
 const DEFAULT_OPENAI_OPENROUTER_MODEL_OVERRIDE = "openai/gpt-4.1-mini";
-const DEFAULT_QWEN_OPENROUTER_MODEL_OVERRIDE = "openai/gpt-4.1-nano";
+const DEFAULT_QWEN_OPENROUTER_MODEL_OVERRIDE = "qwen/qwen3-coder";
 const DEFAULT_GEMINI_OPENROUTER_MODEL_OVERRIDE = "google/gemini-3-flash-preview";
 const WRITE_FILE_CONTENTS = "hi";
 
@@ -583,9 +584,13 @@ test("workbench: endpoint harness OpenRouter matrix first pass", async ({ page, 
     .split(",")
     .map((entry) => entry.trim())
     .filter(Boolean);
+  const selectableMatrixEntries = [
+    ...OPENROUTER_ENDPOINT_FIRST_PASS_HARNESSES,
+    ...OPENROUTER_ENDPOINT_FOCUSED_DEFERRED_HARNESSES,
+  ];
   const defaultOpenRouterModelOverride =
     firstText(process.env.CTX_E2E_OPENROUTER_MODEL_OVERRIDE);
-  const modelOverrideByProvider = OPENROUTER_ENDPOINT_FIRST_PASS_HARNESSES.reduce(
+  const modelOverrideByProvider = selectableMatrixEntries.reduce(
     (acc, entry) => {
       const perProviderEnv = providerModelOverrideEnvVar(entry.providerId);
       const override =
@@ -632,14 +637,16 @@ test("workbench: endpoint harness OpenRouter matrix first pass", async ({ page, 
   const providers = await providerHealthMap(request);
   const results: HarnessRunRecord[] = [];
   const matrixEntries = requestedProviderIds.length
-    ? OPENROUTER_ENDPOINT_FIRST_PASS_HARNESSES.filter((entry) =>
+    ? selectableMatrixEntries.filter((entry) =>
         requestedProviderIds.includes(entry.providerId),
       )
     : OPENROUTER_ENDPOINT_FIRST_PASS_HARNESSES;
 
-  if (requestedProviderIds.length && matrixEntries.length === 0) {
+  if (requestedProviderIds.length && matrixEntries.length !== requestedProviderIds.length) {
+    const resolvedProviderIds = new Set(matrixEntries.map((entry) => entry.providerId));
+    const missingProviderIds = requestedProviderIds.filter((providerId) => !resolvedProviderIds.has(providerId));
     throw new Error(
-      `CTX_E2E_ENDPOINT_PROVIDERS did not match first-pass matrix entries: ${requestedProviderIds.join(",")}`,
+      `CTX_E2E_ENDPOINT_PROVIDERS did not match shared endpoint matrix entries: ${missingProviderIds.join(",")}`,
     );
   }
 

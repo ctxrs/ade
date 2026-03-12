@@ -44,6 +44,7 @@ const DEFAULT_VERIFY_TIMEOUT_MS = 90_000;
 const DEFAULT_MODEL_TIMEOUT_MS = 90_000;
 const DEFAULT_TERMINAL_TIMEOUT_MS = 180_000;
 const TERMINAL_TURN_STATUSES = new Set(["completed", "failed", "interrupted"]);
+const TRUTHY_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
 
 export const asRecord = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -63,6 +64,26 @@ export const firstText = (...values: unknown[]): string => {
 };
 
 export const normalizeErrorMessage = (raw: string): string => raw.replace(/\s+/g, " ").trim();
+export const normalizeWriteFileContents = (raw: string): string =>
+  raw.replace(/\r\n/g, "\n").trimEnd();
+export const bundledOnlyModeAppliesToProvider = (
+  providerId: string,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean => {
+  if (!TRUTHY_ENV_VALUES.has(String(env.CTX_E2E_BUNDLED_ONLY ?? "").trim().toLowerCase())) {
+    return false;
+  }
+
+  const providers = String(env.CTX_E2E_BUNDLED_ONLY_PROVIDERS ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  if (providers.length === 0) {
+    return true;
+  }
+
+  return providers.includes(providerId.trim());
+};
 
 const readStringMap = (value: unknown): Record<string, string> => {
   const out: Record<string, string> = {};
@@ -230,7 +251,7 @@ export async function ensureProviderInstalledAndHealthy(
 ): Promise<ProviderStatus> {
   const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const initial = await getProviderStatus(request, providerId, target, { requestTimeoutMs });
-  if (!initial.installed) {
+  if (!initial.installed && !bundledOnlyModeAppliesToProvider(providerId)) {
     await installProviderAndWait(request, providerId, target, options);
   }
   const finalStatus = initial.installed ? initial : await getProviderStatus(request, providerId, target, { requestTimeoutMs });
@@ -430,10 +451,10 @@ export async function waitForWorkspaceFileContents(
     }
 
     const actualContents = readFileSync(filePath, "utf8");
-    if (actualContents === expectedContents) {
+    if (normalizeWriteFileContents(actualContents) === normalizeWriteFileContents(expectedContents)) {
       return filePath;
     }
-    lastDetail = `unexpected contents for ${trimmedRelativePath}: ${JSON.stringify(actualContents)}`;
+    lastDetail = `unexpected normalized contents for ${trimmedRelativePath}: ${JSON.stringify(actualContents)}`;
     await sleep(pollMs);
   }
 

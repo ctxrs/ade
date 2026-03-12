@@ -47,14 +47,50 @@ function isExecutable(path: string): boolean {
   }
 }
 
-function localPiCliForAdapter(): string | null {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const binName = process.platform === "win32" ? "pi.cmd" : "pi";
-  const candidate = resolve(here, "../node_modules/.bin", binName);
-  return isExecutable(candidate) ? candidate : null;
+function pathExists(path: string): boolean {
+  try {
+    accessSync(path, constants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-export function buildPiLaunchArgs(env: NodeJS.ProcessEnv): { command: string; args: string[] } {
+type BundledPiLaunch = {
+  command: string;
+  argsPrefix: string[];
+};
+
+function resolveBundledPiLaunch(adapterFileDir = dirname(fileURLToPath(import.meta.url))): BundledPiLaunch | null {
+  const binName = process.platform === "win32" ? "pi.cmd" : "pi";
+  const binCandidate = resolve(adapterFileDir, "../node_modules/.bin", binName);
+  if (isExecutable(binCandidate)) {
+    return {
+      command: binCandidate,
+      argsPrefix: [],
+    };
+  }
+
+  // Managed provider bundles currently preserve the dependency package tree but may omit
+  // node_modules/.bin symlinks. Fall back to the dependency's real CLI entrypoint.
+  const packageCli = resolve(
+    adapterFileDir,
+    "../node_modules/@mariozechner/pi-coding-agent/dist/cli.js",
+  );
+  if (pathExists(packageCli)) {
+    return {
+      command: process.execPath,
+      argsPrefix: [packageCli],
+    };
+  }
+
+  return null;
+}
+
+export function buildPiLaunchArgs(
+  env: NodeJS.ProcessEnv,
+  adapterFileDir = dirname(fileURLToPath(import.meta.url)),
+): { command: string; args: string[] } {
   const explicitCommand = env.PI_ACP_PI_COMMAND?.trim();
   const args = ["--mode", "rpc", "--no-session"];
 
@@ -70,13 +106,16 @@ export function buildPiLaunchArgs(env: NodeJS.ProcessEnv): { command: string; ar
     return { command: explicitCommand, args: [...args, ...extraArgs] };
   }
 
-  const bundledLocalPi = localPiCliForAdapter();
+  const bundledLocalPi = resolveBundledPiLaunch(adapterFileDir);
   if (bundledLocalPi) {
-    return { command: bundledLocalPi, args: [...args, ...extraArgs] };
+    return {
+      command: bundledLocalPi.command,
+      args: [...bundledLocalPi.argsPrefix, ...args, ...extraArgs],
+    };
   }
 
   throw new Error(
-    "pi ACP runtime missing bundled pi binary at node_modules/.bin/pi. Rebuild bundled harnesses for provider 'pi'.",
+    "pi ACP runtime missing bundled pi CLI at node_modules/.bin/pi or node_modules/@mariozechner/pi-coding-agent/dist/cli.js. Rebuild bundled harnesses for provider 'pi'.",
   );
 }
 

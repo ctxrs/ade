@@ -121,7 +121,19 @@ test("web provider lanes invoke the checked-in apps/web playwright binary", () =
   );
   assert.match(
     script,
-    /playwright binary missing at \$\{playwright_bin\}; restoring locked core workspace install/,
+    /playwright_pkg="\$\{web_root\}\/node_modules\/playwright"/,
+  );
+  assert.match(
+    script,
+    /playwright install missing in \$\{web_root\}; restoring locked core workspace install/,
+  );
+  assert.match(
+    script,
+    /\[\[ ! -x "\$\{playwright_bin\}" \|\| ! -d "\$\{playwright_pkg\}" \]\]/,
+  );
+  assert.match(
+    script,
+    /cd "\$\{repo_root\}"/,
   );
   assert.match(
     script,
@@ -129,7 +141,7 @@ test("web provider lanes invoke the checked-in apps/web playwright binary", () =
   );
   assert.match(
     script,
-    /missing playwright binary at \$\{playwright_bin\} after restore; run 'bash -lc \\"cd \$\{repo_root\} && pnpm install --frozen-lockfile\\"'/,
+    /missing playwright install in \$\{web_root\} after restore; run 'bash -lc \\"cd \$\{repo_root\} && pnpm install --frozen-lockfile\\"'/,
   );
 });
 
@@ -155,6 +167,18 @@ test("endpoint-ui lane defaults to host-mode bundles and scopes focused reruns",
   assert.match(
     script,
     /CTX_E2E_ENDPOINT_APPEND_LINUX_TARGETS="\$\{CTX_E2E_ENDPOINT_APPEND_LINUX_TARGETS:-0\}"/,
+  );
+  assert.match(
+    script,
+    /local first_pass_providers="\$\{CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-acp-crp-bridge,codex,copilot,gemini,qwen,opencode,mistral,goose,droid,kimi,openhands\}"/,
+  );
+  assert.match(
+    script,
+    /if \[\[ -n "\$\{CTX_E2E_ENDPOINT_SPECS:-\}" \]\]; then/,
+  );
+  assert.match(
+    script,
+    /IFS=',' read -r -a endpoint_specs <<<"\$\{CTX_E2E_ENDPOINT_SPECS\}"/,
   );
 });
 

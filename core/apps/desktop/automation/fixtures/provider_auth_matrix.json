@@ -2618,20 +2618,17 @@
       "auth_mode": "endpoint_api_key",
       "daemon_location": "local",
       "execution_environment": "host",
-      "support": "deferred",
-      "lane": "nightly",
+      "support": "unsupported",
+      "lane": "none",
       "required_assertions": [
-        "install_success",
-        "probe_success",
-        "model_list_population",
-        "first_turn_success"
+        "unsupported_contract"
       ],
       "owner": "provider-amp",
       "prerequisites": [],
       "runner": {
         "kind": "none"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": "provider_auth_mode_not_supported"
     },
     {
       "id": "amp.endpoint_api_key.local.container_host_mounted",
@@ -2639,20 +2636,17 @@
       "auth_mode": "endpoint_api_key",
       "daemon_location": "local",
       "execution_environment": "container_host_mounted",
-      "support": "deferred",
-      "lane": "nightly",
+      "support": "unsupported",
+      "lane": "none",
       "required_assertions": [
-        "install_success",
-        "probe_success",
-        "model_list_population",
-        "first_turn_success"
+        "unsupported_contract"
       ],
       "owner": "provider-amp",
       "prerequisites": [],
       "runner": {
         "kind": "none"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": "provider_auth_mode_not_supported"
     },
     {
       "id": "amp.endpoint_api_key.remote.host",
@@ -2660,20 +2654,17 @@
       "auth_mode": "endpoint_api_key",
       "daemon_location": "remote",
       "execution_environment": "host",
-      "support": "deferred",
-      "lane": "nightly",
+      "support": "unsupported",
+      "lane": "none",
       "required_assertions": [
-        "install_success",
-        "probe_success",
-        "model_list_population",
-        "first_turn_success"
+        "unsupported_contract"
       ],
       "owner": "provider-amp",
       "prerequisites": [],
       "runner": {
         "kind": "none"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": "provider_auth_mode_not_supported"
     },
     {
       "id": "amp.endpoint_api_key.remote.container_host_mounted",
@@ -2681,20 +2672,17 @@
       "auth_mode": "endpoint_api_key",
       "daemon_location": "remote",
       "execution_environment": "container_host_mounted",
-      "support": "deferred",
-      "lane": "nightly",
+      "support": "unsupported",
+      "lane": "none",
       "required_assertions": [
-        "install_success",
-        "probe_success",
-        "model_list_population",
-        "first_turn_success"
+        "unsupported_contract"
       ],
       "owner": "provider-amp",
       "prerequisites": [],
       "runner": {
         "kind": "none"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": "provider_auth_mode_not_supported"
     },
     {
       "id": "amp.auth_import.local.host",
@@ -3290,20 +3278,17 @@
       "auth_mode": "endpoint_api_key",
       "daemon_location": "local",
       "execution_environment": "host",
-      "support": "deferred",
-      "lane": "nightly",
+      "support": "unsupported",
+      "lane": "none",
       "required_assertions": [
-        "install_success",
-        "probe_success",
-        "model_list_population",
-        "first_turn_success"
+        "unsupported_contract"
       ],
       "owner": "provider-auggie",
       "prerequisites": [],
       "runner": {
         "kind": "none"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": "provider_auth_mode_not_supported"
     },
     {
       "id": "auggie.endpoint_api_key.local.container_host_mounted",
@@ -3311,20 +3296,17 @@
       "auth_mode": "endpoint_api_key",
       "daemon_location": "local",
       "execution_environment": "container_host_mounted",
-      "support": "deferred",
-      "lane": "nightly",
+      "support": "unsupported",
+      "lane": "none",
       "required_assertions": [
-        "install_success",
-        "probe_success",
-        "model_list_population",
-        "first_turn_success"
+        "unsupported_contract"
       ],
       "owner": "provider-auggie",
       "prerequisites": [],
       "runner": {
         "kind": "none"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": "provider_auth_mode_not_supported"
     },
     {
       "id": "auggie.endpoint_api_key.remote.host",
@@ -3332,20 +3314,17 @@
       "auth_mode": "endpoint_api_key",
       "daemon_location": "remote",
       "execution_environment": "host",
-      "support": "deferred",
-      "lane": "nightly",
+      "support": "unsupported",
+      "lane": "none",
       "required_assertions": [
-        "install_success",
-        "probe_success",
-        "model_list_population",
-        "first_turn_success"
+        "unsupported_contract"
       ],
       "owner": "provider-auggie",
       "prerequisites": [],
       "runner": {
         "kind": "none"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": "provider_auth_mode_not_supported"
     },
     {
       "id": "auggie.endpoint_api_key.remote.container_host_mounted",
@@ -3353,20 +3332,17 @@
       "auth_mode": "endpoint_api_key",
       "daemon_location": "remote",
       "execution_environment": "container_host_mounted",
-      "support": "deferred",
-      "lane": "nightly",
+      "support": "unsupported",
+      "lane": "none",
       "required_assertions": [
-        "install_success",
-        "probe_success",
-        "model_list_population",
-        "first_turn_success"
+        "unsupported_contract"
       ],
       "owner": "provider-auggie",
       "prerequisites": [],
       "runner": {
         "kind": "none"
       },
-      "skip_reason": "coverage_not_implemented_yet"
+      "skip_reason": "provider_auth_mode_not_supported"
     },
     {
       "id": "auggie.auth_import.local.host",

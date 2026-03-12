@@ -11,6 +11,19 @@ export const OPENROUTER_ENDPOINT_FIRST_PASS_HARNESSES: EndpointHarnessMatrixEntr
   { providerId: "codex", menuLabel: "Codex", searchTerm: "codex" },
   { providerId: "qwen", menuLabel: "Qwen Code", searchTerm: "qwen" },
   { providerId: "copilot", menuLabel: "Copilot", searchTerm: "copilot" },
+  { providerId: "pi", menuLabel: "PI", searchTerm: "pi" },
+];
+
+// Explicitly runnable on the shared OpenRouter flow for focused/manual reruns,
+// but still deferred from the default first-pass suite until they have a live
+// green write-file baseline.
+export const OPENROUTER_ENDPOINT_FOCUSED_DEFERRED_HARNESSES: EndpointHarnessMatrixEntry[] = [
+  { providerId: "droid", menuLabel: "Droid", searchTerm: "droid" },
+  { providerId: "goose", menuLabel: "Goose", searchTerm: "goose" },
+  { providerId: "openhands", menuLabel: "OpenHands", searchTerm: "openhands" },
+  { providerId: "kimi", menuLabel: "Kimi", searchTerm: "kimi" },
+  { providerId: "mistral", menuLabel: "Mistral", searchTerm: "mistral" },
+  { providerId: "opencode", menuLabel: "OpenCode", searchTerm: "opencode" },
 ];
 
 // Explicitly excluded from this suite because they need a dedicated non-OpenRouter lane.
@@ -31,13 +44,6 @@ export const OPENROUTER_ENDPOINT_FIRST_PASS_EXCLUDED_DEFERRED = [
   "aider",
   "kilo",
   // These do not satisfy the shared OpenRouter write-file contract today.
-  "opencode",
-  "kimi",
-  "droid",
-  "mistral",
-  "goose",
-  "openhands",
   "amp",
   "auggie",
-  "pi",
 ] as const;

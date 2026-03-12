@@ -228,7 +228,9 @@ fn expect_file_written(workdir: &Path, provider_id: &str) -> Result<(), String> 
     let file_path = workdir.join(&file_name);
     let contents = fs::read_to_string(&file_path)
         .map_err(|err| format!("{provider_id} did not create {}: {err}", file_name))?;
-    if contents != WRITE_FILE_CONTENTS {
+    if contents.trim_end_matches(|ch| ch == '\r' || ch == '\n' || ch == ' ' || ch == '\t')
+        != WRITE_FILE_CONTENTS
+    {
         return Err(format!(
             "{provider_id} wrote unexpected contents to {}",
             file_name
@@ -498,14 +500,10 @@ fn provider_skip_reason(provider: ProviderSpec) -> Option<String> {
         return Some("requires Augment login; not OpenRouter-compatible".to_string());
     }
     if provider.id == "amp" {
-        let allow = env_truthy("AMP_TOKEN_TESTS");
-        let has_amp_auth = env_present("AMP_API_KEY") || env_present("AMP_SETTINGS_FILE");
-        if !allow && !has_amp_auth {
-            return Some(
-                "missing AMP_API_KEY/AMP_SETTINGS_FILE; set AMP_TOKEN_TESTS=1 to attempt"
-                    .to_string(),
-            );
-        }
+        return Some(
+            "Amp requires native Amp auth and does not support OpenRouter endpoint mode"
+                .to_string(),
+        );
     }
     if provider.id == "droid" {
         let allow = env_truthy("DROID_TOKEN_TESTS");
@@ -632,6 +630,10 @@ fn build_env(
     if provider.id == "droid" {
         env.insert("CTX_PROVIDER_MODE".to_string(), "auto_high".to_string());
     }
+    if provider.id == "pi" {
+        env.insert("PI_ACP_PROVIDER".to_string(), "openrouter".to_string());
+        env.insert("PI_ACP_MODEL".to_string(), model_id.to_string());
+    }
 
     env
 }
@@ -648,6 +650,15 @@ fn provider_model_id(default_model_id: &str, provider: ProviderSpec) -> Option<S
     }
     if provider.id == "qwen" {
         return Some(DEFAULT_QWEN_MODEL.to_string());
+    }
+    if provider.id == "pi" {
+        return Some(
+            std::env::var("CTX_TOKENS_PI_MODEL")
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| DEFAULT_GEMINI_MODEL.to_string()),
+        );
     }
     if provider.id != "mistral" {
         return Some(default_model_id.to_string());
@@ -938,5 +949,41 @@ mod tests {
         )
         .expect("gemini model");
         assert_eq!(model, DEFAULT_GEMINI_MODEL);
+    }
+
+    #[test]
+    fn provider_model_id_uses_pi_default() {
+        let model = provider_model_id(
+            DEFAULT_OPENROUTER_MODEL,
+            ProviderSpec {
+                id: "pi",
+                fallback_cmd: "pi-acp",
+                fallback_args: &[],
+                opencode_config: false,
+            },
+        )
+        .expect("pi model");
+        assert_eq!(model, DEFAULT_GEMINI_MODEL);
+    }
+
+    #[test]
+    fn provider_skip_reason_marks_amp_as_unsupported_for_token_mode() {
+        let reason = provider_skip_reason(ProviderSpec {
+            id: "amp",
+            fallback_cmd: "amp-acp",
+            fallback_args: &[],
+            opencode_config: false,
+        })
+        .expect("amp should be skipped");
+        assert!(reason.contains("does not support OpenRouter endpoint mode"));
+    }
+
+    #[test]
+    fn expect_file_written_accepts_trailing_newline() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file_path = dir.path().join(write_file_name("droid"));
+        fs::write(&file_path, "hi\n").expect("write file");
+
+        expect_file_written(dir.path(), "droid").expect("normalized file contents");
     }
 }

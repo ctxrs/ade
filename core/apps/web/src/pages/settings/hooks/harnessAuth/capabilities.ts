@@ -9,11 +9,9 @@ const HARNESSES_WITH_ENDPOINT_CONFIG = new Set([
   "opencode",
   "mistral",
   "goose",
-  "amp",
   "droid",
   "openhands",
   "copilot",
-  "auggie",
   "pi",
 ]);
 

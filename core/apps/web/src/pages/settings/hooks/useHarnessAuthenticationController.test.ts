@@ -751,6 +751,11 @@ describe("resolveHarnessAuthModalInitialStage", () => {
     expect(resolveHarnessAuthModalInitialStage("pi")).toBe("api_key");
   });
 
+  it("routes subscription-only providers directly to subscription", () => {
+    expect(resolveHarnessAuthModalInitialStage("amp")).toBe("subscription");
+    expect(resolveHarnessAuthModalInitialStage("auggie")).toBe("subscription");
+  });
+
   it("keeps choose stage for providers supporting both methods", () => {
     expect(resolveHarnessAuthModalInitialStage("codex")).toBe("choose");
     expect(resolveHarnessAuthModalInitialStage("claude-crp")).toBe("choose");

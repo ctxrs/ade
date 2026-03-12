@@ -4,7 +4,9 @@ import path from "path";
 import { describe, expect, it, vi } from "vitest";
 import type { JsonRequestLike, JsonResponseLike } from "./providerRuntime";
 import {
+  bundledOnlyModeAppliesToProvider,
   ensureProviderInstalledAndHealthy,
+  normalizeWriteFileContents,
   resolveSessionWorktreeRoot,
   resolveWorkspaceProviderModelId,
   verifyProviderForWorkspace,
@@ -29,6 +31,12 @@ const createRequest = (
 });
 
 describe("providerRuntime", () => {
+  it("normalizes trailing whitespace for baseline write-file assertions", () => {
+    expect(normalizeWriteFileContents("hi\n")).toBe("hi");
+    expect(normalizeWriteFileContents("hi\r\n\r\n")).toBe("hi");
+    expect(normalizeWriteFileContents("hi")).toBe("hi");
+  });
+
   it("installs a missing provider against the requested host target and rechecks health", async () => {
     const get = vi.fn<JsonRequestLike["get"]>()
       .mockResolvedValueOnce(jsonResponse(200, {
@@ -77,6 +85,61 @@ describe("providerRuntime", () => {
     });
     expect(get).toHaveBeenNthCalledWith(2, "/api/providers/install/install-1", { timeout: 30_000 });
     expect(get).toHaveBeenNthCalledWith(4, "/api/providers/gemini?target=host", { timeout: 30_000 });
+  });
+
+  it("treats an empty bundled-only provider list as applying to all providers", () => {
+    expect(
+      bundledOnlyModeAppliesToProvider("opencode", {
+        CTX_E2E_BUNDLED_ONLY: "1",
+        CTX_E2E_BUNDLED_ONLY_PROVIDERS: " , ",
+      }),
+    ).toBe(true);
+  });
+
+  it("does not invoke provider install in bundled-only mode", async () => {
+    const get = vi.fn<JsonRequestLike["get"]>()
+      .mockResolvedValueOnce(jsonResponse(200, {
+        installed: false,
+        health: "missing",
+        diagnostics: ["provider not installed"],
+        details: {},
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        installed: false,
+        health: "missing",
+        diagnostics: ["provider not installed"],
+        details: {},
+      }));
+    const post = vi.fn<JsonRequestLike["post"]>();
+    const request = createRequest(get, post);
+
+    const originalBundledOnly = process.env.CTX_E2E_BUNDLED_ONLY;
+    const originalBundledProviders = process.env.CTX_E2E_BUNDLED_ONLY_PROVIDERS;
+    process.env.CTX_E2E_BUNDLED_ONLY = "1";
+    process.env.CTX_E2E_BUNDLED_ONLY_PROVIDERS = "opencode";
+
+    try {
+      await expect(
+        ensureProviderInstalledAndHealthy(request, "opencode", "host", {
+          pollMs: 0,
+          sleep: async () => {},
+        }),
+      ).rejects.toThrow("provider opencode is not ready");
+    } finally {
+      if (originalBundledOnly === undefined) {
+        delete process.env.CTX_E2E_BUNDLED_ONLY;
+      } else {
+        process.env.CTX_E2E_BUNDLED_ONLY = originalBundledOnly;
+      }
+      if (originalBundledProviders === undefined) {
+        delete process.env.CTX_E2E_BUNDLED_ONLY_PROVIDERS;
+      } else {
+        process.env.CTX_E2E_BUNDLED_ONLY_PROVIDERS = originalBundledProviders;
+      }
+    }
+
+    expect(post).not.toHaveBeenCalled();
+    expect(get).toHaveBeenCalledTimes(2);
   });
 
   it("retries workspace verification until the provider reports ok", async () => {
@@ -260,5 +323,32 @@ describe("providerRuntime", () => {
       },
       sleep: async () => {},
     })).rejects.toThrow(/session_hint=provider rejected the request because metadata\.client_name was empty/);
+  });
+
+  it("accepts a session file with trailing newline when normalized contents match", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-provider-runtime-session-file-pass-"));
+    fs.writeFileSync(path.join(dir, "hello.md"), "hi\n");
+    const get = vi.fn<JsonRequestLike["get"]>()
+      .mockResolvedValueOnce(jsonResponse(200, {
+        head: {
+          session: {
+            worktree_id: "wt-789",
+          },
+        },
+        summary: {},
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        root_path: dir,
+      }));
+    const post = vi.fn<JsonRequestLike["post"]>();
+    const request = createRequest(get, post);
+
+    await expect(waitForSessionWorkspaceFileContents(request, "session-3", "hello.md", "hi", {
+      timeoutMs: 20,
+      pollMs: 0,
+      requestTimeoutMs: 30_000,
+      now: () => 0,
+      sleep: async () => {},
+    })).resolves.toContain("hello.md");
   });
 });

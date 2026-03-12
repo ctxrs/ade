@@ -145,7 +145,7 @@ ensure_endpoint_ui_bundles() {
   # Keep fresh E2E bundle dirs under a home/cache root so Podman-machine container
   # mounts can see them during bundled-only container validation on macOS hosts.
   local bundle_dir="${CTX_E2E_BUNDLE_DIR:-${cache_root}/bundles-${cache_key}}"
-  local first_pass_providers="${CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-acp-crp-bridge,codex,gemini,qwen,opencode,mistral,goose,droid,kimi,openhands}"
+  local first_pass_providers="${CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-acp-crp-bridge,codex,copilot,gemini,qwen,opencode,mistral,goose,droid,kimi,openhands}"
   local matrix_json="${CTX_BUNDLE_MATRIX_JSON:-${repo_root}/crates/ctx-http/src/provider_matrix.json}"
   local canonical_runtime_lock="${repo_root}/apps/desktop/src-tauri/bundles/runtime_lock.v2.json"
   local bundle_build_dir="${CTX_E2E_BUNDLE_BUILD_DIR:-/tmp/ctx-e2e-bundle-build-${cache_key}}"
@@ -353,15 +353,16 @@ ensure_openrouter_creds_for_lane() {
 run_web_playwright_suite() {
   local web_root="${repo_root}/apps/web"
   local playwright_bin="${web_root}/node_modules/.bin/playwright"
-  if [[ ! -x "${playwright_bin}" ]]; then
-    echo "playwright binary missing at ${playwright_bin}; restoring locked core workspace install" >&2
+  local playwright_pkg="${web_root}/node_modules/playwright"
+  if [[ ! -x "${playwright_bin}" || ! -d "${playwright_pkg}" ]]; then
+    echo "playwright install missing in ${web_root}; restoring locked core workspace install" >&2
     (
       cd "${repo_root}"
       pnpm install --frozen-lockfile
     )
   fi
-  if [[ ! -x "${playwright_bin}" ]]; then
-    echo "missing playwright binary at ${playwright_bin} after restore; run 'bash -lc \"cd ${repo_root} && pnpm install --frozen-lockfile\"'" >&2
+  if [[ ! -x "${playwright_bin}" || ! -d "${playwright_pkg}" ]]; then
+    echo "missing playwright install in ${web_root} after restore; run 'bash -lc \"cd ${repo_root} && pnpm install --frozen-lockfile\"'" >&2
     exit 1
   fi
 
@@ -552,8 +553,15 @@ case "${suite}" in
 
     ensure_endpoint_ui_bundles
 
+    endpoint_specs=(
+      e2e/workbench-endpoint-harness-openrouter-matrix.spec.ts
+    )
+    if [[ -n "${CTX_E2E_ENDPOINT_SPECS:-}" ]]; then
+      IFS=',' read -r -a endpoint_specs <<<"${CTX_E2E_ENDPOINT_SPECS}"
+    fi
+
     run_web_playwright_suite \
-      e2e/workbench-endpoint-harness-openrouter-matrix.spec.ts \
+      "${endpoint_specs[@]}" \
       --workers=1
     exit 0
     ;;

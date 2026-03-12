@@ -82,7 +82,8 @@ async function ensureCodexOpenAiEndpointSelected(
       .map((entry) => asRecord(entry))
       .find((entry) =>
         readString(entry.name) === CODEX_OPENAI_ENDPOINT_NAME
-        && readString(entry.base_url) === OPENAI_BASE_URL,
+        && readString(entry.base_url) === OPENAI_BASE_URL
+        && readString(entry.model_override) === modelOverride
       ) ?? selectedEndpointForConfig(config);
   const endpointId = readString(selectedEndpoint?.id);
   expect(endpointId).not.toBe("");

@@ -14,11 +14,9 @@ pub fn default_shape_for_provider(provider_id: &str) -> Option<HarnessApiShape> 
         Some(PROVIDER_OPENCODE) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_MISTRAL) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_GOOSE) => Some(HarnessApiShape::OpenaiResponses),
-        Some(PROVIDER_AMP) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_DROID) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_OPENHANDS) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_COPILOT) => Some(HarnessApiShape::OpenaiResponses),
-        Some(PROVIDER_AUGGIE) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_PI) => Some(HarnessApiShape::OpenaiResponses),
         _ => None,
     }
@@ -64,8 +62,13 @@ pub fn ensure_shape_compatible(provider_id: &str, shape: HarnessApiShape) -> Res
                 );
             }
         }
-        PROVIDER_QWEN | PROVIDER_OPENCODE | PROVIDER_MISTRAL | PROVIDER_GOOSE | PROVIDER_AMP
-        | PROVIDER_DROID | PROVIDER_OPENHANDS | PROVIDER_COPILOT | PROVIDER_AUGGIE
+        PROVIDER_QWEN
+        | PROVIDER_OPENCODE
+        | PROVIDER_MISTRAL
+        | PROVIDER_GOOSE
+        | PROVIDER_DROID
+        | PROVIDER_OPENHANDS
+        | PROVIDER_COPILOT
         | PROVIDER_PI => {
             if shape != HarnessApiShape::OpenaiResponses {
                 anyhow::bail!(
@@ -231,11 +234,9 @@ pub(super) fn provider_supports_harness_endpoint(canonical_provider_id: &str) ->
             | PROVIDER_OPENCODE
             | PROVIDER_MISTRAL
             | PROVIDER_GOOSE
-            | PROVIDER_AMP
             | PROVIDER_DROID
             | PROVIDER_OPENHANDS
             | PROVIDER_COPILOT
-            | PROVIDER_AUGGIE
             | PROVIDER_PI
     )
 }

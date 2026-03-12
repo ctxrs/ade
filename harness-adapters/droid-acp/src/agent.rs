@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::{mpsc, oneshot, Mutex, watch};
+use tokio::sync::{mpsc, oneshot, watch, Mutex};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AutoLevel {
@@ -141,6 +141,31 @@ pub struct DroidAcpAgent {
 }
 
 impl DroidAcpAgent {
+    fn should_drop_text_block_for_droid(text: &str) -> bool {
+        text.contains("The commands below were executed at the start of all sessions")
+            || text.contains("TodoWrite was not called yet")
+    }
+
+    fn normalize_text_block_for_droid(text: String) -> Option<String> {
+        if Self::should_drop_text_block_for_droid(&text) {
+            return None;
+        }
+        let normalized = text.replace(
+            "Always prefer using the absolute paths when using tools, to avoid any ambiguity.",
+            "Always prefer using paths relative to the current working directory when using tools.",
+        );
+        let trimmed = normalized.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    }
+
+    fn droid_path_guidance() -> &'static str {
+        "Droid is already running with the correct current working directory. Use paths relative to that working directory for all tool arguments. Do not synthesize or prepend absolute paths unless the user explicitly provided an absolute path."
+    }
+
     pub fn new(
         droid_path: String,
         default_model: Option<String>,
@@ -217,8 +242,8 @@ impl DroidAcpAgent {
         for block in prompt {
             match block {
                 acp::ContentBlock::Text(text) => {
-                    if !text.text.is_empty() {
-                        parts.push(text.text);
+                    if let Some(normalized) = Self::normalize_text_block_for_droid(text.text) {
+                        parts.push(normalized);
                     }
                 }
                 acp::ContentBlock::Image(image) => {
@@ -249,6 +274,7 @@ impl DroidAcpAgent {
             }
         }
 
+        parts.push(Self::droid_path_guidance().to_string());
         parts.join("\n\n")
     }
 
@@ -296,7 +322,8 @@ impl DroidAcpAgent {
             tool_name,
             parameters,
             ..
-        } = tool_call else {
+        } = tool_call
+        else {
             return Ok(());
         };
 
@@ -337,7 +364,8 @@ impl DroidAcpAgent {
             is_error,
             value,
             ..
-        } = tool_result else {
+        } = tool_result
+        else {
             return Ok(());
         };
 
@@ -347,7 +375,9 @@ impl DroidAcpAgent {
             acp::ToolCallStatus::Completed
         };
 
-        let content = value.as_ref().map(|output| vec![text_content(raw_value_text(output))]);
+        let content = value
+            .as_ref()
+            .map(|output| vec![text_content(raw_value_text(output))]);
 
         let update = acp::ToolCallUpdate {
             id: acp::ToolCallId(id.into()),
@@ -379,14 +409,8 @@ impl DroidAcpAgent {
             .spawn()
             .map_err(|err| acp::Error::internal_error().with_data(err.to_string()))?;
 
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(acp::Error::internal_error)?;
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or_else(acp::Error::internal_error)?;
+        let stdout = child.stdout.take().ok_or_else(acp::Error::internal_error)?;
+        let stderr = child.stderr.take().ok_or_else(acp::Error::internal_error)?;
 
         let cwd = state_snapshot.cwd.clone();
         let mut lines = BufReader::new(stdout).lines();
@@ -530,6 +554,76 @@ impl DroidAcpAgent {
         }
 
         Ok((acp::StopReason::EndTurn, droid_session_id))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text_block(text: &str) -> acp::ContentBlock {
+        acp::ContentBlock::Text(acp::TextContent {
+            text: text.to_string(),
+            annotations: None,
+            meta: None,
+        })
+    }
+
+    #[test]
+    fn prompt_to_text_appends_relative_path_guidance() {
+        let prompt = vec![text_block("Create hello-droid.md in the workspace root.")];
+
+        let rendered = DroidAcpAgent::prompt_to_text(prompt);
+
+        assert!(rendered.contains("Create hello-droid.md in the workspace root."));
+        assert!(rendered.contains(DroidAcpAgent::droid_path_guidance()));
+        assert!(rendered.ends_with(DroidAcpAgent::droid_path_guidance()));
+    }
+
+    #[test]
+    fn prompt_to_text_strips_ctx_bootstrap_system_reminders() {
+        let prompt = vec![
+            text_block("<system-reminder>The commands below were executed at the start of all sessions\n% pwd\n/tmp/project</system-reminder>"),
+            text_block("<system-reminder>IMPORTANT: TodoWrite was not called yet.</system-reminder>"),
+            text_block("Create hello-droid.md in the workspace root."),
+        ];
+
+        let rendered = DroidAcpAgent::prompt_to_text(prompt);
+
+        assert!(!rendered.contains("The commands below were executed at the start of all sessions"));
+        assert!(!rendered.contains("TodoWrite was not called yet"));
+        assert!(rendered.contains("Create hello-droid.md in the workspace root."));
+    }
+
+    #[test]
+    fn prompt_to_text_rewrites_absolute_path_tool_guidance() {
+        let original_guidance =
+            "Always prefer using the absolute paths when using tools, to avoid any ambiguity.";
+        let prompt = vec![text_block(
+            original_guidance,
+        )];
+
+        let rendered = DroidAcpAgent::prompt_to_text(prompt);
+
+        assert!(!rendered.contains(original_guidance));
+        assert!(rendered.contains("relative to the current working directory"));
+        assert!(rendered.contains("Do not synthesize or prepend absolute paths"));
+    }
+
+    #[test]
+    fn prompt_to_text_ends_with_hard_relative_path_rule() {
+        let prompt = vec![
+            text_block(
+                "Always prefer using the absolute paths when using tools, to avoid any ambiguity.",
+            ),
+            text_block("Create hello-droid.md in the workspace root with text hi."),
+        ];
+
+        let rendered = DroidAcpAgent::prompt_to_text(prompt);
+
+        assert!(rendered.contains("Create hello-droid.md in the workspace root with text hi."));
+        assert!(rendered.ends_with(DroidAcpAgent::droid_path_guidance()));
+        assert!(rendered.contains("Do not synthesize or prepend absolute paths"));
     }
 }
 
