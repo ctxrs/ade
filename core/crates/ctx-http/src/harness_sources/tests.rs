@@ -858,16 +858,12 @@ async fn additional_provider_endpoint_env_projection_smoke() {
             HarnessEndpointUpsert {
                 endpoint_id: None,
                 name: format!("{provider_id} endpoint"),
-                base_url: if *provider_id == PROVIDER_COPILOT
-                    || *provider_id == PROVIDER_PI
-                {
+                base_url: if *provider_id == PROVIDER_COPILOT || *provider_id == PROVIDER_PI {
                     None
                 } else {
                     Some("https://openrouter.ai/api/v1".to_string())
                 },
-                api_shape: if *provider_id == PROVIDER_COPILOT
-                    || *provider_id == PROVIDER_PI
-                {
+                api_shape: if *provider_id == PROVIDER_COPILOT || *provider_id == PROVIDER_PI {
                     None
                 } else {
                     Some(HarnessApiShape::OpenaiResponses)

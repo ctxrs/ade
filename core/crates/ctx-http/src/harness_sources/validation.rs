@@ -62,14 +62,8 @@ pub fn ensure_shape_compatible(provider_id: &str, shape: HarnessApiShape) -> Res
                 );
             }
         }
-        PROVIDER_QWEN
-        | PROVIDER_OPENCODE
-        | PROVIDER_MISTRAL
-        | PROVIDER_GOOSE
-        | PROVIDER_DROID
-        | PROVIDER_OPENHANDS
-        | PROVIDER_COPILOT
-        | PROVIDER_PI => {
+        PROVIDER_QWEN | PROVIDER_OPENCODE | PROVIDER_MISTRAL | PROVIDER_GOOSE | PROVIDER_DROID
+        | PROVIDER_OPENHANDS | PROVIDER_COPILOT | PROVIDER_PI => {
             if shape != HarnessApiShape::OpenaiResponses {
                 anyhow::bail!(
                     "{} requires api_shape=openai_responses; found {}",

@@ -228,9 +228,7 @@ fn expect_file_written(workdir: &Path, provider_id: &str) -> Result<(), String> 
     let file_path = workdir.join(&file_name);
     let contents = fs::read_to_string(&file_path)
         .map_err(|err| format!("{provider_id} did not create {}: {err}", file_name))?;
-    if contents.trim_end_matches(|ch| ch == '\r' || ch == '\n' || ch == ' ' || ch == '\t')
-        != WRITE_FILE_CONTENTS
-    {
+    if contents.trim_end_matches(['\r', '\n', ' ', '\t']) != WRITE_FILE_CONTENTS {
         return Err(format!(
             "{provider_id} wrote unexpected contents to {}",
             file_name
