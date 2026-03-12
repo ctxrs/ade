@@ -1,43 +1,43 @@
 {
   "version": 1,
   "name": "linux-arm-provider-install-reliability",
-  "updated_at": "2026-03-05",
+  "updated_at": "2026-03-12",
   "expected_environment": "host",
   "expected_network_mode": "llm_only",
   "critical_providers": [
     {
       "provider_id": "codex",
-      "openrouter_model_override": "openai/gpt-5.2-codex"
+      "openrouter_model_override": "openai/gpt-4.1"
     },
     {
       "provider_id": "opencode",
-      "openrouter_model_override": "openai/gpt-5.2-codex"
+      "openrouter_model_override": "google/gemini-3-flash-preview"
     },
     {
       "provider_id": "goose",
-      "openrouter_model_override": "openai/gpt-5.2-codex"
+      "openrouter_model_override": "google/gemini-3-flash-preview"
     }
   ],
   "full_nightly_providers": [
     {
       "provider_id": "codex",
-      "openrouter_model_override": "openai/gpt-5.2-codex"
+      "openrouter_model_override": "openai/gpt-4.1"
     },
     {
       "provider_id": "opencode",
-      "openrouter_model_override": "openai/gpt-5.2-codex"
+      "openrouter_model_override": "google/gemini-3-flash-preview"
     },
     {
       "provider_id": "goose",
-      "openrouter_model_override": "openai/gpt-5.2-codex"
+      "openrouter_model_override": "google/gemini-3-flash-preview"
     },
     {
       "provider_id": "openhands",
-      "openrouter_model_override": "openai/gpt-5.2-codex"
+      "openrouter_model_override": "google/gemini-3-flash-preview"
     },
     {
       "provider_id": "droid",
-      "openrouter_model_override": "openai/gpt-5.2-codex"
+      "openrouter_model_override": "google/gemini-3-flash-preview"
     }
   ],
   "deferred_providers": [

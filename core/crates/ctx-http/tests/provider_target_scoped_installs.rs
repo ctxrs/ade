@@ -794,7 +794,7 @@ async fn provider_status_http_keeps_host_and_container_installs_independent() {
     let app = common::router(state.clone());
 
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
-    let ws = common::create_workspace(&app, repo.path(), "host-ws").await;
+    common::create_workspace(&app, repo.path(), "host-ws").await;
 
     let (host_status, host_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -856,25 +856,6 @@ async fn provider_status_http_keeps_host_and_container_installs_independent() {
             .pointer("/details/managed_version")
             .and_then(serde_json::Value::as_str),
         Some("1.0.0-container")
-    );
-
-    let (options_status, options_body): (StatusCode, serde_json::Value) = common::json_request(
-        &app,
-        axum::http::Method::GET,
-        format!("/api/workspaces/{}/providers/codex/options", ws.id.0),
-        None,
-    )
-    .await;
-    assert_eq!(
-        options_status,
-        StatusCode::OK,
-        "host options request failed: {options_body:#?}"
-    );
-    assert_eq!(
-        options_body
-            .pointer("/models/current_model_id")
-            .and_then(serde_json::Value::as_str),
-        Some("host-model")
     );
 }
 

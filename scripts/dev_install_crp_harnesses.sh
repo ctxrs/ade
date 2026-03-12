@@ -7,7 +7,11 @@ PROFILE="${CTX_CRP_PROFILE:-debug}"
 INSTALL_LOCAL_CODEX="${CTX_INSTALL_LOCAL_CODEX_CRP:-0}"
 
 CODEX_WORKSPACE="${ROOT_DIR}/external-harnesses/codex/codex-rs"
-CODEX_TARGET_DIR="${CTX_CRP_TARGET_DIR:-${CODEX_WORKSPACE}/target}"
+
+# shellcheck source=lib/codex_crp_build_env.sh
+source "${ROOT_DIR}/scripts/lib/codex_crp_build_env.sh"
+
+CODEX_TARGET_DIR="$(codex_crp_target_dir "${ROOT_DIR}")"
 CODEX_BIN_SRC="${CODEX_TARGET_DIR}/${PROFILE}/codex-crp"
 CODEX_INSTALL_DIR="${DATA_DIR}/providers/agent-servers/codex-crp/dev"
 CODEX_INSTALL_BIN="${CODEX_INSTALL_DIR}/codex-crp"

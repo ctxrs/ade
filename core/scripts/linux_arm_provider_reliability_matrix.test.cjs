@@ -6,6 +6,7 @@ const path = require("node:path");
 
 const {
   loadMatrix,
+  modelOverrideMapForLane,
   providerIdsForLane,
   validateMatrix,
 } = require("./linux_arm_provider_reliability_matrix.cjs");
@@ -39,6 +40,23 @@ test("default fixture includes droid in nightly once managed dependencies exist"
 
   assert.ok(nightly.includes("droid"));
   assert.equal(droid, undefined);
+});
+
+test("default fixture carries explicit linux-arm OpenRouter model overrides", () => {
+  const { matrix } = loadMatrix();
+
+  assert.deepEqual(modelOverrideMapForLane(matrix, "critical"), {
+    codex: "openai/gpt-4.1",
+    opencode: "google/gemini-3-flash-preview",
+    goose: "google/gemini-3-flash-preview",
+  });
+  assert.deepEqual(modelOverrideMapForLane(matrix, "nightly"), {
+    codex: "openai/gpt-4.1",
+    opencode: "google/gemini-3-flash-preview",
+    goose: "google/gemini-3-flash-preview",
+    openhands: "google/gemini-3-flash-preview",
+    droid: "google/gemini-3-flash-preview",
+  });
 });
 
 test("droid managed dependencies are attached to droid instead of the ACP bridge", () => {

@@ -367,6 +367,8 @@ run_linux_arm_runtime_install_lane() {
   expected_environment="$(node -e 'const payload = JSON.parse(process.argv[1]); process.stdout.write(String(payload.expected_environment || "").trim());' "${matrix_payload_json}")"
   local expected_network_mode
   expected_network_mode="$(node -e 'const payload = JSON.parse(process.argv[1]); process.stdout.write(String(payload.expected_network_mode || "").trim());' "${matrix_payload_json}")"
+  local model_override_lines
+  model_override_lines="$(node -e 'const payload = JSON.parse(process.argv[1]); const overrides = payload.model_overrides && typeof payload.model_overrides === "object" ? payload.model_overrides : {}; for (const [providerId, rawModel] of Object.entries(overrides)) { const model = String(rawModel || "").trim(); if (!model) continue; const envName = `CTX_E2E_${providerId.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_OPENROUTER_MODEL_OVERRIDE`; console.log(`${envName}=${model}`); }' "${matrix_payload_json}")"
   if [[ -z "${provider_csv}" ]]; then
     provider_csv="${default_provider_csv}"
   fi
@@ -374,6 +376,14 @@ run_linux_arm_runtime_install_lane() {
     echo "linux-arm provider matrix resolved empty provider list for lane ${lane_key}" >&2
     exit 1
   fi
+  while IFS= read -r override_entry; do
+    [[ -z "${override_entry}" ]] && continue
+    local override_key="${override_entry%%=*}"
+    local override_value="${override_entry#*=}"
+    if [[ -n "${override_key}" && -z "${!override_key:-}" ]]; then
+      export "${override_key}=${override_value}"
+    fi
+  done <<< "${model_override_lines}"
 
   local preflight_args=(
     "${repo_root}/scripts/linux_arm_provider_preflight.cjs"

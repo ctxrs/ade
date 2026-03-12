@@ -4,7 +4,12 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CRP_WORKSPACE="${ROOT_DIR}/external-harnesses/codex/codex-rs"
 PROFILE="${CTX_CRP_PROFILE:-debug}"
-TARGET_DIR="${CTX_CRP_TARGET_DIR:-${CRP_WORKSPACE}/target}"
+
+# shellcheck source=lib/codex_crp_build_env.sh
+source "${ROOT_DIR}/scripts/lib/codex_crp_build_env.sh"
+
+TARGET_DIR="$(codex_crp_target_dir "${ROOT_DIR}")"
+BUILD_JOBS="$(codex_crp_build_jobs)"
 DATA_DIR="${CTX_DATA_DIR:-${HOME}/.ctx}"
 INSTALL_DIR="${DATA_DIR}/providers/agent-servers/codex-crp/dev"
 INSTALL_BIN="${INSTALL_DIR}/codex-crp"
@@ -22,7 +27,8 @@ fi
 
 (
   cd "${CRP_WORKSPACE}"
-  CARGO_TARGET_DIR="${TARGET_DIR}" cargo build -p codex-crp "${profile_args[@]}"
+  mkdir -p "${TARGET_DIR}"
+  CARGO_TARGET_DIR="${TARGET_DIR}" CARGO_BUILD_JOBS="${BUILD_JOBS}" cargo build -p codex-crp "${profile_args[@]}"
 )
 
 if [[ ! -f "${TARGET_DIR}/${PROFILE}/codex-crp" ]]; then
