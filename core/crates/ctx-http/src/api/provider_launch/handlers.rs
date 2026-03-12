@@ -317,6 +317,15 @@ pub(in crate::api) async fn get_provider_options(
 
     let mut raw_resp = match probe {
         Ok(probe) => {
+            let fallback_current_model_id =
+                subscription_models_payload_from_status(&provider_status).and_then(|models| {
+                    models
+                        .get("current_model_id")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string)
+                });
             let mut value = serde_json::json!({
                 "provider_id": provider_id,
                 "workspace_id": ws_id.0,
@@ -328,7 +337,11 @@ pub(in crate::api) async fn get_provider_options(
                 "auth_mode": auth_mode,
                 "probed_at": chrono::Utc::now().to_rfc3339(),
             });
-            if let Some(models) = runtime_probe_models_payload(&probe) {
+            if let Some(models) = runtime_probe_models_payload(
+                &provider_id,
+                &probe,
+                fallback_current_model_id.as_deref(),
+            ) {
                 value["models"] = models;
             }
             value

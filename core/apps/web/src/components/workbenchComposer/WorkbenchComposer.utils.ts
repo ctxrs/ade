@@ -144,20 +144,8 @@ export function buildModelsFromProviderOptions(opts?: ProviderOptions): Array<{ 
     .filter((m) => m.id.length > 0);
 }
 
-const FALLBACK_MODELS_BY_PROVIDER: Record<string, Array<{ id: string; name?: string }>> = {
-  gemini: [
-    { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash" },
-    { id: "gemini-2.0-flash-lite", name: "Gemini 2.0 Flash Lite" },
-    { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
-    { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro" },
-    { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash" },
-  ],
-};
-
-export function buildModelsForProvider(providerId: string, opts?: ProviderOptions): Array<{ id: string; name?: string }> {
-  const models = buildModelsFromProviderOptions(opts);
-  if (models.length > 0) return models;
-  return FALLBACK_MODELS_BY_PROVIDER[providerId] ?? [];
+export function buildModelsForProvider(_providerId: string, opts?: ProviderOptions): Array<{ id: string; name?: string }> {
+  return buildModelsFromProviderOptions(opts);
 }
 
 export function shouldShowLoadingProviderModels(providerId: string, opts?: ProviderOptions): boolean {

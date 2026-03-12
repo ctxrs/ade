@@ -1,5 +1,9 @@
 use super::*;
 
+fn default_catalog_model_id(catalog: Option<&ModelCatalog>) -> Option<&str> {
+    catalog.and_then(ModelCatalog::default_model_id)
+}
+
 pub(crate) async fn mcp_agent_init(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -461,7 +465,7 @@ pub(crate) async fn mcp_agent_init(
                 if provider_id == parent.provider_id {
                     Some(parent.model_id.as_str())
                 } else {
-                    catalog.and_then(|c| c.full_ids.first().map(|s| s.as_str()))
+                    default_catalog_model_id(catalog)
                 }
             } else {
                 None

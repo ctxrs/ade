@@ -10,7 +10,7 @@ use ctx_http::daemon::AppState;
 use ctx_http::installer::{
     save_agent_server_config, AgentServerCommand, AgentServerConfigFile, ManagedInstallMetadata,
 };
-use ctx_http::provider_accounts::add_copilot_account;
+use ctx_http::provider_accounts::{add_copilot_account, add_gemini_account};
 use ctx_providers::adapters::{ProviderAdapter, ProviderHealth, ProviderStatus};
 use ctx_store::StoreManager;
 
@@ -75,25 +75,55 @@ fn setup_runtime_command_with_managed_interpreter(
     data_root: &Path,
     provider_id: &str,
 ) -> (String, String) {
+    setup_runtime_command_with_managed_interpreter_and_probe_response(
+        data_root,
+        provider_id,
+        &serde_json::json!({
+            "seq": 1,
+            "channel": "control",
+            "type": "models.list",
+            "models": [{ "id": "fixture-model" }],
+            "current_model_id": "fixture-model",
+            "catalog_source": "live_remote",
+        }),
+    )
+}
+
+#[cfg(unix)]
+fn setup_runtime_command_with_managed_interpreter_and_probe_response(
+    data_root: &Path,
+    provider_id: &str,
+    probe_response: &serde_json::Value,
+) -> (String, String) {
     let dep_bin_rel = format!("managed/runtime-node-{provider_id}/bin");
     let dep_bin_dir = data_root.join(&dep_bin_rel);
     std::fs::create_dir_all(&dep_bin_dir).expect("create dep bin dir");
+
+    let probe_response_path = data_root.join(format!("{provider_id}-probe-models-response.json"));
+    std::fs::write(
+        &probe_response_path,
+        serde_json::to_vec(probe_response).expect("serialize probe response"),
+    )
+    .expect("write probe response");
 
     let interpreter_name = format!("ctx-managed-probe-node-{provider_id}");
     let interpreter = dep_bin_dir.join(&interpreter_name);
     write_executable(
         &interpreter,
-        r#"#!/bin/sh
+        &format!(
+            r#"#!/bin/sh
 while IFS= read -r line; do
   case "$line" in
     *'"type":"models.list"'*)
-      echo '{"seq":1,"channel":"control","type":"models.list","models":[{"id":"fixture-model"}],"current_model_id":"fixture-model","catalog_source":"live_remote"}'
+      cat '{}'
       exit 0
       ;;
   esac
 done
 exit 1
 "#,
+            probe_response_path.to_string_lossy()
+        ),
     );
 
     let runtime_dir = data_root
@@ -111,6 +141,88 @@ exit 1
     );
 
     (runtime_cmd.to_string_lossy().to_string(), dep_bin_rel)
+}
+
+#[cfg(unix)]
+fn setup_explicit_gemini_runtime_command_with_probe_response(
+    data_root: &Path,
+    probe_response: &serde_json::Value,
+) -> AgentServerCommand {
+    let probe_response_path = data_root.join("gemini-probe-models-response.json");
+    std::fs::write(
+        &probe_response_path,
+        serde_json::to_vec(probe_response).expect("serialize gemini probe response"),
+    )
+    .expect("write gemini probe response");
+
+    let node_bin = data_root
+        .join("bundle")
+        .join("runtimes")
+        .join("node")
+        .join("bin")
+        .join("node");
+    let cli_entry = data_root
+        .join("bundle")
+        .join("providers")
+        .join("gemini")
+        .join("node_modules")
+        .join("@google")
+        .join("gemini-cli")
+        .join("dist")
+        .join("index.js");
+    let core_entry = data_root
+        .join("bundle")
+        .join("providers")
+        .join("gemini")
+        .join("node_modules")
+        .join("@google")
+        .join("gemini-cli-core")
+        .join("dist")
+        .join("index.js");
+    let cli_pkg = cli_entry
+        .parent()
+        .expect("cli dist")
+        .parent()
+        .expect("cli root")
+        .join("package.json");
+
+    std::fs::create_dir_all(node_bin.parent().expect("node parent")).expect("mkdir node");
+    std::fs::create_dir_all(cli_entry.parent().expect("cli parent")).expect("mkdir cli");
+    std::fs::create_dir_all(core_entry.parent().expect("core parent")).expect("mkdir core");
+    write_executable(
+        &node_bin,
+        &format!(
+            r#"#!/bin/sh
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"models.list"'*)
+      cat '{}'
+      exit 0
+      ;;
+  esac
+done
+exit 1
+"#,
+            probe_response_path.to_string_lossy()
+        ),
+    );
+    std::fs::write(&cli_entry, b"cli").expect("write cli entry");
+    std::fs::write(&core_entry, b"core").expect("write core entry");
+    std::fs::write(
+        &cli_pkg,
+        r#"{"name":"@google/gemini-cli","version":"0.32.1"}"#,
+    )
+    .expect("write cli package");
+
+    AgentServerCommand {
+        command: node_bin.to_string_lossy().to_string(),
+        args: vec![
+            cli_entry.to_string_lossy().to_string(),
+            "--experimental-acp".to_string(),
+        ],
+        dependencies: Vec::new(),
+        managed: None,
+    }
 }
 
 async fn app_state(data_root: &Path) -> Arc<AppState> {
@@ -171,6 +283,53 @@ async fn seed_runtime_and_status(
             details: HashMap::new(),
         },
     );
+}
+
+#[cfg(unix)]
+async fn seed_acp_bridge_runtime(data_root: &Path) {
+    let bridge_dir = data_root
+        .join("providers")
+        .join("agent-servers")
+        .join("acp-crp-bridge")
+        .join("fixture")
+        .join("bin");
+    std::fs::create_dir_all(&bridge_dir).expect("create bridge runtime dir");
+
+    let bridge_cmd = bridge_dir.join("acp-crp-bridge");
+    write_executable(
+        &bridge_cmd,
+        r#"#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --acp-command)
+      shift
+      exec /bin/sh -lc "$1"
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+echo "missing --acp-command" >&2
+exit 1
+"#,
+    );
+
+    let mut cfg = ctx_http::installer::load_agent_server_config(data_root)
+        .await
+        .unwrap_or_default();
+    cfg.providers.insert(
+        "acp-crp-bridge".to_string(),
+        AgentServerCommand {
+            command: bridge_cmd.to_string_lossy().to_string(),
+            args: Vec::new(),
+            dependencies: Vec::new(),
+            managed: None,
+        },
+    );
+    save_agent_server_config(data_root, &cfg)
+        .await
+        .expect("save bridge runtime config");
 }
 
 #[cfg(unix)]
@@ -304,7 +463,7 @@ async fn copilot_provider_options_include_pinned_model_catalog_when_live_probe_i
 }
 
 #[tokio::test]
-async fn providers_bootstrap_includes_pinned_codex_and_claude_catalogs() {
+async fn providers_bootstrap_includes_pinned_codex_claude_and_gemini_catalogs() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let state = app_state(data_dir.path()).await;
@@ -330,6 +489,19 @@ async fn providers_bootstrap_includes_pinned_codex_and_claude_catalogs() {
             installed: true,
             detected_path: None,
             version: Some("2.1.47".to_string()),
+            capabilities: None,
+            health: ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+        },
+    );
+    state.providers.statuses.lock().await.insert(
+        "gemini".to_string(),
+        ProviderStatus {
+            provider_id: "gemini".to_string(),
+            installed: true,
+            detected_path: None,
+            version: Some("0.32.1".to_string()),
             capabilities: None,
             health: ProviderHealth::Ok,
             diagnostics: Vec::new(),
@@ -374,6 +546,118 @@ async fn providers_bootstrap_includes_pinned_codex_and_claude_catalogs() {
             .and_then(serde_json::Value::as_str),
         Some("default/medium"),
         "expected pinned claude bootstrap current model: {body:#?}"
+    );
+    assert_eq!(
+        body.pointer("/provider_options/gemini/models/meta/catalog_source")
+            .and_then(serde_json::Value::as_str),
+        Some("gemini_cli_version_pinned"),
+        "expected pinned gemini bootstrap catalog: {body:#?}"
+    );
+    assert_eq!(
+        body.pointer("/provider_options/gemini/models/catalog_version")
+            .and_then(serde_json::Value::as_str),
+        Some("0.32.1"),
+        "expected pinned gemini bootstrap catalog version: {body:#?}"
+    );
+    assert_eq!(
+        body.pointer("/provider_options/gemini/models/current_model_id")
+            .and_then(serde_json::Value::as_str),
+        Some("auto-gemini-3"),
+        "expected pinned gemini bootstrap current model: {body:#?}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn gemini_provider_options_use_live_acp_catalog_when_probe_succeeds() {
+    let _env_lock = lock_env().await;
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
+    let state = app_state(data_dir.path()).await;
+    let app = api::router(state.clone());
+
+    add_gemini_account(
+        data_dir.path(),
+        Some("Gemini Test".to_string()),
+        r#"{"access_token":"fixture-gemini-token","refresh_token":"fixture-refresh-token"}"#
+            .to_string(),
+        None,
+        Some("gemini@example.com".to_string()),
+    )
+    .await
+    .expect("add gemini account");
+
+    let gemini_cmd = setup_explicit_gemini_runtime_command_with_probe_response(
+        data_dir.path(),
+        &serde_json::json!({
+            "seq": 1,
+            "channel": "control",
+            "type": "models.list",
+            "models": [
+                { "id": "auto-gemini-3", "name": "Auto (Gemini 3)" },
+                { "id": "auto-gemini-2.5", "name": "Auto (Gemini 2.5)" },
+                { "id": "gemini-3-pro-preview", "name": "Gemini 3 Pro Preview" },
+                { "id": "gemini-3-flash-preview", "name": "Gemini 3 Flash Preview" },
+                { "id": "gemini-2.5-pro", "name": "Gemini 2.5 Pro" },
+                { "id": "gemini-2.5-flash", "name": "Gemini 2.5 Flash" },
+                { "id": "gemini-2.5-flash-lite", "name": "Gemini 2.5 Flash Lite" }
+            ]
+        }),
+    );
+    let mut cfg = ctx_http::installer::load_agent_server_config(data_dir.path())
+        .await
+        .unwrap_or_default();
+    cfg.providers.insert("gemini".to_string(), gemini_cmd);
+    save_agent_server_config(data_dir.path(), &cfg)
+        .await
+        .expect("save gemini runtime config");
+    seed_acp_bridge_runtime(data_dir.path()).await;
+    state.providers.statuses.lock().await.insert(
+        "gemini".to_string(),
+        ProviderStatus {
+            provider_id: "gemini".to_string(),
+            installed: true,
+            detected_path: None,
+            version: Some("0.32.1".to_string()),
+            capabilities: None,
+            health: ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+        },
+    );
+
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let (status, body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::GET,
+        format!("/api/workspaces/{}/providers/gemini/options", ws.id.0),
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "options request failed: {body:#?}");
+    assert_eq!(
+        body.get("probe_ok").and_then(serde_json::Value::as_bool),
+        Some(true),
+        "expected gemini probe_ok=true with fixture ACP runtime: {body:#?}"
+    );
+    assert_eq!(
+        body.pointer("/models/meta/catalog_source")
+            .and_then(serde_json::Value::as_str),
+        Some("runtime_probe_live"),
+        "expected live ACP Gemini catalog to replace the pinned bootstrap catalog: {body:#?}"
+    );
+    assert_eq!(
+        body.pointer("/models/current_model_id")
+            .and_then(serde_json::Value::as_str),
+        Some("auto-gemini-3"),
+        "expected live ACP current model id for Gemini: {body:#?}"
+    );
+    assert_eq!(
+        body.pointer("/models/models/6/id")
+            .and_then(serde_json::Value::as_str),
+        Some("gemini-2.5-flash-lite"),
+        "expected full Gemini ACP model list to be preserved: {body:#?}"
     );
 }
 

@@ -1,6 +1,31 @@
 import { describe, expect, it } from "vitest";
 
-import { shouldShowLoadingProviderModels } from "./WorkbenchComposer.utils";
+import { buildModelsForProvider, shouldShowLoadingProviderModels } from "./WorkbenchComposer.utils";
+
+describe("buildModelsForProvider", () => {
+  it("does not inject a browser-only gemini fallback when provider options are missing", () => {
+    expect(buildModelsForProvider("gemini")).toEqual([]);
+  });
+
+  it("builds gemini models directly from daemon provider options", () => {
+    expect(buildModelsForProvider("gemini", {
+      provider_id: "gemini",
+      workspace_id: "ws-test",
+      supports_load: false,
+      auth_required: false,
+      probed_at: "2026-03-10T00:00:00.000Z",
+      models: {
+        availableModels: [
+          { modelId: "auto-gemini-3", name: "Auto (Gemini 3)" },
+          { modelId: "gemini-3-pro-preview", name: "Gemini 3 Pro Preview" },
+        ],
+      },
+    })).toEqual([
+      { id: "auto-gemini-3", name: "Auto (Gemini 3)" },
+      { id: "gemini-3-pro-preview", name: "Gemini 3 Pro Preview" },
+    ]);
+  });
+});
 
 describe("shouldShowLoadingProviderModels", () => {
   it("keeps subscription-backed discovery providers in a loading state until models arrive", () => {

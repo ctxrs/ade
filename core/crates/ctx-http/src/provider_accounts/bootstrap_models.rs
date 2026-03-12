@@ -3,6 +3,12 @@ use serde_json::json;
 use super::copilot_models_value_for_version;
 
 #[derive(Clone, Copy)]
+struct PinnedFlatModel {
+    id: &'static str,
+    display_name: &'static str,
+}
+
+#[derive(Clone, Copy)]
 struct PinnedReasoningModel {
     id: &'static str,
     display_name: &'static str,
@@ -70,6 +76,39 @@ const CLAUDE_PINNED_SUBSCRIPTION_MODELS: [PinnedReasoningModel; 3] = [
     },
 ];
 
+const GEMINI_CATALOG_VERSION_0_32_1: &str = "0.32.1";
+
+const GEMINI_PINNED_SUBSCRIPTION_MODELS_0_32_1: [PinnedFlatModel; 7] = [
+    PinnedFlatModel {
+        id: "auto-gemini-3",
+        display_name: "Auto (Gemini 3)",
+    },
+    PinnedFlatModel {
+        id: "auto-gemini-2.5",
+        display_name: "Auto (Gemini 2.5)",
+    },
+    PinnedFlatModel {
+        id: "gemini-3-pro-preview",
+        display_name: "Gemini 3 Pro Preview",
+    },
+    PinnedFlatModel {
+        id: "gemini-3-flash-preview",
+        display_name: "Gemini 3 Flash Preview",
+    },
+    PinnedFlatModel {
+        id: "gemini-2.5-pro",
+        display_name: "Gemini 2.5 Pro",
+    },
+    PinnedFlatModel {
+        id: "gemini-2.5-flash",
+        display_name: "Gemini 2.5 Flash",
+    },
+    PinnedFlatModel {
+        id: "gemini-2.5-flash-lite",
+        display_name: "Gemini 2.5 Flash Lite",
+    },
+];
+
 fn effort_label(effort: &str) -> &'static str {
     match effort {
         "xhigh" => "Extra High",
@@ -104,6 +143,49 @@ fn pinned_reasoning_models_value(
     })
 }
 
+fn pinned_flat_models_value(
+    catalog_source: &'static str,
+    catalog_version: &'static str,
+    current_model_id: &'static str,
+    models: &[PinnedFlatModel],
+) -> serde_json::Value {
+    json!({
+        "catalog_source": catalog_source,
+        "catalog_version": catalog_version,
+        "current_model_id": current_model_id,
+        "models": models.iter().map(|model| json!({
+            "id": model.id,
+            "name": model.display_name,
+        })).collect::<Vec<_>>(),
+        "meta": {
+            "source_kind": "subscription",
+            "catalog_source": catalog_source,
+            "catalog_version": catalog_version,
+            "refresh_pending": true,
+        },
+    })
+}
+
+fn normalize_cli_version(version: &str) -> Option<String> {
+    let trimmed = version.trim().trim_start_matches('v').trim_end_matches('.');
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
+fn gemini_models_value_for_version(version: &str) -> Option<serde_json::Value> {
+    match normalize_cli_version(version)?.as_str() {
+        GEMINI_CATALOG_VERSION_0_32_1 => Some(pinned_flat_models_value(
+            "gemini_cli_version_pinned",
+            GEMINI_CATALOG_VERSION_0_32_1,
+            GEMINI_PINNED_SUBSCRIPTION_MODELS_0_32_1[0].id,
+            &GEMINI_PINNED_SUBSCRIPTION_MODELS_0_32_1,
+        )),
+        _ => None,
+    }
+}
+
 pub(crate) fn pinned_subscription_models_value(
     provider_id: &str,
     provider_version: Option<&str>,
@@ -127,6 +209,7 @@ pub(crate) fn pinned_subscription_models_value(
             ),
             &CLAUDE_PINNED_SUBSCRIPTION_MODELS,
         )),
+        "gemini" => provider_version.and_then(gemini_models_value_for_version),
         "copilot" => provider_version.and_then(copilot_models_value_for_version),
         _ => None,
     }
@@ -175,6 +258,61 @@ mod tests {
                 .pointer("/models/5/id")
                 .and_then(serde_json::Value::as_str),
             Some("sonnet/high")
+        );
+    }
+
+    #[test]
+    fn gemini_pinned_subscription_models_match_current_managed_catalog() {
+        let payload = pinned_subscription_models_value("gemini", Some("0.32.1"))
+            .expect("gemini pinned payload");
+        assert_eq!(
+            payload
+                .get("current_model_id")
+                .and_then(serde_json::Value::as_str),
+            Some("auto-gemini-3")
+        );
+        assert_eq!(
+            payload
+                .get("catalog_version")
+                .and_then(serde_json::Value::as_str),
+            Some("0.32.1")
+        );
+        assert_eq!(
+            payload
+                .pointer("/meta/refresh_pending")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            payload
+                .pointer("/models/6/id")
+                .and_then(serde_json::Value::as_str),
+            Some("gemini-2.5-flash-lite")
+        );
+    }
+
+    #[test]
+    fn gemini_pinned_catalog_supports_the_managed_matrix_release() {
+        let matrix: serde_json::Value =
+            serde_json::from_str(include_str!("../provider_matrix.json")).expect("provider matrix");
+        let managed_release = matrix
+            .get("providers")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|providers| {
+                providers.iter().find(|provider| {
+                    provider.get("id").and_then(serde_json::Value::as_str) == Some("gemini")
+                })
+            })
+            .and_then(|provider| provider.get("releases"))
+            .and_then(serde_json::Value::as_array)
+            .and_then(|releases| releases.first())
+            .and_then(|release| release.get("version"))
+            .and_then(serde_json::Value::as_str)
+            .expect("managed gemini release");
+
+        assert!(
+            pinned_subscription_models_value("gemini", Some(managed_release)).is_some(),
+            "missing pinned gemini catalog for managed release {managed_release}"
         );
     }
 }

@@ -12,10 +12,19 @@ struct ModelInfo {
 #[derive(Debug, Clone)]
 pub(super) struct ModelCatalog {
     pub(super) full_ids: Vec<String>,
+    pub(super) current_model_id: Option<String>,
     base_ids: Vec<String>,
     efforts_by_base: HashMap<String, Vec<String>>,
     full_id_by_base_effort: HashMap<String, HashMap<String, String>>,
     info_by_full_id: HashMap<String, ModelInfo>,
+}
+
+impl ModelCatalog {
+    pub(super) fn default_model_id(&self) -> Option<&str> {
+        self.current_model_id
+            .as_deref()
+            .or_else(|| self.full_ids.first().map(String::as_str))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -88,6 +97,13 @@ fn build_model_catalog(models: &serde_json::Value) -> Option<ModelCatalog> {
     if entries.is_empty() {
         return None;
     }
+    let current_model_id = models
+        .get("current_model_id")
+        .or_else(|| models.get("currentModelId"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
     let mut full_ids = HashSet::new();
     let mut base_ids = HashSet::new();
     let mut info_by_full_id = HashMap::new();
@@ -152,11 +168,40 @@ fn build_model_catalog(models: &serde_json::Value) -> Option<ModelCatalog> {
 
     Some(ModelCatalog {
         full_ids,
+        current_model_id,
         base_ids,
         efforts_by_base,
         full_id_by_base_effort,
         info_by_full_id,
     })
+}
+
+async fn load_pinned_subscription_model_catalog(
+    state: &Arc<AppState>,
+    provider_id: &str,
+    install_target: crate::installs::InstallTarget,
+) -> Option<ModelCatalog> {
+    let managed = crate::installer::load_agent_server_config(&state.core.data_root)
+        .await
+        .unwrap_or_default();
+    let matrix = crate::provider_matrix::load_matrix_cached(
+        &state.core.data_root,
+        &state.providers.matrix_cache,
+    )
+    .await;
+    let provider_status = crate::api::providers::provider_status_for_target(
+        state,
+        &managed,
+        &matrix,
+        provider_id,
+        install_target,
+    )
+    .await;
+    let models_value = crate::provider_accounts::pinned_subscription_models_value(
+        provider_id,
+        provider_status.version.as_deref(),
+    )?;
+    build_model_catalog(&models_value)
 }
 
 fn pick_default_effort(efforts: &[String]) -> Option<String> {
@@ -319,34 +364,6 @@ pub(super) async fn load_provider_model_catalog(
         }
     }
 
-    if provider_id == "copilot" {
-        let managed = crate::installer::load_agent_server_config(&state.core.data_root)
-            .await
-            .unwrap_or_default();
-        let matrix = crate::provider_matrix::load_matrix_cached(
-            &state.core.data_root,
-            &state.providers.matrix_cache,
-        )
-        .await;
-        let provider_status = crate::api::providers::provider_status_for_target(
-            state,
-            &managed,
-            &matrix,
-            provider_id,
-            install_target,
-        )
-        .await;
-        if let Some(version) = provider_status.version.as_deref() {
-            if let Some(models_value) =
-                crate::provider_accounts::copilot_models_value_for_version(version)
-            {
-                if let Some(catalog) = build_model_catalog(&models_value) {
-                    return Ok(Some(catalog));
-                }
-            }
-        }
-    }
-
     let source_config =
         crate::harness_sources::get_provider_source_config(&state.core.data_root, provider_id)
             .await
@@ -415,23 +432,33 @@ pub(super) async fn load_provider_model_catalog(
     }
 
     if !crate::api::provider_catalog::provider_supports_runtime_model_catalog(provider_id) {
-        return Ok(None);
+        return Ok(
+            load_pinned_subscription_model_catalog(state, provider_id, install_target).await,
+        );
     }
+
+    let pinned_catalog =
+        load_pinned_subscription_model_catalog(state, provider_id, install_target).await;
 
     let cfg = installer::load_agent_server_config(&state.core.data_root)
         .await
         .unwrap_or_default();
-    let runtime_command = installer::resolve_runtime_provider_command_for_target(
+    let runtime_command = match installer::resolve_runtime_provider_command_for_target(
         &cfg,
         provider_id,
         Some(install_target),
-    )
-    .map_err(|e| format!("runtime_command_invalid: provider={provider_id} error={e}"))?
-    .ok_or_else(|| {
-        format!(
-            "runtime_command_missing: provider={provider_id} (configure an absolute runtime command)"
-        )
-    })?;
+    ) {
+        Ok(Some(command)) => command,
+        Ok(None) => return Ok(pinned_catalog),
+        Err(err) => {
+            tracing::warn!(
+                provider_id = provider_id,
+                "provider runtime command resolution failed: {}",
+                logs::redact_sensitive(&err.to_string())
+            );
+            return Ok(pinned_catalog);
+        }
+    };
     let command = runtime_command.command_abs_path;
     let args = runtime_command.args;
 
@@ -449,7 +476,7 @@ pub(super) async fn load_provider_model_catalog(
                 "provider probe runtime env failed: {}",
                 logs::redact_sensitive(&err)
             );
-            return Ok(None);
+            return Ok(pinned_catalog);
         }
     };
     installer::prepend_runtime_bin_dirs_to_provider_path_for_target(
@@ -476,13 +503,19 @@ pub(super) async fn load_provider_model_catalog(
                 "provider options probe failed: {}",
                 logs::redact_sensitive(&e.to_string())
             );
-            return Ok(None);
+            return Ok(pinned_catalog);
         }
     };
 
-    let Some(models_value) = crate::api::provider_catalog::runtime_probe_models_payload(&probe)
-    else {
-        return Ok(None);
+    let fallback_current_model_id = pinned_catalog
+        .as_ref()
+        .and_then(ModelCatalog::default_model_id);
+    let Some(models_value) = crate::api::provider_catalog::runtime_probe_models_payload(
+        provider_id,
+        &probe,
+        fallback_current_model_id,
+    ) else {
+        return Ok(pinned_catalog);
     };
     if let Some(models) = build_model_catalog(&models_value) {
         let mut value = serde_json::json!({
@@ -506,12 +539,12 @@ pub(super) async fn load_provider_model_catalog(
         return Ok(Some(models));
     }
 
-    Ok(None)
+    Ok(pinned_catalog)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::load_provider_model_catalog;
+    use super::{load_provider_model_catalog, ModelCatalog};
 
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -583,5 +616,68 @@ mod tests {
 
         assert!(catalog.full_ids.iter().any(|id| id == "gpt-5"));
         assert!(catalog.full_ids.iter().any(|id| id == "gpt-5/high"));
+        assert_eq!(catalog.current_model_id.as_deref(), Some("gpt-5"));
+    }
+
+    #[tokio::test]
+    async fn load_provider_model_catalog_falls_back_to_pinned_gemini_catalog() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let stores = StoreManager::open(temp.path()).await.expect("open stores");
+        let state = Arc::new(AppState::new(
+            temp.path().to_path_buf(),
+            stores,
+            HashMap::new(),
+            "http://127.0.0.1:4311".to_string(),
+            None,
+        ));
+        let workspace = state
+            .global_store()
+            .create_workspace(
+                "ws".to_string(),
+                temp.path().join("repo").to_string_lossy().to_string(),
+                VcsKind::Git,
+            )
+            .await
+            .expect("create workspace");
+
+        state.providers.statuses.lock().await.insert(
+            "gemini".to_string(),
+            ctx_providers::adapters::ProviderStatus {
+                provider_id: "gemini".to_string(),
+                installed: true,
+                detected_path: None,
+                version: Some("0.32.1".to_string()),
+                capabilities: None,
+                health: ctx_providers::adapters::ProviderHealth::Ok,
+                diagnostics: Vec::new(),
+                details: HashMap::new(),
+            },
+        );
+
+        let catalog = load_provider_model_catalog(&state, &workspace, "gemini")
+            .await
+            .expect("load catalog")
+            .expect("catalog");
+
+        assert_eq!(catalog.current_model_id.as_deref(), Some("auto-gemini-3"));
+        assert!(catalog.full_ids.iter().any(|id| id == "auto-gemini-3"));
+        assert!(catalog
+            .full_ids
+            .iter()
+            .any(|id| id == "gemini-3-pro-preview"));
+    }
+
+    #[test]
+    fn model_catalog_default_model_id_prefers_current_model_id() {
+        let catalog = ModelCatalog {
+            full_ids: vec!["gemini-2.5-pro".to_string(), "auto-gemini-3".to_string()],
+            current_model_id: Some("auto-gemini-3".to_string()),
+            base_ids: Vec::new(),
+            efforts_by_base: HashMap::new(),
+            full_id_by_base_effort: HashMap::new(),
+            info_by_full_id: HashMap::new(),
+        };
+
+        assert_eq!(catalog.default_model_id(), Some("auto-gemini-3"));
     }
 }
