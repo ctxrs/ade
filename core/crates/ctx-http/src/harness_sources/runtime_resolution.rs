@@ -233,6 +233,9 @@ impl<'a> ProviderRuntimeContext<'a> {
                 })?;
                 let kimi_share_dir =
                     prepare_kimi_share_dir(self.runtime_data_root(), &endpoint.id).await?;
+                env.insert("OPENAI_API_KEY".to_string(), api_key.clone());
+                env.insert("OPENAI_BASE_URL".to_string(), base_url.clone());
+                env.insert("OPENAI_MODEL".to_string(), model_id.clone());
                 env.insert("KIMI_API_KEY".to_string(), api_key);
                 env.insert("KIMI_BASE_URL".to_string(), base_url);
                 env.insert("KIMI_MODEL_NAME".to_string(), model_id);
@@ -240,6 +243,7 @@ impl<'a> ProviderRuntimeContext<'a> {
                     KIMI_SHARE_DIR_ENV.to_string(),
                     kimi_share_dir.to_string_lossy().to_string(),
                 );
+                env.insert("CTX_CRP_DISABLE_MODEL_OVERRIDE".to_string(), "1".to_string());
             }
             PROVIDER_QWEN => {
                 let api_key = secrets::endpoint_secret_api_key(secret)?;
@@ -301,6 +305,13 @@ impl<'a> ProviderRuntimeContext<'a> {
                         ),
                     );
                 }
+                root.insert(
+                    "permission".to_string(),
+                    serde_json::json!({
+                        "edit": "deny",
+                        "bash": "allow",
+                    }),
+                );
                 root.insert(
                     "provider".to_string(),
                     serde_json::Value::Object(provider_config),
@@ -595,7 +606,29 @@ async fn prepare_qwen_home_with_openai_settings(qwen_home: &Path) -> Result<()> 
 
 async fn prepare_kimi_share_dir(runtime_data_root: &Path, endpoint_id: &str) -> Result<PathBuf> {
     let share_dir = kimi_endpoint_home(runtime_data_root, endpoint_id).join(".kimi");
-    tokio::fs::create_dir_all(&share_dir).await?;
+    let credentials_dir = share_dir.join("credentials");
+    tokio::fs::create_dir_all(&credentials_dir).await?;
+    // Kimi currently refuses endpoint/API-key sessions unless a file-backed token exists.
+    // Seed a benign token in the isolated endpoint runtime home so the CLI reaches the
+    // actual endpoint-auth path instead of aborting with auth_required before turn start.
+    let token_path = credentials_dir.join("kimi-code.json");
+    let token = serde_json::json!({
+        "access_token": "ctx-endpoint-access-token",
+        "refresh_token": "ctx-endpoint-refresh-token",
+        "expires_at": 4_102_444_800.0,
+        "scope": "openid profile",
+        "token_type": "Bearer",
+    });
+    tokio::fs::write(&token_path, token.to_string()).await?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = tokio::fs::set_permissions(
+            &token_path,
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .await;
+    }
     Ok(share_dir)
 }
 

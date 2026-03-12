@@ -1223,6 +1223,76 @@ describe("WorkbenchComposer textarea sizing", () => {
     expect(screen.getByRole("button", { name: "Codex" })).toBeInTheDocument();
   });
 
+  it("keeps the only auth-ready harness selected when its row is clicked again", async () => {
+    const NewTaskHarness = () => {
+      const [value, setValue] = useState("");
+      const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
+      const [draftHarness, setDraftHarness] = useState<DraftHarness | null>({ providerId: "opencode", modelId: "" });
+      const harnessCatalog: HarnessCatalogEntry[] = [
+        { id: "opencode", label: "OpenCode", logoSrc: "" },
+        { id: "cursor", label: "Cursor", logoSrc: "" },
+      ];
+      const providersById: Record<string, ProviderStatus> = {
+        opencode: { provider_id: "opencode", installed: true, health: "ok", diagnostics: [] },
+        cursor: { provider_id: "cursor", installed: true, health: "ok", diagnostics: [] },
+      };
+      const providerOptions: Record<string, ProviderOptions | undefined> = {
+        opencode: {
+          ...baseOptions("opencode"),
+          source: {
+            provider_id: "opencode",
+            selected_source_kind: "endpoint" as const,
+            selected_endpoint_id: "endpoint-opencode",
+            endpoints: [],
+          },
+        },
+        cursor: { ...baseOptions("cursor"), has_active_auth: false },
+      };
+
+      return (
+        <WorkbenchComposer
+          variant="newSession"
+          value={value}
+          setValue={setValue}
+          placeholder="@ for context, / for commands"
+          inputDisabled={false}
+          sessionIdForAutocomplete={null}
+          workspaceIdForAutocomplete={null}
+          slashCommands={[]}
+          attachments={attachments}
+          setAttachments={setAttachments}
+          onSend={vi.fn()}
+          sendDisabled={false}
+          sendDisabledReason={null}
+          onInterrupt={null}
+          modeId={modeId}
+          setModeId={setModeId}
+          harnessCatalog={harnessCatalog}
+          providersById={providersById}
+          providerInstallsById={{}}
+          onInstallProvider={vi.fn()}
+          onInstallAllProviders={vi.fn()}
+          providerOptions={providerOptions}
+          ensureProviderAuthSummary={async (providerId: string) => providerOptions[providerId]}
+          draftHarness={draftHarness}
+          setDraftHarness={setDraftHarness}
+          defaultProviderId="opencode"
+        />
+      );
+    };
+
+    render(<NewTaskHarness />);
+    fireEvent.click(screen.getByRole("button", { name: "OpenCode" }));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    const openCodeButtons = screen.getAllByRole("button", { name: /OpenCode/i });
+    fireEvent.click(openCodeButtons[1] as HTMLButtonElement);
+    expect(screen.getByRole("button", { name: "OpenCode" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Select agent" })).not.toBeInTheDocument();
+  });
+
   it("tracks provider_selected when the composer switches harnesses", async () => {
     const NewTaskHarness = () => {
       const [value, setValue] = useState("");

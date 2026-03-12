@@ -298,7 +298,7 @@ describe("provider auth import matrix cell (desktop e2e)", () => {
           exactAssistantMessage: true,
           prompt: [
             "This is an end to end test, so it is very important that you do exactly what I ask.",
-            "Make a new file in the workspace root called hello.md and put exactly this text in it: hi. The file must contain exactly those two characters with no trailing newline or extra whitespace.",
+            "Make a new file in the workspace root called hello.md and put exactly this text in it: hi. The file must contain exactly those two characters with no trailing newline or extra whitespace. If you use a shell command to write the file, use printf rather than echo -n, because echo -n is not portable and may write the literal text -n.",
             "Use only the current worktree root as the target directory. Do not write in a parent directory, and if your first attempt adds a trailing newline or uses the wrong directory, fix the file before replying.",
             "That is all. Do it now without further deliberation.",
             "After writing the file, reply with exactly: hi",

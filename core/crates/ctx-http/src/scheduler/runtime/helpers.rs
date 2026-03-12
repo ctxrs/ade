@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use super::*;
@@ -276,4 +277,62 @@ pub(super) fn runtime_provider_id_for_session_provider<'a>(
     _resolved_source: &harness_sources::ResolvedHarnessSource,
 ) -> &'a str {
     session_provider_id
+}
+
+pub(super) async fn apply_provider_launch_overrides(
+    provider_id: &str,
+    _workdir: &std::path::Path,
+    provider_env: &mut HashMap<String, String>,
+) -> Result<()> {
+    if !matches!(provider_id, "opencode" | "kimi") {
+        return Ok(());
+    }
+
+    // These providers currently behave truthfully only on their native ACP tool paths.
+    provider_env.insert("CTX_MCP_DISABLED".to_string(), "1".to_string());
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn opencode_launch_overrides_disable_mcp() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut env = HashMap::new();
+
+        apply_provider_launch_overrides("opencode", temp.path(), &mut env)
+            .await
+            .expect("apply overrides");
+
+        assert_eq!(env.get("CTX_MCP_DISABLED").map(String::as_str), Some("1"));
+        assert!(!env.contains_key("ACP_CWD"));
+    }
+
+    #[tokio::test]
+    async fn kimi_launch_overrides_disable_mcp() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut env = HashMap::new();
+
+        apply_provider_launch_overrides("kimi", temp.path(), &mut env)
+            .await
+            .expect("apply overrides");
+
+        assert_eq!(env.get("CTX_MCP_DISABLED").map(String::as_str), Some("1"));
+        assert!(!env.contains_key("ACP_CWD"));
+    }
+
+    #[tokio::test]
+    async fn unrelated_launch_overrides_leave_env_unchanged() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut env = HashMap::from([("CTX_MCP_DISABLED".to_string(), "0".to_string())]);
+
+        apply_provider_launch_overrides("codex", temp.path(), &mut env)
+            .await
+            .expect("apply overrides");
+
+        assert_eq!(env.get("CTX_MCP_DISABLED").map(String::as_str), Some("0"));
+        assert!(!env.contains_key("ACP_CWD"));
+    }
 }

@@ -36,7 +36,7 @@ mod helpers;
 use self::event_loop::{spawn_turn_event_loop, TurnEventLoop};
 pub(crate) use self::helpers::model_context_window;
 use self::helpers::{
-    compute_context_window_metrics, normalize_session_model_id,
+    apply_provider_launch_overrides, compute_context_window_metrics, normalize_session_model_id,
     provider_supports_system_prompt_append, runtime_provider_id_for_session_provider,
 };
 use super::lifecycle::RunningTurn;
@@ -546,6 +546,7 @@ pub(crate) async fn start_turn(
         }
         provider_env.insert("CTX_SYSTEM_PROMPT_APPEND".to_string(), append.to_string());
     }
+    apply_provider_launch_overrides(runtime_provider_id, workdir, &mut provider_env).await?;
 
     let run_started_at = Instant::now();
     let spawn_started_at = Instant::now();

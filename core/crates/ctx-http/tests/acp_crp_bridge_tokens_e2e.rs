@@ -186,7 +186,7 @@ fn write_file_name(provider_id: &str) -> String {
 fn write_file_prompt(provider_id: &str) -> String {
     let file_name = write_file_name(provider_id);
     format!(
-        "This is an end-to-end write test. Create a new file in this directory called {file_name} and put exactly {WRITE_FILE_CONTENTS} in it. The file must contain exactly those two characters with no trailing newline or extra whitespace. Use only the current worktree root as the target directory. Do not write in a parent directory, and if your first attempt adds a trailing newline or uses the wrong directory, fix the file before replying. Then reply with exactly {WRITE_FILE_CONTENTS}. Do it now without further deliberation."
+        "This is an end-to-end write test. Create a new file in this directory called {file_name} and put exactly {WRITE_FILE_CONTENTS} in it. The file must contain exactly those two characters with no trailing newline or extra whitespace. If you use a shell command to write the file, use printf rather than echo -n, because echo -n is not portable and may write the literal text -n. Use only the current worktree root as the target directory. Do not write in a parent directory, and if your first attempt adds a trailing newline or uses the wrong directory, fix the file before replying. Then reply with exactly {WRITE_FILE_CONTENTS}. Do it now without further deliberation."
     )
 }
 
@@ -589,6 +589,10 @@ fn build_env(
         };
         let cfg = serde_json::json!({
             "model": opencode_model,
+            "permission": {
+                "edit": "deny",
+                "bash": "allow"
+            },
             "provider": {
                 "openrouter": {
                     "options": {

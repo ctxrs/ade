@@ -15,6 +15,12 @@ use super::protocol::{CrpMcpServerConfig, CrpModelInfo, CrpModelsProbe, CrpSessi
 
 const DEFAULT_CTX_MCP_TOOL_TIMEOUT_SECS: u64 = 2 * 60 * 60;
 
+pub(super) fn model_override_disabled(env: &HashMap<String, String>) -> bool {
+    env.get("CTX_CRP_DISABLE_MODEL_OVERRIDE")
+        .and_then(|value| parse_boolish(value))
+        .unwrap_or(false)
+}
+
 pub(super) fn build_crp_session_config(
     env: &HashMap<String, String>,
     workdir: &Path,
@@ -25,10 +31,13 @@ pub(super) fn build_crp_session_config(
         .map(|disabled| !disabled)
         .unwrap_or(true);
 
-    let (model, reasoning_effort) = env
-        .get("CTX_MODEL_ID")
-        .map(|value| split_model_id_and_effort(value))
-        .unwrap_or((None, None));
+    let (model, reasoning_effort) = if model_override_disabled(env) {
+        (None, None)
+    } else {
+        env.get("CTX_MODEL_ID")
+            .map(|value| split_model_id_and_effort(value))
+            .unwrap_or((None, None))
+    };
 
     let mcp_servers = if mcp_enabled {
         let mut mcp_env = HashMap::new();
@@ -219,6 +228,34 @@ pub(super) async fn build_prompt_items(
     Ok(items)
 }
 
+pub(super) fn provider_requires_flattened_text_prompt(provider_id: &str) -> bool {
+    provider_id.eq_ignore_ascii_case("opencode")
+}
+
+pub(super) fn flatten_prompt_items_as_text(items: &[Value]) -> Result<String> {
+    let mut out = Vec::new();
+    for item in items {
+        let text = match item {
+            Value::String(text) => Some(text.as_str()),
+            Value::Object(obj) => obj
+                .get("text")
+                .and_then(Value::as_str)
+                .or_else(|| obj.get("content").and_then(Value::as_str)),
+            _ => None,
+        };
+        let Some(text) = text else {
+            anyhow::bail!("provider requires text-only ACP prompt items");
+        };
+        if !text.is_empty() {
+            out.push(text.to_string());
+        }
+    }
+    if out.is_empty() {
+        anyhow::bail!("provider requires a non-empty text ACP prompt");
+    }
+    Ok(out.join("\n\n"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,6 +314,18 @@ mod tests {
     }
 
     #[test]
+    fn build_crp_session_config_can_disable_model_override() {
+        let mut env = HashMap::new();
+        env.insert("CTX_MODEL_ID".to_string(), "openai/gpt-4.1-mini".to_string());
+        env.insert("CTX_CRP_DISABLE_MODEL_OVERRIDE".to_string(), "1".to_string());
+        let workdir = PathBuf::from("/tmp/workdir");
+
+        let cfg = build_crp_session_config(&env, &workdir);
+        assert_eq!(cfg.model, None);
+        assert_eq!(cfg.reasoning_effort, None);
+    }
+
+    #[test]
     fn build_crp_model_probe_config_forces_full_yolo_policy() {
         let workdir = PathBuf::from("/tmp/workdir");
 
@@ -315,5 +364,26 @@ mod tests {
     fn synthetic_cline_models_probe_requires_openai_model() {
         let env = HashMap::new();
         assert!(synthetic_models_probe_for_provider("cline", &env).is_none());
+    }
+
+    #[test]
+    fn flatten_prompt_items_as_text_joins_text_blocks_in_order() {
+        let items = vec![
+            json!({"type":"text","text":"system"}),
+            json!({"type":"text","text":"user"}),
+        ];
+        assert_eq!(
+            flatten_prompt_items_as_text(&items).expect("flattened prompt"),
+            "system\n\nuser"
+        );
+    }
+
+    #[test]
+    fn flatten_prompt_items_as_text_rejects_non_text_items() {
+        let items = vec![json!({"type":"image","image_url":"data:image/png;base64,AAAA"})];
+        let err = flatten_prompt_items_as_text(&items).expect_err("image item should fail");
+        assert!(err
+            .to_string()
+            .contains("provider requires text-only ACP prompt items"));
     }
 }

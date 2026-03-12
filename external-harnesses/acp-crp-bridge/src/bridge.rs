@@ -9,7 +9,8 @@ use agent_client_protocol::{
     InitializeRequest, McpServer, McpServerStdio, NewSessionRequest, PermissionOptionKind,
     PromptRequest, ProtocolVersion, RequestPermissionOutcome, RequestPermissionRequest,
     RequestPermissionResponse, ResourceLink, SelectedPermissionOutcome, SessionModeState,
-    SessionNotification, SetSessionModeRequest, SetSessionModelRequest, TextContent,
+    SessionNotification, SessionUpdate, SetSessionModeRequest, SetSessionModelRequest,
+    TextContent,
 };
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
@@ -18,7 +19,7 @@ use tokio::process::Command;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::LocalSet;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
-use tracing::{error, warn};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::config::Config;
@@ -62,6 +63,56 @@ struct BridgeClient {
     sessions: Arc<Mutex<Sessions>>,
 }
 
+fn bridge_trace_filter_matches(filter: Option<&str>, provider_id: Option<&str>) -> bool {
+    let Some(filter) = filter.map(str::trim).filter(|value| !value.is_empty()) else {
+        return false;
+    };
+    if filter == "*" {
+        return true;
+    }
+    provider_id.is_some_and(|provider| provider.eq_ignore_ascii_case(filter))
+}
+
+fn bridge_trace_enabled(provider_id: Option<&str>) -> bool {
+    if std::env::var("CTX_ACP_BRIDGE_TRACE")
+        .ok()
+        .is_some_and(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "YES"))
+    {
+        return true;
+    }
+    bridge_trace_filter_matches(
+        std::env::var("CTX_ACP_BRIDGE_TRACE_PROVIDER").ok().as_deref(),
+        provider_id,
+    )
+}
+
+fn bridge_trace_enabled_from_env() -> bool {
+    let provider_id = std::env::var("CTX_PROVIDER_ID").ok();
+    bridge_trace_enabled(provider_id.as_deref())
+}
+
+fn session_update_kind(update: &SessionUpdate) -> &'static str {
+    match update {
+        SessionUpdate::AgentMessageChunk(_) => "agent_message_chunk",
+        SessionUpdate::AgentThoughtChunk(_) => "agent_thought_chunk",
+        SessionUpdate::ToolCall(_) => "tool_call",
+        SessionUpdate::ToolCallUpdate(_) => "tool_call_update",
+        _ => "other",
+    }
+}
+
+fn raw_session_update_kind(line: &str) -> Option<String> {
+    let msg: Value = serde_json::from_str(line).ok()?;
+    let method = msg.get("method").and_then(Value::as_str)?;
+    if method != "session/update" {
+        return Some(method.to_string());
+    }
+    msg.pointer("/params/update/sessionUpdate")
+        .and_then(Value::as_str)
+        .map(|value| format!("session/update:{value}"))
+        .or_else(|| Some("session/update".to_string()))
+}
+
 #[async_trait::async_trait(?Send)]
 impl Client for BridgeClient {
     async fn request_permission(
@@ -97,11 +148,24 @@ impl Client for BridgeClient {
         let mut sessions = self.sessions.lock().await;
         let session_id = args.session_id.to_string();
         if let Some(state) = sessions.by_acp.get_mut(&session_id) {
+            let trace_enabled = bridge_trace_enabled_from_env();
+            let update_kind = session_update_kind(&args.update);
             let events = state.translator.apply_update(args.update);
             if state.active_turn_id.is_some() && !events.is_empty() {
                 state.last_turn_update_at = Some(Instant::now());
                 state.turn_update_count =
                     state.turn_update_count.saturating_add(events.len() as u64);
+            }
+            if trace_enabled {
+                info!(
+                    session_id = %session_id,
+                    update_kind,
+                    emitted_events = events.len(),
+                    active_turn_id = ?state.active_turn_id,
+                    has_buffered_message = state.translator.has_buffered_message(),
+                    turn_update_count = state.turn_update_count,
+                    "acp session notification"
+                );
             }
             for event in events {
                 let _ = self.events_tx.send(event).await;
@@ -217,10 +281,19 @@ async fn forward_acp_stdout(
 ) -> Result<()> {
     let mut lines = BufReader::new(child_stdout).lines();
     let mut writer = BufWriter::new(proxy);
+    let trace_enabled = bridge_trace_enabled_from_env();
     while let Some(line) = lines.next_line().await? {
+        if trace_enabled {
+            if let Some(kind) = raw_session_update_kind(&line) {
+                info!(kind = %kind, "acp stdout");
+            }
+        }
         if let Some(rewrites) = rewrite_session_update_line(&line) {
             if rewrites.is_empty() {
                 continue;
+            }
+            if trace_enabled {
+                info!(rewrites = rewrites.len(), "acp stdout rewrite");
             }
             for entry in rewrites {
                 writer.write_all(entry.as_bytes()).await?;
@@ -780,10 +853,35 @@ async fn handle_command(
 
             let prompt_blocks = build_prompt_blocks(prompt, items, Some(&prompt_cwd))
                 .ok_or_else(|| anyhow!("session.prompt missing prompt"))?;
+            let trace_enabled = {
+                let state = bridge_state.lock().await;
+                bridge_trace_enabled(state.provider_id.as_deref())
+            };
+            if trace_enabled {
+                info!(
+                    session_id = %crp_session_id,
+                    provider_session_id = %acp_session_id,
+                    turn_id = %turn_id,
+                    prompt_blocks = prompt_blocks.len(),
+                    cwd = %prompt_cwd.display(),
+                    requested_model = ?model,
+                    wait_for_prompt_tail = wait_for_cline_tail,
+                    "session.prompt start"
+                );
+            }
             let prompt_req = PromptRequest::new(acp_session_id.clone(), prompt_blocks);
             let response = match acp.prompt(prompt_req).await {
                 Ok(response) => response,
                 Err(err) => {
+                    if trace_enabled {
+                        info!(
+                            session_id = %crp_session_id,
+                            provider_session_id = %acp_session_id,
+                            turn_id = %turn_id,
+                            error = %err,
+                            "session.prompt failed"
+                        );
+                    }
                     fail_active_turn(
                         events_tx,
                         sessions,
@@ -796,6 +894,15 @@ async fn handle_command(
                     return Ok(());
                 }
             };
+            if trace_enabled {
+                info!(
+                    session_id = %crp_session_id,
+                    provider_session_id = %acp_session_id,
+                    turn_id = %turn_id,
+                    stop_reason = ?response.stop_reason,
+                    "session.prompt response"
+                );
+            }
 
             if wait_for_cline_tail {
                 wait_for_prompt_tail(sessions, &acp_session_id, &turn_id, initial_update_count)
@@ -808,7 +915,19 @@ async fn handle_command(
                 .get_mut(&acp_session_id)
                 .ok_or_else(|| anyhow!("missing session after prompt"))?;
 
-            if let Some(final_event) = state.translator.finish_turn() {
+            let final_event = state.translator.finish_turn();
+            if trace_enabled {
+                info!(
+                    session_id = %crp_session_id,
+                    provider_session_id = %acp_session_id,
+                    turn_id = %turn_id,
+                    final_event_emitted = final_event.is_some(),
+                    has_buffered_message = state.translator.has_buffered_message(),
+                    turn_update_count = state.turn_update_count,
+                    "session.prompt finalize"
+                );
+            }
+            if let Some(final_event) = final_event {
                 let _ = events_tx.send(final_event).await;
             }
             state.translator.clear_turn();
@@ -1509,6 +1628,15 @@ mod tests {
     }
 
     #[test]
+    fn bridge_trace_provider_filter_matches_provider_id() {
+        assert!(bridge_trace_filter_matches(Some("opencode"), Some("opencode")));
+        assert!(bridge_trace_filter_matches(Some("OPENCODE"), Some("opencode")));
+        assert!(bridge_trace_filter_matches(Some("*"), Some("qwen")));
+        assert!(!bridge_trace_filter_matches(Some("qwen"), Some("opencode")));
+        assert!(!bridge_trace_filter_matches(None, Some("opencode")));
+    }
+
+    #[test]
     fn prompt_tail_waits_for_first_update() {
         let started_at = Instant::now();
         let now = started_at + Duration::from_secs(1);
@@ -1600,5 +1728,30 @@ mod tests {
             parsed.pointer("/params/update/sessionUpdate"),
             Some(&Value::String("agent_message_chunk".to_string()))
         );
+    }
+
+    #[test]
+    fn raw_session_update_kind_reports_method_and_update_kind() {
+        let line = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "update": {
+                    "sessionUpdate": "agent_message"
+                }
+            }
+        })
+        .to_string();
+        assert_eq!(
+            raw_session_update_kind(&line).as_deref(),
+            Some("session/update:agent_message")
+        );
+
+        let other = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "session/open"
+        })
+        .to_string();
+        assert_eq!(raw_session_update_kind(&other).as_deref(), Some("session/open"));
     }
 }

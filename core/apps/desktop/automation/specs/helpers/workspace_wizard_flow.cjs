@@ -1175,7 +1175,7 @@ const runProviderFileEditApiSmoke = async (
   const expectedContents = String(fileContents || "");
   const finalPrompt = normalizeText(prompt) || [
     `Create or overwrite the workspace file ${relativePath}.`,
-    `Write exactly this content and nothing else: ${JSON.stringify(expectedContents)}. The file must contain exactly those characters with no trailing newline or extra whitespace.`,
+    `Write exactly this content and nothing else: ${JSON.stringify(expectedContents)}. The file must contain exactly those characters with no trailing newline or extra whitespace. If you use a shell command to write the file, use printf rather than echo -n, because echo -n is not portable and may write the literal text -n.`,
     "Use only the current worktree root as the target directory. Do not write in a parent directory, and if your first attempt adds a trailing newline or uses the wrong directory, fix the file before replying.",
     `After writing the file, reply with exactly this token: ${expectedContents}`,
   ].join(" ");

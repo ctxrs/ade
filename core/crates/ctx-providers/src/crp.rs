@@ -28,7 +28,11 @@ mod runtime;
 #[cfg(test)]
 mod tests;
 
-use self::config::{build_crp_session_config, build_prompt_items, split_model_id_and_effort};
+use self::config::{
+    build_crp_session_config, build_prompt_items, flatten_prompt_items_as_text,
+    model_override_disabled,
+    provider_requires_flattened_text_prompt, split_model_id_and_effort,
+};
 use self::normalize::{event_matches_session, event_turn_id, map_crp_event, CachedToolInput};
 use self::policy::{
     extract_auth_error_from_stderr_line, extract_auth_url_from_stderr_line,
@@ -643,19 +647,28 @@ impl CrpSessionPool {
             }
             None => {
                 let items = build_prompt_items(&req.input, &req.workdir, &req.env).await?;
-                let (model, reasoning_effort) = req
-                    .input
-                    .model_id
-                    .as_deref()
-                    .map(split_model_id_and_effort)
-                    .unwrap_or((None, None));
+                let (prompt_items, prompt) =
+                    if provider_requires_flattened_text_prompt(&self.agent.provider_id) {
+                        (None, Some(flatten_prompt_items_as_text(&items)?))
+                    } else {
+                        (Some(items), Some(req.input.content.clone()))
+                    };
+                let (model, reasoning_effort) = if model_override_disabled(&req.env) {
+                    (None, None)
+                } else {
+                    req.input
+                        .model_id
+                        .as_deref()
+                        .map(split_model_id_and_effort)
+                        .unwrap_or((None, None))
+                };
                 session
                     .process
                     .send(CrpCommand::SessionPrompt {
                         session_id: Some(req.session_key.clone()),
                         turn_id: Some(turn_id.clone()),
-                        items: Some(items),
-                        prompt: Some(req.input.content.clone()),
+                        items: prompt_items,
+                        prompt,
                         model,
                         reasoning_effort,
                         cwd: Some(req.workdir.clone()),

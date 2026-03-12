@@ -170,7 +170,7 @@ test("workbench: codex OpenAI endpoint auth can run a real task", async ({ page,
   });
 
   const promptMarker = `codex-openai-provider-endpoint-${Date.now()}`;
-  const prompt = `${promptMarker}: this is an end-to-end write test. Create a new file in this directory called ${WRITE_FILE_NAME} and put exactly ${WRITE_FILE_CONTENTS} in it. The file must contain exactly those two characters with no trailing newline or extra whitespace. Use only the current worktree root as the target directory. Do not write in a parent directory, and if your first attempt adds a trailing newline or uses the wrong directory, fix the file before replying. Then reply with exactly ${WRITE_FILE_CONTENTS}.`;
+  const prompt = `${promptMarker}: this is an end-to-end write test. Create a new file in this directory called ${WRITE_FILE_NAME} and put exactly ${WRITE_FILE_CONTENTS} in it. The file must contain exactly those two characters with no trailing newline or extra whitespace. If you use a shell command to write the file, use printf rather than echo -n, because echo -n is not portable and may write the literal text -n. Use only the current worktree root as the target directory. Do not write in a parent directory, and if your first attempt adds a trailing newline or uses the wrong directory, fix the file before replying. Then reply with exactly ${WRITE_FILE_CONTENTS}.`;
 
   const createTaskResp = await request.post(`/api/workspaces/${workspaceId}/tasks`, {
     data: {

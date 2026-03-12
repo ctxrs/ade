@@ -540,8 +540,18 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
           source: "provider_switch",
         });
       }
+      const authReadyVisibleHarnessCount = Object.keys(ns.providersById).filter(
+        (id) =>
+          !UNSUPPORTED_HARNESS_IDS.has(id)
+          && isReadyVisibleHarnessProviderStatus(ns.providersById[id])
+          && hasConfiguredHarnessAuth(id, ns.providerOptions[id]),
+      ).length;
       ns.setDraftHarness((prev) => {
-        if (prev?.providerId === providerId) return null;
+        // Keep the only auth-ready harness selected so late auto-selection does not
+        // immediately get toggled back to an empty composer state.
+        if (prev?.providerId === providerId) {
+          return authReadyVisibleHarnessCount <= 1 ? prev : null;
+        }
         return { providerId, modelId: "" };
       });
       ns.ensureProviderAuthSummary(providerId).catch(() => {});

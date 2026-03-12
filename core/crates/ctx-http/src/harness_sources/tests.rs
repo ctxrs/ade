@@ -703,18 +703,47 @@ async fn kimi_endpoint_projects_env_for_run_resolution() {
         Some("https://api.moonshot.ai/v1")
     );
     assert_eq!(
+        resolved.env.get("OPENAI_BASE_URL").map(String::as_str),
+        Some("https://api.moonshot.ai/v1")
+    );
+    assert_eq!(
         resolved.env.get("KIMI_API_KEY").map(String::as_str),
+        Some("kimi-key")
+    );
+    assert_eq!(
+        resolved.env.get("OPENAI_API_KEY").map(String::as_str),
         Some("kimi-key")
     );
     assert_eq!(
         resolved.env.get("KIMI_MODEL_NAME").map(String::as_str),
         Some("kimi-k2")
     );
+    assert_eq!(
+        resolved.env.get("OPENAI_MODEL").map(String::as_str),
+        Some("kimi-k2")
+    );
+    assert_eq!(
+        resolved
+            .env
+            .get("CTX_CRP_DISABLE_MODEL_OVERRIDE")
+            .map(String::as_str),
+        Some("1")
+    );
     let kimi_share_dir = resolved
         .env
         .get("KIMI_SHARE_DIR")
         .expect("KIMI_SHARE_DIR should be set");
-    assert!(PathBuf::from(kimi_share_dir).starts_with(root.path()));
+    let kimi_share_path = PathBuf::from(kimi_share_dir);
+    assert!(kimi_share_path.starts_with(root.path()));
+    let token_path = kimi_share_path.join("credentials").join("kimi-code.json");
+    let token = tokio::fs::read_to_string(&token_path)
+        .await
+        .expect("read seeded kimi endpoint token");
+    let parsed: serde_json::Value = serde_json::from_str(&token).expect("parse kimi token json");
+    assert_eq!(
+        parsed.get("access_token").and_then(serde_json::Value::as_str),
+        Some("ctx-endpoint-access-token")
+    );
 }
 
 #[tokio::test]
@@ -804,6 +833,20 @@ async fn qwen_model_override_is_opaque_and_opencode_uses_endpoint_namespace() {
     assert_eq!(
         parsed.get("model").and_then(serde_json::Value::as_str),
         Some("myawesomeprovider/openai/gpt-5.2-codex")
+    );
+    assert_eq!(
+        parsed
+            .get("permission")
+            .and_then(|permission| permission.get("edit"))
+            .and_then(serde_json::Value::as_str),
+        Some("deny")
+    );
+    assert_eq!(
+        parsed
+            .get("permission")
+            .and_then(|permission| permission.get("bash"))
+            .and_then(serde_json::Value::as_str),
+        Some("allow")
     );
     assert!(
         parsed
