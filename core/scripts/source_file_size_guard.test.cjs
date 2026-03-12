@@ -8,10 +8,12 @@ const {
   GUIDANCE_MESSAGE,
   HARD_MAX_LINES,
   SOFT_MAX_LINES,
+  classifySourceFile,
   collectSourceFileStats,
   countLines,
   evaluateSourceFileSizes,
   isTrackedSourceFile,
+  isTestOrAutomationFile,
   run,
 } = require("./source_file_size_guard.cjs");
 
@@ -22,44 +24,44 @@ const writeFile = (rootDir, relativePath, lineCount) => {
   fs.writeFileSync(absolutePath, `${lines.join("\n")}\n`, "utf8");
 };
 
-const writeExceptions = (rootDir, entries) => {
-  const exceptionPath = path.join(rootDir, "exceptions.json");
-  fs.writeFileSync(exceptionPath, `${JSON.stringify(entries, null, 2)}\n`, "utf8");
-  return exceptionPath;
-};
-
-test("isTrackedSourceFile includes src production files and excludes tests", () => {
-  assert.equal(isTrackedSourceFile("apps/web/src/pages/SessionPage.view.tsx"), true);
-  assert.equal(isTrackedSourceFile("crates/ctx-http/src/api/mod.rs"), true);
-  assert.equal(isTrackedSourceFile("apps/web/src/pages/SessionPage.view.test.tsx"), false);
-  assert.equal(isTrackedSourceFile("crates/ctx-http/src/provider_accounts/tests.rs"), false);
-  assert.equal(isTrackedSourceFile("apps/web/scripts/replay-loadtest.mjs"), false);
-  assert.equal(isTrackedSourceFile("external-harnesses/codex/codex-rs/core/src/codex.rs"), false);
+test("source file classification distinguishes production from test and ignored paths", () => {
+  assert.equal(classifySourceFile("core/apps/web/src/pages/SessionPage.view.tsx"), "production");
+  assert.equal(classifySourceFile("core/crates/ctx-http/src/api/mod.rs"), "production");
+  assert.equal(classifySourceFile("site/src/main.js"), "production");
+  assert.equal(classifySourceFile("core/apps/web/src/pages/SessionPage.view.test.tsx"), "test_or_automation");
+  assert.equal(classifySourceFile("core/crates/ctx-http/src/provider_accounts/tests.rs"), "test_or_automation");
+  assert.equal(classifySourceFile("core/apps/web/e2e/workbench-index.spec.ts"), "test_or_automation");
+  assert.equal(classifySourceFile("core/scripts/bundled_dependency_updates.cjs"), "test_or_automation");
+  assert.equal(classifySourceFile("core/crates/ctx-http/src/bin/ctx-http-lsp-test-server.rs"), "production");
+  assert.equal(classifySourceFile("external-harnesses/codex/codex-rs/core/src/codex.rs"), "ignore");
 });
 
-test("evaluateSourceFileSizes reports missing exceptions and oversized exceptions", () => {
+test("isTrackedSourceFile includes production files and excludes tests and external harnesses", () => {
+  assert.equal(isTrackedSourceFile("core/apps/web/src/pages/SessionPage.view.tsx"), true);
+  assert.equal(isTrackedSourceFile("core/crates/ctx-http/src/api/mod.rs"), true);
+  assert.equal(isTrackedSourceFile("site/src/main.js"), true);
+  assert.equal(isTrackedSourceFile("core/apps/web/src/pages/SessionPage.view.test.tsx"), false);
+  assert.equal(isTrackedSourceFile("core/crates/ctx-http/src/provider_accounts/tests.rs"), false);
+  assert.equal(isTrackedSourceFile("core/apps/web/scripts/replay-loadtest.mjs"), false);
+  assert.equal(isTrackedSourceFile("external-harnesses/codex/codex-rs/core/src/codex.rs"), false);
+  assert.equal(isTestOrAutomationFile("core/apps/web/e2e/workbench-index.spec.ts"), true);
+  assert.equal(isTestOrAutomationFile("core/apps/web/src/pages/SessionPage.view.tsx"), false);
+});
+
+test("evaluateSourceFileSizes reports soft-limit warnings and hard-limit violations", () => {
   const files = [
     { path: "apps/web/src/Small.ts", lineCount: SOFT_MAX_LINES + 10 },
     { path: "apps/web/src/TooBig.ts", lineCount: HARD_MAX_LINES + 1 },
     { path: "crates/ctx-http/src/Huge.rs", lineCount: HARD_MAX_LINES + 50 },
   ];
-  const exceptions = new Map([
-    [
-      "crates/ctx-http/src/Huge.rs",
-      { path: "crates/ctx-http/src/Huge.rs", maxLines: HARD_MAX_LINES + 20, reason: "temporary" },
-    ],
+
+  const result = evaluateSourceFileSizes({ files });
+
+  assert.equal(result.warnings.length, 3);
+  assert.deepEqual(result.violations.map((entry) => entry.path), [
+    "apps/web/src/TooBig.ts",
+    "crates/ctx-http/src/Huge.rs",
   ]);
-
-  const result = evaluateSourceFileSizes({ files, exceptions });
-
-  assert.equal(result.warnings.length, 2);
-  assert.deepEqual(
-    result.violations.map((entry) => ({ path: entry.path, type: entry.type })),
-    [
-      { path: "apps/web/src/TooBig.ts", type: "missing_exception" },
-      { path: "crates/ctx-http/src/Huge.rs", type: "exception_exceeded" },
-    ],
-  );
 });
 
 test("countLines matches newline-terminated and unterminated files", () => {
@@ -70,8 +72,7 @@ test("countLines matches newline-terminated and unterminated files", () => {
 
 test("run emits the architectural guidance and exits nonzero when enforcement fails", () => {
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "source-file-size-"));
-  writeFile(rootDir, "apps/web/src/pages/HugePage.tsx", HARD_MAX_LINES + 5);
-  const exceptionsFilePath = writeExceptions(rootDir, []);
+  writeFile(rootDir, "core/apps/web/src/pages/HugePage.tsx", HARD_MAX_LINES + 5);
   let output = "";
   const stream = {
     write(chunk) {
@@ -81,7 +82,6 @@ test("run emits the architectural guidance and exits nonzero when enforcement fa
 
   const exitCode = run({
     rootDir,
-    exceptionsFilePath,
     enforce: true,
     stdout: stream,
     stderr: stream,
@@ -92,24 +92,32 @@ test("run emits the architectural guidance and exits nonzero when enforcement fa
   assert.match(output, new RegExp(GUIDANCE_MESSAGE.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")));
 });
 
-test("run accepts files that are large but explicitly capped by exception", () => {
-  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "source-file-size-ok-"));
-  writeFile(rootDir, "apps/web/src/pages/AllowedPage.tsx", HARD_MAX_LINES + 5);
-  const exceptionsFilePath = writeExceptions(rootDir, [
-    {
-      path: "apps/web/src/pages/AllowedPage.tsx",
-      maxLines: HARD_MAX_LINES + 5,
-      reason: "existing large file",
-    },
-  ]);
+test("run ignores oversized test and automation files", () => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "source-file-size-ignore-"));
+  writeFile(rootDir, "core/apps/web/src/pages/AllowedPage.test.tsx", HARD_MAX_LINES + 50);
+  writeFile(rootDir, "core/apps/web/e2e/workbench-index.spec.ts", HARD_MAX_LINES + 50);
+  writeFile(rootDir, "core/scripts/replay-loadtest.mjs", HARD_MAX_LINES + 50);
   const files = collectSourceFileStats(rootDir);
-  assert.equal(files.length, 1);
+  assert.equal(files.length, 0);
   const exitCode = run({
     rootDir,
-    exceptionsFilePath,
     enforce: true,
     stdout: { write() {} },
     stderr: { write() {} },
   });
   assert.equal(exitCode, 0);
+});
+
+test("collectSourceFileStats keeps site sources and ignores external harnesses", () => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "source-file-size-collect-"));
+  writeFile(rootDir, "core/apps/web/src/pages/WorkbenchPage.shell.tsx", 10);
+  writeFile(rootDir, "site/src/main.js", 11);
+  writeFile(rootDir, "core/apps/web/e2e/workbench-index.spec.ts", 12);
+  writeFile(rootDir, "external-harnesses/codex/codex-rs/core/src/codex.rs", 13);
+
+  const files = collectSourceFileStats(rootDir);
+  assert.deepEqual(
+    files.map((entry) => entry.path),
+    ["site/src/main.js", "core/apps/web/src/pages/WorkbenchPage.shell.tsx"],
+  );
 });

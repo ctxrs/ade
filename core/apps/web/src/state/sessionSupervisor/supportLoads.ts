@@ -26,7 +26,7 @@ type SessionStateLoadStatus = {
 };
 
 type SubagentInvocationsLoadStatus = {
-  subagentInvocationsLoaded: boolean;
+  subagentInvocationsLoaded?: boolean;
   subagentInvocationsLoading: boolean;
   subagentInvocationsAppliedRev?: number;
 };

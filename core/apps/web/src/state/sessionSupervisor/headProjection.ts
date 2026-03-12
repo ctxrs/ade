@@ -1,0 +1,390 @@
+import {
+  idToString,
+  type Message,
+  type SessionEvent,
+  type SessionHead,
+  type SessionHeadSnapshot,
+  type SessionState,
+  type SessionTurn,
+  type SessionTurnTool,
+  type SessionTurnToolSummary,
+} from "../../api/client";
+import { saveSessionHeadV1 } from "../uiStateStore";
+import { findWorkspaceSessionHead } from "../workspaceActiveSnapshot/projection";
+import { stripPartialEvents, stripTurnPartials } from "./cachePolicy";
+import { asRecord, hasModelList } from "./eventHydration";
+import {
+  type InternalEntry,
+  type SessionLoadState,
+  type SessionMode,
+  type SessionSupportLoadErrorKey,
+} from "./entryState";
+import { adoptLoadedStateRevision } from "./supportLoads";
+import type { SessionSupervisorWorkspaceSnapshotState } from "./workspaceInputs";
+
+type AcpMeta = {
+  models?: unknown;
+  modes?: unknown;
+  currentModelId?: string;
+  commands?: unknown;
+  slashCommands?: unknown;
+};
+
+export type SessionSupervisorHeadProjectionHost = {
+  workspaceSnapshotState: SessionSupervisorWorkspaceSnapshotState;
+  workspaceSessionHeadsById: Map<string, SessionHeadSnapshot>;
+  stateCacheBySessionId: Map<string, { state: SessionState; stateRev?: number }>;
+  publish(): void;
+  mergeTurns(entry: InternalEntry, turns: SessionTurn[]): void;
+  mergeEvents(entry: InternalEntry, events: SessionEvent[], opts?: { notify?: boolean }): void;
+  mergeMessages(entry: InternalEntry, messages: Message[]): void;
+  applyAcpMeta(
+    entry: InternalEntry,
+    meta: AcpMeta,
+    opts?: { persist?: boolean; syncSharedProviderCatalog?: boolean },
+  ): boolean;
+  applyAcpMetaFromEvents(entry: InternalEntry, events: SessionEvent[]): boolean;
+  applyGitStatusSnapshotFromEvents(entry: InternalEntry, events: SessionEvent[]): boolean;
+  ensureProviderOptions(entry: InternalEntry): Promise<void>;
+  resolveSessionMode(
+    sessionId: string,
+    entry?: InternalEntry,
+    explicitMode?: SessionMode,
+  ): SessionMode | null;
+  setSessionLoadState(entry: InternalEntry, next: SessionLoadState): void;
+  syncSupportLoadsForOpenSession(entry: InternalEntry): void;
+  ensureThoughtCache(entry: InternalEntry): Promise<void>;
+  adoptLoadedSubagentInvocationsRevision(entry: InternalEntry, stateRev: number): void;
+  clearSupportLoadError(entry: InternalEntry, key: SessionSupportLoadErrorKey): void;
+  bumpTurnsRev(entry: InternalEntry): void;
+  bumpMessagesRev(entry: InternalEntry): void;
+  bumpEventsRev(entry: InternalEntry): void;
+};
+
+export function seedHeadFromActiveSnapshot(
+  this: SessionSupervisorHeadProjectionHost,
+  entry: InternalEntry,
+): boolean {
+  const head = findWorkspaceSessionHead(
+    this.workspaceSnapshotState,
+    this.workspaceSessionHeadsById,
+    entry.sessionId,
+  );
+  if (!head) return false;
+  const nextSeq = typeof head.last_event_seq === "number" ? head.last_event_seq : -1;
+  const prevSeq = typeof entry.lastEventSeq === "number" ? entry.lastEventSeq : -1;
+  if (entry.turnsHydrated && prevSeq >= nextSeq) {
+    if (!entry.session) {
+      entry.session = head.session;
+      return true;
+    }
+    return false;
+  }
+  const strippedEvents =
+    (head.events?.length ?? 0) === 0 && (head.head_window?.event_limit ?? 0) === 0;
+  applyHead.call(this, entry, head as SessionHead, { fromCache: strippedEvents });
+  return true;
+}
+
+export function applyHead(
+  this: SessionSupervisorHeadProjectionHost,
+  entry: InternalEntry,
+  head: SessionHead,
+  opts?: { fromCache?: boolean },
+) {
+  entry.headFromCache = Boolean(opts?.fromCache);
+  entry.session = head.session;
+  if (!entry.mode) {
+    const resolvedMode = this.resolveSessionMode(entry.sessionId, entry);
+    if (resolvedMode) {
+      entry.mode = resolvedMode;
+    }
+  }
+  entry.summaryCheckpoint = head.summary_checkpoint ?? null;
+  entry.headWindow = head.head_window ?? null;
+  entry.turnsHydrated = true;
+  entry.hasMoreTurns = head.has_more_turns;
+  entry.lastEventSeq = head.last_event_seq;
+  const headRecord = asRecord(head);
+  const headStateRev = headRecord?.state_rev ?? headRecord?.stateRev;
+  if (typeof headStateRev === "number") {
+    entry.stateRev = headStateRev;
+    entry.stateAppliedRev = adoptLoadedStateRevision(
+      entry.stateLoaded,
+      entry.stateAppliedRev,
+      headStateRev,
+    );
+    this.adoptLoadedSubagentInvocationsRevision(entry, headStateRev);
+  }
+  this.mergeTurns(entry, head.turns ?? []);
+  this.mergeEvents(entry, head.events ?? [], { notify: false });
+  this.mergeMessages(entry, head.messages ?? []);
+  this.applyAcpMetaFromEvents(entry, head.events ?? []);
+  this.applyGitStatusSnapshotFromEvents(entry, head.events ?? []);
+  if (!entry.acpModels || !hasModelList(entry.acpModels)) {
+    void this.ensureProviderOptions(entry);
+  }
+  const incomingToolSummaries = head.tool_summaries;
+  if (Array.isArray(incomingToolSummaries) && incomingToolSummaries.length > 0) {
+    entry.toolSummaries = incomingToolSummaries;
+  } else if (entry.toolSummaries.length === 0) {
+    entry.toolSummaries = incomingToolSummaries ?? [];
+  }
+  if (head.tool_summaries && head.tool_summaries.length > 0) {
+    const hydrated = entry.turnToolsHydratedByTurnId;
+    const nextByTurn: Record<string, SessionTurnTool[]> = {};
+    for (const summary of head.tool_summaries) {
+      const turnId = idToString(summary.turn_id);
+      if (!turnId) continue;
+      if (hydrated[turnId]) continue;
+      const list = nextByTurn[turnId] ?? [];
+      list.push({
+        session_id: summary.session_id,
+        tool_call_id: summary.tool_call_id,
+        turn_id: summary.turn_id,
+        tool_kind: summary.tool_kind,
+        title: summary.title,
+        status: summary.status,
+        input_json: summary.input_preview ?? null,
+        output_text: null,
+        input_truncated: summary.input_truncated ?? null,
+        input_original_bytes: summary.input_original_bytes ?? null,
+        output_truncated: summary.output_truncated ?? null,
+        output_original_bytes: summary.output_original_bytes ?? null,
+        created_at: summary.created_at,
+        updated_at: summary.updated_at,
+        summary_only: true,
+      } as SessionTurnTool & { summary_only: boolean });
+      nextByTurn[turnId] = list;
+    }
+    if (Object.keys(nextByTurn).length > 0) {
+      entry.turnToolsByTurnId = {
+        ...entry.turnToolsByTurnId,
+        ...nextByTurn,
+      };
+      for (const turnId of Object.keys(nextByTurn)) {
+        if (!hydrated[turnId]) hydrated[turnId] = false;
+      }
+    }
+  }
+  entry.toolSummariesReady = true;
+  entry.error = undefined;
+  this.setSessionLoadState(entry, "live");
+  this.syncSupportLoadsForOpenSession(entry);
+  void this.ensureThoughtCache(entry);
+  entry.updatedAtMs = Date.now();
+  this.publish();
+}
+
+export function applyToolSummaries(
+  this: SessionSupervisorHeadProjectionHost,
+  entry: InternalEntry,
+  summaries: SessionTurnToolSummary[],
+) {
+  const hydrated = entry.turnToolsHydratedByTurnId;
+  let changed = false;
+  const nextByTurn: Record<string, SessionTurnTool[]> = {};
+  entry.toolSummaries = summaries;
+
+  for (const summary of summaries) {
+    const turnId = idToString(summary.turn_id);
+    if (!turnId) continue;
+    if (hydrated[turnId]) continue;
+    const list = nextByTurn[turnId] ?? [];
+    list.push({
+      session_id: summary.session_id,
+      tool_call_id: summary.tool_call_id,
+      turn_id: summary.turn_id,
+      tool_kind: summary.tool_kind ?? null,
+      title: summary.title ?? null,
+      status: summary.status ?? null,
+      input_json: summary.input_preview ?? null,
+      output_text: null,
+      input_truncated: summary.input_truncated ?? null,
+      input_original_bytes: summary.input_original_bytes ?? null,
+      output_truncated: summary.output_truncated ?? null,
+      output_original_bytes: summary.output_original_bytes ?? null,
+      created_at: summary.created_at,
+      updated_at: summary.updated_at,
+      summary_only: true,
+    } as SessionTurnTool & { summary_only: boolean });
+    nextByTurn[turnId] = list;
+  }
+
+  for (const [turnId, incoming] of Object.entries(nextByTurn)) {
+    const existing = entry.turnToolsByTurnId[turnId] ?? [];
+    const seen = new Set(existing.map((tool) => String(tool.tool_call_id)));
+    const merged = existing.slice();
+    for (const tool of incoming) {
+      const key = String(tool.tool_call_id);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(tool);
+    }
+    entry.turnToolsByTurnId = {
+      ...entry.turnToolsByTurnId,
+      [turnId]: merged,
+    };
+    if (!hydrated[turnId]) hydrated[turnId] = false;
+    changed = true;
+  }
+
+  if (changed) {
+    entry.toolSummariesReady = true;
+    entry.updatedAtMs = Date.now();
+    this.publish();
+  }
+}
+
+export function applyState(
+  this: SessionSupervisorHeadProjectionHost,
+  entry: InternalEntry,
+  state: SessionState | null,
+  stateRev?: number,
+) {
+  if (!state) return;
+  if (
+    typeof stateRev === "number" &&
+    typeof entry.stateRev === "number" &&
+    stateRev < entry.stateRev
+  ) {
+    return;
+  }
+  entry.stateLoaded = true;
+  entry.stateLoading = false;
+  this.clearSupportLoadError(entry, "state");
+  if (typeof stateRev === "number") {
+    entry.stateRev = stateRev;
+    entry.stateAppliedRev = stateRev;
+  }
+  entry.artifacts = Array.isArray(state.artifacts) ? state.artifacts : [];
+  entry.artifactsLoaded = true;
+  entry.artifactsLoading = false;
+  entry.artifactsFetchedAtMs = Date.now();
+  this.clearSupportLoadError(entry, "artifacts");
+  entry.gitStatusSummary = state.git_status ?? null;
+  syncStateCache.call(this, entry, stateRev);
+}
+
+export function syncStateCache(
+  this: SessionSupervisorHeadProjectionHost,
+  entry: InternalEntry,
+  stateRev?: number,
+) {
+  const cached = this.stateCacheBySessionId.get(entry.sessionId);
+  this.stateCacheBySessionId.set(entry.sessionId, {
+    state: {
+      artifacts: entry.artifacts.slice(),
+      git_status: buildStateGitStatusSummary(this, entry),
+    },
+    stateRev: typeof stateRev === "number" ? stateRev : cached?.stateRev,
+  });
+}
+
+const buildStateGitStatusSummary = (
+  host: SessionSupervisorHeadProjectionHost,
+  entry: InternalEntry,
+): SessionState["git_status"] => {
+  const summary = entry.gitStatusSummary;
+  const cached = host.stateCacheBySessionId.get(entry.sessionId)?.state.git_status ?? null;
+  if (!summary) return null;
+
+  const summaryLine =
+    typeof summary?.summary_line === "string"
+      ? summary.summary_line
+      : typeof summary?.summaryLine === "string"
+        ? summary.summaryLine
+        : typeof summary?.summary === "string"
+          ? summary.summary
+          : "";
+  if (!summaryLine) return null;
+
+  const readNumber = (value: unknown, fallback: number): number => {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    return fallback;
+  };
+
+  return {
+    summary_line: summaryLine,
+    branch: typeof summary?.branch === "string" ? summary.branch : cached?.branch ?? null,
+    upstream: typeof summary?.upstream === "string" ? summary.upstream : cached?.upstream ?? null,
+    ahead: readNumber(summary?.ahead, cached?.ahead ?? 0),
+    behind: readNumber(summary?.behind, cached?.behind ?? 0),
+    detached: typeof summary?.detached === "boolean" ? summary.detached : cached?.detached ?? false,
+    staged: readNumber(summary?.staged, cached?.staged ?? 0),
+    unstaged: readNumber(summary?.unstaged, cached?.unstaged ?? 0),
+    untracked: readNumber(summary?.untracked, cached?.untracked ?? 0),
+  };
+};
+
+export async function persistHead(
+  entry: InternalEntry,
+) {
+  if (!entry.session) return;
+  const turns = stripTurnPartials(entry.turns);
+  const events = stripPartialEvents(entry.events);
+  const head = {
+    session: entry.session,
+    turns,
+    events,
+    messages: entry.messages,
+    tool_summaries: entry.toolSummaries,
+    last_event_seq: entry.lastEventSeq ?? 0,
+    has_more_turns: entry.hasMoreTurns,
+    summary_checkpoint: entry.summaryCheckpoint ?? null,
+    head_window: entry.headWindow ?? undefined,
+  };
+  await saveSessionHeadV1(entry.sessionId, head);
+}
+
+export function applyActiveSnapshotHead(
+  this: SessionSupervisorHeadProjectionHost,
+  entry: InternalEntry,
+  head: SessionHead | SessionHeadSnapshot,
+): boolean {
+  entry.mode = "active";
+  const nextSeq = typeof head.last_event_seq === "number" ? head.last_event_seq : -1;
+  const prevSeq = typeof entry.lastEventSeq === "number" ? entry.lastEventSeq : -1;
+  if (entry.turnsHydrated && prevSeq >= nextSeq) {
+    if (!entry.session) {
+      entry.session = head.session;
+      return true;
+    }
+    return false;
+  }
+  applyHead.call(this, entry, head as SessionHead);
+  void persistHead.call(this, entry);
+  entry.error = undefined;
+  this.setSessionLoadState(entry, "live");
+  return true;
+}
+
+export function resetEntryProjectionForReplace(
+  this: SessionSupervisorHeadProjectionHost,
+  entry: InternalEntry,
+  opts?: { skipPublish?: boolean },
+) {
+  entry.turns = [];
+  entry.events = [];
+  entry.messages = [];
+  entry.queue = [];
+  this.bumpTurnsRev(entry);
+  this.bumpEventsRev(entry);
+  this.bumpMessagesRev(entry);
+  entry.turnToolsByTurnId = {};
+  entry.turnToolsHydratedByTurnId = {};
+  entry.turnToolsLoadingSet.clear();
+  entry.turnToolsLoading = [];
+  entry.toolStatusByKey.clear();
+  entry.toolIdsByTurn.clear();
+  entry.seqSet.clear();
+  entry.startedTurnIds.clear();
+  entry.turnsHydrated = false;
+  entry.toolSummariesReady = false;
+  entry.hasMoreTurns = true;
+  this.setSessionLoadState(entry, "recovering");
+  entry.updatedAtMs = Date.now();
+  if (!opts?.skipPublish) {
+    this.publish();
+  }
+}

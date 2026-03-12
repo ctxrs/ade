@@ -1,6 +1,7 @@
 import { blobUrl, type MessageAttachment, type ProviderOptions } from "../../api/client";
 import type { SessionViewVerbosity } from "../../state/uiStateStore";
 import type { WorkbenchModeId } from "./WorkbenchComposer.types";
+import type { ContextWindowInfo } from "./WorkbenchComposer.types";
 import type { buildModelCatalog } from "../../utils/modelEffort";
 import { composeModelId } from "../../utils/modelEffort";
 import {
@@ -85,6 +86,43 @@ export function formatUsedTokenCount(value: number): string {
     return `${rounded}k`;
   }
   return `${Math.round(value)}`;
+}
+
+export type ContextWindowDisplay = {
+  percent: number;
+  usedLabel: string;
+  windowLabel: string;
+  title: string;
+  summary: string;
+};
+
+export function describeContextWindow(
+  contextWindow?: ContextWindowInfo | null,
+): ContextWindowDisplay | null {
+  if (!contextWindow?.windowTokens) return null;
+  let usedTokens = contextWindow.usedTokens;
+  if (usedTokens == null && contextWindow.remainingTokens != null) {
+    usedTokens = contextWindow.windowTokens - contextWindow.remainingTokens;
+  }
+  if (usedTokens == null && contextWindow.remainingFraction != null) {
+    usedTokens = Math.round(contextWindow.windowTokens * (1 - contextWindow.remainingFraction));
+  }
+  if (usedTokens == null) return null;
+
+  const windowTokens = Math.max(1, Math.round(contextWindow.windowTokens));
+  const clampedUsed = Math.max(0, Math.min(windowTokens, Math.round(usedTokens)));
+  const percent = Math.max(0, Math.min(100, Math.round((clampedUsed / windowTokens) * 100)));
+  const usedLabel = formatUsedTokenCount(clampedUsed);
+  const windowLabel = formatTokenCount(windowTokens);
+  const summary = `${percent}% · ${usedLabel}/${windowLabel}`;
+
+  return {
+    percent,
+    usedLabel,
+    windowLabel,
+    title: `Context Window: ${summary}`,
+    summary,
+  };
 }
 
 export function buildModelsFromProviderOptions(opts?: ProviderOptions): Array<{ id: string; name?: string }> {

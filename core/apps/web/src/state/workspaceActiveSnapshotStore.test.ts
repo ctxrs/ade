@@ -1005,8 +1005,8 @@ describe("WorkspaceActiveSnapshotStore", () => {
   });
 
   it("emits a desktop bridge invariant diagnostic when worker base URL stays missing", async () => {
-    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
     const { getDaemonClientConfig, syncDesktopDaemonConnectionFromBridge } = await import("../api/client");
+    const { resolveWorkerConnectionState } = await import("./workspaceActiveSnapshot/workerConnection");
 
     const previousTauri = (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;
 
@@ -1034,13 +1034,15 @@ describe("WorkspaceActiveSnapshotStore", () => {
         error: null,
       });
 
-      const store = new WorkspaceActiveSnapshotStoreImpl("ws-1");
-      await (store as unknown as { resolveWorkerConnectionState: (phase: "worker_init") => Promise<unknown> })
-        .resolveWorkerConnectionState("worker_init");
+      await resolveWorkerConnectionState({
+        workspaceId: "ws-1",
+        phase: "worker_init",
+        authTokenOverride: null,
+        wsBaseUrlOverride: null,
+      });
       const diagnostics = getUiDiagnostics().filter((event) => event.code === "workspace.worker_desktop_bridge_missing_base");
       expect(diagnostics).toHaveLength(1);
       expect(asRecord(diagnostics[0]?.context).phase).toBe("worker_init");
-      store.destroy();
     } finally {
       if (previousTauri === undefined) {
         delete (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;

@@ -17,27 +17,18 @@ import {
   setSessionModel,
   authenticateSession,
   type ProviderOptions,
-  getSettings,
   idToString,
   interruptSession,
-  submitAskUserQuestion,
   uploadBlob,
 } from "../api/client";
 import { useOpenSession, useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
 import { loadSessionViewPrefsV1, saveSessionViewPrefsV1, type SessionViewVerbosity } from "../state/uiStateStore";
-import { AskUserQuestionCard } from "../components/AskUserQuestionCard";
-import { DictationOnboardingModal } from "../components/dictation/DictationOnboardingModal";
 import { type SlashCommandDescriptor } from "../state/useComposerAutocomplete";
-import { HARNESS_CATALOG } from "../utils/harnessCatalog";
-import { useSettingsSnapshot, useSettingsStore } from "../state/settingsStore";
 import { useRafCoalesced } from "../components/hooks/useRafCoalesced";
 import {
-  WorkbenchComposer as UnifiedWorkbenchComposer,
   type ContextWindowInfo,
   type WorkbenchModeId,
 } from "../components/WorkbenchComposer";
-import { imageFilesToInlineAttachments } from "../utils/messageAttachments";
-import { registerDropScope } from "../utils/dragDropScopes";
 import { useFeatureGate } from "../utils/analytics";
 import { useDictationController } from "../utils/useDictationController";
 import { useWorkbenchStore } from "../workbench/store";
@@ -45,24 +36,9 @@ import { buildModelsFromProviderOptions } from "../components/workbenchComposer/
 import { deriveProtocolSlashCommands } from "../utils/protocolSlashCommands";
 import { VIRTUOSO_MESSAGE_LIST_LICENSE_KEY } from "../config/licenses";
 import { randomUuid } from "../utils/randomUuid";
-import {
-  AssistantEntry,
-  ThreadItemView,
-  WorkbenchThoughtRow,
-  WorkbenchToolGroupRow,
-  WorkbenchToolRow,
-  WorkbenchTurnHeaderView,
-  WorkbenchTurnStatusRow,
-} from "./sessionThread/SessionThreadItemViews";
-import type {
-  AskUserQuestionAnswerState,
-  ThreadItem,
-  WorkbenchListItem,
-} from "./SessionPage.types";
-import { markdownToPlainText } from "./SessionPage.helpers";
+import type { AskUserQuestionAnswerState, WorkbenchListItem } from "./SessionPage.types";
 import {
   buildPendingTurns,
-  collectAskUserQuestionAnswers,
   deriveAuthUi,
   deriveMessagesKey,
   deriveProviderGuardNotice,
@@ -75,7 +51,6 @@ import {
   normalizeContextWindowMetrics,
 } from "./SessionPage.workbenchViewModel";
 import { buildOptimisticUserMessage } from "./SessionPage.optimisticMessage";
-import { SessionThreadPane } from "./sessionThread/SessionThreadPane";
 import { useSessionMessageListController } from "./useSessionMessageListController";
 import { useWorkbenchThreadViewModelController } from "./useWorkbenchThreadViewModelController";
 import { errorMessage } from "../utils/errorMessage";
@@ -83,48 +58,12 @@ import { defaultSessionVerbosityForProvider } from "./sessionVerbosity";
 import { appendSegment } from "./SessionPage.helpers";
 import { isSameContextWindow } from "./sessionView/estimateHeuristics";
 import { PendingMessageEntry, shouldDropPendingMessage } from "./sessionView/pendingMessages";
-import { ProviderGuardBanner } from "./sessionView/ProviderGuardBanner";
-import { SessionAuthBanner } from "./sessionView/SessionAuthBanner";
-import { SessionDebugPanel } from "./sessionView/SessionDebugPanel";
-import { getQueuedAttachments, SessionQueuePanel } from "./sessionView/SessionQueuePanel";
-import { SessionSubagentInvocationsCard } from "./sessionView/SessionSubagentInvocationsCard";
+import { getQueuedAttachments } from "./sessionView/SessionQueuePanel";
+import { SessionWorkbenchPane } from "./sessionView/SessionWorkbenchPane";
+import { useSessionImageDropScope } from "./sessionView/useSessionImageDropScope";
+import { useSessionProviderGuard } from "./sessionView/useSessionProviderGuard";
 import { useSharedSessionProviderOptions } from "./sessionView/useSharedSessionProviderOptions";
-
-// Edge case: the workspace stream can deliver the real message before the
-// POST response updates the optimistic entry. We drop pending entries once
-// the real message with the same id is observed.
-
-function areAnswerRecordsEqual(a: Record<string, string>, b: Record<string, string>): boolean {
-  const aKeys = Object.keys(a);
-  const bKeys = Object.keys(b);
-  if (aKeys.length !== bKeys.length) return false;
-  for (const key of aKeys) {
-    if (a[key] !== b[key]) return false;
-  }
-  return true;
-}
-
-function areAskUserAnswerStatesEqual(
-  a: AskUserQuestionAnswerState,
-  b: AskUserQuestionAnswerState,
-): boolean {
-  return a.outcome === b.outcome && areAnswerRecordsEqual(a.answers, b.answers);
-}
-
-function areAskUserAnswerMapsEqual(
-  a: Map<string, AskUserQuestionAnswerState>,
-  b: Map<string, AskUserQuestionAnswerState>,
-): boolean {
-  if (a === b) return true;
-  if (a.size !== b.size) return false;
-  for (const [toolCallId, state] of a.entries()) {
-    const next = b.get(toolCallId);
-    if (!next || !areAskUserAnswerStatesEqual(state, next)) {
-      return false;
-    }
-  }
-  return true;
-}
+import { useStableAskUserQuestionAnswers } from "./sessionView/useStableAskUserQuestionAnswers";
 
 export function SessionView({
   sessionId,
@@ -186,7 +125,6 @@ export function SessionView({
   const [verbosity, setVerbosity] = useState<SessionViewVerbosity>("default");
   const [inputInternal, setInputInternal] = useState("");
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
-  const [dropActive, setDropActive] = useState(false);
   const [workbenchModeInternal, setWorkbenchModeInternal] = useState<WorkbenchModeId>("default");
   const [sendBusy, setSendBusy] = useState(false);
   const sendBusyRef = useRef(false);
@@ -206,6 +144,7 @@ export function SessionView({
   const [expandedTurnDetailsById, setExpandedTurnDetailsById] = useState<Record<string, boolean>>({});
   const [expandedToolById, setExpandedToolById] = useState<Record<string, boolean>>({});
   const [lastContextWindow, setLastContextWindow] = useState<ContextWindowInfo | null>(null);
+  const { dropScopeRef, dropActive } = useSessionImageDropScope({ setDraftAttachments });
 
 		  useEffect(() => {
 		    setPendingMessages([]);
@@ -214,7 +153,6 @@ export function SessionView({
 		    setDraftAttachments([]);
     setSendError(null);
     setFileOpenError(null);
-    setDropActive(false);
     setOptimisticAskAnswers({});
     setExpandedTurnHeaders({});
     setExpandedTurnDetailsById({});
@@ -223,19 +161,8 @@ export function SessionView({
     setAuthMethodId("");
     setAuthBusy(false);
     setAuthError(null);
-		    setProviderGuardActionError(null);
-		    setProviderGuardActionBusy(false);
 		    setAtBottom(true);
-    if (dropHideTimerRef.current) {
-      window.clearTimeout(dropHideTimerRef.current);
-      dropHideTimerRef.current = null;
-    }
   }, [id]);
-  const dropHideTimerRef = useRef<number | null>(null);
-  const settingsStore = useSettingsStore();
-  const settingsSnapshot = useSettingsSnapshot();
-  const [providerGuardActionError, setProviderGuardActionError] = useState<string | null>(null);
-  const [providerGuardActionBusy, setProviderGuardActionBusy] = useState(false);
 
   useEffect(() => {
     const update = (event: KeyboardEvent) => {
@@ -357,7 +284,6 @@ export function SessionView({
   const messagesRev = entry?.messagesRev ?? 0;
   const eventsRev = entry?.eventsRev ?? 0;
   const subagentInvocations: SubagentInvocation[] = entry?.subagentInvocations ?? [];
-  const subagentInvocationsLoading = entry?.subagentInvocationsLoading ?? false;
   const eventsStamp = `${eventsRev}:${entry?.lastEventSeq ?? 0}:${events.length}`;
   const turnsKey = useMemo(() => deriveTurnsKey(turns), [turns, turnsRev]);
   const messagesKey = useMemo(() => deriveMessagesKey(messages), [messages, messagesRev]);
@@ -528,14 +454,6 @@ export function SessionView({
     [eventsStamp],
   );
 
-  const providerGuardNoticeKey = providerGuardNotice
-    ? `${providerGuardNotice.kind}:${providerGuardNotice.stage}:${providerGuardNotice.pid ?? ""}:${providerGuardNotice.killAtMs ?? ""}`
-    : "";
-
-  useEffect(() => {
-    setProviderGuardActionError(null);
-  }, [providerGuardNoticeKey]);
-
   const activeAskToolCallId = useMemo(() => {
     const answered = new Set<string>();
     for (const ev of events) {
@@ -559,69 +477,11 @@ export function SessionView({
     return null;
   }, [eventsStamp, optimisticAskAnswers]);
 
-  // Preserve identity for unrelated event appends so the controller can take
-  // the narrow append-only fast path when ask-user state has not changed.
-  const stableAskUserQuestionAnswersRef = useRef(new Map<string, AskUserQuestionAnswerState>());
-  const askUserQuestionAnswers = useMemo(() => {
-    const next = collectAskUserQuestionAnswers(events, optimisticAskAnswers);
-    const previous = stableAskUserQuestionAnswersRef.current;
-    if (areAskUserAnswerMapsEqual(previous, next)) {
-      return previous;
-    }
-    stableAskUserQuestionAnswersRef.current = next;
-    return next;
-  }, [eventsStamp, optimisticAskAnswers]);
-
-  const applyProviderGuardSettings = useCallback(
-    async (opts: {
-      enabled?: boolean;
-      mode?: "auto" | "custom";
-      memoryHighMb?: number | null;
-      memoryMaxMb?: number | null;
-    }) => {
-      setProviderGuardActionError(null);
-      setProviderGuardActionBusy(true);
-      try {
-        const current = settingsSnapshot.settings ?? (await getSettings());
-        const guard = current.provider_guard ?? { enabled: true, mode: "auto" };
-        const nextGuard = {
-          enabled: opts.enabled ?? guard.enabled ?? true,
-          mode: opts.mode ?? guard.mode ?? "auto",
-          memory_high_mb: opts.memoryHighMb ?? guard.memory_high_mb ?? null,
-          memory_max_mb: opts.memoryMaxMb ?? guard.memory_max_mb ?? null,
-          interval_ms: guard.interval_ms ?? null,
-          grace_period_ms: guard.grace_period_ms ?? null,
-        };
-        await settingsStore.update({ provider_guard: nextGuard });
-      } catch (e: unknown) {
-        setProviderGuardActionError(errorMessage(e));
-      } finally {
-        setProviderGuardActionBusy(false);
-      }
-    },
-    [settingsSnapshot.settings, settingsStore],
-  );
-
-  const raiseProviderGuardLimit = useCallback(async () => {
-    const totalMb = providerGuardNotice?.systemTotalMb;
-    if (!totalMb || !Number.isFinite(totalMb)) {
-      setProviderGuardActionError("System memory total is unavailable.");
-      return;
-    }
-    const maxMb = Math.max(1024, Math.floor(totalMb * 0.9));
-    let highMb = Math.floor(totalMb * 0.85);
-    if (highMb > maxMb) highMb = maxMb;
-    await applyProviderGuardSettings({
-      enabled: true,
-      mode: "custom",
-      memoryHighMb: highMb,
-      memoryMaxMb: maxMb,
-    });
-  }, [applyProviderGuardSettings, providerGuardNotice?.systemTotalMb]);
-
-  const disableProviderGuard = useCallback(async () => {
-    await applyProviderGuardSettings({ enabled: false });
-  }, [applyProviderGuardSettings]);
+  const askUserQuestionAnswers = useStableAskUserQuestionAnswers({
+    events,
+    optimisticAskAnswers,
+    eventsStamp,
+  });
 
   useEffect(() => {
     if (!perfEnabled) return;
@@ -745,30 +605,22 @@ export function SessionView({
   }, [isActive, scrollState, messageListMethodsRef]);
 
   const authUi = useMemo(() => deriveAuthUi(events), [eventsStamp]);
-  const providerGuardMemoryLimitMb =
-    providerGuardNotice?.stage === "high" ? providerGuardNotice?.limitHighMb : providerGuardNotice?.limitMaxMb;
-  const providerGuardHeading =
-    providerGuardNotice?.kind === "provider_guard_kill"
-      ? "Provider guard kill"
-      : providerGuardNotice?.stage === "max"
-        ? "Provider memory limit"
-        : "Provider memory warning";
-  const providerGuardMessage =
-    providerGuardNotice?.message ??
-    (providerGuardNotice?.kind === "provider_guard_kill"
-      ? "Provider process killed after exceeding memory limits."
-      : "Provider memory is above the guard threshold.");
-  const providerGuardLimitLabel =
-    providerGuardNotice?.stage === "high"
-      ? "high limit"
-      : providerGuardNotice?.stage === "max"
-        ? "max limit"
-        : "limit";
-  const providerGuardProviderLabel = providerGuardNotice?.provider ?? session?.provider_id ?? undefined;
-  const providerGuardPidLabel =
-    providerGuardNotice?.pid != null ? `PID ${Math.round(providerGuardNotice.pid)}` : null;
-  const canRaiseProviderGuard =
-    providerGuardNotice?.systemTotalMb != null && Number.isFinite(providerGuardNotice.systemTotalMb);
+  const {
+    providerGuardActionError,
+    providerGuardActionBusy,
+    providerGuardMemoryLimitMb,
+    providerGuardHeading,
+    providerGuardMessage,
+    providerGuardLimitLabel,
+    providerGuardProviderLabel,
+    providerGuardPidLabel,
+    canRaiseProviderGuard,
+    raiseProviderGuardLimit,
+    disableProviderGuard,
+  } = useSessionProviderGuard({
+    providerGuardNotice,
+    sessionProviderId: session?.provider_id,
+  });
 
   useEffect(() => {
     if (authMethodId) return;
@@ -1008,451 +860,136 @@ export function SessionView({
   // Note: we intentionally do not overscan (`increaseViewportBy`) for the session thread.
   // Large overscan amplifies prepend stabilization error for unknown-height items.
 
-  const wrapperClass = "wb-session-view";
-  const leftClass = "wb-session-left";
-
-  const dropScopeRef = useRef<HTMLDivElement | null>(null);
-
-  const onDropFiles = useCallback(
-    async (files: File[]) => {
-      if (files.length === 0) return;
-      const next = await imageFilesToInlineAttachments(files);
-      if (next.length === 0) return;
-      setDraftAttachments((prev) => [...prev, ...next]);
-    },
-    [],
-  );
-
-  const showDropOverlay = useCallback(() => {
-    setDropActive(true);
-    if (dropHideTimerRef.current) window.clearTimeout(dropHideTimerRef.current);
-    dropHideTimerRef.current = window.setTimeout(() => setDropActive(false), 140);
-  }, []);
-
-  const hideDropOverlay = useCallback(() => {
-    if (dropHideTimerRef.current) window.clearTimeout(dropHideTimerRef.current);
-    dropHideTimerRef.current = null;
-    setDropActive(false);
-  }, []);
-
-  const extractFilesFromTransfer = useCallback(
-    (dt: DataTransfer | null): File[] => {
-      if (!dt) return [];
-      const out: File[] = [];
-      const files = dt.files ? Array.from(dt.files) : [];
-      out.push(...files);
-      const items = dt.items;
-      if (out.length === 0 && items && items.length > 0) {
-        for (const item of Array.from(items)) {
-          if (item.kind !== "file") continue;
-          const f = item.getAsFile?.();
-          if (f) out.push(f);
-        }
-      }
-      return out;
-    },
-    [],
-  );
-
-  const extractFirstUrlFromTransfer = useCallback((dt: DataTransfer | null): string | null => {
-    if (!dt) return null;
-    const uriRaw = (dt.getData?.("text/uri-list") ?? "").trim();
-    if (uriRaw) {
-      for (const line of uriRaw.split("\n")) {
-        const v = line.trim();
-        if (!v || v.startsWith("#")) continue;
-        return v;
-      }
-    }
-    const html = (dt.getData?.("text/html") ?? "").trim();
-    if (html) {
-      const m = html.match(/<img[^>]*\ssrc=("([^"]+)"|'([^']+)'|([^\s>]+))/i);
-      const src = (m?.[2] ?? m?.[3] ?? m?.[4] ?? "").trim();
-      if (src) return src;
-    }
-    const text = (dt.getData?.("text/plain") ?? "").trim();
-    if (text && /^(https?:|data:image\/|blob:)/i.test(text)) return text;
-    return null;
-  }, []);
-
-  const urlToImageFile = useCallback(async (url: string): Promise<File | null> => {
-    try {
-      const res = await fetch(url);
-      if (!res.ok) return null;
-      const blob = await res.blob();
-      const type = blob.type || "";
-      if (!type.startsWith("image/")) return null;
-      const baseName = (() => {
-        try {
-          const u = new URL(url, window.location.href);
-          const last = u.pathname.split("/").filter(Boolean).pop() || "image";
-          return last.replace(/[?#].*$/, "") || "image";
-        } catch {
-          return "image";
-        }
-      })();
-      const ext = type.split("/")[1] || "";
-      const name = ext && !baseName.toLowerCase().endsWith(`.${ext.toLowerCase()}`) ? `${baseName}.${ext}` : baseName;
-      return new File([blob], name, { type });
-    } catch {
-      return null;
-    }
-  }, []);
-
-  useEffect(() => {
-    const el = dropScopeRef.current;
-    if (!el) return;
-    return registerDropScope({
-      element: el,
-      onDragOver: () => showDropOverlay(),
-      onDrop: (dt) => {
-        hideDropOverlay();
-        void (async () => {
-          const files = extractFilesFromTransfer(dt);
-          if (files.length > 0) {
-            await onDropFiles(files);
-            return;
-          }
-          const url = extractFirstUrlFromTransfer(dt);
-          if (!url) return;
-          const asFile = await urlToImageFile(url);
-          if (!asFile) return;
-          await onDropFiles([asFile]);
-        })();
-      },
-    });
-  }, [extractFilesFromTransfer, extractFirstUrlFromTransfer, hideDropOverlay, onDropFiles, showDropOverlay, urlToImageFile]);
-
-  const renderThreadItem = useCallback((item: ThreadItem) => {
-    if (item.kind === "spacer") {
-      return <div style={{ height: 1 }} />;
-    }
-    if (item.kind === "thought") {
-      return <WorkbenchThoughtRow item={item} />;
-    }
-    if (item.kind === "turn_status") {
-      return <WorkbenchTurnStatusRow item={item} />;
-    }
-    if (item.kind === "assistant") {
-      if (!item.is_complete && item.content.trim().length === 0) {
-        return null;
-      }
-      return (
-        <AssistantEntry
-          content={item.content}
-          worktreeId={worktreeId}
-          onFileOpenError={handleFileOpenError}
-          modifierDown={modifierDown}
-        />
-      );
-    }
-    if (item.kind === "tool_group") {
-      const expanded = expandedTurnDetailsById[item.turn_id] ?? false;
-      const toolsLoading = turnToolsLoading.includes(item.turn_id);
-      return (
-        <WorkbenchToolGroupRow
-          item={item}
-          verbosity={verbosity}
-          expanded={expanded}
-          toolsLoading={toolsLoading}
-          onToggle={() => {
-            setExpandedTurnDetailsById((prev) => ({ ...prev, [item.turn_id]: !expanded }));
-          }}
-          onRequestTools={() => supervisor.loadTurnTools(id, item.turn_id)}
-          onToggleTool={(toolId) => {
-            setExpandedToolById((prev) => ({ ...prev, [toolId]: !prev[toolId] }));
-          }}
-          expandedToolById={expandedToolById}
-        />
-      );
-    }
-    if (item.kind === "tool") {
-      const toolExpanded = expandedToolById[item.id] ?? false;
-      return (
-        <WorkbenchToolRow
-          item={item}
-          verbosity={verbosity}
-          expanded={toolExpanded}
-          onToggle={() => {
-            setExpandedToolById((prev) => ({ ...prev, [item.id]: !toolExpanded }));
-          }}
-        />
-      );
-    }
-    if (item.kind === "ask_user_question") {
-      const isActive = item.tool_call_id === activeAskToolCallId;
-      return (
-        <AskUserQuestionCard
-          input={item.input}
-          answers={item.answers}
-          outcome={item.outcome}
-          readOnly={item.answered}
-          active={isActive}
-          onCancel={
-            item.answered
-              ? undefined
-              : async () => {
-                if (!id) throw new Error("Missing session id.");
-                await submitAskUserQuestion(id, item.tool_call_id, "cancelled", {});
-                setOptimisticAskAnswers((prev) => ({
-                  ...prev,
-                  [item.tool_call_id]: { outcome: "cancelled", answers: {} },
-                }));
-              }
-          }
-          onSubmit={
-            item.answered
-              ? undefined
-              : async (answers) => {
-                if (!id) throw new Error("Missing session id.");
-                await submitAskUserQuestion(id, item.tool_call_id, "submitted", answers);
-                setOptimisticAskAnswers((prev) => ({
-                  ...prev,
-                  [item.tool_call_id]: { outcome: "submitted", answers },
-                }));
-              }
-          }
-        />
-      );
-    }
-    return (
-      <ThreadItemView
-        item={item}
-        worktreeId={worktreeId}
-        onFileOpenError={handleFileOpenError}
-        modifierDown={modifierDown}
-      />
-    );
-  }, [
-    activeAskToolCallId,
-    expandedToolById,
-    expandedTurnDetailsById,
-    handleFileOpenError,
-    modifierDown,
-    id,
-    supervisor,
-    turnToolsLoading,
-    worktreeId,
-  ]);
-
-  const workbenchItemContent = useCallback(
-    (_: number, item: WorkbenchListItem) => {
-      if (!item) return <div style={{ height: 1 }} />;
-      const itemId = item.id;
-      if (item.kind === "turn_header") {
-        const header = (item as Extract<WorkbenchListItem, { kind: "turn_header" }>).header;
-        const plainText = header.plain_text ?? markdownToPlainText(header.content ?? "");
-        const isLong = plainText.split("\n").length > 4 || plainText.length > 280;
-        const expanded = expandedTurnHeaders[header.id] ?? !isLong;
-        return (
-          <div data-thread-item-id={itemId} style={{ display: "contents" }}>
-            <WorkbenchTurnHeaderView
-              header={header}
-              plainText={plainText}
-              expanded={expanded}
-              onToggle={() => {
-                setExpandedTurnHeaders((prev) => ({ ...prev, [header.id]: !expanded }));
-              }}
-            />
-          </div>
-        );
-      }
-      const content = renderThreadItem(item as ThreadItem);
-      return (
-        <div className="wb-thread-indent" data-thread-item-id={itemId}>
-          {content}
-        </div>
-      );
-    },
-    [expandedTurnHeaders, renderThreadItem],
-  );
-
   const messageListItemIdentity = useCallback((item: WorkbenchListItem) => item.id, []);
+  const handleAuthenticate = useCallback(async () => {
+    if (!id) return;
+    setAuthBusy(true);
+    setAuthError(null);
+    try {
+      await authenticateSession(id, authMethodId);
+      await refreshAll();
+    } catch (error: unknown) {
+      setAuthError(errorMessage(error));
+    } finally {
+      setAuthBusy(false);
+    }
+  }, [authMethodId, id, refreshAll]);
+
+  const handleInterruptSession = useCallback(async () => {
+    await interruptSession(id);
+  }, [id]);
+
+  const handleToggleRecording = useCallback(() => {
+    if (dictationRecording) {
+      stopDictation().catch(() => {});
+      return;
+    }
+    startDictation().catch(() => {});
+  }, [dictationRecording, startDictation, stopDictation]);
+
+  const handleSetModelId = useCallback(async (next: string) => {
+    const updated = await setSessionModel(id, next);
+    supervisor.setSession(updated);
+  }, [id, supervisor]);
 
   return (
-    <div
-      className={`${wrapperClass} ctx-drop-scope`}
-      ref={dropScopeRef}
-      data-testid="session-view"
-      data-session-id={id}
-      data-thread-count={listItems.length}
-    >
-      {dropActive && (
-        <div className="ctx-drop-overlay" aria-hidden="true">
-          <div className="ctx-drop-overlay-text">Drop image to attach</div>
-        </div>
-      )}
-      <div className={leftClass}>
-        {entry?.loadState === "fatal" && entry?.error && (
-          <div className="banner">
-            <span className="error">{entry.error}</span>
-          </div>
-        )}
-        {sessionError && (
-          <div className="banner" role="alert">
-            <div className="row" style={{ justifyContent: "space-between" }}>
-              <strong>Error</strong>
-              {sessionError.provider ? <span className="muted">{sessionError.provider}</span> : null}
-            </div>
-            <div className="error" style={{ whiteSpace: "pre-wrap" }}>
-              {sessionError.message}
-            </div>
-          </div>
-        )}
-        <ProviderGuardBanner
-          heading={providerGuardHeading}
-          message={providerGuardMessage}
-          providerLabel={providerGuardProviderLabel}
-          pidLabel={providerGuardPidLabel}
-          memoryLabel={
-            providerGuardNotice?.memoryMb != null
-              ? `Memory ${formatMemoryMb(providerGuardNotice.memoryMb)}${
-                  providerGuardMemoryLimitMb != null
-                    ? ` / ${formatMemoryMb(providerGuardMemoryLimitMb)} (${providerGuardLimitLabel})`
-                    : ""
-                }`
-              : null
-          }
-          systemLabel={
-            providerGuardNotice?.systemUsedMb != null && providerGuardNotice.systemTotalMb != null
-              ? `System ${formatMemoryMb(providerGuardNotice.systemUsedMb)} / ${formatMemoryMb(providerGuardNotice.systemTotalMb)}`
-              : null
-          }
-          notice={providerGuardNotice}
-          actionBusy={providerGuardActionBusy}
-          actionError={providerGuardActionError}
-          canRaiseLimit={canRaiseProviderGuard}
-          onRaiseLimit={raiseProviderGuardLimit}
-          onDisableGuard={disableProviderGuard}
-        />
-        {showDebug && (
-          <div className="wb-muted" style={{ fontFamily: "var(--mono)" }}>
-            debug: events={events.length} messages={messages.length} userMessages={messages.filter((m) => m.role === "user").length} items={listItems.length}
-          </div>
-        )}
-        <SessionAuthBanner
-          visible={authUi.status === "required" || authUi.status === "failed"}
-          status={authUi.status}
-          provider={authUi.provider ?? session?.provider_id}
-          message={authUi.message}
-          methods={authUi.methods}
-          authMethodId={authMethodId}
-          onAuthMethodChange={setAuthMethodId}
-          authBusy={authBusy}
-          authError={authError}
-          onAuthenticate={async () => {
-            if (!id) return;
-            setAuthBusy(true);
-            setAuthError(null);
-            try {
-              await authenticateSession(id, authMethodId);
-              await refreshAll();
-            } catch (error: unknown) {
-              setAuthError(errorMessage(error));
-            } finally {
-              setAuthBusy(false);
-            }
-          }}
-        />
-        <SessionSubagentInvocationsCard
-          subagentInvocations={subagentInvocations}
-          onOpenChildSession={openChildSession}
-        />
-
-        {showDebug && debugEvents.length > 0 ? <SessionDebugPanel events={debugEvents} /> : null}
-
-        <SessionThreadPane
-          style={virtuosoStyle}
-          itemContent={workbenchItemContent}
-          itemIdentity={messageListItemIdentity}
-          initialLocation={messageListInitialLocation}
-          context={messageListContext}
-          onScroll={handleMessageListScroll}
-          onRenderedDataChange={handleRenderedDataChange}
-          methodsRef={messageListMethodsRef}
-          licenseKey={messageListLicenseKey}
-          // When the list is short, bottom-align only while we're actually at bottom.
-          // Otherwise, bottom alignment + history prepend can cause an apparent "jump"
-          // as the list transitions from short->tall.
-          shortSizeAlign={atBottom ? "bottom" : "top"}
-        >
-          <SessionQueuePanel
-            queue={queueForPanel}
-            pendingQueueMessageIdSet={pendingQueueMessageIdSet}
-            queueActionBusy={queueActionBusy}
-            sendBusy={sendBusy}
-            onSendQueuedNow={onSendQueuedNow}
-            onEditQueued={onEditQueued}
-            onRemoveQueued={onRemoveQueued}
-          />
-
-          <UnifiedWorkbenchComposer
-            variant="activeSession"
-            value={input}
-            setValue={setInput}
-            placeholder="@ for context, / for commands"
-            inputDisabled={dictationRecording}
-            sessionIdForAutocomplete={id ?? null}
-            slashCommands={slashCommands}
-            attachments={draftAttachments}
-            setAttachments={setDraftAttachments}
-            onSend={sendNow}
-            sendDisabled={sendBusy || !hasDraftContent}
-            sendDisabledReason={sendBusy ? "Sending..." : !hasDraftContent ? "Enter a message." : null}
-            onInterrupt={id ? () => interruptSession(id) : null}
-            isWorking={hasActiveTurn}
-            verbosity={verbosity}
-            onSetVerbosity={setVerbosityPref}
-            modeId={workbenchMode}
-            setModeId={setWorkbenchMode}
-            contextWindow={contextWindow}
-            recording={dictationRecording}
-            onToggleRecording={() => {
-              if (dictationRecording) stopDictation().catch(() => { });
-              else startDictation().catch(() => { });
-            }}
-            harnessLabel={
-              HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.label ??
-              (session?.provider_id ?? "Provider")
-            }
-            harnessLogoSrc={HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.logoSrc}
-            harnessLogoInvert={HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.invertInDark}
-            harnessLogoInvertInLight={
-              HARNESS_CATALOG.find((h) => h.id === (session?.provider_id ?? ""))?.invertInLight
-            }
-            availableModels={modelOptions}
-            currentModelId={currentModelId}
-            onSetModelId={async (next) => {
-              if (!id) return;
-              const updated = await setSessionModel(id, next);
-              supervisor.setSession(updated);
-            }}
-          />
-          {sendError && <div className="wb-banner">{sendError}</div>}
-          {fileOpenError && <div className="wb-banner">{fileOpenError}</div>}
-          {dictationDebugText && <div className="wb-banner">{dictationDebugText}</div>}
-          {dictationError && <div className="wb-banner">{dictationError}</div>}
-          <DictationOnboardingModal
-            state={dictationOnboarding}
-            onClose={dismissDictationOnboarding}
-            onBack={backDictationOnboarding}
-            onChooseLocal={chooseDictationOnboardingLocal}
-            onChooseCloud={chooseDictationOnboardingCloud}
-            onCloudChange={updateDictationOnboardingCloud}
-            onSubmitCloud={() => {
-              void submitDictationOnboardingCloud();
-            }}
-            onSubmitLocal={() => {
-              void submitDictationOnboardingLocal();
-            }}
-          />
-        </SessionThreadPane>
-
-        <div className="sr-only" aria-live="polite">
-          {session && (atBottom ? "Agent output updating." : "New agent activity.")}
-        </div>
-      </div>
-
-    </div>
+    <SessionWorkbenchPane
+      id={id}
+      entryLoadState={entry?.loadState}
+      entryError={entry?.error}
+      session={session}
+      sessionError={sessionError}
+      dropActive={dropActive}
+      dropScopeRef={dropScopeRef}
+      listItems={listItems}
+      events={events}
+      messages={messages}
+      worktreeId={worktreeId}
+      handleFileOpenError={handleFileOpenError}
+      modifierDown={modifierDown}
+      activeAskToolCallId={activeAskToolCallId}
+      expandedTurnHeaders={expandedTurnHeaders}
+      setExpandedTurnHeaders={setExpandedTurnHeaders}
+      expandedTurnDetailsById={expandedTurnDetailsById}
+      setExpandedTurnDetailsById={setExpandedTurnDetailsById}
+      expandedToolById={expandedToolById}
+      setExpandedToolById={setExpandedToolById}
+      turnToolsLoading={turnToolsLoading}
+      verbosity={verbosity}
+      setOptimisticAskAnswers={setOptimisticAskAnswers}
+      onRequestTurnTools={(turnId) => {
+        supervisor.loadTurnTools(id, turnId);
+      }}
+      showDebug={showDebug}
+      debugEvents={debugEvents}
+      authUi={authUi}
+      authMethodId={authMethodId}
+      onAuthMethodChange={setAuthMethodId}
+      authBusy={authBusy}
+      authError={authError}
+      onAuthenticate={handleAuthenticate}
+      subagentInvocations={subagentInvocations}
+      onOpenChildSession={openChildSession}
+      style={virtuosoStyle}
+      itemIdentity={messageListItemIdentity}
+      initialLocation={messageListInitialLocation}
+      context={messageListContext}
+      onScroll={handleMessageListScroll}
+      onRenderedDataChange={handleRenderedDataChange}
+      methodsRef={messageListMethodsRef}
+      licenseKey={messageListLicenseKey}
+      shortSizeAlign={atBottom ? "bottom" : "top"}
+      queueForPanel={queueForPanel}
+      pendingQueueMessageIdSet={pendingQueueMessageIdSet}
+      queueActionBusy={queueActionBusy}
+      sendBusy={sendBusy}
+      onSendQueuedNow={onSendQueuedNow}
+      onEditQueued={onEditQueued}
+      onRemoveQueued={onRemoveQueued}
+      input={input}
+      setInput={setInput}
+      slashCommands={slashCommands}
+      draftAttachments={draftAttachments}
+      setDraftAttachments={setDraftAttachments}
+      sendNow={sendNow}
+      hasDraftContent={hasDraftContent}
+      hasActiveTurn={hasActiveTurn}
+      atBottom={atBottom}
+      setVerbosityPref={setVerbosityPref}
+      workbenchMode={workbenchMode}
+      setWorkbenchMode={setWorkbenchMode}
+      contextWindow={contextWindow}
+      dictationRecording={dictationRecording}
+      onToggleRecording={handleToggleRecording}
+      onInterruptSession={handleInterruptSession}
+      sendError={sendError}
+      fileOpenError={fileOpenError}
+      dictationDebugText={dictationDebugText}
+      dictationError={dictationError}
+      dictationOnboarding={dictationOnboarding}
+      dismissDictationOnboarding={dismissDictationOnboarding}
+      backDictationOnboarding={backDictationOnboarding}
+      chooseDictationOnboardingLocal={chooseDictationOnboardingLocal}
+      chooseDictationOnboardingCloud={chooseDictationOnboardingCloud}
+      updateDictationOnboardingCloud={updateDictationOnboardingCloud}
+      submitDictationOnboardingCloud={submitDictationOnboardingCloud}
+      submitDictationOnboardingLocal={submitDictationOnboardingLocal}
+      providerGuardNotice={providerGuardNotice}
+      providerGuardHeading={providerGuardHeading}
+      providerGuardMessage={providerGuardMessage}
+      providerGuardProviderLabel={providerGuardProviderLabel}
+      providerGuardPidLabel={providerGuardPidLabel}
+      providerGuardMemoryLimitMb={providerGuardMemoryLimitMb}
+      providerGuardLimitLabel={providerGuardLimitLabel}
+      providerGuardActionBusy={providerGuardActionBusy}
+      providerGuardActionError={providerGuardActionError}
+      canRaiseProviderGuard={canRaiseProviderGuard}
+      onRaiseProviderGuardLimit={raiseProviderGuardLimit}
+      onDisableProviderGuard={disableProviderGuard}
+      formatMemoryMb={formatMemoryMb}
+      availableModels={modelOptions}
+      currentModelId={currentModelId}
+      onSetModelId={handleSetModelId}
+    />
   );
 }

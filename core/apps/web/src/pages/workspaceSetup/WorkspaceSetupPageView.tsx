@@ -1,8 +1,6 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import { Link } from "react-router-dom";
-import { ChevronRight, Info, X } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { ChevronRight } from "lucide-react";
 import LauncherBrand from "../../components/LauncherBrand";
 import type {
   ExecutionLaunchSnapshot,
@@ -15,6 +13,13 @@ import {
   AuthImportStepPanel,
   HarnessDownloadsStepPanel,
 } from "./WorkspaceSetupPanels";
+import {
+  WorkspaceLaunchLogPanel,
+  WorkspaceSetupDialogs,
+  WorkspaceSetupStepOptions,
+} from "./WorkspaceSetupChrome";
+import { WorkspaceSetupPagination } from "./WorkspaceSetupPagination";
+import { WorkspaceSetupStepHeader } from "./WorkspaceSetupStepHeader";
 import type { WorkspaceSetupLaunchLogLine } from "./launchProgress";
 import type {
   HarnessInstallProviderRow,
@@ -293,217 +298,36 @@ export function WorkspaceSetupPageView({
     <div className="launcher-shell launcher-shell--crt">
       <LauncherBrand fullScreen>
         <div className="wizard-panel" data-testid="workspace-setup" data-step-key={step.key}>
-          {importInitDialog && (
-            <div
-              className="wizard-modal-backdrop"
-              role="dialog"
-              aria-modal="true"
-              aria-label="Initialize Git repo"
-              data-testid="wizard-import-init-modal"
-              onClick={() => resolveImportInitDialog(false)}
-            >
-              <div className="wizard-modal" onClick={(event) => event.stopPropagation()}>
-                <div className="wizard-modal-header">
-                  <div className="wizard-modal-title">Initialize Git repo in this folder?</div>
-                  <button
-                    type="button"
-                    className="wizard-modal-close"
-                    aria-label="Close"
-                    onClick={() => resolveImportInitDialog(false)}
-                  >
-                    <X size={16} aria-hidden="true" />
-                  </button>
-                </div>
-                <div className="wizard-modal-body">
-                  <div className="wizard-modal-copy">
-                    The selected folder is not currently a repository.
-                  </div>
-                  <div className="wizard-modal-path">
-                    <code>{importInitDialog.path}</code>
-                  </div>
-                  <div className="wizard-modal-note">
-                    This will run <code>git init</code> and create one empty initial commit. Existing files are not staged or committed.
-                  </div>
-                  <div className="wizard-modal-actions">
-                    <button
-                      type="button"
-                      className="wizard-secondary"
-                      data-testid="wizard-import-init-cancel"
-                      onClick={() => resolveImportInitDialog(false)}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      className="wizard-primary"
-                      data-testid="wizard-import-init-confirm"
-                      onClick={() => resolveImportInitDialog(true)}
-                    >
-                      Initialize Git repo here
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-          {infoStep?.info && (
-            <div
-              className="wizard-modal-backdrop"
-              role="dialog"
-              aria-modal="true"
-              aria-label={`${infoStep.title} info`}
-              onClick={() => setOpenInfoKey(null)}
-            >
-              <div className="wizard-modal" onClick={(event) => event.stopPropagation()}>
-                <div className="wizard-modal-header">
-                  <div className="wizard-modal-title">{infoStep.title}</div>
-                  <button
-                    type="button"
-                    className="wizard-modal-close"
-                    aria-label="Close"
-                    onClick={() => setOpenInfoKey(null)}
-                  >
-                    <X size={16} aria-hidden="true" />
-                  </button>
-                </div>
-                <div className="wizard-modal-body">
-                  <div className="wizard-markdown">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {infoStep.info}
-                    </ReactMarkdown>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+          <WorkspaceSetupDialogs
+            importInitDialog={importInitDialog}
+            resolveImportInitDialog={resolveImportInitDialog}
+            infoStep={infoStep}
+            setOpenInfoKey={setOpenInfoKey}
+          />
           <div className="wizard-steps">
             <div className="wizard-step" data-testid="wizard-step" data-step-key={step.key}>
-              <div className="wizard-step-header">
-                <div className="wizard-step-title-row">
-                  <div className="wizard-step-title">{step.title}</div>
-                  {step.info && (
-                    <button
-                      type="button"
-                      className="wizard-info-toggle"
-                      onClick={() => setOpenInfoKey((prev) => (prev === step.key ? null : step.key))}
-                      aria-label="Info"
-                    >
-                      <Info size={16} aria-hidden="true" />
-                    </button>
-                  )}
-                </div>
-                <div className="wizard-step-note">{step.note}</div>
-              </div>
+              <WorkspaceSetupStepHeader step={step} setOpenInfoKey={setOpenInfoKey} />
               <div className="wizard-step-body">
                 {createError && (
                   <div className="wizard-error">{createError}</div>
                 )}
-                {showLaunchPanel && launchSnapshot && (
-                  <div className="wizard-launch-log-panel" data-testid="wizard-launch-log-panel">
-                    <div className="wizard-launch-log-header">
-                      <div>
-                        <div className="wizard-launch-log-title">Workspace Launch Logs</div>
-                        <div className="wizard-launch-log-meta">
-                          <span>{currentLaunchStepLabel}</span>
-                          <span>{currentLaunchElapsed} elapsed</span>
-                          <span>{currentLaunchEtaLabel}</span>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        className="wizard-input-button"
-                        onClick={onCopyLaunchDiagnostics}
-                        data-testid="wizard-launch-copy"
-                      >
-                        {launchCopyLabel}
-                      </button>
-                    </div>
-                    <div className="wizard-launch-log-body">
-                      {launchLogs.length === 0 ? (
-                        <div className="wizard-note">Waiting for launch logs…</div>
-                      ) : (
-                        launchLogs.map((line) => (
-                          <div key={line.seq} className="wizard-launch-log-line">
-                            <span className="wizard-launch-log-ts">{line.timeLabel}</span>
-                            <span className="wizard-launch-log-phase">{line.phaseLabel}</span>
-                            <span className={`wizard-launch-log-level wizard-launch-log-level--${line.level}`}>{line.level}</span>
-                            <span className="wizard-launch-log-msg">{line.message}</span>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                )}
-                {step.options && (
-                  <>
-                    <div className="wizard-option-grid">
-                      {step.options
-                        .filter((option) => step.key !== "container" || !option.advanced)
-                        .map((option) => {
-                          const selected = selections[step.key] === option.id;
-                          return (
-                            <button
-                              key={option.id}
-                              type="button"
-                              className={`wizard-option${selected ? " is-selected" : ""}`}
-                              data-testid={`wizard-option-${step.key}-${option.id}`}
-                              onClick={() => onSelectOption(step.key, option.id)}
-                              aria-pressed={selected}
-                            >
-                              <div className="wizard-option-title">
-                                <span className="wizard-option-title-text">{option.title}</span>
-                                {option.badge && <span className="wizard-option-badge">{option.badge}</span>}
-                              </div>
-                              <div className="wizard-option-desc">{option.desc}</div>
-                            </button>
-                          );
-                        })}
-                    </div>
-                    {step.key === "container" && (
-                      <button
-                        type="button"
-                        className="wizard-advanced-link"
-                        data-testid="wizard-container-advanced-toggle"
-                        onClick={() => setContainerAdvancedOpen((open) => !open)}
-                        aria-expanded={containerAdvancedOpen}
-                      >
-                        <ChevronRight
-                          size={14}
-                          className={containerAdvancedOpen ? "is-open" : undefined}
-                          aria-hidden="true"
-                        />
-                        Advanced
-                      </button>
-                    )}
-                    {step.key === "container" && containerAdvancedOpen && (
-                      <div className="wizard-container-advanced">
-                        <div className="wizard-option-grid wizard-option-grid--two">
-                          {step.options
-                            .filter((option) => Boolean(option.advanced))
-                            .map((option) => {
-                              const selected = selections[step.key] === option.id;
-                              return (
-                                <button
-                                  key={option.id}
-                                  type="button"
-                                  className={`wizard-option${selected ? " is-selected" : ""}`}
-                                  data-testid={`wizard-option-${step.key}-${option.id}`}
-                                  onClick={() => onSelectOption(step.key, option.id)}
-                                  aria-pressed={selected}
-                                >
-                                  <div className="wizard-option-title">
-                                    <span className="wizard-option-title-text">{option.title}</span>
-                                    {option.badge && <span className="wizard-option-badge">{option.badge}</span>}
-                                  </div>
-                                  <div className="wizard-option-desc">{option.desc}</div>
-                                </button>
-                              );
-                            })}
-                        </div>
-                      </div>
-                    )}
-                  </>
-                )}
+                <WorkspaceLaunchLogPanel
+                  showLaunchPanel={showLaunchPanel}
+                  launchSnapshot={launchSnapshot}
+                  currentLaunchStepLabel={currentLaunchStepLabel}
+                  currentLaunchElapsed={currentLaunchElapsed}
+                  currentLaunchEtaLabel={currentLaunchEtaLabel}
+                  launchCopyLabel={launchCopyLabel}
+                  onCopyLaunchDiagnostics={onCopyLaunchDiagnostics}
+                  launchLogs={launchLogs}
+                />
+                <WorkspaceSetupStepOptions
+                  step={step}
+                  selections={selections}
+                  onSelectOption={onSelectOption}
+                  containerAdvancedOpen={containerAdvancedOpen}
+                  setContainerAdvancedOpen={setContainerAdvancedOpen}
+                />
                 {step.key === "network" && selections.network === "allowlist" && (
                   <div className="wizard-input">
                     <label>
@@ -1115,56 +939,19 @@ export function WorkspaceSetupPageView({
               </div>
             </div>
           </div>
-          <div className="wizard-pagination" role="tablist" aria-label="Setup steps">
-            {(() => {
-              const isStepSatisfied = (key: string): boolean => {
-                if (key === "location") {
-                  if (selections.location === "local") return true;
-                  if (selections.location !== "remote") return false;
-                  return remoteStatus === "connected" && hasRemoteHost;
-                }
-                if (key === "auth-import") return true;
-                if (key === "harness-downloads") return true;
-                if (key === "session-titling") {
-                  return titlingMode === "skip"
-                    || titlingMode === "local"
-                    || (titlingMode === "remote" && titlingRemoteValid);
-                }
-                if (key === "source") return sourceStepComplete;
-                if (key === "merge-queue") return mergeQueueSkipped || Boolean(targetBranch.trim());
-                return true;
-              };
-
-              let maxIdx = 0;
-              for (let index = 0; index < steps.length; index += 1) {
-                if (isStepSatisfied(steps[index].key)) {
-                  maxIdx = Math.min(steps.length - 1, index + 1);
-                } else {
-                  maxIdx = Math.max(0, index);
-                  break;
-                }
-              }
-
-              return steps.map((item, index) => {
-                const disabled = index > maxIdx;
-                return (
-                  <button
-                    key={item.key}
-                    type="button"
-                    className={`wizard-dot${index === stepIndex ? " is-active" : ""}`}
-                    aria-label={`Go to step ${index + 1}`}
-                    aria-current={index === stepIndex ? "true" : undefined}
-                    disabled={disabled}
-                    onClick={() => {
-                      if (!disabled) {
-                        goToStepKey(item.key);
-                      }
-                    }}
-                  />
-                );
-              });
-            })()}
-          </div>
+          <WorkspaceSetupPagination
+            steps={steps}
+            stepIndex={stepIndex}
+            selections={selections}
+            remoteStatus={remoteStatus}
+            hasRemoteHost={hasRemoteHost}
+            titlingMode={titlingMode}
+            titlingRemoteValid={titlingRemoteValid}
+            sourceStepComplete={sourceStepComplete}
+            mergeQueueSkipped={mergeQueueSkipped}
+            targetBranch={targetBranch}
+            goToStepKey={goToStepKey}
+          />
           <div className="wizard-actions">
             {isFirst ? (
               <Link to="/" className="wizard-secondary" data-testid="wizard-back-link">

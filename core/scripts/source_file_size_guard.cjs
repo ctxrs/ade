@@ -1,34 +1,74 @@
 #!/usr/bin/env node
 
+const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 
 const coreRoot = path.resolve(__dirname, "..");
-const exceptionsPath = path.join(__dirname, "source_file_size_exceptions.json");
+const repoRoot = path.resolve(coreRoot, "..");
 
 const SOFT_MAX_LINES = 800;
-const HARD_MAX_LINES = 1200;
-const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".rs"]);
-const EXCLUDED_PARTS = new Set(["node_modules", "target", "dist", "build", ".next", "coverage", ".turbo"]);
-const TEST_FILE_PATTERNS = [/\.test\.tsx?$/u, /_test\.rs$/u, /(^|\/)tests\.rs$/u];
+const HARD_MAX_LINES = 1000;
+const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".rs"]);
+const EXCLUDED_PARTS = new Set([
+  ".ctx",
+  ".git",
+  "node_modules",
+  "target",
+  "dist",
+  "build",
+  ".next",
+  "coverage",
+  ".turbo",
+  ".cache",
+]);
+const TEST_PATH_SEGMENTS = new Set(["tests", "__tests__", "e2e", "automation"]);
+const REPO_ROOTS = new Set(["core", "site"]);
+const TEST_FILE_PATTERNS = [
+  /\.test\.[^.]+$/u,
+  /\.spec\.[^.]+$/u,
+  /_test\.rs$/u,
+  /(^|\/)(test|tests)\.[^.]+$/u,
+];
+const AUTOMATION_PATH_PATTERNS = [/^core\/scripts\//u, /^core\/apps\/[^/]+\/scripts\//u];
+const PRODUCTION_ROOT_PATTERNS = [
+  /^core\/apps\/web\/src\//u,
+  /^core\/apps\/desktop\/src-tauri\/src\//u,
+  /^core\/crates\/[^/]+\/src\//u,
+  /^core\/packages\/[^/]+\/src\//u,
+  /^core\/tools\/[^/]+\/src\//u,
+  /^site\/src\//u,
+];
 
 const GUIDANCE_MESSAGE =
-  'This file is getting too big. Consider if that is a code smell pointing to a deeper architectural issue with a module having too many concerns. If you absolutely must keep it, you can add it as an exception. But consider if you can break it up. We do not want to break things up just to break them up though. We should have clean responsibilities, good architecture, and "just works" mentality.';
+  'This file is getting too big. Consider if that is a code smell pointing to a deeper architectural issue with a module having too many concerns. Break it up along clean responsibility boundaries instead of sharding it arbitrarily. We do not allow production-source exceptions to this hard cap.';
 
 const toPosix = (value) => value.split(path.sep).join("/");
 
-const isTestFile = (relativePath) => TEST_FILE_PATTERNS.some((pattern) => pattern.test(relativePath));
-
-const isTrackedSourceFile = (relativePath) => {
+const isTestOrAutomationFile = (relativePath) => {
   const normalized = toPosix(relativePath);
   const parts = normalized.split("/");
-  if (parts.some((part) => EXCLUDED_PARTS.has(part))) return false;
-  if (isTestFile(normalized)) return false;
-  if (parts.length < 3) return false;
-  if (!SOURCE_EXTENSIONS.has(path.extname(normalized))) return false;
+  if (TEST_FILE_PATTERNS.some((pattern) => pattern.test(normalized))) return true;
+  if (parts.some((part) => TEST_PATH_SEGMENTS.has(part))) return true;
+  return AUTOMATION_PATH_PATTERNS.some((pattern) => pattern.test(normalized));
+};
+
+const classifySourceFile = (relativePath) => {
+  const normalized = toPosix(relativePath);
+  const parts = normalized.split("/");
   const [top] = parts;
-  if (!new Set(["apps", "crates", "packages", "tools"]).has(top)) return false;
-  return parts.includes("src");
+
+  if (parts.some((part) => EXCLUDED_PARTS.has(part))) return "ignore";
+  if (top === "external-harnesses") return "ignore";
+  if (!SOURCE_EXTENSIONS.has(path.extname(normalized))) return "ignore";
+  if (isTestOrAutomationFile(normalized)) return "test_or_automation";
+  if (!REPO_ROOTS.has(top)) return "ignore";
+  if (PRODUCTION_ROOT_PATTERNS.some((pattern) => pattern.test(normalized))) return "production";
+  return "ignore";
+};
+
+const isTrackedSourceFile = (relativePath) => {
+  return classifySourceFile(relativePath) === "production";
 };
 
 const countLines = (raw) => {
@@ -50,30 +90,19 @@ const walkFiles = (dirPath, output = []) => {
   return output;
 };
 
-const loadExceptions = (filePath = exceptionsPath) => {
-  const raw = fs.readFileSync(filePath, "utf8");
-  const parsed = JSON.parse(raw);
-  const byPath = new Map();
-  for (const entry of parsed) {
-    const normalizedPath = toPosix(String(entry.path ?? "").trim());
-    if (!normalizedPath) {
-      throw new Error(`source file size exception entry is missing path in ${filePath}`);
-    }
-    const maxLines = Number(entry.maxLines);
-    if (!Number.isInteger(maxLines) || maxLines <= 0) {
-      throw new Error(`source file size exception entry for ${normalizedPath} has invalid maxLines`);
-    }
-    byPath.set(normalizedPath, {
-      path: normalizedPath,
-      maxLines,
-      reason: String(entry.reason ?? "").trim(),
-    });
-  }
-  return byPath;
+const listTrackedFiles = (rootDir) => {
+  const raw = childProcess.execFileSync("git", ["-C", rootDir, "ls-files", "-z"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  return raw
+    .split("\0")
+    .filter(Boolean)
+    .map((relativePath) => path.join(rootDir, relativePath));
 };
 
-const collectSourceFileStats = (rootDir = coreRoot) => {
-  const files = walkFiles(rootDir);
+const collectSourceFileStats = (rootDir = repoRoot) => {
+  const files = rootDir === repoRoot ? listTrackedFiles(rootDir) : walkFiles(rootDir);
   const stats = [];
   for (const absolutePath of files) {
     const relativePath = toPosix(path.relative(rootDir, absolutePath));
@@ -91,7 +120,6 @@ const collectSourceFileStats = (rootDir = coreRoot) => {
 
 const evaluateSourceFileSizes = ({
   files,
-  exceptions,
   softMaxLines = SOFT_MAX_LINES,
   hardMaxLines = HARD_MAX_LINES,
 }) => {
@@ -99,9 +127,7 @@ const evaluateSourceFileSizes = ({
   const violations = [];
 
   for (const file of files) {
-    const exception = exceptions.get(file.path);
-
-    if (file.lineCount > softMaxLines && !exception) {
+    if (file.lineCount > softMaxLines) {
       warnings.push({
         type: "soft_limit",
         path: file.path,
@@ -114,69 +140,31 @@ const evaluateSourceFileSizes = ({
       continue;
     }
 
-    if (!exception) {
-      violations.push({
-        type: "missing_exception",
-        path: file.path,
-        lineCount: file.lineCount,
-        limit: hardMaxLines,
-      });
-      continue;
-    }
-
-    if (file.lineCount > exception.maxLines) {
-      violations.push({
-        type: "exception_exceeded",
-        path: file.path,
-        lineCount: file.lineCount,
-        limit: exception.maxLines,
-        reason: exception.reason,
-      });
-    }
+    violations.push({
+      path: file.path,
+      lineCount: file.lineCount,
+      limit: hardMaxLines,
+    });
   }
 
-  const staleExceptions = [];
-  for (const [exceptionPath, exception] of exceptions.entries()) {
-    if (!files.some((file) => file.path === exceptionPath)) {
-      staleExceptions.push({
-        path: exceptionPath,
-        limit: exception.maxLines,
-        reason: exception.reason,
-      });
-    }
-  }
-
-  return { warnings, violations, staleExceptions };
+  return { warnings, violations };
 };
 
 const formatWarning = (warning) =>
   `warning: ${warning.path} is ${warning.lineCount} lines (soft limit ${warning.limit})`;
 
-const formatViolation = (violation) => {
-  if (violation.type === "missing_exception") {
-    return `${violation.path} is ${violation.lineCount} lines (hard limit ${violation.limit}) and has no exception entry.`;
-  }
-  return `${violation.path} is ${violation.lineCount} lines but its exception cap is ${violation.limit}.`;
-};
+const formatViolation = (violation) =>
+  `${violation.path} is ${violation.lineCount} lines (hard limit ${violation.limit}).`;
 
 const printReport = ({
   warnings,
   violations,
-  staleExceptions,
   stream = process.stderr,
 }) => {
   if (warnings.length > 0) {
     stream.write("source-file-size warnings:\n");
     for (const warning of warnings) {
       stream.write(`  - ${formatWarning(warning)}\n`);
-    }
-    stream.write("\n");
-  }
-
-  if (staleExceptions.length > 0) {
-    stream.write("source-file-size stale exceptions:\n");
-    for (const stale of staleExceptions) {
-      stream.write(`  - ${stale.path} no longer matches a tracked source file\n`);
     }
     stream.write("\n");
   }
@@ -189,26 +177,17 @@ const printReport = ({
   }
   stream.write("\n");
   stream.write(`${GUIDANCE_MESSAGE}\n\n`);
-  stream.write(`If you need an exception, update ${toPosix(path.relative(coreRoot, exceptionsPath))} with a deliberate maxLines cap and rationale.\n`);
+  stream.write(`No production-source exceptions are allowed. Refactor the file below ${HARD_MAX_LINES} lines.\n`);
 };
 
 const run = ({
-  rootDir = coreRoot,
-  exceptionsFilePath = exceptionsPath,
+  rootDir = repoRoot,
   enforce = false,
   stdout = process.stdout,
   stderr = process.stderr,
 } = {}) => {
-  let exceptions;
-  try {
-    exceptions = loadExceptions(exceptionsFilePath);
-  } catch (error) {
-    stderr.write(`source-file-size guard failed to load exceptions: ${error.message}\n`);
-    return 1;
-  }
-
   const files = collectSourceFileStats(rootDir);
-  const result = evaluateSourceFileSizes({ files, exceptions });
+  const result = evaluateSourceFileSizes({ files });
   printReport({ ...result, stream: result.violations.length > 0 ? stderr : stdout });
 
   if (!enforce) return 0;
@@ -227,7 +206,8 @@ module.exports = {
   collectSourceFileStats,
   countLines,
   evaluateSourceFileSizes,
+  classifySourceFile,
   isTrackedSourceFile,
-  loadExceptions,
+  isTestOrAutomationFile,
   run,
 };

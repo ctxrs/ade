@@ -25,9 +25,8 @@ import {
   attachmentDisplayName,
   buildModelsForProvider,
   clamp,
+  describeContextWindow,
   deriveFullModelIdForBase,
-  formatTokenCount,
-  formatUsedTokenCount,
   imageAttachmentSrc,
   labelForVerbosity,
   modelIdFromProviderOptions,
@@ -76,34 +75,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
   const sendActionDisabled = !showStop && (!!sendDisabled || !!sendDisabledReason);
   const sendActionTitle = showStop ? "Stop" : sendDisabledReason ?? "Send";
   const sendActionLabel = showStop ? "Stop" : "Send";
-  const contextWindowDisplay = useMemo(() => {
-    if (!contextWindow?.windowTokens) return null;
-    let usedTokens = contextWindow.usedTokens;
-    if (usedTokens == null && contextWindow.remainingTokens != null) {
-      usedTokens = contextWindow.windowTokens - contextWindow.remainingTokens;
-    }
-    if (usedTokens == null && contextWindow.remainingFraction != null) {
-      usedTokens = Math.round(contextWindow.windowTokens * (1 - contextWindow.remainingFraction));
-    }
-    if (usedTokens == null) return null;
-
-    const windowTokens = Math.max(1, Math.round(contextWindow.windowTokens));
-    const clampedUsed = Math.max(0, Math.min(windowTokens, Math.round(usedTokens)));
-    const fraction = clampedUsed / windowTokens;
-    const percent = Math.max(0, Math.min(100, Math.round(fraction * 100)));
-    const usedLabel = formatUsedTokenCount(clampedUsed);
-    const windowLabel = formatTokenCount(windowTokens);
-    const summary = `${percent}% · ${usedLabel}/${windowLabel}`;
-    const title = `Context Window: ${summary}`;
-
-    return {
-      percent,
-      usedLabel,
-      windowLabel,
-      title,
-      summary,
-    };
-  }, [contextWindow]);
+  const contextWindowDisplay = useMemo(() => describeContextWindow(contextWindow), [contextWindow]);
 
   const [openMenu, setOpenMenu] = useState<OpenMenuId | null>(null);
   const [menuStyle, setMenuStyle] = useState<React.CSSProperties | null>(null);

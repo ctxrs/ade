@@ -22,6 +22,8 @@ use crate::container_fs::is_container_path;
 use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::harness_runtime::{podman_command, workspace_container_name};
+mod parse;
+use parse::{parse_git_status_entries, parse_git_status_short};
 
 const GIT_STATUS_DEBOUNCE_MS: u64 = 500;
 const GIT_STATUS_MAX_INTERVAL_MS: u64 = 2000;
@@ -54,16 +56,6 @@ pub struct GitStatusEntry {
     pub orig_path: Option<String>,
     pub index_status: String,
     pub worktree_status: String,
-}
-
-#[derive(Debug)]
-struct GitStatusBranchInfo {
-    summary_line: String,
-    branch: Option<String>,
-    upstream: Option<String>,
-    ahead: i64,
-    behind: i64,
-    detached: bool,
 }
 
 fn vcs_driver_for_worktree(worktree: &Worktree) -> Arc<dyn VcsDriver> {
@@ -322,15 +314,6 @@ fn snapshot_fingerprint(snapshot: &WorktreeVcsSnapshot) -> String {
     copy.rev = 0;
     copy.emitted_at_ms = 0;
     serde_json::to_string(&copy).unwrap_or_default()
-}
-
-struct ParsedGitStatusEntries {
-    entries: Vec<GitStatusEntry>,
-    staged: i64,
-    unstaged: i64,
-    untracked: i64,
-    total_count: i64,
-    truncated: bool,
 }
 
 fn build_touched_files(entries: &[WorktreeVcsTouchedFile]) -> WorktreeVcsTouchedFiles {
@@ -951,136 +934,6 @@ async fn run_git_status_poller(state: Arc<AppState>, worktree: Worktree) -> Resu
             tracing::warn!(worktree_id = %worktree.id.0, "git status snapshot failed: {err:#}");
         }
     }
-}
-
-fn parse_git_status_short(output: &str) -> GitStatusBranchInfo {
-    let mut info = GitStatusBranchInfo {
-        summary_line: String::new(),
-        branch: None,
-        upstream: None,
-        ahead: 0,
-        behind: 0,
-        detached: false,
-    };
-    let mut lines = output.lines();
-    let Some(line) = lines.next() else {
-        return info;
-    };
-    info.summary_line = line.trim().to_string();
-    let Some(mut line) = line.trim().strip_prefix("## ") else {
-        return info;
-    };
-    let mut counts_part = None;
-    if let Some(idx) = line.find(" [") {
-        counts_part = Some(line[idx + 2..].trim());
-        line = line[..idx].trim();
-    }
-    if line.starts_with("HEAD") {
-        info.detached = true;
-    }
-    if let Some((local, upstream)) = line.split_once("...") {
-        if !local.trim().is_empty() {
-            info.branch = Some(local.trim().to_string());
-        }
-        if !upstream.trim().is_empty() {
-            info.upstream = Some(upstream.trim().to_string());
-        }
-    } else if !line.trim().is_empty() && !info.detached {
-        info.branch = Some(line.trim().to_string());
-    }
-    if let Some(mut counts) = counts_part {
-        if counts.ends_with(']') {
-            counts = &counts[..counts.len() - 1];
-        }
-        for part in counts.split(',') {
-            let mut iter = part.split_whitespace();
-            let Some(kind) = iter.next() else {
-                continue;
-            };
-            let Some(value) = iter.next() else {
-                continue;
-            };
-            let count = value.parse::<i64>().unwrap_or(0);
-            match kind {
-                "ahead" => info.ahead = count,
-                "behind" => info.behind = count,
-                _ => {}
-            }
-        }
-    }
-    info
-}
-
-fn parse_git_status_entries(entries: &[String]) -> ParsedGitStatusEntries {
-    let mut out = Vec::new();
-    let mut staged = 0;
-    let mut unstaged = 0;
-    let mut untracked = 0;
-    let mut total_count = 0;
-    let mut i = 0;
-    while i < entries.len() {
-        let raw = entries[i].trim_end();
-        if raw.len() < 3 {
-            i += 1;
-            continue;
-        }
-        let bytes = raw.as_bytes();
-        if bytes.len() < 3 || bytes[2] != b' ' {
-            i += 1;
-            continue;
-        }
-        let mut chars = raw.chars();
-        let index_status = chars.next().unwrap_or(' ');
-        let worktree_status = chars.next().unwrap_or(' ');
-        let path = raw[3..].trim();
-        if path.is_empty() {
-            i += 1;
-            continue;
-        }
-        let mut current_path = path.to_string();
-        let mut orig_path = None;
-        if (index_status == 'R' || index_status == 'C') && i + 1 < entries.len() {
-            let next_raw = entries[i + 1].trim_end();
-            if !looks_like_porcelain_status(next_raw) && !next_raw.is_empty() {
-                orig_path = Some(current_path);
-                current_path = next_raw.to_string();
-                i += 1;
-            }
-        }
-        total_count += 1;
-        if index_status == '?' && worktree_status == '?' {
-            untracked += 1;
-        } else {
-            if index_status != ' ' {
-                staged += 1;
-            }
-            if worktree_status != ' ' {
-                unstaged += 1;
-            }
-        }
-        if out.len() < WORKTREE_VCS_TOUCHED_FILES_CAP {
-            out.push(GitStatusEntry {
-                path: current_path,
-                orig_path,
-                index_status: index_status.to_string(),
-                worktree_status: worktree_status.to_string(),
-            });
-        }
-        i += 1;
-    }
-    ParsedGitStatusEntries {
-        entries: out,
-        staged,
-        unstaged,
-        untracked,
-        total_count,
-        truncated: total_count as usize > WORKTREE_VCS_TOUCHED_FILES_CAP,
-    }
-}
-
-fn looks_like_porcelain_status(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    bytes.len() >= 3 && bytes[2] == b' '
 }
 
 fn should_ignore_event(event: &Event) -> bool {

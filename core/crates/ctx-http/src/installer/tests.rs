@@ -1,0 +1,659 @@
+use super::artifacts::{
+    commit_atomic_install_dir, prepare_atomic_install_dir, resolve_download_resume,
+    validate_sha256_digest,
+};
+use super::toolchains::{
+    node_runtime_target_for_install_target, python_target_can_use_bundled_runtime,
+    resolve_python_bin,
+};
+use super::*;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+fn status_with_managed_target(target: &str) -> ctx_providers::adapters::ProviderStatus {
+    let mut details = HashMap::new();
+    details.insert("managed_target".to_string(), target.to_string());
+    ctx_providers::adapters::ProviderStatus {
+        provider_id: "codex".to_string(),
+        installed: true,
+        detected_path: Some("/tmp/codex".to_string()),
+        version: None,
+        capabilities: None,
+        health: ctx_providers::adapters::ProviderHealth::Ok,
+        diagnostics: Vec::new(),
+        details,
+    }
+}
+
+fn host_detected_status() -> ctx_providers::adapters::ProviderStatus {
+    ctx_providers::adapters::ProviderStatus {
+        provider_id: "codex".to_string(),
+        installed: true,
+        detected_path: Some("/usr/local/bin/codex".to_string()),
+        version: None,
+        capabilities: None,
+        health: ctx_providers::adapters::ProviderHealth::Ok,
+        diagnostics: Vec::new(),
+        details: HashMap::new(),
+    }
+}
+
+#[test]
+fn managed_provider_installs_are_enabled_for_supported_entries() {
+    let matrix = provider_matrix::builtin_matrix();
+    assert!(is_supported_managed_provider(&matrix, "codex"));
+    assert!(is_supported_managed_provider(&matrix, "opencode"));
+}
+
+#[test]
+fn parse_install_target_defaults_to_host() {
+    assert_eq!(
+        parse_install_target(None).expect("default install target"),
+        InstallTarget::Host
+    );
+}
+
+#[test]
+fn parse_install_target_rejects_unknown_values() {
+    let err = parse_install_target(Some("not-a-target")).expect_err("invalid target should fail");
+    assert!(err.to_string().contains("invalid install target"));
+}
+
+#[test]
+fn archive_bin_requires_node_runtime_detects_javascript_entrypoints() {
+    let missing = Path::new("/__ctx_missing_entrypoint__");
+    assert!(archive_bin_requires_node_runtime(
+        "dist/bin/amp-acp.js",
+        missing
+    ));
+    assert!(archive_bin_requires_node_runtime(
+        "dist/bin/provider.mjs",
+        missing
+    ));
+    assert!(archive_bin_requires_node_runtime(
+        "dist/bin/provider.cjs",
+        missing
+    ));
+    assert!(!archive_bin_requires_node_runtime(
+        "dist/bin/provider",
+        missing
+    ));
+    assert!(!archive_bin_requires_node_runtime(
+        "dist/bin/provider.exe",
+        missing
+    ));
+}
+
+#[test]
+fn archive_bin_requires_node_runtime_detects_extensionless_node_shebang() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let launcher = temp.path().join("claude-crp");
+    std::fs::write(&launcher, "#!/usr/bin/env node\nconsole.log('ctx');\n")
+        .expect("write launcher");
+    assert!(archive_bin_requires_node_runtime(
+        "bin/claude-crp",
+        &launcher
+    ));
+}
+
+#[test]
+fn archive_bin_requires_node_runtime_detects_env_shebang_with_flags() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let launcher = temp.path().join("provider");
+    std::fs::write(
+        &launcher,
+        "#!/usr/bin/env -S node --no-warnings\nconsole.log('ctx');\n",
+    )
+    .expect("write launcher");
+    assert!(archive_bin_requires_node_runtime("bin/provider", &launcher));
+}
+
+#[test]
+fn archive_bin_requires_node_runtime_ignores_non_node_shebang() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let launcher = temp.path().join("provider");
+    std::fs::write(&launcher, "#!/bin/sh\necho ctx\n").expect("write launcher");
+    assert!(!archive_bin_requires_node_runtime(
+        "bin/provider",
+        &launcher
+    ));
+}
+
+#[test]
+fn node_runtime_dependency_id_is_target_specific() {
+    assert_eq!(
+        node_runtime_dependency_id(InstallTarget::Host),
+        "runtime-node-host"
+    );
+    assert_eq!(
+        node_runtime_dependency_id(InstallTarget::Container),
+        "runtime-node-container"
+    );
+    assert_eq!(
+        node_runtime_dependency_id(InstallTarget::LinuxAarch64),
+        "runtime-node-linux-aarch64"
+    );
+}
+
+#[test]
+fn container_node_runtime_target_is_linux_for_host_arch() {
+    let target = node_runtime_target_for_install_target(InstallTarget::Container)
+        .expect("container target mapping");
+    match std::env::consts::ARCH {
+        "aarch64" => assert_eq!(target.dist_target, "linux-arm64"),
+        "x86_64" => assert_eq!(target.dist_target, "linux-x64"),
+        other => panic!("unexpected test arch: {other}"),
+    }
+    assert!(!target.is_windows);
+}
+
+#[test]
+fn container_node_runtime_dependency_targets_include_host_on_non_linux() {
+    assert_eq!(
+        node_runtime_dependency_targets_for_install_target(InstallTarget::Container, "macos"),
+        vec![InstallTarget::Container, InstallTarget::Host]
+    );
+    assert_eq!(
+        node_runtime_dependency_targets_for_install_target(InstallTarget::Container, "windows"),
+        vec![InstallTarget::Container, InstallTarget::Host]
+    );
+    assert_eq!(
+        node_runtime_dependency_targets_for_install_target(InstallTarget::Container, "linux"),
+        vec![InstallTarget::Container]
+    );
+}
+
+#[test]
+fn managed_provider_runtime_command_wraps_acp_providers_with_bridge() {
+    let data_root = tempfile::tempdir().expect("tempdir");
+    let managed = AgentServerCommand {
+        command: "/tmp/opencode".to_string(),
+        args: vec!["acp".to_string()],
+        dependencies: Vec::new(),
+        managed: None,
+    };
+    let bridge = AgentServerCommand {
+        command: "/tmp/acp-crp-bridge".to_string(),
+        args: vec!["--stdio".to_string()],
+        dependencies: Vec::new(),
+        managed: None,
+    };
+
+    let runtime =
+        managed_provider_runtime_command(data_root.path(), "opencode", managed, Some(&bridge))
+            .expect("wrapped runtime command");
+
+    assert_eq!(runtime.command, "/tmp/acp-crp-bridge");
+    assert_eq!(runtime.args.first().map(String::as_str), Some("--stdio"));
+    assert!(
+        runtime.args.iter().any(|arg| arg == "--acp-command"),
+        "bridge command must include ACP command wrapper"
+    );
+    assert!(
+        runtime.args.iter().any(|arg| arg == "/tmp/opencode acp"),
+        "bridge command should point at the installed ACP command"
+    );
+}
+
+#[test]
+fn managed_provider_runtime_command_rejects_path_style_gemini_runtime() {
+    let data_root = tempfile::tempdir().expect("tempdir");
+    let gemini_bin = data_root.path().join("bundle").join("bin").join("gemini");
+    std::fs::create_dir_all(gemini_bin.parent().expect("parent")).expect("mkdir gemini");
+    std::fs::write(&gemini_bin, b"gemini").expect("write gemini");
+    let managed = AgentServerCommand {
+        command: gemini_bin.to_string_lossy().to_string(),
+        args: vec!["--experimental-acp".to_string()],
+        dependencies: Vec::new(),
+        managed: None,
+    };
+    let bridge = AgentServerCommand {
+        command: "/tmp/acp-crp-bridge".to_string(),
+        args: vec!["--stdio".to_string()],
+        dependencies: Vec::new(),
+        managed: None,
+    };
+
+    let err = managed_provider_runtime_command(data_root.path(), "gemini", managed, Some(&bridge))
+        .unwrap_err();
+
+    assert!(err
+        .to_string()
+        .contains("must use an explicit absolute node executable"));
+}
+
+#[test]
+fn managed_provider_runtime_command_keeps_native_crp_providers_raw() {
+    let managed = AgentServerCommand {
+        command: "/tmp/codex-crp".to_string(),
+        args: vec!["--stdio".to_string()],
+        dependencies: Vec::new(),
+        managed: None,
+    };
+
+    let runtime = managed_provider_runtime_command(Path::new("/tmp"), "codex", managed, None)
+        .expect("raw runtime command");
+
+    assert_eq!(runtime.command, "/tmp/codex-crp");
+    assert_eq!(runtime.args, vec!["--stdio".to_string()]);
+}
+
+#[test]
+fn bundled_seed_js_runtime_prepends_bundled_node_bin_dir() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let script = temp
+        .path()
+        .join("providers/goose/macos/aarch64/goose-acp.js");
+    std::fs::create_dir_all(script.parent().expect("parent")).expect("mkdir script");
+    std::fs::write(&script, b"#!/usr/bin/env node\n").expect("write script");
+
+    let node_bin = temp
+        .path()
+        .join("runtimes/node/macos/aarch64/node-v1/bin/node");
+    std::fs::create_dir_all(node_bin.parent().expect("parent")).expect("mkdir node");
+    std::fs::write(&node_bin, b"ok").expect("write node");
+
+    let runtime_cmd = ProviderRuntimeCommand {
+        provider_id: "goose".to_string(),
+        command_abs_path: script.to_string_lossy().to_string(),
+        args: Vec::new(),
+        dependencies: Vec::new(),
+        source: ProviderRuntimeCommandSource::BundledSeed,
+    };
+    let bundled_node = bundled_assets::BundledRuntimePaths {
+        root: node_bin
+            .parent()
+            .expect("bin dir")
+            .parent()
+            .expect("runtime root")
+            .to_path_buf(),
+        bin: node_bin.clone(),
+        npm_cli: None,
+        version: "1".to_string(),
+    };
+
+    let mut bin_dirs = vec![script.parent().expect("script dir").to_path_buf()];
+    prepend_bundled_seed_node_bin_dir(&mut bin_dirs, &runtime_cmd, Some(bundled_node));
+
+    assert!(bin_dirs.contains(&node_bin.parent().expect("node dir").to_path_buf()));
+}
+
+#[test]
+fn dependency_target_compatibility_filters_linux_bins_for_non_linux_host_probes() {
+    assert!(dependency_target_compatible_with_context(
+        Some(InstallTarget::Host),
+        false,
+        "macos",
+        "aarch64"
+    ));
+    assert!(!dependency_target_compatible_with_context(
+        Some(InstallTarget::Container),
+        false,
+        "macos",
+        "aarch64"
+    ));
+    assert!(!dependency_target_compatible_with_context(
+        Some(InstallTarget::LinuxAarch64),
+        false,
+        "macos",
+        "aarch64"
+    ));
+    assert!(dependency_target_compatible_with_context(
+        Some(InstallTarget::Container),
+        false,
+        "linux",
+        "x86_64"
+    ));
+}
+
+#[test]
+fn dependency_target_compatibility_allows_linux_bins_for_container_exec() {
+    assert!(dependency_target_compatible_with_context(
+        Some(InstallTarget::Container),
+        true,
+        "macos",
+        "aarch64"
+    ));
+    assert!(dependency_target_compatible_with_context(
+        Some(InstallTarget::LinuxAarch64),
+        true,
+        "windows",
+        "aarch64"
+    ));
+    assert!(!dependency_target_compatible_with_context(
+        Some(InstallTarget::Host),
+        true,
+        "linux",
+        "x86_64"
+    ));
+}
+
+#[test]
+fn managed_provider_target_support_matches_install_kind() {
+    let matrix = provider_matrix::builtin_matrix();
+    let harness_provider_ids = [
+        "claude-crp",
+        "codex",
+        "qwen",
+        "cursor",
+        "pi",
+        "amp",
+        "droid",
+        "gemini",
+        "copilot",
+        "opencode",
+        "cline",
+        "mistral",
+        "auggie",
+        "goose",
+        "kimi",
+        "openhands",
+    ];
+    let mut archive_count = 0usize;
+    assert_eq!(
+        harness_provider_ids.len(),
+        16,
+        "curated harness list changed; update coverage expectation"
+    );
+    for target in [InstallTarget::Host, InstallTarget::Container] {
+        let supported = harness_provider_ids
+            .iter()
+            .filter(|provider_id| {
+                is_supported_managed_provider_for_target(&matrix, provider_id, target)
+            })
+            .count();
+        let target_label = match target {
+            InstallTarget::Host => "host",
+            InstallTarget::Container => "container",
+            InstallTarget::LinuxAarch64 => "linux-aarch64",
+            InstallTarget::LinuxX8664 => "linux-x86_64",
+        };
+        assert_eq!(
+            supported,
+            harness_provider_ids.len(),
+            "expected full harness support for {target_label}: {supported}/{}",
+            harness_provider_ids.len()
+        );
+    }
+    for provider_id in harness_provider_ids {
+        let entry = provider_matrix::get_entry(&matrix, provider_id)
+            .unwrap_or_else(|| panic!("missing provider matrix entry for {provider_id}"));
+        let install = entry
+            .managed_install
+            .as_ref()
+            .unwrap_or_else(|| panic!("missing managed_install for {provider_id}"));
+        match install {
+            provider_matrix::ProviderInstall::Archive { .. } => {
+                archive_count += 1;
+                assert!(
+                    is_supported_managed_provider_for_target(
+                        &matrix,
+                        provider_id,
+                        InstallTarget::LinuxAarch64
+                    ),
+                    "archive provider {provider_id} missing linux-aarch64 support"
+                );
+                assert!(
+                    is_supported_managed_provider_for_target(
+                        &matrix,
+                        provider_id,
+                        InstallTarget::LinuxX8664
+                    ),
+                    "archive provider {provider_id} missing linux-x86_64 support"
+                );
+            }
+            provider_matrix::ProviderInstall::Npm { .. }
+            | provider_matrix::ProviderInstall::Python { .. } => {
+                assert!(
+                    is_supported_managed_provider_for_target(
+                        &matrix,
+                        provider_id,
+                        InstallTarget::Host
+                    ),
+                    "managed provider {provider_id} must support host installs"
+                );
+                assert!(
+                    is_supported_managed_provider_for_target(
+                        &matrix,
+                        provider_id,
+                        InstallTarget::Container
+                    ),
+                    "managed provider {provider_id} must support container installs"
+                );
+            }
+        }
+    }
+    assert_eq!(
+        archive_count, 8,
+        "curated harness archive set changed; verify linux target coverage expectations"
+    );
+    assert!(is_supported_managed_provider_for_target(
+        &matrix,
+        "codex",
+        InstallTarget::Container
+    ));
+    assert!(is_supported_managed_provider_for_target(
+        &matrix,
+        "auggie",
+        InstallTarget::Container
+    ));
+}
+
+#[test]
+fn python_bundled_runtime_is_host_only() {
+    assert!(python_target_can_use_bundled_runtime(InstallTarget::Host));
+    assert!(!python_target_can_use_bundled_runtime(
+        InstallTarget::Container
+    ));
+    assert!(!python_target_can_use_bundled_runtime(
+        InstallTarget::LinuxAarch64
+    ));
+    assert!(!python_target_can_use_bundled_runtime(
+        InstallTarget::LinuxX8664
+    ));
+}
+
+#[test]
+fn expected_managed_dependency_version_detects_runtime_dependencies() {
+    assert_eq!(
+        expected_managed_dependency_version("runtime-node-host"),
+        Some(NODE_VERSION)
+    );
+    assert_eq!(
+        expected_managed_dependency_version("runtime-python-container"),
+        Some(PYTHON_VERSION)
+    );
+    assert_eq!(expected_managed_dependency_version("codex"), None);
+}
+
+#[test]
+fn python_paths_for_container_target_use_linux_layout() {
+    let python_root = Path::new("/tmp/python-runtime");
+    let venv_root = Path::new("/tmp/provider-venv");
+    assert_eq!(
+        resolve_python_bin(python_root, InstallTarget::Container),
+        python_root.join("bin").join("python")
+    );
+    assert_eq!(
+        venv_exe(venv_root, "python", InstallTarget::Container),
+        venv_root.join("bin").join("python")
+    );
+}
+
+#[test]
+fn python_paths_for_linux_targets_use_linux_layout() {
+    let python_root = Path::new("/tmp/python-runtime");
+    let venv_root = Path::new("/tmp/provider-venv");
+    for target in [InstallTarget::LinuxAarch64, InstallTarget::LinuxX8664] {
+        assert_eq!(
+            resolve_python_bin(python_root, target),
+            python_root.join("bin").join("python")
+        );
+        assert_eq!(
+            venv_exe(venv_root, "python", target),
+            venv_root.join("bin").join("python")
+        );
+    }
+}
+
+#[test]
+fn validate_sha256_digest_accepts_case_insensitive_match() {
+    assert!(validate_sha256_digest("ABcd1234", "abcd1234").is_ok());
+}
+
+#[test]
+fn validate_sha256_digest_rejects_mismatch() {
+    let err =
+        validate_sha256_digest("abcd1234", "ffff1234").expect_err("mismatched digest should fail");
+    assert!(err.to_string().contains("archive checksum mismatch"));
+}
+
+#[test]
+fn resolve_download_resume_handles_partial_content() {
+    let (resumed, total) =
+        resolve_download_resume(120, reqwest::StatusCode::PARTIAL_CONTENT, Some(880));
+    assert!(resumed);
+    assert_eq!(total, Some(1000));
+}
+
+#[test]
+fn resolve_download_resume_restarts_on_non_partial_status() {
+    let (resumed, total) = resolve_download_resume(120, reqwest::StatusCode::OK, Some(880));
+    assert!(!resumed);
+    assert_eq!(total, Some(880));
+}
+
+#[test]
+fn classify_install_error_maps_codes() {
+    assert_eq!(
+        classify_install_error("download", &anyhow::anyhow!("sending request failed")),
+        InstallErrorCode::DownloadFailed
+    );
+    assert_eq!(
+        classify_install_error("refresh", &anyhow::anyhow!("provider not healthy")),
+        InstallErrorCode::HealthCheckFailed
+    );
+    assert_eq!(
+        classify_install_error(
+            "registry",
+            &anyhow::anyhow!("managed install registry write failed")
+        ),
+        InstallErrorCode::RegistryWriteFailed
+    );
+    assert_eq!(
+        classify_install_error("download", &anyhow::anyhow!("install canceled by user")),
+        InstallErrorCode::Cancelled
+    );
+}
+
+#[test]
+fn apply_install_target_status_marks_mismatch_as_missing() {
+    let mut status = status_with_managed_target("host");
+    apply_install_target_status(&mut status, InstallTarget::Container);
+    assert!(!status.installed);
+    assert!(matches!(
+        status.health,
+        ctx_providers::adapters::ProviderHealth::Missing
+    ));
+    assert_eq!(
+        status.details.get("target_mismatch").map(String::as_str),
+        Some("true")
+    );
+}
+
+#[test]
+fn apply_install_target_status_marks_host_detected_status_unverified_for_container() {
+    let mut status = host_detected_status();
+    apply_install_target_status(&mut status, InstallTarget::Container);
+    assert!(!status.installed);
+    assert!(matches!(
+        status.health,
+        ctx_providers::adapters::ProviderHealth::Missing
+    ));
+    assert_eq!(
+        status.details.get("target_unverified").map(String::as_str),
+        Some("true")
+    );
+}
+
+#[test]
+fn validate_post_install_status_rejects_target_mismatch() {
+    let status = status_with_managed_target("host");
+    let err = validate_post_install_status(&status, "codex", InstallTarget::Container)
+        .expect_err("target mismatch should fail verification");
+    assert!(err.to_string().contains("expected 'container'"));
+}
+
+#[test]
+fn validate_post_install_status_accepts_matching_target() {
+    let status = status_with_managed_target("container");
+    validate_post_install_status(&status, "codex", InstallTarget::Container)
+        .expect("matching target should pass verification");
+}
+
+#[tokio::test]
+async fn provider_install_lock_serializes_same_provider_target() {
+    let first = acquire_provider_install_lock("codex", InstallTarget::Container).await;
+    let acquired = Arc::new(AtomicBool::new(false));
+    let acquired2 = acquired.clone();
+    let waiter = tokio::spawn(async move {
+        let _second = acquire_provider_install_lock("codex", InstallTarget::Container).await;
+        acquired2.store(true, Ordering::SeqCst);
+    });
+
+    tokio::time::sleep(Duration::from_millis(40)).await;
+    assert!(
+        !acquired.load(Ordering::SeqCst),
+        "second lock should block while first lock is held"
+    );
+
+    drop(first);
+    tokio::time::timeout(Duration::from_secs(1), waiter)
+        .await
+        .expect("second lock should acquire after first unlock")
+        .expect("waiter task should finish without panic");
+    assert!(acquired.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn atomic_install_commit_replaces_existing_install_dir() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let install_dir = temp.path().join("providers").join("codex").join("1.2.3");
+    tokio::fs::create_dir_all(install_dir.join("old"))
+        .await
+        .expect("create old dir");
+    tokio::fs::write(install_dir.join("old").join("keep.txt"), b"old")
+        .await
+        .expect("write old file");
+
+    let staging_dir = prepare_atomic_install_dir(&install_dir)
+        .await
+        .expect("prepare staging dir");
+    tokio::fs::create_dir_all(staging_dir.join("new"))
+        .await
+        .expect("create new dir");
+    tokio::fs::write(staging_dir.join("new").join("fresh.txt"), b"new")
+        .await
+        .expect("write new file");
+
+    commit_atomic_install_dir(&staging_dir, &install_dir)
+        .await
+        .expect("commit install dir");
+
+    assert!(
+        tokio::fs::metadata(staging_dir).await.is_err(),
+        "staging dir should be moved into final location"
+    );
+    assert!(
+        tokio::fs::metadata(install_dir.join("new").join("fresh.txt"))
+            .await
+            .is_ok()
+    );
+    assert!(
+        tokio::fs::metadata(install_dir.join("old").join("keep.txt"))
+            .await
+            .is_err(),
+        "old install contents should be replaced"
+    );
+}

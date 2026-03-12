@@ -17,6 +17,7 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::info;
 
 use conversions::*;
+use conversions_tools::*;
 use metrics_and_runtime::*;
 
 #[derive(Clone)]
@@ -588,13 +589,18 @@ impl Store {
 mod artifacts_blobs;
 mod attachments;
 mod conversions;
+mod conversions_tools;
 mod events;
 mod messages;
+mod messages_snapshots;
+mod messages_workspace_active;
+mod messages_workspace_index;
 mod metrics_and_runtime;
 mod mobile;
 mod sessions;
 mod tasks;
 mod turns;
+mod turns_session_heads;
 mod workspace;
 mod worktrees;
 
