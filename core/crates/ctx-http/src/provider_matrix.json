@@ -19,37 +19,37 @@
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/acp-crp-bridge/0.1.2/macos/aarch64/acp-crp-bridge-0.1.2-macos-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "acp-crp-bridge",
-            "sha256": "1f9d6d7d5464b5bf3d07dd3629507b5e585e6392a87e9c15fe4f654268a7b2c6"
+            "sha256": "20bfc5c439c28e31642bd62b59c93064f5f096d1786cac2541d63e0fea82d93b"
           },
           "darwin-x86_64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/acp-crp-bridge/0.1.2/macos/x86_64/acp-crp-bridge-0.1.2-macos-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "acp-crp-bridge",
-            "sha256": "6886564ae7fd0e6c13b9e5033b7691144c1342acfb942f0a03bdbebc40a82a38"
+            "sha256": "ae18a4b86d649e1ceac768ac15e84fbd0c80871954109972dea74c968fdf4f95"
           },
           "linux-aarch64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/acp-crp-bridge/0.1.2/linux/aarch64/acp-crp-bridge-0.1.2-linux-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "acp-crp-bridge",
-            "sha256": "bb0210ba917ec87c7e595978ccd46033d3b34b7c22efcb89c90e4f0a438e33dc"
+            "sha256": "34921efa5e6c0412c27448e13cdd00f856cbad78afeb493db5755943c7b38a5f"
           },
           "linux-x86_64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/acp-crp-bridge/0.1.2/linux/x86_64/acp-crp-bridge-0.1.2-linux-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "acp-crp-bridge",
-            "sha256": "be3da516e823a6ae50da85e302c3c49348c339ee9b1a62e901537b28381bf8bd"
+            "sha256": "659c427533d3d51a9abb04139dee77702103170a43bf2f767138fe297cc1f156"
           },
           "macos-aarch64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/acp-crp-bridge/0.1.2/macos/aarch64/acp-crp-bridge-0.1.2-macos-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "acp-crp-bridge",
-            "sha256": "1f9d6d7d5464b5bf3d07dd3629507b5e585e6392a87e9c15fe4f654268a7b2c6"
+            "sha256": "20bfc5c439c28e31642bd62b59c93064f5f096d1786cac2541d63e0fea82d93b"
           },
           "macos-x86_64": {
             "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/acp-crp-bridge/0.1.2/macos/x86_64/acp-crp-bridge-0.1.2-macos-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "acp-crp-bridge",
-            "sha256": "6886564ae7fd0e6c13b9e5033b7691144c1342acfb942f0a03bdbebc40a82a38"
+            "sha256": "ae18a4b86d649e1ceac768ac15e84fbd0c80871954109972dea74c968fdf4f95"
           }
         }
       },
@@ -82,40 +82,40 @@
         "args": [],
         "targets": {
           "darwin-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/amp/0.1.1/macos/aarch64/amp-0.1.1-macos-aarch64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/amp/0.1.2/macos/aarch64/amp-0.1.2-macos-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/amp-acp.js",
-            "sha256": "d104cb2f78fdf476727255161495593d5a6ac3477181b289271c2d886fc6038c"
+            "sha256": "b51f71afc745a7f090c302c8c51a41192e4535ea6dfee886bb3903a5a250c521"
           },
           "darwin-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/amp/0.1.1/macos/x86_64/amp-0.1.1-macos-x86_64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/amp/0.1.2/macos/x86_64/amp-0.1.2-macos-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/amp-acp.js",
-            "sha256": "6ca4ea2efa03370b14d4f09c0a39c288af0934428b1299afe820262f8c9e6db8"
+            "sha256": "5f6608fd3316490c4fc864ef0de2b735781ccba59217f0275bb83f6738b8eb9a"
           },
           "linux-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/amp/0.1.1/linux/aarch64/amp-0.1.1-linux-aarch64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/amp/0.1.2/linux/aarch64/amp-0.1.2-linux-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/amp-acp.js",
-            "sha256": "802daafae7aa351ac14781b65c8f78c95a4a75c56d6d3cd9adfacbc25db58611"
+            "sha256": "967bf772de64039d0a37d0818f3a39842c4f45d5e0e19ab550a95340904910b5"
           },
           "linux-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/amp/0.1.1/linux/x86_64/amp-0.1.1-linux-x86_64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/amp/0.1.2/linux/x86_64/amp-0.1.2-linux-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/amp-acp.js",
-            "sha256": "95c37d91c7a976f34e2a545fae7579cd3d4e4b9d8c79e68f51ed0e8d404438e6"
+            "sha256": "8d80993bfb3d9f011af69a3854599b3d1b5ae38685fbd6623cc0951ef437f388"
           },
           "macos-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/amp/0.1.1/macos/aarch64/amp-0.1.1-macos-aarch64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/amp/0.1.2/macos/aarch64/amp-0.1.2-macos-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/amp-acp.js",
-            "sha256": "d104cb2f78fdf476727255161495593d5a6ac3477181b289271c2d886fc6038c"
+            "sha256": "b51f71afc745a7f090c302c8c51a41192e4535ea6dfee886bb3903a5a250c521"
           },
           "macos-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/amp/0.1.1/macos/x86_64/amp-0.1.1-macos-x86_64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/amp/0.1.2/macos/x86_64/amp-0.1.2-macos-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "dist/bin/amp-acp.js",
-            "sha256": "6ca4ea2efa03370b14d4f09c0a39c288af0934428b1299afe820262f8c9e6db8"
+            "sha256": "5f6608fd3316490c4fc864ef0de2b735781ccba59217f0275bb83f6738b8eb9a"
           }
         }
       },
