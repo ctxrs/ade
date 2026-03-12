@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "acp-crp-bridge"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "agent-client-protocol",
  "anyhow",

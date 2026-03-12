@@ -12,7 +12,7 @@
       },
       "managed_install": {
         "kind": "archive",
-        "version": "0.1.1",
+        "version": "0.1.2",
         "args": [],
         "targets": {
           "darwin-aarch64": {
@@ -61,7 +61,7 @@
       },
       "releases": [
         {
-          "version": "0.1.1",
+          "version": "0.1.2",
           "status": "supported",
           "context_min": "0.1.1",
           "notes": "Pinned workspace adapter source (external-harnesses/acp-crp-bridge/Cargo.toml)"
@@ -204,44 +204,44 @@
       },
       "managed_install": {
         "kind": "archive",
-        "version": "0.2.7-ctx.2",
+        "version": "0.2.7-ctx.3",
         "args": [],
         "targets": {
           "darwin-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.2/macos/aarch64/claude-crp-0.2.7-ctx.2-darwin-aarch64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.3/macos/aarch64/claude-crp-0.2.7-ctx.3-darwin-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "bin/claude-crp",
-            "sha256": "154a4a0ace1c7446b5bbbce2972cd8d5d3d949451d60eba27d79296928e49b2d"
+            "sha256": "0660e82333c778b06ae57e8bb7d2c8c4b669e282e6d65608742f5871357be11b"
           },
           "darwin-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.2/macos/x86_64/claude-crp-0.2.7-ctx.2-darwin-x86_64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.3/macos/x86_64/claude-crp-0.2.7-ctx.3-darwin-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "bin/claude-crp",
-            "sha256": "b5dea8042cc6b6dc8aaac8c5993c8648fbd2039ec2b13f8d2398e733b263dfac"
+            "sha256": "089630669794d58d5b2c202155db61b681e7923d35e7f6498cb0c981fd0edd09"
           },
           "linux-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.2/linux/aarch64/claude-crp-0.2.7-ctx.2-linux-aarch64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.3/linux/aarch64/claude-crp-0.2.7-ctx.3-linux-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "bin/claude-crp",
-            "sha256": "5810972403cddbe93ffa3f85978bf5e10802c7b8b6e48c6f8ad1c89aa9eaf3de"
+            "sha256": "646e3ed8510f6f4d6a0da7e8671c66d5e101d89dd3040f47a5edda12f31392b2"
           },
           "linux-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.2/linux/x86_64/claude-crp-0.2.7-ctx.2-linux-x86_64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.3/linux/x86_64/claude-crp-0.2.7-ctx.3-linux-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "bin/claude-crp",
-            "sha256": "b012804c7823b66f2dcbdbf72d9770a831895254685e676361e040a94ba5b0b3"
+            "sha256": "3775745ec12151fa41c5f6706bfbef6d7245e47bf4baf866397a9a9d153bd192"
           },
           "macos-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.2/macos/aarch64/claude-crp-0.2.7-ctx.2-darwin-aarch64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.3/macos/aarch64/claude-crp-0.2.7-ctx.3-darwin-aarch64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "bin/claude-crp",
-            "sha256": "154a4a0ace1c7446b5bbbce2972cd8d5d3d949451d60eba27d79296928e49b2d"
+            "sha256": "0660e82333c778b06ae57e8bb7d2c8c4b669e282e6d65608742f5871357be11b"
           },
           "macos-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.2/macos/x86_64/claude-crp-0.2.7-ctx.2-darwin-x86_64.tar.gz",
+            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/claude-crp/0.2.7-ctx.3/macos/x86_64/claude-crp-0.2.7-ctx.3-darwin-x86_64.tar.gz",
             "archive": "tar_gz",
             "bin_path": "bin/claude-crp",
-            "sha256": "b5dea8042cc6b6dc8aaac8c5993c8648fbd2039ec2b13f8d2398e733b263dfac"
+            "sha256": "089630669794d58d5b2c202155db61b681e7923d35e7f6498cb0c981fd0edd09"
           }
         }
       },
@@ -260,7 +260,7 @@
       },
       "releases": [
         {
-          "version": "0.2.7-ctx.2",
+          "version": "0.2.7-ctx.3",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned workspace adapter source (external-harnesses/claude-crp/package.json)",
