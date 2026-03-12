@@ -214,23 +214,13 @@ async fn prepare_provider_runtime_probe(
         Some(install_target),
     )
     .map_err(|e| {
-        PreparedProviderRuntimeProbeError::Route((
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": format!(
-                    "runtime_command_invalid: provider={provider_id} error={e}"
-                ),
-            })),
+        PreparedProviderRuntimeProbeError::Verify(format!(
+            "runtime_command_invalid: provider={provider_id} error={e}"
         ))
     })?
     .ok_or_else(|| {
-        PreparedProviderRuntimeProbeError::Route((
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": format!(
-                    "runtime_command_missing: provider={provider_id} (configure an absolute runtime command)"
-                ),
-            })),
+        PreparedProviderRuntimeProbeError::Verify(format!(
+            "runtime_command_missing: provider={provider_id} (configure an absolute runtime command)"
         ))
     })?;
     let command = runtime_command.command;

@@ -238,8 +238,8 @@ describe("shouldHydrateProviderModels", () => {
     expect(shouldHydrateProviderModels("codex", options)).toBe(true);
   });
 
-  it("does not request hydration for providers without CRP model discovery", () => {
-    expect(shouldHydrateProviderModels("gemini", baseOptions("gemini"))).toBe(false);
+  it("requests hydration for gemini subscription auth when models are missing", () => {
+    expect(shouldHydrateProviderModels("gemini", baseOptions("gemini"))).toBe(true);
   });
 
   it("requests hydration for copilot subscription auth when models are missing", () => {
@@ -248,6 +248,19 @@ describe("shouldHydrateProviderModels", () => {
 
   it("requests hydration for cursor subscription auth when models are missing", () => {
     expect(shouldHydrateProviderModels("cursor", baseOptions("cursor"))).toBe(true);
+  });
+
+  it("requests hydration for qwen subscription auth when models are missing", () => {
+    for (const providerId of ["qwen"]) {
+      expect(shouldHydrateProviderModels(providerId, baseOptions(providerId))).toBe(true);
+    }
+  });
+
+  it("does not request hydration for providers outside the live subscription discovery set", () => {
+    expect(shouldHydrateProviderModels("mistral", baseOptions("mistral"))).toBe(false);
+    expect(shouldHydrateProviderModels("auggie", baseOptions("auggie"))).toBe(false);
+    expect(shouldHydrateProviderModels("kimi", baseOptions("kimi"))).toBe(false);
+    expect(shouldHydrateProviderModels("amp", baseOptions("amp"))).toBe(false);
   });
 
   it("does not keep passively hydrating after a failed probe", () => {

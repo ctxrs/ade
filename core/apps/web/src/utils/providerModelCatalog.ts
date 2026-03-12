@@ -5,6 +5,8 @@ export const SUBSCRIPTION_MODEL_DISCOVERY_PROVIDER_IDS = new Set([
   "claude-crp",
   "copilot",
   "cursor",
+  "gemini",
+  "qwen",
 ]);
 
 const asRecord = (value: unknown): Record<string, unknown> => {

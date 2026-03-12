@@ -197,7 +197,7 @@ async fn provider_options_probe_uses_managed_dependency_path() {
 }
 
 #[tokio::test]
-async fn copilot_provider_options_include_pinned_model_catalog() {
+async fn copilot_provider_options_include_pinned_model_catalog_when_live_probe_is_unavailable() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let state = app_state(data_dir.path()).await;
@@ -238,8 +238,14 @@ async fn copilot_provider_options_include_pinned_model_catalog() {
     assert_eq!(status, StatusCode::OK, "options request failed: {body:#?}");
     assert_eq!(
         body.get("probe_ok").and_then(serde_json::Value::as_bool),
-        Some(true),
-        "expected probe_ok=true with active copilot auth: {body:#?}"
+        Some(false),
+        "expected probe_ok=false when the copilot runtime command is unavailable: {body:#?}"
+    );
+    assert!(
+        body.get("probe_error")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|message| message.contains("runtime_command_missing: provider=copilot")),
+        "expected runtime command probe error for copilot fixture: {body:#?}"
     );
     assert_eq!(
         body.get("has_active_auth")

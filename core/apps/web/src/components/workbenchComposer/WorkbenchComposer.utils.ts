@@ -5,6 +5,7 @@ import type { ContextWindowInfo } from "./WorkbenchComposer.types";
 import type { buildModelCatalog } from "../../utils/modelEffort";
 import { composeModelId } from "../../utils/modelEffort";
 import {
+  hasFailedProviderModelProbe,
   hasProviderModels,
   isEndpointProviderSourceSelected,
   isFinalProviderModelCatalog,
@@ -164,6 +165,7 @@ export function shouldShowLoadingProviderModels(providerId: string, opts?: Provi
   if (hasProviderModels(opts)) return !isFinalProviderModelCatalog(opts);
   if (isEndpointProviderSourceSelected(opts)) return false;
   if (!SUBSCRIPTION_MODEL_DISCOVERY_PROVIDER_IDS.has(providerId)) return false;
+  if (hasFailedProviderModelProbe(opts)) return false;
   return opts.has_active_auth === true;
 }
 

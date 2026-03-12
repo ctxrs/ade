@@ -1,3 +1,6 @@
+const RUNTIME_MODEL_CATALOG_PROVIDER_IDS: &[&str] =
+    &["codex", "claude-crp", "copilot", "cursor", "gemini", "qwen"];
+
 pub(crate) fn provider_models_payload_is_final(models: &serde_json::Value) -> bool {
     let meta = models
         .get("meta")
@@ -24,7 +27,7 @@ pub(crate) fn provider_models_payload_is_final(models: &serde_json::Value) -> bo
 }
 
 pub(crate) fn provider_supports_runtime_model_catalog(provider_id: &str) -> bool {
-    matches!(provider_id, "codex" | "claude-crp" | "copilot" | "cursor")
+    RUNTIME_MODEL_CATALOG_PROVIDER_IDS.contains(&provider_id)
 }
 
 fn provider_options_probe_failed(value: &serde_json::Value) -> bool {
@@ -39,7 +42,7 @@ pub(crate) fn provider_options_cache_entry_is_authoritative(
     provider_id: &str,
     value: &serde_json::Value,
 ) -> bool {
-    if provider_id != "codex" && provider_id != "claude-crp" && provider_id != "copilot" {
+    if !provider_supports_runtime_model_catalog(provider_id) {
         return true;
     }
     if value
@@ -81,7 +84,11 @@ mod tests {
         assert!(provider_supports_runtime_model_catalog("claude-crp"));
         assert!(provider_supports_runtime_model_catalog("copilot"));
         assert!(provider_supports_runtime_model_catalog("cursor"));
-        assert!(!provider_supports_runtime_model_catalog("gemini"));
+        assert!(provider_supports_runtime_model_catalog("gemini"));
+        assert!(provider_supports_runtime_model_catalog("qwen"));
+        assert!(!provider_supports_runtime_model_catalog("kimi"));
+        assert!(!provider_supports_runtime_model_catalog("amp"));
+        assert!(!provider_supports_runtime_model_catalog("mistral"));
     }
 
     #[test]
@@ -129,13 +136,26 @@ mod tests {
     #[test]
     fn explicit_probe_failure_remains_authoritative_until_retry() {
         let cached = serde_json::json!({
-            "provider_id": "codex",
+            "provider_id": "gemini",
             "probe_ok": false,
             "probe_error": "runtime probe failed",
         });
 
         assert!(provider_options_cache_entry_is_authoritative(
-            "codex", &cached,
+            "gemini", &cached,
+        ));
+    }
+
+    #[test]
+    fn discovery_provider_without_final_models_is_not_authoritative() {
+        let cached = serde_json::json!({
+            "provider_id": "qwen",
+            "probe_ok": true,
+            "models": null,
+        });
+
+        assert!(!provider_options_cache_entry_is_authoritative(
+            "qwen", &cached,
         ));
     }
 

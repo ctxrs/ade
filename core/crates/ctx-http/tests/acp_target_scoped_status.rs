@@ -226,17 +226,17 @@ async fn workspace_options_use_workspace_target_status_for_acp_provider() {
     );
     let app = common::router(state.clone());
 
-    let command_path = seed_container_only_install(data_dir.path(), "kimi").await;
+    let command_path = seed_container_only_install(data_dir.path(), "qwen").await;
     state
         .providers
         .statuses
         .lock()
         .await
-        .insert("kimi".to_string(), bridge_missing_status("kimi"));
+        .insert("qwen".to_string(), bridge_missing_status("qwen"));
     state.providers.target_adapters.lock().await.insert(
-        "kimi@container".to_string(),
+        "qwen@container".to_string(),
         Arc::new(StatusOnlyAdapter {
-            status: healthy_container_status("kimi", &command_path),
+            status: healthy_container_status("qwen", &command_path),
         }),
     );
 
@@ -244,7 +244,7 @@ async fn workspace_options_use_workspace_target_status_for_acp_provider() {
     let (host_status, host_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
         axum::http::Method::GET,
-        format!("/api/workspaces/{}/providers/kimi/options", ws.id.0),
+        format!("/api/workspaces/{}/providers/qwen/options", ws.id.0),
         None,
     )
     .await;
@@ -286,7 +286,7 @@ async fn workspace_options_use_workspace_target_status_for_acp_provider() {
     let (status, body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
         axum::http::Method::GET,
-        format!("/api/workspaces/{}/providers/kimi/options", ws.id.0),
+        format!("/api/workspaces/{}/providers/qwen/options", ws.id.0),
         None,
     )
     .await;

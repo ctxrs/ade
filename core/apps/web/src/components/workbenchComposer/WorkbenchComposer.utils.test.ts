@@ -39,6 +39,46 @@ describe("shouldShowLoadingProviderModels", () => {
     })).toBe(true);
   });
 
+  it("keeps gemini and qwen in a loading state while discovery is pending", () => {
+    for (const providerId of ["gemini", "qwen"]) {
+      expect(shouldShowLoadingProviderModels(providerId, {
+        provider_id: providerId,
+        workspace_id: "ws-test",
+        supports_load: false,
+        auth_required: false,
+        has_active_auth: true,
+        auth_mode: "subscription",
+        source: {
+          provider_id: providerId,
+          selected_source_kind: "subscription",
+          selected_endpoint_id: null,
+          endpoints: [],
+        },
+        probed_at: "2026-03-10T00:00:00.000Z",
+      })).toBe(true);
+    }
+  });
+
+  it("stops showing loading after a live model probe has already failed", () => {
+    expect(shouldShowLoadingProviderModels("qwen", {
+      provider_id: "qwen",
+      workspace_id: "ws-test",
+      supports_load: false,
+      probe_ok: false,
+      probe_error: "runtime_command_missing: provider=qwen",
+      auth_required: false,
+      has_active_auth: true,
+      auth_mode: "subscription",
+      source: {
+        provider_id: "qwen",
+        selected_source_kind: "subscription",
+        selected_endpoint_id: null,
+        endpoints: [],
+      },
+      probed_at: "2026-03-10T00:00:00.000Z",
+    })).toBe(false);
+  });
+
   it("does not show loading for endpoint-backed providers without a discovered catalog", () => {
     expect(shouldShowLoadingProviderModels("codex", {
       provider_id: "codex",
