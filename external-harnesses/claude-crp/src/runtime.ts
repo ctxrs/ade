@@ -11,7 +11,8 @@ import {
   type SlashCommand,
   type ModelInfo,
   type AgentInfo,
-  type AccountInfo
+  type AccountInfo,
+  type PermissionMode
 } from "@anthropic-ai/claude-agent-sdk";
 import { translateClaudeEventsToCrp } from "./translate.js";
 
@@ -37,6 +38,8 @@ type SessionState = {
   providerSessionId: string;
   defaultModel?: string;
   defaultCwd?: string;
+  permissionMode: PermissionMode;
+  allowDangerouslySkipPermissions: boolean;
   activeTurn: TurnState | null;
 };
 
@@ -46,6 +49,8 @@ type TurnState = {
   runId: string;
   requestedModel?: string;
   cwd: string;
+  permissionMode: PermissionMode;
+  allowDangerouslySkipPermissions: boolean;
   records: Array<Record<string, unknown>>;
   emittedCount: number;
   interrupted: boolean;
@@ -224,6 +229,85 @@ function buildClaudeProcessEnv(): Record<string, string> {
   } as Record<string, string>;
 }
 
+function asPermissionMode(value: unknown): PermissionMode | undefined {
+  switch (value) {
+    case "default":
+    case "acceptEdits":
+    case "bypassPermissions":
+    case "plan":
+    case "dontAsk":
+      return value;
+    default:
+      return undefined;
+  }
+}
+
+export function resolvePermissionSettings(params?: {
+  config?: Record<string, unknown> | null;
+  env?: NodeJS.ProcessEnv;
+}): {
+  permissionMode: PermissionMode;
+  allowDangerouslySkipPermissions: boolean;
+} {
+  const config = params?.config ?? {};
+  const env = params?.env ?? process.env;
+
+  const envMode = asPermissionMode(env.CTX_PROVIDER_MODE);
+  if (envMode) {
+    return {
+      permissionMode: envMode,
+      allowDangerouslySkipPermissions: envMode === "bypassPermissions"
+    };
+  }
+
+  const explicitMode =
+    asPermissionMode(config.permission_mode) ?? asPermissionMode(config.permissionMode);
+  if (explicitMode) {
+    return {
+      permissionMode: explicitMode,
+      allowDangerouslySkipPermissions: explicitMode === "bypassPermissions"
+    };
+  }
+
+  const approvalPolicy =
+    asNonEmptyTrimmedString(config.approval_policy) ??
+    asNonEmptyTrimmedString(config.approvalPolicy);
+  const sandboxMode =
+    asNonEmptyTrimmedString(config.sandbox_mode) ??
+    asNonEmptyTrimmedString(config.sandboxMode);
+
+  if (approvalPolicy === "never" && sandboxMode === "danger-full-access") {
+    return {
+      permissionMode: "bypassPermissions",
+      allowDangerouslySkipPermissions: true
+    };
+  }
+
+  return {
+    permissionMode: "default",
+    allowDangerouslySkipPermissions: false
+  };
+}
+
+export function buildPermissionControlOptions(
+  permissionMode: PermissionMode,
+  allowDangerouslySkipPermissions: boolean
+): Record<string, unknown> {
+  const options: Record<string, unknown> = {
+    permissionMode
+  };
+
+  if (allowDangerouslySkipPermissions) {
+    options.allowDangerouslySkipPermissions = true;
+  }
+
+  if (permissionMode === "default") {
+    options.canUseTool = async () => ({ behavior: "allow" });
+  }
+
+  return options;
+}
+
 function resolveCwd(cwd: string): string {
   if (!cwd) return cwd;
   try {
@@ -294,6 +378,7 @@ async function openSession(command: CrpCommand, state: { session: SessionState |
   const config = (command.config && typeof command.config === "object"
     ? command.config
     : {}) as Record<string, unknown>;
+  const permissionSettings = resolvePermissionSettings({ config });
 
   const defaultModel =
     typeof config.model === "string" && config.model ? config.model : undefined;
@@ -305,6 +390,8 @@ async function openSession(command: CrpCommand, state: { session: SessionState |
     providerSessionId,
     defaultModel,
     defaultCwd,
+    permissionMode: permissionSettings.permissionMode,
+    allowDangerouslySkipPermissions: permissionSettings.allowDangerouslySkipPermissions,
     activeTurn: null
   };
 
@@ -337,11 +424,14 @@ function buildQueryOptions(turn: TurnState) {
     settingSources: ["user", "project", "local"],
     tools: { type: "preset", preset: "claude_code" },
     env: buildClaudeProcessEnv(),
+    ...buildPermissionControlOptions(
+      turn.permissionMode,
+      turn.allowDangerouslySkipPermissions
+    ),
     ...(shouldResume
       ? { resume: turn.sessionId }
       : { extraArgs: { "session-id": turn.sessionId } }),
     abortController: turn.abortController,
-    canUseTool: async () => ({ behavior: "allow" }),
     stderr: (data: string) => {
       process.stderr.write(String(data));
       if (!String(data).endsWith("\n")) process.stderr.write("\n");
@@ -604,6 +694,8 @@ async function startTurn(command: CrpCommand, state: { session: SessionState | n
     runId,
     requestedModel,
     cwd,
+    permissionMode: session.permissionMode,
+    allowDangerouslySkipPermissions: session.allowDangerouslySkipPermissions,
     records: [],
     emittedCount: 0,
     interrupted: false,

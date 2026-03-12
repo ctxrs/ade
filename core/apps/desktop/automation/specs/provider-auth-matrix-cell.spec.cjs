@@ -10,6 +10,7 @@ const {
   assertConnectedLocalAndListening,
   assertLocalWorkspaceConfig,
   runProviderFirstTurnApiSmoke,
+  runProviderFileEditApiSmoke,
 } = require("./helpers/workspace_wizard_flow.cjs");
 const {
   getProviderStatus,
@@ -244,6 +245,13 @@ describe("provider auth matrix cell (desktop e2e)", () => {
           });
           return;
         }
+        if (authSetup.artifacts?.oauth_login?.status === "opened") {
+          recorder.recordAssertion(
+            "subscription_browser_open_success",
+            "pass",
+            "subscription auth flow opened the provider auth endpoint through the desktop shell path",
+          );
+        }
         recorder.recordAssertion(
           "subscription_auth_setup",
           "pass",
@@ -314,6 +322,31 @@ describe("provider auth matrix cell (desktop e2e)", () => {
       );
       recorder.recordArtifact("first_turn_result", turnResult);
       recorder.recordAssertion("first_turn_success", "pass", "first turn completed with assistant response");
+
+      currentAssertion = "file_edit_success";
+      const fileEditResult = await runProviderFileEditApiSmoke(
+        workspace.workspaceId,
+        workspaceDest,
+        {
+          providerId,
+          modelId,
+          executionEnvironment,
+          relativeFilePath: "hello.md",
+          fileContents: "hi",
+          exactFileContents: true,
+          expectedAssistantMessage: "hi",
+          exactAssistantMessage: true,
+          prompt: [
+            "This is an end to end test, so it is very important that you do exactly what I ask.",
+            "Make a new file in the workspace root called hello.md and put exactly this text in it: hi",
+            "That is all. Do it now without further deliberation.",
+            "After writing the file, reply with exactly: hi",
+          ].join(" "),
+        },
+        240_000,
+      );
+      recorder.recordArtifact("file_edit_result", fileEditResult);
+      recorder.recordAssertion("file_edit_success", "pass", "provider created hello.md with exact contents");
 
       recorder.finalize({
         result: "pass",

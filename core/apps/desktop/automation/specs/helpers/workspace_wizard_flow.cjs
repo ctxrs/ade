@@ -1088,14 +1088,16 @@ const runProviderFirstTurnApiSmoke = async (
     if (history.status === 200 && history.payload) {
       lastHistory = history.payload;
       const messages = Array.isArray(history.payload.messages) ? history.payload.messages : [];
-      const assistantMessage = messages
+      const assistantMessageRaw = messages
         .filter((m) => String(m?.role || "").toLowerCase() === "assistant")
-        .map((m) => String(m?.content || "").trim())
-        .find((content) => content.length > 0) || "";
+        .map((m) => String(m?.content || ""))
+        .find((content) => content.trim().length > 0) || "";
+      const assistantMessage = assistantMessageRaw.trim();
       if (assistantMessage) {
         return {
           taskId,
           sessionId,
+          assistantMessageRaw,
           assistantMessage,
         };
       }
@@ -1146,7 +1148,8 @@ const runCodexFirstTurnApiSmoke = async (workspaceId, options = {}, timeoutMs = 
   );
 };
 
-const normalizeFileBody = (value) => String(value || "").replace(/\r\n/g, "\n").trimEnd();
+const normalizeNewlines = (value) => String(value || "").replace(/\r\n/g, "\n");
+const normalizeFileBody = (value) => normalizeNewlines(value).trimEnd();
 
 const runProviderFileEditApiSmoke = async (
   workspaceId,
@@ -1158,6 +1161,9 @@ const runProviderFileEditApiSmoke = async (
     relativeFilePath = "codex-write-proof.txt",
     fileContents = "CTX_PROVIDER_FILE_EDIT_OK",
     prompt = "",
+    exactFileContents = false,
+    expectedAssistantMessage = "",
+    exactAssistantMessage = false,
   } = {},
   timeoutMs = 240000,
 ) => {
@@ -1184,11 +1190,30 @@ const runProviderFileEditApiSmoke = async (
     timeoutMs,
   );
 
+  const actualAssistantMessageRaw = normalizeNewlines(
+    turnResult.assistantMessageRaw != null ? turnResult.assistantMessageRaw : turnResult.assistantMessage || "",
+  );
+  const actualAssistantMessageNormalized = String(turnResult.assistantMessage || "").trim();
+  const expectedAssistantRaw = normalizeNewlines(expectedAssistantMessage || "");
+  const expectedAssistantNormalized = String(expectedAssistantMessage || "").trim();
+  if (expectedAssistantMessage) {
+    const assistantMatches = exactAssistantMessage
+      ? actualAssistantMessageRaw === expectedAssistantRaw
+      : actualAssistantMessageNormalized === expectedAssistantNormalized;
+    if (!assistantMatches) {
+      throw new Error(
+        `${providerId} file edit smoke expected assistant response ${JSON.stringify(expectedAssistantMessage)} but got ${JSON.stringify(turnResult.assistantMessage || "")}`,
+      );
+    }
+  }
+
   const deadline = Date.now() + timeoutMs;
   while (Date.now() <= deadline) {
     if (fs.existsSync(absolutePath)) {
-      const actualContents = normalizeFileBody(fs.readFileSync(absolutePath, "utf8"));
-      if (actualContents === normalizeFileBody(expectedContents)) {
+      const fileBody = fs.readFileSync(absolutePath, "utf8");
+      const actualContents = exactFileContents ? normalizeNewlines(fileBody) : normalizeFileBody(fileBody);
+      const expectedBody = exactFileContents ? normalizeNewlines(expectedContents) : normalizeFileBody(expectedContents);
+      if (actualContents === expectedBody) {
         return {
           ...turnResult,
           filePath: absolutePath,
