@@ -14,6 +14,12 @@ use ctx_http::provider_accounts::add_copilot_account;
 use ctx_providers::adapters::{ProviderAdapter, ProviderHealth, ProviderStatus};
 use ctx_store::StoreManager;
 
+static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+async fn lock_env() -> tokio::sync::MutexGuard<'static, ()> {
+    ENV_LOCK.lock().await
+}
+
 struct EnvVarGuard {
     key: &'static str,
     prev: Option<String>,
@@ -23,6 +29,12 @@ impl EnvVarGuard {
     fn set(key: &'static str, value: &str) -> Self {
         let prev = std::env::var(key).ok();
         std::env::set_var(key, value);
+        Self { key, prev }
+    }
+
+    fn without(key: &'static str) -> Self {
+        let prev = std::env::var(key).ok();
+        std::env::remove_var(key);
         Self { key, prev }
     }
 }
@@ -162,9 +174,27 @@ async fn seed_runtime_and_status(
 }
 
 #[cfg(unix)]
+async fn configure_hermetic_codex_host_auth(root: &Path) -> Vec<EnvVarGuard> {
+    let host_auth = root.join("fixture-codex-auth.json");
+    tokio::fs::write(&host_auth, br#"{"OPENAI_API_KEY":"fixture-codex-key"}"#)
+        .await
+        .expect("write fixture codex auth");
+    vec![
+        EnvVarGuard::without("CTX_CODEX_HOME"),
+        EnvVarGuard::without("CTX_SEED_CODEX_AUTH_FROM_HOST"),
+        EnvVarGuard::set(
+            "CTX_CODEX_HOST_AUTH_PATH",
+            host_auth.to_string_lossy().as_ref(),
+        ),
+    ]
+}
+
+#[cfg(unix)]
 #[tokio::test]
 async fn provider_options_probe_uses_managed_dependency_path() {
+    let _env_lock = lock_env().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
+    let _env_guards = configure_hermetic_codex_host_auth(data_dir.path()).await;
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let state = app_state(data_dir.path()).await;
     let app = api::router(state.clone());
@@ -474,7 +504,9 @@ async fn fake_provider_bootstrap_and_options_are_ready_without_browser_rewrite()
 #[cfg(unix)]
 #[tokio::test]
 async fn provider_verify_probe_uses_managed_dependency_path() {
+    let _env_lock = lock_env().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
+    let _env_guards = configure_hermetic_codex_host_auth(data_dir.path()).await;
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let state = app_state(data_dir.path()).await;
     let app = api::router(state.clone());
