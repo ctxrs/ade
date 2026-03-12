@@ -119,8 +119,7 @@ while IFS= read -r line; do
   esac
 done
 exit 1
-"#,
-            probe_response_path.to_string_lossy()
+        "#,
             probe_response_path.to_string_lossy()
         ),
     );
