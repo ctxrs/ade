@@ -3714,6 +3714,142 @@ index 828bbe2..115d00b 100644
  pub mod turn_diff_tracker;
  mod turn_metadata;
  pub use rollout::ARCHIVED_SESSIONS_SUBDIR;
+diff --git a/codex-rs/core/src/models_manager/manager.rs b/codex-rs/core/src/models_manager/manager.rs
+index 35e723d..4e987f9 100644
+--- a/codex-rs/core/src/models_manager/manager.rs
++++ b/codex-rs/core/src/models_manager/manager.rs
+@@ -42,6 +42,14 @@ pub enum RefreshStrategy {
+     OnlineIfUncached,
+ }
+ 
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum ModelCatalogSource {
++    LiveRemote,
++    LocalCache,
++    LocalBundle,
++    CustomCatalog,
++}
++
+ /// How the manager's base catalog is sourced for the lifetime of the process.
+ #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ enum CatalogMode {
+@@ -103,11 +111,25 @@ impl ModelsManager {
+     ///
+     /// Returns model presets sorted by priority and filtered by auth mode and visibility.
+     pub async fn list_models(&self, refresh_strategy: RefreshStrategy) -> Vec<ModelPreset> {
+-        if let Err(err) = self.refresh_available_models(refresh_strategy).await {
+-            error!("failed to refresh available models: {err}");
+-        }
++        self.list_models_with_catalog_source(refresh_strategy)
++            .await
++            .0
++    }
++
++    /// List all available models and report where the backing catalog came from.
++    pub async fn list_models_with_catalog_source(
++        &self,
++        refresh_strategy: RefreshStrategy,
++    ) -> (Vec<ModelPreset>, ModelCatalogSource) {
++        let catalog_source = match self.refresh_available_models(refresh_strategy).await {
++            Ok(source) => source,
++            Err(err) => {
++                error!("failed to refresh available models: {err}");
++                ModelCatalogSource::LocalBundle
++            }
++        };
+         let remote_models = self.get_remote_models().await;
+-        self.build_available_models(remote_models)
++        (self.build_available_models(remote_models), catalog_source)
+     }
+ 
+     /// List collaboration mode presets.
+@@ -239,40 +261,49 @@ impl ModelsManager {
+     }
+ 
+     /// Refresh available models according to the specified strategy.
+-    async fn refresh_available_models(&self, refresh_strategy: RefreshStrategy) -> CoreResult<()> {
++    async fn refresh_available_models(
++        &self,
++        refresh_strategy: RefreshStrategy,
++    ) -> CoreResult<ModelCatalogSource> {
+         // don't override the custom model catalog if one was provided by the user
+         if matches!(self.catalog_mode, CatalogMode::Custom) {
+-            return Ok(());
++            return Ok(ModelCatalogSource::CustomCatalog);
+         }
+ 
+         if self.auth_manager.auth_mode() != Some(AuthMode::Chatgpt) {
+             if matches!(
+                 refresh_strategy,
+                 RefreshStrategy::Offline | RefreshStrategy::OnlineIfUncached
+-            ) {
+-                self.try_load_cache().await;
++            ) && self.try_load_cache().await
++            {
++                return Ok(ModelCatalogSource::LocalCache);
+             }
+-            return Ok(());
++            return Ok(ModelCatalogSource::LocalBundle);
+         }
+ 
+         match refresh_strategy {
+             RefreshStrategy::Offline => {
+                 // Only try to load from cache, never fetch
+-                self.try_load_cache().await;
+-                Ok(())
++                if self.try_load_cache().await {
++                    Ok(ModelCatalogSource::LocalCache)
++                } else {
++                    Ok(ModelCatalogSource::LocalBundle)
++                }
+             }
+             RefreshStrategy::OnlineIfUncached => {
+                 // Try cache first, fall back to online if unavailable
+                 if self.try_load_cache().await {
+                     info!("models cache: using cached models for OnlineIfUncached");
+-                    return Ok(());
++                    return Ok(ModelCatalogSource::LocalCache);
+                 }
+                 info!("models cache: cache miss, fetching remote models");
+-                self.fetch_and_update_models().await
++                self.fetch_and_update_models().await?;
++                Ok(ModelCatalogSource::LiveRemote)
+             }
+             RefreshStrategy::Online => {
+                 // Always fetch from network
+-                self.fetch_and_update_models().await
++                self.fetch_and_update_models().await?;
++                Ok(ModelCatalogSource::LiveRemote)
+             }
+         }
+     }
+diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
+index 68ccae1..210481c 100644
+--- a/codex-rs/core/src/thread_manager.rs
++++ b/codex-rs/core/src/thread_manager.rs
+@@ -268,9 +268,21 @@ impl ThreadManager {
+         &self,
+         refresh_strategy: crate::models_manager::manager::RefreshStrategy,
+     ) -> Vec<ModelPreset> {
++        self.list_models_with_catalog_source(refresh_strategy)
++            .await
++            .0
++    }
++
++    pub async fn list_models_with_catalog_source(
++        &self,
++        refresh_strategy: crate::models_manager::manager::RefreshStrategy,
++    ) -> (
++        Vec<ModelPreset>,
++        crate::models_manager::manager::ModelCatalogSource,
++    ) {
+         self.state
+             .models_manager
+-            .list_models(refresh_strategy)
++            .list_models_with_catalog_source(refresh_strategy)
+             .await
+     }
+ 
 diff --git a/codex-rs/core/src/tools/context.rs b/codex-rs/core/src/tools/context.rs
 index 9f85e6a..b0bfbdd 100644
 --- a/codex-rs/core/src/tools/context.rs
@@ -3988,10 +4124,10 @@ index 0000000..3f62859
 +} | "$crp_bin"
 diff --git a/codex-rs/crp-runtime/src/main.rs b/codex-rs/crp-runtime/src/main.rs
 new file mode 100644
-index 0000000..43e6a11
+index 0000000..20c2a09
 --- /dev/null
 +++ b/codex-rs/crp-runtime/src/main.rs
-@@ -0,0 +1,3523 @@
+@@ -0,0 +1,3540 @@
 +#![deny(clippy::print_stdout)]
 +
 +mod protocol;
@@ -5363,16 +5499,33 @@ index 0000000..43e6a11
 +                config.model_catalog.clone(),
 +                collaboration_modes_config(&config),
 +            );
-+            let presets = thread_manager
-+                .list_models(codex_core::models_manager::manager::RefreshStrategy::OnlineIfUncached)
++            let (presets, catalog_source) = thread_manager
++                .list_models_with_catalog_source(
++                    codex_core::models_manager::manager::RefreshStrategy::Online,
++                )
 +                .await;
 +            let models = build_crp_model_infos(&presets);
 +            let current_model_id = build_current_model_id(&config, &presets);
++            let catalog_source = match catalog_source {
++                codex_core::models_manager::manager::ModelCatalogSource::LiveRemote => {
++                    Some("live_remote".to_string())
++                }
++                codex_core::models_manager::manager::ModelCatalogSource::LocalCache => {
++                    Some("local_cache".to_string())
++                }
++                codex_core::models_manager::manager::ModelCatalogSource::LocalBundle => {
++                    Some("local_bundle".to_string())
++                }
++                codex_core::models_manager::manager::ModelCatalogSource::CustomCatalog => {
++                    Some("custom_catalog".to_string())
++                }
++            };
 +
 +            if router
 +                .send_control(CrpEvent::ModelsList {
 +                    models,
 +                    current_model_id,
++                    catalog_source,
 +                })
 +                .is_err()
 +            {
@@ -7517,10 +7670,10 @@ index 0000000..43e6a11
 +}
 diff --git a/codex-rs/crp-runtime/src/protocol.rs b/codex-rs/crp-runtime/src/protocol.rs
 new file mode 100644
-index 0000000..0777e8a
+index 0000000..2a42bae
 --- /dev/null
 +++ b/codex-rs/crp-runtime/src/protocol.rs
-@@ -0,0 +1,471 @@
+@@ -0,0 +1,473 @@
 +use codex_protocol::config_types::Personality;
 +use codex_protocol::config_types::SandboxMode;
 +use codex_protocol::openai_models::ReasoningEffort;
@@ -7817,6 +7970,8 @@ index 0000000..0777e8a
 +        models: Vec<CrpModelInfo>,
 +        #[serde(skip_serializing_if = "Option::is_none")]
 +        current_model_id: Option<String>,
++        #[serde(skip_serializing_if = "Option::is_none")]
++        catalog_source: Option<String>,
 +    },
 +}
 +
