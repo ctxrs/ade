@@ -232,7 +232,7 @@ export const defaultEndpointProviderPresetForHarness = (harnessProviderId: strin
   if (harnessProviderId === "codex") return "openai";
   if (harnessProviderId === "claude-crp") return "anthropic";
   if (harnessProviderId === "gemini") return "google_ai_studio";
-  if (harnessProviderId === "kimi") return "moonshot_ai";
+  if (harnessProviderId === "kimi") return "openrouter";
   if (harnessProviderId === "cursor") return "other";
   return "openrouter";
 };

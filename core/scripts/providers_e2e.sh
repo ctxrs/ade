@@ -3,7 +3,7 @@ set -euo pipefail
 
 suite="${1:-}"
 if [[ -z "${suite}" ]]; then
-  echo "usage: $0 {e2e|runner|tokens|endpoint-ui|provider-api-auth|provider-browser-auth|linux-arm-critical|linux-arm-nightly}" >&2
+  echo "usage: $0 {e2e|runner|tokens|endpoint-ui|provider-api-auth|provider-browser-auth|write-file|linux-arm-critical|linux-arm-nightly}" >&2
   exit 2
 fi
 
@@ -13,6 +13,19 @@ http_tests_dir="${repo_root}/crates/ctx-http/tests"
 providers_tests_dir="${repo_root}/crates/ctx-providers/tests"
 bundle_script="${repo_root}/../scripts/ensure_bundled_harnesses.sh"
 preflight_script="${repo_root}/scripts/desktop_e2e_preflight.cjs"
+default_cargo_target_dir="${CTX_E2E_CARGO_TARGET_DIR:-/tmp/ctx-e2e-cargo-${suite}}"
+
+mkdir -p \
+  "${default_cargo_target_dir}" \
+  "${default_cargo_target_dir}/debug" \
+  "${default_cargo_target_dir}/debug/deps" \
+  "${default_cargo_target_dir}/debug/.fingerprint" \
+  "${default_cargo_target_dir}/release" \
+  "${default_cargo_target_dir}/release/deps" \
+  "${default_cargo_target_dir}/release/.fingerprint"
+
+export CTX_E2E_CARGO_TARGET_DIR="${default_cargo_target_dir}"
+export CARGO_TARGET_DIR="${default_cargo_target_dir}"
 
 run_preflight() {
   local suite_id="$1"
@@ -337,6 +350,27 @@ ensure_openrouter_creds_for_lane() {
   fi
 }
 
+run_web_playwright_suite() {
+  local web_root="${repo_root}/apps/web"
+  local playwright_bin="${web_root}/node_modules/.bin/playwright"
+  if [[ ! -x "${playwright_bin}" ]]; then
+    echo "playwright binary missing at ${playwright_bin}; restoring locked core workspace install" >&2
+    (
+      cd "${repo_root}"
+      pnpm install --frozen-lockfile
+    )
+  fi
+  if [[ ! -x "${playwright_bin}" ]]; then
+    echo "missing playwright binary at ${playwright_bin} after restore; run 'bash -lc \"cd ${repo_root} && pnpm install --frozen-lockfile\"'" >&2
+    exit 1
+  fi
+
+  (
+    cd "${web_root}"
+    "${playwright_bin}" test -c playwright.config.ts "$@"
+  )
+}
+
 run_linux_arm_runtime_install_lane() {
   local lane="$1"
   local allow_failures="$2"
@@ -437,12 +471,9 @@ run_linux_arm_runtime_install_lane() {
   export OPENAI_API_KEY="${OPENAI_API_KEY:-${OPENROUTER_API_KEY}}"
   export OPENAI_BASE_URL="${OPENAI_BASE_URL:-${OPENROUTER_BASE_URL}}"
 
-  (
-    cd "${repo_root}/apps/web"
-    pnpm exec playwright test -c playwright.config.ts \
-      e2e/runtime-provider-install-openrouter-smoke.spec.ts \
-      --workers=1
-  )
+  run_web_playwright_suite \
+    e2e/runtime-provider-install-openrouter-smoke.spec.ts \
+    --workers=1
 }
 
 tests=()
@@ -475,6 +506,13 @@ case "${suite}" in
       echo "skipping token tests; missing OpenRouter credentials (set OPENROUTER_API_KEY/OPENROUTER_BASE_URL or configure title_generation in ${CTX_DATA_ROOT:-$HOME/.ctx}/settings.json)" >&2
       exit 0
     fi
+    local_bridge_manifest="${repo_root}/../external-harnesses/acp-crp-bridge/Cargo.toml"
+    export CTX_TOKENS_ACP_CRP_BRIDGE_BIN="${CTX_TOKENS_ACP_CRP_BRIDGE_BIN:-${CTX_E2E_CARGO_TARGET_DIR}/debug/acp-crp-bridge}"
+    cargo build --manifest-path "${local_bridge_manifest}" --bin acp-crp-bridge >/dev/null
+    if [[ ! -x "${CTX_TOKENS_ACP_CRP_BRIDGE_BIN}" ]]; then
+      echo "missing local acp-crp-bridge binary after build: ${CTX_TOKENS_ACP_CRP_BRIDGE_BIN}" >&2
+      exit 1
+    fi
     add_test "ctx-http" "acp_crp_bridge_tokens_e2e" "${http_tests_dir}/acp_crp_bridge_tokens_e2e.rs"
     ;;
   endpoint-ui)
@@ -501,15 +539,22 @@ case "${suite}" in
     export GOOSE_PROVIDER="${GOOSE_PROVIDER:-openrouter}"
     export GOOSE_DISABLE_KEYRING="${GOOSE_DISABLE_KEYRING:-1}"
     export GOOSE_MODEL="${GOOSE_MODEL:-${CTX_E2E_GOOSE_OPENROUTER_MODEL_OVERRIDE:-${CTX_E2E_OPENROUTER_MODEL_OVERRIDE:-openai/gpt-5.2-codex}}}"
+    if [[ -n "${CTX_E2E_ENDPOINT_PROVIDERS:-}" && -z "${CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-}" ]]; then
+      endpoint_bundle_providers="${CTX_E2E_ENDPOINT_PROVIDERS}"
+      if [[ ",${endpoint_bundle_providers}," != *",acp-crp-bridge,"* ]]; then
+        endpoint_bundle_providers="acp-crp-bridge,${endpoint_bundle_providers}"
+      fi
+      export CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS="${endpoint_bundle_providers}"
+    fi
+    export CTX_E2E_ENDPOINT_BUNDLE_HARNESS_IMAGE="${CTX_E2E_ENDPOINT_BUNDLE_HARNESS_IMAGE:-0}"
+    export CTX_E2E_ENDPOINT_BUNDLE_PODMAN="${CTX_E2E_ENDPOINT_BUNDLE_PODMAN:-0}"
+    export CTX_E2E_ENDPOINT_APPEND_LINUX_TARGETS="${CTX_E2E_ENDPOINT_APPEND_LINUX_TARGETS:-0}"
 
     ensure_endpoint_ui_bundles
 
-    (
-      cd "${repo_root}/apps/web"
-      pnpm exec playwright test -c playwright.config.ts \
-        e2e/workbench-endpoint-harness-openrouter-matrix.spec.ts \
-        --workers=1
-    )
+    run_web_playwright_suite \
+      e2e/workbench-endpoint-harness-openrouter-matrix.spec.ts \
+      --workers=1
     exit 0
     ;;
   provider-api-auth)
@@ -555,20 +600,25 @@ case "${suite}" in
     export CTX_E2E_ENDPOINT_BUNDLE_HARNESS_IMAGE="${CTX_E2E_ENDPOINT_BUNDLE_HARNESS_IMAGE:-0}"
     # Provider API-key auth checks execute in host-mode web e2e and don't need
     # linux target append/payloads.
+    export CTX_E2E_ENDPOINT_BUNDLE_PODMAN="${CTX_E2E_ENDPOINT_BUNDLE_PODMAN:-0}"
     export CTX_E2E_ENDPOINT_APPEND_LINUX_TARGETS="${CTX_E2E_ENDPOINT_APPEND_LINUX_TARGETS:-0}"
     ensure_endpoint_ui_bundles
 
-    (
-      cd "${repo_root}/apps/web"
-      pnpm exec playwright test -c playwright.config.ts \
-        e2e/workbench-copilot-subscription-token-real.spec.ts \
-        e2e/workbench-codex-provider-endpoint-openai-real.spec.ts \
-        e2e/workbench-cursor-provider-api-key-real.spec.ts \
-        e2e/workbench-gemini-provider-api-key-real.spec.ts \
-        e2e/workbench-gemini-vertex-provider-api-key-real.spec.ts \
-        e2e/workbench-mistral-provider-api-key-real.spec.ts \
-        --workers=1
+    provider_api_auth_specs=(
+      e2e/workbench-copilot-subscription-token-real.spec.ts
+      e2e/workbench-codex-provider-endpoint-openai-real.spec.ts
+      e2e/workbench-cursor-provider-api-key-real.spec.ts
+      e2e/workbench-gemini-provider-api-key-real.spec.ts
+      e2e/workbench-gemini-vertex-provider-api-key-real.spec.ts
+      e2e/workbench-mistral-provider-api-key-real.spec.ts
     )
+    if [[ -n "${CTX_E2E_PROVIDER_AUTH_SPECS:-}" ]]; then
+      IFS=',' read -r -a provider_api_auth_specs <<<"${CTX_E2E_PROVIDER_AUTH_SPECS}"
+    fi
+
+    run_web_playwright_suite \
+      "${provider_api_auth_specs[@]}" \
+      --workers=1
     exit 0
     ;;
   provider-browser-auth)
@@ -613,12 +663,16 @@ case "${suite}" in
       IFS=',' read -r -a provider_browser_auth_specs <<<"${CTX_E2E_PROVIDER_BROWSER_AUTH_SPECS}"
     fi
 
-    (
-      cd "${repo_root}/apps/web"
-      pnpm exec playwright test -c playwright.config.ts \
-        "${provider_browser_auth_specs[@]}" \
-        --workers=1
-    )
+    run_web_playwright_suite \
+      "${provider_browser_auth_specs[@]}" \
+      --workers=1
+    exit 0
+    ;;
+  write-file)
+    "${BASH_SOURCE[0]}" tokens
+    "${BASH_SOURCE[0]}" endpoint-ui
+    "${BASH_SOURCE[0]}" provider-api-auth
+    "${BASH_SOURCE[0]}" provider-browser-auth
     exit 0
     ;;
   linux-arm-critical)
@@ -632,7 +686,7 @@ case "${suite}" in
     exit 0
     ;;
   *)
-    echo "usage: $0 {e2e|runner|tokens|endpoint-ui|provider-api-auth|provider-browser-auth|linux-arm-critical|linux-arm-nightly}" >&2
+    echo "usage: $0 {e2e|runner|tokens|endpoint-ui|provider-api-auth|provider-browser-auth|write-file|linux-arm-critical|linux-arm-nightly}" >&2
     exit 2
     ;;
 esac

@@ -662,7 +662,7 @@ async fn gemini_endpoint_rejects_unknown_auth_type() {
 }
 
 #[tokio::test]
-async fn kimi_endpoint_projects_kimi_env_for_run_resolution() {
+async fn kimi_endpoint_projects_env_for_run_resolution() {
     let root = tempfile::tempdir().expect("tempdir");
     let endpoint = upsert_provider_endpoint(
         root.path(),
@@ -697,17 +697,22 @@ async fn kimi_endpoint_projects_kimi_env_for_run_resolution() {
         .expect("resolve run");
     assert_eq!(resolved.source_kind, HarnessSourceKind::Endpoint);
     assert_eq!(
-        resolved.env.get("KIMI_API_KEY"),
-        Some(&"kimi-key".to_string())
+        resolved.env.get("KIMI_BASE_URL").map(String::as_str),
+        Some("https://api.moonshot.ai/v1")
     );
     assert_eq!(
-        resolved.env.get("KIMI_BASE_URL"),
-        Some(&"https://api.moonshot.ai/v1".to_string())
+        resolved.env.get("KIMI_API_KEY").map(String::as_str),
+        Some("kimi-key")
     );
     assert_eq!(
-        resolved.env.get("KIMI_MODEL_NAME"),
-        Some(&"kimi-k2".to_string())
+        resolved.env.get("KIMI_MODEL_NAME").map(String::as_str),
+        Some("kimi-k2")
     );
+    let kimi_share_dir = resolved
+        .env
+        .get("KIMI_SHARE_DIR")
+        .expect("KIMI_SHARE_DIR should be set");
+    assert!(PathBuf::from(kimi_share_dir).starts_with(root.path()));
 }
 
 #[tokio::test]
@@ -1188,6 +1193,54 @@ async fn deleting_codex_endpoint_removes_endpoint_home() {
         .expect("delete endpoint");
 
     assert!(!endpoint_home.exists());
+}
+
+#[tokio::test]
+async fn pi_endpoint_uses_openrouter_provider_for_openrouter_base_urls() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let endpoint = upsert_provider_endpoint(
+        root.path(),
+        PROVIDER_PI,
+        HarnessEndpointUpsert {
+            endpoint_id: None,
+            name: "Pi OpenRouter".to_string(),
+            base_url: Some("https://openrouter.ai/api/v1".to_string()),
+            api_shape: Some(HarnessApiShape::OpenaiResponses),
+            auth_type: None,
+            model_override: Some("google/gemini-3-flash-preview".to_string()),
+            api_key: Some("pi-openrouter-key".to_string()),
+            service_account_json: None,
+            project_id: None,
+            location: None,
+        },
+    )
+    .await
+    .expect("upsert endpoint");
+
+    set_provider_source_selection(
+        root.path(),
+        PROVIDER_PI,
+        HarnessSourceKind::Endpoint,
+        Some(endpoint.id.clone()),
+    )
+    .await
+    .expect("select endpoint");
+
+    let resolved = resolve_provider_source_for_run(root.path(), PROVIDER_PI)
+        .await
+        .expect("resolve run");
+    assert_eq!(
+        resolved.env.get("PI_ACP_PROVIDER"),
+        Some(&"openrouter".to_string())
+    );
+    assert_eq!(
+        resolved.env.get("OPENAI_BASE_URL"),
+        Some(&"https://openrouter.ai/api/v1".to_string())
+    );
+    assert_eq!(
+        resolved.env.get("PI_ACP_MODEL"),
+        Some(&"google/gemini-3-flash-preview".to_string())
+    );
 }
 
 #[tokio::test]

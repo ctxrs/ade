@@ -3,7 +3,9 @@ const { providerStatusPath } = require("../../../../../test-support/provider_sta
 const { stringMapFlag } = require("../../../../../scripts/lib/boolish.cjs");
 
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
-const DEFAULT_CODEX_OPENROUTER_MODEL_OVERRIDE = "openai/gpt-5.2-codex";
+const DEFAULT_OPENAI_OPENROUTER_MODEL_OVERRIDE = "openai/gpt-4.1-mini";
+const DEFAULT_QWEN_OPENROUTER_MODEL_OVERRIDE = "openai/gpt-4.1-nano";
+const DEFAULT_GEMINI_OPENROUTER_MODEL_OVERRIDE = "google/gemini-3-flash-preview";
 const ACP_BRIDGE_PROVIDER_ID = "acp-crp-bridge";
 
 const asRecord = (value) => {
@@ -226,11 +228,22 @@ const resolveWorkspaceProviderModelId = async (
   throw new Error(`models list not populated for ${providerId} in workspace ${workspaceId}`);
 };
 
-const readOpenRouterEnv = () => {
+const providerDefaultOpenRouterModelOverride = (providerId = "codex") => {
+  const normalizedProviderId = firstText(providerId).toLowerCase();
+  if (normalizedProviderId === "qwen") {
+    return DEFAULT_QWEN_OPENROUTER_MODEL_OVERRIDE;
+  }
+  if (normalizedProviderId === "pi") {
+    return DEFAULT_GEMINI_OPENROUTER_MODEL_OVERRIDE;
+  }
+  return DEFAULT_OPENAI_OPENROUTER_MODEL_OVERRIDE;
+};
+
+const readOpenRouterEnv = (providerId = "codex") => {
   const apiKey = String(process.env.OPENROUTER_API_KEY || "").trim();
   const baseUrl = String(process.env.OPENROUTER_BASE_URL || "").trim() || DEFAULT_OPENROUTER_BASE_URL;
   const modelOverride = String(process.env.CTX_E2E_OPENROUTER_MODEL_OVERRIDE || "").trim()
-    || DEFAULT_CODEX_OPENROUTER_MODEL_OVERRIDE;
+    || providerDefaultOpenRouterModelOverride(providerId);
   return { apiKey, baseUrl, modelOverride };
 };
 
@@ -245,7 +258,7 @@ const ensureCodexOpenRouterWorkspaceReady = async (
     allowInstall = true,
   } = {},
 ) => {
-  const { apiKey, baseUrl, modelOverride } = readOpenRouterEnv();
+  const { apiKey, baseUrl, modelOverride } = readOpenRouterEnv(providerId);
   if (!apiKey) {
     throw new Error("OPENROUTER_API_KEY is required to configure Codex endpoint auth for remote first-turn validation");
   }
@@ -306,6 +319,7 @@ module.exports = {
   refreshEndpointModels,
   verifyProviderForWorkspace,
   resolveWorkspaceProviderModelId,
+  providerDefaultOpenRouterModelOverride,
   readOpenRouterEnv,
   ensureCodexOpenRouterWorkspaceReady,
   assertAcpBridgeRuntimeViable,

@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from "fs";
+import path from "path";
+
 export type JsonResponseLike = {
   ok(): boolean;
   status(): number;
@@ -110,6 +113,17 @@ const extractTerminalErrorMessage = (head: Record<string, unknown>): string => {
   }
   const lastTurn = turns.length > 0 ? turns[turns.length - 1] : {};
   return normalizeErrorMessage(firstText(lastTurn.status, "no explicit error payload"));
+};
+
+const extractLatestAssistantMessage = (head: Record<string, unknown>): string => {
+  const messages = asArray(head.messages).map((entry) => asRecord(entry));
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (readString(message.role) !== "assistant") continue;
+    const content = normalizeErrorMessage(readString(message.content));
+    if (content) return content;
+  }
+  return "";
 };
 
 const resolvePollingOptions = (options: PollOptions) => ({
@@ -381,4 +395,120 @@ export async function waitForTerminalState(
   }
 
   throw new Error(`session ${sessionId} did not reach terminal state: ${lastDetail || "timed out"}`);
+}
+
+export async function waitForWorkspaceFileContents(
+  workspaceRoot: string,
+  relativePath: string,
+  expectedContents: string,
+  options: Pick<PollOptions, "timeoutMs" | "pollMs" | "sleep" | "now"> = {},
+): Promise<string> {
+  const {
+    timeoutMs = DEFAULT_TERMINAL_TIMEOUT_MS,
+    pollMs = 1_000,
+    sleep = defaultSleep,
+    now = Date.now,
+  } = options;
+
+  const trimmedRoot = readString(workspaceRoot).trim();
+  const trimmedRelativePath = readString(relativePath).trim();
+  if (!trimmedRoot) {
+    throw new Error("workspaceRoot is required");
+  }
+  if (!trimmedRelativePath) {
+    throw new Error("relativePath is required");
+  }
+
+  const filePath = path.join(trimmedRoot, trimmedRelativePath);
+  const startedAt = now();
+  let lastDetail = `file not found: ${filePath}`;
+  while (now() - startedAt < timeoutMs) {
+    if (!existsSync(filePath)) {
+      lastDetail = `file not found: ${filePath}`;
+      await sleep(pollMs);
+      continue;
+    }
+
+    const actualContents = readFileSync(filePath, "utf8");
+    if (actualContents === expectedContents) {
+      return filePath;
+    }
+    lastDetail = `unexpected contents for ${trimmedRelativePath}: ${JSON.stringify(actualContents)}`;
+    await sleep(pollMs);
+  }
+
+  throw new Error(`workspace file assertion failed: ${lastDetail}`);
+}
+
+export async function resolveSessionWorktreeRoot(
+  request: JsonRequestLike,
+  sessionId: string,
+  options: { requestTimeoutMs?: number } = {},
+): Promise<string> {
+  const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  const snapshotResponse = await request.get(`/api/sessions/${sessionId}/snapshot?limit=1`, {
+    timeout: requestTimeoutMs,
+  });
+  if (!snapshotResponse.ok()) {
+    const detail = await responseBodyText(snapshotResponse);
+    throw new Error(`failed to read session snapshot (${snapshotResponse.status()}): ${detail}`);
+  }
+
+  const snapshot = asRecord(await snapshotResponse.json());
+  const worktreeId = firstText(
+    asRecord(asRecord(snapshot.head).session).worktree_id,
+    asRecord(asRecord(snapshot.summary).session).worktree_id,
+  );
+  if (!worktreeId) {
+    throw new Error(`session ${sessionId} snapshot did not include worktree_id`);
+  }
+
+  const worktreeResponse = await request.get(`/api/worktrees/${encodeURIComponent(worktreeId)}`, {
+    timeout: requestTimeoutMs,
+  });
+  if (!worktreeResponse.ok()) {
+    const detail = await responseBodyText(worktreeResponse);
+    throw new Error(`failed to read worktree ${worktreeId} (${worktreeResponse.status()}): ${detail}`);
+  }
+
+  const worktree = asRecord(await worktreeResponse.json());
+  const rootPath = firstText(worktree.root_path);
+  if (!rootPath) {
+    throw new Error(`worktree ${worktreeId} response missing root_path`);
+  }
+  return rootPath;
+}
+
+export async function waitForSessionWorkspaceFileContents(
+  request: JsonRequestLike,
+  sessionId: string,
+  relativePath: string,
+  expectedContents: string,
+  options: PollOptions = {},
+): Promise<string> {
+  const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  const workspaceRoot = await resolveSessionWorktreeRoot(request, sessionId, { requestTimeoutMs });
+  try {
+    return await waitForWorkspaceFileContents(workspaceRoot, relativePath, expectedContents, options);
+  } catch (error) {
+    const baseMessage = error instanceof Error ? error.message : String(error);
+    try {
+      const headResponse = await request.get(`/api/sessions/${sessionId}/head?include_events=1&limit=80`, {
+        timeout: requestTimeoutMs,
+      });
+      if (!headResponse.ok()) {
+        throw new Error(baseMessage);
+      }
+      const head = asRecord(await headResponse.json());
+      const assistantMessage = extractLatestAssistantMessage(head);
+      const runtimeError = extractTerminalErrorMessage(head);
+      const hint = normalizeErrorMessage(firstText(assistantMessage, runtimeError));
+      if (!hint) {
+        throw new Error(baseMessage);
+      }
+      throw new Error(`${baseMessage}; session_hint=${hint}`);
+    } catch (hintError) {
+      throw new Error(hintError instanceof Error ? hintError.message : baseMessage);
+    }
+  }
 }

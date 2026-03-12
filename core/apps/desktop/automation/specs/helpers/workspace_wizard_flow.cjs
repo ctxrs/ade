@@ -47,6 +47,7 @@ const parsePositiveInt = (raw, fallback) => {
   if (!Number.isFinite(n) || n <= 0) return fallback;
   return n;
 };
+const normalizeText = (value) => String(value || "").trim();
 const REMOTE_PORT = parsePort(process.env.CTX_AUTOMATION_REMOTE_PORT || "44099", 44099);
 const REMOTE_DATA_DIR_RAW = process.env.CTX_AUTOMATION_REMOTE_DATA_DIR || "";
 const CONTAINER_LAUNCH_TIMEOUT_MS = parsePositiveInt(
@@ -1172,10 +1173,10 @@ const runProviderFileEditApiSmoke = async (
     throw new Error("relativeFilePath is required for file edit smoke");
   }
   const expectedContents = String(fileContents || "");
-  const absolutePath = path.join(workspaceRoot, relativePath);
   const finalPrompt = normalizeText(prompt) || [
     `Create or overwrite the workspace file ${relativePath}.`,
-    `Write exactly this content and nothing else: ${JSON.stringify(expectedContents)}`,
+    `Write exactly this content and nothing else: ${JSON.stringify(expectedContents)}. The file must contain exactly those characters with no trailing newline or extra whitespace.`,
+    "Use only the current worktree root as the target directory. Do not write in a parent directory, and if your first attempt adds a trailing newline or uses the wrong directory, fix the file before replying.",
     `After writing the file, reply with exactly this token: ${expectedContents}`,
   ].join(" ");
 
@@ -1207,6 +1208,8 @@ const runProviderFileEditApiSmoke = async (
     }
   }
 
+  const executionRoot = await resolveSessionWorktreeRoot(turnResult.sessionId);
+  const absolutePath = path.join(executionRoot, relativePath);
   const deadline = Date.now() + timeoutMs;
   while (Date.now() <= deadline) {
     if (fs.existsSync(absolutePath)) {
@@ -1221,12 +1224,12 @@ const runProviderFileEditApiSmoke = async (
         };
       }
     }
-    await waitMs(500);
+    await sleep(500);
   }
 
   const actualContents = fs.existsSync(absolutePath) ? fs.readFileSync(absolutePath, "utf8") : null;
   throw new Error(
-    `${providerId} file edit smoke timed out waiting for ${absolutePath} to contain ${JSON.stringify(expectedContents)}; actual=${JSON.stringify(actualContents)}`,
+    `${providerId} file edit smoke timed out waiting for ${absolutePath} to contain ${JSON.stringify(expectedContents)}; session=${turnResult.sessionId || "unknown"}; actual=${JSON.stringify(actualContents)}`,
   );
 };
 
@@ -1272,6 +1275,44 @@ const getWorkspaceTerminalCwd = async (workspaceId) => {
   } finally {
     await deleteTerminal(terminalId);
   }
+};
+
+const resolveSessionWorktreeRoot = async (sessionId) => {
+  const resolvedSessionId = normalizeText(sessionId);
+  if (!resolvedSessionId) {
+    throw new Error("sessionId is required to resolve a session worktree root");
+  }
+
+  const snapshotResp = await daemonJson("GET", `/api/sessions/${resolvedSessionId}/snapshot?limit=1`);
+  if (snapshotResp.status !== 200) {
+    throw new Error(
+      `GET /api/sessions/${resolvedSessionId}/snapshot failed (${snapshotResp.status}): ${JSON.stringify(snapshotResp.payload || null)}`,
+    );
+  }
+
+  const headSession = snapshotResp.payload?.head?.session || {};
+  const summarySession = snapshotResp.payload?.summary?.session || {};
+  const worktreeId = normalizeText(
+    idString(headSession.worktree_id)
+    || idString(summarySession.worktree_id)
+    || headSession.worktree_id
+    || summarySession.worktree_id,
+  );
+  if (!worktreeId) {
+    throw new Error(`session ${resolvedSessionId} snapshot did not include worktree_id`);
+  }
+
+  const worktreeResp = await daemonJson("GET", `/api/worktrees/${encodeURIComponent(worktreeId)}`);
+  if (worktreeResp.status !== 200) {
+    throw new Error(
+      `GET /api/worktrees/${worktreeId} failed (${worktreeResp.status}): ${JSON.stringify(worktreeResp.payload || null)}`,
+    );
+  }
+  const rootPath = normalizeText(worktreeResp.payload?.root_path);
+  if (!rootPath) {
+    throw new Error(`worktree ${worktreeId} response missing root_path`);
+  }
+  return rootPath;
 };
 
 const assertWorkspaceTerminalCwdPrefix = async (workspaceId, expectedPrefix) => {
@@ -2306,6 +2347,7 @@ module.exports = {
   createWorkspaceTerminal,
   deleteTerminal,
   getWorkspaceTerminalCwd,
+  resolveSessionWorktreeRoot,
   assertWorkspaceTerminalCwdPrefix,
   daemonOverlayText,
   assertNoDaemonOverlayFor,

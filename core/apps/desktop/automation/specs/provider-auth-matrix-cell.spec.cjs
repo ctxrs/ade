@@ -9,6 +9,7 @@ const {
   scenarioEnabled,
   assertConnectedLocalAndListening,
   assertLocalWorkspaceConfig,
+  getWorkspaceTerminalCwd,
   runProviderFirstTurnApiSmoke,
   runProviderFileEditApiSmoke,
 } = require("./helpers/workspace_wizard_flow.cjs");
@@ -18,6 +19,7 @@ const {
   configureOpenRouterEndpoint,
   verifyProviderForWorkspace,
   resolveWorkspaceProviderModelId,
+  readOpenRouterEnv,
 } = require("./helpers/provider_runtime.cjs");
 const {
   createProviderAuthContractRecorder,
@@ -30,8 +32,6 @@ const {
   prepareSubscriptionAuth,
 } = require("./helpers/provider_auth_matrix_flow.cjs");
 
-const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
-const DEFAULT_MODEL_OVERRIDE = "openai/gpt-5.2-codex";
 const DEFAULT_PROVIDER_ID = "codex";
 const DEFAULT_AUTH_MODE = "endpoint_api_key";
 const DEFAULT_DAEMON_LOCATION = "local";
@@ -112,10 +112,15 @@ const createWorkspaceAndLaunchExecution = async ({
       lastPayload = status.payload || null;
       const state = normalizeText(status.payload?.state).toLowerCase();
       if (state === "ready") {
+        const executionRoot = normalizeText(await getWorkspaceTerminalCwd(workspaceId));
+        if (!executionRoot) {
+          throw new Error(`workspace execution root missing for ${workspaceId}`);
+        }
         return {
           workspaceId,
           environment,
           networkMode,
+          executionRoot,
           launchJobId: jobId,
           launchStatus: status.payload || null,
         };
@@ -132,12 +137,7 @@ const createWorkspaceAndLaunchExecution = async ({
   );
 };
 
-const openRouterEnv = () => {
-  const apiKey = normalizeText(process.env.OPENROUTER_API_KEY || "");
-  const baseUrl = normalizeText(process.env.OPENROUTER_BASE_URL || "") || DEFAULT_OPENROUTER_BASE_URL;
-  const modelOverride = normalizeText(process.env.CTX_E2E_OPENROUTER_MODEL_OVERRIDE || "") || DEFAULT_MODEL_OVERRIDE;
-  return { apiKey, baseUrl, modelOverride };
-};
+const openRouterEnv = (providerId) => readOpenRouterEnv(providerId);
 
 describe("provider auth matrix cell (desktop e2e)", () => {
   const runId = `${Date.now()}`;
@@ -258,7 +258,7 @@ describe("provider auth matrix cell (desktop e2e)", () => {
           "managed subscription auth prepared for verify and first-turn validation",
         );
       } else if (authMode === "endpoint_api_key" || authMode === "configure_later_then_connect") {
-        const { apiKey, baseUrl, modelOverride } = openRouterEnv();
+        const { apiKey, baseUrl, modelOverride } = openRouterEnv(providerId);
         if (!apiKey) {
           throw new Error("OPENROUTER_API_KEY is required for endpoint/configure-later matrix cells");
         }
@@ -326,7 +326,7 @@ describe("provider auth matrix cell (desktop e2e)", () => {
       currentAssertion = "file_edit_success";
       const fileEditResult = await runProviderFileEditApiSmoke(
         workspace.workspaceId,
-        workspaceDest,
+        workspace.executionRoot,
         {
           providerId,
           modelId,
@@ -338,7 +338,8 @@ describe("provider auth matrix cell (desktop e2e)", () => {
           exactAssistantMessage: true,
           prompt: [
             "This is an end to end test, so it is very important that you do exactly what I ask.",
-            "Make a new file in the workspace root called hello.md and put exactly this text in it: hi",
+            "Make a new file in the workspace root called hello.md and put exactly this text in it: hi. The file must contain exactly those two characters with no trailing newline or extra whitespace.",
+            "Use only the current worktree root as the target directory. Do not write in a parent directory, and if your first attempt adds a trailing newline or uses the wrong directory, fix the file before replying.",
             "That is all. Do it now without further deliberation.",
             "After writing the file, reply with exactly: hi",
           ].join(" "),

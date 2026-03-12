@@ -705,7 +705,7 @@
       "command": {
         "command": "kimi",
         "args": [
-          "--acp"
+          "acp"
         ]
       },
       "managed_install": {
@@ -714,7 +714,7 @@
         "version": "1.17.0",
         "entrypoint": "kimi",
         "args": [
-          "--acp"
+          "acp"
         ]
       },
       "version_probe": {

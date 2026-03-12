@@ -2,7 +2,7 @@ use super::*;
 use crate::provider_accounts::{
     apply_gemini_api_key_runtime_auth_env, apply_gemini_vertex_runtime_auth_env,
     write_gemini_auth_settings, GEMINI_AUTH_SELECTED_TYPE_API_KEY,
-    GEMINI_AUTH_SELECTED_TYPE_VERTEX_AI,
+    GEMINI_AUTH_SELECTED_TYPE_VERTEX_AI, KIMI_SHARE_DIR_ENV,
 };
 
 pub(crate) fn droid_cli_model_id_for_endpoint_model(
@@ -96,6 +96,7 @@ impl<'a> ProviderRuntimeContext<'a> {
     pub(super) async fn cleanup_endpoint_runtime(&self, endpoint_id: &str) -> Result<()> {
         let Some(endpoint_home) = (match self.canonical {
             PROVIDER_CODEX => Some(codex_endpoint_home(self.data_root, endpoint_id)),
+            PROVIDER_KIMI => Some(kimi_endpoint_home(self.data_root, endpoint_id)),
             PROVIDER_QWEN => Some(qwen_endpoint_home(self.data_root, endpoint_id)),
             PROVIDER_GEMINI => Some(gemini_endpoint_home(self.data_root, endpoint_id)),
             PROVIDER_DROID => Some(droid_endpoint_home(self.data_root, endpoint_id)),
@@ -224,16 +225,21 @@ impl<'a> ProviderRuntimeContext<'a> {
                 let api_key = secrets::endpoint_secret_api_key(secret)?;
                 let base_url = validation::endpoint_base_url_or_err(endpoint)?;
                 validation::ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
+                let model_id = endpoint_preferred_model_id(endpoint).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Kimi endpoint '{}' requires a model override or discovered model catalog before launch",
+                        endpoint.name
+                    )
+                })?;
+                let kimi_share_dir =
+                    prepare_kimi_share_dir(self.runtime_data_root(), &endpoint.id).await?;
                 env.insert("KIMI_API_KEY".to_string(), api_key);
                 env.insert("KIMI_BASE_URL".to_string(), base_url);
-                if let Some(model) = endpoint
-                    .model_override
-                    .as_ref()
-                    .map(|value| value.trim().to_string())
-                    .filter(|value| !value.is_empty())
-                {
-                    env.insert("KIMI_MODEL_NAME".to_string(), model);
-                }
+                env.insert("KIMI_MODEL_NAME".to_string(), model_id);
+                env.insert(
+                    KIMI_SHARE_DIR_ENV.to_string(),
+                    kimi_share_dir.to_string_lossy().to_string(),
+                );
             }
             PROVIDER_QWEN => {
                 let api_key = secrets::endpoint_secret_api_key(secret)?;
@@ -400,7 +406,10 @@ impl<'a> ProviderRuntimeContext<'a> {
             PROVIDER_PI => {
                 let api_key = secrets::endpoint_secret_api_key(secret)?;
                 validation::ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
-                env.insert("PI_ACP_PROVIDER".to_string(), "openai".to_string());
+                let provider =
+                    model_catalog::infer_endpoint_model_provider_namespace(&endpoint.base_url)
+                        .unwrap_or_else(|| "openai".to_string());
+                env.insert("PI_ACP_PROVIDER".to_string(), provider);
                 env.insert("OPENAI_API_KEY".to_string(), api_key);
                 let base_url = endpoint.base_url.trim().to_string();
                 if !base_url.is_empty() {
@@ -522,6 +531,14 @@ pub(super) fn qwen_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf
         .join(endpoint_id)
 }
 
+pub(super) fn kimi_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
+    data_root
+        .join("providers")
+        .join("kimi")
+        .join("endpoint-homes")
+        .join(endpoint_id)
+}
+
 pub(super) fn gemini_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
     data_root
         .join("providers")
@@ -574,6 +591,12 @@ async fn prepare_qwen_home_with_openai_settings(qwen_home: &Path) -> Result<()> 
     }))?;
     tokio::fs::write(qwen_config.join("settings.json"), payload).await?;
     Ok(())
+}
+
+async fn prepare_kimi_share_dir(runtime_data_root: &Path, endpoint_id: &str) -> Result<PathBuf> {
+    let share_dir = kimi_endpoint_home(runtime_data_root, endpoint_id).join(".kimi");
+    tokio::fs::create_dir_all(&share_dir).await?;
+    Ok(share_dir)
 }
 
 fn endpoint_preferred_model_id(endpoint: &HarnessEndpointRecordInternal) -> Option<String> {

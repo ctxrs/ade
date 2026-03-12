@@ -53,7 +53,9 @@ type StageError = Error & {
 
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const DEFAULT_PROVIDER_ID = "codex";
-const DEFAULT_MODEL_OVERRIDE = "openai/gpt-5.2-codex";
+const DEFAULT_OPENAI_MODEL_OVERRIDE = "openai/gpt-4.1-mini";
+const DEFAULT_QWEN_MODEL_OVERRIDE = "openai/gpt-4.1-nano";
+const DEFAULT_GEMINI_MODEL_OVERRIDE = "google/gemini-3-flash-preview";
 const DEFAULT_TERMINAL_TIMEOUT_MS = 180_000;
 const TERMINAL_TURN_STATUSES = new Set(["completed", "failed", "interrupted"]);
 
@@ -101,6 +103,16 @@ const envInt = (value: string | undefined, fallback: number): number => {
 
 const providerOverrideEnvVar = (providerId: string): string =>
   `CTX_E2E_${providerId.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_OPENROUTER_MODEL_OVERRIDE`;
+
+const providerDefaultOpenRouterModelOverride = (providerId: string): string => {
+  if (providerId === "qwen") {
+    return DEFAULT_QWEN_MODEL_OVERRIDE;
+  }
+  if (providerId === "pi") {
+    return DEFAULT_GEMINI_MODEL_OVERRIDE;
+  }
+  return DEFAULT_OPENAI_MODEL_OVERRIDE;
+};
 
 const createStageError = (stage: string, message: string, errorCode?: string): StageError => {
   const error = new Error(message) as StageError;
@@ -710,7 +722,7 @@ test("runtime install smoke: provider matrix install/probe/first-turn via OpenRo
   }
 
   const defaultModelOverride =
-    (process.env.CTX_E2E_INSTALL_SMOKE_MODEL_OVERRIDE ?? DEFAULT_MODEL_OVERRIDE).trim() || DEFAULT_MODEL_OVERRIDE;
+    (process.env.CTX_E2E_INSTALL_SMOKE_MODEL_OVERRIDE ?? "").trim();
   const baseUrl = (process.env.OPENROUTER_BASE_URL ?? "").trim() || DEFAULT_OPENROUTER_BASE_URL;
   const executionEnvironment =
     ((process.env.CTX_E2E_INSTALL_SMOKE_ENVIRONMENT ?? "host").trim() as ExecutionEnvironment) || "host";
@@ -739,7 +751,9 @@ test("runtime install smoke: provider matrix install/probe/first-turn via OpenRo
   const results: ProviderResult[] = [];
   for (const providerId of providerIds) {
     const perProviderModelOverride =
-      (process.env[providerOverrideEnvVar(providerId)] ?? "").trim() || defaultModelOverride;
+      (process.env[providerOverrideEnvVar(providerId)] ?? "").trim()
+      || defaultModelOverride
+      || providerDefaultOpenRouterModelOverride(providerId);
     const result = await runProvider(
       request,
       workspaceId,

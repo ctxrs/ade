@@ -215,6 +215,28 @@ fn builtin_matrix_marks_dependencies_and_omits_cagent() {
 }
 
 #[test]
+fn builtin_matrix_uses_kimi_acp_subcommand() {
+    let matrix = builtin_matrix();
+    let kimi = matrix
+        .providers
+        .iter()
+        .find(|entry| entry.id == "kimi")
+        .expect("kimi entry");
+
+    let command = kimi.command.as_ref().expect("kimi command");
+    assert_eq!(command.command, "kimi");
+    assert_eq!(command.args, vec!["acp".to_string()]);
+
+    let managed_install = kimi.managed_install.as_ref().expect("kimi managed install");
+    match managed_install {
+        ProviderInstall::Python { args, .. } => {
+            assert_eq!(args, &vec!["acp".to_string()]);
+        }
+        other => panic!("expected kimi python managed install, got {other:?}"),
+    }
+}
+
+#[test]
 fn user_facing_harness_filter_excludes_known_dependencies_only() {
     let matrix = builtin_matrix();
 

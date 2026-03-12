@@ -258,6 +258,15 @@ fn estimate_tokens(text: &str) -> usize {
     chars.div_ceil(4)
 }
 
+pub(super) fn normalize_session_model_id(model_id: &str) -> Option<String> {
+    let trimmed = model_id.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("default") {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
 pub(super) fn provider_supports_system_prompt_append(provider_id: &str) -> bool {
     matches!(provider_id, "claude-crp" | "codex")
 }

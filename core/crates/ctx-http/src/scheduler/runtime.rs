@@ -36,8 +36,8 @@ mod helpers;
 use self::event_loop::{spawn_turn_event_loop, TurnEventLoop};
 pub(crate) use self::helpers::model_context_window;
 use self::helpers::{
-    compute_context_window_metrics, provider_supports_system_prompt_append,
-    runtime_provider_id_for_session_provider,
+    compute_context_window_metrics, normalize_session_model_id,
+    provider_supports_system_prompt_append, runtime_provider_id_for_session_provider,
 };
 use super::lifecycle::RunningTurn;
 use super::persistence::{append_session_event_with_retry, emit_event, persist_assistant_message};
@@ -55,6 +55,7 @@ fn provider_mode_id_for(
         ProviderControlMode::Full => match provider_id {
             "codex" => Some("full-access"),
             "claude-crp" => Some("bypassPermissions"),
+            "droid" => Some("auto_high"),
             _ => None,
         },
         ProviderControlMode::HarnessNative | ProviderControlMode::CtxEnforced => None,
@@ -548,21 +549,13 @@ pub(crate) async fn start_turn(
 
     let run_started_at = Instant::now();
     let spawn_started_at = Instant::now();
-    let session_model_id = session.model_id.trim();
-    if session_model_id.is_empty() || session_model_id.eq_ignore_ascii_case("default") {
-        anyhow::bail!(
-            "session {} is missing a concrete model id for provider {}",
-            session.id.0,
-            session.provider_id
-        );
-    }
     let handle = match adapter
         .run(
             TurnInput {
                 content: prompt,
                 attachments: message.attachments.clone(),
                 context_blocks,
-                model_id: Some(session_model_id.to_string()),
+                model_id: normalize_session_model_id(&session.model_id),
             },
             workdir.to_path_buf(),
             provider_env,
@@ -706,6 +699,7 @@ pub(crate) async fn start_turn(
 #[cfg(test)]
 mod runtime_tests {
     use super::helpers::strip_emitted_prefix;
+    use super::provider_mode_id_for;
     use super::runtime_provider_id_for_session_provider;
     use crate::harness_sources::{
         HarnessApiShape, HarnessEndpointRecord, HarnessEndpointVerificationStatus,
@@ -715,6 +709,7 @@ mod runtime_tests {
         prepend_runtime_bin_dirs_to_provider_path, AgentServerCommand, AgentServerConfigFile,
         ManagedInstallMetadata,
     };
+    use crate::settings::ProviderControlMode;
     use chrono::Utc;
     use std::collections::HashMap;
     use std::path::PathBuf;
@@ -723,6 +718,34 @@ mod runtime_tests {
     #[test]
     fn returns_full_when_no_emitted() {
         assert_eq!(strip_emitted_prefix("Hello", ""), Some("Hello".to_string()));
+    }
+
+    #[test]
+    fn full_provider_control_maps_known_full_access_modes() {
+        assert_eq!(
+            provider_mode_id_for("codex", &ProviderControlMode::Full),
+            Some("full-access")
+        );
+        assert_eq!(
+            provider_mode_id_for("claude-crp", &ProviderControlMode::Full),
+            Some("bypassPermissions")
+        );
+        assert_eq!(
+            provider_mode_id_for("droid", &ProviderControlMode::Full),
+            Some("auto_high")
+        );
+    }
+
+    #[test]
+    fn non_full_provider_control_does_not_force_provider_modes() {
+        assert_eq!(
+            provider_mode_id_for("droid", &ProviderControlMode::HarnessNative),
+            None
+        );
+        assert_eq!(
+            provider_mode_id_for("droid", &ProviderControlMode::CtxEnforced),
+            None
+        );
     }
 
     #[test]

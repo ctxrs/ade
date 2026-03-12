@@ -143,6 +143,20 @@ fn infer_legacy_managed_target(entry_id: &str, target: Option<InstallTarget>) ->
         .unwrap_or(InstallTarget::Host)
 }
 
+fn migrate_managed_provider_command_args(
+    provider_id: &str,
+    command: &mut AgentServerCommand,
+) -> bool {
+    if command.managed.is_none() {
+        return false;
+    }
+    if provider_id == "kimi" && command.args == ["--acp"] {
+        command.args = vec!["acp".to_string()];
+        return true;
+    }
+    false
+}
+
 fn target_bucket_lookup<'a, T>(
     buckets: &'a HashMap<String, HashMap<String, T>>,
     provider_id: &str,
@@ -484,6 +498,9 @@ fn migrate_agent_server_config(cfg: &mut AgentServerConfigFile) -> bool {
     let mut drop_managed_entries = Vec::new();
 
     for (provider_id, command) in cfg.providers.iter_mut() {
+        if migrate_managed_provider_command_args(provider_id, command) {
+            changed = true;
+        }
         let Some(existing) = command.managed.as_ref() else {
             continue;
         };
@@ -531,6 +548,14 @@ fn migrate_agent_server_config(cfg: &mut AgentServerConfigFile) -> bool {
         }
         drop_provider_entries.push(provider_id.clone());
         changed = true;
+    }
+
+    for (provider_id, targets) in cfg.managed_provider_targets.iter_mut() {
+        for command in targets.values_mut() {
+            if migrate_managed_provider_command_args(provider_id, command) {
+                changed = true;
+            }
+        }
     }
 
     for (provider_id, managed) in cfg.managed_installs.iter_mut() {

@@ -34,7 +34,7 @@ async function readOptionalVisibleText(locator: Locator): Promise<string> {
 const harnessTriggerLabel = (page: Page) =>
   page
     .locator(
-      ".wb-new-composer-stack .wb-switcher-harness .wb-switcher-label, .wb-new-composer-stack button[title='Harness'] .wb-switcher-label",
+      ".wb-new-composer-stack .wb-switcher-harness .wb-switcher-label, .wb-new-composer-stack button[title='Agents'] .wb-switcher-label, .wb-new-composer-stack button[title='Harness'] .wb-switcher-label",
     )
     .first();
 
@@ -45,7 +45,9 @@ const isHarnessLabelSelected = (labelText: string, entry: EndpointHarnessMatrixE
 
 async function openHarnessMenu(page: Page) {
   const harnessButton = page
-    .locator(".wb-new-composer-stack .wb-switcher-harness, .wb-new-composer-stack button[title='Harness']")
+    .locator(
+      ".wb-new-composer-stack .wb-switcher-harness, .wb-new-composer-stack button[title='Agents'], .wb-new-composer-stack button[title='Harness']",
+    )
     .first();
   await expect(harnessButton).toBeVisible({ timeout: 20_000 });
   const menu = page.locator(".wb-harness-menu");
@@ -60,16 +62,11 @@ async function resolveHarnessMenuButton(
   menu: Locator,
   entry: EndpointHarnessMatrixEntry,
 ) {
-  const byLabel = menu
+  const labelPattern = new RegExp(`${escapeRegex(entry.menuLabel)}|${escapeRegex(entry.providerId)}`, "i");
+  return menu
     .locator(".wb-harness-row .wb-harness-row-main")
-    .filter({ hasText: entry.menuLabel })
+    .filter({ hasText: labelPattern })
     .first();
-  if (await byLabel.count()) return byLabel;
-  const byProviderId = menu
-    .locator(".wb-harness-row .wb-harness-row-main")
-    .filter({ hasText: entry.providerId })
-    .first();
-  return byProviderId;
 }
 
 async function waitForHarnessRowReady(rowButton: Locator, timeout: number) {
@@ -175,9 +172,13 @@ export async function configureHarnessEndpointAuthViaModal(
 ): Promise<HarnessAuthConfigResult> {
   await dismissAuthModalIfOpen(page);
   const menu = await openHarnessMenu(page);
-  await menu.getByLabel("Search agents").fill(entry.searchTerm);
+  const searchInput = menu.getByLabel("Search agents");
+  await searchInput.fill(entry.searchTerm);
+  await expect(searchInput).toHaveValue(entry.searchTerm);
   const rowButton = await resolveHarnessMenuButton(menu, entry);
-  if ((await rowButton.count()) === 0) {
+  try {
+    await expect(rowButton).toBeVisible({ timeout: 10_000 });
+  } catch {
     return { ok: false, detail: "harness menu row not found" };
   }
   await rowButton.click();

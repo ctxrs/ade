@@ -5,6 +5,7 @@ import path from "path";
 import { execSync } from "child_process";
 import type { APIRequestContext, Page } from "playwright/test";
 import { parseBoolishString } from "../src/utils/boolish";
+import { waitForSessionWorkspaceFileContents } from "../src/testing/providerRuntime";
 import {
   configureHarnessEndpointAuthViaModal,
   selectHarnessForComposer,
@@ -33,6 +34,8 @@ type HarnessRunRecord = {
   model_id: string | null;
   terminal_status: string | null;
   assistant_messages: number;
+  file_edit_success: boolean;
+  file_path: string | null;
   result: Outcome;
   reason: string;
   elapsed_ms: number;
@@ -66,25 +69,34 @@ type ProviderModelSelectionResult =
   | { ok: false; detail: string };
 
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
-const DEFAULT_E2E_AUTH_TOKEN = "ctx-e2e-auth-token";
+  const DEFAULT_E2E_AUTH_TOKEN = "ctx-e2e-auth-token";
 const TERMINAL_TURN_STATUSES = new Set(["completed", "failed", "interrupted"]);
 const DEFAULT_RUN_CONTEXT_TIMEOUT_MS = 30_000;
 const DEFAULT_TERMINAL_TIMEOUT_MS = 120_000;
 const DEFAULT_PI_TERMINAL_TIMEOUT_MS = 240_000;
-const DEFAULT_CODEX_OPENROUTER_MODEL_OVERRIDE = "openai/gpt-5.2-codex";
-const DEFAULT_PI_OPENROUTER_MODEL_OVERRIDE = "google/gemini-3-flash-preview";
+const DEFAULT_OPENAI_OPENROUTER_MODEL_OVERRIDE = "openai/gpt-4.1-mini";
+const DEFAULT_QWEN_OPENROUTER_MODEL_OVERRIDE = "openai/gpt-4.1-nano";
+const DEFAULT_GEMINI_OPENROUTER_MODEL_OVERRIDE = "google/gemini-3-flash-preview";
+const WRITE_FILE_CONTENTS = "hi";
 
 const providerDefaultOpenRouterModelOverride = (providerId: string): string => {
-  if (providerId === "pi") return DEFAULT_PI_OPENROUTER_MODEL_OVERRIDE;
-  return DEFAULT_CODEX_OPENROUTER_MODEL_OVERRIDE;
+  if (providerId === "qwen") {
+    return DEFAULT_QWEN_OPENROUTER_MODEL_OVERRIDE;
+  }
+  if (providerId === "pi") {
+    return DEFAULT_GEMINI_OPENROUTER_MODEL_OVERRIDE;
+  }
+  return DEFAULT_OPENAI_OPENROUTER_MODEL_OVERRIDE;
 };
 
-const providerTerminalTimeoutForHarness = (providerId: string, fallbackTimeoutMs: number): number => {
+  const providerTerminalTimeoutForHarness = (providerId: string, fallbackTimeoutMs: number): number => {
   if (providerId === "pi") {
     return Math.max(fallbackTimeoutMs, DEFAULT_PI_TERMINAL_TIMEOUT_MS);
   }
   return fallbackTimeoutMs;
 };
+
+const providerWriteFilePath = (providerId: string): string => `hello-${providerId}.md`;
 
 const asRecord = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -661,6 +673,8 @@ test("workbench: endpoint harness OpenRouter matrix first pass", async ({ page, 
       model_id: null,
       terminal_status: null,
       assistant_messages: 0,
+      file_edit_success: false,
+      file_path: null,
       result: "fail",
       reason: "",
       elapsed_ms: 0,
@@ -698,7 +712,6 @@ test("workbench: endpoint harness OpenRouter matrix first pass", async ({ page, 
         baseUrl,
         modelOverride,
       );
-      console.log(`endpoint matrix: ${entry.providerId} auth result -> ${authResult.ok ? "ok" : "fail"}`);
       const authLikelyAlreadyConfigured =
         !authResult.ok && authResult.detail.toLowerCase().includes("already be configured");
       const authProbeFailureOnly =
@@ -708,6 +721,7 @@ test("workbench: endpoint harness OpenRouter matrix first pass", async ({ page, 
           || authResult.detail.toLowerCase().includes("requires openai_model")
           || authResult.detail.toLowerCase().includes("configure a model override"));
       const authSaved = authResult.ok || authLikelyAlreadyConfigured || authProbeFailureOnly;
+      console.log(`endpoint matrix: ${entry.providerId} auth result -> ${authSaved ? "ok" : "fail"}`);
       if (!authSaved) {
         results.push({
           ...baseRecord,
@@ -788,7 +802,14 @@ test("workbench: endpoint harness OpenRouter matrix first pass", async ({ page, 
       }
 
       const promptMarker = `or-matrix-${entry.providerId}-${Date.now()}`;
-      const prompt = `${promptMarker}: reply with exactly the word pong`;
+      const relativeFilePath = providerWriteFilePath(entry.providerId);
+      const prompt = [
+        "This is an end to end test, so it is very important that you do exactly what I ask.",
+        `Make a new file in the workspace root called ${relativeFilePath} and put exactly this text in it: ${WRITE_FILE_CONTENTS}. The file must contain exactly those two characters with no trailing newline or extra whitespace.`,
+        "Use only the current worktree root as the target directory. Do not write in a parent directory, and if your first attempt adds a trailing newline or uses the wrong directory, fix the file before replying.",
+        "That is all. Do it now without further deliberation.",
+        `After writing the file, reply with exactly: ${WRITE_FILE_CONTENTS}`,
+      ].join(" ");
 
       const modelSelection = await resolveWorkspaceProviderModelId({
         request,
@@ -959,9 +980,21 @@ test("workbench: endpoint harness OpenRouter matrix first pass", async ({ page, 
 
       let result: Outcome = "fail";
       let reason = "session ended without assistant completion";
+      let fileEditSuccess = false;
+      let filePath: string | null = null;
       if (terminal.terminalStatus === "completed" && terminal.assistantMessages > 0) {
-        result = "pass";
-        reason = "assistant completion observed";
+        try {
+          filePath = await waitForSessionWorkspaceFileContents(request, sessionId, relativeFilePath, WRITE_FILE_CONTENTS, {
+            timeoutMs: 30_000,
+            pollMs: 1_000,
+          });
+          fileEditSuccess = true;
+          result = "pass";
+          reason = `assistant completion observed and wrote ${relativeFilePath}`;
+        } catch (error) {
+          result = "fail";
+          reason = normalizeErrorMessage(error instanceof Error ? error.message : String(error));
+        }
       } else {
         const errorMessage = terminal.errorMessage || "session ended without explicit error payload";
         if (isLikelyRuntimeSkip(errorMessage)) {
@@ -984,6 +1017,8 @@ test("workbench: endpoint harness OpenRouter matrix first pass", async ({ page, 
         model_id: terminal.modelId ?? modelSelection.modelId,
         terminal_status: terminal.terminalStatus,
         assistant_messages: terminal.assistantMessages,
+        file_edit_success: fileEditSuccess,
+        file_path: filePath,
         result,
         reason,
         elapsed_ms: Date.now() - startMs,

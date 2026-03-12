@@ -12,17 +12,24 @@ const TAURI_DRIVER_CLI = require.resolve("@crabnebula/tauri-driver/cli.js");
 
 const ROOT = path.resolve(__dirname, "..");
 const CORE_ROOT = path.resolve(ROOT, "..", "..");
+const TAURI_TARGET_DIR = (() => {
+  const configured = String(process.env.CARGO_TARGET_DIR || "").trim();
+  if (configured) {
+    return path.resolve(configured);
+  }
+  return path.resolve(ROOT, "src-tauri/target");
+})();
 const defaultAppPath = (() => {
   if (process.platform === "darwin") {
-    return path.resolve(ROOT, "src-tauri/target/debug/bundle/macos/ctx.app");
+    return path.resolve(TAURI_TARGET_DIR, "debug/bundle/macos/ctx.app");
   }
   if (process.platform === "linux") {
-    return path.resolve(ROOT, "src-tauri/target/debug/ctx");
+    return path.resolve(TAURI_TARGET_DIR, "debug/ctx");
   }
   if (process.platform === "win32") {
-    return path.resolve(ROOT, "src-tauri/target/debug/ctx.exe");
+    return path.resolve(TAURI_TARGET_DIR, "debug/ctx.exe");
   }
-  return path.resolve(ROOT, "src-tauri/target/debug/ctx");
+  return path.resolve(TAURI_TARGET_DIR, "debug/ctx");
 })();
 const APP_PATH = process.env.CTX_DESKTOP_APP_PATH || defaultAppPath;
 const BUNDLES_DIR = path.resolve(ROOT, "src-tauri/bundles");
@@ -1245,10 +1252,13 @@ exports.config = {
     // (Linux provider binaries + harness image tars). Keep the app build in debug mode
     // for the automation plugin, but sync release resources.
     if (!SKIP_PREP_RELEASE) {
+      const prepEnv = { ...process.env };
+      delete prepEnv.NODE_OPTIONS;
       const prepRelease = spawnSync("pnpm", ["-C", CORE_ROOT, "desktop:prep:release"], {
         stdio: "inherit",
         cwd: ROOT,
         shell: true,
+        env: prepEnv,
       });
       if (prepRelease.status !== 0) {
         throw new Error("pnpm -C core desktop:prep:release failed");

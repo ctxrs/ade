@@ -5,6 +5,7 @@ import path from "path";
 import { execSync } from "child_process";
 import type { APIRequestContext, Locator, Page } from "playwright/test";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
+import { waitForSessionWorkspaceFileContents } from "../src/testing/providerRuntime";
 
 type TerminalState = {
   done: boolean;
@@ -272,7 +273,13 @@ test("workbench: cursor provider API key auth can run a real task", async ({ pag
   }
 
   const promptMarker = `cursor-provider-auth-${Date.now()}`;
-  const prompt = `${promptMarker}: reply with exactly the word pong`;
+  const prompt = [
+    "This is an end to end test, so it is very important that you do exactly what I ask.",
+    "Make a new file in the workspace root called hello.md and put exactly this text in it: hi. The file must contain exactly those two characters with no trailing newline or extra whitespace.",
+    "Use only the current worktree root as the target directory. Do not write in a parent directory, and if your first attempt adds a trailing newline or uses the wrong directory, fix the file before replying.",
+    "That is all. Do it now without further deliberation.",
+    "After writing the file, reply with exactly: hi",
+  ].join(" ");
 
   const createTaskResp = await request.post(`/api/workspaces/${workspaceId}/tasks`, {
     data: {
@@ -309,4 +316,8 @@ test("workbench: cursor provider API key auth can run a real task", async ({ pag
   const terminal = await waitForTerminalState({ request, sessionId });
   expect(terminal.terminalStatus, terminal.errorMessage ?? "cursor run did not complete").toBe("completed");
   expect(terminal.assistantMessages).toBeGreaterThan(0);
+  await waitForSessionWorkspaceFileContents(request, sessionId, "hello.md", "hi", {
+    timeoutMs: 30_000,
+    pollMs: 1_000,
+  });
 });

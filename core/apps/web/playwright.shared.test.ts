@@ -32,6 +32,7 @@ describe("createCtxPlaywrightConfig", () => {
     restoreEnv();
     const config = await createCtxPlaywrightConfig("all");
     expect(config.outputDir).toBe(path.resolve(__dirname, "e2e/test-results/all"));
+    expect(config.webServer?.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/api\/health$/);
 
     const reporters = getReporterTuples(config.reporter);
     const htmlReporter = reporters.find((entry) => entry[0] === "html");

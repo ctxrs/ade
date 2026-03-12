@@ -9,7 +9,9 @@ const {
   scenarioEnabled,
   assertConnectedLocalAndListening,
   assertLocalWorkspaceConfig,
+  getWorkspaceTerminalCwd,
   runProviderFirstTurnApiSmoke,
+  runProviderFileEditApiSmoke,
 } = require("./helpers/workspace_wizard_flow.cjs");
 const {
   getProviderStatus,
@@ -106,10 +108,15 @@ const createWorkspaceAndLaunchExecution = async ({
       lastPayload = status.payload || null;
       const state = normalizeText(status.payload?.state).toLowerCase();
       if (state === "ready") {
+        const executionRoot = normalizeText(await getWorkspaceTerminalCwd(workspaceId));
+        if (!executionRoot) {
+          throw new Error(`workspace execution root missing for ${workspaceId}`);
+        }
         return {
           workspaceId,
           environment,
           networkMode,
+          executionRoot,
           launchJobId: jobId,
           launchStatus: status.payload || null,
         };
@@ -275,6 +282,32 @@ describe("provider auth import matrix cell (desktop e2e)", () => {
       );
       recorder.recordArtifact("first_turn_result", turnResult);
       recorder.recordAssertion("first_turn_success", "pass", "first turn completed with assistant response");
+
+      currentAssertion = "file_edit_success";
+      const fileEditResult = await runProviderFileEditApiSmoke(
+        workspace.workspaceId,
+        workspace.executionRoot,
+        {
+          providerId,
+          modelId,
+          executionEnvironment,
+          relativeFilePath: "hello.md",
+          fileContents: "hi",
+          exactFileContents: true,
+          expectedAssistantMessage: "hi",
+          exactAssistantMessage: true,
+          prompt: [
+            "This is an end to end test, so it is very important that you do exactly what I ask.",
+            "Make a new file in the workspace root called hello.md and put exactly this text in it: hi. The file must contain exactly those two characters with no trailing newline or extra whitespace.",
+            "Use only the current worktree root as the target directory. Do not write in a parent directory, and if your first attempt adds a trailing newline or uses the wrong directory, fix the file before replying.",
+            "That is all. Do it now without further deliberation.",
+            "After writing the file, reply with exactly: hi",
+          ].join(" "),
+        },
+        240_000,
+      );
+      recorder.recordArtifact("file_edit_result", fileEditResult);
+      recorder.recordAssertion("file_edit_success", "pass", "provider created hello.md with exact contents");
 
       recorder.finalize({
         result: "pass",

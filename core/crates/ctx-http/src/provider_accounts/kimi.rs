@@ -15,6 +15,8 @@ use super::{
     KIMI_SECRET_VERSION, KIMI_SHARE_DIR_ENV,
 };
 
+const KIMI_CANONICAL_PROVIDER: &str = "kimi-code";
+
 fn default_kimi_credential_kind() -> String {
     KIMI_CREDENTIAL_KIND_CREDENTIALS_JSON.to_string()
 }
@@ -265,11 +267,15 @@ pub fn normalize_kimi_label(label: Option<String>, account_id: &str) -> String {
         .unwrap_or_else(|| format!("Kimi Account {account_id}"))
 }
 
+fn default_kimi_provider() -> String {
+    KIMI_CANONICAL_PROVIDER.to_string()
+}
+
 fn normalize_kimi_provider(provider: Option<String>) -> Result<String> {
     let provider = provider
         .map(|raw| raw.trim().to_string())
         .filter(|raw| !raw.is_empty())
-        .unwrap_or_else(|| "moonshot".to_string());
+        .unwrap_or_else(default_kimi_provider);
     if provider
         .chars()
         .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
@@ -282,6 +288,66 @@ fn normalize_kimi_provider(provider: Option<String>) -> Result<String> {
 fn normalize_optional_multiline(raw: Option<String>) -> Option<String> {
     raw.map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn default_kimi_config_toml() -> String {
+    r#"default_model = "kimi-code/kimi-for-coding"
+default_thinking = true
+default_yolo = false
+
+[models."kimi-code/kimi-for-coding"]
+provider = "managed:kimi-code"
+model = "kimi-for-coding"
+max_context_size = 262144
+capabilities = ["image_in", "video_in", "thinking"]
+
+[providers."managed:kimi-code"]
+type = "kimi"
+base_url = "https://api.kimi.com/coding/v1"
+api_key = ""
+
+[providers."managed:kimi-code".oauth]
+storage = "file"
+key = "oauth/kimi-code"
+
+[loop_control]
+max_steps_per_turn = 100
+max_retries_per_step = 3
+max_ralph_iterations = 0
+reserved_context_size = 50000
+
+[services.moonshot_search]
+base_url = "https://api.kimi.com/coding/v1/search"
+api_key = ""
+
+[services.moonshot_search.oauth]
+storage = "file"
+key = "oauth/kimi-code"
+
+[services.moonshot_fetch]
+base_url = "https://api.kimi.com/coding/v1/fetch"
+api_key = ""
+
+[services.moonshot_fetch.oauth]
+storage = "file"
+key = "oauth/kimi-code"
+
+[mcp.client]
+tool_call_timeout_ms = 60000
+"#
+    .to_string()
+}
+
+fn projected_kimi_credential_stems(provider: &str, config_toml: Option<&str>) -> Vec<String> {
+    if config_toml.is_some() {
+        return vec![provider.to_string()];
+    }
+
+    let mut stems = vec![KIMI_CANONICAL_PROVIDER.to_string()];
+    if provider != KIMI_CANONICAL_PROVIDER {
+        stems.push(provider.to_string());
+    }
+    stems
 }
 
 async fn write_kimi_secret_for_account(
@@ -339,16 +405,15 @@ async fn ensure_kimi_account_home(
     let credentials_dir = share_dir.join("credentials");
     tokio::fs::create_dir_all(&credentials_dir).await?;
     let provider = normalize_kimi_provider(Some(secret.provider.clone()))?;
-    let credentials_path = credentials_dir.join(format!("{provider}.json"));
-    write_secure_file_atomic(
-        &credentials_path,
-        &serde_json::to_vec_pretty(&secret.credentials)?,
-    )
-    .await?;
+    let credentials_payload = serde_json::to_vec_pretty(&secret.credentials)?;
+    for stem in projected_kimi_credential_stems(&provider, secret.config_toml.as_deref()) {
+        let credentials_path = credentials_dir.join(format!("{stem}.json"));
+        write_secure_file_atomic(&credentials_path, &credentials_payload).await?;
+    }
     let config_toml = secret
         .config_toml
         .clone()
-        .unwrap_or_else(|| format!("current_provider = \"{provider}\"\n"));
+        .unwrap_or_else(default_kimi_config_toml);
     write_secure_file_atomic(&share_dir.join("config.toml"), config_toml.as_bytes()).await?;
     Ok(share_dir)
 }
@@ -392,12 +457,21 @@ mod tests {
             .get(KIMI_SHARE_DIR_ENV)
             .expect("KIMI_SHARE_DIR should be set");
         assert!(share_dir.contains(&active_id));
-        let credentials_path = Path::new(share_dir)
+        let canonical_credentials_path = Path::new(share_dir)
+            .join("credentials")
+            .join("kimi-code.json");
+        assert!(canonical_credentials_path.exists());
+        let legacy_credentials_path = Path::new(share_dir)
             .join("credentials")
             .join("moonshot.json");
-        assert!(credentials_path.exists());
+        assert!(legacy_credentials_path.exists());
         let config_path = Path::new(share_dir).join("config.toml");
         assert!(config_path.exists());
+        let config = tokio::fs::read_to_string(&config_path)
+            .await
+            .expect("read config.toml");
+        assert!(config.contains("default_model = \"kimi-code/kimi-for-coding\""));
+        assert!(config.contains("key = \"oauth/kimi-code\""));
     }
 
     #[tokio::test]

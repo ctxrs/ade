@@ -15,7 +15,7 @@ describe("harnessEndpointProviders", () => {
     expect(defaultEndpointProviderPresetForHarness("codex")).toBe("openai");
     expect(defaultEndpointProviderPresetForHarness("claude-crp")).toBe("anthropic");
     expect(defaultEndpointProviderPresetForHarness("gemini")).toBe("google_ai_studio");
-    expect(defaultEndpointProviderPresetForHarness("kimi")).toBe("moonshot_ai");
+    expect(defaultEndpointProviderPresetForHarness("kimi")).toBe("openrouter");
     expect(defaultEndpointProviderPresetForHarness("cursor")).toBe("other");
   });
 

@@ -8,6 +8,7 @@ const { spawnSync } = require("node:child_process");
 
 const repoRoot = path.resolve(__dirname, "..");
 const scriptPath = path.join(repoRoot, "scripts", "providers_e2e.sh");
+const webE2eServerPath = path.join(repoRoot, "apps", "web", "scripts", "start-e2e-server.mjs");
 const bundleHarnessScriptPath = path.join(
   repoRoot,
   "..",
@@ -107,6 +108,77 @@ test("endpoint bundle defaults use a home-shareable cache root", () => {
   );
 });
 
+test("web provider lanes invoke the checked-in apps/web playwright binary", () => {
+  const script = fs.readFileSync(scriptPath, "utf8");
+
+  assert.match(
+    script,
+    /run_web_playwright_suite\(\)/,
+  );
+  assert.match(
+    script,
+    /playwright_bin="\$\{web_root\}\/node_modules\/\.bin\/playwright"/,
+  );
+  assert.match(
+    script,
+    /playwright binary missing at \$\{playwright_bin\}; restoring locked core workspace install/,
+  );
+  assert.match(
+    script,
+    /pnpm install --frozen-lockfile/,
+  );
+  assert.match(
+    script,
+    /missing playwright binary at \$\{playwright_bin\} after restore; run 'bash -lc \\"cd \$\{repo_root\} && pnpm install --frozen-lockfile\\"'/,
+  );
+});
+
+test("endpoint-ui lane defaults to host-mode bundles and scopes focused reruns", () => {
+  const script = fs.readFileSync(scriptPath, "utf8");
+
+  assert.match(
+    script,
+    /if \[\[ -n "\$\{CTX_E2E_ENDPOINT_PROVIDERS:-\}" && -z "\$\{CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-\}" \]\]; then/,
+  );
+  assert.match(
+    script,
+    /endpoint_bundle_providers="acp-crp-bridge,\$\{endpoint_bundle_providers\}"/,
+  );
+  assert.match(
+    script,
+    /CTX_E2E_ENDPOINT_BUNDLE_HARNESS_IMAGE="\$\{CTX_E2E_ENDPOINT_BUNDLE_HARNESS_IMAGE:-0\}"/,
+  );
+  assert.match(
+    script,
+    /CTX_E2E_ENDPOINT_BUNDLE_PODMAN="\$\{CTX_E2E_ENDPOINT_BUNDLE_PODMAN:-0\}"/,
+  );
+  assert.match(
+    script,
+    /CTX_E2E_ENDPOINT_APPEND_LINUX_TARGETS="\$\{CTX_E2E_ENDPOINT_APPEND_LINUX_TARGETS:-0\}"/,
+  );
+});
+
+test("tokens lane builds and exports the local worktree bridge binary", () => {
+  const script = fs.readFileSync(scriptPath, "utf8");
+
+  assert.match(
+    script,
+    /local_bridge_manifest="\$\{repo_root\}\/\.\.\/external-harnesses\/acp-crp-bridge\/Cargo\.toml"/,
+  );
+  assert.match(
+    script,
+    /CTX_TOKENS_ACP_CRP_BRIDGE_BIN="\$\{CTX_TOKENS_ACP_CRP_BRIDGE_BIN:-\$\{CTX_E2E_CARGO_TARGET_DIR\}\/debug\/acp-crp-bridge\}"/,
+  );
+  assert.match(
+    script,
+    /cargo build --manifest-path "\$\{local_bridge_manifest\}" --bin acp-crp-bridge >\/dev\/null/,
+  );
+  assert.match(
+    script,
+    /missing local acp-crp-bridge binary after build: \$\{CTX_TOKENS_ACP_CRP_BRIDGE_BIN\}/,
+  );
+});
+
 test("bundle harnesses treat archive js entrypoints as requiring node", () => {
   const script = fs.readFileSync(bundleHarnessScriptPath, "utf8");
   const providersScript = fs.readFileSync(
@@ -123,4 +195,13 @@ test("bundle harnesses treat archive js entrypoints as requiring node", () => {
     providersScript,
     /bin_path\.endswith\(\("\.js", "\.mjs", "\.cjs"\)\)/,
   );
+});
+
+test("web e2e daemon launcher injects an explicit ctx-mcp command", () => {
+  const script = fs.readFileSync(webE2eServerPath, "utf8");
+
+  assert.match(script, /const ensureCtxMcpCommand = \(repoRoot, env\) =>/);
+  assert.match(script, /runSync\(cargoCmd, \["build", "-p", "ctx-mcp", "--bin", "ctx-mcp"\]/);
+  assert.match(script, /const binaryPath = path\.join\(resolveCargoTargetDir\(repoRoot, env\), "debug", binName\)/);
+  assert.match(script, /env\.CTX_MCP_COMMAND = ensureCtxMcpCommand\(repoRoot, env\);/);
 });

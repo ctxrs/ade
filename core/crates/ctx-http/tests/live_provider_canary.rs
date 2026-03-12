@@ -250,7 +250,7 @@ async fn live_codex_canary_can_edit_workspace_file() {
     let expected_token = format!("CTX_LIVE_CODEX_WRITE_OK_{}", uuid::Uuid::new_v4());
     let relative_path = "live-codex-write-proof.txt";
     let prompt = format!(
-        "Create or overwrite the workspace file {relative_path}. Write exactly this content and nothing else: {expected_token}. After writing the file, reply with exactly this token: {expected_token}"
+        "Create or overwrite the workspace file {relative_path}. Write exactly this content and nothing else: {expected_token}. The file must contain exactly those characters with no trailing newline or extra whitespace. After writing the file, reply with exactly this token: {expected_token}"
     );
     post_message(&app, session.id.0, &prompt).await;
     wait_for_terminal(&state, session.id).await;

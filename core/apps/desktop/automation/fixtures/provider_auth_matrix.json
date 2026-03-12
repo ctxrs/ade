@@ -1948,7 +1948,7 @@
       "auth_mode": "endpoint_api_key",
       "daemon_location": "local",
       "execution_environment": "host",
-      "support": "supported",
+      "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
         "install_success",
@@ -1958,15 +1958,11 @@
         "file_edit_success"
       ],
       "owner": "provider-kimi",
-      "prerequisites": [
-        "OPENROUTER_API_KEY"
-      ],
+      "prerequisites": [],
       "runner": {
-        "kind": "desktop_wdio",
-        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
-        "scenarios": "provider,provider-auth-matrix"
+        "kind": "none"
       },
-      "skip_reason": null
+      "skip_reason": "provider_external_challenge"
     },
     {
       "id": "kimi.endpoint_api_key.local.container_host_mounted",
@@ -3610,7 +3606,7 @@
       "auth_mode": "endpoint_api_key",
       "daemon_location": "local",
       "execution_environment": "host",
-      "support": "supported",
+      "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
         "install_success",
@@ -3620,15 +3616,11 @@
         "file_edit_success"
       ],
       "owner": "provider-opencode",
-      "prerequisites": [
-        "OPENROUTER_API_KEY"
-      ],
+      "prerequisites": [],
       "runner": {
-        "kind": "desktop_wdio",
-        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
-        "scenarios": "provider,provider-auth-matrix"
+        "kind": "none"
       },
-      "skip_reason": null
+      "skip_reason": "provider_external_challenge"
     },
     {
       "id": "opencode.endpoint_api_key.local.container_host_mounted",
@@ -3947,7 +3939,7 @@
       "auth_mode": "endpoint_api_key",
       "daemon_location": "local",
       "execution_environment": "host",
-      "support": "supported",
+      "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
         "install_success",
@@ -3957,15 +3949,11 @@
         "file_edit_success"
       ],
       "owner": "provider-goose",
-      "prerequisites": [
-        "OPENROUTER_API_KEY"
-      ],
+      "prerequisites": [],
       "runner": {
-        "kind": "desktop_wdio",
-        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
-        "scenarios": "provider,provider-auth-matrix"
+        "kind": "none"
       },
-      "skip_reason": null
+      "skip_reason": "coverage_not_implemented_yet"
     },
     {
       "id": "goose.endpoint_api_key.local.container_host_mounted",
@@ -4268,7 +4256,7 @@
       "auth_mode": "endpoint_api_key",
       "daemon_location": "local",
       "execution_environment": "host",
-      "support": "supported",
+      "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
         "install_success",
@@ -4278,15 +4266,11 @@
         "file_edit_success"
       ],
       "owner": "provider-droid",
-      "prerequisites": [
-        "OPENROUTER_API_KEY"
-      ],
+      "prerequisites": [],
       "runner": {
-        "kind": "desktop_wdio",
-        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
-        "scenarios": "provider,provider-auth-matrix"
+        "kind": "none"
       },
-      "skip_reason": null
+      "skip_reason": "provider_external_challenge"
     },
     {
       "id": "droid.endpoint_api_key.local.container_host_mounted",
@@ -4589,7 +4573,7 @@
       "auth_mode": "endpoint_api_key",
       "daemon_location": "local",
       "execution_environment": "host",
-      "support": "supported",
+      "support": "deferred",
       "lane": "nightly",
       "required_assertions": [
         "install_success",
@@ -4599,15 +4583,11 @@
         "file_edit_success"
       ],
       "owner": "provider-openhands",
-      "prerequisites": [
-        "OPENROUTER_API_KEY"
-      ],
+      "prerequisites": [],
       "runner": {
-        "kind": "desktop_wdio",
-        "spec": "automation/specs/provider-auth-matrix-cell.spec.cjs",
-        "scenarios": "provider,provider-auth-matrix"
+        "kind": "none"
       },
-      "skip_reason": null
+      "skip_reason": "coverage_not_implemented_yet"
     },
     {
       "id": "openhands.endpoint_api_key.local.container_host_mounted",

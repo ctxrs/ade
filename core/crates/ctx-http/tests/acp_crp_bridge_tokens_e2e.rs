@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::process::Command;
 use tokio::sync::mpsc;
@@ -12,9 +12,14 @@ use ctx_providers::crp::Tier1CrpAdapter;
 use ctx_providers::events::NormalizedEvent;
 
 use ctx_http::installer::{load_agent_server_config, resolve_provider_command, AgentServerCommand};
+use ctx_http::provider_accounts::KIMI_SHARE_DIR_ENV;
 
-const DEFAULT_MODEL: &str = "google/gemini-3-flash-preview";
+const DEFAULT_OPENROUTER_MODEL: &str = "openai/gpt-4.1-mini";
+const DEFAULT_GEMINI_MODEL: &str = "google/gemini-3-flash-preview";
 const DEFAULT_OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
+const DEFAULT_MISTRAL_BASE_URL: &str = "https://api.mistral.ai/v1";
+const DEFAULT_QWEN_MODEL: &str = "openai/gpt-4.1-nano";
+const WRITE_FILE_CONTENTS: &str = "hi";
 
 #[derive(Clone, Copy)]
 struct ProviderSpec {
@@ -44,15 +49,9 @@ const PROVIDERS: &[ProviderSpec] = &[
         opencode_config: false,
     },
     ProviderSpec {
-        id: "goose",
-        fallback_cmd: "goose",
-        fallback_args: &["acp"],
-        opencode_config: false,
-    },
-    ProviderSpec {
         id: "kimi",
         fallback_cmd: "kimi",
-        fallback_args: &["--acp"],
+        fallback_args: &["acp"],
         opencode_config: false,
     },
     ProviderSpec {
@@ -89,12 +88,6 @@ const PROVIDERS: &[ProviderSpec] = &[
         id: "cline",
         fallback_cmd: "cline-acp",
         fallback_args: &[],
-        opencode_config: false,
-    },
-    ProviderSpec {
-        id: "openhands",
-        fallback_cmd: "openhands",
-        fallback_args: &["acp"],
         opencode_config: false,
     },
     ProviderSpec {
@@ -149,9 +142,9 @@ async fn run_and_collect(
     adapter: &dyn ProviderAdapter,
     workdir: &Path,
     prompt: &str,
-    model_id: &str,
+    model_id: Option<&str>,
     env: HashMap<String, String>,
-) -> Vec<NormalizedEvent> {
+) -> Result<Vec<NormalizedEvent>, String> {
     let (tx, mut rx) = mpsc::channel::<NormalizedEvent>(1024);
     let handle = adapter
         .run(
@@ -159,14 +152,14 @@ async fn run_and_collect(
                 content: prompt.to_string(),
                 attachments: vec![],
                 context_blocks: vec![],
-                model_id: Some(model_id.to_string()),
+                model_id: model_id.map(str::to_string),
             },
             workdir.to_path_buf(),
             env,
             tx,
         )
         .await
-        .unwrap();
+        .map_err(|err| format!("provider run failed to start: {err}"))?;
 
     let events = tokio::time::timeout(Duration::from_secs(240), async move {
         let mut events = Vec::new();
@@ -180,18 +173,29 @@ async fn run_and_collect(
         events
     })
     .await
-    .expect("timed out waiting for provider events");
+    .map_err(|_| "timed out waiting for provider events".to_string())?;
 
     let _ = handle.done.await;
-    events
+    Ok(events)
 }
 
-fn expect_success(events: &[NormalizedEvent], provider_id: &str) {
+fn write_file_name(provider_id: &str) -> String {
+    format!("hello-{provider_id}.md")
+}
+
+fn write_file_prompt(provider_id: &str) -> String {
+    let file_name = write_file_name(provider_id);
+    format!(
+        "This is an end-to-end write test. Create a new file in this directory called {file_name} and put exactly {WRITE_FILE_CONTENTS} in it. The file must contain exactly those two characters with no trailing newline or extra whitespace. Use only the current worktree root as the target directory. Do not write in a parent directory, and if your first attempt adds a trailing newline or uses the wrong directory, fix the file before replying. Then reply with exactly {WRITE_FILE_CONTENTS}. Do it now without further deliberation."
+    )
+}
+
+fn expect_success(events: &[NormalizedEvent], provider_id: &str) -> Result<(), String> {
     if events
         .iter()
         .any(|e| matches!(e.event_type, SessionEventType::Error))
     {
-        panic!("{provider_id} emitted error event(s): {events:#?}");
+        return Err(format!("{provider_id} emitted error event(s): {events:#?}"));
     }
 
     let has_assistant = events
@@ -204,16 +208,33 @@ fn expect_success(events: &[NormalizedEvent], provider_id: &str) {
         if provider_id == "opencode" && has_thought {
             // Opencode ACP can emit reasoning without a final assistant chunk; accept for now.
         } else {
-            panic!("{provider_id} produced no AssistantComplete event: {events:#?}");
+            return Err(format!(
+                "{provider_id} produced no AssistantComplete event: {events:#?}"
+            ));
         }
     }
 
-    assert!(
-        events
-            .iter()
-            .any(|e| matches!(e.event_type, SessionEventType::Done)),
-        "{provider_id} produced no Done event: {events:#?}"
-    );
+    if !events
+        .iter()
+        .any(|e| matches!(e.event_type, SessionEventType::Done))
+    {
+        return Err(format!("{provider_id} produced no Done event: {events:#?}"));
+    }
+    Ok(())
+}
+
+fn expect_file_written(workdir: &Path, provider_id: &str) -> Result<(), String> {
+    let file_name = write_file_name(provider_id);
+    let file_path = workdir.join(&file_name);
+    let contents = fs::read_to_string(&file_path)
+        .map_err(|err| format!("{provider_id} did not create {}: {err}", file_name))?;
+    if contents != WRITE_FILE_CONTENTS {
+        return Err(format!(
+            "{provider_id} wrote unexpected contents to {}",
+            file_name
+        ));
+    }
+    Ok(())
 }
 
 fn token_tests_enabled() -> bool {
@@ -297,6 +318,19 @@ fn resolve_command(
     fallback_cmd: &str,
     fallback_args: &[&str],
 ) -> AgentServerCommand {
+    if provider_id == "acp-crp-bridge" {
+        if let Ok(command) = std::env::var("CTX_TOKENS_ACP_CRP_BRIDGE_BIN") {
+            let trimmed = command.trim();
+            if !trimmed.is_empty() {
+                return AgentServerCommand {
+                    command: trimmed.to_string(),
+                    args: Vec::new(),
+                    dependencies: Vec::new(),
+                    managed: None,
+                };
+            }
+        }
+    }
     resolve_provider_command(cfg, provider_id).unwrap_or_else(|| AgentServerCommand {
         command: fallback_cmd.to_string(),
         args: fallback_args.iter().map(|s| s.to_string()).collect(),
@@ -385,6 +419,31 @@ fn create_qwen_settings_home() -> std::io::Result<tempfile::TempDir> {
 "#;
     fs::write(qwen_dir.join("settings.json"), settings)?;
     Ok(dir)
+}
+
+fn create_kimi_share_home() -> std::io::Result<(tempfile::TempDir, PathBuf)> {
+    let dir = tempfile::tempdir()?;
+    let share_dir = dir.path().join(".kimi");
+    fs::create_dir_all(&share_dir)?;
+    let credentials_dir = share_dir.join("credentials");
+    fs::create_dir_all(&credentials_dir)?;
+    // Kimi ACP currently hard-requires a file-backed OAuth token before session creation,
+    // even when endpoint/API-key env overrides are present. Seed a benign token so the
+    // session can reach the actual API-key-driven write path under test.
+    let expires_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64()
+        + 86_400.0;
+    let token = serde_json::json!({
+        "access_token": "ctx-test-access-token",
+        "refresh_token": "ctx-test-refresh-token",
+        "expires_at": expires_at,
+        "scope": "openid profile",
+        "token_type": "Bearer",
+    });
+    fs::write(credentials_dir.join("kimi-code.json"), token.to_string())?;
+    Ok((dir, share_dir))
 }
 
 fn env_truthy(name: &str) -> bool {
@@ -503,6 +562,10 @@ fn build_env(
     provider: ProviderSpec,
 ) -> HashMap<String, String> {
     let mut env = HashMap::new();
+    // This direct bridge sweep is not running under a daemon-backed session with valid
+    // ctx-mcp session context. Disable automatic ctx MCP injection so providers exercise
+    // their native ACP/CLI tool paths instead of hanging on a half-configured MCP server.
+    env.insert("CTX_MCP_DISABLED".to_string(), "1".to_string());
     env.insert(
         "OPENROUTER_API_KEY".to_string(),
         openrouter_api_key.to_string(),
@@ -517,6 +580,11 @@ fn build_env(
         openrouter_base_url.to_string(),
     );
     env.insert("OPENAI_MODEL".to_string(), model_id.to_string());
+
+    if provider.id == "qwen" {
+        env.remove("OPENROUTER_API_KEY");
+        env.remove("OPENROUTER_BASE_URL");
+    }
 
     if provider.opencode_config {
         let (opencode_model, opencode_model_key) = match model_id.strip_prefix("openrouter/") {
@@ -540,20 +608,78 @@ fn build_env(
         env.insert("OPENCODE_CONFIG_CONTENT".to_string(), cfg.to_string());
     }
 
-    if provider.id == "goose" {
-        env.insert("GOOSE_PROVIDER".to_string(), "openrouter".to_string());
-        env.insert("GOOSE_MODEL".to_string(), model_id.to_string());
-        env.insert("GOOSE_DISABLE_KEYRING".to_string(), "1".to_string());
-        env.insert("OPENROUTER_MODEL".to_string(), model_id.to_string());
-    }
-
     if provider.id == "kimi" {
         env.insert("KIMI_BASE_URL".to_string(), openrouter_base_url.to_string());
         env.insert("KIMI_API_KEY".to_string(), openrouter_api_key.to_string());
         env.insert("KIMI_MODEL_NAME".to_string(), model_id.to_string());
     }
+    if provider.id == "mistral" {
+        let mistral_api_key = std::env::var("MISTRAL_API_KEY")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| openrouter_api_key.to_string());
+        let mistral_base_url = std::env::var("MISTRAL_BASE_URL")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| DEFAULT_MISTRAL_BASE_URL.to_string());
+        env.insert("MISTRAL_API_KEY".to_string(), mistral_api_key.clone());
+        env.insert("MISTRAL_BASE_URL".to_string(), mistral_base_url.clone());
+        env.insert("OPENAI_API_KEY".to_string(), mistral_api_key);
+        env.insert("OPENAI_BASE_URL".to_string(), mistral_base_url);
+    }
+    if provider.id == "droid" {
+        env.insert("CTX_PROVIDER_MODE".to_string(), "auto_high".to_string());
+    }
 
     env
+}
+
+fn provider_model_id(default_model_id: &str, provider: ProviderSpec) -> Option<String> {
+    if provider.id == "gemini" {
+        return Some(
+            std::env::var("CTX_TOKENS_GEMINI_MODEL")
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| DEFAULT_GEMINI_MODEL.to_string()),
+        );
+    }
+    if provider.id == "qwen" {
+        return Some(DEFAULT_QWEN_MODEL.to_string());
+    }
+    if provider.id != "mistral" {
+        return Some(default_model_id.to_string());
+    }
+
+    [
+        "CTX_TOKENS_MISTRAL_MODEL",
+        "CTX_E2E_MISTRAL_MODEL_ID",
+        "MISTRAL_MODEL_ID",
+        "MISTRAL_MODEL",
+    ]
+    .iter()
+    .find_map(|name| {
+        std::env::var(name)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    })
+}
+
+fn requested_token_providers() -> Option<HashSet<String>> {
+    let raw = std::env::var("CTX_TOKENS_PROVIDERS").ok()?;
+    let parsed = raw
+        .split(',')
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<HashSet<_>>();
+    if parsed.is_empty() {
+        None
+    } else {
+        Some(parsed)
+    }
 }
 
 #[tokio::test]
@@ -581,20 +707,34 @@ async fn acp_crp_bridge_token_providers() {
         },
     };
 
-    let model_id = std::env::var("CTX_TOKENS_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
+    let default_model_id = std::env::var("CTX_TOKENS_MODEL")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_OPENROUTER_MODEL.to_string());
 
     let cfg = load_agent_server_config(&data_root)
         .await
         .unwrap_or_default();
     let bridge_cmd = resolve_command(&cfg, "acp-crp-bridge", "acp-crp-bridge", &[]);
+    let mut requested_providers = requested_token_providers();
 
     if !command_exists(&bridge_cmd.command) {
         panic!("acp-crp-bridge not found: {}", bridge_cmd.command);
     }
 
     let repo = setup_git_repo().await;
-    let prompt = "Reply with the single word: pong";
+    let mut failures = Vec::new();
     for provider in PROVIDERS {
+        if requested_providers
+            .as_ref()
+            .is_some_and(|requested| !requested.contains(provider.id))
+        {
+            continue;
+        }
+        if let Some(requested) = requested_providers.as_mut() {
+            requested.remove(provider.id);
+        }
         let acp_cmd = resolve_command(
             &cfg,
             provider.id,
@@ -616,14 +756,19 @@ async fn acp_crp_bridge_token_providers() {
         eprintln!("running {}...", provider.id);
         let mut _cline_stub = None;
         let mut _qwen_home = None;
+        let mut _kimi_home = None;
         let mut acp_args = acp_cmd.args.clone();
         if provider.id == "qwen" {
             maybe_add_qwen_auth(&mut acp_args);
         }
+        let provider_model_id = provider_model_id(&default_model_id, *provider);
+        let env_model_id = provider_model_id
+            .as_deref()
+            .unwrap_or(default_model_id.as_str());
         let mut env = build_env(
             &openrouter_api_key,
             &openrouter_base_url,
-            &model_id,
+            env_model_id,
             *provider,
         );
         if provider.id == "cline" {
@@ -662,12 +807,22 @@ async fn acp_crp_bridge_token_providers() {
                 }
             }
         }
-        if provider.id == "openhands" {
-            if let Err(reason) =
-                probe_command(&acp_cmd.command, &acp_cmd.args, &["--help"], Some(&env)).await
-            {
-                eprintln!("skipping {}: {}", provider.id, reason);
-                continue;
+        if provider.id == "kimi" {
+            match create_kimi_share_home() {
+                Ok((dir, share_dir)) => {
+                    env.insert(
+                        KIMI_SHARE_DIR_ENV.to_string(),
+                        share_dir.display().to_string(),
+                    );
+                    _kimi_home = Some(dir);
+                }
+                Err(err) => {
+                    eprintln!(
+                        "skipping {}: failed to create kimi share dir: {}",
+                        provider.id, err
+                    );
+                    continue;
+                }
             }
         }
         let acp_command = format_shell_command(&acp_cmd.command, &acp_args);
@@ -677,8 +832,111 @@ async fn acp_crp_bridge_token_providers() {
 
         let adapter =
             Tier1CrpAdapter::from_raw(provider.id, bridge_cmd.command.clone(), bridge_args);
-        let events = run_and_collect(&adapter, repo.path(), prompt, &model_id, env).await;
-        expect_success(&events, provider.id);
-        eprintln!("completed {}", provider.id);
+        let prompt = write_file_prompt(provider.id);
+        match run_and_collect(
+            &adapter,
+            repo.path(),
+            &prompt,
+            provider_model_id.as_deref(),
+            env,
+        )
+        .await
+        {
+            Ok(events) => match expect_success(&events, provider.id)
+                .and_then(|_| expect_file_written(repo.path(), provider.id))
+            {
+                Ok(()) => eprintln!("completed {}", provider.id),
+                Err(err) => {
+                    eprintln!("failed {}: {}", provider.id, err);
+                    failures.push(err);
+                }
+            },
+            Err(err) => {
+                let message = format!("{}: {}", provider.id, err);
+                eprintln!("failed {}", message);
+                failures.push(message);
+            }
+        }
+    }
+    if let Some(requested) = requested_providers {
+        assert!(
+            requested.is_empty(),
+            "unknown CTX_TOKENS_PROVIDERS entries: {}",
+            requested.into_iter().collect::<Vec<_>>().join(",")
+        );
+    }
+    assert!(
+        failures.is_empty(),
+        "write-file token sweep failures:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_env_sets_droid_write_mode() {
+        let env = build_env(
+            "test-openrouter-key",
+            "https://openrouter.ai/api/v1",
+            DEFAULT_OPENROUTER_MODEL,
+            ProviderSpec {
+                id: "droid",
+                fallback_cmd: "droid-acp",
+                fallback_args: &[],
+                opencode_config: false,
+            },
+        );
+
+        assert_eq!(
+            env.get("CTX_PROVIDER_MODE").map(String::as_str),
+            Some("auto_high")
+        );
+    }
+
+    #[test]
+    fn requested_token_providers_parses_csv() {
+        unsafe {
+            std::env::set_var("CTX_TOKENS_PROVIDERS", " qwen, mistral ,,opencode ");
+        }
+        let requested = requested_token_providers().expect("providers");
+        assert!(requested.contains("qwen"));
+        assert!(requested.contains("mistral"));
+        assert!(requested.contains("opencode"));
+        assert_eq!(requested.len(), 3);
+        unsafe {
+            std::env::remove_var("CTX_TOKENS_PROVIDERS");
+        }
+    }
+
+    #[test]
+    fn resolve_command_prefers_explicit_bridge_override() {
+        unsafe {
+            std::env::set_var("CTX_TOKENS_ACP_CRP_BRIDGE_BIN", "/tmp/local-acp-crp-bridge");
+        }
+        let cfg = ctx_http::installer::AgentServerConfigFile::default();
+        let command = resolve_command(&cfg, "acp-crp-bridge", "acp-crp-bridge", &[]);
+        assert_eq!(command.command, "/tmp/local-acp-crp-bridge");
+        assert!(command.args.is_empty());
+        unsafe {
+            std::env::remove_var("CTX_TOKENS_ACP_CRP_BRIDGE_BIN");
+        }
+    }
+
+    #[test]
+    fn provider_model_id_uses_gemini_native_default() {
+        let model = provider_model_id(
+            DEFAULT_OPENROUTER_MODEL,
+            ProviderSpec {
+                id: "gemini",
+                fallback_cmd: "gemini",
+                fallback_args: &["--experimental-acp"],
+                opencode_config: false,
+            },
+        )
+        .expect("gemini model");
+        assert_eq!(model, DEFAULT_GEMINI_MODEL);
     }
 }

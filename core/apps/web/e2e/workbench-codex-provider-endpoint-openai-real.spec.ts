@@ -13,6 +13,7 @@ import {
   readString,
   resolveWorkspaceProviderModelId,
   verifyProviderForWorkspace,
+  waitForSessionWorkspaceFileContents,
   waitForTerminalState,
 } from "../src/testing/providerRuntime";
 
@@ -25,6 +26,8 @@ const CODEX_ENTRY = {
 };
 const OPENAI_BASE_URL = "https://api.openai.com/v1";
 const CODEX_OPENAI_ENDPOINT_NAME = "Codex OpenAI E2E";
+const WRITE_FILE_NAME = "hello.md";
+const WRITE_FILE_CONTENTS = "hi";
 
 const selectedEndpointForConfig = (config: Record<string, unknown>): Record<string, unknown> | null => {
   const selectedEndpointId = readString(config.selected_endpoint_id);
@@ -166,7 +169,7 @@ test("workbench: codex OpenAI endpoint auth can run a real task", async ({ page,
   });
 
   const promptMarker = `codex-openai-provider-endpoint-${Date.now()}`;
-  const prompt = `${promptMarker}: reply with exactly the word pong`;
+  const prompt = `${promptMarker}: this is an end-to-end write test. Create a new file in this directory called ${WRITE_FILE_NAME} and put exactly ${WRITE_FILE_CONTENTS} in it. The file must contain exactly those two characters with no trailing newline or extra whitespace. Use only the current worktree root as the target directory. Do not write in a parent directory, and if your first attempt adds a trailing newline or uses the wrong directory, fix the file before replying. Then reply with exactly ${WRITE_FILE_CONTENTS}.`;
 
   const createTaskResp = await request.post(`/api/workspaces/${workspaceId}/tasks`, {
     data: {
@@ -207,4 +210,8 @@ test("workbench: codex OpenAI endpoint auth can run a real task", async ({ page,
   });
   expect(terminal.terminalStatus, terminal.errorMessage ?? "codex OpenAI run did not complete").toBe("completed");
   expect(terminal.assistantMessages).toBeGreaterThan(0);
+  await waitForSessionWorkspaceFileContents(request, sessionId, WRITE_FILE_NAME, WRITE_FILE_CONTENTS, {
+    timeoutMs: 15_000,
+    pollMs: 500,
+  });
 });

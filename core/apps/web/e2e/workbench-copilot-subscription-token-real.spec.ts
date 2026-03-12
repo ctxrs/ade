@@ -12,6 +12,7 @@ import {
   readString,
   resolveWorkspaceProviderModelId,
   verifyProviderForWorkspace,
+  waitForSessionWorkspaceFileContents,
   waitForTerminalState,
 } from "../src/testing/providerRuntime";
 
@@ -104,7 +105,13 @@ test("workbench: copilot subscription token auth can run a real task", async ({ 
   expect(modelId).toBe("gpt-5-mini");
 
   const promptMarker = `copilot-subscription-token-${Date.now()}`;
-  const prompt = `${promptMarker}: reply with exactly the word pong`;
+  const prompt = [
+    "This is an end to end test, so it is very important that you do exactly what I ask.",
+    "Make a new file in the workspace root called hello.md and put exactly this text in it: hi. The file must contain exactly those two characters with no trailing newline or extra whitespace.",
+    "Use only the current worktree root as the target directory. Do not write in a parent directory, and if your first attempt adds a trailing newline or uses the wrong directory, fix the file before replying.",
+    "That is all. Do it now without further deliberation.",
+    "After writing the file, reply with exactly: hi",
+  ].join(" ");
 
   const createTaskResp = await request.post(`/api/workspaces/${workspaceId}/tasks`, {
     data: {
@@ -146,4 +153,8 @@ test("workbench: copilot subscription token auth can run a real task", async ({ 
   expect(terminal.terminalStatus, terminal.errorMessage ?? "copilot run did not complete").toBe("completed");
   expect(terminal.assistantMessages).toBeGreaterThan(0);
   expect(terminal.modelId).toBe("gpt-5-mini");
+  await waitForSessionWorkspaceFileContents(request, sessionId, "hello.md", "hi", {
+    timeoutMs: 30_000,
+    pollMs: 1_000,
+  });
 });

@@ -1,9 +1,15 @@
+import fs from "fs";
+import os from "os";
+import path from "path";
 import { describe, expect, it, vi } from "vitest";
 import type { JsonRequestLike, JsonResponseLike } from "./providerRuntime";
 import {
   ensureProviderInstalledAndHealthy,
+  resolveSessionWorktreeRoot,
   resolveWorkspaceProviderModelId,
   verifyProviderForWorkspace,
+  waitForSessionWorkspaceFileContents,
+  waitForWorkspaceFileContents,
   waitForTerminalState,
 } from "./providerRuntime";
 
@@ -162,5 +168,97 @@ describe("providerRuntime", () => {
     });
     expect(state.errorMessage).toContain("session.error");
     expect(state.errorMessage).toContain("invalid API key");
+  });
+
+  it("waits for a workspace file to appear with exact contents", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-provider-runtime-file-"));
+    const relativePath = "hello.md";
+    const filePath = path.join(dir, relativePath);
+    let currentTime = 0;
+    let wroteFile = false;
+
+    const resolved = await waitForWorkspaceFileContents(dir, relativePath, "hi", {
+      timeoutMs: 100,
+      pollMs: 0,
+      now: () => {
+        currentTime += 10;
+        return currentTime;
+      },
+      sleep: async () => {
+        if (!wroteFile) {
+          fs.writeFileSync(filePath, "hi", "utf8");
+          wroteFile = true;
+        }
+      },
+    });
+
+    expect(resolved).toBe(filePath);
+  });
+
+  it("resolves a session's managed worktree root", async () => {
+    const get = vi.fn<JsonRequestLike["get"]>()
+      .mockResolvedValueOnce(jsonResponse(200, {
+        head: {
+          session: {
+            worktree_id: "wt-123",
+          },
+        },
+        summary: {},
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        root_path: "/tmp/ctx-managed-worktree",
+      }));
+    const post = vi.fn<JsonRequestLike["post"]>();
+    const request = createRequest(get, post);
+
+    const rootPath = await resolveSessionWorktreeRoot(request, "session-1");
+
+    expect(rootPath).toBe("/tmp/ctx-managed-worktree");
+    expect(get).toHaveBeenNthCalledWith(1, "/api/sessions/session-1/snapshot?limit=1", { timeout: 30_000 });
+    expect(get).toHaveBeenNthCalledWith(2, "/api/worktrees/wt-123", { timeout: 30_000 });
+  });
+
+  it("waits for a session file in the managed worktree and reports assistant hints on failure", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-provider-runtime-session-file-"));
+    const get = vi.fn<JsonRequestLike["get"]>()
+      .mockResolvedValueOnce(jsonResponse(200, {
+        head: {
+          session: {
+            worktree_id: "wt-456",
+          },
+        },
+        summary: {},
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        root_path: dir,
+      }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        messages: [
+          {
+            role: "assistant",
+            content: "provider rejected the request because metadata.client_name was empty",
+          },
+        ],
+        turns: [
+          {
+            status: "completed",
+          },
+        ],
+        events: [],
+      }));
+    const post = vi.fn<JsonRequestLike["post"]>();
+    const request = createRequest(get, post);
+    let currentTime = 0;
+
+    await expect(waitForSessionWorkspaceFileContents(request, "session-2", "hello.md", "hi", {
+      timeoutMs: 20,
+      pollMs: 0,
+      requestTimeoutMs: 30_000,
+      now: () => {
+        currentTime += 10;
+        return currentTime;
+      },
+      sleep: async () => {},
+    })).rejects.toThrow(/session_hint=provider rejected the request because metadata\.client_name was empty/);
   });
 });

@@ -226,6 +226,40 @@ fn migration_preserves_runtime_dependency_entries_and_infers_target_from_id() {
 }
 
 #[test]
+fn migration_rewrites_stale_kimi_managed_args_in_target_buckets() {
+    let mut cfg = AgentServerConfigFile::default();
+    cfg.managed_provider_targets.insert(
+        "kimi".to_string(),
+        HashMap::from([(
+            "host".to_string(),
+            AgentServerCommand {
+                command: "/tmp/kimi".to_string(),
+                args: vec!["--acp".to_string()],
+                dependencies: Vec::new(),
+                managed: Some(ManagedInstallMetadata {
+                    package: Some("kimi".to_string()),
+                    version: Some("1.17.0".to_string()),
+                    target: Some(InstallTarget::Host),
+                    install_dir_rel: Some("providers/agent-servers/kimi/1.17.0".to_string()),
+                    bin_dir_rel: Some("providers/agent-servers/kimi/1.17.0/bin".to_string()),
+                    last_success_at: None,
+                    last_error: None,
+                }),
+            },
+        )]),
+    );
+
+    assert!(migrate_agent_server_config(&mut cfg));
+    assert_eq!(
+        cfg.managed_provider_targets
+            .get("kimi")
+            .and_then(|targets| targets.get("host"))
+            .map(|command| command.args.clone()),
+        Some(vec!["acp".to_string()])
+    );
+}
+
+#[test]
 fn resolve_runtime_provider_command_for_target_prefers_target_bucket() {
     let temp = tempdir().expect("tempdir");
     let host = temp.path().join("codex-host");

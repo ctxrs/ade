@@ -17,11 +17,10 @@ const {
   configureOpenRouterEndpoint,
   verifyProviderForWorkspace,
   resolveWorkspaceProviderModelId,
+  readOpenRouterEnv,
 } = require("./helpers/provider_runtime.cjs");
 
-const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const DEFAULT_PROVIDER_ID = "codex";
-const DEFAULT_MODEL_OVERRIDE = "openai/gpt-5.2-codex";
 const scenarioFilter = new Set(
   String(process.env.CTX_AUTOMATION_SCENARIOS || "")
     .split(",")
@@ -117,12 +116,7 @@ const createAndLaunchContainerWorkspace = async ({
   );
 };
 
-const requiredOpenRouterEnv = () => {
-  const apiKey = String(process.env.OPENROUTER_API_KEY || "").trim();
-  const baseUrl = String(process.env.OPENROUTER_BASE_URL || "").trim() || DEFAULT_OPENROUTER_BASE_URL;
-  const modelOverride = String(process.env.CTX_E2E_OPENROUTER_MODEL_OVERRIDE || "").trim() || DEFAULT_MODEL_OVERRIDE;
-  return { apiKey, baseUrl, modelOverride };
-};
+const requiredOpenRouterEnv = (providerId) => readOpenRouterEnv(providerId);
 
 describe("container provider OpenRouter (desktop e2e)", () => {
   const runId = `${Date.now()}`;
@@ -151,7 +145,7 @@ describe("container provider OpenRouter (desktop e2e)", () => {
     this.timeout(20 * 60_000);
     if (!scenarioEnabled("local-codex-smoke", ["local", "container", "provider"])) this.skip();
 
-    const { apiKey, baseUrl, modelOverride } = requiredOpenRouterEnv();
+    const { apiKey, baseUrl, modelOverride } = requiredOpenRouterEnv(DEFAULT_PROVIDER_ID);
     if (!apiKey) {
       console.error("[skip] OPENROUTER_API_KEY is required for container-provider-openrouter.spec.cjs");
       this.skip();

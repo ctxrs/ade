@@ -12,6 +12,7 @@ import {
   readString,
   resolveWorkspaceProviderModelId,
   verifyProviderForWorkspace,
+  waitForSessionWorkspaceFileContents,
   waitForTerminalState,
 } from "../src/testing/providerRuntime";
 
@@ -19,6 +20,8 @@ const REQUEST_TIMEOUT_MS = 60_000;
 const INSTALL_TARGET = "host" as const;
 const MISTRAL_BASE_URL = "https://api.mistral.ai/v1";
 const MISTRAL_ENDPOINT_NAME = "Mistral Provider API Key E2E";
+const WRITE_FILE_NAME = "hello.md";
+const WRITE_FILE_CONTENTS = "hi";
 
 const selectedEndpointForConfig = (config: Record<string, unknown>): Record<string, unknown> | null => {
   const selectedEndpointId = readString(config.selected_endpoint_id);
@@ -139,7 +142,7 @@ test("workbench: mistral provider API key can run a real task", async ({ page, r
     });
 
   const promptMarker = `mistral-provider-auth-${Date.now()}`;
-  const prompt = `${promptMarker}: reply with exactly the word pong`;
+  const prompt = `${promptMarker}: this is an end-to-end write test. Create a new file in this directory called ${WRITE_FILE_NAME} and put exactly ${WRITE_FILE_CONTENTS} in it. The file must contain exactly those two characters with no trailing newline or extra whitespace. Use only the current worktree root as the target directory. Do not write in a parent directory, and if your first attempt adds a trailing newline or uses the wrong directory, fix the file before replying. Then reply with exactly ${WRITE_FILE_CONTENTS}.`;
 
   const createTaskResp = await request.post(`/api/workspaces/${workspaceId}/tasks`, {
     data: {
@@ -180,4 +183,8 @@ test("workbench: mistral provider API key can run a real task", async ({ page, r
   });
   expect(terminal.terminalStatus, terminal.errorMessage ?? "mistral run did not complete").toBe("completed");
   expect(terminal.assistantMessages).toBeGreaterThan(0);
+  await waitForSessionWorkspaceFileContents(request, sessionId, WRITE_FILE_NAME, WRITE_FILE_CONTENTS, {
+    timeoutMs: 15_000,
+    pollMs: 500,
+  });
 });

@@ -811,6 +811,14 @@ mod tests {
             Path::new(share_dir).starts_with(runtime_root.path()),
             "expected runtime-root projected KIMI_SHARE_DIR, got {share_dir}"
         );
+        assert!(Path::new(share_dir)
+            .join("credentials")
+            .join("kimi-code.json")
+            .exists());
+        let config = tokio::fs::read_to_string(Path::new(share_dir).join("config.toml"))
+            .await
+            .expect("read kimi config");
+        assert!(config.contains("default_model = \"kimi-code/kimi-for-coding\""));
     }
 
     #[tokio::test]

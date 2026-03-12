@@ -78,6 +78,7 @@ export async function createCtxPlaywrightConfig(
   const PORT = await resolvePort(reuseExistingServer);
   process.env.CTX_E2E_PORT = String(PORT);
   const baseURL = `http://${HOST}:${PORT}`;
+  const readinessURL = `${baseURL}/api/health`;
 
   const dataDir =
     process.env.CTX_E2E_DATA_DIR ?? `${os.tmpdir()}/ctx-e2e-${profileSlug}-${process.pid}`;
@@ -153,7 +154,7 @@ export async function createCtxPlaywrightConfig(
       video: "retain-on-failure",
     },
     webServer: {
-      url: baseURL,
+      url: readinessURL,
       command: "node apps/web/scripts/start-e2e-server.mjs",
       cwd: "../..",
       env: webServerEnv,

@@ -40,6 +40,31 @@ const runSync = (command, args, cwd, env) => {
   }
 };
 
+const resolveCargoTargetDir = (repoRoot, env) => {
+  const configured = String(env.CARGO_TARGET_DIR ?? "").trim();
+  if (!configured) {
+    return path.join(repoRoot, "target");
+  }
+  return path.isAbsolute(configured) ? configured : path.resolve(repoRoot, configured);
+};
+
+const ensureCtxMcpCommand = (repoRoot, env) => {
+  const configured = String(env.CTX_MCP_COMMAND ?? "").trim();
+  if (configured) {
+    return configured;
+  }
+
+  const cargoCmd = process.platform === "win32" ? "cargo.exe" : "cargo";
+  runSync(cargoCmd, ["build", "-p", "ctx-mcp", "--bin", "ctx-mcp"], repoRoot, env);
+
+  const binName = process.platform === "win32" ? "ctx-mcp.exe" : "ctx-mcp";
+  const binaryPath = path.join(resolveCargoTargetDir(repoRoot, env), "debug", binName);
+  if (!fs.existsSync(binaryPath)) {
+    throw new Error(`ctx-mcp binary not found after build: ${binaryPath}`);
+  }
+  return binaryPath;
+};
+
 const main = () => {
   const repoRoot = process.cwd();
   const host = process.env.CTX_E2E_HOST ?? "127.0.0.1";
@@ -53,6 +78,7 @@ const main = () => {
   const authToken = requireEnv("CTX_E2E_AUTH_TOKEN");
   const skipWebBuild = parseBool(process.env.CTX_E2E_SKIP_WEB_BUILD);
   const env = { ...process.env };
+  env.CTX_MCP_COMMAND = ensureCtxMcpCommand(repoRoot, env);
 
   if (!skipWebBuild) {
     const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";

@@ -5,10 +5,11 @@ use std::time::{Duration, Instant};
 
 use agent_client_protocol::{
     Agent, AuthMethod, AuthenticateRequest, CancelNotification, Client, ClientCapabilities,
-    ClientSideConnection, ContentBlock, EnvVariable, ErrorCode, ImageContent, InitializeRequest,
-    McpServer, McpServerStdio, NewSessionRequest, PermissionOptionKind, PromptRequest,
-    ProtocolVersion, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
-    ResourceLink, SelectedPermissionOutcome, SessionNotification, TextContent,
+    ClientSideConnection, ContentBlock, EnvVariable, ErrorCode, ImageContent, Implementation,
+    InitializeRequest, McpServer, McpServerStdio, NewSessionRequest, PermissionOptionKind,
+    PromptRequest, ProtocolVersion, RequestPermissionOutcome, RequestPermissionRequest,
+    RequestPermissionResponse, ResourceLink, SelectedPermissionOutcome, SessionModeState,
+    SessionNotification, SetSessionModeRequest, TextContent,
 };
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
@@ -22,8 +23,8 @@ use uuid::Uuid;
 
 use crate::config::Config;
 use crate::crp::{
-    CrpChannel, CrpCommand, CrpEnvelope, CrpEvent, CrpMcpServerConfig, CrpModelInfo, CrpTurnStatus,
-    CrpWriter,
+    CrpChannel, CrpCommand, CrpEnvelope, CrpEvent, CrpMcpServerConfig, CrpModelInfo, CrpTurnError,
+    CrpTurnStatus, CrpWriter,
 };
 use crate::translate::Translator;
 
@@ -128,7 +129,7 @@ fn normalize_agent_message_block(value: Value) -> Value {
     }
 }
 
-fn rewrite_agent_message_line(line: &str) -> Option<Vec<String>> {
+fn rewrite_session_update_line(line: &str) -> Option<Vec<String>> {
     let msg: Value = serde_json::from_str(line).ok()?;
     let method = msg.get("method").and_then(|v| v.as_str())?;
     if method != "session/update" {
@@ -136,6 +137,9 @@ fn rewrite_agent_message_line(line: &str) -> Option<Vec<String>> {
     }
     let update = msg.pointer("/params/update")?;
     let kind = update.get("sessionUpdate").and_then(|v| v.as_str())?;
+    if kind == "usage_update" {
+        return Some(Vec::new());
+    }
     if kind != "agent_message" {
         return None;
     }
@@ -213,7 +217,10 @@ async fn forward_acp_stdout(
     let mut lines = BufReader::new(child_stdout).lines();
     let mut writer = BufWriter::new(proxy);
     while let Some(line) = lines.next_line().await? {
-        if let Some(rewrites) = rewrite_agent_message_line(&line) {
+        if let Some(rewrites) = rewrite_session_update_line(&line) {
+            if rewrites.is_empty() {
+                continue;
+            }
             for entry in rewrites {
                 writer.write_all(entry.as_bytes()).await?;
                 writer.write_all(b"\n").await?;
@@ -291,8 +298,7 @@ pub async fn run_bridge(config: Config) -> Result<()> {
                 }
             });
 
-            let init = InitializeRequest::new(ProtocolVersion::LATEST)
-                .client_capabilities(ClientCapabilities::default());
+            let init = acp_initialize_request();
             let init_response = match acp.initialize(init).await {
                 Ok(response) => response,
                 Err(err) => {
@@ -345,6 +351,55 @@ pub async fn run_bridge(config: Config) -> Result<()> {
             Ok(())
         })
         .await
+}
+
+fn acp_initialize_request() -> InitializeRequest {
+    InitializeRequest::new(ProtocolVersion::LATEST)
+        .client_capabilities(ClientCapabilities::default())
+        .client_info(Implementation::new("ctx", env!("CARGO_PKG_VERSION")).title("ctx"))
+}
+
+fn requested_acp_session_mode() -> Option<String> {
+    std::env::var("CTX_PROVIDER_MODE")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn should_apply_requested_session_mode(
+    modes: Option<&SessionModeState>,
+    requested_mode: &str,
+) -> Result<bool> {
+    let Some(modes) = modes else {
+        anyhow::bail!(
+            "CTX_PROVIDER_MODE='{}' requested but ACP agent did not advertise session modes",
+            requested_mode
+        );
+    };
+
+    if modes.current_mode_id.0.as_ref() == requested_mode {
+        return Ok(false);
+    }
+
+    if modes
+        .available_modes
+        .iter()
+        .any(|mode| mode.id.0.as_ref() == requested_mode)
+    {
+        return Ok(true);
+    }
+
+    let available = modes
+        .available_modes
+        .iter()
+        .map(|mode| mode.id.0.as_ref())
+        .collect::<Vec<_>>()
+        .join(", ");
+    anyhow::bail!(
+        "CTX_PROVIDER_MODE='{}' requested but ACP agent advertised modes [{}]",
+        requested_mode,
+        available
+    );
 }
 
 const CLINE_PROMPT_TAIL_FIRST_UPDATE_WAIT: Duration = Duration::from_secs(4);
@@ -424,6 +479,48 @@ async fn wait_for_prompt_tail(
     }
 }
 
+async fn fail_active_turn(
+    events_tx: &mpsc::Sender<CrpEnvelope>,
+    sessions: &Arc<Mutex<Sessions>>,
+    crp_session_id: &str,
+    acp_session_id: &str,
+    turn_id: &str,
+    message: String,
+) {
+    let final_event = {
+        let mut sessions_guard = sessions.lock().await;
+        match sessions_guard.by_acp.get_mut(acp_session_id) {
+            Some(state) => {
+                let final_event = state.translator.finish_turn();
+                state.translator.clear_turn();
+                state.active_turn_id = None;
+                state.last_turn_update_at = None;
+                state.turn_update_count = 0;
+                final_event
+            }
+            None => None,
+        }
+    };
+    if let Some(final_event) = final_event {
+        let _ = events_tx.send(final_event).await;
+    }
+    let _ = events_tx
+        .send(CrpEnvelope {
+            channel: CrpChannel::Control,
+            event: CrpEvent::TurnCompleted {
+                session_id: crp_session_id.to_string(),
+                turn_id: turn_id.to_string(),
+                status: CrpTurnStatus::Error,
+                error: Some(CrpTurnError {
+                    message,
+                    kind: Some("acp_prompt_failed".to_string()),
+                    details: None,
+                }),
+            },
+        })
+        .await;
+}
+
 async fn handle_command(
     command: CrpCommand,
     acp: &ClientSideConnection,
@@ -465,6 +562,17 @@ async fn handle_command(
                     return Err(anyhow!("acp new_session failed: {err}"));
                 }
             };
+
+            if let Some(mode_id) = requested_acp_session_mode() {
+                if should_apply_requested_session_mode(response.modes.as_ref(), &mode_id)? {
+                    acp.set_session_mode(SetSessionModeRequest::new(
+                        response.session_id.clone(),
+                        mode_id.clone(),
+                    ))
+                    .await
+                    .map_err(|err| anyhow!("acp set_session_mode '{}' failed: {err}", mode_id))?;
+                }
+            }
 
             let acp_session_id = response.session_id.to_string();
             let model_catalog = acp_session_models_to_catalog(response.models.as_ref());
@@ -558,7 +666,21 @@ async fn handle_command(
             let prompt_blocks = build_prompt_blocks(prompt, items, Some(&prompt_cwd))
                 .ok_or_else(|| anyhow!("session.prompt missing prompt"))?;
             let prompt_req = PromptRequest::new(acp_session_id.clone(), prompt_blocks);
-            let response = acp.prompt(prompt_req).await.context("acp prompt")?;
+            let response = match acp.prompt(prompt_req).await {
+                Ok(response) => response,
+                Err(err) => {
+                    fail_active_turn(
+                        events_tx,
+                        sessions,
+                        &crp_session_id,
+                        &acp_session_id,
+                        &turn_id,
+                        format!("acp prompt failed: {err}"),
+                    )
+                    .await;
+                    return Ok(());
+                }
+            };
 
             if wait_for_cline_tail {
                 wait_for_prompt_tail(sessions, &acp_session_id, &turn_id, initial_update_count)
@@ -992,7 +1114,21 @@ fn skill_block(obj: &serde_json::Map<String, Value>) -> Option<ContentBlock> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pretty_assertions::assert_eq;
+
+    fn session_mode_state(current: &str, available: &[&str]) -> SessionModeState {
+        SessionModeState::new(
+            current.to_string(),
+            available
+                .iter()
+                .map(|mode| {
+                    agent_client_protocol::SessionMode::new(
+                        (*mode).to_string(),
+                        (*mode).to_string(),
+                    )
+                })
+                .collect(),
+        )
+    }
 
     #[test]
     fn acp_session_models_are_converted_to_crp_catalog() {
@@ -1033,6 +1169,55 @@ mod tests {
                 .as_ref()
                 .and_then(|value| value.pointer("/currentModelId")),
             Some(&json!("cursor-auto"))
+        );
+    }
+
+    #[test]
+    fn initialize_request_sets_non_empty_client_identity() {
+        let request = acp_initialize_request();
+        let client_info = request.client_info.expect("client info should be present");
+        assert_eq!(client_info.name, "ctx");
+        assert_eq!(client_info.title.as_deref(), Some("ctx"));
+        assert!(!client_info.version.trim().is_empty());
+    }
+
+    #[test]
+    fn requested_session_mode_requires_session_mode_support() {
+        let err = should_apply_requested_session_mode(None, "auto_high")
+            .expect_err("missing modes should fail");
+        assert!(
+            err.to_string().contains("did not advertise session modes"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn requested_session_mode_skips_when_already_selected() {
+        let modes = session_mode_state("auto_high", &["read_only", "auto_high"]);
+        assert!(
+            !should_apply_requested_session_mode(Some(&modes), "auto_high")
+                .expect("current mode should be accepted")
+        );
+    }
+
+    #[test]
+    fn requested_session_mode_requires_requested_mode_to_exist() {
+        let modes = session_mode_state("read_only", &["read_only", "auto_medium"]);
+        let err = should_apply_requested_session_mode(Some(&modes), "auto_high")
+            .expect_err("unknown mode should fail");
+        assert!(
+            err.to_string()
+                .contains("advertised modes [read_only, auto_medium]"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn requested_session_mode_is_applied_when_advertised() {
+        let modes = session_mode_state("read_only", &["read_only", "auto_high"]);
+        assert!(
+            should_apply_requested_session_mode(Some(&modes), "auto_high")
+                .expect("advertised mode should be accepted")
         );
     }
 
@@ -1088,5 +1273,53 @@ mod tests {
             true,
         );
         assert_eq!(decision, PromptTailDecision::Done);
+    }
+
+    #[test]
+    fn usage_update_lines_are_dropped_before_acp_parse() {
+        let line = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "sessionId": "ses_123",
+                "update": {
+                    "sessionUpdate": "usage_update",
+                    "used": 0,
+                    "size": 1024
+                }
+            }
+        })
+        .to_string();
+
+        let rewritten = rewrite_session_update_line(&line).expect("line should be recognized");
+        assert!(rewritten.is_empty(), "usage updates should be dropped");
+    }
+
+    #[test]
+    fn agent_message_lines_are_rewritten_to_agent_message_chunks() {
+        let line = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "sessionId": "ses_123",
+                "update": {
+                    "sessionUpdate": "agent_message",
+                    "content": {
+                        "type": "text",
+                        "text": "hi"
+                    }
+                }
+            }
+        })
+        .to_string();
+
+        let rewritten = rewrite_session_update_line(&line).expect("line should be rewritten");
+        assert_eq!(rewritten.len(), 1);
+        let parsed: Value =
+            serde_json::from_str(&rewritten[0]).expect("rewritten line should stay valid JSON");
+        assert_eq!(
+            parsed.pointer("/params/update/sessionUpdate"),
+            Some(&Value::String("agent_message_chunk".to_string()))
+        );
     }
 }

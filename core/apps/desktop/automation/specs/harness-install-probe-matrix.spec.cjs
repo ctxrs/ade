@@ -16,12 +16,11 @@ const {
   configureOpenRouterEndpoint,
   verifyProviderForWorkspace,
   resolveWorkspaceProviderModelId,
+  readOpenRouterEnv,
 } = require("./helpers/provider_runtime.cjs");
 const { daemonJson } = require("./helpers/daemon.cjs");
 
 const DEFAULT_PROVIDER_ID = "codex";
-const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
-const DEFAULT_MODEL_OVERRIDE = "openai/gpt-5.2-codex";
 const reportPath = process.env.CTX_HARNESS_MATRIX_REPORT || path.join("/tmp", "ctx-harness-install-probe-matrix.json");
 const scenarioFilter = new Set(
   String(process.env.CTX_AUTOMATION_SCENARIOS || "")
@@ -71,8 +70,7 @@ describe("harness install/probe matrix (desktop e2e)", () => {
       console.error("[skip] OPENROUTER_API_KEY is required for harness-install-probe-matrix.spec.cjs");
       this.skip();
     }
-    const baseUrl = String(process.env.OPENROUTER_BASE_URL || "").trim() || DEFAULT_OPENROUTER_BASE_URL;
-    const modelOverride = String(process.env.CTX_E2E_OPENROUTER_MODEL_OVERRIDE || "").trim() || DEFAULT_MODEL_OVERRIDE;
+    const { baseUrl, modelOverride } = readOpenRouterEnv(DEFAULT_PROVIDER_ID);
 
     const diagnostics = {
       providerId: DEFAULT_PROVIDER_ID,
