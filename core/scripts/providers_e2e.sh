@@ -145,7 +145,7 @@ ensure_endpoint_ui_bundles() {
   # Keep fresh E2E bundle dirs under a home/cache root so Podman-machine container
   # mounts can see them during bundled-only container validation on macOS hosts.
   local bundle_dir="${CTX_E2E_BUNDLE_DIR:-${cache_root}/bundles-${cache_key}}"
-  local first_pass_providers="${CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-acp-crp-bridge,codex,copilot,gemini,qwen,opencode,mistral,goose,droid,kimi,openhands}"
+  local first_pass_providers="${CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-acp-crp-bridge,codex,copilot,gemini,qwen,pi,opencode,mistral,droid,kimi}"
   local matrix_json="${CTX_BUNDLE_MATRIX_JSON:-${repo_root}/crates/ctx-http/src/provider_matrix.json}"
   local canonical_runtime_lock="${repo_root}/apps/desktop/src-tauri/bundles/runtime_lock.v2.json"
   local bundle_build_dir="${CTX_E2E_BUNDLE_BUILD_DIR:-/tmp/ctx-e2e-bundle-build-${cache_key}}"
@@ -353,16 +353,20 @@ ensure_openrouter_creds_for_lane() {
 run_web_playwright_suite() {
   local web_root="${repo_root}/apps/web"
   local playwright_bin="${web_root}/node_modules/.bin/playwright"
-  local playwright_pkg="${web_root}/node_modules/playwright"
-  if [[ ! -x "${playwright_bin}" || ! -d "${playwright_pkg}" ]]; then
-    echo "playwright install missing in ${web_root}; restoring locked core workspace install" >&2
-    (
-      cd "${repo_root}"
-      pnpm install --frozen-lockfile
-    )
+  echo "ensuring locked playwright install in ${web_root}" >&2
+  (
+    cd "${web_root}"
+    pnpm install --frozen-lockfile >/dev/null
+  )
+  if [[ ! -x "${playwright_bin}" ]]; then
+    echo "missing playwright binary in ${web_root} after locked install; run 'bash -lc \"cd ${web_root} && pnpm install --frozen-lockfile\"'" >&2
+    exit 1
   fi
-  if [[ ! -x "${playwright_bin}" || ! -d "${playwright_pkg}" ]]; then
-    echo "missing playwright install in ${web_root} after restore; run 'bash -lc \"cd ${repo_root} && pnpm install --frozen-lockfile\"'" >&2
+  if ! (
+    cd "${web_root}"
+    node -e "require.resolve('playwright/package.json')"
+  ) >/dev/null 2>&1; then
+    echo "playwright package is not resolvable from ${web_root} after locked install; run 'bash -lc \"cd ${web_root} && pnpm install --frozen-lockfile\"'" >&2
     exit 1
   fi
 

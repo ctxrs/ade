@@ -9,7 +9,6 @@ const PREFERRED_DEFAULT_PROVIDER_IDS = [
   "qwen",
   "opencode",
   "mistral",
-  "goose",
   "kimi",
   "auggie",
 ] as const;

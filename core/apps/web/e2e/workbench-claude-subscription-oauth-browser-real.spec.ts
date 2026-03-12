@@ -39,11 +39,8 @@ test("workbench: claude subscription browser OAuth can run a real task", async (
     pollMs: 2_000,
     requestTimeoutMs: REQUEST_TIMEOUT_MS,
   });
-  await ensureProviderInstalledAndHealthy(request, "claude-cli", INSTALL_TARGET, {
-    timeoutMs: 10 * 60_000,
-    pollMs: 2_000,
-    requestTimeoutMs: REQUEST_TIMEOUT_MS,
-  });
+  // `claude-cli` is a bundled readiness dependency behind `claude-crp`, not the
+  // user-facing provider contract this browser-auth e2e is proving.
 
   const authContextHandle = await createClaudeBrowserAuthContext(page.context());
   try {

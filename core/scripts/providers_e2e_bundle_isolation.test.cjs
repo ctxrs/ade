@@ -121,27 +121,27 @@ test("web provider lanes invoke the checked-in apps/web playwright binary", () =
   );
   assert.match(
     script,
-    /playwright_pkg="\$\{web_root\}\/node_modules\/playwright"/,
+    /ensuring locked playwright install in \$\{web_root\}/,
   );
   assert.match(
     script,
-    /playwright install missing in \$\{web_root\}; restoring locked core workspace install/,
+    /pnpm install --frozen-lockfile >\/dev\/null/,
   );
   assert.match(
     script,
-    /\[\[ ! -x "\$\{playwright_bin\}" \|\| ! -d "\$\{playwright_pkg\}" \]\]/,
+    /cd "\$\{web_root\}"/,
   );
   assert.match(
     script,
-    /cd "\$\{repo_root\}"/,
+    /node -e "require\.resolve\('playwright\/package\.json'\)"/,
   );
   assert.match(
     script,
-    /pnpm install --frozen-lockfile/,
+    /missing playwright binary in \$\{web_root\} after locked install; run 'bash -lc \\"cd \$\{web_root\} && pnpm install --frozen-lockfile\\"'/,
   );
   assert.match(
     script,
-    /missing playwright install in \$\{web_root\} after restore; run 'bash -lc \\"cd \$\{repo_root\} && pnpm install --frozen-lockfile\\"'/,
+    /playwright package is not resolvable from \$\{web_root\} after locked install; run 'bash -lc \\"cd \$\{web_root\} && pnpm install --frozen-lockfile\\"'/,
   );
 });
 
@@ -170,7 +170,7 @@ test("endpoint-ui lane defaults to host-mode bundles and scopes focused reruns",
   );
   assert.match(
     script,
-    /local first_pass_providers="\$\{CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-acp-crp-bridge,codex,copilot,gemini,qwen,opencode,mistral,goose,droid,kimi,openhands\}"/,
+    /local first_pass_providers="\$\{CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-acp-crp-bridge,codex,copilot,gemini,qwen,pi,opencode,mistral,droid,kimi\}"/,
   );
   assert.match(
     script,

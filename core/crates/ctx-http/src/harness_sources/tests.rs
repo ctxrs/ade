@@ -5,6 +5,8 @@ fn claude_supports_endpoint_mode_but_cursor_does_not() {
     assert!(supports_harness_endpoint(PROVIDER_CLAUDE));
     assert!(!supports_harness_endpoint(PROVIDER_CURSOR));
     assert!(supports_harness_endpoint(PROVIDER_CODEX));
+    assert!(!supports_harness_endpoint(PROVIDER_GOOSE));
+    assert!(!supports_harness_endpoint(PROVIDER_OPENHANDS));
 }
 
 #[tokio::test]
@@ -832,22 +834,7 @@ async fn additional_provider_endpoint_env_projection_smoke() {
                 "OPENCODE_CONFIG_CONTENT",
             ],
         ),
-        (
-            PROVIDER_GOOSE,
-            &[
-                "OPENAI_API_KEY",
-                "OPENAI_HOST",
-                "OPENROUTER_API_KEY",
-                "OPENROUTER_BASE_URL",
-                "GOOSE_PROVIDER",
-                "GOOSE_DISABLE_KEYRING",
-                "GOOSE_MODEL",
-                "OPENAI_MODEL",
-                "OPENROUTER_MODEL",
-            ],
-        ),
         (PROVIDER_MISTRAL, &["MISTRAL_API_KEY", "MISTRAL_BASE_URL"]),
-        (PROVIDER_AMP, &["AMP_API_KEY"]),
         (
             PROVIDER_DROID,
             &[
@@ -859,16 +846,8 @@ async fn additional_provider_endpoint_env_projection_smoke() {
         ),
         (PROVIDER_COPILOT, &["GH_TOKEN", "GITHUB_TOKEN"]),
         (
-            PROVIDER_AUGGIE,
-            &["AUGMENT_SESSION_AUTH", "AUGMENT_API_TOKEN"],
-        ),
-        (
             PROVIDER_PI,
             &["OPENAI_API_KEY", "PI_ACP_PROVIDER", "PI_ACP_MODEL"],
-        ),
-        (
-            PROVIDER_OPENHANDS,
-            &["LLM_API_KEY", "LLM_BASE_URL", "LLM_MODEL"],
         ),
     ];
 
@@ -880,7 +859,6 @@ async fn additional_provider_endpoint_env_projection_smoke() {
                 endpoint_id: None,
                 name: format!("{provider_id} endpoint"),
                 base_url: if *provider_id == PROVIDER_COPILOT
-                    || *provider_id == PROVIDER_AUGGIE
                     || *provider_id == PROVIDER_PI
                 {
                     None
@@ -888,7 +866,6 @@ async fn additional_provider_endpoint_env_projection_smoke() {
                     Some("https://openrouter.ai/api/v1".to_string())
                 },
                 api_shape: if *provider_id == PROVIDER_COPILOT
-                    || *provider_id == PROVIDER_AUGGIE
                     || *provider_id == PROVIDER_PI
                 {
                     None

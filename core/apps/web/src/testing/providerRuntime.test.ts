@@ -142,6 +142,32 @@ describe("providerRuntime", () => {
     expect(get).toHaveBeenCalledTimes(2);
   });
 
+  it("treats dependency-blocked providers as not ready for use", async () => {
+    const get = vi.fn<JsonRequestLike["get"]>()
+      .mockResolvedValueOnce(jsonResponse(200, {
+        installed: true,
+        health: "ok",
+        diagnostics: [
+          "provider is not ready until required dependencies are installed: claude-cli",
+        ],
+        details: {
+          ready_for_use: "false",
+          pending_dependency_ids: "claude-cli",
+        },
+      }));
+    const post = vi.fn<JsonRequestLike["post"]>();
+    const request = createRequest(get, post);
+
+    await expect(
+      ensureProviderInstalledAndHealthy(request, "claude-crp", "host", {
+        pollMs: 0,
+        sleep: async () => {},
+      }),
+    ).rejects.toThrow("claude-cli");
+
+    expect(post).not.toHaveBeenCalled();
+  });
+
   it("retries workspace verification until the provider reports ok", async () => {
     const get = vi.fn<JsonRequestLike["get"]>();
     const post = vi.fn<JsonRequestLike["post"]>()

@@ -16,5 +16,7 @@ describe("harnessCatalog", () => {
     expect(ids.has("aider")).toBe(false);
     expect(ids.has("kilo")).toBe(false);
     expect(ids.has("junie")).toBe(false);
+    expect(ids.has("goose")).toBe(false);
+    expect(ids.has("openhands")).toBe(false);
   });
 });

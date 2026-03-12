@@ -6,13 +6,11 @@ import cursorLogo from "../assets/emdash-logos/cursorlogo.png";
 import droidLogo from "../assets/emdash-logos/factorydroid.png";
 import geminiLogo from "../assets/emdash-logos/gemini.png";
 import copilotLogo from "../assets/emdash-logos/ghcopilot.png";
-import gooseLogo from "../assets/emdash-logos/goose.png";
 import kimiLogo from "../assets/emdash-logos/kimi.png";
 import mistralLogo from "../assets/emdash-logos/mistral.png";
 import codexLogo from "../assets/emdash-logos/openai.png";
 import opencodeLogo from "../assets/emdash-logos/opencode.png";
 import qwenLogo from "../assets/emdash-logos/qwen.png";
-import openhandsLogo from "../assets/harness-logos/openhands.png";
 import piLogo from "../assets/harness-logos/pi.svg";
 
 export type HarnessCatalogEntry = {
@@ -38,14 +36,18 @@ export const HARNESS_CATALOG: HarnessCatalogEntry[] = [
   { id: "cline", label: "Cline", logoSrc: clineLogo },
   { id: "mistral", label: "Mistral Vibe", logoSrc: mistralLogo },
   { id: "auggie", label: "Auggie", logoSrc: augmentLogo, invertInDark: true },
-  { id: "goose", label: "Goose", logoSrc: gooseLogo },
   { id: "kimi", label: "Kimi", logoSrc: kimiLogo },
-
-  // Additional harnesses from specs/21_harness_providers.md
-  { id: "openhands", label: "OpenHands", logoSrc: openhandsLogo },
 ];
 
-export const UNSUPPORTED_HARNESS_IDS = new Set(["codebuff", "charm", "aider", "kilo", "junie"]);
+export const UNSUPPORTED_HARNESS_IDS = new Set([
+  "codebuff",
+  "charm",
+  "aider",
+  "kilo",
+  "junie",
+  "goose",
+  "openhands",
+]);
 
 export const HARNESS_LOGO_SRCS = Array.from(
   new Set(HARNESS_CATALOG.map((entry) => entry.logoSrc).filter(Boolean)),

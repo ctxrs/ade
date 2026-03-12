@@ -51,6 +51,13 @@ describe("harnessSelection", () => {
     ])).toBe("claude-crp");
   });
 
+  it("does not prefer deferred non-writer harnesses over supported defaults", () => {
+    expect(resolveDefaultHarnessProviderId([
+      provider("goose"),
+      provider("kimi"),
+    ])).toBe("kimi");
+  });
+
   it("falls back to the first installed provider or codex when no preferred provider exists", () => {
     expect(resolveDefaultHarnessProviderId([
       provider("cursor"),

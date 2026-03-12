@@ -255,9 +255,14 @@ export async function ensureProviderInstalledAndHealthy(
     await installProviderAndWait(request, providerId, target, options);
   }
   const finalStatus = initial.installed ? initial : await getProviderStatus(request, providerId, target, { requestTimeoutMs });
-  if (!finalStatus.installed || finalStatus.health !== "ok") {
+  const readyForUse = (finalStatus.details.ready_for_use ?? "").trim().toLowerCase();
+  const readyForUseBlocked = readyForUse.length > 0 && readyForUse !== "true";
+  if (!finalStatus.installed || finalStatus.health !== "ok" || readyForUseBlocked) {
+    const pendingDependencyIds = (finalStatus.details.pending_dependency_ids ?? "").trim();
     const detail = finalStatus.diagnostics[0]
-      ?? `installed=${String(finalStatus.installed)} health=${finalStatus.health || "unknown"}`;
+      ?? (pendingDependencyIds
+        ? `pending dependencies: ${pendingDependencyIds}`
+        : `installed=${String(finalStatus.installed)} health=${finalStatus.health || "unknown"} ready_for_use=${readyForUse || "unknown"}`);
     throw new Error(`provider ${providerId} is not ready for target=${target}: ${detail}`);
   }
   return finalStatus;

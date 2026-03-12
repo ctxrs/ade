@@ -19,8 +19,6 @@ export const OPENROUTER_ENDPOINT_FIRST_PASS_HARNESSES: EndpointHarnessMatrixEntr
 // green write-file baseline.
 export const OPENROUTER_ENDPOINT_FOCUSED_DEFERRED_HARNESSES: EndpointHarnessMatrixEntry[] = [
   { providerId: "droid", menuLabel: "Droid", searchTerm: "droid" },
-  { providerId: "goose", menuLabel: "Goose", searchTerm: "goose" },
-  { providerId: "openhands", menuLabel: "OpenHands", searchTerm: "openhands" },
   { providerId: "kimi", menuLabel: "Kimi", searchTerm: "kimi" },
   { providerId: "mistral", menuLabel: "Mistral", searchTerm: "mistral" },
   { providerId: "opencode", menuLabel: "OpenCode", searchTerm: "opencode" },
@@ -43,6 +41,10 @@ export const OPENROUTER_ENDPOINT_FIRST_PASS_EXCLUDED_DEFERRED = [
   "charm",
   "aider",
   "kilo",
+  // These currently route through a shared text-only shim and are not truthful
+  // write-capable harnesses in the beta product surface.
+  "goose",
+  "openhands",
   // These do not satisfy the shared OpenRouter write-file contract today.
   "amp",
   "auggie",

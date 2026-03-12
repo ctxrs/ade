@@ -8,9 +8,7 @@ const HARNESSES_WITH_ENDPOINT_CONFIG = new Set([
   "qwen",
   "opencode",
   "mistral",
-  "goose",
   "droid",
-  "openhands",
   "copilot",
   "pi",
 ]);
@@ -37,10 +35,8 @@ const HARNESSES_WITH_ENDPOINT_BASE_URL = new Set([
   "qwen",
   "opencode",
   "mistral",
-  "goose",
   "pi",
   "droid",
-  "openhands",
 ]);
 
 const looksLikeClaudeSetupToken = (value: string): boolean => value.trim().startsWith("sk-ant-oat");

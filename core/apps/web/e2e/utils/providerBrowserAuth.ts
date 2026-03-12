@@ -1354,18 +1354,25 @@ export async function completeClaudeOauthWithGoogleBrowserCredentials(
         } else if (!isClaudeLoginShell) {
           firstPostGoogleClaudePageAt = null;
         }
-        if (/selectAccount=true/i.test(state.url) && stateMentions(state, /continue with google/i)) {
+        if (progress.grantedConsent && isClaudeLoginShell && stateMentions(state, /continue with google/i)) {
           const nextPage = await clickVisibleTextActionAndObserveNextPage(activePage, [
             "continue with google",
             "sign in with google",
             "continue to google",
           ]);
-          if (!nextPage) {
+          const submitted = nextPage
+            ? false
+            : await submitVisibleAuthStep(activePage, [
+              "continue with google",
+              "sign in with google",
+              "continue to google",
+            ]);
+          if (!nextPage && !submitted) {
             throw new Error(`Claude select-account page did not expose a usable Google continuation: ${JSON.stringify(summarizeState(state))}`);
           }
           return {
             handled: true,
-            page: nextPage,
+            page: nextPage ?? activePage,
           };
         }
         if (isClaudeHost && /\/oauth\/authorize\b/i.test(state.url) && stateMentions(state, /authorize|decline|switch account/i)) {

@@ -55,6 +55,7 @@ import {
   toErrorObject,
   useHarnessAuthenticationController,
 } from "./useHarnessAuthenticationController";
+import { supportsHarnessEndpointConfigStatic } from "./harnessAuth/capabilities";
 import { resetProviderOnboardingCoordinatorForTests } from "../../../state/providerOnboardingCoordinator";
 import { createDesktopLocalDaemonTargetScope } from "../../../state/scopeIdentity";
 import type { HarnessAuthRow } from "../harnessAuthRows";
@@ -751,6 +752,18 @@ describe("supportsHarnessSubscriptionAuth", () => {
 
   it("returns true for cursor now that managed browser auth is restored", () => {
     expect(supportsHarnessSubscriptionAuth("cursor")).toBe(true);
+  });
+});
+
+describe("supportsHarnessEndpointConfigStatic", () => {
+  it("returns false for deferred non-writer harnesses", () => {
+    expect(supportsHarnessEndpointConfigStatic("goose")).toBe(false);
+    expect(supportsHarnessEndpointConfigStatic("openhands")).toBe(false);
+  });
+
+  it("returns true for supported endpoint-capable harnesses", () => {
+    expect(supportsHarnessEndpointConfigStatic("opencode")).toBe(true);
+    expect(supportsHarnessEndpointConfigStatic("pi")).toBe(true);
   });
 });
 
