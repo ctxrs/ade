@@ -4,9 +4,11 @@ import type { WorkbenchMessageListContext } from "../SessionPage.thread";
 
 type WorkbenchMessageListProps = VirtuosoMessageListProps<WorkbenchListItem, WorkbenchMessageListContext>;
 
-export const WorkbenchMessageListEmptyPlaceholder: WorkbenchMessageListProps["EmptyPlaceholder"] = ({ context }) => {
-  // Avoid visible "Loading..." placeholders; the thread should feel continuous.
-  return context.loaded ? <div className="wb-muted">Empty</div> : null;
+export const WorkbenchMessageListEmptyPlaceholder: WorkbenchMessageListProps["EmptyPlaceholder"] = () => {
+  // Avoid visible placeholders; the thread should feel continuous.
+  // During task switches the list briefly has zero items while `loaded` is already true,
+  // so rendering anything here would flash for a single frame.
+  return null;
 };
 
 export const WorkbenchMessageListHeader: WorkbenchMessageListProps["Header"] = ({ context }) => {
