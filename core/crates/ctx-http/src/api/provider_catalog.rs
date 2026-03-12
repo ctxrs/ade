@@ -23,6 +23,10 @@ pub(crate) fn provider_models_payload_is_final(models: &serde_json::Value) -> bo
     }
 }
 
+pub(crate) fn provider_supports_runtime_model_catalog(provider_id: &str) -> bool {
+    matches!(provider_id, "codex" | "claude-crp" | "copilot" | "cursor")
+}
+
 fn provider_options_probe_failed(value: &serde_json::Value) -> bool {
     value.get("probe_ok").and_then(serde_json::Value::as_bool) == Some(false)
         || value
@@ -66,7 +70,19 @@ pub(crate) fn runtime_probe_models_payload(
 
 #[cfg(test)]
 mod tests {
-    use super::{provider_options_cache_entry_is_authoritative, runtime_probe_models_payload};
+    use super::{
+        provider_options_cache_entry_is_authoritative, provider_supports_runtime_model_catalog,
+        runtime_probe_models_payload,
+    };
+
+    #[test]
+    fn runtime_model_catalog_provider_set_matches_supported_live_discovery_paths() {
+        assert!(provider_supports_runtime_model_catalog("codex"));
+        assert!(provider_supports_runtime_model_catalog("claude-crp"));
+        assert!(provider_supports_runtime_model_catalog("copilot"));
+        assert!(provider_supports_runtime_model_catalog("cursor"));
+        assert!(!provider_supports_runtime_model_catalog("gemini"));
+    }
 
     #[test]
     fn pinned_subscription_catalog_is_not_authoritative_for_discovery_cache() {

@@ -56,8 +56,8 @@ import {
   isFinalProviderModelCatalog,
   isEndpointProviderSourceSelected,
   isPinnedSubscriptionBootstrapCatalog,
+  SUBSCRIPTION_MODEL_DISCOVERY_PROVIDER_IDS,
 } from "../utils/providerModelCatalog";
-const MODEL_DISCOVERY_PROVIDER_IDS = new Set(["codex", "claude-crp", "copilot"]);
 
 export { resolveProviderOptionsUpdate } from "./providersBootstrapStore";
 
@@ -435,7 +435,7 @@ export const shouldHydrateProviderModels = (
   options: ProviderOptions | undefined,
   trigger: ProviderAuthSummaryTrigger = "passive",
 ): boolean => {
-  if (!MODEL_DISCOVERY_PROVIDER_IDS.has(providerId)) return false;
+  if (!SUBSCRIPTION_MODEL_DISCOVERY_PROVIDER_IDS.has(providerId)) return false;
   if (!options) return false;
   if (isEndpointProviderSourceSelected(options)) return false;
   if (options.has_active_auth !== true) return false;

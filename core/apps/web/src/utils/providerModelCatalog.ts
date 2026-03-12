@@ -1,5 +1,12 @@
 import type { ProviderOptions } from "../api/client";
 
+export const SUBSCRIPTION_MODEL_DISCOVERY_PROVIDER_IDS = new Set([
+  "codex",
+  "claude-crp",
+  "copilot",
+  "cursor",
+]);
+
 const asRecord = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return value as Record<string, unknown>;

@@ -136,7 +136,7 @@ pub(in crate::api) async fn get_provider_options(
         return Ok(Json(out));
     }
 
-    let use_crp_probe = provider_id == "codex" || provider_id == "claude-crp";
+    let use_crp_probe = provider_supports_runtime_model_catalog(&provider_id);
     if !use_crp_probe {
         let ws = state
             .global_store()

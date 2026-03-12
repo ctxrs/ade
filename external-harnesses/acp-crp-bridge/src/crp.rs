@@ -90,7 +90,12 @@ pub enum CrpEvent {
     #[serde(rename = "session.opened")]
     SessionOpened {
         session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
         provider_session_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        models: Option<Value>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        current_model_id: Option<String>,
     },
     #[serde(rename = "turn.started")]
     TurnStarted { session_id: String, turn_id: String },
@@ -204,7 +209,7 @@ pub enum CrpEvent {
     },
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct CrpModelInfo {
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]

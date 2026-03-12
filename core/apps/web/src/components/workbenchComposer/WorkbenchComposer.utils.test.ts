@@ -21,6 +21,24 @@ describe("shouldShowLoadingProviderModels", () => {
     })).toBe(true);
   });
 
+  it("keeps cursor in a loading state while subscription model discovery is pending", () => {
+    expect(shouldShowLoadingProviderModels("cursor", {
+      provider_id: "cursor",
+      workspace_id: "ws-test",
+      supports_load: false,
+      auth_required: false,
+      has_active_auth: true,
+      auth_mode: "subscription",
+      source: {
+        provider_id: "cursor",
+        selected_source_kind: "subscription",
+        selected_endpoint_id: null,
+        endpoints: [],
+      },
+      probed_at: "2026-03-10T00:00:00.000Z",
+    })).toBe(true);
+  });
+
   it("does not show loading for endpoint-backed providers without a discovered catalog", () => {
     expect(shouldShowLoadingProviderModels("codex", {
       provider_id: "codex",

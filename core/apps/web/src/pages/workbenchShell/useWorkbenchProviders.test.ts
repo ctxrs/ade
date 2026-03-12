@@ -246,6 +246,10 @@ describe("shouldHydrateProviderModels", () => {
     expect(shouldHydrateProviderModels("copilot", baseOptions("copilot"))).toBe(true);
   });
 
+  it("requests hydration for cursor subscription auth when models are missing", () => {
+    expect(shouldHydrateProviderModels("cursor", baseOptions("cursor"))).toBe(true);
+  });
+
   it("does not keep passively hydrating after a failed probe", () => {
     const options: ProviderOptions = {
       ...baseOptions("codex"),

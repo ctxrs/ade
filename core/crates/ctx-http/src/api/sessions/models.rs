@@ -414,7 +414,7 @@ pub(super) async fn load_provider_model_catalog(
         }
     }
 
-    if provider_id != "codex" && provider_id != "claude-crp" {
+    if !crate::api::provider_catalog::provider_supports_runtime_model_catalog(provider_id) {
         return Ok(None);
     }
 

@@ -8,6 +8,7 @@ import {
   hasProviderModels,
   isEndpointProviderSourceSelected,
   isFinalProviderModelCatalog,
+  SUBSCRIPTION_MODEL_DISCOVERY_PROVIDER_IDS,
 } from "../../utils/providerModelCatalog";
 
 export const MENU_DESCRIPTIONS = {
@@ -151,8 +152,6 @@ const FALLBACK_MODELS_BY_PROVIDER: Record<string, Array<{ id: string; name?: str
     { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash" },
   ],
 };
-
-const SUBSCRIPTION_MODEL_DISCOVERY_PROVIDER_IDS = new Set(["codex", "claude-crp", "copilot"]);
 
 export function buildModelsForProvider(providerId: string, opts?: ProviderOptions): Array<{ id: string; name?: string }> {
   const models = buildModelsFromProviderOptions(opts);

@@ -22,7 +22,8 @@ use uuid::Uuid;
 
 use crate::config::Config;
 use crate::crp::{
-    CrpChannel, CrpCommand, CrpEnvelope, CrpEvent, CrpMcpServerConfig, CrpTurnStatus, CrpWriter,
+    CrpChannel, CrpCommand, CrpEnvelope, CrpEvent, CrpMcpServerConfig, CrpModelInfo, CrpTurnStatus,
+    CrpWriter,
 };
 use crate::translate::Translator;
 
@@ -32,6 +33,14 @@ struct SessionState {
     active_turn_id: Option<String>,
     last_turn_update_at: Option<Instant>,
     turn_update_count: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ModelCatalogState {
+    payload: Option<Value>,
+    models: Vec<CrpModelInfo>,
+    current_model_id: Option<String>,
+    catalog_source: Option<String>,
 }
 
 #[derive(Default)]
@@ -166,6 +175,34 @@ fn rewrite_agent_message_line(line: &str) -> Option<Vec<String>> {
         None
     } else {
         Some(out)
+    }
+}
+
+fn acp_session_models_to_catalog(
+    models: Option<&agent_client_protocol::SessionModelState>,
+) -> ModelCatalogState {
+    let Some(models) = models else {
+        return ModelCatalogState::default();
+    };
+
+    let current_model_id = Some(models.current_model_id.to_string());
+    let available_models = models
+        .available_models
+        .iter()
+        .map(|model| CrpModelInfo {
+            id: model.model_id.to_string(),
+            name: Some(model.name.clone()),
+        })
+        .collect::<Vec<_>>();
+    let payload = serde_json::to_value(models).ok();
+    let catalog_source = (current_model_id.is_some() || !available_models.is_empty())
+        .then(|| "live_remote".to_string());
+
+    ModelCatalogState {
+        payload,
+        models: available_models,
+        current_model_id,
+        catalog_source,
     }
 }
 
@@ -430,6 +467,7 @@ async fn handle_command(
             };
 
             let acp_session_id = response.session_id.to_string();
+            let model_catalog = acp_session_models_to_catalog(response.models.as_ref());
 
             let mut sessions_guard = sessions.lock().await;
             if sessions_guard.by_crp.contains_key(&crp_session_id) {
@@ -458,6 +496,8 @@ async fn handle_command(
                 event: CrpEvent::SessionOpened {
                     session_id: crp_session_id,
                     provider_session_id: Some(acp_session_id),
+                    models: model_catalog.payload,
+                    current_model_id: model_catalog.current_model_id,
                 },
             };
             let _ = events_tx.send(opened).await;
@@ -604,14 +644,32 @@ async fn handle_command(
                 }
             }
         }
-        CrpCommand::ModelsList { .. } => {
+        CrpCommand::ModelsList { config: crp_config } => {
+            let cwd = crp_config
+                .as_ref()
+                .and_then(|cfg| cfg.cwd.clone())
+                .or_else(|| config.cwd.clone())
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+            let mcp_servers = crp_config
+                .and_then(|cfg| cfg.mcp_servers)
+                .map(crp_mcp_servers_to_acp)
+                .unwrap_or_default();
+            let mut new_session_req = NewSessionRequest::new(cwd);
+            if !mcp_servers.is_empty() {
+                new_session_req = new_session_req.mcp_servers(mcp_servers);
+            }
+            let response = acp
+                .new_session(new_session_req)
+                .await
+                .context("acp new_session for models.list")?;
+            let model_catalog = acp_session_models_to_catalog(response.models.as_ref());
             let _ = events_tx
                 .send(CrpEnvelope {
                     channel: CrpChannel::Control,
                     event: CrpEvent::ModelsList {
-                        models: vec![],
-                        current_model_id: None,
-                        catalog_source: None,
+                        models: model_catalog.models,
+                        current_model_id: model_catalog.current_model_id,
+                        catalog_source: model_catalog.catalog_source,
                     },
                 })
                 .await;
@@ -934,6 +992,49 @@ fn skill_block(obj: &serde_json::Map<String, Value>) -> Option<ContentBlock> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn acp_session_models_are_converted_to_crp_catalog() {
+        let catalog =
+            acp_session_models_to_catalog(Some(&agent_client_protocol::SessionModelState::new(
+                "cursor-auto",
+                vec![
+                    agent_client_protocol::ModelInfo::new("cursor-auto", "Auto"),
+                    agent_client_protocol::ModelInfo::new("gpt-5.4", "GPT-5.4"),
+                ],
+            )));
+
+        assert_eq!(catalog.current_model_id.as_deref(), Some("cursor-auto"));
+        assert_eq!(catalog.catalog_source.as_deref(), Some("live_remote"));
+        assert_eq!(
+            catalog.models,
+            vec![
+                CrpModelInfo {
+                    id: "cursor-auto".to_string(),
+                    name: Some("Auto".to_string()),
+                },
+                CrpModelInfo {
+                    id: "gpt-5.4".to_string(),
+                    name: Some("GPT-5.4".to_string()),
+                },
+            ]
+        );
+        assert_eq!(
+            catalog
+                .payload
+                .as_ref()
+                .and_then(|value| value.pointer("/availableModels/0/modelId")),
+            Some(&json!("cursor-auto"))
+        );
+        assert_eq!(
+            catalog
+                .payload
+                .as_ref()
+                .and_then(|value| value.pointer("/currentModelId")),
+            Some(&json!("cursor-auto"))
+        );
+    }
 
     #[test]
     fn cline_tail_wait_is_provider_scoped() {
