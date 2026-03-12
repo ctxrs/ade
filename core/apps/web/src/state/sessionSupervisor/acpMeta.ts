@@ -67,6 +67,7 @@ const mergeSharedProviderModelsFromAcpMeta = (
   const nextMeta = asRecord(nextRecord.meta);
 
   const merged: Record<string, unknown> = {
+    ...previousRecord,
     ...nextRecord,
     meta: {
       ...previousMeta,

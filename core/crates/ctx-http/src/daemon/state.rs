@@ -213,6 +213,7 @@ impl AppState {
                 claude_oauth_login_sessions: Mutex::new(HashMap::new()),
                 gemini_login_sessions: Mutex::new(HashMap::new()),
                 qwen_login_sessions: Mutex::new(HashMap::new()),
+                kimi_login_sessions: Mutex::new(HashMap::new()),
                 cursor_login_sessions: Mutex::new(HashMap::new()),
                 amp_login_sessions: Mutex::new(HashMap::new()),
                 mistral_login_sessions: Mutex::new(HashMap::new()),

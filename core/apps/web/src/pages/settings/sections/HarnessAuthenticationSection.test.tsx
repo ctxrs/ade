@@ -73,6 +73,38 @@ function makeCopilotSubscriptionModal(): HarnessAuthModalState {
     subscription_oauth_creds_json: "",
     subscription_google_accounts_json: "",
     subscription_device_code: null,
+    subscription_auth_url: null,
+    subscription_status: null,
+    subscription_busy: false,
+    api_key_busy: false,
+  };
+}
+
+function makeKimiSubscriptionModal(): HarnessAuthModalState {
+  return {
+    provider_id: "kimi",
+    stage: "subscription",
+    endpoint_provider_id: "openrouter",
+    gemini_endpoint_auth_type: "gemini_api_key",
+    endpoint_name: "",
+    base_url: "",
+    api_key: "",
+    service_account_json: "",
+    project_id: "",
+    location: "",
+    endpoint_id: null,
+    manual_model_ids: "",
+    subscription_label: "",
+    subscription_token: "",
+    subscription_email: "",
+    subscription_provider: "",
+    subscription_credentials_json: "",
+    subscription_config_toml: "",
+    subscription_auth_token_json: "",
+    subscription_oauth_creds_json: "",
+    subscription_google_accounts_json: "",
+    subscription_device_code: null,
+    subscription_auth_url: null,
     subscription_status: null,
     subscription_busy: false,
     api_key_busy: false,
@@ -513,6 +545,44 @@ describe("HarnessAuthenticationSection Copilot subscription modal", () => {
 
     expect(screen.queryByText("GitHub device code")).not.toBeInTheDocument();
     expect(screen.queryByDisplayValue("ABCD-1234")).not.toBeInTheDocument();
+  });
+});
+
+describe("HarnessAuthenticationSection Kimi subscription modal", () => {
+  it("renders Kimi browser sign-in UI with auth link and device code guidance", () => {
+    mockUseHarnessAuthenticationController.mockReturnValue(
+      makeController({
+        harnessAuthModal: {
+          ...makeKimiSubscriptionModal(),
+          subscription_status: "Open the Kimi sign-in link below and complete authentication in your browser...",
+          subscription_auth_url: "https://kimi.example.com/login/device",
+          subscription_device_code: "KIMI-1234",
+        },
+      }),
+    );
+
+    render(
+      <HarnessAuthenticationSection
+        workspaceId="ws-1"
+        active
+        modalOnly
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "Start Kimi sign-in here, then complete the provider flow in your browser with the link below.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Kimi credentials JSON")).not.toBeInTheDocument();
+    expect(screen.queryByText("Kimi config TOML (optional)")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start sign-in" })).toBeEnabled();
+    expect(screen.getByRole("link", { name: "Open Kimi sign-in" })).toHaveAttribute(
+      "href",
+      "https://kimi.example.com/login/device",
+    );
+    expect(screen.getByText("Kimi device code")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("KIMI-1234")).toBeInTheDocument();
   });
 });
 

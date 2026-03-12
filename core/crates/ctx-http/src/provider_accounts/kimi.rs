@@ -12,12 +12,12 @@ use super::shared::{
 };
 use super::{
     kimi_account_home, kimi_registry_path, kimi_secret_path, KIMI_CREDENTIAL_KIND_CREDENTIALS_JSON,
-    KIMI_SECRET_VERSION, KIMI_SHARE_DIR_ENV,
+    KIMI_CREDENTIAL_KIND_OAUTH, KIMI_SECRET_VERSION, KIMI_SHARE_DIR_ENV,
 };
 
 const KIMI_CANONICAL_PROVIDER: &str = "kimi-code";
 
-fn default_kimi_credential_kind() -> String {
+fn default_kimi_import_credential_kind() -> String {
     KIMI_CREDENTIAL_KIND_CREDENTIALS_JSON.to_string()
 }
 
@@ -25,7 +25,7 @@ fn default_kimi_credential_kind() -> String {
 pub struct KimiAccountEntry {
     pub id: String,
     pub label: String,
-    #[serde(default = "default_kimi_credential_kind")]
+    #[serde(default = "default_kimi_import_credential_kind")]
     pub kind: String,
     #[serde(default)]
     pub email: Option<String>,
@@ -42,6 +42,20 @@ pub struct KimiAccountRegistry {
     pub active_account_id: Option<String>,
     #[serde(default)]
     pub accounts: Vec<KimiAccountEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KimiLoginStatus {
+    pub login_id: String,
+    pub status: String,
+    #[serde(default)]
+    pub account_id: Option<String>,
+    #[serde(default)]
+    pub auth_url: Option<String>,
+    #[serde(default)]
+    pub device_code: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,6 +82,45 @@ pub async fn add_kimi_account(
     credentials_json: String,
     config_toml: Option<String>,
     email: Option<String>,
+) -> Result<KimiAccountRegistry> {
+    upsert_kimi_account(
+        data_root,
+        label,
+        provider,
+        credentials_json,
+        config_toml,
+        email,
+        KIMI_CREDENTIAL_KIND_CREDENTIALS_JSON,
+    )
+    .await
+}
+
+pub async fn add_kimi_oauth_account(
+    data_root: &Path,
+    label: Option<String>,
+    credentials_json: String,
+    email: Option<String>,
+) -> Result<KimiAccountRegistry> {
+    upsert_kimi_account(
+        data_root,
+        label,
+        Some(KIMI_CANONICAL_PROVIDER.to_string()),
+        credentials_json,
+        None,
+        email,
+        KIMI_CREDENTIAL_KIND_OAUTH,
+    )
+    .await
+}
+
+async fn upsert_kimi_account(
+    data_root: &Path,
+    label: Option<String>,
+    provider: Option<String>,
+    credentials_json: String,
+    config_toml: Option<String>,
+    email: Option<String>,
+    kind: &str,
 ) -> Result<KimiAccountRegistry> {
     let normalized_provider = normalize_kimi_provider(provider)?;
     let credentials = parse_required_json_object(&credentials_json, "credentials_json")?;
@@ -106,6 +159,7 @@ pub async fn add_kimi_account(
         {
             apply_label_update(label.clone(), &mut entry.label);
             apply_email_update(email.clone(), &mut entry.email);
+            entry.kind = kind.to_string();
             entry.last_used_at = Some(Utc::now());
         }
         registry.active_account_id = Some(account_id);
@@ -125,7 +179,7 @@ pub async fn add_kimi_account(
     let entry = KimiAccountEntry {
         id: account_id.clone(),
         label: normalize_kimi_label(label, &account_id),
-        kind: KIMI_CREDENTIAL_KIND_CREDENTIALS_JSON.to_string(),
+        kind: kind.to_string(),
         email: normalize_optional_email(email),
         created_at: Utc::now(),
         last_used_at: Some(Utc::now()),

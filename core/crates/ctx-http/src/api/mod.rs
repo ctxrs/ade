@@ -410,6 +410,26 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             delete(delete_qwen_account),
         )
         .route(
+            "/api/providers/kimi/accounts/login/start",
+            post(start_kimi_login),
+        )
+        .route(
+            "/api/providers/kimi/accounts/login/:id",
+            get(get_kimi_login),
+        )
+        .route(
+            "/api/providers/kimi/accounts",
+            get(list_kimi_accounts).post(upsert_kimi_account),
+        )
+        .route(
+            "/api/providers/kimi/active-account",
+            put(set_kimi_active_account),
+        )
+        .route(
+            "/api/providers/kimi/accounts/:id",
+            delete(delete_kimi_account),
+        )
+        .route(
             "/api/providers/amp/accounts/login/start",
             post(start_amp_login),
         )
@@ -445,18 +465,6 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route(
             "/api/providers/mistral/accounts/:id",
             delete(delete_mistral_account),
-        )
-        .route(
-            "/api/providers/kimi/accounts",
-            get(list_kimi_accounts).post(upsert_kimi_account),
-        )
-        .route(
-            "/api/providers/kimi/active-account",
-            put(set_kimi_active_account),
-        )
-        .route(
-            "/api/providers/kimi/accounts/:id",
-            delete(delete_kimi_account),
         )
         .route(
             "/api/providers/copilot/accounts",

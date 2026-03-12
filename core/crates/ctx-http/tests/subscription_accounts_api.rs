@@ -91,6 +91,22 @@ struct QwenLoginStatusResponse {
 }
 
 #[derive(Debug, Deserialize)]
+struct KimiLoginStartResponse {
+    login_id: String,
+    auth_url: Option<String>,
+    device_code: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct KimiLoginStatusResponse {
+    status: String,
+    account_id: Option<String>,
+    auth_url: Option<String>,
+    device_code: Option<String>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct MistralLoginStartResponse {
     login_id: String,
     auth_url: Option<String>,
@@ -713,6 +729,7 @@ async fn write_mock_cursor_runtime(
 const MOCK_CLAUDE_OAUTH_CREDENTIALS_JSON: &str = r#"{"claudeAiOauth":{"accessToken":"access-token","refreshToken":"refresh-token","expiresAt":4102444800000,"scopes":["user:inference","user:profile"],"subscriptionType":"pro"}}"#;
 const MOCK_CLAUDE_CONFIG_JSON: &str = r#"{"oauthAccount":{"emailAddress":"contact-086a332885a5@fixture.example.test","organizationUuid":"org-test","organizationName":"Profound App"}} "#;
 static CLAUDE_TOKEN_ENV_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
+static KIMI_TOKEN_ENV_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
 
 struct TestEnvVar {
     key: &'static str,
@@ -775,6 +792,81 @@ async fn start_claude_token_exchange_server(
             .expect("serve claude token server");
     });
     (format!("http://{addr}/v1/oauth/token"), captured, handle)
+}
+
+#[derive(Debug, Deserialize)]
+struct KimiDeviceAuthorizationRequest {
+    client_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct KimiTokenPollRequest {
+    client_id: String,
+    device_code: String,
+    grant_type: String,
+}
+
+async fn start_kimi_oauth_server() -> (common::TestServer, Arc<Mutex<Vec<KimiTokenPollRequest>>>) {
+    let polls = Arc::new(Mutex::new(Vec::<KimiTokenPollRequest>::new()));
+    let polls_for_token = Arc::clone(&polls);
+    let app = axum::Router::new()
+        .route(
+            "/api/oauth/device_authorization",
+            axum::routing::post(
+                |axum::Form(payload): axum::Form<KimiDeviceAuthorizationRequest>| async move {
+                    assert_eq!(payload.client_id, "17e5f671-d194-4dfb-9706-5516cb48c098");
+                    axum::Json(json!({
+                        "user_code": "ABCD-1234",
+                        "device_code": "device-code-1",
+                        "verification_uri": "http://127.0.0.1/verify",
+                        "verification_uri_complete": "http://127.0.0.1/verify?user_code=ABCD-1234",
+                        "expires_in": 30,
+                        "interval": 1,
+                    }))
+                },
+            ),
+        )
+        .route(
+            "/api/oauth/token",
+            axum::routing::post(
+                move |axum::Form(payload): axum::Form<KimiTokenPollRequest>| {
+                    let polls = Arc::clone(&polls_for_token);
+                    async move {
+                        assert_eq!(payload.client_id, "17e5f671-d194-4dfb-9706-5516cb48c098");
+                        assert_eq!(
+                            payload.grant_type,
+                            "urn:ietf:params:oauth:grant-type:device_code"
+                        );
+                        assert_eq!(payload.device_code, "device-code-1");
+                        let mut recorded = polls.lock().expect("poll mutex");
+                        recorded.push(payload);
+                        let attempt = recorded.len();
+                        drop(recorded);
+                        if attempt == 1 {
+                            return (
+                                StatusCode::BAD_REQUEST,
+                                axum::Json(json!({
+                                    "error": "authorization_pending",
+                                    "error_description": "Waiting for Google sign-in",
+                                })),
+                            );
+                        }
+                        (
+                            StatusCode::OK,
+                            axum::Json(json!({
+                                "access_token": "kimi-access",
+                                "refresh_token": "kimi-refresh",
+                                "expires_in": 3600,
+                                "scope": "openid profile email",
+                                "token_type": "Bearer",
+                            })),
+                        )
+                    }
+                },
+            ),
+        );
+    let server = common::spawn_http_server(app).await;
+    (server, polls)
 }
 
 fn parse_claude_auth_url(start_body: &ClaudeLoginStartResponse) -> Url {
@@ -868,6 +960,34 @@ async fn poll_qwen_login_status(
         }
         if Instant::now() >= deadline {
             panic!("qwen login did not complete in time");
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+async fn poll_kimi_login_status(
+    server: &common::TestServer,
+    login_id: &str,
+) -> KimiLoginStatusResponse {
+    let status_url = format!(
+        "{}/api/providers/kimi/accounts/login/{}",
+        server.base_url, login_id
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let resp = server
+            .client
+            .get(&status_url)
+            .send()
+            .await
+            .expect("kimi status request");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: KimiLoginStatusResponse = resp.json().await.expect("kimi status body");
+        if body.status != "pending" {
+            return body;
+        }
+        if Instant::now() >= deadline {
+            panic!("kimi login did not complete in time");
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
@@ -1687,6 +1807,74 @@ async fn amp_login_auth_required_notice_reports_real_message() {
         Some("Amp needs subscription approval")
     );
     assert_eq!(status.auth_url.as_deref(), Some("https://ampcode.com/auth"));
+}
+
+#[tokio::test]
+async fn kimi_login_start_and_status_success_persists_oauth_account() {
+    let _env_lock = KIMI_TOKEN_ENV_LOCK.lock().await;
+    let oauth_server = start_kimi_oauth_server().await;
+    let _oauth_host = TestEnvVar::set("KIMI_CODE_OAUTH_HOST", oauth_server.0.base_url.as_str());
+    let _timeout = TestEnvVar::set("CTX_KIMI_LOGIN_TIMEOUT_SECS", "5");
+
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let server = common::spawn_http_server(common::router(state)).await;
+
+    let start_url = format!(
+        "{}/api/providers/kimi/accounts/login/start",
+        server.base_url
+    );
+    let start_resp = server
+        .client
+        .post(start_url)
+        .json(&json!({ "label": "Kimi Google" }))
+        .send()
+        .await
+        .expect("start kimi login request");
+    assert_eq!(start_resp.status(), StatusCode::OK);
+    let start_body: KimiLoginStartResponse = start_resp.json().await.expect("start body");
+    assert!(!start_body.login_id.is_empty());
+    assert_eq!(
+        start_body.auth_url.as_deref(),
+        Some("http://127.0.0.1/verify?user_code=ABCD-1234")
+    );
+    assert_eq!(start_body.device_code.as_deref(), Some("ABCD-1234"));
+
+    let status = poll_kimi_login_status(&server, &start_body.login_id).await;
+    assert_eq!(status.status, "success");
+    assert!(status.error.is_none());
+    assert!(status.account_id.is_some());
+    assert_eq!(
+        status.auth_url.as_deref(),
+        Some("http://127.0.0.1/verify?user_code=ABCD-1234")
+    );
+    assert_eq!(status.device_code.as_deref(), Some("ABCD-1234"));
+
+    let accounts_url = format!("{}/api/providers/kimi/accounts", server.base_url);
+    let accounts_resp = server
+        .client
+        .get(accounts_url)
+        .send()
+        .await
+        .expect("kimi accounts request");
+    assert_eq!(accounts_resp.status(), StatusCode::OK);
+    let accounts: SubscriptionAccountsResponse = accounts_resp.json().await.expect("accounts body");
+    assert_eq!(accounts.accounts.len(), 1);
+    assert_eq!(accounts.active_account_id, status.account_id);
+    assert_eq!(accounts.accounts[0].label.as_deref(), Some("Kimi Google"));
+
+    let registry = ctx_http::provider_accounts::load_kimi_registry(data_dir.path()).await;
+    assert_eq!(registry.accounts.len(), 1);
+    assert_eq!(registry.accounts[0].kind, "oauth");
+
+    let polls = oauth_server.1.lock().expect("poll mutex");
+    assert!(polls.len() >= 2);
 }
 
 #[tokio::test]

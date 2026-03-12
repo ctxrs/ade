@@ -1,5 +1,13 @@
-const RUNTIME_MODEL_CATALOG_PROVIDER_IDS: &[&str] =
-    &["codex", "claude-crp", "copilot", "cursor", "gemini", "qwen"];
+const RUNTIME_MODEL_CATALOG_PROVIDER_IDS: &[&str] = &[
+    "amp",
+    "codex",
+    "claude-crp",
+    "copilot",
+    "cursor",
+    "gemini",
+    "kimi",
+    "qwen",
+];
 
 pub(crate) fn provider_models_payload_is_final(models: &serde_json::Value) -> bool {
     let meta = models
@@ -107,14 +115,14 @@ mod tests {
 
     #[test]
     fn runtime_model_catalog_provider_set_matches_supported_live_discovery_paths() {
+        assert!(provider_supports_runtime_model_catalog("amp"));
         assert!(provider_supports_runtime_model_catalog("codex"));
         assert!(provider_supports_runtime_model_catalog("claude-crp"));
         assert!(provider_supports_runtime_model_catalog("copilot"));
         assert!(provider_supports_runtime_model_catalog("cursor"));
         assert!(provider_supports_runtime_model_catalog("gemini"));
+        assert!(provider_supports_runtime_model_catalog("kimi"));
         assert!(provider_supports_runtime_model_catalog("qwen"));
-        assert!(!provider_supports_runtime_model_catalog("kimi"));
-        assert!(!provider_supports_runtime_model_catalog("amp"));
         assert!(!provider_supports_runtime_model_catalog("mistral"));
     }
 

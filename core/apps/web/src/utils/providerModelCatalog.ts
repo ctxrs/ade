@@ -1,11 +1,13 @@
 import type { ProviderOptions } from "../api/client";
 
 export const SUBSCRIPTION_MODEL_DISCOVERY_PROVIDER_IDS = new Set([
+  "amp",
   "codex",
   "claude-crp",
   "copilot",
   "cursor",
   "gemini",
+  "kimi",
   "qwen",
 ]);
 

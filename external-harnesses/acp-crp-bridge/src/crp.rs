@@ -43,6 +43,11 @@ pub enum CrpCommand {
         #[serde(default)]
         method_id: Option<String>,
     },
+    #[serde(rename = "session.set_model")]
+    SessionSetModel {
+        session_id: Option<String>,
+        model_id: Option<String>,
+    },
     #[serde(rename = "models.list")]
     ModelsList {
         #[serde(default)]
@@ -256,6 +261,34 @@ struct CrpEventEnvelope<'a> {
     channel: &'a CrpChannel,
     #[serde(flatten)]
     event: &'a CrpEvent,
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::CrpCommand;
+
+    #[test]
+    fn session_set_model_command_deserializes() {
+        let command: CrpCommand = serde_json::from_value(json!({
+            "type": "session.set_model",
+            "session_id": "session-123",
+            "model_id": "amp-medium",
+        }))
+        .expect("session.set_model should deserialize");
+
+        match command {
+            CrpCommand::SessionSetModel {
+                session_id,
+                model_id,
+            } => {
+                assert_eq!(session_id.as_deref(), Some("session-123"));
+                assert_eq!(model_id.as_deref(), Some("amp-medium"));
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
 }
 
 pub struct CrpWriter<W> {

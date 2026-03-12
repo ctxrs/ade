@@ -67,6 +67,7 @@ pub struct ProviderRuntime {
         Mutex<HashMap<String, provider_accounts::ClaudeOauthLoginSession>>,
     pub gemini_login_sessions: Mutex<HashMap<String, provider_accounts::GeminiLoginStatus>>,
     pub qwen_login_sessions: Mutex<HashMap<String, provider_accounts::QwenLoginStatus>>,
+    pub kimi_login_sessions: Mutex<HashMap<String, provider_accounts::KimiLoginStatus>>,
     pub cursor_login_sessions: Mutex<HashMap<String, provider_accounts::CursorLoginStatus>>,
     pub amp_login_sessions: Mutex<HashMap<String, provider_accounts::AmpLoginStatus>>,
     pub mistral_login_sessions: Mutex<HashMap<String, provider_accounts::MistralLoginStatus>>,

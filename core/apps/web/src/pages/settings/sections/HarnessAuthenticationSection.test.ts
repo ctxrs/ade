@@ -86,14 +86,14 @@ describe("HarnessAuthenticationSection Claude fallback submit", () => {
     expect(subscriptionPrimaryActionLabel(modal)).toBe("Start sign-in");
   });
 
-  it("shows Kimi subscription action as sign in with Kimi when idle", () => {
+  it("shows Kimi subscription action as start sign-in when idle", () => {
     const modal = baseModal({
       provider_id: "kimi",
       subscription_busy: false,
       subscription_token: "",
     });
 
-    expect(subscriptionPrimaryActionLabel(modal)).toBe("Sign in with Kimi");
+    expect(subscriptionPrimaryActionLabel(modal)).toBe("Start sign-in");
   });
 
   it("uses GitHub sign-in action for Copilot when no fallback token is entered", () => {

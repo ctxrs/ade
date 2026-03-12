@@ -256,11 +256,17 @@ describe("shouldHydrateProviderModels", () => {
     }
   });
 
+  it("requests hydration for kimi subscription auth when models are missing", () => {
+    expect(shouldHydrateProviderModels("kimi", baseOptions("kimi"))).toBe(true);
+  });
+
+  it("requests hydration for amp subscription auth when models are missing", () => {
+    expect(shouldHydrateProviderModels("amp", baseOptions("amp"))).toBe(true);
+  });
+
   it("does not request hydration for providers outside the live subscription discovery set", () => {
     expect(shouldHydrateProviderModels("mistral", baseOptions("mistral"))).toBe(false);
     expect(shouldHydrateProviderModels("auggie", baseOptions("auggie"))).toBe(false);
-    expect(shouldHydrateProviderModels("kimi", baseOptions("kimi"))).toBe(false);
-    expect(shouldHydrateProviderModels("amp", baseOptions("amp"))).toBe(false);
   });
 
   it("does not keep passively hydrating after a failed probe", () => {

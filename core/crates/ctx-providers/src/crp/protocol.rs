@@ -59,6 +59,11 @@ pub(super) enum CrpCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         method_id: Option<String>,
     },
+    #[serde(rename = "session.set_model")]
+    SessionSetModel {
+        session_id: Option<String>,
+        model_id: Option<String>,
+    },
     #[serde(rename = "session.cancel")]
     SessionCancel {
         session_id: Option<String>,

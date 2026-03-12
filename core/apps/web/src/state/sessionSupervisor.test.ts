@@ -597,6 +597,100 @@ describe("SessionSupervisor", () => {
     expect(meta.refresh_pending).toBe(false);
   });
 
+  it("updates the live session current model from init events without rewriting shared provider defaults", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+    const providersBootstrapStore = await import("./providersBootstrapStore");
+
+    const sessionId = "session-shared-provider-current-model";
+    const workspaceId = "ws-shared-provider-current-model";
+    const now = new Date().toISOString();
+
+    providersBootstrapStore.updateProvidersBootstrap(workspaceId, (current) => ({
+      ...current,
+      provider_options: {
+        ...current.provider_options,
+        codex: {
+          provider_id: "codex",
+          workspace_id: workspaceId,
+          supports_load: false,
+          auth_required: false,
+          probed_at: now,
+          models: {
+            models: [{ id: "gpt-5.4" }, { id: "gpt-5.3-codex" }, { id: "gpt-5.3-codex-spark" }],
+            current_model_id: "gpt-5.4",
+            meta: {
+              source_kind: "subscription",
+              catalog_source: "runtime_probe_live",
+              refresh_pending: false,
+            },
+          },
+        },
+      },
+    }));
+
+    const session = {
+      ...mkSession(sessionId),
+      workspace_id: workspaceId,
+      provider_id: "codex",
+      model_id: "gpt-5.3-codex",
+    };
+    getSessionSnapshotMock.mockResolvedValue({
+      summary: {
+        session,
+      },
+    });
+    getSessionHeadMock.mockResolvedValue({
+      session,
+      turns: [] as SessionTurn[],
+      events: [
+        {
+          seq: 1,
+          id: "init-models-1",
+          session_id: sessionId,
+          event_type: "init",
+          payload_json: {
+            current_model_id: "gpt-5.3-codex",
+            models: {
+              models: [{ id: "gpt-5.4" }, { id: "gpt-5.3-codex" }, { id: "gpt-5.3-codex-spark" }],
+              current_model_id: "gpt-5.3-codex",
+            },
+          },
+          created_at: now,
+        },
+        {
+          seq: 2,
+          id: "init-models-2",
+          session_id: sessionId,
+          event_type: "init",
+          payload_json: {
+            current_model_id: "gpt-5.3-codex-spark",
+          },
+          created_at: now,
+        },
+      ] as SessionEvent[],
+      messages: [] as Message[],
+      last_event_seq: 2,
+      has_more_turns: false,
+      has_more_history: false,
+      history_cursor: null,
+    });
+
+    const sup = new SessionSupervisor();
+    sup.openSession(sessionId, { mode: "archived" });
+
+    await waitForCondition(
+      () => sup.getSnapshot().sessions[sessionId]?.acpCurrentModelId === "gpt-5.3-codex-spark",
+    );
+
+    expect(sup.getSnapshot().sessions[sessionId]?.acpCurrentModelId).toBe("gpt-5.3-codex-spark");
+    const models = providersBootstrapStore
+      .getProvidersBootstrapSnapshot(workspaceId)
+      .provider_options
+      .codex
+      ?.models as Record<string, unknown> | undefined;
+    expect(models?.current_model_id).toBe("gpt-5.4");
+  });
+
   it("applies session head deltas from workspace stream", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 

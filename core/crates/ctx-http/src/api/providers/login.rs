@@ -7,6 +7,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 mod browser;
 mod codex;
+mod kimi;
 mod mistral;
 
 pub(crate) use browser::{
@@ -14,6 +15,7 @@ pub(crate) use browser::{
     start_qwen_login,
 };
 pub(crate) use codex::{complete_codex_login, get_codex_login, start_codex_login};
+pub(crate) use kimi::{get_kimi_login, start_kimi_login};
 pub(crate) use mistral::{get_mistral_login, start_mistral_login};
 
 #[derive(Debug, Deserialize)]

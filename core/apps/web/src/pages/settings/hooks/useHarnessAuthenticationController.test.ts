@@ -13,6 +13,7 @@ import {
   getCodexLogin,
   getCursorLogin,
   getGeminiLogin,
+  getKimiLogin,
   getProviderOptions,
   selectProviderHarnessSource,
   setAmpActiveAccount,
@@ -21,6 +22,7 @@ import {
   startCodexLogin,
   startCursorLogin,
   startGeminiLogin,
+  startKimiLogin,
   upsertProviderHarnessEndpoint,
   verifyProviderForWorkspace,
 } from "../../../api/client";
@@ -161,6 +163,7 @@ vi.mock("../../../api/client", async (importOriginal) => {
     getCodexLogin: vi.fn(),
     getCursorLogin: vi.fn(),
     getGeminiLogin: vi.fn(),
+    getKimiLogin: vi.fn(),
     getProviderOptions: vi.fn(),
     selectProviderHarnessSource: vi.fn(),
     setAmpActiveAccount: vi.fn(),
@@ -169,6 +172,7 @@ vi.mock("../../../api/client", async (importOriginal) => {
     startCodexLogin: vi.fn(),
     startCursorLogin: vi.fn(),
     startGeminiLogin: vi.fn(),
+    startKimiLogin: vi.fn(),
     upsertProviderHarnessEndpoint: vi.fn(),
     verifyProviderForWorkspace: vi.fn(),
   };
@@ -424,6 +428,7 @@ beforeEach(() => {
   vi.mocked(getCodexLogin).mockReset();
   vi.mocked(getCursorLogin).mockReset();
   vi.mocked(getGeminiLogin).mockReset();
+  vi.mocked(getKimiLogin).mockReset();
   vi.mocked(getProviderOptions).mockReset();
   vi.mocked(selectProviderHarnessSource).mockReset();
   vi.mocked(setAmpActiveAccount).mockReset();
@@ -432,6 +437,7 @@ beforeEach(() => {
   vi.mocked(startCodexLogin).mockReset();
   vi.mocked(startCursorLogin).mockReset();
   vi.mocked(startGeminiLogin).mockReset();
+  vi.mocked(startKimiLogin).mockReset();
   vi.mocked(upsertProviderHarnessEndpoint).mockReset();
   vi.mocked(verifyProviderForWorkspace).mockReset();
   trackFeatureUsed.mockReset();
@@ -1496,6 +1502,86 @@ describe("useHarnessAuthenticationController", () => {
     expect(requireController(controller).harnessAuthModal).toBeNull();
     expect(requireController(controller).providerError).toBeNull();
     expect(vi.mocked(selectProviderHarnessSource)).not.toHaveBeenCalled();
+  });
+
+  it("starts Kimi sign-in without auto-opening the browser and surfaces auth state while polling", async () => {
+    let controller: Controller | null = null;
+    const loginPoll = deferred<{
+      login_id: string;
+      auth_url?: string | null;
+      device_code?: string | null;
+      status: string;
+      error?: string | null;
+    }>();
+
+    vi.mocked(startKimiLogin).mockResolvedValue({
+      login_id: "kimi-login-1",
+      auth_url: "https://kimi.example.com/login/device",
+    });
+    vi.mocked(getKimiLogin).mockReturnValue(loginPoll.promise as ReturnType<typeof getKimiLogin>);
+    queueBootstrapRefresh(
+      "ws-test",
+      makeBootstrap({
+        kimi_accounts: {
+          active_account_id: "kimi-acct-1",
+          accounts: [
+            {
+              id: "kimi-acct-1",
+              label: "Kimi OAuth",
+              email: "kimi@example.com",
+              created_at: "2026-03-11T00:00:00Z",
+            },
+          ],
+        },
+      }),
+    );
+
+    render(createElement(ControllerHarness, {
+      onChange: (next) => {
+        controller = next;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(controller).not.toBeNull();
+    });
+
+    await act(async () => {
+      controller?.openHarnessAuthModal("kimi");
+      controller?.patchHarnessAuthModal({
+        stage: "subscription",
+        subscription_label: "Kimi Login",
+      });
+    });
+
+    let submitPromise: Promise<void> | undefined;
+    await act(async () => {
+      submitPromise = controller?.submitHarnessSubscriptionModal();
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(startKimiLogin)).toHaveBeenCalledWith("Kimi Login");
+    });
+
+    expect(vi.mocked(openExternalLink)).not.toHaveBeenCalled();
+    expect(requireController(controller).harnessAuthModal?.subscription_auth_url).toBe(
+      "https://kimi.example.com/login/device",
+    );
+
+    loginPoll.resolve({
+      login_id: "kimi-login-1",
+      auth_url: "https://kimi.example.com/login/device",
+      device_code: "KIMI-1234",
+      status: "success",
+    });
+
+    await act(async () => {
+      await submitPromise;
+    });
+
+    expect(requireController(controller).harnessAuthModal).toBeNull();
+    expect(requireController(controller).providerError).toBeNull();
+    expect(vi.mocked(selectProviderHarnessSource)).toHaveBeenCalledWith("kimi", "subscription", null);
   });
 
   it("suppresses stale api-key submit effects after switching providers", async () => {

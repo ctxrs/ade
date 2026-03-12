@@ -9,7 +9,7 @@ use agent_client_protocol::{
     InitializeRequest, McpServer, McpServerStdio, NewSessionRequest, PermissionOptionKind,
     PromptRequest, ProtocolVersion, RequestPermissionOutcome, RequestPermissionRequest,
     RequestPermissionResponse, ResourceLink, SelectedPermissionOutcome, SessionModeState,
-    SessionNotification, SetSessionModeRequest, TextContent,
+    SessionNotification, SetSessionModeRequest, SetSessionModelRequest, TextContent,
 };
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
@@ -31,6 +31,7 @@ use crate::translate::Translator;
 struct SessionState {
     translator: Translator,
     cwd: PathBuf,
+    model_catalog: ModelCatalogState,
     active_turn_id: Option<String>,
     last_turn_update_at: Option<Instant>,
     turn_update_count: u64,
@@ -366,6 +367,27 @@ fn requested_acp_session_mode() -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn apply_model_catalog_current_model(
+    model_catalog: &mut ModelCatalogState,
+    current_model_id: &str,
+) {
+    model_catalog.current_model_id = Some(current_model_id.to_string());
+    if let Some(payload) = model_catalog
+        .payload
+        .as_mut()
+        .and_then(Value::as_object_mut)
+    {
+        payload.insert(
+            "currentModelId".to_string(),
+            Value::String(current_model_id.to_string()),
+        );
+        payload.insert(
+            "current_model_id".to_string(),
+            Value::String(current_model_id.to_string()),
+        );
+    }
+}
+
 fn should_apply_requested_session_mode(
     modes: Option<&SessionModeState>,
     requested_mode: &str,
@@ -398,6 +420,69 @@ fn should_apply_requested_session_mode(
     anyhow::bail!(
         "CTX_PROVIDER_MODE='{}' requested but ACP agent advertised modes [{}]",
         requested_mode,
+        available
+    );
+}
+
+async fn maybe_apply_requested_session_model(
+    acp: &ClientSideConnection,
+    acp_session_id: &str,
+    model_catalog: &mut ModelCatalogState,
+    requested_model: Option<&str>,
+) -> Result<()> {
+    let Some(requested_model) = requested_model
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+
+    if !should_apply_requested_session_model(model_catalog, requested_model)? {
+        return Ok(());
+    }
+
+    acp.set_session_model(SetSessionModelRequest::new(
+        acp_session_id.to_string(),
+        requested_model.to_string(),
+    ))
+    .await
+    .map_err(|err| anyhow!("acp set_session_model '{}' failed: {err}", requested_model))?;
+    apply_model_catalog_current_model(model_catalog, requested_model);
+    Ok(())
+}
+
+fn should_apply_requested_session_model(
+    model_catalog: &ModelCatalogState,
+    requested_model: &str,
+) -> Result<bool> {
+    if model_catalog.current_model_id.as_deref() == Some(requested_model) {
+        return Ok(false);
+    }
+
+    if model_catalog.models.is_empty() {
+        anyhow::bail!(
+            "model '{}' requested but ACP agent did not advertise session models",
+            requested_model
+        );
+    }
+
+    if model_catalog
+        .models
+        .iter()
+        .any(|model| model.id == requested_model)
+    {
+        return Ok(true);
+    }
+
+    let available = model_catalog
+        .models
+        .iter()
+        .map(|model| model.id.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    anyhow::bail!(
+        "model '{}' requested but ACP agent advertised models [{}]",
+        requested_model,
         available
     );
 }
@@ -535,6 +620,10 @@ async fn handle_command(
             config: crp_config,
         } => {
             let crp_session_id = session_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+            let requested_model = crp_config
+                .as_ref()
+                .and_then(|cfg| cfg.model.as_deref())
+                .map(str::to_string);
             let cwd = crp_config
                 .as_ref()
                 .and_then(|cfg| cfg.cwd.clone())
@@ -575,7 +664,14 @@ async fn handle_command(
             }
 
             let acp_session_id = response.session_id.to_string();
-            let model_catalog = acp_session_models_to_catalog(response.models.as_ref());
+            let mut model_catalog = acp_session_models_to_catalog(response.models.as_ref());
+            maybe_apply_requested_session_model(
+                acp,
+                &acp_session_id,
+                &mut model_catalog,
+                requested_model.as_deref(),
+            )
+            .await?;
 
             let mut sessions_guard = sessions.lock().await;
             if sessions_guard.by_crp.contains_key(&crp_session_id) {
@@ -593,6 +689,7 @@ async fn handle_command(
                 SessionState {
                     translator,
                     cwd,
+                    model_catalog: model_catalog.clone(),
                     active_turn_id: None,
                     last_turn_update_at: None,
                     turn_update_count: 0,
@@ -615,6 +712,7 @@ async fn handle_command(
             turn_id,
             items,
             prompt,
+            model,
             cwd,
             ..
         } => {
@@ -640,6 +738,7 @@ async fn handle_command(
                 state.cwd = cwd;
             }
             let prompt_cwd = state.cwd.clone();
+            let mut prompt_model_catalog = state.model_catalog.clone();
 
             let turn_id = turn_id.unwrap_or_else(|| Uuid::new_v4().to_string());
             let message_id = Uuid::new_v4().to_string();
@@ -661,6 +760,22 @@ async fn handle_command(
                 })
                 .await;
 
+            drop(sessions_guard);
+
+            maybe_apply_requested_session_model(
+                acp,
+                &acp_session_id,
+                &mut prompt_model_catalog,
+                model.as_deref(),
+            )
+            .await?;
+
+            let mut sessions_guard = sessions.lock().await;
+            let state = sessions_guard
+                .by_acp
+                .get_mut(&acp_session_id)
+                .ok_or_else(|| anyhow!("unknown provider session: {acp_session_id}"))?;
+            state.model_catalog = prompt_model_catalog.clone();
             drop(sessions_guard);
 
             let prompt_blocks = build_prompt_blocks(prompt, items, Some(&prompt_cwd))
@@ -763,6 +878,84 @@ async fn handle_command(
                     } else {
                         emit_auth_error_notice(events_tx, bridge_state, &crp_session_id, err).await;
                     }
+                }
+            }
+        }
+        CrpCommand::SessionSetModel {
+            session_id,
+            model_id,
+        } => {
+            let crp_session_id =
+                session_id.ok_or_else(|| anyhow!("session.set_model missing session_id"))?;
+            let model_id = model_id.ok_or_else(|| anyhow!("session.set_model missing model_id"))?;
+
+            let mut sessions_guard = sessions.lock().await;
+            let acp_session_id = sessions_guard
+                .by_crp
+                .get(&crp_session_id)
+                .cloned()
+                .ok_or_else(|| anyhow!("unknown session_id: {crp_session_id}"))?;
+            let state = sessions_guard
+                .by_acp
+                .get_mut(&acp_session_id)
+                .ok_or_else(|| anyhow!("unknown provider session: {acp_session_id}"))?;
+            let mut next_model_catalog = state.model_catalog.clone();
+            drop(sessions_guard);
+
+            match maybe_apply_requested_session_model(
+                acp,
+                &acp_session_id,
+                &mut next_model_catalog,
+                Some(model_id.as_str()),
+            )
+            .await
+            {
+                Ok(()) => {
+                    let mut sessions_guard = sessions.lock().await;
+                    let state = sessions_guard
+                        .by_acp
+                        .get_mut(&acp_session_id)
+                        .ok_or_else(|| anyhow!("unknown provider session: {acp_session_id}"))?;
+                    state.model_catalog = next_model_catalog;
+                    drop(sessions_guard);
+                    let _ = events_tx
+                        .send(CrpEnvelope {
+                            channel: CrpChannel::Control,
+                            event: CrpEvent::SessionNotice {
+                                session_id: crp_session_id,
+                                turn_id: None,
+                                code: "session_model_updated".to_string(),
+                                severity: Some("info".to_string()),
+                                message: Some(format!("session model updated to {model_id}")),
+                                details: Some(json!({
+                                    "model_id": model_id,
+                                    "provider_session_id": acp_session_id,
+                                })),
+                                transient: Some(false),
+                            },
+                        })
+                        .await;
+                }
+                Err(err) => {
+                    let _ = events_tx
+                        .send(CrpEnvelope {
+                            channel: CrpChannel::Control,
+                            event: CrpEvent::SessionNotice {
+                                session_id: crp_session_id,
+                                turn_id: None,
+                                code: "session_model_update_failed".to_string(),
+                                severity: Some("error".to_string()),
+                                message: Some(format!(
+                                    "acp set_session_model '{model_id}' failed: {err}"
+                                )),
+                                details: Some(json!({
+                                    "model_id": model_id,
+                                    "provider_session_id": acp_session_id,
+                                })),
+                                transient: Some(false),
+                            },
+                        })
+                        .await;
                 }
             }
         }
@@ -1169,6 +1362,92 @@ mod tests {
                 .as_ref()
                 .and_then(|value| value.pointer("/currentModelId")),
             Some(&json!("cursor-auto"))
+        );
+    }
+
+    #[test]
+    fn requested_session_model_skips_when_already_selected() {
+        let catalog =
+            acp_session_models_to_catalog(Some(&agent_client_protocol::SessionModelState::new(
+                "kimi-k2.5",
+                vec![
+                    agent_client_protocol::ModelInfo::new("kimi-k2.5", "Kimi K2.5"),
+                    agent_client_protocol::ModelInfo::new(
+                        "kimi-k2.5-thinking",
+                        "Kimi K2.5 Thinking",
+                    ),
+                ],
+            )));
+
+        assert!(!should_apply_requested_session_model(&catalog, "kimi-k2.5")
+            .expect("matching model should skip"));
+    }
+
+    #[test]
+    fn requested_session_model_requires_advertised_models() {
+        let err = should_apply_requested_session_model(&ModelCatalogState::default(), "kimi-k2.5")
+            .expect_err("missing model catalog should fail");
+        assert!(
+            err.to_string().contains("did not advertise session models"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn requested_session_model_requires_requested_model_to_exist() {
+        let catalog =
+            acp_session_models_to_catalog(Some(&agent_client_protocol::SessionModelState::new(
+                "kimi-k2.5",
+                vec![
+                    agent_client_protocol::ModelInfo::new("kimi-k2.5", "Kimi K2.5"),
+                    agent_client_protocol::ModelInfo::new(
+                        "kimi-k2.5-thinking",
+                        "Kimi K2.5 Thinking",
+                    ),
+                ],
+            )));
+        let err = should_apply_requested_session_model(&catalog, "kimi-k3")
+            .expect_err("unknown requested model should fail");
+        assert!(
+            err.to_string()
+                .contains("advertised models [kimi-k2.5, kimi-k2.5-thinking]"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn apply_model_catalog_current_model_updates_payload_and_current_model() {
+        let mut catalog =
+            acp_session_models_to_catalog(Some(&agent_client_protocol::SessionModelState::new(
+                "kimi-k2.5",
+                vec![
+                    agent_client_protocol::ModelInfo::new("kimi-k2.5", "Kimi K2.5"),
+                    agent_client_protocol::ModelInfo::new(
+                        "kimi-k2.5-thinking",
+                        "Kimi K2.5 Thinking",
+                    ),
+                ],
+            )));
+
+        apply_model_catalog_current_model(&mut catalog, "kimi-k2.5-thinking");
+
+        assert_eq!(
+            catalog.current_model_id.as_deref(),
+            Some("kimi-k2.5-thinking")
+        );
+        assert_eq!(
+            catalog
+                .payload
+                .as_ref()
+                .and_then(|value| value.pointer("/currentModelId")),
+            Some(&json!("kimi-k2.5-thinking"))
+        );
+        assert_eq!(
+            catalog
+                .payload
+                .as_ref()
+                .and_then(|value| value.pointer("/current_model_id")),
+            Some(&json!("kimi-k2.5-thinking"))
         );
     }
 

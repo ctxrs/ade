@@ -239,15 +239,31 @@ pub(crate) async fn set_session_model(
     )
     .await;
 
-    adapter
-        .set_session_model(session.id.0.to_string(), req.model_id.clone())
-        .await
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    if adapter.has_live_session(&session.id.0.to_string()).await {
+        adapter
+            .set_session_model(session.id.0.to_string(), req.model_id.clone())
+            .await
+            .map_err(|_| StatusCode::BAD_REQUEST)?;
+    }
+
+    let next_model_id = req.model_id.clone();
 
     store
-        .update_session_model(session_id, req.model_id)
+        .update_session_model(session_id, next_model_id.clone())
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let event = store
+        .append_session_event(
+            session_id,
+            None,
+            None,
+            SessionEventType::Init,
+            serde_json::json!({"current_model_id": next_model_id}),
+        )
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    state.publish_event(event).await;
 
     let updated = store
         .get_session(session_id)

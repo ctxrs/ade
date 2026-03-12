@@ -61,14 +61,12 @@ export function subscriptionPrimaryActionLabel(modal: HarnessAuthModalState): st
     || modal.provider_id === "amp"
     || modal.provider_id === "cursor"
     || modal.provider_id === "gemini"
+    || modal.provider_id === "kimi"
     || modal.provider_id === "qwen"
     || modal.provider_id === "mistral"
     || (modal.provider_id === "claude-crp" && !claudeSetupTokenProvided(modal))
   ) {
     return modal.provider_id === "gemini" ? "Sign in with Google" : "Start sign-in";
-  }
-  if (modal.provider_id === "kimi") {
-    return "Sign in with Kimi";
   }
   if (modal.provider_id === "copilot") {
     return "Sign in with GitHub";
@@ -86,8 +84,8 @@ export function shouldAutoStartSubscriptionFlow(providerId: string): boolean {
   return providerId === "codex"
     || providerId === "claude-crp"
     || providerId === "gemini"
-    || providerId === "kimi"
     || providerId === "qwen"
+    || providerId === "kimi"
     || providerId === "cursor"
     || providerId === "amp"
     || providerId === "mistral"
@@ -206,6 +204,8 @@ export function HarnessAuthenticationModal({
                       subscription_auth_token_json: "",
                       subscription_oauth_creds_json: "",
                       subscription_google_accounts_json: "",
+                      subscription_device_code: null,
+                      subscription_auth_url: null,
                     });
                     if (shouldAutoStartSubscriptionFlow(harnessAuthModal.provider_id)) {
                       void submitHarnessSubscriptionModal();
@@ -236,6 +236,8 @@ export function HarnessAuthenticationModal({
                       subscription_auth_token_json: "",
                       subscription_oauth_creds_json: "",
                       subscription_google_accounts_json: "",
+                      subscription_device_code: null,
+                      subscription_auth_url: null,
                       base_url: modalRequiresBaseUrl
                         ? getHarnessEndpointProviderPreset(harnessAuthModal.endpoint_provider_id).base_url
                           ?? harnessAuthModal.base_url
@@ -262,10 +264,10 @@ export function HarnessAuthenticationModal({
                       ? "Sign in with Qwen in your browser to capture managed OAuth credentials automatically."
                       : harnessAuthModal.provider_id === "amp"
                         ? "Sign in with Amp in your browser to complete OAuth on this host."
-                        : harnessAuthModal.provider_id === "mistral"
-                          ? "Sign in with Mistral in your browser to complete managed OAuth on this host."
+                          : harnessAuthModal.provider_id === "mistral"
+                            ? "Sign in with Mistral in your browser to complete managed OAuth on this host."
                           : harnessAuthModal.provider_id === "kimi"
-                            ? "Paste Kimi credentials JSON for a managed Kimi share directory."
+                            ? "Start Kimi sign-in here, then complete the provider flow in your browser with the link below."
                           : harnessAuthModal.provider_id === "copilot"
                               ? "Paste a GitHub token with Copilot entitlement for the managed Copilot account."
                               : harnessAuthModal.provider_id === "cursor"
@@ -313,44 +315,28 @@ export function HarnessAuthenticationModal({
                     autoFocus
                   />
                 </label>
-                <label className="settings-harness-modal-label">
-                  Email (optional)
-                  <input
-                    className="settings-control"
-                    value={harnessAuthModal.subscription_email}
-                    onChange={(e) => patchHarnessAuthModal({ subscription_email: e.target.value })}
-                    placeholder="you@example.com"
-                  />
-                </label>
-                <label className="settings-harness-modal-label">
-                  Provider (optional)
-                  <input
-                    className="settings-control"
-                    value={harnessAuthModal.subscription_provider}
-                    onChange={(e) => patchHarnessAuthModal({ subscription_provider: e.target.value })}
-                    placeholder="moonshot"
-                  />
-                </label>
-                <label className="settings-harness-modal-label">
-                  Credentials JSON
-                  <textarea
-                    className="settings-control settings-control-wide"
-                    value={harnessAuthModal.subscription_credentials_json}
-                    onChange={(e) => patchHarnessAuthModal({ subscription_credentials_json: e.target.value })}
-                    placeholder='{"access_token":"...","refresh_token":"..."}'
-                    rows={6}
-                  />
-                </label>
-                <label className="settings-harness-modal-label">
-                  Config TOML (optional)
-                  <textarea
-                    className="settings-control settings-control-wide"
-                    value={harnessAuthModal.subscription_config_toml}
-                    onChange={(e) => patchHarnessAuthModal({ subscription_config_toml: e.target.value })}
-                    placeholder='current_provider = "moonshot"'
-                    rows={4}
-                  />
-                </label>
+                {harnessAuthModal.subscription_auth_url ? (
+                  <div className="settings-row-desc">
+                    Continue the Kimi sign-in flow here:{" "}
+                    <ExternalLink
+                      className="settings-harness-help-link"
+                      href={harnessAuthModal.subscription_auth_url}
+                    >
+                      Open Kimi sign-in
+                    </ExternalLink>
+                    .
+                  </div>
+                ) : null}
+                {harnessAuthModal.subscription_device_code ? (
+                  <label className="settings-harness-modal-label">
+                    Kimi device code
+                    <input
+                      className="settings-control settings-control-wide"
+                      value={harnessAuthModal.subscription_device_code}
+                      readOnly
+                    />
+                  </label>
+                ) : null}
               </>
             ) : null}
             {harnessAuthModal.provider_id === "copilot" ? (
@@ -411,6 +397,8 @@ export function HarnessAuthenticationModal({
                     subscription_auth_token_json: "",
                     subscription_oauth_creds_json: "",
                     subscription_google_accounts_json: "",
+                    subscription_device_code: null,
+                    subscription_auth_url: null,
                   });
                 }}
                 disabled={harnessAuthModal.subscription_busy}
@@ -608,6 +596,8 @@ export function HarnessAuthenticationModal({
                     location: "",
                     manual_model_ids: "",
                     subscription_status: null,
+                    subscription_device_code: null,
+                    subscription_auth_url: null,
                   });
                 }}
               >

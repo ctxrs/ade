@@ -64,8 +64,8 @@ describe("shouldShowLoadingProviderModels", () => {
     })).toBe(true);
   });
 
-  it("keeps gemini and qwen in a loading state while discovery is pending", () => {
-    for (const providerId of ["gemini", "qwen"]) {
+  it("keeps amp, gemini, kimi, and qwen in a loading state while discovery is pending", () => {
+    for (const providerId of ["amp", "gemini", "kimi", "qwen"]) {
       expect(shouldShowLoadingProviderModels(providerId, {
         provider_id: providerId,
         workspace_id: "ws-test",

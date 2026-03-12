@@ -82,9 +82,9 @@ pub(crate) use self::gemini::{
     write_gemini_auth_settings,
 };
 pub use self::kimi::{
-    add_kimi_account, kimi_env_for_account, kimi_env_for_active_account, load_kimi_registry,
-    normalize_kimi_label, remove_kimi_account, save_kimi_registry, set_active_kimi_account,
-    KimiAccountEntry, KimiAccountRegistry,
+    add_kimi_account, add_kimi_oauth_account, kimi_env_for_account, kimi_env_for_active_account,
+    load_kimi_registry, normalize_kimi_label, remove_kimi_account, save_kimi_registry,
+    set_active_kimi_account, KimiAccountEntry, KimiAccountRegistry, KimiLoginStatus,
 };
 pub use self::mistral::{
     clear_mistral_runtime_home, ensure_mistral_runtime_home, load_mistral_registry,
@@ -119,6 +119,7 @@ pub const CLAUDE_CREDENTIAL_KIND_CLAUDE_AI_OAUTH: &str = "claude-ai-oauth";
 pub const GEMINI_CREDENTIAL_KIND_OAUTH_PERSONAL: &str = "oauth-personal";
 pub const QWEN_CREDENTIAL_KIND_OAUTH: &str = "oauth";
 pub const KIMI_CREDENTIAL_KIND_CREDENTIALS_JSON: &str = "credentials-json";
+pub const KIMI_CREDENTIAL_KIND_OAUTH: &str = "oauth";
 pub const MISTRAL_CREDENTIAL_KIND_BROWSER_OAUTH: &str = "browser-oauth";
 pub const COPILOT_CREDENTIAL_KIND_GH_TOKEN: &str = "gh-token";
 pub const CURSOR_CREDENTIAL_KIND_API_KEY: &str = "api-key";

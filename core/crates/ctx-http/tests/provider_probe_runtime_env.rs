@@ -8,9 +8,11 @@ use axum::http::StatusCode;
 use ctx_http::api;
 use ctx_http::daemon::AppState;
 use ctx_http::installer::{
-    save_agent_server_config, AgentServerCommand, AgentServerConfigFile, ManagedInstallMetadata,
+    load_agent_server_config, save_agent_server_config, AgentServerCommand, ManagedInstallMetadata,
 };
-use ctx_http::provider_accounts::{add_copilot_account, add_gemini_account};
+use ctx_http::provider_accounts::{
+    add_copilot_account, add_gemini_account, add_kimi_account, upsert_amp_account,
+};
 use ctx_providers::adapters::{ProviderAdapter, ProviderHealth, ProviderStatus};
 use ctx_store::StoreManager;
 
@@ -243,8 +245,10 @@ async fn seed_runtime_and_status(
     runtime_cmd: String,
     dep_bin_rel: String,
 ) {
-    let dep_id = "runtime-node-host".to_string();
-    let mut cfg = AgentServerConfigFile::default();
+    let dep_id = format!("runtime-node-host-{provider_id}");
+    let mut cfg = load_agent_server_config(&state.core.data_root)
+        .await
+        .unwrap_or_default();
     cfg.providers.insert(
         provider_id.to_string(),
         AgentServerCommand {
@@ -382,6 +386,188 @@ async fn provider_options_probe_uses_managed_dependency_path() {
             .and_then(serde_json::Value::as_str),
         Some("fixture-model"),
         "expected fixture model probe result: {body:#?}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn kimi_provider_options_expose_live_runtime_catalog_and_bootstrap_stays_hydratable() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
+    let state = app_state(data_dir.path()).await;
+    let app = api::router(state.clone());
+
+    add_kimi_account(
+        data_dir.path(),
+        Some("Kimi Test".to_string()),
+        None,
+        r#"{"api_key":"kimi-key"}"#.to_string(),
+        None,
+        Some("kimi@example.com".to_string()),
+    )
+    .await
+    .expect("add kimi account");
+
+    let (bridge_cmd, bridge_dep_bin_rel) =
+        setup_runtime_command_with_managed_interpreter(data_dir.path(), "acp-crp-bridge");
+    seed_runtime_and_status(&state, "acp-crp-bridge", bridge_cmd, bridge_dep_bin_rel).await;
+    let (runtime_cmd, dep_bin_rel) =
+        setup_runtime_command_with_managed_interpreter(data_dir.path(), "kimi");
+    seed_runtime_and_status(&state, "kimi", runtime_cmd, dep_bin_rel).await;
+
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let (status, options): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::GET,
+        format!("/api/workspaces/{}/providers/kimi/options", ws.id.0),
+        None,
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "options request failed: {options:#?}"
+    );
+    assert_eq!(
+        options.get("probe_ok").and_then(serde_json::Value::as_bool),
+        Some(true),
+        "expected probe_ok=true for kimi runtime discovery: {options:#?}"
+    );
+    assert_eq!(
+        options
+            .get("has_active_auth")
+            .and_then(serde_json::Value::as_bool),
+        Some(true),
+        "expected active kimi auth to remain visible in provider options: {options:#?}"
+    );
+    assert_eq!(
+        options
+            .pointer("/models/current_model_id")
+            .and_then(serde_json::Value::as_str),
+        Some("fixture-model"),
+        "expected kimi provider options to expose the live runtime model: {options:#?}"
+    );
+    assert_eq!(
+        options
+            .pointer("/models/meta/catalog_source")
+            .and_then(serde_json::Value::as_str),
+        Some("runtime_probe_live"),
+        "expected kimi provider options to advertise a live runtime catalog: {options:#?}"
+    );
+
+    let (status, bootstrap): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::GET,
+        format!("/api/workspaces/{}/providers/bootstrap", ws.id.0),
+        None,
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "bootstrap request failed: {bootstrap:#?}"
+    );
+    assert_eq!(
+        bootstrap
+            .pointer("/provider_options/kimi/has_active_auth")
+            .and_then(serde_json::Value::as_bool),
+        Some(true),
+        "expected bootstrap to keep kimi marked as authenticated for web hydration: {bootstrap:#?}"
+    );
+    assert_eq!(
+        bootstrap
+            .pointer("/provider_options/kimi/source/selected_source_kind")
+            .and_then(serde_json::Value::as_str),
+        Some("subscription"),
+        "expected bootstrap to keep kimi on the subscription discovery path: {bootstrap:#?}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn amp_provider_options_include_live_runtime_model_catalog() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
+    let state = app_state(data_dir.path()).await;
+    let app = api::router(state.clone());
+
+    upsert_amp_account(
+        data_dir.path(),
+        Some("Amp Test".to_string()),
+        Some("amp@example.com".to_string()),
+    )
+    .await
+    .expect("upsert amp account");
+
+    let (bridge_cmd, bridge_dep_bin_rel) =
+        setup_runtime_command_with_managed_interpreter(data_dir.path(), "acp-crp-bridge");
+    seed_runtime_and_status(&state, "acp-crp-bridge", bridge_cmd, bridge_dep_bin_rel).await;
+    let (runtime_cmd, dep_bin_rel) =
+        setup_runtime_command_with_managed_interpreter(data_dir.path(), "amp");
+    seed_runtime_and_status(&state, "amp", runtime_cmd, dep_bin_rel).await;
+
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let (status, body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::GET,
+        format!("/api/workspaces/{}/providers/amp/options", ws.id.0),
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "options request failed: {body:#?}");
+    assert_eq!(
+        body.get("probe_ok").and_then(serde_json::Value::as_bool),
+        Some(true),
+        "expected probe_ok=true for amp live discovery fixture: {body:#?}"
+    );
+    assert_eq!(
+        body.get("has_active_auth")
+            .and_then(serde_json::Value::as_bool),
+        Some(true),
+        "expected has_active_auth=true for active amp account: {body:#?}"
+    );
+    assert_eq!(
+        body.pointer("/models/current_model_id")
+            .and_then(serde_json::Value::as_str),
+        Some("fixture-model"),
+        "expected fixture model probe result for amp: {body:#?}"
+    );
+    assert_eq!(
+        body.pointer("/models/meta/catalog_source")
+            .and_then(serde_json::Value::as_str),
+        Some("runtime_probe_live"),
+        "expected live runtime model catalog for amp: {body:#?}"
+    );
+
+    let (status, bootstrap): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::GET,
+        format!("/api/workspaces/{}/providers/bootstrap", ws.id.0),
+        None,
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "bootstrap request failed: {bootstrap:#?}"
+    );
+    assert_eq!(
+        bootstrap
+            .pointer("/provider_options/amp/has_active_auth")
+            .and_then(serde_json::Value::as_bool),
+        Some(true),
+        "expected bootstrap to keep amp marked as authenticated for web hydration: {bootstrap:#?}"
+    );
+    assert_eq!(
+        bootstrap
+            .pointer("/provider_options/amp/source/selected_source_kind")
+            .and_then(serde_json::Value::as_str),
+        Some("subscription"),
+        "expected bootstrap to keep amp on the subscription discovery path: {bootstrap:#?}"
     );
 }
 

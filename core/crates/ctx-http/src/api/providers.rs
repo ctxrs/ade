@@ -71,8 +71,9 @@ pub(super) use imports::{
 pub(super) use install::{dev_restart_providers, install_lsp_server, refresh_provider_matrix};
 pub(super) use login::{
     complete_claude_login, complete_codex_login, get_amp_login, get_claude_login, get_codex_login,
-    get_gemini_login, get_mistral_login, get_qwen_login, start_amp_login, start_claude_login,
-    start_codex_login, start_gemini_login, start_mistral_login, start_qwen_login,
+    get_gemini_login, get_kimi_login, get_mistral_login, get_qwen_login, start_amp_login,
+    start_claude_login, start_codex_login, start_gemini_login, start_kimi_login,
+    start_mistral_login, start_qwen_login,
 };
 pub(crate) use status::provider_status_for_target;
 pub(super) use status::{get_provider, get_provider_usage, list_providers};

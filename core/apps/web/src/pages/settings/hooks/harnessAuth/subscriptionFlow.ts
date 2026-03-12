@@ -6,6 +6,7 @@ import {
   getCodexLogin,
   getCursorLogin,
   getGeminiLogin,
+  getKimiLogin,
   getMistralLogin,
   getQwenLogin,
   startAmpLogin,
@@ -13,16 +14,15 @@ import {
   startCodexLogin,
   startCursorLogin,
   startGeminiLogin,
+  startKimiLogin,
   startMistralLogin,
   startQwenLogin,
   upsertClaudeAccount,
   upsertCopilotAccount,
-  upsertKimiAccount,
   type ClaudeAccountsResponse,
   type CodexAccountsResponse,
   type CopilotAccountsResponse,
   type GeminiAccountsResponse,
-  type KimiAccountsResponse,
   type MistralAccountsResponse,
   type QwenAccountsResponse,
 } from "../../../../api/client";
@@ -41,6 +41,7 @@ import {
   QWEN_LOGIN_POLL_ATTEMPTS,
   QWEN_LOGIN_POLL_INTERVAL_MS,
   messageFromError,
+  shouldAutoOpenKimiAuthUrl,
   shouldOpenPolledAuthUrlForStatus,
   shouldOpenPolledClaudeAuthUrl,
   takeNextAuthUrlToOpen,
@@ -60,18 +61,21 @@ type BrowserLoginOutcome = {
 type BrowserLoginStatus = {
   status: string;
   auth_url?: string | null;
+  device_code?: string | null;
   error?: string | null;
 };
 
 type BrowserLoginDefinition = {
-  providerId: "gemini" | "qwen" | "cursor" | "amp" | "mistral";
+  providerId: "gemini" | "qwen" | "cursor" | "kimi" | "amp" | "mistral";
   waitingMessage: string;
   timeoutMessage: string;
-  startLogin: (label?: string) => Promise<{ login_id: string; auth_url?: string | null }>;
+  startLogin: (label?: string) => Promise<{ login_id: string; auth_url?: string | null; device_code?: string | null }>;
   getLogin: (loginId: string) => Promise<BrowserLoginStatus>;
   maxAttempts: number;
   pollIntervalMs: number;
   refreshAccounts?: (opts?: RefreshAccountsOptions) => Promise<unknown>;
+  shouldAutoOpenAuthUrl?: (authUrl: string) => boolean;
+  syncBrowserLoginState?: (state: { authUrl: string | null; deviceCode: string | null }) => void;
 };
 
 type SubscriptionFlowDeps = {
@@ -94,11 +98,11 @@ type SubscriptionFlowDeps = {
   refreshClaudeAccounts: (opts?: RefreshAccountsOptions) => Promise<ClaudeAccountsResponse | null>;
   refreshGeminiAccounts: (opts?: RefreshAccountsOptions) => Promise<GeminiAccountsResponse | null>;
   refreshQwenAccounts: (opts?: RefreshAccountsOptions) => Promise<QwenAccountsResponse | null>;
+  refreshKimiAccounts: (opts?: RefreshAccountsOptions) => Promise<unknown>;
   refreshCursorAccounts: (opts?: RefreshAccountsOptions) => Promise<unknown>;
   refreshAmpAccounts: (opts?: RefreshAccountsOptions) => Promise<unknown>;
   refreshMistralAccounts: (opts?: RefreshAccountsOptions) => Promise<MistralAccountsResponse | null>;
   setClaudeAccounts: Dispatch<SetStateAction<ClaudeAccountsResponse | null>>;
-  setKimiAccounts: Dispatch<SetStateAction<KimiAccountsResponse | null>>;
   setCopilotAccounts: Dispatch<SetStateAction<CopilotAccountsResponse | null>>;
   openCodexAuthUrl: (
     url: string,
@@ -139,6 +143,11 @@ const refreshAccountsAfterFlow = async <TResponse>(
 ): Promise<TResponse | null> => {
   if (!refresh) return null;
   return refresh({ silent: !flow.isCurrent() });
+};
+
+const normalizeOptionalString = (value: string | null | undefined): string | null => {
+  const normalized = value?.trim() ?? "";
+  return normalized.length > 0 ? normalized : null;
 };
 
 const waitForCodexLoginOutcome = async (
@@ -194,6 +203,7 @@ const waitForBrowserLoginOutcome = async (params: {
   loginId: string;
   getStatus: (loginId: string) => Promise<BrowserLoginStatus>;
   onAuthUrl?: (authUrl: string) => Promise<void>;
+  onStatus?: (status: BrowserLoginStatus) => void;
   openedAuthUrl?: string | null;
   maxAttempts: number;
   intervalMs: number;
@@ -205,6 +215,7 @@ const waitForBrowserLoginOutcome = async (params: {
     try {
       const status = await params.getStatus(params.loginId);
       params.flow.throwIfCancelled();
+      params.onStatus?.(status);
       if (status.status === "success") return { status: "success" };
       if (status.status === "failed") return { status: "failed", error: status.error };
       if (status.status === "timeout") return { status: "timeout", error: status.error };
@@ -239,13 +250,21 @@ const runBrowserSubscriptionFlow = async (
   deps: SubscriptionFlowDeps,
   definition: BrowserLoginDefinition,
 ): Promise<void> => {
+  definition.syncBrowserLoginState?.({ authUrl: null, deviceCode: null });
   const label = deps.modal.subscription_label.trim();
   const login = await definition.startLogin(label ? label : undefined);
   deps.flow.throwIfCancelled();
 
   const initialAuthUrl = takeNextAuthUrlToOpen(login.auth_url, new Set<string>());
+  definition.syncBrowserLoginState?.({
+    authUrl: normalizeOptionalString(login.auth_url),
+    deviceCode: normalizeOptionalString(login.device_code),
+  });
   let initialAuthOpened = false;
-  if (initialAuthUrl) {
+  const shouldAutoOpenInitialAuthUrl = initialAuthUrl
+    ? (definition.shouldAutoOpenAuthUrl?.(initialAuthUrl) ?? true)
+    : false;
+  if (initialAuthUrl && shouldAutoOpenInitialAuthUrl) {
     initialAuthOpened = await openExternalAuthUrlForFlow(deps, initialAuthUrl);
     deps.flow.throwIfCancelled();
   }
@@ -262,7 +281,16 @@ const runBrowserSubscriptionFlow = async (
     loginId: login.login_id,
     getStatus: definition.getLogin,
     onAuthUrl: async (authUrl) => {
+      if (!(definition.shouldAutoOpenAuthUrl?.(authUrl) ?? true)) {
+        return;
+      }
       await openExternalAuthUrlForFlow(deps, authUrl);
+    },
+    onStatus: (status) => {
+      definition.syncBrowserLoginState?.({
+        authUrl: normalizeOptionalString(status.auth_url),
+        deviceCode: normalizeOptionalString(status.device_code),
+      });
     },
     openedAuthUrl: initialAuthUrl,
     maxAttempts: definition.maxAttempts,
@@ -402,30 +430,6 @@ const runClaudeSubscriptionFlow = async (deps: SubscriptionFlowDeps): Promise<vo
   setFlowStatus(deps, "Still waiting for completion. Keep this dialog open or retry.");
 };
 
-const runKimiSubscriptionFlow = async (deps: SubscriptionFlowDeps): Promise<void> => {
-  const credentialsJson = deps.modal.subscription_credentials_json.trim();
-  if (!credentialsJson) {
-    throw new Error("Credentials JSON is required.");
-  }
-
-  const provider = deps.modal.subscription_provider.trim();
-  const configToml = deps.modal.subscription_config_toml.trim();
-  const label = deps.modal.subscription_label.trim();
-  const email = deps.modal.subscription_email.trim();
-  const next = await upsertKimiAccount(credentialsJson, {
-    ...(label ? { label } : {}),
-    ...(provider ? { provider } : {}),
-    ...(configToml ? { configToml } : {}),
-    ...(email ? { email } : {}),
-  });
-
-  await deps.refreshBootstrapAfterMutation("kimi");
-  if (!deps.flow.isCurrent()) return;
-
-  deps.setKimiAccounts(next);
-  await finalizeSuccessfulSubscription(deps, "kimi");
-};
-
 const runCopilotSubscriptionFlow = async (deps: SubscriptionFlowDeps): Promise<void> => {
   const token = deps.modal.subscription_token.trim();
   if (!token) {
@@ -528,7 +532,23 @@ export const runHarnessSubscriptionFlow = async (deps: SubscriptionFlowDeps): Pr
         });
         return;
       case "kimi":
-        await runKimiSubscriptionFlow(deps);
+        await runBrowserSubscriptionFlow(deps, {
+          providerId: "kimi",
+          waitingMessage: "Open the Kimi sign-in link below and complete authentication in your browser...",
+          timeoutMessage: "Timed out waiting for Kimi sign-in completion. Retry.",
+          startLogin: startKimiLogin,
+          getLogin: getKimiLogin,
+          maxAttempts: GEMINI_LOGIN_POLL_ATTEMPTS,
+          pollIntervalMs: GEMINI_LOGIN_POLL_INTERVAL_MS,
+          refreshAccounts: deps.refreshKimiAccounts,
+          shouldAutoOpenAuthUrl: (authUrl) => shouldAutoOpenKimiAuthUrl() && authUrl.length > 0,
+          syncBrowserLoginState: ({ authUrl, deviceCode }) => {
+            deps.patchHarnessAuthModalForOperation(deps.flow, {
+              subscription_auth_url: authUrl,
+              subscription_device_code: deviceCode,
+            });
+          },
+        });
         return;
       case "copilot":
         await runCopilotSubscriptionFlow(deps);

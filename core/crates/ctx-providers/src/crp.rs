@@ -25,6 +25,8 @@ mod policy;
 mod probe;
 mod protocol;
 mod runtime;
+#[cfg(test)]
+mod tests;
 
 use self::config::{build_crp_session_config, build_prompt_items, split_model_id_and_effort};
 use self::normalize::{event_matches_session, event_turn_id, map_crp_event, CachedToolInput};
@@ -45,6 +47,7 @@ const CRP_MODEL_PROBE_TIMEOUT_CONTAINER: Duration = Duration::from_secs(45);
 const CRP_RUNTIME_LAUNCH_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const CRP_RUNTIME_LAUNCH_PROBE_TIMEOUT_CONTAINER: Duration = Duration::from_secs(5);
 const CRP_AUTH_EVENT_FORWARD_TIMEOUT: Duration = Duration::from_secs(60 * 10);
+const CRP_SESSION_MODEL_UPDATE_TIMEOUT: Duration = Duration::from_secs(5);
 const CODEX_CRP_DUMP_CODEX_EVENTS_ENV: &str = "CODEX_CRP_DUMP_CODEX_EVENTS_PATH";
 const CODEX_CRP_DUMP_CRP_EVENTS_ENV: &str = "CODEX_CRP_DUMP_CRP_EVENTS_PATH";
 
@@ -186,6 +189,64 @@ impl ProviderAdapter for Tier1CrpAdapter {
 
     async fn has_live_session(&self, session_key: &str) -> bool {
         self.pool.has_session(session_key).await
+    }
+
+    async fn set_session_model(&self, session_key: String, model_id: String) -> Result<()> {
+        let session = self.pool.require_open_session(&session_key).await?;
+        let mut rx = session.process.events.subscribe();
+        let mut shutdown_rx = session.process.shutdown.subscribe();
+        session
+            .process
+            .send(CrpCommand::SessionSetModel {
+                session_id: Some(session_key.clone()),
+                model_id: Some(model_id.clone()),
+            })
+            .await?;
+
+        tokio::time::timeout(CRP_SESSION_MODEL_UPDATE_TIMEOUT, async {
+            loop {
+                tokio::select! {
+                    _ = shutdown_rx.changed() => {
+                        let reason = shutdown_rx.borrow().clone().unwrap_or_else(|| "crp_shutdown".to_string());
+                        anyhow::bail!("CRP runtime shut down while setting model: {reason}");
+                    }
+                    recv = rx.recv() => {
+                        match recv {
+                            Ok(env) => {
+                                if !event_matches_session(&env.event, &session_key) {
+                                    continue;
+                                }
+                                if let CrpEvent::SessionNotice { code, message, details, .. } = env.event {
+                                    if code == "session_model_updated" {
+                                        let selected = details
+                                            .as_ref()
+                                            .and_then(|value| value.get("model_id"))
+                                            .and_then(|value| value.as_str())
+                                            .unwrap_or(model_id.as_str());
+                                        if selected == model_id {
+                                            return Ok(());
+                                        }
+                                    }
+                                    if code == "session_model_update_failed" {
+                                        let detail = message.unwrap_or_else(|| {
+                                            format!("provider rejected session model '{model_id}'")
+                                        });
+                                        anyhow::bail!("{detail}");
+                                    }
+                                }
+                            }
+                            Err(broadcast::error::RecvError::Lagged(_)) => {}
+                            Err(broadcast::error::RecvError::Closed) => {
+                                anyhow::bail!("CRP runtime closed while waiting for session model update");
+                            }
+                        }
+                    }
+                }
+            }
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("timed out waiting for session model update"))??;
+        Ok(())
     }
 
     async fn authenticate_session(
@@ -404,6 +465,19 @@ impl CrpSessionPool {
     async fn has_session(&self, session_key: &str) -> bool {
         let sessions = self.sessions.lock().await;
         sessions.contains_key(session_key)
+    }
+
+    async fn require_open_session(&self, session_key: &str) -> Result<Arc<CrpSession>> {
+        let sessions = self.sessions.lock().await;
+        let session = sessions
+            .get(session_key)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("provider session {session_key} is not live"))?;
+        drop(sessions);
+        if !session.opened.load(Ordering::SeqCst) {
+            anyhow::bail!("provider session {session_key} is not open");
+        }
+        Ok(session)
     }
 
     async fn restart(&self, reason: &str, mode: ProviderRestartMode) -> Result<()> {
