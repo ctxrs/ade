@@ -115,6 +115,7 @@ mod tools;
 
 // Public re-exports used by workspace consumers (e.g. ctx-specific runtimes).
 pub use function_tool::FunctionCallError;
+pub use tools::context::FunctionToolOutput;
 pub use tools::context::ToolInvocation;
 pub use tools::context::ToolOutput;
 pub use tools::context::ToolPayload;

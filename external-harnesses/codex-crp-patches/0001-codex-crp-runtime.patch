@@ -4176,16 +4176,17 @@ index 453091be2..50abdc394 100644
      "exec",
      "execpolicy",
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 871322869..b3160fe8f 100644
+index 871322869..b0ee7fa36 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
-@@ -112,6 +112,14 @@ pub mod spawn;
+@@ -112,6 +112,15 @@ pub mod spawn;
  pub mod state_db;
  pub mod terminal;
  mod tools;
 +
 +// Public re-exports used by workspace consumers (e.g. ctx-specific runtimes).
 +pub use function_tool::FunctionCallError;
++pub use tools::context::FunctionToolOutput;
 +pub use tools::context::ToolInvocation;
 +pub use tools::context::ToolOutput;
 +pub use tools::context::ToolPayload;
@@ -4360,7 +4361,7 @@ index ce6f8ea53..1c1a6ebdb 100644
  #[derive(Clone, Debug)]
  pub enum ToolPayload {
      Function {
-diff --git a/codex-rs/crp-runtime/BUILD.bazel b/codex-rs/crp-runtime/BUILD.bazel
+diff --git a/tmp/codex-patched-snap/codex-rs/crp-runtime/BUILD.bazel b/codex-rs/crp-runtime/BUILD.bazel
 new file mode 100644
 index 000000000..3b59a4d5a
 --- /dev/null
@@ -4373,7 +4374,7 @@ index 000000000..3b59a4d5a
 +    crate_name = "codex_crp",
 +    test_tags = ["no-sandbox"],
 +)
-diff --git a/codex-rs/crp-runtime/Cargo.toml b/codex-rs/crp-runtime/Cargo.toml
+diff --git a/tmp/codex-patched-snap/codex-rs/crp-runtime/Cargo.toml b/codex-rs/crp-runtime/Cargo.toml
 new file mode 100644
 index 000000000..68aac8ec4
 --- /dev/null
@@ -4418,7 +4419,7 @@ index 000000000..68aac8ec4
 +
 +[dev-dependencies]
 +pretty_assertions = { workspace = true }
-diff --git a/codex-rs/crp-runtime/README.md b/codex-rs/crp-runtime/README.md
+diff --git a/tmp/codex-patched-snap/codex-rs/crp-runtime/README.md b/codex-rs/crp-runtime/README.md
 new file mode 100644
 index 000000000..0da646210
 --- /dev/null
@@ -4475,7 +4476,7 @@ index 000000000..0da646210
 +
 +4) Run a sample task and confirm `tool.request`, `tool.output.delta`, and `tool.completed`
 +   events appear in the session stream.
-diff --git a/codex-rs/crp-runtime/docs/tool-name-and-tui-labels.md b/codex-rs/crp-runtime/docs/tool-name-and-tui-labels.md
+diff --git a/tmp/codex-patched-snap/codex-rs/crp-runtime/docs/tool-name-and-tui-labels.md b/codex-rs/crp-runtime/docs/tool-name-and-tui-labels.md
 new file mode 100644
 index 000000000..5b323410b
 --- /dev/null
@@ -4510,7 +4511,7 @@ index 000000000..5b323410b
 +| list_dir | Listing directory | Listed directory | Listing directory | Listed directory |
 +| test_sync_tool | Syncing tests | Synced tests | Syncing tests | Synced tests |
 +| dynamic tools | Running tool | Ran tool | Running tool | Ran tool |
-diff --git a/codex-rs/crp-runtime/scripts/dummy_daemon.py b/codex-rs/crp-runtime/scripts/dummy_daemon.py
+diff --git a/tmp/codex-patched-snap/codex-rs/crp-runtime/scripts/dummy_daemon.py b/codex-rs/crp-runtime/scripts/dummy_daemon.py
 new file mode 100644
 index 000000000..3d0413e11
 --- /dev/null
@@ -4584,7 +4585,7 @@ index 000000000..3d0413e11
 +
 +if __name__ == "__main__":
 +    raise SystemExit(main())
-diff --git a/codex-rs/crp-runtime/scripts/mock_client.sh b/codex-rs/crp-runtime/scripts/mock_client.sh
+diff --git a/tmp/codex-patched-snap/codex-rs/crp-runtime/scripts/mock_client.sh b/codex-rs/crp-runtime/scripts/mock_client.sh
 new file mode 100755
 index 000000000..3f62859d2
 --- /dev/null
@@ -4602,12 +4603,12 @@ index 000000000..3f62859d2
 +  sleep 1
 +  printf '%s\n' '{"type":"session.cancel","session_id":"mock-session"}'
 +} | "$crp_bin"
-diff --git a/codex-rs/crp-runtime/src/main.rs b/codex-rs/crp-runtime/src/main.rs
+diff --git a/tmp/codex-patched-snap/codex-rs/crp-runtime/src/main.rs b/codex-rs/crp-runtime/src/main.rs
 new file mode 100644
-index 000000000..20c2a0931
+index 000000000..8933f9850
 --- /dev/null
 +++ b/codex-rs/crp-runtime/src/main.rs
-@@ -0,0 +1,3540 @@
+@@ -0,0 +1,3581 @@
 +#![deny(clippy::print_stdout)]
 +
 +mod protocol;
@@ -4634,6 +4635,7 @@ index 000000000..20c2a0931
 +use codex_core::AuthManager;
 +use codex_core::CodexThread;
 +use codex_core::FunctionCallError;
++use codex_core::FunctionToolOutput;
 +use codex_core::NewThread;
 +use codex_core::SESSIONS_SUBDIR;
 +use codex_core::ThreadManager;
@@ -4657,6 +4659,7 @@ index 000000000..20c2a0931
 +use codex_protocol::items::AgentMessageItem;
 +use codex_protocol::items::TurnItem;
 +use codex_protocol::mcp::CallToolResult;
++use codex_protocol::models::McpToolOutput;
 +use codex_protocol::openai_models::ModelPreset;
 +use codex_protocol::openai_models::ReasoningEffort;
 +use codex_protocol::parse_command::ParsedCommand;
@@ -5333,6 +5336,45 @@ index 000000000..20c2a0931
 +    request_tx: mpsc::UnboundedSender<ToolBridgeRequest>,
 +}
 +
++enum BridgeToolOutput {
++    Function(FunctionToolOutput),
++    Mcp(McpToolOutput),
++}
++
++impl ToolOutput for BridgeToolOutput {
++    fn log_preview(&self) -> String {
++        match self {
++            Self::Function(output) => output.log_preview(),
++            Self::Mcp(output) => output.log_preview(),
++        }
++    }
++
++    fn success_for_logging(&self) -> bool {
++        match self {
++            Self::Function(output) => output.success_for_logging(),
++            Self::Mcp(output) => output.success_for_logging(),
++        }
++    }
++
++    fn to_response_item(
++        &self,
++        call_id: &str,
++        payload: &ToolPayload,
++    ) -> codex_protocol::models::ResponseInputItem {
++        match self {
++            Self::Function(output) => output.to_response_item(call_id, payload),
++            Self::Mcp(output) => output.to_response_item(call_id, payload),
++        }
++    }
++
++    fn code_mode_result(&self, payload: &ToolPayload) -> serde_json::Value {
++        match self {
++            Self::Function(output) => output.code_mode_result(payload),
++            Self::Mcp(output) => output.code_mode_result(payload),
++        }
++    }
++}
++
 +#[allow(dead_code)]
 +impl ExternalToolHandler {
 +    fn new(
@@ -5348,6 +5390,8 @@ index 000000000..20c2a0931
 +
 +#[async_trait]
 +impl ToolHandler for ExternalToolHandler {
++    type Output = BridgeToolOutput;
++
 +    fn kind(&self) -> ToolKind {
 +        ToolKind::Function
 +    }
@@ -5360,7 +5404,7 @@ index 000000000..20c2a0931
 +        true
 +    }
 +
-+    async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError> {
++    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
 +        let turn_id = invocation.turn_id().to_string();
 +        let ToolInvocation {
 +            call_id,
@@ -5973,10 +6017,9 @@ index 000000000..20c2a0931
 +                config.cli_auth_credentials_store_mode,
 +            );
 +            let thread_manager = ThreadManager::new(
-+                config.codex_home.clone(),
++                &config,
 +                auth_manager,
 +                SessionSource::Exec,
-+                config.model_catalog.clone(),
 +                collaboration_modes_config(&config),
 +            );
 +            let (presets, catalog_source) = thread_manager
@@ -6132,10 +6175,9 @@ index 000000000..20c2a0931
 +        config.cli_auth_credentials_store_mode,
 +    );
 +    let thread_manager = ThreadManager::new(
-+        config.codex_home.clone(),
++        &config,
 +        Arc::clone(&auth_manager),
 +        SessionSource::Exec,
-+        config.model_catalog.clone(),
 +        collaboration_modes_config(&config),
 +    );
 +    let default_model = thread_manager
@@ -6718,7 +6760,7 @@ index 000000000..20c2a0931
 +fn tool_output_from_result(
 +    result: ToolBridgeResult,
 +    payload: &ToolPayload,
-+) -> Result<ToolOutput, FunctionCallError> {
++) -> Result<BridgeToolOutput, FunctionCallError> {
 +    let ToolBridgeResult {
 +        status,
 +        output,
@@ -6730,24 +6772,24 @@ index 000000000..20c2a0931
 +        ToolPayload::Mcp { .. } => {
 +            if success {
 +                let call_tool_result = call_tool_result_from_value(output);
-+                Ok(ToolOutput::Mcp {
-+                    result: Ok(call_tool_result),
-+                })
++                Ok(BridgeToolOutput::Mcp(McpToolOutput::from_result(Ok(
++                    call_tool_result,
++                ))))
 +            } else {
 +                let message = error
 +                    .or_else(|| output_text.clone())
 +                    .unwrap_or_else(|| "tool error".to_string());
-+                Ok(ToolOutput::Mcp {
-+                    result: Err(message),
-+                })
++                Ok(BridgeToolOutput::Mcp(McpToolOutput::from_result(Err(
++                    message,
++                ))))
 +            }
 +        }
 +        _ => {
 +            let content = output_text.or_else(|| error.clone()).unwrap_or_default();
-+            Ok(ToolOutput::Function {
-+                body: codex_protocol::models::FunctionCallOutputBody::Text(content),
-+                success: Some(success),
-+            })
++            Ok(BridgeToolOutput::Function(FunctionToolOutput::from_text(
++                content,
++                Some(success),
++            )))
 +        }
 +    }
 +}
@@ -8148,7 +8190,7 @@ index 000000000..20c2a0931
 +        }
 +    }
 +}
-diff --git a/codex-rs/crp-runtime/src/protocol.rs b/codex-rs/crp-runtime/src/protocol.rs
+diff --git a/tmp/codex-patched-snap/codex-rs/crp-runtime/src/protocol.rs b/codex-rs/crp-runtime/src/protocol.rs
 new file mode 100644
 index 000000000..2a42bae80
 --- /dev/null
@@ -8627,7 +8669,7 @@ index 000000000..2a42bae80
 +        );
 +    }
 +}
-diff --git a/codex-rs/crp-runtime/testdata/message_delta_final.expected.jsonl b/codex-rs/crp-runtime/testdata/message_delta_final.expected.jsonl
+diff --git a/tmp/codex-patched-snap/codex-rs/crp-runtime/testdata/message_delta_final.expected.jsonl b/codex-rs/crp-runtime/testdata/message_delta_final.expected.jsonl
 new file mode 100644
 index 000000000..1f1c2cac3
 --- /dev/null
@@ -9154,7 +9196,7 @@ index 000000000..1f1c2cac3
 +{"v":1,"seq":519,"channel":"data","type":"message.delta","session_id":"replay_session","turn_id":"fixture-turn-1","message_id":"msg_05253661ee4744cb0169815e025f44819e8ffbfa139ac805dd","delta":" research"}
 +{"v":1,"seq":520,"channel":"data","type":"message.delta","session_id":"replay_session","turn_id":"fixture-turn-1","message_id":"msg_05253661ee4744cb0169815e025f44819e8ffbfa139ac805dd","delta":"."}
 +{"v":1,"seq":521,"channel":"control","type":"message.final","session_id":"replay_session","turn_id":"fixture-turn-1","message_id":"msg_05253661ee4744cb0169815e025f44819e8ffbfa139ac805dd","content":"This is the ctx monorepo: an Agentic Development Environment (ADE) that runs a local daemon to orchestrate coding agents over real workspaces, plus multiple clients and adapters. It’s built around a vendor‑neutral control plane for tasks, sessions, runs/turns, and structured context (ctx Packs), with support for different agent harnesses (Codex/Claude/Gemini/etc.) via adapters.\n\nKey areas you’ll see:\n- `core/` — main product code (daemon + clients + shared packages).\n- `harness-adapters/` and `external-harnesses/` — provider adapters and integrations.\n- `.ctx/ctx-pack/specs/` — the canonical specs that define domain model, APIs, UX invariants, etc.\n- `supabase/` — backend services for subscriptions/entitlements.\n- `docs/`, `partner-docs/`, `prior-art-analyses/` — supporting documentation and research."}
-diff --git a/codex-rs/crp-runtime/testdata/message_delta_final.input.jsonl b/codex-rs/crp-runtime/testdata/message_delta_final.input.jsonl
+diff --git a/tmp/codex-patched-snap/codex-rs/crp-runtime/testdata/message_delta_final.input.jsonl b/codex-rs/crp-runtime/testdata/message_delta_final.input.jsonl
 new file mode 100644
 index 000000000..35adfd9be
 --- /dev/null
@@ -9682,7 +9724,7 @@ index 000000000..35adfd9be
 +{"event":{"id":"fixture-turn-1","msg":{"delta":".","item_id":"msg_05253661ee4744cb0169815e025f44819e8ffbfa139ac805dd","thread_id":"019c2156-ce72-77e1-8698-0ba2c38c97b7","turn_id":"fixture-turn-1","type":"agent_message_content_delta"}},"i":836}
 +{"event":{"id":"fixture-turn-1","msg":{"item":{"content":[{"text":"This is the ctx monorepo: an Agentic Development Environment (ADE) that runs a local daemon to orchestrate coding agents over real workspaces, plus multiple clients and adapters. It’s built around a vendor‑neutral control plane for tasks, sessions, runs/turns, and structured context (ctx Packs), with support for different agent harnesses (Codex/Claude/Gemini/etc.) via adapters.\n\nKey areas you’ll see:\n- `core/` — main product code (daemon + clients + shared packages).\n- `harness-adapters/` and `external-harnesses/` — provider adapters and integrations.\n- `.ctx/ctx-pack/specs/` — the canonical specs that define domain model, APIs, UX invariants, etc.\n- `supabase/` — backend services for subscriptions/entitlements.\n- `docs/`, `partner-docs/`, `prior-art-analyses/` — supporting documentation and research.","type":"Text"}],"id":"msg_05253661ee4744cb0169815e025f44819e8ffbfa139ac805dd","type":"AgentMessage"},"thread_id":"019c2156-ce72-77e1-8698-0ba2c38c97b7","turn_id":"fixture-turn-1","type":"item_completed"}},"i":838}
 +{"event":{"id":"fixture-turn-1","msg":{"turn_id":"fixture-turn-1","last_agent_message":"This is the ctx monorepo: an Agentic Development Environment (ADE) that runs a local daemon to orchestrate coding agents over real workspaces, plus multiple clients and adapters. It’s built around a vendor‑neutral control plane for tasks, sessions, runs/turns, and structured context (ctx Packs), with support for different agent harnesses (Codex/Claude/Gemini/etc.) via adapters.\n\nKey areas you’ll see:\n- `core/` — main product code (daemon + clients + shared packages).\n- `harness-adapters/` and `external-harnesses/` — provider adapters and integrations.\n- `.ctx/ctx-pack/specs/` — the canonical specs that define domain model, APIs, UX invariants, etc.\n- `supabase/` — backend services for subscriptions/entitlements.\n- `docs/`, `partner-docs/`, `prior-art-analyses/` — supporting documentation and research.","type":"task_complete"}},"i":842}
-diff --git a/codex-rs/crp-runtime/testdata/wal_reasoning_title_then_body.input.jsonl b/codex-rs/crp-runtime/testdata/wal_reasoning_title_then_body.input.jsonl
+diff --git a/tmp/codex-patched-snap/codex-rs/crp-runtime/testdata/wal_reasoning_title_then_body.input.jsonl b/codex-rs/crp-runtime/testdata/wal_reasoning_title_then_body.input.jsonl
 new file mode 100644
 index 000000000..ddb0ebb15
 --- /dev/null
@@ -9692,7 +9734,7 @@ index 000000000..ddb0ebb15
 +{"id":"turn-1","msg":{"type":"reasoning_content_delta","thread_id":"thread-1","turn_id":"turn-1","item_id":"rs-1","delta":"**Planning to read context files**","summary_index":0}}
 +{"id":"turn-1","msg":{"type":"reasoning_content_delta","thread_id":"thread-1","turn_id":"turn-1","item_id":"rs-1","delta":"\n\nI'm preparing to list and read all files in .ctx/ctx-pack (agent-basics + specs) before doing anything else.","summary_index":0}}
 +{"id":"turn-1","msg":{"type":"reasoning_content_delta","thread_id":"thread-1","turn_id":"turn-1","item_id":"rs-1","delta":"**Planning to read context files**","summary_index":0}}
-diff --git a/codex-rs/crp-runtime/testdata/wal_title_only_no_trace.expected.jsonl b/codex-rs/crp-runtime/testdata/wal_title_only_no_trace.expected.jsonl
+diff --git a/tmp/codex-patched-snap/codex-rs/crp-runtime/testdata/wal_title_only_no_trace.expected.jsonl b/codex-rs/crp-runtime/testdata/wal_title_only_no_trace.expected.jsonl
 new file mode 100644
 index 000000000..d6de9df83
 --- /dev/null
@@ -9700,7 +9742,7 @@ index 000000000..d6de9df83
 @@ -0,0 +1,2 @@
 +{"v":1,"seq":1,"channel":"control","type":"session.opened","session_id":"replay_session","provider_session_id":null}
 +{"v":1,"seq":2,"channel":"control","type":"reasoning.summary","session_id":"replay_session","turn_id":"crp-512457e0-db50-47d9-9217-5aa99237e9aa","summary_index":0,"text":"Applying patch to add hello_world.txt","item_id":"rs_0ece40f3c989df4d01697c05db5818819e8b8a12bb89197472"}
-diff --git a/codex-rs/crp-runtime/testdata/wal_title_only_no_trace.input.jsonl b/codex-rs/crp-runtime/testdata/wal_title_only_no_trace.input.jsonl
+diff --git a/tmp/codex-patched-snap/codex-rs/crp-runtime/testdata/wal_title_only_no_trace.input.jsonl b/codex-rs/crp-runtime/testdata/wal_title_only_no_trace.input.jsonl
 new file mode 100644
 index 000000000..bf844c8b2
 --- /dev/null
@@ -9716,7 +9758,7 @@ index 000000000..bf844c8b2
 +{"i":7,"event":{"id":"crp-512457e0-db50-47d9-9217-5aa99237e9aa","msg":{"type":"reasoning_content_delta","turn_id":"crp-512457e0-db50-47d9-9217-5aa99237e9aa","thread_id":"019c0c76-60e7-7422-98e5-e347321726a5","item_id":"rs_0ece40f3c989df4d01697c05db5818819e8b8a12bb89197472","summary_index":0,"delta":"**"}}}
 +{"i":8,"event":{"id":"crp-512457e0-db50-47d9-9217-5aa99237e9aa","msg":{"type":"reasoning_content_delta","turn_id":"crp-512457e0-db50-47d9-9217-5aa99237e9aa","thread_id":"019c0c76-60e7-7422-98e5-e347321726a5","item_id":"rs_0ece40f3c989df4d01697c05db5818819e8b8a12bb89197472","summary_index":0,"delta":"**Applying patch to add hello_world.txt**"}}}
 +{"i":9,"event":{"id":"crp-512457e0-db50-47d9-9217-5aa99237e9aa","msg":{"type":"reasoning_content_delta","turn_id":"crp-512457e0-db50-47d9-9217-5aa99237e9aa","thread_id":"019c0c76-60e7-7422-98e5-e347321726a5","item_id":"rs_0ece40f3c989df4d01697c05db5818819e8b8a12bb89197472","summary_index":0,"delta":"**Applying patch to add hello_world.txt**"}}}
-diff --git a/codex-rs/crp-runtime/testdata/wal_title_then_body_trace_no_title.expected.jsonl b/codex-rs/crp-runtime/testdata/wal_title_then_body_trace_no_title.expected.jsonl
+diff --git a/tmp/codex-patched-snap/codex-rs/crp-runtime/testdata/wal_title_then_body_trace_no_title.expected.jsonl b/codex-rs/crp-runtime/testdata/wal_title_then_body_trace_no_title.expected.jsonl
 new file mode 100644
 index 000000000..daa2caf65
 --- /dev/null
@@ -9727,7 +9769,7 @@ index 000000000..daa2caf65
 +{"v":1,"seq":3,"channel":"data","type":"reasoning.trace","session_id":"replay_session","turn_id":"crp-0b356178-0666-4844-a72c-d47939f10367","chunk":"Confirmed","summary_index":0,"item_id":"rs_0a09e82cb36f9efb01697c05bb60a081a0847bcb800fe3cc6e"}
 +{"v":1,"seq":4,"channel":"data","type":"reasoning.trace","session_id":"replay_session","turn_id":"crp-0b356178-0666-4844-a72c-d47939f10367","chunk":" instructions","summary_index":0,"item_id":"rs_0a09e82cb36f9efb01697c05bb60a081a0847bcb800fe3cc6e"}
 +{"v":1,"seq":5,"channel":"data","type":"reasoning.trace.final","session_id":"replay_session","turn_id":"crp-0b356178-0666-4844-a72c-d47939f10367","content":"Confirmed instructions","summary_index":0,"item_id":"rs_0a09e82cb36f9efb01697c05bb60a081a0847bcb800fe3cc6e"}
-diff --git a/codex-rs/crp-runtime/testdata/wal_title_then_body_trace_no_title.input.jsonl b/codex-rs/crp-runtime/testdata/wal_title_then_body_trace_no_title.input.jsonl
+diff --git a/tmp/codex-patched-snap/codex-rs/crp-runtime/testdata/wal_title_then_body_trace_no_title.input.jsonl b/codex-rs/crp-runtime/testdata/wal_title_then_body_trace_no_title.input.jsonl
 new file mode 100644
 index 000000000..2fc0532a5
 --- /dev/null
@@ -9751,7 +9793,7 @@ index d6adf2c58..c4f85019d 100644
  pub mod request_user_input;
 +pub mod slash_commands;
  pub mod user_input;
-diff --git a/codex-rs/protocol/src/slash_commands.rs b/codex-rs/protocol/src/slash_commands.rs
+diff --git a/tmp/codex-patched-snap/codex-rs/protocol/src/slash_commands.rs b/codex-rs/protocol/src/slash_commands.rs
 new file mode 100644
 index 000000000..b4669645d
 --- /dev/null

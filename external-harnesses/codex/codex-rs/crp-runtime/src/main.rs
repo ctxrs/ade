@@ -24,6 +24,7 @@ use codex_core::ARCHIVED_SESSIONS_SUBDIR;
 use codex_core::AuthManager;
 use codex_core::CodexThread;
 use codex_core::FunctionCallError;
+use codex_core::FunctionToolOutput;
 use codex_core::NewThread;
 use codex_core::SESSIONS_SUBDIR;
 use codex_core::ThreadManager;
@@ -47,6 +48,7 @@ use codex_protocol::items::AgentMessageContent;
 use codex_protocol::items::AgentMessageItem;
 use codex_protocol::items::TurnItem;
 use codex_protocol::mcp::CallToolResult;
+use codex_protocol::models::McpToolOutput;
 use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::parse_command::ParsedCommand;
@@ -723,6 +725,45 @@ struct ExternalToolHandler {
     request_tx: mpsc::UnboundedSender<ToolBridgeRequest>,
 }
 
+enum BridgeToolOutput {
+    Function(FunctionToolOutput),
+    Mcp(McpToolOutput),
+}
+
+impl ToolOutput for BridgeToolOutput {
+    fn log_preview(&self) -> String {
+        match self {
+            Self::Function(output) => output.log_preview(),
+            Self::Mcp(output) => output.log_preview(),
+        }
+    }
+
+    fn success_for_logging(&self) -> bool {
+        match self {
+            Self::Function(output) => output.success_for_logging(),
+            Self::Mcp(output) => output.success_for_logging(),
+        }
+    }
+
+    fn to_response_item(
+        &self,
+        call_id: &str,
+        payload: &ToolPayload,
+    ) -> codex_protocol::models::ResponseInputItem {
+        match self {
+            Self::Function(output) => output.to_response_item(call_id, payload),
+            Self::Mcp(output) => output.to_response_item(call_id, payload),
+        }
+    }
+
+    fn code_mode_result(&self, payload: &ToolPayload) -> serde_json::Value {
+        match self {
+            Self::Function(output) => output.code_mode_result(payload),
+            Self::Mcp(output) => output.code_mode_result(payload),
+        }
+    }
+}
+
 #[allow(dead_code)]
 impl ExternalToolHandler {
     fn new(
@@ -738,6 +779,8 @@ impl ExternalToolHandler {
 
 #[async_trait]
 impl ToolHandler for ExternalToolHandler {
+    type Output = BridgeToolOutput;
+
     fn kind(&self) -> ToolKind {
         ToolKind::Function
     }
@@ -750,7 +793,7 @@ impl ToolHandler for ExternalToolHandler {
         true
     }
 
-    async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError> {
+    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
         let turn_id = invocation.turn_id().to_string();
         let ToolInvocation {
             call_id,
@@ -1363,10 +1406,9 @@ async fn handle_command(
                 config.cli_auth_credentials_store_mode,
             );
             let thread_manager = ThreadManager::new(
-                config.codex_home.clone(),
+                &config,
                 auth_manager,
                 SessionSource::Exec,
-                config.model_catalog.clone(),
                 collaboration_modes_config(&config),
             );
             let (presets, catalog_source) = thread_manager
@@ -1522,10 +1564,9 @@ async fn open_session(
         config.cli_auth_credentials_store_mode,
     );
     let thread_manager = ThreadManager::new(
-        config.codex_home.clone(),
+        &config,
         Arc::clone(&auth_manager),
         SessionSource::Exec,
-        config.model_catalog.clone(),
         collaboration_modes_config(&config),
     );
     let default_model = thread_manager
@@ -2108,7 +2149,7 @@ fn tool_payload_to_value(payload: &ToolPayload) -> Option<serde_json::Value> {
 fn tool_output_from_result(
     result: ToolBridgeResult,
     payload: &ToolPayload,
-) -> Result<ToolOutput, FunctionCallError> {
+) -> Result<BridgeToolOutput, FunctionCallError> {
     let ToolBridgeResult {
         status,
         output,
@@ -2120,24 +2161,24 @@ fn tool_output_from_result(
         ToolPayload::Mcp { .. } => {
             if success {
                 let call_tool_result = call_tool_result_from_value(output);
-                Ok(ToolOutput::Mcp {
-                    result: Ok(call_tool_result),
-                })
+                Ok(BridgeToolOutput::Mcp(McpToolOutput::from_result(Ok(
+                    call_tool_result,
+                ))))
             } else {
                 let message = error
                     .or_else(|| output_text.clone())
                     .unwrap_or_else(|| "tool error".to_string());
-                Ok(ToolOutput::Mcp {
-                    result: Err(message),
-                })
+                Ok(BridgeToolOutput::Mcp(McpToolOutput::from_result(Err(
+                    message,
+                ))))
             }
         }
         _ => {
             let content = output_text.or_else(|| error.clone()).unwrap_or_default();
-            Ok(ToolOutput::Function {
-                body: codex_protocol::models::FunctionCallOutputBody::Text(content),
-                success: Some(success),
-            })
+            Ok(BridgeToolOutput::Function(FunctionToolOutput::from_text(
+                content,
+                Some(success),
+            )))
         }
     }
 }
