@@ -500,8 +500,9 @@ button.linklike:hover {
   text-decoration: none;
 }
 
-.markdown-modifier .ctx-file-link:hover,
-.markdown-modifier .code-token-path:hover {
+.markdown-modifier .ctx-markdown-link,
+.markdown-modifier .ctx-file-link,
+.markdown-modifier .code-token-path {
   color: var(--accent);
   text-decoration: underline;
   text-decoration-thickness: 1px;
@@ -509,7 +510,7 @@ button.linklike:hover {
   cursor: pointer;
 }
 
-.markdown-modifier .code-token-url:hover {
+.markdown-modifier .code-token-url {
   color: inherit;
   text-decoration: underline;
   text-decoration-thickness: 1px;

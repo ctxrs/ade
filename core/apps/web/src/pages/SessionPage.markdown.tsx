@@ -364,9 +364,10 @@ export function Markdown({
           a({ href, children, className, ...rest }) {
             const isContextOpen =
               typeof href === "string" && href.startsWith("ctx://open?");
+            const markdownLinkClassName = [className, "ctx-markdown-link"].filter(Boolean).join(" ");
             if (!isContextOpen) {
               return (
-                <ExternalLink href={href ?? ""} className={className} {...rest}>
+                <ExternalLink href={href ?? ""} className={markdownLinkClassName} {...rest}>
                   {children}
                 </ExternalLink>
               );
@@ -404,7 +405,7 @@ export function Markdown({
               }
             };
 
-            const combinedClassName = [className, "ctx-file-link"].filter(Boolean).join(" ");
+            const combinedClassName = [className, "ctx-markdown-link", "ctx-file-link"].filter(Boolean).join(" ");
             return (
               <a
                 data-allow-raw-anchor
