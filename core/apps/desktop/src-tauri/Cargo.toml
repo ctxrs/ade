@@ -68,5 +68,6 @@ stt = ["tauri-plugin-stt"]
 
 [patch.crates-io]
 tauri-plugin-automation = { path = "third_party/tauri-plugin-automation" }
+tauri-plugin-updater = { path = "third_party/tauri-plugin-updater" }
 
 [workspace]
