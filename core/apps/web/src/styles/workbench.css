@@ -4292,6 +4292,23 @@
   scrollbar-gutter: stable;
 }
 
+.wb-artifact-inline-markdown {
+  width: 100%;
+  max-height: 180px;
+  overflow: auto;
+  padding: 14px;
+  color: var(--text-strong);
+  scrollbar-gutter: stable;
+}
+
+.wb-artifact-inline-markdown > :first-child {
+  margin-top: 0;
+}
+
+.wb-artifact-inline-markdown > :last-child {
+  margin-bottom: 0;
+}
+
 .wb-artifact-meta {
   display: grid;
   gap: 4px;

@@ -2,7 +2,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Copy, Download, RotateCcw, X, ZoomIn, ZoomOut } from "lucide-react";
 import { artifactUrl, idToString, type Artifact } from "../api/client";
 import { MemoMarkdown } from "../pages/SessionPage.markdown";
-import { getArtifactPreviewKind, isImageArtifact, isPreviewableArtifact, isVideoArtifact } from "../utils/artifacts";
+import {
+  getArtifactPreviewKind,
+  isImageArtifact,
+  isPreviewableArtifact,
+  isVideoArtifact,
+  type ArtifactPreviewKind,
+} from "../utils/artifacts";
 import { errorMessage } from "../utils/errorMessage";
 
 const DEFAULT_MIN_SCALE = 0.2;
@@ -69,7 +75,13 @@ async function copyArtifactImage(artifact: Artifact, url: string) {
   await navigator.clipboard.write([new window.ClipboardItem({ [type]: blob })]);
 }
 
-function ArtifactInlineTextPreview({ artifact }: { artifact: Artifact }) {
+function ArtifactInlineTextPreview({
+  artifact,
+  previewKind,
+}: {
+  artifact: Artifact;
+  previewKind: Extract<ArtifactPreviewKind, "markdown" | "text">;
+}) {
   const artifactId = idToString(artifact.id);
   const url = artifactUrl(artifactId);
   const missing = Boolean(artifact.missing);
@@ -111,6 +123,14 @@ function ArtifactInlineTextPreview({ artifact }: { artifact: Artifact }) {
 
   if (textPreview.status === "error") {
     return <div className="wb-artifact-inline-status">{textPreview.error}</div>;
+  }
+
+  if (previewKind === "markdown") {
+    return (
+      <div className="wb-artifact-inline-markdown wb-tool-markdown">
+        <MemoMarkdown content={textPreview.content} />
+      </div>
+    );
   }
 
   return <pre className="wb-artifact-inline-text">{textPreview.content}</pre>;
@@ -172,7 +192,7 @@ function ArtifactCard({
   } else if (isImage) {
     preview = <img className="wb-artifact-image" src={url} alt={name} />;
   } else if (isInlineTextPreview) {
-    preview = <ArtifactInlineTextPreview artifact={artifact} />;
+    preview = <ArtifactInlineTextPreview artifact={artifact} previewKind={previewKind} />;
   } else {
     preview = <div className="wb-artifact-file">{name}</div>;
   }

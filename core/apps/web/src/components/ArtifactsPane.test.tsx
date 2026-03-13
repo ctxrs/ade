@@ -128,8 +128,30 @@ describe("ArtifactsPane", () => {
 
     fireEvent.click(screen.getByTitle("/tmp/notes.md"));
 
-    expect(await screen.findByText("Heading")).toBeInTheDocument();
-    expect(screen.getByText("Some artifact text.")).toBeInTheDocument();
+    const headings = await screen.findAllByText("Heading");
+    expect(headings).toHaveLength(2);
+    const bodyText = screen.getAllByText("Some artifact text.");
+    expect(bodyText).toHaveLength(2);
+  });
+
+  it("renders markdown artifacts as markdown in the inline preview", async () => {
+    mockTextFetch({ text: "## Inline Heading\n\nPreview body text." });
+
+    render(
+      <ArtifactsPane
+        artifacts={[
+          makeArtifact({
+            name: "preview.md",
+            mime_type: "text/markdown",
+            absolute_path: "/tmp/preview.md",
+          }),
+        ]}
+      />,
+    );
+
+    expect(await screen.findByText("Inline Heading")).toBeInTheDocument();
+    expect(screen.getByText("Preview body text.")).toBeInTheDocument();
+    expect(screen.queryByText("## Inline Heading")).not.toBeInTheDocument();
   });
 
   it("renders json artifacts as text in the viewer", async () => {
