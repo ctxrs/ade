@@ -11,8 +11,27 @@ import {
 } from "../utils/artifacts";
 import { errorMessage } from "../utils/errorMessage";
 
-const DEFAULT_MIN_SCALE = 0.2;
-const MAX_SCALE = 5;
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 6;
+const BUTTON_ZOOM_FACTOR = 1.2;
+const WHEEL_ZOOM_SENSITIVITY = 0.0015;
+const MAX_WHEEL_DELTA = 80;
+
+type Point = {
+  x: number;
+  y: number;
+};
+
+type Size = {
+  width: number;
+  height: number;
+};
+
+const ZERO_POINT: Point = { x: 0, y: 0 };
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
 
 type TextPreviewState =
   | { status: "idle" | "loading"; content: string; error: null }
@@ -162,8 +181,8 @@ function ArtifactCard({
   const onDownload = useCallback(
     (event?: React.MouseEvent) => {
       event?.stopPropagation();
-    if (!canDownload) return;
-    downloadArtifact(artifact, url);
+      if (!canDownload) return;
+      downloadArtifact(artifact, url);
     },
     [artifact, canDownload, url],
   );
@@ -259,12 +278,12 @@ function ArtifactViewer({
   const meta = `${artifact.mime_type || "application/octet-stream"} · ${formatBytes(artifact.bytes)}`;
   const missing = Boolean(artifact.missing);
   const [copying, setCopying] = useState(false);
-  const [scale, setScale] = useState(1);
-  const [baseScale, setBaseScale] = useState(1);
-  const [minScale, setMinScale] = useState(DEFAULT_MIN_SCALE);
+  const [zoom, setZoom] = useState(MIN_ZOOM);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
+  const baseSizeRef = useRef<Size | null>(null);
   const draggingRef = useRef(false);
   const lastPointRef = useRef({ x: 0, y: 0 });
   const [textPreview, setTextPreview] = useState<TextPreviewState>({
@@ -272,14 +291,23 @@ function ArtifactViewer({
     content: "",
     error: null,
   });
+  const pointerIdRef = useRef<number | null>(null);
+  const zoomRef = useRef(MIN_ZOOM);
 
   useEffect(() => {
-    setScale(1);
-    setBaseScale(1);
-    setMinScale(DEFAULT_MIN_SCALE);
-    setOffset({ x: 0, y: 0 });
+    setZoom(MIN_ZOOM);
+    zoomRef.current = MIN_ZOOM;
+    setOffset(ZERO_POINT);
+    setDragging(false);
+    draggingRef.current = false;
+    pointerIdRef.current = null;
+    baseSizeRef.current = null;
     setTextPreview({ status: "idle", content: "", error: null });
   }, [artifactId]);
+
+  useEffect(() => {
+    zoomRef.current = zoom;
+  }, [zoom]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -322,74 +350,144 @@ function ArtifactViewer({
       });
     return () => controller.abort();
   }, [artifactId, isTextPreview, missing, url]);
+  const updateBaseSize = useCallback(() => {
+    const img = imageRef.current;
+    if (!img) return;
+    const width = img.clientWidth;
+    const height = img.clientHeight;
+    if (!width || !height) return;
+    baseSizeRef.current = { width, height };
+  }, []);
 
-  const clampScale = useCallback(
-    (value: number) => Math.min(MAX_SCALE, Math.max(minScale, value)),
-    [minScale],
-  );
+  const clampOffset = useCallback((next: Point, zoomValue: number): Point => {
+    const container = containerRef.current;
+    const baseSize = baseSizeRef.current;
+    if (!container || !baseSize || zoomValue <= MIN_ZOOM) {
+      return { x: 0, y: 0 };
+    }
+    const baseWidth = Number(baseSize.width);
+    const baseHeight = Number(baseSize.height);
+    const containerWidth = Number(container.clientWidth);
+    const containerHeight = Number(container.clientHeight);
+    const nextX = Number(next.x);
+    const nextY = Number(next.y);
+    if (
+      !Number.isFinite(baseWidth)
+      || !Number.isFinite(baseHeight)
+      || !Number.isFinite(containerWidth)
+      || !Number.isFinite(containerHeight)
+      || !Number.isFinite(nextX)
+      || !Number.isFinite(nextY)
+      || !Number.isFinite(zoomValue)
+    ) {
+      return { x: 0, y: 0 };
+    }
+    const maxX = Math.max(0, (baseWidth * zoomValue - containerWidth) / 2);
+    const maxY = Math.max(0, (baseHeight * zoomValue - containerHeight) / 2);
+    return {
+      x: clamp(nextX, -maxX, maxX),
+      y: clamp(nextY, -maxY, maxY),
+    };
+  }, []);
 
-  const zoomBy = useCallback(
-    (delta: number) => {
-      setScale((current) => {
-        const next = clampScale(current + delta);
-        if (next === baseScale) {
-          setOffset({ x: 0, y: 0 });
-        }
-        return next;
+  const adjustZoom = useCallback(
+    (factor: number, focusPoint: Point) => {
+      setZoom((currentZoom) => {
+        const nextZoom = clamp(currentZoom * factor, MIN_ZOOM, MAX_ZOOM);
+        setOffset((currentOffset) => {
+          if (nextZoom <= MIN_ZOOM) {
+            return { x: 0, y: 0 };
+          }
+          const ratio = nextZoom / currentZoom;
+          const nextOffset = {
+            x: focusPoint.x - ratio * (focusPoint.x - currentOffset.x),
+            y: focusPoint.y - ratio * (focusPoint.y - currentOffset.y),
+          };
+          return clampOffset(nextOffset, nextZoom);
+        });
+        return nextZoom;
       });
     },
-    [baseScale, clampScale],
+    [clampOffset],
   );
 
   const resetZoom = useCallback(() => {
-    setScale(baseScale);
+    setZoom(MIN_ZOOM);
     setOffset({ x: 0, y: 0 });
-  }, [baseScale]);
+  }, []);
 
   const onImageLoad = useCallback(() => {
     if (!isImage) return;
-    const container = containerRef.current;
-    const img = imageRef.current;
-    if (!container || !img) return;
-    const { clientWidth, clientHeight } = container;
-    const { naturalWidth, naturalHeight } = img;
-    if (!clientWidth || !clientHeight || !naturalWidth || !naturalHeight) return;
-    const fitScale = Math.min(1, clientWidth / naturalWidth, clientHeight / naturalHeight);
-    setBaseScale(fitScale);
-    setMinScale(Math.min(DEFAULT_MIN_SCALE, fitScale));
-    setScale(fitScale);
+    updateBaseSize();
+    setZoom(MIN_ZOOM);
     setOffset({ x: 0, y: 0 });
-  }, [isImage]);
+  }, [isImage, updateBaseSize]);
+
+  useEffect(() => {
+    if (!isImage) return;
+    const onResize = () => {
+      updateBaseSize();
+      setOffset((current) => clampOffset(current, zoomRef.current));
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [clampOffset, isImage, updateBaseSize]);
 
   const onWheel = useCallback(
     (event: React.WheelEvent<HTMLDivElement>) => {
       if (!isImage) return;
       event.preventDefault();
-      const delta = event.deltaY;
-      zoomBy(delta < 0 ? 0.2 : -0.2);
+      const container = containerRef.current;
+      if (!container) return;
+      const unit =
+        event.deltaMode === WheelEvent.DOM_DELTA_LINE
+          ? 16
+          : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+            ? container.clientHeight || 800
+            : 1;
+      const normalizedDelta = clamp(event.deltaY * unit, -MAX_WHEEL_DELTA, MAX_WHEEL_DELTA);
+      const rect = container.getBoundingClientRect();
+      const focusPoint = {
+        x: event.clientX - rect.left - rect.width / 2,
+        y: event.clientY - rect.top - rect.height / 2,
+      };
+      const factor = Math.exp(-normalizedDelta * WHEEL_ZOOM_SENSITIVITY);
+      adjustZoom(factor, focusPoint);
     },
-    [isImage, zoomBy],
+    [adjustZoom, isImage],
   );
 
   const onPointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
-      if (!isImage || scale <= baseScale) return;
+      if (!isImage || zoom <= MIN_ZOOM) return;
+      event.preventDefault();
       draggingRef.current = true;
+      pointerIdRef.current = event.pointerId;
       lastPointRef.current = { x: event.clientX, y: event.clientY };
+      setDragging(true);
+      event.currentTarget.setPointerCapture(event.pointerId);
     },
-    [baseScale, isImage, scale],
+    [isImage, zoom],
   );
 
   const onPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (!draggingRef.current) return;
+    event.preventDefault();
     const dx = event.clientX - lastPointRef.current.x;
     const dy = event.clientY - lastPointRef.current.y;
+    if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
     lastPointRef.current = { x: event.clientX, y: event.clientY };
-    setOffset((prev) => ({ x: prev.x + dx, y: prev.y + dy }));
-  }, []);
+    setOffset((prev) => clampOffset({ x: prev.x + dx, y: prev.y + dy }, zoomRef.current));
+  }, [clampOffset]);
 
-  const onPointerUp = useCallback(() => {
+  const onPointerUp = useCallback((event?: React.PointerEvent<HTMLDivElement>) => {
     draggingRef.current = false;
+    setDragging(false);
+    const pointerId = event?.pointerId ?? pointerIdRef.current;
+    if (event && pointerId !== null && event.currentTarget.hasPointerCapture(pointerId)) {
+      event.currentTarget.releasePointerCapture(pointerId);
+    }
+    pointerIdRef.current = null;
   }, []);
 
   const onDownload = useCallback(() => {
@@ -445,8 +543,8 @@ function ArtifactViewer({
                 <button
                   type="button"
                   className="wb-artifact-action"
-                  onClick={() => zoomBy(-0.2)}
-                  disabled={scale <= minScale}
+                  onClick={() => adjustZoom(1 / BUTTON_ZOOM_FACTOR, ZERO_POINT)}
+                  disabled={zoom <= MIN_ZOOM}
                   aria-label="Zoom out"
                   title="Zoom out"
                 >
@@ -455,8 +553,8 @@ function ArtifactViewer({
                 <button
                   type="button"
                   className="wb-artifact-action"
-                  onClick={() => zoomBy(0.2)}
-                  disabled={scale >= MAX_SCALE}
+                  onClick={() => adjustZoom(BUTTON_ZOOM_FACTOR, ZERO_POINT)}
+                  disabled={zoom >= MAX_ZOOM}
                   aria-label="Zoom in"
                   title="Zoom in"
                 >
@@ -466,7 +564,7 @@ function ArtifactViewer({
                   type="button"
                   className="wb-artifact-action"
                   onClick={resetZoom}
-                  disabled={scale === baseScale && offset.x === 0 && offset.y === 0}
+                  disabled={zoom === MIN_ZOOM && offset.x === 0 && offset.y === 0}
                   aria-label="Reset zoom"
                   title="Reset"
                 >
@@ -487,11 +585,12 @@ function ArtifactViewer({
         </div>
         <div
           ref={containerRef}
-          className={`wb-artifact-modal-body ${scale > baseScale ? "wb-artifact-zoomed" : ""} ${isTextPreview ? "wb-artifact-modal-body-text" : ""}`}
+          className={`wb-artifact-modal-body ${zoom > MIN_ZOOM ? "wb-artifact-zoomed" : ""} ${dragging ? "wb-artifact-dragging" : ""} ${isTextPreview ? "wb-artifact-modal-body-text" : ""}`}
           onWheel={onWheel}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
           onPointerLeave={onPointerUp}
         >
           {missing ? (
@@ -507,7 +606,8 @@ function ArtifactViewer({
               src={url}
               alt={name}
               onLoad={onImageLoad}
-              style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})` }}
+              draggable={false}
+              style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})` }}
             />
           ) : isTextPreview ? (
             textPreview.status === "loading" || textPreview.status === "idle" ? (

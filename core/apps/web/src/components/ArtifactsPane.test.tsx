@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Artifact } from "../api/client";
 import { ArtifactsPane } from "./ArtifactsPane";
@@ -9,6 +9,8 @@ const makeArtifact = (overrides: Partial<Artifact> = {}): Artifact =>
     id: "artifact-1",
     session_id: "session-1",
     task_id: "task-1",
+    workspace_id: "workspace-1",
+    worktree_id: "worktree-1",
     turn_id: null,
     name: "artifact",
     mime_type: "text/plain",
@@ -33,6 +35,52 @@ function mockTextFetch(opts: { ok?: boolean; status?: number; text?: string } = 
 afterEach(() => {
   global.fetch = originalFetch;
 });
+
+function extractTransformNumber(transform: string, name: "translate" | "scale", axis?: "x" | "y"): number {
+  if (name === "scale") {
+    const match = /scale\(([-+\d.]+)\)/.exec(transform);
+    return match ? Number(match[1]) : Number.NaN;
+  }
+  const match = /translate\(([-+\d.]+)px(?:,\s*|\s+)([-+\d.]+)px\)/.exec(transform);
+  if (!match) return Number.NaN;
+  return Number(axis === "y" ? match[2] : match[1]);
+}
+
+function openImageViewer() {
+  render(
+    <ArtifactsPane
+      artifacts={[
+        makeArtifact({
+          name: "sample.png",
+          absolute_path: "/tmp/sample.png",
+          mime_type: "image/png",
+          bytes: 2048,
+        }),
+      ]}
+    />,
+  );
+  fireEvent.click(screen.getByText("sample.png"));
+  const body = document.querySelector(".wb-artifact-modal-body") as HTMLDivElement;
+  const image = document.querySelector(".wb-artifact-modal-image") as HTMLImageElement;
+  Object.defineProperty(body, "clientWidth", { configurable: true, value: 300 });
+  Object.defineProperty(body, "clientHeight", { configurable: true, value: 200 });
+  body.getBoundingClientRect = () =>
+    ({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: 300,
+      bottom: 200,
+      width: 300,
+      height: 200,
+      toJSON: () => ({}),
+    }) as DOMRect;
+  Object.defineProperty(image, "clientWidth", { configurable: true, value: 200 });
+  Object.defineProperty(image, "clientHeight", { configurable: true, value: 100 });
+  fireEvent.load(image);
+  return { body, image };
+}
 
 describe("ArtifactsPane", () => {
   it("renders an explicit load error with retry affordance", () => {
@@ -193,5 +241,42 @@ describe("ArtifactsPane", () => {
     fireEvent.click(screen.getByTitle("/tmp/broken.txt"));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Failed to load artifact (500).");
+  });
+
+  it("keeps wheel zoom changes bounded for image artifacts", () => {
+    const { body, image } = openImageViewer();
+
+    fireEvent.wheel(body, { deltaY: -400, clientX: 150, clientY: 100 });
+
+    expect(extractTransformNumber(image.style.transform, "scale")).toBeLessThan(1.2);
+    expect(extractTransformNumber(image.style.transform, "scale")).toBeGreaterThan(1);
+  });
+
+  it("keeps drag transforms finite while zoomed", async () => {
+    const { body, image } = openImageViewer();
+
+    Object.defineProperty(body, "setPointerCapture", { configurable: true, value: vi.fn() });
+    Object.defineProperty(body, "releasePointerCapture", { configurable: true, value: vi.fn() });
+    Object.defineProperty(body, "hasPointerCapture", { configurable: true, value: vi.fn(() => true) });
+
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    await waitFor(() => {
+      expect(extractTransformNumber(image.style.transform, "scale")).toBeGreaterThan(1.7);
+    });
+
+    fireEvent.pointerDown(body, { pointerId: 1, clientX: 100, clientY: 100 });
+    expect(body).toHaveClass("wb-artifact-dragging");
+
+    fireEvent.pointerMove(body, { pointerId: 1, clientX: 260, clientY: 100 });
+    await waitFor(() => {
+      expect(image.style.transform).not.toContain("NaN");
+      expect(Number.isFinite(extractTransformNumber(image.style.transform, "translate", "x"))).toBe(true);
+      expect(Number.isFinite(extractTransformNumber(image.style.transform, "translate", "y"))).toBe(true);
+    });
+
+    fireEvent.pointerUp(body, { pointerId: 1, clientX: 260, clientY: 100 });
+    expect(body).not.toHaveClass("wb-artifact-dragging");
   });
 });

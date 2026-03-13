@@ -4453,8 +4453,13 @@
   max-height: 100%;
   display: block;
   transform-origin: center;
-  transition: transform 0.08s ease-out;
+  transition: transform 0.14s ease-out;
+  will-change: transform;
   pointer-events: none;
+}
+
+.wb-artifact-modal-body.wb-artifact-dragging .wb-artifact-modal-image {
+  transition: none;
 }
 
 .wb-artifact-modal-video {
