@@ -1,6 +1,6 @@
 import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Artifact } from "../api/client";
 import { ArtifactsPane } from "./ArtifactsPane";
 
@@ -18,6 +18,21 @@ const makeArtifact = (overrides: Partial<Artifact> = {}): Artifact =>
     created_at: "2026-03-13T00:00:00.000Z",
     ...overrides,
   }) as Artifact;
+
+const originalFetch = global.fetch;
+
+function mockTextFetch(opts: { ok?: boolean; status?: number; text?: string } = {}) {
+  const response = {
+    ok: opts.ok ?? true,
+    status: opts.status ?? 200,
+    text: async () => opts.text ?? "",
+  } as Response;
+  global.fetch = vi.fn(async () => response);
+}
+
+afterEach(() => {
+  global.fetch = originalFetch;
+});
 
 describe("ArtifactsPane", () => {
   it("renders an explicit load error with retry affordance", () => {
@@ -75,5 +90,66 @@ describe("ArtifactsPane", () => {
     fireEvent.click(screen.getByTitle("/tmp/report.csv"));
 
     expect(screen.queryByRole("button", { name: "Close" })).not.toBeInTheDocument();
+  });
+
+  it("renders markdown artifacts in the viewer", async () => {
+    mockTextFetch({ text: "# Heading\n\nSome artifact text." });
+
+    render(
+      <ArtifactsPane
+        artifacts={[
+          makeArtifact({
+            name: "notes.md",
+            mime_type: "text/markdown",
+            absolute_path: "/tmp/notes.md",
+          }),
+        ]}
+      />,
+    );
+
+    fireEvent.click(screen.getByTitle("/tmp/notes.md"));
+
+    expect(await screen.findByText("Heading")).toBeInTheDocument();
+    expect(screen.getByText("Some artifact text.")).toBeInTheDocument();
+  });
+
+  it("renders json artifacts as text in the viewer", async () => {
+    mockTextFetch({ text: '{\n  "ok": true\n}' });
+
+    render(
+      <ArtifactsPane
+        artifacts={[
+          makeArtifact({
+            name: "report.json",
+            mime_type: "application/json",
+            absolute_path: "/tmp/report.json",
+          }),
+        ]}
+      />,
+    );
+
+    fireEvent.click(screen.getByTitle("/tmp/report.json"));
+
+    expect(await screen.findByText(/"ok": true/, { selector: "pre" })).toBeInTheDocument();
+  });
+
+  it("shows an inline error when text artifact loading fails", async () => {
+    mockTextFetch({ ok: false, status: 500 });
+
+    render(
+      <ArtifactsPane
+        artifacts={[
+          makeArtifact({
+            name: "broken.txt",
+            mime_type: "text/plain",
+            absolute_path: "/tmp/broken.txt",
+          }),
+        ]}
+      />,
+    );
+
+    fireEvent.click(screen.getByTitle("/tmp/broken.txt"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Failed to load artifact (500).");
   });
 });

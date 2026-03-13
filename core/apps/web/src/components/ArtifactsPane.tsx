@@ -1,10 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Copy, Download, RotateCcw, X, ZoomIn, ZoomOut } from "lucide-react";
 import { artifactUrl, idToString, type Artifact } from "../api/client";
-import { isImageArtifact, isPreviewableArtifact, isVideoArtifact } from "../utils/artifacts";
+import { MemoMarkdown } from "../pages/SessionPage.markdown";
+import { getArtifactPreviewKind, isImageArtifact, isPreviewableArtifact, isVideoArtifact } from "../utils/artifacts";
 import { errorMessage } from "../utils/errorMessage";
 const DEFAULT_MIN_SCALE = 0.2;
 const MAX_SCALE = 5;
+
+type TextPreviewState =
+  | { status: "idle" | "loading"; content: string; error: null }
+  | { status: "ready"; content: string; error: null }
+  | { status: "error"; content: string; error: string };
 
 function formatBytes(bytes: number | null | undefined): string {
   if (!bytes || bytes <= 0) return "0 B";
@@ -77,8 +83,9 @@ function ArtifactCard({
   const mimeLabel = artifact.mime_type || "application/octet-stream";
   const meta = `${mimeLabel} · ${formatBytes(artifact.bytes)}`;
   const title = artifact.absolute_path || name;
-  const isVideo = isVideoArtifact(artifact);
-  const isImage = isImageArtifact(artifact);
+  const previewKind = getArtifactPreviewKind(artifact);
+  const isVideo = previewKind === "video";
+  const isImage = previewKind === "image";
   const canPreview = isPreviewableArtifact(artifact) && !missing;
   const canDownload = Boolean(artifactId) && !missing;
   const canCopy = Boolean(artifactId) && !missing && isImage && !copying;
@@ -170,8 +177,11 @@ function ArtifactViewer({
   artifact: Artifact;
   onClose: () => void;
 }) {
-  const isVideo = isVideoArtifact(artifact);
-  const isImage = isImageArtifact(artifact);
+  const previewKind = getArtifactPreviewKind(artifact);
+  const isVideo = previewKind === "video";
+  const isImage = previewKind === "image";
+  const isMarkdown = previewKind === "markdown";
+  const isTextPreview = previewKind === "markdown" || previewKind === "text";
   const name = displayName(artifact);
   const artifactId = idToString(artifact.id);
   const url = artifactUrl(artifactId);
@@ -186,12 +196,18 @@ function ArtifactViewer({
   const imageRef = useRef<HTMLImageElement | null>(null);
   const draggingRef = useRef(false);
   const lastPointRef = useRef({ x: 0, y: 0 });
+  const [textPreview, setTextPreview] = useState<TextPreviewState>({
+    status: "idle",
+    content: "",
+    error: null,
+  });
 
   useEffect(() => {
     setScale(1);
     setBaseScale(1);
     setMinScale(DEFAULT_MIN_SCALE);
     setOffset({ x: 0, y: 0 });
+    setTextPreview({ status: "idle", content: "", error: null });
   }, [artifactId]);
 
   useEffect(() => {
@@ -209,6 +225,32 @@ function ArtifactViewer({
       document.body.style.overflow = prev;
     };
   }, []);
+
+  useEffect(() => {
+    if (!artifactId || missing || !isTextPreview) return;
+    const controller = new AbortController();
+    setTextPreview({ status: "loading", content: "", error: null });
+    void fetch(url, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (resp) => {
+        if (!resp.ok) {
+          throw new Error(`Failed to load artifact (${resp.status}).`);
+        }
+        const content = await resp.text();
+        setTextPreview({ status: "ready", content, error: null });
+      })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return;
+        setTextPreview({
+          status: "error",
+          content: "",
+          error: errorMessage(err) || "Failed to load artifact.",
+        });
+      });
+    return () => controller.abort();
+  }, [artifactId, isTextPreview, missing, url]);
 
   const clampScale = useCallback(
     (value: number) => Math.min(MAX_SCALE, Math.max(minScale, value)),
@@ -374,7 +416,7 @@ function ArtifactViewer({
         </div>
         <div
           ref={containerRef}
-          className={`wb-artifact-modal-body ${scale > baseScale ? "wb-artifact-zoomed" : ""}`}
+          className={`wb-artifact-modal-body ${scale > baseScale ? "wb-artifact-zoomed" : ""} ${isTextPreview ? "wb-artifact-modal-body-text" : ""}`}
           onWheel={onWheel}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
@@ -396,6 +438,20 @@ function ArtifactViewer({
               onLoad={onImageLoad}
               style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})` }}
             />
+          ) : isTextPreview ? (
+            textPreview.status === "loading" || textPreview.status === "idle" ? (
+              <div className="wb-muted">Loading artifact…</div>
+            ) : textPreview.status === "error" ? (
+              <div className="wb-artifacts-error" role="alert">
+                <div>{textPreview.error}</div>
+              </div>
+            ) : isMarkdown ? (
+              <div className="wb-artifact-text-content wb-tool-markdown">
+                <MemoMarkdown content={textPreview.content} />
+              </div>
+            ) : (
+              <pre className="wb-artifact-text-content wb-artifact-text-pre">{textPreview.content}</pre>
+            )
           ) : (
             <div className="wb-artifact-file">{name}</div>
           )}

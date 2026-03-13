@@ -4418,6 +4418,27 @@
   border-radius: 12px;
 }
 
+.wb-artifact-modal-body-text {
+  display: block;
+  overflow: auto;
+  touch-action: auto;
+  user-select: text;
+}
+
+.wb-artifact-text-content {
+  width: min(100%, 960px);
+  margin: 0 auto;
+  color: var(--text);
+}
+
+.wb-artifact-text-pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .wb-editplans {
   min-height: 0;
   display: flex;

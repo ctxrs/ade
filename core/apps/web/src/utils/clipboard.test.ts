@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { describeClipboardCopyFailure, tryCopyTextToClipboard } from "./clipboard";
 
-type MutableNavigator = Navigator & {
-  clipboard?: Pick<Clipboard, "writeText">;
+type MutableNavigator = Omit<Navigator, "clipboard"> & {
+  clipboard?: Partial<Clipboard> & Pick<Clipboard, "writeText">;
 };
 
 const originalExecCommand = document.execCommand;
