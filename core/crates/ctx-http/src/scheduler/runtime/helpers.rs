@@ -250,8 +250,10 @@ fn find_codex_session_log(session_ref: &str) -> Option<PathBuf> {
 }
 
 pub(crate) fn model_context_window(provider_id: &str, model_id: &str) -> Option<usize> {
-    let _ = (provider_id, model_id);
-    None
+    match (provider_id, model_id) {
+        ("fake", "fake-model") => Some(100),
+        _ => None,
+    }
 }
 
 fn estimate_tokens(text: &str) -> usize {

@@ -116,6 +116,50 @@ fn derive_message_preview(content: &str) -> String {
     out
 }
 
+fn event_context_window(event: &SessionEvent) -> Option<serde_json::Value> {
+    event.payload_json.get("context_window").cloned()
+}
+
+fn turn_status_from_finished_event(event: &SessionEvent) -> SessionTurnStatus {
+    event
+        .payload_json
+        .get("status")
+        .and_then(|value| serde_json::from_value::<SessionTurnStatus>(value.clone()).ok())
+        .unwrap_or(SessionTurnStatus::Completed)
+}
+
+fn patch_turn_from_event(turn: &mut SessionTurn, event: &SessionEvent) {
+    match event.event_type {
+        SessionEventType::TurnQueued => {
+            turn.status = SessionTurnStatus::Queued;
+        }
+        SessionEventType::TurnStarted => {
+            turn.status = SessionTurnStatus::Running;
+        }
+        SessionEventType::Done => {
+            turn.status = SessionTurnStatus::Completed;
+            turn.end_seq = Some(event.seq);
+        }
+        SessionEventType::TurnFinished => {
+            turn.status = turn_status_from_finished_event(event);
+            turn.end_seq = Some(event.seq);
+        }
+        SessionEventType::TurnInterrupted => {
+            turn.status = SessionTurnStatus::Interrupted;
+            turn.end_seq = Some(event.seq);
+        }
+        SessionEventType::Error => {
+            turn.status = SessionTurnStatus::Failed;
+            turn.end_seq = Some(event.seq);
+        }
+        _ => {}
+    }
+    if let Some(metrics_json) = event_context_window(event) {
+        turn.metrics_json = Some(metrics_json);
+    }
+    turn.updated_at = event.created_at;
+}
+
 fn turn_from_event(event: &SessionEvent, message: Option<&Message>) -> Option<SessionTurn> {
     if !matches!(event.event_type, SessionEventType::UserMessage) {
         return None;
@@ -148,6 +192,18 @@ fn turn_from_event(event: &SessionEvent, message: Option<&Message>) -> Option<Se
         tool_completed: 0,
         tool_failed: 0,
     })
+}
+
+fn should_refresh_turn_from_store(event_type: &SessionEventType) -> bool {
+    matches!(
+        event_type,
+        SessionEventType::TurnQueued
+            | SessionEventType::TurnStarted
+            | SessionEventType::Done
+            | SessionEventType::TurnFinished
+            | SessionEventType::TurnInterrupted
+            | SessionEventType::Error
+    )
 }
 
 impl SessionRuntime {
@@ -319,12 +375,7 @@ impl SessionRuntime {
             None
         };
         let mut turn = turn_from_event(event, message.as_ref());
-        if turn.is_none()
-            && matches!(
-                event.event_type,
-                SessionEventType::TurnStarted | SessionEventType::TurnFinished
-            )
-        {
+        if turn.is_none() && should_refresh_turn_from_store(&event.event_type) {
             if let Some(turn_id) = event.turn_id {
                 if let Ok(store) = state.store_for_session(event.session_id).await {
                     if let Ok(Some(fetched)) =
@@ -334,6 +385,9 @@ impl SessionRuntime {
                     }
                 }
             }
+        }
+        if let Some(turn) = turn.as_mut() {
+            patch_turn_from_event(turn, event);
         }
         let mut tool_summaries: Vec<SessionTurnToolSummary> = Vec::new();
         if matches!(
