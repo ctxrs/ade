@@ -290,7 +290,9 @@ pub(crate) async fn mcp_subagent_interrupt(
             ))?;
 
         let tx = state.ensure_scheduler(child.clone()).await;
-        let _ = tx.send(SchedulerCommand::Interrupt).await;
+        let interrupt =
+            crate::scheduler::InterruptTelemetryContext::new(uuid::Uuid::new_v4().to_string());
+        let _ = tx.send(SchedulerCommand::Interrupt(interrupt)).await;
 
         let context_window = context_window_for_session(&state, child.id).await;
         results.push(

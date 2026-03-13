@@ -2,6 +2,7 @@ use super::helpers::{
     read_codex_context_window_metrics, should_track_thought_chunk, strip_emitted_prefix,
 };
 use super::*;
+use crate::scheduler::{latency_bucket, metric_labels};
 
 pub(super) struct TurnEventLoop {
     pub(super) state: Arc<AppState>,
@@ -526,21 +527,18 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                 if !telemetry_emitted {
                     telemetry_emitted = true;
                     let duration_ms = run_started_at.elapsed().as_millis() as u64;
-                    let mut run_labels = HashMap::new();
-                    run_labels.insert("provider_id".to_string(), provider_id.clone());
-                    run_labels.insert("model_id".to_string(), model_id.clone());
-                    run_labels.insert(
-                        "execution_environment".to_string(),
-                        execution_environment_label.clone(),
-                    );
-                    run_labels.insert("session_root_kind".to_string(), session_root_kind.clone());
-                    run_labels.insert("event".to_string(), "run_interrupt".to_string());
                     let run_metric = PerfMetric {
                         name: "scheduler.run_total_ms".to_string(),
                         kind: PerfMetricKind::Histogram,
                         unit: "ms".to_string(),
                         value: duration_ms as f64,
-                        labels: run_labels,
+                        labels: metric_labels(
+                            &provider_id,
+                            &model_id,
+                            &execution_environment_label,
+                            &session_root_kind,
+                            "run_interrupt",
+                        ),
                     };
                     state
                         .telemetry
@@ -571,6 +569,58 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                             duration_ms,
                         ))
                         .await;
+                }
+                if let Some(requested_at_ms) = event
+                    .payload_json
+                    .get("requested_at_ms")
+                    .and_then(Value::as_i64)
+                {
+                    let latency_ms =
+                        (event.created_at.timestamp_millis() - requested_at_ms).max(0) as u64;
+                    let bucket = latency_bucket(latency_ms).to_string();
+                    let interrupt_metric = PerfMetric {
+                        name: "scheduler.interrupt_total_ms".to_string(),
+                        kind: PerfMetricKind::Histogram,
+                        unit: "ms".to_string(),
+                        value: latency_ms as f64,
+                        labels: metric_labels(
+                            &provider_id,
+                            &model_id,
+                            &execution_environment_label,
+                            &session_root_kind,
+                            "turn_interrupted_visible",
+                        ),
+                    };
+                    state
+                        .telemetry
+                        .perf_telemetry
+                        .record_metric(interrupt_metric, perf_run_id.clone(), None, None)
+                        .await;
+                    state
+                        .telemetry
+                        .telemetry
+                        .emit(TelemetryEvent::session_interrupt_latency(
+                            provider_id.clone(),
+                            model_id.clone(),
+                            Some(execution_environment_label.clone()),
+                            Some(session_root_kind.clone()),
+                            latency_ms,
+                            bucket.clone(),
+                        ))
+                        .await;
+                    let interrupt_id = event
+                        .payload_json
+                        .get("interrupt_id")
+                        .and_then(serde_json::Value::as_str);
+                    tracing::info!(
+                        session_id = %session_id.0,
+                        run_id = %run_id.0,
+                        turn_id = %turn_id.0,
+                        interrupt_id,
+                        interrupt_total_ms = latency_ms,
+                        duration_bucket = %bucket,
+                        "session interrupt became visible in event loop"
+                    );
                 }
                 terminal_status = Some(SessionTurnStatus::Interrupted);
                 let _ = store

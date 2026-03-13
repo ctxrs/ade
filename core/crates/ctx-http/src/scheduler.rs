@@ -12,12 +12,14 @@ use ctx_core::models::{Message, MessageDelivery, Session, SessionEventType};
 use crate::daemon::AppState;
 use crate::ops_events::OpsEvent;
 
+mod interrupt_telemetry;
 mod lifecycle;
 mod persistence;
 mod reconcile;
 mod runtime;
 mod tools;
 
+pub(crate) use interrupt_telemetry::{latency_bucket, metric_labels, InterruptTelemetryContext};
 use lifecycle::{
     finalize_start_failure_if_needed, handle_provider_exit, stop_running_turn, RunningTurn,
     StopReason,
@@ -41,7 +43,7 @@ pub enum SchedulerCommand {
     Enqueue(QueuedMessage),
     RemoveQueued(MessageId),
     Cancel,
-    Interrupt,
+    Interrupt(InterruptTelemetryContext),
 }
 
 pub async fn session_worker(
@@ -189,17 +191,19 @@ pub async fn session_worker(
                                 session.id,
                                 turn,
                                 StopReason::Cancel,
+                                None,
                             )
                             .await;
                         }
                     }
-                    Some(SchedulerCommand::Interrupt) => {
+                    Some(SchedulerCommand::Interrupt(interrupt)) => {
                         if let Some(turn) = running.take() {
                             suspend_queue = stop_running_turn(
                                 &state,
                                 session.id,
                                 turn,
                                 StopReason::Interrupt,
+                                Some(interrupt),
                             )
                             .await;
                         }

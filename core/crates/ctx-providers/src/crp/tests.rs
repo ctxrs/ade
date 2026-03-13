@@ -190,7 +190,10 @@ done
     }
 
     prompt_task.await??;
-    assert!(saw_turn_interrupted, "expected interrupted terminal event after cancel");
+    assert!(
+        saw_turn_interrupted,
+        "expected interrupted terminal event after cancel"
+    );
 
     session.process.shutdown("test complete").await;
     Ok(())

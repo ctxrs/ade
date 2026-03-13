@@ -37,6 +37,7 @@ pub enum TelemetryEventKind {
     WorkspaceOpened,
     SessionStarted,
     SessionCompleted,
+    SessionInterruptLatency,
     ProviderCall,
 }
 
@@ -55,6 +56,8 @@ pub struct TelemetryEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_bucket: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub success: Option<bool>,
@@ -70,6 +73,7 @@ impl TelemetryEvent {
             execution_environment: None,
             session_root_kind: None,
             duration_ms: None,
+            duration_bucket: None,
             status: None,
             success: None,
         }
@@ -84,6 +88,7 @@ impl TelemetryEvent {
             execution_environment: None,
             session_root_kind: None,
             duration_ms: None,
+            duration_bucket: None,
             status: None,
             success: None,
         }
@@ -103,6 +108,7 @@ impl TelemetryEvent {
             execution_environment,
             session_root_kind,
             duration_ms: None,
+            duration_bucket: None,
             status: None,
             success: None,
         }
@@ -124,8 +130,31 @@ impl TelemetryEvent {
             execution_environment,
             session_root_kind,
             duration_ms: Some(duration_ms),
+            duration_bucket: None,
             status: Some(status),
             success: None,
+        }
+    }
+
+    pub fn session_interrupt_latency(
+        provider_id: String,
+        model_id: String,
+        execution_environment: Option<String>,
+        session_root_kind: Option<String>,
+        duration_ms: u64,
+        duration_bucket: String,
+    ) -> Self {
+        Self {
+            name: TelemetryEventKind::SessionInterruptLatency,
+            occurred_at: Utc::now(),
+            provider_id: Some(provider_id),
+            model_id: Some(model_id),
+            execution_environment,
+            session_root_kind,
+            duration_ms: Some(duration_ms),
+            duration_bucket: Some(duration_bucket),
+            status: Some("interrupted".to_string()),
+            success: Some(true),
         }
     }
 
@@ -145,6 +174,7 @@ impl TelemetryEvent {
             execution_environment,
             session_root_kind,
             duration_ms: Some(duration_ms),
+            duration_bucket: None,
             status: None,
             success: Some(success),
         }
@@ -347,6 +377,32 @@ async fn send_batch(runtime: &TelemetryRuntime, events: &[TelemetryEvent]) -> Re
         .await?
         .error_for_status()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TelemetryEvent, TelemetryEventKind};
+
+    #[test]
+    fn session_interrupt_latency_event_sets_bounded_fields() {
+        let event = TelemetryEvent::session_interrupt_latency(
+            "codex".to_string(),
+            "gpt-5.2-codex".to_string(),
+            Some("host".to_string()),
+            Some("worktree".to_string()),
+            1320,
+            "1s_to_3s".to_string(),
+        );
+
+        assert!(matches!(
+            event.name,
+            TelemetryEventKind::SessionInterruptLatency
+        ));
+        assert_eq!(event.duration_ms, Some(1320));
+        assert_eq!(event.duration_bucket.as_deref(), Some("1s_to_3s"));
+        assert_eq!(event.status.as_deref(), Some("interrupted"));
+        assert_eq!(event.success, Some(true));
+    }
 }
 
 async fn telemetry_worker(data_root: PathBuf, mut rx: mpsc::Receiver<TelemetryCommand>) {
