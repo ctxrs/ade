@@ -220,6 +220,85 @@ test("provider oauth harness records redacted artifacts through terminal success
   );
 });
 
+test("awaitLoginUrl returns the start response auth URL without requiring browser probe execution", async () => {
+  const fakeWindow = {
+    __TAURI__: {
+      core: {
+        invoke: async (command) => {
+          if (command === "desktop_get_connection" || command === "desktop_connect_local") {
+            return {
+              kind: "local",
+              base_url: "http://127.0.0.1:4311",
+              token: "desktop-token",
+            };
+          }
+          throw new Error(`unexpected invoke command: ${String(command)}`);
+        },
+      },
+    },
+  };
+  global.window = fakeWindow;
+  globalThis.window = fakeWindow;
+  let executeCalls = 0;
+  global.browser = {
+    execute: async (fn, ...args) => {
+      executeCalls += 1;
+      return await fn(...args);
+    },
+  };
+  global.fetch = async (url, options) => {
+    const href = String(url);
+    if (href.endsWith("/api/providers/codex/accounts/login/start")) {
+      return new Response(
+        JSON.stringify({
+          account_id: "acct-start-url",
+          auth_url: "https://auth.openai.com/oauth/authorize?state=start-response",
+          expected_callback_url: "http://localhost:1455/auth/callback?code=secret",
+          completion_token: "completion-token-secret",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (href.endsWith("/api/providers/codex/accounts/login/acct-start-url")) {
+      return new Response(
+        JSON.stringify({
+          account_id: "acct-start-url",
+          auth_url: "https://auth.openai.com/oauth/authorize?state=pending",
+          status: "pending",
+          completion_token: "completion-token-secret",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (href.endsWith("/api/health") || href.endsWith("/api/providers")) {
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    throw new Error(`unexpected fetch: ${href} method=${options?.method || "GET"}`);
+  };
+
+  const { createProviderOAuthHarness } = loadHelper();
+  const harness = createProviderOAuthHarness({
+    pollMs: 5,
+    timeoutMs: 1000,
+  });
+
+  const started = await harness.startProviderLogin("codex", "Codex Start URL");
+  const executeCallsAfterStart = executeCalls;
+  const loginUrl = await harness.awaitLoginUrl(started.loginId, 1000);
+  assert.equal(executeCalls, executeCallsAfterStart);
+  assert.equal(loginUrl.source, "start_response");
+  assert.equal(loginUrl.authUrl, "https://auth.openai.com/oauth/authorize?state=start-response");
+  assert.deepEqual(loginUrl.sanitizedAuthUrl, {
+    scheme: "https",
+    host: "auth.openai.com",
+    path: "/oauth/authorize",
+    redacted: "https://auth.openai.com/oauth/authorize",
+  });
+});
+
 test("provider oauth harness supports cursor login lifecycle without codex-specific callback fields", async () => {
   const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-provider-oauth-cursor-test-"));
   const artifactPath = path.join(artifactDir, "artifact.json");
@@ -422,31 +501,7 @@ test("submitVisibleAuthStep prefers webdriver button clicks before DOM-execute f
   assert.equal(executeCalled, false);
 });
 
-test("driveCodexOpenAiLoginWithCredentials classifies inbox code prompts as blocked email challenges", async () => {
-  let navigatedUrl = "";
-  global.browser = {
-    url: async (href) => {
-      navigatedUrl = href;
-    },
-    execute: async () => ({
-      url: "https://chat.openai.com/challenge",
-      title: "Check your inbox",
-      bodyText: "Check your inbox. Enter the code we sent to continue.",
-      inputs: [
-        {
-          tag: "input",
-          type: "text",
-          name: "code",
-          autocomplete: "one-time-code",
-          inputmode: "numeric",
-          label: "Verification code",
-          maxLength: 6,
-        },
-      ],
-      buttons: ["Continue"],
-    }),
-  };
-
+test("driveCodexOpenAiLoginWithCredentials blocks because WDIO cannot drive the real external browser path", async () => {
   const { driveCodexOpenAiLoginWithCredentials } = loadHelper();
   await assert.rejects(
     () => driveCodexOpenAiLoginWithCredentials({
@@ -459,12 +514,10 @@ test("driveCodexOpenAiLoginWithCredentials classifies inbox code prompts as bloc
     }),
     (error) => {
       assert.equal(error.name, "ProviderOAuthBlockedError");
-      assert.equal(error.blockedReason, "email_challenge_required");
-      assert.match(error.message, /email verification code challenge/i);
-      assert.equal(error.challenge?.kind, "email_challenge_required");
-      assert.equal(error.challenge?.state?.title, "Check your inbox");
+      assert.equal(error.blockedReason, "external_browser_automation_unsupported");
+      assert.match(error.message, /system browser/i);
+      assert.match(error.message, /localhost callback path/i);
       return true;
     },
   );
-  assert.equal(navigatedUrl, "https://chat.openai.com/oauth/authorize?state=secret");
 });

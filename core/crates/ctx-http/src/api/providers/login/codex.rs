@@ -83,7 +83,38 @@ pub(crate) async fn complete_codex_login(
         )
     })?;
 
-    let response = reqwest::Client::new()
+    let parsed_callback = Url::parse(&req.callback_url).map_err(|err| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiErrorResp {
+                error: format!("invalid callback_url: {err}"),
+            }),
+        )
+    })?;
+    let callback_host = parsed_callback
+        .host_str()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let client = if callback_host == "localhost" {
+        reqwest::Client::builder()
+            .resolve(
+                "localhost",
+                std::net::SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 0),
+            )
+            .build()
+            .map_err(|err| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: format!("failed to build callback replay client: {err}"),
+                    }),
+                )
+            })?
+    } else {
+        reqwest::Client::new()
+    };
+
+    let response = client
         .get(&req.callback_url)
         .timeout(Duration::from_secs(20))
         .send()
@@ -119,7 +150,6 @@ pub(crate) async fn complete_codex_login(
         status_code,
     }))
 }
-
 pub(crate) async fn start_codex_login(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CodexLoginStartReq>,

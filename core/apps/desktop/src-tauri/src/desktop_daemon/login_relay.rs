@@ -18,6 +18,29 @@ pub(super) fn is_loopback_host_name(host: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn relay_bind_addr(host: &str, port: u16) -> Result<std::net::SocketAddr> {
+    let normalized = host.trim().to_ascii_lowercase();
+    if normalized == "localhost" {
+        // Codex currently listens for the real callback on 127.0.0.1 while advertising
+        // `localhost` in the OAuth redirect URI. Binding the relay on 127.0.0.1 would
+        // shadow Codex and cause the daemon replay to loop back into the relay instead of
+        // reaching Codex. Bind the relay on ::1 so browser callbacks that resolve
+        // `localhost` to IPv6 still succeed without stealing the IPv4 listener.
+        return Ok(std::net::SocketAddr::new(
+            std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST),
+            port,
+        ));
+    }
+
+    let ip = normalized
+        .parse::<std::net::IpAddr>()
+        .with_context(|| format!("callback_url host is not a loopback IP: {host}"))?;
+    if !ip.is_loopback() {
+        anyhow::bail!("callback_url host must be loopback");
+    }
+    Ok(std::net::SocketAddr::new(ip, port))
+}
+
 fn read_http_request_target(stream: &mut TcpStream) -> Result<String> {
     stream
         .set_read_timeout(Some(Duration::from_secs(15)))
@@ -78,7 +101,6 @@ fn callback_url_from_target(
         anyhow::bail!("callback host must be loopback");
     }
     let _ = url.set_scheme("http");
-    let _ = url.set_host(Some("127.0.0.1"));
     let _ = url.set_port(Some(expected_port));
     Ok(url.to_string())
 }
@@ -182,8 +204,9 @@ pub(crate) async fn desktop_start_codex_login_relay(
             anyhow::bail!("callback_url path must start with /auth/callback");
         }
 
-        let listener = TcpListener::bind((host.as_str(), port))
-            .with_context(|| format!("binding codex callback relay on {host}:{port}"))?;
+        let bind_addr = relay_bind_addr(&host, port)?;
+        let listener = TcpListener::bind(bind_addr)
+            .with_context(|| format!("binding codex callback relay on {bind_addr}"))?;
         listener
             .set_nonblocking(true)
             .context("setting callback relay nonblocking")?;
@@ -223,4 +246,68 @@ pub(crate) async fn desktop_start_codex_login_relay(
     .await
     .map_err(|e| format!("starting codex relay failed: {e}"))?
     .map_err(to_err)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relay_bind_addr_uses_ipv6_loopback_for_localhost() {
+        let addr = relay_bind_addr("localhost", 43123).expect("resolve localhost relay addr");
+        assert_eq!(
+            addr,
+            std::net::SocketAddr::new(std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST), 43123,)
+        );
+    }
+
+    #[test]
+    fn relay_bind_addr_preserves_explicit_ipv4_loopback() {
+        let addr = relay_bind_addr("127.0.0.1", 43123).expect("resolve ipv4 relay addr");
+        assert_eq!(
+            addr,
+            std::net::SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 43123,)
+        );
+    }
+
+    #[test]
+    fn callback_url_from_target_preserves_localhost_authority() {
+        let callback = callback_url_from_target(
+            "/auth/callback?code=abc&state=def",
+            "/auth/callback",
+            1455,
+        )
+        .expect("build callback URL");
+        assert_eq!(
+            callback,
+            "http://localhost:1455/auth/callback?code=abc&state=def"
+        );
+    }
+
+    #[test]
+    fn ipv6_localhost_relay_can_coexist_with_ipv4_codex_callback_listener() {
+        let codex_listener =
+            TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).expect("bind ipv4 callback");
+        let port = codex_listener
+            .local_addr()
+            .expect("read ipv4 callback addr")
+            .port();
+        let relay_addr = relay_bind_addr("localhost", port).expect("resolve localhost relay addr");
+        let relay_listener = TcpListener::bind(relay_addr);
+        if relay_addr.is_ipv6() && relay_listener.is_err() {
+            let err = relay_listener.expect_err("relay bind should fail with an error");
+            let kind = err.kind();
+            assert!(
+                matches!(
+                    kind,
+                    ErrorKind::AddrNotAvailable
+                        | ErrorKind::Unsupported
+                        | ErrorKind::PermissionDenied
+                ),
+                "unexpected ipv6 bind failure kind: {kind:?}"
+            );
+            return;
+        }
+        relay_listener.expect("bind localhost relay without shadowing ipv4 listener");
+    }
 }

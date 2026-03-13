@@ -124,6 +124,44 @@ async fn complete_login_replays_loopback_callback_and_clears_token() {
 }
 
 #[tokio::test]
+async fn complete_login_replays_localhost_callback_via_ipv4_override() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let state = app_state(data_dir.path()).await;
+    let (callback_base, callback_handle) = start_callback_server().await;
+    let callback_port = callback_base
+        .rsplit_once(':')
+        .expect("callback base port")
+        .1
+        .parse::<u16>()
+        .expect("callback port");
+    let expected_callback = format!("http://localhost:{callback_port}/auth/callback");
+    let callback_url = format!("{expected_callback}?code=abc&state=xyz");
+    let account_id = "acct-localhost";
+    let token = "completion-token";
+    insert_pending_login(&state, account_id, token, &expected_callback).await;
+
+    let (base, client, server_handle) = start_http_app(state.clone()).await;
+    let resp = client
+        .post(format!(
+            "{base}/api/providers/codex/accounts/login/{account_id}"
+        ))
+        .json(&json!({
+            "callback_url": callback_url,
+            "completion_token": token
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: CompleteResp = resp.json().await.unwrap();
+    assert!(body.accepted);
+    assert_eq!(body.status_code, 200);
+
+    callback_handle.abort();
+    server_handle.abort();
+}
+
+#[tokio::test]
 async fn complete_login_rejects_invalid_completion_token() {
     let data_dir = tempfile::tempdir().unwrap();
     let state = app_state(data_dir.path()).await;

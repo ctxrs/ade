@@ -453,6 +453,12 @@ const createProviderOAuthBlockedError = ({ stage, blockedReason, message, challe
 
 const isProviderOAuthBlockedError = (error) => Boolean(error?.blocked === true || error?.name === "ProviderOAuthBlockedError");
 
+const codexExternalBrowserAutomationUnsupported = () => createProviderOAuthBlockedError({
+  stage: "drive_codex_openai_login",
+  blockedReason: "external_browser_automation_unsupported",
+  message: "Codex OAuth currently opens in the system browser, but this WDIO harness can only drive the ctx Tauri webview. Use manual validation for the real localhost callback path.",
+});
+
 const classifyCodexOpenAiChallenge = ({ state, hasOtpInput = false } = {}) => {
   const text = collectAuthStateText(state);
   if (!text) return null;
@@ -775,112 +781,9 @@ const startCodexDesktopRelay = async ({ loginId, callbackUrl, completionToken })
 
 const driveCodexOpenAiLoginWithCredentials = async ({
   authUrl,
-  expectedCallbackUrl = "",
-  email,
-  password,
-  totpSecret,
-  timeoutMs = DEFAULT_TIMEOUT_MS,
-  pollMs = DEFAULT_POLL_MS,
 } = {}) => {
-  const normalizedEmail = readString(email);
-  const normalizedPassword = typeof password === "string" ? password : "";
-  const normalizedTotpSecret = readString(totpSecret);
-  if (!normalizedEmail) throw new Error("Codex OAuth email is required");
-  if (!normalizedPassword) throw new Error("Codex OAuth password is required");
-  if (!normalizedTotpSecret) throw new Error("Codex OAuth TOTP secret is required");
-
-  await navigateBrowserToUrl(authUrl);
-  const startedAtMs = Date.now();
-  let lastState = null;
-  let usedTotp = false;
-  while (Date.now() - startedAtMs <= timeoutMs) {
-    const state = await readVisibleDomState();
-    lastState = state;
-    if (callbackReached(state, expectedCallbackUrl) || stateMentions(state, /completing sign-in|login callback received/i)) {
-      return {
-        status: "callback_reached",
-        finalUrl: sanitizeAuthUrl(state.url),
-        usedTotp,
-      };
-    }
-
-    const inputs = Array.isArray(state.inputs) ? state.inputs : [];
-    const hasEmailInput = inputs.some((entry) =>
-      entry.type === "email" || entry.autocomplete === "email" || entry.name.includes("email") || entry.label.includes("email"));
-    const hasPasswordInput = inputs.some((entry) =>
-      entry.type === "password" || entry.autocomplete.includes("password") || entry.label.includes("password"));
-    const hasOtpInput = inputs.some((entry) =>
-      entry.autocomplete === "one-time-code"
-      || entry.inputmode === "numeric"
-      || entry.name.includes("otp")
-      || entry.name.includes("code")
-      || entry.label.includes("code")
-      || entry.label.includes("authenticator")
-      || entry.label.includes("verification"));
-
-    const blockedChallenge = classifyCodexOpenAiChallenge({ state, hasOtpInput });
-    if (blockedChallenge) {
-      throw createProviderOAuthBlockedError({
-        stage: "drive_codex_openai_login",
-        blockedReason: blockedChallenge.kind,
-        message: blockedChallenge.message,
-        challenge: blockedChallenge,
-      });
-    }
-
-    if (stateMentions(state, /incorrect|invalid|try again|wrong password|too many requests|blocked|unusual activity/i)) {
-      throw new Error(`OpenAI auth page reported an error: ${readString(state.bodyText).slice(0, 240)}`);
-    }
-
-    if (!hasEmailInput && !hasPasswordInput && !hasOtpInput && stateMentions(state, /log in|login/i)) {
-      await submitVisibleAuthStep(["log in", "login"]);
-      await waitMs(pollMs);
-      continue;
-    }
-
-    if (hasEmailInput) {
-      const filled = await fillBrowserAuthField("email", normalizedEmail);
-      if (!filled?.ok) {
-        throw new Error(readString(filled?.reason) || "failed to fill Codex OAuth email");
-      }
-      await submitVisibleAuthStep(["continue with email", "continue", "next", "log in", "login"]);
-      await waitMs(pollMs);
-      continue;
-    }
-
-    if (hasPasswordInput) {
-      const filled = await fillBrowserAuthField("password", normalizedPassword);
-      if (!filled?.ok) {
-        throw new Error(readString(filled?.reason) || "failed to fill Codex OAuth password");
-      }
-      await submitVisibleAuthStep(["continue", "log in", "login", "next"]);
-      await waitMs(pollMs);
-      continue;
-    }
-
-    if (hasOtpInput) {
-      const code = createTotpCode(normalizedTotpSecret);
-      const filled = await fillBrowserAuthField("otp", code);
-      if (!filled?.ok) {
-        throw new Error(readString(filled?.reason) || "failed to fill Codex OAuth authenticator code");
-      }
-      usedTotp = true;
-      await submitVisibleAuthStep(["continue", "verify", "submit", "log in", "login"]);
-      await waitMs(pollMs);
-      continue;
-    }
-
-    await waitMs(pollMs);
-  }
-
-  const summary = {
-    finalUrl: sanitizeAuthUrl(lastState?.url),
-    title: readString(lastState?.title),
-    bodyText: readString(lastState?.bodyText).slice(0, 240),
-    inputs: Array.isArray(lastState?.inputs) ? lastState.inputs : [],
-    buttons: Array.isArray(lastState?.buttons) ? lastState.buttons : [],
-  };
-  throw new Error(`timed out driving Codex OAuth browser flow: ${JSON.stringify(summary)}`);
+  void authUrl;
+  throw codexExternalBrowserAutomationUnsupported();
 };
 
 const secretKeyPattern = /(completion_token|callback_code|api_?key|secret|password|token|oauth_creds_json|google_accounts_json|credentials_json)/i;
@@ -1364,6 +1267,25 @@ const createProviderOAuthHarness = ({
 
   const awaitLoginUrl = async (loginId, timeout = timeoutMs) => {
     const session = getSession(loginId);
+    const startedAuthUrl = sanitizeAuthUrl(session.authUrl);
+    if (startedAuthUrl) {
+      recordStage(
+        "await_login_url",
+        `${session.providerId} auth URL observed via ${session.authUrlSource || "start_response"}`,
+        {
+          auth_url: session.authUrl,
+          latest_status: session.statusHistory[session.statusHistory.length - 1]?.status || null,
+        },
+        { provider_id: session.providerId, login_id: session.loginId },
+      );
+      return {
+        providerId: session.providerId,
+        loginId: session.loginId,
+        source: session.authUrlSource || "start_response",
+        authUrl: session.authUrl,
+        sanitizedAuthUrl: startedAuthUrl,
+      };
+    }
     const deadline = Date.now() + Math.max(0, Number(timeout) || 0);
     let fallbackAuthUrl = session.authUrl;
     let fallbackObservedAtMs = fallbackAuthUrl ? Date.now() : 0;
