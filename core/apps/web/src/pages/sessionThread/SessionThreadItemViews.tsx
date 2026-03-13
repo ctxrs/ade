@@ -36,6 +36,40 @@ const asRecord = (value: unknown): Record<string, unknown> => {
   return value as Record<string, unknown>;
 };
 
+type SelectionSnapshot = {
+  text: string;
+  anchorNode: Node | null;
+  anchorOffset: number;
+  focusNode: Node | null;
+  focusOffset: number;
+};
+
+function readSelectionSnapshot(): SelectionSnapshot {
+  const selection = window.getSelection();
+  return {
+    text: selection?.toString().trim() ?? "",
+    anchorNode: selection?.anchorNode ?? null,
+    anchorOffset: selection?.anchorOffset ?? -1,
+    focusNode: selection?.focusNode ?? null,
+    focusOffset: selection?.focusOffset ?? -1,
+  };
+}
+
+function selectionChangedDuringInteraction(
+  before: SelectionSnapshot | null,
+  after: SelectionSnapshot,
+): boolean {
+  if (!after.text) return false;
+  if (!before) return true;
+  return (
+    before.text !== after.text ||
+    before.anchorNode !== after.anchorNode ||
+    before.anchorOffset !== after.anchorOffset ||
+    before.focusNode !== after.focusNode ||
+    before.focusOffset !== after.focusOffset
+  );
+}
+
 export function ThreadItemView({
   item,
   worktreeId,
@@ -87,6 +121,7 @@ export function WorkbenchTurnHeaderView({
 }) {
   const [copied, setCopied] = useState(false);
   const resetTimerRef = useRef<number | null>(null);
+  const pointerSelectionRef = useRef<SelectionSnapshot | null>(null);
 
   useEffect(() => {
     if (!copied) return;
@@ -113,8 +148,8 @@ export function WorkbenchTurnHeaderView({
   );
 
   const handleClick = () => {
-    const selection = window.getSelection()?.toString() ?? "";
-    if (selection.trim()) return;
+    const selection = readSelectionSnapshot();
+    if (selectionChangedDuringInteraction(pointerSelectionRef.current, selection)) return;
     onToggle();
   };
 
@@ -131,6 +166,9 @@ export function WorkbenchTurnHeaderView({
       className={`wb-turn-header ${expanded ? "wb-turn-header-expanded" : "wb-turn-header-collapsed"}`}
       role="button"
       tabIndex={0}
+      onMouseDown={() => {
+        pointerSelectionRef.current = readSelectionSnapshot();
+      }}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       aria-expanded={expanded}
