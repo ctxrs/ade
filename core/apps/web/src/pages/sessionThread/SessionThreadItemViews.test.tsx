@@ -10,7 +10,7 @@ vi.mock("../../utils/clipboard", () => ({
   copyTextToClipboard: copyTextToClipboardMock,
 }));
 
-import { WorkbenchTurnHeaderView } from "./SessionThreadItemViews";
+import { WorkbenchToolRow, WorkbenchTurnHeaderView } from "./SessionThreadItemViews";
 
 function TestHeader({ plainText = "line 1\nline 2\nline 3\nline 4\nline 5" }: { plainText?: string }) {
   const [expanded, setExpanded] = useState(false);
@@ -98,5 +98,44 @@ describe("WorkbenchTurnHeaderView", () => {
     expect(copyTextToClipboardMock).toHaveBeenCalledWith("copy me");
     expect(header).toHaveAttribute("aria-expanded", "false");
     expect(await screen.findByRole("button", { name: "Copied" })).toBeInTheDocument();
+  });
+});
+
+describe("WorkbenchToolRow", () => {
+  it("renders the tool description on a dedicated secondary line", () => {
+    const onToggle = vi.fn();
+
+    const { container } = render(
+      <WorkbenchToolRow
+        item={{
+          kind: "tool",
+          id: "tool-1",
+          tool_call_id: "tool-call-1",
+          created_at: "2025-01-01T00:00:00.000Z",
+          updated_at: "2025-01-01T00:00:01.000Z",
+          tool_kind: "execute",
+          provider_tool_name: "Bash",
+          title: "Bash",
+          subtitle: "Get current working directory",
+          status: "running",
+          locations: [],
+          input: { command: "pwd" },
+          output_text: "",
+          raw: null,
+          updates_seen: 1,
+          has_details: true,
+        }}
+        verbosity="normal"
+        expanded={false}
+        onToggle={onToggle}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /bash/i })).toBeInTheDocument();
+    expect(screen.getByText("Get current working directory")).toBeInTheDocument();
+    const description = container.querySelector(".wb-tool-description");
+    expect(description).not.toBeNull();
+    expect(description?.textContent).toBe("Get current working directory");
+    expect(screen.queryByText("Bash · Get current working directory")).not.toBeInTheDocument();
   });
 });

@@ -3163,6 +3163,18 @@
   min-width: 0;
 }
 
+.wb-tool-row .wb-tool-text {
+  display: grid;
+  gap: 2px;
+  align-items: start;
+}
+
+.wb-tool-row .wb-tool-mainline {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+}
+
 .wb-tool-row .wb-tool-verb,
 .wb-tool-row .wb-tool-sep {
   flex: none;
@@ -3175,6 +3187,16 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.wb-tool-row .wb-tool-description {
+  display: block;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .wb-event-chev {

@@ -390,17 +390,9 @@ export function WorkbenchToolRow({
       "Edit",
     ]);
     const titleRest = titlePrefixed?.rest ?? "";
-    const trimmedSummary = String(summary ?? "").trim();
-    const hasSummary = trimmedSummary.length > 0;
 
     if (normalizedTitle && normalizedTitle !== "Tool") {
-      if (titlePrefixed) {
-        if (!titlePrefixed.rest && hasSummary) return makeParts(titlePrefixed.verb, trimmedSummary);
-        return titlePrefixed;
-      }
-      if (hasSummary && !/\\s/.test(normalizedTitle)) {
-        return makeParts(normalizedTitle, trimmedSummary);
-      }
+      if (titlePrefixed) return titlePrefixed;
       return makeParts(normalizedTitle);
     }
 
@@ -468,6 +460,12 @@ export function WorkbenchToolRow({
   })();
 
   const { verb, rest, label } = labelParts;
+  const description = (() => {
+    const trimmed = String(summary ?? "").trim();
+    if (!trimmed) return "";
+    if (trimmed === rest || trimmed === label || trimmed === title) return "";
+    return trimmed;
+  })();
   const showOutputPreview = verbosity === "verbose";
   const hasOutputText = !!item.output_text?.trim();
   const hasDetails = !!item.input || (showOutputPreview && hasOutputText);
@@ -481,16 +479,19 @@ export function WorkbenchToolRow({
         aria-expanded={hasDetails ? expanded : undefined}
         title={label}
       >
-        <span className="wb-event-text">
-          <span className="wb-tool-verb">{verb}</span>
-          {rest ? (
-            <>
-              <span className="wb-tool-sep" aria-hidden="true">
-                ·
-              </span>
-              <span className="wb-tool-rest">{rest}</span>
-            </>
-          ) : null}
+        <span className="wb-event-text wb-tool-text">
+          <span className="wb-tool-mainline">
+            <span className="wb-tool-verb">{verb}</span>
+            {rest ? (
+              <>
+                <span className="wb-tool-sep" aria-hidden="true">
+                  ·
+                </span>
+                <span className="wb-tool-rest">{rest}</span>
+              </>
+            ) : null}
+          </span>
+          {description ? <span className="wb-tool-description">{description}</span> : null}
         </span>
       </button>
       {hasDetails && expanded && (
