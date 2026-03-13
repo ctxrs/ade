@@ -6,6 +6,7 @@ use std::time::Instant;
 
 use anyhow::Result;
 use serde_json::json;
+use tokio::sync::{mpsc, oneshot};
 use tokio::time::Duration;
 
 use super::*;
@@ -88,6 +89,111 @@ async fn set_session_model_rejects_missing_live_session() {
     assert!(err
         .to_string()
         .contains("provider session missing is not live"));
+}
+
+#[tokio::test]
+async fn prompt_drains_terminal_interrupted_event_after_cancel() -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let script_path = workdir.join("fake-crp.sh");
+    let log_path = workdir.join("stdin.log");
+
+    fs::write(
+        &script_path,
+        r#"#!/bin/sh
+turn_id=""
+session_id=""
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_FILE"
+  case "$line" in
+    *'"type":"session.prompt"'*)
+      turn_id=$(printf '%s' "$line" | sed -n 's/.*"turn_id":"\([^"]*\)".*/\1/p')
+      session_id=$(printf '%s' "$line" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')
+      ;;
+    *'"type":"session.cancel"'*)
+      sleep 0.1
+      printf '{"v":1,"seq":1,"channel":"control","type":"turn.completed","session_id":"%s","turn_id":"%s","status":"interrupted"}\n' "$session_id" "$turn_id"
+      ;;
+  esac
+done
+"#,
+    )?;
+    let mut permissions = fs::metadata(&script_path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions)?;
+
+    let adapter = Tier1CrpAdapter::from_raw(
+        "fake-crp",
+        "/bin/sh".to_string(),
+        vec![script_path.to_string_lossy().to_string()],
+    );
+    let session_key = "cancel-drain";
+    let mut env = HashMap::new();
+    env.insert(
+        "LOG_FILE".to_string(),
+        log_path.to_string_lossy().to_string(),
+    );
+
+    let session = adapter
+        .pool
+        .get_or_create_session(session_key, &workdir, &env)
+        .await?;
+    session.opened.store(true, Ordering::SeqCst);
+
+    let (event_tx, mut event_rx) = mpsc::channel(16);
+    let (cancel_tx, cancel_rx) = oneshot::channel();
+    let request = CrpPromptRequest {
+        session_key: session_key.to_string(),
+        input: TurnInput {
+            content: "investigate".to_string(),
+            attachments: Vec::new(),
+            context_blocks: Vec::new(),
+            model_id: None,
+        },
+        workdir: workdir.clone(),
+        env: env.clone(),
+        event_sink: event_tx,
+        cancel_rx,
+    };
+
+    let pool = Arc::clone(&adapter.pool);
+    let prompt_task = tokio::spawn(async move { pool.prompt(request).await });
+
+    let started = Instant::now();
+    loop {
+        if let Ok(contents) = fs::read_to_string(&log_path) {
+            if contents.contains(r#""type":"session.prompt""#) {
+                break;
+            }
+        }
+        if started.elapsed() > Duration::from_secs(5) {
+            anyhow::bail!("timed out waiting for session.prompt");
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    cancel_tx.send(()).expect("cancel signal should send");
+
+    let mut saw_turn_interrupted = false;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while tokio::time::Instant::now() < deadline {
+        match tokio::time::timeout(Duration::from_millis(200), event_rx.recv()).await {
+            Ok(Some(event)) => {
+                if matches!(event.event_type, SessionEventType::TurnInterrupted) {
+                    saw_turn_interrupted = true;
+                    break;
+                }
+            }
+            Ok(None) => break,
+            Err(_) => {}
+        }
+    }
+
+    prompt_task.await??;
+    assert!(saw_turn_interrupted, "expected interrupted terminal event after cancel");
+
+    session.process.shutdown("test complete").await;
+    Ok(())
 }
 
 #[tokio::test]

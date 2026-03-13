@@ -51,6 +51,7 @@ const CRP_RUNTIME_LAUNCH_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const CRP_RUNTIME_LAUNCH_PROBE_TIMEOUT_CONTAINER: Duration = Duration::from_secs(5);
 const CRP_AUTH_EVENT_FORWARD_TIMEOUT: Duration = Duration::from_secs(60 * 10);
 const CRP_SESSION_MODEL_UPDATE_TIMEOUT: Duration = Duration::from_secs(5);
+const CRP_CANCEL_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 const CODEX_CRP_DUMP_CODEX_EVENTS_ENV: &str = "CODEX_CRP_DUMP_CODEX_EVENTS_PATH";
 const CODEX_CRP_DUMP_CRP_EVENTS_ENV: &str = "CODEX_CRP_DUMP_CRP_EVENTS_PATH";
 
@@ -706,13 +707,23 @@ impl CrpSessionPool {
                 .ok()
         });
         let mut cancel_rx = req.cancel_rx;
+        let mut cancel_requested = false;
+        let mut cancel_deadline: Option<tokio::time::Instant> = None;
         loop {
             tokio::select! {
-                _ = &mut cancel_rx => {
+                _ = &mut cancel_rx, if !cancel_requested => {
                     let _ = session.process.send(CrpCommand::SessionCancel {
                         session_id: Some(req.session_key.clone()),
                         turn_id: Some(turn_id.clone()),
                     }).await;
+                    cancel_requested = true;
+                    cancel_deadline = Some(tokio::time::Instant::now() + CRP_CANCEL_DRAIN_TIMEOUT);
+                }
+                _ = async {
+                    if let Some(deadline) = cancel_deadline {
+                        tokio::time::sleep_until(deadline).await;
+                    }
+                }, if cancel_requested && cancel_deadline.is_some() => {
                     break;
                 }
                 shutdown = shutdown_rx.changed() => {
