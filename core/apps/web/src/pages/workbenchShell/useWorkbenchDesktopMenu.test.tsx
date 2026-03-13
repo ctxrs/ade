@@ -55,6 +55,7 @@ const baseHandlers = () => ({
   copyTranscript: vi.fn(),
   copySessionLog: vi.fn(),
   copyWorktreeLocation: vi.fn(),
+  copyTaskId: vi.fn(),
   openWorktreeTerminal: vi.fn(),
   interruptSession: vi.fn(),
 });

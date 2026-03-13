@@ -47,6 +47,7 @@ type WorkbenchDesktopMenuHandlers = {
   copyTranscript: () => void | Promise<void>;
   copySessionLog: () => void | Promise<void>;
   copyWorktreeLocation: () => void | Promise<void>;
+  copyTaskId: () => void | Promise<void>;
   openWorktreeTerminal: () => void | Promise<void>;
   interruptSession: (sessionId: string) => void;
 };
@@ -83,6 +84,7 @@ export const buildWorkbenchDesktopMenuItems = (state: WorkbenchDesktopMenuState)
   { id: "session.copy-transcript", enabled: Boolean(state.activeSessionId) && !state.copyTranscriptBusy },
   { id: "session.copy-session-log", enabled: Boolean(state.activeSessionId) },
   { id: "session.copy-worktree-location", enabled: state.worktreeCanCopy },
+  { id: "session.copy-task-id", enabled: Boolean(state.activeTaskId) && !state.activeTaskIsOptimistic },
   { id: "session.open-worktree-terminal", enabled: state.worktreeCanOpenTerminal },
   { id: "session.interrupt", enabled: state.canInterruptSession },
 ];
@@ -160,6 +162,12 @@ export const handleWorkbenchDesktopMenuCommand = (
       if (!state.worktreeCanCopy) return { status: "ignored", note: "worktree-unavailable" };
       void handlers.copyWorktreeLocation();
       return { status: "handled", note: "copy-worktree-location" };
+    case "session.copy-task-id":
+      if (!state.activeTaskId || state.activeTaskIsOptimistic) {
+        return { status: "ignored", note: "task-missing-or-optimistic" };
+      }
+      void handlers.copyTaskId();
+      return { status: "handled", note: "copy-task-id" };
     case "session.open-worktree-terminal":
       if (!state.worktreeCanOpenTerminal) return { status: "ignored", note: "worktree-unavailable" };
       void handlers.openWorktreeTerminal();

@@ -593,6 +593,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       copyTranscript: activeTaskController.copyTranscript,
       copySessionLog: activeTaskController.copySessionLog,
       copyWorktreeLocation: activeTaskController.copyWorktreeLocation,
+      copyTaskId: activeTaskController.copyTaskId,
       openWorktreeTerminal: activeTaskController.openWorktreeTerminal,
       interruptSession: (sessionId) => {
         void interruptSession(sessionId).catch(() => {});
@@ -961,6 +962,8 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         convoMenu={activeTaskController.convoMenu}
         convoMenuRef={activeTaskController.convoMenuRef}
         activeSessionId={activeSessionId}
+        activeTaskId={activeTaskId}
+        canCopyTaskId={!activeTaskController.activeTaskIsOptimistic}
         copyTranscriptBusy={activeTaskController.copyTranscriptBusy}
         transcriptSpinnerDelayMs={activeTaskController.transcriptSpinnerDelayMs}
         canCopyWorktree={activeTaskController.worktreeChip.canCopyWorktree}
@@ -988,6 +991,10 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         onCopyWorktreeLocation={() => {
           activeTaskController.closeConvoMenu();
           void activeTaskController.copyWorktreeLocation();
+        }}
+        onCopyTaskId={() => {
+          activeTaskController.closeConvoMenu();
+          void activeTaskController.copyTaskId();
         }}
         onArchiveConversation={(event) => {
           if (!activeTaskId) return;

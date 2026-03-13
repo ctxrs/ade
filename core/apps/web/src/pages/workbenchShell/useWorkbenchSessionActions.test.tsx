@@ -94,6 +94,7 @@ describe("useWorkbenchSessionActions", () => {
         singleSessionTitle: "Conversation",
         worktreePath: "/tmp/worktree",
         canCopyWorktree: true,
+        canCopyTaskId: true,
         canOpenTerminal: true,
         terminalPanelRef: { current: null },
         setTerminalOpen: vi.fn(),
@@ -123,6 +124,7 @@ describe("useWorkbenchSessionActions", () => {
         singleSessionTitle: "Conversation",
         worktreePath: "/tmp/worktree",
         canCopyWorktree: true,
+        canCopyTaskId: true,
         canOpenTerminal: true,
         terminalPanelRef: { current: null },
         setTerminalOpen: vi.fn(),
@@ -155,6 +157,7 @@ describe("useWorkbenchSessionActions", () => {
         singleSessionTitle: "Conversation",
         worktreePath: "/tmp/worktree",
         canCopyWorktree: true,
+        canCopyTaskId: true,
         canOpenTerminal: true,
         terminalPanelRef: { current: null },
         setTerminalOpen: vi.fn(),
@@ -168,5 +171,93 @@ describe("useWorkbenchSessionActions", () => {
     });
 
     expect(result.current.transcriptNotice).toBe("Couldn't load full history. Copied what's already loaded.");
+  });
+
+  it("copies the active task ID to the clipboard", async () => {
+    const entry = buildEntry();
+    clipboardSpy.mockResolvedValue({ ok: true });
+
+    const { result } = renderHook(() =>
+      useWorkbenchSessionActions({
+        activeEntry: entry,
+        activeSessionId: entry.sessionId,
+        activeTaskId: "task-1",
+        activeWorktreeId: "worktree-1",
+        singleSessionTitle: "Conversation",
+        worktreePath: "/tmp/worktree",
+        canCopyWorktree: true,
+        canCopyTaskId: true,
+        canOpenTerminal: true,
+        terminalPanelRef: { current: null },
+        setTerminalOpen: vi.fn(),
+        getSupervisorSnapshot: () => buildSnapshot(entry),
+        loadMoreTurns: vi.fn(),
+      }),
+    );
+
+    await act(async () => {
+      await result.current.copyTaskId();
+    });
+
+    expect(clipboardSpy).toHaveBeenCalledWith("task-1");
+  });
+
+  it("alerts when copying the active task ID fails", async () => {
+    const entry = buildEntry();
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+    clipboardSpy.mockResolvedValue({ ok: false, reason: "unavailable" });
+
+    const { result } = renderHook(() =>
+      useWorkbenchSessionActions({
+        activeEntry: entry,
+        activeSessionId: entry.sessionId,
+        activeTaskId: "task-1",
+        activeWorktreeId: "worktree-1",
+        singleSessionTitle: "Conversation",
+        worktreePath: "/tmp/worktree",
+        canCopyWorktree: true,
+        canCopyTaskId: true,
+        canOpenTerminal: true,
+        terminalPanelRef: { current: null },
+        setTerminalOpen: vi.fn(),
+        getSupervisorSnapshot: () => buildSnapshot(entry),
+        loadMoreTurns: vi.fn(),
+      }),
+    );
+
+    await act(async () => {
+      await result.current.copyTaskId();
+    });
+
+    expect(alertSpy).toHaveBeenCalledWith("Couldn't copy the task ID to the clipboard.");
+  });
+
+  it("does not copy the task ID for optimistic tasks", async () => {
+    const entry = buildEntry();
+    clipboardSpy.mockResolvedValue({ ok: true });
+
+    const { result } = renderHook(() =>
+      useWorkbenchSessionActions({
+        activeEntry: entry,
+        activeSessionId: entry.sessionId,
+        activeTaskId: "task-1",
+        activeWorktreeId: "worktree-1",
+        singleSessionTitle: "Conversation",
+        worktreePath: "/tmp/worktree",
+        canCopyWorktree: true,
+        canCopyTaskId: false,
+        canOpenTerminal: true,
+        terminalPanelRef: { current: null },
+        setTerminalOpen: vi.fn(),
+        getSupervisorSnapshot: () => buildSnapshot(entry),
+        loadMoreTurns: vi.fn(),
+      }),
+    );
+
+    await act(async () => {
+      await result.current.copyTaskId();
+    });
+
+    expect(clipboardSpy).not.toHaveBeenCalled();
   });
 });

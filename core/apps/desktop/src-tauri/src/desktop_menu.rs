@@ -30,6 +30,7 @@ pub(super) const CMD_TASK_DELETE: &str = "task.delete";
 pub(super) const CMD_SESSION_COPY_TRANSCRIPT: &str = "session.copy-transcript";
 pub(super) const CMD_SESSION_COPY_SESSION_LOG: &str = "session.copy-session-log";
 pub(super) const CMD_SESSION_COPY_WORKTREE_LOCATION: &str = "session.copy-worktree-location";
+pub(super) const CMD_SESSION_COPY_TASK_ID: &str = "session.copy-task-id";
 pub(super) const CMD_SESSION_OPEN_WORKTREE_TERMINAL: &str = "session.open-worktree-terminal";
 pub(super) const CMD_SESSION_INTERRUPT: &str = "session.interrupt";
 pub(super) const CMD_GO_LAUNCHER: &str = "go.launcher";
@@ -351,6 +352,7 @@ fn build_session_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri:
         None,
         false,
     )?;
+    let copy_task_id = menu_item(app, CMD_SESSION_COPY_TASK_ID, "Copy Task ID", None, false)?;
     let open_terminal = menu_item(
         app,
         CMD_SESSION_OPEN_WORKTREE_TERMINAL,
@@ -370,6 +372,7 @@ fn build_session_submenu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri:
         .item(&copy_transcript)
         .item(&copy_session_log)
         .item(&copy_worktree)
+        .item(&copy_task_id)
         .item(&open_terminal)
         .item(&interrupt)
         .build()
