@@ -284,6 +284,16 @@
         }
       ]
     },
+    "BundledSkillsConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "ConfigProfile": {
       "additionalProperties": false,
       "description": "Collection of common configuration options that a user can define as a unit in `config.toml`.",
@@ -326,7 +336,13 @@
             "child_agents_md": {
               "type": "boolean"
             },
+            "code_mode": {
+              "type": "boolean"
+            },
             "codex_git_commit": {
+              "type": "boolean"
+            },
+            "codex_hooks": {
               "type": "boolean"
             },
             "collab": {
@@ -360,6 +376,9 @@
               "type": "boolean"
             },
             "fast_mode": {
+              "type": "boolean"
+            },
+            "guardian_approval": {
               "type": "boolean"
             },
             "image_detail_original": {
@@ -407,6 +426,9 @@
             "request_permissions": {
               "type": "boolean"
             },
+            "request_permissions_tool": {
+              "type": "boolean"
+            },
             "request_rule": {
               "type": "boolean"
             },
@@ -441,6 +463,9 @@
               "type": "boolean"
             },
             "steer": {
+              "type": "boolean"
+            },
+            "tool_call_mcp_elicitation": {
               "type": "boolean"
             },
             "undo": {
@@ -527,10 +552,10 @@
         "service_tier": {
           "$ref": "#/definitions/ServiceTier"
         },
-        "tools_view_image": {
-          "type": "boolean"
+        "tools": {
+          "$ref": "#/definitions/ToolsToml"
         },
-        "tools_web_search": {
+        "tools_view_image": {
           "type": "boolean"
         },
         "web_search": {
@@ -563,6 +588,30 @@
           "type": "boolean"
         }
       },
+      "type": "object"
+    },
+    "FileSystemAccessMode": {
+      "enum": [
+        "none",
+        "read",
+        "write"
+      ],
+      "type": "string"
+    },
+    "FilesystemPermissionToml": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/FileSystemAccessMode"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/definitions/FileSystemAccessMode"
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "FilesystemPermissionsToml": {
       "type": "object"
     },
     "ForcedLoginMethod": {
@@ -794,9 +843,6 @@
     "NetworkToml": {
       "additionalProperties": false,
       "properties": {
-        "admin_url": {
-          "type": "string"
-        },
         "allow_local_binding": {
           "type": "boolean"
         },
@@ -816,9 +862,6 @@
           "type": "array"
         },
         "dangerously_allow_all_unix_sockets": {
-          "type": "boolean"
-        },
-        "dangerously_allow_non_loopback_admin": {
           "type": "boolean"
         },
         "dangerously_allow_non_loopback_proxy": {
@@ -1092,18 +1135,19 @@
       },
       "type": "object"
     },
-    "PermissionsToml": {
+    "PermissionProfileToml": {
       "additionalProperties": false,
       "properties": {
+        "filesystem": {
+          "$ref": "#/definitions/FilesystemPermissionsToml"
+        },
         "network": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/NetworkToml"
-            }
-          ],
-          "description": "Network proxy settings from `[permissions.network]`. User config can enable the proxy; managed requirements may still constrain values."
+          "$ref": "#/definitions/NetworkToml"
         }
       },
+      "type": "object"
+    },
+    "PermissionsToml": {
       "type": "object"
     },
     "Personality": {
@@ -1288,6 +1332,11 @@
           "description": "Reject MCP elicitation prompts.",
           "type": "boolean"
         },
+        "request_permissions": {
+          "default": false,
+          "description": "Reject approval prompts related to built-in permission requests.",
+          "type": "boolean"
+        },
         "rules": {
           "description": "Reject prompts triggered by execpolicy `prompt` rules.",
           "type": "boolean"
@@ -1424,6 +1473,9 @@
     "SkillsConfig": {
       "additionalProperties": false,
       "properties": {
+        "bundled": {
+          "$ref": "#/definitions/BundledSkillsConfig"
+        },
         "config": {
           "items": {
             "$ref": "#/definitions/SkillConfig"
@@ -1442,8 +1494,12 @@
           "type": "boolean"
         },
         "web_search": {
-          "default": null,
-          "type": "boolean"
+          "allOf": [
+            {
+              "$ref": "#/definitions/WebSearchToolConfig"
+            }
+          ],
+          "default": null
         }
       },
       "type": "object"
@@ -1551,6 +1607,32 @@
       ],
       "type": "string"
     },
+    "WebSearchContextSize": {
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "type": "string"
+    },
+    "WebSearchLocation": {
+      "additionalProperties": false,
+      "properties": {
+        "city": {
+          "type": "string"
+        },
+        "country": {
+          "type": "string"
+        },
+        "region": {
+          "type": "string"
+        },
+        "timezone": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "WebSearchMode": {
       "enum": [
         "disabled",
@@ -1558,6 +1640,24 @@
         "live"
       ],
       "type": "string"
+    },
+    "WebSearchToolConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_domains": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "context_size": {
+          "$ref": "#/definitions/WebSearchContextSize"
+        },
+        "location": {
+          "$ref": "#/definitions/WebSearchLocation"
+        }
+      },
+      "type": "object"
     },
     "WindowsSandboxModeToml": {
       "enum": [
@@ -1667,6 +1767,10 @@
       "description": "Compact prompt used for history compaction.",
       "type": "string"
     },
+    "default_permissions": {
+      "description": "Default named permissions profile to apply from the `[permissions]` table.",
+      "type": "string"
+    },
     "developer_instructions": {
       "default": null,
       "description": "Developer instructions inserted as a `developer` role message.",
@@ -1689,6 +1793,10 @@
     },
     "experimental_realtime_ws_model": {
       "description": "Experimental / do not use. Selects the realtime websocket model/snapshot used for the `Op::RealtimeConversation` connection.",
+      "type": "string"
+    },
+    "experimental_realtime_ws_startup_context": {
+      "description": "Experimental / do not use. Replaces the synthesized realtime startup context appended to websocket session instructions. An empty string disables startup context injection entirely.",
       "type": "string"
     },
     "experimental_use_freeform_apply_patch": {
@@ -1717,7 +1825,13 @@
         "child_agents_md": {
           "type": "boolean"
         },
+        "code_mode": {
+          "type": "boolean"
+        },
         "codex_git_commit": {
+          "type": "boolean"
+        },
+        "codex_hooks": {
           "type": "boolean"
         },
         "collab": {
@@ -1751,6 +1865,9 @@
           "type": "boolean"
         },
         "fast_mode": {
+          "type": "boolean"
+        },
+        "guardian_approval": {
           "type": "boolean"
         },
         "image_detail_original": {
@@ -1798,6 +1915,9 @@
         "request_permissions": {
           "type": "boolean"
         },
+        "request_permissions_tool": {
+          "type": "boolean"
+        },
         "request_rule": {
           "type": "boolean"
         },
@@ -1832,6 +1952,9 @@
           "type": "boolean"
         },
         "steer": {
+          "type": "boolean"
+        },
+        "tool_call_mcp_elicitation": {
           "type": "boolean"
         },
         "undo": {
@@ -2067,7 +2190,7 @@
         }
       ],
       "default": null,
-      "description": "Nested permissions settings."
+      "description": "Named permissions profiles."
     },
     "personality": {
       "allOf": [
