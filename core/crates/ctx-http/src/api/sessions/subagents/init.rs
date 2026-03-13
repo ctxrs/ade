@@ -504,13 +504,7 @@ pub(crate) async fn mcp_agent_init(
             .map_err(|error| (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error })))?;
 
             let prompt_length = prompt.chars().count() as i64;
-            let requested_effort = agent
-                .reasoning_effort
-                .as_deref()
-                .map(normalize_effort_id)
-                .filter(|value| !value.is_empty());
-            let (_, model_effort) = split_model_id(&resolved.model_id);
-            let reasoning_effort = requested_effort.or(model_effort);
+            let reasoning_effort = resolved.reasoning_effort.clone();
 
             let worktree_id = match worktree_selection {
                 SubagentWorktreeSelection::Inherit => parent.worktree_id,
@@ -535,13 +529,14 @@ pub(crate) async fn mcp_agent_init(
             };
 
             let session = store
-                .create_session(
+                .create_session_with_reasoning_effort(
                     parent.task_id,
                     parent.workspace_id,
                     worktree_id,
                     parent.execution_environment,
                     provider_id.clone(),
                     resolved.model_id.clone(),
+                    reasoning_effort.clone(),
                     "subagent".into(),
                     Some(parent.id),
                     Some("sub_agent".to_string()),
@@ -586,7 +581,7 @@ pub(crate) async fn mcp_agent_init(
                 status: "running".to_string(),
                 label: Some(label),
                 harness: Some(provider_id),
-                model: Some(resolved.model_id),
+                model: Some(resolved.full_model_id),
                 reasoning_effort,
                 prompt_length,
                 created_at: child_created_at,

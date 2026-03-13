@@ -65,6 +65,10 @@ mod messages;
 pub(crate) use messages::ensure_session_turn_for_message;
 pub(super) use messages::{delete_message, post_message};
 mod models;
+pub(crate) use models::{
+    compose_model_id, deserialize_optional_reasoning_effort, load_provider_model_catalog,
+    normalize_effort_id, resolve_model_id,
+};
 mod snapshot;
 pub(super) use snapshot::{
     apply_session_diff_patch, get_session_diff, get_session_diff_summary, get_session_events,

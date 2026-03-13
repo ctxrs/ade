@@ -275,6 +275,40 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     expect(onStartError).toHaveBeenCalledWith(null);
   });
 
+  it("splits a combined draft model id into model_id and reasoning_effort for session creation", async () => {
+    let current: FlowValue | null = null;
+    mockedCreateTask.mockResolvedValue(makeTask("task-1", "session-1"));
+    mockedCreateSession.mockResolvedValue({
+      ...makeSession("session-1", "task-1"),
+      model_id: "gpt-5",
+      reasoning_effort: "xhigh",
+    });
+    const onStartError = vi.fn();
+
+    render(
+      <Harness
+        draftHarness={{ providerId: "codex", modelId: "gpt-5/xhigh" }}
+        onChange={(value) => {
+          current = value;
+        }}
+        onStartError={onStartError}
+      />,
+    );
+
+    await act(async () => {
+      await requireValue(current).startNewTask();
+    });
+
+    await waitFor(() => {
+      expect(requireValue(current).optimisticTasks[0]?.localStatus).toBe("synced");
+    });
+    expect(mockedCreateSession).toHaveBeenCalledWith("task-1", "codex", "gpt-5", expect.objectContaining({
+      execution_environment: "container_disk_isolated",
+      reasoning_effort: "xhigh",
+    }));
+    expect(onStartError).toHaveBeenCalledWith(null);
+  });
+
   it("keeps a failed optimistic task visible with failure metadata", async () => {
     let current: FlowValue | null = null;
     mockedCreateTask.mockRejectedValue(new Error("task create failed"));

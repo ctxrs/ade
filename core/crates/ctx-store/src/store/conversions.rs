@@ -108,6 +108,7 @@ pub(super) fn session_metadata_from_session(session: &Session) -> SessionMetadat
         relationship: session.relationship.clone(),
         provider_id: session.provider_id.clone(),
         model_id: session.model_id.clone(),
+        reasoning_effort: session.reasoning_effort.clone(),
         title: session.title.clone(),
         agent_role: session.agent_role.clone(),
         status: session.status.clone(),

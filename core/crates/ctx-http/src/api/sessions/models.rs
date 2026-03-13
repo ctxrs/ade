@@ -10,9 +10,9 @@ struct ModelInfo {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct ModelCatalog {
-    pub(super) full_ids: Vec<String>,
-    pub(super) current_model_id: Option<String>,
+pub(crate) struct ModelCatalog {
+    pub(crate) full_ids: Vec<String>,
+    pub(crate) current_model_id: Option<String>,
     base_ids: Vec<String>,
     efforts_by_base: HashMap<String, Vec<String>>,
     full_id_by_base_effort: HashMap<String, HashMap<String, String>>,
@@ -20,7 +20,7 @@ pub(super) struct ModelCatalog {
 }
 
 impl ModelCatalog {
-    pub(super) fn default_model_id(&self) -> Option<&str> {
+    pub(crate) fn default_model_id(&self) -> Option<&str> {
         self.current_model_id
             .as_deref()
             .or_else(|| self.full_ids.first().map(String::as_str))
@@ -28,15 +28,53 @@ impl ModelCatalog {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct ResolvedModel {
-    pub(super) model_id: String,
+pub(crate) struct ResolvedModel {
+    pub(crate) model_id: String,
+    pub(crate) reasoning_effort: Option<String>,
+    pub(crate) full_model_id: String,
 }
 
-pub(super) fn normalize_effort_id(value: &str) -> String {
+pub(crate) fn normalize_effort_id(value: &str) -> String {
     let raw = value.trim().to_lowercase();
     match raw.as_str() {
         "extra_high" | "extra-high" | "extra high" | "extrahigh" => "xhigh".to_string(),
         _ => raw,
+    }
+}
+
+pub(crate) fn deserialize_optional_reasoning_effort<'de, D>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let Some(raw) = Option::<String>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    let normalized = normalize_effort_id(trimmed);
+    if !KNOWN_EFFORT_IDS.contains(&normalized.as_str()) {
+        return Err(serde::de::Error::custom(format!(
+            "invalid reasoning_effort '{trimmed}'"
+        )));
+    }
+    Ok(Some(normalized))
+}
+
+pub(crate) fn compose_model_id(model_id: &str, reasoning_effort: Option<&str>) -> String {
+    let base = model_id.trim();
+    if base.is_empty() {
+        return String::new();
+    }
+    match reasoning_effort
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(effort) => format!("{base}/{effort}"),
+        None => base.to_string(),
     }
 }
 
@@ -212,13 +250,44 @@ fn pick_default_effort(efforts: &[String]) -> Option<String> {
     medium.or_else(|| efforts.first().cloned())
 }
 
-pub(super) fn resolve_model_id(
+fn build_resolved_model(model_id: String, reasoning_effort: Option<String>) -> ResolvedModel {
+    let model_id = model_id.trim().to_string();
+    let reasoning_effort = reasoning_effort
+        .map(|value| normalize_effort_id(&value))
+        .filter(|value| !value.is_empty());
+    let full_model_id = compose_model_id(&model_id, reasoning_effort.as_deref());
+    ResolvedModel {
+        model_id,
+        reasoning_effort,
+        full_model_id,
+    }
+}
+
+fn resolved_from_full_model_id(
+    catalog: Option<&ModelCatalog>,
+    full_model_id: &str,
+) -> ResolvedModel {
+    let trimmed = full_model_id.trim();
+    if let Some(catalog) = catalog {
+        if let Some(info) = catalog.info_by_full_id.get(trimmed) {
+            return build_resolved_model(info.base.clone(), info.effort.clone());
+        }
+    }
+    let (base, suffix) = split_model_id(trimmed);
+    let reasoning_effort = suffix.filter(|value| is_known_effort_id(value));
+    if reasoning_effort.is_some() {
+        return build_resolved_model(base, reasoning_effort);
+    }
+    build_resolved_model(trimmed.to_string(), None)
+}
+
+pub(crate) fn resolve_model_id(
     requested_model: Option<&str>,
     requested_effort: Option<&str>,
     fallback_model: Option<&str>,
     catalog: Option<&ModelCatalog>,
 ) -> Result<ResolvedModel, String> {
-    let mut model = requested_model
+    let model = requested_model
         .or(fallback_model)
         .unwrap_or("")
         .trim()
@@ -261,13 +330,11 @@ pub(super) fn resolve_model_id(
                         "model '{model}' already includes effort '{existing}'; requested '{req_effort}'"
                     ));
                 }
-                return Ok(ResolvedModel { model_id: model });
+                return Ok(resolved_from_full_model_id(Some(catalog), &model));
             }
             if let Some(map) = effort_map {
                 if let Some(full_id) = map.get(&req_norm) {
-                    return Ok(ResolvedModel {
-                        model_id: full_id.clone(),
-                    });
+                    return Ok(resolved_from_full_model_id(Some(catalog), full_id));
                 }
             }
             let efforts = if available_efforts.is_empty() {
@@ -287,7 +354,7 @@ pub(super) fn resolve_model_id(
         }
 
         if existing_effort.is_some() {
-            return Ok(ResolvedModel { model_id: model });
+            return Ok(resolved_from_full_model_id(Some(catalog), &model));
         }
 
         if supports_default_effort {
@@ -295,9 +362,7 @@ pub(super) fn resolve_model_id(
                 let default_norm = normalize_effort_id(&default_effort);
                 if let Some(map) = effort_map {
                     if let Some(full_id) = map.get(&default_norm) {
-                        return Ok(ResolvedModel {
-                            model_id: full_id.clone(),
-                        });
+                        return Ok(resolved_from_full_model_id(Some(catalog), full_id));
                     }
                 }
             }
@@ -306,28 +371,25 @@ pub(super) fn resolve_model_id(
             let default_norm = normalize_effort_id(&default_effort);
             if let Some(map) = effort_map {
                 if let Some(full_id) = map.get(&default_norm) {
-                    return Ok(ResolvedModel {
-                        model_id: full_id.clone(),
-                    });
+                    return Ok(resolved_from_full_model_id(Some(catalog), full_id));
                 }
             }
         }
 
-        return Ok(ResolvedModel { model_id: model });
+        return Ok(resolved_from_full_model_id(Some(catalog), &model));
     }
 
     if let Some(req_effort) = effort_input {
         let (_, suffix) = split_model_id(&model);
         if suffix.is_none() {
-            model = format!("{}/{}", model, req_effort);
-            return Ok(ResolvedModel { model_id: model });
+            return Ok(build_resolved_model(model, Some(req_effort)));
         }
     }
 
-    Ok(ResolvedModel { model_id: model })
+    Ok(resolved_from_full_model_id(None, &model))
 }
 
-pub(super) async fn load_provider_model_catalog(
+pub(crate) async fn load_provider_model_catalog(
     state: &Arc<AppState>,
     workspace: &Workspace,
     provider_id: &str,

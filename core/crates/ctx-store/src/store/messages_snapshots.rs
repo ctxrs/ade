@@ -27,7 +27,7 @@ impl Store {
             let mut session_sql = String::from(
                 "
                 SELECT id, task_id, workspace_id, parent_session_id, relationship,
-                       execution_environment, provider_id, model_id, title, status, created_at, updated_at
+                       execution_environment, provider_id, model_id, reasoning_effort, title, status, created_at, updated_at
                 FROM (
                     SELECT
                         s.*,
@@ -80,6 +80,7 @@ impl Store {
                     relationship: r.try_get("relationship")?,
                     provider_id: r.try_get("provider_id")?,
                     model_id: r.try_get("model_id")?,
+                    reasoning_effort: r.try_get("reasoning_effort")?,
                     title: r.try_get("title")?,
                     status: parse_session_status(r.try_get::<String, _>("status")?.as_str()),
                     created_at: parse_dt(&created_at)?,
@@ -123,6 +124,7 @@ impl Store {
                 s.relationship,
                 s.provider_id,
                 s.model_id,
+                s.reasoning_effort,
                 s.title,
                 s.agent_role,
                 s.status,
@@ -180,6 +182,7 @@ impl Store {
                 ),
                 provider_id: r.try_get("provider_id")?,
                 model_id: r.try_get("model_id")?,
+                reasoning_effort: r.try_get("reasoning_effort")?,
                 title: r.try_get("title")?,
                 agent_role: r.try_get("agent_role")?,
                 status: parse_session_status(r.try_get::<String, _>("status")?.as_str()),
@@ -293,6 +296,7 @@ impl Store {
                 s.relationship,
                 s.provider_id,
                 s.model_id,
+                s.reasoning_effort,
                 s.title,
                 s.agent_role,
                 s.status,
@@ -344,6 +348,7 @@ impl Store {
                 ),
                 provider_id: r.try_get("provider_id")?,
                 model_id: r.try_get("model_id")?,
+                reasoning_effort: r.try_get("reasoning_effort")?,
                 title: r.try_get("title")?,
                 agent_role: r.try_get("agent_role")?,
                 status: parse_session_status(r.try_get::<String, _>("status")?.as_str()),
@@ -398,6 +403,7 @@ impl Store {
                 s.relationship,
                 s.provider_id,
                 s.model_id,
+                s.reasoning_effort,
                 s.title,
                 s.agent_role,
                 s.status,
@@ -446,6 +452,7 @@ impl Store {
             ),
             provider_id: r.try_get("provider_id")?,
             model_id: r.try_get("model_id")?,
+            reasoning_effort: r.try_get("reasoning_effort")?,
             title: r.try_get("title")?,
             agent_role: r.try_get("agent_role")?,
             status: parse_session_status(r.try_get::<String, _>("status")?.as_str()),

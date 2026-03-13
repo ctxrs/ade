@@ -8,6 +8,7 @@ use axum::Json;
 use serde::Deserialize;
 
 use super::super::errors::ApiErrorResp;
+use super::{compose_model_id, load_provider_model_catalog, normalize_effort_id, resolve_model_id};
 use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::logs;
@@ -195,6 +196,8 @@ pub(crate) async fn schedule_session_title_generation(
 #[derive(Debug, Deserialize)]
 pub(crate) struct SetSessionModelReq {
     pub(crate) model_id: String,
+    #[serde(default)]
+    pub(crate) reasoning_effort: Option<String>,
 }
 
 pub(crate) async fn set_session_model(
@@ -210,6 +213,12 @@ pub(crate) async fn set_session_model(
         .map_err(|_| StatusCode::NOT_FOUND)?;
     let session = store
         .get_session(session_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let workspace = state
+        .global_store()
+        .get_workspace(session.workspace_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -239,17 +248,45 @@ pub(crate) async fn set_session_model(
     )
     .await;
 
+    let reasoning_effort = req
+        .reasoning_effort
+        .as_deref()
+        .map(normalize_effort_id)
+        .filter(|value| !value.is_empty());
+    if let Some(ref effort) = reasoning_effort {
+        let allowed = ["none", "minimal", "low", "medium", "high", "xhigh"];
+        if !allowed.contains(&effort.as_str()) {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    }
+    let catalog = load_provider_model_catalog(&state, &workspace, &session.provider_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let resolved_model = resolve_model_id(
+        Some(req.model_id.as_str()),
+        reasoning_effort.as_deref(),
+        None,
+        catalog.as_ref(),
+    )
+    .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let next_full_model_id = compose_model_id(
+        &resolved_model.model_id,
+        resolved_model.reasoning_effort.as_deref(),
+    );
+
     if adapter.has_live_session(&session.id.0.to_string()).await {
         adapter
-            .set_session_model(session.id.0.to_string(), req.model_id.clone())
+            .set_session_model(session.id.0.to_string(), next_full_model_id.clone())
             .await
             .map_err(|_| StatusCode::BAD_REQUEST)?;
     }
 
-    let next_model_id = req.model_id.clone();
-
     store
-        .update_session_model(session_id, next_model_id.clone())
+        .update_session_model_config(
+            session_id,
+            resolved_model.model_id.clone(),
+            resolved_model.reasoning_effort.clone(),
+        )
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -259,7 +296,10 @@ pub(crate) async fn set_session_model(
             None,
             None,
             SessionEventType::Init,
-            serde_json::json!({"current_model_id": next_model_id}),
+            serde_json::json!({
+                "current_model_id": next_full_model_id,
+                "reasoning_effort": resolved_model.reasoning_effort.clone(),
+            }),
         )
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -270,6 +310,13 @@ pub(crate) async fn set_session_model(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
+    state.remember_session_meta(&updated).await;
+    if let Err(e) = state.emit_workspace_task_upsert(updated.task_id).await {
+        tracing::warn!(
+            task_id = %updated.task_id.0,
+            "workspace active snapshot refresh failed after session model update: {e:?}"
+        );
+    }
 
     Ok(Json(updated))
 }

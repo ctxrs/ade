@@ -19,6 +19,7 @@ import {
 import type { DraftHarness, ProviderAuthSummaryTrigger, WorkbenchModeId } from "../../components/WorkbenchComposer";
 import type { SessionSupervisor } from "../../state/sessionSupervisor";
 import { errorMessage } from "../../utils/errorMessage";
+import { parseModelId } from "../../utils/modelEffort";
 import { randomUuid } from "../../utils/randomUuid";
 import type { WorkbenchStore } from "../../workbench/store";
 import type { OptimisticFocus, OptimisticTaskSummary } from "../WorkbenchPage.types";
@@ -152,6 +153,9 @@ export function useWorkbenchTaskCreation({
       onStartError(errorMessage(e));
       return;
     }
+    const parsedResolvedModel = parseModelId(resolvedModelId);
+    const sessionModelId = parsedResolvedModel.base || resolvedModelId;
+    const sessionReasoningEffort = parsedResolvedModel.effort;
     const optimisticTaskId = randomUuid();
     const optimisticSessionId = randomUuid();
     const optimisticMessageId = randomUuid();
@@ -183,7 +187,8 @@ export function useWorkbenchTaskCreation({
       workspace_id: workspaceId,
       worktree_id: "",
       provider_id: primaryTrack.providerId,
-      model_id: resolvedModelId,
+      model_id: sessionModelId,
+      reasoning_effort: sessionReasoningEffort,
       title: "Session 1",
       agent_role: "assistant",
       status: "starting",
@@ -315,9 +320,10 @@ export function useWorkbenchTaskCreation({
       const messageId = optimisticMessageId;
       const turnId = optimisticTurnId;
       const shouldSendInitialPrompt = attachmentsToSend.length === 0;
-      const session = await createSession(currentTaskId, primaryTrack.providerId, resolvedModelId, {
+      const session = await createSession(currentTaskId, primaryTrack.providerId, sessionModelId, {
         execution_environment: executionEnvironment,
         id: clientSessionId,
+        reasoning_effort: sessionReasoningEffort,
         initial_message_id: messageId,
         initial_turn_id: turnId,
         ...(shouldSendInitialPrompt ? { initial_prompt: prompt } : {}),

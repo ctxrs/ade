@@ -25,10 +25,7 @@ import { useOpenSession, useSessionEntry, useSessionSupervisor } from "../state/
 import { loadSessionViewPrefsV1, saveSessionViewPrefsV1, type SessionViewVerbosity } from "../state/uiStateStore";
 import { type SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 import { useRafCoalesced } from "../components/hooks/useRafCoalesced";
-import {
-  type ContextWindowInfo,
-  type WorkbenchModeId,
-} from "../components/WorkbenchComposer";
+import { type ContextWindowInfo, type WorkbenchModeId } from "../components/WorkbenchComposer";
 import { useFeatureGate } from "../utils/analytics";
 import { useDictationController } from "../utils/useDictationController";
 import { useWorkbenchStore } from "../workbench/store";
@@ -64,6 +61,7 @@ import { useSessionImageDropScope } from "./sessionView/useSessionImageDropScope
 import { useSessionProviderGuard } from "./sessionView/useSessionProviderGuard";
 import { useSharedSessionProviderOptions } from "./sessionView/useSharedSessionProviderOptions";
 import { useStableAskUserQuestionAnswers } from "./sessionView/useStableAskUserQuestionAnswers";
+import { composeModelId, parseModelId } from "../utils/modelEffort";
 
 export function SessionView({
   sessionId,
@@ -634,14 +632,18 @@ export function SessionView({
   const modelOptions = useMemo(() => {
     const parsed = buildModelsFromProviderOptions(sharedProviderOptions);
     if (parsed.length > 0) return parsed;
-    const fallbackId = String(session?.model_id ?? "").trim();
+    const fallbackId = composeModelId(
+      String(session?.model_id ?? ""),
+      session?.reasoning_effort ?? null,
+    );
     return fallbackId ? [{ id: fallbackId, name: fallbackId }] : [];
-  }, [session?.model_id, sharedProviderOptions]);
+  }, [session?.model_id, session?.reasoning_effort, sharedProviderOptions]);
   const currentModelId = useMemo(() => {
-    const fromMeta = String(entry?.acpCurrentModelId ?? "").trim();
-    if (fromMeta) return fromMeta;
-    return String(session?.model_id ?? "").trim();
-  }, [entry?.acpCurrentModelId, session?.model_id]);
+    return composeModelId(
+      String(session?.model_id ?? ""),
+      session?.reasoning_effort ?? null,
+    );
+  }, [session?.model_id, session?.reasoning_effort]);
 
   const setSendBusySafe = (next: boolean) => {
     sendBusyRef.current = next;
@@ -888,7 +890,8 @@ export function SessionView({
   }, [dictationRecording, startDictation, stopDictation]);
 
   const handleSetModelId = useCallback(async (next: string) => {
-    const updated = await setSessionModel(id, next);
+    const parsed = parseModelId(next);
+    const updated = await setSessionModel(id, parsed.base || next, parsed.effort);
     supervisor.setSession(updated);
   }, [id, supervisor]);
 

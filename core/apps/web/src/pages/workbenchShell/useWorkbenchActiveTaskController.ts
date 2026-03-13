@@ -17,7 +17,7 @@ import { HARNESS_CATALOG } from "../../utils/harnessCatalog";
 import { trackWorkbenchPanelToggled } from "../../utils/analytics";
 import { errorMessage } from "../../utils/errorMessage";
 import { getLoadTestTelemetry } from "../../utils/loadTestTelemetry";
-import { parseModelId } from "../../utils/modelEffort";
+import { composeModelId, parseModelId } from "../../utils/modelEffort";
 import {
   loadWorkbenchTerminalPanelOpenV1,
   saveWorkbenchArtifactsPaneOpenV1,
@@ -792,7 +792,9 @@ export function useWorkbenchActiveTaskController({
   const singleSessionHeader = useMemo(() => {
     const session = activeEntry?.session ?? null;
     if (!session) return null;
-    const parsedModel = parseModelId(session?.model_id ?? "");
+    const parsedModel = parseModelId(
+      composeModelId(session?.model_id ?? "", session?.reasoning_effort ?? null),
+    );
     const harness =
       HARNESS_CATALOG.find((item) => item.id === (session?.provider_id ?? ""))?.label ??
       (session?.provider_id ?? "Provider");

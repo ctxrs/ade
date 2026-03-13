@@ -134,6 +134,7 @@ export type Session = {
   relationship?: string | null;
   provider_id: string;
   model_id: string;
+  reasoning_effort?: string | null;
   title: string;
   agent_role: string;
   status: string;
@@ -170,6 +171,7 @@ export type SessionSummary = {
   relationship?: string | null;
   provider_id: string;
   model_id: string;
+  reasoning_effort?: string | null;
   title: string;
   status: string;
   execution_environment?: ExecutionEnvironment | null;

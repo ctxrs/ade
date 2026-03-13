@@ -8,7 +8,7 @@ use ctx_core::models::{
     Message, MessageDelivery, MessageRole, SessionEventType, SessionTurn, SessionTurnStatus,
     VcsKind,
 };
-use sqlx::SqlitePool;
+use sqlx::{Row, SqlitePool};
 use tokio::sync::Barrier;
 
 struct SessionFixture {
@@ -214,6 +214,95 @@ async fn can_create_task() {
     let other = WorkspaceId::new();
     let tasks_other = store.list_tasks(other).await.unwrap();
     assert!(tasks_other.is_empty());
+}
+
+#[tokio::test]
+async fn session_reasoning_effort_migration_backfills_known_suffixes_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db.sqlite");
+    std::fs::File::create(&db_path).unwrap();
+    let pool = SqlitePool::connect(&sqlite_url(&db_path)).await.unwrap();
+
+    sqlx::query(
+        r#"CREATE TABLE sessions (
+            id TEXT PRIMARY KEY,
+            model_id TEXT NOT NULL
+        )"#,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query("INSERT INTO sessions (id, model_id) VALUES (?, ?)")
+        .bind("session-1")
+        .bind("openai/gpt-5/xhigh")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO sessions (id, model_id) VALUES (?, ?)")
+        .bind("session-2")
+        .bind("openrouter/google/gemini-2.5-pro")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO sessions (id, model_id) VALUES (?, ?)")
+        .bind("session-3")
+        .bind("vendor/highway")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let migration_sql = include_str!("../migrations/0046_session_reasoning_effort.sql");
+    for statement in migration_sql
+        .split(";\n\n")
+        .map(str::trim)
+        .filter(|statement| !statement.is_empty())
+    {
+        sqlx::query(statement).execute(&pool).await.unwrap();
+    }
+
+    let rows = sqlx::query("SELECT id, model_id, reasoning_effort FROM sessions ORDER BY id ASC")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    let session1 = &rows[0];
+    assert_eq!(
+        session1.try_get::<String, _>("model_id").unwrap(),
+        "openai/gpt-5"
+    );
+    assert_eq!(
+        session1
+            .try_get::<Option<String>, _>("reasoning_effort")
+            .unwrap()
+            .as_deref(),
+        Some("xhigh")
+    );
+
+    let session2 = &rows[1];
+    assert_eq!(
+        session2.try_get::<String, _>("model_id").unwrap(),
+        "openrouter/google/gemini-2.5-pro"
+    );
+    assert_eq!(
+        session2
+            .try_get::<Option<String>, _>("reasoning_effort")
+            .unwrap(),
+        None
+    );
+
+    let session3 = &rows[2];
+    assert_eq!(
+        session3.try_get::<String, _>("model_id").unwrap(),
+        "vendor/highway"
+    );
+    assert_eq!(
+        session3
+            .try_get::<Option<String>, _>("reasoning_effort")
+            .unwrap(),
+        None
+    );
+
+    pool.close().await;
 }
 
 #[tokio::test]

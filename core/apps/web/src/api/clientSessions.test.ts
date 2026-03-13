@@ -77,4 +77,23 @@ describe("createSession analytics", () => {
     await createSession("task-1", "codex", "gpt-5-codex", { execution_environment: "host" });
     expect(trackFirstTurnSubmittedMock).not.toHaveBeenCalled();
   });
+
+  it("posts split reasoning_effort while preserving analytics on the effective full model id", async () => {
+    await createSession("task-1", "codex", "gpt-5-codex", {
+      execution_environment: "host",
+      reasoning_effort: "xhigh",
+    });
+
+    const [, options] = apiAnyMock.mock.calls[0] ?? [];
+    expect(JSON.parse(String(options?.body ?? "{}"))).toEqual({
+      provider_id: "codex",
+      model_id: "gpt-5-codex",
+      reasoning_effort: "xhigh",
+      execution_environment: "host",
+    });
+    expect(trackSessionCreatedMock).toHaveBeenCalledWith(expect.objectContaining({
+      providerId: "codex",
+      modelId: "gpt-5-codex/xhigh",
+    }));
+  });
 });

@@ -243,7 +243,10 @@ impl<'a> ProviderRuntimeContext<'a> {
                     KIMI_SHARE_DIR_ENV.to_string(),
                     kimi_share_dir.to_string_lossy().to_string(),
                 );
-                env.insert("CTX_CRP_DISABLE_MODEL_OVERRIDE".to_string(), "1".to_string());
+                env.insert(
+                    "CTX_CRP_DISABLE_MODEL_OVERRIDE".to_string(),
+                    "1".to_string(),
+                );
             }
             PROVIDER_QWEN => {
                 let api_key = secrets::endpoint_secret_api_key(secret)?;
@@ -623,11 +626,8 @@ async fn prepare_kimi_share_dir(runtime_data_root: &Path, endpoint_id: &str) -> 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = tokio::fs::set_permissions(
-            &token_path,
-            std::fs::Permissions::from_mode(0o600),
-        )
-        .await;
+        let _ =
+            tokio::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o600)).await;
     }
     Ok(share_dir)
 }

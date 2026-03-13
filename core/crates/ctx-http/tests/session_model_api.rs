@@ -275,3 +275,158 @@ async fn set_session_model_skips_adapter_when_session_is_not_live() {
         Some(&json!("queued-model"))
     );
 }
+
+#[tokio::test]
+async fn create_session_splits_legacy_combined_model_id_into_reasoning_effort() {
+    let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let adapter = Arc::new(RecordingSetModelAdapter::live());
+    let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
+    providers.insert("fake-set-model".to_string(), adapter);
+
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        providers,
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state);
+    let server = common::spawn_http_server(app).await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let workspace: ctx_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .expect("create workspace")
+        .json()
+        .await
+        .expect("workspace json");
+
+    let task: ctx_core::models::Task = client
+        .post(format!("{base}/api/workspaces/{}/tasks", workspace.id.0))
+        .json(&json!({"title":"session-model"}))
+        .send()
+        .await
+        .expect("create task")
+        .json()
+        .await
+        .expect("task json");
+
+    let session: Session = client
+        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
+        .json(&json!({
+            "provider_id":"fake-set-model",
+            "model_id":"gpt-5/xhigh"
+        }))
+        .send()
+        .await
+        .expect("create session")
+        .json()
+        .await
+        .expect("session json");
+
+    assert_eq!(session.model_id, "gpt-5");
+    assert_eq!(session.reasoning_effort.as_deref(), Some("xhigh"));
+}
+
+#[tokio::test]
+async fn set_session_model_persists_reasoning_effort_and_forwards_full_model_id() {
+    let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let adapter = Arc::new(RecordingSetModelAdapter::live());
+    let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
+    providers.insert("fake-set-model".to_string(), adapter.clone());
+
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        providers,
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state);
+    let server = common::spawn_http_server(app).await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let workspace: ctx_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .expect("create workspace")
+        .json()
+        .await
+        .expect("workspace json");
+
+    let task: ctx_core::models::Task = client
+        .post(format!("{base}/api/workspaces/{}/tasks", workspace.id.0))
+        .json(&json!({"title":"session-model"}))
+        .send()
+        .await
+        .expect("create task")
+        .json()
+        .await
+        .expect("task json");
+
+    let session: Session = client
+        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
+        .json(&json!({"provider_id":"fake-set-model","model_id":"start-model"}))
+        .send()
+        .await
+        .expect("create session")
+        .json()
+        .await
+        .expect("session json");
+
+    let updated: Session = client
+        .post(format!("{base}/api/sessions/{}/model", session.id.0))
+        .json(&json!({
+            "model_id":"gpt-5",
+            "reasoning_effort":"xhigh"
+        }))
+        .send()
+        .await
+        .expect("set session model")
+        .json()
+        .await
+        .expect("updated session json");
+
+    assert_eq!(updated.model_id, "gpt-5");
+    assert_eq!(updated.reasoning_effort.as_deref(), Some("xhigh"));
+    assert_eq!(
+        adapter.calls.lock().expect("calls").as_slice(),
+        &[(session.id.0.to_string(), "gpt-5/xhigh".to_string())]
+    );
+
+    let head: SessionHeadSnapshot = client
+        .get(format!(
+            "{base}/api/sessions/{}/head?limit=10&include_events=true",
+            session.id.0
+        ))
+        .send()
+        .await
+        .expect("get session head")
+        .json()
+        .await
+        .expect("session head json");
+
+    let init_event = head
+        .events
+        .iter()
+        .rev()
+        .find(|event| matches!(event.event_type, SessionEventType::Init))
+        .expect("init event appended");
+    assert_eq!(
+        init_event.payload_json.get("current_model_id"),
+        Some(&json!("gpt-5/xhigh"))
+    );
+    assert_eq!(
+        init_event.payload_json.get("reasoning_effort"),
+        Some(&json!("xhigh"))
+    );
+}

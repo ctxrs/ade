@@ -7,7 +7,7 @@ import type { TerminalPanelHandle } from "../../components/TerminalPanel";
 import { HARNESS_CATALOG } from "../../utils/harnessCatalog";
 import { copyTextToClipboard } from "../../utils/clipboard";
 import { errorMessage } from "../../utils/errorMessage";
-import { parseModelId } from "../../utils/modelEffort";
+import { composeModelId, parseModelId } from "../../utils/modelEffort";
 import {
   formatWorktreePath,
   sanitizeFileName,
@@ -81,7 +81,9 @@ export function useWorkbenchSessionActions({
     const session = activeEntry.session;
     const harness =
       HARNESS_CATALOG.find((item) => item.id === (session.provider_id ?? ""))?.label ?? (session.provider_id ?? "Provider");
-    const parsedModel = parseModelId(session.model_id ?? "");
+    const parsedModel = parseModelId(
+      composeModelId(session.model_id ?? "", session.reasoning_effort ?? null),
+    );
     const thread = buildWorkbenchThreadViewModel(
       activeEntry.turns ?? [],
       activeEntry.messages ?? [],

@@ -16,6 +16,7 @@ use ctx_providers::adapters::TurnInput;
 use ctx_providers::events::NormalizedEvent;
 use ctx_store::store::SessionTurnToolCountDeltas;
 
+use crate::api::sessions::compose_model_id;
 use crate::daemon::{ensure_provider_adapter_for_target_with_cfg, AppState};
 use crate::execution_effective;
 use crate::harness_runtime::HarnessRuntimeKind;
@@ -78,6 +79,7 @@ pub(crate) async fn start_turn(
     let workdir_canonical = tokio::fs::canonicalize(&workdir_root).await.ok();
     let workdir_str = workdir_root.to_string_lossy().to_string();
     let execution_environment = session.execution_environment;
+    let full_model_id = compose_model_id(&session.model_id, session.reasoning_effort.as_deref());
 
     let mut message = queued.message;
     let message_id = message.id;
@@ -85,7 +87,7 @@ pub(crate) async fn start_turn(
     let queue_wait_ms = queued.enqueued_at.elapsed().as_millis() as u64;
     let mut queue_labels = HashMap::new();
     queue_labels.insert("provider_id".to_string(), session.provider_id.clone());
-    queue_labels.insert("model_id".to_string(), session.model_id.clone());
+    queue_labels.insert("model_id".to_string(), full_model_id.clone());
     queue_labels.insert(
         "execution_environment".to_string(),
         execution_environment.as_str().to_string(),
@@ -119,7 +121,8 @@ pub(crate) async fn start_turn(
     run_event.cwd = Some(workdir_str.clone());
     run_event.worktree_root = Some(workdir_str.clone());
     run_event.meta = Some(json!({
-        "model_id": session.model_id.clone(),
+        "model_id": full_model_id.clone(),
+        "reasoning_effort": session.reasoning_effort.clone(),
         "execution_environment": execution_environment.as_str(),
         "session_root_kind": session_root_kind,
     }));
@@ -202,7 +205,7 @@ pub(crate) async fn start_turn(
     let prompt = message.content.clone();
     let provider_session_ref = session.provider_session_ref.clone();
     let context_window_metrics =
-        compute_context_window_metrics(&session.provider_id, &session.model_id, &prompt);
+        compute_context_window_metrics(&session.provider_id, &full_model_id, &prompt);
 
     let (ev_tx, ev_rx) = mpsc::channel::<NormalizedEvent>(128);
     let (events_done_tx, events_done_rx) = oneshot::channel();
@@ -226,7 +229,7 @@ pub(crate) async fn start_turn(
         provider_env.insert("CTX_PROVIDER_SESSION_REF".to_string(), provider_ref);
     }
     provider_env.insert("CTX_SESSION_ID".to_string(), session.id.0.to_string());
-    provider_env.insert("CTX_MODEL_ID".to_string(), session.model_id.clone());
+    provider_env.insert("CTX_MODEL_ID".to_string(), full_model_id.clone());
     let mcp_token = uuid::Uuid::new_v4().to_string();
     provider_env.insert("CTX_MCP_TOKEN".to_string(), mcp_token);
     let settings = settings::load_settings(state.global_store()).await?;
@@ -501,7 +504,8 @@ pub(crate) async fn start_turn(
     run_env_event.cwd = Some(workdir_str.clone());
     run_env_event.worktree_root = Some(workdir_str.clone());
     run_env_event.meta = Some(json!({
-        "model_id": session.model_id.clone(),
+        "model_id": full_model_id.clone(),
+        "reasoning_effort": session.reasoning_effort.clone(),
         "execution_environment": execution_environment.as_str(),
         "session_root_kind": session_root_kind,
         "runtime_provider_id": runtime_provider_id,
@@ -556,7 +560,7 @@ pub(crate) async fn start_turn(
                 content: prompt,
                 attachments: message.attachments.clone(),
                 context_blocks,
-                model_id: normalize_session_model_id(&session.model_id),
+                model_id: normalize_session_model_id(&full_model_id),
             },
             workdir.to_path_buf(),
             provider_env,
@@ -568,7 +572,7 @@ pub(crate) async fn start_turn(
             let spawn_ms = spawn_started_at.elapsed().as_millis() as u64;
             let mut spawn_labels = HashMap::new();
             spawn_labels.insert("provider_id".to_string(), session.provider_id.clone());
-            spawn_labels.insert("model_id".to_string(), session.model_id.clone());
+            spawn_labels.insert("model_id".to_string(), full_model_id.clone());
             spawn_labels.insert(
                 "execution_environment".to_string(),
                 execution_environment.as_str().to_string(),
@@ -599,7 +603,7 @@ pub(crate) async fn start_turn(
                 .telemetry
                 .emit(TelemetryEvent::provider_call(
                     session.provider_id.clone(),
-                    session.model_id.clone(),
+                    full_model_id.clone(),
                     Some(execution_environment.as_str().to_string()),
                     Some(session_root_kind.to_string()),
                     false,
@@ -615,7 +619,8 @@ pub(crate) async fn start_turn(
             fail_event.cwd = Some(workdir_str.clone());
             fail_event.worktree_root = Some(workdir_str.clone());
             fail_event.meta = Some(json!({
-                "model_id": session.model_id.clone(),
+                "model_id": full_model_id.clone(),
+                "reasoning_effort": session.reasoning_effort.clone(),
                 "execution_environment": execution_environment.as_str(),
                 "session_root_kind": session_root_kind,
                 "error": err.to_string(),
@@ -669,7 +674,7 @@ pub(crate) async fn start_turn(
         workspace_id: session.workspace_id,
         worktree_id: session.worktree_id,
         provider_id: session.provider_id.clone(),
-        model_id: session.model_id.clone(),
+        model_id: full_model_id,
         session_root_kind: session_root_kind.to_string(),
         execution_environment_label: execution_environment.as_str().to_string(),
         perf_run_id: perf_run_id.clone(),

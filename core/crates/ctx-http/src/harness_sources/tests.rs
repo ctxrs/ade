@@ -741,7 +741,9 @@ async fn kimi_endpoint_projects_env_for_run_resolution() {
         .expect("read seeded kimi endpoint token");
     let parsed: serde_json::Value = serde_json::from_str(&token).expect("parse kimi token json");
     assert_eq!(
-        parsed.get("access_token").and_then(serde_json::Value::as_str),
+        parsed
+            .get("access_token")
+            .and_then(serde_json::Value::as_str),
         Some("ctx-endpoint-access-token")
     );
 }

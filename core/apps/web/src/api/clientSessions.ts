@@ -22,6 +22,7 @@ import {
   trackProviderSelected,
   trackSessionCreated,
 } from "../utils/analytics";
+import { composeModelId } from "../utils/modelEffort";
 
 export type BlobUploadResp = {
   blob_id: string;
@@ -70,6 +71,7 @@ export const createSession = (
     id?: string;
     parent_session_id?: string | null;
     relationship?: string | null;
+    reasoning_effort?: string | null;
     execution_environment?: ExecutionEnvironment;
     worktree_id?: string | null;
     initial_prompt?: string | null;
@@ -88,6 +90,7 @@ export const createSession = (
       ...(opts?.id ? { id: opts.id } : {}),
       provider_id,
       model_id,
+      ...(opts?.reasoning_effort ? { reasoning_effort: opts.reasoning_effort } : {}),
       ...(opts?.parent_session_id ? { parent_session_id: opts.parent_session_id } : {}),
       ...(opts?.relationship ? { relationship: opts.relationship } : {}),
       ...(opts?.execution_environment ? { execution_environment: opts.execution_environment } : {}),
@@ -98,10 +101,11 @@ export const createSession = (
         : {}),
     }),
   }).then((session) => {
+    const effectiveModelId = composeModelId(model_id, opts?.reasoning_effort ?? null) || model_id;
     const connection = getDaemonConnection();
     trackSessionCreated({
       providerId: provider_id,
-      modelId: model_id,
+      modelId: effectiveModelId,
       executionEnvironment: opts?.execution_environment,
       sessionRootKind: "worktree",
       sessionLocation: connection.targetScope?.kind === "desktop_ssh"
@@ -121,7 +125,7 @@ export const createSession = (
         trackFirstTurnSubmitted({
           sessionId,
           providerId: provider_id,
-          modelId: model_id,
+          modelId: effectiveModelId,
         });
       }
     }
@@ -356,10 +360,17 @@ export const cancelSession = (sessionId: string) =>
 export const interruptSession = (sessionId: string) =>
   apiAny(`/api/sessions/${sessionId}/interrupt`, { method: "POST" });
 
-export const setSessionModel = (sessionId: string, model_id: string) =>
+export const setSessionModel = (
+  sessionId: string,
+  model_id: string,
+  reasoning_effort?: string | null,
+) =>
   apiAny<Session>(`/api/sessions/${sessionId}/model`, {
     method: "POST",
-    body: JSON.stringify({ model_id }),
+    body: JSON.stringify({
+      model_id,
+      ...(reasoning_effort ? { reasoning_effort } : {}),
+    }),
   });
 
 export const setSessionMode = (sessionId: string, mode_id: string) =>

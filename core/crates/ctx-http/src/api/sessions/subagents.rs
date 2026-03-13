@@ -1,6 +1,5 @@
 use super::models::{
-    load_provider_model_catalog, normalize_effort_id, resolve_model_id, split_model_id,
-    ModelCatalog,
+    load_provider_model_catalog, normalize_effort_id, resolve_model_id, ModelCatalog,
 };
 use super::*;
 

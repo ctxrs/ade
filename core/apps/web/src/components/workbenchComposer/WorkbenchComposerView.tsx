@@ -15,9 +15,7 @@ import { trackFeatureUsed, trackProviderSelected } from "../../utils/analytics";
 import { ComposerAutocompleteMenu } from "../ComposerAutocompleteMenu";
 import { useComposerAutocomplete } from "../../state/useComposerAutocomplete";
 import { imageFilesToInlineAttachments } from "../../utils/messageAttachments";
-import {
-  installErrorSummary,
-} from "../../utils/providerInstallUi";
+import { installErrorSummary } from "../../utils/providerInstallUi";
 import type { SessionViewVerbosity } from "../../state/uiStateStore";
 import { MenuTitleRow } from "./WorkbenchComposerMenu";
 import {
@@ -33,11 +31,7 @@ import {
   pickDefaultEffort,
   shouldShowLoadingProviderModels,
 } from "./WorkbenchComposer.utils";
-import type {
-  ActiveSessionProps,
-  NewSessionProps,
-  WorkbenchComposerProps,
-} from "./WorkbenchComposer.types";
+import type { ActiveSessionProps, NewSessionProps, WorkbenchComposerProps } from "./WorkbenchComposer.types";
 
 type OpenMenuId = "harness" | "model" | "effort" | "verbosity";
 
@@ -79,20 +73,16 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
 
   const [openMenu, setOpenMenu] = useState<OpenMenuId | null>(null);
   const [menuStyle, setMenuStyle] = useState<React.CSSProperties | null>(null);
-
   const rootRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const mirrorRef = useRef<HTMLDivElement | null>(null);
   const lastHeightRef = useRef<number>(0);
-
   const harnessTriggerRef = useRef<HTMLButtonElement | null>(null);
   const modelTriggerRef = useRef<HTMLButtonElement | null>(null);
   const effortTriggerRef = useRef<HTMLButtonElement | null>(null);
   const verbosityTriggerRef = useRef<HTMLButtonElement | null>(null);
-
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-
   const autocomplete = useComposerAutocomplete({
     sessionId: sessionIdForAutocomplete,
     workspaceId: workspaceIdForAutocomplete ?? null,

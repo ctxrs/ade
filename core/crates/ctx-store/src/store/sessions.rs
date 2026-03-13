@@ -16,7 +16,7 @@ impl Store {
         relationship: Option<String>,
         provider_session_ref: Option<String>,
     ) -> Result<Session> {
-        self.create_session_with_id(
+        self.create_session_with_id_inner(
             SessionId::new(),
             task_id,
             workspace_id,
@@ -24,6 +24,39 @@ impl Store {
             execution_environment,
             provider_id,
             model_id,
+            None,
+            agent_role,
+            parent_session_id,
+            relationship,
+            provider_session_ref,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_session_with_reasoning_effort(
+        &self,
+        task_id: TaskId,
+        workspace_id: WorkspaceId,
+        worktree_id: WorktreeId,
+        execution_environment: ExecutionEnvironment,
+        provider_id: String,
+        model_id: String,
+        reasoning_effort: Option<String>,
+        agent_role: String,
+        parent_session_id: Option<SessionId>,
+        relationship: Option<String>,
+        provider_session_ref: Option<String>,
+    ) -> Result<Session> {
+        self.create_session_with_id_inner(
+            SessionId::new(),
+            task_id,
+            workspace_id,
+            worktree_id,
+            execution_environment,
+            provider_id,
+            model_id,
+            reasoning_effort,
             agent_role,
             parent_session_id,
             relationship,
@@ -42,6 +75,72 @@ impl Store {
         execution_environment: ExecutionEnvironment,
         provider_id: String,
         model_id: String,
+        agent_role: String,
+        parent_session_id: Option<SessionId>,
+        relationship: Option<String>,
+        provider_session_ref: Option<String>,
+    ) -> Result<Session> {
+        self.create_session_with_id_inner(
+            session_id,
+            task_id,
+            workspace_id,
+            worktree_id,
+            execution_environment,
+            provider_id,
+            model_id,
+            None,
+            agent_role,
+            parent_session_id,
+            relationship,
+            provider_session_ref,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_session_with_id_and_reasoning_effort(
+        &self,
+        session_id: SessionId,
+        task_id: TaskId,
+        workspace_id: WorkspaceId,
+        worktree_id: WorktreeId,
+        execution_environment: ExecutionEnvironment,
+        provider_id: String,
+        model_id: String,
+        reasoning_effort: Option<String>,
+        agent_role: String,
+        parent_session_id: Option<SessionId>,
+        relationship: Option<String>,
+        provider_session_ref: Option<String>,
+    ) -> Result<Session> {
+        self.create_session_with_id_inner(
+            session_id,
+            task_id,
+            workspace_id,
+            worktree_id,
+            execution_environment,
+            provider_id,
+            model_id,
+            reasoning_effort,
+            agent_role,
+            parent_session_id,
+            relationship,
+            provider_session_ref,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn create_session_with_id_inner(
+        &self,
+        session_id: SessionId,
+        task_id: TaskId,
+        workspace_id: WorkspaceId,
+        worktree_id: WorktreeId,
+        execution_environment: ExecutionEnvironment,
+        provider_id: String,
+        model_id: String,
+        reasoning_effort: Option<String>,
         agent_role: String,
         parent_session_id: Option<SessionId>,
         relationship: Option<String>,
@@ -77,6 +176,7 @@ impl Store {
             relationship,
             provider_id,
             model_id,
+            reasoning_effort,
             title,
             agent_role,
             status: SessionStatus::Active,
@@ -86,8 +186,8 @@ impl Store {
         };
         let result = self.query(
             r#"INSERT INTO sessions (id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
-               execution_environment, provider_id, model_id, title, agent_role, status, provider_session_ref, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               execution_environment, provider_id, model_id, reasoning_effort, title, agent_role, status, provider_session_ref, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(id) DO NOTHING"#,
         )
         .bind(session.id.0.to_string())
@@ -99,6 +199,7 @@ impl Store {
         .bind(execution_environment_to_str(session.execution_environment))
         .bind(&session.provider_id)
         .bind(&session.model_id)
+        .bind(&session.reasoning_effort)
         .bind(&session.title)
         .bind(&session.agent_role)
         .bind(session_status_to_str(&session.status))
@@ -123,7 +224,7 @@ impl Store {
     pub async fn get_session(&self, id: SessionId) -> Result<Option<Session>> {
         let row = self.query(
             r#"SELECT id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
-               execution_environment, provider_id, model_id, agent_role, title, status, provider_session_ref, created_at, updated_at
+               execution_environment, provider_id, model_id, reasoning_effort, agent_role, title, status, provider_session_ref, created_at, updated_at
                FROM sessions WHERE id = ?"#,
         )
         .bind(id.0.to_string())
@@ -151,6 +252,7 @@ impl Store {
                 relationship: r.try_get("relationship").ok()?,
                 provider_id: r.try_get("provider_id").ok()?,
                 model_id: r.try_get("model_id").ok()?,
+                reasoning_effort: r.try_get("reasoning_effort").ok()?,
                 title: r.try_get("title").ok()?,
                 agent_role: r.try_get("agent_role").ok()?,
                 status: parse_session_status(r.try_get::<String, _>("status").ok()?.as_str()),
@@ -162,13 +264,23 @@ impl Store {
     }
 
     pub async fn update_session_model(&self, id: SessionId, model_id: String) -> Result<()> {
+        self.update_session_model_config(id, model_id, None).await
+    }
+
+    pub async fn update_session_model_config(
+        &self,
+        id: SessionId,
+        model_id: String,
+        reasoning_effort: Option<String>,
+    ) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         self.query(
             r#"UPDATE sessions
-               SET model_id = ?, updated_at = ?
+               SET model_id = ?, reasoning_effort = ?, updated_at = ?
                WHERE id = ?"#,
         )
         .bind(model_id)
+        .bind(reasoning_effort)
         .bind(now)
         .bind(id.0.to_string())
         .execute(&self.pool)
@@ -214,7 +326,7 @@ impl Store {
     pub async fn list_sessions_for_task(&self, task_id: TaskId) -> Result<Vec<Session>> {
         let rows = self.query(
             r#"SELECT id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
-               execution_environment, provider_id, model_id, agent_role, title, status, provider_session_ref, created_at, updated_at
+               execution_environment, provider_id, model_id, reasoning_effort, agent_role, title, status, provider_session_ref, created_at, updated_at
                FROM sessions WHERE task_id = ? ORDER BY created_at ASC"#,
         )
         .bind(task_id.0.to_string())
@@ -241,6 +353,7 @@ impl Store {
                 relationship: r.try_get("relationship")?,
                 provider_id: r.try_get("provider_id")?,
                 model_id: r.try_get("model_id")?,
+                reasoning_effort: r.try_get("reasoning_effort")?,
                 title: r.try_get("title")?,
                 agent_role: r.try_get("agent_role")?,
                 status: parse_session_status(r.try_get::<String, _>("status")?.as_str()),
@@ -258,7 +371,7 @@ impl Store {
     ) -> Result<Vec<Session>> {
         let rows = self.query(
             r#"SELECT id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
-               execution_environment, provider_id, model_id, agent_role, title, status, provider_session_ref, created_at, updated_at
+               execution_environment, provider_id, model_id, reasoning_effort, agent_role, title, status, provider_session_ref, created_at, updated_at
                FROM sessions WHERE worktree_id = ? ORDER BY created_at ASC"#,
         )
         .bind(worktree_id.0.to_string())
@@ -285,6 +398,7 @@ impl Store {
                 relationship: r.try_get("relationship")?,
                 provider_id: r.try_get("provider_id")?,
                 model_id: r.try_get("model_id")?,
+                reasoning_effort: r.try_get("reasoning_effort")?,
                 title: r.try_get("title")?,
                 agent_role: r.try_get("agent_role")?,
                 status: parse_session_status(r.try_get::<String, _>("status")?.as_str()),
@@ -303,7 +417,7 @@ impl Store {
         let rows = self
             .query(
                 r#"SELECT id, task_id, workspace_id, parent_session_id, relationship,
-               execution_environment, provider_id, model_id, title, status, created_at, updated_at
+               execution_environment, provider_id, model_id, reasoning_effort, title, status, created_at, updated_at
                FROM sessions
                WHERE parent_session_id = ? AND relationship = 'sub_agent'
                ORDER BY created_at ASC"#,
@@ -333,6 +447,7 @@ impl Store {
                 relationship: r.try_get("relationship")?,
                 provider_id: r.try_get("provider_id")?,
                 model_id: r.try_get("model_id")?,
+                reasoning_effort: r.try_get("reasoning_effort")?,
                 title: r.try_get("title")?,
                 status: parse_session_status(r.try_get::<String, _>("status")?.as_str()),
                 created_at: parse_dt(&created_at)?,
@@ -350,7 +465,7 @@ impl Store {
         let row = self
             .query(
                 r#"SELECT id, task_id, workspace_id, worktree_id, parent_session_id, relationship,
-               execution_environment, provider_id, model_id, agent_role, title, status, provider_session_ref, created_at, updated_at
+               execution_environment, provider_id, model_id, reasoning_effort, agent_role, title, status, provider_session_ref, created_at, updated_at
                FROM sessions
                WHERE parent_session_id = ? AND relationship = 'sub_agent' AND title = ?
                LIMIT 1"#,
@@ -381,6 +496,7 @@ impl Store {
                 relationship: r.try_get("relationship").ok()?,
                 provider_id: r.try_get("provider_id").ok()?,
                 model_id: r.try_get("model_id").ok()?,
+                reasoning_effort: r.try_get("reasoning_effort").ok()?,
                 title: r.try_get("title").ok()?,
                 agent_role: r.try_get("agent_role").ok()?,
                 status: parse_session_status(r.try_get::<String, _>("status").ok()?.as_str()),

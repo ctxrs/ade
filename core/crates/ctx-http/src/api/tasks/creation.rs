@@ -391,6 +391,11 @@ pub(in crate::api) struct CreateSessionReq {
     provider_id: String,
     #[serde(deserialize_with = "deserialize_concrete_model_id")]
     model_id: String,
+    #[serde(
+        default,
+        deserialize_with = "sessions::deserialize_optional_reasoning_effort"
+    )]
+    reasoning_effort: Option<String>,
     parent_session_id: Option<String>,
     relationship: Option<String>,
     #[serde(default)]
@@ -470,7 +475,25 @@ pub(in crate::api) async fn create_session_for_task(
     {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let model_id = req.model_id.clone();
+    let catalog = sessions::load_provider_model_catalog(&state, &workspace, &provider_id)
+        .await
+        .map_err(|error| {
+            tracing::warn!(
+                workspace_id = %workspace.id.0,
+                provider_id = provider_id,
+                "failed to load provider model catalog while creating session: {error}"
+            );
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    let resolved_model = sessions::resolve_model_id(
+        Some(req.model_id.as_str()),
+        req.reasoning_effort.as_deref(),
+        None,
+        catalog.as_ref(),
+    )
+    .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let model_id = resolved_model.model_id.clone();
+    let reasoning_effort = resolved_model.reasoning_effort.clone();
 
     let session_id = match req.id.as_deref().map(str::trim) {
         Some("") | None => None,
@@ -667,6 +690,7 @@ pub(in crate::api) async fn create_session_for_task(
                     || existing.execution_environment != execution_environment
                     || existing.provider_id != provider_id
                     || existing.model_id != model_id
+                    || existing.reasoning_effort != reasoning_effort
                     || existing.parent_session_id != parent_session_id
                     || existing.relationship != relationship
                 {
@@ -701,7 +725,7 @@ pub(in crate::api) async fn create_session_for_task(
     let requested_session_id = session_id;
     let session = if let Some(session_id) = requested_session_id {
         store
-            .create_session_with_id(
+            .create_session_with_id_and_reasoning_effort(
                 session_id,
                 task_id,
                 task.workspace_id,
@@ -709,6 +733,7 @@ pub(in crate::api) async fn create_session_for_task(
                 execution_environment,
                 provider_id.clone(),
                 model_id.clone(),
+                reasoning_effort.clone(),
                 "implementer".to_string(),
                 parent_session_id,
                 relationship.clone(),
@@ -718,13 +743,14 @@ pub(in crate::api) async fn create_session_for_task(
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     } else {
         store
-            .create_session(
+            .create_session_with_reasoning_effort(
                 task_id,
                 task.workspace_id,
                 worktree_id,
                 execution_environment,
                 provider_id.clone(),
                 model_id.clone(),
+                reasoning_effort.clone(),
                 "implementer".to_string(),
                 parent_session_id,
                 relationship.clone(),
@@ -741,6 +767,7 @@ pub(in crate::api) async fn create_session_for_task(
             || session.execution_environment != execution_environment
             || session.provider_id != provider_id
             || session.model_id != model_id
+            || session.reasoning_effort != reasoning_effort
             || session.parent_session_id != parent_session_id
             || session.relationship != requested_relationship
         {
@@ -941,7 +968,7 @@ pub(in crate::api) async fn create_session_for_task(
         .telemetry
         .emit(TelemetryEvent::session_started(
             session.provider_id.clone(),
-            session.model_id.clone(),
+            sessions::compose_model_id(&session.model_id, session.reasoning_effort.as_deref()),
             Some(session.execution_environment.as_str().to_string()),
             Some(session_root_kind.clone()),
         ))
@@ -951,7 +978,8 @@ pub(in crate::api) async fn create_session_for_task(
     ops_event.worktree_id = Some(session.worktree_id.0.to_string());
     ops_event.provider_id = Some(session.provider_id.clone());
     ops_event.meta = Some(serde_json::json!({
-        "model_id": session.model_id.clone(),
+        "model_id": sessions::compose_model_id(&session.model_id, session.reasoning_effort.as_deref()),
+        "reasoning_effort": session.reasoning_effort.clone(),
         "execution_environment": session.execution_environment.as_str(),
         "session_root_kind": session_root_kind.clone(),
         "parent_session_id": session.parent_session_id.map(|id| id.0.to_string()),

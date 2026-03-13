@@ -430,6 +430,8 @@ pub struct Session {
     pub relationship: Option<String>,
     pub provider_id: String,
     pub model_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
     pub title: String,
     pub agent_role: String,
     pub status: SessionStatus,
@@ -451,6 +453,8 @@ pub struct SessionMetadata {
     pub relationship: Option<String>,
     pub provider_id: String,
     pub model_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
     pub title: String,
     pub agent_role: String,
     pub status: SessionStatus,
@@ -694,6 +698,8 @@ pub struct SessionSummary {
     pub relationship: Option<String>,
     pub provider_id: String,
     pub model_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
     pub title: String,
     pub status: SessionStatus,
     pub created_at: DateTime<Utc>,
