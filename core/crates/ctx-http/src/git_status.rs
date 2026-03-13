@@ -647,7 +647,7 @@ async fn upsert_worktree_vcs_snapshot(
     Some(snapshot)
 }
 
-async fn refresh_worktree_vcs_summary(state: Arc<AppState>, worktree: Worktree) -> Result<()> {
+pub async fn refresh_worktree_vcs_summary(state: Arc<AppState>, worktree: Worktree) -> Result<()> {
     let cached_summary = {
         let mut cache = state.workspaces.worktree_vcs_snapshots.lock().await;
         if let Some(entry) = cache.get_mut(&worktree.id) {
