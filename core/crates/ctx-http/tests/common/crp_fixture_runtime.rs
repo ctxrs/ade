@@ -57,7 +57,106 @@ def send(msg, channel="control"):
     sys.stdout.write("\n")
     sys.stdout.flush()
 
+def send_tool(session_id, turn_id, tool):
+    tool_call_id = str(uuid.uuid4())
+    tool_name = tool.get("tool_name") or "exec_command"
+    tool_input = tool.get("input")
+    tool_output = tool.get("output") or "ok"
+    send({
+        "type": "tool.started",
+        "session_id": session_id,
+        "turn_id": turn_id,
+        "tool_call_id": tool_call_id,
+        "tool_name": tool_name,
+        "input": tool_input,
+    }, channel="data")
+    send({
+        "type": "tool.output.delta",
+        "session_id": session_id,
+        "turn_id": turn_id,
+        "tool_call_id": tool_call_id,
+        "chunk": tool_output,
+    }, channel="data")
+    send({
+        "type": "tool.completed",
+        "session_id": session_id,
+        "turn_id": turn_id,
+        "tool_call_id": tool_call_id,
+        "tool_name": tool_name,
+        "status": "success",
+        "output": {"text": tool_output},
+    }, channel="data")
+
 def send_turn(session_id, turn_id, turn):
+    if turn.get("events"):
+        msg_id = str(uuid.uuid4())
+        final = turn.get("final") or ("hola from " + PROVIDER_ID)
+        for step in (turn.get("events") or []):
+            kind = step.get("kind")
+            if kind == "thought":
+                item_id = str(uuid.uuid4())
+                thought = step.get("content") or ""
+                if not thought:
+                    continue
+                send({
+                    "type": "reasoning.trace",
+                    "session_id": session_id,
+                    "turn_id": turn_id,
+                    "chunk": thought,
+                    "item_id": item_id,
+                    "summary_index": 0,
+                }, channel="data")
+                send({
+                    "type": "reasoning.trace.final",
+                    "session_id": session_id,
+                    "turn_id": turn_id,
+                    "content": thought,
+                    "item_id": item_id,
+                    "summary_index": 0,
+                }, channel="data")
+                continue
+            if kind == "tool":
+                send_tool(session_id, turn_id, step)
+                continue
+            if kind == "delta":
+                send({
+                    "type": "message.delta",
+                    "session_id": session_id,
+                    "turn_id": turn_id,
+                    "message_id": msg_id,
+                    "delta": step.get("content") or "",
+                }, channel="data")
+                continue
+            if kind == "final":
+                send({
+                    "type": "message.final",
+                    "session_id": session_id,
+                    "turn_id": turn_id,
+                    "message_id": msg_id,
+                    "content": step.get("content") or final,
+                }, channel="data")
+                send({
+                    "type": "turn.completed",
+                    "session_id": session_id,
+                    "turn_id": turn_id,
+                    "status": "success",
+                }, channel="control")
+                return
+        send({
+            "type": "message.final",
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "message_id": msg_id,
+            "content": final,
+        }, channel="data")
+        send({
+            "type": "turn.completed",
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "status": "success",
+        }, channel="control")
+        return
+
     thought = turn.get("thought")
     if thought:
         item_id = str(uuid.uuid4())
@@ -79,34 +178,7 @@ def send_turn(session_id, turn_id, turn):
         }, channel="data")
 
     for tool in (turn.get("tools") or []):
-        tool_call_id = str(uuid.uuid4())
-        tool_name = tool.get("tool_name") or "exec_command"
-        tool_input = tool.get("input")
-        tool_output = tool.get("output") or "ok"
-        send({
-            "type": "tool.started",
-            "session_id": session_id,
-            "turn_id": turn_id,
-            "tool_call_id": tool_call_id,
-            "tool_name": tool_name,
-            "input": tool_input,
-        }, channel="data")
-        send({
-            "type": "tool.output.delta",
-            "session_id": session_id,
-            "turn_id": turn_id,
-            "tool_call_id": tool_call_id,
-            "chunk": tool_output,
-        }, channel="data")
-        send({
-            "type": "tool.completed",
-            "session_id": session_id,
-            "turn_id": turn_id,
-            "tool_call_id": tool_call_id,
-            "tool_name": tool_name,
-            "status": "success",
-            "output": {"text": tool_output},
-        }, channel="data")
+        send_tool(session_id, turn_id, tool)
 
     msg_id = str(uuid.uuid4())
     final = turn.get("final") or ("hola from " + PROVIDER_ID)

@@ -292,68 +292,6 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
             SessionEventType::ToolCall
             | SessionEventType::ToolCallUpdate
             | SessionEventType::ToolResult => {
-                if !assistant_partial.is_empty() {
-                    let message_id = ctx_core::ids::MessageId::new();
-                    let order_seq = {
-                        let mut order_seq_state = order_seq_state.lock().await;
-                        order_seq_state.get_or_assign(format!("message:{}", message_id.0), None)
-                    };
-                    if let Ok(saved) = persist_assistant_message(
-                        state.as_ref(),
-                        &store,
-                        workspace_id,
-                        message_id,
-                        order_seq,
-                        session_id,
-                        task_id,
-                        run_id,
-                        turn_id,
-                        assistant_partial.clone(),
-                        assistant_sequence + 1,
-                        event.created_at,
-                    )
-                    .await
-                    {
-                        assistant_sequence += 1;
-                        assistant_emitted.push_str(&saved.content);
-                        assistant_partial.clear();
-                        let mut payload = json!({
-                            "message_id": saved.id.0,
-                            "content": saved.content,
-                            "delivery": saved.delivery,
-                            "attachments": saved.attachments,
-                            "turn_sequence": saved.turn_sequence,
-                            "order_seq": saved.order_seq,
-                        });
-                        if let Some(provider_message_id) = assistant_partial_message_id.take() {
-                            if let Some(obj) = payload.as_object_mut() {
-                                obj.insert(
-                                    "provider_message_id".to_string(),
-                                    json!(provider_message_id),
-                                );
-                            }
-                        }
-                        {
-                            let mut order_seq_state = order_seq_state.lock().await;
-                            attach_order_seq(
-                                &mut order_seq_state,
-                                &SessionEventType::AssistantMessageInserted,
-                                &mut payload,
-                                Some(&turn_id),
-                                assistant_sequence,
-                            );
-                        }
-                        let _ = emit_event(
-                            &state,
-                            session_id,
-                            Some(run_id),
-                            Some(turn_id),
-                            SessionEventType::AssistantMessageInserted,
-                            payload,
-                        )
-                        .await;
-                    }
-                }
                 if let Some(update) = build_turn_tool_update_from_payload(&event_type, &raw_payload)
                 {
                     let prev = if matches!(event.event_type, SessionEventType::ToolCallUpdate) {

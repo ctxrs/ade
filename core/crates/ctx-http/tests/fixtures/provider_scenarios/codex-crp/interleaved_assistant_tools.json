@@ -1,0 +1,26 @@
+{
+  "turns": [
+    {
+      "events": [
+        {"kind": "thought", "content": "Investigating interleaved assistant/tool boundaries"},
+        {"kind": "delta", "content": "Synthetic assistant text crosses tool events."},
+        {
+          "kind": "tool",
+          "tool_name": "exec_command",
+          "input": {"cmd": "echo tool-1"},
+          "output": "tool-1"
+        },
+        {"kind": "delta", "content": " The fixture keeps the message contiguous across calls."},
+        {
+          "kind": "tool",
+          "tool_name": "exec_command",
+          "input": {"cmd": "echo tool-2"},
+          "output": "tool-2"
+        },
+        {"kind": "delta", "content": " The final text remains deterministic."},
+        {"kind": "final", "content": "Synthetic assistant text crosses tool events. The fixture keeps the message contiguous across calls. The final text remains deterministic."}
+      ],
+      "final": "Synthetic assistant text crosses tool events. The fixture keeps the message contiguous across calls. The final text remains deterministic."
+    }
+  ]
+}

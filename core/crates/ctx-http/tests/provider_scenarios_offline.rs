@@ -6,7 +6,7 @@ use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use tower::ServiceExt;
 
-use ctx_core::models::SessionEventType;
+use ctx_core::models::{MessageRole, SessionEventType};
 use ctx_http::daemon::AppState;
 use ctx_store::StoreManager;
 
@@ -137,6 +137,21 @@ fn check_assistant_message_inserted_contains(
     }
 }
 
+fn check_event_count_exact(
+    events: &[ctx_core::models::SessionEvent],
+    event_type: SessionEventType,
+    expected_count: usize,
+) -> Result<(), String> {
+    let count = count_events(events, event_type.clone());
+    if count != expected_count {
+        Err(format!(
+            "expected exactly {expected_count} {event_type:?} events; saw {count}: {events:#?}"
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 fn check_turn_thought_partial_contains(
     turns: &[ctx_core::models::SessionTurn],
     expected: &str,
@@ -263,5 +278,78 @@ async fn provider_scenarios_offline_crp_fixtures() {
     assert!(
         failures.is_empty(),
         "provider scenario assertion failures: {failures:#?}"
+    );
+}
+
+#[allow(clippy::await_holding_lock)]
+#[tokio::test]
+async fn provider_scenarios_offline_interleaved_assistant_tools_do_not_fragment_messages() {
+    let _env_lock = lock_env();
+
+    let Some(python) = common::crp_fixture_runtime::python_binary() else {
+        eprintln!("skipping: python3/python not found");
+        return;
+    };
+
+    let fixtures_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("provider_scenarios");
+    let _guard_fixtures = EnvGuard::set("CTX_TEST_FIXTURES_DIR", &fixtures_dir.to_string_lossy());
+    let _guard_scenario = EnvGuard::set("CTX_TEST_SCENARIO", "interleaved_assistant_tools");
+
+    let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
+    let data_dir = tempfile::tempdir().unwrap();
+    let codex_home = tempfile::tempdir().unwrap();
+    tokio::fs::write(
+        codex_home.path().join("auth.json"),
+        br#"{"OPENAI_API_KEY":"test-key"}"#,
+    )
+    .await
+    .unwrap();
+    let _guard_codex_home = EnvGuard::set("CTX_CODEX_HOME", &codex_home.path().to_string_lossy());
+    let stores = StoreManager::open(data_dir.path()).await.unwrap();
+    let script_path = common::crp_fixture_runtime::write_crp_fixture_runtime(data_dir.path());
+    let providers = common::crp_fixture_runtime::build_crp_fixture_providers(
+        &["codex-crp"],
+        &python,
+        &script_path,
+    );
+
+    let state = Arc::new(AppState::new(
+        data_dir.path().to_path_buf(),
+        stores,
+        providers,
+        "http://127.0.0.1:0".to_string(),
+        None,
+    ));
+    let app = ctx_http::api::router(state.clone());
+
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let task = common::create_task(&app, ws.id.0, "t1").await;
+    let session = common::create_session(&app, task.id.0, "codex-crp", "fake-model").await;
+
+    post_message(&app, session.id.0, "hi").await;
+    wait_for_done(&state, session.id).await;
+
+    let store = state.store_for_session(session.id).await.unwrap();
+    let events = store.list_session_events(session.id).await.unwrap();
+    let messages = store.list_messages_for_session(session.id).await.unwrap();
+
+    check_event_count_exact(&events, SessionEventType::AssistantMessageInserted, 1)
+        .unwrap_or_else(|err| panic!("{err}"));
+
+    let assistant_messages = messages
+        .iter()
+        .filter(|message| matches!(message.role, MessageRole::Assistant))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        assistant_messages.len(),
+        1,
+        "expected one persisted assistant message, saw: {assistant_messages:#?}"
+    );
+    assert_eq!(
+        assistant_messages[0].content,
+        "Synthetic assistant text crosses tool events. The fixture keeps the message contiguous across calls. The final text remains deterministic."
     );
 }
