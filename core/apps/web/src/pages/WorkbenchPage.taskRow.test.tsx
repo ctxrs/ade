@@ -61,4 +61,82 @@ describe("TaskRow rename draft", () => {
     const remountedInput = screen.getByLabelText("Rename task") as HTMLInputElement;
     expect(remountedInput.value).toBe("Draft title");
   });
+
+  it("opens the workbench task menu on context menu for real tasks", () => {
+    const onOpenMenu = vi.fn();
+
+    render(
+      <TaskRow
+        taskId="task-1"
+        title="Initial title"
+        archived={false}
+        archivePending={false}
+        archivePendingAction={null}
+        statusKind="idle"
+        selected={false}
+        hovered={false}
+        isRenaming={false}
+        ageIso={new Date().toISOString()}
+        providerCount={0}
+        harnesses={[]}
+        getRenameDraft={(_, fallback) => fallback}
+        setRenameDraft={vi.fn()}
+        onFocusTask={vi.fn()}
+        onOpenMenu={onOpenMenu}
+        onToggleArchive={vi.fn().mockResolvedValue(undefined)}
+        onHoverEnter={vi.fn()}
+        onHoverLeave={vi.fn()}
+        onCancelRename={vi.fn()}
+        onCommitRename={vi.fn()}
+      />,
+    );
+
+    const row = screen.getByRole("listitem", { name: "Initial title" });
+    const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 120, clientY: 64 });
+
+    row.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(onOpenMenu).toHaveBeenCalledWith("task-1", { x: 120, y: 64 });
+  });
+
+  it("suppresses the native context menu for optimistic rows without opening task actions", () => {
+    const onOpenMenu = vi.fn();
+
+    render(
+      <TaskRow
+        taskId="task-1"
+        title="New Task"
+        archived={false}
+        archivePending={false}
+        archivePendingAction={null}
+        statusKind="working"
+        selected={false}
+        hovered={false}
+        isRenaming={false}
+        ageIso={new Date().toISOString()}
+        providerCount={0}
+        harnesses={[]}
+        getRenameDraft={(_, fallback) => fallback}
+        setRenameDraft={vi.fn()}
+        onFocusTask={vi.fn()}
+        onOpenMenu={onOpenMenu}
+        menuEnabled={false}
+        archiveEnabled={false}
+        onToggleArchive={vi.fn().mockResolvedValue(undefined)}
+        onHoverEnter={vi.fn()}
+        onHoverLeave={vi.fn()}
+        onCancelRename={vi.fn()}
+        onCommitRename={vi.fn()}
+      />,
+    );
+
+    const row = screen.getByRole("listitem", { name: "New Task" });
+    const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 88, clientY: 44 });
+
+    row.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(onOpenMenu).not.toHaveBeenCalled();
+  });
 });

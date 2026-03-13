@@ -138,9 +138,9 @@ export const TaskRow = React.memo(function TaskRow({
       onPointerEnter={() => onHoverEnter(taskId)}
       onPointerLeave={() => onHoverLeave(taskId)}
       onContextMenu={(e) => {
-        if (!showMenu) return;
         e.preventDefault();
         e.stopPropagation();
+        if (!showMenu) return;
         onOpenMenu(taskId, { x: e.clientX, y: e.clientY });
       }}
       onKeyDown={(e) => {
