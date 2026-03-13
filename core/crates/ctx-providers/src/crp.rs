@@ -30,8 +30,7 @@ mod tests;
 
 use self::config::{
     build_crp_session_config, build_prompt_items, flatten_prompt_items_as_text,
-    model_override_disabled,
-    provider_requires_flattened_text_prompt, split_model_id_and_effort,
+    model_override_disabled, provider_requires_flattened_text_prompt, split_model_id_and_effort,
 };
 use self::normalize::{event_matches_session, event_turn_id, map_crp_event, CachedToolInput};
 use self::policy::{
@@ -442,6 +441,14 @@ struct CrpSessionPool {
     active_prompts: Arc<StdMutex<HashSet<String>>>,
 }
 
+fn session_shutdown_reason(session: &CrpSession) -> Option<String> {
+    session.process.shutdown.borrow().clone()
+}
+
+fn session_is_live(session: &CrpSession) -> bool {
+    !session.draining.load(Ordering::SeqCst) && session_shutdown_reason(session).is_none()
+}
+
 impl CrpSessionPool {
     fn new(agent: CrpAgentConfig) -> Self {
         Self {
@@ -468,7 +475,10 @@ impl CrpSessionPool {
 
     async fn has_session(&self, session_key: &str) -> bool {
         let sessions = self.sessions.lock().await;
-        sessions.contains_key(session_key)
+        match sessions.get(session_key) {
+            Some(session) => session_is_live(session),
+            None => false,
+        }
     }
 
     async fn require_open_session(&self, session_key: &str) -> Result<Arc<CrpSession>> {
@@ -478,6 +488,9 @@ impl CrpSessionPool {
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("provider session {session_key} is not live"))?;
         drop(sessions);
+        if !session_is_live(&session) {
+            anyhow::bail!("provider session {session_key} is not live");
+        }
         if !session.opened.load(Ordering::SeqCst) {
             anyhow::bail!("provider session {session_key} is not open");
         }
@@ -818,22 +831,27 @@ impl CrpSessionPool {
         workdir: &PathBuf,
         env: &HashMap<String, String>,
     ) -> Result<Arc<CrpSession>> {
-        let drained = {
+        let replaced = {
             let mut sessions = self.sessions.lock().await;
             if let Some(existing) = sessions.get(session_key) {
-                if !existing.draining.load(Ordering::SeqCst) {
+                let shutdown_reason = session_shutdown_reason(existing);
+                if !existing.draining.load(Ordering::SeqCst) && shutdown_reason.is_none() {
                     return Ok(Arc::clone(existing));
                 }
-                sessions.remove(session_key)
+                sessions
+                    .remove(session_key)
+                    .map(|session| (session, shutdown_reason))
             } else {
                 None
             }
         };
-        if let Some(existing) = drained {
-            existing
-                .process
-                .shutdown(&format!("drain replace ({session_key})"))
-                .await;
+        if let Some((existing, shutdown_reason)) = replaced {
+            if shutdown_reason.is_none() {
+                existing
+                    .process
+                    .shutdown(&format!("drain replace ({session_key})"))
+                    .await;
+            }
         }
 
         let process = CrpProcess::spawn(&self.agent, workdir, env)

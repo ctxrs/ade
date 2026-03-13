@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
+use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Result;
@@ -143,10 +144,7 @@ async fn opencode_flattens_prompt_items_into_single_prompt_field() -> Result<()>
         .expect("captured prompt line");
     let payload: serde_json::Value = serde_json::from_str(prompt_line)?;
     assert_eq!(payload.get("items"), None);
-    assert_eq!(
-        payload.get("prompt"),
-        Some(&json!("system\n\nuser"))
-    );
+    assert_eq!(payload.get("prompt"), Some(&json!("system\n\nuser")));
 
     Ok(())
 }
@@ -177,7 +175,10 @@ async fn prompt_model_override_can_be_disabled_via_env() -> Result<()> {
         log_path.to_string_lossy().to_string(),
     );
     env.insert("CTX_SESSION_ID".to_string(), "session-no-model".to_string());
-    env.insert("CTX_CRP_DISABLE_MODEL_OVERRIDE".to_string(), "1".to_string());
+    env.insert(
+        "CTX_CRP_DISABLE_MODEL_OVERRIDE".to_string(),
+        "1".to_string(),
+    );
 
     let (event_sink, mut event_rx) = tokio::sync::mpsc::channel(8);
     let handle = adapter
@@ -207,5 +208,41 @@ async fn prompt_model_override_can_be_disabled_via_env() -> Result<()> {
     let payload: serde_json::Value = serde_json::from_str(prompt_line)?;
     assert_eq!(payload.get("model"), None);
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn shutdown_cached_session_is_not_live_and_gets_replaced() -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let adapter = Tier1CrpAdapter::from_raw(
+        "fake-crp",
+        "/bin/sh".to_string(),
+        vec!["-c".into(), "cat >/dev/null".into()],
+    );
+    let env = HashMap::new();
+    let session_key = "session-restart-after-shutdown";
+
+    let first = adapter
+        .pool
+        .get_or_create_session(session_key, &workdir, &env)
+        .await?;
+    assert!(adapter.has_live_session(session_key).await);
+
+    first.process.shutdown("simulated runtime exit").await;
+
+    assert!(!adapter.has_live_session(session_key).await);
+
+    let second = adapter
+        .pool
+        .get_or_create_session(session_key, &workdir, &env)
+        .await?;
+    assert!(
+        !Arc::ptr_eq(&first, &second),
+        "expected a dead cached session to be replaced"
+    );
+    assert_eq!(session_shutdown_reason(&second), None);
+
+    second.process.shutdown("test complete").await;
     Ok(())
 }

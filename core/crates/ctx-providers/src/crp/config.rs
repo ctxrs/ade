@@ -316,8 +316,14 @@ mod tests {
     #[test]
     fn build_crp_session_config_can_disable_model_override() {
         let mut env = HashMap::new();
-        env.insert("CTX_MODEL_ID".to_string(), "openai/gpt-4.1-mini".to_string());
-        env.insert("CTX_CRP_DISABLE_MODEL_OVERRIDE".to_string(), "1".to_string());
+        env.insert(
+            "CTX_MODEL_ID".to_string(),
+            "openai/gpt-4.1-mini".to_string(),
+        );
+        env.insert(
+            "CTX_CRP_DISABLE_MODEL_OVERRIDE".to_string(),
+            "1".to_string(),
+        );
         let workdir = PathBuf::from("/tmp/workdir");
 
         let cfg = build_crp_session_config(&env, &workdir);
