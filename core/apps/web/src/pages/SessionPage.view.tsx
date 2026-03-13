@@ -1,7 +1,6 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -49,6 +48,7 @@ import {
 } from "./SessionPage.workbenchViewModel";
 import { buildOptimisticUserMessage } from "./SessionPage.optimisticMessage";
 import { useSessionMessageListController } from "./useSessionMessageListController";
+import { useSessionScrollRestoreOnActivate } from "./useSessionScrollRestoreOnActivate";
 import { useWorkbenchThreadViewModelController } from "./useWorkbenchThreadViewModelController";
 import { errorMessage } from "../utils/errorMessage";
 import { defaultSessionVerbosityForProvider } from "./sessionVerbosity";
@@ -543,64 +543,16 @@ export function SessionView({
 
   const listItemsRef = useRef(listItems);
   listItemsRef.current = listItems;
-  const restoreTokenRef = useRef(0);
-  const wasActiveRef = useRef(false);
-  useLayoutEffect(() => {
-    if (!isActive) {
-      wasActiveRef.current = false;
-      restoreTokenRef.current += 1;
-      return;
-    }
-    if (wasActiveRef.current) return;
-    wasActiveRef.current = true;
-    const token = (restoreTokenRef.current += 1);
-    if (!scrollState || scrollState.stickToBottom) return;
-    const applyScroll = (attempts: number) => {
-      if (restoreTokenRef.current !== token) return;
-      const methods = messageListMethodsRef.current;
-      if (!methods) {
-        // Virtuoso methods can lag behind the first "active" render, especially when sessions are
-        // opened/hydrated on focus. Keep retrying long enough for initial data + layout.
-        if (attempts < 120) requestAnimationFrame(() => applyScroll(attempts + 1));
-        return;
-      }
-      const scroller = methods.scrollerElement?.() ?? null;
-      if (preserveScrollOnFocus && scroller && scrollState.scrollTop != null) {
-        // When a session view stays mounted and is merely re-focused, avoid a jump if it's already
-        // at the expected position. If the view was remounted (e.g. only 1 slot is mounted),
-        // the scroller will be at a default position and we should restore.
-        const delta = Math.abs(scroller.scrollTop - scrollState.scrollTop);
-        if (delta <= 2) return;
-      }
-      if (scroller && scrollState.scrollTop != null) {
-        const delta = Math.abs(scroller.scrollTop - scrollState.scrollTop);
-        if (delta <= 2) return;
-      }
-      const anchorId = scrollState.anchorItemId;
-      let anchorOffset = scrollState.anchorOffset;
-      if (anchorId && anchorOffset != null) {
-        const index = listItemsRef.current.findIndex((item) => item.id === anchorId);
-        if (index >= 0) {
-          if (scroller) {
-            anchorOffset = Math.min(scroller.clientHeight, Math.max(0, anchorOffset));
-          }
-          methods.scrollToItem({ index, align: "start", behavior: "instant", offset: anchorOffset });
-          // Setting position can be overwritten by subsequent layout/measurement; keep retrying
-          // until we observe we're at the expected scrollTop.
-          if (attempts < 120) requestAnimationFrame(() => applyScroll(attempts + 1));
-          return;
-        }
-      }
-      if (scroller && scrollState.scrollTop != null) {
-        scroller.scrollTop = scrollState.scrollTop;
-        // Virtualized layouts can adjust scrollTop after we set it; retry until it sticks.
-        if (attempts < 120) requestAnimationFrame(() => applyScroll(attempts + 1));
-        return;
-      }
-      if (attempts < 120) requestAnimationFrame(() => applyScroll(attempts + 1));
-    };
-    applyScroll(0);
-  }, [isActive, scrollState, messageListMethodsRef]);
+  useSessionScrollRestoreOnActivate({
+    sessionId: id,
+    isActive,
+    loaded: Boolean(entry?.stateLoaded),
+    preserveScrollOnFocus,
+    scrollState,
+    listItemsRef,
+    methodsRef: messageListMethodsRef,
+    showDebug,
+  });
 
   const authUi = useMemo(() => deriveAuthUi(events), [eventsStamp]);
   const {

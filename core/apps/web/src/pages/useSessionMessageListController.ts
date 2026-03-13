@@ -8,109 +8,12 @@ import type {
 import { useRafCoalesced } from "../components/hooks/useRafCoalesced";
 import type { WorkbenchListItem } from "./SessionPage.types";
 import type { WorkbenchMessageListContext } from "./SessionPage.thread";
-
-type RenderedItemContractViolation = {
-  kind: string;
-  reason: string;
-  id: string;
-  details?: Record<string, unknown>;
-};
-
-const asRecord = (value: unknown): Record<string, unknown> => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  return value as Record<string, unknown>;
-};
-
-function debugStableKey(item: WorkbenchListItem): string {
-  // Best-effort "identity" key independent of `item.id` to detect id churn.
-  // This is DEV-only diagnostics; collisions are possible but still useful.
-  const rec = asRecord(item);
-  const kind = String(rec.kind ?? "unknown");
-  const header = asRecord(rec.header);
-  switch (kind) {
-    case "turn_header":
-      return `turn_header:${String(header.id ?? "")}`;
-    case "tool":
-      return `tool:${String(rec.tool_call_id ?? "")}`;
-    case "ask_user_question":
-      return `askq:${String(rec.tool_call_id ?? "")}`;
-    case "turn_status":
-      return `turn_status:${String(rec.turn_id ?? "")}`;
-    case "thought":
-      return `thought:${String(rec.turn_id ?? "")}:${String(rec.created_at ?? "")}`;
-    case "assistant":
-      // Prefer turn_id + created_at, but also include the item id prefix if it encodes a domain id (e.g. assistant-msg-<messageId>).
-      // This is intentionally "best effort"; we also log direct missing/added ids during reconcile.
-      return `assistant:${String(rec.turn_id ?? "")}:${String(rec.created_at ?? "")}:${String(
-        rec.is_complete ?? "",
-      )}:${String(rec.id ?? "").slice(0, 40)}`;
-    case "message":
-      return `message:${String(rec.role ?? "")}:${String(rec.created_at ?? "")}`;
-    case "spacer":
-      return `spacer:${String(rec.created_at ?? "")}`;
-    default:
-      return `${kind}:${String(rec.created_at ?? "")}`;
-  }
-}
-
-function debugItemSummary(item: WorkbenchListItem | { id: string }): Record<string, unknown> {
-  const rec = asRecord(item);
-  const header = asRecord(rec.header);
-  const kind = String(rec.kind ?? "unknown");
-  const base: Record<string, unknown> = {
-    id: String(rec.id ?? ""),
-    kind,
-    created_at: rec.created_at ?? header.created_at ?? null,
-  };
-
-  if (kind === "turn_header") {
-    base.turn_id = header.id ?? null;
-    return base;
-  }
-  if (typeof rec.turn_id === "string") base.turn_id = rec.turn_id;
-  if (typeof rec.tool_call_id === "string") base.tool_call_id = rec.tool_call_id;
-  if (typeof rec.event_id === "string") base.event_id = rec.event_id;
-  if (typeof rec.status === "string") base.status = rec.status;
-  if (typeof rec.role === "string") base.role = rec.role;
-  if (typeof rec.is_complete === "boolean") base.is_complete = rec.is_complete;
-  if (typeof rec.content === "string") base.content_len = rec.content.length;
-  return base;
-}
-
-function findFirstRenderedItemContractViolation(items: WorkbenchListItem[]): RenderedItemContractViolation | null {
-  // The whole point is to avoid "fallback ids" like `ts:` and `idx:` which cause identity churn.
-  // These invariants are intentionally strict; if they fire, it's a bug we should fix upstream.
-  for (const it of items) {
-    const anyIt = asRecord(it);
-    const kind = String(anyIt.kind ?? "unknown");
-    const id = String(anyIt.id ?? "");
-    if (!id) return { kind, reason: "missing id", id: "" };
-
-    if (kind === "thought") {
-      if (id.includes("ts:") || id.includes("idx:") || id.includes("unknown-")) {
-        return { kind, reason: "fallback thought id (ts/idx/unknown)", id };
-      }
-    }
-    if (kind === "turn_header") {
-      const turnId = String(asRecord(anyIt.header).id ?? "");
-      if (!turnId) return { kind, reason: "turn_header missing header.id", id };
-    }
-    if (kind === "tool" || kind === "ask_user_question") {
-      const toolCallId = String(anyIt.tool_call_id ?? "");
-      if (!toolCallId) return { kind, reason: "missing tool_call_id", id };
-    }
-    if (kind === "assistant") {
-      const turnId = String(anyIt.turn_id ?? "");
-      if (!turnId) return { kind, reason: "assistant missing turn_id", id };
-      // We currently allow a deliberate streaming placeholder id.
-      const isPending = id.endsWith("-pending");
-      if (!isPending && !id.startsWith("assistant-msg-")) {
-        return { kind, reason: "assistant id does not encode message id", id, details: { turn_id: turnId } };
-      }
-    }
-  }
-  return null;
-}
+import {
+  debugItemSummary,
+  debugStableKey,
+  findFirstRenderedItemContractViolation,
+} from "./sessionMessageListDataDebug";
+import { useSessionMessageListDiagnostics } from "./useSessionMessageListDiagnostics";
 
 type Params = {
   sessionId: string;
@@ -161,7 +64,6 @@ export function useSessionMessageListController(params: Params): Result {
 
   const methodsRef = useRef<VirtuosoMessageListMethods<WorkbenchListItem, WorkbenchMessageListContext> | null>(null);
   const lastSessionIdRef = useRef(sessionId);
-  const debugLoggedSessionRef = useRef<string | null>(null);
   const contractViolationLoggedRef = useRef<{ sessionId: string; violationKey: string } | null>(null);
 
   const lastScrollLocationRef = useRef<ListScrollLocation | null>(null);
@@ -191,19 +93,24 @@ export function useSessionMessageListController(params: Params): Result {
   const historyRequestedAnchorIdRef = useRef<string | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const suppressIdDiffLogsRef = useRef<{ sessionId: string; remainingTicks: number } | null>(null);
+  const lastScrollDebugAtRef = useRef(0);
 
   // Coalesce for steady-state updates, but never let it affect session transitions.
   const listItemsCoalesced = useRafCoalesced(listItems);
 
   const context = useMemo(() => ({ loaded, loadingOlder }), [loaded, loadingOlder]);
-
-  useEffect(() => {
-    if (!import.meta.env.DEV || !showDebug) return;
-    if (debugLoggedSessionRef.current === sessionId) return;
-    debugLoggedSessionRef.current = sessionId;
-    // eslint-disable-next-line no-console
-    console.debug("[MessageList][debug]", { sessionId, isActive, loaded });
-  }, [isActive, loaded, sessionId, showDebug]);
+  const recordDebugSnapshot = useSessionMessageListDiagnostics({
+    sessionId,
+    isActive,
+    loaded,
+    listItemsLength: listItems.length,
+    scrollState,
+    showDebug,
+    methodsRef,
+    lastAtBottomRef,
+    renderedAnchorIdRef,
+    renderedTopIdRef,
+  });
 
   useEffect(() => {
     // When only one session slot is mounted, switching tasks/sessions can remount the list.
@@ -217,7 +124,7 @@ export function useSessionMessageListController(params: Params): Result {
     } else {
       suppressInitialBottomPersistRef.current = null;
     }
-  }, [sessionId]);
+  }, [scrollState, sessionId]);
 
   type ScrollStatePersist = {
     stickToBottom: boolean;
@@ -389,6 +296,22 @@ export function useSessionMessageListController(params: Params): Result {
       const prefetchThreshold = -Math.max(250, location.visibleListHeight); // ~1 viewport, min 250px
       const nearTop = location.listOffset > prefetchThreshold;
 
+      if (import.meta.env.DEV && showDebug) {
+        const now = Date.now();
+        const shouldRecordScroll = now - lastScrollDebugAtRef.current >= 120 || nearTop || atBottom;
+        if (shouldRecordScroll) {
+          lastScrollDebugAtRef.current = now;
+          recordDebugSnapshot("scroll", {
+            listOffset: location.listOffset,
+            visibleListHeight: location.visibleListHeight,
+            bottomOffset: location.bottomOffset,
+            atBottom,
+            allowPersist,
+            suppressingInitialBottomPersist: Boolean(suppressInitialBottomPersistRef.current),
+          });
+        }
+      }
+
       if (import.meta.env.DEV && showDebug && nearTop) {
         // eslint-disable-next-line no-console
         console.debug("[MessageList][history:gate]", {
@@ -456,9 +379,13 @@ export function useSessionMessageListController(params: Params): Result {
     requestAnimationFrame(() => {
       if (Math.abs(scroller.scrollTop - target) > 2) {
         scroller.scrollTop = target;
+        recordDebugSnapshot("restore:non-bottom-scrollTop", {
+          targetScrollTop: target,
+          actualScrollTop: scroller.scrollTop,
+        });
       }
     });
-  }, []);
+  }, [recordDebugSnapshot]);
 
   const onRenderedDataChange = useCallback((range: WorkbenchListItem[]) => {
     const topId = range?.[0]?.id ?? null;
@@ -598,6 +525,11 @@ export function useSessionMessageListController(params: Params): Result {
       suppressIdDiffLogsRef.current = { sessionId, remainingTicks: 3 };
       methods.data.replace(nextRaw, { initialLocation, purgeItemSizes: true });
       restoreNonBottomScroll();
+      recordDebugSnapshot("data:replace", {
+        reason: "sessionChanged",
+        nextLen: nextRaw.length,
+        currentLen: current.length,
+      });
       if (import.meta.env.DEV && showDebug) {
         // eslint-disable-next-line no-console
         console.debug("[MessageList][data:replace]", { sessionId, nextLen: nextRaw.length, reason: "sessionChanged" });
@@ -617,6 +549,11 @@ export function useSessionMessageListController(params: Params): Result {
       suppressIdDiffLogsRef.current = { sessionId, remainingTicks: 2 };
       methods.data.replace(nextRaw, { initialLocation, purgeItemSizes: true });
       restoreNonBottomScroll();
+      recordDebugSnapshot("data:replace", {
+        reason: "initialPopulation",
+        nextLen: nextRaw.length,
+        currentLen,
+      });
       if (import.meta.env.DEV && showDebug) {
         // eslint-disable-next-line no-console
         console.debug("[MessageList][data:replace]", {
@@ -632,6 +569,10 @@ export function useSessionMessageListController(params: Params): Result {
     if (nextLen === 0) {
       historyExpectedRef.current = false;
       methods.data.deleteRange(0, currentLen);
+      recordDebugSnapshot("data:deleteRange", {
+        offset: 0,
+        count: currentLen,
+      });
       if (import.meta.env.DEV && showDebug) {
         // eslint-disable-next-line no-console
         console.debug("[MessageList][data:deleteRange]", { sessionId, offset: 0, count: currentLen });
@@ -694,6 +635,16 @@ export function useSessionMessageListController(params: Params): Result {
         historyExpectedRef.current = false;
         historyRequestedAtTopRef.current = false;
         historyRequestedAnchorIdRef.current = null;
+        recordDebugSnapshot("history:extend", {
+          prefixLen: prefix.length,
+          suffixLen: suffix.length,
+          firstIndex,
+          lastIndex,
+          nextLen,
+          currentLen,
+          requestedAnchorId,
+          wasAtTop,
+        });
         if (import.meta.env.DEV && showDebug) {
           // eslint-disable-next-line no-console
           console.debug("[MessageList][history:extend]", {
@@ -744,6 +695,15 @@ export function useSessionMessageListController(params: Params): Result {
           const targetIndex = prefix.length;
           requestAnimationFrame(() => methods.scrollToItem({ index: targetIndex, align: "start", behavior: "instant" }));
         }
+        recordDebugSnapshot("data:prepend", {
+          prefixLen: prefix.length,
+          nextLen,
+          currentLen,
+          anchorId,
+          anchorIndex,
+          requestedAnchorId,
+          wasAtTop,
+        });
         if (import.meta.env.DEV && showDebug) {
           // eslint-disable-next-line no-console
           console.debug("[MessageList][data:prepend]", {
@@ -793,6 +753,11 @@ export function useSessionMessageListController(params: Params): Result {
           );
         }
         restoreNonBottomScroll();
+        recordDebugSnapshot("data:append", {
+          suffixLen: suffix.length,
+          nextLen,
+          currentLen,
+        });
         if (import.meta.env.DEV && showDebug) {
           // eslint-disable-next-line no-console
           console.debug("[MessageList][data:append]", { sessionId, suffixLen: suffix.length, nextLen, currentLen });
@@ -852,6 +817,13 @@ export function useSessionMessageListController(params: Params): Result {
             stickToBottomRef.current ? ("auto" as const) : undefined,
           );
         }
+        recordDebugSnapshot("data:map", {
+          nextLen,
+          currentLen,
+          anchorId,
+          anchorIndex,
+          stickToBottom: stickToBottomRef.current,
+        });
         return;
       }
     }
@@ -974,7 +946,18 @@ export function useSessionMessageListController(params: Params): Result {
       },
       appendBehavior,
     );
-  }, [isActive, listItemsCoalesced, sessionId, showDebug]);
+    recordDebugSnapshot("data:reconcile", {
+      nextLen,
+      currentLen,
+      prefixLen,
+      suffixLen,
+      deleteCount,
+      insertLen: insertData.length,
+      anchorId,
+      anchorIndex,
+      stickToBottom: stickToBottomRef.current,
+    });
+  }, [isActive, listItems, listItemsCoalesced, recordDebugSnapshot, sessionId, showDebug, scrollState, initialLocation, restoreNonBottomScroll]);
 
   return {
     methodsRef,
