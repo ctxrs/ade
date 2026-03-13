@@ -40,7 +40,7 @@ export function useSessionMessageListDiagnostics({
 
   const recordDebugSnapshot = useCallback(
     (cause: string, detail?: Record<string, unknown> | null) => {
-      if (!import.meta.env.DEV || !showDebug) return;
+      if (!showDebug) return;
       recordSessionMessageListDebugSnapshot({
         sessionId,
         cause,
@@ -68,7 +68,7 @@ export function useSessionMessageListDiagnostics({
   );
 
   useEffect(() => {
-    if (!import.meta.env.DEV || !showDebug) return;
+    if (!showDebug) return;
     if (debugLoggedSessionRef.current === sessionId) return;
     debugLoggedSessionRef.current = sessionId;
     // eslint-disable-next-line no-console
@@ -85,7 +85,7 @@ export function useSessionMessageListDiagnostics({
   }, [recordDebugSnapshot, scrollState, sessionId]);
 
   useEffect(() => {
-    if (!import.meta.env.DEV || !showDebug || !isActive) return;
+    if (!showDebug || !isActive) return;
     let cancelled = false;
     let rafId: number | null = null;
     let cleanup: (() => void) | null = null;

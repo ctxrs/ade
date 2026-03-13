@@ -5,6 +5,7 @@ import type {
   SetStateAction,
 } from "react";
 import type {
+  DataWithScrollModifier,
   ItemLocation,
   ListScrollLocation,
   ShortSizeAlign,
@@ -120,7 +121,9 @@ type SessionWorkbenchPaneProps = {
   onOpenChildSession: (childSessionId: string) => void;
   style: CSSProperties;
   itemIdentity: (item: WorkbenchListItem) => unknown;
+  initialData: WorkbenchListItem[];
   initialLocation: ItemLocation;
+  dataState?: DataWithScrollModifier<WorkbenchListItem>;
   context: WorkbenchMessageListContext;
   onScroll: (location: ListScrollLocation) => void;
   onRenderedDataChange: (range: WorkbenchListItem[]) => void;
@@ -221,7 +224,9 @@ export function SessionWorkbenchPane({
   onOpenChildSession,
   style,
   itemIdentity,
+  initialData,
   initialLocation,
+  dataState,
   context,
   onScroll,
   onRenderedDataChange,
@@ -497,9 +502,11 @@ export function SessionWorkbenchPane({
 
         <SessionThreadPane
           style={style}
+          initialData={initialData}
           itemContent={workbenchItemContent}
           itemIdentity={itemIdentity}
           initialLocation={initialLocation}
+          dataState={dataState}
           context={context}
           onScroll={onScroll}
           onRenderedDataChange={onRenderedDataChange}

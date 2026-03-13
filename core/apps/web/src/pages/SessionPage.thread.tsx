@@ -1,7 +1,8 @@
-import { memo, useCallback, useRef, type CSSProperties, type MutableRefObject, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useRef, type CSSProperties, type MutableRefObject, type ReactNode } from "react";
 import {
   VirtuosoMessageList,
   VirtuosoMessageListLicense,
+  type DataWithScrollModifier,
   type ItemLocation,
   type ItemContent as MessageItemContent,
   type ListScrollLocation,
@@ -16,9 +17,11 @@ import {
 
 type WorkbenchMessageListStackProps = {
   virtuosoStyle: CSSProperties;
+  initialData: WorkbenchListItem[];
   itemContent: (index: number, item: WorkbenchListItem) => ReactNode;
   itemIdentity: (item: WorkbenchListItem) => unknown;
   initialLocation?: ItemLocation;
+  dataState?: DataWithScrollModifier<WorkbenchListItem>;
   context: WorkbenchMessageListContext;
   onScroll: (location: ListScrollLocation) => void;
   onRenderedDataChange: (range: WorkbenchListItem[]) => void;
@@ -32,11 +35,78 @@ export type WorkbenchMessageListContext = {
   loadingOlder: boolean;
 };
 
+const DEBUG_ROW_SIZE_DELTA_PX = 8;
+
+function MeasuredThreadRow({
+  id,
+  children,
+}: {
+  id: string;
+  children: ReactNode;
+}) {
+  const rowRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    let debugEnabled = false;
+    try {
+      debugEnabled = new URLSearchParams(window.location.search).get("debug") === "1";
+    } catch {
+      debugEnabled = false;
+    }
+    if (!debugEnabled) return;
+
+    const rowEl = rowRef.current;
+    if (!rowEl) return;
+    const parentEl = rowEl.parentElement as HTMLElement | null;
+    if (!parentEl) return;
+
+    let lastSignature = "";
+    const emitMismatch = (reason: string) => {
+      const knownSizeRaw = parentEl.getAttribute("data-known-size");
+      const actualHeight = rowEl.getBoundingClientRect().height;
+      const parentHeight = parentEl.getBoundingClientRect().height;
+      const knownSize = knownSizeRaw == null ? Number.NaN : Number(knownSizeRaw);
+      if (!Number.isFinite(knownSize)) return;
+      if (Math.abs(actualHeight - knownSize) <= DEBUG_ROW_SIZE_DELTA_PX) return;
+      const signature = `${reason}:${knownSize}:${Math.round(actualHeight)}:${Math.round(parentHeight)}`;
+      if (signature === lastSignature) return;
+      lastSignature = signature;
+      // eslint-disable-next-line no-console
+      console.log("[MessageList][row-size-mismatch]", {
+        id,
+        reason,
+        dataIndex: parentEl.getAttribute("data-index"),
+        knownSize,
+        actualHeight,
+        parentHeight,
+      });
+    };
+
+    emitMismatch("mount");
+    const observer = new ResizeObserver(() => emitMismatch("resize"));
+    observer.observe(rowEl);
+    observer.observe(parentEl);
+    const rafId = requestAnimationFrame(() => emitMismatch("raf"));
+    return () => {
+      cancelAnimationFrame(rafId);
+      observer.disconnect();
+    };
+  }, [id]);
+
+  return (
+    <div ref={rowRef} role="listitem" data-thread-item-id={id}>
+      {children}
+    </div>
+  );
+}
+
 export const WorkbenchMessageListStack = memo(function WorkbenchMessageListStack({
   virtuosoStyle,
+  initialData,
   itemContent,
   itemIdentity,
   initialLocation,
+  dataState,
   context,
   onScroll,
   onRenderedDataChange,
@@ -52,9 +122,9 @@ export const WorkbenchMessageListStack = memo(function WorkbenchMessageListStack
     ({ index, data }) => {
       if (!data) return <div style={{ height: 1 }} />;
       return (
-        <div role="listitem" data-thread-item-id={data.id}>
+        <MeasuredThreadRow id={data.id}>
           {itemContentRef.current(index, data)}
-        </div>
+        </MeasuredThreadRow>
       );
     },
     [],
@@ -68,6 +138,8 @@ export const WorkbenchMessageListStack = memo(function WorkbenchMessageListStack
           style={virtuosoStyle}
           className="wb-thread-scroller"
           role="list"
+          initialData={initialData}
+          data={dataState}
           context={context}
           itemIdentity={itemIdentity}
           computeItemKey={({ data }) => data.id}

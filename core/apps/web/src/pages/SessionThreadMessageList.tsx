@@ -1,5 +1,6 @@
 import { memo, type CSSProperties, type MutableRefObject, type ReactNode } from "react";
 import type {
+  DataWithScrollModifier,
   ItemLocation,
   ListScrollLocation,
   ShortSizeAlign,
@@ -10,9 +11,11 @@ import type { WorkbenchListItem } from "./SessionPage.types";
 
 export const SessionThreadMessageList = memo(function SessionThreadMessageList({
   style,
+  initialData,
   itemContent,
   itemIdentity,
   initialLocation,
+  dataState,
   context,
   onScroll,
   onRenderedDataChange,
@@ -21,9 +24,11 @@ export const SessionThreadMessageList = memo(function SessionThreadMessageList({
   shortSizeAlign,
 }: {
   style: CSSProperties;
+  initialData: WorkbenchListItem[];
   itemContent: (index: number, item: WorkbenchListItem) => ReactNode;
   itemIdentity: (item: WorkbenchListItem) => unknown;
   initialLocation: ItemLocation;
+  dataState?: DataWithScrollModifier<WorkbenchListItem>;
   context: WorkbenchMessageListContext;
   onScroll: (location: ListScrollLocation) => void;
   onRenderedDataChange: (range: WorkbenchListItem[]) => void;
@@ -34,9 +39,11 @@ export const SessionThreadMessageList = memo(function SessionThreadMessageList({
   return (
     <WorkbenchMessageListStack
       virtuosoStyle={style}
+      initialData={initialData}
       itemContent={itemContent}
       itemIdentity={itemIdentity}
       initialLocation={initialLocation}
+      dataState={dataState}
       context={context}
       onScroll={onScroll}
       onRenderedDataChange={onRenderedDataChange}

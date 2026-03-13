@@ -520,6 +520,7 @@ export function SessionView({
   const {
     methodsRef: messageListMethodsRef,
     context: messageListContext,
+    initialData: messageListInitialData,
     initialLocation: messageListInitialLocation,
     onScroll: handleMessageListScroll,
     onRenderedDataChange: handleRenderedDataChange,
@@ -887,6 +888,7 @@ export function SessionView({
       onOpenChildSession={openChildSession}
       style={virtuosoStyle}
       itemIdentity={messageListItemIdentity}
+      initialData={messageListInitialData}
       initialLocation={messageListInitialLocation}
       context={messageListContext}
       onScroll={handleMessageListScroll}
