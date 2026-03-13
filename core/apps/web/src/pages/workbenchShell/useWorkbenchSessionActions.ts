@@ -5,7 +5,7 @@ import { buildWorkbenchThreadViewModel } from "../SessionPage";
 import type { SessionCacheEntry, SessionSupervisorSnapshot } from "../../state/sessionSupervisor";
 import type { TerminalPanelHandle } from "../../components/TerminalPanel";
 import { HARNESS_CATALOG } from "../../utils/harnessCatalog";
-import { copyTextToClipboard } from "../../utils/clipboard";
+import { describeClipboardCopyFailure, tryCopyTextToClipboard } from "../../utils/clipboard";
 import { errorMessage } from "../../utils/errorMessage";
 import { composeModelId, parseModelId } from "../../utils/modelEffort";
 import {
@@ -28,6 +28,12 @@ type Params = {
   setTerminalOpen: (open: boolean) => void;
   getSupervisorSnapshot: () => SessionSupervisorSnapshot;
   loadMoreTurns: (sessionId: string) => Promise<void>;
+};
+
+type TranscriptHydrationResult = {
+  ok: boolean;
+  partial: boolean;
+  error?: unknown;
 };
 
 const attachmentLine = (attachments: MessageAttachment[]): string => {
@@ -205,7 +211,7 @@ export function useWorkbenchSessionActions({
     return buildTranscriptExportFromEntry(activeEntry ?? null);
   }, [activeEntry, buildTranscriptExportFromEntry]);
 
-  const hydrateTranscriptHistory = useCallback(async (sessionId: string): Promise<{ ok: boolean; partial: boolean }> => {
+  const hydrateTranscriptHistory = useCallback(async (sessionId: string): Promise<TranscriptHydrationResult> => {
     let lastCursor: number | null = null;
     let stalledCount = 0;
     while (true) {
@@ -245,9 +251,9 @@ export function useWorkbenchSessionActions({
   const copySessionLog = useCallback(async () => {
     const payload = buildSessionLogExport();
     if (!payload) return;
-    const copied = await copyTextToClipboard(payload.markdown);
-    if (!copied) {
-      window.alert("Clipboard access is blocked; use HTTPS/desktop app or copy manually.");
+    const result = await tryCopyTextToClipboard(payload.markdown);
+    if (!result.ok) {
+      window.alert(describeClipboardCopyFailure(result, { action: "copy the session log to the clipboard" }));
     }
   }, [buildSessionLogExport]);
 
@@ -268,23 +274,29 @@ export function useWorkbenchSessionActions({
     setCopyTranscriptBusy(true);
     setTranscriptNotice(null);
     try {
-      let hydrationResult = { ok: true, partial: false };
+      let hydrationResult: TranscriptHydrationResult = { ok: true, partial: false };
       try {
         hydrationResult = await hydrateTranscriptHistory(sessionId);
-      } catch {
-        hydrationResult = { ok: false, partial: true };
+      } catch (error: unknown) {
+        hydrationResult = { ok: false, partial: true, error };
       }
       const entry = getSupervisorSnapshot().sessions[String(sessionId)] ?? null;
       const payload = buildTranscriptExportFromEntry(entry);
       if (!payload) return;
-      const copied = await copyTextToClipboard(payload.markdown);
-      if (!copied) {
-        setTranscriptNotice("Clipboard access is blocked; use HTTPS/desktop app or copy manually.");
+      const copyResult = await tryCopyTextToClipboard(payload.markdown);
+      if (!copyResult.ok) {
+        if (hydrationResult.error) {
+          setTranscriptNotice(errorMessage(hydrationResult.error) || "Failed to load transcript history.");
+          return;
+        }
+        setTranscriptNotice(describeClipboardCopyFailure(copyResult, { action: "copy transcript to the clipboard" }));
         return;
       }
       if (!hydrationResult.ok || hydrationResult.partial) {
         setTranscriptNotice("Couldn't load full history. Copied what's already loaded.");
       }
+    } catch (error: unknown) {
+      setTranscriptNotice(errorMessage(error) || "Failed to copy transcript.");
     } finally {
       copyTranscriptBusyRef.current = false;
       setCopyTranscriptBusy(false);
@@ -294,9 +306,9 @@ export function useWorkbenchSessionActions({
   const copyWorktreeLocation = useCallback(async () => {
     const path = String(worktreePath).trim();
     if (!path || !canCopyWorktree) return;
-    const copied = await copyTextToClipboard(path);
-    if (!copied) {
-      window.alert("Clipboard access is blocked; use HTTPS/desktop app or copy manually.");
+    const result = await tryCopyTextToClipboard(path);
+    if (!result.ok) {
+      window.alert(describeClipboardCopyFailure(result, { action: "copy the worktree location to the clipboard" }));
       return;
     }
     setWorktreeCopied(true);
