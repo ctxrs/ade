@@ -20,3 +20,6 @@ export const isImageArtifact = (artifact: Artifact): boolean => {
   const mime = (artifact.mime_type ?? "").toLowerCase();
   return mime.startsWith("image/");
 };
+
+export const isPreviewableArtifact = (artifact: Artifact): boolean =>
+  isImageArtifact(artifact) || isVideoArtifact(artifact);

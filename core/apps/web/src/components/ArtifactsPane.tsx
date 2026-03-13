@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Copy, Download, RotateCcw, X, ZoomIn, ZoomOut } from "lucide-react";
 import { artifactUrl, idToString, type Artifact } from "../api/client";
-import { isImageArtifact, isVideoArtifact } from "../utils/artifacts";
+import { isImageArtifact, isPreviewableArtifact, isVideoArtifact } from "../utils/artifacts";
 import { errorMessage } from "../utils/errorMessage";
 const DEFAULT_MIN_SCALE = 0.2;
 const MAX_SCALE = 5;
@@ -79,6 +79,7 @@ function ArtifactCard({
   const title = artifact.absolute_path || name;
   const isVideo = isVideoArtifact(artifact);
   const isImage = isImageArtifact(artifact);
+  const canPreview = isPreviewableArtifact(artifact) && !missing;
   const canDownload = Boolean(artifactId) && !missing;
   const canCopy = Boolean(artifactId) && !missing && isImage && !copying;
 
@@ -119,7 +120,11 @@ function ArtifactCard({
   }
 
   return (
-    <div className="wb-artifact-card" title={title} onClick={() => onOpen(artifact)}>
+    <div
+      className={`wb-artifact-card ${canPreview ? "wb-artifact-card-previewable" : ""}`}
+      title={title}
+      onClick={canPreview ? () => onOpen(artifact) : undefined}
+    >
       <div className="wb-artifact-preview">{preview}</div>
       <div className="wb-artifact-meta">
         <div className="wb-artifact-name-row">

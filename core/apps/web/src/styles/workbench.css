@@ -4225,6 +4225,10 @@
   gap: 8px;
 }
 
+.wb-artifact-card-previewable {
+  cursor: pointer;
+}
+
 .wb-artifact-preview {
   border-radius: 10px;
   background: var(--wb-artifact-preview-bg);
