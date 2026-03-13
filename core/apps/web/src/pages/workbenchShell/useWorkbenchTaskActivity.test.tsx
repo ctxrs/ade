@@ -1,15 +1,17 @@
 import React from "react";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Session, SessionSnapshotSummary } from "../../api/client";
+import type { Session, SessionHeadSnapshot, SessionSnapshotSummary, SessionTurn } from "../../api/client";
 import { SessionSupervisorProvider, type SessionCacheEntry, type SessionSupervisorSnapshot } from "../../state/sessionSupervisor";
 import type { WorkspaceActiveSnapshotItem, WorkspaceActiveSnapshotState } from "../../state/workspaceActiveSnapshotStore";
 import { WORKBENCH_TASK_IDLE_EVENT, type WorkbenchTaskIdleDetail } from "../../utils/updaterEvents";
 import type { OptimisticTaskSummary } from "../WorkbenchPage.types";
 import {
   deriveProviderIdsByTaskFromSessions,
+  deriveWorkbenchTaskStatusKind,
   deriveTaskLiveInfo,
   deriveWarmSessionIds,
+  isPrimarySessionRunning,
   isWorkbenchTaskUnread,
   resolveWorkbenchActiveSessionId,
   useWorkbenchTaskActivity,
@@ -54,12 +56,14 @@ const makeTaskSummary = ({
   taskId,
   sessions,
   primarySessionId,
+  primarySessionHead = null,
   assistantSeenAt = null,
   lastAssistantMessageAt = now,
 }: {
   taskId: string;
   sessions: SessionSnapshotSummary[];
   primarySessionId: string;
+  primarySessionHead?: SessionHeadSnapshot | null;
   assistantSeenAt?: string | null;
   lastAssistantMessageAt?: string | null;
 }): WorkspaceActiveSnapshotItem => ({
@@ -79,29 +83,33 @@ const makeTaskSummary = ({
   },
   sessions,
   primarySessionId,
-  primarySessionHead: null,
+  primarySessionHead,
   sort_at: now,
   sortAtMs: Date.parse(now),
 });
 
 const makeSessionEntry = ({
   session,
+  turns = [],
   messageCreatedAt = now,
+  hasMoreTurns = false,
   updatedAtMs = Date.parse(now),
 }: {
   session: Session;
+  turns?: SessionTurn[];
   messageCreatedAt?: string;
+  hasMoreTurns?: boolean;
   updatedAtMs?: number;
 }): SessionCacheEntry => ({
   sessionId: session.id,
   loadState: "live",
   session,
-  turns: [],
+  turns,
   turnToolsByTurnId: {},
   turnToolsLoading: [],
   toolSummaries: [],
   toolSummariesReady: false,
-  hasMoreTurns: false,
+  hasMoreTurns,
   events: [],
   messages: [
     {
@@ -124,6 +132,40 @@ const makeSessionEntry = ({
   loading: false,
   subscribed: true,
   updatedAtMs,
+});
+
+const makeTurn = (sessionId: string, status: SessionTurn["status"]): SessionTurn => ({
+  turn_id: `${sessionId}-${status}`,
+  session_id: sessionId,
+  run_id: null,
+  user_message_id: `${sessionId}-message`,
+  status,
+  start_seq: 1,
+  end_seq: status === "running" ? null : 2,
+  started_at: now,
+  updated_at: now,
+  assistant_partial: null,
+  thought_partial: null,
+  metrics_json: null,
+  tool_total: 0,
+  tool_pending: 0,
+  tool_running: 0,
+  tool_completed: 0,
+  tool_failed: 0,
+});
+
+const makeHead = (session: Session, turns: SessionTurn[]): SessionHeadSnapshot => ({
+  session,
+  turns,
+  messages: [],
+  last_event_seq: turns.length,
+  activity: {
+    is_working: turns.some((turn) => turn.status === "running"),
+    last_turn_status: turns.at(-1)?.status ?? null,
+  },
+  has_more_turns: false,
+  has_more_history: false,
+  history_cursor: null,
 });
 
 const makeSessionSnapshot = (sessions: Record<string, SessionCacheEntry>): SessionSupervisorSnapshot => ({
@@ -243,6 +285,220 @@ describe("useWorkbenchTaskActivity helpers", () => {
     expect(isWorkbenchTaskUnread({ taskId: "task-1", tasksById, taskLiveInfo })).toBe(true);
   });
 
+  it("treats only a running primary turn as working", () => {
+    const primarySession = makeSession("session-1", "task-1", "active");
+    const runningTurn = makeTurn(primarySession.id, "running");
+    const queuedTurn = makeTurn(primarySession.id, "queued");
+
+    expect(
+      isPrimarySessionRunning({
+        primarySessionSummary: makeSessionSummary(primarySession, {
+          activity: { is_working: false, last_turn_status: "completed" },
+        }),
+        primarySessionHead: null,
+        primaryEntry: makeSessionEntry({ session: primarySession, turns: [runningTurn] }),
+      }),
+    ).toBe(true);
+
+    expect(
+      isPrimarySessionRunning({
+        primarySessionSummary: makeSessionSummary(primarySession, {
+          activity: { is_working: true, last_turn_status: "queued" },
+        }),
+        primarySessionHead: null,
+        primaryEntry: makeSessionEntry({ session: primarySession, turns: [queuedTurn] }),
+      }),
+    ).toBe(false);
+
+    expect(
+      isPrimarySessionRunning({
+        primarySessionSummary: makeSessionSummary(primarySession, {
+          activity: { is_working: true, last_turn_status: "queued" },
+        }),
+        primarySessionHead: makeHead(primarySession, [runningTurn]),
+        primaryEntry: undefined,
+      }),
+    ).toBe(true);
+
+    expect(
+      isPrimarySessionRunning({
+        primarySessionSummary: makeSessionSummary(primarySession, {
+          activity: { is_working: true, last_turn_status: "queued" },
+        }),
+        primarySessionHead: {
+          ...makeHead(primarySession, []),
+          activity: { is_working: true, last_turn_status: "running" },
+        },
+        primaryEntry: undefined,
+      }),
+    ).toBe(true);
+
+    expect(
+      isPrimarySessionRunning({
+        primarySessionSummary: makeSessionSummary(primarySession, {
+          activity: { is_working: true, last_turn_status: "queued" },
+        }),
+        primarySessionHead: null,
+        primaryEntry: undefined,
+      }),
+    ).toBe(false);
+    });
+
+  it("prefers live primary turns over a stale non-working summary", () => {
+    const primarySession = makeSession("session-1", "task-1", "active");
+    const taskLiveInfo = deriveTaskLiveInfo({
+      tasksById: {
+        "task-1": makeTaskSummary({
+          taskId: "task-1",
+          primarySessionId: primarySession.id,
+          sessions: [
+            makeSessionSummary(primarySession, {
+              activity: { is_working: false, last_turn_status: "completed" },
+            }),
+          ],
+        }),
+      },
+      optimisticTasks: [],
+      sessions: {
+        [primarySession.id]: makeSessionEntry({
+          session: primarySession,
+          turns: [makeTurn(primarySession.id, "running")],
+        }),
+      },
+    });
+
+    expect(taskLiveInfo.workingByTask.has("task-1")).toBe(true);
+  });
+
+  it("does not mark queued primary turns as working", () => {
+    const primarySession = makeSession("session-1", "task-1", "active");
+    const taskLiveInfo = deriveTaskLiveInfo({
+      tasksById: {
+        "task-1": makeTaskSummary({
+          taskId: "task-1",
+          primarySessionId: primarySession.id,
+          sessions: [
+            makeSessionSummary(primarySession, {
+              activity: { is_working: true, last_turn_status: "queued" },
+            }),
+          ],
+        }),
+      },
+      optimisticTasks: [],
+      sessions: {
+        [primarySession.id]: makeSessionEntry({
+          session: primarySession,
+          turns: [makeTurn(primarySession.id, "queued")],
+        }),
+      },
+    });
+
+    expect(taskLiveInfo.workingByTask.has("task-1")).toBe(false);
+  });
+
+  it("falls back to a running summary when the live cache only has older non-running turns", () => {
+    const primarySession = makeSession("session-1", "task-1", "active");
+    const taskLiveInfo = deriveTaskLiveInfo({
+      tasksById: {
+        "task-1": makeTaskSummary({
+          taskId: "task-1",
+          primarySessionId: primarySession.id,
+          sessions: [
+            makeSessionSummary(primarySession, {
+              activity: { is_working: true, last_turn_status: "running" },
+            }),
+          ],
+        }),
+      },
+      optimisticTasks: [],
+      sessions: {
+        [primarySession.id]: makeSessionEntry({
+          session: primarySession,
+          turns: [makeTurn(primarySession.id, "completed")],
+          hasMoreTurns: true,
+        }),
+      },
+    });
+
+    expect(taskLiveInfo.workingByTask.has("task-1")).toBe(true);
+  });
+
+  it("ignores optimistic starting state when a real primary running turn exists", () => {
+    const primarySession = makeSession("session-1", "task-1", "starting");
+    const optimisticTask = {
+      ...makeTaskSummary({
+        taskId: "task-1",
+        primarySessionId: primarySession.id,
+        sessions: [
+          makeSessionSummary(primarySession, {
+            activity: { is_working: true, last_turn_status: "running" },
+          }),
+        ],
+      }),
+      localStatus: "starting",
+      localPrompt: "ship it",
+      localMessageId: "message-1",
+    } as OptimisticTaskSummary;
+
+    const taskLiveInfo = deriveTaskLiveInfo({
+      tasksById: {},
+      optimisticTasks: [optimisticTask],
+      sessions: {
+        [primarySession.id]: makeSessionEntry({
+          session: primarySession,
+          turns: [makeTurn(primarySession.id, "running")],
+        }),
+      },
+    });
+
+    expect(taskLiveInfo.workingByTask.has("task-1")).toBe(true);
+  });
+
+  it("falls back to a running summary when the primary head is stale", () => {
+    const primarySession = makeSession("session-1", "task-1", "active");
+    const taskLiveInfo = deriveTaskLiveInfo({
+      tasksById: {
+        "task-1": makeTaskSummary({
+          taskId: "task-1",
+          primarySessionId: primarySession.id,
+          sessions: [
+            makeSessionSummary(primarySession, {
+              activity: { is_working: true, last_turn_status: "running" },
+            }),
+          ],
+          primarySessionHead: {
+            ...makeHead(primarySession, [makeTurn(primarySession.id, "completed")]),
+            activity: { is_working: false, last_turn_status: "completed" },
+          },
+        }),
+      },
+      optimisticTasks: [],
+      sessions: {},
+    });
+
+    expect(taskLiveInfo.workingByTask.has("task-1")).toBe(true);
+  });
+
+  it("derives task row status from running, unread, and error only", () => {
+    expect(
+      deriveWorkbenchTaskStatusKind({
+        hasError: false,
+        working: false,
+        unread: true,
+        localStatus: "starting",
+      }),
+    ).toBe("unread");
+
+    expect(
+      deriveWorkbenchTaskStatusKind({
+        hasError: false,
+        working: true,
+        unread: true,
+        localStatus: null,
+      }),
+    ).toBe("working");
+  });
+
   it("orders task provider ids by recent session activity", () => {
     const providerIdsByTask = deriveProviderIdsByTaskFromSessions({
       "session-1": makeSessionEntry({
@@ -329,7 +585,7 @@ describe("useWorkbenchTaskActivity", () => {
       primarySessionId: "session-1",
       sessions: [
         makeSessionSummary(activeSession, {
-          activity: { is_working: true },
+          activity: { is_working: true, last_turn_status: "running" },
         }),
       ],
     });

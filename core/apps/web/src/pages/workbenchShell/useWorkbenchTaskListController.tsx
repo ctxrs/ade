@@ -34,6 +34,7 @@ import {
   parseMs,
 } from "../WorkbenchPage.utils";
 import { useWorkbenchTaskScrollbar } from "./useWorkbenchTaskScrollbar";
+import { deriveWorkbenchTaskStatusKind } from "./workbenchTaskActivity";
 
 type TaskLiveInfo = {
   workingByTask: Set<string>;
@@ -444,20 +445,12 @@ export function useWorkbenchTaskListController({
       const seenMs = parseMs(task.assistant_seen_at ?? null);
       const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
       const ageIso = task.last_activity_at ?? task.updated_at ?? task.created_at;
-      let statusKind: "error" | "idle" | "archive" | "working" | "unread" = archivePending
-        ? "archive"
-        : hasError
-          ? "error"
-          : working
-            ? "working"
-            : unread
-              ? "unread"
-              : "idle";
-      if (localStatus === "failed") {
-        statusKind = "error";
-      } else if (localStatus === "starting") {
-        statusKind = "working";
-      }
+      const statusKind = deriveWorkbenchTaskStatusKind({
+        hasError,
+        working,
+        unread,
+        localStatus,
+      });
       const summaryProviders =
         summary.providerIds && summary.providerIds.length
           ? summary.providerIds

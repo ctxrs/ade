@@ -1,23 +1,17 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, ChevronDown, Ellipsis, Image, Square } from "lucide-react";
-import { providerDetailFlag } from "../../utils/boolish";
 import { shouldSendOnEnter } from "../../utils/keyboard";
 import { buildModelCatalog, formatEffortLabel, parseModelId } from "../../utils/modelEffort";
-import { PROVIDER_INSTALLS_ENABLED } from "../../utils/providerInstallGate";
 import {
   isReadyVisibleHarnessProviderStatus,
-  isVisibleHarnessProviderStatus,
 } from "../../utils/providerInventory";
-import { hasConfiguredHarnessAuth } from "../../utils/providerAuthStatus";
-import { UNSUPPORTED_HARNESS_IDS } from "../../utils/harnessCatalog";
 import { shouldHydrateProviderModels } from "../../pages/workbenchShell/useWorkbenchProviders";
-import { trackFeatureUsed, trackProviderSelected } from "../../utils/analytics";
 import { ComposerAutocompleteMenu } from "../ComposerAutocompleteMenu";
 import { useComposerAutocomplete } from "../../state/useComposerAutocomplete";
 import { imageFilesToInlineAttachments } from "../../utils/messageAttachments";
-import { installErrorSummary } from "../../utils/providerInstallUi";
 import type { SessionViewVerbosity } from "../../state/uiStateStore";
 import { MenuTitleRow } from "./WorkbenchComposerMenu";
+import { WorkbenchComposerHarnessMenu } from "./WorkbenchComposerHarnessMenu";
 import {
   MENU_DESCRIPTIONS,
   attachmentDisplayName,
@@ -64,7 +58,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
   const contextWindow =
     variant === "activeSession" ? (props as ActiveSessionProps).contextWindow ?? null : null;
   const hasDraft = value.trim().length > 0 || attachments.length > 0;
-  const installControlsEnabled = PROVIDER_INSTALLS_ENABLED;
   const showStop = !!onInterrupt && !!isWorking && !hasDraft;
   const sendActionDisabled = !showStop && (!!sendDisabled || !!sendDisabledReason);
   const sendActionTitle = showStop ? "Stop" : sendDisabledReason ?? "Send";
@@ -357,15 +350,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     }
   }, [newSession?.ensureProviderAuthSummary, newSession?.providerOptions, newSession?.providersById, providerIdsToEnsure]);
 
-  useEffect(() => {
-    if (!newSession) return;
-    if (openMenu !== "harness") return;
-    for (const [providerId, status] of Object.entries(newSession.providersById)) {
-      if (!isReadyVisibleHarnessProviderStatus(status)) continue;
-      newSession.ensureProviderAuthSummary(providerId).catch(() => {});
-    }
-  }, [newSession, openMenu]);
-
   // Seed the primary draft model from provider-advertised defaults (when available),
   // so the UI shows the current model + effort (e.g. `gpt-5.2/xhigh`) immediately.
   useEffect(() => {
@@ -505,231 +489,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
     };
   }, [props, variant]);
 
-  const [harnessSearch, setHarnessSearch] = useState("");
-
-  const toggleHarness = useCallback(
-    (providerId: string) => {
-      if (variant !== "newSession") return;
-      const ns = props as NewSessionProps;
-      const st = ns.providersById[providerId];
-      const installed = isReadyVisibleHarnessProviderStatus(st);
-      if (!installed) return;
-      const hasActiveAuth = hasConfiguredHarnessAuth(providerId, ns.providerOptions[providerId]);
-      if (!hasActiveAuth) {
-        trackFeatureUsed("harness_auth_requested", {
-          provider_id: providerId,
-          entry_surface: "workbench_new_task",
-        });
-        ns.onRequestHarnessAuth?.(providerId);
-        setOpenMenu(null);
-        return;
-      }
-      if (ns.draftHarness?.providerId !== providerId) {
-        trackProviderSelected({
-          providerId,
-          source: "provider_switch",
-        });
-      }
-      const authReadyVisibleHarnessCount = Object.keys(ns.providersById).filter(
-        (id) =>
-          !UNSUPPORTED_HARNESS_IDS.has(id)
-          && isReadyVisibleHarnessProviderStatus(ns.providersById[id])
-          && hasConfiguredHarnessAuth(id, ns.providerOptions[id]),
-      ).length;
-      ns.setDraftHarness((prev) => {
-        // Keep the only auth-ready harness selected so late auto-selection does not
-        // immediately get toggled back to an empty composer state.
-        if (prev?.providerId === providerId) {
-          return authReadyVisibleHarnessCount <= 1 ? prev : null;
-        }
-        return { providerId, modelId: "" };
-      });
-      ns.ensureProviderAuthSummary(providerId).catch(() => {});
-      setOpenMenu(null);
-    },
-    [props, variant],
-  );
-
-  const harnessMenu =
-    variant === "newSession" ? (
-      <div className="wb-menu wb-harness-menu" role="menu" ref={menuRef} style={menuStyle ?? undefined}>
-        <div className="wb-menu-top">
-          <MenuTitleRow title="Agents" description={MENU_DESCRIPTIONS.harness} tooltipId="wb-menu-tooltip-harness" />
-          <input
-            className="wb-menu-search"
-            value={harnessSearch}
-            onChange={(e) => setHarnessSearch(e.target.value)}
-            placeholder="Search agents"
-            aria-label="Search agents"
-            autoFocus
-          />
-
-          {installControlsEnabled
-            ? (() => {
-                const ns = props as NewSessionProps;
-                const hasSupportedMissing = Object.values(ns.providersById).some(
-                  (st) =>
-                    providerDetailFlag(st.details, "install_supported") &&
-                    !isReadyVisibleHarnessProviderStatus(st),
-                );
-                const busy = ns.installAllBusy ?? false;
-                return (
-                  <button
-                    type="button"
-                    className="wb-harness-install-all"
-                    onClick={() => ns.onInstallAllProviders()}
-                    disabled={!hasSupportedMissing || busy}
-                    title={hasSupportedMissing ? "Install all supported harnesses" : "No supported harnesses to install"}
-                  >
-                    {busy ? "Installing…" : "Install all"}
-                  </button>
-                );
-              })()
-            : null}
-        </div>
-
-        <div className="wb-harness-list">
-          {(() => {
-            const ns = props as NewSessionProps;
-            const q = harnessSearch.trim().toLowerCase();
-            const catalog = ns.harnessCatalog.filter(
-              (h) =>
-                isVisibleHarnessProviderStatus(ns.providersById[h.id])
-                && !UNSUPPORTED_HARNESS_IDS.has(String(h.id)),
-            );
-            type HarnessOption = NewSessionProps["harnessCatalog"][number];
-            const order = new Map<string, number>(catalog.map((h, idx) => [h.id, idx]));
-            const extras = Object.keys(ns.providersById)
-              .filter(
-                (id) =>
-                  !order.has(id)
-                  && isVisibleHarnessProviderStatus(ns.providersById[id])
-                  && !UNSUPPORTED_HARNESS_IDS.has(String(id)),
-              )
-              .map((id): HarnessOption => ({ id, label: id, logoSrc: "" }))
-              .sort((a, b) => String(a.id).localeCompare(String(b.id)));
-
-            const all = [...catalog, ...extras];
-            const filtered = q
-              ? all.filter(
-                  (h) =>
-                    String(h.id).toLowerCase().includes(q) || String(h.label).toLowerCase().includes(q),
-                )
-              : all;
-            const visible = installControlsEnabled
-              ? filtered
-              : filtered.filter((h) => {
-                  const status = ns.providersById[String(h.id)];
-                  return isReadyVisibleHarnessProviderStatus(status);
-                });
-            if (visible.length === 0) return <div className="wb-menu-empty">No matching agents.</div>;
-
-            return visible.map((h) => {
-              const id = String(h.id);
-              const label = String(h.label ?? id);
-              const providerStatus = ns.providersById[id];
-              const installed = isReadyVisibleHarnessProviderStatus(providerStatus);
-              const installSupported = providerDetailFlag(providerStatus?.details, "install_supported");
-              const installUi = ns.providerInstallsById[id];
-              const installRunning =
-                installUi?.state === "running" || providerDetailFlag(ns.providersById[id]?.details, "install_running");
-              const installFinishing = installUi?.state === "succeeded" && !installed;
-              const installBusy = installRunning || installFinishing;
-              const installPct =
-                installUi?.state === "running"
-                  ? (typeof installUi?.pct === "number"
-                    ? installUi.pct
-                    : null)
-                  : null;
-              const installButtonLabel =
-                installRunning
-                  ? `${Math.max(0, Math.min(100, installPct ?? 0))}%`
-                  : installFinishing
-                    ? "Finalizing…"
-                    : "Install";
-              const installButtonTitle =
-                !installSupported
-                  ? "Install not supported yet"
-                  : installRunning
-                    ? "Install in progress"
-                    : installFinishing
-                      ? "Install finishing"
-                      : "Install this harness";
-              const installButtonStyle =
-                installRunning
-                  ? ({ "--wb-install-pct": `${Math.max(0, Math.min(100, installPct ?? 0))}%` } as React.CSSProperties)
-                  : undefined;
-              const installFailureMessage =
-                installUi?.state === "failed" || installUi?.state === "cancelled"
-                  ? installErrorSummary(installUi.errorCode, installUi.error)
-                  : null;
-              const checked = ns.draftHarness?.providerId === id;
-
-              const opts = ns.providerOptions[id];
-              const hasActiveAuth = hasConfiguredHarnessAuth(id, opts);
-
-              return (
-                <div key={id} className={`wb-harness-row ${installed ? "" : "wb-disabled"}`}>
-                  <button
-                    type="button"
-                    className="wb-harness-row-main"
-                    onClick={() => toggleHarness(id)}
-                    disabled={!installed}
-                  >
-                    <span className={`wb-check ${checked ? "wb-check-on" : ""}`} aria-hidden="true">
-                      {checked ? "✓" : ""}
-                    </span>
-                    {h.logoSrc ? (
-                      <img
-                        className={logoClasses("wb-harness-logo", h.invertInDark, h.invertInLight)}
-                        src={h.logoSrc}
-                        alt=""
-                      />
-                    ) : null}
-                    <span className="wb-harness-name">{label}</span>
-                    {installed ? (
-                      <span className="wb-harness-status-lights">
-                        <span
-                          className={`wb-harness-auth-dot ${hasActiveAuth ? "wb-harness-auth-dot-active" : "wb-harness-auth-dot-inactive"}`}
-                          aria-label={hasActiveAuth ? "Authentication configured" : "Authentication not configured"}
-                          title={hasActiveAuth ? "Authentication configured" : "Authentication not configured"}
-                        />
-                      </span>
-                    ) : null}
-                  </button>
-
-                  {!installed && installControlsEnabled ? (
-                    <div className="wb-harness-actions">
-                      <button
-                        type="button"
-                        className={`wb-harness-install${installBusy ? " wb-harness-install-busy" : ""}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (installBusy) return;
-                          ns.onInstallProvider(id);
-                        }}
-                        disabled={!installSupported}
-                        title={installButtonTitle}
-                        style={installButtonStyle}
-                      >
-                        {installButtonLabel}
-                      </button>
-                      {installFailureMessage ? (
-                        <span className="wb-harness-install-error" title={installFailureMessage}>
-                          {installFailureMessage}
-                        </span>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
-              );
-            });
-          })()}
-        </div>
-
-      </div>
-    ) : null;
-
   return (
     <div
       ref={rootRef}
@@ -820,7 +579,6 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                 onClick={() => {
                   if (variant !== "newSession") return;
                   setOpenMenu((v) => (v === "harness" ? null : "harness"));
-                  setHarnessSearch("");
                 }}
                 aria-haspopup={variant === "newSession" ? "menu" : undefined}
                 aria-expanded={openMenu === "harness"}
@@ -861,7 +619,15 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
                 ) : null}
               </div>
             )}
-            {variant === "newSession" && openMenu === "harness" && harnessMenu}
+            {variant === "newSession" && openMenu === "harness" ? (
+              <WorkbenchComposerHarnessMenu
+                logoClasses={logoClasses}
+                menuRef={menuRef}
+                menuStyle={menuStyle}
+                newSession={props as NewSessionProps}
+                onClose={() => setOpenMenu(null)}
+              />
+            ) : null}
           </div>
 
           {/* Model */}

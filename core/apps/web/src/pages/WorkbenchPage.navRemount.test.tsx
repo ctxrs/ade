@@ -424,17 +424,30 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+function renderWorkbenchPage() {
+  return render(
+    <VirtuosoMockContext.Provider value={{ itemHeight: 40, viewportHeight: 400 }}>
+      <MemoryRouter initialEntries={[`/workspaces/${workspaceId}`]}>
+        <Routes>
+          <Route path="/workspaces/:id" element={<WorkbenchPage />} />
+        </Routes>
+      </MemoryRouter>
+    </VirtuosoMockContext.Provider>,
+  );
+}
+
+function getTaskRow(title: string) {
+  const row = screen
+    .getAllByText(title)
+    .map((node) => node.closest(".wb-task-row"))
+    .find((node): node is HTMLElement => Boolean(node));
+  if (!row) throw new Error(`Missing task row for ${title}`);
+  return row;
+}
+
 describe("WorkbenchPage task rename selection", () => {
   it("does not force session mode through WorkbenchPage route-open policy", async () => {
-    render(
-      <VirtuosoMockContext.Provider value={{ itemHeight: 40, viewportHeight: 400 }}>
-        <MemoryRouter initialEntries={[`/workspaces/${workspaceId}`]}>
-          <Routes>
-            <Route path="/workspaces/:id" element={<WorkbenchPage />} />
-          </Routes>
-        </MemoryRouter>
-      </VirtuosoMockContext.Provider>,
-    );
+    renderWorkbenchPage();
 
     await waitFor(() => {
       expect(useOpenSessionMock).toHaveBeenCalledWith(sessionId, expect.objectContaining({ watchDiff: false }));
@@ -497,15 +510,6 @@ describe("WorkbenchPage task rename selection", () => {
 
 describe("WorkbenchPage archive navigation", () => {
   it("does not refocus new task after navigation during archive", async () => {
-    const getTaskRow = (title: string) => {
-      const row = screen
-        .getAllByText(title)
-        .map((node) => node.closest(".wb-task-row"))
-        .find((node): node is HTMLElement => Boolean(node));
-      if (!row) throw new Error(`Missing task row for ${title}`);
-      return row;
-    };
-
     workspaceSnapshotSnap = {
       ...workspaceSnapshotSnap,
       tasksById: {
@@ -584,6 +588,233 @@ describe("WorkbenchPage archive navigation", () => {
 
     await waitFor(() => expect(applyTaskUpdateSpy).toHaveBeenCalledTimes(1));
     expect(focusNewTaskSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("WorkbenchPage nav status indicator", () => {
+  it("shows spinner only for the primary running turn and ignores queued or subagent activity", async () => {
+    const starterSummary = workspaceSnapshotSnap.tasksById[taskId] as {
+      task: Record<string, unknown>;
+      sessions: Array<Record<string, unknown>>;
+    };
+    const starterSession = sessionSnap.sessions[sessionId];
+    if (!starterSession?.session) throw new Error("Missing starter session");
+    const starterSessionMeta = starterSession.session;
+
+    workspaceSnapshotSnap = {
+      ...workspaceSnapshotSnap,
+      tasksById: {
+        ...workspaceSnapshotSnap.tasksById,
+        [taskId]: {
+          ...starterSummary,
+          task: {
+            ...starterSummary.task,
+            primary_session_id: sessionId,
+            assistant_seen_at: baseIso,
+            last_assistant_message_at: "2024-01-01T00:00:02.000Z",
+          },
+          primarySessionId: sessionId,
+          sessions: [
+            {
+              ...starterSummary.sessions[0],
+              activity: { is_working: false, last_turn_status: "completed" },
+              last_message_at: "2024-01-01T00:00:02.000Z",
+            },
+          ],
+        },
+      },
+    };
+    sessionSnap = {
+      ...sessionSnap,
+      sessions: {
+        ...sessionSnap.sessions,
+        [sessionId]: {
+          ...starterSession,
+          turns: [
+            {
+              turn_id: "turn-running",
+              session_id: sessionId,
+              run_id: null,
+              user_message_id: "message-1",
+              status: "running",
+              start_seq: 1,
+              end_seq: null,
+              started_at: baseIso,
+              updated_at: baseIso,
+              assistant_partial: null,
+              thought_partial: null,
+              metrics_json: null,
+              tool_total: 0,
+              tool_pending: 0,
+              tool_running: 0,
+              tool_completed: 0,
+              tool_failed: 0,
+            },
+          ],
+        },
+      },
+    };
+
+    const ui = renderWorkbenchPage();
+
+    await screen.findAllByText("Starter task");
+    const row = getTaskRow("Starter task");
+    expect(row.querySelector(".wb-task-spinner")).not.toBeNull();
+    expect(row.querySelector(".wb-task-status-dot-unread")).toBeNull();
+
+    sessionSnap = {
+      ...sessionSnap,
+      sessions: {
+        ...sessionSnap.sessions,
+        [sessionId]: {
+          ...sessionSnap.sessions[sessionId],
+          turns: [
+            {
+              turn_id: "turn-queued",
+              session_id: sessionId,
+              run_id: null,
+              user_message_id: "message-1",
+              status: "queued",
+              start_seq: 1,
+              end_seq: null,
+              started_at: baseIso,
+              updated_at: baseIso,
+              assistant_partial: null,
+              thought_partial: null,
+              metrics_json: null,
+              tool_total: 0,
+              tool_pending: 0,
+              tool_running: 0,
+              tool_completed: 0,
+              tool_failed: 0,
+            },
+          ],
+          messages: [
+            {
+              ...sessionSnap.sessions[sessionId].messages[0],
+              created_at: "2024-01-01T00:00:03.000Z",
+            },
+          ],
+          updatedAtMs: 3,
+        },
+        "session-subagent": {
+          ...sessionSnap.sessions[sessionId],
+          sessionId: "session-subagent",
+          session: {
+            ...starterSessionMeta,
+            id: "session-subagent",
+            parent_session_id: sessionId,
+            relationship: "sub_agent",
+            updated_at: "2024-01-01T00:00:04.000Z",
+          },
+          turns: [
+            {
+              turn_id: "subagent-running",
+              session_id: "session-subagent",
+              run_id: null,
+              user_message_id: "message-subagent",
+              status: "running",
+              start_seq: 2,
+              end_seq: null,
+              started_at: "2024-01-01T00:00:04.000Z",
+              updated_at: "2024-01-01T00:00:04.000Z",
+              assistant_partial: null,
+              thought_partial: null,
+              metrics_json: null,
+              tool_total: 0,
+              tool_pending: 0,
+              tool_running: 0,
+              tool_completed: 0,
+              tool_failed: 0,
+            },
+          ],
+          updatedAtMs: 4,
+        },
+      },
+    };
+    workspaceSnapshotSnap = {
+      ...workspaceSnapshotSnap,
+      tasksById: {
+        ...workspaceSnapshotSnap.tasksById,
+        [taskId]: {
+          ...(workspaceSnapshotSnap.tasksById[taskId] as Record<string, unknown>),
+          task: {
+            ...((workspaceSnapshotSnap.tasksById[taskId] as { task: Record<string, unknown> }).task ?? {}),
+            assistant_seen_at: baseIso,
+            last_assistant_message_at: "2024-01-01T00:00:03.000Z",
+          },
+          sessions: [
+            {
+              ...((workspaceSnapshotSnap.tasksById[taskId] as { sessions: Array<Record<string, unknown>> }).sessions[0] ??
+                {}),
+              activity: { is_working: true, last_turn_status: "queued" },
+              last_message_at: "2024-01-01T00:00:03.000Z",
+            },
+          ],
+        },
+      },
+    };
+
+    ui.rerender(
+      <VirtuosoMockContext.Provider value={{ itemHeight: 40, viewportHeight: 400 }}>
+        <MemoryRouter initialEntries={[`/workspaces/${workspaceId}`]}>
+          <Routes>
+            <Route path="/workspaces/:id" element={<WorkbenchPage />} />
+          </Routes>
+        </MemoryRouter>
+      </VirtuosoMockContext.Provider>,
+    );
+
+    await waitFor(() => {
+      const rerenderedRow = getTaskRow("Starter task");
+      expect(rerenderedRow.querySelector(".wb-task-spinner")).toBeNull();
+      expect(rerenderedRow.querySelector(".wb-task-status-dot-unread")).not.toBeNull();
+    });
+  });
+
+  it("does not show a spinner while archive is pending", async () => {
+    const starterSummary = workspaceSnapshotSnap.tasksById[taskId] as {
+      task: Record<string, unknown>;
+    };
+    workspaceSnapshotSnap = {
+      ...workspaceSnapshotSnap,
+      tasksById: {
+        ...workspaceSnapshotSnap.tasksById,
+        [taskId]: {
+          ...(workspaceSnapshotSnap.tasksById[taskId] as Record<string, unknown>),
+          task: {
+            ...starterSummary.task,
+            primary_session_id: sessionId,
+          },
+        },
+      },
+    };
+
+    const { archiveTask } = await import("../api/client");
+    const archiveDeferred = createDeferred<Awaited<ReturnType<typeof archiveTask>>>();
+    vi.mocked(archiveTask).mockReturnValueOnce(archiveDeferred.promise);
+
+    renderWorkbenchPage();
+
+    const row = getTaskRow("Starter task");
+    fireEvent.click(within(row).getByRole("button", { name: "Archive" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Archive confirmation" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Archive" }));
+
+    await waitFor(() => expect(archiveTask).toHaveBeenCalledTimes(1));
+    expect(getTaskRow("Starter task").querySelector(".wb-task-spinner")).toBeNull();
+
+    archiveDeferred.resolve({
+      id: taskId,
+      workspace_id: workspaceId,
+      title: "Starter task",
+      status: "completed",
+      created_at: baseIso,
+      updated_at: baseIso,
+      archived_at: baseIso,
+    });
+    await waitFor(() => expect(applyTaskUpdateSpy).toHaveBeenCalled());
   });
 });
 

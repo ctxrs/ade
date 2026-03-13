@@ -160,6 +160,32 @@ fn patch_turn_from_event(turn: &mut SessionTurn, event: &SessionEvent) {
     turn.updated_at = event.created_at;
 }
 
+fn derive_summary_activity(event_type: &SessionEventType) -> Option<SessionActivityState> {
+    match event_type {
+        SessionEventType::TurnQueued => Some(SessionActivityState {
+            is_working: false,
+            last_turn_status: Some(SessionTurnStatus::Queued),
+        }),
+        SessionEventType::TurnStarted => Some(SessionActivityState {
+            is_working: true,
+            last_turn_status: Some(SessionTurnStatus::Running),
+        }),
+        SessionEventType::TurnFinished | SessionEventType::Done => Some(SessionActivityState {
+            is_working: false,
+            last_turn_status: Some(SessionTurnStatus::Completed),
+        }),
+        SessionEventType::TurnInterrupted => Some(SessionActivityState {
+            is_working: false,
+            last_turn_status: Some(SessionTurnStatus::Interrupted),
+        }),
+        SessionEventType::Error => Some(SessionActivityState {
+            is_working: false,
+            last_turn_status: Some(SessionTurnStatus::Failed),
+        }),
+        _ => None,
+    }
+}
+
 fn turn_from_event(event: &SessionEvent, message: Option<&Message>) -> Option<SessionTurn> {
     if !matches!(event.event_type, SessionEventType::UserMessage) {
         return None;
@@ -426,29 +452,7 @@ impl SessionRuntime {
             event.seq
         };
 
-        let activity = match event.event_type {
-            SessionEventType::TurnQueued => Some(SessionActivityState {
-                is_working: true,
-                last_turn_status: Some(SessionTurnStatus::Queued),
-            }),
-            SessionEventType::TurnStarted => Some(SessionActivityState {
-                is_working: true,
-                last_turn_status: Some(SessionTurnStatus::Running),
-            }),
-            SessionEventType::TurnFinished | SessionEventType::Done => Some(SessionActivityState {
-                is_working: false,
-                last_turn_status: Some(SessionTurnStatus::Completed),
-            }),
-            SessionEventType::TurnInterrupted => Some(SessionActivityState {
-                is_working: false,
-                last_turn_status: Some(SessionTurnStatus::Interrupted),
-            }),
-            SessionEventType::Error => Some(SessionActivityState {
-                is_working: false,
-                last_turn_status: Some(SessionTurnStatus::Failed),
-            }),
-            _ => None,
-        };
+        let activity = derive_summary_activity(&event.event_type);
 
         let mut last_message_at = None;
         let mut last_message_preview = None;
@@ -900,7 +904,11 @@ impl AppState {
 
 #[cfg(test)]
 mod cache_sweep_tests {
-    use super::{active_head_projection_should_flush, active_head_projection_wait_duration};
+    use super::{
+        active_head_projection_should_flush, active_head_projection_wait_duration,
+        derive_summary_activity,
+    };
+    use ctx_core::models::{SessionEventType, SessionTurnStatus};
     use std::time::{Duration, Instant};
 
     #[test]
@@ -955,5 +963,18 @@ mod cache_sweep_tests {
             debounce,
             max_flush
         ));
+    }
+
+    #[test]
+    fn queued_turns_do_not_publish_working_activity() {
+        let queued = derive_summary_activity(&SessionEventType::TurnQueued)
+            .expect("queued turns should publish summary activity");
+        assert!(!queued.is_working);
+        assert_eq!(queued.last_turn_status, Some(SessionTurnStatus::Queued));
+
+        let running = derive_summary_activity(&SessionEventType::TurnStarted)
+            .expect("running turns should publish summary activity");
+        assert!(running.is_working);
+        assert_eq!(running.last_turn_status, Some(SessionTurnStatus::Running));
     }
 }
