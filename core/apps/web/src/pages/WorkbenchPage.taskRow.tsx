@@ -154,7 +154,7 @@ export const TaskRow = React.memo(function TaskRow({
         }
       }}
       tabIndex={0}
-      title={title}
+      aria-label={title}
     >
       <div className="wb-task-leading" aria-hidden="true">
         {providerCount > 1 ? (
