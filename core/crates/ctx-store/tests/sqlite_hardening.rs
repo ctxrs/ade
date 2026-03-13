@@ -114,7 +114,10 @@ async fn open_repairs_partially_applied_duplicate_tool_display_migration() -> Re
     let migrations = migration_files()?;
     let tool_display_migration = migrations
         .iter()
-        .find(|path| path.file_name().is_some_and(|name| name == "0047_tool_display_fields.sql"))
+        .find(|path| {
+            path.file_name()
+                .is_some_and(|name| name == "0047_tool_display_fields.sql")
+        })
         .cloned()
         .context("finding tool display migration")?;
 
@@ -171,16 +174,12 @@ async fn open_repairs_partially_applied_duplicate_tool_display_migration() -> Re
     assert!(column_exists(&db_path, "session_turn_tools", "subtitle").await?);
 
     let applied = applied_migrations(&db_path).await?;
-    assert!(
-        applied
-            .iter()
-            .any(|(version, description)| *version == 46 && description == "session reasoning effort")
-    );
-    assert!(
-        applied
-            .iter()
-            .any(|(version, description)| *version == 47 && description == "tool display fields")
-    );
+    assert!(applied
+        .iter()
+        .any(|(version, description)| *version == 46 && description == "session reasoning effort"));
+    assert!(applied
+        .iter()
+        .any(|(version, description)| *version == 47 && description == "tool display fields"));
 
     Ok(())
 }
@@ -443,7 +442,12 @@ async fn applied_migrations(db_path: &Path) -> Result<Vec<(i64, String)>> {
         .max_connections(1)
         .connect(&sqlite_url)
         .await
-        .with_context(|| format!("connecting migration details pool for {}", db_path.display()))?;
+        .with_context(|| {
+            format!(
+                "connecting migration details pool for {}",
+                db_path.display()
+            )
+        })?;
     let rows = sqlx::query("SELECT version, description FROM _sqlx_migrations ORDER BY version")
         .fetch_all(&pool)
         .await
@@ -462,7 +466,8 @@ async fn column_exists(db_path: &Path, table: &str, column: &str) -> Result<bool
         .connect(&sqlite_url)
         .await
         .with_context(|| format!("connecting column check pool for {}", db_path.display()))?;
-    let query = format!("SELECT COUNT(*) AS count FROM pragma_table_info('{table}') WHERE name = ?");
+    let query =
+        format!("SELECT COUNT(*) AS count FROM pragma_table_info('{table}') WHERE name = ?");
     let count = sqlx::query_scalar::<_, i64>(&query)
         .bind(column)
         .fetch_one(&pool)

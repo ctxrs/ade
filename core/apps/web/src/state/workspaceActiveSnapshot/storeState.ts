@@ -32,6 +32,7 @@ import type {
   WorkspaceActiveSnapshotItem,
   WorkspaceActiveSnapshotState,
 } from "./storeTypes";
+import { findWorkspaceActiveSnapshotInsertIndex } from "./storeOrdering";
 import {
   asRecord,
   collectWorkspaceActivePrimarySessionIds,
@@ -96,11 +97,7 @@ export class WorkspaceActiveSnapshotStoreState {
   };
 
   getSessionHeadsSnapshot = (): Record<string, SessionHeadSnapshot> => {
-    const out: Record<string, SessionHeadSnapshot> = {};
-    for (const [id, head] of this.sessionHeadsById.entries()) {
-      out[id] = head;
-    }
-    return out;
+    return Object.fromEntries(this.sessionHeadsById.entries()) as Record<string, SessionHeadSnapshot>;
   };
 
   getWorktreeRoot = (worktreeId: string): string | null => {
@@ -110,11 +107,7 @@ export class WorkspaceActiveSnapshotStoreState {
   };
 
   getWorktreeRootsSnapshot = (): Record<string, string> => {
-    const out: Record<string, string> = {};
-    for (const [id, root] of this.worktreeRootsById.entries()) {
-      out[id] = root;
-    }
-    return out;
+    return Object.fromEntries(this.worktreeRootsById.entries()) as Record<string, string>;
   };
 
   getWorktreeVcsSnapshot = (worktreeId: string): WorktreeVcsSnapshot | null => {
@@ -988,26 +981,17 @@ export class WorkspaceActiveSnapshotStoreState {
     this.activeOrder = this.activeOrder.filter((existing) => existing !== id);
     this.archivedOrder = this.archivedOrder.filter((existing) => existing !== id);
     if (item.task.archived_at) {
-      this.archivedOrder.splice(this.findInsertIndex(this.archivedOrder, item.sortAtMs, id), 0, id);
+      this.archivedOrder.splice(
+        findWorkspaceActiveSnapshotInsertIndex(this.tasks, this.archivedOrder, item.sortAtMs, id),
+        0,
+        id,
+      );
     } else {
-      this.activeOrder.splice(this.findInsertIndex(this.activeOrder, item.sortAtMs, id), 0, id);
+      this.activeOrder.splice(
+        findWorkspaceActiveSnapshotInsertIndex(this.tasks, this.activeOrder, item.sortAtMs, id),
+        0,
+        id,
+      );
     }
-  }
-
-  private findInsertIndex(order: string[], sortAt: number, id: string): number {
-    let low = 0;
-    let high = order.length;
-    while (low < high) {
-      const mid = Math.floor((low + high) / 2);
-      const midId = order[mid];
-      const midItem = this.tasks.get(midId);
-      const midSort = midItem?.sortAtMs ?? 0;
-      if (sortAt > midSort || (sortAt === midSort && id > midId)) {
-        high = mid;
-      } else {
-        low = mid + 1;
-      }
-    }
-    return low;
   }
 }

@@ -619,12 +619,14 @@ async fn repair_duplicate_tool_display_migration_version(pool: &Pool<Sqlite>) ->
     .await?;
 
     if renamed_version_exists == 0 {
-        sqlx::query("UPDATE _sqlx_migrations SET version = ? WHERE version = ? AND description = ?")
-            .bind(TOOL_DISPLAY_FIELDS_MIGRATION_VERSION)
-            .bind(SESSION_REASONING_EFFORT_MIGRATION_VERSION)
-            .bind(TOOL_DISPLAY_FIELDS_MIGRATION_DESCRIPTION)
-            .execute(pool)
-            .await?;
+        sqlx::query(
+            "UPDATE _sqlx_migrations SET version = ? WHERE version = ? AND description = ?",
+        )
+        .bind(TOOL_DISPLAY_FIELDS_MIGRATION_VERSION)
+        .bind(SESSION_REASONING_EFFORT_MIGRATION_VERSION)
+        .bind(TOOL_DISPLAY_FIELDS_MIGRATION_DESCRIPTION)
+        .execute(pool)
+        .await?;
     } else {
         sqlx::query("DELETE FROM _sqlx_migrations WHERE version = ? AND description = ?")
             .bind(SESSION_REASONING_EFFORT_MIGRATION_VERSION)

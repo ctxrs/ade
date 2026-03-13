@@ -34,7 +34,8 @@ import { useWorkbenchOptimisticTasks } from "./workbenchShell/useWorkbenchOptimi
 import { useWorkbenchProviders } from "./workbenchShell/useWorkbenchProviders";
 import { WorkbenchActiveTaskView } from "./workbenchShell/WorkbenchActiveTaskView";
 import { WorkbenchEmptyState } from "./workbenchShell/WorkbenchEmptyState";
-import { WorkbenchArchiveConfirm, WorkbenchConversationMenu, WorkbenchSidebar, WorkbenchTaskMenu, WorkbenchTopbar } from "./workbenchShell/WorkbenchShellChrome";
+import { WorkbenchSidebar, WorkbenchTopbar } from "./workbenchShell/WorkbenchShellChrome";
+import { WorkbenchPageMenus } from "./workbenchShell/WorkbenchPageMenus";
 import { useWorkbenchChromeIntegration } from "./workbenchShell/useWorkbenchChromeIntegration";
 import { useWorkbenchSessionBridge } from "./workbenchShell/useWorkbenchSessionBridge";
 import { useWorkbenchTaskCreation } from "./workbenchShell/useWorkbenchTaskCreation";
@@ -933,75 +934,11 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
         </div>
       </div>
 
-      <WorkbenchTaskMenu
-        taskMenu={taskListController.taskMenu}
-        taskMenuRef={taskListController.taskMenuRef}
-        archiveDisabled={taskListController.taskMenuArchiveDisabled}
-        archiveLabel={taskListController.taskMenuArchiveLabel}
-        markReadDisabled={taskListController.taskMenuMarkReadDisabled}
-        markReadLabel={taskListController.taskMenuMarkReadLabel}
-        onRename={taskListController.onTaskMenuRename}
-        onToggleArchive={taskListController.onTaskMenuToggleArchive}
-        onToggleRead={taskListController.onTaskMenuToggleRead}
-        onDelete={taskListController.onTaskMenuDelete}
-      />
-
-      <WorkbenchArchiveConfirm
-        archiveConfirm={taskListController.archiveConfirm}
-        archiveConfirmStyle={taskListController.archiveConfirmStyle}
-        archiveConfirmRef={taskListController.archiveConfirmRef}
-        archiveConfirmDontRemind={taskListController.archiveConfirmDontRemind}
-        onArchiveConfirmDontRemindChange={taskListController.setArchiveConfirmDontRemind}
-        onCancel={taskListController.cancelArchiveConfirm}
-        onConfirm={() => {
-          void taskListController.confirmArchive();
-        }}
-      />
-
-      <WorkbenchConversationMenu
-        convoMenu={activeTaskController.convoMenu}
-        convoMenuRef={activeTaskController.convoMenuRef}
-        activeSessionId={activeSessionId}
+      <WorkbenchPageMenus
+        activeTaskController={activeTaskController}
+        taskListController={taskListController}
         activeTaskId={activeTaskId}
-        canCopyTaskId={!activeTaskController.activeTaskIsOptimistic}
-        copyTranscriptBusy={activeTaskController.copyTranscriptBusy}
-        transcriptSpinnerDelayMs={activeTaskController.transcriptSpinnerDelayMs}
-        canCopyWorktree={activeTaskController.worktreeChip.canCopyWorktree}
-        archiveConversationDisabled={
-          !activeTaskId ||
-          Boolean(activeTaskController.activeTask?.archived_at) ||
-          taskListController.isArchivePending(activeTaskId)
-        }
-        onExportTranscript={() => {
-          activeTaskController.closeConvoMenu();
-          void activeTaskController.exportTranscript();
-        }}
-        onCopyTranscript={() => {
-          activeTaskController.closeConvoMenu();
-          void activeTaskController.copyTranscript();
-        }}
-        onExportSessionLog={() => {
-          activeTaskController.closeConvoMenu();
-          void activeTaskController.exportSessionLog();
-        }}
-        onCopySessionLog={() => {
-          activeTaskController.closeConvoMenu();
-          void activeTaskController.copySessionLog();
-        }}
-        onCopyWorktreeLocation={() => {
-          activeTaskController.closeConvoMenu();
-          void activeTaskController.copyWorktreeLocation();
-        }}
-        onCopyTaskId={() => {
-          activeTaskController.closeConvoMenu();
-          void activeTaskController.copyTaskId();
-        }}
-        onArchiveConversation={(event) => {
-          if (!activeTaskId) return;
-          activeTaskController.closeConvoMenu();
-          const anchor = event.currentTarget.getBoundingClientRect();
-          taskListController.onToggleArchive(activeTaskId, true, anchor).catch(() => {});
-        }}
+        activeSessionId={activeSessionId}
       />
     </div>
   );
