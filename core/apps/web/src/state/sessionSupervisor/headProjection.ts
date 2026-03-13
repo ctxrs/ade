@@ -61,6 +61,58 @@ export type SessionSupervisorHeadProjectionHost = {
   bumpEventsRev(entry: InternalEntry): void;
 };
 
+const isBoundedHeadWindow = (head: SessionHead): boolean =>
+  typeof head.head_window?.turn_limit === "number" && head.head_window.turn_limit > 0;
+
+function pruneOmittedNonTerminalTurns(
+  this: SessionSupervisorHeadProjectionHost,
+  entry: InternalEntry,
+  incomingTurns: SessionTurn[],
+) {
+  if (incomingTurns.length === 0 || entry.turns.length === 0) return;
+  const retainedTurnIds = new Set(
+    incomingTurns
+      .map((turn) => idToString(turn.turn_id))
+      .filter((turnId): turnId is string => turnId.length > 0),
+  );
+  if (retainedTurnIds.size === 0) return;
+
+  const removedTurnIds = new Set<string>();
+  entry.turns = entry.turns.filter((turn) => {
+    const turnId = idToString(turn.turn_id);
+    if (!turnId || retainedTurnIds.has(turnId)) return true;
+    if (turn.status !== "running" && turn.status !== "queued") return true;
+    removedTurnIds.add(turnId);
+    return false;
+  });
+
+  if (removedTurnIds.size === 0) return;
+
+  entry.messages = entry.messages.filter((message) => {
+    const turnId = idToString(message.turn_id ?? "");
+    return !turnId || !removedTurnIds.has(turnId);
+  });
+  entry.queue = entry.messages.filter((message) => message.delivery === "queued");
+  entry.toolSummaries = entry.toolSummaries.filter((summary) => {
+    const turnId = idToString(summary.turn_id);
+    return !turnId || !removedTurnIds.has(turnId);
+  });
+
+  for (const turnId of removedTurnIds) {
+    delete entry.turnToolsByTurnId[turnId];
+    delete entry.turnToolsHydratedByTurnId[turnId];
+    entry.startedTurnIds.delete(turnId);
+    entry.toolIdsByTurn.delete(turnId);
+  }
+
+  entry.turnToolsLoading = entry.turnToolsLoading.filter((turnId) => !removedTurnIds.has(turnId));
+  entry.turnToolsLoadingSet = new Set(entry.turnToolsLoading);
+  entry.oldestTurnSeq = entry.turns[0]?.start_seq ?? entry.oldestTurnSeq;
+  this.bumpTurnsRev(entry);
+  this.bumpMessagesRev(entry);
+  entry.updatedAtMs = Date.now();
+}
+
 export function seedHeadFromActiveSnapshot(
   this: SessionSupervisorHeadProjectionHost,
   entry: InternalEntry,
@@ -117,6 +169,9 @@ export function applyHead(
     this.adoptLoadedSubagentInvocationsRevision(entry, headStateRev);
   }
   this.mergeTurns(entry, head.turns ?? []);
+  if (isBoundedHeadWindow(head)) {
+    pruneOmittedNonTerminalTurns.call(this, entry, head.turns ?? []);
+  }
   this.mergeEvents(entry, head.events ?? [], { notify: false });
   this.mergeMessages(entry, head.messages ?? []);
   this.applyAcpMetaFromEvents(entry, head.events ?? []);

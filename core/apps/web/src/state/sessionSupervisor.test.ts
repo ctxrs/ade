@@ -83,6 +83,39 @@ const mkSession = (sessionId: string): Session => ({
   status: "active",
 });
 
+const mkTurn = ({
+  sessionId,
+  turnId,
+  status,
+  startSeq,
+}: {
+  sessionId: string;
+  turnId: string;
+  status: SessionTurn["status"];
+  startSeq: number;
+}): SessionTurn => {
+  const startedAt = new Date(Date.UTC(2026, 2, 9, 0, 0, startSeq)).toISOString();
+  return {
+    turn_id: turnId,
+    session_id: sessionId,
+    run_id: null,
+    user_message_id: `user-${turnId}`,
+    status,
+    start_seq: startSeq,
+    end_seq: status === "completed" ? startSeq + 1 : null,
+    started_at: startedAt,
+    updated_at: startedAt,
+    assistant_partial: "",
+    thought_partial: "",
+    metrics_json: null,
+    tool_total: 0,
+    tool_pending: 0,
+    tool_running: 0,
+    tool_completed: 0,
+    tool_failed: 0,
+  };
+};
+
 const asRecord = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
@@ -1672,6 +1705,111 @@ describe("SessionSupervisor", () => {
 
     expect(getSessionHead).not.toHaveBeenCalled();
     expect(getSessionSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("evicts omitted stale running turns from bounded active heads", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-stale-running";
+    const listeners = new Set<(evt: WorkspaceActiveSnapshotEvent) => void>();
+    const store: WorkspaceActiveSnapshotEventSource = {
+      subscribe: () => () => {},
+      subscribeEvents: (listener: (evt: WorkspaceActiveSnapshotEvent) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      getSessionHeadSnapshot: () => null,
+      getWorktreeRoot: () => null,
+      getWorktreeVcsSnapshot: () => null,
+      setSubscribedSessionIds: () => {},
+      getSnapshot: () => mkWorkspaceSnapshotState(),
+    };
+
+    const sup = new SessionSupervisor();
+    attachWorkspaceStore(sup, store);
+    sup.openSession(sessionId, { mode: "active" });
+
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId] != null);
+
+    listeners.forEach((listener) =>
+      listener({
+        type: "session_head_seed",
+        workspace_id: "ws-1",
+        snapshot_rev: 1,
+        head: {
+          session: mkSession(sessionId),
+          turns: [mkTurn({ sessionId, turnId: "turn-stale", status: "running", startSeq: 1 })],
+          events: [] as SessionEvent[],
+          messages: [] as Message[],
+          last_event_seq: 1,
+          state_rev: 1,
+          has_more_turns: false,
+          has_more_history: false,
+          history_cursor: null,
+          head_window: {
+            turn_limit: 5,
+            message_limit: 200,
+            event_limit: 0,
+            byte_limit: 1500000,
+            turn_count: 1,
+            message_count: 0,
+            event_count: 0,
+            bytes: 0,
+            truncated: false,
+          },
+        },
+      }),
+    );
+
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.turns.length === 1);
+    expect(sup.getSnapshot().sessions[sessionId]?.turns[0]?.status).toBe("running");
+
+    const freshTurns = Array.from({ length: 5 }, (_, index) =>
+      mkTurn({
+        sessionId,
+        turnId: `turn-fresh-${index + 1}`,
+        status: "completed",
+        startSeq: index + 10,
+      }),
+    );
+
+    listeners.forEach((listener) =>
+      listener({
+        type: "session_head_seed",
+        workspace_id: "ws-1",
+        snapshot_rev: 2,
+        head: {
+          session: mkSession(sessionId),
+          turns: freshTurns,
+          events: [] as SessionEvent[],
+          messages: [] as Message[],
+          last_event_seq: 20,
+          state_rev: 2,
+          has_more_turns: true,
+          has_more_history: false,
+          history_cursor: null,
+          head_window: {
+            turn_limit: 5,
+            message_limit: 200,
+            event_limit: 0,
+            byte_limit: 1500000,
+            turn_count: 5,
+            message_count: 0,
+            event_count: 0,
+            bytes: 0,
+            truncated: true,
+          },
+        },
+      }),
+    );
+
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.lastEventSeq === 20);
+
+    const entry = sup.getSnapshot().sessions[sessionId];
+    expect(entry?.turns.map((turn) => turn.turn_id)).toEqual(freshTurns.map((turn) => turn.turn_id));
+    expect(entry?.turns.some((turn) => turn.status === "running" || turn.status === "queued")).toBe(
+      false,
+    );
   });
 
   it("auto-loads support for open sessions when an authoritative head revision is known", async () => {
