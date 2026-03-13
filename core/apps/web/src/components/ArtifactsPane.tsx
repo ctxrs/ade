@@ -4,6 +4,7 @@ import { artifactUrl, idToString, type Artifact } from "../api/client";
 import { MemoMarkdown } from "../pages/SessionPage.markdown";
 import { getArtifactPreviewKind, isImageArtifact, isPreviewableArtifact, isVideoArtifact } from "../utils/artifacts";
 import { errorMessage } from "../utils/errorMessage";
+
 const DEFAULT_MIN_SCALE = 0.2;
 const MAX_SCALE = 5;
 
@@ -68,6 +69,53 @@ async function copyArtifactImage(artifact: Artifact, url: string) {
   await navigator.clipboard.write([new window.ClipboardItem({ [type]: blob })]);
 }
 
+function ArtifactInlineTextPreview({ artifact }: { artifact: Artifact }) {
+  const artifactId = idToString(artifact.id);
+  const url = artifactUrl(artifactId);
+  const missing = Boolean(artifact.missing);
+  const [textPreview, setTextPreview] = useState<TextPreviewState>({
+    status: "idle",
+    content: "",
+    error: null,
+  });
+
+  useEffect(() => {
+    if (!artifactId || missing) return;
+    const controller = new AbortController();
+    setTextPreview({ status: "loading", content: "", error: null });
+    void fetch(url, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (resp) => {
+        if (!resp.ok) {
+          throw new Error(`Failed to load artifact (${resp.status}).`);
+        }
+        const content = await resp.text();
+        setTextPreview({ status: "ready", content, error: null });
+      })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return;
+        setTextPreview({
+          status: "error",
+          content: "",
+          error: errorMessage(err) || "Failed to load artifact.",
+        });
+      });
+    return () => controller.abort();
+  }, [artifactId, missing, url]);
+
+  if (textPreview.status === "loading" || textPreview.status === "idle") {
+    return <div className="wb-artifact-inline-status">Loading preview…</div>;
+  }
+
+  if (textPreview.status === "error") {
+    return <div className="wb-artifact-inline-status">{textPreview.error}</div>;
+  }
+
+  return <pre className="wb-artifact-inline-text">{textPreview.content}</pre>;
+}
+
 function ArtifactCard({
   artifact,
   onOpen,
@@ -86,6 +134,7 @@ function ArtifactCard({
   const previewKind = getArtifactPreviewKind(artifact);
   const isVideo = previewKind === "video";
   const isImage = previewKind === "image";
+  const isInlineTextPreview = previewKind === "markdown" || previewKind === "text";
   const canPreview = isPreviewableArtifact(artifact) && !missing;
   const canDownload = Boolean(artifactId) && !missing;
   const canCopy = Boolean(artifactId) && !missing && isImage && !copying;
@@ -122,6 +171,8 @@ function ArtifactCard({
     );
   } else if (isImage) {
     preview = <img className="wb-artifact-image" src={url} alt={name} />;
+  } else if (isInlineTextPreview) {
+    preview = <ArtifactInlineTextPreview artifact={artifact} />;
   } else {
     preview = <div className="wb-artifact-file">{name}</div>;
   }

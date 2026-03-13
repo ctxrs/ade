@@ -92,6 +92,25 @@ describe("ArtifactsPane", () => {
     expect(screen.queryByRole("button", { name: "Close" })).not.toBeInTheDocument();
   });
 
+  it("renders an inline text preview for previewable text artifacts", async () => {
+    mockTextFetch({ text: "line 1\nline 2\nline 3" });
+
+    render(
+      <ArtifactsPane
+        artifacts={[
+          makeArtifact({
+            name: "notes.txt",
+            mime_type: "text/plain",
+            absolute_path: "/tmp/notes.txt",
+          }),
+        ]}
+      />,
+    );
+
+    expect(await screen.findByText(/line 2/, { selector: "pre" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Close" })).not.toBeInTheDocument();
+  });
+
   it("renders markdown artifacts in the viewer", async () => {
     mockTextFetch({ text: "# Heading\n\nSome artifact text." });
 
@@ -130,7 +149,8 @@ describe("ArtifactsPane", () => {
 
     fireEvent.click(screen.getByTitle("/tmp/report.json"));
 
-    expect(await screen.findByText(/"ok": true/, { selector: "pre" })).toBeInTheDocument();
+    const jsonPreviews = await screen.findAllByText(/"ok": true/, { selector: "pre" });
+    expect(jsonPreviews).toHaveLength(2);
   });
 
   it("shows an inline error when text artifact loading fails", async () => {
