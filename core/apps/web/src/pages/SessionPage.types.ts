@@ -63,7 +63,9 @@ export type ThreadItem =
       updated_at: string;
       tool_call_id: string;
       tool_kind: string;
+      provider_tool_name?: string;
       title: string;
+      subtitle?: string;
       status: string;
       locations: Array<{ path?: string; range?: unknown }>;
       input: unknown;

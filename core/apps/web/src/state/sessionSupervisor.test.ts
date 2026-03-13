@@ -1640,9 +1640,12 @@ describe("SessionSupervisor", () => {
           tool_call_id: "tool-1",
           turn_id: turnId,
           tool_kind: "execute",
+          provider_tool_name: "Bash",
           title: "Run",
+          subtitle: "pwd",
           status: "completed",
           input_preview: { command: "pwd" },
+          first_event_seq: 2,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         },
@@ -1663,6 +1666,9 @@ describe("SessionSupervisor", () => {
 
     const entry = sup.getSnapshot().sessions[sessionId];
     expect(entry?.turnToolsByTurnId[turnId]?.length).toBe(1);
+    expect((entry?.turnToolsByTurnId[turnId]?.[0] as { first_event_seq?: number | null } | undefined)?.first_event_seq).toBe(2);
+    expect(entry?.turnToolsByTurnId[turnId]?.[0]?.provider_tool_name).toBe("Bash");
+    expect(entry?.turnToolsByTurnId[turnId]?.[0]?.subtitle).toBe("pwd");
 
     await sup.loadTurnTools(sessionId, turnId);
     expect(listTurnTools).toHaveBeenCalledWith(sessionId, turnId);

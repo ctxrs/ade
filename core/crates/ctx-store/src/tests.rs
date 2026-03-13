@@ -601,6 +601,100 @@ async fn tool_projection_normalizes_mixed_payloads_and_rebuilds_from_event_log()
 }
 
 #[tokio::test]
+async fn tool_projection_uses_provider_tool_name_when_title_is_missing() {
+    let fixture = setup_session_fixture().await;
+    let run_id = RunId::new();
+    let turn_id = TurnId::new();
+    fixture
+        .store
+        .insert_session_turn(make_turn(fixture.session_id, run_id, turn_id))
+        .await
+        .unwrap();
+
+    let call_event = fixture
+        .store
+        .append_session_event(
+            fixture.session_id,
+            Some(run_id),
+            Some(turn_id),
+            SessionEventType::ToolCall,
+            serde_json::json!({
+                "toolCallId": "tool-43",
+                "kind": "execute",
+                "toolCall": {
+                    "name": "Bash",
+                    "kind": "execute"
+                },
+                "rawInput": {
+                    "command": "pwd",
+                    "description": "Print working directory"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    fixture
+        .store
+        .append_session_event(
+            fixture.session_id,
+            Some(run_id),
+            Some(turn_id),
+            SessionEventType::ToolResult,
+            serde_json::json!({
+                "tool_call_id": "tool-43",
+                "status": "completed",
+                "toolCall": {
+                    "name": "Bash",
+                    "kind": "execute"
+                },
+                "result": "/tmp/project"
+            }),
+        )
+        .await
+        .unwrap();
+
+    let events = fixture
+        .store
+        .list_session_events_for_turn(fixture.session_id, turn_id, false)
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 2);
+
+    let persisted = fixture
+        .store
+        .get_session_turn_tool(fixture.session_id, "tool-43")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(persisted.first_event_seq, Some(call_event.seq));
+    assert_eq!(persisted.tool_kind.as_deref(), Some("execute"));
+    assert_eq!(persisted.provider_tool_name.as_deref(), Some("Bash"));
+    assert_eq!(persisted.title.as_deref(), Some("Bash"));
+    assert_eq!(
+        persisted.subtitle.as_deref(),
+        Some("Print working directory")
+    );
+    assert_eq!(persisted.status.as_deref(), Some("completed"));
+
+    delete_tool_projection(&fixture.db_path, fixture.session_id, "tool-43").await;
+
+    let rebuilt = fixture
+        .store
+        .list_turn_tools(fixture.session_id, turn_id)
+        .await
+        .unwrap();
+    assert_eq!(rebuilt.len(), 1);
+    let rebuilt = &rebuilt[0];
+    assert_eq!(rebuilt.tool_call_id, "tool-43");
+    assert_eq!(rebuilt.first_event_seq, Some(call_event.seq));
+    assert_eq!(rebuilt.tool_kind.as_deref(), Some("execute"));
+    assert_eq!(rebuilt.provider_tool_name.as_deref(), Some("Bash"));
+    assert_eq!(rebuilt.title.as_deref(), Some("Bash"));
+    assert_eq!(rebuilt.subtitle.as_deref(), Some("Print working directory"));
+    assert_eq!(rebuilt.status.as_deref(), Some("completed"));
+}
+
+#[tokio::test]
 async fn session_head_snapshot_strips_partials_and_stream_only_events() {
     let fixture = setup_session_fixture().await;
     let run_id = RunId::new();

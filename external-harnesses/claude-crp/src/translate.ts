@@ -203,6 +203,34 @@ export function translateClaudeEventsToCrp(records, opts = {}) {
     }
   }
 
+  function registerAssistantToolUse(item) {
+    if (!item || item.type !== "tool_use") return;
+    const toolId = typeof item.id === "string" ? item.id : "";
+    if (!toolId) return;
+    const existing = toolStates.get(toolId);
+    const parsedInput = hasNonEmptyObject(item.input) ? item.input : existing?.inputParsed || null;
+    const tool = existing || {
+      id: toolId,
+      name: "unknown",
+      inputBuffer: "",
+      inputParsed: null,
+      inputTruncated: false,
+      inputOriginalBytes: 0,
+      emitted: false
+    };
+    if (typeof item.name === "string" && item.name.trim()) {
+      tool.name = item.name;
+    }
+    if (parsedInput) {
+      tool.inputParsed = parsedInput;
+      if (tool.inputOriginalBytes === 0) {
+        tool.inputOriginalBytes = Buffer.byteLength(JSON.stringify(parsedInput), "utf8");
+      }
+    }
+    toolStates.set(toolId, tool);
+    if (tool.inputParsed) emitToolStarted(tool);
+  }
+
   for (const record of records || []) {
     if (!record || typeof record !== "object") continue;
 
@@ -362,6 +390,10 @@ export function translateClaudeEventsToCrp(records, opts = {}) {
       let text = "";
       if (Array.isArray(message.content)) {
         for (const item of message.content) {
+          if (item && item.type === "tool_use") {
+            registerAssistantToolUse(item);
+            continue;
+          }
           if (item && item.type === "text" && typeof item.text === "string") {
             text += item.text;
           }

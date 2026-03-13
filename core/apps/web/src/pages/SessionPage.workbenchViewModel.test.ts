@@ -787,6 +787,156 @@ describe("buildWorkbenchThreadViewModel", () => {
     expect(statusItem?.custom_status).toBe("Searching alpha");
   }, 10000);
 
+  it("uses provider tool names for tool rows and turn status when title is missing", async () => {
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+
+    const turns = [
+      {
+        turn_id: "t1",
+        session_id: "s1",
+        user_message_id: "m1",
+        status: "running",
+        started_at: "2025-12-15T00:00:00.000Z",
+        updated_at: "2025-12-15T00:00:02.000Z",
+        tool_total: 1,
+        tool_pending: 1,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      },
+    ];
+
+    const messages = [
+      {
+        id: "m1",
+        session_id: "s1",
+        role: "user",
+        content: "hello",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:00.000Z",
+        turn_id: "t1",
+        order_seq: 1,
+      },
+    ];
+
+    const events = [
+      {
+        seq: 1,
+        id: "e1",
+        session_id: "s1",
+        run_id: "r1",
+        turn_id: "t1",
+        event_type: "tool_call",
+        payload_json: {
+          tool_call_id: "tool-1",
+          kind: "execute",
+          tool_name: "Bash",
+          subtitle: "Print working directory",
+          status: "running",
+          order_seq: 2,
+          toolCall: {
+            name: "Bash",
+            kind: "execute",
+          },
+          rawInput: { command: "pwd" },
+        },
+        created_at: "2025-12-15T00:00:01.000Z",
+      },
+    ];
+
+    const out = buildWorkbenchThreadViewModel(
+      turns as unknown as SessionTurn[],
+      messages as unknown as Message[],
+      {},
+      events as unknown as SessionEvent[],
+    );
+    const toolItem = out.groups[0]?.items.find(isToolItem);
+    const statusItem = out.groups[0]?.items.find(isTurnStatusItem);
+    expect(toolItem?.title).toBe("Bash");
+    expect(toolItem?.subtitle).toBe("Print working directory");
+    expect(statusItem?.custom_status).toBe("Running Bash");
+  }, 10000);
+
+  it("renders tool summaries as tool rows when per-turn events are absent", async () => {
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+
+    const turns = [
+      {
+        turn_id: "t1",
+        session_id: "s1",
+        user_message_id: "m1",
+        status: "completed",
+        start_seq: 1,
+        end_seq: 4,
+        started_at: "2025-12-15T00:00:00.000Z",
+        updated_at: "2025-12-15T00:00:03.000Z",
+        tool_total: 1,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 1,
+        tool_failed: 0,
+      },
+    ];
+
+    const messages = [
+      {
+        id: "m1",
+        session_id: "s1",
+        role: "user",
+        content: "hello",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:00.000Z",
+        turn_id: "t1",
+        order_seq: 1,
+      },
+      {
+        id: "m2",
+        session_id: "s1",
+        role: "assistant",
+        content: "done",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:03.000Z",
+        turn_id: "t1",
+        order_seq: 3,
+      },
+    ];
+
+    const toolsByTurnId = {
+      t1: [
+        {
+          session_id: "s1",
+          tool_call_id: "tool-1",
+          turn_id: "t1",
+          tool_kind: "Grep",
+          provider_tool_name: "Grep",
+          title: "Grep",
+          subtitle: "SessionPage",
+          status: "completed",
+          input_json: { pattern: "SessionPage" },
+          output_text: "Found 29 files",
+          first_event_seq: 2,
+          created_at: "2025-12-15T00:00:01.000Z",
+          updated_at: "2025-12-15T00:00:02.000Z",
+        },
+      ],
+    };
+
+    const out = buildWorkbenchThreadViewModel(
+      turns as unknown as SessionTurn[],
+      messages as unknown as Message[],
+      toolsByTurnId,
+      [],
+    );
+
+    const toolItems = out.groups[0]?.items.filter(isToolItem) ?? [];
+    expect(toolItems).toHaveLength(1);
+    expect(toolItems[0]?.title).toBe("Grep");
+    expect(toolItems[0]?.subtitle).toBe("SessionPage");
+  }, 10000);
+
   it("normalizes context-window metrics from canonical keys only", async () => {
     const { normalizeContextWindowMetrics } = await import("./SessionPage.workbenchViewModel");
 

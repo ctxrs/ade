@@ -11,6 +11,39 @@ use crate::daemon::AppState;
 mod preview;
 use preview::*;
 
+fn string_from_value(value: Option<&Value>) -> Option<String> {
+    value.and_then(Value::as_str).map(str::to_owned)
+}
+
+fn tool_label_from_update(update: &Value) -> Option<String> {
+    string_from_value(update.get("tool_label"))
+        .or_else(|| string_from_value(update.get("toolLabel")))
+        .or_else(|| string_from_value(update.pointer("/toolCall/tool_label")))
+        .or_else(|| string_from_value(update.pointer("/toolCall/toolLabel")))
+}
+
+fn tool_name_from_update(update: &Value) -> Option<String> {
+    string_from_value(update.get("tool_name"))
+        .or_else(|| string_from_value(update.get("toolName")))
+        .or_else(|| string_from_value(update.get("name")))
+        .or_else(|| string_from_value(update.pointer("/toolCall/name")))
+}
+
+fn tool_kind_from_update(update: &Value) -> Option<String> {
+    string_from_value(update.get("kind"))
+        .or_else(|| string_from_value(update.pointer("/toolCall/kind")))
+}
+
+fn tool_title_from_update(update: &Value) -> Option<String> {
+    string_from_value(update.get("title"))
+        .or_else(|| string_from_value(update.get("tool_label")))
+        .or_else(|| string_from_value(update.get("toolLabel")))
+        .or_else(|| string_from_value(update.pointer("/toolCall/title")))
+        .or_else(|| string_from_value(update.pointer("/toolCall/tool_label")))
+        .or_else(|| string_from_value(update.pointer("/toolCall/toolLabel")))
+        .or_else(|| tool_name_from_update(update))
+}
+
 pub(super) fn sanitize_tool_event_payload(
     event_type: &SessionEventType,
     raw_payload: &Value,
@@ -19,16 +52,11 @@ pub(super) fn sanitize_tool_event_payload(
     let update = extract_tool_update(raw_payload);
     let tool_call_id = tool_call_id_from_payload(raw_payload).unwrap_or_default();
 
-    let tool_kind = update
-        .get("kind")
-        .and_then(|v| v.as_str())
-        .or_else(|| update.pointer("/toolCall/kind").and_then(|v| v.as_str()))
-        .map(|s| s.to_string());
-    let tool_label = update
-        .get("tool_label")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let title = tool_label.clone();
+    let tool_kind = tool_kind_from_update(update);
+    let provider_tool_name = tool_name_from_update(update);
+    let tool_label = tool_label_from_update(update);
+    let tool_name = provider_tool_name.clone();
+    let title = tool_title_from_update(update);
 
     let raw_status = update
         .get("status")
@@ -49,6 +77,11 @@ pub(super) fn sanitize_tool_event_payload(
         .and_then(|v| if v.is_null() { None } else { Some(v.clone()) })
         .or_else(|| tool_input_preview(input, update, tool_kind.as_deref(), title.as_deref()));
     let input_meta = build_json_preview(input, input_preview);
+    let subtitle = tool_subtitle_from_preview(
+        tool_kind.as_deref(),
+        provider_tool_name.as_deref(),
+        input_meta.preview.as_ref(),
+    );
 
     let patch_preview = if is_edit_tool(tool_kind.as_deref(), title.as_deref()) {
         extract_patch_text_owned(input, update).map(|t| build_output_preview(&t))
@@ -69,8 +102,16 @@ pub(super) fn sanitize_tool_event_payload(
         obj.insert("kind".to_string(), Value::String(v));
     }
     if let Some(v) = tool_label {
-        obj.insert("tool_label".to_string(), Value::String(v.clone()));
+        obj.insert("tool_label".to_string(), Value::String(v));
+    }
+    if let Some(v) = tool_name {
+        obj.insert("tool_name".to_string(), Value::String(v));
+    }
+    if let Some(v) = title {
         obj.insert("title".to_string(), Value::String(v));
+    }
+    if let Some(v) = subtitle {
+        obj.insert("subtitle".to_string(), Value::String(v));
     }
     obj.insert("status".to_string(), Value::String(status));
     if let Some(v) = input_meta.preview {
@@ -138,15 +179,8 @@ pub(super) fn build_tool_ops_meta(
 ) -> ToolOpsMeta {
     let update = extract_tool_update(raw_payload);
     let tool_call_id = tool_call_id_from_payload(raw_payload);
-    let tool_kind = update
-        .get("kind")
-        .and_then(|v| v.as_str())
-        .or_else(|| update.pointer("/toolCall/kind").and_then(|v| v.as_str()))
-        .map(|s| s.to_string());
-    let title = update
-        .get("tool_label")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+    let tool_kind = tool_kind_from_update(update);
+    let title = tool_title_from_update(update);
     let raw_status = update
         .get("status")
         .and_then(|v| v.as_str())
@@ -202,7 +236,9 @@ pub(super) fn cwd_outside_worktree(
 pub(super) struct TurnToolUpdate {
     pub(super) tool_call_id: String,
     tool_kind: Option<String>,
+    provider_tool_name: Option<String>,
     title: Option<String>,
+    subtitle: Option<String>,
     status: Option<String>,
     input_json: Option<Value>,
     output_text: Option<String>,
@@ -218,17 +254,9 @@ pub(super) fn build_turn_tool_update_from_payload(
 ) -> Option<TurnToolUpdate> {
     let update = extract_tool_update(payload_json);
     let tool_call_id = tool_call_id_from_payload(payload_json)?;
-    let tool_kind = update
-        .get("kind")
-        .and_then(|v| v.as_str())
-        .or_else(|| update.pointer("/toolCall/kind").and_then(|v| v.as_str()))
-        .map(|s| s.to_string());
-    let title = update
-        .get("title")
-        .and_then(|v| v.as_str())
-        .or_else(|| update.pointer("/toolCall/title").and_then(|v| v.as_str()))
-        .or_else(|| update.pointer("/toolCall/name").and_then(|v| v.as_str()))
-        .map(|s| s.to_string());
+    let tool_kind = tool_kind_from_update(update);
+    let provider_tool_name = tool_name_from_update(update);
+    let title = tool_title_from_update(update);
     let raw_status = update
         .get("status")
         .and_then(|v| v.as_str())
@@ -246,6 +274,11 @@ pub(super) fn build_turn_tool_update_from_payload(
     let input = extract_tool_input(update);
     let input_json = tool_input_preview(input, update, tool_kind.as_deref(), title.as_deref());
     let input_meta = build_json_preview(input, input_json);
+    let subtitle = tool_subtitle_from_preview(
+        tool_kind.as_deref(),
+        provider_tool_name.as_deref(),
+        input_meta.preview.as_ref(),
+    );
 
     let patch_preview = if is_edit_tool(tool_kind.as_deref(), title.as_deref()) {
         extract_patch_text_owned(input, update).map(|t| build_output_preview(&t))
@@ -261,7 +294,9 @@ pub(super) fn build_turn_tool_update_from_payload(
     Some(TurnToolUpdate {
         tool_call_id,
         tool_kind,
+        provider_tool_name,
         title,
+        subtitle,
         status,
         input_json: input_meta.preview,
         output_text: output_preview
@@ -292,7 +327,13 @@ pub(super) fn merge_tool_update(
     let tool_kind = update
         .tool_kind
         .or_else(|| prev.and_then(|t| t.tool_kind.clone()));
+    let provider_tool_name = update
+        .provider_tool_name
+        .or_else(|| prev.and_then(|t| t.provider_tool_name.clone()));
     let title = update.title.or_else(|| prev.and_then(|t| t.title.clone()));
+    let subtitle = update
+        .subtitle
+        .or_else(|| prev.and_then(|t| t.subtitle.clone()));
     let status = update
         .status
         .or_else(|| prev.and_then(|t| t.status.clone()));
@@ -335,7 +376,9 @@ pub(super) fn merge_tool_update(
         tool_call_id: update.tool_call_id,
         turn_id,
         tool_kind,
+        provider_tool_name,
         title,
+        subtitle,
         status,
         input_json,
         output_text,
@@ -637,8 +680,8 @@ fn merge_streaming_text(prev: Option<&str>, next: &str) -> String {
 #[cfg(test)]
 mod tool_preview_tests {
     use super::{
-        build_text_preview, sanitize_tool_event_payload, TOOL_PREVIEW_MAX_LINES,
-        TOOL_PREVIEW_MAX_LINE_CHARS,
+        build_text_preview, build_tool_ops_meta, build_turn_tool_update_from_payload,
+        sanitize_tool_event_payload, TOOL_PREVIEW_MAX_LINES, TOOL_PREVIEW_MAX_LINE_CHARS,
     };
     use ctx_core::models::SessionEventType;
     use serde_json::json;
@@ -682,5 +725,71 @@ mod tool_preview_tests {
             sanitized.get("output_truncated").and_then(|v| v.as_bool()),
             Some(true)
         );
+    }
+
+    #[test]
+    fn tool_title_falls_back_to_provider_tool_name_consistently() {
+        let raw = json!({
+            "tool_call_id": "call-2",
+            "kind": "execute",
+            "toolCall": {
+                "name": "Bash",
+                "kind": "execute",
+            },
+            "status": "running",
+            "rawInput": { "command": "pwd" }
+        });
+
+        let sanitized = sanitize_tool_event_payload(&SessionEventType::ToolCall, &raw, None);
+        assert_eq!(
+            sanitized.get("title").and_then(|v| v.as_str()),
+            Some("Bash")
+        );
+        assert_eq!(
+            sanitized.get("subtitle").and_then(|v| v.as_str()),
+            Some("pwd")
+        );
+        assert_eq!(
+            sanitized.get("tool_name").and_then(|v| v.as_str()),
+            Some("Bash")
+        );
+
+        let meta = build_tool_ops_meta(&SessionEventType::ToolCall, &raw);
+        assert_eq!(meta.title.as_deref(), Some("Bash"));
+
+        let update = build_turn_tool_update_from_payload(&SessionEventType::ToolCall, &raw)
+            .expect("tool update");
+        assert_eq!(update.title.as_deref(), Some("Bash"));
+        assert_eq!(update.subtitle.as_deref(), Some("pwd"));
+    }
+
+    #[test]
+    fn tool_title_prefers_explicit_labels_over_raw_name() {
+        let raw = json!({
+            "tool_call_id": "call-3",
+            "kind": "execute",
+            "tool_label": "Run shell",
+            "toolCall": {
+                "name": "Bash",
+                "title": "Nested title",
+            },
+            "rawInput": {
+                "description": "Run shell command"
+            }
+        });
+
+        let sanitized = sanitize_tool_event_payload(&SessionEventType::ToolCall, &raw, None);
+        assert_eq!(
+            sanitized.get("title").and_then(|v| v.as_str()),
+            Some("Run shell")
+        );
+
+        let meta = build_tool_ops_meta(&SessionEventType::ToolCall, &raw);
+        assert_eq!(meta.title.as_deref(), Some("Run shell"));
+
+        let update = build_turn_tool_update_from_payload(&SessionEventType::ToolCall, &raw)
+            .expect("tool update");
+        assert_eq!(update.title.as_deref(), Some("Run shell"));
+        assert_eq!(update.subtitle.as_deref(), Some("Run shell command"));
     }
 }

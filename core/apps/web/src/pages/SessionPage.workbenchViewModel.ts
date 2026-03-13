@@ -12,7 +12,7 @@ import type {
   WorkbenchThreadView,
   WorkbenchTurnHeader,
 } from "./SessionPage.types";
-import { humanToolKind } from "./SessionPage.helpers";
+import { humanToolKind, toolDisplayTitleFromPayload } from "./SessionPage.helpers";
 import {
   buildPendingTurns,
   filterQueuedMessagesForPanel,
@@ -190,7 +190,9 @@ function ensureToolItem(
     created_at: createdAt,
     updated_at: createdAt,
     tool_kind: "tool",
+    provider_tool_name: "",
     title: "Tool",
+    subtitle: "",
     status: "pending",
     locations: [],
     input: null,
@@ -218,19 +220,16 @@ function applyToolUpdateFromEvent(
 
   const nextKind = String(updateRecord.kind ?? toolCall?.kind ?? "").trim();
   if (nextKind) tool.tool_kind = nextKind;
-
-  const nextTitle = String(
-    updateRecord.title ??
-      updateRecord.tool_label ??
-      updateRecord.toolLabel ??
-      toolCall?.title ??
-      toolCall?.tool_label ??
-      toolCall?.toolLabel ??
-      toolCall?.name ??
-      "",
+  const nextProviderToolName = String(
+    updateRecord.tool_name ?? updateRecord.toolName ?? updateRecord.name ?? toolCall?.name ?? "",
   ).trim();
+  if (nextProviderToolName) tool.provider_tool_name = nextProviderToolName;
+
+  const nextTitle = toolDisplayTitleFromPayload(updateRecord);
   if (nextTitle) tool.title = nextTitle;
   else if (tool.tool_kind && tool.title === "Tool") tool.title = humanToolKind(tool.tool_kind);
+  const nextSubtitle = String(updateRecord.subtitle ?? "").trim();
+  if (nextSubtitle) tool.subtitle = nextSubtitle;
 
   const nextStatus = String(updateRecord.status ?? toolCall?.status ?? "").trim();
   if (nextStatus) tool.status = normalizeToolStatus(nextStatus, ev.event_type);
@@ -393,6 +392,20 @@ function buildTurnActivityTimeline(opts: {
     });
   }
 
+  for (const tool of toolById.values()) {
+    if (toolInserted.has(tool.tool_call_id)) continue;
+    const raw = asRecord(tool.raw);
+    const firstEventSeq = Number(raw.first_event_seq ?? Number.NaN);
+    if (!Number.isFinite(firstEventSeq)) continue;
+    activity.push({
+      item: tool,
+      created_at: tool.created_at,
+      kind: "tool",
+      order_seq: firstEventSeq as number,
+    });
+    toolInserted.add(tool.tool_call_id);
+  }
+
   return { activity, tools: Array.from(toolById.values()) };
 }
 
@@ -492,7 +505,9 @@ export function buildWorkbenchThreadViewModelFromTurns(
         created_at: tool.created_at,
         updated_at: tool.updated_at ?? tool.created_at,
         tool_kind: toolKind,
+        provider_tool_name: String(tool.provider_tool_name ?? ""),
         title,
+        subtitle: String(tool.subtitle ?? ""),
         status: String(tool.status ?? "pending"),
         locations: [],
         input: tool.input_json ?? null,

@@ -724,7 +724,9 @@ export type SessionTurnTool = {
   tool_call_id: string;
   turn_id: string;
   tool_kind?: string | null;
+  provider_tool_name?: string | null;
   title?: string | null;
+  subtitle?: string | null;
   status?: string | null;
   input_json?: Record<string, unknown> | null;
   output_text?: string | null;
@@ -732,6 +734,7 @@ export type SessionTurnTool = {
   input_original_bytes?: number | null;
   output_truncated?: boolean | null;
   output_original_bytes?: number | null;
+  first_event_seq?: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -741,7 +744,9 @@ export type SessionTurnToolSummary = {
   tool_call_id: string;
   turn_id: string;
   tool_kind?: string | null;
+  provider_tool_name?: string | null;
   title?: string | null;
+  subtitle?: string | null;
   status?: string | null;
   input_preview?: Record<string, unknown> | null;
   output_preview?: string | null;
@@ -749,6 +754,7 @@ export type SessionTurnToolSummary = {
   input_original_bytes?: number | null;
   output_truncated?: boolean | null;
   output_original_bytes?: number | null;
+  first_event_seq?: number | null;
   created_at: string;
   updated_at: string;
 };

@@ -9,6 +9,11 @@ const asRecord = (value: unknown): Record<string, unknown> => {
   return value as Record<string, unknown>;
 };
 
+const readTrimmedString = (value: unknown): string => {
+  if (typeof value !== "string") return "";
+  return value.trim();
+};
+
 export function imageAttachmentSrc(a: MessageAttachment): string {
   return a.kind === "image_ref" ? blobUrl(a.blob_id) : `data:${a.mime_type};base64,${a.data_base64}`;
 }
@@ -137,6 +142,23 @@ export function formatSubagentChildMeta(child: SubagentInvocationChild): string 
   return parts.join(" · ");
 }
 
+export function toolDisplayTitleFromPayload(payload: unknown): string {
+  const update = asRecord(payload);
+  const toolCall = asRecord(update.toolCall);
+  return (
+    readTrimmedString(update.title) ||
+    readTrimmedString(update.tool_label) ||
+    readTrimmedString(update.toolLabel) ||
+    readTrimmedString(toolCall.title) ||
+    readTrimmedString(toolCall.tool_label) ||
+    readTrimmedString(toolCall.toolLabel) ||
+    readTrimmedString(update.tool_name) ||
+    readTrimmedString(update.toolName) ||
+    readTrimmedString(update.name) ||
+    readTrimmedString(toolCall.name)
+  );
+}
+
 export function toolKindIcon(kind: string): string {
   const k = String(kind ?? "").trim().toLowerCase();
   if (k === "execute" || k === "exec") return "$";
@@ -253,6 +275,8 @@ function formatToolPathSummary(input: unknown): string {
 export function toolSummaryLine(toolKind: string, input: unknown): string {
   const k = (toolKind || "").toLowerCase();
   const rec = asRecord(input);
+  const description = String(rec.description ?? "").trim();
+  if (description) return truncateMiddle(description, 120);
   if (k.startsWith("mcp.")) {
     const server = String(rec.server ?? "").trim();
     const tool = String(rec.tool ?? "").trim();
@@ -265,12 +289,27 @@ export function toolSummaryLine(toolKind: string, input: unknown): string {
     const cmd = Array.isArray(rec.command) ? rec.command.join(" ") : rec.command;
     return cmd ? truncateMiddle(String(cmd), 120) : "";
   }
+  if (k === "bash" || k === "shell") {
+    const cmd = Array.isArray(rec.command) ? rec.command.join(" ") : rec.command;
+    return cmd ? truncateMiddle(String(cmd), 120) : "";
+  }
   if (k === "search" || k === "web_search") {
     const q = rec.query ?? rec.pattern ?? rec.regex ?? rec.text;
     const path = formatToolPathSummary(input);
     const query = q ? truncateMiddle(String(q), 120) : "";
     if (query && path) return truncateMiddle(`${query} in ${path}`, 120);
     return query || path;
+  }
+  if (k === "grep") {
+    const q = rec.pattern ?? rec.query ?? rec.regex ?? rec.text;
+    const path = formatToolPathSummary(input);
+    const query = q ? truncateMiddle(String(q), 120) : "";
+    if (query && path) return truncateMiddle(`${query} in ${path}`, 120);
+    return query || path;
+  }
+  if (k === "glob") {
+    const pattern = rec.glob ?? rec.pattern;
+    return pattern ? truncateMiddle(String(pattern), 120) : formatToolPathSummary(input);
   }
   if (k === "list" || k === "list_files") {
     return formatToolPathSummary(input);

@@ -344,6 +344,147 @@ pub(super) fn dedupe_paths(paths: &mut Vec<String>) {
     *paths = out;
 }
 
+fn preview_string(input: &Value, key: &str) -> Option<String> {
+    input
+        .get(key)
+        .and_then(|value| value.as_str())
+        .map(str::to_owned)
+}
+
+fn preview_command(input: &Value) -> Option<String> {
+    match input.get("command") {
+        Some(Value::String(value)) => {
+            Some(value.trim().to_owned()).filter(|value| !value.is_empty())
+        }
+        Some(Value::Array(parts)) => {
+            let joined = parts
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
+            Some(joined).filter(|value| !value.is_empty())
+        }
+        _ => None,
+    }
+}
+
+fn preview_path_summary(input: &Value) -> Option<String> {
+    let direct = [
+        "path",
+        "file",
+        "filename",
+        "file_path",
+        "filePath",
+        "filepath",
+        "target",
+    ]
+    .into_iter()
+    .find_map(|key| preview_string(input, key));
+    if direct.is_some() {
+        return direct;
+    }
+    for key in ["paths", "files", "file_paths", "filePaths"] {
+        if let Some(Value::Array(values)) = input.get(key) {
+            let paths = values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>();
+            if let Some(first) = paths.first() {
+                let more = paths.len().saturating_sub(1);
+                return Some(if more > 0 {
+                    format!("{first} +{more} more")
+                } else {
+                    (*first).to_owned()
+                });
+            }
+        }
+    }
+    None
+}
+
+fn format_diff_stats(input: &Value) -> Option<String> {
+    let stats = input.get("diff_stats")?.as_object()?;
+    let added = stats.get("added").and_then(Value::as_i64).unwrap_or(0);
+    let removed = stats.get("removed").and_then(Value::as_i64).unwrap_or(0);
+    let files = stats.get("files").and_then(Value::as_i64).unwrap_or(0);
+    let mut parts = Vec::new();
+    if added > 0 {
+        parts.push(format!("+{added}"));
+    }
+    if removed > 0 {
+        parts.push(format!("-{removed}"));
+    }
+    if parts.is_empty() && files > 0 {
+        parts.push(format!("{files} files"));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(format!("({})", parts.join(" ")))
+    }
+}
+
+pub(super) fn tool_subtitle_from_preview(
+    tool_kind: Option<&str>,
+    provider_tool_name: Option<&str>,
+    input: Option<&Value>,
+) -> Option<String> {
+    let input = input?;
+    input.as_object()?;
+    if let Some(description) = preview_string(input, "description") {
+        return Some(description);
+    }
+    let kind_hint = tool_kind
+        .or(provider_tool_name)
+        .unwrap_or_default()
+        .trim()
+        .to_lowercase();
+    let path = preview_path_summary(input);
+    let query = preview_string(input, "query")
+        .or_else(|| preview_string(input, "pattern"))
+        .or_else(|| preview_string(input, "regex"))
+        .or_else(|| preview_string(input, "text"));
+    let command = preview_command(input);
+    let glob = preview_string(input, "glob").or_else(|| preview_string(input, "pattern"));
+    let url = preview_string(input, "url")
+        .or_else(|| preview_string(input, "uri"))
+        .or_else(|| preview_string(input, "href"));
+
+    let combine_query_path = |q: String, path: Option<String>| match path {
+        Some(path) => format!("{q} in {path}"),
+        None => q,
+    };
+    let combine_path_stats = |path: Option<String>, stats: Option<String>| match (path, stats) {
+        (Some(path), Some(stats)) => Some(format!("{path} {stats}")),
+        (Some(path), None) => Some(path),
+        (None, Some(stats)) => Some(stats),
+        (None, None) => None,
+    };
+
+    match kind_hint.as_str() {
+        "execute" | "exec" | "shell" | "bash" => command,
+        "search" | "web_search" | "grep" => {
+            query.map(|q| combine_query_path(q, path.clone())).or(path)
+        }
+        "glob" => glob.or(path),
+        "list" | "list_files" => path,
+        "read" | "read_file" => path,
+        "edit" | "write" | "apply_patch" | "patch" => {
+            combine_path_stats(path, format_diff_stats(input))
+        }
+        "fetch" | "http" | "curl" => {
+            let method = preview_string(input, "method").unwrap_or_else(|| "GET".to_owned());
+            url.map(|url| format!("{} {}", method.trim().to_uppercase(), url))
+                .or(Some(method.trim().to_uppercase()))
+        }
+        _ => path.or(query).or(command).or(glob).or(url),
+    }
+}
+
 pub(super) fn extract_paths_from_update(update: &Value) -> Vec<String> {
     let mut paths = Vec::new();
     for value in [
@@ -417,6 +558,7 @@ pub(super) fn tool_input_preview(
             "method",
             "cwd",
             "root",
+            "description",
         ] {
             if let Some(value) = obj.get(key) {
                 if matches!(key, "paths" | "files" | "file_paths" | "filePaths") {

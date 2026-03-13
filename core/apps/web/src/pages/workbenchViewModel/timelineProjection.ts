@@ -1,4 +1,5 @@
 import { idToString, type SessionEvent } from "../../api/client";
+import { toolDisplayTitleFromPayload } from "../SessionPage.helpers";
 
 export type AssistantOrderSeqLookup = {
   byProviderId: Map<string, number>;
@@ -385,7 +386,7 @@ export function buildCustomStatusByTurnId(events: SessionEvent[]): Map<string, s
       const query = normalize(readPath(update, ["input", "query"]) ?? readPath(update, ["input", "q"]));
       if (query) return `${verb} ${query}`;
     }
-    const title = normalize(update.title);
+    const title = normalize(toolDisplayTitleFromPayload(update));
     if (title) return `${verb} ${title}`;
     return verb;
   };

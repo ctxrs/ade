@@ -312,7 +312,7 @@ export function WorkbenchToolRow({
   const kind = String(item.tool_kind ?? "").toLowerCase();
   const pathFromLoc = item.locations?.[0]?.path;
   const title = String(item.title ?? "").trim();
-  const summary = toolSummaryLine(kind, item.input);
+  const summary = String(item.subtitle ?? "").trim() || toolSummaryLine(kind, item.input);
 
   const normalizeWorktreePath = (p?: string) => {
     const s = String(p ?? "").trim();
@@ -678,14 +678,17 @@ function ToolCard({ item }: { item: Extract<ThreadItem, { kind: "tool" }> }) {
   const hasOutput = item.output_text.trim().length > 0;
   const shouldDefaultOpen = item.tool_kind === "execute" && isRunning;
   const isOpen = expanded || shouldDefaultOpen;
-  const summary = useMemo(() => toolSummaryLine(item.tool_kind, item.input), [item.tool_kind, item.input]);
+  const summary = useMemo(
+    () => String(item.subtitle ?? "").trim() || toolSummaryLine(item.tool_kind, item.input),
+    [item.input, item.subtitle, item.tool_kind],
+  );
   const path = item.locations?.length === 1 ? item.locations[0]?.path : null;
   const subtitleItems: ReactNode[] = [
     <span key="status" className={`pill ${isFailed ? "err" : isRunning ? "run" : "ok"}`}>
       {humanToolStatus(item.status)}
     </span>,
   ];
-  if (path) subtitleItems.push(<span key="path" className="muted tool-path">{path}</span>);
+  if (path && !summary) subtitleItems.push(<span key="path" className="muted tool-path">{path}</span>);
   if (summary) subtitleItems.push(<span key="summary" className="muted tool-summary">{summary}</span>);
 
   return (

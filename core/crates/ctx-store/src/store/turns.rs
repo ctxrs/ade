@@ -501,7 +501,7 @@ impl Store {
     ) -> Result<Vec<SessionTurnTool>> {
         let rows = self
             .query(
-                r#"SELECT session_id, tool_call_id, turn_id, tool_kind, title, status, input_json,
+                r#"SELECT session_id, tool_call_id, turn_id, tool_kind, provider_tool_name, title, subtitle, status, input_json,
                       output_text, first_event_seq, input_truncated, input_original_bytes,
                       output_truncated, output_original_bytes, created_at, updated_at
                FROM session_turn_tools
@@ -542,7 +542,7 @@ impl Store {
             return Ok(Vec::new());
         }
         let mut sql = String::from(
-            r#"SELECT session_id, tool_call_id, turn_id, tool_kind, title, status, input_json,
+            r#"SELECT session_id, tool_call_id, turn_id, tool_kind, provider_tool_name, title, subtitle, status, input_json,
                       output_text, first_event_seq, input_truncated, input_original_bytes,
                       output_truncated, output_original_bytes, created_at, updated_at
                FROM session_turn_tools
@@ -578,7 +578,7 @@ impl Store {
     ) -> Result<Option<SessionTurnTool>> {
         let row = self
             .query(
-                r#"SELECT session_id, tool_call_id, turn_id, tool_kind, title, status, input_json,
+                r#"SELECT session_id, tool_call_id, turn_id, tool_kind, provider_tool_name, title, subtitle, status, input_json,
                       output_text, first_event_seq, input_truncated, input_original_bytes,
                       output_truncated, output_original_bytes, created_at, updated_at
                FROM session_turn_tools
@@ -611,7 +611,9 @@ impl Store {
             + bytes_str(&tool.tool_call_id)
             + bytes_str(&turn_id)
             + bytes_opt_str(tool.tool_kind.as_deref())
+            + bytes_opt_str(tool.provider_tool_name.as_deref())
             + bytes_opt_str(tool.title.as_deref())
+            + bytes_opt_str(tool.subtitle.as_deref())
             + bytes_opt_str(tool.status.as_deref())
             + bytes_opt_str(input_json.as_deref())
             + bytes_opt_str(tool.output_text.as_deref())
@@ -632,14 +634,16 @@ impl Store {
             + bytes_str(&updated_at);
         let result = self.query(
             r#"INSERT INTO session_turn_tools (
-                    session_id, tool_call_id, turn_id, tool_kind, title, status, input_json,
+                    session_id, tool_call_id, turn_id, tool_kind, provider_tool_name, title, subtitle, status, input_json,
                     output_text, first_event_seq, input_truncated, input_original_bytes, output_truncated,
                     output_original_bytes, created_at, updated_at
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(session_id, tool_call_id) DO UPDATE SET
                    turn_id = excluded.turn_id,
                    tool_kind = COALESCE(excluded.tool_kind, session_turn_tools.tool_kind),
+                   provider_tool_name = COALESCE(excluded.provider_tool_name, session_turn_tools.provider_tool_name),
                    title = COALESCE(excluded.title, session_turn_tools.title),
+                   subtitle = COALESCE(excluded.subtitle, session_turn_tools.subtitle),
                    status = CASE WHEN excluded.status IS NULL THEN session_turn_tools.status
                        WHEN session_turn_tools.status IN ('completed', 'failed')
                             AND excluded.status IN ('pending', 'in_progress') THEN session_turn_tools.status
@@ -655,7 +659,9 @@ impl Store {
         .bind(&tool.tool_call_id)
         .bind(&turn_id)
         .bind(tool.tool_kind.as_deref())
+        .bind(tool.provider_tool_name.as_deref())
         .bind(tool.title.as_deref())
+        .bind(tool.subtitle.as_deref())
         .bind(tool.status.as_deref())
         .bind(input_json)
         .bind(tool.output_text.as_deref())

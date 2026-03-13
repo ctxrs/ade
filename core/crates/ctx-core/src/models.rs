@@ -642,7 +642,11 @@ pub struct SessionTurnTool {
     pub tool_call_id: String,
     pub turn_id: TurnId,
     pub tool_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_tool_name: Option<String>,
     pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtitle: Option<String>,
     pub status: Option<String>,
     pub input_json: Option<serde_json::Value>,
     pub output_text: Option<String>,
@@ -666,7 +670,11 @@ pub struct SessionTurnToolSummary {
     pub tool_call_id: String,
     pub turn_id: TurnId,
     pub tool_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_tool_name: Option<String>,
     pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtitle: Option<String>,
     pub status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_preview: Option<serde_json::Value>,
