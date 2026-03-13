@@ -23,6 +23,7 @@ type Params = {
   singleSessionTitle: string | null;
   worktreePath: string;
   canCopyWorktree: boolean;
+  canCopyTaskId: boolean;
   canOpenTerminal: boolean;
   terminalPanelRef: MutableRefObject<TerminalPanelHandle | null>;
   setTerminalOpen: (open: boolean) => void;
@@ -52,6 +53,7 @@ export function useWorkbenchSessionActions({
   singleSessionTitle,
   worktreePath,
   canCopyWorktree,
+  canCopyTaskId,
   canOpenTerminal,
   terminalPanelRef,
   setTerminalOpen,
@@ -314,6 +316,15 @@ export function useWorkbenchSessionActions({
     setWorktreeCopied(true);
   }, [canCopyWorktree, worktreePath]);
 
+  const copyTaskId = useCallback(async () => {
+    const taskId = String(activeTaskId ?? "").trim();
+    if (!taskId || !canCopyTaskId) return;
+    const result = await tryCopyTextToClipboard(taskId);
+    if (!result.ok) {
+      window.alert(describeClipboardCopyFailure(result, { action: "copy the task ID to the clipboard" }));
+    }
+  }, [activeTaskId, canCopyTaskId]);
+
   const openWorktreeTerminal = useCallback(async () => {
     const path = String(worktreePath).trim();
     if (!path || !canOpenTerminal || !terminalPanelRef.current) return;
@@ -336,6 +347,7 @@ export function useWorkbenchSessionActions({
     transcriptSpinnerDelayMs: transcriptSpinnerDelayMs.current,
     worktreeCopied,
     copyWorktreeLocation,
+    copyTaskId,
     openWorktreeTerminal,
     exportSessionLog,
     copySessionLog,

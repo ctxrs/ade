@@ -302,6 +302,8 @@ type WorkbenchConversationMenuProps = {
   convoMenu: { style: React.CSSProperties } | null;
   convoMenuRef: React.RefObject<HTMLDivElement | null>;
   activeSessionId: string | null;
+  activeTaskId: string | null;
+  canCopyTaskId: boolean;
   copyTranscriptBusy: boolean;
   transcriptSpinnerDelayMs: number;
   canCopyWorktree: boolean;
@@ -311,6 +313,7 @@ type WorkbenchConversationMenuProps = {
   onExportSessionLog: () => void;
   onCopySessionLog: () => void;
   onCopyWorktreeLocation: () => void;
+  onCopyTaskId: () => void;
   onArchiveConversation: (event: React.MouseEvent<HTMLButtonElement>) => void;
 };
 
@@ -318,6 +321,8 @@ export function WorkbenchConversationMenu({
   convoMenu,
   convoMenuRef,
   activeSessionId,
+  activeTaskId,
+  canCopyTaskId,
   copyTranscriptBusy,
   transcriptSpinnerDelayMs,
   canCopyWorktree,
@@ -327,6 +332,7 @@ export function WorkbenchConversationMenu({
   onExportSessionLog,
   onCopySessionLog,
   onCopyWorktreeLocation,
+  onCopyTaskId,
   onArchiveConversation,
 }: WorkbenchConversationMenuProps) {
   if (!convoMenu) {
@@ -388,6 +394,15 @@ export function WorkbenchConversationMenu({
         role="menuitem"
       >
         Copy Worktree Location
+      </button>
+      <button
+        type="button"
+        className="wb-menu-item"
+        disabled={!activeTaskId || !canCopyTaskId}
+        onClick={onCopyTaskId}
+        role="menuitem"
+      >
+        Copy Task ID
       </button>
       <button
         type="button"

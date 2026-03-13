@@ -41,6 +41,7 @@ const baseHandlers = () => ({
   copyTranscript: vi.fn(),
   copySessionLog: vi.fn(),
   copyWorktreeLocation: vi.fn(),
+  copyTaskId: vi.fn(),
   openWorktreeTerminal: vi.fn(),
   interruptSession: vi.fn(),
 });
@@ -77,7 +78,7 @@ describe("handleWorkbenchDesktopMenuCommand", () => {
   });
 
   it("returns ignored when required workbench state is missing", () => {
-    const state = { ...baseState(), activeSessionId: null, worktreeCanCopy: false };
+    const state = { ...baseState(), activeSessionId: null, activeTaskId: null, worktreeCanCopy: false };
     const handlers = baseHandlers();
 
     expect(handleWorkbenchDesktopMenuCommand("file.export-transcript", state, handlers)).toEqual({
@@ -88,7 +89,34 @@ describe("handleWorkbenchDesktopMenuCommand", () => {
       status: "ignored",
       note: "worktree-unavailable",
     });
+    expect(handleWorkbenchDesktopMenuCommand("session.copy-task-id", state, handlers)).toEqual({
+      status: "ignored",
+      note: "task-missing-or-optimistic",
+    });
     expect(handlers.exportTranscript).not.toHaveBeenCalled();
     expect(handlers.copyWorktreeLocation).not.toHaveBeenCalled();
+    expect(handlers.copyTaskId).not.toHaveBeenCalled();
+  });
+
+  it("routes copy task ID when an active task is selected", () => {
+    const state = baseState();
+    const handlers = baseHandlers();
+
+    expect(handleWorkbenchDesktopMenuCommand("session.copy-task-id", state, handlers)).toEqual({
+      status: "handled",
+      note: "copy-task-id",
+    });
+    expect(handlers.copyTaskId).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores copy task ID for optimistic tasks", () => {
+    const state = { ...baseState(), activeTaskIsOptimistic: true };
+    const handlers = baseHandlers();
+
+    expect(handleWorkbenchDesktopMenuCommand("session.copy-task-id", state, handlers)).toEqual({
+      status: "ignored",
+      note: "task-missing-or-optimistic",
+    });
+    expect(handlers.copyTaskId).not.toHaveBeenCalled();
   });
 });
