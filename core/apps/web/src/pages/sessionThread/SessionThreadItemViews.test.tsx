@@ -1,6 +1,15 @@
 import React, { useState } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { copyTextToClipboardMock } = vi.hoisted(() => ({
+  copyTextToClipboardMock: vi.fn(async () => true),
+}));
+
+vi.mock("../../utils/clipboard", () => ({
+  copyTextToClipboard: copyTextToClipboardMock,
+}));
+
 import { WorkbenchTurnHeaderView } from "./SessionThreadItemViews";
 
 function TestHeader({ plainText = "line 1\nline 2\nline 3\nline 4\nline 5" }: { plainText?: string }) {
@@ -43,6 +52,7 @@ describe("WorkbenchTurnHeaderView", () => {
   beforeEach(() => {
     document.body.innerHTML = "";
     window.getSelection()?.removeAllRanges();
+    copyTextToClipboardMock.mockClear();
   });
 
   it("expands when clicked even if unrelated text elsewhere is selected", () => {
@@ -74,5 +84,19 @@ describe("WorkbenchTurnHeaderView", () => {
 
     expect(window.getSelection()?.toString()).toContain("hello world");
     expect(header).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("copies the message when the copy button is clicked without expanding the header", async () => {
+    render(<TestHeader plainText="copy me" />);
+
+    const header = getHeader();
+    const copyButton = screen.getByRole("button", { name: "Copy message" });
+    expect(header).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(copyButton);
+
+    expect(copyTextToClipboardMock).toHaveBeenCalledWith("copy me");
+    expect(header).toHaveAttribute("aria-expanded", "false");
+    expect(await screen.findByRole("button", { name: "Copied" })).toBeInTheDocument();
   });
 });

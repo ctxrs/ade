@@ -34,6 +34,7 @@ type WorkbenchActiveTaskViewProps = {
   sessionLoadIssues: SessionLoadIssues;
   onRetrySessionLoads: () => void;
   activeSessionId: string | null;
+  mountedSessionIds: string[];
   activeScrollState: SessionScrollState;
   preserveScrollOnFocus?: boolean;
   optimisticFailure: OptimisticFailure;
@@ -81,6 +82,7 @@ export function WorkbenchActiveTaskView({
   sessionLoadIssues,
   onRetrySessionLoads,
   activeSessionId,
+  mountedSessionIds,
   activeScrollState,
   preserveScrollOnFocus,
   optimisticFailure,
@@ -132,16 +134,16 @@ export function WorkbenchActiveTaskView({
 
         <div className="wb-session">
           <WorkbenchSessionLoadIssues issues={sessionLoadIssues} onRetry={onRetrySessionLoads} />
-          {activeSessionId ? (
+          {mountedSessionIds.map((sessionId) => (
             <WorkbenchSessionSlot
-              key={activeSessionId}
-              sessionId={activeSessionId}
-              active={true}
-              scrollState={activeScrollState}
+              key={sessionId}
+              sessionId={sessionId}
+              active={sessionId === activeSessionId}
+              scrollState={sessionId === activeSessionId ? activeScrollState : undefined}
               preserveScrollOnFocus={preserveScrollOnFocus}
-              optimisticFailure={optimisticFailure}
+              optimisticFailure={sessionId === activeSessionId ? optimisticFailure : null}
             />
-          ) : null}
+          ))}
           {!activeSessionId ? (
             <div className="wb-muted" style={{ padding: 16 }}>
               Select a session to view this task.

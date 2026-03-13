@@ -61,6 +61,9 @@ const SESSION_HEAD_EVENT_LIMIT: usize = 200;
 const SESSION_HEAD_BYTE_LIMIT: usize = 1_500_000;
 const ACTIVE_SNAPSHOT_HEAD_LIMIT: u32 = 5;
 const SESSION_HEAD_ARCHIVED_TURN_LIMIT: u32 = 50;
+const SESSION_REASONING_EFFORT_MIGRATION_VERSION: i64 = 46;
+const TOOL_DISPLAY_FIELDS_MIGRATION_VERSION: i64 = 47;
+const TOOL_DISPLAY_FIELDS_MIGRATION_DESCRIPTION: &str = "tool display fields";
 // Keep stream-only seq values within JS safe integer range.
 const STREAM_ONLY_EVENT_SEQ_START: i64 = -(1_i64 << 52);
 static STREAM_ONLY_EVENT_SEQ: AtomicI64 = AtomicI64::new(STREAM_ONLY_EVENT_SEQ_START);
@@ -475,6 +478,7 @@ impl Store {
             })
             .connect(&sqlite_url)
             .await?;
+        repair_duplicate_tool_display_migration_version(&pool).await?;
         STORE_MIGRATOR.run(&pool).await?;
         let event_log = Arc::new(EventLogRuntime::load(&pool).await?);
         let store = Self { pool, event_log };
@@ -584,6 +588,52 @@ impl Store {
             turn_thoughts_cleared,
         })
     }
+}
+
+async fn repair_duplicate_tool_display_migration_version(pool: &Pool<Sqlite>) -> Result<()> {
+    let migrations_table_exists = sqlx::query_scalar::<_, i64>(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations')",
+    )
+    .fetch_one(pool)
+    .await?;
+    if migrations_table_exists == 0 {
+        return Ok(());
+    }
+
+    let tool_display_version = sqlx::query_scalar::<_, i64>(
+        "SELECT version FROM _sqlx_migrations WHERE description = ? LIMIT 1",
+    )
+    .bind(TOOL_DISPLAY_FIELDS_MIGRATION_DESCRIPTION)
+    .fetch_optional(pool)
+    .await?;
+
+    if tool_display_version != Some(SESSION_REASONING_EFFORT_MIGRATION_VERSION) {
+        return Ok(());
+    }
+
+    let renamed_version_exists = sqlx::query_scalar::<_, i64>(
+        "SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version = ?)",
+    )
+    .bind(TOOL_DISPLAY_FIELDS_MIGRATION_VERSION)
+    .fetch_one(pool)
+    .await?;
+
+    if renamed_version_exists == 0 {
+        sqlx::query("UPDATE _sqlx_migrations SET version = ? WHERE version = ? AND description = ?")
+            .bind(TOOL_DISPLAY_FIELDS_MIGRATION_VERSION)
+            .bind(SESSION_REASONING_EFFORT_MIGRATION_VERSION)
+            .bind(TOOL_DISPLAY_FIELDS_MIGRATION_DESCRIPTION)
+            .execute(pool)
+            .await?;
+    } else {
+        sqlx::query("DELETE FROM _sqlx_migrations WHERE version = ? AND description = ?")
+            .bind(SESSION_REASONING_EFFORT_MIGRATION_VERSION)
+            .bind(TOOL_DISPLAY_FIELDS_MIGRATION_DESCRIPTION)
+            .execute(pool)
+            .await?;
+    }
+
+    Ok(())
 }
 
 mod artifacts_blobs;

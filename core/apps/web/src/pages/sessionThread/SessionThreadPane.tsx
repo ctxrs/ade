@@ -1,5 +1,6 @@
 import type { CSSProperties, MutableRefObject, ReactNode } from "react";
 import type {
+  DataWithScrollModifier,
   ItemLocation,
   ListScrollLocation,
   ShortSizeAlign,
@@ -11,9 +12,11 @@ import { SessionThreadMessageList } from "../SessionThreadMessageList";
 
 export function SessionThreadPane({
   style,
+  initialData,
   itemContent,
   itemIdentity,
   initialLocation,
+  dataState,
   context,
   onScroll,
   onRenderedDataChange,
@@ -23,9 +26,11 @@ export function SessionThreadPane({
   children,
 }: {
   style: CSSProperties;
+  initialData: WorkbenchListItem[];
   itemContent: (index: number, item: WorkbenchListItem) => ReactNode;
   itemIdentity: (item: WorkbenchListItem) => unknown;
   initialLocation: ItemLocation;
+  dataState?: DataWithScrollModifier<WorkbenchListItem>;
   context: WorkbenchMessageListContext;
   onScroll: (location: ListScrollLocation) => void;
   onRenderedDataChange: (range: WorkbenchListItem[]) => void;
@@ -38,9 +43,11 @@ export function SessionThreadPane({
     <>
       <SessionThreadMessageList
         style={style}
+        initialData={initialData}
         itemContent={itemContent}
         itemIdentity={itemIdentity}
         initialLocation={initialLocation}
+        dataState={dataState}
         context={context}
         onScroll={onScroll}
         onRenderedDataChange={onRenderedDataChange}

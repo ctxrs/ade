@@ -17,7 +17,6 @@ use ctx_core::ids::*;
 use ctx_core::models::*;
 
 use crate::daemon::AppState;
-use crate::git_status::emit_worktree_vcs_snapshot_for_worktree;
 use crate::terminals::{TerminalClientMessage, TerminalServerMessage};
 use crate::web_sessions::WebSessionManager;
 use crate::workspace_active_snapshot::{WorkspaceSessionReplay, WorkspaceSessionReplayItem};
@@ -28,7 +27,8 @@ use queue::{
     HeadBatchBuffer, StreamQueue,
 };
 use replay::{
-    ensure_worktree_vcs_watchers_for_sessions, primary_session_id_for_active_task,
+    ensure_worktree_vcs_watchers_for_sessions, hydrate_worktree_vcs_for_sessions,
+    load_worktree_vcs_snapshots_for_sessions, primary_session_id_for_active_task,
     queue_reset_required, queue_snapshot_payload, replay_session_events,
     resolve_workspace_active_snapshot_subscriptions, session_ids_for_active_task_summary,
     sync_active_worktrees, with_stream_rev, ReplayOutcome,

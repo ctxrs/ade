@@ -52,6 +52,23 @@ fn git_status_untracked_from_message(
     }
 }
 
+fn worktree_file_count_from_snapshot_message(
+    message: ctx_core::models::WorkspaceActiveSnapshotStreamMessage,
+    worktree_id: WorktreeId,
+) -> Option<i64> {
+    match message {
+        ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Snapshot {
+            active_snapshot,
+            ..
+        } => active_snapshot
+            .worktree_vcs_snapshots
+            .into_iter()
+            .find(|snapshot| snapshot.worktree_id == worktree_id)
+            .and_then(|snapshot| snapshot.summary.file_count),
+        _ => None,
+    }
+}
+
 async fn setup_with_root(
     repo: tempfile::TempDir,
 ) -> (
@@ -1261,6 +1278,86 @@ async fn workspace_stream_emits_git_status_snapshot_for_new_subscriber() {
     assert!(
         saw_second,
         "expected git status snapshot for new subscriber"
+    );
+}
+
+#[tokio::test]
+async fn workspace_stream_hydrates_worktree_vcs_summary_in_snapshot() {
+    let (repo, _data_dir, state, server) = setup_git().await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let ws: ctx_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let task =
+        create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "hydrate-vcs")
+            .await;
+    let session = create_primary_worktree_session(client, base, task.id).await;
+
+    let store = state.store_for_session(session.id).await.unwrap();
+    let worktree = store
+        .get_worktree(session.worktree_id)
+        .await
+        .unwrap()
+        .expect("missing worktree");
+    tokio::fs::write(
+        Path::new(&worktree.root_path).join("file.txt"),
+        "hello\nchanged\n",
+    )
+    .await
+    .unwrap();
+
+    let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
+    let (mut socket, _) = connect_async(&ws_url).await.unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+    let subscribe = json!({
+        "type": "subscribe",
+        "scope": "active",
+        "include_active_heads": true,
+    })
+    .to_string();
+    socket
+        .send(WsMessage::Text(subscribe.into()))
+        .await
+        .unwrap();
+
+    let mut hydrated_file_count = None;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(6);
+    while tokio::time::Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let wait = remaining.min(Duration::from_millis(250));
+        let next = tokio::time::timeout(wait, socket.next()).await;
+        if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
+            if let Ok(message) =
+                serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
+            {
+                if let Some(file_count) =
+                    worktree_file_count_from_snapshot_message(message, worktree.id)
+                {
+                    hydrated_file_count = Some(file_count);
+                    break;
+                }
+            }
+        }
+    }
+
+    assert_eq!(
+        hydrated_file_count,
+        Some(1),
+        "expected hydrate snapshot to include ready worktree vcs counts"
     );
 }
 

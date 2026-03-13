@@ -37,7 +37,7 @@ export function useSessionScrollRestoreOnActivate({
 
   const recordRestoreDebug = useCallback(
     (cause: string, detail?: Record<string, unknown> | null) => {
-      if (!import.meta.env.DEV || !showDebug) return;
+      if (!showDebug) return;
       recordSessionMessageListDebugSnapshot({
         sessionId,
         cause,
@@ -50,6 +50,8 @@ export function useSessionScrollRestoreOnActivate({
         renderedTopId: scrollState?.anchorItemId ?? null,
         detail: detail ?? null,
       });
+      // eslint-disable-next-line no-console
+      console.log(`[MessageList][restore] ${JSON.stringify({ sessionId, cause, detail: detail ?? null })}`);
     },
     [isActive, listItemsRef, loaded, methodsRef, scrollState, sessionId, showDebug],
   );
@@ -60,6 +62,7 @@ export function useSessionScrollRestoreOnActivate({
       restoreTokenRef.current += 1;
       return;
     }
+    if (preserveScrollOnFocus) return;
     if (wasActiveRef.current) return;
     wasActiveRef.current = true;
     const token = (restoreTokenRef.current += 1);
@@ -81,18 +84,42 @@ export function useSessionScrollRestoreOnActivate({
         return;
       }
       const scroller = methods.scrollerElement?.() ?? null;
-      if (preserveScrollOnFocus && scroller && scrollState.scrollTop != null) {
-        const delta = Math.abs(scroller.scrollTop - scrollState.scrollTop);
-        if (delta <= 2) {
-          recordRestoreDebug("restore:already-at-target", {
+      const anchorId = scrollState.anchorItemId;
+      if (anchorId) {
+        const index = listItemsRef.current.findIndex((item) => item.id === anchorId);
+        if (index >= 0) {
+          let anchorOffset = scrollState.anchorOffset;
+          if (scroller) {
+            const maxOffset = scroller.clientHeight;
+            if (anchorOffset != null) {
+              anchorOffset = Math.min(maxOffset, Math.max(0, anchorOffset));
+            }
+          }
+          recordRestoreDebug("restore:anchor", {
             attempts,
-            mode: "preserveScrollOnFocus",
-            delta,
-            actualScrollTop: scroller.scrollTop,
-            targetScrollTop: scrollState.scrollTop,
+            anchorId,
+            anchorOffset: anchorOffset ?? null,
+            index,
+            targetScrollTop: scrollState.scrollTop ?? null,
           });
+          methods.scrollToItem(
+            anchorOffset != null
+              ? { index, align: "start", behavior: "instant", offset: anchorOffset }
+              : { index, align: "start", behavior: "instant" },
+          );
           return;
         }
+      }
+      if (preserveScrollOnFocus) {
+        if (attempts === 0 || attempts === 30 || attempts === 90) {
+          recordRestoreDebug("restore:await-anchor", {
+            attempts,
+            anchorId: scrollState.anchorItemId ?? null,
+            listCount: listItemsRef.current.length,
+          });
+        }
+        if (attempts < 120) requestAnimationFrame(() => applyScroll(attempts + 1));
+        return;
       }
       if (scroller && scrollState.scrollTop != null) {
         const delta = Math.abs(scroller.scrollTop - scrollState.scrollTop);
@@ -104,25 +131,6 @@ export function useSessionScrollRestoreOnActivate({
             actualScrollTop: scroller.scrollTop,
             targetScrollTop: scrollState.scrollTop,
           });
-          return;
-        }
-      }
-      const anchorId = scrollState.anchorItemId;
-      let anchorOffset = scrollState.anchorOffset;
-      if (anchorId && anchorOffset != null) {
-        const index = listItemsRef.current.findIndex((item) => item.id === anchorId);
-        if (index >= 0) {
-          if (scroller) {
-            anchorOffset = Math.min(scroller.clientHeight, Math.max(0, anchorOffset));
-          }
-          recordRestoreDebug("restore:anchor", {
-            attempts,
-            anchorId,
-            anchorOffset,
-            index,
-            targetScrollTop: scrollState.scrollTop ?? null,
-          });
-          methods.scrollToItem({ index, align: "start", behavior: "instant", offset: anchorOffset });
           return;
         }
       }

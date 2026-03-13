@@ -506,6 +506,20 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   }, [activeTaskId, activeSessionId]);
 
   const preserveScrollOnFocus = true;
+  const [mountedWorkbenchSessionIds, setMountedWorkbenchSessionIds] = useState<string[]>(() =>
+    activeSessionId ? [activeSessionId] : [],
+  );
+  useEffect(() => {
+    if (!activeTaskId) {
+      setMountedWorkbenchSessionIds([]);
+      return;
+    }
+    if (!activeSessionId) return;
+    setMountedWorkbenchSessionIds((previous) => {
+      const next = [activeSessionId, ...previous.filter((sessionId) => sessionId !== activeSessionId)];
+      return next.slice(0, 3);
+    });
+  }, [activeSessionId, activeTaskId]);
   const activeScrollState = activeSessionId
     ? workbenchSnap.window.scrollByKey[scrollKey(activeSessionId)] ?? null
     : null;
@@ -864,6 +878,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             sessionLoadIssues={activeTaskController.sessionLoadIssues}
             onRetrySessionLoads={activeTaskController.retryActiveSessionLoads}
             activeSessionId={activeSessionId}
+            mountedSessionIds={mountedWorkbenchSessionIds}
             activeScrollState={activeScrollState}
             preserveScrollOnFocus={preserveScrollOnFocus}
             optimisticFailure={optimisticFailure}

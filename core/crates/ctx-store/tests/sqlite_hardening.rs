@@ -18,6 +18,25 @@ const LOCK_DB_PATH_ENV: &str = "CTX_STORE_LOCK_DB_PATH";
 const LOCK_READY_PATH_ENV: &str = "CTX_STORE_LOCK_READY_PATH";
 const LOCK_RELEASE_PATH_ENV: &str = "CTX_STORE_LOCK_RELEASE_PATH";
 
+#[test]
+fn migration_versions_are_unique() -> Result<()> {
+    let migrations = migration_files()?;
+    let mut seen = std::collections::BTreeMap::new();
+
+    for migration in migrations {
+        let version = migration_version(&migration)?;
+        if let Some(previous) = seen.insert(version, migration.clone()) {
+            anyhow::bail!(
+                "duplicate migration version {version}: {} and {}",
+                previous.display(),
+                migration.display()
+            );
+        }
+    }
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn migrations_upgrade_cleanly_from_every_historical_prefix() -> Result<()> {
     let migrations = migration_files()?;
@@ -82,6 +101,86 @@ async fn migrations_upgrade_cleanly_from_every_historical_prefix() -> Result<()>
             "expected all migrations applied after upgrading prefix {prefix_len}"
         );
     }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn open_repairs_partially_applied_duplicate_tool_display_migration() -> Result<()> {
+    let tempdir = tempfile::tempdir().context("creating tempdir for duplicate migration repair")?;
+    let subset_dir = tempdir.path().join("subset-migrations");
+    fs::create_dir_all(&subset_dir).context("creating subset migration dir")?;
+
+    let migrations = migration_files()?;
+    let tool_display_migration = migrations
+        .iter()
+        .find(|path| path.file_name().is_some_and(|name| name == "0047_tool_display_fields.sql"))
+        .cloned()
+        .context("finding tool display migration")?;
+
+    for migration in &migrations {
+        if migration_version(migration)? <= 45 {
+            let filename = migration
+                .file_name()
+                .context("migration file missing name")?;
+            fs::copy(migration, subset_dir.join(filename)).with_context(|| {
+                format!(
+                    "copying {} into duplicate-version subset",
+                    migration.display()
+                )
+            })?;
+        }
+    }
+
+    fs::copy(
+        &tool_display_migration,
+        subset_dir.join("0046_tool_display_fields.sql"),
+    )
+    .with_context(|| {
+        format!(
+            "copying {} into duplicate-version subset as 0046",
+            tool_display_migration.display()
+        )
+    })?;
+
+    let db_path = tempdir.path().join("db.sqlite");
+    fs::File::create(&db_path).context("creating sqlite file")?;
+    let sqlite_url = sqlite_url(&db_path);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&sqlite_url)
+        .await
+        .context("connecting partial-migration pool for duplicate repair")?;
+    let subset_migrator = Migrator::new(subset_dir.clone())
+        .await
+        .context("loading subset migrator for duplicate repair")?;
+    subset_migrator
+        .run(&pool)
+        .await
+        .context("running subset migrator for duplicate repair")?;
+    pool.close().await;
+
+    let store = Store::open(&db_path)
+        .await
+        .context("opening store after duplicate-version partial migration")?;
+    store.close().await;
+
+    assert_store_integrity(&db_path).await?;
+    assert!(column_exists(&db_path, "sessions", "reasoning_effort").await?);
+    assert!(column_exists(&db_path, "session_turn_tools", "provider_tool_name").await?);
+    assert!(column_exists(&db_path, "session_turn_tools", "subtitle").await?);
+
+    let applied = applied_migrations(&db_path).await?;
+    assert!(
+        applied
+            .iter()
+            .any(|(version, description)| *version == 46 && description == "session reasoning effort")
+    );
+    assert!(
+        applied
+            .iter()
+            .any(|(version, description)| *version == 47 && description == "tool display fields")
+    );
 
     Ok(())
 }
@@ -338,6 +437,41 @@ async fn applied_migration_count(db_path: &Path) -> Result<i64> {
     Ok(count)
 }
 
+async fn applied_migrations(db_path: &Path) -> Result<Vec<(i64, String)>> {
+    let sqlite_url = sqlite_url(db_path);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&sqlite_url)
+        .await
+        .with_context(|| format!("connecting migration details pool for {}", db_path.display()))?;
+    let rows = sqlx::query("SELECT version, description FROM _sqlx_migrations ORDER BY version")
+        .fetch_all(&pool)
+        .await
+        .context("listing applied migrations")?;
+    pool.close().await;
+    Ok(rows
+        .into_iter()
+        .map(|row| (row.get("version"), row.get("description")))
+        .collect())
+}
+
+async fn column_exists(db_path: &Path, table: &str, column: &str) -> Result<bool> {
+    let sqlite_url = sqlite_url(db_path);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&sqlite_url)
+        .await
+        .with_context(|| format!("connecting column check pool for {}", db_path.display()))?;
+    let query = format!("SELECT COUNT(*) AS count FROM pragma_table_info('{table}') WHERE name = ?");
+    let count = sqlx::query_scalar::<_, i64>(&query)
+        .bind(column)
+        .fetch_one(&pool)
+        .await
+        .with_context(|| format!("checking {table}.{column}"))?;
+    pool.close().await;
+    Ok(count > 0)
+}
+
 fn migration_files() -> Result<Vec<PathBuf>> {
     let migrations_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
     let mut files = fs::read_dir(&migrations_dir)
@@ -347,6 +481,20 @@ fn migration_files() -> Result<Vec<PathBuf>> {
         .context("collecting migration paths")?;
     files.sort();
     Ok(files)
+}
+
+fn migration_version(path: &Path) -> Result<i64> {
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .with_context(|| format!("migration path missing UTF-8 filename: {}", path.display()))?;
+    let version = filename
+        .split_once('_')
+        .with_context(|| format!("migration filename missing version prefix: {filename}"))?
+        .0
+        .parse::<i64>()
+        .with_context(|| format!("parsing migration version from {filename}"))?;
+    Ok(version)
 }
 
 fn sqlite_url(path: &Path) -> String {

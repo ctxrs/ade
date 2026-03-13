@@ -41,6 +41,7 @@ type Params = {
 type Result = {
   methodsRef: MutableRefObject<VirtuosoMessageListMethods<WorkbenchListItem, WorkbenchMessageListContext> | null>;
   context: WorkbenchMessageListContext;
+  initialData: WorkbenchListItem[];
   initialLocation: ItemLocation;
   onScroll: (location: ListScrollLocation) => void;
   onRenderedDataChange: (range: WorkbenchListItem[]) => void;
@@ -64,6 +65,7 @@ export function useSessionMessageListController(params: Params): Result {
 
   const methodsRef = useRef<VirtuosoMessageListMethods<WorkbenchListItem, WorkbenchMessageListContext> | null>(null);
   const lastSessionIdRef = useRef(sessionId);
+  const initialMountedSyncDoneRef = useRef(false);
   const contractViolationLoggedRef = useRef<{ sessionId: string; violationKey: string } | null>(null);
 
   const lastScrollLocationRef = useRef<ListScrollLocation | null>(null);
@@ -91,6 +93,7 @@ export function useSessionMessageListController(params: Params): Result {
   const historyExpectedRef = useRef(false);
   const historyRequestedAtTopRef = useRef(false);
   const historyRequestedAnchorIdRef = useRef<string | null>(null);
+  const activationSettlingUntilRef = useRef(0);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const suppressIdDiffLogsRef = useRef<{ sessionId: string; remainingTicks: number } | null>(null);
   const lastScrollDebugAtRef = useRef(0);
@@ -111,6 +114,19 @@ export function useSessionMessageListController(params: Params): Result {
     renderedAnchorIdRef,
     renderedTopIdRef,
   });
+  const logMessageListDebug = useCallback(
+    (label: string, detail: Record<string, unknown>) => {
+      if (!showDebug) return;
+      // eslint-disable-next-line no-console
+      console.log(`[MessageList][${label}] ${JSON.stringify({ sessionId, ...detail })}`);
+    },
+    [sessionId, showDebug],
+  );
+
+  const appendBehavior = useMemo<AutoscrollToBottom<WorkbenchListItem, WorkbenchMessageListContext>>(
+    () => (params) => (params.atBottom ? "auto" : false),
+    [],
+  );
 
   useEffect(() => {
     // When only one session slot is mounted, switching tasks/sessions can remount the list.
@@ -138,16 +154,34 @@ export function useSessionMessageListController(params: Params): Result {
   const scrollStateRafRef = useRef<number | null>(null);
   const anchorOffsetTimerRef = useRef<number | null>(null);
 
+  const measureRenderedAnchorOffset = useCallback(
+    (anchorItemId: string | null) => {
+      if (!anchorItemId) return null;
+      const scroller = methodsRef.current?.scrollerElement?.() ?? null;
+      if (!scroller) return null;
+
+      const scrollerRect = scroller.getBoundingClientRect();
+      const anchorEl = scroller.querySelector(`[data-thread-item-id="${anchorItemId}"]`);
+      const itemEl = anchorEl?.closest("[role=\"listitem\"]") as HTMLElement | null;
+      if (!itemEl) return null;
+      const itemRect = itemEl.getBoundingClientRect();
+      const anchorOffset = itemRect.top - scrollerRect.top;
+      if (anchorOffset < 0 || anchorOffset > scrollerRect.height) return null;
+      return anchorOffset;
+    },
+    [methodsRef],
+  );
+
   const flushScrollState = useCallback(() => {
     scrollStateRafRef.current = null;
     const pending = pendingScrollStateRef.current;
     pendingScrollStateRef.current = null;
     if (!pending || !onScrollStateChange) return;
     lastPersistedScrollStateRef.current = pending;
-    // Avoid DOM/layout reads in the scroll hot path. If we can compute an anchor offset, do it
-    // lazily after scroll settles (scheduled from `onScroll`).
-    onScrollStateChange({ ...pending, anchorOffset: null });
-  }, [onScrollStateChange, methodsRef]);
+    const anchorOffset =
+      pending.stickToBottom || !pending.anchorItemId ? null : measureRenderedAnchorOffset(pending.anchorItemId);
+    onScrollStateChange({ ...pending, anchorOffset });
+  }, [measureRenderedAnchorOffset, onScrollStateChange]);
 
   const scheduleAnchorOffsetPersist = useCallback(() => {
     if (!onScrollStateChange) return;
@@ -162,22 +196,12 @@ export function useSessionMessageListController(params: Params): Result {
       if (pending.stickToBottom) return;
       const { anchorItemId } = pending;
       if (!anchorItemId) return;
-      const scroller = methodsRef.current?.scrollerElement?.() ?? null;
-      if (!scroller) return;
-
-      const scrollerRect = scroller.getBoundingClientRect();
-      const anchorEl = scroller.querySelector(`[data-thread-item-id="${anchorItemId}"]`);
-      const itemEl = anchorEl?.closest("[role=\"listitem\"]") as HTMLElement | null;
-      if (!itemEl) return;
-      const itemRect = itemEl.getBoundingClientRect();
-      const anchorOffset = itemRect.top - scrollerRect.top;
-      // If the anchor isn't actually within the visible viewport (overscan), fall back to
-      // `scrollTop` restoration.
-      if (anchorOffset < 0 || anchorOffset > scrollerRect.height) return;
+      const anchorOffset = measureRenderedAnchorOffset(anchorItemId);
+      if (anchorOffset == null) return;
 
       onScrollStateChange({ ...pending, anchorOffset });
     }, 150);
-  }, [methodsRef, onScrollStateChange]);
+  }, [measureRenderedAnchorOffset, onScrollStateChange]);
 
   useLayoutEffect(() => {
     return () => {
@@ -207,11 +231,9 @@ export function useSessionMessageListController(params: Params): Result {
         };
       }
     }
-    // We know the user was not at bottom, but we don't have a resolvable anchor yet.
-    // Starting at bottom would immediately mark the session as "stickToBottom" and clobber the
-    // saved scroll state before restoration can occur.
     return { index: 0, align: "start" };
   }, [listItems, scrollState]);
+  const initialData = useMemo<WorkbenchListItem[]>(() => listItems, [listItems]);
 
   // Keep an up-to-date reference without introducing additional hook ordering churn under HMR.
   firstListItemIdRef.current = listItemsCoalesced?.[0]?.id ?? null;
@@ -219,7 +241,6 @@ export function useSessionMessageListController(params: Params): Result {
   const onScroll = useCallback(
     (location: ListScrollLocation) => {
       lastScrollLocationRef.current = location;
-
       if (!isActive) return;
 
       const scroller = methodsRef.current?.scrollerElement?.() ?? null;
@@ -238,7 +259,7 @@ export function useSessionMessageListController(params: Params): Result {
           ? scroller.scrollHeight - (scrollTop + scroller.clientHeight) <= 16
           : atBottomFromLocation;
       stickToBottomRef.current = atBottom;
-      if (onAtBottomChange && lastAtBottomRef.current !== atBottom) {
+      if (isActive && onAtBottomChange && lastAtBottomRef.current !== atBottom) {
         lastAtBottomRef.current = atBottom;
         onAtBottomChange(atBottom);
       }
@@ -366,32 +387,42 @@ export function useSessionMessageListController(params: Params): Result {
           setLoadingOlder(false);
         });
     },
-    [canLoadOlder, loaded, loadOlder, loadingOlder, onAtBottomChange, onScrollStateChange, sessionId, showDebug, isActive],
+    [
+      canLoadOlder,
+      loaded,
+      loadOlder,
+      loadingOlder,
+      onAtBottomChange,
+      onScrollStateChange,
+      sessionId,
+      showDebug,
+      isActive,
+    ],
   );
-
-  const restoreNonBottomScroll = useCallback(() => {
-    if (stickToBottomRef.current) return;
-    const methods = methodsRef.current;
-    if (!methods) return;
-    const scroller = methods.scrollerElement?.() ?? null;
-    const target = lastKnownScrollTopRef.current;
-    if (!scroller || target == null) return;
-    requestAnimationFrame(() => {
-      if (Math.abs(scroller.scrollTop - target) > 2) {
-        scroller.scrollTop = target;
-        recordDebugSnapshot("restore:non-bottom-scrollTop", {
-          targetScrollTop: target,
-          actualScrollTop: scroller.scrollTop,
-        });
-      }
-    });
-  }, [recordDebugSnapshot]);
 
   const onRenderedDataChange = useCallback((range: WorkbenchListItem[]) => {
     const topId = range?.[0]?.id ?? null;
+    const middleIndex = range.length > 0 ? Math.floor(range.length / 2) : 0;
+    const anchorId = range?.[middleIndex]?.id ?? topId;
     renderedTopIdRef.current = topId;
-    renderedAnchorIdRef.current = topId;
+    renderedAnchorIdRef.current = anchorId;
   }, []);
+
+  const resolveRestoreLocation = useCallback(
+    (items: WorkbenchListItem[]): ItemLocation => {
+      if (!scrollState || scrollState.stickToBottom) return initialLocation;
+      const anchorId = scrollState.anchorItemId ?? renderedAnchorIdRef.current;
+      if (!anchorId) return initialLocation;
+      const index = items.findIndex((item) => item.id === anchorId);
+      if (index < 0) return initialLocation;
+      return {
+        index,
+        align: "start",
+        offset: scrollState.anchorOffset ?? 0,
+      };
+    },
+    [initialLocation, scrollState],
+  );
 
   useLayoutEffect(() => {
     if (!isActive) return;
@@ -403,6 +434,12 @@ export function useSessionMessageListController(params: Params): Result {
     let next = listItemsCoalesced;
     const current = methods.data.get();
     const sessionChanged = lastSessionIdRef.current !== sessionId;
+    const needsInitialMountedPurge =
+      !initialMountedSyncDoneRef.current &&
+      Boolean(scrollState && !scrollState.stickToBottom) &&
+      current.length > 0 &&
+      nextRaw.length > 0;
+    initialMountedSyncDoneRef.current = true;
 
     // Suppress noisy "ids missing" diagnostics during session transitions / initial hydration.
     // The list is expected to change dramatically in these windows and the logs are not actionable.
@@ -503,10 +540,8 @@ export function useSessionMessageListController(params: Params): Result {
       }
     }
 
-    const appendBehavior: AutoscrollToBottom<WorkbenchListItem, WorkbenchMessageListContext> = (params) =>
-      params.atBottom ? "auto" : false;
-
     if (sessionChanged) {
+      initialMountedSyncDoneRef.current = true;
       lastSessionIdRef.current = sessionId;
       pendingHistoryRef.current = false;
       historyExpectedRef.current = false;
@@ -521,19 +556,39 @@ export function useSessionMessageListController(params: Params): Result {
       renderedTopIdRef.current = scrollState?.anchorItemId ?? null;
       firstListItemIdRef.current = null;
       lastKnownScrollTopRef.current = scrollState?.scrollTop ?? null;
+      activationSettlingUntilRef.current = scrollState?.stickToBottom ? 0 : Date.now() + 500;
       methods.cancelSmoothScroll();
       suppressIdDiffLogsRef.current = { sessionId, remainingTicks: 3 };
-      methods.data.replace(nextRaw, { initialLocation, purgeItemSizes: true });
-      restoreNonBottomScroll();
+      methods.data.replace(nextRaw, { initialLocation: resolveRestoreLocation(nextRaw), purgeItemSizes: true });
       recordDebugSnapshot("data:replace", {
         reason: "sessionChanged",
         nextLen: nextRaw.length,
         currentLen: current.length,
       });
-      if (import.meta.env.DEV && showDebug) {
-        // eslint-disable-next-line no-console
-        console.debug("[MessageList][data:replace]", { sessionId, nextLen: nextRaw.length, reason: "sessionChanged" });
-      }
+      logMessageListDebug("data:replace", {
+        reason: "sessionChanged",
+        nextLen: nextRaw.length,
+        currentLen: current.length,
+      });
+      return;
+    }
+
+    if (needsInitialMountedPurge) {
+      historyExpectedRef.current = false;
+      activationSettlingUntilRef.current = scrollState?.stickToBottom ? 0 : Date.now() + 500;
+      methods.cancelSmoothScroll();
+      suppressIdDiffLogsRef.current = { sessionId, remainingTicks: 2 };
+      methods.data.replace(nextRaw, { initialLocation: resolveRestoreLocation(nextRaw), purgeItemSizes: true });
+      recordDebugSnapshot("data:replace", {
+        reason: "initialMountedPurge",
+        nextLen: nextRaw.length,
+        currentLen: current.length,
+      });
+      logMessageListDebug("data:replace", {
+        reason: "initialMountedPurge",
+        nextLen: nextRaw.length,
+        currentLen: current.length,
+      });
       return;
     }
 
@@ -545,24 +600,20 @@ export function useSessionMessageListController(params: Params): Result {
     if (currentLen === 0) {
       if (nextRaw.length === 0) return;
       historyExpectedRef.current = false;
+      activationSettlingUntilRef.current = scrollState?.stickToBottom ? 0 : Date.now() + 500;
       methods.cancelSmoothScroll();
       suppressIdDiffLogsRef.current = { sessionId, remainingTicks: 2 };
-      methods.data.replace(nextRaw, { initialLocation, purgeItemSizes: true });
-      restoreNonBottomScroll();
+      methods.data.replace(nextRaw, { initialLocation: resolveRestoreLocation(nextRaw), purgeItemSizes: true });
       recordDebugSnapshot("data:replace", {
         reason: "initialPopulation",
         nextLen: nextRaw.length,
         currentLen,
       });
-      if (import.meta.env.DEV && showDebug) {
-        // eslint-disable-next-line no-console
-        console.debug("[MessageList][data:replace]", {
-          sessionId,
-          nextLen: nextRaw.length,
-          currentLen,
-          reason: "initialPopulation",
-        });
-      }
+      logMessageListDebug("data:replace", {
+        reason: "initialPopulation",
+        nextLen: nextRaw.length,
+        currentLen,
+      });
       return;
     }
 
@@ -739,29 +790,37 @@ export function useSessionMessageListController(params: Params): Result {
       }
       if (isPureAppend) {
         const suffix = next.slice(currentLen);
+        const activationSettling =
+          !stickToBottomRef.current && Date.now() < activationSettlingUntilRef.current;
         if (suffix.length > 0) methods.data.append(suffix, appendBehavior);
         if (!stickToBottomRef.current) {
           const nextById = new Map(next.map((it) => [it.id, it] as const));
           const anchorId = renderedAnchorIdRef.current;
           const anchorIndex = anchorId ? next.findIndex((it) => it.id === anchorId) : -1;
-          if (anchorIndex >= 0) methods.data.mapWithAnchor((item) => nextById.get(item.id) ?? item, anchorIndex);
-          else methods.data.map((item) => nextById.get(item.id) ?? item);
+          if (!activationSettling && anchorIndex >= 0) {
+            methods.data.mapWithAnchor((item) => nextById.get(item.id) ?? item, anchorIndex);
+          } else {
+            methods.data.map((item) => nextById.get(item.id) ?? item);
+          }
         } else {
           methods.data.map(
             (item) => item,
             stickToBottomRef.current ? ("auto" as const) : undefined,
           );
         }
-        restoreNonBottomScroll();
         recordDebugSnapshot("data:append", {
           suffixLen: suffix.length,
           nextLen,
           currentLen,
         });
-        if (import.meta.env.DEV && showDebug) {
-          // eslint-disable-next-line no-console
-          console.debug("[MessageList][data:append]", { sessionId, suffixLen: suffix.length, nextLen, currentLen });
-        }
+        logMessageListDebug("data:append", {
+          suffixLen: suffix.length,
+          nextLen,
+          currentLen,
+          stickToBottom: stickToBottomRef.current,
+          anchorId: renderedAnchorIdRef.current,
+          activationSettling,
+        });
         return;
       }
     }
@@ -779,6 +838,8 @@ export function useSessionMessageListController(params: Params): Result {
         const nextById = new Map(next.map((it) => [it.id, it] as const));
         const anchorId = renderedAnchorIdRef.current;
         const anchorIndex = anchorId ? next.findIndex((it) => it.id === anchorId) : -1;
+        const activationSettling =
+          !stickToBottomRef.current && Date.now() < activationSettlingUntilRef.current;
         if (import.meta.env.DEV && showDebug) {
           // Count by reference to detect “content changes” even when IDs/order are stable.
           let changedByRef = 0;
@@ -809,7 +870,7 @@ export function useSessionMessageListController(params: Params): Result {
             renderedTopId: renderedTopIdRef.current,
           });
         }
-        if (!stickToBottomRef.current && anchorIndex >= 0) {
+        if (!stickToBottomRef.current && anchorIndex >= 0 && !activationSettling) {
           methods.data.mapWithAnchor((item) => nextById.get(item.id) ?? item, anchorIndex);
         } else {
           methods.data.map(
@@ -823,6 +884,14 @@ export function useSessionMessageListController(params: Params): Result {
           anchorId,
           anchorIndex,
           stickToBottom: stickToBottomRef.current,
+        });
+        logMessageListDebug("data:map", {
+          nextLen,
+          currentLen,
+          anchorId,
+          anchorIndex,
+          stickToBottom: stickToBottomRef.current,
+          activationSettling,
         });
         return;
       }
@@ -957,11 +1026,23 @@ export function useSessionMessageListController(params: Params): Result {
       anchorIndex,
       stickToBottom: stickToBottomRef.current,
     });
-  }, [isActive, listItems, listItemsCoalesced, recordDebugSnapshot, sessionId, showDebug, scrollState, initialLocation, restoreNonBottomScroll]);
+  }, [
+    appendBehavior,
+    initialLocation,
+    isActive,
+    listItems,
+    listItemsCoalesced,
+    recordDebugSnapshot,
+    resolveRestoreLocation,
+    scrollState,
+    sessionId,
+    showDebug,
+  ]);
 
   return {
     methodsRef,
     context,
+    initialData,
     initialLocation,
     onScroll,
     onRenderedDataChange,

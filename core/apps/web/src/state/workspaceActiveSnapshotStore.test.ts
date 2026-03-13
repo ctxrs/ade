@@ -4,6 +4,7 @@ import type {
   SessionHeadSnapshot,
   SessionSnapshotSummary,
   Task,
+  WorktreeVcsSnapshot,
   WorkspaceActiveHeadBatch,
   WorkspaceActiveSnapshot,
   WorkspaceActiveTaskSummary,
@@ -169,6 +170,46 @@ const mkActiveSummary = (
   sort_at: now,
 });
 
+const mkWorktreeVcsSnapshot = (
+  worktreeId: string,
+  rev: number,
+  fileCount: number,
+): WorktreeVcsSnapshot => ({
+  worktree_id: worktreeId,
+  rev,
+  emitted_at_ms: rev,
+  base_commit_sha: "base",
+  head_commit_sha: "head",
+  base_resolution: {
+    kind: "merge_base",
+  },
+  compute_state: "ready",
+  summary: {
+    file_count: fileCount,
+    line_additions: fileCount,
+    line_deletions: 0,
+    line_count: fileCount,
+  },
+  git_status: {
+    branch: null,
+    upstream: null,
+    ahead: 0,
+    behind: 0,
+    detached: false,
+    staged: 0,
+    unstaged: fileCount,
+    untracked: 0,
+    entries: [],
+  },
+  touched_files: {
+    total_count: fileCount,
+    truncated: false,
+    items: [],
+  },
+  available: true,
+  schema_version: 1,
+});
+
 const openWsState = (globalThis.WebSocket as unknown as { OPEN?: number } | undefined)?.OPEN ?? 1;
 
 const mkOpenWs = (): MockWs => ({
@@ -223,6 +264,101 @@ describe("WorkspaceActiveSnapshotStore", () => {
     const snapshot = store.getSnapshot();
     expect(snapshot.activeIds).toEqual(["task-1"]);
     expect(store.getSessionHeadSnapshot("session-1")?.last_event_seq).toBe(0);
+  });
+
+  it("preserves active worktree vcs when a hydrate snapshot omits it", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const now = new Date().toISOString();
+    const task = mkTask("task-1", "ws-1", now);
+    const session = mkSession("session-1", "task-1", "ws-1", now);
+    const summary = mkSummary(session, now);
+    const head = mkHead(session);
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 1,
+        event: {
+          type: "worktree_vcs_snapshot",
+          workspace_id: "ws-1",
+          snapshot_rev: 1,
+          snapshot: mkWorktreeVcsSnapshot("wt-1", 1, 3),
+        },
+      }),
+    );
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "snapshot",
+        rev: 2,
+        active_snapshot: {
+          workspace_id: "ws-1",
+          snapshot_rev: 2,
+          archived_rev: 0,
+          active: { total_count: 1, tasks: [mkActiveSummary(task, summary, head, now)] },
+          worktree_vcs_snapshots: [],
+        },
+        active_heads: {
+          workspace_id: "ws-1",
+          snapshot_rev: 2,
+          heads: [head],
+        },
+      }),
+    );
+
+    await waitForCondition(() => store.getSnapshot().initialized);
+
+    expect(store.getSnapshot().worktreeVcsById["wt-1"]?.summary.file_count).toBe(3);
+  });
+
+  it("drops stale worktree vcs for worktrees that are no longer active", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const now = new Date().toISOString();
+    const task = mkTask("task-2", "ws-1", now);
+    const session = { ...mkSession("session-2", "task-2", "ws-1", now), worktree_id: "wt-2" };
+    const summary = mkSummary(session, now);
+    const head = mkHead(session);
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 1,
+        event: {
+          type: "worktree_vcs_snapshot",
+          workspace_id: "ws-1",
+          snapshot_rev: 1,
+          snapshot: mkWorktreeVcsSnapshot("wt-1", 1, 2),
+        },
+      }),
+    );
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "snapshot",
+        rev: 2,
+        active_snapshot: {
+          workspace_id: "ws-1",
+          snapshot_rev: 2,
+          archived_rev: 0,
+          active: { total_count: 1, tasks: [mkActiveSummary(task, summary, head, now)] },
+          worktree_vcs_snapshots: [],
+        },
+        active_heads: {
+          workspace_id: "ws-1",
+          snapshot_rev: 2,
+          heads: [head],
+        },
+      }),
+    );
+
+    await waitForCondition(() => store.getSnapshot().initialized);
+
+    expect(store.getSnapshot().worktreeVcsById["wt-1"]).toBeUndefined();
+    expect(store.getSnapshot().worktreeVcsById["wt-2"]).toBeUndefined();
   });
 
   it("requests snapshot on reset_required", async () => {

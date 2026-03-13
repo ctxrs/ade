@@ -87,7 +87,6 @@ export function recordSessionMessageListDebugSnapshot({
   renderedTopId,
   detail = null,
 }: RecordSessionMessageListDebugSnapshotParams): void {
-  if (!import.meta.env.DEV) return;
   if (typeof window === "undefined") return;
 
   const scrollerRect = scroller?.getBoundingClientRect() ?? null;

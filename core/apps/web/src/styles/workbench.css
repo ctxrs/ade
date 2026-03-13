@@ -4225,13 +4225,17 @@
   gap: 8px;
 }
 
+.wb-artifact-card-previewable {
+  cursor: pointer;
+}
+
 .wb-artifact-preview {
   border-radius: 10px;
   background: var(--wb-artifact-preview-bg);
   overflow: hidden;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: stretch;
+  justify-content: stretch;
   min-height: 140px;
 }
 
@@ -4250,12 +4254,59 @@
   font-size: 12px;
   color: var(--text-muted);
   padding: 20px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .wb-artifact-missing {
   font-size: 12px;
   color: color-mix(in srgb, var(--state-warning-solid) 90%, transparent);
   padding: 20px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wb-artifact-inline-status {
+  width: 100%;
+  padding: 14px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.wb-artifact-inline-text {
+  margin: 0;
+  width: 100%;
+  max-height: 180px;
+  overflow: auto;
+  padding: 14px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-strong);
+  font-family: var(--font-family-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+  scrollbar-gutter: stable;
+}
+
+.wb-artifact-inline-markdown {
+  width: 100%;
+  max-height: 180px;
+  overflow: auto;
+  padding: 14px;
+  color: var(--text-strong);
+  scrollbar-gutter: stable;
+}
+
+.wb-artifact-inline-markdown > :first-child {
+  margin-top: 0;
+}
+
+.wb-artifact-inline-markdown > :last-child {
+  margin-bottom: 0;
 }
 
 .wb-artifact-meta {
@@ -4412,6 +4463,27 @@
   width: min(100%, 1080px);
   background: var(--wb-artifact-preview-bg);
   border-radius: 12px;
+}
+
+.wb-artifact-modal-body-text {
+  display: block;
+  overflow: auto;
+  touch-action: auto;
+  user-select: text;
+}
+
+.wb-artifact-text-content {
+  width: min(100%, 960px);
+  margin: 0 auto;
+  color: var(--text);
+}
+
+.wb-artifact-text-pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .wb-editplans {
