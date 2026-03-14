@@ -84,7 +84,6 @@ export function SessionView({
   const id = sessionId;
   const supervisor = useSessionSupervisor();
   const workbenchStore = useWorkbenchStore();
-  const initialVirtuosoIndex = 100000;
   const showDebug = useMemo(() => {
     try {
       return new URLSearchParams(window.location.search).get("debug") === "1";

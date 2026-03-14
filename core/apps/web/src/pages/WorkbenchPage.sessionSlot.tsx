@@ -4,24 +4,18 @@ import { sessionDraftKey, useWorkbenchDraft, useWorkbenchStore } from "../workbe
 
 export type WorkbenchSessionSlotProps = {
   sessionId: string;
-  active: boolean;
   optimisticFailure?: { prompt: string; error: string | null } | null;
 };
 
 export function WorkbenchSessionSlot({
   sessionId,
-  active,
   optimisticFailure,
 }: WorkbenchSessionSlotProps) {
   const workbenchStore = useWorkbenchStore();
   const draft = useWorkbenchDraft(sessionDraftKey(sessionId), { text: "", modeId: "default" });
 
   return (
-    <div
-      className="wb-session-slot"
-      style={{ opacity: active ? 1 : 0, pointerEvents: active ? "auto" : "none" }}
-      aria-hidden={!active}
-    >
+    <div className="wb-session-slot">
       {optimisticFailure ? (
         <div className="banner" role="alert">
           <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
@@ -43,7 +37,6 @@ export function WorkbenchSessionSlot({
       ) : null}
       <SessionView
         sessionId={sessionId}
-        isActive={active}
         autoOpenSession={false}
         draft={draft.value}
         onDraftChange={(text) => draft.setValue({ text, modeId: draft.value.modeId })}

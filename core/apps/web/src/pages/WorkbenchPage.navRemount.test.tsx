@@ -345,7 +345,9 @@ vi.mock("../components/DiffReviewPane", () => ({
 }));
 
 vi.mock("./SessionPage", () => ({
-  SessionView: () => null,
+  SessionView: ({ sessionId: mockedSessionId }: { sessionId: string }) => (
+    <div data-testid="session-view-mock" data-session-id={mockedSessionId} />
+  ),
   buildWorkbenchThreadViewModel: () => ({ groups: [] }),
 }));
 
@@ -448,6 +450,17 @@ function getTaskRow(title: string) {
 }
 
 describe("WorkbenchPage task rename selection", () => {
+  it("renders only the active session slot for the selected task", async () => {
+    renderWorkbenchPage();
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId("session-view-mock")).toHaveLength(1);
+    });
+    expect(screen.getByTestId("session-view-mock")).toHaveAttribute("data-session-id", sessionId);
+    expect(document.querySelectorAll(".wb-session-slot")).toHaveLength(1);
+    expect(document.querySelector(".wb-session-slot")?.hasAttribute("aria-hidden")).toBe(false);
+  });
+
   it("does not force session mode through WorkbenchPage route-open policy", async () => {
     renderWorkbenchPage();
 

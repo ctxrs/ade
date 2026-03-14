@@ -11,8 +11,6 @@ export function deriveTaskTitle(_prompt: string): string {
 export const ARCHIVE_CONFIRM_STORAGE_KEY = "wb.archiveConfirmDismissed";
 export const WORKSPACE_TABS_STORAGE_KEY = "wb.workspaceTabs.v1";
 export const UI_WINDOW_ID_STORAGE_KEY = "contextUiWindowId.v1";
-// Keep a small pool mounted to avoid remounting session views during task switches.
-export const SESSION_VIEW_POOL_LIMIT = 3;
 
 export type WorkspaceTabsState = {
   openWorkspaceIds: string[];

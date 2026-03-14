@@ -130,7 +130,6 @@ export function WorkbenchActiveTaskView({
           {activeSessionId ? (
             <WorkbenchSessionSlot
               sessionId={activeSessionId}
-              active
               optimisticFailure={optimisticFailure}
             />
           ) : null}
