@@ -8,7 +8,11 @@ pub(super) const DAEMON_PATH_SENTINEL_END: &str = "__CTX_DAEMON_PATH_END__";
 pub(super) const LOCAL_DAEMON_PATH_PROBE_START: &str = "__CTX_DAEMON_PATH_START__";
 pub(super) const LOCAL_DAEMON_PATH_PROBE_END: &str = "__CTX_DAEMON_PATH_END__";
 
-fn append_unique_path_entry(entries: &mut Vec<PathBuf>, seen: &mut HashSet<PathBuf>, entry: PathBuf) {
+fn append_unique_path_entry(
+    entries: &mut Vec<PathBuf>,
+    seen: &mut HashSet<PathBuf>,
+    entry: PathBuf,
+) {
     if entry.as_os_str().is_empty() {
         return;
     }
@@ -17,13 +21,21 @@ fn append_unique_path_entry(entries: &mut Vec<PathBuf>, seen: &mut HashSet<PathB
     }
 }
 
-fn append_path_entries_from_raw(entries: &mut Vec<PathBuf>, seen: &mut HashSet<PathBuf>, raw: &OsStr) {
+fn append_path_entries_from_raw(
+    entries: &mut Vec<PathBuf>,
+    seen: &mut HashSet<PathBuf>,
+    raw: &OsStr,
+) {
     for entry in std::env::split_paths(raw) {
         append_unique_path_entry(entries, seen, entry);
     }
 }
 
-fn append_common_tool_dirs(entries: &mut Vec<PathBuf>, seen: &mut HashSet<PathBuf>, home_dir: Option<&Path>) {
+fn append_common_tool_dirs(
+    entries: &mut Vec<PathBuf>,
+    seen: &mut HashSet<PathBuf>,
+    home_dir: Option<&Path>,
+) {
     if let Some(home) = home_dir {
         append_unique_path_entry(entries, seen, home.join(".local").join("bin"));
         append_unique_path_entry(entries, seen, home.join("bin"));

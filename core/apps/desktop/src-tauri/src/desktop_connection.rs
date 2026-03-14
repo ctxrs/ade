@@ -578,9 +578,7 @@ impl ConnectionManager {
                 ),
             }
         };
-
         let url = format!("{}/api/blobs", base_url.trim_end_matches('/'));
-
         let mut part = reqwest::blocking::multipart::Part::bytes(bytes);
         if let Some(n) = name.as_deref().filter(|s| !s.trim().is_empty()) {
             part = part.file_name(n.to_string());
@@ -588,9 +586,11 @@ impl ConnectionManager {
         part = part
             .mime_str(&mime_type)
             .context("invalid mime_type for multipart")?;
-
         let form = reqwest::blocking::multipart::Form::new().part("file", part);
-        let mut req = client.post(url).timeout(Duration::from_secs(60)).multipart(form);
+        let mut req = client
+            .post(url)
+            .timeout(Duration::from_secs(60))
+            .multipart(form);
         if let Some(t) = token.as_deref() {
             if !t.trim().is_empty() {
                 req = req.bearer_auth(t);

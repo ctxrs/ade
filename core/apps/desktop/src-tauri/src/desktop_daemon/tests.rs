@@ -1,10 +1,10 @@
-use super::*;
 use super::path_env::{
     build_effective_daemon_path, extract_shell_path, parse_local_daemon_path_probe_output,
     probe_local_daemon_path_via_shell, read_login_shell_path, resolve_daemon_path_env,
     DAEMON_PATH_SENTINEL_BEGIN, DAEMON_PATH_SENTINEL_END, LOCAL_DAEMON_PATH_PROBE_END,
     LOCAL_DAEMON_PATH_PROBE_START,
 };
+use super::*;
 use crate::desktop_local_daemon::{
     apply_validated_local_connection, connect_local_with_sources, lock_local_connect_gate,
 };
@@ -62,7 +62,10 @@ fn parse_local_daemon_path_probe_output_extracts_marker_payload() {
         parse_local_daemon_path_probe_output(&output),
         Some("/Users/test/.local/bin:/usr/bin".to_string())
     );
-    assert_eq!(parse_local_daemon_path_probe_output("missing markers"), None);
+    assert_eq!(
+        parse_local_daemon_path_probe_output("missing markers"),
+        None
+    );
 }
 
 #[cfg(unix)]
@@ -470,8 +473,7 @@ fn extract_shell_path_reads_sentinel_payload() {
 fn read_login_shell_path_uses_shell_output_markers() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp =
-        std::env::temp_dir().join(format!("ctx-daemon-shell-{}", uuid::Uuid::new_v4()));
+    let temp = std::env::temp_dir().join(format!("ctx-daemon-shell-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp).expect("create temp dir");
     let shell_path = temp.join("fake-shell");
     std::fs::write(
@@ -488,7 +490,10 @@ fn read_login_shell_path_uses_shell_output_markers() {
     std::fs::set_permissions(&shell_path, perms).expect("chmod fake shell");
 
     let resolved = read_login_shell_path(&shell_path).expect("resolved shell path");
-    assert_eq!(resolved, std::ffi::OsString::from("/tmp/fake-cursor:/usr/bin"));
+    assert_eq!(
+        resolved,
+        std::ffi::OsString::from("/tmp/fake-cursor:/usr/bin")
+    );
     std::fs::remove_dir_all(&temp).ok();
 }
 
@@ -498,8 +503,7 @@ fn resolve_daemon_path_env_prefers_current_path_and_shell_discovery() {
     use std::os::unix::fs::PermissionsExt;
 
     let _guard = env_lock().lock().expect("lock env");
-    let temp =
-        std::env::temp_dir().join(format!("ctx-daemon-shell-{}", uuid::Uuid::new_v4()));
+    let temp = std::env::temp_dir().join(format!("ctx-daemon-shell-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp).expect("create temp dir");
     let shell_path = temp.join("fake-shell");
     std::fs::write(

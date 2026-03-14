@@ -28,13 +28,17 @@ describe("droppedImageAttachments", () => {
   it("creates inline attachments from dropped desktop paths", async () => {
     const mod = await import("./droppedImageAttachments");
     const attachments = await mod.imageAttachmentsFromPaths(["/tmp/example.png"]);
+    const attachment = attachments[0];
 
     expect(desktopReadBinaryFileMock).toHaveBeenCalledWith({ path: "/tmp/example.png" });
     expect(attachments).toHaveLength(1);
-    expect(attachments[0]?.kind).toBe("image");
-    expect(attachments[0]?.mime_type).toBe("image/png");
-    expect(attachments[0]?.name).toBe("example.png");
-    expect(attachments[0]?.data_base64).toBeTruthy();
+    expect(attachment?.kind).toBe("image");
+    if (!attachment || attachment.kind !== "image") {
+      throw new Error("Expected an inline image attachment");
+    }
+    expect(attachment.mime_type).toBe("image/png");
+    expect(attachment.name).toBe("example.png");
+    expect(attachment.data_base64).toBeTruthy();
   });
 
   it("normalizes file:// drops through the desktop path flow", async () => {

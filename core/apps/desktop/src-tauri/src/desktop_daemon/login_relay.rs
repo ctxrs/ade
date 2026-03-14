@@ -272,12 +272,9 @@ mod tests {
 
     #[test]
     fn callback_url_from_target_preserves_localhost_authority() {
-        let callback = callback_url_from_target(
-            "/auth/callback?code=abc&state=def",
-            "/auth/callback",
-            1455,
-        )
-        .expect("build callback URL");
+        let callback =
+            callback_url_from_target("/auth/callback?code=abc&state=def", "/auth/callback", 1455)
+                .expect("build callback URL");
         assert_eq!(
             callback,
             "http://localhost:1455/auth/callback?code=abc&state=def"
