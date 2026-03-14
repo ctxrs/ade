@@ -1144,7 +1144,7 @@ describe("SessionSupervisor", () => {
       message_id: "assistant-msg-1",
       content: "Hello. What do you want to work on?",
       delivery: "immediate",
-      order_seq: 3,
+      order_seq: 2,
       turn_sequence: 1,
       provider_message_id: "provider-msg-1",
     });
@@ -1159,6 +1159,7 @@ describe("SessionSupervisor", () => {
       session_id: sessionId,
       turn_id: turnId,
       turn_sequence: 1,
+      order_seq: 2,
       role: "assistant",
       content: "Hello. What do you want to work on?",
       delivery: "immediate",

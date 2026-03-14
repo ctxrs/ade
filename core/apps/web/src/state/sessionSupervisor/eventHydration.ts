@@ -56,6 +56,7 @@ export const messageFromEvent = (
     task_id: session?.task_id ?? "",
     turn_id: event.turn_id ?? null,
     turn_sequence: readPayloadNumber(payload, ["turn_sequence", "turnSequence"]),
+    order_seq: readPayloadNumber(payload, ["order_seq", "orderSeq"]),
     role,
     content,
     attachments,

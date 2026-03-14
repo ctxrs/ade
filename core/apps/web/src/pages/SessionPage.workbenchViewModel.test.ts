@@ -438,6 +438,77 @@ describe("buildWorkbenchThreadViewModel", () => {
     expect(tools.map((it) => it.tool_call_id)).toEqual(["tool-1", "tool-2"]);
   }, 10000);
 
+  it("orders assistant messages by message order_seq instead of turn_sequence fallback", async () => {
+    const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
+
+    const turns = [
+      {
+        turn_id: "t1",
+        session_id: "s1",
+        user_message_id: "m1",
+        status: "completed",
+        started_at: "2025-12-15T00:00:00.000Z",
+        updated_at: "2025-12-15T00:00:03.000Z",
+        tool_total: 1,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 1,
+        tool_failed: 0,
+      },
+    ];
+
+    const messages = [
+      {
+        id: "m1",
+        session_id: "s1",
+        role: "user",
+        content: "hello",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:00.000Z",
+        turn_id: "t1",
+        order_seq: 1,
+      },
+      {
+        id: "m2",
+        session_id: "s1",
+        role: "assistant",
+        content: "done",
+        attachments: [],
+        delivery: "immediate",
+        created_at: "2025-12-15T00:00:03.000Z",
+        turn_id: "t1",
+        turn_sequence: 1,
+        order_seq: 3,
+      },
+    ];
+
+    const events = [
+      {
+        id: "e1",
+        session_id: "s1",
+        run_id: "r1",
+        turn_id: "t1",
+        event_type: "tool_call",
+        payload_json: { tool_call_id: "tool-1", title: "ls", order_seq: 2 },
+        created_at: "2025-12-15T00:00:01.000Z",
+      },
+    ];
+
+    const out = buildWorkbenchThreadViewModel(
+      turns as unknown as SessionTurn[],
+      messages as unknown as Message[],
+      {},
+      events as unknown as SessionEvent[],
+    );
+
+    expect(out.groups[0]?.items.map((item) => item.kind)).toEqual([
+      "tool",
+      "assistant",
+      "turn_status",
+    ]);
+  }, 10000);
+
   it("keeps thought ordering stable when final chunks arrive", async () => {
     const { buildWorkbenchThreadViewModel } = await import("./SessionPage");
 

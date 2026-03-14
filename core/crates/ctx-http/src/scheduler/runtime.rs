@@ -24,7 +24,7 @@ use crate::harness_sources::{self, HarnessSourceKind};
 use crate::installer;
 use crate::installs::InstallTarget;
 use crate::ops_events::OpsEvent;
-use crate::order_seq::{attach_order_seq, OrderSeqState};
+use crate::order_seq::{attach_order_seq, read_order_seq, OrderSeqState};
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::provider_accounts;
 use crate::settings::{self, ProviderControlMode};

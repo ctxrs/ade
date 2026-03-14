@@ -246,6 +246,20 @@ fn check_turn_thought_partial_contains(
     }
 }
 
+fn read_event_order_seq(event: &ctx_core::models::SessionEvent) -> Option<i64> {
+    event
+        .payload_json
+        .get("order_seq")
+        .or_else(|| event.payload_json.get("orderSeq"))
+        .and_then(|value| {
+            value.as_i64().or_else(|| {
+                value
+                    .as_str()
+                    .and_then(|text| text.trim().parse::<i64>().ok())
+            })
+        })
+}
+
 #[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn provider_scenarios_offline_crp_fixtures() {
@@ -436,5 +450,32 @@ async fn provider_scenarios_offline_interleaved_assistant_tools_do_not_fragment_
     assert_eq!(
         assistant_messages[0].content,
         "Synthetic assistant text crosses tool events. The fixture keeps the message contiguous across calls. The final text remains deterministic."
+    );
+
+    let assistant_inserted = events
+        .iter()
+        .find(|event| matches!(event.event_type, SessionEventType::AssistantMessageInserted))
+        .unwrap_or_else(|| panic!("missing AssistantMessageInserted event: {events:#?}"));
+    let first_tool_call = events
+        .iter()
+        .find(|event| matches!(event.event_type, SessionEventType::ToolCall))
+        .unwrap_or_else(|| panic!("missing ToolCall event: {events:#?}"));
+
+    let assistant_inserted_order = read_event_order_seq(assistant_inserted).unwrap_or_else(|| {
+        panic!("AssistantMessageInserted missing order_seq: {assistant_inserted:#?}")
+    });
+    let tool_order = read_event_order_seq(first_tool_call)
+        .unwrap_or_else(|| panic!("ToolCall missing order_seq: {first_tool_call:#?}"));
+    let message_order = assistant_messages[0]
+        .order_seq
+        .unwrap_or_else(|| panic!("assistant message missing order_seq: {assistant_messages:#?}"));
+
+    assert_eq!(
+        message_order, assistant_inserted_order,
+        "persisted assistant message should reuse assistant_message_inserted order_seq"
+    );
+    assert!(
+        message_order < tool_order,
+        "interleaved assistant message should stay anchored before later tool calls; message={message_order}, tool={tool_order}, events={events:#?}"
     );
 }

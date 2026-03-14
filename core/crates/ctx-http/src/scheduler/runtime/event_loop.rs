@@ -511,6 +511,15 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                     .and_then(Value::as_str)
                     .map(|s: &str| s.to_string())
                     .or_else(|| assistant_partial_message_id.clone());
+                let order_seq = read_order_seq(&event.payload_json).unwrap_or_else(|| {
+                    tracing::warn!(
+                        session_id = %session_id.0,
+                        run_id = %run_id.0,
+                        turn_id = %turn_id.0,
+                        "assistant_complete missing order_seq; assigning fallback message order"
+                    );
+                    0
+                });
                 let content: Option<String> = event
                     .payload_json
                     .get("full_content")
@@ -527,7 +536,9 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                 if let Some(content) = content {
                     if let Some(content) = strip_emitted_prefix(&content, &assistant_emitted) {
                         let assistant_message_id = ctx_core::ids::MessageId::new();
-                        let order_seq = {
+                        let persisted_order_seq = if order_seq > 0 {
+                            order_seq
+                        } else {
                             let mut order_seq_state = order_seq_state.lock().await;
                             order_seq_state
                                 .get_or_assign(format!("message:{}", assistant_message_id.0), None)
@@ -537,7 +548,7 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                             &store,
                             workspace_id,
                             assistant_message_id,
-                            order_seq,
+                            persisted_order_seq,
                             session_id,
                             task_id,
                             run_id,
@@ -568,6 +579,16 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                                         );
                                     }
                                 }
+                                {
+                                    let mut order_seq_state = order_seq_state.lock().await;
+                                    attach_order_seq(
+                                        &mut order_seq_state,
+                                        &SessionEventType::AssistantMessageInserted,
+                                        &mut payload,
+                                        Some(&turn_id),
+                                        assistant_sequence,
+                                    );
+                                }
                                 let _ = emit_event(
                                     &state,
                                     session_id,
@@ -582,7 +603,7 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                             Err(err) => {
                                 let details = Some(json!({
                                     "provider_message_id": provider_message_id,
-                                    "order_seq": order_seq,
+                                    "order_seq": persisted_order_seq,
                                     "turn_sequence": assistant_sequence + 1,
                                 }));
                                 fail_turn(
