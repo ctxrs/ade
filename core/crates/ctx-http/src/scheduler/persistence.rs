@@ -17,6 +17,15 @@ fn is_transient_store_error(err: &anyhow::Error) -> bool {
         || msg.contains("database is busy")
 }
 
+fn maybe_fail_persist_assistant_message() -> Result<()> {
+    if let Err(err) =
+        crate::fault_injection::maybe_fail("ctx_http.persist_assistant_message.transient")
+    {
+        return Err(anyhow!("database is locked (fault injection): {err}"));
+    }
+    crate::fault_injection::maybe_fail("ctx_http.persist_assistant_message.fatal")
+}
+
 pub(crate) async fn append_session_event_with_retry(
     store: &ctx_store::Store,
     session_id: ctx_core::ids::SessionId,
@@ -107,6 +116,16 @@ pub(crate) async fn persist_assistant_message(
     };
     let mut attempt = 0usize;
     loop {
+        if let Err(err) = maybe_fail_persist_assistant_message() {
+            if !is_transient_store_error(&err) || attempt >= STORE_WRITE_RETRY_LIMIT {
+                tracing::warn!("assistant message insert failed: {err:#}");
+                return Err(err);
+            }
+            attempt += 1;
+            let backoff_ms = STORE_WRITE_RETRY_BASE_MS.saturating_mul(attempt as u64);
+            tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+            continue;
+        }
         match store.insert_message(msg.clone()).await {
             Ok(saved) => {
                 state

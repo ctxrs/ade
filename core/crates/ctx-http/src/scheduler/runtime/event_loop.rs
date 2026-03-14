@@ -36,6 +36,159 @@ pub(super) fn spawn_turn_event_loop(ctx: TurnEventLoop) {
     });
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn fail_turn(
+    state: &Arc<AppState>,
+    store: &ctx_store::Store,
+    session_id: ctx_core::ids::SessionId,
+    worktree_id: ctx_core::ids::WorktreeId,
+    run_id: RunId,
+    turn_id: TurnId,
+    message_id: MessageId,
+    provider_id: &str,
+    model_id: &str,
+    execution_environment_label: &str,
+    session_root_kind: &str,
+    workdir_str: &str,
+    run_started_at: Instant,
+    perf_run_id: Option<&String>,
+    telemetry_emitted: &mut bool,
+    terminal_status: &mut Option<SessionTurnStatus>,
+    created_at: chrono::DateTime<chrono::Utc>,
+    error_message: String,
+    details: Option<Value>,
+    kind: Option<Value>,
+    emit_error_event: bool,
+) {
+    if !*telemetry_emitted {
+        *telemetry_emitted = true;
+        let duration_ms = run_started_at.elapsed().as_millis() as u64;
+        let mut run_labels = HashMap::new();
+        run_labels.insert("provider_id".to_string(), provider_id.to_string());
+        run_labels.insert("model_id".to_string(), model_id.to_string());
+        run_labels.insert(
+            "execution_environment".to_string(),
+            execution_environment_label.to_string(),
+        );
+        run_labels.insert(
+            "session_root_kind".to_string(),
+            session_root_kind.to_string(),
+        );
+        run_labels.insert("event".to_string(), "run_failed".to_string());
+        let run_metric = PerfMetric {
+            name: "scheduler.run_total_ms".to_string(),
+            kind: PerfMetricKind::Histogram,
+            unit: "ms".to_string(),
+            value: duration_ms as f64,
+            labels: run_labels,
+        };
+        state
+            .telemetry
+            .perf_telemetry
+            .record_metric(run_metric, perf_run_id.cloned(), None, None)
+            .await;
+        state
+            .telemetry
+            .telemetry
+            .emit(TelemetryEvent::provider_call(
+                provider_id.to_string(),
+                model_id.to_string(),
+                Some(execution_environment_label.to_string()),
+                Some(session_root_kind.to_string()),
+                false,
+                duration_ms,
+            ))
+            .await;
+        state
+            .telemetry
+            .telemetry
+            .emit(TelemetryEvent::session_completed(
+                provider_id.to_string(),
+                model_id.to_string(),
+                Some(execution_environment_label.to_string()),
+                Some(session_root_kind.to_string()),
+                "failed".to_string(),
+                duration_ms,
+            ))
+            .await;
+    }
+
+    let mut fail_event = OpsEvent::new("error", "provider_run_failed");
+    fail_event.session_id = Some(session_id.0.to_string());
+    fail_event.worktree_id = Some(worktree_id.0.to_string());
+    fail_event.run_id = Some(run_id.0.to_string());
+    fail_event.turn_id = Some(turn_id.0.to_string());
+    fail_event.provider_id = Some(provider_id.to_string());
+    fail_event.cwd = Some(workdir_str.to_string());
+    fail_event.worktree_root = Some(workdir_str.to_string());
+    fail_event.meta = Some(json!({
+        "model_id": model_id,
+        "execution_environment": execution_environment_label,
+        "session_root_kind": session_root_kind,
+        "error": error_message.clone(),
+        "details": details.clone(),
+        "kind": kind.clone(),
+    }));
+    state.telemetry.ops_events.emit(fail_event);
+
+    if emit_error_event {
+        let mut payload = json!({
+            "message": error_message,
+        });
+        if let Some(obj) = payload.as_object_mut() {
+            if let Some(details) = details {
+                obj.insert("details".to_string(), details);
+            }
+            if let Some(kind) = kind {
+                obj.insert("kind".to_string(), kind);
+            }
+        }
+        let _ = emit_event(
+            state,
+            session_id,
+            Some(run_id),
+            Some(turn_id),
+            SessionEventType::Error,
+            payload,
+        )
+        .await;
+    }
+
+    *terminal_status = Some(SessionTurnStatus::Failed);
+    let _ = store
+        .update_session_turn_status(
+            session_id,
+            turn_id,
+            SessionTurnStatus::Failed,
+            None,
+            None,
+            created_at,
+        )
+        .await;
+    let _ = store
+        .delete_session_events_for_turn_types(
+            session_id,
+            turn_id,
+            &[
+                SessionEventType::AssistantChunk,
+                SessionEventType::ThoughtChunk,
+            ],
+        )
+        .await;
+    let _ = emit_event(
+        state,
+        session_id,
+        Some(run_id),
+        Some(turn_id),
+        SessionEventType::TurnFinished,
+        json!({
+            "message_id": message_id.0,
+            "status": "failed",
+        }),
+    )
+    .await;
+}
+
 async fn run_turn_event_loop(ctx: TurnEventLoop) {
     let TurnEventLoop {
         state,
@@ -373,16 +526,17 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                     });
                 if let Some(content) = content {
                     if let Some(content) = strip_emitted_prefix(&content, &assistant_emitted) {
-                        let message_id = ctx_core::ids::MessageId::new();
+                        let assistant_message_id = ctx_core::ids::MessageId::new();
                         let order_seq = {
                             let mut order_seq_state = order_seq_state.lock().await;
-                            order_seq_state.get_or_assign(format!("message:{}", message_id.0), None)
+                            order_seq_state
+                                .get_or_assign(format!("message:{}", assistant_message_id.0), None)
                         };
-                        if let Ok(saved) = persist_assistant_message(
+                        match persist_assistant_message(
                             state.as_ref(),
                             &store,
                             workspace_id,
-                            message_id,
+                            assistant_message_id,
                             order_seq,
                             session_id,
                             task_id,
@@ -394,35 +548,70 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                         )
                         .await
                         {
-                            assistant_sequence += 1;
-                            assistant_emitted.push_str(&saved.content);
-                            assistant_partial.clear();
-                            let mut payload = json!({
-                                "message_id": saved.id.0,
-                                "content": saved.content,
-                                "delivery": saved.delivery,
-                                "attachments": saved.attachments,
-                                "turn_sequence": saved.turn_sequence,
-                                "order_seq": saved.order_seq,
-                            });
-                            if let Some(provider_message_id) = provider_message_id {
-                                if let Some(obj) = payload.as_object_mut() {
-                                    obj.insert(
-                                        "provider_message_id".to_string(),
-                                        json!(provider_message_id),
-                                    );
+                            Ok(saved) => {
+                                assistant_sequence += 1;
+                                assistant_emitted.push_str(&saved.content);
+                                assistant_partial.clear();
+                                let mut payload = json!({
+                                    "message_id": saved.id.0,
+                                    "content": saved.content,
+                                    "delivery": saved.delivery,
+                                    "attachments": saved.attachments,
+                                    "turn_sequence": saved.turn_sequence,
+                                    "order_seq": saved.order_seq,
+                                });
+                                if let Some(provider_message_id) = provider_message_id {
+                                    if let Some(obj) = payload.as_object_mut() {
+                                        obj.insert(
+                                            "provider_message_id".to_string(),
+                                            json!(provider_message_id),
+                                        );
+                                    }
                                 }
+                                let _ = emit_event(
+                                    &state,
+                                    session_id,
+                                    Some(run_id),
+                                    Some(turn_id),
+                                    SessionEventType::AssistantMessageInserted,
+                                    payload,
+                                )
+                                .await;
+                                assistant_partial_message_id = None;
                             }
-                            let _ = emit_event(
-                                &state,
-                                session_id,
-                                Some(run_id),
-                                Some(turn_id),
-                                SessionEventType::AssistantMessageInserted,
-                                payload,
-                            )
-                            .await;
-                            assistant_partial_message_id = None;
+                            Err(err) => {
+                                let details = Some(json!({
+                                    "provider_message_id": provider_message_id,
+                                    "order_seq": order_seq,
+                                    "turn_sequence": assistant_sequence + 1,
+                                }));
+                                fail_turn(
+                                    &state,
+                                    &store,
+                                    session_id,
+                                    worktree_id,
+                                    run_id,
+                                    turn_id,
+                                    message_id,
+                                    &provider_id,
+                                    &model_id,
+                                    &execution_environment_label,
+                                    &session_root_kind,
+                                    &workdir_str,
+                                    run_started_at,
+                                    perf_run_id.as_ref(),
+                                    &mut telemetry_emitted,
+                                    &mut terminal_status,
+                                    event.created_at,
+                                    format!("failed to persist assistant message: {err:#}"),
+                                    details,
+                                    Some(json!("assistant_message_persist_failed")),
+                                    true,
+                                )
+                                .await;
+                                assistant_partial.clear();
+                                assistant_partial_message_id = None;
+                            }
                         }
                     } else {
                         assistant_partial.clear();
@@ -441,6 +630,9 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                     .await;
             }
             SessionEventType::Done => {
+                if terminal_status.is_some() {
+                    continue;
+                }
                 if !telemetry_emitted {
                     telemetry_emitted = true;
                     let duration_ms = run_started_at.elapsed().as_millis() as u64;
@@ -668,103 +860,28 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                     .and_then(|value| value.as_str())
                     .unwrap_or("provider runtime error")
                     .to_string();
-                if !telemetry_emitted {
-                    telemetry_emitted = true;
-                    let duration_ms = run_started_at.elapsed().as_millis() as u64;
-                    let mut run_labels = HashMap::new();
-                    run_labels.insert("provider_id".to_string(), provider_id.clone());
-                    run_labels.insert("model_id".to_string(), model_id.clone());
-                    run_labels.insert(
-                        "execution_environment".to_string(),
-                        execution_environment_label.clone(),
-                    );
-                    run_labels.insert("session_root_kind".to_string(), session_root_kind.clone());
-                    run_labels.insert("event".to_string(), "run_failed".to_string());
-                    let run_metric = PerfMetric {
-                        name: "scheduler.run_total_ms".to_string(),
-                        kind: PerfMetricKind::Histogram,
-                        unit: "ms".to_string(),
-                        value: duration_ms as f64,
-                        labels: run_labels,
-                    };
-                    state
-                        .telemetry
-                        .perf_telemetry
-                        .record_metric(run_metric, perf_run_id.clone(), None, None)
-                        .await;
-                    state
-                        .telemetry
-                        .telemetry
-                        .emit(TelemetryEvent::provider_call(
-                            provider_id.clone(),
-                            model_id.clone(),
-                            Some(execution_environment_label.clone()),
-                            Some(session_root_kind.clone()),
-                            false,
-                            duration_ms,
-                        ))
-                        .await;
-                    state
-                        .telemetry
-                        .telemetry
-                        .emit(TelemetryEvent::session_completed(
-                            provider_id.clone(),
-                            model_id.clone(),
-                            Some(execution_environment_label.clone()),
-                            Some(session_root_kind.clone()),
-                            "failed".to_string(),
-                            duration_ms,
-                        ))
-                        .await;
-                }
-                let mut fail_event = OpsEvent::new("error", "provider_run_failed");
-                fail_event.session_id = Some(session_id.0.to_string());
-                fail_event.worktree_id = Some(worktree_id.0.to_string());
-                fail_event.run_id = Some(run_id.0.to_string());
-                fail_event.turn_id = Some(turn_id.0.to_string());
-                fail_event.provider_id = Some(provider_id.clone());
-                fail_event.cwd = Some(workdir_str.clone());
-                fail_event.worktree_root = Some(workdir_str.clone());
-                fail_event.meta = Some(json!({
-                    "model_id": model_id.clone(),
-                    "execution_environment": execution_environment_label.clone(),
-                    "session_root_kind": session_root_kind.clone(),
-                    "error": error_message,
-                    "details": event.payload_json.get("details").cloned(),
-                    "kind": event.payload_json.get("kind").cloned(),
-                }));
-                state.telemetry.ops_events.emit(fail_event);
-                terminal_status = Some(SessionTurnStatus::Failed);
-                let _ = store
-                    .update_session_turn_status(
-                        session_id,
-                        turn_id,
-                        SessionTurnStatus::Failed,
-                        None,
-                        None,
-                        event.created_at,
-                    )
-                    .await;
-                let _ = store
-                    .delete_session_events_for_turn_types(
-                        session_id,
-                        turn_id,
-                        &[
-                            SessionEventType::AssistantChunk,
-                            SessionEventType::ThoughtChunk,
-                        ],
-                    )
-                    .await;
-                let _ = emit_event(
+                fail_turn(
                     &state,
+                    &store,
                     session_id,
-                    Some(run_id),
-                    Some(turn_id),
-                    SessionEventType::TurnFinished,
-                    json!({
-                        "message_id": message_id.0,
-                        "status": "failed",
-                    }),
+                    worktree_id,
+                    run_id,
+                    turn_id,
+                    message_id,
+                    &provider_id,
+                    &model_id,
+                    &execution_environment_label,
+                    &session_root_kind,
+                    &workdir_str,
+                    run_started_at,
+                    perf_run_id.as_ref(),
+                    &mut telemetry_emitted,
+                    &mut terminal_status,
+                    event.created_at,
+                    error_message,
+                    event.payload_json.get("details").cloned(),
+                    event.payload_json.get("kind").cloned(),
+                    false,
                 )
                 .await;
             }
