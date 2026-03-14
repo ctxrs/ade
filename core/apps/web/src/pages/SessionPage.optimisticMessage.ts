@@ -32,19 +32,17 @@ type BuildOptimisticUserMessageInput = {
 
 export function buildOptimisticUserMessage(input: BuildOptimisticUserMessageInput): Message {
   const orderSeq = allocateOptimisticOrderSeq(input.orderSeqSeedMs);
-  const message: Message = {
+  return {
     id: input.messageId,
     session_id: input.sessionId,
     task_id: input.taskId,
     turn_id: input.turnId,
     turn_sequence: orderSeq,
+    order_seq: orderSeq,
     role: "user",
     content: input.content,
     attachments: input.attachments,
     delivery: input.delivery,
     created_at: input.createdAt ?? new Date().toISOString(),
   };
-  // `order_seq` exists at runtime but is not yet reflected in the generated web client type.
-  (message as Message & { order_seq?: number }).order_seq = orderSeq;
-  return message;
 }

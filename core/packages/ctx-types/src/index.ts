@@ -603,6 +603,7 @@ export type Message = {
   task_id: string;
   turn_id?: string | null;
   turn_sequence?: number | null;
+  order_seq?: number | null;
   role: "user" | "assistant" | "system";
   content: string;
   attachments?: MessageAttachment[];
