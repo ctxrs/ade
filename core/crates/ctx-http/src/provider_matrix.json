@@ -347,17 +347,17 @@
       "releases": [
         {
           "version": "0.0.0-ctx.5",
-          "upstream_version": "0.111.0",
+          "upstream_version": "0.114.0",
           "provenance": {
             "upstream_repo": "openai/codex",
-            "upstream_release_tag": "rust-v0.111.0",
-            "upstream_commit_sha": "8c75cd9afcd405d134530e53c78e5e0e4e5312a3",
+            "upstream_release_tag": "rust-v0.114.0",
+            "upstream_commit_sha": "b9904c0ae4ecb773549efd6ea3fb05229402fdb9",
             "ctx_repo": "ctxrs/codex-crp",
             "ctx_release_tag": "v0.0.0-ctx.5"
           },
           "status": "supported",
           "context_min": "0.1.0",
-          "notes": "Release-only intake from openai/codex rust-v0.111.0"
+          "notes": "Release-only intake from openai/codex rust-v0.114.0"
         },
         {
           "version": "0.0.0-ctx.2",
