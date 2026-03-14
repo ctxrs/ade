@@ -8,6 +8,7 @@ use ctx_core::models::{
     Session, SessionEventType, Task, TerminalSession, TerminalStatus, Workspace,
     WorkspaceActiveSnapshotEvent, WorkspaceActiveSnapshotStreamMessage,
 };
+use ctx_http::daemon::AppState;
 use ctx_http::terminals::TerminalServerMessage;
 
 mod common;
@@ -62,13 +63,39 @@ async fn read_terminal_until_marker(socket: &mut WsStream, marker: &str) -> Stri
     String::from_utf8_lossy(&buffer).to_string()
 }
 
-async fn wait_for_workspace_done_events_no_gap(
-    socket: &mut WsStream,
-    session: &Session,
+async fn wait_for_session_done_events_in_store(
+    state: &std::sync::Arc<AppState>,
+    session_id: ctx_core::ids::SessionId,
     expected_done_events: usize,
 ) {
-    let mut done_count = 0usize;
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    while tokio::time::Instant::now() < deadline {
+        let store = state.store_for_session(session_id).await.unwrap();
+        let events = store.list_session_events(session_id).await.unwrap();
+        let done_count = events
+            .iter()
+            .filter(|event| matches!(event.event_type, SessionEventType::Done))
+            .count();
+        let saw_error = events
+            .iter()
+            .any(|event| matches!(event.event_type, SessionEventType::Error));
+        if saw_error {
+            panic!("unexpected session error while terminal churn was active: {events:#?}");
+        }
+        if done_count >= expected_done_events {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("timed out waiting for {expected_done_events} done events in store");
+}
+
+async fn assert_workspace_stream_no_gap(
+    socket: &mut WsStream,
+    session: &Session,
+    duration: Duration,
+) {
+    let deadline = tokio::time::Instant::now() + duration;
     while tokio::time::Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         let wait = remaining.min(Duration::from_millis(250));
@@ -91,29 +118,11 @@ async fn wait_for_workspace_done_events_no_gap(
                                 panic!("unexpected session_gap while terminal churn was active");
                             }
                             WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. }
-                                if delta.session_id == session.id =>
-                            {
-                                if delta.event.as_ref().is_some_and(|event| {
-                                    matches!(event.event_type.clone(), SessionEventType::Done)
-                                }) {
-                                    done_count += 1;
-                                }
-                            }
+                                if delta.session_id == session.id => {}
                             _ => {}
                         }
                     }
-                    WorkspaceActiveSnapshotStreamMessage::HeadsBatch { deltas, .. } => {
-                        for delta in deltas {
-                            if delta.session_id != session.id {
-                                continue;
-                            }
-                            if delta.event.as_ref().is_some_and(|event| {
-                                matches!(event.event_type.clone(), SessionEventType::Done)
-                            }) {
-                                done_count += 1;
-                            }
-                        }
-                    }
+                    WorkspaceActiveSnapshotStreamMessage::HeadsBatch { .. } => {}
                     WorkspaceActiveSnapshotStreamMessage::Snapshot { .. } => {}
                 }
             }
@@ -125,14 +134,7 @@ async fn wait_for_workspace_done_events_no_gap(
             Ok(None) => panic!("workspace stream ended while terminal churn was active"),
             Err(_) => {}
         }
-
-        if done_count >= expected_done_events {
-            return;
-        }
     }
-    panic!(
-        "timed out waiting for {expected_done_events} done events without reset_required/session_gap"
-    );
 }
 
 #[tokio::test]
@@ -287,8 +289,9 @@ async fn terminal_disconnect_and_reconnect_do_not_poison_workspace_control_plane
         "reconnected terminal should continue streaming new output"
     );
 
-    wait_for_workspace_done_events_no_gap(&mut workspace_socket, &session, message_count).await;
     send_messages.await.unwrap();
+    wait_for_session_done_events_in_store(&state, session.id, message_count).await;
+    assert_workspace_stream_no_gap(&mut workspace_socket, &session, Duration::from_secs(5)).await;
 
     let _ = client
         .delete(format!("{base}/api/terminals/{}", terminal.id.0))

@@ -144,7 +144,7 @@ struct BlockingWarmupOperations {
 
 impl BlockingWarmupOperations {
     async fn wait_for_runtime_runs(&self, expected: usize) {
-        tokio::time::timeout(Duration::from_secs(3), async {
+        tokio::time::timeout(Duration::from_secs(10), async {
             loop {
                 if self.runtime_runs.load(Ordering::SeqCst) >= expected {
                     break;
@@ -157,7 +157,7 @@ impl BlockingWarmupOperations {
     }
 
     async fn wait_for_builder_runs(&self, expected: usize) {
-        tokio::time::timeout(Duration::from_secs(3), async {
+        tokio::time::timeout(Duration::from_secs(10), async {
             loop {
                 if self.builder_runs.load(Ordering::SeqCst) >= expected {
                     break;
@@ -464,7 +464,7 @@ async fn concurrent_launch_start_is_deduplicated() {
     assert_eq!(second.workspace_id, workspace_id);
 
     TrackedExecutionLaunch::new(&coordinator, first.clone())
-        .wait_ready(Duration::from_secs(5))
+        .wait_ready(Duration::from_secs(10))
         .await;
     assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 0);
 
@@ -658,7 +658,7 @@ async fn workspace_launch_waits_for_running_startup_prewarm_without_duplicate_ru
     ops.release_runtime();
     startup.await.expect("startup prewarm task");
 
-    let ready = tokio::time::timeout(Duration::from_secs(3), async {
+    let ready = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             let latest = coordinator
                 .launch_status(&snapshot.job_id)

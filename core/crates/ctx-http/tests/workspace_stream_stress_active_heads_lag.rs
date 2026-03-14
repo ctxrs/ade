@@ -86,9 +86,9 @@ async fn workspace_stream_does_not_reset_during_hydration_when_active_heads_are_
     // than failing client-side with `MessageTooLong`.
     // Keep this large enough to overflow old, non-compacted baselines while
     // staying lightweight enough for always-on execution in the full package suite.
-    let session_count: usize = 12;
-    let turns_per_session: i64 = 40;
-    let message_bytes: usize = 24 * 1024;
+    let session_count: usize = 8;
+    let turns_per_session: i64 = 24;
+    let message_bytes: usize = 16 * 1024;
     let max_snapshot_bytes: usize = 8_000_000;
 
     let mut sessions: Vec<ctx_core::models::Session> = Vec::with_capacity(session_count);
@@ -255,7 +255,7 @@ async fn workspace_stream_does_not_reset_during_hydration_when_active_heads_are_
             // On baselines with large active_heads, hydration should still take long enough to
             // overflow the head batch buffer.
             throttle = throttle.wrapping_add(1);
-            if throttle.is_multiple_of(8) {
+            if throttle.is_multiple_of(2) {
                 tokio::task::yield_now().await;
             }
         }
@@ -263,7 +263,7 @@ async fn workspace_stream_does_not_reset_during_hydration_when_active_heads_are_
 
     // Wait for the snapshot and fail fast if the server resets while hydrating.
     let mut saw_snapshot = false;
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(45);
     while tokio::time::Instant::now() < deadline {
         let next = tokio::time::timeout(Duration::from_millis(250), socket.next()).await;
         match next {

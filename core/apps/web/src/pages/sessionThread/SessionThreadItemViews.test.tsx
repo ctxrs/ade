@@ -125,7 +125,7 @@ describe("WorkbenchToolRow", () => {
           updates_seen: 1,
           has_details: true,
         }}
-        verbosity="normal"
+        verbosity="default"
         expanded={false}
         onToggle={onToggle}
       />,

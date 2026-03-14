@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::body::Body;
+use axum::body::{to_bytes, Body};
 use axum::http::{Method, Request, StatusCode};
 use tower::ServiceExt;
 
@@ -41,6 +41,42 @@ impl Drop for EnvGuard {
     }
 }
 
+async fn fixture_model_id_for_provider(
+    app: &axum::Router,
+    workspace_id: uuid::Uuid,
+    provider_id: &str,
+) -> String {
+    let fallback_model_id = match provider_id {
+        "codex" => Some("gpt-5.4/medium"),
+        "claude-crp" => Some("default/medium"),
+        _ => None,
+    };
+    let (status, body): (StatusCode, serde_json::Value) = common::json_request(
+        app,
+        Method::GET,
+        format!("/api/workspaces/{workspace_id}/providers/{provider_id}/options"),
+        None,
+    )
+    .await;
+    if status != StatusCode::OK {
+        return fallback_model_id.unwrap_or("fake-model").to_string();
+    }
+    body.pointer("/models/current_model_id")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            body.pointer("/models/models")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|models| models.first())
+                .and_then(|model| model.get("id"))
+                .and_then(serde_json::Value::as_str)
+        })
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or(fallback_model_id)
+        .unwrap_or("fake-model")
+        .to_string()
+}
+
 async fn post_message(app: &axum::Router, session_id: uuid::Uuid, content: &str) {
     let req = Request::builder()
         .method(Method::POST)
@@ -52,6 +88,47 @@ async fn post_message(app: &axum::Router, session_id: uuid::Uuid, content: &str)
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
+}
+
+async fn create_session_for_provider(
+    app: &axum::Router,
+    task_id: uuid::Uuid,
+    provider_id: &str,
+    model_id: &str,
+) -> Result<ctx_core::models::Session, String> {
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/api/tasks/{task_id}/sessions"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::json!({
+                "provider_id": provider_id,
+                "model_id": model_id,
+            })
+            .to_string(),
+        ))
+        .map_err(|error| format!("build request failed: {error}"))?;
+    let res = app
+        .clone()
+        .oneshot(req)
+        .await
+        .map_err(|error| format!("request failed: {error}"))?;
+    let status = res.status();
+    let body = to_bytes(res.into_body(), usize::MAX)
+        .await
+        .map_err(|error| format!("read body failed: {error}"))?;
+    if status != StatusCode::OK {
+        return Err(format!(
+            "create_session status {status}; model_id={model_id}; body={}",
+            String::from_utf8_lossy(&body)
+        ));
+    }
+    serde_json::from_slice(&body).map_err(|error| {
+        format!(
+            "failed to parse session JSON: {error}; body={}",
+            String::from_utf8_lossy(&body)
+        )
+    })
 }
 
 async fn wait_for_done(state: &Arc<AppState>, session_id: ctx_core::ids::SessionId) {
@@ -241,7 +318,15 @@ async fn provider_scenarios_offline_crp_fixtures() {
 
     let mut failures: HashMap<&str, String> = HashMap::new();
     for provider_id in provider_ids {
-        let session = common::create_session(&app, task.id.0, provider_id, "fake-model").await;
+        let model_id = fixture_model_id_for_provider(&app, ws.id.0, provider_id).await;
+        let session =
+            match create_session_for_provider(&app, task.id.0, provider_id, &model_id).await {
+                Ok(session) => session,
+                Err(err) => {
+                    failures.insert(*provider_id, err);
+                    continue;
+                }
+            };
 
         post_message(&app, session.id.0, "hi").await;
         wait_for_done(&state, session.id).await;
