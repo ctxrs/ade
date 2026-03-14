@@ -257,7 +257,7 @@ pub(super) async fn desktop_git_clone(
 }
 
 fn desktop_settings_path(_app: &tauri::AppHandle) -> Result<PathBuf> {
-    let root = ctx_fs::paths::default_ctx_home().context("resolving ctx home")?;
+    let root = desktop_local_data_root()?;
     Ok(ctx_fs::paths::ui_root(root).join("desktop-settings.json"))
 }
 
