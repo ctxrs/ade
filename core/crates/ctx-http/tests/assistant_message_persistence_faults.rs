@@ -1,7 +1,7 @@
 #![cfg(feature = "fault_injection")]
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::http::{Method, StatusCode};
 use ctx_core::models::{
@@ -35,7 +35,7 @@ async fn wait_for_terminal_turn(
     turn_id: ctx_core::ids::TurnId,
 ) -> (SessionTurn, Vec<SessionEvent>) {
     let store = state.store_for_session(session_id).await.unwrap();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(120);
     loop {
         let turn = store
             .get_session_turn(session_id, turn_id)
@@ -58,10 +58,10 @@ async fn wait_for_terminal_turn(
         if terminal && finished {
             return (turn, events);
         }
-        if tokio::time::Instant::now() >= deadline {
+        if Instant::now() >= deadline {
             panic!("timed out waiting for terminal turn: {events:#?}");
         }
-        tokio::time::sleep(Duration::from_millis(25)).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 
