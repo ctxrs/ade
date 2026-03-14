@@ -134,6 +134,11 @@ export const TaskRow = React.memo(function TaskRow({
         hovered ? "wb-task-row-hovered" : ""
       }`}
       role="listitem"
+      onContextMenuCapture={(e) => {
+        if (showMenu) return;
+        e.preventDefault();
+        e.stopPropagation();
+      }}
       onClick={() => onFocusTask(taskId)}
       onPointerEnter={() => onHoverEnter(taskId)}
       onPointerLeave={() => onHoverLeave(taskId)}

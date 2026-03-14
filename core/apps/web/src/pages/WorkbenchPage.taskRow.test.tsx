@@ -132,9 +132,11 @@ describe("TaskRow rename draft", () => {
     );
 
     const row = screen.getByRole("listitem", { name: "New Task" });
+    const title = row.querySelector(".wb-task-title");
+    expect(title).not.toBeNull();
     const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 88, clientY: 44 });
 
-    row.dispatchEvent(event);
+    title?.dispatchEvent(event);
 
     expect(event.defaultPrevented).toBe(true);
     expect(onOpenMenu).not.toHaveBeenCalled();
