@@ -53,7 +53,6 @@ test("default fixture carries explicit linux-arm OpenRouter model overrides", ()
     codex: "google/gemini-3-flash-preview",
     opencode: "google/gemini-3-flash-preview",
     goose: "google/gemini-3-flash-preview",
-    openhands: "google/gemini-3-flash-preview",
     droid: "google/gemini-3-flash-preview",
   });
 });

@@ -224,6 +224,80 @@ fn managed_provider_runtime_command_rejects_path_style_gemini_runtime() {
 }
 
 #[test]
+fn managed_provider_runtime_command_wraps_goose_binary_with_acp_subcommand() {
+    let data_root = tempfile::tempdir().expect("tempdir");
+    let goose_bin = data_root.path().join("bin").join("goose");
+    std::fs::create_dir_all(goose_bin.parent().expect("parent")).expect("mkdir goose");
+    std::fs::write(&goose_bin, b"#!/bin/sh\nexit 0\n").expect("write goose");
+    let managed = AgentServerCommand {
+        command: goose_bin.to_string_lossy().to_string(),
+        args: Vec::new(),
+        dependencies: Vec::new(),
+        managed: None,
+    };
+    let bridge = AgentServerCommand {
+        command: "/tmp/acp-crp-bridge".to_string(),
+        args: vec!["--stdio".to_string()],
+        dependencies: Vec::new(),
+        managed: None,
+    };
+
+    let runtime =
+        managed_provider_runtime_command(data_root.path(), "goose", managed, Some(&bridge))
+            .expect("wrapped runtime command");
+
+    let acp_command_index = runtime
+        .args
+        .iter()
+        .position(|arg| arg == "--acp-command")
+        .expect("missing --acp-command");
+    assert_eq!(runtime.command, "/tmp/acp-crp-bridge");
+    assert_eq!(
+        runtime.args.get(acp_command_index + 1),
+        Some(&format!("{} acp", goose_bin.to_string_lossy()))
+    );
+}
+
+#[test]
+fn managed_provider_runtime_command_keeps_existing_goose_shim_shape_unchanged() {
+    let data_root = tempfile::tempdir().expect("tempdir");
+    let goose_shim = data_root
+        .path()
+        .join("dist")
+        .join("bin")
+        .join("goose-acp.js");
+    std::fs::create_dir_all(goose_shim.parent().expect("parent")).expect("mkdir shim");
+    std::fs::write(&goose_shim, b"#!/usr/bin/env node\n").expect("write shim");
+    let managed = AgentServerCommand {
+        command: goose_shim.to_string_lossy().to_string(),
+        args: Vec::new(),
+        dependencies: Vec::new(),
+        managed: None,
+    };
+    let bridge = AgentServerCommand {
+        command: "/tmp/acp-crp-bridge".to_string(),
+        args: vec!["--stdio".to_string()],
+        dependencies: Vec::new(),
+        managed: None,
+    };
+
+    let runtime =
+        managed_provider_runtime_command(data_root.path(), "goose", managed, Some(&bridge))
+            .expect("wrapped runtime command");
+
+    let acp_command_index = runtime
+        .args
+        .iter()
+        .position(|arg| arg == "--acp-command")
+        .expect("missing --acp-command");
+    assert_eq!(runtime.command, "/tmp/acp-crp-bridge");
+    assert_eq!(
+        runtime.args.get(acp_command_index + 1),
+        Some(&goose_shim.to_string_lossy().to_string())
+    );
+}
+
+#[test]
 fn managed_provider_runtime_command_keeps_native_crp_providers_raw() {
     let managed = AgentServerCommand {
         command: "/tmp/codex-crp".to_string(),
@@ -242,9 +316,7 @@ fn managed_provider_runtime_command_keeps_native_crp_providers_raw() {
 #[test]
 fn bundled_seed_js_runtime_prepends_bundled_node_bin_dir() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let script = temp
-        .path()
-        .join("providers/goose/macos/aarch64/goose-acp.js");
+    let script = temp.path().join("providers/pi/macos/aarch64/pi-acp.js");
     std::fs::create_dir_all(script.parent().expect("parent")).expect("mkdir script");
     std::fs::write(&script, b"#!/usr/bin/env node\n").expect("write script");
 
@@ -255,7 +327,7 @@ fn bundled_seed_js_runtime_prepends_bundled_node_bin_dir() {
     std::fs::write(&node_bin, b"ok").expect("write node");
 
     let runtime_cmd = ProviderRuntimeCommand {
-        provider_id: "goose".to_string(),
+        provider_id: "pi".to_string(),
         command_abs_path: script.to_string_lossy().to_string(),
         args: Vec::new(),
         dependencies: Vec::new(),
@@ -425,7 +497,7 @@ fn managed_provider_target_support_matches_install_kind() {
         }
     }
     assert_eq!(
-        archive_count, 8,
+        archive_count, 7,
         "curated harness archive set changed; verify linux target coverage expectations"
     );
     assert!(is_supported_managed_provider_for_target(
@@ -438,6 +510,32 @@ fn managed_provider_target_support_matches_install_kind() {
         "auggie",
         InstallTarget::Container
     ));
+}
+
+#[test]
+fn managed_python_runtime_spec_defaults_to_global_python_runtime() {
+    let spec = managed_python_runtime_spec(None, None);
+
+    assert_eq!(
+        spec,
+        ManagedPythonRuntimeSpec {
+            version: PYTHON_VERSION.to_string(),
+            build_tag: PYTHON_BUILD_TAG.to_string(),
+        }
+    );
+}
+
+#[test]
+fn managed_python_runtime_spec_allows_provider_scoped_override() {
+    let spec = managed_python_runtime_spec(Some("3.12.13"), Some("20260303"));
+
+    assert_eq!(
+        spec,
+        ManagedPythonRuntimeSpec {
+            version: "3.12.13".to_string(),
+            build_tag: "20260303".to_string(),
+        }
+    );
 }
 
 #[test]

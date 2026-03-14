@@ -93,10 +93,10 @@ if [[ "$TARGET_OS" != "$HOST_OS" || "$TARGET_ARCH" != "$HOST_ARCH" ]]; then
 fi
 
 case "${TARGET_OS}/${TARGET_ARCH}" in
-  linux/x86_64) RUST_TARGET="x86_64-unknown-linux-gnu" ;;
-  linux/aarch64) RUST_TARGET="aarch64-unknown-linux-gnu" ;;
-  macos/x86_64) RUST_TARGET="x86_64-apple-darwin" ;;
-  macos/aarch64) RUST_TARGET="aarch64-apple-darwin" ;;
+  linux/x86_64) RUST_TARGET="x86_64-unknown-linux-gnu"; PYTHON_TARGET="x86_64-unknown-linux-gnu" ;;
+  linux/aarch64) RUST_TARGET="aarch64-unknown-linux-gnu"; PYTHON_TARGET="aarch64-unknown-linux-gnu" ;;
+  macos/x86_64) RUST_TARGET="x86_64-apple-darwin"; PYTHON_TARGET="x86_64-apple-darwin" ;;
+  macos/aarch64) RUST_TARGET="aarch64-apple-darwin"; PYTHON_TARGET="aarch64-apple-darwin" ;;
   *)
     echo "error: unsupported target ${TARGET_OS}/${TARGET_ARCH}" >&2
     exit 2
@@ -316,6 +316,224 @@ process.stdout.write(
 NODE
 }
 
+get_archive_target_metadata() {
+  local provider_id="$1"
+  node - "$MATRIX_JSON" "$provider_id" "$TARGET_OS" "$TARGET_ARCH" <<'NODE'
+const fs = require("node:fs");
+const [matrixPath, providerId, os, arch] = process.argv.slice(2);
+const matrix = JSON.parse(fs.readFileSync(matrixPath, "utf8"));
+const provider = (matrix.providers || []).find((entry) => entry?.id === providerId);
+if (!provider) {
+  process.exit(1);
+}
+const managed = provider.managed_install || {};
+if (managed.kind !== "archive") {
+  process.exit(2);
+}
+const targets = managed.targets || {};
+const keys = [
+  `${os}-${arch}`,
+  os === "macos" ? `darwin-${arch}` : null,
+].filter(Boolean);
+const target = keys.map((key) => targets[key]).find(Boolean);
+if (!target) {
+  process.exit(3);
+}
+const out = [
+  String(target.url || "").trim(),
+  String(target.archive || "").trim(),
+  String(target.bin_path || "").trim(),
+  String(target.sha256 || "").trim(),
+];
+if (!out[0] || !out[1] || !out[2]) {
+  process.exit(4);
+}
+process.stdout.write(`${out.join("\t")}\n`);
+NODE
+}
+
+stage_matrix_archive_provider() {
+  local provider_id="$1"
+  local version="$2"
+  local metadata
+  metadata="$(get_archive_target_metadata "$provider_id")"
+  local url archive_kind bin_path expected_sha
+  IFS=$'\t' read -r url archive_kind bin_path expected_sha <<< "$metadata"
+
+  require_cmd curl
+
+  local filename
+  filename="$(basename "${url%%\?*}")"
+  local staged_archive="$OUT_DIR/$filename"
+  curl --fail --location --silent --show-error "$url" --output "$staged_archive"
+
+  local sha
+  sha="$(sha256_file "$staged_archive")"
+  if [[ -n "$expected_sha" && "$sha" != "$expected_sha" ]]; then
+    echo "error: sha256 mismatch for $provider_id archive (expected $expected_sha, got $sha)" >&2
+    exit 4
+  fi
+  local size_bytes
+  size_bytes="$(file_size_bytes "$staged_archive")"
+  write_entry "$provider_id" "$version" "$archive_kind" "$bin_path" "$staged_archive" "$sha" "$size_bytes"
+}
+
+venv_exe() {
+  local venv_dir="$1"
+  local tool_name="$2"
+  if [[ "$TARGET_OS" == "windows" ]]; then
+    echo "$venv_dir/Scripts/${tool_name}.exe"
+  else
+    echo "$venv_dir/bin/$tool_name"
+  fi
+}
+
+get_python_provider_metadata() {
+  local provider_id="$1"
+  node - "$MATRIX_JSON" "$provider_id" <<'NODE'
+const fs = require("node:fs");
+const [matrixPath, providerId] = process.argv.slice(2);
+const matrix = JSON.parse(fs.readFileSync(matrixPath, "utf8"));
+const provider = (matrix.providers || []).find((entry) => entry?.id === providerId);
+if (!provider) {
+  process.exit(1);
+}
+const managed = provider.managed_install || {};
+if (managed.kind !== "python") {
+  process.exit(2);
+}
+const out = [
+  String(managed.package || "").trim(),
+  String(managed.entrypoint || "").trim(),
+  String(managed.version || "").trim(),
+  String(managed.python_version || "").trim(),
+  String(managed.python_build_tag || "").trim(),
+];
+if (!out[0] || !out[1] || !out[2] || !out[3] || !out[4]) {
+  process.exit(3);
+}
+process.stdout.write(`${out.join("\t")}\n`);
+NODE
+}
+
+ensure_python_runtime() {
+  local python_version="$1"
+  local python_build_tag="$2"
+  local runtime_root="$OUT_DIR/.python-runtimes/cpython-${python_version}+${python_build_tag}-${PYTHON_TARGET}"
+  local python_bin
+  python_bin="$runtime_root/bin/python3"
+  if [[ ! -f "$python_bin" ]]; then
+    python_bin="$runtime_root/bin/python"
+  fi
+  if [[ -f "$python_bin" ]]; then
+    echo "$runtime_root"
+    return
+  fi
+
+  require_cmd curl
+  require_cmd tar
+
+  mkdir -p "$(dirname "$runtime_root")"
+  local asset="cpython-${python_version}+${python_build_tag}-${PYTHON_TARGET}-install_only.tar.gz"
+  local url="https://github.com/indygreg/python-build-standalone/releases/download/${python_build_tag}/${asset}"
+  local archive_tmp
+  archive_tmp="$(mktemp "$OUT_DIR/.python-runtime.XXXXXX.tar.gz")"
+  curl --fail --location --silent --show-error "$url" --output "$archive_tmp"
+
+  local extract_dir
+  extract_dir="$(mktemp -d "$OUT_DIR/.python-runtime-extract.XXXXXX")"
+  tar -xzf "$archive_tmp" -C "$extract_dir"
+  rm -f "$archive_tmp"
+
+  local extracted="$extract_dir/python"
+  if [[ ! -d "$extracted" ]]; then
+    echo "error: python runtime extraction failed for ${python_version}+${python_build_tag}" >&2
+    exit 1
+  fi
+
+  rm -rf "$runtime_root"
+  mv "$extracted" "$runtime_root"
+  rm -rf "$extract_dir"
+  echo "$runtime_root"
+}
+
+stage_matrix_python_provider() {
+  local provider_id="$1"
+  local metadata
+  metadata="$(get_python_provider_metadata "$provider_id")"
+  local package entrypoint version python_version python_build_tag
+  IFS=$'\t' read -r package entrypoint version python_version python_build_tag <<< "$metadata"
+
+  local runtime_root
+  runtime_root="$(ensure_python_runtime "$python_version" "$python_build_tag")"
+  local runtime_python="$runtime_root/bin/python3"
+  if [[ ! -f "$runtime_python" ]]; then
+    runtime_python="$runtime_root/bin/python"
+  fi
+  if [[ ! -f "$runtime_python" ]]; then
+    echo "error: missing bundled python runtime for $provider_id at $runtime_root" >&2
+    exit 1
+  fi
+
+  local provider_root
+  provider_root="$(mktemp -d "$OUT_DIR/.python-provider-${provider_id}.XXXXXX")"
+  mkdir -p "$provider_root/bin" "$provider_root/site-packages"
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a "$runtime_root/" "$provider_root/python/"
+  else
+    mkdir -p "$provider_root/python"
+    (
+      cd "$runtime_root"
+      tar -cf - .
+    ) | (
+      cd "$provider_root/python"
+      tar -xf -
+    )
+  fi
+
+  local staged_python="$provider_root/python/bin/python3"
+  if [[ ! -f "$staged_python" ]]; then
+    staged_python="$provider_root/python/bin/python"
+  fi
+  if [[ ! -f "$staged_python" ]]; then
+    echo "error: missing staged python binary for $provider_id: $provider_root/python" >&2
+    exit 1
+  fi
+
+  PIP_DISABLE_PIP_VERSION_CHECK=1 \
+  PIP_NO_INPUT=1 \
+  "$staged_python" -m pip install --disable-pip-version-check --no-input --target "$provider_root/site-packages" "${package}==${version}" >&2
+
+  local entrypoint_rel="bin/${entrypoint}"
+  local entrypoint_path="$provider_root/$entrypoint_rel"
+  cat > "$entrypoint_path" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PYTHONNOUSERSITE=1
+export PYTHONPATH="$script_dir/../site-packages${PYTHONPATH:+:$PYTHONPATH}"
+python_bin="$script_dir/../python/bin/python3"
+if [[ ! -x "$python_bin" ]]; then
+  python_bin="$script_dir/../python/bin/python"
+fi
+exec "$python_bin" -c 'from openhands_cli.entrypoint import main; raise SystemExit(main())' "$@"
+SH
+  chmod +x "$entrypoint_path"
+
+  local stage_dir="$OUT_DIR/providers/$provider_id/$version/$TARGET_OS/$TARGET_ARCH"
+  mkdir -p "$stage_dir"
+  local archive_path="$stage_dir/${provider_id}-${version}-${TARGET_OS}-${TARGET_ARCH}.tar.gz"
+  create_deterministic_tar_gz "$archive_path" "$provider_root" "bin" "python" "site-packages"
+  local sha
+  sha="$(sha256_file "$archive_path")"
+  local size_bytes
+  size_bytes="$(file_size_bytes "$archive_path")"
+  write_entry "$provider_id" "$version" "tar_gz" "$entrypoint_rel" "$archive_path" "$sha" "$size_bytes"
+
+  rm -rf "$provider_root"
+}
+
 stage_archive_from_binary() {
   local provider_id="$1"
   local version="$2"
@@ -526,10 +744,10 @@ for provider in "${providers[@]}"; do
       build_node_project_provider "$provider" "$ROOT/harness-adapters/pi-acp" "dist/bin/pi-acp.js" "$version"
       ;;
     openhands)
-      build_node_project_provider "$provider" "$ROOT/harness-adapters/openhands-acp" "dist/bin/openhands-acp.js" "$version"
+      stage_matrix_python_provider "$provider"
       ;;
     goose)
-      build_node_project_provider "$provider" "$ROOT/harness-adapters/openhands-acp" "dist/bin/goose-acp.js" "$version"
+      stage_matrix_archive_provider "$provider" "$version"
       ;;
     claude-crp)
       build_claude_crp_provider "$version"

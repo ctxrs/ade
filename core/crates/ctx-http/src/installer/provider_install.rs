@@ -315,6 +315,8 @@ pub(super) async fn install_provider_impl(
                 version,
                 entrypoint,
                 args,
+                python_version,
+                python_build_tag,
             } => {
                 if !matches!(target, InstallTarget::Host | InstallTarget::Container) {
                     anyhow::bail!(
@@ -345,6 +347,8 @@ pub(super) async fn install_provider_impl(
                     package,
                     version,
                     entrypoint,
+                    python_version.as_deref(),
+                    python_build_tag.as_deref(),
                     resolve_install_args(args),
                     target,
                     &mut stage,

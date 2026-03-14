@@ -80,6 +80,8 @@ type ResolveInitialHarnessSelectionArgs = {
   mruProviderId?: string | null;
 };
 
+const NON_AUTOSELECTABLE_PROVIDER_IDS = new Set(["fake"]);
+
 export function resolveInitialHarnessSelection({
   providerIds,
   providerOptions,
@@ -88,14 +90,27 @@ export function resolveInitialHarnessSelection({
   const authedProviderIds = providerIds.filter((providerId) =>
     hasConfiguredHarnessAuth(providerId, providerOptions[providerId]),
   );
+  const hasRealInstalledProvider = providerIds.some(
+    (providerId) => !NON_AUTOSELECTABLE_PROVIDER_IDS.has(providerId),
+  );
 
   const mru = (mruProviderId ?? "").trim();
   if (mru && authedProviderIds.includes(mru)) {
+    if (NON_AUTOSELECTABLE_PROVIDER_IDS.has(mru) && hasRealInstalledProvider) {
+      return null;
+    }
     return mru;
   }
 
   if (authedProviderIds.length === 1) {
-    return authedProviderIds[0];
+    const [onlyAuthedProviderId] = authedProviderIds;
+    if (
+      NON_AUTOSELECTABLE_PROVIDER_IDS.has(onlyAuthedProviderId)
+      && hasRealInstalledProvider
+    ) {
+      return null;
+    }
+    return onlyAuthedProviderId;
   }
 
   return null;

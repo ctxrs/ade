@@ -86,8 +86,20 @@ const PROVIDERS: &[ProviderSpec] = &[
     },
     ProviderSpec {
         id: "cline",
-        fallback_cmd: "cline-acp",
-        fallback_args: &[],
+        fallback_cmd: "cline",
+        fallback_args: &["--acp"],
+        opencode_config: false,
+    },
+    ProviderSpec {
+        id: "goose",
+        fallback_cmd: "goose",
+        fallback_args: &["acp"],
+        opencode_config: false,
+    },
+    ProviderSpec {
+        id: "openhands",
+        fallback_cmd: "openhands",
+        fallback_args: &["acp"],
         opencode_config: false,
     },
     ProviderSpec {
@@ -391,23 +403,6 @@ async fn probe_command(
     ))
 }
 
-fn create_cline_vscode_stub() -> std::io::Result<(tempfile::TempDir, PathBuf)> {
-    let dir = tempfile::tempdir()?;
-    let node_modules = dir.path().join("node_modules/vscode");
-    fs::create_dir_all(&node_modules)?;
-    let node_path = dir.path().join("node_modules");
-    let stub = r#"module.exports = {
-  workspace: {
-    getConfiguration: () => ({ get: () => undefined })
-  },
-  ExtensionMode: { Development: 0, Production: 1, Test: 2 },
-  ExtensionKind: { UI: 1, Workspace: 2 }
-};
-"#;
-    fs::write(node_modules.join("index.js"), stub)?;
-    Ok((dir, node_path))
-}
-
 fn create_qwen_settings_home() -> std::io::Result<tempfile::TempDir> {
     let dir = tempfile::tempdir()?;
     let qwen_dir = dir.path().join(".qwen");
@@ -444,6 +439,107 @@ fn create_kimi_share_home() -> std::io::Result<(tempfile::TempDir, PathBuf)> {
     });
     fs::write(credentials_dir.join("kimi-code.json"), token.to_string())?;
     Ok((dir, share_dir))
+}
+
+fn create_cline_config_dir(
+    api_key: &str,
+    model_id: &str,
+    _base_url: &str,
+) -> std::io::Result<tempfile::TempDir> {
+    let dir = tempfile::Builder::new()
+        .prefix("ctx-cline-home-")
+        .tempdir()?;
+    let data_dir = dir.path().join("data");
+    let settings_dir = data_dir.join("settings");
+    fs::create_dir_all(&settings_dir)?;
+
+    let global_state = serde_json::json!({
+        "actModeApiProvider": "openrouter",
+        "planModeApiProvider": "openrouter",
+        "actModeOpenRouterModelId": model_id,
+        "planModeOpenRouterModelId": model_id,
+        "welcomeViewCompleted": true,
+    });
+    fs::write(
+        data_dir.join("globalState.json"),
+        serde_json::to_vec_pretty(&global_state)?,
+    )?;
+
+    let secrets = serde_json::json!({
+        "openRouterApiKey": api_key,
+    });
+    let secrets_path = data_dir.join("secrets.json");
+    fs::write(&secrets_path, serde_json::to_vec_pretty(&secrets)?)?;
+
+    let mcp_settings = serde_json::json!({
+        "mcpServers": {},
+    });
+    fs::write(
+        settings_dir.join("cline_mcp_settings.json"),
+        serde_json::to_vec_pretty(&mcp_settings)?,
+    )?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&secrets_path, std::fs::Permissions::from_mode(0o600));
+    }
+
+    Ok(dir)
+}
+
+fn create_goose_path_root() -> std::io::Result<(tempfile::TempDir, PathBuf)> {
+    let dir = tempfile::Builder::new()
+        .prefix("ctx-goose-home-")
+        .tempdir()?;
+    let path_root = dir.path().join("goose");
+    fs::create_dir_all(&path_root)?;
+    Ok((dir, path_root))
+}
+
+fn normalize_openhands_model_id(model_id: &str) -> String {
+    if model_id.starts_with("openrouter/") {
+        return model_id.to_string();
+    }
+    format!("openrouter/{model_id}")
+}
+
+fn create_openhands_persistence_dir(
+    api_key: &str,
+    model_id: &str,
+    base_url: &str,
+) -> std::io::Result<(tempfile::TempDir, PathBuf)> {
+    let dir = tempfile::Builder::new()
+        .prefix("ctx-openhands-home-")
+        .tempdir()?;
+    let persistence_dir = dir.path().join("persistence");
+    fs::create_dir_all(&persistence_dir)?;
+    let agent_settings = serde_json::json!({
+        "llm": {
+            "model": normalize_openhands_model_id(model_id),
+            "api_key": api_key,
+            "base_url": base_url,
+            "usage_id": "agent",
+        },
+        "tools": [
+            { "name": "file_editor", "params": {} },
+            { "name": "task_tracker", "params": {} },
+            { "name": "delegate", "params": {} },
+        ],
+        "mcp_config": {},
+        "kind": "Agent",
+    });
+    let agent_settings_path = persistence_dir.join("agent_settings.json");
+    fs::write(
+        &agent_settings_path,
+        serde_json::to_vec_pretty(&agent_settings)?,
+    )?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&agent_settings_path, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok((dir, persistence_dir))
 }
 
 fn env_truthy(name: &str) -> bool {
@@ -524,14 +620,6 @@ fn provider_skip_reason(provider: ProviderSpec) -> Option<String> {
             return Some("missing CONTINUE_API_KEY; continue CLI uses Continue Cloud".to_string());
         }
     }
-    if provider.id == "cline" {
-        let allow = env_truthy("CLINE_TOKEN_TESTS");
-        if !allow {
-            return Some(
-                "cline-acp bundle missing deps (vscode/grpc-health-check/package.json); set CLINE_TOKEN_TESTS=1 to attempt".to_string(),
-            );
-        }
-    }
     if provider.id == "pi" {
         let allow = env_truthy("PI_TOKEN_TESTS");
         if !allow {
@@ -549,6 +637,29 @@ fn maybe_add_qwen_auth(args: &mut Vec<String>) {
     }
     args.push("--auth-type".to_string());
     args.push("openai".to_string());
+}
+
+fn maybe_add_goose_acp_subcommand(args: &mut Vec<String>) {
+    if !args.iter().any(|arg| arg == "acp") {
+        args.insert(0, "acp".to_string());
+    }
+    let has_developer_builtin = args.windows(2).any(|window| {
+        window[0] == "--with-builtin"
+            && window[1]
+                .split(',')
+                .any(|value| value.trim() == "developer")
+    });
+    if !has_developer_builtin {
+        args.push("--with-builtin".to_string());
+        args.push("developer".to_string());
+    }
+}
+
+fn maybe_add_openhands_env_override(args: &mut Vec<String>) {
+    if args.iter().any(|arg| arg == "--override-with-envs") {
+        return;
+    }
+    args.push("--override-with-envs".to_string());
 }
 
 fn build_env(
@@ -612,6 +723,45 @@ fn build_env(
         env.insert("KIMI_BASE_URL".to_string(), openrouter_base_url.to_string());
         env.insert("KIMI_API_KEY".to_string(), openrouter_api_key.to_string());
         env.insert("KIMI_MODEL_NAME".to_string(), model_id.to_string());
+    }
+    if provider.id == "goose" {
+        env.insert("CTX_PROVIDER_MODE".to_string(), String::new());
+        env.remove("OPENAI_API_KEY");
+        env.remove("OPENAI_BASE_URL");
+        env.remove("OPENAI_MODEL");
+        env.remove("OPENROUTER_BASE_URL");
+        env.insert("GOOSE_PROVIDER".to_string(), "openrouter".to_string());
+        env.insert("GOOSE_DISABLE_KEYRING".to_string(), "1".to_string());
+        env.insert("GOOSE_MODE".to_string(), "auto".to_string());
+        env.insert("GOOSE_MODEL".to_string(), model_id.to_string());
+    }
+    if provider.id == "openhands" {
+        env.insert(
+            "CTX_PROVIDER_MODE".to_string(),
+            "always-approve".to_string(),
+        );
+        env.insert(
+            "CTX_CRP_DISABLE_MODEL_OVERRIDE".to_string(),
+            "1".to_string(),
+        );
+        env.remove("OPENAI_API_KEY");
+        env.remove("OPENAI_BASE_URL");
+        env.remove("OPENAI_MODEL");
+        env.insert("LLM_API_KEY".to_string(), openrouter_api_key.to_string());
+        env.insert("LLM_BASE_URL".to_string(), openrouter_base_url.to_string());
+        env.insert(
+            "LLM_MODEL".to_string(),
+            normalize_openhands_model_id(model_id),
+        );
+    }
+    if provider.id == "cline" {
+        env.insert("CTX_PROVIDER_MODE".to_string(), "act".to_string());
+        env.remove("OPENAI_API_KEY");
+        env.remove("OPENAI_BASE_URL");
+        env.insert(
+            "CTX_CRP_DISABLE_MODEL_OVERRIDE".to_string(),
+            "1".to_string(),
+        );
     }
     if provider.id == "mistral" {
         let mistral_api_key = std::env::var("MISTRAL_API_KEY")
@@ -767,12 +917,20 @@ async fn acp_crp_bridge_token_providers() {
         }
 
         eprintln!("running {}...", provider.id);
-        let mut _cline_stub = None;
+        let mut _isolated_home = None;
         let mut _qwen_home = None;
         let mut _kimi_home = None;
+        let mut _goose_home = None;
+        let mut _openhands_home = None;
         let mut acp_args = acp_cmd.args.clone();
         if provider.id == "qwen" {
             maybe_add_qwen_auth(&mut acp_args);
+        }
+        if provider.id == "goose" {
+            maybe_add_goose_acp_subcommand(&mut acp_args);
+        }
+        if provider.id == "openhands" {
+            maybe_add_openhands_env_override(&mut acp_args);
         }
         let provider_model_id = provider_model_id(&default_model_id, *provider);
         let env_model_id = provider_model_id
@@ -785,19 +943,22 @@ async fn acp_crp_bridge_token_providers() {
             *provider,
         );
         if provider.id == "cline" {
-            match create_cline_vscode_stub() {
-                Ok((dir, node_path)) => {
-                    env.insert("NODE_PATH".to_string(), node_path.display().to_string());
-                    _cline_stub = Some(dir);
+            match create_cline_config_dir(&openrouter_api_key, env_model_id, &openrouter_base_url) {
+                Ok(dir) => {
+                    env.insert("CLINE_DIR".to_string(), dir.path().display().to_string());
+                    env.insert("CLINE_NO_AUTO_UPDATE".to_string(), "1".to_string());
+                    _isolated_home = Some(dir);
                 }
                 Err(err) => {
                     eprintln!(
-                        "skipping {}: failed to create vscode stub: {}",
+                        "skipping {}: failed to create Cline config dir: {}",
                         provider.id, err
                     );
                     continue;
                 }
             }
+        }
+        if provider.id == "cline" {
             if let Err(reason) =
                 probe_command(&acp_cmd.command, &acp_cmd.args, &["--version"], Some(&env)).await
             {
@@ -832,6 +993,46 @@ async fn acp_crp_bridge_token_providers() {
                 Err(err) => {
                     eprintln!(
                         "skipping {}: failed to create kimi share dir: {}",
+                        provider.id, err
+                    );
+                    continue;
+                }
+            }
+        }
+        if provider.id == "goose" {
+            match create_goose_path_root() {
+                Ok((dir, path_root)) => {
+                    env.insert(
+                        "GOOSE_PATH_ROOT".to_string(),
+                        path_root.display().to_string(),
+                    );
+                    _goose_home = Some(dir);
+                }
+                Err(err) => {
+                    eprintln!(
+                        "skipping {}: failed to create goose path root: {}",
+                        provider.id, err
+                    );
+                    continue;
+                }
+            }
+        }
+        if provider.id == "openhands" {
+            match create_openhands_persistence_dir(
+                &openrouter_api_key,
+                env_model_id,
+                &openrouter_base_url,
+            ) {
+                Ok((dir, persistence_dir)) => {
+                    env.insert(
+                        "OPENHANDS_PERSISTENCE_DIR".to_string(),
+                        persistence_dir.display().to_string(),
+                    );
+                    _openhands_home = Some(dir);
+                }
+                Err(err) => {
+                    eprintln!(
+                        "skipping {}: failed to create OpenHands persistence dir: {}",
                         provider.id, err
                     );
                     continue;
@@ -910,6 +1111,110 @@ mod tests {
     }
 
     #[test]
+    fn build_env_sets_goose_openrouter_runtime_contract() {
+        let env = build_env(
+            "test-openrouter-key",
+            "https://openrouter.ai/api/v1",
+            DEFAULT_OPENROUTER_MODEL,
+            ProviderSpec {
+                id: "goose",
+                fallback_cmd: "goose",
+                fallback_args: &["acp"],
+                opencode_config: false,
+            },
+        );
+
+        assert_eq!(
+            env.get("GOOSE_PROVIDER").map(String::as_str),
+            Some("openrouter")
+        );
+        assert_eq!(
+            env.get("GOOSE_DISABLE_KEYRING").map(String::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            env.get("GOOSE_MODEL").map(String::as_str),
+            Some(DEFAULT_OPENROUTER_MODEL)
+        );
+        assert_eq!(env.get("GOOSE_MODE").map(String::as_str), Some("auto"));
+        assert_eq!(env.get("CTX_PROVIDER_MODE").map(String::as_str), Some(""));
+        assert!(!env.contains_key("OPENAI_API_KEY"));
+        assert!(!env.contains_key("OPENAI_BASE_URL"));
+        assert!(!env.contains_key("OPENAI_MODEL"));
+        assert!(!env.contains_key("OPENAI_HOST"));
+        assert!(!env.contains_key("OPENROUTER_BASE_URL"));
+        assert!(!env.contains_key("OPENROUTER_HOST"));
+        assert!(!env.contains_key("OPENROUTER_MODEL"));
+    }
+
+    #[test]
+    fn build_env_sets_cline_write_mode() {
+        let env = build_env(
+            "test-openrouter-key",
+            "https://openrouter.ai/api/v1",
+            DEFAULT_OPENROUTER_MODEL,
+            ProviderSpec {
+                id: "cline",
+                fallback_cmd: "cline",
+                fallback_args: &["--acp"],
+                opencode_config: false,
+            },
+        );
+
+        assert_eq!(
+            env.get("CTX_PROVIDER_MODE").map(String::as_str),
+            Some("act")
+        );
+        assert_eq!(
+            env.get("CTX_CRP_DISABLE_MODEL_OVERRIDE")
+                .map(String::as_str),
+            Some("1")
+        );
+        assert!(!env.contains_key("OPENAI_API_KEY"));
+        assert!(!env.contains_key("OPENAI_BASE_URL"));
+    }
+
+    #[test]
+    fn build_env_sets_openhands_llm_contract() {
+        let env = build_env(
+            "test-openrouter-key",
+            "https://openrouter.ai/api/v1",
+            DEFAULT_OPENROUTER_MODEL,
+            ProviderSpec {
+                id: "openhands",
+                fallback_cmd: "openhands",
+                fallback_args: &["acp"],
+                opencode_config: false,
+            },
+        );
+
+        assert_eq!(
+            env.get("LLM_API_KEY").map(String::as_str),
+            Some("test-openrouter-key")
+        );
+        assert_eq!(
+            env.get("LLM_BASE_URL").map(String::as_str),
+            Some("https://openrouter.ai/api/v1")
+        );
+        assert_eq!(
+            env.get("LLM_MODEL").map(String::as_str),
+            Some("openrouter/openai/gpt-4.1-mini")
+        );
+        assert_eq!(
+            env.get("CTX_PROVIDER_MODE").map(String::as_str),
+            Some("always-approve")
+        );
+        assert_eq!(
+            env.get("CTX_CRP_DISABLE_MODEL_OVERRIDE")
+                .map(String::as_str),
+            Some("1")
+        );
+        assert!(!env.contains_key("OPENAI_API_KEY"));
+        assert!(!env.contains_key("OPENAI_BASE_URL"));
+        assert!(!env.contains_key("OPENAI_MODEL"));
+    }
+
+    #[test]
     fn requested_token_providers_parses_csv() {
         unsafe {
             std::env::set_var("CTX_TOKENS_PROVIDERS", " qwen, mistral ,,opencode ");
@@ -978,6 +1283,17 @@ mod tests {
         })
         .expect("amp should be skipped");
         assert!(reason.contains("does not support OpenRouter endpoint mode"));
+    }
+
+    #[test]
+    fn provider_skip_reason_does_not_gate_cline_anymore() {
+        let reason = provider_skip_reason(ProviderSpec {
+            id: "cline",
+            fallback_cmd: "cline",
+            fallback_args: &["--acp"],
+            opencode_config: false,
+        });
+        assert!(reason.is_none());
     }
 
     #[test]

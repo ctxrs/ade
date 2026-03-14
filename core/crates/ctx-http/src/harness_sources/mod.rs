@@ -28,6 +28,7 @@ const PROVIDER_COPILOT: &str = "copilot";
 const PROVIDER_AUGGIE: &str = "auggie";
 const PROVIDER_PI: &str = "pi";
 const PROVIDER_CURSOR: &str = "cursor";
+const PROVIDER_CLINE: &str = "cline";
 const CTX_DROID_HOST_AUTH_PATH_ENV: &str = "CTX_DROID_HOST_AUTH_PATH";
 
 const CLAUDE_AUTH_TYPE_API_KEY: &str = "api_key";
@@ -85,8 +86,8 @@ use model_catalog::{
 use registry::registry_path;
 #[cfg(test)]
 use runtime_resolution::{
-    codex_endpoint_home, droid_endpoint_home, gemini_endpoint_home, qwen_endpoint_home,
-    seed_droid_auth_from_host_path,
+    cline_endpoint_home, codex_endpoint_home, droid_endpoint_home, gemini_endpoint_home,
+    qwen_endpoint_home, seed_droid_auth_from_host_path,
 };
 #[cfg(test)]
 use validation::normalize_manual_model_ids;

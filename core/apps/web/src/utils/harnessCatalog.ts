@@ -5,11 +5,13 @@ import clineLogo from "../assets/emdash-logos/cline.png";
 import cursorLogo from "../assets/emdash-logos/cursorlogo.png";
 import droidLogo from "../assets/emdash-logos/factorydroid.png";
 import geminiLogo from "../assets/emdash-logos/gemini.png";
+import gooseLogo from "../assets/emdash-logos/goose.png";
 import copilotLogo from "../assets/emdash-logos/ghcopilot.png";
 import kimiLogo from "../assets/emdash-logos/kimi.png";
 import mistralLogo from "../assets/emdash-logos/mistral.png";
 import codexLogo from "../assets/emdash-logos/openai.png";
 import opencodeLogo from "../assets/emdash-logos/opencode.png";
+import openhandsLogo from "../assets/harness-logos/openhands.png";
 import qwenLogo from "../assets/emdash-logos/qwen.png";
 import piLogo from "../assets/harness-logos/pi.svg";
 
@@ -31,8 +33,10 @@ export const HARNESS_CATALOG: HarnessCatalogEntry[] = [
   { id: "amp", label: "Amp", logoSrc: ampLogo },
   { id: "droid", label: "Droid", logoSrc: droidLogo, invertInDark: true },
   { id: "gemini", label: "Gemini", logoSrc: geminiLogo },
+  { id: "goose", label: "Goose", logoSrc: gooseLogo },
   { id: "copilot", label: "Copilot", logoSrc: copilotLogo, invertInDark: true },
   { id: "opencode", label: "OpenCode", logoSrc: opencodeLogo, invertInDark: true },
+  { id: "openhands", label: "OpenHands", logoSrc: openhandsLogo, invertInDark: true },
   { id: "cline", label: "Cline", logoSrc: clineLogo },
   { id: "mistral", label: "Mistral Vibe", logoSrc: mistralLogo },
   { id: "auggie", label: "Auggie", logoSrc: augmentLogo, invertInDark: true },
@@ -45,8 +49,6 @@ export const UNSUPPORTED_HARNESS_IDS = new Set([
   "aider",
   "kilo",
   "junie",
-  "goose",
-  "openhands",
 ]);
 
 export const HARNESS_LOGO_SRCS = Array.from(

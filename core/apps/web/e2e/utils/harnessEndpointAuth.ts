@@ -31,6 +31,27 @@ async function readOptionalVisibleText(locator: Locator): Promise<string> {
   return normalizeText(text);
 }
 
+async function visibleHarnessMenuNames(menu: Locator): Promise<string[]> {
+  const rows = menu.locator(".wb-harness-row .wb-harness-name");
+  const count = await rows.count().catch(() => 0);
+  const out: string[] = [];
+  for (let idx = 0; idx < count; idx += 1) {
+    const text = normalizeText(await rows.nth(idx).textContent().catch(() => ""));
+    if (text) out.push(text);
+  }
+  return out;
+}
+
+async function modalDebugSummary(modal: Locator): Promise<string> {
+  const text = normalizeText(await modal.textContent().catch(() => ""));
+  const hasApiKeyButton = (
+    await modal.getByRole("button", { name: /^API Key$/i }).count().catch(() => 0)
+  ) > 0;
+  const hasPasswordInput = (await modal.locator("input[type='password']").count().catch(() => 0)) > 0;
+  const hasProviderSelect = (await modal.getByRole("combobox").count().catch(() => 0)) > 0;
+  return `modal_text=${JSON.stringify(text)} api_key_button=${hasApiKeyButton} password_input=${hasPasswordInput} combobox=${hasProviderSelect}`;
+}
+
 const harnessTriggerLabel = (page: Page) =>
   page
     .locator(
@@ -162,6 +183,13 @@ async function dismissAuthModalIfOpen(page: Page): Promise<void> {
   await modal.waitFor({ state: "hidden", timeout: 4_000 }).catch(() => {});
 }
 
+async function advanceToApiKeyStageIfPresent(modal: Locator): Promise<void> {
+  const apiKeyButton = modal.getByRole("button", { name: /^API Key$/i }).first();
+  if ((await apiKeyButton.count()) === 0) return;
+  if (!(await apiKeyButton.isVisible().catch(() => false))) return;
+  await apiKeyButton.click();
+}
+
 export async function configureHarnessEndpointAuthViaModal(
   page: Page,
   entry: EndpointHarnessMatrixEntry,
@@ -179,7 +207,11 @@ export async function configureHarnessEndpointAuthViaModal(
   try {
     await expect(rowButton).toBeVisible({ timeout: 10_000 });
   } catch {
-    return { ok: false, detail: "harness menu row not found" };
+    const visibleNames = await visibleHarnessMenuNames(menu);
+    return {
+      ok: false,
+      detail: `harness menu row not found; visible=${visibleNames.join(", ") || "none"}`,
+    };
   }
   await rowButton.click();
 
@@ -190,7 +222,7 @@ export async function configureHarnessEndpointAuthViaModal(
     return { ok: false, detail: "auth modal did not open (provider may already be configured)" };
   }
 
-  await modal.getByRole("button", { name: "API Key" }).click();
+  await advanceToApiKeyStageIfPresent(modal);
   if (options.geminiAuthMode) {
     await chooseGeminiAuthMode(page, modal, options.geminiAuthMode);
   }
@@ -230,7 +262,11 @@ export async function configureHarnessEndpointAuthViaModal(
     }
   } else {
     const passwordInput = modal.locator("input[type='password']").first();
-    await expect(passwordInput).toBeVisible({ timeout: 10_000 });
+    try {
+      await expect(passwordInput).toBeVisible({ timeout: 10_000 });
+    } catch {
+      throw new Error(`password input not visible; ${await modalDebugSummary(modal)}`);
+    }
     await passwordInput.fill(apiKey);
   }
 

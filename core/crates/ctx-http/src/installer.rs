@@ -63,10 +63,11 @@ pub use provider_install::refresh_provider_statuses;
 pub use title_generation::install_title_generation_local_with_progress;
 pub(crate) use toolchains::{
     archive_bin_requires_node_runtime, ensure_node_runtime, ensure_python_pip,
-    ensure_python_runtime, install_dir_for_provider, install_dir_rel, node_runtime_dependency_id,
-    node_runtime_dependency_metadata, node_runtime_dependency_targets_for_install_target,
-    npm_dependency_matches, npm_install, npm_install_one, resolve_node_package_bin,
-    sanitize_npm_package_for_path, venv_exe, NodeRuntime,
+    ensure_python_runtime_versioned, install_dir_for_provider, install_dir_rel,
+    node_runtime_dependency_id, node_runtime_dependency_metadata,
+    node_runtime_dependency_targets_for_install_target, npm_dependency_matches, npm_install,
+    npm_install_one, resolve_node_package_bin, sanitize_npm_package_for_path, venv_exe,
+    NodeRuntime,
 };
 
 const NODE_VERSION: &str = "24.14.0";
@@ -96,6 +97,12 @@ static PROVIDER_INSTALL_LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> 
 const TITLE_GENERATION_LOCAL_INSTALL_KEY: &str = "title_generation_local";
 const MANAGED_PROVIDER_INSTALLS_ENABLED: bool = true;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ManagedPythonRuntimeSpec {
+    version: String,
+    build_tag: String,
+}
+
 pub(crate) fn expected_managed_dependency_version(dependency_id: &str) -> Option<&'static str> {
     let normalized = dependency_id.trim().to_ascii_lowercase();
     if normalized.starts_with("runtime-node-") {
@@ -113,6 +120,23 @@ fn node_runtime_install_lock() -> &'static Mutex<()> {
 
 fn python_runtime_install_lock() -> &'static Mutex<()> {
     PYTHON_RUNTIME_INSTALL_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn managed_python_runtime_spec(
+    python_version: Option<&str>,
+    python_build_tag: Option<&str>,
+) -> ManagedPythonRuntimeSpec {
+    let version = python_version
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(PYTHON_VERSION)
+        .to_string();
+    let build_tag = python_build_tag
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(PYTHON_BUILD_TAG)
+        .to_string();
+    ManagedPythonRuntimeSpec { version, build_tag }
 }
 
 fn provider_install_locks() -> &'static Mutex<HashMap<String, Arc<Mutex<()>>>> {
@@ -695,17 +719,22 @@ async fn install_managed_python_provider(
     package: &str,
     version: &str,
     entrypoint: &str,
+    python_version: Option<&str>,
+    python_build_tag: Option<&str>,
     args: Vec<String>,
     target: InstallTarget,
     stage: &mut &'static str,
 ) -> Result<ManagedProviderInstall> {
     *stage = "python";
-    let python = ensure_python_runtime(
+    let python_runtime = managed_python_runtime_spec(python_version, python_build_tag);
+    let python = ensure_python_runtime_versioned(
         state,
         install_id,
         provider_id,
         &state.core.data_root,
         target,
+        &python_runtime.version,
+        &python_runtime.build_tag,
     )
     .await
     .context("ensuring managed Python runtime")?

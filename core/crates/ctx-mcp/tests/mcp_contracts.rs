@@ -72,6 +72,66 @@ async fn mcp_tools_list_hides_lsp_by_default() {
 }
 
 #[tokio::test]
+async fn mcp_subagent_tool_schemas_avoid_top_level_combinators() {
+    let bin = mcp_bin();
+    let mut child = Command::new(bin)
+        .arg("--stdio")
+        .env("CTX_DAEMON_URL", "http://127.0.0.1:9")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout).lines();
+
+    for msg in [
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}),
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
+    ] {
+        stdin.write_all(msg.to_string().as_bytes()).await.unwrap();
+        stdin.write_all(b"\n").await.unwrap();
+    }
+    stdin.flush().await.unwrap();
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let mut got_list = false;
+    while tokio::time::Instant::now() < deadline {
+        let Some(line) = reader.next_line().await.unwrap() else {
+            break;
+        };
+        let v: Value = serde_json::from_str(&line).unwrap();
+        if v.get("id").and_then(|id| id.as_i64()) == Some(2) {
+            let tools = v["result"]["tools"].as_array().expect("tools array");
+            for tool_name in ["subagent_wait", "subagent_interrupt"] {
+                let tool = tools
+                    .iter()
+                    .find(|tool| tool.get("name").and_then(|name| name.as_str()) == Some(tool_name))
+                    .unwrap_or_else(|| panic!("missing tool {tool_name}"));
+                let schema = tool["inputSchema"].as_object().expect("inputSchema object");
+                assert_eq!(
+                    schema.get("type").and_then(|value| value.as_str()),
+                    Some("object"),
+                    "expected {tool_name} schema type=object"
+                );
+                for key in ["anyOf", "allOf", "oneOf", "not", "enum"] {
+                    assert!(
+                        !schema.contains_key(key),
+                        "expected {tool_name} schema to avoid top-level {key}"
+                    );
+                }
+            }
+            got_list = true;
+            break;
+        }
+    }
+
+    assert!(got_list, "did not receive tools/list response");
+    let _ = child.kill().await;
+}
+
+#[tokio::test]
 async fn mcp_list_workspaces_scrubs_internal_ids() {
     let app = Router::new()
         .route(

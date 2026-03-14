@@ -229,10 +229,10 @@ fn rewrite_container_args_for_linux_keeps_explicit_node_binary_for_acp_command()
     let tmp = tempfile::tempdir().expect("tempdir");
     let host_provider = tmp
         .path()
-        .join("bundles/providers/goose/macos/aarch64/goose-acp.js");
+        .join("bundles/providers/pi/macos/aarch64/pi-acp.js");
     let linux_provider = tmp
         .path()
-        .join("bundles/providers/goose/linux/aarch64/goose-acp.js");
+        .join("bundles/providers/pi/linux/aarch64/pi-acp.js");
     let host_node = tmp
         .path()
         .join("bundles/runtimes/node/macos/aarch64/node-v1/bin/node");
@@ -284,9 +284,7 @@ fn rewrite_container_command_for_linux_uses_explicit_node_binary_for_js_entrypoi
     fs::create_dir_all(&node_dir).expect("mkdir node dir");
     let node_bin = node_dir.join("node");
     fs::write(&node_bin, b"ok").expect("write node");
-    let script = tmp
-        .path()
-        .join("providers/goose/linux/aarch64/goose-acp.js");
+    let script = tmp.path().join("providers/pi/linux/aarch64/pi-acp.js");
     fs::create_dir_all(script.parent().expect("parent")).expect("mkdir script parent");
     fs::write(&script, b"#!/usr/bin/env node\n").expect("write script");
 

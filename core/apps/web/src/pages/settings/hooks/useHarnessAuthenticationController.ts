@@ -63,10 +63,12 @@ import {
   harnessEndpointRequiresApiShape,
   harnessEndpointRequiresBaseUrl,
   messageFromError,
+  preferredModelIdFromEndpointSummary,
   shouldCompleteClaudeLoginWithCallbackCode,
   supportsHarnessEndpointConfigStatic,
   supportsHarnessSubscriptionAuth,
   toErrorObject,
+  validateHarnessEndpointConfigForOwnerScope,
 } from "./harnessAuth/capabilities";
 import { runHarnessSubscriptionFlow } from "./harnessAuth/subscriptionFlow";
 import { useHarnessAuthAccountCollections } from "./harnessAuth/useHarnessAuthAccountCollections";
@@ -552,6 +554,16 @@ export function useHarnessAuthenticationController({
       .split(/[\n,]/)
       .map((value: string) => value.trim())
       .filter((value: string) => value.length > 0);
+    const ownerScope = requireOwnerScope();
+    const existingEndpoint = (providerHarnessConfigRef.current[modal.provider_id]?.endpoints ?? [])
+      .find((endpoint) => endpoint.id === modal.endpoint_id);
+    const ownerScopeValidationError = validateHarnessEndpointConfigForOwnerScope({
+      ownerScopeKind: ownerScope.kind,
+      providerId: modal.provider_id,
+      baseUrl: effectiveBaseUrl,
+      manualModelIds,
+      existingPreferredModelId: preferredModelIdFromEndpointSummary(existingEndpoint),
+    });
 
     if (requiresBaseUrl && !base) {
       setProviderError("Endpoint base URL is required.");
@@ -564,6 +576,10 @@ export function useHarnessAuthenticationController({
       }
     } else if (!key) {
       setProviderError("API key is required.");
+      return;
+    }
+    if (ownerScopeValidationError) {
+      setProviderError(ownerScopeValidationError);
       return;
     }
 
@@ -592,7 +608,7 @@ export function useHarnessAuthenticationController({
       }
 
       const result = await submitProviderEndpointAuth({
-        ownerScope: requireOwnerScope(),
+        ownerScope,
         providerId: modal.provider_id,
         requestedEndpointId: modal.endpoint_id?.trim() || null,
         name,

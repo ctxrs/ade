@@ -397,16 +397,21 @@ pub fn bundled_provider_command(provider_id: &str) -> Option<BundledCommand> {
     })
 }
 
-fn bundled_runtime(id: &str) -> Option<BundledRuntimePaths> {
-    let root = bundle_dir()?;
-    let manifest = load_manifest()?;
+fn bundled_runtime_from_manifest(
+    root: &Path,
+    manifest: &BundledAssetsManifest,
+    id: &str,
+    version: Option<&str>,
+) -> Option<BundledRuntimePaths> {
     let (os, arch) = current_platform();
-    let entry = manifest
-        .runtimes
-        .iter()
-        .find(|r| r.id == id && r.os == os && r.arch == arch)?;
+    let entry = manifest.runtimes.iter().find(|r| {
+        r.id == id
+            && r.os == os
+            && r.arch == arch
+            && version.is_none_or(|expected| r.version == expected)
+    })?;
     let runtime_root =
-        resolve_bundle_path(&root, &entry.root).unwrap_or_else(|| root.join(&entry.root));
+        resolve_bundle_path(root, &entry.root).unwrap_or_else(|| root.join(&entry.root));
     if !runtime_root.exists() {
         return None;
     }
@@ -438,12 +443,24 @@ fn bundled_runtime(id: &str) -> Option<BundledRuntimePaths> {
     })
 }
 
+fn bundled_runtime(id: &str) -> Option<BundledRuntimePaths> {
+    let root = bundle_dir()?;
+    let manifest = load_manifest()?;
+    bundled_runtime_from_manifest(&root, &manifest, id, None)
+}
+
 pub fn bundled_node_runtime() -> Option<BundledRuntimePaths> {
     bundled_runtime("node")
 }
 
 pub fn bundled_python_runtime() -> Option<BundledRuntimePaths> {
     bundled_runtime("python")
+}
+
+pub fn bundled_python_runtime_version(version: &str) -> Option<BundledRuntimePaths> {
+    let root = bundle_dir()?;
+    let manifest = load_manifest()?;
+    bundled_runtime_from_manifest(&root, &manifest, "python", Some(version))
 }
 
 pub fn bundled_podman_runtime() -> Option<BundledRuntimePaths> {
@@ -630,6 +647,55 @@ mod tests {
         let root = PathBuf::from("/tmp/ctx-bundles-root");
         let resolved = manifest_path(&root);
         assert_eq!(resolved, root.join(MANIFEST_FILENAME));
+    }
+
+    #[test]
+    fn bundled_runtime_from_manifest_can_select_python_by_version() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let (os, arch) = current_platform();
+        let runtime_313_root = root.join("runtimes/python/runtime-313");
+        let runtime_312_root = root.join("runtimes/python/runtime-312");
+        std::fs::create_dir_all(runtime_313_root.join("bin")).expect("mkdir runtime 313");
+        std::fs::create_dir_all(runtime_312_root.join("bin")).expect("mkdir runtime 312");
+        std::fs::write(runtime_313_root.join("bin/python3"), b"python313")
+            .expect("write runtime 313");
+        std::fs::write(runtime_312_root.join("bin/python3"), b"python312")
+            .expect("write runtime 312");
+
+        let manifest = BundledAssetsManifest {
+            version: MANIFEST_VERSION,
+            generated_at: None,
+            providers: vec![],
+            runtimes: vec![
+                BundledRuntime {
+                    id: "python".to_string(),
+                    version: "3.13.12".to_string(),
+                    os: os.to_string(),
+                    arch: arch.to_string(),
+                    sha256: "sha313".to_string(),
+                    root: "runtimes/python/runtime-313".to_string(),
+                    bin: "bin/python3".to_string(),
+                    npm_cli: None,
+                },
+                BundledRuntime {
+                    id: "python".to_string(),
+                    version: "3.12.13".to_string(),
+                    os: os.to_string(),
+                    arch: arch.to_string(),
+                    sha256: "sha312".to_string(),
+                    root: "runtimes/python/runtime-312".to_string(),
+                    bin: "bin/python3".to_string(),
+                    npm_cli: None,
+                },
+            ],
+            images: vec![],
+        };
+
+        let bundled = bundled_runtime_from_manifest(root, &manifest, "python", Some("3.12.13"))
+            .expect("bundled runtime");
+        assert_eq!(bundled.version, "3.12.13");
+        assert_eq!(bundled.bin, runtime_312_root.join("bin/python3"));
     }
 
     #[test]

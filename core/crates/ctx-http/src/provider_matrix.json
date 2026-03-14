@@ -636,49 +636,53 @@
       "display_name": "Goose",
       "tier": "tier2",
       "command": {
-        "command": "goose-acp",
-        "args": []
+        "command": "goose",
+        "args": [
+          "acp"
+        ]
       },
       "managed_install": {
         "kind": "archive",
-        "version": "0.1.1",
-        "args": [],
+        "version": "1.27.2",
+        "args": [
+          "acp"
+        ],
         "targets": {
           "darwin-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/goose/0.1.1/macos/aarch64/goose-0.1.1-macos-aarch64.tar.gz",
-            "archive": "tar_gz",
-            "bin_path": "dist/bin/goose-acp.js",
-            "sha256": "7581a1e5a9c00b128b377b9ab9c90d90e1c919b13aa62ecbc79a34f9eef40a0d"
+            "url": "https://github.com/block/goose/releases/download/v1.27.2/goose-aarch64-apple-darwin.tar.bz2",
+            "archive": "tar_bz2",
+            "bin_path": "goose",
+            "sha256": "9e66353e19169f550a32054498ca60a2a2cb20238eb91aee38780a4347322ee9"
           },
           "darwin-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/goose/0.1.1/macos/x86_64/goose-0.1.1-macos-x86_64.tar.gz",
-            "archive": "tar_gz",
-            "bin_path": "dist/bin/goose-acp.js",
-            "sha256": "7581a1e5a9c00b128b377b9ab9c90d90e1c919b13aa62ecbc79a34f9eef40a0d"
+            "url": "https://github.com/block/goose/releases/download/v1.27.2/goose-x86_64-apple-darwin.tar.bz2",
+            "archive": "tar_bz2",
+            "bin_path": "goose",
+            "sha256": "04c66f8944795c996cdeb2f27a9a3fb6f6ea418320dacf2ec9a61af726fb5249"
           },
           "linux-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/goose/0.1.1/linux/aarch64/goose-0.1.1-linux-aarch64.tar.gz",
-            "archive": "tar_gz",
-            "bin_path": "dist/bin/goose-acp.js",
-            "sha256": "e27501114ac5ffcbfe6356af8c162f77e3cbe5f46d3b2eeb4b7f614f8c7051cf"
+            "url": "https://github.com/block/goose/releases/download/v1.27.2/goose-aarch64-unknown-linux-gnu.tar.bz2",
+            "archive": "tar_bz2",
+            "bin_path": "goose",
+            "sha256": "37f84a491e78793b8132a9dcc614d24bc4ac0b0fde7547fb40ed27bcb8480520"
           },
           "linux-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/goose/0.1.1/linux/x86_64/goose-0.1.1-linux-x86_64.tar.gz",
-            "archive": "tar_gz",
-            "bin_path": "dist/bin/goose-acp.js",
-            "sha256": "e27501114ac5ffcbfe6356af8c162f77e3cbe5f46d3b2eeb4b7f614f8c7051cf"
+            "url": "https://github.com/block/goose/releases/download/v1.27.2/goose-x86_64-unknown-linux-gnu.tar.bz2",
+            "archive": "tar_bz2",
+            "bin_path": "goose",
+            "sha256": "735e74578a25045e048e6b98fbb7fba342eeea0052b38f67a17ecd3cd3036067"
           },
           "macos-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/goose/0.1.1/macos/aarch64/goose-0.1.1-macos-aarch64.tar.gz",
-            "archive": "tar_gz",
-            "bin_path": "dist/bin/goose-acp.js",
-            "sha256": "7581a1e5a9c00b128b377b9ab9c90d90e1c919b13aa62ecbc79a34f9eef40a0d"
+            "url": "https://github.com/block/goose/releases/download/v1.27.2/goose-aarch64-apple-darwin.tar.bz2",
+            "archive": "tar_bz2",
+            "bin_path": "goose",
+            "sha256": "9e66353e19169f550a32054498ca60a2a2cb20238eb91aee38780a4347322ee9"
           },
           "macos-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/goose/0.1.1/macos/x86_64/goose-0.1.1-macos-x86_64.tar.gz",
-            "archive": "tar_gz",
-            "bin_path": "dist/bin/goose-acp.js",
-            "sha256": "7581a1e5a9c00b128b377b9ab9c90d90e1c919b13aa62ecbc79a34f9eef40a0d"
+            "url": "https://github.com/block/goose/releases/download/v1.27.2/goose-x86_64-apple-darwin.tar.bz2",
+            "archive": "tar_bz2",
+            "bin_path": "goose",
+            "sha256": "04c66f8944795c996cdeb2f27a9a3fb6f6ea418320dacf2ec9a61af726fb5249"
           }
         }
       },
@@ -690,11 +694,10 @@
       },
       "releases": [
         {
-          "version": "0.1.1",
+          "version": "1.27.2",
           "status": "supported",
           "context_min": "0.1.0",
-          "notes": "Pinned workspace adapter source (harness-adapters/openhands-acp/package.json)",
-          "upstream_version": "1.27.2"
+          "notes": "Pinned upstream Goose CLI ACP release"
         }
       ]
     },
@@ -825,51 +828,21 @@
       "display_name": "OpenHands",
       "tier": "tier2",
       "command": {
-        "command": "openhands-acp",
-        "args": []
+        "command": "openhands",
+        "args": [
+          "acp"
+        ]
       },
       "managed_install": {
-        "kind": "archive",
-        "version": "0.1.1",
-        "args": [],
-        "targets": {
-          "darwin-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/openhands/0.1.1/macos/aarch64/openhands-0.1.1-macos-aarch64.tar.gz",
-            "archive": "tar_gz",
-            "bin_path": "dist/bin/openhands-acp.js",
-            "sha256": "d034740f817e7de11bf1c7bf819f8ec361cb91671a586f5adfa01635fa9a46ee"
-          },
-          "darwin-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/openhands/0.1.1/macos/x86_64/openhands-0.1.1-macos-x86_64.tar.gz",
-            "archive": "tar_gz",
-            "bin_path": "dist/bin/openhands-acp.js",
-            "sha256": "d034740f817e7de11bf1c7bf819f8ec361cb91671a586f5adfa01635fa9a46ee"
-          },
-          "linux-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/openhands/0.1.1/linux/aarch64/openhands-0.1.1-linux-aarch64.tar.gz",
-            "archive": "tar_gz",
-            "bin_path": "dist/bin/openhands-acp.js",
-            "sha256": "ed21c5f73fbeb35991cde88eb43901bc5db6ae4bf5e8309b01279a879094ce61"
-          },
-          "linux-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/openhands/0.1.1/linux/x86_64/openhands-0.1.1-linux-x86_64.tar.gz",
-            "archive": "tar_gz",
-            "bin_path": "dist/bin/openhands-acp.js",
-            "sha256": "ed21c5f73fbeb35991cde88eb43901bc5db6ae4bf5e8309b01279a879094ce61"
-          },
-          "macos-aarch64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/openhands/0.1.1/macos/aarch64/openhands-0.1.1-macos-aarch64.tar.gz",
-            "archive": "tar_gz",
-            "bin_path": "dist/bin/openhands-acp.js",
-            "sha256": "d034740f817e7de11bf1c7bf819f8ec361cb91671a586f5adfa01635fa9a46ee"
-          },
-          "macos-x86_64": {
-            "url": "https://example-project.supabase.co/storage/v1/object/public/releases/providers/openhands/0.1.1/macos/x86_64/openhands-0.1.1-macos-x86_64.tar.gz",
-            "archive": "tar_gz",
-            "bin_path": "dist/bin/openhands-acp.js",
-            "sha256": "d034740f817e7de11bf1c7bf819f8ec361cb91671a586f5adfa01635fa9a46ee"
-          }
-        }
+        "kind": "python",
+        "package": "openhands",
+        "version": "1.13.1",
+        "entrypoint": "openhands",
+        "args": [
+          "acp"
+        ],
+        "python_version": "3.12.13",
+        "python_build_tag": "20260303"
       },
       "version_probe": {
         "kind": "command",
@@ -879,11 +852,10 @@
       },
       "releases": [
         {
-          "version": "0.1.1",
+          "version": "1.13.1",
           "status": "supported",
           "context_min": "0.1.0",
-          "notes": "Pinned workspace adapter source (harness-adapters/openhands-acp/package.json)",
-          "upstream_version": "1.4.0"
+          "notes": "Pinned upstream OpenHands ACP CLI release"
         }
       ]
     },

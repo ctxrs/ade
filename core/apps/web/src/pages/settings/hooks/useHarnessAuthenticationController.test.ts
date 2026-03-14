@@ -756,9 +756,10 @@ describe("supportsHarnessSubscriptionAuth", () => {
 });
 
 describe("supportsHarnessEndpointConfigStatic", () => {
-  it("returns false for deferred non-writer harnesses", () => {
-    expect(supportsHarnessEndpointConfigStatic("goose")).toBe(false);
-    expect(supportsHarnessEndpointConfigStatic("openhands")).toBe(false);
+  it("returns true for upstream ACP endpoint-capable harnesses", () => {
+    expect(supportsHarnessEndpointConfigStatic("cline")).toBe(true);
+    expect(supportsHarnessEndpointConfigStatic("goose")).toBe(true);
+    expect(supportsHarnessEndpointConfigStatic("openhands")).toBe(true);
   });
 
   it("returns true for supported endpoint-capable harnesses", () => {
@@ -769,6 +770,9 @@ describe("supportsHarnessEndpointConfigStatic", () => {
 
 describe("resolveHarnessAuthModalInitialStage", () => {
   it("routes API-key-only providers directly to api_key", () => {
+    expect(resolveHarnessAuthModalInitialStage("cline")).toBe("api_key");
+    expect(resolveHarnessAuthModalInitialStage("goose")).toBe("api_key");
+    expect(resolveHarnessAuthModalInitialStage("openhands")).toBe("api_key");
     expect(resolveHarnessAuthModalInitialStage("opencode")).toBe("api_key");
     expect(resolveHarnessAuthModalInitialStage("pi")).toBe("api_key");
   });
@@ -1682,7 +1686,7 @@ describe("useHarnessAuthenticationController", () => {
 
     expect(requireController(controller).harnessAuthModal).toBeNull();
     expect(requireController(controller).providerError).toBeNull();
-    expect(vi.mocked(selectProviderHarnessSource)).toHaveBeenCalledWith("amp", "subscription", null);
+    expect(vi.mocked(selectProviderHarnessSource)).not.toHaveBeenCalled();
   });
 
   it("suppresses stale api-key submit effects after switching providers", async () => {

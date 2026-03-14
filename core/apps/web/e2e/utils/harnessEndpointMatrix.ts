@@ -9,8 +9,11 @@ export type EndpointHarnessMatrixEntry = {
 // through the shared OpenRouter flow.
 export const OPENROUTER_ENDPOINT_FIRST_PASS_HARNESSES: EndpointHarnessMatrixEntry[] = [
   { providerId: "codex", menuLabel: "Codex", searchTerm: "codex" },
+  { providerId: "cline", menuLabel: "Cline", searchTerm: "cline" },
   { providerId: "qwen", menuLabel: "Qwen Code", searchTerm: "qwen" },
   { providerId: "copilot", menuLabel: "Copilot", searchTerm: "copilot" },
+  { providerId: "goose", menuLabel: "Goose", searchTerm: "goose" },
+  { providerId: "openhands", menuLabel: "OpenHands", searchTerm: "openhands" },
   { providerId: "pi", menuLabel: "PI", searchTerm: "pi" },
 ];
 
@@ -29,7 +32,6 @@ export const OPENROUTER_ENDPOINT_FIRST_PASS_EXCLUDED_PROVIDER_TOKEN_ONLY = [
   "gemini",
   "cursor",
   "claude-crp",
-  "cline",
   "cagent",
 ] as const;
 
@@ -41,10 +43,6 @@ export const OPENROUTER_ENDPOINT_FIRST_PASS_EXCLUDED_DEFERRED = [
   "charm",
   "aider",
   "kilo",
-  // These currently route through a shared text-only shim and are not truthful
-  // write-capable harnesses in the beta product surface.
-  "goose",
-  "openhands",
   // These do not satisfy the shared OpenRouter write-file contract today.
   "amp",
   "auggie",

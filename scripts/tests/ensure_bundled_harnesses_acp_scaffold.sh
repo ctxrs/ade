@@ -83,6 +83,11 @@ assert_npm_entry("qwen", "@qwen-code/qwen-code/cli.js", "--experimental-acp")
 assert_npm_entry("cline", "node_modules/cline/dist/cli.mjs", "--acp")
 assert_npm_entry("auggie", "@augmentcode/auggie/augment.mjs", "--acp")
 
+cline_args = providers_by_id["cline"].get("args") or []
+if any("dist-standalone/cline-acp.js" in str(arg) or str(arg) == "cline-acp" for arg in cline_args):
+    print(f"cline args still reference standalone shim path: {cline_args!r}", file=sys.stderr)
+    raise SystemExit(1)
+
 # archive-backed cagent should resolve to bundled provider payload path.
 cagent_cmd = str(providers_by_id["cagent"].get("command", ""))
 if "providers/cagent/" not in cagent_cmd:

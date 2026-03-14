@@ -3,14 +3,17 @@ import type { HarnessAuthModalState } from "../../../SettingsPage.types";
 const HARNESSES_WITH_ENDPOINT_CONFIG = new Set([
   "codex",
   "claude-crp",
+  "cline",
   "gemini",
+  "goose",
   "kimi",
-  "qwen",
-  "opencode",
   "mistral",
-  "droid",
+  "openhands",
+  "opencode",
   "copilot",
   "pi",
+  "qwen",
+  "droid",
 ]);
 
 const HARNESSES_WITH_SUBSCRIPTION_AUTH = new Set([
@@ -31,12 +34,21 @@ const HARNESSES_WITH_SUBSCRIPTION_AUTH = new Set([
 const HARNESSES_WITH_ENDPOINT_BASE_URL = new Set([
   "codex",
   "claude-crp",
+  "cline",
   "kimi",
-  "qwen",
-  "opencode",
   "mistral",
+  "goose",
+  "openhands",
+  "opencode",
   "pi",
+  "qwen",
   "droid",
+]);
+
+const HARNESSES_REQUIRING_CONCRETE_ENDPOINT_MODEL = new Set([
+  "cline",
+  "goose",
+  "openhands",
 ]);
 
 const looksLikeClaudeSetupToken = (value: string): boolean => value.trim().startsWith("sk-ant-oat");
@@ -67,6 +79,67 @@ export const harnessEndpointRequiresBaseUrl = (providerId: string): boolean =>
 
 export const harnessEndpointRequiresApiShape = (providerId: string): boolean =>
   HARNESSES_WITH_ENDPOINT_BASE_URL.has(providerId);
+
+export const harnessEndpointRequiresConcreteModel = (providerId: string): boolean =>
+  HARNESSES_REQUIRING_CONCRETE_ENDPOINT_MODEL.has(providerId);
+
+type HarnessEndpointSummary = {
+  model_override?: string | null;
+  manual_model_ids?: string[] | null;
+  model_catalog_models?: Array<{ id?: string | null }> | null;
+};
+
+const firstNonEmpty = (values: Array<string | null | undefined>): string | null => {
+  for (const value of values) {
+    const trimmed = value?.trim() ?? "";
+    if (trimmed) return trimmed;
+  }
+  return null;
+};
+
+export const preferredModelIdFromEndpointSummary = (
+  endpoint: HarnessEndpointSummary | null | undefined,
+): string | null => {
+  if (!endpoint) return null;
+  return (
+    firstNonEmpty([endpoint.model_override])
+    ?? firstNonEmpty(endpoint.manual_model_ids ?? [])
+    ?? firstNonEmpty((endpoint.model_catalog_models ?? []).map((entry) => entry.id))
+  );
+};
+
+export const isOpenRouterBaseUrl = (baseUrl: string): boolean => {
+  const trimmed = baseUrl.trim();
+  if (!trimmed) return false;
+  try {
+    const parsed = new URL(trimmed);
+    const hostname = parsed.hostname.toLowerCase();
+    return hostname === "openrouter.ai" || hostname.endsWith(".openrouter.ai");
+  } catch {
+    return false;
+  }
+};
+
+export const validateHarnessEndpointConfigForOwnerScope = (params: {
+  ownerScopeKind: "host" | "workspace";
+  providerId: string;
+  baseUrl: string | null;
+  manualModelIds: string[];
+  existingPreferredModelId: string | null;
+}): string | null => {
+  if (params.ownerScopeKind !== "host") return null;
+  if (params.providerId === "goose" && !isOpenRouterBaseUrl(params.baseUrl ?? "")) {
+    return "Goose currently requires an OpenRouter base URL.";
+  }
+  if (
+    harnessEndpointRequiresConcreteModel(params.providerId)
+    && params.manualModelIds.length === 0
+    && !(params.existingPreferredModelId?.trim())
+  ) {
+    return "Configure at least one manual model slug before saving this host-scoped endpoint.";
+  }
+  return null;
+};
 
 export const resolveHarnessAuthModalInitialStage = (
   providerId: string,

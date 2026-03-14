@@ -4,16 +4,23 @@ use crate::provider_accounts::{
     write_gemini_auth_settings, GEMINI_AUTH_SELECTED_TYPE_API_KEY,
     GEMINI_AUTH_SELECTED_TYPE_VERTEX_AI, KIMI_SHARE_DIR_ENV,
 };
+mod provider_fs;
 
-pub(crate) fn droid_cli_model_id_for_endpoint_model(
-    model_id: Option<&str>,
-    base_url: Option<&str>,
-) -> Option<String> {
-    let model_id = model_id?;
-    let base_url = base_url?;
-    let display_name = droid_custom_model_display_name(model_id, base_url)?;
-    droid_cli_model_id_from_display_name(&display_name)
-}
+use self::provider_fs::{
+    amp_subscription_home, endpoint_preferred_model_id, goose_subscription_path_root,
+    kimi_endpoint_home, normalize_openhands_endpoint_model_id,
+    prepare_cline_home_with_endpoint_settings, prepare_codex_home_with_api_key,
+    prepare_droid_home_with_endpoint_settings, prepare_goose_endpoint_path_root,
+    prepare_kimi_share_dir, prepare_openhands_persistence_dir,
+    prepare_openhands_python_hook_dir, prepare_qwen_home_with_openai_settings,
+    prepend_pythonpath,
+};
+pub(super) use self::provider_fs::{
+    cline_endpoint_home, codex_endpoint_home, droid_cli_model_id_for_endpoint_model,
+    droid_endpoint_home, gemini_endpoint_home, goose_endpoint_path_root, qwen_endpoint_home,
+};
+#[cfg(test)]
+pub(super) use self::provider_fs::{openhands_endpoint_home, seed_droid_auth_from_host_path};
 
 pub async fn resolve_provider_source_for_probe(
     data_root: &Path,
@@ -90,16 +97,28 @@ impl<'a> ProviderRuntimeContext<'a> {
                 home.join(".cache").to_string_lossy().to_string(),
             );
         }
+        if self.canonical == PROVIDER_GOOSE {
+            let path_root = goose_subscription_path_root(self.data_root, self.runtime_data_root);
+            env.insert(
+                "GOOSE_PATH_ROOT".to_string(),
+                path_root.to_string_lossy().to_string(),
+            );
+        }
         env
     }
 
     pub(super) async fn cleanup_endpoint_runtime(&self, endpoint_id: &str) -> Result<()> {
         let Some(endpoint_home) = (match self.canonical {
             PROVIDER_CODEX => Some(codex_endpoint_home(self.data_root, endpoint_id)),
+            PROVIDER_CLINE => Some(cline_endpoint_home(self.data_root, endpoint_id)),
+            PROVIDER_GOOSE => Some(goose_endpoint_path_root(self.data_root, endpoint_id)),
             PROVIDER_KIMI => Some(kimi_endpoint_home(self.data_root, endpoint_id)),
             PROVIDER_QWEN => Some(qwen_endpoint_home(self.data_root, endpoint_id)),
             PROVIDER_GEMINI => Some(gemini_endpoint_home(self.data_root, endpoint_id)),
             PROVIDER_DROID => Some(droid_endpoint_home(self.data_root, endpoint_id)),
+            PROVIDER_OPENHANDS => {
+                Some(provider_fs::openhands_endpoint_home(self.data_root, endpoint_id))
+            }
             _ => None,
         }) else {
             return Ok(());
@@ -142,6 +161,37 @@ impl<'a> ProviderRuntimeContext<'a> {
                 );
                 env.insert("OPENAI_API_KEY".to_string(), api_key);
                 env.insert("OPENAI_BASE_URL".to_string(), base_url);
+            }
+            PROVIDER_CLINE => {
+                let api_key = secrets::endpoint_secret_api_key(secret)?;
+                let base_url = validation::endpoint_base_url_or_err(endpoint)?;
+                validation::ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
+                validation::ensure_safe_endpoint_id(&endpoint.id)?;
+                let model_id = endpoint_preferred_model_id(endpoint).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "selected endpoint '{}' for {} is missing a concrete model id",
+                        endpoint.name,
+                        self.canonical
+                    )
+                })?;
+                let cline_dir = prepare_cline_home_with_endpoint_settings(
+                    &cline_endpoint_home(self.runtime_data_root(), &endpoint.id),
+                    &api_key,
+                    &model_id,
+                    &base_url,
+                )
+                .await?;
+                env.insert(
+                    "CLINE_DIR".to_string(),
+                    cline_dir.to_string_lossy().to_string(),
+                );
+                env.insert("CLINE_NO_AUTO_UPDATE".to_string(), "1".to_string());
+                env.insert("OPENAI_MODEL".to_string(), model_id);
+                env.insert(
+                    "CTX_CRP_DISABLE_MODEL_OVERRIDE".to_string(),
+                    "1".to_string(),
+                );
+                env.insert("CTX_PROVIDER_MODE".to_string(), "act".to_string());
             }
             PROVIDER_CLAUDE => {
                 let api_key = secrets::endpoint_secret_api_key(secret)?;
@@ -328,13 +378,27 @@ impl<'a> ProviderRuntimeContext<'a> {
                 let api_key = secrets::endpoint_secret_api_key(secret)?;
                 let base_url = validation::endpoint_base_url_or_err(endpoint)?;
                 validation::ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
-                env.insert("OPENAI_API_KEY".to_string(), api_key.clone());
-                env.insert("OPENAI_BASE_URL".to_string(), base_url.clone());
-                env.insert("OPENAI_HOST".to_string(), base_url.clone());
+                validation::ensure_safe_endpoint_id(&endpoint.id)?;
+                if model_catalog::infer_endpoint_model_provider_namespace(&base_url).as_deref()
+                    != Some("openrouter")
+                {
+                    anyhow::bail!(
+                        "goose harness endpoints currently require an OpenRouter base_url; found {}",
+                        base_url
+                    );
+                }
+                let path_root = goose_endpoint_path_root(self.runtime_data_root(), &endpoint.id);
+                prepare_goose_endpoint_path_root(&path_root).await?;
                 env.insert("OPENROUTER_API_KEY".to_string(), api_key);
-                env.insert("OPENROUTER_BASE_URL".to_string(), base_url);
                 env.insert("GOOSE_PROVIDER".to_string(), "openrouter".to_string());
+                env.insert(
+                    "GOOSE_PATH_ROOT".to_string(),
+                    path_root.to_string_lossy().to_string(),
+                );
                 env.insert("GOOSE_DISABLE_KEYRING".to_string(), "1".to_string());
+                env.insert("GOOSE_MODE".to_string(), "auto".to_string());
+                // Override the host-wide provider mode so Goose uses its own ACP defaults.
+                env.insert("CTX_PROVIDER_MODE".to_string(), String::new());
                 if let Some(model) = endpoint
                     .model_override
                     .as_ref()
@@ -342,8 +406,6 @@ impl<'a> ProviderRuntimeContext<'a> {
                     .filter(|value| !value.is_empty())
                 {
                     env.insert("GOOSE_MODEL".to_string(), model.clone());
-                    env.insert("OPENAI_MODEL".to_string(), model.clone());
-                    env.insert("OPENROUTER_MODEL".to_string(), model);
                 }
             }
             PROVIDER_MISTRAL => {
@@ -397,19 +459,47 @@ impl<'a> ProviderRuntimeContext<'a> {
                 let api_key = secrets::endpoint_secret_api_key(secret)?;
                 let base_url = validation::endpoint_base_url_or_err(endpoint)?;
                 validation::ensure_shape_compatible(self.canonical, endpoint.api_shape)?;
+                validation::ensure_safe_endpoint_id(&endpoint.id)?;
+                let model_id = endpoint_preferred_model_id(endpoint).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "selected endpoint '{}' for {} is missing a concrete model id",
+                        endpoint.name,
+                        self.canonical
+                    )
+                })?;
+                let normalized_model_id =
+                    normalize_openhands_endpoint_model_id(&base_url, &model_id);
+                let persistence_dir = prepare_openhands_persistence_dir(
+                    &provider_fs::openhands_endpoint_home(
+                        self.runtime_data_root(),
+                        &endpoint.id,
+                    ),
+                    &api_key,
+                    &normalized_model_id,
+                    &base_url,
+                )
+                .await?;
+                let python_hook_dir =
+                    prepare_openhands_python_hook_dir(&persistence_dir).await?;
                 env.insert("LLM_API_KEY".to_string(), api_key.clone());
                 env.insert("LLM_BASE_URL".to_string(), base_url.clone());
-                env.insert("OPENAI_API_KEY".to_string(), api_key);
-                env.insert("OPENAI_BASE_URL".to_string(), base_url);
-                if let Some(model) = endpoint
-                    .model_override
-                    .as_ref()
-                    .map(|value| value.trim().to_string())
-                    .filter(|value| !value.is_empty())
-                {
-                    env.insert("LLM_MODEL".to_string(), model.clone());
-                    env.insert("OPENAI_MODEL".to_string(), model);
-                }
+                env.insert("LLM_MODEL".to_string(), normalized_model_id);
+                env.insert(
+                    "CTX_CRP_DISABLE_MODEL_OVERRIDE".to_string(),
+                    "1".to_string(),
+                );
+                env.insert(
+                    "OPENHANDS_PERSISTENCE_DIR".to_string(),
+                    persistence_dir.to_string_lossy().to_string(),
+                );
+                env.insert(
+                    "PYTHONPATH".to_string(),
+                    prepend_pythonpath(&python_hook_dir)?.to_string_lossy().to_string(),
+                );
+                env.insert(
+                    "CTX_PROVIDER_MODE".to_string(),
+                    "always-approve".to_string(),
+                );
             }
             PROVIDER_COPILOT => {
                 let api_key = secrets::endpoint_secret_api_key(secret)?;
@@ -527,262 +617,4 @@ async fn resolve_internal(
         endpoint: Some(public),
         env,
     })
-}
-
-pub(super) fn codex_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
-    data_root
-        .join("providers")
-        .join("codex")
-        .join("endpoint-homes")
-        .join(endpoint_id)
-}
-
-pub(super) fn qwen_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
-    data_root
-        .join("providers")
-        .join("qwen")
-        .join("endpoint-homes")
-        .join(endpoint_id)
-}
-
-pub(super) fn kimi_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
-    data_root
-        .join("providers")
-        .join("kimi")
-        .join("endpoint-homes")
-        .join(endpoint_id)
-}
-
-pub(super) fn gemini_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
-    data_root
-        .join("providers")
-        .join("gemini")
-        .join("endpoint-homes")
-        .join(endpoint_id)
-}
-
-pub(super) fn droid_endpoint_home(data_root: &Path, endpoint_id: &str) -> PathBuf {
-    data_root
-        .join("providers")
-        .join("droid")
-        .join("endpoint-homes")
-        .join(endpoint_id)
-}
-
-fn amp_subscription_home(data_root: &Path, runtime_data_root: Option<&Path>) -> PathBuf {
-    runtime_data_root
-        .unwrap_or(data_root)
-        .join("providers")
-        .join("amp")
-        .join("home")
-}
-
-async fn prepare_codex_home_with_api_key(codex_home: &Path, api_key: &str) -> Result<()> {
-    tokio::fs::create_dir_all(codex_home).await?;
-    let auth_path = codex_home.join("auth.json");
-    let payload = serde_json::to_vec_pretty(&serde_json::json!({
-        "OPENAI_API_KEY": api_key,
-    }))?;
-    tokio::fs::write(&auth_path, payload).await?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = tokio::fs::set_permissions(auth_path, std::fs::Permissions::from_mode(0o600)).await;
-    }
-    Ok(())
-}
-
-async fn prepare_qwen_home_with_openai_settings(qwen_home: &Path) -> Result<()> {
-    let qwen_config = qwen_home.join(".qwen");
-    tokio::fs::create_dir_all(&qwen_config).await?;
-    let payload = serde_json::to_vec_pretty(&serde_json::json!({
-        "$version": 2,
-        "security": {
-            "auth": {
-                "selectedType": "openai"
-            }
-        }
-    }))?;
-    tokio::fs::write(qwen_config.join("settings.json"), payload).await?;
-    Ok(())
-}
-
-async fn prepare_kimi_share_dir(runtime_data_root: &Path, endpoint_id: &str) -> Result<PathBuf> {
-    let share_dir = kimi_endpoint_home(runtime_data_root, endpoint_id).join(".kimi");
-    let credentials_dir = share_dir.join("credentials");
-    tokio::fs::create_dir_all(&credentials_dir).await?;
-    // Kimi currently refuses endpoint/API-key sessions unless a file-backed token exists.
-    // Seed a benign token in the isolated endpoint runtime home so the CLI reaches the
-    // actual endpoint-auth path instead of aborting with auth_required before turn start.
-    let token_path = credentials_dir.join("kimi-code.json");
-    let token = serde_json::json!({
-        "access_token": "ctx-endpoint-access-token",
-        "refresh_token": "ctx-endpoint-refresh-token",
-        "expires_at": 4_102_444_800.0,
-        "scope": "openid profile",
-        "token_type": "Bearer",
-    });
-    tokio::fs::write(&token_path, token.to_string()).await?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ =
-            tokio::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o600)).await;
-    }
-    Ok(share_dir)
-}
-
-fn endpoint_preferred_model_id(endpoint: &HarnessEndpointRecordInternal) -> Option<String> {
-    endpoint
-        .model_override
-        .as_ref()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .or_else(|| {
-            endpoint.manual_model_ids.iter().find_map(|value| {
-                let trimmed = value.trim();
-                if trimmed.is_empty() {
-                    None
-                } else {
-                    Some(trimmed.to_string())
-                }
-            })
-        })
-        .or_else(|| {
-            endpoint.model_catalog_models.iter().find_map(|record| {
-                let trimmed = record.id.trim();
-                if trimmed.is_empty() {
-                    None
-                } else {
-                    Some(trimmed.to_string())
-                }
-            })
-        })
-}
-
-fn droid_custom_model_name(model_id: &str) -> Option<String> {
-    let trimmed = model_id.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let without_prefix = trimmed
-        .strip_prefix("custom:")
-        .map(str::trim)
-        .unwrap_or(trimmed);
-    if without_prefix.is_empty() {
-        None
-    } else {
-        Some(without_prefix.to_string())
-    }
-}
-
-fn droid_backend_model_id(model_id: &str) -> Option<String> {
-    droid_custom_model_name(model_id)
-}
-
-fn droid_custom_model_display_name(model_id: &str, base_url: &str) -> Option<String> {
-    let backend_model_id = droid_backend_model_id(model_id)?;
-    let namespace = model_catalog::infer_endpoint_model_provider_namespace(base_url)
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "endpoint".to_string());
-    Some(format!("{backend_model_id} [{namespace}]"))
-}
-
-fn droid_cli_model_id_from_display_name(display_name: &str) -> Option<String> {
-    let trimmed = display_name.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    Some(format!(
-        "custom:{}-0",
-        trimmed.split_whitespace().collect::<Vec<_>>().join("-")
-    ))
-}
-
-fn droid_host_auth_path() -> Result<PathBuf> {
-    if let Some(path) = std::env::var(CTX_DROID_HOST_AUTH_PATH_ENV)
-        .ok()
-        .map(|raw| raw.trim().to_string())
-        .filter(|raw| !raw.is_empty())
-    {
-        return Ok(PathBuf::from(path));
-    }
-    let base = BaseDirs::new().ok_or_else(|| anyhow::anyhow!("missing home dir"))?;
-    Ok(base.home_dir().join(".factory").join("auth.encrypted"))
-}
-
-pub(super) async fn seed_droid_auth_from_host_path(
-    droid_home: &Path,
-    host_auth_path: &Path,
-) -> Result<bool> {
-    if !host_auth_path.exists() {
-        return Ok(false);
-    }
-    let bytes = tokio::fs::read(host_auth_path).await?;
-    if bytes.is_empty() {
-        anyhow::bail!(
-            "host droid auth file is empty: {}",
-            host_auth_path.display()
-        );
-    }
-
-    let droid_config = droid_home.join(".factory");
-    tokio::fs::create_dir_all(&droid_config).await?;
-    let dest = droid_config.join("auth.encrypted");
-    let should_write = match tokio::fs::read(&dest).await {
-        Ok(existing) => existing != bytes,
-        Err(_) => true,
-    };
-    if should_write {
-        tokio::fs::write(&dest, &bytes).await?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = tokio::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o600)).await;
-        }
-    }
-
-    Ok(should_write)
-}
-
-async fn maybe_seed_droid_auth_from_host(droid_home: &Path) -> Result<bool> {
-    let host_auth_path = droid_host_auth_path()?;
-    seed_droid_auth_from_host_path(droid_home, &host_auth_path).await
-}
-
-async fn prepare_droid_home_with_endpoint_settings(
-    droid_home: &Path,
-    base_url: &str,
-    api_key: &str,
-    model_id: &str,
-) -> Result<Option<String>> {
-    let Some(display_name) = droid_custom_model_display_name(model_id, base_url) else {
-        return Ok(None);
-    };
-    let Some(backend_model_id) = droid_backend_model_id(model_id) else {
-        return Ok(None);
-    };
-    let droid_config = droid_home.join(".factory");
-    tokio::fs::create_dir_all(&droid_config).await?;
-    let payload = serde_json::to_vec_pretty(&serde_json::json!({
-        "customModels": [
-            {
-                "model": backend_model_id,
-                "displayName": display_name,
-                "provider": "generic-chat-completion-api",
-                "baseUrl": base_url,
-                "apiKey": api_key,
-            }
-        ]
-    }))?;
-    let settings_path = droid_config.join("settings.json");
-    tokio::fs::write(&settings_path, payload).await?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = tokio::fs::set_permissions(&settings_path, std::fs::Permissions::from_mode(0o600))
-            .await;
-    }
-    let _ = maybe_seed_droid_auth_from_host(droid_home).await?;
-    Ok(droid_cli_model_id_from_display_name(&display_name))
 }

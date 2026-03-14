@@ -18,6 +18,7 @@ pub fn default_shape_for_provider(provider_id: &str) -> Option<HarnessApiShape> 
         Some(PROVIDER_OPENHANDS) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_COPILOT) => Some(HarnessApiShape::OpenaiResponses),
         Some(PROVIDER_PI) => Some(HarnessApiShape::OpenaiResponses),
+        Some(PROVIDER_CLINE) => Some(HarnessApiShape::OpenaiResponses),
         _ => None,
     }
 }
@@ -63,7 +64,7 @@ pub fn ensure_shape_compatible(provider_id: &str, shape: HarnessApiShape) -> Res
             }
         }
         PROVIDER_QWEN | PROVIDER_OPENCODE | PROVIDER_MISTRAL | PROVIDER_GOOSE | PROVIDER_DROID
-        | PROVIDER_OPENHANDS | PROVIDER_COPILOT | PROVIDER_PI => {
+        | PROVIDER_OPENHANDS | PROVIDER_COPILOT | PROVIDER_PI | PROVIDER_CLINE => {
             if shape != HarnessApiShape::OpenaiResponses {
                 anyhow::bail!(
                     "{} requires api_shape=openai_responses; found {}",
@@ -98,6 +99,7 @@ pub(super) fn normalize_provider_id(provider_id: &str) -> Option<&'static str> {
         PROVIDER_AUGGIE => Some(PROVIDER_AUGGIE),
         PROVIDER_PI => Some(PROVIDER_PI),
         PROVIDER_CURSOR => Some(PROVIDER_CURSOR),
+        PROVIDER_CLINE => Some(PROVIDER_CLINE),
         _ => None,
     }
 }
@@ -227,9 +229,12 @@ pub(super) fn provider_supports_harness_endpoint(canonical_provider_id: &str) ->
             | PROVIDER_QWEN
             | PROVIDER_OPENCODE
             | PROVIDER_MISTRAL
+            | PROVIDER_GOOSE
             | PROVIDER_DROID
+            | PROVIDER_OPENHANDS
             | PROVIDER_COPILOT
             | PROVIDER_PI
+            | PROVIDER_CLINE
     )
 }
 
@@ -287,5 +292,6 @@ fn provider_requires_endpoint_base_url(provider_id: &str) -> bool {
             | PROVIDER_GOOSE
             | PROVIDER_DROID
             | PROVIDER_OPENHANDS
+            | PROVIDER_CLINE
     )
 }

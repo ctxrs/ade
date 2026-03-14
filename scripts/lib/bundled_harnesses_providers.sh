@@ -75,9 +75,7 @@ fi
 
 if ! is_falsy "$LOCAL_ADAPTER_MODE"; then
   if provider_selected_for_bundle "amp" \
-    || provider_selected_for_bundle "pi" \
-    || provider_selected_for_bundle "goose" \
-    || provider_selected_for_bundle "openhands"; then
+    || provider_selected_for_bundle "pi"; then
     runtime_need_node="1"
   fi
 fi
@@ -86,6 +84,50 @@ if provider_selected_for_bundle "claude-crp" || provider_selected_for_bundle "cl
 fi
 if provider_selected_for_bundle "cline"; then
   runtime_need_node="1"
+fi
+
+python_specs_src="$(mktemp /tmp/ctx-bundle-python-specs.XXXXXX)"
+: > "$python_specs_src"
+if [[ "$runtime_need_python" == "1" ]]; then
+  run_python - "$MATRIX_JSON" "$only_providers_raw" "$skip_providers_raw" "$PYTHON_VERSION" "$PYTHON_BUILD_TAG" > "$python_specs_src" <<'PY'
+import json
+import sys
+
+matrix_path = sys.argv[1]
+only_raw = sys.argv[2]
+skip_raw = sys.argv[3]
+default_version = sys.argv[4]
+default_build_tag = sys.argv[5]
+
+only = {value for value in only_raw.split(",") if value}
+skip = {value for value in skip_raw.split(",") if value}
+seen = set()
+
+def include(provider_id: str) -> bool:
+    if only and provider_id not in only:
+        return False
+    if provider_id in skip:
+        return False
+    return True
+
+with open(matrix_path, "r", encoding="utf-8") as fh:
+    data = json.load(fh)
+
+for provider in data.get("providers", []):
+    provider_id = str(provider.get("id") or "").strip()
+    if not provider_id or not include(provider_id):
+        continue
+    managed = provider.get("managed_install") or {}
+    if managed.get("kind") != "python":
+        continue
+    version = str(managed.get("python_version") or default_version).strip()
+    build_tag = str(managed.get("python_build_tag") or default_build_tag).strip()
+    key = (version, build_tag)
+    if key in seen:
+        continue
+    seen.add(key)
+    print(f"{version}\x1f{build_tag}")
+PY
 fi
 
 if provider_selected_for_bundle "claude-crp"; then
@@ -131,7 +173,12 @@ if ! is_truthy "$skip_runtimes_raw"; then
     ensure_node_runtime
   fi
   if [[ "$runtime_need_python" == "1" ]]; then
-    ensure_python_runtime
+    while IFS=$'\x1f' read -r python_version python_build_tag; do
+      if [[ -z "$python_version" || -z "$python_build_tag" ]]; then
+        continue
+      fi
+      ensure_python_runtime_versioned "$python_version" "$python_build_tag"
+    done < "$python_specs_src"
   fi
   ensure_podman_runtime
 fi
@@ -153,11 +200,6 @@ node_root=""
 node_bin=""
 npm_cli=""
 
-python_root_rel=""
-python_bin_rel=""
-python_root=""
-python_bin=""
-
 if ! is_truthy "$skip_runtimes_raw"; then
   if [[ "$runtime_need_node" == "1" ]]; then
     node_root_rel="runtimes/node/${os}/${arch}/node-v${NODE_VERSION}-${node_target}"
@@ -171,20 +213,6 @@ if ! is_truthy "$skip_runtimes_raw"; then
     node_root="$bundle_dir/$node_root_rel"
     node_bin="$node_root/$node_bin_rel"
     npm_cli="$node_root/$npm_cli_rel"
-  fi
-
-  if [[ "$runtime_need_python" == "1" ]]; then
-    python_root_rel="runtimes/python/${os}/${arch}/cpython-${PYTHON_VERSION}+${PYTHON_BUILD_TAG}-${python_target}"
-    if [[ "$os" == "windows" ]]; then
-      python_bin_rel="python.exe"
-    else
-      python_bin_rel="bin/python3"
-      if [[ ! -f "$bundle_dir/$python_root_rel/$python_bin_rel" ]]; then
-        python_bin_rel="bin/python"
-      fi
-    fi
-    python_root="$bundle_dir/$python_root_rel"
-    python_bin="$python_root/$python_bin_rel"
   fi
 fi
 
@@ -298,6 +326,8 @@ for provider in data.get("providers", []):
                 "",
                 "",
                 json.dumps(args, separators=(",", ":")),
+                "",
+                "",
             ]
         )
         print(line)
@@ -319,6 +349,8 @@ for provider in data.get("providers", []):
                 mi.get("package", ""),
                 mi.get("entrypoint", ""),
                 json.dumps(args, separators=(",", ":")),
+                "",
+                "",
             ]
         )
         print(line)
@@ -334,6 +366,8 @@ for provider in data.get("providers", []):
                 mi.get("package", ""),
                 mi.get("entrypoint", ""),
                 json.dumps(args, separators=(",", ":")),
+                mi.get("python_version", ""),
+                mi.get("python_build_tag", ""),
             ]
         )
         print(line)
@@ -528,10 +562,10 @@ add_local_provider() {
     mv "$filtered" "$local_providers_src"
   fi
   local sep=$'\x1f'
-  printf '%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n' \
+  printf '%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n' \
     "$provider_id" "$sep" "$kind" "$sep" "$version" "$sep" \
     "$source_path" "$sep" "" "$sep" "$bin_path" "$sep" "" "$sep" "" "$sep" \
-    "$args_json" >> "$local_providers_src"
+    "$args_json" "$sep" "" "$sep" "" >> "$local_providers_src"
   local found=0
   local existing
   for existing in "${local_ids[@]-}"; do
@@ -714,7 +748,7 @@ if ! is_falsy "$LOCAL_ADAPTER_MODE"; then
   fi
 
   adapter_version_override="${CTX_BUNDLE_ADAPTER_VERSION:-}"
-  for id in amp pi goose openhands droid; do
+  for id in amp pi droid; do
     if ! provider_selected_for_bundle "$id"; then
       continue
     fi
@@ -726,7 +760,7 @@ if ! is_falsy "$LOCAL_ADAPTER_MODE"; then
       version="local"
     fi
 
-    if [[ "$id" == "amp" || "$id" == "pi" || "$id" == "goose" || "$id" == "openhands" ]]; then
+    if [[ "$id" == "amp" || "$id" == "pi" ]]; then
       src="$(local_adapter_node_entrypoint "$id")"
       if [[ ! -f "$src" ]]; then
         dir="$(local_adapter_dir "$id")"
@@ -802,7 +836,7 @@ fi
 
 providers_out="$(mktemp /tmp/ctx-bundle-providers-out.XXXXXX)"
 
-while IFS=$'\x1f' read -r provider_id kind version url archive bin_path package entrypoint args_json; do
+while IFS=$'\x1f' read -r provider_id kind version url archive bin_path package entrypoint args_json python_version python_build_tag; do
   if [[ -z "$provider_id" || -z "$kind" ]]; then
     continue
   fi
@@ -978,31 +1012,6 @@ PY
       if [[ "$os" != "windows" ]]; then
         chmod +x "$command_path" || true
       fi
-      if [[ "$provider_id" == "cline" ]]; then
-        write_cline_bundle_stubs "$provider_root"
-        patch_cline_standalone_runtime "$provider_root"
-        if [[ -z "$node_bin" || ! -f "$node_bin" ]]; then
-          log "error: cline provider requires bundled node runtime"
-          exit 5
-        fi
-        entrypoint_path="$provider_root/dist-standalone/cline-acp.js"
-        if [[ ! -f "$entrypoint_path" ]]; then
-          log "error: cline standalone entrypoint missing: $entrypoint_path"
-          exit 5
-        fi
-        command_path="$node_bin"
-        entrypoint_rel="${entrypoint_path#"$bundle_dir/"}"
-        args_json="$(PROVIDER_ENTRYPOINT="$entrypoint_rel" PROVIDER_ARGS_JSON="$args_json" run_python - <<'PY'
-import json
-import os
-
-args = [os.environ["PROVIDER_ENTRYPOINT"]]
-extra = json.loads(os.environ["PROVIDER_ARGS_JSON"] or "[]")
-args.extend(extra)
-print(json.dumps(args, separators=(",", ":")))
-PY
-)"
-      fi
       maybe_adhoc_codesign_macos_binary "$command_path"
       ;;
     npm)
@@ -1073,19 +1082,25 @@ PY
 
       venv_dir="$provider_root/venv"
       entrypoint_path="$(venv_exe "$venv_dir" "$entrypoint")"
+      provider_python_version="${python_version:-$PYTHON_VERSION}"
+      provider_python_build_tag="${python_build_tag:-$PYTHON_BUILD_TAG}"
+      provider_python_root_rel="$(python_runtime_root_rel "$provider_python_version" "$provider_python_build_tag")"
+      provider_python_bin_rel="$(python_runtime_bin_rel "$provider_python_root_rel")"
+      provider_python_bin="$bundle_dir/$provider_python_root_rel/$provider_python_bin_rel"
+      bundle_version_marker="${version}|${provider_python_version}|${provider_python_build_tag}"
       if [[ -f "$version_marker" ]]; then
-        if [[ "$(cat "$version_marker" 2>/dev/null || true)" != "$version" || ! -f "$entrypoint_path" ]]; then
+        if [[ "$(cat "$version_marker" 2>/dev/null || true)" != "$bundle_version_marker" || ! -f "$entrypoint_path" ]]; then
           rm -rf "$provider_root"
         fi
       fi
 
       if [[ ! -d "$provider_root" ]]; then
         mkdir -p "$provider_root"
-        if [[ -z "$python_bin" || ! -f "$python_bin" ]]; then
+        if [[ -z "$provider_python_bin" || ! -f "$provider_python_bin" ]]; then
           log "error: python provider $provider_id requires bundled python runtime"
           exit 5
         fi
-        "$python_bin" -m venv "$venv_dir"
+        "$provider_python_bin" -m venv "$venv_dir"
         venv_python="$(venv_exe "$venv_dir" "python")"
         ensure_venv_pip "$venv_python"
 
@@ -1103,7 +1118,7 @@ PY
           log "error: python entrypoint missing for $provider_id: $entrypoint_path"
           exit 5
         fi
-        echo "$version" > "$version_marker"
+        echo "$bundle_version_marker" > "$version_marker"
       fi
 
       command_path="$entrypoint_path"
@@ -1186,14 +1201,21 @@ PY
   fi
 
   if [[ "$runtime_need_python" == "1" ]]; then
-    python_sha="$(sha256_file "$python_bin")"
-    PYTHON_VERSION_ENV="$PYTHON_VERSION" \
-    PYTHON_OS_ENV="$os" \
-    PYTHON_ARCH_ENV="$arch" \
-    PYTHON_SHA_ENV="$python_sha" \
-    PYTHON_ROOT_REL_ENV="$python_root_rel" \
-    PYTHON_BIN_REL_ENV="$python_bin_rel" \
-    run_python - <<'PY' >> "$runtimes_out"
+    while IFS=$'\x1f' read -r python_version python_build_tag; do
+      if [[ -z "$python_version" || -z "$python_build_tag" ]]; then
+        continue
+      fi
+      python_root_rel="$(python_runtime_root_rel "$python_version" "$python_build_tag")"
+      python_bin_rel="$(python_runtime_bin_rel "$python_root_rel")"
+      python_bin="$bundle_dir/$python_root_rel/$python_bin_rel"
+      python_sha="$(sha256_file "$python_bin")"
+      PYTHON_VERSION_ENV="$python_version" \
+      PYTHON_OS_ENV="$os" \
+      PYTHON_ARCH_ENV="$arch" \
+      PYTHON_SHA_ENV="$python_sha" \
+      PYTHON_ROOT_REL_ENV="$python_root_rel" \
+      PYTHON_BIN_REL_ENV="$python_bin_rel" \
+      run_python - <<'PY' >> "$runtimes_out"
 import json
 import os
 
@@ -1208,6 +1230,7 @@ entry = {
 }
 print(json.dumps(entry, separators=(",", ":")))
 PY
+    done < "$python_specs_src"
   fi
 
   if [[ "${CTX_BUNDLE_PODMAN:-0}" == "1" ]]; then

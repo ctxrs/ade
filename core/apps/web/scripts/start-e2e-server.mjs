@@ -4,6 +4,7 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const parseBool = (value) => ["1", "true", "yes", "on"].includes(String(value ?? "").trim().toLowerCase());
 
@@ -48,9 +49,39 @@ const resolveCargoTargetDir = (repoRoot, env) => {
   return path.isAbsolute(configured) ? configured : path.resolve(repoRoot, configured);
 };
 
+export const resolveE2EWebDistDir = (
+  baseTmpDir = os.tmpdir(),
+  pid = process.pid,
+) => path.resolve(baseTmpDir, `ctx-e2e-web-dist-${pid}`);
+
+export const resolveWebBuildArgs = (webDistDir) => [
+  "-C",
+  "apps/web",
+  "exec",
+  "vite",
+  "build",
+  "--outDir",
+  webDistDir,
+  "--emptyOutDir",
+];
+
+export const resolveServeWebDistDir = (repoRoot, env, skipWebBuild = false) => {
+  const configured = String(env.CTX_WEB_DIST ?? "").trim();
+  if (configured) {
+    return path.isAbsolute(configured) ? configured : path.resolve(repoRoot, configured);
+  }
+  if (skipWebBuild) {
+    return path.join(repoRoot, "apps", "web", "dist");
+  }
+  return resolveE2EWebDistDir();
+};
+
+export const shouldUseConfiguredCtxMcpCommand = (env) =>
+  String(env.CTX_E2E_ALLOW_CONFIGURED_MCP_COMMAND ?? "").trim() === "1";
+
 const ensureCtxMcpCommand = (repoRoot, env) => {
   const configured = String(env.CTX_MCP_COMMAND ?? "").trim();
-  if (configured) {
+  if (configured && shouldUseConfiguredCtxMcpCommand(env)) {
     return configured;
   }
 
@@ -79,10 +110,12 @@ const main = () => {
   const skipWebBuild = parseBool(process.env.CTX_E2E_SKIP_WEB_BUILD);
   const env = { ...process.env };
   env.CTX_MCP_COMMAND = ensureCtxMcpCommand(repoRoot, env);
+  const webDistDir = resolveServeWebDistDir(repoRoot, env, skipWebBuild);
 
   if (!skipWebBuild) {
     const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-    runSync(pnpmCmd, ["-C", "apps/web", "build"], repoRoot, env);
+    fs.rmSync(webDistDir, { recursive: true, force: true });
+    runSync(pnpmCmd, resolveWebBuildArgs(webDistDir), repoRoot, env);
   }
 
   fs.rmSync(dataDir, { recursive: true, force: true });
@@ -101,6 +134,7 @@ const main = () => {
         CTX_EXECUTION_MODE: "host",
         CTX_SHOW_FAKE_PROVIDER: "1",
         CTX_STORAGE_BACKEND: "sqlite",
+        CTX_WEB_DIST: webDistDir,
       },
       stdio: "inherit",
     },
@@ -130,9 +164,11 @@ const main = () => {
   });
 };
 
-try {
-  main();
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  try {
+    main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
 }

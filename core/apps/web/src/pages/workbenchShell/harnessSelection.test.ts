@@ -123,6 +123,18 @@ describe("harnessSelection", () => {
     expect(selected).toBe("codex");
   });
 
+  it("does not auto-select fake when a real installed harness exists", () => {
+    const selected = resolveInitialHarnessSelection({
+      providerIds: ["fake", "cline"],
+      providerOptions: {
+        fake: { ...baseOptions("fake"), has_active_auth: true },
+        cline: baseOptions("cline"),
+      },
+      mruProviderId: "fake",
+    });
+    expect(selected).toBeNull();
+  });
+
   it("returns null when none or multiple candidates are authed", () => {
     const noneAuthed = resolveInitialHarnessSelection({
       providerIds: ["codex", "cursor"],

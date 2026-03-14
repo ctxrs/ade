@@ -25,8 +25,6 @@ const workspaceProviderVersionSources = {
   "acp-crp-bridge": { kind: "cargo", relPath: "external-harnesses/acp-crp-bridge/Cargo.toml" },
   amp: { kind: "package_json", relPath: "harness-adapters/example-acp/package.json" },
   droid: { kind: "cargo", relPath: "harness-adapters/droid-acp/Cargo.toml" },
-  goose: { kind: "package_json", relPath: "harness-adapters/openhands-acp/package.json" },
-  openhands: { kind: "package_json", relPath: "harness-adapters/openhands-acp/package.json" },
   pi: { kind: "package_json", relPath: "harness-adapters/pi-acp/package.json" },
   "claude-crp": { kind: "package_json", relPath: "external-harnesses/claude-crp/package.json" },
 };
@@ -35,7 +33,6 @@ const providerUpstreamVersionSources = {
   amp: { kind: "npm", package: "@example/sdk" },
   "claude-crp": { kind: "npm", package: "@anthropic-ai/claude-agent-sdk" },
   goose: { kind: "github_release", repo: "block/goose" },
-  openhands: { kind: "github_release", repo: "All-Hands-AI/OpenHands" },
   pi: { kind: "npm", package: "@mariozechner/pi-coding-agent" },
 };
 

@@ -4,7 +4,10 @@ use std::sync::Arc;
 use std::{fs, path::Path as StdPath};
 
 use anyhow::{Context, Result};
-use ctx_providers::adapters::{ProviderAdapter, ProviderHealth, ProviderStatus};
+use ctx_providers::adapters::{
+    ProviderAdapter, ProviderHealth, ProviderProcessInfo, ProviderRestartMode, ProviderStatus,
+    RunHandle, TurnInput,
+};
 use ctx_providers::crp::Tier1CrpAdapter;
 use ctx_providers::fake::FakeProviderAdapter;
 
@@ -92,6 +95,190 @@ fn acp_status_adapter_bridge_missing(provider_id: &str, msg: String) -> Arc<dyn 
         "acp_bridge_missing",
         msg,
     )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OpenHandsRuntimeContract {
+    UpstreamAcp,
+    ShimAcp,
+    Unknown,
+}
+
+impl OpenHandsRuntimeContract {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::UpstreamAcp => "upstream_acp",
+            Self::ShimAcp => "shim_acp",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    fn note(self) -> &'static str {
+        match self {
+            Self::UpstreamAcp => "runtime command matches the upstream `openhands acp` contract",
+            Self::ShimAcp => "runtime command still points at the legacy `openhands-acp` shim",
+            Self::Unknown => {
+                "runtime command does not clearly match the upstream `openhands acp` contract"
+            }
+        }
+    }
+
+    fn supports_real_runtime(self) -> bool {
+        matches!(self, Self::UpstreamAcp)
+    }
+}
+
+fn path_file_stem_or_raw(raw: &str) -> String {
+    StdPath::new(raw)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or(raw)
+        .to_string()
+}
+
+fn path_file_name_or_raw(raw: &str) -> String {
+    StdPath::new(raw)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or(raw)
+        .to_string()
+}
+
+fn openhands_runtime_contract_for_command(
+    cmd: &installer::AgentServerCommand,
+) -> OpenHandsRuntimeContract {
+    let command_stem = path_file_stem_or_raw(&cmd.command).to_ascii_lowercase();
+    let command_name = path_file_name_or_raw(&cmd.command).to_ascii_lowercase();
+
+    if command_stem == "openhands" && cmd.args.first().is_some_and(|arg| arg == "acp") {
+        return OpenHandsRuntimeContract::UpstreamAcp;
+    }
+
+    if command_stem == "openhands-acp" || command_name == "openhands-acp.js" {
+        return OpenHandsRuntimeContract::ShimAcp;
+    }
+
+    if command_stem.starts_with("python") {
+        let module_arg = cmd.args.iter().position(|arg| arg == "-m");
+        if let Some(idx) = module_arg {
+            let module = cmd
+                .args
+                .get(idx + 1)
+                .map(String::as_str)
+                .unwrap_or_default();
+            let subcommand = cmd
+                .args
+                .get(idx + 2)
+                .map(String::as_str)
+                .unwrap_or_default();
+            if matches!(module, "openhands" | "openhands.core.main") && subcommand == "acp" {
+                return OpenHandsRuntimeContract::UpstreamAcp;
+            }
+        }
+    }
+
+    if let Some(first_arg) = cmd.args.first() {
+        let first_stem = path_file_stem_or_raw(first_arg).to_ascii_lowercase();
+        let first_name = path_file_name_or_raw(first_arg).to_ascii_lowercase();
+        if first_stem == "openhands-acp" || first_name == "openhands-acp.js" {
+            return OpenHandsRuntimeContract::ShimAcp;
+        }
+    }
+
+    OpenHandsRuntimeContract::Unknown
+}
+
+fn apply_openhands_runtime_contract_details(
+    status: &mut ProviderStatus,
+    contract: OpenHandsRuntimeContract,
+) {
+    status.details.insert(
+        "openhands_runtime_contract".to_string(),
+        contract.as_str().to_string(),
+    );
+    status.details.insert(
+        "openhands_real_runtime".to_string(),
+        if contract.supports_real_runtime() {
+            "true".to_string()
+        } else {
+            "false".to_string()
+        },
+    );
+    status.details.insert(
+        "openhands_runtime_contract_note".to_string(),
+        contract.note().to_string(),
+    );
+}
+
+struct OpenHandsRuntimeContractAdapter {
+    inner: Arc<dyn ProviderAdapter>,
+    contract: OpenHandsRuntimeContract,
+}
+
+impl OpenHandsRuntimeContractAdapter {
+    fn new(inner: Arc<dyn ProviderAdapter>, contract: OpenHandsRuntimeContract) -> Self {
+        Self { inner, contract }
+    }
+}
+
+#[async_trait::async_trait]
+impl ProviderAdapter for OpenHandsRuntimeContractAdapter {
+    async fn inspect(&self) -> Result<ProviderStatus> {
+        let mut status = self.inner.inspect().await?;
+        apply_openhands_runtime_contract_details(&mut status, self.contract);
+        Ok(status)
+    }
+
+    async fn run(
+        &self,
+        input: TurnInput,
+        workdir: PathBuf,
+        env: HashMap<String, String>,
+        event_sink: tokio::sync::mpsc::Sender<ctx_providers::events::NormalizedEvent>,
+    ) -> Result<RunHandle> {
+        self.inner.run(input, workdir, env, event_sink).await
+    }
+
+    async fn cancel(&self, handle: RunHandle) -> Result<()> {
+        self.inner.cancel(handle).await
+    }
+
+    async fn list_processes(&self) -> Vec<ProviderProcessInfo> {
+        self.inner.list_processes().await
+    }
+
+    async fn restart(&self, reason: &str, mode: ProviderRestartMode) -> Result<()> {
+        self.inner.restart(reason, mode).await
+    }
+
+    async fn has_live_session(&self, session_key: &str) -> bool {
+        self.inner.has_live_session(session_key).await
+    }
+
+    fn supports_resume(&self) -> bool {
+        self.inner.supports_resume()
+    }
+
+    async fn set_session_model(&self, session_key: String, model_id: String) -> Result<()> {
+        self.inner.set_session_model(session_key, model_id).await
+    }
+
+    async fn set_session_mode(&self, session_key: String, mode_id: String) -> Result<()> {
+        self.inner.set_session_mode(session_key, mode_id).await
+    }
+
+    async fn authenticate_session(
+        &self,
+        session_key: String,
+        workdir: PathBuf,
+        env: HashMap<String, String>,
+        method_id: Option<String>,
+        event_sink: tokio::sync::mpsc::Sender<ctx_providers::events::NormalizedEvent>,
+    ) -> Result<()> {
+        self.inner
+            .authenticate_session(session_key, workdir, env, method_id, event_sink)
+            .await
+    }
 }
 
 fn acp_status_adapter_bridge_invalid(provider_id: &str, msg: String) -> Arc<dyn ProviderAdapter> {
@@ -209,8 +396,18 @@ pub(crate) fn acp_bridge_adapter(
     bridge_cmd: &installer::AgentServerCommand,
     acp_cmd: installer::AgentServerCommand,
 ) -> Arc<dyn ProviderAdapter> {
+    let contract = if id == "openhands" {
+        Some(openhands_runtime_contract_for_command(&acp_cmd))
+    } else {
+        None
+    };
     let bridged = acp_bridge_command(bridge_cmd, acp_cmd);
-    Arc::new(Tier1CrpAdapter::from_raw(id, bridged.command, bridged.args))
+    let inner: Arc<dyn ProviderAdapter> =
+        Arc::new(Tier1CrpAdapter::from_raw(id, bridged.command, bridged.args));
+    if let Some(contract) = contract {
+        return Arc::new(OpenHandsRuntimeContractAdapter::new(inner, contract));
+    }
+    inner
 }
 
 #[derive(Debug, Clone)]
@@ -397,6 +594,30 @@ fn maybe_set_bridge_env_override(
     cmd
 }
 
+fn goose_args_include_developer_builtin(args: &[String]) -> bool {
+    args.windows(2).any(|window| {
+        window[0] == "--with-builtin"
+            && window[1]
+                .split(',')
+                .any(|value| value.trim() == "developer")
+    })
+}
+
+fn maybe_set_goose_acp_subcommand(
+    mut cmd: installer::AgentServerCommand,
+) -> installer::AgentServerCommand {
+    if !cmd.args.iter().any(|arg| arg == "acp")
+        && file_stem_matches(StdPath::new(&cmd.command), "goose")
+    {
+        cmd.args.insert(0, "acp".to_string());
+    }
+    if !goose_args_include_developer_builtin(&cmd.args) {
+        cmd.args.push("--with-builtin".to_string());
+        cmd.args.push("developer".to_string());
+    }
+    cmd
+}
+
 pub(crate) fn normalize_acp_provider_command(
     data_root: &Path,
     provider_id: &str,
@@ -409,6 +630,11 @@ pub(crate) fn normalize_acp_provider_command(
     };
     let cmd = if provider_id == "qwen" {
         maybe_set_qwen_openai_auth_type(cmd)
+    } else {
+        cmd
+    };
+    let cmd = if provider_id == "goose" {
+        maybe_set_goose_acp_subcommand(cmd)
     } else {
         cmd
     };
@@ -618,6 +844,128 @@ mod tests {
                 "--auth-type".to_string(),
                 "openai".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn normalizes_goose_command_with_acp_and_developer_builtin() {
+        let temp = tempdir().unwrap();
+        let input = installer::AgentServerCommand {
+            command: "/tmp/goose".to_string(),
+            args: Vec::new(),
+            dependencies: Vec::new(),
+            managed: None,
+        };
+        let normalized =
+            normalize_acp_provider_command(temp.path(), "goose", input).expect("normalized goose");
+        assert_eq!(
+            normalized.args,
+            vec![
+                "acp".to_string(),
+                "--with-builtin".to_string(),
+                "developer".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn preserves_existing_goose_developer_builtin() {
+        let temp = tempdir().unwrap();
+        let input = installer::AgentServerCommand {
+            command: "/tmp/goose".to_string(),
+            args: vec![
+                "acp".to_string(),
+                "--with-builtin".to_string(),
+                "developer,computercontroller".to_string(),
+            ],
+            dependencies: Vec::new(),
+            managed: None,
+        };
+        let normalized =
+            normalize_acp_provider_command(temp.path(), "goose", input).expect("normalized goose");
+        assert_eq!(
+            normalized.args,
+            vec![
+                "acp".to_string(),
+                "--with-builtin".to_string(),
+                "developer,computercontroller".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn classifies_upstream_openhands_runtime_contract() {
+        let cmd = installer::AgentServerCommand {
+            command: "/tmp/openhands".to_string(),
+            args: vec!["acp".to_string(), "--override-with-envs".to_string()],
+            dependencies: Vec::new(),
+            managed: None,
+        };
+
+        assert_eq!(
+            openhands_runtime_contract_for_command(&cmd),
+            OpenHandsRuntimeContract::UpstreamAcp
+        );
+    }
+
+    #[test]
+    fn classifies_legacy_openhands_shim_runtime_contract() {
+        let cmd = installer::AgentServerCommand {
+            command: "/tmp/openhands-acp.js".to_string(),
+            args: Vec::new(),
+            dependencies: Vec::new(),
+            managed: None,
+        };
+
+        assert_eq!(
+            openhands_runtime_contract_for_command(&cmd),
+            OpenHandsRuntimeContract::ShimAcp
+        );
+    }
+
+    #[tokio::test]
+    async fn openhands_bridge_adapter_inspect_surfaces_runtime_contract_details() {
+        let temp = tempdir().unwrap();
+        let bridge_cmd = temp.path().join("acp-crp-bridge");
+        std::fs::write(&bridge_cmd, b"bridge").unwrap();
+
+        let adapter = acp_bridge_adapter(
+            "openhands",
+            &installer::AgentServerCommand {
+                command: bridge_cmd.to_string_lossy().to_string(),
+                args: vec!["--stdio".to_string()],
+                dependencies: Vec::new(),
+                managed: None,
+            },
+            installer::AgentServerCommand {
+                command: "/tmp/openhands-acp.js".to_string(),
+                args: Vec::new(),
+                dependencies: Vec::new(),
+                managed: None,
+            },
+        );
+
+        let status = adapter.inspect().await.expect("inspect status");
+        assert_eq!(
+            status
+                .details
+                .get("openhands_runtime_contract")
+                .map(String::as_str),
+            Some("shim_acp")
+        );
+        assert_eq!(
+            status
+                .details
+                .get("openhands_real_runtime")
+                .map(String::as_str),
+            Some("false")
+        );
+        assert_eq!(
+            status
+                .details
+                .get("openhands_runtime_contract_note")
+                .map(String::as_str),
+            Some("runtime command still points at the legacy `openhands-acp` shim")
         );
     }
 

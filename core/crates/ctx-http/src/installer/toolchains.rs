@@ -445,24 +445,26 @@ pub(crate) fn node_runtime_dependency_metadata(
     }
 }
 
-pub(crate) async fn ensure_python_runtime(
+pub(crate) async fn ensure_python_runtime_versioned(
     state: &AppState,
     install_id: Option<InstallId>,
     provider_id: &str,
     data_root: &Path,
     target: InstallTarget,
+    python_version: &str,
+    python_build_tag: &str,
 ) -> Result<PythonRuntime> {
     let target_triple = python_target_triple_for_install_target(target)?;
     if python_target_can_use_bundled_runtime(target) {
-        if let Some(bundled) = bundled_assets::bundled_python_runtime() {
-            if bundled.version == PYTHON_VERSION {
+        if let Some(bundled) = bundled_assets::bundled_python_runtime_version(python_version) {
+            if bundled.version == python_version {
                 emit_install(
                     state,
                     install_id,
                     provider_id,
                     InstallEventLevel::Info,
                     "python",
-                    format!("Using bundled Python runtime {PYTHON_VERSION} ({target_triple})"),
+                    format!("Using bundled Python runtime {python_version} ({target_triple})"),
                     None,
                     None,
                     None,
@@ -476,12 +478,12 @@ pub(crate) async fn ensure_python_runtime(
                 tracing::warn!(
                     "bundled Python runtime version {} does not match expected {}",
                     bundled.version,
-                    PYTHON_VERSION
+                    python_version
                 );
             }
         }
     }
-    let folder = format!("cpython-{PYTHON_VERSION}+{PYTHON_BUILD_TAG}-{target_triple}");
+    let folder = format!("cpython-{python_version}+{python_build_tag}-{target_triple}");
     let python_root = data_root.join("runtimes").join("python").join(&folder);
     let python_bin = resolve_python_bin(&python_root, target);
 
@@ -492,7 +494,7 @@ pub(crate) async fn ensure_python_runtime(
             provider_id,
             InstallEventLevel::Info,
             "python",
-            format!("Using existing Python runtime {PYTHON_VERSION} ({target_triple})"),
+            format!("Using existing Python runtime {python_version} ({target_triple})"),
             None,
             None,
             None,
@@ -513,7 +515,7 @@ pub(crate) async fn ensure_python_runtime(
             provider_id,
             InstallEventLevel::Info,
             "python",
-            format!("Using existing Python runtime {PYTHON_VERSION} ({target_triple})"),
+            format!("Using existing Python runtime {python_version} ({target_triple})"),
             None,
             None,
             None,
@@ -530,9 +532,9 @@ pub(crate) async fn ensure_python_runtime(
     }
 
     let asset =
-        format!("cpython-{PYTHON_VERSION}+{PYTHON_BUILD_TAG}-{target_triple}-install_only.tar.gz");
+        format!("cpython-{python_version}+{python_build_tag}-{target_triple}-install_only.tar.gz");
     let url = format!(
-        "https://github.com/indygreg/python-build-standalone/releases/download/{PYTHON_BUILD_TAG}/{asset}"
+        "https://github.com/indygreg/python-build-standalone/releases/download/{python_build_tag}/{asset}"
     );
     let tmp = data_root.join("runtimes").join("python").join(&asset);
 
@@ -620,7 +622,7 @@ pub(crate) async fn ensure_python_runtime(
         provider_id,
         InstallEventLevel::Success,
         "python_extract",
-        format!("Installed Python runtime {PYTHON_VERSION} ({target_triple})"),
+        format!("Installed Python runtime {python_version} ({target_triple})"),
         None,
         None,
         None,

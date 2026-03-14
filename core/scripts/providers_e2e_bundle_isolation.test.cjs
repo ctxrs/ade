@@ -170,7 +170,7 @@ test("endpoint-ui lane defaults to host-mode bundles and scopes focused reruns",
   );
   assert.match(
     script,
-    /local first_pass_providers="\$\{CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-acp-crp-bridge,codex,copilot,gemini,qwen,pi,opencode,mistral,droid,kimi\}"/,
+    /local first_pass_providers="\$\{CTX_E2E_ENDPOINT_BUNDLE_PROVIDERS:-acp-crp-bridge,codex,cline,copilot,gemini,goose,openhands,qwen,pi,opencode,mistral,droid,kimi\}"/,
   );
   assert.match(
     script,
@@ -219,6 +219,27 @@ test("bundle harnesses treat archive js entrypoints as requiring node", () => {
     providersScript,
     /bin_path\.endswith\(\("\.js", "\.mjs", "\.cjs"\)\)/,
   );
+});
+
+test("bundle runtime downloads use mktemp templates that work on macOS", () => {
+  const script = fs.readFileSync(bundleHarnessScriptPath, "utf8");
+
+  assert.match(script, /mktemp -p "\$dest_dir" "node-\$\{node_folder\}\.XXXXXX"/);
+  assert.match(script, /mktemp -p "\$dest_dir" "python-\$\{py_folder\}\.XXXXXX"/);
+  assert.match(script, /mktemp -p "\$dest_dir" "podman-\$\{PODMAN_VERSION\}\.XXXXXX"/);
+  assert.doesNotMatch(script, /mktemp -p "\$dest_dir" "node-[^"]+XXXXXX\.[^"]+"/);
+  assert.doesNotMatch(script, /mktemp -p "\$dest_dir" "python-[^"]+XXXXXX\.[^"]+"/);
+  assert.doesNotMatch(script, /mktemp -p "\$dest_dir" "podman-[^"]+XXXXXX\.[^"]+"/);
+});
+
+test("bundle podman extraction dispatches on detected archive type, not temp filename suffix", () => {
+  const script = fs.readFileSync(bundleHarnessScriptPath, "utf8");
+
+  assert.match(script, /local archive_path=""\s+local archive_type=""/);
+  assert.match(script, /case "\$archive_type" in/);
+  assert.match(script, /archive_type="zip"/);
+  assert.match(script, /archive_type="tar"/);
+  assert.match(script, /archive_type="tgz"/);
 });
 
 test("web e2e daemon launcher injects an explicit ctx-mcp command", () => {

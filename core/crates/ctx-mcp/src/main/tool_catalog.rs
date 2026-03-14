@@ -80,10 +80,6 @@ pub(super) fn tools_list_response() -> Value {
                         "label": { "type": "string", "description": "Subagent label." },
                         "labels": { "type": "array", "items": { "type": "string" }, "description": "Subagent labels." }
                     },
-                    "anyOf": [
-                        { "required": ["label"] },
-                        { "required": ["labels"] }
-                    ],
                     "additionalProperties": false
                 }
             },
@@ -97,10 +93,6 @@ pub(super) fn tools_list_response() -> Value {
                         "label": { "type": "string", "description": "Subagent label." },
                         "all": { "type": "boolean", "description": "Interrupt all subagents." }
                     },
-                    "anyOf": [
-                        { "required": ["label"] },
-                        { "required": ["all"] }
-                    ],
                     "additionalProperties": false
                 }
             },

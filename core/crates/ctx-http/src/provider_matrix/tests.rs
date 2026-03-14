@@ -237,6 +237,122 @@ fn builtin_matrix_uses_kimi_acp_subcommand() {
 }
 
 #[test]
+fn builtin_matrix_uses_raw_upstream_cline_acp_runtime() {
+    let matrix = builtin_matrix();
+    let cline = matrix
+        .providers
+        .iter()
+        .find(|entry| entry.id == "cline")
+        .expect("cline entry");
+
+    let command = cline.command.as_ref().expect("cline command");
+    assert_eq!(command.command, "cline");
+    assert_eq!(command.args, vec!["--acp".to_string()]);
+
+    let managed_install = cline
+        .managed_install
+        .as_ref()
+        .expect("cline managed install");
+    match managed_install {
+        ProviderInstall::Npm {
+            package,
+            entrypoint,
+            args,
+        } => {
+            assert_eq!(package, "cline");
+            assert_eq!(entrypoint, "node_modules/cline/dist/cli.mjs");
+            assert_eq!(args, &vec!["--acp".to_string()]);
+        }
+        other => panic!("expected cline npm managed install, got {other:?}"),
+    }
+}
+
+#[test]
+fn builtin_matrix_uses_goose_upstream_acp_archive() {
+    let matrix = builtin_matrix();
+    let goose = matrix
+        .providers
+        .iter()
+        .find(|entry| entry.id == "goose")
+        .expect("goose entry");
+
+    let command = goose.command.as_ref().expect("goose command");
+    assert_eq!(command.command, "goose");
+    assert_eq!(command.args, vec!["acp".to_string()]);
+
+    let managed_install = goose
+        .managed_install
+        .as_ref()
+        .expect("goose managed install");
+    match managed_install {
+        ProviderInstall::Archive {
+            version,
+            args,
+            targets,
+        } => {
+            assert_eq!(version, "1.27.2");
+            assert_eq!(args, &vec!["acp".to_string()]);
+
+            let darwin = targets
+                .get("darwin-aarch64")
+                .expect("goose darwin-aarch64 target");
+            assert!(matches!(darwin.archive, ProviderArchiveKind::TarBz2));
+            assert_eq!(darwin.bin_path, "goose");
+            assert_eq!(
+                darwin.url,
+                "https://github.com/block/goose/releases/download/v1.27.2/goose-aarch64-apple-darwin.tar.bz2"
+            );
+            assert_eq!(
+                darwin.sha256.as_deref(),
+                Some("9e66353e19169f550a32054498ca60a2a2cb20238eb91aee38780a4347322ee9")
+            );
+        }
+        other => panic!("expected goose archive managed install, got {other:?}"),
+    }
+
+    let release = goose.releases.first().expect("goose release");
+    assert_eq!(release.version, "1.27.2");
+    assert!(release.upstream_version.is_none());
+}
+
+#[test]
+fn builtin_matrix_uses_upstream_openhands_python_acp_runtime() {
+    let matrix = builtin_matrix();
+    let openhands = matrix
+        .providers
+        .iter()
+        .find(|entry| entry.id == "openhands")
+        .expect("openhands entry");
+
+    let command = openhands.command.as_ref().expect("openhands command");
+    assert_eq!(command.command, "openhands");
+    assert_eq!(command.args, vec!["acp".to_string()]);
+
+    let managed_install = openhands
+        .managed_install
+        .as_ref()
+        .expect("openhands managed install");
+    match managed_install {
+        ProviderInstall::Python {
+            package,
+            version,
+            entrypoint,
+            args,
+            python_version,
+            python_build_tag,
+        } => {
+            assert_eq!(package, "openhands");
+            assert_eq!(version, "1.13.1");
+            assert_eq!(entrypoint, "openhands");
+            assert_eq!(args, &vec!["acp".to_string()]);
+            assert_eq!(python_version.as_deref(), Some("3.12.13"));
+            assert_eq!(python_build_tag.as_deref(), Some("20260303"));
+        }
+        other => panic!("expected openhands python managed install, got {other:?}"),
+    }
+}
+
+#[test]
 fn user_facing_harness_filter_excludes_known_dependencies_only() {
     let matrix = builtin_matrix();
 

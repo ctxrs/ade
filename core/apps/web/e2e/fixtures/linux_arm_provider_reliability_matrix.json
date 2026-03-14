@@ -24,10 +24,6 @@
       "openrouter_model_override": "google/gemini-3-flash-preview"
     },
     {
-      "provider_id": "openhands",
-      "openrouter_model_override": "google/gemini-3-flash-preview"
-    },
-    {
       "provider_id": "droid",
       "openrouter_model_override": "google/gemini-3-flash-preview"
     }
@@ -44,6 +40,10 @@
     {
       "provider_id": "kimi",
       "reason": "provider matrix does not currently ship linux-aarch64 managed archive target"
+    },
+    {
+      "provider_id": "openhands",
+      "reason": "provider matrix now uses a python managed install with a provider-scoped Python 3.12 runtime instead of a linux-aarch64 managed archive target"
     },
     {
       "provider_id": "claude-crp",
