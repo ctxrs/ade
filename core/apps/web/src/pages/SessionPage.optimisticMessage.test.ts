@@ -17,8 +17,7 @@ describe("SessionPage optimistic message helpers", () => {
 
     expect(message.role).toBe("user");
     expect(message.turn_sequence).toBeTypeOf("number");
-    const orderedMessage = message as typeof message & { order_seq?: number | null };
-    expect(orderedMessage.order_seq).toBe(message.turn_sequence);
+    expect(message.order_seq).toBe(message.turn_sequence);
     expect(Number.isFinite(Number(message.turn_sequence))).toBe(true);
   });
 

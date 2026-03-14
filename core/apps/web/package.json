@@ -31,7 +31,7 @@
     "test:e2e:updater:ui-contract": "pnpm exec playwright test -c playwright.premerge.config.ts e2e/updater-desktop-ui-contract.spec.ts e2e/updater-global-semantics.spec.ts",
     "test:e2e:flake-report": "node ./scripts/flake-report.mjs --format table",
     "test:e2e:quarantine-sync": "node ./scripts/quarantine-sync.mjs",
-    "typecheck": "tsc --noEmit --incremental --tsBuildInfoFile .turbo/tsbuildinfo/apps-web.tsbuildinfo"
+    "typecheck": "tsc --noEmit --incremental false"
   },
   "dependencies": {
     "@ctx/design": "workspace:*",
