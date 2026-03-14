@@ -136,6 +136,41 @@ describe("WorkbenchTurnHeaderView", () => {
 });
 
 describe("WorkbenchToolRow", () => {
+  it("keeps action-style tool summaries on the primary line", () => {
+    const onToggle = vi.fn();
+
+    const { container } = render(
+      <WorkbenchToolRow
+        item={{
+          kind: "tool",
+          id: "tool-1",
+          tool_call_id: "tool-call-1",
+          created_at: "2025-01-01T00:00:00.000Z",
+          updated_at: "2025-01-01T00:00:01.000Z",
+          tool_kind: "execute",
+          provider_tool_name: "Bash",
+          title: "Ran",
+          subtitle: "/bin/zsh -lc pwd",
+          status: "running",
+          locations: [],
+          input: { command: "pwd" },
+          output_text: "",
+          raw: null,
+          updates_seen: 1,
+          has_details: true,
+        }}
+        verbosity="default"
+        expanded={false}
+        onToggle={onToggle}
+      />,
+    );
+
+    const mainline = container.querySelector(".wb-tool-mainline");
+    expect(mainline?.textContent).toContain("Ran");
+    expect(mainline?.textContent).toContain("/bin/zsh -lc pwd");
+    expect(container.querySelector(".wb-tool-description")).toBeNull();
+  });
+
   it("renders the tool description on a dedicated secondary line", () => {
     const onToggle = vi.fn();
 

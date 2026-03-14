@@ -36,6 +36,22 @@ const asRecord = (value: unknown): Record<string, unknown> => {
   return value as Record<string, unknown>;
 };
 
+const INLINE_SUMMARY_VERBS = new Set([
+  "Read",
+  "Explored",
+  "Searched",
+  "Wrote",
+  "Edited",
+  "Ran",
+  "Run",
+  "Fetch",
+  "Fetched",
+  "Search",
+  "List",
+  "Write",
+  "Edit",
+]);
+
 type SelectionSnapshot = {
   text: string;
   anchorNode: Node | null;
@@ -381,6 +397,8 @@ export function WorkbenchToolRow({
     return null;
   };
 
+  const isInlineSummaryVerb = (value: string) => INLINE_SUMMARY_VERBS.has(String(value ?? "").trim());
+
   const labelParts = (() => {
     const normalizedTitle = normalizeWorktreePath(title);
     const titlePrefixed = parsePrefixed(normalizedTitle, [
@@ -399,6 +417,9 @@ export function WorkbenchToolRow({
     const titleRest = titlePrefixed?.rest ?? "";
 
     if (normalizedTitle && normalizedTitle !== "Tool") {
+      if (summary && isInlineSummaryVerb(normalizedTitle)) {
+        return makeParts(normalizedTitle, summary);
+      }
       if (titlePrefixed) return titlePrefixed;
       return makeParts(normalizedTitle);
     }
