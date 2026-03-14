@@ -99,6 +99,40 @@ describe("WorkbenchTurnHeaderView", () => {
     expect(header).toHaveAttribute("aria-expanded", "false");
     expect(await screen.findByRole("button", { name: "Copied" })).toBeInTheDocument();
   });
+
+  it("does not expand when the copy button interaction starts with mouse down", async () => {
+    render(<TestHeader plainText="copy me" />);
+
+    const header = getHeader();
+    const copyButton = screen.getByRole("button", { name: "Copy message" });
+    expect(header).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.mouseDown(copyButton);
+    fireEvent.click(copyButton);
+
+    expect(copyTextToClipboardMock).toHaveBeenCalledWith("copy me");
+    expect(header).toHaveAttribute("aria-expanded", "false");
+    expect(await screen.findByRole("button", { name: "Copied" })).toBeInTheDocument();
+  });
+
+  it("does not expand when the icon glyph itself is clicked", async () => {
+    render(<TestHeader plainText="copy me" />);
+
+    const header = getHeader();
+    const copyButton = screen.getByRole("button", { name: "Copy message" });
+    const icon = copyButton.querySelector("svg");
+    if (!(icon instanceof SVGElement)) {
+      throw new Error("Expected copy icon svg to be rendered");
+    }
+    expect(header).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.mouseDown(icon);
+    fireEvent.click(icon);
+
+    expect(copyTextToClipboardMock).toHaveBeenCalledWith("copy me");
+    expect(header).toHaveAttribute("aria-expanded", "false");
+    expect(await screen.findByRole("button", { name: "Copied" })).toBeInTheDocument();
+  });
 });
 
 describe("WorkbenchToolRow", () => {

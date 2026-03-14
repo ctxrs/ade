@@ -1,8 +1,9 @@
-import type {
-  CSSProperties,
-  Dispatch,
-  MutableRefObject,
-  SetStateAction,
+import {
+  type CSSProperties,
+  type Dispatch,
+  type MutableRefObject,
+  type SetStateAction,
+  useMemo,
 } from "react";
 import type {
   DataWithScrollModifier,
@@ -285,6 +286,18 @@ export function SessionWorkbenchPane({
   currentModelId,
   onSetModelId,
 }: SessionWorkbenchPaneProps) {
+  const messageListContext = useMemo(
+    () => ({
+      ...context,
+      renderRevision: JSON.stringify({
+        turnHeaders: expandedTurnHeaders,
+        turnDetails: expandedTurnDetailsById,
+        tools: expandedToolById,
+      }),
+    }),
+    [context, expandedToolById, expandedTurnDetailsById, expandedTurnHeaders],
+  );
+
   const renderThreadItem = (item: ThreadItem) => {
     if (item.kind === "spacer") {
       return <div style={{ height: 1 }} />;
@@ -507,7 +520,7 @@ export function SessionWorkbenchPane({
           itemIdentity={itemIdentity}
           initialLocation={initialLocation}
           dataState={dataState}
-          context={context}
+          context={messageListContext}
           onScroll={onScroll}
           onRenderedDataChange={onRenderedDataChange}
           methodsRef={methodsRef}

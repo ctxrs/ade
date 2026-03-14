@@ -33,6 +33,7 @@ type WorkbenchMessageListStackProps = {
 export type WorkbenchMessageListContext = {
   loaded: boolean;
   loadingOlder: boolean;
+  renderRevision?: string;
 };
 
 const DEBUG_ROW_SIZE_DELTA_PX = 8;

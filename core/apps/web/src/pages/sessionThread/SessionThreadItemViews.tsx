@@ -147,7 +147,13 @@ export function WorkbenchTurnHeaderView({
     [header.content],
   );
 
-  const handleClick = () => {
+  const handleCopyMouseDown = useCallback((e: MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+  }, []);
+
+  const handleClick = (event: MouseEvent<HTMLDivElement>) => {
+    const target = event.target;
+    if (target instanceof Element && target.closest(".wb-turn-header-copy")) return;
     const selection = readSelectionSnapshot();
     if (selectionChangedDuringInteraction(pointerSelectionRef.current, selection)) return;
     onToggle();
@@ -180,6 +186,7 @@ export function WorkbenchTurnHeaderView({
             className="wb-turn-header-copy"
             aria-label={copied ? "Copied" : "Copy message"}
             title={copied ? "Copied" : "Copy message"}
+            onMouseDown={handleCopyMouseDown}
             onClick={handleCopy}
           >
             {copied ? <Check size={12} aria-hidden="true" /> : <Copy size={12} aria-hidden="true" />}

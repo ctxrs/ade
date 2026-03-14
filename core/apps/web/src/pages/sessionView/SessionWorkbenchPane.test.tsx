@@ -1,0 +1,230 @@
+import React, { useRef, useState } from "react";
+import { fireEvent, render, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { VirtuosoMessageListTestingContext } from "@virtuoso.dev/message-list";
+import type { MessageAttachment } from "../../api/client";
+import type { WorkbenchMessageListContext } from "../SessionPage.thread";
+import type {
+  AskUserQuestionAnswerState,
+  WorkbenchListItem,
+} from "../SessionPage.types";
+import { SessionWorkbenchPane } from "./SessionWorkbenchPane";
+
+const { copyTextToClipboardMock } = vi.hoisted(() => ({
+  copyTextToClipboardMock: vi.fn(async () => true),
+}));
+
+vi.mock("../../utils/clipboard", () => ({
+  copyTextToClipboard: copyTextToClipboardMock,
+}));
+
+vi.mock("../../components/WorkbenchComposer", () => ({
+  WorkbenchComposer: () => <div data-testid="workbench-composer" />,
+}));
+
+vi.mock("./ProviderGuardBanner", () => ({
+  ProviderGuardBanner: () => null,
+}));
+
+vi.mock("./SessionAuthBanner", () => ({
+  SessionAuthBanner: () => null,
+}));
+
+vi.mock("./SessionDebugPanel", () => ({
+  SessionDebugPanel: () => null,
+}));
+
+vi.mock("./SessionQueuePanel", () => ({
+  SessionQueuePanel: () => null,
+}));
+
+vi.mock("./SessionSubagentInvocationsCard", () => ({
+  SessionSubagentInvocationsCard: () => null,
+}));
+
+vi.mock("../../components/dictation/DictationOnboardingModal", () => ({
+  DictationOnboardingModal: () => null,
+}));
+
+function TestPane() {
+  const listItems = useRef<WorkbenchListItem[]>([
+    {
+      kind: "turn_header",
+      id: "turn-header-row-1",
+      header: {
+        id: "header-1",
+        content: "line 1\nline 2\nline 3\nline 4\nline 5",
+        plain_text: "line 1\nline 2\nline 3\nline 4\nline 5",
+        attachments: [],
+        created_at: "2025-01-01T00:00:00.000Z",
+      },
+    },
+  ]);
+  const [expandedTurnHeaders, setExpandedTurnHeaders] = useState<Record<string, boolean>>({});
+  const [expandedTurnDetailsById, setExpandedTurnDetailsById] = useState<Record<string, boolean>>({});
+  const [expandedToolById, setExpandedToolById] = useState<Record<string, boolean>>({});
+  const [, setOptimisticAskAnswers] = useState<Record<string, AskUserQuestionAnswerState>>({});
+  const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
+  const methodsRef = useRef(null);
+  const dropScopeRef = useRef<HTMLDivElement | null>(null);
+  const context: WorkbenchMessageListContext = { loaded: true, loadingOlder: false };
+
+  return (
+    <VirtuosoMessageListTestingContext.Provider value={{ viewportHeight: 600, itemHeight: 120 }}>
+      <SessionWorkbenchPane
+        id="session-1"
+        entryLoadState={undefined}
+        entryError={null}
+        session={null}
+        sessionError={null}
+        dropActive={false}
+        dropScopeRef={dropScopeRef}
+        listItems={listItems.current}
+        events={[]}
+        messages={[]}
+        worktreeId={null}
+        handleFileOpenError={() => {}}
+        modifierDown={false}
+        activeAskToolCallId={null}
+        expandedTurnHeaders={expandedTurnHeaders}
+        setExpandedTurnHeaders={setExpandedTurnHeaders}
+        expandedTurnDetailsById={expandedTurnDetailsById}
+        setExpandedTurnDetailsById={setExpandedTurnDetailsById}
+        expandedToolById={expandedToolById}
+        setExpandedToolById={setExpandedToolById}
+        turnToolsLoading={[]}
+        verbosity="default"
+        setOptimisticAskAnswers={setOptimisticAskAnswers}
+        onRequestTurnTools={() => {}}
+        showDebug={false}
+        debugEvents={[]}
+        authUi={{ status: "ok", methods: [] }}
+        authMethodId=""
+        onAuthMethodChange={() => {}}
+        authBusy={false}
+        authError={null}
+        onAuthenticate={async () => {}}
+        subagentInvocations={[]}
+        onOpenChildSession={() => {}}
+        style={{ height: 400 }}
+        itemIdentity={(item) => item.id}
+        initialData={listItems.current}
+        initialLocation={{ index: 0, align: "start" }}
+        dataState={{ data: listItems.current }}
+        context={context}
+        onScroll={() => {}}
+        onRenderedDataChange={() => {}}
+        methodsRef={methodsRef}
+        licenseKey=""
+        shortSizeAlign="top"
+        queueForPanel={[]}
+        pendingQueueMessageIdSet={new Set<string>()}
+        queueActionBusy={false}
+        sendBusy={false}
+        onSendQueuedNow={async () => {}}
+        onEditQueued={async () => {}}
+        onRemoveQueued={async () => {}}
+        input=""
+        setInput={() => {}}
+        slashCommands={[]}
+        draftAttachments={draftAttachments}
+        setDraftAttachments={setDraftAttachments}
+        sendNow={async () => {}}
+        hasDraftContent={false}
+        hasActiveTurn={false}
+        atBottom={true}
+        setVerbosityPref={() => {}}
+        workbenchMode="default"
+        setWorkbenchMode={() => {}}
+        contextWindow={null}
+        dictationRecording={false}
+        onToggleRecording={() => {}}
+        onInterruptSession={null}
+        sendError={null}
+        fileOpenError={null}
+        dictationDebugText={null}
+        dictationError={null}
+        dictationOnboarding={null}
+        dismissDictationOnboarding={() => {}}
+        backDictationOnboarding={() => {}}
+        chooseDictationOnboardingLocal={() => {}}
+        chooseDictationOnboardingCloud={() => {}}
+        updateDictationOnboardingCloud={() => {}}
+        submitDictationOnboardingCloud={async () => {}}
+        submitDictationOnboardingLocal={async () => {}}
+        providerGuardNotice={null}
+        providerGuardHeading=""
+        providerGuardMessage=""
+        providerGuardProviderLabel={undefined}
+        providerGuardPidLabel={null}
+        providerGuardMemoryLimitMb={null}
+        providerGuardLimitLabel=""
+        providerGuardActionBusy={false}
+        providerGuardActionError={null}
+        canRaiseProviderGuard={false}
+        onRaiseProviderGuardLimit={async () => {}}
+        onDisableProviderGuard={async () => {}}
+        formatMemoryMb={() => "0 MB"}
+        availableModels={[]}
+        currentModelId=""
+        onSetModelId={async () => {}}
+      />
+    </VirtuosoMessageListTestingContext.Provider>
+  );
+}
+
+describe("SessionWorkbenchPane", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    copyTextToClipboardMock.mockClear();
+    class ResizeObserverStub {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    Object.defineProperty(globalThis, "ResizeObserver", {
+      configurable: true,
+      writable: true,
+      value: ResizeObserverStub,
+    });
+  });
+
+  it("expands a turn header when clicked inside the virtualized workbench list", async () => {
+    const { container } = render(<TestPane />);
+    const header = container.querySelector(".wb-turn-header");
+    if (!(header instanceof HTMLDivElement)) {
+      throw new Error("Expected .wb-turn-header to be rendered");
+    }
+
+    expect(header).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.mouseDown(header);
+    fireEvent.click(header);
+
+    expect(header).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("copies without expanding when the copy icon is clicked inside the virtualized workbench list", async () => {
+    const { container } = render(<TestPane />);
+    const header = container.querySelector(".wb-turn-header");
+    if (!(header instanceof HTMLDivElement)) {
+      throw new Error("Expected .wb-turn-header to be rendered");
+    }
+    const copyButton = container.querySelector(".wb-turn-header-copy");
+    if (!(copyButton instanceof HTMLButtonElement)) {
+      throw new Error("Expected .wb-turn-header-copy to be rendered");
+    }
+
+    expect(header).toHaveAttribute("aria-expanded", "false");
+    expect(copyButton).toHaveAttribute("aria-label", "Copy message");
+
+    fireEvent.mouseDown(copyButton);
+    fireEvent.click(copyButton);
+
+    expect(copyTextToClipboardMock).toHaveBeenCalledWith("line 1\nline 2\nline 3\nline 4\nline 5");
+    expect(header).toHaveAttribute("aria-expanded", "false");
+    await waitFor(() => {
+      expect(copyButton).toHaveAttribute("aria-label", "Copied");
+    });
+  });
+});
