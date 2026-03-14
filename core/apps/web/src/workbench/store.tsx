@@ -2,7 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import { randomUuid } from "../utils/randomUuid";
 import { errorMessage } from "../utils/errorMessage";
 import type { WorkbenchModeId } from "../components/WorkbenchComposer";
-import type { LayoutNode, PersistedWorkbenchWindowV1, WorkbenchDraft, WorkbenchScrollState, WorkbenchTab } from "./types";
+import type { LayoutNode, PersistedWorkbenchWindowV1, WorkbenchDraft, WorkbenchTab } from "./types";
 import {
   loadWorkbenchDraftV1,
   loadWorkbenchWindowV1,
@@ -38,14 +38,9 @@ function writeSessionWindowV1(workspaceId: string, windowId: string, win: Persis
   }
 }
 
-const SCROLL_CACHE_LIMIT = 2;
 export const NEW_TASK_DRAFT_KEY = "new_task";
 
 export function sessionDraftKey(sessionId: string): string {
-  return `session:${sessionId}`;
-}
-
-export function scrollKey(sessionId: string): string {
   return `session:${sessionId}`;
 }
 
@@ -105,7 +100,6 @@ function defaultWindowState(): PersistedWorkbenchWindowV1 {
       activeTabId: tabId,
     },
     focusedLeafId: leafId,
-    scrollByKey: {},
   };
 }
 
@@ -262,34 +256,6 @@ export class WorkbenchStore {
     }
   }
 
-  private pruneScrollByKey(
-    scrollByKey: Record<string, WorkbenchScrollState | undefined>,
-  ): Record<string, WorkbenchScrollState | undefined> {
-    const entries = Object.entries(scrollByKey)
-      .map(([key, state]) => (state && !state.stickToBottom ? ([key, state] as const) : null))
-      .filter((entry): entry is [string, WorkbenchScrollState] => Boolean(entry));
-    if (entries.length === 0) return {};
-    entries.sort((a, b) => (b[1].updatedAtMs ?? 0) - (a[1].updatedAtMs ?? 0));
-    const next: Record<string, WorkbenchScrollState | undefined> = {};
-    for (const [key, state] of entries.slice(0, SCROLL_CACHE_LIMIT)) {
-      next[key] = state;
-    }
-    return next;
-  }
-
-  private scrollByKeyEquals(
-    a: Record<string, WorkbenchScrollState | undefined>,
-    b: Record<string, WorkbenchScrollState | undefined>,
-  ): boolean {
-    const aKeys = Object.keys(a).filter((key) => a[key]);
-    const bKeys = Object.keys(b).filter((key) => b[key]);
-    if (aKeys.length !== bKeys.length) return false;
-    for (const key of aKeys) {
-      if (a[key] !== b[key]) return false;
-    }
-    return true;
-  }
-
   private addWarning(msg: string) {
     if (this.snapshot.warnings.includes(msg)) return;
     this.snapshot = { ...this.snapshot, warnings: [...this.snapshot.warnings, msg] };
@@ -336,11 +302,6 @@ export class WorkbenchStore {
       const loaded = await loadWorkbenchWindowV1(workspaceId, windowId);
       if (loaded && !this.layoutDirtyBeforeHydrate && !this.seededFromSessionStorage) {
         this.snapshot = { ...this.snapshot, window: loaded };
-      }
-      const normalized = this.pruneScrollByKey(this.snapshot.window.scrollByKey);
-      if (!this.scrollByKeyEquals(this.snapshot.window.scrollByKey, normalized)) {
-        this.snapshot = { ...this.snapshot, window: { ...this.snapshot.window, scrollByKey: normalized } };
-        this.schedulePersistWindow(0);
       }
     } catch (e: unknown) {
       this.persistEnabled = false;
@@ -489,43 +450,6 @@ export class WorkbenchStore {
     });
     this.setWindow({ ...win, layout: updateLeaf(win.layout, leafId, () => nextLeaf) }, { persistDelayMs: 0 });
     return true;
-  };
-
-  setScrollState = (
-    key: string,
-    next: Omit<WorkbenchScrollState, "updatedAtMs"> & { updatedAtMs?: number },
-  ) => {
-    const now = Date.now();
-    const current = this.snapshot.window.scrollByKey[key];
-    const updatedAtMs = next.updatedAtMs ?? now;
-    if (
-      current &&
-      current.stickToBottom === next.stickToBottom &&
-      current.anchorItemId === next.anchorItemId &&
-      (current.anchorOffset ?? null) === (next.anchorOffset ?? null) &&
-      (current.scrollTop ?? null) === (next.scrollTop ?? null) &&
-      Math.abs(current.updatedAtMs - updatedAtMs) < 5
-    ) {
-      return;
-    }
-    const win = this.snapshot.window;
-    const nextEntry: WorkbenchScrollState = {
-      stickToBottom: next.stickToBottom,
-      anchorItemId: next.anchorItemId,
-      anchorOffset: next.anchorOffset ?? null,
-      scrollTop: next.scrollTop ?? null,
-      updatedAtMs,
-    };
-    const nextScrollByKey = { ...win.scrollByKey };
-    if (nextEntry.stickToBottom) {
-      if (!current) return;
-      delete nextScrollByKey[key];
-    } else {
-      nextScrollByKey[key] = nextEntry;
-    }
-    const pruned = this.pruneScrollByKey(nextScrollByKey);
-    if (this.scrollByKeyEquals(win.scrollByKey, pruned)) return;
-    this.setWindow({ ...win, scrollByKey: pruned }, { persistDelayMs: 500 });
   };
 
   getDraft = (draftKey: string): WorkbenchDraft | null => {

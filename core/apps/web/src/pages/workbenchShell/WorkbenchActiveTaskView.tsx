@@ -9,7 +9,6 @@ import { WorkbenchSessionLoadIssues } from "./WorkbenchSessionLoadIssues";
 
 type WorktreeChip = ComponentProps<typeof WorkbenchSessionHeader>["worktreeChip"];
 type SessionLoadIssues = ComponentProps<typeof WorkbenchSessionLoadIssues>["issues"];
-type SessionScrollState = ComponentProps<typeof WorkbenchSessionSlot>["scrollState"];
 type OptimisticFailure = ComponentProps<typeof WorkbenchSessionSlot>["optimisticFailure"];
 type SessionSections = ComponentProps<typeof SessionsPane>["sections"];
 type Artifacts = ComponentProps<typeof ArtifactsPane>["artifacts"];
@@ -34,9 +33,6 @@ type WorkbenchActiveTaskViewProps = {
   sessionLoadIssues: SessionLoadIssues;
   onRetrySessionLoads: () => void;
   activeSessionId: string | null;
-  mountedSessionIds: string[];
-  activeScrollState: SessionScrollState;
-  preserveScrollOnFocus?: boolean;
   optimisticFailure: OptimisticFailure;
   rightPaneOpen: boolean;
   onSplitterMouseDown: (event: MouseEvent<HTMLDivElement>) => void;
@@ -82,9 +78,6 @@ export function WorkbenchActiveTaskView({
   sessionLoadIssues,
   onRetrySessionLoads,
   activeSessionId,
-  mountedSessionIds,
-  activeScrollState,
-  preserveScrollOnFocus,
   optimisticFailure,
   rightPaneOpen,
   onSplitterMouseDown,
@@ -134,16 +127,13 @@ export function WorkbenchActiveTaskView({
 
         <div className="wb-session">
           <WorkbenchSessionLoadIssues issues={sessionLoadIssues} onRetry={onRetrySessionLoads} />
-          {mountedSessionIds.map((sessionId) => (
+          {activeSessionId ? (
             <WorkbenchSessionSlot
-              key={sessionId}
-              sessionId={sessionId}
-              active={sessionId === activeSessionId}
-              scrollState={sessionId === activeSessionId ? activeScrollState : undefined}
-              preserveScrollOnFocus={preserveScrollOnFocus}
-              optimisticFailure={sessionId === activeSessionId ? optimisticFailure : null}
+              sessionId={activeSessionId}
+              active
+              optimisticFailure={optimisticFailure}
             />
-          ))}
+          ) : null}
           {!activeSessionId ? (
             <div className="wb-muted" style={{ padding: 16 }}>
               Select a session to view this task.

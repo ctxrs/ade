@@ -19,7 +19,7 @@ import type { SlashCommandDescriptor } from "../state/useComposerAutocomplete";
 import { isDesktopApp } from "../utils/desktop";
 import { copyTextToClipboard } from "../utils/clipboard";
 import { useDictationController } from "../utils/useDictationController";
-import { NEW_TASK_DRAFT_KEY, scrollKey, useActiveWorkbenchIds, useNewTaskDraft, useWorkbenchShellSnapshot, useWorkbenchStore } from "../workbench/store";
+import { NEW_TASK_DRAFT_KEY, useActiveWorkbenchIds, useNewTaskDraft, useWorkbenchShellSnapshot, useWorkbenchStore } from "../workbench/store";
 import { useWorkspaceActiveSnapshotSnapshot, useWorkspaceActiveSnapshotStore } from "../state/workspaceActiveSnapshotStore";
 import { hasConfiguredHarnessAuth } from "../utils/providerAuthStatus";
 import { HarnessAuthenticationSection } from "./settings/sections/HarnessAuthenticationSection";
@@ -506,24 +506,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     return `task:${short(activeTaskId)} session:${short(activeSessionId)}`;
   }, [activeTaskId, activeSessionId]);
 
-  const preserveScrollOnFocus = true;
-  const [mountedWorkbenchSessionIds, setMountedWorkbenchSessionIds] = useState<string[]>(() =>
-    activeSessionId ? [activeSessionId] : [],
-  );
-  useEffect(() => {
-    if (!activeTaskId) {
-      setMountedWorkbenchSessionIds([]);
-      return;
-    }
-    if (!activeSessionId) return;
-    setMountedWorkbenchSessionIds((previous) => {
-      const next = [activeSessionId, ...previous.filter((sessionId) => sessionId !== activeSessionId)];
-      return next.slice(0, 3);
-    });
-  }, [activeSessionId, activeTaskId]);
-  const activeScrollState = activeSessionId
-    ? workbenchSnap.window.scrollByKey[scrollKey(activeSessionId)] ?? null
-    : null;
   const optimisticFailure = activeSessionId
     ? optimisticFailureBySessionId[activeSessionId] ?? null
     : null;
@@ -880,9 +862,6 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             sessionLoadIssues={activeTaskController.sessionLoadIssues}
             onRetrySessionLoads={activeTaskController.retryActiveSessionLoads}
             activeSessionId={activeSessionId}
-            mountedSessionIds={mountedWorkbenchSessionIds}
-            activeScrollState={activeScrollState}
-            preserveScrollOnFocus={preserveScrollOnFocus}
             optimisticFailure={optimisticFailure}
             rightPaneOpen={activeTaskController.rightPaneOpen}
             onSplitterMouseDown={activeTaskController.onSplitterMouseDown}

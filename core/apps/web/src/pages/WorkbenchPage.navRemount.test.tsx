@@ -310,13 +310,11 @@ vi.mock("../state/workspaceActiveSnapshotStore", () => ({
 vi.mock("../workbench/store", () => ({
   WorkbenchStoreProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   NEW_TASK_DRAFT_KEY: "new_task",
-  scrollKey: () => "scroll-key",
   sessionDraftKey: () => "draft-key",
   useWorkbenchStore: () => ({
     focusNewTask: focusNewTaskSpy,
     focusTask: focusTaskSpy,
     setActiveSessionForActiveTask: vi.fn(),
-    setScrollState: vi.fn(),
     flushDraft: vi.fn(),
     getActiveTab: () => activeTab,
     getNavToken: () => navToken,
@@ -326,7 +324,11 @@ vi.mock("../workbench/store", () => ({
     windowId: "window-1",
     hydrated: true,
     warnings: [],
-    window: { scrollByKey: {} },
+    window: {
+      v: 1,
+      focusedLeafId: "leaf-1",
+      layout: { kind: "leaf", id: "leaf-1", tabs: [], activeTabId: "" },
+    },
   }),
   useActiveWorkbenchTab: () => null,
   useActiveWorkbenchIds: () => ({ taskId: activeTaskId, sessionId: activeSessionId }),

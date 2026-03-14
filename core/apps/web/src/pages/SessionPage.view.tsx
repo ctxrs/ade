@@ -48,7 +48,6 @@ import {
 } from "./SessionPage.workbenchViewModel";
 import { buildOptimisticUserMessage } from "./SessionPage.optimisticMessage";
 import { useSessionMessageListController } from "./useSessionMessageListController";
-import { useSessionScrollRestoreOnActivate } from "./useSessionScrollRestoreOnActivate";
 import { useWorkbenchThreadViewModelController } from "./useWorkbenchThreadViewModelController";
 import { errorMessage } from "../utils/errorMessage";
 import { defaultSessionVerbosityForProvider } from "./sessionVerbosity";
@@ -72,9 +71,6 @@ export function SessionView({
   onDraftChange,
   onDraftPersistNow,
   onModeChange,
-  preserveScrollOnFocus = false,
-  scrollState,
-  onScrollStateChange,
 }: {
   sessionId: string;
   isActive?: boolean;
@@ -83,21 +79,6 @@ export function SessionView({
   onDraftChange?: ((text: string) => void) | null;
   onDraftPersistNow?: (() => void | Promise<void>) | null;
   onModeChange?: ((modeId: WorkbenchModeId) => void) | null;
-  preserveScrollOnFocus?: boolean;
-  scrollState?: {
-    stickToBottom: boolean;
-    anchorItemId: string | null;
-    anchorOffset: number | null;
-    scrollTop: number | null;
-  } | null;
-  onScrollStateChange?: ((
-    next: {
-      stickToBottom: boolean;
-      anchorItemId: string | null;
-      anchorOffset: number | null;
-      scrollTop: number | null;
-    },
-  ) => void) | null;
   autoOpenSession?: boolean;
 }) {
   const id = sessionId;
@@ -529,7 +510,6 @@ export function SessionView({
     isActive,
     loaded: Boolean(entry?.stateLoaded),
     listItems,
-    scrollState,
     canLoadOlder: Boolean(id && hasMoreTurns),
     loadOlder: async () => {
       if (!id) return;
@@ -537,23 +517,9 @@ export function SessionView({
     },
     showDebug,
     onAtBottomChange: setAtBottom,
-    onScrollStateChange: onScrollStateChange ?? undefined,
   });
 
   // MessageList integration is now handled by `useSessionMessageListController`.
-
-  const listItemsRef = useRef(listItems);
-  listItemsRef.current = listItems;
-  useSessionScrollRestoreOnActivate({
-    sessionId: id,
-    isActive,
-    loaded: Boolean(entry?.stateLoaded),
-    preserveScrollOnFocus,
-    scrollState,
-    listItemsRef,
-    methodsRef: messageListMethodsRef,
-    showDebug,
-  });
 
   const authUi = useMemo(() => deriveAuthUi(events), [eventsStamp]);
   const {

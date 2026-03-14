@@ -36,14 +36,6 @@ export type WorkbenchTab =
       viewMode?: "compact" | "normal" | "verbose";
     };
 
-export type WorkbenchScrollState = {
-  stickToBottom: boolean;
-  anchorItemId: string | null;
-  anchorOffset: number | null;
-  scrollTop: number | null;
-  updatedAtMs: number;
-};
-
 export type WorkbenchDraft = {
   text: string;
   modeId: WorkbenchModeId;
@@ -103,7 +95,6 @@ export type PersistedWorkbenchWindowV1 = {
   v: 1;
   layout: LayoutNode;
   focusedLeafId: string;
-  scrollByKey: Record<string, WorkbenchScrollState | undefined>;
 };
 
 export type PersistedWorkbenchDraftV1 = {

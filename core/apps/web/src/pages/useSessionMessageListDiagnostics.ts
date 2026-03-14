@@ -4,19 +4,11 @@ import { recordSessionMessageListDebugSnapshot } from "./sessionMessageListDebug
 import type { WorkbenchListItem } from "./SessionPage.types";
 import type { WorkbenchMessageListContext } from "./SessionPage.thread";
 
-type ScrollState = {
-  stickToBottom: boolean;
-  anchorItemId: string | null;
-  anchorOffset: number | null;
-  scrollTop: number | null;
-};
-
 type Params = {
   sessionId: string;
   isActive: boolean;
   loaded: boolean;
   listItemsLength: number;
-  scrollState: ScrollState | null | undefined;
   showDebug: boolean;
   methodsRef: MutableRefObject<VirtuosoMessageListMethods<WorkbenchListItem, WorkbenchMessageListContext> | null>;
   lastAtBottomRef: MutableRefObject<boolean | null>;
@@ -29,7 +21,6 @@ export function useSessionMessageListDiagnostics({
   isActive,
   loaded,
   listItemsLength,
-  scrollState,
   showDebug,
   methodsRef,
   lastAtBottomRef,
@@ -76,13 +67,8 @@ export function useSessionMessageListDiagnostics({
   }, [isActive, loaded, sessionId, showDebug]);
 
   useEffect(() => {
-    recordDebugSnapshot("session:init", {
-      persistedStickToBottom: scrollState?.stickToBottom ?? null,
-      persistedAnchorItemId: scrollState?.anchorItemId ?? null,
-      persistedAnchorOffset: scrollState?.anchorOffset ?? null,
-      persistedScrollTop: scrollState?.scrollTop ?? null,
-    });
-  }, [recordDebugSnapshot, scrollState, sessionId]);
+    recordDebugSnapshot("session:init");
+  }, [recordDebugSnapshot, sessionId]);
 
   useEffect(() => {
     if (!showDebug || !isActive) return;

@@ -1,41 +1,20 @@
-import { useCallback } from "react";
 import { copyTextToClipboard } from "../utils/clipboard";
 import { SessionView } from "./SessionPage";
-import { scrollKey, sessionDraftKey, useWorkbenchDraft, useWorkbenchSnapshot, useWorkbenchStore } from "../workbench/store";
-import type { WorkbenchScrollState } from "../workbench/types";
+import { sessionDraftKey, useWorkbenchDraft, useWorkbenchStore } from "../workbench/store";
 
 export type WorkbenchSessionSlotProps = {
   sessionId: string;
   active: boolean;
-  scrollState?: WorkbenchScrollState | null;
-  preserveScrollOnFocus?: boolean;
   optimisticFailure?: { prompt: string; error: string | null } | null;
 };
 
 export function WorkbenchSessionSlot({
   sessionId,
   active,
-  scrollState,
-  preserveScrollOnFocus,
   optimisticFailure,
 }: WorkbenchSessionSlotProps) {
   const workbenchStore = useWorkbenchStore();
-  const workbenchSnap = useWorkbenchSnapshot();
   const draft = useWorkbenchDraft(sessionDraftKey(sessionId), { text: "", modeId: "default" });
-  const effectiveScrollState = scrollState ?? workbenchSnap.window.scrollByKey[scrollKey(sessionId)] ?? null;
-  const handleScrollStateChange = useCallback(
-    (next: {
-      stickToBottom: boolean;
-      anchorItemId: string | null;
-      anchorOffset: number | null;
-      scrollTop: number | null;
-    }) => {
-      workbenchStore.setScrollState(scrollKey(sessionId), next);
-    },
-    [sessionId, workbenchStore],
-  );
-
-  const onScrollStateChange = active || preserveScrollOnFocus ? handleScrollStateChange : null;
 
   return (
     <div
@@ -66,22 +45,10 @@ export function WorkbenchSessionSlot({
         sessionId={sessionId}
         isActive={active}
         autoOpenSession={false}
-        preserveScrollOnFocus={preserveScrollOnFocus}
         draft={draft.value}
         onDraftChange={(text) => draft.setValue({ text, modeId: draft.value.modeId })}
         onDraftPersistNow={() => workbenchStore.flushDraft(sessionDraftKey(sessionId))}
         onModeChange={(modeId) => draft.setValue({ text: draft.value.text, modeId })}
-        scrollState={
-          effectiveScrollState
-            ? {
-                stickToBottom: effectiveScrollState.stickToBottom,
-                anchorItemId: effectiveScrollState.anchorItemId,
-                anchorOffset: effectiveScrollState.anchorOffset ?? null,
-                scrollTop: effectiveScrollState.scrollTop ?? null,
-              }
-            : null
-        }
-        onScrollStateChange={onScrollStateChange}
       />
     </div>
   );

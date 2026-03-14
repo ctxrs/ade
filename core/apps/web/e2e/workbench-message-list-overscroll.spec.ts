@@ -124,9 +124,13 @@ async function clearActiveComposer(page: Page) {
 async function clickTaskAndWait(page: Page, taskNumber: number, expectedSessionId: string) {
   const row = page.locator(".wb-task-row").filter({ hasText: `fixture task ${taskNumber}` }).first();
   await row.click();
-  await expect(page.getByTestId("session-view")).toHaveAttribute("data-session-id", expectedSessionId, {
-    timeout: 20_000,
-  });
+  await expect(page.locator('.wb-session-slot[aria-hidden="false"] [data-testid="session-view"]').first()).toHaveAttribute(
+    "data-session-id",
+    expectedSessionId,
+    {
+      timeout: 20_000,
+    },
+  );
   await expect(page.locator(scrollSelector).first()).toBeVisible({ timeout: 20_000 });
   await page.waitForTimeout(160);
 }

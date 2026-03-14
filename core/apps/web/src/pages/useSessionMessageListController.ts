@@ -17,22 +17,10 @@ type Params = {
   isActive: boolean;
   loaded: boolean;
   listItems: WorkbenchListItem[];
-  scrollState?: {
-    stickToBottom: boolean;
-    anchorItemId: string | null;
-    anchorOffset: number | null;
-    scrollTop: number | null;
-  } | null;
   canLoadOlder: boolean;
   loadOlder: () => Promise<void>;
   showDebug: boolean;
   onAtBottomChange?: (atBottom: boolean) => void;
-  onScrollStateChange?: (next: {
-    stickToBottom: boolean;
-    anchorItemId: string | null;
-    anchorOffset: number | null;
-    scrollTop: number | null;
-  }) => void;
 };
 
 type Result = {
@@ -52,45 +40,33 @@ export function useSessionMessageListController(params: Params): Result {
     isActive,
     loaded,
     listItems,
-    scrollState,
     canLoadOlder,
     loadOlder,
     showDebug,
     onAtBottomChange,
   } = params;
-  const onScrollStateChange = params.onScrollStateChange;
 
   const methodsRef = useRef<VirtuosoMessageListMethods<WorkbenchListItem, WorkbenchMessageListContext> | null>(null);
   const lastSessionIdRef = useRef(sessionId);
-  const initialMountedSyncDoneRef = useRef(false);
+  const lastIsActiveRef = useRef(isActive);
   const contractViolationLoggedRef = useRef<{ sessionId: string; violationKey: string } | null>(null);
 
   const lastScrollLocationRef = useRef<ListScrollLocation | null>(null);
-  const stickToBottomRef = useRef(scrollState?.stickToBottom ?? true);
-  const lastAtBottomRef = useRef<boolean | null>(scrollState ? scrollState.stickToBottom : null);
+  const stickToBottomRef = useRef(true);
+  const lastAtBottomRef = useRef<boolean | null>(null);
   const lastListOffsetRef = useRef<number | null>(null);
-  const lastKnownScrollTopRef = useRef<number | null>(scrollState?.scrollTop ?? null);
-  const suppressInitialBottomPersistRef = useRef<{
-    untilMs: number;
-    targetScrollTop: number | null;
-  } | null>(
-    scrollState && !scrollState.stickToBottom
-      ? { untilMs: Date.now() + 1500, targetScrollTop: scrollState.scrollTop ?? null }
-      : null,
-  );
 
   // Best-effort anchoring based on rendered data (no DOM reads).
   // NOTE: `onRenderedDataChange` can include overscan. Anchoring to `range[0]` can anchor an offscreen
   // row and cause visible jumps, especially with large `increaseViewportBy`. Prefer a mid-range anchor.
-  const renderedAnchorIdRef = useRef<string | null>(scrollState?.anchorItemId ?? null);
-  const renderedTopIdRef = useRef<string | null>(scrollState?.anchorItemId ?? null);
+  const renderedAnchorIdRef = useRef<string | null>(null);
+  const renderedTopIdRef = useRef<string | null>(null);
   const firstListItemIdRef = useRef<string | null>(null);
 
   const pendingHistoryRef = useRef(false);
   const historyExpectedRef = useRef(false);
   const historyRequestedAtTopRef = useRef(false);
   const historyRequestedAnchorIdRef = useRef<string | null>(null);
-  const activationSettlingUntilRef = useRef(0);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const suppressIdDiffLogsRef = useRef<{ sessionId: string; remainingTicks: number } | null>(null);
   const lastScrollDebugAtRef = useRef(0);
@@ -104,7 +80,6 @@ export function useSessionMessageListController(params: Params): Result {
     isActive,
     loaded,
     listItemsLength: listItems.length,
-    scrollState,
     showDebug,
     methodsRef,
     lastAtBottomRef,
@@ -119,117 +94,24 @@ export function useSessionMessageListController(params: Params): Result {
     },
     [sessionId, showDebug],
   );
+  const snapToBottom = useCallback(
+    (methods: VirtuosoMessageListMethods<WorkbenchListItem, WorkbenchMessageListContext>) => {
+      requestAnimationFrame(() => {
+        methods.scrollToItem({ index: "LAST", align: "end", behavior: "instant" });
+        const scroller = methods.scrollerElement?.() ?? null;
+        if (scroller) {
+          scroller.scrollTop = scroller.scrollHeight;
+        }
+      });
+    },
+    [],
+  );
 
   const appendBehavior = useMemo<AutoscrollToBottom<WorkbenchListItem, WorkbenchMessageListContext>>(
     () => (params) => (params.atBottom ? "auto" : false),
     [],
   );
-
-  useEffect(() => {
-    // When only one session slot is mounted, switching tasks/sessions can remount the list.
-    // Virtuoso may briefly report "at bottom" on initial layout; avoid immediately deleting a
-    // previously persisted non-bottom scroll state before restoration can run.
-    if (scrollState && !scrollState.stickToBottom) {
-      suppressInitialBottomPersistRef.current = {
-        untilMs: Date.now() + 1500,
-        targetScrollTop: scrollState.scrollTop ?? null,
-      };
-    } else {
-      suppressInitialBottomPersistRef.current = null;
-    }
-  }, [scrollState, sessionId]);
-
-  type ScrollStatePersist = {
-    stickToBottom: boolean;
-    anchorItemId: string | null;
-    scrollTop: number | null;
-  };
-
-  // Persist scroll state at most once per frame.
-  const pendingScrollStateRef = useRef<ScrollStatePersist | null>(null);
-  const lastPersistedScrollStateRef = useRef<ScrollStatePersist | null>(null);
-  const scrollStateRafRef = useRef<number | null>(null);
-  const anchorOffsetTimerRef = useRef<number | null>(null);
-
-  const measureRenderedAnchorOffset = useCallback(
-    (anchorItemId: string | null) => {
-      if (!anchorItemId) return null;
-      const scroller = methodsRef.current?.scrollerElement?.() ?? null;
-      if (!scroller) return null;
-
-      const scrollerRect = scroller.getBoundingClientRect();
-      const anchorEl = scroller.querySelector(`[data-thread-item-id="${anchorItemId}"]`);
-      const itemEl = anchorEl?.closest("[role=\"listitem\"]") as HTMLElement | null;
-      if (!itemEl) return null;
-      const itemRect = itemEl.getBoundingClientRect();
-      const anchorOffset = itemRect.top - scrollerRect.top;
-      if (anchorOffset < 0 || anchorOffset > scrollerRect.height) return null;
-      return anchorOffset;
-    },
-    [methodsRef],
-  );
-
-  const flushScrollState = useCallback(() => {
-    scrollStateRafRef.current = null;
-    const pending = pendingScrollStateRef.current;
-    pendingScrollStateRef.current = null;
-    if (!pending || !onScrollStateChange) return;
-    lastPersistedScrollStateRef.current = pending;
-    const anchorOffset =
-      pending.stickToBottom || !pending.anchorItemId ? null : measureRenderedAnchorOffset(pending.anchorItemId);
-    onScrollStateChange({ ...pending, anchorOffset });
-  }, [measureRenderedAnchorOffset, onScrollStateChange]);
-
-  const scheduleAnchorOffsetPersist = useCallback(() => {
-    if (!onScrollStateChange) return;
-    if (anchorOffsetTimerRef.current != null) {
-      window.clearTimeout(anchorOffsetTimerRef.current);
-      anchorOffsetTimerRef.current = null;
-    }
-    anchorOffsetTimerRef.current = window.setTimeout(() => {
-      anchorOffsetTimerRef.current = null;
-      const pending = lastPersistedScrollStateRef.current;
-      if (!pending) return;
-      if (pending.stickToBottom) return;
-      const { anchorItemId } = pending;
-      if (!anchorItemId) return;
-      const anchorOffset = measureRenderedAnchorOffset(anchorItemId);
-      if (anchorOffset == null) return;
-
-      onScrollStateChange({ ...pending, anchorOffset });
-    }, 150);
-  }, [measureRenderedAnchorOffset, onScrollStateChange]);
-
-  useLayoutEffect(() => {
-    return () => {
-      if (scrollStateRafRef.current != null) {
-        // Persist the most recent scroll state even if the component unmounts before the next rAF.
-        // This is important when switching tasks/sessions quickly (only one slot mounted).
-        cancelAnimationFrame(scrollStateRafRef.current);
-        scrollStateRafRef.current = null;
-        flushScrollState();
-      }
-      if (anchorOffsetTimerRef.current != null) {
-        window.clearTimeout(anchorOffsetTimerRef.current);
-        anchorOffsetTimerRef.current = null;
-      }
-    };
-  }, [flushScrollState]);
-
-  const initialLocation = useMemo<ItemLocation>(() => {
-    if (!scrollState || scrollState.stickToBottom) return INITIAL_LOCATION_BOTTOM;
-    if (scrollState.anchorItemId) {
-      const index = listItems.findIndex((item) => item.id === scrollState.anchorItemId);
-      if (index >= 0) {
-        return {
-          index,
-          align: "start",
-          offset: scrollState.anchorOffset ?? 0,
-        };
-      }
-    }
-    return { index: 0, align: "start" };
-  }, [listItems, scrollState]);
+  const initialLocation: ItemLocation = INITIAL_LOCATION_BOTTOM;
   const initialData = useMemo<WorkbenchListItem[]>(() => listItems, [listItems]);
 
   // Keep an up-to-date reference without introducing additional hook ordering churn under HMR.
@@ -241,67 +123,16 @@ export function useSessionMessageListController(params: Params): Result {
       if (!isActive) return;
 
       const scroller = methodsRef.current?.scrollerElement?.() ?? null;
-      let scrollTop: number | null = null;
-      if (scroller) {
-        scrollTop = scroller.scrollTop;
-        lastKnownScrollTopRef.current = scrollTop;
-      } else {
-        scrollTop = lastKnownScrollTopRef.current;
-      }
       const atBottomFromLocation = location.bottomOffset <= 16;
-      // Virtuoso's `bottomOffset` can be optimistic during fast task/session switches. Prefer the
-      // actual DOM scroller metrics when available so scroll state doesn't incorrectly snap to bottom.
+      // Prefer the live DOM scroller metrics when available; bottomOffset can be optimistic mid-transition.
       const atBottom =
-        scroller && scrollTop != null
-          ? scroller.scrollHeight - (scrollTop + scroller.clientHeight) <= 16
+        scroller
+          ? scroller.scrollHeight - (scroller.scrollTop + scroller.clientHeight) <= 16
           : atBottomFromLocation;
       stickToBottomRef.current = atBottom;
       if (isActive && onAtBottomChange && lastAtBottomRef.current !== atBottom) {
         lastAtBottomRef.current = atBottom;
         onAtBottomChange(atBottom);
-      }
-
-      let allowPersist = true;
-      // During task/session switches the Virtuoso scroller can temporarily disappear; avoid
-      // persisting a partial/incorrect state which can clobber a previously saved non-bottom
-      // scroll position.
-      if (!scroller) {
-        allowPersist = false;
-      }
-      const suppress = suppressInitialBottomPersistRef.current;
-      if (suppress) {
-        if (Date.now() > suppress.untilMs) {
-          suppressInitialBottomPersistRef.current = null;
-        } else if (!atBottom) {
-          suppressInitialBottomPersistRef.current = null;
-        } else if (
-          suppress.targetScrollTop != null &&
-          scrollTop != null &&
-          Math.abs(scrollTop - suppress.targetScrollTop) <= 2
-        ) {
-          suppressInitialBottomPersistRef.current = null;
-        } else if (atBottom) {
-          allowPersist = false;
-        }
-      }
-
-      if (onScrollStateChange && allowPersist) {
-        const anchorItemId = renderedAnchorIdRef.current;
-        const nextPending: ScrollStatePersist = {
-          stickToBottom: stickToBottomRef.current,
-          anchorItemId,
-          scrollTop,
-        };
-        pendingScrollStateRef.current = nextPending;
-        lastPersistedScrollStateRef.current = nextPending;
-        if (scrollStateRafRef.current == null) {
-          scrollStateRafRef.current = requestAnimationFrame(flushScrollState);
-        }
-        // If the user is not at bottom, try to capture a stable anchor offset once scrolling settles.
-        // This is lower-frequency than rAF persistence and keeps layout reads off the scroll hot path.
-        if (!stickToBottomRef.current && anchorItemId) {
-          scheduleAnchorOffsetPersist();
-        }
       }
 
       // History pagination trigger: use the library-provided scroll location only.
@@ -324,8 +155,6 @@ export function useSessionMessageListController(params: Params): Result {
             visibleListHeight: location.visibleListHeight,
             bottomOffset: location.bottomOffset,
             atBottom,
-            allowPersist,
-            suppressingInitialBottomPersist: Boolean(suppressInitialBottomPersistRef.current),
           });
         }
       }
@@ -390,7 +219,6 @@ export function useSessionMessageListController(params: Params): Result {
       loadOlder,
       loadingOlder,
       onAtBottomChange,
-      onScrollStateChange,
       sessionId,
       showDebug,
       isActive,
@@ -405,21 +233,20 @@ export function useSessionMessageListController(params: Params): Result {
     renderedAnchorIdRef.current = anchorId;
   }, []);
 
-  const resolveRestoreLocation = useCallback(
-    (items: WorkbenchListItem[]): ItemLocation => {
-      if (!scrollState || scrollState.stickToBottom) return initialLocation;
-      const anchorId = scrollState.anchorItemId ?? renderedAnchorIdRef.current;
-      if (!anchorId) return initialLocation;
-      const index = items.findIndex((item) => item.id === anchorId);
-      if (index < 0) return initialLocation;
-      return {
-        index,
-        align: "start",
-        offset: scrollState.anchorOffset ?? 0,
-      };
-    },
-    [initialLocation, scrollState],
-  );
+  useLayoutEffect(() => {
+    const becameActive = isActive && !lastIsActiveRef.current;
+    lastIsActiveRef.current = isActive;
+    if (!becameActive) return;
+
+    const methods = methodsRef.current;
+    if (!methods) return;
+    stickToBottomRef.current = true;
+    lastAtBottomRef.current = true;
+    methods.cancelSmoothScroll();
+    snapToBottom(methods);
+    onAtBottomChange?.(true);
+    recordDebugSnapshot("session:activated", { reason: "focusBottom" });
+  }, [isActive, onAtBottomChange, recordDebugSnapshot, snapToBottom]);
 
   useLayoutEffect(() => {
     if (!isActive) return;
@@ -431,12 +258,6 @@ export function useSessionMessageListController(params: Params): Result {
     let next = listItemsCoalesced;
     const current = methods.data.get();
     const sessionChanged = lastSessionIdRef.current !== sessionId;
-    const needsInitialMountedPurge =
-      !initialMountedSyncDoneRef.current &&
-      Boolean(scrollState && !scrollState.stickToBottom) &&
-      current.length > 0 &&
-      nextRaw.length > 0;
-    initialMountedSyncDoneRef.current = true;
 
     // Suppress noisy "ids missing" diagnostics during session transitions / initial hydration.
     // The list is expected to change dramatically in these windows and the logs are not actionable.
@@ -538,7 +359,6 @@ export function useSessionMessageListController(params: Params): Result {
     }
 
     if (sessionChanged) {
-      initialMountedSyncDoneRef.current = true;
       lastSessionIdRef.current = sessionId;
       pendingHistoryRef.current = false;
       historyExpectedRef.current = false;
@@ -547,16 +367,15 @@ export function useSessionMessageListController(params: Params): Result {
       setLoadingOlder(false);
       lastScrollLocationRef.current = null;
       lastListOffsetRef.current = null;
-      stickToBottomRef.current = scrollState?.stickToBottom ?? true;
-      lastAtBottomRef.current = stickToBottomRef.current;
-      renderedAnchorIdRef.current = scrollState?.anchorItemId ?? null;
-      renderedTopIdRef.current = scrollState?.anchorItemId ?? null;
+      stickToBottomRef.current = true;
+      lastAtBottomRef.current = true;
+      renderedAnchorIdRef.current = null;
+      renderedTopIdRef.current = null;
       firstListItemIdRef.current = null;
-      lastKnownScrollTopRef.current = scrollState?.scrollTop ?? null;
-      activationSettlingUntilRef.current = scrollState?.stickToBottom ? 0 : Date.now() + 500;
       methods.cancelSmoothScroll();
       suppressIdDiffLogsRef.current = { sessionId, remainingTicks: 3 };
-      methods.data.replace(nextRaw, { initialLocation: resolveRestoreLocation(nextRaw), purgeItemSizes: true });
+      methods.data.replace(nextRaw, { initialLocation, purgeItemSizes: true });
+      snapToBottom(methods);
       recordDebugSnapshot("data:replace", {
         reason: "sessionChanged",
         nextLen: nextRaw.length,
@@ -564,25 +383,6 @@ export function useSessionMessageListController(params: Params): Result {
       });
       logMessageListDebug("data:replace", {
         reason: "sessionChanged",
-        nextLen: nextRaw.length,
-        currentLen: current.length,
-      });
-      return;
-    }
-
-    if (needsInitialMountedPurge) {
-      historyExpectedRef.current = false;
-      activationSettlingUntilRef.current = scrollState?.stickToBottom ? 0 : Date.now() + 500;
-      methods.cancelSmoothScroll();
-      suppressIdDiffLogsRef.current = { sessionId, remainingTicks: 2 };
-      methods.data.replace(nextRaw, { initialLocation: resolveRestoreLocation(nextRaw), purgeItemSizes: true });
-      recordDebugSnapshot("data:replace", {
-        reason: "initialMountedPurge",
-        nextLen: nextRaw.length,
-        currentLen: current.length,
-      });
-      logMessageListDebug("data:replace", {
-        reason: "initialMountedPurge",
         nextLen: nextRaw.length,
         currentLen: current.length,
       });
@@ -597,10 +397,10 @@ export function useSessionMessageListController(params: Params): Result {
     if (currentLen === 0) {
       if (nextRaw.length === 0) return;
       historyExpectedRef.current = false;
-      activationSettlingUntilRef.current = scrollState?.stickToBottom ? 0 : Date.now() + 500;
       methods.cancelSmoothScroll();
       suppressIdDiffLogsRef.current = { sessionId, remainingTicks: 2 };
-      methods.data.replace(nextRaw, { initialLocation: resolveRestoreLocation(nextRaw), purgeItemSizes: true });
+      methods.data.replace(nextRaw, { initialLocation, purgeItemSizes: true });
+      snapToBottom(methods);
       recordDebugSnapshot("data:replace", {
         reason: "initialPopulation",
         nextLen: nextRaw.length,
@@ -787,14 +587,12 @@ export function useSessionMessageListController(params: Params): Result {
       }
       if (isPureAppend) {
         const suffix = next.slice(currentLen);
-        const activationSettling =
-          !stickToBottomRef.current && Date.now() < activationSettlingUntilRef.current;
         if (suffix.length > 0) methods.data.append(suffix, appendBehavior);
         if (!stickToBottomRef.current) {
           const nextById = new Map(next.map((it) => [it.id, it] as const));
           const anchorId = renderedAnchorIdRef.current;
           const anchorIndex = anchorId ? next.findIndex((it) => it.id === anchorId) : -1;
-          if (!activationSettling && anchorIndex >= 0) {
+          if (anchorIndex >= 0) {
             methods.data.mapWithAnchor((item) => nextById.get(item.id) ?? item, anchorIndex);
           } else {
             methods.data.map((item) => nextById.get(item.id) ?? item);
@@ -816,7 +614,6 @@ export function useSessionMessageListController(params: Params): Result {
           currentLen,
           stickToBottom: stickToBottomRef.current,
           anchorId: renderedAnchorIdRef.current,
-          activationSettling,
         });
         return;
       }
@@ -835,8 +632,6 @@ export function useSessionMessageListController(params: Params): Result {
         const nextById = new Map(next.map((it) => [it.id, it] as const));
         const anchorId = renderedAnchorIdRef.current;
         const anchorIndex = anchorId ? next.findIndex((it) => it.id === anchorId) : -1;
-        const activationSettling =
-          !stickToBottomRef.current && Date.now() < activationSettlingUntilRef.current;
         if (import.meta.env.DEV && showDebug) {
           // Count by reference to detect “content changes” even when IDs/order are stable.
           let changedByRef = 0;
@@ -867,7 +662,7 @@ export function useSessionMessageListController(params: Params): Result {
             renderedTopId: renderedTopIdRef.current,
           });
         }
-        if (!stickToBottomRef.current && anchorIndex >= 0 && !activationSettling) {
+        if (!stickToBottomRef.current && anchorIndex >= 0) {
           methods.data.mapWithAnchor((item) => nextById.get(item.id) ?? item, anchorIndex);
         } else {
           methods.data.map(
@@ -888,7 +683,6 @@ export function useSessionMessageListController(params: Params): Result {
           anchorId,
           anchorIndex,
           stickToBottom: stickToBottomRef.current,
-          activationSettling,
         });
         return;
       }
@@ -978,10 +772,9 @@ export function useSessionMessageListController(params: Params): Result {
     listItems,
     listItemsCoalesced,
     recordDebugSnapshot,
-    resolveRestoreLocation,
-    scrollState,
     sessionId,
     showDebug,
+    snapToBottom,
   ]);
 
   return {
