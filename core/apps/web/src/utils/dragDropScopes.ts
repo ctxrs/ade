@@ -1,12 +1,22 @@
+import { desktopListenForDragDrop, type DesktopDragDropEvent } from "./desktop";
+
 export type DropScope = {
   element: HTMLElement;
   accepts?: (dt: DataTransfer | null) => boolean;
-  onDragOver?: (dt: DataTransfer | null, ev: DragEvent) => void;
-  onDrop?: (dt: DataTransfer | null, ev: DragEvent) => void;
+  onDragOver?: (dt: DataTransfer | null, ev?: DragEvent | null) => void;
+  onDragLeave?: () => void;
+  onDrop?: (dt: DataTransfer | null, ev?: DragEvent | null) => void;
+  onDropPaths?: (paths: string[], position: { x: number; y: number }) => void;
 };
 
 const scopes = new Map<HTMLElement, DropScope>();
 let listenersInstalled = false;
+let nativeDragDropInstalled = false;
+const DROP_SCOPE_READY_PROP = "__ctxDropScopeReady";
+
+type DropScopeReadyElement = HTMLElement & {
+  [DROP_SCOPE_READY_PROP]?: boolean;
+};
 
 function dataTransferTypes(dt: DataTransfer | null): string[] {
   if (!dt) return [];
@@ -48,12 +58,13 @@ function defaultAccepts(dt: DataTransfer | null): boolean {
   return hasFileLikeItem(dt) || hasImageUrlLike(dt);
 }
 
-function scopeForEvent(ev: DragEvent): DropScope | null {
-  const doc = ev.view?.document ?? document;
-  const x = typeof ev.clientX === "number" ? ev.clientX : 0;
-  const y = typeof ev.clientY === "number" ? ev.clientY : 0;
+function scopeAtPoint(x: number, y: number, fallbackTarget?: EventTarget | null): DropScope | null {
   const pointEl =
-    x || y ? (doc.elementFromPoint(x, y) as Element | null) : (ev.target instanceof Element ? ev.target : null);
+    Number.isFinite(x) && Number.isFinite(y)
+      ? (document.elementFromPoint(x, y) as Element | null)
+      : fallbackTarget instanceof Element
+        ? fallbackTarget
+        : null;
   if (!pointEl) return null;
 
   let el: Element | null = pointEl;
@@ -65,6 +76,86 @@ function scopeForEvent(ev: DragEvent): DropScope | null {
     el = el.parentElement;
   }
   return null;
+}
+
+function scopeForEvent(ev: DragEvent): DropScope | null {
+  const x = typeof ev.clientX === "number" ? ev.clientX : Number.NaN;
+  const y = typeof ev.clientY === "number" ? ev.clientY : Number.NaN;
+  return scopeAtPoint(x, y, ev.target);
+}
+
+function setNativeHoverScope(activeScope: DropScope | null) {
+  for (const scope of scopes.values()) {
+    if (scope === activeScope) {
+      scope.onDragOver?.(null, null);
+      continue;
+    }
+    scope.onDragLeave?.();
+  }
+}
+
+function nativeScopeForPosition(position: { x: number; y: number }): DropScope | null {
+  const ratio = window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;
+  return scopeAtPoint(position.x / ratio, position.y / ratio);
+}
+
+function handleNativeDragDrop(event: DesktopDragDropEvent) {
+  (
+    globalThis as typeof globalThis & {
+      __ctxNativeDropEvents?: Array<{
+        type: DesktopDragDropEvent["type"];
+        hasScope: boolean;
+        hasOnDropPaths: boolean;
+        pathCount: number;
+      }>;
+    }
+  ).__ctxNativeDropEvents ??= [];
+  if (event.type === "leave") {
+    (
+      globalThis as typeof globalThis & {
+        __ctxNativeDropEvents?: Array<{
+          type: DesktopDragDropEvent["type"];
+          hasScope: boolean;
+          hasOnDropPaths: boolean;
+          pathCount: number;
+        }>;
+      }
+    ).__ctxNativeDropEvents?.push({ type: event.type, hasScope: false, hasOnDropPaths: false, pathCount: 0 });
+    setNativeHoverScope(null);
+    return;
+  }
+  const scope = nativeScopeForPosition(event.position);
+  (
+    globalThis as typeof globalThis & {
+        __ctxNativeDropEvents?: Array<{
+          type: DesktopDragDropEvent["type"];
+          hasScope: boolean;
+          hasOnDropPaths: boolean;
+          pathCount: number;
+        }>;
+      }
+    ).__ctxNativeDropEvents?.push({
+      type: event.type,
+      hasScope: Boolean(scope),
+      hasOnDropPaths: typeof scope?.onDropPaths === "function",
+      pathCount: "paths" in event ? event.paths.length : 0,
+    });
+  if (event.type === "enter" || event.type === "over") {
+    setNativeHoverScope(scope);
+    return;
+  }
+  setNativeHoverScope(null);
+  if (event.type === "drop" && scope && event.paths.length > 0) {
+    (
+      globalThis as typeof globalThis & {
+        __ctxNativeDropDelivered?: { pathCount: number; position: { x: number; y: number } };
+      }
+    ).__ctxNativeDropDelivered = {
+      pathCount: event.paths.length,
+      position: event.position,
+    };
+    scope.onDropPaths?.(event.paths, event.position);
+  }
 }
 
 function ensureListeners() {
@@ -93,12 +184,21 @@ function ensureListeners() {
 
   window.addEventListener("dragover", onDragOver, true);
   window.addEventListener("drop", onDrop, true);
+
+  if (!nativeDragDropInstalled) {
+    nativeDragDropInstalled = true;
+    void desktopListenForDragDrop((event) => {
+      handleNativeDragDrop(event);
+    });
+  }
 }
 
 export function registerDropScope(scope: DropScope): () => void {
   ensureListeners();
   scopes.set(scope.element, scope);
+  (scope.element as DropScopeReadyElement)[DROP_SCOPE_READY_PROP] = true;
   return () => {
     scopes.delete(scope.element);
+    delete (scope.element as DropScopeReadyElement)[DROP_SCOPE_READY_PROP];
   };
 }

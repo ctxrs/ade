@@ -117,6 +117,32 @@ export type DesktopStorageNotice =
       reason: "schema_mismatch" | "invalid_ui_state_db";
     };
 
+export type DesktopDragDropPosition = {
+  x: number;
+  y: number;
+};
+
+export type DesktopDragDropEvent =
+  | {
+      type: "enter";
+      paths: string[];
+      position: DesktopDragDropPosition;
+    }
+  | {
+      type: "over";
+      position: DesktopDragDropPosition;
+    }
+  | {
+      type: "drop";
+      paths: string[];
+      position: DesktopDragDropPosition;
+    }
+  | {
+      type: "leave";
+    };
+
+const DESKTOP_DRAG_DROP_TEST_EVENT = "ctx:desktop-drag-drop-test";
+
 export type DesktopSshHost = {
   host: string;
   user?: string | null;
@@ -140,6 +166,11 @@ export type DesktopOpenPathReq = {
   path: string;
   line?: number | null;
   col?: number | null;
+};
+
+export type DesktopReadBinaryFileResp = {
+  path: string;
+  bytes: number[];
 };
 
 export type DesktopEditorSettings = {
@@ -260,6 +291,54 @@ export const desktopListen = async <T>(event: string, handler: (payload: T) => v
   };
 };
 
+export const desktopListenForDragDrop = async (
+  handler: (event: DesktopDragDropEvent) => void,
+): Promise<(() => void) | null> => {
+  const cleanup = new Set<() => void>();
+  const onTestEvent = (event: Event) => {
+    if (!(event instanceof CustomEvent)) return;
+    handler(event.detail as DesktopDragDropEvent);
+  };
+  window.addEventListener(DESKTOP_DRAG_DROP_TEST_EVENT, onTestEvent as EventListener);
+  cleanup.add(() => {
+    window.removeEventListener(DESKTOP_DRAG_DROP_TEST_EVENT, onTestEvent as EventListener);
+  });
+  try {
+    const unlisten = await desktopListen<DesktopDragDropEvent>(DESKTOP_DRAG_DROP_TEST_EVENT, handler);
+    cleanup.add(() => {
+      try {
+        unlisten();
+      } catch {
+        // ignore
+      }
+    });
+  } catch {
+    // Ignore missing event-bus support in environments that only expose DOM test events.
+  }
+  try {
+    const mod = await import("@tauri-apps/api/webview");
+    const unlisten = await mod.getCurrentWebview().onDragDropEvent((event) => handler(event.payload as DesktopDragDropEvent));
+    cleanup.add(() => {
+      try {
+        unlisten();
+      } catch {
+        // ignore
+      }
+    });
+  } catch {
+    // Ignore missing Tauri drag/drop support in environments that don't expose the desktop webview API.
+  }
+  return () => {
+    for (const dispose of cleanup) {
+      try {
+        dispose();
+      } catch {
+        // ignore
+      }
+    }
+  };
+};
+
 export const desktopGetConnection = async (): Promise<DesktopConnectionInfo> =>
   invoke<DesktopConnectionInfo>("desktop_get_connection");
 
@@ -348,7 +427,12 @@ export const desktopReadFile = async (args: {
   line?: number | null;
   col?: number | null;
 }): Promise<{ path: string; text: string }> =>
-  invoke<{ path: string; text: string }>("desktop_read_file", args);
+  invoke<{ path: string; text: string }>("desktop_read_file", { req: args });
+
+export const desktopReadBinaryFile = async (args: {
+  path: string;
+}): Promise<DesktopReadBinaryFileResp> =>
+  invoke<DesktopReadBinaryFileResp>("desktop_read_binary_file", { req: args });
 
 export const desktopGetDeepLinkToken = async (): Promise<DesktopDeepLinkToken> =>
   invoke<DesktopDeepLinkToken>("desktop_get_deep_link_token");

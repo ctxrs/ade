@@ -93,14 +93,14 @@ if [[ "$(uname -s)" == "Darwin" && -z "${CN_API_KEY:-}" && "${INFISICAL_HELP_BYP
     infisical "${INFISICAL_RUN_ARGS[@]}" \
       env CTX_AUTOMATION_SCENARIOS="${SCENARIOS}" \
       CARGO_TARGET_DIR="${DEFAULT_CARGO_TARGET_DIR}" \
-      TMPDIR="${AUTOMATION_TMPDIR}" TMP="${AUTOMATION_TMPDIR}" TEMP="${AUTOMATION_TMPDIR}" \
+      CTX_AUTOMATION_TMPDIR="${AUTOMATION_TMPDIR}" \
       pnpm -C apps/desktop exec wdio run automation/wdio.conf.cjs "${ARGS[@]}"
     exit $?
   fi
   infisical "${INFISICAL_RUN_ARGS[@]}" \
     env CTX_AUTOMATION_SCENARIOS="${SCENARIOS}" \
     CARGO_TARGET_DIR="${DEFAULT_CARGO_TARGET_DIR}" \
-    TMPDIR="${AUTOMATION_TMPDIR}" TMP="${AUTOMATION_TMPDIR}" TEMP="${AUTOMATION_TMPDIR}" \
+    CTX_AUTOMATION_TMPDIR="${AUTOMATION_TMPDIR}" \
     pnpm -C apps/desktop exec wdio run automation/wdio.conf.cjs
   exit $?
 fi
@@ -110,12 +110,12 @@ ensure_desktop_automation_deps
 if [[ "${#ARGS[@]}" -gt 0 ]]; then
   env CTX_AUTOMATION_SCENARIOS="${SCENARIOS}" \
     CARGO_TARGET_DIR="${DEFAULT_CARGO_TARGET_DIR}" \
-    TMPDIR="${AUTOMATION_TMPDIR}" TMP="${AUTOMATION_TMPDIR}" TEMP="${AUTOMATION_TMPDIR}" \
+    CTX_AUTOMATION_TMPDIR="${AUTOMATION_TMPDIR}" \
     pnpm -C apps/desktop exec wdio run automation/wdio.conf.cjs "${ARGS[@]}"
   exit $?
 fi
 env CTX_AUTOMATION_SCENARIOS="${SCENARIOS}" \
   CARGO_TARGET_DIR="${DEFAULT_CARGO_TARGET_DIR}" \
-  TMPDIR="${AUTOMATION_TMPDIR}" TMP="${AUTOMATION_TMPDIR}" TEMP="${AUTOMATION_TMPDIR}" \
+  CTX_AUTOMATION_TMPDIR="${AUTOMATION_TMPDIR}" \
   pnpm -C apps/desktop exec wdio run automation/wdio.conf.cjs
 exit $?

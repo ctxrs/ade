@@ -5,6 +5,13 @@ const { spawnSync, spawn } = require("child_process");
 const os = require("os");
 const { resolveBoolishFlag } = require("../../../scripts/lib/boolish.cjs");
 
+const automationTmpDir = String(process.env.CTX_AUTOMATION_TMPDIR || "").trim();
+if (automationTmpDir) {
+  process.env.TMPDIR = automationTmpDir;
+  process.env.TMP = automationTmpDir;
+  process.env.TEMP = automationTmpDir;
+}
+
 const { waitTestRunnerBackendReady } = require("@crabnebula/test-runner-backend");
 const { waitTauriDriverReady } = require("@crabnebula/tauri-driver");
 const TEST_RUNNER_BACKEND_CLI = require.resolve("@crabnebula/test-runner-backend/cli.js");

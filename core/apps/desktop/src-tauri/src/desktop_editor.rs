@@ -77,6 +77,12 @@ pub(super) struct DesktopReadFileResp {
     text: String,
 }
 
+#[derive(Debug, Serialize)]
+pub(super) struct DesktopReadBinaryFileResp {
+    path: String,
+    bytes: Vec<u8>,
+}
+
 #[tauri::command]
 pub(super) async fn desktop_pick_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -206,6 +212,29 @@ pub(super) fn desktop_read_file(req: DesktopOpenPathReq) -> Result<DesktopReadFi
     Ok(DesktopReadFileResp {
         path: resolved.to_string_lossy().to_string(),
         text,
+    })
+}
+
+#[tauri::command]
+pub(super) fn desktop_read_binary_file(
+    req: DesktopOpenPathReq,
+) -> Result<DesktopReadBinaryFileResp, String> {
+    let path = req.path.trim();
+    if path.is_empty() {
+        return Err("path is required".to_string());
+    }
+    let path = PathBuf::from(path);
+    if !path.is_absolute() {
+        return Err("path must be absolute".to_string());
+    }
+    let resolved = std::fs::canonicalize(&path).map_err(|e| format!("invalid path: {e}"))?;
+    if !resolved.exists() {
+        return Err("path does not exist".to_string());
+    }
+    let bytes = std::fs::read(&resolved).map_err(|e| format!("failed to read file: {e}"))?;
+    Ok(DesktopReadBinaryFileResp {
+        path: resolved.to_string_lossy().to_string(),
+        bytes,
     })
 }
 

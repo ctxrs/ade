@@ -88,7 +88,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     [newTaskDraft.text, setNewTaskDraft],
   );
 
-  const newComposerRef = useRef<HTMLDivElement | null>(null);
+  const [newComposerElement, setNewComposerElement] = useState<HTMLDivElement | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(260);
   const [sidebarResizing, setSidebarResizing] = useState(false);
@@ -196,7 +196,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   );
 
   const { dropActive } = useWorkbenchDragDropAttachments({
-    scopeRef: newComposerRef,
+    scopeElement: newComposerElement,
     activeTaskId,
     setDraftAttachments,
   });
@@ -523,6 +523,24 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     setSidebarCollapsed((prev) => !prev);
   }, []);
 
+  useEffect(() => {
+    if (window.sessionStorage.getItem("ctxE2E") !== "1") return;
+    const win = window as Window & {
+      __ctxE2E?: {
+        focusTask?: (taskId: string, sessionId?: string | null) => boolean;
+      };
+    };
+    win.__ctxE2E ??= {};
+    win.__ctxE2E.focusTask = (taskId: string, sessionId?: string | null) => {
+      const navToken = workbenchStore.getNavToken();
+      return workbenchStore.focusTask(taskId, sessionId, { navToken, source: "system" });
+    };
+    return () => {
+      if (!win.__ctxE2E) return;
+      delete win.__ctxE2E.focusTask;
+    };
+  }, [workbenchStore]);
+
   const {
     desktopUi,
     desktopStorageNotice,
@@ -793,7 +811,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
       <div className="wb-main">
         {!activeTaskId ? (
           <WorkbenchEmptyState
-            newComposerRef={newComposerRef}
+            newComposerRef={setNewComposerElement}
             dropActive={dropActive}
             draftPrompt={draftPrompt}
             setDraftPrompt={setDraftPrompt}

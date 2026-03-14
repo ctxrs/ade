@@ -13,7 +13,7 @@ import { HARNESS_CATALOG } from "../../utils/harnessCatalog";
 type WorkbenchNewSessionProps = Extract<WorkbenchComposerProps, { variant: "newSession" }>;
 
 type WorkbenchEmptyStateProps = {
-  newComposerRef: React.RefObject<HTMLDivElement | null>;
+  newComposerRef: React.Ref<HTMLDivElement>;
   dropActive: boolean;
   draftPrompt: string;
   setDraftPrompt: (value: string) => void;

@@ -24,6 +24,7 @@
     "@wdio/cli": "^9.8.1",
     "@wdio/local-runner": "^9.8.1",
     "@wdio/mocha-framework": "^9.8.1",
+    "@wdio/runner": "^9.8.1",
     "@wdio/spec-reporter": "^9.8.1",
     "webdriverio": "^9.8.1"
   }

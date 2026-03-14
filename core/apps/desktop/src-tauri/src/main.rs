@@ -117,6 +117,7 @@ fn main() {
             desktop_open_file,
             desktop_open_path,
             desktop_read_file,
+            desktop_read_binary_file,
             desktop_get_deep_link_token,
             desktop_set_open_workspaces,
             desktop_open_launcher_in_new_window,
