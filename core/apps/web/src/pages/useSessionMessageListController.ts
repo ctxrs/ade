@@ -34,6 +34,31 @@ type Result = {
 
 const INITIAL_LOCATION_BOTTOM: ItemLocation = { index: "LAST", align: "end" };
 
+function applyPrependDrivenHistoryUpdate({
+  methods,
+  prefix,
+  suffix,
+  nextById,
+  stickToBottom,
+  appendBehavior,
+}: {
+  methods: VirtuosoMessageListMethods<WorkbenchListItem, WorkbenchMessageListContext>;
+  prefix: WorkbenchListItem[];
+  suffix: WorkbenchListItem[];
+  nextById: ReadonlyMap<string, WorkbenchListItem>;
+  stickToBottom: boolean;
+  appendBehavior: AutoscrollToBottom<WorkbenchListItem, WorkbenchMessageListContext>;
+}) {
+  // Invariant: prepend-driven history updates have exactly one scroll owner.
+  // Once `prepend()` runs, do not add `mapWithAnchor()` or manual scroll pinning on top of it.
+  if (prefix.length > 0) methods.data.prepend(prefix);
+  if (suffix.length > 0) methods.data.append(suffix, appendBehavior);
+  methods.data.map(
+    (item) => nextById.get(item.id) ?? item,
+    stickToBottom ? ("auto" as const) : undefined,
+  );
+}
+
 export function useSessionMessageListController(params: Params): Result {
   const {
     sessionId,
@@ -75,7 +100,7 @@ export function useSessionMessageListController(params: Params): Result {
   const listItemsCoalesced = useRafCoalesced(listItems);
 
   const context = useMemo(() => ({ loaded, loadingOlder }), [loaded, loadingOlder]);
-  const recordDebugSnapshot = useSessionMessageListDiagnostics({
+  const { recordDebugSnapshot, startFlashProbe } = useSessionMessageListDiagnostics({
     sessionId,
     isActive,
     loaded,
@@ -97,7 +122,6 @@ export function useSessionMessageListController(params: Params): Result {
   const snapToBottom = useCallback(
     (methods: VirtuosoMessageListMethods<WorkbenchListItem, WorkbenchMessageListContext>) => {
       requestAnimationFrame(() => {
-        methods.scrollToItem({ index: "LAST", align: "end", behavior: "instant" });
         const scroller = methods.scrollerElement?.() ?? null;
         if (scroller) {
           scroller.scrollTop = scroller.scrollHeight;
@@ -442,7 +466,6 @@ export function useSessionMessageListController(params: Params): Result {
         const prefix = next.slice(0, firstIndex).filter((it) => !currentIdSet.has(it.id));
         const suffix = next.slice(lastIndex + 1).filter((it) => !currentIdSet.has(it.id));
         const nextById = new Map(next.map((it) => [it.id, it] as const));
-
         if (import.meta.env.DEV && showDebug) {
           const nextIdSet = new Set(next.map((it) => it.id));
           const missingFromNext: string[] = [];
@@ -460,26 +483,26 @@ export function useSessionMessageListController(params: Params): Result {
           }
         }
 
-        // Avoid batching `prepend()` with other ops; let MessageList manage scroll stabilization.
-        if (prefix.length > 0) methods.data.prepend(prefix);
-        if (suffix.length > 0) methods.data.append(suffix, appendBehavior);
+        startFlashProbe("history:extend", {
+          currentLen,
+          nextLen,
+          prefixLen: prefix.length,
+          suffixLen: suffix.length,
+          firstIndex,
+          lastIndex,
+          requestedAnchorId,
+          wasAtTop,
+        });
 
-        // For non-bottom, keep a rendered item anchored as size estimates settle.
-        if (!stickToBottomRef.current) {
-          const anchorId = requestedAnchorId ?? renderedAnchorIdRef.current;
-          const anchorIndex = anchorId ? next.findIndex((it) => it.id === anchorId) : -1;
-          if (anchorIndex >= 0) methods.data.mapWithAnchor((item) => nextById.get(item.id) ?? item, anchorIndex);
-          else methods.data.map((item) => nextById.get(item.id) ?? item);
-        } else {
-          methods.data.map((item) => nextById.get(item.id) ?? item, "auto");
-        }
+        applyPrependDrivenHistoryUpdate({
+          methods,
+          prefix,
+          suffix,
+          nextById,
+          stickToBottom: stickToBottomRef.current,
+          appendBehavior,
+        });
 
-        // If the user actually hit the top, force the pre-history first item back to the top.
-        // This uses the library's own scroll API (no DOM reads/offset math).
-        if (wasAtTop && !stickToBottomRef.current && firstIndex >= 0) {
-          // `prepend()` schedules internal rAF scroll stabilization; schedule our pin after it (pre-paint).
-          requestAnimationFrame(() => methods.scrollToItem({ index: firstIndex, align: "start", behavior: "instant" }));
-        }
         historyExpectedRef.current = false;
         historyRequestedAtTopRef.current = false;
         historyRequestedAnchorIdRef.current = null;
@@ -526,23 +549,25 @@ export function useSessionMessageListController(params: Params): Result {
         const anchorId = renderedAnchorIdRef.current;
         const anchorIndex = anchorId ? next.findIndex((it) => it.id === anchorId) : -1;
 
-        // Avoid batching `prepend()` with other ops; rely on MessageList prepend stabilization.
-        if (prefix.length > 0) methods.data.prepend(prefix);
+        startFlashProbe("data:prepend", {
+          currentLen,
+          nextLen,
+          prefixLen: prefix.length,
+          anchorId,
+          anchorIndex,
+          requestedAnchorId,
+          wasAtTop,
+        });
 
-        if (!stickToBottomRef.current) {
-          const reqAnchorId = requestedAnchorId ?? renderedAnchorIdRef.current;
-          const reqAnchorIndex = reqAnchorId ? next.findIndex((it) => it.id === reqAnchorId) : -1;
-          if (reqAnchorIndex >= 0) methods.data.mapWithAnchor((item) => nextById.get(item.id) ?? item, reqAnchorIndex);
-          else methods.data.map((item) => nextById.get(item.id) ?? item);
-        } else {
-          methods.data.map((item) => nextById.get(item.id) ?? item, "auto");
-        }
+        applyPrependDrivenHistoryUpdate({
+          methods,
+          prefix,
+          suffix: [],
+          nextById,
+          stickToBottom: stickToBottomRef.current,
+          appendBehavior,
+        });
 
-        // If we were at the very top, pin the previous first item back to the top.
-        if (wasAtTop && !stickToBottomRef.current) {
-          const targetIndex = prefix.length;
-          requestAnimationFrame(() => methods.scrollToItem({ index: targetIndex, align: "start", behavior: "instant" }));
-        }
         recordDebugSnapshot("data:prepend", {
           prefixLen: prefix.length,
           nextLen,
@@ -739,6 +764,19 @@ export function useSessionMessageListController(params: Params): Result {
       suppressIdDiffLogs,
     });
 
+    startFlashProbe("data:reconcile", {
+      currentLen,
+      nextLen,
+      prefixLen,
+      suffixLen,
+      deleteCount,
+      insertLen: insertData.length,
+      anchorId,
+      anchorIndex,
+      historyExpected,
+      stickToBottom: stickToBottomRef.current,
+    });
+
     methods.data.batch(
       () => {
         if (deleteCount > 0) methods.data.deleteRange(prefixLen, deleteCount);
@@ -775,6 +813,7 @@ export function useSessionMessageListController(params: Params): Result {
     sessionId,
     showDebug,
     snapToBottom,
+    startFlashProbe,
   ]);
 
   return {
