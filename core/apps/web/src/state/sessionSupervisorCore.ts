@@ -18,7 +18,6 @@ import {
 import type { WorkspaceActiveSnapshotState } from "./workspaceActiveSnapshotStore";
 import {
   collectWorkspaceActivePrimarySessionIds,
-  resolveSessionModeFromWorkspaceState,
 } from "./workspaceActiveSnapshot/projection";
 import {
   loadSessionHistoryPageV1,
@@ -83,12 +82,16 @@ import {
   resolveEntryWorkspaceOwnerScope,
   resolveWorkspaceOwnerScope,
 } from "./sessionSupervisor/thoughtCache";
+import { dedupeIds, sameIdList } from "./sessionSupervisor/cachePolicy";
 import {
-  dedupeIds,
-  sameIdList,
-} from "./sessionSupervisor/cachePolicy";
+  applySessionActivityUpdate,
+  buildSubscribedSessions,
+  emitSubscribedSessions,
+  markOpenSessionsRecovering,
+  refreshSubscriptions,
+} from "./sessionSupervisor/subscriptions";
+import { resolveSessionMode, shouldFailPendingSessionOpen } from "./sessionSupervisor/sessionMode";
 import { summarizeToolPayload } from "./sessionSupervisor/toolStateProjection";
-import { buildSessionSubscriptionPlan } from "./sessionSupervisor/sessionSubscriptionPlan";
 import {
   adoptLoadedSubagentInvocationsRevision,
   adoptLoadedStateRevision,
@@ -408,29 +411,10 @@ export class SessionSupervisor {
   refreshQueue = (sessionId: string) => {
     this.replica.dispatch({ type: "refresh_session", sessionId });
   };
-
   getSubscribedSessionIds = (): string[] => this.subscribedSessionIds.slice();
 
   private buildSubscribedSessions(): SessionSubscriptionCursor[] {
-    return this.subscribedSessionIds.map((sessionId) => {
-      const entry = this.entries.get(sessionId);
-      const headSeq = this.workspaceSessionHeadsById.get(sessionId)?.last_event_seq;
-      if (entry?.freshness === "recovering") {
-        return {
-          sessionId,
-          afterSeq: null,
-        };
-      }
-      return {
-        sessionId,
-        afterSeq:
-          typeof entry?.lastEventSeq === "number"
-            ? entry.lastEventSeq
-            : typeof headSeq === "number"
-              ? headSeq
-              : null,
-      };
-    });
+    return buildSubscribedSessions(this.subscribedSessionIds, this.entries, this.workspaceSessionHeadsById);
   }
 
   private applySessionActivityUpdate(
@@ -438,41 +422,7 @@ export class SessionSupervisor {
     activity: InternalEntry["activity"],
     version?: { lastEventSeq?: number | null; stateRev?: number | null },
   ): boolean {
-    const entry = this.entries.get(sessionId);
-    if (!entry || activity === undefined) return false;
-    const incomingStateRev = typeof version?.stateRev === "number" ? version.stateRev : null;
-    const incomingLastEventSeq =
-      typeof version?.lastEventSeq === "number" ? version.lastEventSeq : null;
-    if (
-      incomingStateRev === null &&
-      incomingLastEventSeq === null &&
-      (typeof entry.stateRev === "number" || typeof entry.lastEventSeq === "number")
-    ) {
-      return false;
-    }
-    if (
-      incomingStateRev !== null &&
-      typeof entry.stateRev === "number" &&
-      incomingStateRev < entry.stateRev
-    ) {
-      return false;
-    }
-    if (
-      incomingLastEventSeq !== null &&
-      typeof entry.lastEventSeq === "number" &&
-      incomingLastEventSeq < entry.lastEventSeq
-    ) {
-      return false;
-    }
-    if (
-      (entry.activity?.is_working ?? false) === (activity?.is_working ?? false) &&
-      (entry.activity?.last_turn_status ?? null) === (activity?.last_turn_status ?? null)
-    ) {
-      return false;
-    }
-    entry.activity = activity ?? null;
-    entry.updatedAtMs = Date.now();
-    return true;
+    return applySessionActivityUpdate(this.entries, sessionId, activity, version);
   }
 
   setActiveTaskSessionIds = (sessionIds: string[]) => {
@@ -498,8 +448,6 @@ export class SessionSupervisor {
     entry.updatedAtMs = Date.now();
     this.publish();
   };
-
-
   setMessages = (sessionId: string, messages: Message[], opts?: { replace?: boolean }) => {
     const id = String(sessionId || "").trim();
     if (!id) return;
@@ -900,31 +848,11 @@ export class SessionSupervisor {
     entry?: InternalEntry,
     explicitMode?: SessionMode,
   ): SessionMode | null {
-    const id = String(sessionId ?? "").trim();
-    if (!id) return null;
-    if (explicitMode) {
-      if (entry) entry.mode = explicitMode;
-      return explicitMode;
-    }
-    if (entry?.mode) return entry.mode;
-    const state = this.workspaceSnapshotState;
-    if (!state) {
-      if (entry) {
-        entry.mode = "active";
-      }
-      return "active";
-    }
-    const mode = resolveSessionModeFromWorkspaceState(state, id);
-    if (mode && entry) {
-      entry.mode = mode;
-    }
-    return mode;
+    return resolveSessionMode.call(this, sessionId, entry, explicitMode);
   }
 
   private shouldFailPendingSessionOpen() {
-    const state = this.workspaceSnapshotState;
-    if (!state) return false;
-    return state.initialized && state.fetchState.active === "idle";
+    return shouldFailPendingSessionOpen(this.workspaceSnapshotState);
   }
 
   setSessionLoadState(entry: InternalEntry, next: SessionLoadState) {
@@ -961,57 +889,24 @@ export class SessionSupervisor {
   }
 
   private markOpenSessionsRecovering() {
-    let changed = false;
-    for (const entry of this.entries.values()) {
-      if (entry.refCount <= 0) continue;
-      if (entry.loadState === "fatal") continue;
-      if (entry.loadState !== "recovering") {
-        entry.loadState = "recovering";
-        changed = true;
-      }
-      if (entry.freshness !== "recovering") {
-        entry.freshness = "recovering";
-        changed = true;
-      }
-      entry.updatedAtMs = Date.now();
-    }
-    if (changed) {
-      this.publish();
-      this.emitSubscribedSessions();
-    }
+    markOpenSessionsRecovering({ entries: this.entries, emitSubscribedSessions: () => this.emitSubscribedSessions(), publish: () => this.publish() });
   }
 
   private refreshSubscriptions(opts?: { emitIfUnchanged?: boolean }) {
-    const openSessionIds = Array.from(this.entries.values())
-      .filter((entry) => entry.refCount > 0)
-      .map((entry) => entry.sessionId);
-    const plan = buildSessionSubscriptionPlan({
-      openSessionIds,
+    refreshSubscriptions({
+      entries: this.entries,
       activeTaskSessionIds: this.activeTaskSessionIds,
       warmSessionIds: this.warmSessionIds,
-      previousSubscribedSessionIds: this.subscribedSessionIds,
-    });
-    if (!plan.changed) {
-      if (opts?.emitIfUnchanged) {
-        this.emitSubscribedSessions();
-      }
-      return;
-    }
-    const nextSet = new Set(plan.nextSubscribedSessionIds);
-    this.subscribedSessionIds = plan.nextSubscribedSessionIds;
-    for (const entry of this.entries.values()) {
-      entry.subscribed = nextSet.has(entry.sessionId);
-    }
-    for (const sessionId of plan.addedSessionIds) {
-      const entry = this.ensureEntry(sessionId);
-      entry.subscribed = true;
-    }
-    this.emitSubscribedSessions();
-    this.publish();
+      subscribedSessionIds: this.subscribedSessionIds,
+      setSubscribedSessionIds: (next) => { this.subscribedSessionIds = next; },
+      emitSubscribedSessions: () => this.emitSubscribedSessions(),
+      ensureEntry: (sessionId) => this.ensureEntry(sessionId),
+      publish: () => this.publish(),
+    }, opts);
   }
 
   private emitSubscribedSessions() {
-    this.subscribedSessionIdsSink?.(this.buildSubscribedSessions());
+    emitSubscribedSessions(this.subscribedSessionIdsSink, this.buildSubscribedSessions());
   }
 
   private ingestWorkspaceEvent(evt: SessionSupervisorWorkspaceEvent) {

@@ -224,7 +224,7 @@ fn managed_provider_runtime_command_rejects_path_style_gemini_runtime() {
 }
 
 #[test]
-fn managed_provider_runtime_command_wraps_goose_binary_with_acp_subcommand() {
+fn managed_provider_runtime_command_wraps_goose_binary_with_acp_and_developer_builtin() {
     let data_root = tempfile::tempdir().expect("tempdir");
     let goose_bin = data_root.path().join("bin").join("goose");
     std::fs::create_dir_all(goose_bin.parent().expect("parent")).expect("mkdir goose");
@@ -254,12 +254,15 @@ fn managed_provider_runtime_command_wraps_goose_binary_with_acp_subcommand() {
     assert_eq!(runtime.command, "/tmp/acp-crp-bridge");
     assert_eq!(
         runtime.args.get(acp_command_index + 1),
-        Some(&format!("{} acp", goose_bin.to_string_lossy()))
+        Some(&format!(
+            "{} acp --with-builtin developer",
+            goose_bin.to_string_lossy()
+        ))
     );
 }
 
 #[test]
-fn managed_provider_runtime_command_keeps_existing_goose_shim_shape_unchanged() {
+fn managed_provider_runtime_command_keeps_goose_shim_entrypoint_while_adding_developer_builtin() {
     let data_root = tempfile::tempdir().expect("tempdir");
     let goose_shim = data_root
         .path()
@@ -293,7 +296,10 @@ fn managed_provider_runtime_command_keeps_existing_goose_shim_shape_unchanged() 
     assert_eq!(runtime.command, "/tmp/acp-crp-bridge");
     assert_eq!(
         runtime.args.get(acp_command_index + 1),
-        Some(&goose_shim.to_string_lossy().to_string())
+        Some(&format!(
+            "{} --with-builtin developer",
+            goose_shim.to_string_lossy()
+        ))
     );
 }
 
