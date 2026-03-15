@@ -215,6 +215,46 @@ describe("SessionReplicaCore", () => {
     expect(getSessionHead).toHaveBeenCalledTimes(1);
   });
 
+  it("refetches /head on explicit refresh even after authoritative hydration", async () => {
+    const sessionId = "session-refresh";
+    const initialHead = mkHead(sessionId, "initial");
+    const refreshedHead = {
+      ...mkHead(sessionId, "refreshed"),
+      last_event_seq: 2,
+      state_rev: 2,
+    };
+    const getSessionHead = vi
+      .fn(async () => initialHead)
+      .mockResolvedValueOnce(initialHead)
+      .mockResolvedValueOnce(refreshedHead);
+    const patches: SessionReplicaPatch[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead },
+      emit: (next) => patches.push(...next),
+    });
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 50 } });
+    core.handleCommand({ type: "hydrate_session_head", sessionId });
+    await waitForCondition(() => getSessionHead.mock.calls.length === 1);
+
+    core.handleCommand({ type: "refresh_session", sessionId });
+    await waitForCondition(() => getSessionHead.mock.calls.length === 2);
+
+    const latest = [...patches].reverse().find(
+      (patch: SessionReplicaPatch) =>
+        patch.sessionId === sessionId
+        && patch.op !== "evict"
+        && patch.data.messages?.some((message) => message.content === "refreshed"),
+    );
+    if (!latest || latest.op === "evict") {
+      throw new Error("expected refreshed authoritative patch");
+    }
+
+    expect(getSessionHead).toHaveBeenCalledTimes(2);
+    expect(latest.data.freshness).toBe("authoritative");
+    expect(latest.data.lastEventSeq).toBe(2);
+  });
+
   it("applies session_head_seed events", async () => {
     const getSessionHead = vi.fn();
     const patches: SessionReplicaPatch[] = [];

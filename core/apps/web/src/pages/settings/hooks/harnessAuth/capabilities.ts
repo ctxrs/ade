@@ -127,7 +127,6 @@ export const validateHarnessEndpointConfigForOwnerScope = (params: {
   manualModelIds: string[];
   existingPreferredModelId: string | null;
 }): string | null => {
-  if (params.ownerScopeKind !== "host") return null;
   if (params.providerId === "goose" && !isOpenRouterBaseUrl(params.baseUrl ?? "")) {
     return "Goose currently requires an OpenRouter base URL.";
   }
@@ -136,7 +135,7 @@ export const validateHarnessEndpointConfigForOwnerScope = (params: {
     && params.manualModelIds.length === 0
     && !(params.existingPreferredModelId?.trim())
   ) {
-    return "Configure at least one manual model slug before saving this host-scoped endpoint.";
+    return "Configure at least one manual model slug before saving this endpoint.";
   }
   return null;
 };

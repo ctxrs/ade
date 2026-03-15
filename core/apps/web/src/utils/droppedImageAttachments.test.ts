@@ -74,6 +74,7 @@ describe("droppedImageAttachments", () => {
     const mod = await import("./droppedImageAttachments");
     const attachments = await mod.imageAttachmentsFromPaths(["/tmp/notes.txt"]);
 
+    expect(desktopReadBinaryFileMock).not.toHaveBeenCalled();
     expect(attachments).toEqual([]);
   });
 

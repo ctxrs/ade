@@ -298,7 +298,7 @@ export class SessionReplicaCore {
         this.closeSession(cmd.sessionId);
         return;
       case "refresh_session":
-        this.openSession(cmd.sessionId, {
+        this.hydrateSessionHead(cmd.sessionId, {
           force: true,
           silent: true,
           emitOp: "append",

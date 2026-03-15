@@ -366,23 +366,7 @@ export class SessionSupervisor {
       type: "refresh_session",
       sessionId,
     });
-    if (mode === "archived") {
-      this.replica.dispatch({
-        type: "hydrate_session_head",
-        sessionId,
-        force: true,
-        silent: true,
-      });
-      this.setSessionLoadState(entry, "pending_hydration");
-      return;
-    }
-    if (entry.freshness !== "authoritative") {
-      this.replica.dispatch({
-        type: "hydrate_session_head",
-        sessionId,
-        force: true,
-        silent: true,
-      });
+    if (mode === "archived" || entry.freshness !== "authoritative") {
       this.setSessionLoadState(entry, "pending_hydration");
     }
   };

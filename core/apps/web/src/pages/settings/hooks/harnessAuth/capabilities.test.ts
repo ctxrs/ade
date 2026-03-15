@@ -30,7 +30,7 @@ describe("preferredModelIdFromEndpointSummary", () => {
 });
 
 describe("validateHarnessEndpointConfigForOwnerScope", () => {
-  it("accepts OpenRouter base URLs and rejects non-OpenRouter Goose host configs", () => {
+  it("accepts OpenRouter base URLs and rejects non-OpenRouter Goose configs in any scope", () => {
     expect(isOpenRouterBaseUrl("https://openrouter.ai/api/v1")).toBe(true);
     expect(isOpenRouterBaseUrl("https://openrouter.example/api/v1")).toBe(false);
     expect(validateHarnessEndpointConfigForOwnerScope({
@@ -40,31 +40,40 @@ describe("validateHarnessEndpointConfigForOwnerScope", () => {
       manualModelIds: ["openai/gpt-4.1-mini"],
       existingPreferredModelId: null,
     })).toBe("Goose currently requires an OpenRouter base URL.");
-  });
-
-  it("requires a concrete model for host-scoped cline/goose/openhands saves", () => {
-    for (const providerId of ["cline", "goose", "openhands"]) {
-      expect(validateHarnessEndpointConfigForOwnerScope({
-        ownerScopeKind: "host",
-        providerId,
-        baseUrl: "https://openrouter.ai/api/v1",
-        manualModelIds: [],
-        existingPreferredModelId: null,
-      })).toBe("Configure at least one manual model slug before saving this host-scoped endpoint.");
-    }
-  });
-
-  it("allows workspace-scoped saves and host saves with an existing or manual model", () => {
     expect(validateHarnessEndpointConfigForOwnerScope({
       ownerScopeKind: "workspace",
       providerId: "goose",
       baseUrl: "https://api.openai.com/v1",
-      manualModelIds: [],
+      manualModelIds: ["openai/gpt-4.1-mini"],
       existingPreferredModelId: null,
-    })).toBeNull();
+    })).toBe("Goose currently requires an OpenRouter base URL.");
+  });
+
+  it("requires a concrete model for cline/goose/openhands saves in any scope", () => {
+    for (const ownerScopeKind of ["host", "workspace"] as const) {
+      for (const providerId of ["cline", "goose", "openhands"]) {
+        expect(validateHarnessEndpointConfigForOwnerScope({
+          ownerScopeKind,
+          providerId,
+          baseUrl: "https://openrouter.ai/api/v1",
+          manualModelIds: [],
+          existingPreferredModelId: null,
+        })).toBe("Configure at least one manual model slug before saving this endpoint.");
+      }
+    }
+  });
+
+  it("allows saves with a valid base URL and an existing or manual model", () => {
     expect(validateHarnessEndpointConfigForOwnerScope({
       ownerScopeKind: "host",
       providerId: "cline",
+      baseUrl: "https://openrouter.ai/api/v1",
+      manualModelIds: ["openai/gpt-4.1-mini"],
+      existingPreferredModelId: null,
+    })).toBeNull();
+    expect(validateHarnessEndpointConfigForOwnerScope({
+      ownerScopeKind: "workspace",
+      providerId: "goose",
       baseUrl: "https://openrouter.ai/api/v1",
       manualModelIds: ["openai/gpt-4.1-mini"],
       existingPreferredModelId: null,

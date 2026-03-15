@@ -341,8 +341,26 @@ async fn ensure_openhands_workdir_alias(
     tokio::fs::create_dir_all(&alias_root).await?;
     let alias = alias_root.join(session_id);
     reset_existing_alias(&alias, workdir).await?;
-    create_dir_symlink(workdir, &alias).await?;
+    match create_dir_symlink(workdir, &alias).await {
+        Ok(()) => {}
+        // Windows directory symlinks often require Developer Mode or elevated privileges.
+        // Falling back to the real workdir keeps OpenHands usable when the short alias cannot
+        // be created, even if the path is longer than ideal.
+        Err(err) if should_fallback_to_direct_openhands_workdir(&err) => {
+            return Ok(workdir.to_path_buf());
+        }
+        Err(err) => return Err(err),
+    }
     Ok(alias)
+}
+
+fn should_fallback_to_direct_openhands_workdir(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .and_then(std::io::Error::raw_os_error)
+            == Some(1314)
+    })
 }
 
 async fn reset_existing_alias(alias: &std::path::Path, target: &std::path::Path) -> Result<()> {
@@ -491,5 +509,18 @@ mod tests {
         let link_target = tokio::fs::read_link(&alias).await.expect("read alias");
         assert_eq!(link_target, workdir);
         assert!(!env.contains_key("CTX_MCP_DISABLED"));
+    }
+
+    #[test]
+    fn openhands_workdir_fallback_detects_windows_symlink_privilege_errors() {
+        let privilege_err = Err::<(), _>(std::io::Error::from_raw_os_error(1314))
+            .with_context(|| "symlink failed")
+            .expect_err("expected privilege error");
+        let unrelated_err = Err::<(), _>(std::io::Error::from_raw_os_error(5))
+            .with_context(|| "symlink failed")
+            .expect_err("expected unrelated error");
+
+        assert!(should_fallback_to_direct_openhands_workdir(&privilege_err));
+        assert!(!should_fallback_to_direct_openhands_workdir(&unrelated_err));
     }
 }

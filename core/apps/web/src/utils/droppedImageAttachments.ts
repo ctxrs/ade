@@ -37,6 +37,11 @@ function extensionMimeType(name: string): string {
   return IMAGE_EXTENSION_FALLBACKS[ext] ?? "";
 }
 
+function pathLooksLikeImage(path: string): boolean {
+  const name = basename(path);
+  return Boolean(name) && Boolean(extensionMimeType(name));
+}
+
 function normalizeFileUrlToPath(url: string): string | null {
   try {
     const parsed = new URL(url);
@@ -52,6 +57,7 @@ function normalizeFileUrlToPath(url: string): string | null {
 
 async function readImageFileFromDesktopPath(path: string): Promise<File | null> {
   if (!isDesktopApp()) return null;
+  if (!pathLooksLikeImage(path)) return null;
   try {
     const response = await desktopReadBinaryFile({ path });
     const name = basename(response.path) || basename(path) || "image";

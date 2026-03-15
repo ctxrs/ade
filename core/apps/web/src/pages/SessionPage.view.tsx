@@ -195,7 +195,6 @@ export function SessionView({
   useOpenSession(autoOpenSession ? id ?? "" : "", { watchDiff: true, mode: sessionMode });
   const refreshAll = useCallback(async () => {
     if (!id) return;
-    await supervisor.refreshQueue(id);
     supervisor.refreshSession(id, { watchDiff: true });
   }, [id, supervisor]);
 
