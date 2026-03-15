@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { requireLocalNodeBin } from "./localTooling.mjs";
 
 const parseBool = (value) => ["1", "true", "yes", "on"].includes(String(value ?? "").trim().toLowerCase());
 
@@ -41,12 +42,18 @@ const runSync = (command, args, cwd, env) => {
   }
 };
 
-const resolveCargoTargetDir = (repoRoot, env) => {
+export const resolveCargoTargetDir = (repoRoot, env) => {
   const configured = String(env.CARGO_TARGET_DIR ?? "").trim();
   if (!configured) {
     return path.join(repoRoot, "target");
   }
   return path.isAbsolute(configured) ? configured : path.resolve(repoRoot, configured);
+};
+
+export const ensureCargoTargetDir = (repoRoot, env) => {
+  const cargoTargetDir = resolveCargoTargetDir(repoRoot, env);
+  fs.mkdirSync(cargoTargetDir, { recursive: true });
+  return cargoTargetDir;
 };
 
 export const resolveE2EWebDistDir = (
@@ -55,10 +62,6 @@ export const resolveE2EWebDistDir = (
 ) => path.resolve(baseTmpDir, `ctx-e2e-web-dist-${pid}`);
 
 export const resolveWebBuildArgs = (webDistDir) => [
-  "-C",
-  "apps/web",
-  "exec",
-  "vite",
   "build",
   "--outDir",
   webDistDir,
@@ -85,6 +88,7 @@ const ensureCtxMcpCommand = (repoRoot, env) => {
     return configured;
   }
 
+  ensureCargoTargetDir(repoRoot, env);
   const cargoCmd = process.platform === "win32" ? "cargo.exe" : "cargo";
   runSync(cargoCmd, ["build", "-p", "ctx-mcp", "--bin", "ctx-mcp"], repoRoot, env);
 
@@ -109,13 +113,15 @@ const main = () => {
   const authToken = requireEnv("CTX_E2E_AUTH_TOKEN");
   const skipWebBuild = parseBool(process.env.CTX_E2E_SKIP_WEB_BUILD);
   const env = { ...process.env };
+  ensureCargoTargetDir(repoRoot, env);
   env.CTX_MCP_COMMAND = ensureCtxMcpCommand(repoRoot, env);
   const webDistDir = resolveServeWebDistDir(repoRoot, env, skipWebBuild);
+  const webRoot = path.join(repoRoot, "apps", "web");
 
   if (!skipWebBuild) {
-    const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+    const viteBin = requireLocalNodeBin(webRoot, "vite");
     fs.rmSync(webDistDir, { recursive: true, force: true });
-    runSync(pnpmCmd, resolveWebBuildArgs(webDistDir), repoRoot, env);
+    runSync(viteBin, resolveWebBuildArgs(webDistDir), webRoot, env);
   }
 
   fs.rmSync(dataDir, { recursive: true, force: true });

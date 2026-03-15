@@ -1,5 +1,6 @@
 # Visual regression suite for PR-time Argos review.
 e2e/theme-screenshots.spec.ts
+e2e/markdown-link-modifier-visual.spec.ts
 e2e/visual-diff-pane.spec.ts
 e2e/visual-settings-global.spec.ts
 e2e/visual-workbench-shell.spec.ts

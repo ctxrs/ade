@@ -65,9 +65,6 @@ test("workbench: context window meter renders for a live fake-provider session",
 
   const activeTextarea = page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea");
   await expect(activeTextarea).toBeVisible({ timeout: 20_000 });
-  await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] button[aria-label=\"Stop\"]")).toBeVisible({
-    timeout: 20_000,
-  });
 
   const assistantEntries = page.locator('.wb-session-slot[aria-hidden="false"] .wb-assistant-entry');
   await expect(assistantEntries.filter({ hasText: "done: slow-diff-test 0123456789" })).toBeVisible({

@@ -459,7 +459,7 @@ describe("WorkbenchPage task rename selection", () => {
     });
     expect(screen.getByTestId("session-view-mock")).toHaveAttribute("data-session-id", sessionId);
     expect(document.querySelectorAll(".wb-session-slot")).toHaveLength(1);
-    expect(document.querySelector(".wb-session-slot")?.hasAttribute("aria-hidden")).toBe(false);
+    expect(document.querySelector(".wb-session-slot")).toHaveAttribute("aria-hidden", "false");
   });
 
   it("does not force session mode through WorkbenchPage route-open policy", async () => {

@@ -15,7 +15,7 @@ export function WorkbenchSessionSlot({
   const draft = useWorkbenchDraft(sessionDraftKey(sessionId), { text: "", modeId: "default" });
 
   return (
-    <div className="wb-session-slot">
+    <div className="wb-session-slot" aria-hidden="false">
       {optimisticFailure ? (
         <div className="banner" role="alert">
           <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>

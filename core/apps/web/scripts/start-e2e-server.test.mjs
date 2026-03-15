@@ -1,7 +1,11 @@
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  ensureCargoTargetDir,
+  resolveCargoTargetDir,
   resolveE2EWebDistDir,
   resolveServeWebDistDir,
   resolveWebBuildArgs,
@@ -17,10 +21,6 @@ describe("start-e2e-server", () => {
   it("targets an isolated dist dir and empties it", () => {
     const resolved = resolveWebBuildArgs("/tmp/ctx-web-dist");
     expect(resolved).toEqual([
-      "-C",
-      "apps/web",
-      "exec",
-      "vite",
       "build",
       "--outDir",
       "/tmp/ctx-web-dist",
@@ -52,5 +52,18 @@ describe("start-e2e-server", () => {
         CTX_E2E_ALLOW_CONFIGURED_MCP_COMMAND: "1",
       }),
     ).toBe(true);
+  });
+
+  it("resolves a relative cargo target dir against the repo root", () => {
+    expect(resolveCargoTargetDir("/repo/core", { CARGO_TARGET_DIR: "../tmp/cargo" })).toBe(
+      path.resolve("/repo/core", "../tmp/cargo"),
+    );
+  });
+
+  it("creates the cargo target dir before invoking cargo", () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-start-e2e-cargo-"));
+    const targetDir = ensureCargoTargetDir(repoRoot, { CARGO_TARGET_DIR: "tmp/cargo" });
+    expect(targetDir).toBe(path.resolve(repoRoot, "tmp/cargo"));
+    expect(fs.statSync(targetDir).isDirectory()).toBe(true);
   });
 });
