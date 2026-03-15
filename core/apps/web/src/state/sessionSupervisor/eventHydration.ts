@@ -50,19 +50,23 @@ export const messageFromEvent = (
   if (!messageId || !content) return null;
   const delivery = readPayloadString(payload, ["delivery"]) === "queued" ? "queued" : "immediate";
   const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
-  return {
+  const message: Message = {
     id: messageId,
     session_id: event.session_id,
     task_id: session?.task_id ?? "",
     turn_id: event.turn_id ?? null,
     turn_sequence: readPayloadNumber(payload, ["turn_sequence", "turnSequence"]),
-    order_seq: readPayloadNumber(payload, ["order_seq", "orderSeq"]),
     role,
     content,
     attachments,
     delivery,
     created_at: event.created_at ?? new Date().toISOString(),
   };
+  const orderSeq = readPayloadNumber(payload, ["order_seq", "orderSeq"]);
+  if (orderSeq !== null) {
+    (message as Message & { order_seq?: number }).order_seq = orderSeq;
+  }
+  return message;
 };
 
 export const readAcpCurrentModelId = (models: unknown): string | undefined => {

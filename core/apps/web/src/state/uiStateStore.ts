@@ -133,6 +133,10 @@ export async function saveSessionHeadV1(
   } satisfies PersistedSessionHeadV1);
 }
 
+export async function clearSessionHeadV1(sessionId: string): Promise<void> {
+  await storage.deleteSnapshot(sessionHeadKeyV1(sessionId));
+}
+
 export type PersistedSessionAcpMetaV1 = {
   v: 1;
   sessionId: string;
@@ -356,6 +360,25 @@ export async function saveSessionHistoryPageV1(
 
   await storage.setHistoryPage(key, pageValue);
   await updateSessionHistoryIndexV1(key, now, { force: true });
+}
+
+export async function clearSessionHistoryPagesV1(sessionId: string): Promise<void> {
+  const encodedSessionId = safeKeyPart(sessionId);
+  const index = decodeSessionHistoryIndexV1(
+    await storage.getKv<PersistedSessionHistoryIndexV1>(sessionHistoryIndexKeyV1()),
+  );
+  const kept = index.entries.filter(
+    (entry) => !entry.key.includes(`.${encodedSessionId}.`),
+  );
+  const deletedKeys = index.entries
+    .filter((entry) => entry.key.includes(`.${encodedSessionId}.`))
+    .map((entry) => entry.key);
+  await storage.setKv(
+    sessionHistoryIndexKeyV1(),
+    { v: 1, entries: kept } satisfies PersistedSessionHistoryIndexV1,
+  );
+  if (deletedKeys.length === 0) return;
+  await Promise.all(deletedKeys.map((key) => storage.deleteHistoryPage(key)));
 }
 
 const asRecord = (value: unknown): Record<string, unknown> | null => {

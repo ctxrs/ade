@@ -1,6 +1,7 @@
 import { idToString } from "../../api/client";
 import type { SessionCacheEntry, SessionSupervisorSnapshot } from "../../state/sessionSupervisor";
 import type { WorkspaceActiveSnapshotItem } from "../../state/workspaceActiveSnapshotStore";
+import { hasSessionActiveTurn, isSessionWorkingActivity } from "../../utils/sessionActivity";
 import { pickPreferredSessionId } from "../../utils/workbenchSelection";
 import { lastAssistantMessageMs, parseMs } from "../WorkbenchPage.utils";
 import type { OptimisticTaskSummary } from "../WorkbenchPage.types";
@@ -15,31 +16,12 @@ export type WorkbenchTaskStatusKind = "error" | "working" | "unread" | "idle";
 
 type SessionTaskProviderSample = { providerId: string; updatedAt: number };
 
-const hasRunningTurn = (
-  turns: SessionCacheEntry["turns"] | NonNullable<WorkspaceActiveSnapshotItem["primarySessionHead"]>["turns"] | null | undefined,
-) => Array.isArray(turns) && turns.some((turn) => turn.status === "running");
-
-const hasRunningActivity = (
-  activity:
-    | WorkspaceActiveSnapshotItem["sessions"][number]["activity"]
-    | NonNullable<WorkspaceActiveSnapshotItem["primarySessionHead"]>["activity"]
-    | null
-    | undefined,
-) => activity?.is_working === true && activity.last_turn_status === "running";
-
 export const isPrimarySessionRunning = ({
   primarySessionSummary,
-  primarySessionHead,
-  primaryEntry,
 }: {
   primarySessionSummary?: WorkspaceActiveSnapshotItem["sessions"][number];
-  primarySessionHead?: WorkspaceActiveSnapshotItem["primarySessionHead"] | null;
-  primaryEntry?: SessionCacheEntry;
 }): boolean => {
-  if (hasRunningTurn(primaryEntry?.turns)) return true;
-  if (hasRunningTurn(primarySessionHead?.turns)) return true;
-  if (hasRunningActivity(primarySessionHead?.activity)) return true;
-  return hasRunningActivity(primarySessionSummary?.activity);
+  return isSessionWorkingActivity(primarySessionSummary?.activity);
 };
 
 export const deriveWorkbenchTaskStatusKind = ({
@@ -100,7 +82,7 @@ export const deriveWarmSessionIds = ({
       const sessionId = idToString(sessionSummary.session.id);
       if (!sessionId || activeSet.has(sessionId)) continue;
       const updatedAt = parseMs(sessionSummary.last_message_at) ?? parseMs(sessionSummary.session.updated_at) ?? 0;
-      const running = sessionSummary.session.status === "active" || sessionSummary.session.status === "running";
+      const running = hasSessionActiveTurn(sessionSummary.activity);
       candidates.push({ id: sessionId, updatedAt, running });
     }
   }
@@ -147,31 +129,23 @@ const deriveTaskLiveInfoFromSources = (
       ? summary.sessions.find((sessionSummary) => idToString(sessionSummary.session.id) === primarySessionId)
       : undefined;
     const primaryEntry = primarySessionId ? entryBySessionId.get(primarySessionId) : undefined;
-    const primarySessionHead =
-      primarySessionId && idToString(summary.primarySessionHead?.session?.id) === primarySessionId
-        ? summary.primarySessionHead
-        : null;
 
-    if (primarySessionSummary || primaryEntry?.session || primarySessionHead?.session) {
-      if (isPrimarySessionRunning({ primarySessionSummary, primarySessionHead, primaryEntry })) {
+    if (primarySessionSummary || primaryEntry?.session) {
+      if (isPrimarySessionRunning({ primarySessionSummary })) {
         workingByTask.add(taskId);
       }
 
-      const status =
-        primaryEntry?.session?.status ?? primarySessionSummary?.session.status ?? primarySessionHead?.session.status;
+      const status = primaryEntry?.session?.status ?? primarySessionSummary?.session.status;
       if (status === "failed" || status === "cancelled") {
         errorByTask.add(taskId);
       }
 
       const liveMs = primaryEntry ? lastAssistantMessageMs(primaryEntry.messages) : null;
-      const headMs = primarySessionHead ? lastAssistantMessageMs(primarySessionHead.messages) : null;
       const summaryMs = parseMs(primarySessionSummary?.last_message_at ?? null);
       const lastAssistantMs =
         liveMs !== null
-          ? Math.max(liveMs, headMs ?? 0, summaryMs ?? 0)
-          : headMs !== null && summaryMs !== null
-            ? Math.max(headMs, summaryMs)
-            : headMs ?? summaryMs;
+          ? Math.max(liveMs, summaryMs ?? 0)
+          : summaryMs;
       if (lastAssistantMs !== null) {
         lastAssistantMsByTask[taskId] = Math.max(lastAssistantMsByTask[taskId] ?? 0, lastAssistantMs);
       }

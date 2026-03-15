@@ -18,6 +18,7 @@ import { trackWorkbenchPanelToggled } from "../../utils/analytics";
 import { errorMessage } from "../../utils/errorMessage";
 import { getLoadTestTelemetry } from "../../utils/loadTestTelemetry";
 import { composeModelId, parseModelId } from "../../utils/modelEffort";
+import { hasSessionActiveTurn } from "../../utils/sessionActivity";
 import {
   loadWorkbenchTerminalPanelOpenV1,
   saveWorkbenchArtifactsPaneOpenV1,
@@ -877,9 +878,7 @@ export function useWorkbenchActiveTaskController({
     setTranscriptNotice(null);
   }, [setTranscriptNotice]);
 
-  const activeSessionStatus = String(activeEntry?.session?.status ?? "").toLowerCase();
-  const canInterruptSession =
-    Boolean(activeSessionId) && (activeSessionStatus === "active" || activeSessionStatus === "running");
+  const canInterruptSession = Boolean(activeSessionId) && hasSessionActiveTurn(activeEntry?.activity);
 
   const [convoMenu, setConvoMenu] = useState<{ style: React.CSSProperties } | null>(null);
   const convoMenuRef = useRef<HTMLDivElement | null>(null);

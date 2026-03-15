@@ -50,6 +50,7 @@ import { buildOptimisticUserMessage } from "./SessionPage.optimisticMessage";
 import { useSessionMessageListController } from "./useSessionMessageListController";
 import { useWorkbenchThreadViewModelController } from "./useWorkbenchThreadViewModelController";
 import { errorMessage } from "../utils/errorMessage";
+import { hasSessionActiveTurn } from "../utils/sessionActivity";
 import { defaultSessionVerbosityForProvider } from "./sessionVerbosity";
 import { appendSegment } from "./SessionPage.helpers";
 import { isSameContextWindow } from "./sessionView/estimateHeuristics";
@@ -419,8 +420,8 @@ export function SessionView({
   }, [computedContextWindow]);
   const contextWindow = computedContextWindow ?? lastContextWindow;
   const hasActiveTurn = useMemo(
-    () => turns.some((turn) => turn.status === "running" || turn.status === "queued"),
-    [turnsKey],
+    () => hasSessionActiveTurn(entry?.activity),
+    [entry?.activity],
   );
   const queuedMessagesEnabled = useFeatureGate("queued_messages_enabled", false);
   const sessionError = useMemo(

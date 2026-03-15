@@ -4,6 +4,12 @@ import type {
   WorkspaceActiveSnapshotCommand,
   WorkspaceActiveSnapshotPatch,
 } from "../workspaceActiveSnapshotProtocol";
+import type { SessionSubscriptionCursor } from "../sessionSubscription";
+import {
+  normalizeSessionSubscriptionCursors,
+  sameSessionSubscriptionCursorIds,
+  sameSessionSubscriptionCursors,
+} from "../sessionSubscription";
 import { buildWorkspaceActiveSubscribeMessage } from "./subscriptions";
 import type { WorkspaceActiveSnapshotStoreState } from "./storeState";
 
@@ -18,7 +24,7 @@ export type WorkspaceActiveSnapshotControlHost = {
   wsBaseUrlOverride: string | null;
   authTokenOverride: string | null;
   workspaceId: string;
-  subscribedSessionIds: string[];
+  subscribedSessions: SessionSubscriptionCursor[];
   foregroundTaskId: string | null;
   eventListeners: Set<(event: WorkspaceActiveSnapshotEvent) => void>;
   workerPatchEmitter: ((patch: WorkspaceActiveSnapshotPatch) => void) | null;
@@ -109,22 +115,19 @@ export function getCanonicalStreamUrl(
   return `${wsBaseUrl.replace(/\/+$/, "")}/api/workspaces/${host.workspaceId}/active_snapshot/stream${qs}`;
 }
 
-export function setSubscribedSessionIds(
+export function setSubscribedSessions(
   host: WorkspaceActiveSnapshotControlHost,
-  sessionIds: string[],
+  sessions: SessionSubscriptionCursor[],
 ) {
-  const activeSet = new Set(host.state.getActiveSessionIds());
-  const next = sessionIds
-    .map((id) => String(id || "").trim())
-    .filter((id) => id.length > 0 && !activeSet.has(id));
-  const deduped = Array.from(new Set(next));
-  if (deduped.join("|") === host.subscribedSessionIds.join("|")) return;
-  host.subscribedSessionIds = deduped;
+  const deduped = normalizeSessionSubscriptionCursors(sessions);
+  if (sameSessionSubscriptionCursors(deduped, host.subscribedSessions)) return;
+  const idsChanged = !sameSessionSubscriptionCursorIds(deduped, host.subscribedSessions);
+  host.subscribedSessions = deduped;
   if (host.worker) {
-    host.postWorkerCommand({ type: "set_subscribed_session_ids", sessionIds: deduped });
+    host.postWorkerCommand({ type: "set_subscribed_sessions", sessions: deduped });
     return;
   }
-  flushSubscriptions(host, "session_ids");
+  flushSubscriptions(host, idsChanged ? "session_ids" : "session_cursors");
 }
 
 export function setForegroundTaskId(
@@ -151,7 +154,7 @@ export function flushSubscriptions(
   const { message, requestSnapshot } = buildWorkspaceActiveSubscribeMessage(
     reason,
     host.foregroundTaskId,
-    host.subscribedSessionIds,
+    host.subscribedSessions,
   );
   if (requestSnapshot) {
     host.scheduleSnapshotWarning(reason);

@@ -3,6 +3,7 @@ import type {
   Task,
   WorkspaceActiveSnapshotEvent,
 } from "@ctx/types";
+import type { SessionSubscriptionCursor } from "./sessionSubscription";
 import type { PersistedWorkspaceActiveSnapshotV1 } from "./uiStateStore";
 import type { WorkspaceActiveSnapshotState } from "./workspaceActiveSnapshotStoreCore";
 
@@ -29,7 +30,7 @@ export type WorkspaceActiveSnapshotCommand =
       type: "seed_cache";
       snapshot: PersistedWorkspaceActiveSnapshotV1;
     }
-  | { type: "set_subscribed_session_ids"; sessionIds: string[] }
+  | { type: "set_subscribed_sessions"; sessions: SessionSubscriptionCursor[] }
   | { type: "set_foreground_task_id"; taskId: string | null }
   | { type: "ensure_archived_loaded" }
   | { type: "load_more_archived" }

@@ -186,6 +186,29 @@ fn derive_summary_activity(event_type: &SessionEventType) -> Option<SessionActiv
     }
 }
 
+fn build_session_summary_delta(
+    session: &Session,
+    activity: Option<SessionActivityState>,
+    last_message_at: Option<chrono::DateTime<chrono::Utc>>,
+    last_message_preview: Option<String>,
+    last_event_seq: i64,
+    state_rev: i64,
+) -> Option<SessionSummaryDelta> {
+    if activity.is_none() && last_message_at.is_none() && last_message_preview.is_none() {
+        return None;
+    }
+
+    Some(SessionSummaryDelta {
+        session_id: session.id,
+        task_id: session.task_id,
+        activity,
+        last_message_at,
+        last_message_preview,
+        last_event_seq: Some(last_event_seq),
+        state_rev: Some(state_rev),
+    })
+}
+
 fn turn_from_event(event: &SessionEvent, message: Option<&Message>) -> Option<SessionTurn> {
     if !matches!(event.event_type, SessionEventType::UserMessage) {
         return None;
@@ -461,25 +484,14 @@ impl SessionRuntime {
             last_message_preview = Some(derive_message_preview(&message.content));
         }
 
-        let summary_delta =
-            if activity.is_some() || last_message_at.is_some() || last_message_preview.is_some() {
-                let mut summary_delta = SessionSummaryDelta {
-                    session_id: session.id,
-                    task_id: session.task_id,
-                    activity,
-                    last_message_at,
-                    last_message_preview,
-                    last_event_seq: None,
-                    state_rev: None,
-                };
-                if !stream_only {
-                    summary_delta.last_event_seq = Some(event.seq);
-                    summary_delta.state_rev = Some(event.seq);
-                }
-                Some(summary_delta)
-            } else {
-                None
-            };
+        let summary_delta = build_session_summary_delta(
+            &session,
+            activity,
+            last_message_at,
+            last_message_preview,
+            last_event_seq,
+            state_rev,
+        );
 
         let delta = SessionHeadDelta {
             session_id: event.session_id,
@@ -906,10 +918,35 @@ impl AppState {
 mod cache_sweep_tests {
     use super::{
         active_head_projection_should_flush, active_head_projection_wait_duration,
-        derive_summary_activity,
+        build_session_summary_delta, derive_summary_activity,
     };
-    use ctx_core::models::{SessionEventType, SessionTurnStatus};
+    use chrono::Utc;
+    use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
+    use ctx_core::models::{
+        ExecutionEnvironment, Session, SessionEventType, SessionStatus, SessionTurnStatus,
+    };
     use std::time::{Duration, Instant};
+
+    fn test_session() -> Session {
+        Session {
+            id: SessionId::new(),
+            task_id: TaskId::new(),
+            workspace_id: WorkspaceId::new(),
+            worktree_id: WorktreeId::new(),
+            execution_environment: ExecutionEnvironment::Host,
+            parent_session_id: None,
+            relationship: None,
+            provider_id: "fake".to_string(),
+            model_id: "fake-model".to_string(),
+            reasoning_effort: None,
+            title: String::new(),
+            agent_role: "assistant".to_string(),
+            status: SessionStatus::Active,
+            provider_session_ref: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
 
     #[test]
     fn active_head_projection_waits_for_debounce_or_max_flush() {
@@ -976,5 +1013,44 @@ mod cache_sweep_tests {
             .expect("running turns should publish summary activity");
         assert!(running.is_working);
         assert_eq!(running.last_turn_status, Some(SessionTurnStatus::Running));
+    }
+
+    #[test]
+    fn emitted_session_summary_deltas_always_include_monotonic_versions() {
+        let session = test_session();
+        let now = Utc::now();
+
+        let activity_delta = build_session_summary_delta(
+            &session,
+            derive_summary_activity(&SessionEventType::TurnStarted),
+            None,
+            None,
+            17,
+            21,
+        )
+        .expect("activity change should emit a summary delta");
+        assert_eq!(activity_delta.last_event_seq, Some(17));
+        assert_eq!(activity_delta.state_rev, Some(21));
+
+        let message_delta = build_session_summary_delta(
+            &session,
+            None,
+            Some(now),
+            Some("preview".to_string()),
+            22,
+            22,
+        )
+        .expect("message preview should emit a summary delta");
+        assert_eq!(message_delta.last_event_seq, Some(22));
+        assert_eq!(message_delta.state_rev, Some(22));
+    }
+
+    #[test]
+    fn empty_session_summary_delta_is_not_emitted() {
+        let session = test_session();
+        assert!(
+            build_session_summary_delta(&session, None, None, None, 5, 5).is_none(),
+            "empty updates should not publish summary deltas"
+        );
     }
 }

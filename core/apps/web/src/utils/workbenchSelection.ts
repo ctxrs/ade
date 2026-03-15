@@ -19,10 +19,6 @@ export function pickPreferredSession(
     const preferred = candidates.find((s) => idToString(s?.id ?? "") === preferredSessionId);
     if (preferred) return preferred;
   }
-  for (let i = candidates.length - 1; i >= 0; i--) {
-    const s = candidates[i];
-    if (s?.status === "active") return s;
-  }
   return candidates[candidates.length - 1] ?? null;
 }
 

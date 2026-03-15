@@ -29,6 +29,7 @@ import type {
   WorkspaceActiveSnapshotPatch,
   WorkspaceActiveSnapshotWorkerMessage,
 } from "./workspaceActiveSnapshotProtocol";
+import type { SessionSubscriptionCursor } from "./sessionSubscription";
 import { WorkspaceActiveSnapshotStoreState } from "./workspaceActiveSnapshot/storeState";
 import type {
   WorkspaceActiveSnapshotEventSource,
@@ -44,7 +45,7 @@ import {
   setDropActiveSnapshotMessages,
   setE2EEnabled,
   setForegroundTaskId,
-  setSubscribedSessionIds,
+  setSubscribedSessions,
   unwrapEvent,
   type WorkspaceActiveSnapshotControlHost,
 } from "./workspaceActiveSnapshot/controls";
@@ -104,7 +105,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   wsBaseUrlOverride: string | null = null;
   private configUnsubscribe: (() => void) | null = null;
   private listWorkspaceArchivedTaskSummariesFn: typeof listWorkspaceArchivedTaskSummaries;
-  subscribedSessionIds: string[] = [];
+  subscribedSessions: SessionSubscriptionCursor[] = [];
   foregroundTaskId: string | null = null;
   foregroundTaskTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
   ws: WebSocket | null = null;
@@ -188,8 +189,8 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
 
   e2eGetCanonicalStreamUrl = (): string | null => getCanonicalStreamUrl(this);
 
-  setSubscribedSessionIds = (sessionIds: string[]) =>
-    setSubscribedSessionIds(this, sessionIds);
+  setSubscribedSessions = (sessions: SessionSubscriptionCursor[]) =>
+    setSubscribedSessions(this, sessions);
 
   setForegroundTaskId = (taskId: string | null) =>
     setForegroundTaskId(this, taskId);
@@ -256,8 +257,11 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
         runId: connection.runId,
         e2eEnabled: this.e2eEnabled,
       });
-      if (this.subscribedSessionIds.length > 0) {
-        this.postWorkerCommand({ type: "set_subscribed_session_ids", sessionIds: this.subscribedSessionIds.slice() });
+      if (this.subscribedSessions.length > 0) {
+        this.postWorkerCommand({
+          type: "set_subscribed_sessions",
+          sessions: this.subscribedSessions.slice(),
+        });
       }
       if (this.foregroundTaskId) {
         this.postWorkerCommand({ type: "set_foreground_task_id", taskId: this.foregroundTaskId });
@@ -861,6 +865,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
       this.state.updateArchivedRev(evt.archived_rev);
     }
 
+    let flushAfterNotifyReason: string | null = null;
     switch (evt.type) {
       case "ready":
         if (this.state.setConnection("connected")) {
@@ -920,7 +925,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
         }
         break;
       case "session_gap": {
-        this.flushSubscriptions("session_gap");
+        flushAfterNotifyReason = "session_gap";
         break;
       }
       case "worktree_bootstrap": {
@@ -941,6 +946,9 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     }
 
     this.notifyEventListeners(evt);
+    if (flushAfterNotifyReason) {
+      this.flushSubscriptions(flushAfterNotifyReason);
+    }
   }
 
   private notifyEventListeners(evt: WorkspaceActiveSnapshotEvent) {

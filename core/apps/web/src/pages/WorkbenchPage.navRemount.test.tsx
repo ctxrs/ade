@@ -21,6 +21,7 @@ const buildSessionSnap = (): SessionSupervisorSnapshot => ({
   sessions: {
     [sessionId]: {
       sessionId,
+      freshness: "authoritative",
       session: {
         id: sessionId,
         task_id: taskId,
@@ -161,7 +162,7 @@ const workspaceSnapshotStoreMock = {
   getSessionHeadSnapshot: vi.fn(() => null),
   getSessionHeadsSnapshot: vi.fn(() => ({})),
   setForegroundTaskId: vi.fn(),
-  setSubscribedSessionIds: vi.fn(),
+  setSubscribedSessions: vi.fn(),
 };
 const { trackWorkbenchPanelToggledMock } = vi.hoisted(() => ({
   trackWorkbenchPanelToggledMock: vi.fn(),
@@ -421,7 +422,7 @@ beforeEach(() => {
   workspaceSnapshotStoreMock.getSessionHeadsSnapshot.mockReset();
   workspaceSnapshotStoreMock.getSessionHeadsSnapshot.mockReturnValue({});
   workspaceSnapshotStoreMock.setForegroundTaskId.mockReset();
-  workspaceSnapshotStoreMock.setSubscribedSessionIds.mockReset();
+  workspaceSnapshotStoreMock.setSubscribedSessions.mockReset();
 });
 
 afterEach(() => {
@@ -607,7 +608,7 @@ describe("WorkbenchPage archive navigation", () => {
 });
 
 describe("WorkbenchPage nav status indicator", () => {
-  it("shows spinner only for the primary running turn and ignores queued or subagent activity", async () => {
+  it("shows spinner for canonical primary working activity, including queued follow-ups, and ignores subagent activity", async () => {
     const starterSummary = workspaceSnapshotSnap.tasksById[taskId] as {
       task: Record<string, unknown>;
       sessions: Array<Record<string, unknown>>;
@@ -632,7 +633,7 @@ describe("WorkbenchPage nav status indicator", () => {
           sessions: [
             {
               ...starterSummary.sessions[0],
-              activity: { is_working: false, last_turn_status: "completed" },
+              activity: { is_working: true, last_turn_status: "running" },
               last_message_at: "2024-01-01T00:00:02.000Z",
             },
           ],
@@ -782,8 +783,8 @@ describe("WorkbenchPage nav status indicator", () => {
 
     await waitFor(() => {
       const rerenderedRow = getTaskRow("Starter task");
-      expect(rerenderedRow.querySelector(".wb-task-spinner")).toBeNull();
-      expect(rerenderedRow.querySelector(".wb-task-status-dot-unread")).not.toBeNull();
+      expect(rerenderedRow.querySelector(".wb-task-spinner")).not.toBeNull();
+      expect(rerenderedRow.querySelector(".wb-task-status-dot-unread")).toBeNull();
     });
   });
 

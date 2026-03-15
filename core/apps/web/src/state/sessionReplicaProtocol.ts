@@ -2,6 +2,7 @@ import type {
   Artifact,
   Message,
   Session,
+  SessionActivityState,
   SessionEvent,
   SessionHeadSnapshot,
   SessionHeadWindow,
@@ -16,6 +17,8 @@ export type SessionReplicaConfig = {
   eventBufferLimit: number;
   headLimit: number;
 };
+
+export type SessionReplicaFreshnessState = "bootstrap" | "authoritative" | "recovering";
 
 export type SessionReplicaCommand =
   | {
@@ -36,6 +39,8 @@ export type SessionReplicaCommand =
       sessionId: string;
       force?: boolean;
       silent?: boolean;
+      skipCache?: boolean;
+      hydrateIfNeeded?: boolean;
     }
   | { type: "close_session"; sessionId: string }
   | { type: "refresh_session"; sessionId: string }
@@ -46,6 +51,8 @@ export type SessionReplicaCommand =
 
 export type SessionReplicaData = {
   session?: Session;
+  activity?: SessionActivityState | null;
+  freshness?: SessionReplicaFreshnessState;
   acpMeta?: {
     models?: unknown;
     modes?: unknown;

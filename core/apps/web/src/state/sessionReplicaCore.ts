@@ -2,6 +2,7 @@ import type {
   Artifact,
   Message,
   Session,
+  SessionActivityState,
   SessionEvent,
   SessionHead,
   SessionHeadDelta,
@@ -15,8 +16,19 @@ import type {
   WorkspaceActiveSnapshotEvent,
 } from "@ctx/types";
 import { idToString } from "../api/client";
-import { loadSessionHeadV1, saveSessionHeadV1 } from "./uiStateStore";
-import type { SessionReplicaCommand, SessionReplicaConfig, SessionReplicaData, SessionReplicaPatch } from "./sessionReplicaProtocol";
+import {
+  clearSessionHeadV1,
+  clearSessionHistoryPagesV1,
+  loadSessionHeadV1,
+  saveSessionHeadV1,
+} from "./uiStateStore";
+import type {
+  SessionReplicaCommand,
+  SessionReplicaConfig,
+  SessionReplicaData,
+  SessionReplicaFreshnessState,
+  SessionReplicaPatch,
+} from "./sessionReplicaProtocol";
 
 export type SessionReplicaApi = {
   getSessionHead: (sessionId: string, limit?: number, includeEvents?: boolean) => Promise<SessionHeadSnapshot | null>;
@@ -29,6 +41,10 @@ export type SessionReplicaApi = {
 type SessionReplicaEntry = {
   sessionId: string;
   session?: Session;
+  activity?: SessionActivityState | null;
+  activityLastEventSeq?: number;
+  activityStateRev?: number;
+  freshness: SessionReplicaFreshnessState;
   summaryCheckpoint?: SessionSummaryCheckpoint | null;
   headWindow?: SessionHeadWindow | null;
   stateRev?: number;
@@ -98,6 +114,43 @@ const sanitizeHeadForCache = (head: SessionHead): SessionHead => ({
   turns: stripTurnPartials(head.turns ?? []),
   events: stripPartialEvents(head.events ?? []),
 });
+
+const mergeToolSummaries = (
+  prev: SessionTurnToolSummary[],
+  next: SessionTurnToolSummary[],
+): SessionTurnToolSummary[] => {
+  const byId = new Map<string, SessionTurnToolSummary>();
+  for (const summary of prev) {
+    byId.set(String(summary.tool_call_id), summary);
+  }
+  for (const summary of next) {
+    byId.set(String(summary.tool_call_id), summary);
+  }
+  return Array.from(byId.values());
+};
+
+const isOlderVersion = (
+  incomingLastEventSeq: number | null,
+  incomingStateRev: number | null,
+  existingLastEventSeq: number | null,
+  existingStateRev: number | null,
+): boolean => {
+  if (
+    incomingStateRev !== null &&
+    existingStateRev !== null &&
+    incomingStateRev < existingStateRev
+  ) {
+    return true;
+  }
+  if (
+    incomingLastEventSeq !== null &&
+    existingLastEventSeq !== null &&
+    incomingLastEventSeq < existingLastEventSeq
+  ) {
+    return true;
+  }
+  return false;
+};
 
 const mergePartial = (p: string, n: string): string => {
   if (!p) return n;
@@ -198,6 +251,7 @@ const headToData = (head: SessionHead | SessionHeadSnapshot): SessionReplicaData
     hasMoreTurns: head.has_more_turns,
   };
   if (head.session) data.session = head.session;
+  if ("activity" in head) data.activity = head.activity ?? null;
   if ("summary_checkpoint" in head) data.summaryCheckpoint = head.summary_checkpoint ?? null;
   if ("head_window" in head) data.headWindow = head.head_window ?? null;
   if ("state_rev" in head && typeof head.state_rev === "number") data.stateRev = head.state_rev;
@@ -236,6 +290,8 @@ export class SessionReplicaCore {
         this.openSession(cmd.sessionId, {
           force: cmd.force,
           silent: cmd.silent,
+          skipCache: cmd.skipCache,
+          hydrateIfNeeded: cmd.hydrateIfNeeded,
         }).catch(() => {});
         return;
       case "close_session":
@@ -288,6 +344,10 @@ export class SessionReplicaCore {
     const entry: SessionReplicaEntry = {
       sessionId: id,
       session: undefined,
+      activity: null,
+      activityLastEventSeq: undefined,
+      activityStateRev: undefined,
+      freshness: "bootstrap",
       summaryCheckpoint: undefined,
       headWindow: undefined,
       stateRev: undefined,
@@ -335,6 +395,10 @@ export class SessionReplicaCore {
     entry: SessionReplicaEntry,
     head: SessionHead | SessionHeadSnapshot,
     emitOp: "append" | "replace" = "replace",
+    opts?: {
+      authoritative?: boolean;
+      freshness?: SessionReplicaFreshnessState;
+    },
   ) {
     const data = headToData(head);
     let turns = data.turns ?? [];
@@ -343,32 +407,73 @@ export class SessionReplicaCore {
     let events = this.normalizeEvents(entry, data.events ?? []);
     const incomingSeq = typeof data.lastEventSeq === "number" ? data.lastEventSeq : -1;
     const existingSeq = typeof entry.lastEventSeq === "number" ? entry.lastEventSeq : -1;
-    if (existingSeq > incomingSeq) {
+    const incomingStateRev = typeof data.stateRev === "number" ? data.stateRev : null;
+    const existingStateRev = typeof entry.stateRev === "number" ? entry.stateRev : null;
+    const incomingIsOlder = isOlderVersion(
+      incomingSeq >= 0 ? incomingSeq : null,
+      incomingStateRev,
+      existingSeq >= 0 ? existingSeq : null,
+      existingStateRev,
+    );
+    let toolSummaries = data.toolSummaries ?? entry.toolSummaries;
+    if (incomingIsOlder || (!opts?.authoritative && existingSeq > incomingSeq)) {
       turns = mergeTurns(turns, entry.turns);
       messages = mergeMessages(messages, entry.messages);
       events = mergeEvents(events, entry.events);
+      toolSummaries = mergeToolSummaries(data.toolSummaries ?? [], entry.toolSummaries);
     }
 
     entry.session = data.session ?? entry.session;
+    if (data.activity !== undefined) {
+      const existingActivitySeq =
+        typeof entry.activityLastEventSeq === "number" ? entry.activityLastEventSeq : null;
+      const existingActivityStateRev =
+        typeof entry.activityStateRev === "number" ? entry.activityStateRev : null;
+      const incomingActivityIsOlder = isOlderVersion(
+        incomingSeq >= 0 ? incomingSeq : null,
+        incomingStateRev,
+        existingActivitySeq,
+        existingActivityStateRev,
+      );
+      if (!incomingActivityIsOlder) {
+        entry.activity = data.activity ?? null;
+        entry.activityLastEventSeq = incomingSeq >= 0 ? incomingSeq : entry.activityLastEventSeq;
+        entry.activityStateRev =
+          incomingStateRev ?? entry.activityStateRev;
+      }
+    }
+    if (opts?.freshness) {
+      entry.freshness = opts.freshness;
+    }
     if (data.summaryCheckpoint !== undefined) {
-      entry.summaryCheckpoint = data.summaryCheckpoint ?? null;
+      if (!incomingIsOlder) {
+        entry.summaryCheckpoint = data.summaryCheckpoint ?? null;
+      }
     }
     if (data.headWindow !== undefined) {
-      entry.headWindow = data.headWindow ?? null;
+      if (!incomingIsOlder) {
+        entry.headWindow = data.headWindow ?? null;
+      }
     }
     if (data.stateRev !== undefined) {
-      entry.stateRev = data.stateRev;
+      entry.stateRev =
+        typeof entry.stateRev === "number" ? Math.max(entry.stateRev, data.stateRev) : data.stateRev;
     }
     entry.turns = turns;
     entry.messages = messages;
     entry.events = events;
-    entry.toolSummaries = data.toolSummaries ?? entry.toolSummaries;
-    entry.lastEventSeq = Math.max(existingSeq, incomingSeq);
+    entry.toolSummaries = toolSummaries;
+    entry.lastEventSeq =
+      incomingSeq >= 0
+        ? Math.max(existingSeq, incomingSeq)
+        : entry.lastEventSeq;
     entry.hasMoreTurns = data.hasMoreTurns ?? entry.hasMoreTurns;
     entry.hydrated = true;
 
     const patch: SessionReplicaData = {
       session: entry.session,
+      activity: entry.activity ?? null,
+      freshness: entry.freshness,
       turns: entry.turns,
       messages: entry.messages,
       events: entry.events,
@@ -391,6 +496,7 @@ export class SessionReplicaCore {
       silent?: boolean;
       minEventSeq?: number;
       skipCache?: boolean;
+      hydrateIfNeeded?: boolean;
       emitOp?: "append" | "replace";
     },
   ) {
@@ -398,10 +504,11 @@ export class SessionReplicaCore {
     if (!id) return;
     const entry = this.ensureEntry(id);
     if (entry.loading && !opts?.force) return;
+    const shouldHydrate = Boolean(opts?.hydrateIfNeeded) && entry.freshness !== "authoritative";
     const minSeq = typeof opts?.minEventSeq === "number" ? opts.minEventSeq : undefined;
     if (!opts?.force && entry.hydrated) {
       const entrySeq = typeof entry.lastEventSeq === "number" ? entry.lastEventSeq : -1;
-      if (minSeq === undefined || entrySeq >= minSeq) {
+      if ((minSeq === undefined || entrySeq >= minSeq) && !shouldHydrate) {
         if (!opts?.silent) this.emitPatch("append", id, { loading: false, error: null });
         return;
       }
@@ -411,22 +518,42 @@ export class SessionReplicaCore {
       const cached = await loadSessionHeadV1(id).catch(() => null);
       if (token !== entry.requestToken) return;
       if (cached?.head && (minSeq === undefined || cached.head.last_event_seq >= minSeq)) {
-        this.applyHead(entry, cached.head, opts?.emitOp);
+        this.applyHead(entry, cached.head, opts?.emitOp, { freshness: "bootstrap" });
       }
     }
     if (!opts?.force && entry.hydrated) {
       const entrySeq = typeof entry.lastEventSeq === "number" ? entry.lastEventSeq : -1;
-      if (minSeq === undefined || entrySeq >= minSeq) {
+      if ((minSeq === undefined || entrySeq >= minSeq) && !shouldHydrate) {
         if (!opts?.silent) this.emitPatch("append", id, { loading: false, error: null });
         return;
       }
     }
 
-    // Stream/cache open path: no REST head hydration here.
     entry.loading = true;
     if (!opts?.silent) this.emitPatch("append", id, { loading: true, error: null });
-    entry.loading = false;
-    if (!opts?.silent) this.emitPatch("append", id, { loading: false, error: null });
+    if (!shouldHydrate) {
+      entry.loading = false;
+      if (!opts?.silent) this.emitPatch("append", id, { loading: false, error: null });
+      return;
+    }
+    try {
+      const head = await this.deps.api.getSessionHead(id, this.config.headLimit, true);
+      if (token !== entry.requestToken) return;
+      if (head) {
+        const persisted = snapshotToHead(head);
+        this.applyHead(entry, persisted, opts?.emitOp, {
+          authoritative: true,
+          freshness: "authoritative",
+        });
+        await this.persistHead(entry);
+      }
+      entry.loading = false;
+      if (!opts?.silent) this.emitPatch("append", id, { loading: false, error: null });
+    } catch (err) {
+      entry.loading = false;
+      const message = err instanceof Error && err.message ? err.message : typeof err === "string" ? err : "request failed";
+      if (!opts?.silent) this.emitPatch("append", id, { loading: false, error: message });
+    }
   }
 
   private async hydrateSessionHead(
@@ -451,8 +578,11 @@ export class SessionReplicaCore {
       if (token !== entry.requestToken) return;
       if (head) {
         const persisted = snapshotToHead(head);
-        this.applyHead(entry, persisted, opts?.emitOp);
-        await saveSessionHeadV1(id, sanitizeHeadForCache(persisted)).catch(() => {});
+        this.applyHead(entry, persisted, opts?.emitOp, {
+          authoritative: true,
+          freshness: "authoritative",
+        });
+        await this.persistHead(entry);
       }
       entry.loading = false;
       if (!opts?.silent) this.emitPatch("append", id, { loading: false });
@@ -467,7 +597,9 @@ export class SessionReplicaCore {
     const id = normalizeId(sessionId);
     if (!id) return;
     const entry = this.ensureEntry(id);
-    this.applyHead(entry, head);
+    this.applyHead(entry, head, "replace", {
+      freshness: entry.freshness === "authoritative" ? "authoritative" : "bootstrap",
+    });
     entry.hydrated = true;
   }
 
@@ -483,7 +615,9 @@ export class SessionReplicaCore {
       const sessionId = normalizeId(head?.session?.id ?? "");
       if (!head || !sessionId) return;
       const entry = this.ensureEntry(sessionId);
-      this.applyHead(entry, head);
+      this.applyHead(entry, head, "replace", {
+        freshness: entry.freshness === "authoritative" ? "authoritative" : "bootstrap",
+      });
       return;
     }
     if (evtType === "session_gap") {
@@ -507,11 +641,71 @@ export class SessionReplicaCore {
         // eslint-disable-next-line no-console
         console.warn(message);
       }
+      void clearSessionHeadV1(sessionId).catch(() => {});
+      void clearSessionHistoryPagesV1(sessionId).catch(() => {});
       const entry = this.entries.get(sessionId);
       if (!entry) return;
       entry.hydrated = false;
+      entry.freshness = "recovering";
+      this.emitPatch("append", sessionId, { freshness: "recovering", error: null });
+      this.hydrateSessionHead(sessionId, {
+        force: true,
+        emitOp: "replace",
+      }).catch(() => {});
       return;
     }
+    if (evtType === "session_summary_delta") {
+      const delta = (evt as Extract<WorkspaceActiveSnapshotEvent, { type: "session_summary_delta" }>).delta;
+      this.applyActivityEvent(
+        normalizeId(delta?.session_id ?? ""),
+        delta?.activity,
+        typeof delta?.last_event_seq === "number" ? delta.last_event_seq : null,
+        typeof delta?.state_rev === "number" ? delta.state_rev : null,
+      );
+      return;
+    }
+    if (evtType === "session_summary") {
+      const summary = (evt as Extract<WorkspaceActiveSnapshotEvent, { type: "session_summary" }>).summary;
+      this.applyActivityEvent(
+        normalizeId(summary?.session?.id ?? ""),
+        summary?.activity,
+        typeof summary?.last_event_seq === "number" ? summary.last_event_seq : null,
+        typeof summary?.state_rev === "number" ? summary.state_rev : null,
+      );
+      return;
+    }
+  }
+
+  private applyActivityEvent(
+    sessionId: string,
+    activity: SessionActivityState | null | undefined,
+    lastEventSeq: number | null,
+    stateRev: number | null,
+  ) {
+    if (!sessionId) return;
+    const entry = this.ensureEntry(sessionId);
+    const existingActivitySeq =
+      typeof entry.activityLastEventSeq === "number" ? entry.activityLastEventSeq : null;
+    const existingActivityStateRev =
+      typeof entry.activityStateRev === "number" ? entry.activityStateRev : null;
+    const incomingIsOlder = isOlderVersion(
+      lastEventSeq,
+      stateRev,
+      existingActivitySeq,
+      existingActivityStateRev,
+    );
+    if (incomingIsOlder) return;
+    const normalizedActivity = activity ?? null;
+    const sameActivity =
+      (entry.activity?.is_working ?? false) === (normalizedActivity?.is_working ?? false) &&
+      (entry.activity?.last_turn_status ?? null) ===
+        (normalizedActivity?.last_turn_status ?? null);
+    entry.activity = normalizedActivity;
+    entry.activityLastEventSeq = lastEventSeq ?? entry.activityLastEventSeq;
+    entry.activityStateRev = stateRev ?? entry.activityStateRev;
+    if (sameActivity) return;
+    this.emitPatch("append", sessionId, { activity: normalizedActivity, freshness: entry.freshness });
+    void this.persistHead(entry);
   }
 
   private applyHeadDelta(delta: SessionHeadDelta) {
@@ -549,10 +743,13 @@ export class SessionReplicaCore {
     const incomingSeq = typeof delta.last_event_seq === "number" ? delta.last_event_seq : -1;
     const existingSeq = typeof entry.lastEventSeq === "number" ? entry.lastEventSeq : -1;
     entry.lastEventSeq = Math.max(existingSeq, incomingSeq);
-    const prevStateRev = entry.stateRev;
-    if (typeof delta.state_rev === "number") entry.stateRev = delta.state_rev;
+    if (typeof delta.state_rev === "number") {
+      entry.stateRev =
+        typeof entry.stateRev === "number" ? Math.max(entry.stateRev, delta.state_rev) : delta.state_rev;
+    }
     const data: SessionReplicaData = { lastEventSeq: entry.lastEventSeq };
     if (entry.stateRev !== undefined) data.stateRev = entry.stateRev;
+    data.freshness = entry.freshness;
     if (turns.length) data.turns = turns;
     if (messages.length) data.messages = messages;
     if (events.length) data.events = events;
@@ -574,6 +771,7 @@ export class SessionReplicaCore {
       events: entry.events,
       messages: entry.messages,
       last_event_seq: entry.lastEventSeq,
+      activity: entry.activity ?? undefined,
       has_more_turns: entry.hasMoreTurns,
       summary_checkpoint: entry.summaryCheckpoint ?? null,
       head_window: entry.headWindow ?? undefined,

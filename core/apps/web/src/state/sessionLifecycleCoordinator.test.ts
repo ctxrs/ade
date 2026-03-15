@@ -10,23 +10,27 @@ const now = "2026-03-10T00:00:00.000Z";
 
 const makeWorkspaceSnapshot = (
   overrides?: Partial<WorkspaceActiveSnapshotState>,
-): WorkspaceActiveSnapshotState => ({
-  workspaceId: "workspace-1",
-  initialized: false,
-  connection: "connecting",
-  tasksById: {},
-  activeIds: [],
-  archivedIds: [],
-  totalActive: 0,
-  totalArchived: 0,
-  archivedRev: 0,
-  worktreeVcsById: {},
-  fetchState: { active: "loading", archived: "idle" },
-  hasMoreActive: false,
-  hasMoreArchived: false,
-  archivedLoaded: false,
-  ...overrides,
-});
+): WorkspaceActiveSnapshotState => {
+  const liveSnapshotApplied = overrides?.liveSnapshotApplied ?? false;
+  return {
+    workspaceId: "workspace-1",
+    initialized: false,
+    connection: "connecting",
+    tasksById: {},
+    activeIds: [],
+    archivedIds: [],
+    totalActive: 0,
+    totalArchived: 0,
+    archivedRev: 0,
+    worktreeVcsById: {},
+    fetchState: { active: "loading", archived: "idle" },
+    hasMoreActive: false,
+    hasMoreArchived: false,
+    archivedLoaded: false,
+    ...overrides,
+    liveSnapshotApplied,
+  };
+};
 
 const makeTaskSummary = ({
   taskId,

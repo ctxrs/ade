@@ -1,7 +1,8 @@
 import type { SessionHeadSnapshot, WorkspaceActiveSnapshotEvent } from "../../api/client";
+import type { SessionSubscriptionCursor } from "../sessionSubscription";
 import type { WorkspaceActiveSnapshotState } from "../workspaceActiveSnapshotStore";
 
-export type SessionSupervisorSubscribedSessionIdsSink = ((sessionIds: string[]) => void) | null;
+export type SessionSupervisorSubscribedSessionIdsSink = ((sessions: SessionSubscriptionCursor[]) => void) | null;
 
 export type SessionSupervisorWorkspaceSnapshotState = WorkspaceActiveSnapshotState | null;
 

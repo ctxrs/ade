@@ -11,12 +11,15 @@ import type {
   SessionTurnToolSummary,
   SubagentInvocation,
 } from "../../api/client";
+import type { SessionActivityState } from "@ctx/types";
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "idle";
 
 export type SessionMode = "active" | "archived";
 
 export type SessionLoadState = "pending_hydration" | "live" | "recovering" | "fatal";
+
+export type SessionFreshnessState = "bootstrap" | "authoritative" | "recovering";
 
 export type SessionSupportLoadErrorKey = "state" | "artifacts" | "subagentInvocations";
 
@@ -31,7 +34,9 @@ export type SessionCacheEntry = {
   sessionId: string;
   mode?: SessionMode;
   loadState: SessionLoadState;
+  freshness: SessionFreshnessState;
   session?: Session;
+  activity?: SessionActivityState | null;
   acpModels?: unknown;
   acpModes?: unknown;
   acpCurrentModelId?: string;
@@ -140,7 +145,9 @@ export function createInternalEntry(
     sessionId,
     mode: undefined,
     loadState: "pending_hydration",
+    freshness: "bootstrap",
     session: undefined,
+    activity: null,
     acpModels: undefined,
     acpModes: undefined,
     acpCurrentModelId: undefined,

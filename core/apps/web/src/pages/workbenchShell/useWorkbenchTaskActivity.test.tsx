@@ -1,7 +1,7 @@
 import React from "react";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Session, SessionHeadSnapshot, SessionSnapshotSummary, SessionTurn } from "../../api/client";
+import type { Session, SessionSnapshotSummary, SessionTurn } from "../../api/client";
 import { SessionSupervisorProvider, type SessionCacheEntry, type SessionSupervisorSnapshot } from "../../state/sessionSupervisor";
 import type { WorkspaceActiveSnapshotItem, WorkspaceActiveSnapshotState } from "../../state/workspaceActiveSnapshotStore";
 import { WORKBENCH_TASK_IDLE_EVENT, type WorkbenchTaskIdleDetail } from "../../utils/updaterEvents";
@@ -47,7 +47,7 @@ const makeSessionSummary = (
   last_message_preview: "preview",
   last_event_seq: 1,
   state_rev: 1,
-  activity: { is_working: false },
+  activity: { is_working: false, last_turn_status: null },
   unread: false,
   ...overrides,
 });
@@ -56,14 +56,12 @@ const makeTaskSummary = ({
   taskId,
   sessions,
   primarySessionId,
-  primarySessionHead = null,
   assistantSeenAt = null,
   lastAssistantMessageAt = now,
 }: {
   taskId: string;
   sessions: SessionSnapshotSummary[];
   primarySessionId: string;
-  primarySessionHead?: SessionHeadSnapshot | null;
   assistantSeenAt?: string | null;
   lastAssistantMessageAt?: string | null;
 }): WorkspaceActiveSnapshotItem => ({
@@ -83,7 +81,6 @@ const makeTaskSummary = ({
   },
   sessions,
   primarySessionId,
-  primarySessionHead,
   sort_at: now,
   sortAtMs: Date.parse(now),
 });
@@ -103,6 +100,7 @@ const makeSessionEntry = ({
 }): SessionCacheEntry => ({
   sessionId: session.id,
   loadState: "live",
+  freshness: "authoritative",
   session,
   turns,
   turnToolsByTurnId: {},
@@ -154,20 +152,6 @@ const makeTurn = (sessionId: string, status: SessionTurn["status"]): SessionTurn
   tool_failed: 0,
 });
 
-const makeHead = (session: Session, turns: SessionTurn[]): SessionHeadSnapshot => ({
-  session,
-  turns,
-  messages: [],
-  last_event_seq: turns.length,
-  activity: {
-    is_working: turns.some((turn) => turn.status === "running"),
-    last_turn_status: turns.at(-1)?.status ?? null,
-  },
-  has_more_turns: false,
-  has_more_history: false,
-  history_cursor: null,
-});
-
 const makeSessionSnapshot = (sessions: Record<string, SessionCacheEntry>): SessionSupervisorSnapshot => ({
   connection: "connected",
   sessions,
@@ -179,6 +163,7 @@ const makeWorkspaceSnapshot = (
 ): WorkspaceActiveSnapshotState => ({
   workspaceId: "workspace-1",
   initialized: true,
+  liveSnapshotApplied: true,
   connection: "connected",
   tasksById,
   activeIds,
@@ -223,9 +208,12 @@ describe("useWorkbenchTaskActivity helpers", () => {
           taskId: "task-running",
           primarySessionId: "session-running",
           sessions: [
-            makeSessionSummary(
+              makeSessionSummary(
               makeSession("session-running", "task-running", "active"),
-              { last_message_at: "2026-03-09T00:00:05.000Z", activity: { is_working: true } },
+              {
+                last_message_at: "2026-03-09T00:00:05.000Z",
+                activity: { is_working: true, last_turn_status: "running" },
+              },
             ),
           ],
         }),
@@ -285,66 +273,41 @@ describe("useWorkbenchTaskActivity helpers", () => {
     expect(isWorkbenchTaskUnread({ taskId: "task-1", tasksById, taskLiveInfo })).toBe(true);
   });
 
-  it("treats only a running primary turn as working", () => {
+  it("treats canonical is_working summaries as working, including queued follow-ups", () => {
     const primarySession = makeSession("session-1", "task-1", "active");
-    const runningTurn = makeTurn(primarySession.id, "running");
-    const queuedTurn = makeTurn(primarySession.id, "queued");
+
+    expect(
+      isPrimarySessionRunning({
+        primarySessionSummary: makeSessionSummary(primarySession, {
+          activity: { is_working: true, last_turn_status: "running" },
+        }),
+      }),
+    ).toBe(true);
+
+    expect(
+      isPrimarySessionRunning({
+        primarySessionSummary: makeSessionSummary(primarySession, {
+          activity: { is_working: true, last_turn_status: "queued" },
+        }),
+      }),
+    ).toBe(true);
 
     expect(
       isPrimarySessionRunning({
         primarySessionSummary: makeSessionSummary(primarySession, {
           activity: { is_working: false, last_turn_status: "completed" },
         }),
-        primarySessionHead: null,
-        primaryEntry: makeSessionEntry({ session: primarySession, turns: [runningTurn] }),
-      }),
-    ).toBe(true);
-
-    expect(
-      isPrimarySessionRunning({
-        primarySessionSummary: makeSessionSummary(primarySession, {
-          activity: { is_working: true, last_turn_status: "queued" },
-        }),
-        primarySessionHead: null,
-        primaryEntry: makeSessionEntry({ session: primarySession, turns: [queuedTurn] }),
       }),
     ).toBe(false);
 
     expect(
       isPrimarySessionRunning({
-        primarySessionSummary: makeSessionSummary(primarySession, {
-          activity: { is_working: true, last_turn_status: "queued" },
-        }),
-        primarySessionHead: makeHead(primarySession, [runningTurn]),
-        primaryEntry: undefined,
-      }),
-    ).toBe(true);
-
-    expect(
-      isPrimarySessionRunning({
-        primarySessionSummary: makeSessionSummary(primarySession, {
-          activity: { is_working: true, last_turn_status: "queued" },
-        }),
-        primarySessionHead: {
-          ...makeHead(primarySession, []),
-          activity: { is_working: true, last_turn_status: "running" },
-        },
-        primaryEntry: undefined,
-      }),
-    ).toBe(true);
-
-    expect(
-      isPrimarySessionRunning({
-        primarySessionSummary: makeSessionSummary(primarySession, {
-          activity: { is_working: true, last_turn_status: "queued" },
-        }),
-        primarySessionHead: null,
-        primaryEntry: undefined,
+        primarySessionSummary: undefined,
       }),
     ).toBe(false);
-    });
+  });
 
-  it("prefers live primary turns over a stale non-working summary", () => {
+  it("does not let live primary turns override a non-working canonical summary", () => {
     const primarySession = makeSession("session-1", "task-1", "active");
     const taskLiveInfo = deriveTaskLiveInfo({
       tasksById: {
@@ -367,10 +330,10 @@ describe("useWorkbenchTaskActivity helpers", () => {
       },
     });
 
-    expect(taskLiveInfo.workingByTask.has("task-1")).toBe(true);
+    expect(taskLiveInfo.workingByTask.has("task-1")).toBe(false);
   });
 
-  it("does not mark queued primary turns as working", () => {
+  it("keeps queued primary summaries working when canonical activity is still working", () => {
     const primarySession = makeSession("session-1", "task-1", "active");
     const taskLiveInfo = deriveTaskLiveInfo({
       tasksById: {
@@ -393,7 +356,7 @@ describe("useWorkbenchTaskActivity helpers", () => {
       },
     });
 
-    expect(taskLiveInfo.workingByTask.has("task-1")).toBe(false);
+    expect(taskLiveInfo.workingByTask.has("task-1")).toBe(true);
   });
 
   it("falls back to a running summary when the live cache only has older non-running turns", () => {
@@ -449,31 +412,6 @@ describe("useWorkbenchTaskActivity helpers", () => {
           turns: [makeTurn(primarySession.id, "running")],
         }),
       },
-    });
-
-    expect(taskLiveInfo.workingByTask.has("task-1")).toBe(true);
-  });
-
-  it("falls back to a running summary when the primary head is stale", () => {
-    const primarySession = makeSession("session-1", "task-1", "active");
-    const taskLiveInfo = deriveTaskLiveInfo({
-      tasksById: {
-        "task-1": makeTaskSummary({
-          taskId: "task-1",
-          primarySessionId: primarySession.id,
-          sessions: [
-            makeSessionSummary(primarySession, {
-              activity: { is_working: true, last_turn_status: "running" },
-            }),
-          ],
-          primarySessionHead: {
-            ...makeHead(primarySession, [makeTurn(primarySession.id, "completed")]),
-            activity: { is_working: false, last_turn_status: "completed" },
-          },
-        }),
-      },
-      optimisticTasks: [],
-      sessions: {},
     });
 
     expect(taskLiveInfo.workingByTask.has("task-1")).toBe(true);
@@ -572,7 +510,7 @@ const makeWorkspaceSnapshotStore = (snapshot: WorkspaceActiveSnapshotState) => (
   getSnapshot: vi.fn(() => snapshot),
   getSessionHeadSnapshot: vi.fn(() => null),
   getSessionHeadsSnapshot: vi.fn(() => ({})),
-  setSubscribedSessionIds: vi.fn(),
+  setSubscribedSessions: vi.fn(),
   setForegroundTaskId: vi.fn(),
 });
 
@@ -641,6 +579,12 @@ describe("useWorkbenchTaskActivity", () => {
       expect(supervisor.setWorkspaceSessionHeads).toHaveBeenCalledWith({});
       expect(workbenchStore.setActiveSessionForActiveTask).toHaveBeenCalledWith("session-1", { source: "system" });
       expect(workspaceSnapshotStore.setForegroundTaskId).toHaveBeenCalledWith("task-1");
+      const subscribedSessionsSink = supervisor.setSubscribedSessionIdsSink.mock.calls[0]?.[0];
+      expect(subscribedSessionsSink).toBeTypeOf("function");
+      subscribedSessionsSink?.([{ sessionId: "session-1", afterSeq: 3 }]);
+      expect(workspaceSnapshotStore.setSubscribedSessions).toHaveBeenCalledWith([
+        { sessionId: "session-1", afterSeq: 3 },
+      ]);
       expect(idleDetails.at(-1)).toEqual({ allTasksIdle: false });
     } finally {
       window.removeEventListener(WORKBENCH_TASK_IDLE_EVENT, onIdle as EventListener);
@@ -675,7 +619,7 @@ describe("useWorkbenchTaskActivity", () => {
       subscribeEvents: vi.fn(() => () => {}),
       getSnapshot: vi.fn(() => workspaceSnapshot),
       getSessionHeadSnapshot: vi.fn((sessionId: string) => (sessionId === "session-2" ? secondaryHead : null)),
-      setSubscribedSessionIds: vi.fn(),
+      setSubscribedSessions: vi.fn(),
       setForegroundTaskId: vi.fn(),
     };
 
@@ -731,7 +675,7 @@ describe("useWorkbenchTaskActivity", () => {
       getSnapshot: vi.fn(() => workspaceSnapshot),
       getSessionHeadSnapshot: vi.fn(() => null),
       getSessionHeadsSnapshot: vi.fn(() => ({ "session-2": secondaryHead })),
-      setSubscribedSessionIds: vi.fn(),
+      setSubscribedSessions: vi.fn(),
       setForegroundTaskId: vi.fn(),
     };
 
@@ -864,7 +808,7 @@ describe("useWorkbenchTaskActivity", () => {
         }),
         makeSessionSummary(activeSession, {
           last_message_at: "2026-03-09T00:00:03.000Z",
-          activity: { is_working: true },
+          activity: { is_working: true, last_turn_status: "running" },
         }),
       ],
     });

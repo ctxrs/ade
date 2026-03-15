@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Message, Session, SessionEvent, SessionHeadSnapshot, SessionTurn, WorkspaceActiveSnapshotEvent } from "@ctx/types";
+import type {
+  Message,
+  Session,
+  SessionActivityState,
+  SessionEvent,
+  SessionHeadSnapshot,
+  SessionTurn,
+  WorkspaceActiveSnapshotEvent,
+} from "@ctx/types";
 import { waitForCondition } from "../testUtils/waitForCondition";
 import { SessionReplicaCore } from "./sessionReplicaCore";
 import type { SessionReplicaPatch } from "./sessionReplicaProtocol";
@@ -61,7 +69,7 @@ describe("SessionReplicaCore", () => {
     expect(latest?.data?.error).toBeFalsy();
   });
 
-  it("does not refetch /head on session_gap", async () => {
+  it("refetches /head on session_gap", async () => {
     const head = mkHead("session-gap");
     const getSessionHead = vi.fn(async () => head);
     const core = new SessionReplicaCore({
@@ -85,15 +93,23 @@ describe("SessionReplicaCore", () => {
     };
     core.handleCommand({ type: "workspace_event", event: gapEvent });
 
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(getSessionHead).toHaveBeenCalledTimes(1);
+    await waitForCondition(() => getSessionHead.mock.calls.length === 2);
+    expect(getSessionHead).toHaveBeenCalledTimes(2);
     alertSpy.mockRestore();
   });
 
-  it("recovers from session_gap via stream seed and delta without extra /head fetches", async () => {
+  it("recovers from session_gap via authoritative /head rehydrate and resumed deltas", async () => {
     const sessionId = "session-gap-recovery";
-    const head = mkHead(sessionId, "before-gap");
-    const getSessionHead = vi.fn(async () => head);
+    const initialHead = mkHead(sessionId, "before-gap");
+    const recoveredHead = {
+      ...mkHead(sessionId, "recovered-from-head"),
+      last_event_seq: 2,
+      state_rev: 2,
+    };
+    const getSessionHead = vi
+      .fn(async () => initialHead)
+      .mockResolvedValueOnce(initialHead)
+      .mockResolvedValueOnce(recoveredHead);
     const patches: SessionReplicaPatch[] = [];
     const core = new SessionReplicaCore({
       api: { getSessionHead },
@@ -117,20 +133,7 @@ describe("SessionReplicaCore", () => {
       },
     });
 
-    const recoveredHead = {
-      ...mkHead(sessionId, "recovered-from-seed"),
-      last_event_seq: 2,
-      state_rev: 2,
-    };
-    core.handleCommand({
-      type: "workspace_event",
-      event: {
-        type: "session_head_seed",
-        workspace_id: "ws-1",
-        snapshot_rev: 2,
-        head: recoveredHead,
-      },
-    });
+    await waitForCondition(() => getSessionHead.mock.calls.length === 2);
 
     const now = new Date().toISOString();
     const deltaMessage: Message = {
@@ -173,11 +176,12 @@ describe("SessionReplicaCore", () => {
     });
 
     await waitForCondition(() => {
-      const seedPatch = patches.find(
+      const headPatch = patches.find(
         (patch) =>
           patch.sessionId === sessionId &&
           patch.op !== "evict" &&
-          patch.data?.messages?.some((message) => message.content === "recovered-from-seed"),
+          patch.data?.messages?.some((message) => message.content === "recovered-from-head") &&
+          patch.data?.lastEventSeq === 2,
       );
       const deltaPatch = patches.find(
         (patch) =>
@@ -186,10 +190,10 @@ describe("SessionReplicaCore", () => {
           patch.data?.messages?.some((message) => message.content === "recovered-from-delta") &&
           patch.data?.lastEventSeq === 3,
       );
-      return Boolean(seedPatch && deltaPatch);
+      return Boolean(headPatch && deltaPatch);
     });
 
-    expect(getSessionHead).toHaveBeenCalledTimes(1);
+    expect(getSessionHead).toHaveBeenCalledTimes(2);
   });
 
   it("hydrates /head only when explicitly requested", async () => {
@@ -235,5 +239,164 @@ describe("SessionReplicaCore", () => {
       throw new Error("expected append/replace patch");
     }
     expect(lastPatch?.data?.messages?.[0]?.content).toBe("from-seed");
+  });
+
+  it("preserves newer streamed state when an older /head hydrate resolves later", async () => {
+    const sessionId = "session-stale-head";
+    let resolveHead: (value: SessionHeadSnapshot | null) => void = () => {
+      throw new Error("pending /head resolver was not initialized");
+    };
+    const getSessionHead = vi.fn(
+      () =>
+        new Promise<SessionHeadSnapshot | null>((resolve) => {
+          resolveHead = resolve;
+        }),
+    );
+    const patches: SessionReplicaPatch[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead },
+      emit: (next) => patches.push(...next),
+    });
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 50 } });
+    core.handleCommand({ type: "open_session", sessionId });
+    core.handleCommand({ type: "hydrate_session_head", sessionId });
+
+    await waitForCondition(() => getSessionHead.mock.calls.length === 1);
+
+    const now = new Date().toISOString();
+    const deltaMessage: Message = {
+      id: "m-live-delta",
+      session_id: sessionId,
+      task_id: "task-1",
+      turn_id: "turn-live",
+      role: "assistant",
+      content: "from-live-delta",
+      delivery: "immediate",
+      created_at: now,
+    };
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_head_delta",
+        workspace_id: "ws-1",
+        snapshot_rev: 2,
+        delta: {
+          session_id: sessionId,
+          last_event_seq: 2,
+          state_rev: 2,
+          message: deltaMessage,
+        },
+      },
+    });
+
+    resolveHead({
+      ...mkHead(sessionId, "from-stale-head"),
+      last_event_seq: 1,
+      state_rev: 1,
+    });
+
+    await waitForCondition(() =>
+      patches.some(
+        (patch) =>
+          patch.sessionId === sessionId &&
+          patch.op === "replace" &&
+          patch.data?.freshness === "authoritative",
+      ),
+    );
+
+    const authoritativePatch = [...patches].reverse().find(
+      (patch: SessionReplicaPatch) =>
+        patch.sessionId === sessionId &&
+        patch.op === "replace" &&
+        patch.data.freshness === "authoritative",
+    );
+    if (!authoritativePatch || authoritativePatch.op === "evict") {
+      throw new Error("expected authoritative replace patch");
+    }
+
+    expect(authoritativePatch.data.lastEventSeq).toBe(2);
+    expect(authoritativePatch.data.stateRev).toBe(2);
+    expect(authoritativePatch.data.freshness).toBe("authoritative");
+    expect(authoritativePatch.data.messages?.map((message: Message) => message.content)).toEqual(
+      expect.arrayContaining(["from-stale-head", "from-live-delta"]),
+    );
+  });
+
+  it("does not overwrite newer summary activity on later session_head_deltas", async () => {
+    const sessionId = "session-activity";
+    const patches: SessionReplicaPatch[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead: vi.fn() },
+      emit: (next) => patches.push(...next),
+    });
+    const completedActivity: SessionActivityState = {
+      is_working: false,
+      last_turn_status: "completed",
+    };
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 50 } });
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_summary_delta",
+        workspace_id: "ws-1",
+        snapshot_rev: 2,
+        delta: {
+          session_id: sessionId,
+          task_id: "task-1",
+          activity: completedActivity,
+          last_event_seq: 2,
+          state_rev: 2,
+        },
+      },
+    });
+
+    await waitForCondition(() =>
+      patches.some(
+        (patch) =>
+          patch.sessionId === sessionId &&
+          patch.op === "append" &&
+          patch.data?.activity?.last_turn_status === "completed",
+      ),
+    );
+
+    const now = new Date().toISOString();
+    const deltaMessage: Message = {
+      id: "m-post-summary",
+      session_id: sessionId,
+      task_id: "task-1",
+      turn_id: "turn-post-summary",
+      role: "assistant",
+      content: "post-summary-delta",
+      delivery: "immediate",
+      created_at: now,
+    };
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_head_delta",
+        workspace_id: "ws-1",
+        snapshot_rev: 3,
+        delta: {
+          session_id: sessionId,
+          last_event_seq: 3,
+          state_rev: 3,
+          message: deltaMessage,
+        },
+      },
+    });
+
+    const latest = [...patches].reverse().find(
+      (patch: SessionReplicaPatch) =>
+        patch.sessionId === sessionId &&
+        patch.op === "append" &&
+        Array.isArray(patch.data.messages),
+    );
+    if (!latest || latest.op === "evict" || !latest.data.messages) {
+      throw new Error("expected appended head-delta patch");
+    }
+    expect(latest.data.messages[0]?.content).toBe("post-summary-delta");
+    expect(latest.data.activity).toBeUndefined();
   });
 });

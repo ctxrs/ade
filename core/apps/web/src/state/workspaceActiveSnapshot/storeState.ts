@@ -73,6 +73,7 @@ export class WorkspaceActiveSnapshotStoreState {
     this.snapshot = {
       workspaceId,
       initialized: false,
+      liveSnapshotApplied: false,
       connection: "idle",
       tasksById: {},
       activeIds: [],
@@ -211,6 +212,7 @@ export class WorkspaceActiveSnapshotStoreState {
     this.worktreeRootsById = new Map(Object.entries(patch.worktreeRoots));
     this.snapshotRev = patch.snapshotRev;
     this.archivedRev = patch.archivedRev;
+    this.liveSnapshotApplied = Boolean(patch.snapshot.liveSnapshotApplied);
   }
 
   buildPersistedSnapshot(): Omit<
@@ -513,6 +515,12 @@ export class WorkspaceActiveSnapshotStoreState {
       const current = nextSessions[sessionIdx];
       const nextSummary: SessionSnapshotSummary = { ...current };
       let changed = false;
+      const currentLastEventSeq =
+        typeof current.last_event_seq === "number" ? current.last_event_seq : null;
+      const currentStateRev = typeof current.state_rev === "number" ? current.state_rev : null;
+      const incomingLastEventSeq =
+        typeof delta.last_event_seq === "number" ? delta.last_event_seq : null;
+      const incomingStateRev = typeof delta.state_rev === "number" ? delta.state_rev : null;
 
       if (hasOwnProperty(delta, "last_message_at")) {
         const incoming = delta.last_message_at;
@@ -553,13 +561,27 @@ export class WorkspaceActiveSnapshotStoreState {
         }
       }
       if (typeof delta.state_rev === "number") {
-        const currentStateRev = nextSummary.state_rev ?? 0;
-        if (delta.state_rev > currentStateRev) {
+        const nextCurrentStateRev = nextSummary.state_rev ?? 0;
+        if (delta.state_rev > nextCurrentStateRev) {
           nextSummary.state_rev = delta.state_rev;
           changed = true;
         }
       }
       if (hasOwnProperty(delta, "activity") && delta.activity) {
+        const hasIncomingVersion =
+          incomingStateRev !== null || incomingLastEventSeq !== null;
+        const activityVersionIsStale =
+          (incomingStateRev !== null &&
+            currentStateRev !== null &&
+            incomingStateRev < currentStateRev) ||
+          (incomingLastEventSeq !== null &&
+            currentLastEventSeq !== null &&
+            incomingLastEventSeq < currentLastEventSeq) ||
+          (!hasIncomingVersion &&
+            (currentStateRev !== null || currentLastEventSeq !== null));
+        if (activityVersionIsStale) {
+          return changed;
+        }
         const prevActivity = nextSummary.activity ?? { is_working: false, last_turn_status: null };
         const nextActivity = { ...prevActivity };
         if (typeof delta.activity.is_working === "boolean") {
@@ -744,6 +766,7 @@ export class WorkspaceActiveSnapshotStoreState {
     });
     this.snapshot = {
       ...this.snapshot,
+      liveSnapshotApplied: this.liveSnapshotApplied,
       tasksById,
       activeIds: [...this.activeOrder],
       archivedIds: [...this.archivedOrder],

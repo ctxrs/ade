@@ -1,7 +1,7 @@
 import { test, expect } from "./fixtures";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
-test("workbench: switching between cached sessions makes no extra HTTP requests", async ({ page, request }) => {
+test("workbench: once sessions are authoritative in memory, warm switches stay HTTP-idle", async ({ page, request }) => {
   const seed = await seedDummyWorkspace(request, {
     tasks: 2,
     sessionsPerTask: 1,

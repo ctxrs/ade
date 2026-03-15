@@ -402,6 +402,25 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(payload.include_active_heads).toBe(false);
   });
 
+  it("flushes subscribe messages when only replay cursors change", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    const ws = mkOpenWs();
+    asStoreInternals(store).ws = ws;
+
+    store.setSubscribedSessions([{ sessionId: "session-1", afterSeq: 5 }]);
+    expect(ws.send).toHaveBeenCalledTimes(1);
+
+    ws.send.mockClear();
+    store.setSubscribedSessions([{ sessionId: "session-1", afterSeq: null }]);
+
+    expect(ws.send).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
+    expect(payload.sessions).toEqual([{ session_id: "session-1", after_seq: null }]);
+    expect(payload.include_active_heads).toBe(false);
+  });
+
   it("keeps cache and render projections aligned with the shared active fixture", async () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
     const { buildWorkbenchThreadViewModel } = await import("../pages/SessionPage");

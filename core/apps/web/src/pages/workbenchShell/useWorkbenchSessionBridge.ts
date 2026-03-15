@@ -48,7 +48,7 @@ type TaskBridgeArgs = {
     | "getSnapshot"
     | "getSessionHeadSnapshot"
     | "setForegroundTaskId"
-    | "setSubscribedSessionIds"
+    | "setSubscribedSessions"
   > & { getSessionHeadsSnapshot?: () => Record<string, SessionHeadSnapshot> };
   markTaskRead: (taskId: string) => Promise<void>;
 };
@@ -131,7 +131,7 @@ export function useWorkbenchSessionBridge({
 
   useEffect(() => {
     supervisor.setSubscribedSessionIdsSink((sessionIdsForSubscription) => {
-      workspaceSnapshotStore.setSubscribedSessionIds?.(sessionIdsForSubscription);
+      workspaceSnapshotStore.setSubscribedSessions?.(sessionIdsForSubscription);
     });
     const syncWorkspace = () => {
       const snapshot = workspaceSnapshotStore.getSnapshot();

@@ -1,10 +1,11 @@
 import type { WorkspaceActiveSnapshotClientMessage } from "../../api/client";
+import type { SessionSubscriptionCursor } from "../sessionSubscription";
 import { shouldRequestWorkspaceSnapshot } from "./transport";
 
 export function buildWorkspaceActiveSubscribeMessage(
   reason: string,
   foregroundTaskId: string | null,
-  subscribedSessionIds: string[],
+  subscribedSessions: SessionSubscriptionCursor[],
 ): {
   message: WorkspaceActiveSnapshotClientMessage;
   requestSnapshot: boolean;
@@ -18,8 +19,12 @@ export function buildWorkspaceActiveSubscribeMessage(
   if (foregroundTaskId) {
     message.foreground_task_id = foregroundTaskId;
   }
-  if (subscribedSessionIds.length > 0) {
-    message.session_ids = subscribedSessionIds.slice();
+  if (subscribedSessions.length > 0) {
+    message.session_ids = subscribedSessions.map((session) => session.sessionId);
+    message.sessions = subscribedSessions.map((session) => ({
+      session_id: session.sessionId,
+      after_seq: session.afterSeq,
+    }));
   }
   return { message, requestSnapshot };
 }

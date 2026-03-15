@@ -1,5 +1,6 @@
 import type { WorkspaceArchivedPage, WorkspaceIndexCursor } from "@ctx/types";
 import { workerFetchJson, setWorkerClientConfig } from "../api/workerClient";
+import type { SessionSubscriptionCursor } from "../state/sessionSubscription";
 import { WorkspaceActiveSnapshotStoreImpl } from "../state/workspaceActiveSnapshotStoreCore";
 import type {
   WorkspaceActiveSnapshotCommand,
@@ -41,7 +42,7 @@ const listWorkspaceArchivedTaskSummaries = (
 
 let store: WorkspaceActiveSnapshotStoreImpl | null = null;
 let pendingSeed: PersistedWorkspaceActiveSnapshotV1 | null = null;
-let pendingSubscribedSessionIds: string[] | null = null;
+let pendingSubscribedSessions: SessionSubscriptionCursor[] | null = null;
 let pendingForegroundTaskId: string | null = null;
 
 const ensureStore = (cmd: Extract<WorkspaceActiveSnapshotCommand, { type: "init" }>) => {
@@ -66,9 +67,9 @@ const ensureStore = (cmd: Extract<WorkspaceActiveSnapshotCommand, { type: "init"
     store.seedCachedSnapshot(pendingSeed);
     pendingSeed = null;
   }
-  if (pendingSubscribedSessionIds) {
-    store.setSubscribedSessionIds?.(pendingSubscribedSessionIds);
-    pendingSubscribedSessionIds = null;
+  if (pendingSubscribedSessions) {
+    store.setSubscribedSessions?.(pendingSubscribedSessions);
+    pendingSubscribedSessions = null;
   }
   if (pendingForegroundTaskId !== null) {
     store.setForegroundTaskId?.(pendingForegroundTaskId);
@@ -99,12 +100,12 @@ self.onmessage = (event: MessageEvent<WorkspaceActiveSnapshotCommand>) => {
       }
       store.seedCachedSnapshot(cmd.snapshot);
       return;
-    case "set_subscribed_session_ids":
+    case "set_subscribed_sessions":
       if (!store) {
-        pendingSubscribedSessionIds = cmd.sessionIds;
+        pendingSubscribedSessions = cmd.sessions;
         return;
       }
-      store.setSubscribedSessionIds?.(cmd.sessionIds);
+      store.setSubscribedSessions?.(cmd.sessions);
       return;
     case "set_foreground_task_id":
       if (!store) {

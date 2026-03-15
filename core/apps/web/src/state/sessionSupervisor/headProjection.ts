@@ -64,6 +64,18 @@ export type SessionSupervisorHeadProjectionHost = {
 const isBoundedHeadWindow = (head: SessionHead): boolean =>
   typeof head.head_window?.turn_limit === "number" && head.head_window.turn_limit > 0;
 
+function resolveActiveSnapshotFreshness(
+  this: SessionSupervisorHeadProjectionHost,
+  entry: InternalEntry,
+): InternalEntry["freshness"] {
+  if (entry.freshness === "recovering") return "recovering";
+  if (entry.freshness === "authoritative") return "authoritative";
+  const snapshotState = this.workspaceSnapshotState;
+  const liveConnectedSnapshot =
+    snapshotState?.liveSnapshotApplied === true && snapshotState.connection === "connected";
+  return liveConnectedSnapshot ? "authoritative" : "bootstrap";
+}
+
 function pruneOmittedNonTerminalTurns(
   this: SessionSupervisorHeadProjectionHost,
   entry: InternalEntry,
@@ -134,7 +146,10 @@ export function seedHeadFromActiveSnapshot(
   }
   const strippedEvents =
     (head.events?.length ?? 0) === 0 && (head.head_window?.event_limit ?? 0) === 0;
-  applyHead.call(this, entry, head as SessionHead, { fromCache: strippedEvents });
+  applyHead.call(this, entry, head as SessionHead, {
+    fromCache: strippedEvents,
+    freshness: resolveActiveSnapshotFreshness.call(this, entry),
+  });
   return true;
 }
 
@@ -142,10 +157,19 @@ export function applyHead(
   this: SessionSupervisorHeadProjectionHost,
   entry: InternalEntry,
   head: SessionHead,
-  opts?: { fromCache?: boolean },
+  opts?: {
+    fromCache?: boolean;
+    freshness?: InternalEntry["freshness"];
+  },
 ) {
   entry.headFromCache = Boolean(opts?.fromCache);
   entry.session = head.session;
+  if ("activity" in head) {
+    entry.activity = head.activity ?? null;
+  }
+  if (opts?.freshness) {
+    entry.freshness = opts.freshness;
+  }
   if (!entry.mode) {
     const resolvedMode = this.resolveSessionMode(entry.sessionId, entry);
     if (resolvedMode) {
@@ -391,6 +415,7 @@ export async function persistHead(
     messages: entry.messages,
     tool_summaries: entry.toolSummaries,
     last_event_seq: entry.lastEventSeq ?? 0,
+    activity: entry.activity ?? undefined,
     has_more_turns: entry.hasMoreTurns,
     summary_checkpoint: entry.summaryCheckpoint ?? null,
     head_window: entry.headWindow ?? undefined,
@@ -413,7 +438,9 @@ export function applyActiveSnapshotHead(
     }
     return false;
   }
-  applyHead.call(this, entry, head as SessionHead);
+  applyHead.call(this, entry, head as SessionHead, {
+    freshness: resolveActiveSnapshotFreshness.call(this, entry),
+  });
   void persistHead.call(this, entry);
   entry.error = undefined;
   this.setSessionLoadState(entry, "live");

@@ -2,14 +2,14 @@ import { describe, expect, it } from "vitest";
 import { pickPreferredSession, pickPreferredSessionId } from "./workbenchSelection";
 
 describe("workbenchSelection", () => {
-  it("prefers an active session when present", () => {
+  it("prefers the most recent non-subagent session by default", () => {
     const sessions = [
       { id: "s1", status: "completed" },
       { id: "s2", status: "active" },
       { id: "s3", status: "completed" },
     ];
-    expect(pickPreferredSessionId(sessions)).toBe("s2");
-    expect(pickPreferredSession(sessions)?.id).toBe("s2");
+    expect(pickPreferredSessionId(sessions)).toBe("s3");
+    expect(pickPreferredSession(sessions)?.id).toBe("s3");
   });
 
   it("honors a preferred session id when provided", () => {

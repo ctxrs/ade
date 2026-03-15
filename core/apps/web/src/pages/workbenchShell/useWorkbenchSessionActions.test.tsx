@@ -35,6 +35,7 @@ const baseSession: Session = {
 const buildEntry = (overrides?: Partial<SessionCacheEntry>): SessionCacheEntry => ({
   sessionId: "session-1",
   loadState: "live",
+  freshness: "authoritative",
   session: baseSession,
   turns: [],
   turnToolsByTurnId: {},

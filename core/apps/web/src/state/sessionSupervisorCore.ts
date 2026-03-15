@@ -28,6 +28,7 @@ import type { PersistedTaskThoughtsV1 } from "./uiStateStore";
 import { SessionReplicaBridge } from "./sessionReplicaBridge";
 import type { SessionReplicaPatch } from "./sessionReplicaProtocol";
 import { emitUiDiagnostic } from "./diagnosticsChannel";
+import type { SessionSubscriptionCursor } from "./sessionSubscription";
 import { hasModelList } from "./sessionSupervisor/eventHydration";
 import {
   createInternalEntry,
@@ -233,7 +234,7 @@ export class SessionSupervisor {
 
   setSubscribedSessionIdsSink = (sink: SessionSupervisorSubscribedSessionIdsSink) => {
     this.subscribedSessionIdsSink = sink;
-    this.emitSubscribedSessionIds();
+    this.emitSubscribedSessions();
   };
 
   setWorkspaceSnapshotState = (state: SessionSupervisorWorkspaceSnapshotState) => {
@@ -263,6 +264,7 @@ export class SessionSupervisor {
     for (const entry of this.entries.values()) {
       this.syncSupportLoadsForOpenSession(entry);
     }
+    this.emitSubscribedSessions();
   };
 
   handleWorkspaceEvent = (evt: SessionSupervisorWorkspaceEvent) => {
@@ -369,6 +371,16 @@ export class SessionSupervisor {
         silent: true,
       });
       this.setSessionLoadState(entry, "pending_hydration");
+      return;
+    }
+    if (entry.freshness !== "authoritative") {
+      this.replica.dispatch({
+        type: "hydrate_session_head",
+        sessionId,
+        force: true,
+        silent: true,
+      });
+      this.setSessionLoadState(entry, "pending_hydration");
     }
   };
 
@@ -398,6 +410,70 @@ export class SessionSupervisor {
   };
 
   getSubscribedSessionIds = (): string[] => this.subscribedSessionIds.slice();
+
+  private buildSubscribedSessions(): SessionSubscriptionCursor[] {
+    return this.subscribedSessionIds.map((sessionId) => {
+      const entry = this.entries.get(sessionId);
+      const headSeq = this.workspaceSessionHeadsById.get(sessionId)?.last_event_seq;
+      if (entry?.freshness === "recovering") {
+        return {
+          sessionId,
+          afterSeq: null,
+        };
+      }
+      return {
+        sessionId,
+        afterSeq:
+          typeof entry?.lastEventSeq === "number"
+            ? entry.lastEventSeq
+            : typeof headSeq === "number"
+              ? headSeq
+              : null,
+      };
+    });
+  }
+
+  private applySessionActivityUpdate(
+    sessionId: string,
+    activity: InternalEntry["activity"],
+    version?: { lastEventSeq?: number | null; stateRev?: number | null },
+  ): boolean {
+    const entry = this.entries.get(sessionId);
+    if (!entry || activity === undefined) return false;
+    const incomingStateRev = typeof version?.stateRev === "number" ? version.stateRev : null;
+    const incomingLastEventSeq =
+      typeof version?.lastEventSeq === "number" ? version.lastEventSeq : null;
+    if (
+      incomingStateRev === null &&
+      incomingLastEventSeq === null &&
+      (typeof entry.stateRev === "number" || typeof entry.lastEventSeq === "number")
+    ) {
+      return false;
+    }
+    if (
+      incomingStateRev !== null &&
+      typeof entry.stateRev === "number" &&
+      incomingStateRev < entry.stateRev
+    ) {
+      return false;
+    }
+    if (
+      incomingLastEventSeq !== null &&
+      typeof entry.lastEventSeq === "number" &&
+      incomingLastEventSeq < entry.lastEventSeq
+    ) {
+      return false;
+    }
+    if (
+      (entry.activity?.is_working ?? false) === (activity?.is_working ?? false) &&
+      (entry.activity?.last_turn_status ?? null) === (activity?.last_turn_status ?? null)
+    ) {
+      return false;
+    }
+    entry.activity = activity ?? null;
+    entry.updatedAtMs = Date.now();
+    return true;
+  }
 
   setActiveTaskSessionIds = (sessionIds: string[]) => {
     const next = dedupeIds(sessionIds);
@@ -593,6 +669,7 @@ export class SessionSupervisor {
   private handleReplicaPatches = (patches: SessionReplicaPatch[]) => {
     if (!patches || patches.length === 0) return;
     let changed = false;
+    let subscriptionCursorsChanged = false;
     for (const patch of patches) {
       const sessionId = String(patch.sessionId || "").trim();
       if (!sessionId) continue;
@@ -638,6 +715,12 @@ export class SessionSupervisor {
           }
         }
         void this.ensureThoughtCache(entry);
+      }
+      if (data.activity !== undefined) {
+        entry.activity = data.activity ?? null;
+      }
+      if (data.freshness !== undefined) {
+        entry.freshness = data.freshness;
       }
       if (data.turns && data.turns.length > 0) {
         this.mergeTurns(entry, data.turns);
@@ -702,7 +785,12 @@ export class SessionSupervisor {
         entry.headWindow = data.headWindow;
       }
       if (data.lastEventSeq !== undefined) {
-        entry.lastEventSeq = data.lastEventSeq;
+        if (entry.lastEventSeq !== data.lastEventSeq) {
+          entry.lastEventSeq = data.lastEventSeq;
+          if (entry.subscribed) {
+            subscriptionCursorsChanged = true;
+          }
+        }
       }
       if (data.hasMoreTurns !== undefined) {
         entry.hasMoreTurns = data.hasMoreTurns;
@@ -755,6 +843,9 @@ export class SessionSupervisor {
     if (changed) {
       this.publish();
     }
+    if (subscriptionCursorsChanged) {
+      this.emitSubscribedSessions();
+    }
   };
 
   private ensureEntry(sessionId: string): InternalEntry {
@@ -776,19 +867,21 @@ export class SessionSupervisor {
   ) {
     entry.mode = mode;
     const seededHead = mode === "active" ? this.seedHeadFromActiveSnapshot(entry) : false;
+    const shouldSkipCache =
+      entry.turnsHydrated ||
+      entry.messages.length > 0 ||
+      entry.events.length > 0 ||
+      typeof entry.lastEventSeq === "number" ||
+      entry.freshness !== "bootstrap";
     this.replica.dispatch({
       type: "open_session",
       sessionId,
       force: opts?.force,
       silent: opts?.silent,
+      skipCache: shouldSkipCache,
+      hydrateIfNeeded: mode === "archived" || entry.freshness !== "authoritative",
     });
     if (mode === "archived") {
-      this.replica.dispatch({
-        type: "hydrate_session_head",
-        sessionId,
-        force: opts?.force,
-        silent: opts?.silent,
-      });
       this.setSessionLoadState(entry, "pending_hydration");
       this.syncSupportLoadsForOpenSession(entry);
       return;
@@ -876,9 +969,15 @@ export class SessionSupervisor {
         entry.loadState = "recovering";
         changed = true;
       }
+      if (entry.freshness !== "recovering") {
+        entry.freshness = "recovering";
+        changed = true;
+      }
+      entry.updatedAtMs = Date.now();
     }
     if (changed) {
       this.publish();
+      this.emitSubscribedSessions();
     }
   }
 
@@ -894,7 +993,7 @@ export class SessionSupervisor {
     });
     if (!plan.changed) {
       if (opts?.emitIfUnchanged) {
-        this.emitSubscribedSessionIds();
+        this.emitSubscribedSessions();
       }
       return;
     }
@@ -907,15 +1006,17 @@ export class SessionSupervisor {
       const entry = this.ensureEntry(sessionId);
       entry.subscribed = true;
     }
-    this.emitSubscribedSessionIds();
+    this.emitSubscribedSessions();
     this.publish();
   }
 
-  private emitSubscribedSessionIds() {
-    this.subscribedSessionIdsSink?.(this.getSubscribedSessionIds());
+  private emitSubscribedSessions() {
+    this.subscribedSessionIdsSink?.(this.buildSubscribedSessions());
   }
 
   private ingestWorkspaceEvent(evt: SessionSupervisorWorkspaceEvent) {
+    let changed = false;
+    let subscriptionCursorsChanged = false;
     if (evt.type === "archived_task_upsert") {
       const taskId = idToString(evt.task?.task?.id);
       if (taskId) {
@@ -932,17 +1033,52 @@ export class SessionSupervisor {
         const entry = this.entries.get(sessionId);
         if (entry) {
           this.setSessionLoadState(entry, "recovering");
+          if (entry.freshness !== "recovering") {
+            entry.freshness = "recovering";
+            if (entry.subscribed) {
+              subscriptionCursorsChanged = true;
+            }
+          }
           entry.error = undefined;
           entry.updatedAtMs = Date.now();
-          this.publish();
+          changed = true;
         }
       }
+    } else if (evt.type === "session_summary_delta") {
+      const sessionId = idToString(evt.delta.session_id);
+      if (
+        sessionId &&
+        this.applySessionActivityUpdate(sessionId, evt.delta.activity ?? undefined, {
+          lastEventSeq: evt.delta.last_event_seq ?? null,
+          stateRev: evt.delta.state_rev ?? null,
+        })
+      ) {
+        changed = true;
+      }
+    } else if (evt.type === "session_summary") {
+      const sessionId = idToString(evt.summary.session.id);
+      if (
+        sessionId &&
+        this.applySessionActivityUpdate(sessionId, evt.summary.activity ?? undefined, {
+          lastEventSeq: evt.summary.last_event_seq ?? null,
+          stateRev: evt.summary.state_rev ?? null,
+        })
+      ) {
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.publish();
+    }
+    if (subscriptionCursorsChanged) {
+      this.emitSubscribedSessions();
     }
     this.replica.dispatch({ type: "workspace_event", event: evt });
   }
 
   private syncActiveSnapshot(state: WorkspaceActiveSnapshotState) {
     let changed = false;
+    let subscriptionCursorsChanged = false;
     for (const taskId of state.activeIds) {
       const item = state.tasksById[taskId];
       const head = item?.primarySessionHead;
@@ -950,13 +1086,20 @@ export class SessionSupervisor {
       const sessionId = idToString(head.session?.id);
       if (!sessionId) continue;
       const entry = this.ensureEntry(sessionId);
+      const previousLastEventSeq = entry.lastEventSeq;
       if (this.applyActiveSnapshotHead(entry, head)) {
         entry.updatedAtMs = Date.now();
         changed = true;
+        if (entry.subscribed && previousLastEventSeq !== entry.lastEventSeq) {
+          subscriptionCursorsChanged = true;
+        }
       }
     }
     if (changed) {
       this.publish();
+    }
+    if (subscriptionCursorsChanged) {
+      this.emitSubscribedSessions();
     }
   }
 }
