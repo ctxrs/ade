@@ -18,6 +18,7 @@ import {
 import type { WorkspaceActiveSnapshotState } from "./workspaceActiveSnapshotStore";
 import {
   collectWorkspaceActivePrimarySessionIds,
+  findWorkspaceSessionHead,
 } from "./workspaceActiveSnapshot/projection";
 import {
   loadSessionHistoryPageV1,
@@ -48,13 +49,10 @@ import {
   applyEventToTurns,
 } from "./sessionSupervisor/eventProjection";
 import {
-  applyActiveSnapshotHead,
-  applyHead,
   applyState,
   applyToolSummaries,
   persistHead,
   resetEntryProjectionForReplace,
-  seedHeadFromActiveSnapshot,
   syncStateCache,
 } from "./sessionSupervisor/headProjection";
 import {
@@ -84,7 +82,6 @@ import {
 } from "./sessionSupervisor/thoughtCache";
 import { dedupeIds, sameIdList } from "./sessionSupervisor/cachePolicy";
 import {
-  applySessionActivityUpdate,
   buildSubscribedSessions,
   emitSubscribedSessions,
   markOpenSessionsRecovering,
@@ -189,13 +186,10 @@ export class SessionSupervisor {
   mergeEvents = mergeEvents;
   ensureTurnFromEvent = ensureTurnFromEvent;
   applyEventToTurns = applyEventToTurns;
-  seedHeadFromActiveSnapshot = seedHeadFromActiveSnapshot;
-  applyHead = applyHead;
   applyToolSummaries = applyToolSummaries;
   applyState = applyState;
   syncStateCache = syncStateCache;
   persistHead = persistHead;
-  applyActiveSnapshotHead = applyActiveSnapshotHead;
   resetEntryProjectionForReplace = resetEntryProjectionForReplace;
   evictIfNeeded = evictIfNeeded;
   mapConnection = mapConnection;
@@ -401,12 +395,31 @@ export class SessionSupervisor {
     return buildSubscribedSessions(this.subscribedSessionIds, this.entries, this.workspaceSessionHeadsById);
   }
 
-  private applySessionActivityUpdate(
-    sessionId: string,
-    activity: InternalEntry["activity"],
-    version?: { lastEventSeq?: number | null; stateRev?: number | null },
+  private canSeedReplicaFromActiveSnapshot(
+    entry: InternalEntry,
+    opts?: { allowRecoveringRefresh?: boolean },
   ): boolean {
-    return applySessionActivityUpdate(this.entries, sessionId, activity, version);
+    if (opts?.allowRecoveringRefresh && entry.freshness === "recovering") {
+      return true;
+    }
+    return (
+      entry.freshness !== "authoritative" &&
+      !entry.turnsHydrated &&
+      entry.messages.length === 0 &&
+      entry.events.length === 0
+    );
+  }
+
+  private seedReplicaFromActiveSnapshot(sessionId: string, entry: InternalEntry): boolean {
+    if (!this.canSeedReplicaFromActiveSnapshot(entry)) return false;
+    const head = findWorkspaceSessionHead(
+      this.workspaceSnapshotState,
+      this.workspaceSessionHeadsById,
+      sessionId,
+    );
+    if (!head) return false;
+    this.replica.dispatch({ type: "seed_head", sessionId, head });
+    return true;
   }
 
   setActiveTaskSessionIds = (sessionIds: string[]) => {
@@ -426,11 +439,8 @@ export class SessionSupervisor {
   setSession = (session: Session) => {
     const sessionId = idToString(session.id);
     if (!sessionId) return;
-    const entry = this.ensureEntry(sessionId);
-    entry.session = session;
-    void this.ensureThoughtCache(entry);
-    entry.updatedAtMs = Date.now();
-    this.publish();
+    this.ensureEntry(sessionId);
+    this.replica.dispatch({ type: "set_session", session });
   };
   setMessages = (sessionId: string, messages: Message[], opts?: { replace?: boolean }) => {
     const id = String(sessionId || "").trim();
@@ -701,6 +711,9 @@ export class SessionSupervisor {
       if (data.stateLoading !== undefined) {
         entry.stateLoading = data.stateLoading;
       }
+      if (data.projectionRev !== undefined) {
+        entry.projectionRev = data.projectionRev;
+      }
       if (data.stateRev !== undefined) {
         entry.stateRev = data.stateRev;
         entry.stateAppliedRev = adoptLoadedStateRevision(
@@ -743,6 +756,7 @@ export class SessionSupervisor {
         (Array.isArray(data.events) && data.events.length > 0) ||
         (Array.isArray(data.toolSummaries) && data.toolSummaries.length > 0) ||
         data.lastEventSeq !== undefined ||
+        data.projectionRev !== undefined ||
         data.stateRev !== undefined ||
         data.summaryCheckpoint !== undefined ||
         data.headWindow !== undefined ||
@@ -798,7 +812,7 @@ export class SessionSupervisor {
     opts?: OpenOptions,
   ) {
     entry.mode = mode;
-    const seededHead = mode === "active" ? this.seedHeadFromActiveSnapshot(entry) : false;
+    const seededHead = mode === "active" ? this.seedReplicaFromActiveSnapshot(sessionId, entry) : false;
     const shouldSkipCache =
       entry.turnsHydrated ||
       entry.messages.length > 0 ||
@@ -811,7 +825,11 @@ export class SessionSupervisor {
       force: opts?.force,
       silent: opts?.silent,
       skipCache: shouldSkipCache,
-      hydrateIfNeeded: mode === "archived" || entry.freshness !== "authoritative",
+      forceHydrate: entry.freshness === "recovering" || entry.loadState === "recovering",
+      hydrateIfNeeded:
+        mode === "archived" ||
+        entry.freshness !== "authoritative" ||
+        entry.loadState === "recovering",
     });
     if (mode === "archived") {
       this.setSessionLoadState(entry, "pending_hydration");
@@ -912,38 +930,13 @@ export class SessionSupervisor {
         const entry = this.entries.get(sessionId);
         if (entry) {
           this.setSessionLoadState(entry, "recovering");
-          if (entry.freshness !== "recovering") {
-            entry.freshness = "recovering";
-            if (entry.subscribed) {
-              subscriptionCursorsChanged = true;
-            }
-          }
           entry.error = undefined;
           entry.updatedAtMs = Date.now();
           changed = true;
+          if (entry.subscribed) {
+            subscriptionCursorsChanged = true;
+          }
         }
-      }
-    } else if (evt.type === "session_summary_delta") {
-      const sessionId = idToString(evt.delta.session_id);
-      if (
-        sessionId &&
-        this.applySessionActivityUpdate(sessionId, evt.delta.activity ?? undefined, {
-          lastEventSeq: evt.delta.last_event_seq ?? null,
-          stateRev: evt.delta.state_rev ?? null,
-        })
-      ) {
-        changed = true;
-      }
-    } else if (evt.type === "session_summary") {
-      const sessionId = idToString(evt.summary.session.id);
-      if (
-        sessionId &&
-        this.applySessionActivityUpdate(sessionId, evt.summary.activity ?? undefined, {
-          lastEventSeq: evt.summary.last_event_seq ?? null,
-          stateRev: evt.summary.state_rev ?? null,
-        })
-      ) {
-        changed = true;
       }
     }
     if (changed) {
@@ -956,8 +949,6 @@ export class SessionSupervisor {
   }
 
   private syncActiveSnapshot(state: WorkspaceActiveSnapshotState) {
-    let changed = false;
-    let subscriptionCursorsChanged = false;
     for (const taskId of state.activeIds) {
       const item = state.tasksById[taskId];
       const head = item?.primarySessionHead;
@@ -965,20 +956,8 @@ export class SessionSupervisor {
       const sessionId = idToString(head.session?.id);
       if (!sessionId) continue;
       const entry = this.ensureEntry(sessionId);
-      const previousLastEventSeq = entry.lastEventSeq;
-      if (this.applyActiveSnapshotHead(entry, head)) {
-        entry.updatedAtMs = Date.now();
-        changed = true;
-        if (entry.subscribed && previousLastEventSeq !== entry.lastEventSeq) {
-          subscriptionCursorsChanged = true;
-        }
-      }
-    }
-    if (changed) {
-      this.publish();
-    }
-    if (subscriptionCursorsChanged) {
-      this.emitSubscribedSessions();
+      if (!this.canSeedReplicaFromActiveSnapshot(entry, { allowRecoveringRefresh: true })) continue;
+      this.replica.dispatch({ type: "seed_head", sessionId, head });
     }
   }
 }

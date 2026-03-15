@@ -236,6 +236,7 @@ async fn workspace_stream_does_not_reset_during_hydration_when_active_heads_are_
             let delta = SessionHeadDelta {
                 session_id: session.id,
                 last_event_seq: seq,
+                projection_rev: seq,
                 state_rev: 0,
                 event: Some(SessionEvent {
                     seq,

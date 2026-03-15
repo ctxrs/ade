@@ -94,6 +94,7 @@ pub(super) struct SessionSnapshotRow {
     pub(super) last_message_at: Option<DateTime<Utc>>,
     pub(super) last_message_preview: Option<String>,
     pub(super) last_event_seq: Option<i64>,
+    pub(super) projection_rev: i64,
     pub(super) activity: SessionActivityState,
 }
 
@@ -126,6 +127,7 @@ pub(super) fn session_head_to_snapshot(head: SessionHead) -> SessionHeadSnapshot
         events: head.events,
         messages: head.messages,
         last_event_seq: head.last_event_seq,
+        projection_rev: head.projection_rev,
         state_rev: head.last_event_seq,
         activity: head.activity,
         has_more_turns: head.has_more_turns,

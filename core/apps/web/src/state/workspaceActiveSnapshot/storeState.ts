@@ -34,12 +34,10 @@ import type {
 } from "./storeTypes";
 import { findWorkspaceActiveSnapshotInsertIndex } from "./storeOrdering";
 import {
-  asRecord,
   collectWorkspaceActivePrimarySessionIds,
   hasOwnProperty,
   mapWorktreeVcsSnapshots,
   projectPrimarySessionHeadOntoTasks,
-  readString,
   resolvePrimarySessionId,
   sortSessionSummaries,
 } from "./projection";
@@ -47,7 +45,10 @@ import {
   normalizeSessionSummary,
   pickArchivedSessionId,
   pickArchivedSessionIdFromSummaries,
+  readPrimarySessionHead,
+  readPrimarySessionId,
   sessionToSummary,
+  shouldReplaceSessionHead,
   taskSortAt,
 } from "./summaryHelpers";
 
@@ -508,9 +509,13 @@ export class WorkspaceActiveSnapshotStoreState {
       let changed = false;
       const currentLastEventSeq =
         typeof current.last_event_seq === "number" ? current.last_event_seq : null;
+      const currentProjectionRev =
+        typeof current.projection_rev === "number" ? current.projection_rev : null;
       const currentStateRev = typeof current.state_rev === "number" ? current.state_rev : null;
       const incomingLastEventSeq =
         typeof delta.last_event_seq === "number" ? delta.last_event_seq : null;
+      const incomingProjectionRev =
+        typeof delta.projection_rev === "number" ? delta.projection_rev : null;
       const incomingStateRev = typeof delta.state_rev === "number" ? delta.state_rev : null;
 
       if (hasOwnProperty(delta, "last_message_at")) {
@@ -551,6 +556,13 @@ export class WorkspaceActiveSnapshotStoreState {
           }
         }
       }
+      if (typeof delta.projection_rev === "number") {
+        const nextCurrentProjectionRev = nextSummary.projection_rev ?? 0;
+        if (delta.projection_rev > nextCurrentProjectionRev) {
+          nextSummary.projection_rev = delta.projection_rev;
+          changed = true;
+        }
+      }
       if (typeof delta.state_rev === "number") {
         const nextCurrentStateRev = nextSummary.state_rev ?? 0;
         if (delta.state_rev > nextCurrentStateRev) {
@@ -560,8 +572,11 @@ export class WorkspaceActiveSnapshotStoreState {
       }
       if (hasOwnProperty(delta, "activity") && delta.activity) {
         const hasIncomingVersion =
-          incomingStateRev !== null || incomingLastEventSeq !== null;
+          incomingProjectionRev !== null || incomingStateRev !== null || incomingLastEventSeq !== null;
         const activityVersionIsStale =
+          (incomingProjectionRev !== null &&
+            currentProjectionRev !== null &&
+            incomingProjectionRev < currentProjectionRev) ||
           (incomingStateRev !== null &&
             currentStateRev !== null &&
             incomingStateRev < currentStateRev) ||
@@ -569,7 +584,9 @@ export class WorkspaceActiveSnapshotStoreState {
             currentLastEventSeq !== null &&
             incomingLastEventSeq < currentLastEventSeq) ||
           (!hasIncomingVersion &&
-            (currentStateRev !== null || currentLastEventSeq !== null));
+            (currentProjectionRev !== null ||
+              currentStateRev !== null ||
+              currentLastEventSeq !== null));
         if (activityVersionIsStale) {
           return changed;
         }
@@ -665,20 +682,25 @@ export class WorkspaceActiveSnapshotStoreState {
       toolSummaries = mergeSessionToolSummaries(toolSummaries, incomingToolSummaries, turns);
       changed = true;
     }
-    const next: SessionHeadSnapshot = sanitizeSessionHeadSnapshot({
-      ...existing,
-      turns,
-      tool_summaries: toolSummaries,
-      messages,
-      events,
-      ...(typeof delta.last_event_seq === "number" ? { last_event_seq: delta.last_event_seq } : {}),
-      ...(typeof delta.state_rev === "number" ? { state_rev: delta.state_rev } : {}),
-    });
+      const next: SessionHeadSnapshot = sanitizeSessionHeadSnapshot({
+        ...existing,
+        turns,
+        tool_summaries: toolSummaries,
+        messages,
+        events,
+        ...(typeof delta.last_event_seq === "number" ? { last_event_seq: delta.last_event_seq } : {}),
+        ...(typeof delta.projection_rev === "number" ? { projection_rev: delta.projection_rev } : {}),
+        ...(typeof delta.state_rev === "number" ? { state_rev: delta.state_rev } : {}),
+      });
 
-    if (!changed && next.last_event_seq === existing.last_event_seq) {
+    if (
+      !changed &&
+      next.last_event_seq === existing.last_event_seq &&
+      (next.projection_rev ?? 0) === (existing.projection_rev ?? 0)
+    ) {
       return false;
     }
-    if (!this.shouldReplaceHead(existing, next)) return false;
+    if (!shouldReplaceSessionHead(existing, next)) return false;
     this.sessionHeadsById.set(sessionId, next);
     changed = true;
     if (projectPrimarySessionHeadOntoTasks(this.tasks, next)) {
@@ -696,7 +718,7 @@ export class WorkspaceActiveSnapshotStoreState {
     if (!sessionId) return false;
     const sanitized = sanitizeSessionHeadSnapshot(head);
     const prev = this.sessionHeadsById.get(sessionId);
-    if (!this.shouldReplaceHead(prev, sanitized)) return false;
+    if (!shouldReplaceSessionHead(prev, sanitized)) return false;
     this.sessionHeadsById.set(sessionId, sanitized);
     projectPrimarySessionHeadOntoTasks(this.tasks, sanitized);
     this.syncSnapshot();
@@ -719,7 +741,7 @@ export class WorkspaceActiveSnapshotStoreState {
     if (existing?.primarySessionHead) {
       this.rememberSessionHead(existing.primarySessionHead);
     }
-    const summaryPrimaryId = this.readPrimarySessionId(summary);
+    const summaryPrimaryId = readPrimarySessionId(summary);
     const primarySessionId =
       summaryPrimaryId ||
       pickArchivedSessionIdFromSummaries(task, summarySessions) ||
@@ -770,14 +792,6 @@ export class WorkspaceActiveSnapshotStoreState {
     };
   }
 
-  private shouldReplaceHead(prev: SessionHeadSnapshot | null | undefined, next: SessionHeadSnapshot): boolean {
-    if (!prev) return true;
-    const prevSeq = typeof prev.last_event_seq === "number" ? prev.last_event_seq : -1;
-    const nextSeq = typeof next.last_event_seq === "number" ? next.last_event_seq : -1;
-    if (prevSeq >= 0 && nextSeq >= 0 && nextSeq < prevSeq) return false;
-    return true;
-  }
-
   private applyActiveHeads(heads: SessionHeadSnapshot[]): boolean {
     if (!Array.isArray(heads) || heads.length === 0) return false;
     let changed = false;
@@ -787,7 +801,7 @@ export class WorkspaceActiveSnapshotStoreState {
       if (!sessionId) continue;
       const sanitized = sanitizeSessionHeadSnapshot(head);
       const prev = this.sessionHeadsById.get(sessionId);
-      if (this.shouldReplaceHead(prev, sanitized)) {
+      if (shouldReplaceSessionHead(prev, sanitized)) {
         this.sessionHeadsById.set(sessionId, sanitized);
         changed = true;
       }
@@ -851,6 +865,7 @@ export class WorkspaceActiveSnapshotStoreState {
           events: [],
           messages: [],
           last_event_seq: summary.last_event_seq ?? 0,
+          projection_rev: summary.projection_rev ?? 0,
           state_rev: summary.state_rev ?? 0,
           activity: summary.activity ?? { is_working: false },
           has_more_turns: false,
@@ -864,35 +879,13 @@ export class WorkspaceActiveSnapshotStoreState {
     return null;
   }
 
-  private readPrimarySessionHead(summary: unknown): SessionHeadSnapshot | null {
-    if (!summary || typeof summary !== "object") return null;
-    const rec = summary as Record<string, unknown>;
-    const head = rec.primary_session_head ?? rec.primarySessionHead ?? null;
-    if (!head || typeof head !== "object") return null;
-    return sanitizeSessionHeadSnapshot(head as SessionHeadSnapshot);
-  }
-
-  private readPrimarySessionId(summary: unknown): string | null {
-    const rec = asRecord(summary);
-    if (Object.keys(rec).length === 0) return null;
-    const fromPrimary = idToString(readString(asRecord(asRecord(rec.primary_session).session).id) ?? "");
-    if (fromPrimary) return fromPrimary;
-    const fromHead = idToString(
-      readString(asRecord(asRecord(rec.primary_session_head).session).id) ??
-        readString(asRecord(asRecord(rec.primarySessionHead).session).id) ??
-        "",
-    );
-    if (fromHead) return fromHead;
-    return null;
-  }
-
   private rememberSessionHead(head: SessionHeadSnapshot | null) {
     if (!head) return;
     const sessionId = idToString(head?.session?.id ?? "");
     if (!sessionId) return;
     const sanitized = sanitizeSessionHeadSnapshot(head);
     const prev = this.sessionHeadsById.get(sessionId);
-    if (!this.shouldReplaceHead(prev, sanitized)) return;
+    if (!shouldReplaceSessionHead(prev, sanitized)) return;
     this.sessionHeadsById.set(sessionId, sanitized);
   }
 
@@ -926,11 +919,11 @@ export class WorkspaceActiveSnapshotStoreState {
     const sortAtMs = Date.parse(sortAt) || existing?.sortAtMs || Date.now();
     const existingPrimarySessionId = resolvePrimarySessionId(existing);
     const primarySessionId =
-      this.readPrimarySessionId(summary) ||
+      readPrimarySessionId(summary) ||
       existingPrimarySessionId ||
       idToString((summary as PersistedWorkspaceActiveTaskSummaryV1).primary_session?.session?.id ?? "");
 
-    let primaryHead = summaryHasHead ? this.readPrimarySessionHead(summary) : existing?.primarySessionHead ?? null;
+    let primaryHead = summaryHasHead ? readPrimarySessionHead(summary) : existing?.primarySessionHead ?? null;
     if (!primaryHead && primarySessionId) {
       primaryHead = this.sessionHeadsById.get(primarySessionId) ?? null;
     }

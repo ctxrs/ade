@@ -78,7 +78,7 @@ test("workbench: first user message renders from stream when head is stale", asy
   await rows.first().click();
   await page.waitForTimeout(400);
 
-  const composer = page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea");
+  const composer = page.locator(".wb-session-slot textarea.wb-active-textarea");
   await expect(composer).toBeVisible({ timeout: 20000 });
 
   await expect
@@ -93,7 +93,7 @@ test("workbench: first user message renders from stream when head is stale", asy
   await clearDiagnostics(page);
 
   await composer.fill(prompt);
-  await page.locator(".wb-session-slot[aria-hidden=\"false\"] button[aria-label=\"Send\"]").click();
+  await page.locator(".wb-session-slot button[aria-label=\"Send\"]").click();
 
   const header = page.locator(".wb-turn-header-content").filter({ hasText: prompt });
   await expect(header).toBeVisible({ timeout: 20000 });
@@ -177,7 +177,7 @@ test("workbench: optimistic first user message survives new-task handoff while t
     w.__emptyPlaceholderSeen = false;
     w.__emptyPlaceholderObserver?.disconnect?.();
 
-    const selector = '.wb-session-slot[aria-hidden="false"] .wb-turn-header-content';
+    const selector = ".wb-session-slot .wb-turn-header-content";
     const monitorWindowMs = 2000;
     const startAt = w.__sendClickAt;
 
@@ -189,7 +189,7 @@ test("workbench: optimistic first user message survives new-task handoff while t
         }));
 
     const hasEmptyPlaceholder = () =>
-      Array.from(document.querySelectorAll('.wb-session-slot[aria-hidden="false"] .wb-muted')).some(
+      Array.from(document.querySelectorAll(".wb-session-slot .wb-muted")).some(
         (node) => (node.textContent ?? "").trim() === "Empty",
       );
 
@@ -222,7 +222,7 @@ test("workbench: optimistic first user message survives new-task handoff while t
   await page.getByRole("button", { name: "Send" }).click();
 
   const header = page
-    .locator('.wb-session-slot[aria-hidden="false"] .wb-turn-header-content')
+    .locator(".wb-session-slot .wb-turn-header-content")
     .filter({ hasText: prompt })
     .first();
   await expect(header).toBeVisible({ timeout: 2000 });

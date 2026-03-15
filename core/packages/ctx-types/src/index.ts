@@ -261,6 +261,7 @@ export type SessionSnapshotSummary = {
   last_message_at?: string | null;
   last_message_preview?: string | null;
   last_event_seq?: number | null;
+  projection_rev?: number;
   state_rev?: number;
   activity?: SessionActivityState;
   unread?: boolean;
@@ -273,6 +274,7 @@ export type SessionHeadSnapshot = {
   events?: SessionEvent[];
   messages: Message[];
   last_event_seq: number;
+  projection_rev?: number;
   state_rev?: number;
   activity?: SessionActivityState;
   has_more_turns: boolean;
@@ -428,6 +430,7 @@ export type SessionHead = {
   events?: SessionEvent[];
   messages: Message[];
   last_event_seq: number;
+  projection_rev?: number;
   activity?: SessionActivityState;
   has_more_turns: boolean;
   summary_checkpoint?: SessionSummaryCheckpoint | null;
@@ -437,6 +440,7 @@ export type SessionHead = {
 export type SessionHeadDelta = {
   session_id: string;
   last_event_seq: number;
+  projection_rev?: number;
   state_rev?: number;
   event?: SessionEvent | null;
   turn?: SessionTurn | null;
@@ -497,6 +501,7 @@ export type WorkspaceActiveSnapshotSessionSummaryDelta = {
   last_message_at?: string | null;
   last_message_preview?: string | null;
   last_event_seq?: number | null;
+  projection_rev?: number | null;
   state_rev?: number | null;
 };
 
@@ -596,6 +601,7 @@ export type WorkspaceActiveSnapshotSessionReplay =
   | {
       mode: "resume";
       after_seq: number;
+      after_projection_rev?: number;
     };
 
 export type WorkspaceActiveSnapshotSubscribeScope = "active";

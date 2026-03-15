@@ -2,85 +2,113 @@ use super::*;
 
 pub(super) const SESSION_REPLAY_BUFFER_LIMIT: usize = 2000;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SessionReplayCursor {
+    pub last_event_seq: i64,
+    pub projection_rev: i64,
+}
+
+impl SessionReplayCursor {
+    pub fn from_delta(delta: &SessionHeadDelta) -> Self {
+        Self {
+            last_event_seq: delta
+                .event
+                .as_ref()
+                .map(|event| event.seq)
+                .unwrap_or(delta.last_event_seq)
+                .max(0),
+            projection_rev: delta.projection_rev.max(0),
+        }
+    }
+
+    pub fn from_head(head: &SessionHeadSnapshot) -> Self {
+        Self {
+            last_event_seq: head.last_event_seq.max(0),
+            projection_rev: head.projection_rev.max(0),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct SessionReplayEntry {
-    seq: i64,
+    cursor: SessionReplayCursor,
     delta: SessionHeadDelta,
 }
 
 #[derive(Debug, Default, Clone)]
 pub(super) struct SessionReplayState {
-    pub(super) last_event_seq: i64,
+    pub(super) last_cursor: SessionReplayCursor,
     events: VecDeque<SessionReplayEntry>,
 }
 
 impl SessionReplayState {
     pub(super) fn record(&mut self, delta: &SessionHeadDelta) {
-        let seq = delta
-            .event
-            .as_ref()
-            .map(|event| event.seq)
-            .unwrap_or(delta.last_event_seq);
-        if seq >= 0 {
+        let cursor = SessionReplayCursor::from_delta(delta);
+        if cursor.last_event_seq >= 0 {
             self.events.push_back(SessionReplayEntry {
-                seq,
+                cursor,
                 delta: delta.clone(),
             });
             while self.events.len() > SESSION_REPLAY_BUFFER_LIMIT {
                 self.events.pop_front();
             }
         }
-        self.last_event_seq = self.last_event_seq.max(delta.last_event_seq);
+        self.last_cursor = self.last_cursor.max(cursor);
     }
 
-    pub(super) fn replay(&self, after_seq: i64, limit: usize) -> SessionReplayResult {
-        let after_seq = after_seq.max(0);
-        if self.last_event_seq <= after_seq {
+    pub(super) fn seed(&mut self, cursor: SessionReplayCursor) {
+        self.last_cursor = self.last_cursor.max(cursor);
+    }
+
+    pub(super) fn replay(
+        &self,
+        after_cursor: SessionReplayCursor,
+        limit: usize,
+    ) -> SessionReplayResult {
+        let after_cursor = SessionReplayCursor {
+            last_event_seq: after_cursor.last_event_seq.max(0),
+            projection_rev: after_cursor.projection_rev.max(0),
+        };
+        if self.last_cursor <= after_cursor {
             return SessionReplayResult::Replay {
                 deltas: Vec::new(),
-                last_sent: after_seq,
+                last_sent: after_cursor,
             };
         }
-        let Some(oldest_seq) = self.events.front().map(|entry| entry.seq) else {
+        let Some(oldest_cursor) = self.events.front().map(|entry| entry.cursor) else {
             return SessionReplayResult::Gap {
-                last_known_seq: self.last_event_seq,
+                last_known_seq: self.last_cursor.last_event_seq,
                 reason: Some("missing_replay_events".to_string()),
             };
         };
-        if after_seq < oldest_seq {
+        if after_cursor < oldest_cursor {
             return SessionReplayResult::Gap {
-                last_known_seq: self.last_event_seq,
+                last_known_seq: self.last_cursor.last_event_seq,
                 reason: Some("replay_buffer_overflow".to_string()),
             };
         }
         let mut deltas = Vec::new();
         for entry in self.events.iter() {
-            if entry.seq > after_seq {
+            if entry.cursor > after_cursor {
                 deltas.push(entry.delta.clone());
             }
         }
-        if deltas.is_empty() && self.last_event_seq > after_seq {
+        if deltas.is_empty() && self.last_cursor > after_cursor {
             return SessionReplayResult::Gap {
-                last_known_seq: self.last_event_seq,
+                last_known_seq: self.last_cursor.last_event_seq,
                 reason: Some("replay_gap".to_string()),
             };
         }
         if deltas.len() > limit {
             return SessionReplayResult::Gap {
-                last_known_seq: self.last_event_seq,
+                last_known_seq: self.last_cursor.last_event_seq,
                 reason: Some("replay_limit_exceeded".to_string()),
             };
         }
         let last_sent = deltas
             .last()
-            .map(|delta| {
-                delta
-                    .event
-                    .as_ref()
-                    .map(|event| event.seq)
-                    .unwrap_or(delta.last_event_seq)
-            })
-            .unwrap_or(after_seq);
+            .map(SessionReplayCursor::from_delta)
+            .unwrap_or(after_cursor);
         SessionReplayResult::Replay { deltas, last_sent }
     }
 
@@ -97,7 +125,7 @@ impl SessionReplayState {
 pub enum SessionReplayResult {
     Replay {
         deltas: Vec<SessionHeadDelta>,
-        last_sent: i64,
+        last_sent: SessionReplayCursor,
     },
     Gap {
         last_known_seq: i64,
@@ -121,7 +149,7 @@ pub enum WorkspaceSessionReplayItem {
 pub enum WorkspaceSessionReplay {
     Replay {
         items: Vec<WorkspaceSessionReplayItem>,
-        last_sent: i64,
+        last_sent: SessionReplayCursor,
     },
     ResetRequired,
 }

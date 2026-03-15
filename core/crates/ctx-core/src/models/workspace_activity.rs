@@ -90,6 +90,8 @@ pub struct SessionSnapshotSummary {
     pub last_message_preview: Option<String>,
     pub last_event_seq: Option<i64>,
     #[serde(default)]
+    pub projection_rev: i64,
+    #[serde(default)]
     pub state_rev: i64,
     #[serde(default)]
     pub activity: SessionActivityState,
@@ -122,6 +124,8 @@ pub struct SessionSummaryDelta {
     pub last_message_preview: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_event_seq: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projection_rev: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_rev: Option<i64>,
 }
@@ -166,6 +170,8 @@ pub struct SessionHeadSnapshot {
     pub messages: Vec<Message>,
     pub last_event_seq: i64,
     #[serde(default)]
+    pub projection_rev: i64,
+    #[serde(default)]
     pub state_rev: i64,
     #[serde(default)]
     pub activity: SessionActivityState,
@@ -192,6 +198,8 @@ pub struct SessionHead {
     #[serde(default)]
     pub messages: Vec<Message>,
     pub last_event_seq: i64,
+    #[serde(default)]
+    pub projection_rev: i64,
     #[serde(default)]
     pub activity: SessionActivityState,
     pub has_more_turns: bool,
@@ -237,6 +245,8 @@ pub struct SessionSnapshot {
 pub struct SessionHeadDelta {
     pub session_id: SessionId,
     pub last_event_seq: i64,
+    #[serde(default)]
+    pub projection_rev: i64,
     #[serde(default)]
     pub state_rev: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -395,7 +405,11 @@ pub enum WorkspaceActiveSnapshotStreamMessage {
 pub enum WorkspaceActiveSnapshotSessionReplay {
     Auto,
     Reset,
-    Resume { after_seq: i64 },
+    Resume {
+        after_seq: i64,
+        #[serde(default)]
+        after_projection_rev: i64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

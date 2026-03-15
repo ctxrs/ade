@@ -13,6 +13,7 @@ export type SessionSubscriptionReplay =
   | {
       kind: "resume";
       afterSeq: number;
+      afterProjectionRev?: number;
     };
 
 const normalizeSessionId = (value: unknown): string => {
@@ -31,11 +32,27 @@ const normalizeReplay = (
       return RESET_REPLAY;
     case "resume":
       return typeof value.afterSeq === "number" && Number.isFinite(value.afterSeq)
-        ? { kind: "resume", afterSeq: value.afterSeq }
+        ? {
+            kind: "resume",
+            afterSeq: value.afterSeq,
+            ...(typeof value.afterProjectionRev === "number" && Number.isFinite(value.afterProjectionRev)
+              ? { afterProjectionRev: value.afterProjectionRev }
+              : {}),
+          }
         : AUTO_REPLAY;
     default:
       return AUTO_REPLAY;
   }
+};
+
+const compareResumeReplay = (
+  left: Extract<SessionSubscriptionReplay, { kind: "resume" }>,
+  right: Extract<SessionSubscriptionReplay, { kind: "resume" }>,
+): number => {
+  if (left.afterSeq !== right.afterSeq) {
+    return left.afterSeq - right.afterSeq;
+  }
+  return (left.afterProjectionRev ?? 0) - (right.afterProjectionRev ?? 0);
 };
 
 const mergeReplay = (
@@ -46,7 +63,7 @@ const mergeReplay = (
     return RESET_REPLAY;
   }
   if (left.kind === "resume" && right.kind === "resume") {
-    return { kind: "resume", afterSeq: Math.max(left.afterSeq, right.afterSeq) };
+    return compareResumeReplay(left, right) >= 0 ? left : right;
   }
   if (left.kind === "resume") {
     return left;
@@ -63,7 +80,10 @@ const sameReplay = (
 ): boolean => {
   if (left?.kind !== right?.kind) return false;
   if (left?.kind === "resume" && right?.kind === "resume") {
-    return left.afterSeq === right.afterSeq;
+    return (
+      left.afterSeq === right.afterSeq &&
+      (left.afterProjectionRev ?? 0) === (right.afterProjectionRev ?? 0)
+    );
   }
   return true;
 };

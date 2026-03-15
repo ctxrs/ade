@@ -25,7 +25,7 @@ test("workbench: task switching never desyncs selection (no URL state)", async (
     timeout: 20000,
   });
 
-  const activeThread = page.locator('.wb-session-slot[aria-hidden="false"] .wb-thread-scroller');
+  const activeThread = page.locator(".wb-session-slot .wb-thread-scroller");
 
   const msg1 = `task one marker ${Date.now()}`;
   await page.locator("textarea.wb-composer-textarea").first().fill(msg1);

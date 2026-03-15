@@ -9,8 +9,10 @@ pub(super) fn apply_session_summary_delta(
     delta: &SessionSummaryDelta,
 ) -> bool {
     let mut changed = false;
+    let incoming_projection_rev = delta.projection_rev.unwrap_or(summary.projection_rev);
+    let activity_is_stale = incoming_projection_rev < summary.projection_rev;
     if let Some(activity) = delta.activity.clone() {
-        if summary.activity != activity {
+        if !activity_is_stale && summary.activity != activity {
             summary.activity = activity;
             changed = true;
         }
@@ -46,6 +48,10 @@ pub(super) fn apply_session_summary_delta(
             changed = true;
         }
     }
+    if incoming_projection_rev > summary.projection_rev {
+        summary.projection_rev = incoming_projection_rev;
+        changed = true;
+    }
     if let Some(state_rev) = delta.state_rev {
         if state_rev > summary.state_rev {
             summary.state_rev = state_rev;
@@ -63,6 +69,9 @@ pub(super) fn apply_head_delta(head: &mut SessionHeadSnapshot, delta: &SessionHe
         .unwrap_or(delta.last_event_seq);
     if next_seq > head.last_event_seq {
         head.last_event_seq = next_seq;
+    }
+    if delta.projection_rev > head.projection_rev {
+        head.projection_rev = delta.projection_rev;
     }
     if delta.state_rev > head.state_rev {
         head.state_rev = delta.state_rev;

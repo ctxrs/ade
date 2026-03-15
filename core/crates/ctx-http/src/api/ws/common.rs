@@ -1,13 +1,16 @@
 use super::*;
 
 pub(super) struct SessionCursor {
-    pub(super) last_sent: i64,
+    pub(super) last_sent: SessionReplayCursor,
 }
 
 #[derive(Clone, Copy)]
 pub(super) enum ResolvedWorkspaceActiveSessionReplay {
     Reset,
-    Resume { after_seq: i64 },
+    Resume {
+        after_seq: i64,
+        after_projection_rev: i64,
+    },
 }
 
 pub(super) struct ResolvedWorkspaceActiveSessionSubscription {

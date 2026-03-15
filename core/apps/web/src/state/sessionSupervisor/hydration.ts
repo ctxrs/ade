@@ -35,6 +35,7 @@ type SessionSupportLoadErrorKey = "state" | "artifacts" | "subagentInvocations";
 
 export type SessionSupervisorHydrationEntry = {
   sessionId: string;
+  freshness?: "bootstrap" | "authoritative" | "recovering";
   session?: Session;
   acpModels?: unknown;
   acpModes?: unknown;
@@ -262,6 +263,7 @@ export function resolveRequestedStateRev(
   this: SessionSupervisorHydrationHost,
   entry: SessionSupervisorHydrationEntry,
 ): number | undefined {
+  if (entry.freshness !== "authoritative") return undefined;
   if (typeof entry.stateRev === "number") return entry.stateRev;
   const head = findWorkspaceSessionHead(
     this.workspaceSnapshotState,

@@ -24,7 +24,7 @@ export function newTaskComposer(page: Page) {
 }
 
 export function activeSessionComposer(page: Page) {
-  return page.locator('.wb-session-slot[aria-hidden="false"] textarea.wb-active-textarea');
+  return page.locator(".wb-session-slot textarea.wb-active-textarea");
 }
 
 export async function openFirstTaskSession(page: Page): Promise<void> {

@@ -1093,6 +1093,194 @@ async fn workspace_active_page_includes_primary_and_subagent_sessions() {
     assert_eq!(summary.sessions[0].session.id, subagent.id);
 }
 
+#[tokio::test]
+async fn projection_rev_is_consistent_across_head_and_workspace_summary_reads() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+    let ws = store
+        .create_workspace("ws".into(), "/tmp/ws".into(), VcsKind::Git)
+        .await
+        .unwrap();
+    let task = store
+        .create_task(ws.id, "active".into(), None)
+        .await
+        .unwrap();
+    let worktree = store
+        .create_worktree(ws.id, "/tmp/ws".into(), "abc123".into(), None)
+        .await
+        .unwrap();
+    let session = store
+        .create_session(
+            task.id,
+            ws.id,
+            worktree.id,
+            ctx_core::models::ExecutionEnvironment::Host,
+            "fake".into(),
+            "fake".into(),
+            "implementer".into(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .set_task_primary_session(task.id, session.id, worktree.id)
+        .await
+        .unwrap();
+
+    let run_id = RunId::new();
+    let turn_id = TurnId::new();
+    store
+        .insert_session_turn(make_turn(session.id, run_id, turn_id))
+        .await
+        .unwrap();
+    let notice = store
+        .append_session_event(
+            session.id,
+            Some(run_id),
+            Some(turn_id),
+            SessionEventType::Notice,
+            serde_json::json!({ "kind": "checkpoint", "message": "stable" }),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_message(make_assistant_message(
+            session.id,
+            task.id,
+            run_id,
+            turn_id,
+            "final answer",
+        ))
+        .await
+        .unwrap();
+    store
+        .update_session_turn_status(
+            session.id,
+            turn_id,
+            SessionTurnStatus::Completed,
+            Some(notice.seq),
+            None,
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+
+    let head = store
+        .get_session_head_snapshot(session.id, 10, true)
+        .await
+        .unwrap()
+        .unwrap();
+    let active_head = store
+        .get_active_snapshot_head(session.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let (summaries, total) = store.list_workspace_active_page(ws.id, 50).await.unwrap();
+
+    assert_eq!(total, 1);
+    assert_eq!(summaries.len(), 1);
+    let summary = &summaries[0];
+    assert!(head.projection_rev > 0);
+    assert_eq!(active_head.projection_rev, head.projection_rev);
+    assert_eq!(summary.primary_session.projection_rev, head.projection_rev);
+    assert_eq!(
+        summary.primary_session.last_event_seq,
+        Some(head.last_event_seq)
+    );
+}
+
+#[tokio::test]
+async fn session_head_materialization_refreshes_when_projection_rev_changes_without_new_event() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("db.sqlite");
+    let store = Store::open(&db_path).await.unwrap();
+    let ws = store
+        .create_workspace("ws".into(), "/tmp/ws".into(), VcsKind::Git)
+        .await
+        .unwrap();
+    let task = store
+        .create_task(ws.id, "active".into(), None)
+        .await
+        .unwrap();
+    let worktree = store
+        .create_worktree(ws.id, "/tmp/ws".into(), "abc123".into(), None)
+        .await
+        .unwrap();
+    let session = store
+        .create_session(
+            task.id,
+            ws.id,
+            worktree.id,
+            ctx_core::models::ExecutionEnvironment::Host,
+            "fake".into(),
+            "fake".into(),
+            "implementer".into(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .set_task_primary_session(task.id, session.id, worktree.id)
+        .await
+        .unwrap();
+
+    let run_id = RunId::new();
+    let turn_id = TurnId::new();
+    store
+        .insert_session_turn(make_turn(session.id, run_id, turn_id))
+        .await
+        .unwrap();
+    let notice = store
+        .append_session_event(
+            session.id,
+            Some(run_id),
+            Some(turn_id),
+            SessionEventType::Notice,
+            serde_json::json!({ "kind": "checkpoint", "message": "stable" }),
+        )
+        .await
+        .unwrap();
+
+    assert!(store.archive_task(task.id).await.unwrap());
+    let initial = store
+        .get_session_head_snapshot(session.id, 10, true)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(initial.last_event_seq, notice.seq);
+    assert_eq!(initial.turns[0].status, SessionTurnStatus::Running);
+
+    store
+        .update_session_turn_status(
+            session.id,
+            turn_id,
+            SessionTurnStatus::Completed,
+            Some(notice.seq),
+            None,
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+
+    let refreshed = store
+        .get_session_head_snapshot(session.id, 10, true)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(refreshed.last_event_seq, notice.seq);
+    assert_eq!(refreshed.turns[0].status, SessionTurnStatus::Completed);
+    assert!(refreshed.projection_rev > initial.projection_rev);
+    assert_eq!(
+        refreshed.activity.last_turn_status,
+        Some(SessionTurnStatus::Completed)
+    );
+}
+
 #[cfg(feature = "fault_injection")]
 async fn setup_fault_fixture() -> (
     tempfile::TempDir,

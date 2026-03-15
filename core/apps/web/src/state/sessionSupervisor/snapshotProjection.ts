@@ -80,6 +80,7 @@ const cloneSessionEntry = (entry: InternalEntry): SessionCacheEntry => ({
   gitStatusSummary: entry.gitStatusSummary ?? null,
   summaryCheckpoint: entry.summaryCheckpoint ?? null,
   headWindow: entry.headWindow ?? null,
+  projectionRev: entry.projectionRev,
   diagnosticsByPath: entry.diagnosticsByPath,
   lastEventSeq: entry.lastEventSeq,
   loading: entry.loading,

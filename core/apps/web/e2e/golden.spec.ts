@@ -29,10 +29,10 @@ test("golden path: workspace → task → session → message", async ({ page })
   await expect(rows).toHaveCount(1, { timeout: 20000 });
   await rows.first().click();
 
-  await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea")).toBeVisible({
+  await expect(page.locator(".wb-session-slot textarea.wb-active-textarea")).toBeVisible({
     timeout: 20000,
   });
-  await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] .wb-assistant-entry")).toHaveCount(1, {
+  await expect(page.locator(".wb-session-slot .wb-assistant-entry")).toHaveCount(1, {
     timeout: 40000,
   });
 });

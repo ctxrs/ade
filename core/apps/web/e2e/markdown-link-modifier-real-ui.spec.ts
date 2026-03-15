@@ -25,7 +25,7 @@ test("workbench assistant markdown link visibly underlines under modifier state"
   await page.getByRole("button", { name: "Send" }).click();
 
   const assistantEntry = page
-    .locator('.wb-session-slot[aria-hidden="false"] .wb-assistant-entry')
+    .locator(".wb-session-slot .wb-assistant-entry")
     .first();
   await expect(assistantEntry).toBeVisible({ timeout: 20_000 });
   const renderedLink = assistantEntry.getByRole("link", { name: "docs" });

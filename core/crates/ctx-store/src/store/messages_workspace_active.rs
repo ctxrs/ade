@@ -449,10 +449,12 @@ impl Store {
                           h.messages_json,
                           h.has_more_turns,
                           h.head_window_json,
-                          h.summary_checkpoint_json
+                          h.summary_checkpoint_json,
+                          COALESCE(ss.projection_rev, COALESCE(h.last_event_seq, 0)) AS projection_rev
                    FROM session_active_snapshot_heads h
                    JOIN sessions s ON s.id = h.session_id
                    JOIN tasks t ON t.id = s.task_id
+                   LEFT JOIN session_snapshot_summaries ss ON ss.session_id = s.id
                    WHERE s.workspace_id = ?
                      AND t.archived_at IS NULL
                    ORDER BY s.created_at ASC, s.id ASC"#,
@@ -524,6 +526,7 @@ impl Store {
             let activity = derive_activity_from_status(last_status, has_running_turn);
             let has_more_turns: i64 = row.try_get("has_more_turns")?;
             let last_event_seq: i64 = row.try_get("last_event_seq")?;
+            let projection_rev: i64 = row.try_get("projection_rev")?;
 
             out.push(SessionHeadSnapshot {
                 session: session_metadata_from_session(&session),
@@ -532,6 +535,7 @@ impl Store {
                 events,
                 messages,
                 last_event_seq,
+                projection_rev,
                 state_rev: last_event_seq,
                 activity,
                 has_more_turns: has_more_turns != 0,
@@ -647,6 +651,7 @@ impl Store {
                 last_message_at: row.last_message_at,
                 last_message_preview: row.last_message_preview,
                 last_event_seq: row.last_event_seq,
+                projection_rev: row.projection_rev,
                 state_rev: row.last_event_seq.unwrap_or(0),
                 activity: row.activity,
                 unread: None,

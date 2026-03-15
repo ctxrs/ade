@@ -24,7 +24,7 @@ mod entry;
 mod replay_state;
 mod trim;
 
-pub use replay_state::{WorkspaceSessionReplay, WorkspaceSessionReplayItem};
+pub use replay_state::{SessionReplayCursor, WorkspaceSessionReplay, WorkspaceSessionReplayItem};
 
 pub struct WorkspaceActiveSnapshotHub {
     inner: Mutex<HashMap<WorkspaceId, WorkspaceActiveSnapshotEntry>>,
@@ -189,18 +189,31 @@ impl WorkspaceActiveSnapshotHub {
         entry.session_last_event_seq(session_id)
     }
 
+    pub async fn session_replay_cursor(
+        &self,
+        workspace_id: WorkspaceId,
+        session_id: SessionId,
+    ) -> SessionReplayCursor {
+        let mut guard = self.inner.lock().await;
+        let entry = guard
+            .entry(workspace_id)
+            .or_insert_with(WorkspaceActiveSnapshotEntry::new);
+        entry.session_replay_cursor(session_id)
+    }
+
     pub async fn replay_session_head_deltas(
         &self,
         workspace_id: WorkspaceId,
         session_id: SessionId,
         after_seq: i64,
+        after_projection_rev: i64,
         limit: usize,
     ) -> SessionReplayResult {
         let mut guard = self.inner.lock().await;
         let entry = guard
             .entry(workspace_id)
             .or_insert_with(WorkspaceActiveSnapshotEntry::new);
-        entry.replay_session(session_id, after_seq, limit)
+        entry.replay_session(session_id, after_seq, after_projection_rev, limit)
     }
 
     pub async fn replay_session_stream(
@@ -208,10 +221,17 @@ impl WorkspaceActiveSnapshotHub {
         workspace_id: WorkspaceId,
         session_id: SessionId,
         after_seq: i64,
+        after_projection_rev: i64,
         limit: usize,
     ) -> WorkspaceSessionReplay {
         let replay = self
-            .replay_session_head_deltas(workspace_id, session_id, after_seq, limit)
+            .replay_session_head_deltas(
+                workspace_id,
+                session_id,
+                after_seq,
+                after_projection_rev,
+                limit,
+            )
             .await;
         match replay {
             SessionReplayResult::Replay { deltas, last_sent } => WorkspaceSessionReplay::Replay {
@@ -226,9 +246,17 @@ impl WorkspaceActiveSnapshotHub {
                 reason,
             } => {
                 if after_seq <= 0 {
+                    let last_sent = self.session_replay_cursor(workspace_id, session_id).await;
                     return WorkspaceSessionReplay::Replay {
                         items: Vec::new(),
-                        last_sent: last_known_seq.max(after_seq),
+                        last_sent: SessionReplayCursor {
+                            last_event_seq: last_sent
+                                .last_event_seq
+                                .max(last_known_seq.max(after_seq)),
+                            projection_rev: last_sent
+                                .projection_rev
+                                .max(after_projection_rev.max(0)),
+                        },
                     };
                 }
                 let mut items = vec![WorkspaceSessionReplayItem::Gap {
@@ -236,9 +264,12 @@ impl WorkspaceActiveSnapshotHub {
                     after_seq,
                     reason,
                 }];
-                let mut last_sent = last_known_seq.max(after_seq);
+                let mut last_sent = SessionReplayCursor {
+                    last_event_seq: last_known_seq.max(after_seq),
+                    projection_rev: after_projection_rev.max(0),
+                };
                 if let Some(head) = self.get_session_head(session_id).await {
-                    last_sent = head.last_event_seq.max(0);
+                    last_sent = SessionReplayCursor::from_head(&head);
                     items.push(WorkspaceSessionReplayItem::Seed(head));
                 }
                 WorkspaceSessionReplay::Replay { items, last_sent }
@@ -384,13 +415,13 @@ impl WorkspaceActiveSnapshotHub {
                     .session_replay
                     .retain(|session_id, _| active_session_ids.contains(session_id));
             }
-            let replay_seeds: Vec<(SessionId, i64)> = entry
+            let replay_seeds: Vec<(SessionId, SessionReplayCursor)> = entry
                 .active_heads
                 .values()
-                .map(|head| (head.session.id, head.last_event_seq))
+                .map(|head| (head.session.id, SessionReplayCursor::from_head(head)))
                 .collect();
-            for (session_id, last_event_seq) in replay_seeds {
-                entry.seed_session_replay(session_id, last_event_seq);
+            for (session_id, cursor) in replay_seeds {
+                entry.seed_session_replay(session_id, cursor);
             }
         }
 
@@ -407,7 +438,7 @@ impl WorkspaceActiveSnapshotHub {
     pub async fn update_session_head(&self, head: SessionHeadSnapshot) {
         let session_id = head.session.id;
         let workspace_id = head.session.workspace_id;
-        let last_event_seq = head.last_event_seq;
+        let cursor = SessionReplayCursor::from_head(&head);
         let mut heads = self.session_heads.lock().await;
         heads.insert(session_id, head.clone());
         drop(heads);
@@ -419,7 +450,7 @@ impl WorkspaceActiveSnapshotHub {
             entry
                 .active_heads
                 .insert(session_id, compact_active_head_snapshot(&head));
-            entry.seed_session_replay(session_id, last_event_seq);
+            entry.seed_session_replay(session_id, cursor);
             let mut index = self.active_head_index.lock().await;
             index.insert(session_id, workspace_id);
         }
@@ -830,7 +861,7 @@ impl ActiveSnapshotObserver for WorkspaceActiveSnapshotHub {
     async fn on_active_head_snapshot(&self, head: SessionHeadSnapshot) {
         let workspace_id = head.session.workspace_id;
         let session_id = head.session.id;
-        let last_event_seq = head.last_event_seq;
+        let cursor = SessionReplayCursor::from_head(&head);
         let compact = compact_active_head_snapshot(&head);
         {
             let mut guard = self.inner.lock().await;
@@ -838,7 +869,7 @@ impl ActiveSnapshotObserver for WorkspaceActiveSnapshotHub {
                 .entry(workspace_id)
                 .or_insert_with(WorkspaceActiveSnapshotEntry::new);
             entry.active_heads.insert(session_id, compact);
-            entry.seed_session_replay(session_id, last_event_seq);
+            entry.seed_session_replay(session_id, cursor);
         }
         let mut index = self.active_head_index.lock().await;
         index.insert(session_id, workspace_id);

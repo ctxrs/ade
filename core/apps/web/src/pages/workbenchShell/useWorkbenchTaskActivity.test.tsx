@@ -273,6 +273,60 @@ describe("useWorkbenchTaskActivity helpers", () => {
     expect(isWorkbenchTaskUnread({ taskId: "task-1", tasksById, taskLiveInfo })).toBe(true);
   });
 
+  it("does not treat a user follow-up timestamp as a new unread assistant message", () => {
+    const primarySession = makeSession("session-1", "task-1", "completed");
+    const tasksById = {
+      "task-1": makeTaskSummary({
+        taskId: "task-1",
+        primarySessionId: "session-1",
+        sessions: [
+          makeSessionSummary(primarySession, {
+            last_message_at: "2026-03-09T00:00:09.000Z",
+          }),
+        ],
+        assistantSeenAt: "2026-03-09T00:00:07.000Z",
+        lastAssistantMessageAt: "2026-03-09T00:00:05.000Z",
+      }),
+    };
+    const primaryEntry = {
+      ...makeSessionEntry({
+        session: primarySession,
+        messageCreatedAt: "2026-03-09T00:00:05.000Z",
+      }),
+      messages: [
+        {
+          id: "assistant-message",
+          session_id: primarySession.id,
+          task_id: primarySession.task_id,
+          role: "assistant" as const,
+          content: "done",
+          delivery: "immediate" as const,
+          created_at: "2026-03-09T00:00:05.000Z",
+        },
+        {
+          id: "user-message",
+          session_id: primarySession.id,
+          task_id: primarySession.task_id,
+          role: "user" as const,
+          content: "follow up",
+          delivery: "immediate" as const,
+          created_at: "2026-03-09T00:00:09.000Z",
+        },
+      ],
+    };
+
+    const taskLiveInfo = deriveTaskLiveInfo({
+      tasksById,
+      optimisticTasks: [],
+      sessions: {
+        "session-1": primaryEntry,
+      },
+    });
+
+    expect(taskLiveInfo.lastAssistantMsByTask["task-1"]).toBe(Date.parse("2026-03-09T00:00:05.000Z"));
+    expect(isWorkbenchTaskUnread({ taskId: "task-1", tasksById, taskLiveInfo })).toBe(false);
+  });
+
   it("treats canonical is_working summaries as working, including queued follow-ups", () => {
     const primarySession = makeSession("session-1", "task-1", "active");
 
@@ -921,6 +975,112 @@ describe("useWorkbenchTaskActivity", () => {
       expect(supervisor.setActiveTaskSessionIds).toHaveBeenCalledWith([]);
     });
     expect(workbenchStore.setActiveSessionForActiveTask).not.toHaveBeenCalledWith(null, { source: "system" });
+  });
+
+  it("falls back to the primary session head when task summaries are still sessionless", async () => {
+    const session = makeSession("session-1", "task-1", "active");
+    const taskSummary = {
+      ...makeTaskSummary({
+        taskId: "task-1",
+        primarySessionId: "",
+        sessions: [],
+      }),
+      task: {
+        ...makeTaskSummary({
+          taskId: "task-1",
+          primarySessionId: "",
+          sessions: [],
+        }).task,
+        primary_session_id: null,
+      },
+      primarySessionId: session.id,
+      primarySessionHead: {
+        session,
+        turns: [],
+        events: [],
+        messages: [],
+        last_event_seq: 1,
+        has_more_turns: false,
+        has_more_history: false,
+        history_cursor: null,
+      },
+    };
+    const workspaceSnapshot = makeWorkspaceSnapshot({ "task-1": taskSummary }, ["task-1"]);
+    const supervisor = makeSupervisor();
+    const workspaceSnapshotStore = makeWorkspaceSnapshotStore(workspaceSnapshot);
+    const workbenchStore = makeWorkbenchStore("task-1");
+
+    renderHarness({
+      activeTaskId: "task-1",
+      activeSessionIdFromTab: null,
+      activeTaskSummary: taskSummary,
+      tasksById: { "task-1": taskSummary },
+      workspaceSnapshot,
+      sessionSnap: makeSessionSnapshot({
+        "session-1": makeSessionEntry({ session }),
+      }),
+      optimisticTasks: [] satisfies OptimisticTaskSummary[],
+      optimisticTasksById: {},
+      supervisor,
+      workbenchStore,
+      workspaceSnapshotStore,
+      markTaskRead: vi.fn(async () => {}),
+    });
+
+    await waitFor(() => {
+      expect(supervisor.setActiveTaskSessionIds).toHaveBeenCalledWith(["session-1"]);
+      expect(workbenchStore.setActiveSessionForActiveTask).toHaveBeenCalledWith("session-1", {
+        source: "system",
+      });
+    });
+  });
+
+  it("derives live task info from the primary session fallback when task summaries are still sessionless", () => {
+    const session = makeSession("session-1", "task-1", "active");
+    const sessionSummary = makeSessionSummary(session, {
+      activity: { is_working: true, last_turn_status: "running" },
+    });
+    const taskSummary = {
+      ...makeTaskSummary({
+        taskId: "task-1",
+        primarySessionId: "",
+        sessions: [sessionSummary],
+      }),
+      task: {
+        ...makeTaskSummary({
+          taskId: "task-1",
+          primarySessionId: "",
+          sessions: [sessionSummary],
+        }).task,
+        primary_session_id: null,
+      },
+      primarySessionId: session.id,
+      primarySessionHead: {
+        session,
+        turns: [],
+        events: [],
+        messages: [],
+        last_event_seq: 1,
+        has_more_turns: false,
+        has_more_history: false,
+        history_cursor: null,
+      },
+    };
+
+    const taskLiveInfo = deriveTaskLiveInfo({
+      tasksById: { "task-1": taskSummary },
+      optimisticTasks: [],
+      sessions: {
+        [session.id]: makeSessionEntry({
+          session,
+          turns: [makeTurn(session.id, "running")],
+          messageCreatedAt: "2026-03-09T00:00:06.000Z",
+        }),
+      },
+    });
+
+    expect(taskLiveInfo.workingByTask.has("task-1")).toBe(true);
+    expect(taskLiveInfo.lastAssistantMsByTask["task-1"]).toBe(Date.parse("2026-03-09T00:00:06.000Z"));
   });
 
   it("clears a stale remembered session id when an active task is still sessionless after hydration completes", async () => {

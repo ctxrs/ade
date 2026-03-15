@@ -24,7 +24,7 @@ test("workbench: New Task composer accepts drag-dropped images after switching f
 
   await page.locator("textarea.wb-composer-textarea").first().fill("hello 1");
   await page.getByRole("button", { name: "Send" }).click();
-  await expect(page.locator('.wb-session-slot[aria-hidden="false"] textarea.wb-active-textarea')).toBeVisible({
+  await expect(page.locator(".wb-session-slot textarea.wb-active-textarea")).toBeVisible({
     timeout: 20000,
   });
 

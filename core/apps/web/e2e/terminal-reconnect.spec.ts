@@ -32,7 +32,7 @@ test("terminal reconnects after websocket drop", async ({ page }) => {
   const prompt = `terminal-reconnect-${Date.now()}`;
   await page.locator("textarea.wb-composer-textarea").first().fill(prompt);
   await page.getByRole("button", { name: "Send" }).click();
-  await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea").first()).toBeVisible({
+  await expect(page.locator(".wb-session-slot textarea.wb-active-textarea").first()).toBeVisible({
     timeout: 20000,
   });
 

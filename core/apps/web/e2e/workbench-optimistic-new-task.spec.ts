@@ -99,7 +99,7 @@ test("workbench: optimistic new task message skips queued UI", async ({ page }) 
     w.__optimisticHeaderDuplicated = false;
     w.__optimisticHeaderItemId = null;
 
-    const selector = '.wb-session-slot[aria-hidden="false"] .wb-turn-header-content';
+    const selector = ".wb-session-slot .wb-turn-header-content";
     const monitorWindowMs = 1500;
     const startAt = w.__sendClickAt;
 
@@ -133,7 +133,7 @@ test("workbench: optimistic new task message skips queued UI", async ({ page }) 
   await page.getByRole("button", { name: "Send" }).click();
 
   const header = page
-    .locator('.wb-session-slot[aria-hidden="false"] .wb-turn-header-content')
+    .locator(".wb-session-slot .wb-turn-header-content")
     .filter({ hasText: prompt })
     .first();
   await expect(header).toBeVisible({ timeout: 2000 });
@@ -218,7 +218,7 @@ test("workbench: sending selected new-task text clears lingering selection state
   await composer.press("Enter");
 
   const sentHeader = page
-    .locator('.wb-session-slot[aria-hidden="false"] .wb-turn-header-content')
+    .locator(".wb-session-slot .wb-turn-header-content")
     .filter({ hasText: prompt })
     .first();
   await expect(sentHeader).toBeVisible({ timeout: 10000 });

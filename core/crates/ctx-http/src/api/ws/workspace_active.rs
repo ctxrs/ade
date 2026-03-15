@@ -271,8 +271,10 @@ async fn handle_workspace_active_snapshot_ws(
                                 if let std::collections::hash_map::Entry::Vacant(entry) =
                                     subscriptions.entry(session_id)
                                 {
-                                    let last_sent = state.workspaces.workspace_active_snapshot
-                                        .session_last_event_seq(workspace_id, session_id)
+                                    let last_sent = state
+                                        .workspaces
+                                        .workspace_active_snapshot
+                                        .session_replay_cursor(workspace_id, session_id)
                                         .await;
                                     entry.insert(SessionCursor { last_sent });
                                 }
@@ -432,27 +434,21 @@ async fn handle_workspace_active_snapshot_ws(
                             let Some(cursor) = subscriptions.get_mut(&delta.session_id) else {
                                 continue;
                             };
-                            if let Some(ev) = &delta.event {
-                                if ev.seq >= 0 {
-                                    if ev.seq <= cursor.last_sent {
-                                        continue;
-                                    }
-                                    cursor.last_sent = ev.seq;
-                                }
-                            } else if delta.last_event_seq <= cursor.last_sent {
+                            let incoming = SessionReplayCursor::from_delta(delta);
+                            if incoming <= cursor.last_sent {
                                 continue;
-                            } else {
-                                cursor.last_sent = delta.last_event_seq;
                             }
+                            cursor.last_sent = incoming;
                         }
                         WorkspaceActiveSnapshotEvent::SessionHeadSeed { head, .. } => {
                             let Some(cursor) = subscriptions.get_mut(&head.session.id) else {
                                 continue;
                             };
-                            if head.last_event_seq <= cursor.last_sent {
+                            let incoming = SessionReplayCursor::from_head(head);
+                            if incoming <= cursor.last_sent {
                                 continue;
                             }
-                            cursor.last_sent = head.last_event_seq;
+                            cursor.last_sent = incoming;
                         }
                         _ => {}
                     }
@@ -641,17 +637,28 @@ async fn handle_subscribe_message(
     for sub in &resolved_sessions {
         let session_id = sub.session_id;
         // Reset intentionally leaves the session quiet until the client resubscribes with resume.
-        let ResolvedWorkspaceActiveSessionReplay::Resume { after_seq } = sub.replay else {
+        let ResolvedWorkspaceActiveSessionReplay::Resume {
+            after_seq,
+            after_projection_rev,
+        } = sub.replay
+        else {
             continue;
         };
         if include_initial_snapshot && skip_replay_sessions.contains(&session_id) {
             let last_sent = state
                 .workspaces
                 .workspace_active_snapshot
-                .session_last_event_seq(workspace_id, session_id)
-                .await
-                .max(after_seq);
-            next_map.insert(session_id, SessionCursor { last_sent });
+                .session_replay_cursor(workspace_id, session_id)
+                .await;
+            next_map.insert(
+                session_id,
+                SessionCursor {
+                    last_sent: SessionReplayCursor {
+                        last_event_seq: last_sent.last_event_seq.max(after_seq),
+                        projection_rev: last_sent.projection_rev.max(after_projection_rev),
+                    },
+                },
+            );
             continue;
         }
         let control = ctx.control.clone();
@@ -662,6 +669,7 @@ async fn handle_subscribe_message(
             workspace_id,
             session_id,
             after_seq,
+            after_projection_rev,
             "ctx_http.replay_session_events_active.list",
             Some("ctx_http.replay_session_events_active.send"),
             move |event| {
@@ -725,6 +733,7 @@ async fn handle_subscribe_message(
                     workspace_id = %workspace_id.0,
                     session_id = %session_id.0,
                     after_seq,
+                    after_projection_rev,
                     "workspace stream replay failed",
                 );
                 replay_failed = true;

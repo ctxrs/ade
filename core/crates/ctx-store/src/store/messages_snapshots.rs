@@ -136,6 +136,7 @@ impl Store {
                 ss.last_message_preview AS last_message_content,
                 ss.last_message_at AS last_message_at,
                 ss.last_event_seq AS last_event_seq,
+                COALESCE(ss.projection_rev, COALESCE(ss.last_event_seq, 0)) AS projection_rev,
                 ss.last_turn_status AS last_turn_status,
                 COALESCE(ss.running_turn_count, 0) AS running_turn_count
             FROM sessions s
@@ -169,6 +170,7 @@ impl Store {
             let last_message_at: Option<String> = r.try_get("last_message_at")?;
             let last_message_content: Option<String> = r.try_get("last_message_content")?;
             let last_event_seq: Option<i64> = r.try_get("last_event_seq")?;
+            let projection_rev: i64 = r.try_get("projection_rev")?;
             let last_turn_status: Option<String> = r.try_get("last_turn_status")?;
             let running_turn_count: i64 = r.try_get("running_turn_count")?;
 
@@ -212,6 +214,7 @@ impl Store {
                 last_message_at: last_message_at.as_deref().map(parse_dt).transpose()?,
                 last_message_preview,
                 last_event_seq,
+                projection_rev,
                 activity,
             };
             out.push(row);
@@ -306,10 +309,12 @@ impl Store {
                 lm.content AS last_message_content,
                 lm.created_at AS last_message_at,
                 le.last_event_seq AS last_event_seq,
+                COALESCE(sss.projection_rev, COALESCE(le.last_event_seq, 0)) AS projection_rev,
                 lt.status AS last_turn_status,
                 COALESCE(rt.running_count, 0) AS running_turn_count
             FROM sessions s
             JOIN session_scope ss ON ss.id = s.id
+            LEFT JOIN session_snapshot_summaries sss ON sss.session_id = s.id
             LEFT JOIN last_messages lm ON lm.session_id = s.id AND lm.rn = 1
             LEFT JOIN last_events le ON le.session_id = s.id
             LEFT JOIN last_turns lt ON lt.session_id = s.id AND lt.rn = 1
@@ -335,6 +340,7 @@ impl Store {
             let last_message_at: Option<String> = r.try_get("last_message_at")?;
             let last_message_content: Option<String> = r.try_get("last_message_content")?;
             let last_event_seq: Option<i64> = r.try_get("last_event_seq")?;
+            let projection_rev: i64 = r.try_get("projection_rev")?;
             let last_turn_status: Option<String> = r.try_get("last_turn_status")?;
             let running_turn_count: i64 = r.try_get("running_turn_count")?;
 
@@ -378,6 +384,7 @@ impl Store {
                 last_message_at: last_message_at.as_deref().map(parse_dt).transpose()?,
                 last_message_preview,
                 last_event_seq,
+                projection_rev,
                 activity,
             };
             out.push(row);
@@ -415,6 +422,7 @@ impl Store {
                 ss.last_message_preview AS last_message_content,
                 ss.last_message_at AS last_message_at,
                 ss.last_event_seq AS last_event_seq,
+                COALESCE(ss.projection_rev, COALESCE(ss.last_event_seq, 0)) AS projection_rev,
                 ss.last_turn_status AS last_turn_status,
                 COALESCE(ss.running_turn_count, 0) AS running_turn_count
             FROM sessions s
@@ -439,6 +447,7 @@ impl Store {
         let last_message_at: Option<String> = r.try_get("last_message_at")?;
         let last_message_content: Option<String> = r.try_get("last_message_content")?;
         let last_event_seq: Option<i64> = r.try_get("last_event_seq")?;
+        let projection_rev: i64 = r.try_get("projection_rev")?;
         let last_turn_status: Option<String> = r.try_get("last_turn_status")?;
         let running_turn_count: i64 = r.try_get("running_turn_count")?;
 
@@ -482,6 +491,7 @@ impl Store {
             last_message_at: last_message_at.as_deref().map(parse_dt).transpose()?,
             last_message_preview,
             last_event_seq,
+            projection_rev,
             state_rev: last_event_seq.unwrap_or(0),
             activity,
             unread: None,

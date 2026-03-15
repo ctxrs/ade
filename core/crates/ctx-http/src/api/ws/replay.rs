@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) enum ReplayOutcome {
-    Replay { last_sent: i64 },
+    Replay { last_sent: SessionReplayCursor },
     ResetRequired,
 }
 
@@ -140,6 +140,7 @@ pub(super) async fn replay_session_events<F, Fut>(
     workspace_id: WorkspaceId,
     session_id: SessionId,
     after_seq: i64,
+    after_projection_rev: i64,
     list_failpoint: &'static str,
     send_failpoint: Option<&'static str>,
     mut emit: F,
@@ -160,6 +161,7 @@ where
             workspace_id,
             session_id,
             after_seq,
+            after_projection_rev,
             SESSION_REPLAY_MAX_EVENTS,
         )
         .await;
@@ -268,21 +270,25 @@ async fn resolve_foreground_task_sessions(
 
 fn resolve_session_replay(
     replay: Option<&WorkspaceActiveSnapshotSessionReplay>,
-    existing_last_sent: Option<i64>,
-    current_tail: i64,
+    existing_last_sent: Option<SessionReplayCursor>,
+    current_tail: SessionReplayCursor,
 ) -> ResolvedWorkspaceActiveSessionReplay {
     match replay {
-        Some(WorkspaceActiveSnapshotSessionReplay::Resume { after_seq }) => {
-            ResolvedWorkspaceActiveSessionReplay::Resume {
-                after_seq: *after_seq,
-            }
-        }
+        Some(WorkspaceActiveSnapshotSessionReplay::Resume {
+            after_seq,
+            after_projection_rev,
+        }) => ResolvedWorkspaceActiveSessionReplay::Resume {
+            after_seq: *after_seq,
+            after_projection_rev: *after_projection_rev,
+        },
         Some(WorkspaceActiveSnapshotSessionReplay::Reset) => {
             ResolvedWorkspaceActiveSessionReplay::Reset
         }
         Some(WorkspaceActiveSnapshotSessionReplay::Auto) | None => {
+            let cursor = existing_last_sent.unwrap_or(current_tail);
             ResolvedWorkspaceActiveSessionReplay::Resume {
-                after_seq: existing_last_sent.unwrap_or(current_tail),
+                after_seq: cursor.last_event_seq,
+                after_projection_rev: cursor.projection_rev,
             }
         }
     }
@@ -371,10 +377,10 @@ pub(super) async fn resolve_workspace_active_snapshot_subscriptions(
                     state
                         .workspaces
                         .workspace_active_snapshot
-                        .session_last_event_seq(workspace_id, session_id)
+                        .session_replay_cursor(workspace_id, session_id)
                         .await
                 } else {
-                    0
+                    SessionReplayCursor::default()
                 };
                 let replay = resolve_session_replay(replay, existing_last_sent, current_tail);
                 next.push(ResolvedWorkspaceActiveSessionSubscription { session_id, replay });
@@ -592,7 +598,10 @@ mod tests {
         ));
         assert!(matches!(
             sessions[1].replay,
-            WorkspaceActiveSnapshotSessionReplay::Resume { after_seq: 12 }
+            WorkspaceActiveSnapshotSessionReplay::Resume {
+                after_seq: 12,
+                after_projection_rev: 0,
+            }
         ));
         assert!(matches!(
             sessions[2].replay,
@@ -602,8 +611,14 @@ mod tests {
 
     #[test]
     fn replay_resolution_uses_existing_cursor_for_auto() {
-        let existing_last_sent = Some(7);
-        let current_tail = 41;
+        let existing_last_sent = Some(SessionReplayCursor {
+            last_event_seq: 7,
+            projection_rev: 9,
+        });
+        let current_tail = SessionReplayCursor {
+            last_event_seq: 41,
+            projection_rev: 41,
+        };
 
         assert!(matches!(
             resolve_session_replay(
@@ -611,11 +626,17 @@ mod tests {
                 existing_last_sent,
                 current_tail,
             ),
-            ResolvedWorkspaceActiveSessionReplay::Resume { after_seq: 7 }
+            ResolvedWorkspaceActiveSessionReplay::Resume {
+                after_seq: 7,
+                after_projection_rev: 9,
+            }
         ));
         assert!(matches!(
             resolve_session_replay(None, existing_last_sent, current_tail),
-            ResolvedWorkspaceActiveSessionReplay::Resume { after_seq: 7 }
+            ResolvedWorkspaceActiveSessionReplay::Resume {
+                after_seq: 7,
+                after_projection_rev: 9,
+            }
         ));
     }
 
@@ -624,8 +645,14 @@ mod tests {
         assert!(matches!(
             resolve_session_replay(
                 Some(&WorkspaceActiveSnapshotSessionReplay::Reset),
-                Some(7),
-                41,
+                Some(SessionReplayCursor {
+                    last_event_seq: 7,
+                    projection_rev: 7,
+                }),
+                SessionReplayCursor {
+                    last_event_seq: 41,
+                    projection_rev: 41,
+                },
             ),
             ResolvedWorkspaceActiveSessionReplay::Reset
         ));
@@ -635,23 +662,55 @@ mod tests {
     fn replay_resolution_uses_explicit_resume_cursor() {
         assert!(matches!(
             resolve_session_replay(
-                Some(&WorkspaceActiveSnapshotSessionReplay::Resume { after_seq: 19 }),
-                Some(7),
-                41,
+                Some(&WorkspaceActiveSnapshotSessionReplay::Resume {
+                    after_seq: 19,
+                    after_projection_rev: 23,
+                }),
+                Some(SessionReplayCursor {
+                    last_event_seq: 7,
+                    projection_rev: 7,
+                }),
+                SessionReplayCursor {
+                    last_event_seq: 41,
+                    projection_rev: 41,
+                },
             ),
-            ResolvedWorkspaceActiveSessionReplay::Resume { after_seq: 19 }
+            ResolvedWorkspaceActiveSessionReplay::Resume {
+                after_seq: 19,
+                after_projection_rev: 23,
+            }
         ));
     }
 
     #[test]
     fn replay_resolution_uses_current_tail_for_auto_without_existing_cursor() {
         assert!(matches!(
-            resolve_session_replay(Some(&WorkspaceActiveSnapshotSessionReplay::Auto), None, 41,),
-            ResolvedWorkspaceActiveSessionReplay::Resume { after_seq: 41 }
+            resolve_session_replay(
+                Some(&WorkspaceActiveSnapshotSessionReplay::Auto),
+                None,
+                SessionReplayCursor {
+                    last_event_seq: 41,
+                    projection_rev: 43,
+                },
+            ),
+            ResolvedWorkspaceActiveSessionReplay::Resume {
+                after_seq: 41,
+                after_projection_rev: 43,
+            }
         ));
         assert!(matches!(
-            resolve_session_replay(None, None, 41),
-            ResolvedWorkspaceActiveSessionReplay::Resume { after_seq: 41 }
+            resolve_session_replay(
+                None,
+                None,
+                SessionReplayCursor {
+                    last_event_seq: 41,
+                    projection_rev: 43,
+                },
+            ),
+            ResolvedWorkspaceActiveSessionReplay::Resume {
+                after_seq: 41,
+                after_projection_rev: 43,
+            }
         ));
     }
 

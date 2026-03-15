@@ -61,18 +61,33 @@ ${JSON.stringify(toolCalls)}
 [[/tool_calls]]`;
 };
 
-async function scrollVisibleThreadTo(page: Page, fraction: number) {
+async function scrollVisibleThreadTo(page: Page, fraction: number): Promise<number> {
   const scroller = page.locator(visibleScrollerSelector).first();
   await expect(scroller).toBeVisible({ timeout: 20_000 });
   await expect
     .poll(async () => scroller.evaluate((node) => node.scrollHeight - node.clientHeight), { timeout: 20_000 })
     .toBeGreaterThan(300);
-  await scroller.evaluate((node, targetFraction) => {
+  const targetTop = await scroller.evaluate((node, targetFraction) => {
     const maxTop = Math.max(0, node.scrollHeight - node.clientHeight);
-    node.scrollTop = Math.round(maxTop * targetFraction);
+    const desiredTop = Math.round(maxTop * targetFraction);
+    node.scrollTop = desiredTop;
     node.dispatchEvent(new Event("scroll"));
+    return desiredTop;
   }, fraction);
-  await page.waitForTimeout(250);
+  await expect
+    .poll(
+      async () =>
+        scroller.evaluate((node, desiredTop) => {
+          if (node.scrollTop < desiredTop - 16) {
+            node.scrollTop = desiredTop;
+            node.dispatchEvent(new Event("scroll"));
+          }
+          return node.scrollTop;
+        }, targetTop),
+      { timeout: 20_000 },
+    )
+    .toBeGreaterThan(Math.min(targetTop, 100));
+  return scroller.evaluate((node) => node.scrollTop);
 }
 
 async function readVisibleThreadGeometry(page: Page): Promise<GeometrySnapshot> {
@@ -294,8 +309,7 @@ test("workbench: switching between running tasks never overlaps visible rows", a
   await expect(page.locator(visibleSessionSelector).first()).toHaveAttribute("data-session-id", sessionAId!, {
     timeout: 20_000,
   });
-  await scrollVisibleThreadTo(page, 0.42);
-  const sessionAScrollBefore = await page.locator(visibleScrollerSelector).first().evaluate((node) => node.scrollTop);
+  const sessionAScrollBefore = await scrollVisibleThreadTo(page, 0.42);
   expect(sessionAScrollBefore).toBeGreaterThan(100);
   await assertNoVisibleOverlap(page, testInfo, "alpha-initial", sessionAId!, debugLogs);
 
@@ -303,8 +317,7 @@ test("workbench: switching between running tasks never overlaps visible rows", a
   await expect(page.locator(visibleSessionSelector).first()).toHaveAttribute("data-session-id", sessionBId!, {
     timeout: 20_000,
   });
-  await scrollVisibleThreadTo(page, 0.58);
-  const sessionBScrollBefore = await page.locator(visibleScrollerSelector).first().evaluate((node) => node.scrollTop);
+  const sessionBScrollBefore = await scrollVisibleThreadTo(page, 0.58);
   expect(sessionBScrollBefore).toBeGreaterThan(100);
   await assertNoVisibleOverlap(page, testInfo, "bravo-initial", sessionBId!, debugLogs);
 

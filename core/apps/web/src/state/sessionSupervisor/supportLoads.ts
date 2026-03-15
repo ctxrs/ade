@@ -109,6 +109,7 @@ export function syncSupportLoadsForOpenSession(
 ): void {
   if (entry.refCount <= 0) return;
   const requestedStateRev = deps.resolveRequestedStateRev(entry);
+  if (typeof requestedStateRev !== "number") return;
   const freshnessKey = deriveSupportFreshnessKey(requestedStateRev, entry.supportFreshnessEpoch);
   if (entry.stateAutoLoadKey !== freshnessKey && shouldFetchSessionState(entry)) {
     entry.stateAutoLoadKey = freshnessKey;

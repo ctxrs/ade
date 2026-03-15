@@ -146,6 +146,7 @@ impl Store {
                      WHEN last_message_at IS NULL OR last_message_at < ? THEN ?
                      ELSE last_message_preview
                    END,
+                   projection_rev = projection_rev + 1,
                    updated_at = ?
                WHERE session_id = ?"#,
             )
@@ -178,6 +179,7 @@ impl Store {
             .query(
                 r#"UPDATE session_snapshot_summaries
                SET last_event_seq = ?,
+                   projection_rev = projection_rev + 1,
                    updated_at = ?
                WHERE session_id = ?"#,
             )
@@ -235,6 +237,7 @@ impl Store {
                SET last_turn_status = ?,
                    last_turn_seq = ?,
                    running_turn_count = ?,
+                   projection_rev = projection_rev + 1,
                    updated_at = ?
                WHERE session_id = ?"#,
             )
@@ -251,6 +254,23 @@ impl Store {
             write_bytes,
         );
         Ok(())
+    }
+
+    pub async fn get_session_projection_rev(&self, session_id: SessionId) -> Result<i64> {
+        self.ensure_session_snapshot_summary(session_id).await?;
+        let session_id = session_id.0.to_string();
+        let projection_rev = self
+            .query_scalar::<Option<i64>>(
+                r#"SELECT projection_rev
+                   FROM session_snapshot_summaries
+                   WHERE session_id = ?"#,
+            )
+            .bind(&session_id)
+            .fetch_optional(&self.pool)
+            .await?
+            .flatten()
+            .unwrap_or(0);
+        Ok(projection_rev)
     }
 
     pub async fn list_messages_for_session(&self, session_id: SessionId) -> Result<Vec<Message>> {

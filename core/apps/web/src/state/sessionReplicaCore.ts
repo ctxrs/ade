@@ -43,10 +43,11 @@ type SessionReplicaEntry = {
   session?: Session;
   activity?: SessionActivityState | null;
   activityLastEventSeq?: number;
-  activityStateRev?: number;
+  activityProjectionRev?: number;
   freshness: SessionReplicaFreshnessState;
   summaryCheckpoint?: SessionSummaryCheckpoint | null;
   headWindow?: SessionHeadWindow | null;
+  projectionRev?: number;
   stateRev?: number;
   turns: SessionTurn[];
   messages: Message[];
@@ -254,6 +255,9 @@ const headToData = (head: SessionHead | SessionHeadSnapshot): SessionReplicaData
   if ("activity" in head) data.activity = head.activity ?? null;
   if ("summary_checkpoint" in head) data.summaryCheckpoint = head.summary_checkpoint ?? null;
   if ("head_window" in head) data.headWindow = head.head_window ?? null;
+  if ("projection_rev" in head && typeof head.projection_rev === "number") {
+    data.projectionRev = head.projection_rev;
+  }
   if ("state_rev" in head && typeof head.state_rev === "number") data.stateRev = head.state_rev;
   return data;
 };
@@ -265,6 +269,7 @@ const snapshotToHead = (head: SessionHeadSnapshot): SessionHead => ({
   events: head.events,
   messages: head.messages,
   last_event_seq: head.last_event_seq,
+  projection_rev: head.projection_rev,
   has_more_turns: head.has_more_turns,
   activity: head.activity,
   summary_checkpoint: head.summary_checkpoint ?? null,
@@ -292,6 +297,7 @@ export class SessionReplicaCore {
           silent: cmd.silent,
           skipCache: cmd.skipCache,
           hydrateIfNeeded: cmd.hydrateIfNeeded,
+          forceHydrate: cmd.forceHydrate,
         }).catch(() => {});
         return;
       case "close_session":
@@ -346,10 +352,11 @@ export class SessionReplicaCore {
       session: undefined,
       activity: null,
       activityLastEventSeq: undefined,
-      activityStateRev: undefined,
+      activityProjectionRev: undefined,
       freshness: "bootstrap",
       summaryCheckpoint: undefined,
       headWindow: undefined,
+      projectionRev: undefined,
       stateRev: undefined,
       turns: [],
       messages: [],
@@ -407,16 +414,21 @@ export class SessionReplicaCore {
     let events = this.normalizeEvents(entry, data.events ?? []);
     const incomingSeq = typeof data.lastEventSeq === "number" ? data.lastEventSeq : -1;
     const existingSeq = typeof entry.lastEventSeq === "number" ? entry.lastEventSeq : -1;
-    const incomingStateRev = typeof data.stateRev === "number" ? data.stateRev : null;
-    const existingStateRev = typeof entry.stateRev === "number" ? entry.stateRev : null;
+    const incomingProjectionRev = typeof data.projectionRev === "number" ? data.projectionRev : null;
+    const existingProjectionRev = typeof entry.projectionRev === "number" ? entry.projectionRev : null;
     const incomingIsOlder = isOlderVersion(
       incomingSeq >= 0 ? incomingSeq : null,
-      incomingStateRev,
+      incomingProjectionRev,
       existingSeq >= 0 ? existingSeq : null,
-      existingStateRev,
+      existingProjectionRev,
     );
+    const incomingIsNarrower =
+      !opts?.authoritative &&
+      (turns.length < entry.turns.length ||
+        messages.length < entry.messages.length ||
+        events.length < entry.events.length);
     let toolSummaries = data.toolSummaries ?? entry.toolSummaries;
-    if (incomingIsOlder || (!opts?.authoritative && existingSeq > incomingSeq)) {
+    if (incomingIsOlder || (!opts?.authoritative && existingSeq > incomingSeq) || incomingIsNarrower) {
       turns = mergeTurns(turns, entry.turns);
       messages = mergeMessages(messages, entry.messages);
       events = mergeEvents(events, entry.events);
@@ -427,19 +439,18 @@ export class SessionReplicaCore {
     if (data.activity !== undefined) {
       const existingActivitySeq =
         typeof entry.activityLastEventSeq === "number" ? entry.activityLastEventSeq : null;
-      const existingActivityStateRev =
-        typeof entry.activityStateRev === "number" ? entry.activityStateRev : null;
+      const existingActivityProjectionRev =
+        typeof entry.activityProjectionRev === "number" ? entry.activityProjectionRev : null;
       const incomingActivityIsOlder = isOlderVersion(
         incomingSeq >= 0 ? incomingSeq : null,
-        incomingStateRev,
+        incomingProjectionRev,
         existingActivitySeq,
-        existingActivityStateRev,
+        existingActivityProjectionRev,
       );
       if (!incomingActivityIsOlder) {
         entry.activity = data.activity ?? null;
         entry.activityLastEventSeq = incomingSeq >= 0 ? incomingSeq : entry.activityLastEventSeq;
-        entry.activityStateRev =
-          incomingStateRev ?? entry.activityStateRev;
+        entry.activityProjectionRev = incomingProjectionRev ?? entry.activityProjectionRev;
       }
     }
     if (opts?.freshness) {
@@ -458,6 +469,12 @@ export class SessionReplicaCore {
     if (data.stateRev !== undefined) {
       entry.stateRev =
         typeof entry.stateRev === "number" ? Math.max(entry.stateRev, data.stateRev) : data.stateRev;
+    }
+    if (data.projectionRev !== undefined) {
+      entry.projectionRev =
+        typeof entry.projectionRev === "number"
+          ? Math.max(entry.projectionRev, data.projectionRev)
+          : data.projectionRev;
     }
     entry.turns = turns;
     entry.messages = messages;
@@ -479,6 +496,7 @@ export class SessionReplicaCore {
       events: entry.events,
       toolSummaries: entry.toolSummaries,
       lastEventSeq: entry.lastEventSeq,
+      projectionRev: entry.projectionRev,
       hasMoreTurns: entry.hasMoreTurns,
       summaryCheckpoint: entry.summaryCheckpoint ?? null,
       headWindow: entry.headWindow ?? null,
@@ -497,6 +515,7 @@ export class SessionReplicaCore {
       minEventSeq?: number;
       skipCache?: boolean;
       hydrateIfNeeded?: boolean;
+      forceHydrate?: boolean;
       emitOp?: "append" | "replace";
     },
   ) {
@@ -504,7 +523,9 @@ export class SessionReplicaCore {
     if (!id) return;
     const entry = this.ensureEntry(id);
     if (entry.loading && !opts?.force) return;
-    const shouldHydrate = Boolean(opts?.hydrateIfNeeded) && entry.freshness !== "authoritative";
+    const shouldHydrate =
+      Boolean(opts?.forceHydrate) ||
+      (Boolean(opts?.hydrateIfNeeded) && entry.freshness !== "authoritative");
     const minSeq = typeof opts?.minEventSeq === "number" ? opts.minEventSeq : undefined;
     if (!opts?.force && entry.hydrated) {
       const entrySeq = typeof entry.lastEventSeq === "number" ? entry.lastEventSeq : -1;
@@ -660,7 +681,7 @@ export class SessionReplicaCore {
         normalizeId(delta?.session_id ?? ""),
         delta?.activity,
         typeof delta?.last_event_seq === "number" ? delta.last_event_seq : null,
-        typeof delta?.state_rev === "number" ? delta.state_rev : null,
+        typeof delta?.projection_rev === "number" ? delta.projection_rev : null,
       );
       return;
     }
@@ -670,7 +691,7 @@ export class SessionReplicaCore {
         normalizeId(summary?.session?.id ?? ""),
         summary?.activity,
         typeof summary?.last_event_seq === "number" ? summary.last_event_seq : null,
-        typeof summary?.state_rev === "number" ? summary.state_rev : null,
+        typeof summary?.projection_rev === "number" ? summary.projection_rev : null,
       );
       return;
     }
@@ -680,19 +701,19 @@ export class SessionReplicaCore {
     sessionId: string,
     activity: SessionActivityState | null | undefined,
     lastEventSeq: number | null,
-    stateRev: number | null,
+    projectionRev: number | null,
   ) {
     if (!sessionId) return;
     const entry = this.ensureEntry(sessionId);
     const existingActivitySeq =
       typeof entry.activityLastEventSeq === "number" ? entry.activityLastEventSeq : null;
-    const existingActivityStateRev =
-      typeof entry.activityStateRev === "number" ? entry.activityStateRev : null;
+    const existingActivityProjectionRev =
+      typeof entry.activityProjectionRev === "number" ? entry.activityProjectionRev : null;
     const incomingIsOlder = isOlderVersion(
       lastEventSeq,
-      stateRev,
+      projectionRev,
       existingActivitySeq,
-      existingActivityStateRev,
+      existingActivityProjectionRev,
     );
     if (incomingIsOlder) return;
     const normalizedActivity = activity ?? null;
@@ -702,9 +723,19 @@ export class SessionReplicaCore {
         (normalizedActivity?.last_turn_status ?? null);
     entry.activity = normalizedActivity;
     entry.activityLastEventSeq = lastEventSeq ?? entry.activityLastEventSeq;
-    entry.activityStateRev = stateRev ?? entry.activityStateRev;
+    entry.activityProjectionRev = projectionRev ?? entry.activityProjectionRev;
+    if (projectionRev !== null) {
+      entry.projectionRev =
+        typeof entry.projectionRev === "number"
+          ? Math.max(entry.projectionRev, projectionRev)
+          : projectionRev;
+    }
     if (sameActivity) return;
-    this.emitPatch("append", sessionId, { activity: normalizedActivity, freshness: entry.freshness });
+    this.emitPatch("append", sessionId, {
+      activity: normalizedActivity,
+      freshness: entry.freshness,
+      projectionRev: entry.projectionRev,
+    });
     void this.persistHead(entry);
   }
 
@@ -742,12 +773,21 @@ export class SessionReplicaCore {
     }
     const incomingSeq = typeof delta.last_event_seq === "number" ? delta.last_event_seq : -1;
     const existingSeq = typeof entry.lastEventSeq === "number" ? entry.lastEventSeq : -1;
+    if (typeof delta.projection_rev === "number") {
+      entry.projectionRev =
+        typeof entry.projectionRev === "number"
+          ? Math.max(entry.projectionRev, delta.projection_rev)
+          : delta.projection_rev;
+    }
     entry.lastEventSeq = Math.max(existingSeq, incomingSeq);
     if (typeof delta.state_rev === "number") {
       entry.stateRev =
         typeof entry.stateRev === "number" ? Math.max(entry.stateRev, delta.state_rev) : delta.state_rev;
     }
-    const data: SessionReplicaData = { lastEventSeq: entry.lastEventSeq };
+    const data: SessionReplicaData = {
+      lastEventSeq: entry.lastEventSeq,
+      projectionRev: entry.projectionRev,
+    };
     if (entry.stateRev !== undefined) data.stateRev = entry.stateRev;
     data.freshness = entry.freshness;
     if (turns.length) data.turns = turns;
@@ -771,6 +811,7 @@ export class SessionReplicaCore {
       events: entry.events,
       messages: entry.messages,
       last_event_seq: entry.lastEventSeq,
+      projection_rev: entry.projectionRev,
       activity: entry.activity ?? undefined,
       has_more_turns: entry.hasMoreTurns,
       summary_checkpoint: entry.summaryCheckpoint ?? null,

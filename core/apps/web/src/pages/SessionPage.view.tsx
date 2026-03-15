@@ -437,6 +437,7 @@ export function SessionView({
     () => hasSessionActiveTurn(entry?.activity),
     [entry?.activity],
   );
+  const sessionIsAuthoritative = entry?.freshness === "authoritative";
   const queuedMessagesEnabled = useFeatureGate("queued_messages_enabled", false);
   const sessionError = useMemo(
     () => deriveSessionError(turns, events),
@@ -597,8 +598,8 @@ export function SessionView({
   const sendNow = async () => {
     if (!id) return;
     if (sendBusyRef.current) return;
-    if (hasActiveTurn && !queuedMessagesEnabled) {
-      // Temporarily disabled: queued messages are gated off while a turn is running.
+    if (hasActiveTurn && !queuedMessagesEnabled && sessionIsAuthoritative) {
+      setSendError("A turn is already running. Stop it or wait for it to finish.");
       return;
     }
     setSendBusySafe(true);
@@ -615,7 +616,8 @@ export function SessionView({
       return;
     }
     const attachmentsToSend = draftAttachments.slice();
-    const shouldQueue = hasActiveTurn && queuedMessagesEnabled;
+    const shouldQueue = hasActiveTurn && queuedMessagesEnabled && sessionIsAuthoritative;
+    const requestedDelivery = shouldQueue ? "queued" : undefined;
     const messageId = randomUuid();
     const turnId = randomUuid();
     const optimisticMessage: Message = buildOptimisticUserMessage({
@@ -637,7 +639,7 @@ export function SessionView({
     setInput("");
     setDraftAttachments([]);
     try {
-      const posted = await postMessage(id, text, shouldQueue ? "queued" : undefined, attachmentsToSend, {
+      const posted = await postMessage(id, text, requestedDelivery, attachmentsToSend, {
         id: messageId,
         turn_id: turnId,
       });

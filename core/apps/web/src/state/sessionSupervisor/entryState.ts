@@ -67,6 +67,7 @@ export type SessionCacheEntry = {
   gitStatusSummary?: GitStatusSummary | null;
   summaryCheckpoint?: SessionSummaryCheckpoint | null;
   headWindow?: SessionHeadWindow | null;
+  projectionRev?: number;
   diagnosticsByPath?: Record<string, unknown[]>;
   lastEventSeq?: number;
   loading: boolean;
@@ -177,9 +178,10 @@ export function createInternalEntry(
     queue: [],
     diff: undefined,
     gitStatusSummary: null,
-    summaryCheckpoint: null,
-    headWindow: null,
-    diagnosticsByPath: {},
+  summaryCheckpoint: null,
+  headWindow: null,
+  projectionRev: undefined,
+  diagnosticsByPath: {},
     lastEventSeq: undefined,
     loading: false,
     error: undefined,

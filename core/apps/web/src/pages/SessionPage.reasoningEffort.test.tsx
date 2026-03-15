@@ -1,10 +1,12 @@
 import React from "react";
-import { render, waitFor } from "@testing-library/react";
+import { act, render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionView } from "./SessionPage";
+import { postMessage } from "../api/client";
 
 const paneSpy = vi.hoisted(() => vi.fn());
 const sessionEntries = vi.hoisted(() => ({ map: {} as Record<string, unknown> }));
+const featureGateMock = vi.hoisted(() => vi.fn(() => false));
 
 vi.mock("../api/client", () => ({
   deleteMessage: vi.fn(async () => ({})),
@@ -111,7 +113,7 @@ vi.mock("../utils/analytics", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../utils/analytics")>();
   return {
     ...actual,
-    useFeatureGate: () => false,
+    useFeatureGate: featureGateMock,
   };
 });
 
@@ -140,9 +142,13 @@ vi.mock("../workbench/store", () => ({
 }));
 
 const sessionId = "session-1";
+const postMessageMock = vi.mocked(postMessage);
 
 beforeEach(() => {
   paneSpy.mockClear();
+  postMessageMock.mockClear();
+  featureGateMock.mockReset();
+  featureGateMock.mockReturnValue(false);
   sessionEntries.map = {
     [sessionId]: {
       sessionId,
@@ -203,5 +209,97 @@ describe("SessionPage reasoning effort", () => {
       "gpt-5.4/medium",
       "gpt-5.4/xhigh",
     ]);
+  });
+
+  it("lets send reach the daemon when local active-turn state is only bootstrap", async () => {
+    const existingEntry = (sessionEntries.map[sessionId] ?? {}) as Record<string, unknown>;
+    sessionEntries.map[sessionId] = {
+      ...existingEntry,
+      freshness: "bootstrap",
+      activity: { is_working: true, last_turn_status: "running" },
+    };
+
+    render(<SessionView sessionId={sessionId} />);
+
+    await waitFor(() => {
+      expect(paneSpy).toHaveBeenCalled();
+    });
+
+    await act(async () => {
+      const props = paneSpy.mock.calls.at(-1)?.[0] as { setInput: (value: string) => void };
+      props.setInput("hello from bootstrap");
+    });
+
+    await act(async () => {
+      const props = paneSpy.mock.calls.at(-1)?.[0] as { sendNow: () => Promise<void> };
+      await props.sendNow();
+    });
+
+    expect(postMessageMock).toHaveBeenCalledTimes(1);
+    expect(postMessageMock.mock.calls[0]?.[0]).toBe(sessionId);
+    expect(postMessageMock.mock.calls[0]?.[1]).toBe("hello from bootstrap");
+    expect(postMessageMock.mock.calls[0]?.[2]).toBeUndefined();
+  });
+
+  it("does not force queued delivery when active-turn state is only bootstrap", async () => {
+    featureGateMock.mockReturnValue(true);
+
+    const existingEntry = (sessionEntries.map[sessionId] ?? {}) as Record<string, unknown>;
+    sessionEntries.map[sessionId] = {
+      ...existingEntry,
+      freshness: "bootstrap",
+      activity: { is_working: true, last_turn_status: "running" },
+    };
+
+    render(<SessionView sessionId={sessionId} />);
+
+    await waitFor(() => {
+      expect(paneSpy).toHaveBeenCalled();
+    });
+
+    await act(async () => {
+      const props = paneSpy.mock.calls.at(-1)?.[0] as { setInput: (value: string) => void };
+      props.setInput("hello from bootstrap queue gate");
+    });
+
+    await act(async () => {
+      const props = paneSpy.mock.calls.at(-1)?.[0] as { sendNow: () => Promise<void> };
+      await props.sendNow();
+    });
+
+    expect(postMessageMock).toHaveBeenCalledTimes(1);
+    expect(postMessageMock.mock.calls[0]?.[1]).toBe("hello from bootstrap queue gate");
+    expect(postMessageMock.mock.calls[0]?.[2]).toBeUndefined();
+  });
+
+  it("queues delivery locally when the running turn is authoritative", async () => {
+    featureGateMock.mockReturnValue(true);
+
+    const existingEntry = (sessionEntries.map[sessionId] ?? {}) as Record<string, unknown>;
+    sessionEntries.map[sessionId] = {
+      ...existingEntry,
+      freshness: "authoritative",
+      activity: { is_working: true, last_turn_status: "running" },
+    };
+
+    render(<SessionView sessionId={sessionId} />);
+
+    await waitFor(() => {
+      expect(paneSpy).toHaveBeenCalled();
+    });
+
+    await act(async () => {
+      const props = paneSpy.mock.calls.at(-1)?.[0] as { setInput: (value: string) => void };
+      props.setInput("hello from authoritative queue gate");
+    });
+
+    await act(async () => {
+      const props = paneSpy.mock.calls.at(-1)?.[0] as { sendNow: () => Promise<void> };
+      await props.sendNow();
+    });
+
+    expect(postMessageMock).toHaveBeenCalledTimes(1);
+    expect(postMessageMock.mock.calls[0]?.[1]).toBe("hello from authoritative queue gate");
+    expect(postMessageMock.mock.calls[0]?.[2]).toBe("queued");
   });
 });

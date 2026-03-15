@@ -57,6 +57,7 @@ pub(super) fn new_head_snapshot(session: &Session) -> SessionHeadSnapshot {
         events: Vec::new(),
         messages: Vec::new(),
         last_event_seq: 0,
+        projection_rev: 0,
         state_rev: 0,
         activity: SessionActivityState::default(),
         has_more_turns: false,

@@ -83,7 +83,7 @@ test("workbench: spinner clears after replayed completion", async ({ page }) => 
   await expect(activeSpinners.first()).toBeVisible({ timeout: 20000 });
   blockHead = true;
 
-  const sessionSlot = page.locator('.wb-session-slot[aria-hidden="false"]');
+  const sessionSlot = page.locator(".wb-session-slot");
   await expect(sessionSlot).toBeVisible({ timeout: 20000 });
 
   const toolSummary = sessionSlot.getByRole("button", { name: "tool" }).first();

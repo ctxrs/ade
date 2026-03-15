@@ -144,6 +144,7 @@ fn try_coalesce_partial_delta(entry: &mut [SessionHeadDelta], next: &SessionHead
     }
     prev.event = Some(merged_event);
     prev.last_event_seq = prev.last_event_seq.max(next.last_event_seq);
+    prev.projection_rev = prev.projection_rev.max(next.projection_rev);
     prev.state_rev = prev.state_rev.max(next.state_rev);
     true
 }

@@ -36,12 +36,12 @@ test("workbench: optimistic active-session message does not flash", async ({ pag
   await page.locator("textarea.wb-composer-textarea").first().fill(`first-${Date.now()}`);
   await page.getByRole("button", { name: "Send" }).click();
 
-  const sessionComposer = page.locator('.wb-session-slot[aria-hidden="false"] textarea.wb-active-textarea');
+  const sessionComposer = page.locator(".wb-session-slot textarea.wb-active-textarea");
   await expect(sessionComposer).toBeVisible({ timeout: 20000 });
 
   // The session composer allows clicks while a turn is active, but the handler intentionally no-ops
   // unless queued-messages is enabled. Wait for the initial turn to finish so this test is stable.
-  const initialStatus = page.locator('.wb-session-slot[aria-hidden="false"] .wb-turn-status-label').first();
+  const initialStatus = page.locator(".wb-session-slot .wb-turn-status-label").first();
   await expect(initialStatus).toBeVisible({ timeout: 20000 });
   await expect(initialStatus).toHaveText(/completed|failed|interrupted/i, { timeout: 20000 });
 
@@ -72,7 +72,7 @@ test("workbench: optimistic active-session message does not flash", async ({ pag
     w.__optimisticHeaderDuplicated = false;
     w.__optimisticHeaderItemId = null;
 
-    const selector = '.wb-session-slot[aria-hidden="false"] .wb-turn-header-content';
+    const selector = ".wb-session-slot .wb-turn-header-content";
     const monitorWindowMs = 1500;
     const startAt = w.__sendClickAt;
 
@@ -104,10 +104,10 @@ test("workbench: optimistic active-session message does not flash", async ({ pag
     requestAnimationFrame(tick);
   }, prompt);
 
-  await page.locator('.wb-session-slot[aria-hidden="false"] button[aria-label="Send"]').click();
+  await page.locator('.wb-session-slot button[aria-label="Send"]').click();
 
   const header = page
-    .locator('.wb-session-slot[aria-hidden="false"] .wb-turn-header-content')
+    .locator(".wb-session-slot .wb-turn-header-content")
     .filter({ hasText: prompt });
 
   await expect(header).toBeVisible({ timeout: 2000 });

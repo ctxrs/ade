@@ -92,7 +92,7 @@ test("workbench: queued sends do not flash optimistic turn and queue panel clear
   await queueMessage(page, queuedText);
 
   // Queued sends should not appear as an optimistic/pending turn before the server acknowledges them.
-  const threadScroller = page.locator('.wb-session-slot[aria-hidden="false"] .wb-thread-scroller');
+  const threadScroller = page.locator(".wb-session-slot .wb-thread-scroller");
   await expect(threadScroller).not.toContainText(queuedText, { timeout: 1200 });
 
   const queuePanel = page.locator(".wb-session .queue-panel");
@@ -215,7 +215,7 @@ test("workbench: send now renders optimistic header before message POST resolves
     w.__sendNowHeaderDuplicated = false;
     w.__sendNowHeaderItemId = null;
 
-    const selector = '.wb-session-slot[aria-hidden="false"] .wb-turn-header-content';
+    const selector = ".wb-session-slot .wb-turn-header-content";
     const monitorWindowMs = 1500;
     const startAt = w.__sendNowClickAt;
 
@@ -251,7 +251,7 @@ test("workbench: send now renders optimistic header before message POST resolves
   await expect(queuePanel).toHaveCount(0, { timeout: 800 });
 
   const header = page
-    .locator('.wb-session-slot[aria-hidden="false"] .wb-turn-header-content')
+    .locator(".wb-session-slot .wb-turn-header-content")
     .filter({ hasText: queuedText })
     .first();
   await expect(header).toBeVisible({ timeout: 2000 });

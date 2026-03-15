@@ -15,7 +15,7 @@ impl Store {
         let query_start = timing_enabled.then(Instant::now);
         let row = self
             .query(
-                r#"SELECT last_event_seq, turns_json, tool_summaries_json, events_json,
+                r#"SELECT head_rev, last_event_seq, turns_json, tool_summaries_json, events_json,
                       messages_json, has_more_turns, head_window_json
                FROM session_head_materializations
                WHERE session_id = ? AND head_kind = ?"#,
@@ -92,6 +92,7 @@ impl Store {
         }
 
         Ok(Some(SessionHeadMaterialization {
+            head_rev: row.try_get("head_rev")?,
             last_event_seq: row.try_get("last_event_seq")?,
             turns,
             tool_summaries,
@@ -185,7 +186,7 @@ impl Store {
                )
                VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(session_id, head_kind) DO UPDATE SET
-                   head_rev = session_head_materializations.head_rev + 1,
+                   head_rev = excluded.head_rev,
                    last_event_seq = excluded.last_event_seq,
                    turns_json = excluded.turns_json,
                    tool_summaries_json = excluded.tool_summaries_json,
@@ -198,6 +199,7 @@ impl Store {
             )
             .bind(&session_id)
             .bind(head_kind)
+            .bind(head.head_rev)
             .bind(head.last_event_seq)
             .bind(turns_json)
             .bind(tool_summaries_json)
@@ -245,8 +247,9 @@ impl Store {
             SessionHeadKind::Archived => SESSION_HEAD_ARCHIVED_TURN_LIMIT,
         };
         let limits = session_head_limits(kind, turn_limit);
+        let projection_rev = self.get_session_projection_rev(session.id).await?;
         let head = self
-            .build_session_head(session, limits, true, last_event_seq)
+            .build_session_head(session, limits, true, last_event_seq, projection_rev)
             .await?;
         let materialized = SessionHeadMaterialization::from_head(&head);
         self.upsert_session_head_materialization(session.id, kind, &materialized)
@@ -293,6 +296,7 @@ impl Store {
         limits: SessionHeadLimits,
         include_events: bool,
         last_event_seq: i64,
+        projection_rev: i64,
     ) -> Result<SessionHead> {
         let limit = limits.turn_limit as i64;
         let rows = self.query(
@@ -389,6 +393,7 @@ impl Store {
             events,
             messages,
             last_event_seq,
+            projection_rev,
             activity,
             has_more_turns,
             summary_checkpoint,
@@ -435,9 +440,10 @@ impl Store {
             return Ok(None);
         }
         let last_event_seq = self.session_last_event_seq(session_id).await?;
+        let projection_rev = self.get_session_projection_rev(session_id).await?;
         let limits = session_head_limits(SessionHeadKind::Active, ACTIVE_SNAPSHOT_HEAD_LIMIT);
         let mut head = self
-            .build_session_head(&session, limits, false, last_event_seq)
+            .build_session_head(&session, limits, false, last_event_seq, projection_rev)
             .await?;
         strip_snapshot_partials(&mut head.turns, &mut head.events);
         Ok(Some(session_head_to_snapshot(head)))
@@ -459,14 +465,18 @@ impl Store {
             None => self.session_head_kind_for_task(session.task_id).await?,
         };
         let last_event_seq = self.session_last_event_seq(session_id).await?;
+        let projection_rev = self.get_session_projection_rev(session_id).await?;
 
         if let Some(materialized) = self
             .load_session_head_materialization(session_id, head_kind)
             .await?
         {
-            if materialized.last_event_seq == last_event_seq {
+            if materialized.last_event_seq == last_event_seq
+                && materialized.head_rev == projection_rev
+            {
                 let summary_checkpoint = self.get_session_summary_checkpoint(session_id).await?;
-                let head = materialized.into_session_head(session, summary_checkpoint);
+                let head =
+                    materialized.into_session_head(session, projection_rev, summary_checkpoint);
                 let limits = session_head_limits(head_kind, limit);
                 return Ok(Some(apply_session_head_limits(
                     head,
@@ -482,7 +492,13 @@ impl Store {
         };
         let materialize_limits = session_head_limits(head_kind, turn_limit);
         let head = self
-            .build_session_head(&session, materialize_limits, true, last_event_seq)
+            .build_session_head(
+                &session,
+                materialize_limits,
+                true,
+                last_event_seq,
+                projection_rev,
+            )
             .await?;
         if !disable_head_materialization_writes_for(head_kind) {
             let store = self.clone();
@@ -526,11 +542,14 @@ impl Store {
             return Ok(false);
         }
         let last_event_seq = self.session_last_event_seq(session_id).await?;
+        let projection_rev = self.get_session_projection_rev(session_id).await?;
         if let Some(materialized) = self
             .load_session_head_materialization(session_id, SessionHeadKind::Active)
             .await?
         {
-            if materialized.last_event_seq == last_event_seq {
+            if materialized.last_event_seq == last_event_seq
+                && materialized.head_rev == projection_rev
+            {
                 return Ok(false);
             }
         }

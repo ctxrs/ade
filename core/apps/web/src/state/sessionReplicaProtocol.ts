@@ -41,6 +41,7 @@ export type SessionReplicaCommand =
       silent?: boolean;
       skipCache?: boolean;
       hydrateIfNeeded?: boolean;
+      forceHydrate?: boolean;
     }
   | { type: "close_session"; sessionId: string }
   | { type: "refresh_session"; sessionId: string }
@@ -67,6 +68,7 @@ export type SessionReplicaData = {
   headWindow?: SessionHeadWindow | null;
   summaryCheckpoint?: SessionSummaryCheckpoint | null;
   lastEventSeq?: number;
+  projectionRev?: number;
   hasMoreTurns?: boolean;
   stateRev?: number;
   artifacts?: Artifact[];

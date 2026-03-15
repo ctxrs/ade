@@ -27,10 +27,14 @@ impl WorkspaceActiveSnapshotEntry {
     }
 
     pub(super) fn session_last_event_seq(&self, session_id: SessionId) -> i64 {
+        self.session_replay_cursor(session_id).last_event_seq
+    }
+
+    pub(super) fn session_replay_cursor(&self, session_id: SessionId) -> SessionReplayCursor {
         self.session_replay
             .get(&session_id)
-            .map(|state| state.last_event_seq)
-            .unwrap_or(0)
+            .map(|state| state.last_cursor)
+            .unwrap_or_default()
     }
 
     pub(super) fn record_session_delta(&mut self, delta: &SessionHeadDelta) {
@@ -38,35 +42,41 @@ impl WorkspaceActiveSnapshotEntry {
         state.record(delta);
     }
 
-    pub(super) fn seed_session_replay(&mut self, session_id: SessionId, last_event_seq: i64) {
+    pub(super) fn seed_session_replay(
+        &mut self,
+        session_id: SessionId,
+        cursor: SessionReplayCursor,
+    ) {
         let state = self.session_replay.entry(session_id).or_default();
-        if last_event_seq > state.last_event_seq {
-            state.last_event_seq = last_event_seq;
-        }
+        state.seed(cursor);
     }
 
     pub(super) fn replay_session(
         &self,
         session_id: SessionId,
         after_seq: i64,
+        after_projection_rev: i64,
         limit: usize,
     ) -> SessionReplayResult {
-        let after_seq = after_seq.max(0);
+        let after_cursor = SessionReplayCursor {
+            last_event_seq: after_seq.max(0),
+            projection_rev: after_projection_rev.max(0),
+        };
         match self.session_replay.get(&session_id) {
-            Some(state) => state.replay(after_seq, limit),
+            Some(state) => state.replay(after_cursor, limit),
             None => {
-                if after_seq <= 0 {
+                if after_cursor <= SessionReplayCursor::default() {
                     SessionReplayResult::Replay {
                         deltas: Vec::new(),
-                        last_sent: after_seq,
+                        last_sent: after_cursor,
                     }
                 } else {
                     let last_known_seq = self
                         .active_heads
                         .get(&session_id)
                         .map(|head| head.last_event_seq)
-                        .unwrap_or(after_seq)
-                        .max(after_seq);
+                        .unwrap_or(after_cursor.last_event_seq)
+                        .max(after_cursor.last_event_seq);
                     SessionReplayResult::Gap {
                         last_known_seq,
                         reason: Some("missing_replay_state".to_string()),

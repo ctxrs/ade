@@ -1,10 +1,13 @@
 import type {
   Session,
+  SessionHeadSnapshot,
   SessionSnapshotSummary,
   SessionSummary,
   Task,
 } from "@ctx/types";
 import { idToString } from "../../api/client";
+import { sanitizeSessionHeadSnapshot } from "../sessionHeadState";
+import { asRecord, readString } from "./projection";
 
 export function taskSortAt(task: Task, fallback?: string | null): string {
   if (task.archived_at) return task.archived_at;
@@ -44,6 +47,7 @@ export function normalizeSessionSummary(summary: SessionSnapshotSummary): Sessio
     last_message_at: summary.last_message_at ?? null,
     last_message_preview: summary.last_message_preview ?? null,
     last_event_seq: summary.last_event_seq ?? null,
+    projection_rev: summary.projection_rev ?? undefined,
     state_rev: summary.state_rev ?? undefined,
     activity: summary.activity ?? { is_working: false, last_turn_status: null },
     unread: summary.unread,
@@ -56,8 +60,50 @@ export function sessionToSummary(session: Session): SessionSnapshotSummary {
     last_message_at: null,
     last_message_preview: null,
     last_event_seq: null,
+    projection_rev: undefined,
     state_rev: undefined,
     activity: { is_working: false, last_turn_status: null },
     unread: undefined,
   });
+}
+
+export function shouldReplaceSessionHead(
+  prev: SessionHeadSnapshot | null | undefined,
+  next: SessionHeadSnapshot,
+): boolean {
+  if (!prev) return true;
+  const prevProjectionRev = typeof prev.projection_rev === "number" ? prev.projection_rev : -1;
+  const nextProjectionRev = typeof next.projection_rev === "number" ? next.projection_rev : -1;
+  if (prevProjectionRev >= 0 && nextProjectionRev >= 0 && nextProjectionRev < prevProjectionRev) {
+    return false;
+  }
+  if (prevProjectionRev >= 0 && nextProjectionRev >= 0 && nextProjectionRev > prevProjectionRev) {
+    return true;
+  }
+  const prevSeq = typeof prev.last_event_seq === "number" ? prev.last_event_seq : -1;
+  const nextSeq = typeof next.last_event_seq === "number" ? next.last_event_seq : -1;
+  if (prevSeq >= 0 && nextSeq >= 0 && nextSeq < prevSeq) return false;
+  return true;
+}
+
+export function readPrimarySessionHead(summary: unknown): SessionHeadSnapshot | null {
+  if (!summary || typeof summary !== "object") return null;
+  const rec = summary as Record<string, unknown>;
+  const head = rec.primary_session_head ?? rec.primarySessionHead ?? null;
+  if (!head || typeof head !== "object") return null;
+  return sanitizeSessionHeadSnapshot(head as SessionHeadSnapshot);
+}
+
+export function readPrimarySessionId(summary: unknown): string | null {
+  const rec = asRecord(summary);
+  if (Object.keys(rec).length === 0) return null;
+  const fromPrimary = idToString(readString(asRecord(asRecord(rec.primary_session).session).id) ?? "");
+  if (fromPrimary) return fromPrimary;
+  const fromHead = idToString(
+    readString(asRecord(asRecord(rec.primary_session_head).session).id) ??
+      readString(asRecord(asRecord(rec.primarySessionHead).session).id) ??
+      "",
+  );
+  if (fromHead) return fromHead;
+  return null;
 }

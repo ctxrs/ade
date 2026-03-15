@@ -25,13 +25,13 @@ test("workbench: second message gets a response", async ({ page }) => {
 
   await page.locator("textarea.wb-composer-textarea").first().fill("hello 1");
   await page.getByRole("button", { name: "Send" }).click();
-  const assistantEntries = page.locator('.wb-session-slot[aria-hidden="false"] .wb-assistant-entry');
+  const assistantEntries = page.locator(".wb-session-slot .wb-assistant-entry");
   await expect(assistantEntries.filter({ hasText: "done: hello 1" })).toBeVisible({ timeout: 60000 });
 
-  const sessionComposer = page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea");
+  const sessionComposer = page.locator(".wb-session-slot textarea.wb-active-textarea");
   await expect(sessionComposer).toBeVisible({ timeout: 20000 });
   await sessionComposer.fill("hello 2");
-  await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] button[aria-label=\"Send\"]")).toBeEnabled({ timeout: 20000 });
-  await page.locator(".wb-session-slot[aria-hidden=\"false\"] button[aria-label=\"Send\"]").click();
+  await expect(page.locator(".wb-session-slot button[aria-label=\"Send\"]")).toBeEnabled({ timeout: 20000 });
+  await page.locator(".wb-session-slot button[aria-label=\"Send\"]").click();
   await expect(assistantEntries.filter({ hasText: "done: hello 2" })).toBeVisible({ timeout: 60000 });
 });

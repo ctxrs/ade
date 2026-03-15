@@ -158,7 +158,7 @@ test.describe.serial("visual: workbench shell", () => {
       const composer = newTaskComposer(page);
       await composer.fill(`visual-shell-running-${theme}`);
       await page.getByRole("button", { name: "Send" }).click();
-      await expect(page.locator('.wb-session-slot[aria-hidden="false"] button[aria-label="Stop"]')).toBeVisible({
+      await expect(page.locator('.wb-session-slot button[aria-label="Stop"]')).toBeVisible({
         timeout: 20_000,
       });
       await expect(page.locator(".wb-task-row")).toHaveCount(4, { timeout: 20_000 });

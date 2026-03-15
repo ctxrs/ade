@@ -192,6 +192,7 @@ fn build_session_summary_delta(
     last_message_at: Option<chrono::DateTime<chrono::Utc>>,
     last_message_preview: Option<String>,
     last_event_seq: i64,
+    projection_rev: i64,
     state_rev: i64,
 ) -> Option<SessionSummaryDelta> {
     if activity.is_none() && last_message_at.is_none() && last_message_preview.is_none() {
@@ -205,6 +206,7 @@ fn build_session_summary_delta(
         last_message_at,
         last_message_preview,
         last_event_seq: Some(last_event_seq),
+        projection_rev: Some(projection_rev),
         state_rev: Some(state_rev),
     })
 }
@@ -469,6 +471,13 @@ impl SessionRuntime {
         } else {
             event.seq
         };
+        let projection_rev = match state.store_for_session(event.session_id).await {
+            Ok(store) => store
+                .get_session_projection_rev(event.session_id)
+                .await
+                .unwrap_or(last_event_seq.max(0)),
+            Err(_) => last_event_seq.max(0),
+        };
         let state_rev = if stream_only {
             last_event_seq
         } else {
@@ -490,12 +499,14 @@ impl SessionRuntime {
             last_message_at,
             last_message_preview,
             last_event_seq,
+            projection_rev,
             state_rev,
         );
 
         let delta = SessionHeadDelta {
             session_id: event.session_id,
             last_event_seq,
+            projection_rev,
             state_rev,
             event: Some(event.clone()),
             turn,

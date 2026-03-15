@@ -33,6 +33,7 @@ mod compact_head_tests {
             events: Vec::new(),
             messages: Vec::new(),
             last_event_seq: 123,
+            projection_rev: 123,
             state_rev: 0,
             activity: SessionActivityState::default(),
             has_more_turns: false,
@@ -145,6 +146,7 @@ mod replay_tests {
                 last_message_at: None,
                 last_message_preview: None,
                 last_event_seq: Some(0),
+                projection_rev: 0,
                 state_rev: 0,
                 activity: SessionActivityState::default(),
                 unread: None,
@@ -155,6 +157,7 @@ mod replay_tests {
                 last_message_at: None,
                 last_message_preview: None,
                 last_event_seq: Some(0),
+                projection_rev: 0,
                 state_rev: 0,
                 activity: SessionActivityState::default(),
                 unread: None,
@@ -191,6 +194,7 @@ mod replay_tests {
         let delta = SessionHeadDelta {
             session_id,
             last_event_seq: 5,
+            projection_rev: 5,
             state_rev: 0,
             event: None,
             turn: None,
@@ -200,6 +204,7 @@ mod replay_tests {
         let delta_next = SessionHeadDelta {
             session_id,
             last_event_seq: 6,
+            projection_rev: 6,
             state_rev: 0,
             event: None,
             turn: None,
@@ -210,11 +215,72 @@ mod replay_tests {
         state.record(&delta);
         state.record(&delta_next);
 
-        match state.replay(5, 10) {
+        match state.replay(
+            SessionReplayCursor {
+                last_event_seq: 5,
+                projection_rev: 5,
+            },
+            10,
+        ) {
             SessionReplayResult::Replay { deltas, last_sent } => {
-                assert_eq!(last_sent, 6);
+                assert_eq!(
+                    last_sent,
+                    SessionReplayCursor {
+                        last_event_seq: 6,
+                        projection_rev: 6,
+                    }
+                );
                 assert_eq!(deltas.len(), 1);
                 assert_eq!(deltas[0].last_event_seq, 6);
+            }
+            other => panic!("expected replay, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn replay_records_equal_seq_projection_rev_advance() {
+        let session_id = SessionId(uuid::Uuid::nil());
+        let delta = SessionHeadDelta {
+            session_id,
+            last_event_seq: 5,
+            projection_rev: 5,
+            state_rev: 0,
+            event: None,
+            turn: None,
+            message: None,
+            tool_summaries: Vec::new(),
+        };
+        let delta_next = SessionHeadDelta {
+            session_id,
+            last_event_seq: 5,
+            projection_rev: 6,
+            state_rev: 0,
+            event: None,
+            turn: None,
+            message: None,
+            tool_summaries: Vec::new(),
+        };
+        let mut state = SessionReplayState::default();
+        state.record(&delta);
+        state.record(&delta_next);
+
+        match state.replay(
+            SessionReplayCursor {
+                last_event_seq: 5,
+                projection_rev: 5,
+            },
+            10,
+        ) {
+            SessionReplayResult::Replay { deltas, last_sent } => {
+                assert_eq!(deltas.len(), 1);
+                assert_eq!(deltas[0].projection_rev, 6);
+                assert_eq!(
+                    last_sent,
+                    SessionReplayCursor {
+                        last_event_seq: 5,
+                        projection_rev: 6,
+                    }
+                );
             }
             other => panic!("expected replay, got {other:?}"),
         }
@@ -226,6 +292,7 @@ mod replay_tests {
         let session = replay_session(SessionId::new());
         let mut head = new_head_snapshot(&session);
         head.last_event_seq = 7;
+        head.projection_rev = 9;
         hub.hydrate_snapshot(
             session.workspace_id,
             1,
@@ -236,11 +303,17 @@ mod replay_tests {
         .await;
 
         match hub
-            .replay_session_stream(session.workspace_id, session.id, 3, 50)
+            .replay_session_stream(session.workspace_id, session.id, 3, 3, 50)
             .await
         {
             WorkspaceSessionReplay::Replay { items, last_sent } => {
-                assert_eq!(last_sent, 7);
+                assert_eq!(
+                    last_sent,
+                    SessionReplayCursor {
+                        last_event_seq: 7,
+                        projection_rev: 9,
+                    }
+                );
                 assert_eq!(items.len(), 2);
                 match &items[0] {
                     WorkspaceSessionReplayItem::Gap {
@@ -272,6 +345,7 @@ mod replay_tests {
         let session = replay_session(SessionId::new());
         let mut head = new_head_snapshot(&session);
         head.last_event_seq = 11;
+        head.projection_rev = 17;
         hub.hydrate_snapshot(
             session.workspace_id,
             1,
@@ -282,12 +356,18 @@ mod replay_tests {
         .await;
 
         match hub
-            .replay_session_stream(session.workspace_id, session.id, 0, 50)
+            .replay_session_stream(session.workspace_id, session.id, 0, 0, 50)
             .await
         {
             WorkspaceSessionReplay::Replay { items, last_sent } => {
                 assert!(items.is_empty());
-                assert_eq!(last_sent, 11);
+                assert_eq!(
+                    last_sent,
+                    SessionReplayCursor {
+                        last_event_seq: 11,
+                        projection_rev: 17,
+                    }
+                );
             }
             other => panic!("expected replay, got {other:?}"),
         }

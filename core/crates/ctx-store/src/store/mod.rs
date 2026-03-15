@@ -96,6 +96,7 @@ struct SessionHeadLimits {
 
 #[derive(Debug, Clone)]
 struct SessionHeadMaterialization {
+    head_rev: i64,
     last_event_seq: i64,
     turns: Vec<SessionTurn>,
     tool_summaries: Vec<SessionTurnToolSummary>,
@@ -108,6 +109,7 @@ struct SessionHeadMaterialization {
 impl SessionHeadMaterialization {
     fn from_head(head: &SessionHead) -> Self {
         Self {
+            head_rev: head.projection_rev,
             last_event_seq: head.last_event_seq,
             turns: head.turns.clone(),
             tool_summaries: head.tool_summaries.clone(),
@@ -121,6 +123,7 @@ impl SessionHeadMaterialization {
     fn into_session_head(
         self,
         session: Session,
+        projection_rev: i64,
         summary_checkpoint: Option<SessionSummaryCheckpoint>,
     ) -> SessionHead {
         let last_status = self.turns.last().map(|t| t.status.clone());
@@ -136,6 +139,7 @@ impl SessionHeadMaterialization {
             events: self.events,
             messages: self.messages,
             last_event_seq: self.last_event_seq,
+            projection_rev,
             activity,
             has_more_turns: self.has_more_turns,
             summary_checkpoint,

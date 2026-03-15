@@ -12,7 +12,13 @@ const toWorkspaceReplay = (
     case "reset":
       return { mode: "reset" };
     case "resume":
-      return { mode: "resume", after_seq: replay.afterSeq };
+      return {
+        mode: "resume",
+        after_seq: replay.afterSeq,
+        ...(typeof replay.afterProjectionRev === "number"
+          ? { after_projection_rev: replay.afterProjectionRev }
+          : {}),
+      };
     default:
       return { mode: "auto" };
   }

@@ -44,7 +44,7 @@ async function createWorkspaceAndStartRun(opts: {
   await newTaskComposer(page).fill(prompt);
   await page.getByRole("button", { name: "Send" }).click();
 
-  const sessionComposer = page.locator('.wb-session-slot[aria-hidden="false"] textarea.wb-active-textarea');
+  const sessionComposer = page.locator(".wb-session-slot textarea.wb-active-textarea");
   await expect(sessionComposer).toBeVisible({ timeout: 20_000 });
 
   let sessionId = "";

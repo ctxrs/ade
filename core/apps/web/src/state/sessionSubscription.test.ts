@@ -26,6 +26,17 @@ describe("sessionSubscription", () => {
     ]);
   });
 
+  it("keeps the largest projection rev when resume cursors tie on seq", () => {
+    expect(
+      normalizeSessionSubscriptionCursors([
+        { sessionId: "session-1", replay: { kind: "resume", afterSeq: 9, afterProjectionRev: 11 } },
+        { sessionId: "session-1", replay: { kind: "resume", afterSeq: 9, afterProjectionRev: 14 } },
+      ]),
+    ).toEqual([
+      { sessionId: "session-1", replay: { kind: "resume", afterSeq: 9, afterProjectionRev: 14 } },
+    ]);
+  });
+
   it("treats auto, reset, and resume as distinct replay intents", () => {
     expect(
       sameSessionSubscriptionCursors(
@@ -37,6 +48,12 @@ describe("sessionSubscription", () => {
       sameSessionSubscriptionCursors(
         [{ sessionId: "session-1", replay: { kind: "resume", afterSeq: 3 } }],
         [{ sessionId: "session-1", replay: { kind: "resume", afterSeq: 4 } }],
+      ),
+    ).toBe(false);
+    expect(
+      sameSessionSubscriptionCursors(
+        [{ sessionId: "session-1", replay: { kind: "resume", afterSeq: 4, afterProjectionRev: 5 } }],
+        [{ sessionId: "session-1", replay: { kind: "resume", afterSeq: 4, afterProjectionRev: 6 } }],
       ),
     ).toBe(false);
   });

@@ -11,15 +11,15 @@ use futures::{Sink, SinkExt, StreamExt};
 use serde_json::Value;
 use tokio::sync::{Mutex, Notify};
 use tokio::task::JoinSet;
-use tokio_tungstenite::{connect_async, tungstenite::Message as TungsteniteMessage};
 
 use ctx_core::ids::*;
 use ctx_core::models::*;
 
 use crate::daemon::AppState;
 use crate::terminals::{TerminalClientMessage, TerminalServerMessage};
-use crate::web_sessions::WebSessionManager;
-use crate::workspace_active_snapshot::{WorkspaceSessionReplay, WorkspaceSessionReplayItem};
+use crate::workspace_active_snapshot::{
+    SessionReplayCursor, WorkspaceSessionReplay, WorkspaceSessionReplayItem,
+};
 
 use super::{MobileSecureEnvelope, MobileSecureStreamQuery, SecureEnvelope};
 use common::{send_secure_ws, SessionCursor};
@@ -40,6 +40,7 @@ mod common;
 mod queue;
 mod replay;
 mod terminal;
+mod web_session;
 mod workspace_active;
 
 use common::{
@@ -50,6 +51,7 @@ use common::{
 pub(super) use terminal::terminal_stream_ws;
 #[cfg(test)]
 use terminal::{queue_terminal_ws_message, TerminalWsQueueOutcome};
+pub(super) use web_session::web_session_signal;
 pub(super) use workspace_active::workspace_active_snapshot_stream_ws;
 
 pub(super) async fn mobile_secure_workspace_stream_ws(
@@ -355,6 +357,7 @@ async fn handle_mobile_secure_ws(
                                 // Reset intentionally leaves the session quiet until the client resubscribes with resume.
                                 let ResolvedWorkspaceActiveSessionReplay::Resume {
                                     after_seq,
+                                    after_projection_rev,
                                 } = sub.replay
                                 else {
                                     continue;
@@ -362,11 +365,20 @@ async fn handle_mobile_secure_ws(
                                 if include_initial_snapshot
                                     && skip_replay_sessions.contains(&session_id)
                                 {
-                                    let last_sent = state.workspaces.workspace_active_snapshot
-                                        .session_last_event_seq(workspace_id, session_id)
-                                        .await
-                                        .max(after_seq);
-                                    next_map.insert(session_id, SessionCursor { last_sent });
+                                    let last_sent = state
+                                        .workspaces
+                                        .workspace_active_snapshot
+                                        .session_replay_cursor(workspace_id, session_id)
+                                        .await;
+                                    next_map.insert(
+                                        session_id,
+                                        SessionCursor {
+                                            last_sent: SessionReplayCursor {
+                                                last_event_seq: last_sent.last_event_seq.max(after_seq),
+                                                projection_rev: last_sent.projection_rev.max(after_projection_rev),
+                                            },
+                                        },
+                                    );
                                     continue;
                                 }
                                 let control = control.clone();
@@ -378,6 +390,7 @@ async fn handle_mobile_secure_ws(
                                     workspace_id,
                                     session_id,
                                     after_seq,
+                                    after_projection_rev,
                                     "ctx_http.replay_session_events_secure.list",
                                     None,
                                     move |event| {
@@ -453,6 +466,7 @@ async fn handle_mobile_secure_ws(
                                             workspace_id = %workspace_id.0,
                                             session_id = %session_id.0,
                                             after_seq,
+                                            after_projection_rev,
                                             "workspace stream replay failed (secure)",
                                         );
                                         replay_failed = true;
@@ -554,8 +568,10 @@ async fn handle_mobile_secure_ws(
                                 if let std::collections::hash_map::Entry::Vacant(entry) =
                                     subscriptions.entry(session_id)
                                 {
-                                    let last_sent = state.workspaces.workspace_active_snapshot
-                                        .session_last_event_seq(workspace_id, session_id)
+                                    let last_sent = state
+                                        .workspaces
+                                        .workspace_active_snapshot
+                                        .session_replay_cursor(workspace_id, session_id)
                                         .await;
                                     entry.insert(SessionCursor { last_sent });
                                 }
@@ -710,27 +726,21 @@ async fn handle_mobile_secure_ws(
                             let Some(cursor) = subscriptions.get_mut(&delta.session_id) else {
                                 continue;
                             };
-                            if let Some(ev) = &delta.event {
-                                if ev.seq >= 0 {
-                                    if ev.seq <= cursor.last_sent {
-                                        continue;
-                                    }
-                                    cursor.last_sent = ev.seq;
-                                }
-                            } else if delta.last_event_seq <= cursor.last_sent {
+                            let incoming = SessionReplayCursor::from_delta(delta);
+                            if incoming <= cursor.last_sent {
                                 continue;
-                            } else {
-                                cursor.last_sent = delta.last_event_seq;
                             }
+                            cursor.last_sent = incoming;
                         }
                         WorkspaceActiveSnapshotEvent::SessionHeadSeed { head, .. } => {
                             let Some(cursor) = subscriptions.get_mut(&head.session.id) else {
                                 continue;
                             };
-                            if head.last_event_seq <= cursor.last_sent {
+                            let incoming = SessionReplayCursor::from_head(head);
+                            if incoming <= cursor.last_sent {
                                 continue;
                             }
-                            cursor.last_sent = head.last_event_seq;
+                            cursor.last_sent = incoming;
                         }
                         _ => {}
                     }
@@ -832,103 +842,6 @@ async fn handle_mobile_secure_ws(
         .await;
 
     recv_result.unwrap_or(Ok(()))
-}
-pub(super) async fn web_session_signal(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    ws: WebSocketUpgrade,
-) -> Result<Response, StatusCode> {
-    state
-        .transport
-        .web_sessions
-        .get(&id)
-        .await
-        .ok_or(StatusCode::NOT_FOUND)?;
-    let manager = state.transport.web_sessions.clone();
-    let session_id = id.clone();
-    Ok(ws.on_upgrade(move |socket| async move {
-        handle_web_session_socket(socket, manager, session_id).await;
-    }))
-}
-
-async fn handle_web_session_socket(
-    socket: WebSocket,
-    manager: Arc<WebSessionManager>,
-    session_id: String,
-) {
-    let handle = match manager.get(&session_id).await {
-        Some(handle) => handle,
-        None => {
-            let _ = socket.close().await;
-            return;
-        }
-    };
-    let port = handle.worker_port().await;
-    let url = format!("ws://127.0.0.1:{}/signal", port);
-    let _ = manager.bump_viewers(&session_id, 1).await;
-
-    let connect = connect_async(url).await;
-    let upstream = match connect {
-        Ok((stream, _)) => stream,
-        Err(_) => {
-            let _ = manager.bump_viewers(&session_id, -1).await;
-            return;
-        }
-    };
-
-    let (mut client_tx, mut client_rx) = socket.split();
-    let (mut up_tx, mut up_rx) = upstream.split();
-
-    let client_to_up = tokio::spawn(async move {
-        while let Some(Ok(msg)) = client_rx.next().await {
-            let out = match msg {
-                WsMessage::Text(text) => TungsteniteMessage::Text(text.into()),
-                WsMessage::Binary(bytes) => TungsteniteMessage::Binary(bytes.into()),
-                WsMessage::Ping(bytes) => TungsteniteMessage::Ping(bytes.into()),
-                WsMessage::Pong(bytes) => TungsteniteMessage::Pong(bytes.into()),
-                WsMessage::Close(frame) => {
-                    let frame =
-                        frame.map(|f| tokio_tungstenite::tungstenite::protocol::CloseFrame {
-                            code: f.code.into(),
-                            reason: f.reason.to_string().into(),
-                        });
-                    TungsteniteMessage::Close(frame)
-                }
-            };
-            if up_tx.send(out).await.is_err() {
-                break;
-            }
-        }
-    });
-
-    let up_to_client = tokio::spawn(async move {
-        while let Some(Ok(msg)) = up_rx.next().await {
-            let out = match msg {
-                TungsteniteMessage::Text(text) => WsMessage::Text(text.to_string()),
-                TungsteniteMessage::Binary(bytes) => WsMessage::Binary(bytes.to_vec()),
-                TungsteniteMessage::Ping(bytes) => WsMessage::Ping(bytes.to_vec()),
-                TungsteniteMessage::Pong(bytes) => WsMessage::Pong(bytes.to_vec()),
-                TungsteniteMessage::Close(frame) => {
-                    let frame = frame.map(|f| axum::extract::ws::CloseFrame {
-                        code: f.code.into(),
-                        reason: f.reason.to_string().into(),
-                    });
-                    WsMessage::Close(frame)
-                }
-                TungsteniteMessage::Frame(_) => continue,
-            };
-            if client_tx.send(out).await.is_err() {
-                break;
-            }
-        }
-    });
-
-    tokio::select! {
-        _ = client_to_up => {},
-        _ = up_to_client => {},
-    };
-
-    let _ = manager.bump_viewers(&session_id, -1).await;
 }
 
 const SESSION_REPLAY_MAX_EVENTS: usize = 2000;

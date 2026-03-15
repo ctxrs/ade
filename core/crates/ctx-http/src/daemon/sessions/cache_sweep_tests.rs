@@ -109,9 +109,11 @@ fn emitted_session_summary_deltas_always_include_monotonic_versions() {
         None,
         17,
         21,
+        21,
     )
     .expect("activity change should emit a summary delta");
     assert_eq!(activity_delta.last_event_seq, Some(17));
+    assert_eq!(activity_delta.projection_rev, Some(21));
     assert_eq!(activity_delta.state_rev, Some(21));
 
     let message_delta = build_session_summary_delta(
@@ -121,9 +123,11 @@ fn emitted_session_summary_deltas_always_include_monotonic_versions() {
         Some("preview".to_string()),
         22,
         22,
+        22,
     )
     .expect("message preview should emit a summary delta");
     assert_eq!(message_delta.last_event_seq, Some(22));
+    assert_eq!(message_delta.projection_rev, Some(22));
     assert_eq!(message_delta.state_rev, Some(22));
 }
 
@@ -131,7 +135,7 @@ fn emitted_session_summary_deltas_always_include_monotonic_versions() {
 fn empty_session_summary_delta_is_not_emitted() {
     let session = test_session();
     assert!(
-        build_session_summary_delta(&session, None, None, None, 5, 5).is_none(),
+        build_session_summary_delta(&session, None, None, None, 5, 5, 5).is_none(),
         "empty updates should not publish summary deltas"
     );
 }

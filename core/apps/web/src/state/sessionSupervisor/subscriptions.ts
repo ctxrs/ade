@@ -10,8 +10,10 @@ export function buildSubscribedSessions(
 ): SessionSubscriptionCursor[] {
   return subscribedSessionIds.map((sessionId) => {
     const entry = entries.get(sessionId);
-    const headSeq = workspaceSessionHeadsById.get(sessionId)?.last_event_seq;
-    if (entry?.freshness === "recovering") {
+    const head = workspaceSessionHeadsById.get(sessionId);
+    const headSeq = head?.last_event_seq;
+    const headProjectionRev = head?.projection_rev;
+    if (entry?.freshness === "recovering" || entry?.loadState === "recovering") {
       return {
         sessionId,
         replay: { kind: "reset" },
@@ -23,9 +25,22 @@ export function buildSubscribedSessions(
         : typeof headSeq === "number"
           ? headSeq
           : null;
+    const afterProjectionRev =
+      typeof entry?.projectionRev === "number"
+        ? entry.projectionRev
+        : typeof headProjectionRev === "number"
+          ? headProjectionRev
+          : null;
     return {
       sessionId,
-      replay: typeof afterSeq === "number" ? { kind: "resume", afterSeq } : { kind: "auto" },
+      replay:
+        typeof afterSeq === "number"
+          ? {
+              kind: "resume",
+              afterSeq,
+              ...(typeof afterProjectionRev === "number" ? { afterProjectionRev } : {}),
+            }
+          : { kind: "auto" },
     };
   });
 }

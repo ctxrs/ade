@@ -64,7 +64,7 @@ async function setupRunningSession(page: Page, theme: VisualTheme, opts: { queue
   await newTaskComposer(page).fill(prompt);
   await page.getByRole("button", { name: "Send" }).click();
   await expect(activeSessionComposer(page)).toBeVisible({ timeout: 20_000 });
-  await expect(page.locator('.wb-session-slot[aria-hidden="false"] button[aria-label="Stop"]')).toBeVisible({
+  await expect(page.locator('.wb-session-slot button[aria-label="Stop"]')).toBeVisible({
     timeout: 20_000,
   });
   await waitForVisualSettled(page);
@@ -78,7 +78,7 @@ async function queueMessage(page: Page, text: string) {
     if (!/\/api\/sessions\/[^/]+\/messages$/.test(response.url())) return false;
     return (response.request().postData() ?? "").includes(text);
   });
-  await page.locator('.wb-session-slot[aria-hidden="false"] button[aria-label="Send"]').click();
+  await page.locator('.wb-session-slot button[aria-label="Send"]').click();
   const response = await sendResponse;
   expect(response.ok()).toBeTruthy();
 }

@@ -821,6 +821,7 @@ mod hydration_tests {
                 last_message_at: None,
                 last_message_preview: Some("canonical-summary".to_string()),
                 last_event_seq: Some(44),
+                projection_rev: 44,
                 state_rev: 44,
                 activity: SessionActivityState {
                     is_working: false,
@@ -846,6 +847,7 @@ mod hydration_tests {
             events: Vec::new(),
             messages: Vec::new(),
             last_event_seq: 44,
+            projection_rev: 44,
             state_rev: 44,
             activity: SessionActivityState {
                 is_working: false,

@@ -63,15 +63,15 @@ test("workbench: context window meter renders for a live fake-provider session",
   await expect(rows).toHaveCount(1, { timeout: 20_000 });
   await rows.first().click();
 
-  const activeTextarea = page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea");
+  const activeTextarea = page.locator(".wb-session-slot textarea.wb-active-textarea");
   await expect(activeTextarea).toBeVisible({ timeout: 20_000 });
 
-  const assistantEntries = page.locator('.wb-session-slot[aria-hidden="false"] .wb-assistant-entry');
+  const assistantEntries = page.locator(".wb-session-slot .wb-assistant-entry");
   await expect(assistantEntries.filter({ hasText: "done: slow-diff-test 0123456789" })).toBeVisible({
     timeout: 60_000,
   });
 
-  const contextWindow = page.locator('.wb-session-slot[aria-hidden="false"] .wb-context-window');
+  const contextWindow = page.locator(".wb-session-slot .wb-context-window");
   await expect(contextWindow).toBeVisible({ timeout: 20_000 });
   await expect(contextWindow).toHaveText("7% · 7/100", { timeout: 20_000 });
   await expect(contextWindow).toHaveAttribute("title", "Context Window: 7% · 7/100");
