@@ -41,6 +41,7 @@ import { useWorkbenchSessionBridge } from "./workbenchShell/useWorkbenchSessionB
 import { useWorkbenchTaskCreation } from "./workbenchShell/useWorkbenchTaskCreation";
 import { useWorkbenchTaskListController } from "./workbenchShell/useWorkbenchTaskListController";
 import { useWorkbenchActiveTaskController } from "./workbenchShell/useWorkbenchActiveTaskController";
+import { useWorkbenchE2EBridge } from "./workbenchShell/useWorkbenchE2EBridge";
 import type { OptimisticFocus } from "./WorkbenchPage.types";
 import { appendSegment } from "./WorkbenchPage.utils";
 
@@ -107,6 +108,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const focusTask = useCallback(
     (taskId: string, sessionId?: string | null) => {
       workbenchStore.focusTask(taskId, sessionId);
+      return true;
     },
     [workbenchStore],
   );
@@ -481,6 +483,11 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     workspaceSnapshot,
     workspaceSnapshotStore,
     supervisor,
+  });
+
+  useWorkbenchE2EBridge({
+    focusTask,
+    toggleDiffPane: () => activeTaskController.toggleDiffPane("unknown"),
   });
 
   const showDebugIds = useMemo(() => {

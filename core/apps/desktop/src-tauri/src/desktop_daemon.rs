@@ -1,5 +1,7 @@
 use super::*;
 
+use std::fs::OpenOptions;
+
 use crate::desktop_local_daemon::ensure_local_connection;
 
 mod bundle_preflight;

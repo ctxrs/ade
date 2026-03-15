@@ -25,6 +25,7 @@ use url::Url;
 
 mod artifacts;
 mod auth;
+mod demo;
 mod errors;
 mod execution;
 mod extractors;
@@ -68,6 +69,7 @@ use auth::{
     auth_middleware, generate_mobile_api_token, generate_pairing_token, hash_api_token,
     hash_pairing_token, MobileAuthContext,
 };
+use demo::*;
 use errors::ApiErrorResp;
 use extractors::extract_workspace_edit_from_command;
 use ws::{
@@ -523,6 +525,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             get(provider_launch::install_stream_sse),
         )
         .route("/api/dev/providers/restart", post(dev_restart_providers))
+        .route(
+            "/api/dev/sessions/:id/seed_transcript",
+            post(dev_seed_session_transcript),
+        )
         .route("/api/lsp/status", get(lsp_status))
         .route("/api/lsp/catalog", get(lsp_catalog_list))
         .route(

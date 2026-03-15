@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 #[cfg(target_os = "macos")]
 use std::ffi::{CStr, CString};
-use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -98,6 +97,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             desktop_get_connection,
             desktop_disconnect,
+            desktop_set_demo_connection,
             desktop_connect_local,
             desktop_restart_local_daemon,
             desktop_connect_ssh,

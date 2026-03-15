@@ -1,0 +1,9 @@
+{
+  "actions": [
+    { "kind": "move", "x": 420, "y": 840, "duration_ms": 500 },
+    { "kind": "click", "button": "left" },
+    { "kind": "type", "text": "Make a ping pong game.", "cps": 14 },
+    { "kind": "key", "name": "return" },
+    { "kind": "wait", "duration_ms": 1200 }
+  ]
+}

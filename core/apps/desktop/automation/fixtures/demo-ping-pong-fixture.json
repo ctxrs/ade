@@ -1,0 +1,19 @@
+{
+  "id": "ping-pong",
+  "workspace_name": "Ping Pong Demo",
+  "task_title": "Ping Pong Demo",
+  "session_title": "Ping Pong Build",
+  "provider_id": "codex",
+  "model_id": "gpt-5.4",
+  "prior_turns": [
+    {
+      "user": "Can you build a tiny browser game for a demo?",
+      "assistant": "Yes. I can keep it to a single HTML file so the diff is easy to show."
+    },
+    {
+      "user": "Keep the changes compact and readable.",
+      "assistant": "Understood. I will keep the initial version small and visible in git diff."
+    }
+  ],
+  "next_prompt": "Make a ping pong game."
+}

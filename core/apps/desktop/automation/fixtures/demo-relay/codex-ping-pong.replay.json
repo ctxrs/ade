@@ -1,0 +1,58 @@
+{
+  "id": "codex-ping-pong",
+  "provider": "codex",
+  "response_delay_ms": 120,
+  "rewrite_rules": [],
+  "steps": [
+    {
+      "request_match": {
+        "path": "/v1/responses",
+        "body_includes": [
+          "ping pong"
+        ]
+      },
+      "request_context": {
+        "captured_workspace_path": "/tmp/ctx-demo-option1-pingpong-20260313T193452Z"
+      },
+      "responses": {
+        "sse_events_path": "codex-ping-pong.replay.step-1.sse.json"
+      }
+    },
+    {
+      "request_match": {
+        "path": "/v1/responses",
+        "body_includes": []
+      },
+      "request_context": {
+        "captured_workspace_path": "/tmp/ctx-demo-option1-pingpong-20260313T193452Z"
+      },
+      "responses": {
+        "sse_events_path": "codex-ping-pong.replay.step-2.sse.json"
+      }
+    },
+    {
+      "request_match": {
+        "path": "/v1/responses",
+        "body_includes": []
+      },
+      "request_context": {
+        "captured_workspace_path": "/tmp/ctx-demo-option1-pingpong-20260313T193452Z"
+      },
+      "responses": {
+        "sse_events_path": "codex-ping-pong.replay.step-3.sse.json"
+      }
+    },
+    {
+      "request_match": {
+        "path": "/v1/responses",
+        "body_includes": []
+      },
+      "request_context": {
+        "captured_workspace_path": "/tmp/ctx-demo-option1-pingpong-20260313T193452Z"
+      },
+      "responses": {
+        "sse_events_path": "codex-ping-pong.replay.step-4.sse.json"
+      }
+    }
+  ]
+}
