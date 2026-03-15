@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkbenchComposer } from "./WorkbenchComposer";
 import type { MessageAttachment, ProviderOptions, ProviderStatus } from "../api/client";
@@ -498,6 +498,67 @@ describe("WorkbenchComposer textarea sizing", () => {
       await new Promise((r) => setTimeout(r, 0));
     });
 
+    expect(textarea.scrollTop).toBe(textarea.scrollHeight);
+  });
+
+  it("restores hydrated drafts with the cursor and scroll position at the end", async () => {
+    const hydratedValue = Array.from({ length: 25 }, (_, i) => `line ${i + 1}`).join("\n");
+
+    const ActiveHarness = () => {
+      const [value, setValue] = useState("");
+      const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
+
+      useEffect(() => {
+        const timer = window.setTimeout(() => setValue(hydratedValue), 0);
+        return () => window.clearTimeout(timer);
+      }, []);
+
+      return (
+        <WorkbenchComposer
+          variant="activeSession"
+          value={value}
+          setValue={setValue}
+          placeholder="Ask follow-ups"
+          inputDisabled={false}
+          sessionIdForAutocomplete="session-1"
+          workspaceIdForAutocomplete="ws-1"
+          slashCommands={[]}
+          attachments={attachments}
+          setAttachments={setAttachments}
+          onSend={vi.fn()}
+          sendDisabled={false}
+          sendDisabledReason={null}
+          onInterrupt={null}
+          isWorking={false}
+          modeId={modeId}
+          setModeId={setModeId}
+          harnessLabel="Codex"
+          harnessLogoSrc=""
+          harnessLogoInvert={false}
+          harnessLogoInvertInLight={false}
+          verbosity="default"
+          onSetVerbosity={undefined}
+          contextWindow={null}
+          availableModels={[]}
+          currentModelId="gpt-5"
+          onSetModelId={vi.fn(async () => {})}
+        />
+      );
+    };
+
+    render(<ActiveHarness />);
+    const textarea = screen.getByPlaceholderText("Ask follow-ups") as HTMLTextAreaElement;
+    textarea.scrollTop = 0;
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(textarea.value).toBe(hydratedValue);
+    expect(textarea.selectionStart).toBe(hydratedValue.length);
+    expect(textarea.selectionEnd).toBe(hydratedValue.length);
     expect(textarea.scrollTop).toBe(textarea.scrollHeight);
   });
 

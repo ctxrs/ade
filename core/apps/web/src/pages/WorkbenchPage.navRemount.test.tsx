@@ -788,7 +788,7 @@ describe("WorkbenchPage nav status indicator", () => {
     });
   });
 
-  it("does not show a spinner while archive is pending", async () => {
+  it("shows the archive spinner while archive is pending", async () => {
     const starterSummary = workspaceSnapshotSnap.tasksById[taskId] as {
       task: Record<string, unknown>;
     };
@@ -819,7 +819,9 @@ describe("WorkbenchPage nav status indicator", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Archive" }));
 
     await waitFor(() => expect(archiveTask).toHaveBeenCalledTimes(1));
-    expect(getTaskRow("Starter task").querySelector(".wb-task-spinner")).toBeNull();
+    const spinner = getTaskRow("Starter task").querySelector(".wb-task-spinner");
+    expect(spinner).not.toBeNull();
+    expect(spinner?.classList.contains("wb-task-spinner-archive")).toBe(true);
 
     archiveDeferred.resolve({
       id: taskId,

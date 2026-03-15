@@ -1,4 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useSyncExternalStore } from "react";
+import type { MessageAttachment } from "../api/client";
 import { randomUuid } from "../utils/randomUuid";
 import { errorMessage } from "../utils/errorMessage";
 import type { WorkbenchModeId } from "../components/WorkbenchComposer";
@@ -489,13 +490,21 @@ export class WorkbenchStore {
     return p;
   };
 
-  setDraft = (draftKey: string, next: { text: string; modeId: WorkbenchModeId }) => {
+  setDraft = (draftKey: string, next: { text: string; modeId: WorkbenchModeId; attachments?: MessageAttachment[] }) => {
     const key = String(draftKey || "").trim();
     if (!key) return;
     const now = Date.now();
     const current = this.snapshot.drafts.byKey[key];
-    const draft: WorkbenchDraft = { text: next.text, modeId: next.modeId, updatedAtMs: now };
-    if (current && current.text === draft.text && current.modeId === draft.modeId) return;
+    const attachments = next.attachments ?? current?.attachments ?? [];
+    const draft: WorkbenchDraft = { text: next.text, modeId: next.modeId, attachments, updatedAtMs: now };
+    if (
+      current &&
+      current.text === draft.text &&
+      current.modeId === draft.modeId &&
+      JSON.stringify(current.attachments) === JSON.stringify(draft.attachments)
+    ) {
+      return;
+    }
     const nextDrafts: DraftSnapshot = {
       byKey: { ...this.snapshot.drafts.byKey, [key]: draft },
       loadedKeys: { ...this.snapshot.drafts.loadedKeys, [key]: true },
@@ -595,10 +604,10 @@ export function useActiveWorkbenchIds(): { taskId: string | null; sessionId: str
 
 export function useWorkbenchDraft(
   draftKey: string,
-  fallback?: { text: string; modeId: WorkbenchModeId },
+  fallback?: { text: string; modeId: WorkbenchModeId; attachments?: MessageAttachment[] },
 ): {
-  value: { text: string; modeId: WorkbenchModeId };
-  setValue: (next: { text: string; modeId: WorkbenchModeId }) => void;
+  value: { text: string; modeId: WorkbenchModeId; attachments: MessageAttachment[] };
+  setValue: (next: { text: string; modeId: WorkbenchModeId; attachments?: MessageAttachment[] }) => void;
   updatedAtMs: number;
 } {
   const store = useWorkbenchStore();
@@ -613,13 +622,13 @@ export function useWorkbenchDraft(
     store.ensureDraftLoaded(key).catch(() => { });
   }, [store, key, loaded]);
 
-  const value = useMemo<{ text: string; modeId: WorkbenchModeId }>(() => {
-    if (draft) return { text: draft.text, modeId: draft.modeId };
-    return fallback ?? { text: "", modeId: "default" };
+  const value = useMemo<{ text: string; modeId: WorkbenchModeId; attachments: MessageAttachment[] }>(() => {
+    if (draft) return { text: draft.text, modeId: draft.modeId, attachments: draft.attachments ?? [] };
+    return { text: fallback?.text ?? "", modeId: fallback?.modeId ?? "default", attachments: fallback?.attachments ?? [] };
   }, [draft, fallback]);
 
   const setValue = useCallback(
-    (next: { text: string; modeId: WorkbenchModeId }) => {
+    (next: { text: string; modeId: WorkbenchModeId; attachments?: MessageAttachment[] }) => {
       store.setDraft(key, next);
     },
     [store, key],
@@ -629,5 +638,5 @@ export function useWorkbenchDraft(
 }
 
 export function useNewTaskDraft() {
-  return useWorkbenchDraft(NEW_TASK_DRAFT_KEY, { text: "", modeId: "default" });
+  return useWorkbenchDraft(NEW_TASK_DRAFT_KEY, { text: "", modeId: "default", attachments: [] });
 }

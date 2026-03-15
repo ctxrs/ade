@@ -78,9 +78,53 @@ describe("useWorkbenchSessionActions", () => {
     vi.clearAllMocks();
   });
 
-  it("prefers the history request error over a clipboard-blocked notice", async () => {
+  it("keeps clipboard copy in the click path even while transcript history is still loading", async () => {
     const entry = buildEntry({ hasMoreTurns: true, oldestTurnSeq: 10 });
-    const snapshot = buildSnapshot(entry);
+    let currentEntry = entry;
+    clipboardSpy.mockResolvedValue({ ok: true });
+    let resolveHistoryLoad: (() => void) | null = null;
+    const loadMoreTurns = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveHistoryLoad = () => {
+            currentEntry = buildEntry({ hasMoreTurns: false });
+            resolve();
+          };
+        }),
+    );
+
+    const { result } = renderHook(() =>
+      useWorkbenchSessionActions({
+        activeEntry: entry,
+        activeSessionId: entry.sessionId,
+        activeTaskId: "task-1",
+        activeWorktreeId: "worktree-1",
+        singleSessionTitle: "Conversation",
+        worktreePath: "/tmp/worktree",
+        canCopyWorktree: true,
+        canCopyTaskId: true,
+        canOpenTerminal: true,
+        terminalPanelRef: { current: null },
+        setTerminalOpen: vi.fn(),
+        getSupervisorSnapshot: () => buildSnapshot(currentEntry),
+        loadMoreTurns,
+      }),
+    );
+
+    await act(async () => {
+      const copyPromise = result.current.copyTranscript();
+      await Promise.resolve();
+      expect(clipboardSpy).toHaveBeenCalledTimes(1);
+      expect(loadMoreTurns).toHaveBeenCalledWith("session-1");
+      resolveHistoryLoad?.();
+      await copyPromise;
+    });
+
+    expect(result.current.transcriptNotice).toBe("Copied what's already loaded. Earlier turns are ready if you copy again.");
+  });
+
+  it("shows a blocked clipboard notice before attempting history hydration", async () => {
+    const entry = buildEntry({ hasMoreTurns: true, oldestTurnSeq: 10 });
     clipboardSpy.mockResolvedValue({ ok: false, reason: "blocked" });
     const loadMoreTurns = vi.fn(async () => {
       throw new Error("History request failed.");
@@ -99,7 +143,7 @@ describe("useWorkbenchSessionActions", () => {
         canOpenTerminal: true,
         terminalPanelRef: { current: null },
         setTerminalOpen: vi.fn(),
-        getSupervisorSnapshot: () => snapshot,
+        getSupervisorSnapshot: () => buildSnapshot(entry),
         loadMoreTurns,
       }),
     );
@@ -108,8 +152,8 @@ describe("useWorkbenchSessionActions", () => {
       await result.current.copyTranscript();
     });
 
-    expect(loadMoreTurns).toHaveBeenCalledWith("session-1");
-    expect(result.current.transcriptNotice).toBe("History request failed.");
+    expect(loadMoreTurns).not.toHaveBeenCalled();
+    expect(result.current.transcriptNotice).toBe("Clipboard access is blocked. Use HTTPS or copy manually.");
   });
 
   it("shows a blocked clipboard notice when the clipboard error is explicitly blocked", async () => {

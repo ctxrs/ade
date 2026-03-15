@@ -276,27 +276,26 @@ export function useWorkbenchSessionActions({
     setCopyTranscriptBusy(true);
     setTranscriptNotice(null);
     try {
+      const entry = getSupervisorSnapshot().sessions[String(sessionId)] ?? null;
+      const payload = buildTranscriptExportFromEntry(entry);
+      if (!payload) return;
+      const copyResult = await tryCopyTextToClipboard(payload.markdown);
+      if (!copyResult.ok) {
+        setTranscriptNotice(describeClipboardCopyFailure(copyResult, { action: "copy transcript to the clipboard" }));
+        return;
+      }
+      if (!entry?.hasMoreTurns) return;
       let hydrationResult: TranscriptHydrationResult = { ok: true, partial: false };
       try {
         hydrationResult = await hydrateTranscriptHistory(sessionId);
       } catch (error: unknown) {
         hydrationResult = { ok: false, partial: true, error };
       }
-      const entry = getSupervisorSnapshot().sessions[String(sessionId)] ?? null;
-      const payload = buildTranscriptExportFromEntry(entry);
-      if (!payload) return;
-      const copyResult = await tryCopyTextToClipboard(payload.markdown);
-      if (!copyResult.ok) {
-        if (hydrationResult.error) {
-          setTranscriptNotice(errorMessage(hydrationResult.error) || "Failed to load transcript history.");
-          return;
-        }
-        setTranscriptNotice(describeClipboardCopyFailure(copyResult, { action: "copy transcript to the clipboard" }));
-        return;
-      }
       if (!hydrationResult.ok || hydrationResult.partial) {
         setTranscriptNotice("Couldn't load full history. Copied what's already loaded.");
+        return;
       }
+      setTranscriptNotice("Copied what's already loaded. Earlier turns are ready if you copy again.");
     } catch (error: unknown) {
       setTranscriptNotice(errorMessage(error) || "Failed to copy transcript.");
     } finally {

@@ -14,7 +14,7 @@ type TaskRowProps = {
   archived: boolean;
   archivePending: boolean;
   archivePendingAction: "archive" | "unarchive" | null;
-  statusKind: "error" | "working" | "unread" | "idle";
+  statusKind: "archive" | "error" | "working" | "unread" | "idle";
   selected: boolean;
   hovered: boolean;
   isRenaming: boolean;
@@ -223,6 +223,12 @@ export const TaskRow = React.memo(function TaskRow({
             <RelativeAgeLabel iso={ageIso} />
           </div>
           <span className="wb-task-status-slot">
+            {statusKind === "archive" && (
+              <span
+                className="wb-task-spinner wb-task-spinner-archive"
+                style={{ animationDelay: `${spinnerDelayRef.current}ms` }}
+              />
+            )}
             {statusKind === "working" && (
               <span className="wb-task-spinner" style={{ animationDelay: `${spinnerDelayRef.current}ms` }} />
             )}

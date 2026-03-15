@@ -445,12 +445,14 @@ export function useWorkbenchTaskListController({
       const seenMs = parseMs(task.assistant_seen_at ?? null);
       const unread = !working && lastAssistantMs !== null && (seenMs === null || lastAssistantMs > seenMs);
       const ageIso = task.last_activity_at ?? task.updated_at ?? task.created_at;
-      const statusKind = deriveWorkbenchTaskStatusKind({
-        hasError,
-        working,
-        unread,
-        localStatus,
-      });
+      let statusKind: "archive" | "error" | "working" | "unread" | "idle" = archivePending
+        ? "archive"
+        : deriveWorkbenchTaskStatusKind({
+            hasError,
+            working,
+            unread,
+            localStatus,
+          });
       const summaryProviders =
         summary.providerIds && summary.providerIds.length
           ? summary.providerIds

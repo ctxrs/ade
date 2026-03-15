@@ -9,6 +9,13 @@ vi.mock("./persistence", async () => {
 });
 
 describe("WorkbenchStore.flushDraft", () => {
+  const imageAttachment = {
+    kind: "image_ref" as const,
+    blob_id: "blob-1",
+    mime_type: "image/png",
+    name: "mock.png",
+  };
+
   it("persists the current draft immediately and cancels the pending debounce", async () => {
     vi.useFakeTimers();
     try {
@@ -16,8 +23,8 @@ describe("WorkbenchStore.flushDraft", () => {
       const saveWorkbenchDraftV1 = vi.mocked(persistence.saveWorkbenchDraftV1);
       const { WorkbenchStore } = await import("./store");
       const store = new WorkbenchStore("ws-1");
-      store.setDraft("k1", { text: "hello", modeId: "default" });
-      store.setDraft("k1", { text: "", modeId: "default" });
+      store.setDraft("k1", { text: "hello", modeId: "default", attachments: [imageAttachment] });
+      store.setDraft("k1", { text: "", modeId: "default", attachments: [imageAttachment] });
 
       expect(saveWorkbenchDraftV1).toHaveBeenCalledTimes(0);
 
@@ -29,6 +36,7 @@ describe("WorkbenchStore.flushDraft", () => {
         expect.objectContaining({
           text: "",
           modeId: "default",
+          attachments: [imageAttachment],
           updatedAtMs: expect.any(Number),
         }),
       );

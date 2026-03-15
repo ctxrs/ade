@@ -71,6 +71,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const mirrorRef = useRef<HTMLDivElement | null>(null);
   const lastHeightRef = useRef<number>(0);
+  const restoreDraftTailRef = useRef(true);
   const harnessTriggerRef = useRef<HTMLButtonElement | null>(null);
   const modelTriggerRef = useRef<HTMLButtonElement | null>(null);
   const effortTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -157,6 +158,12 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
 
   useLayoutEffect(() => {
     resizeTextarea();
+    const textarea = textareaRef.current;
+    if (!textarea || !restoreDraftTailRef.current || value.length === 0) return;
+    const end = textarea.value.length;
+    textarea.setSelectionRange(end, end);
+    textarea.scrollTop = textarea.scrollHeight;
+    restoreDraftTailRef.current = false;
   }, [resizeTextarea, value]);
 
   useEffect(() => {
@@ -536,7 +543,10 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
         }
         placeholder={placeholder}
         value={value}
-        onChange={(e) => setValue(e.target.value)}
+        onChange={(e) => {
+          restoreDraftTailRef.current = false;
+          setValue(e.target.value);
+        }}
         disabled={!!inputDisabled}
         onKeyDown={(e) => {
           if (autocomplete.onKeyDown(e)) return;

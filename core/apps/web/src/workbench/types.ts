@@ -1,3 +1,4 @@
+import type { MessageAttachment } from "../api/client";
 import type { WorkbenchModeId } from "../components/WorkbenchComposer";
 
 export type SplitDirection = "horizontal" | "vertical";
@@ -39,6 +40,7 @@ export type WorkbenchTab =
 export type WorkbenchDraft = {
   text: string;
   modeId: WorkbenchModeId;
+  attachments: MessageAttachment[];
   updatedAtMs: number;
 };
 

@@ -12,7 +12,7 @@ export function WorkbenchSessionSlot({
   optimisticFailure,
 }: WorkbenchSessionSlotProps) {
   const workbenchStore = useWorkbenchStore();
-  const draft = useWorkbenchDraft(sessionDraftKey(sessionId), { text: "", modeId: "default" });
+  const draft = useWorkbenchDraft(sessionDraftKey(sessionId), { text: "", modeId: "default", attachments: [] });
 
   return (
     <div className="wb-session-slot" aria-hidden="false">
@@ -40,6 +40,9 @@ export function WorkbenchSessionSlot({
         autoOpenSession={false}
         draft={draft.value}
         onDraftChange={(text) => draft.setValue({ text, modeId: draft.value.modeId })}
+        onDraftAttachmentsChange={(attachments) =>
+          draft.setValue({ text: draft.value.text, modeId: draft.value.modeId, attachments })
+        }
         onDraftPersistNow={() => workbenchStore.flushDraft(sessionDraftKey(sessionId))}
         onModeChange={(modeId) => draft.setValue({ text: draft.value.text, modeId })}
       />

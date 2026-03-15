@@ -83,6 +83,31 @@ function isBoolean(v: unknown): v is boolean {
   return typeof v === "boolean";
 }
 
+function decodeMessageAttachment(raw: unknown) {
+  if (!isRecord(raw)) return null;
+  if (raw.kind === "image") {
+    if (!isString(raw.mime_type) || !isString(raw.data_base64)) return null;
+    const name = raw.name == null ? null : isString(raw.name) ? raw.name : null;
+    return {
+      kind: "image" as const,
+      mime_type: raw.mime_type,
+      data_base64: raw.data_base64,
+      name,
+    };
+  }
+  if (raw.kind === "image_ref") {
+    if (!isString(raw.blob_id) || !isString(raw.mime_type)) return null;
+    const name = raw.name == null ? null : isString(raw.name) ? raw.name : null;
+    return {
+      kind: "image_ref" as const,
+      blob_id: raw.blob_id,
+      mime_type: raw.mime_type,
+      name,
+    };
+  }
+  return null;
+}
+
 function decodeSplitDirection(v: unknown): SplitDirection | null {
   if (v === "horizontal" || v === "vertical") return v;
   return null;
@@ -315,8 +340,12 @@ export function decodePersistedWorkbenchDraftV1(raw: unknown): PersistedWorkbenc
   if (!isString(draftRaw.text)) return null;
   const modeId = isString(draftRaw.modeId) ? draftRaw.modeId : "default";
   if (modeId !== "default" && modeId !== "research" && modeId !== "plan" && modeId !== "review") return null;
+  const attachmentsRaw = Array.isArray(draftRaw.attachments) ? draftRaw.attachments : [];
+  const attachments = attachmentsRaw
+    .map((attachment) => decodeMessageAttachment(attachment))
+    .filter((attachment): attachment is NonNullable<typeof attachment> => attachment !== null);
   const updatedAtMs = isNumber(draftRaw.updatedAtMs) ? draftRaw.updatedAtMs : 0;
-  const draft: WorkbenchDraft = { text: draftRaw.text, modeId, updatedAtMs };
+  const draft: WorkbenchDraft = { text: draftRaw.text, modeId, attachments, updatedAtMs };
   return { v: 1, key: raw.key, draft };
 }
 

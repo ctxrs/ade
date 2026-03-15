@@ -1,4 +1,5 @@
 import {
+  type SetStateAction,
   useCallback,
   useEffect,
   useMemo,
@@ -70,14 +71,16 @@ export function SessionView({
   sessionMode = "active",
   draft,
   onDraftChange,
+  onDraftAttachmentsChange,
   onDraftPersistNow,
   onModeChange,
 }: {
   sessionId: string;
   isActive?: boolean;
   sessionMode?: "active" | "archived";
-  draft?: { text: string; modeId: WorkbenchModeId } | null;
+  draft?: { text: string; modeId: WorkbenchModeId; attachments?: MessageAttachment[] } | null;
   onDraftChange?: ((text: string) => void) | null;
+  onDraftAttachmentsChange?: ((attachments: MessageAttachment[]) => void) | null;
   onDraftPersistNow?: (() => void | Promise<void>) | null;
   onModeChange?: ((modeId: WorkbenchModeId) => void) | null;
   autoOpenSession?: boolean;
@@ -103,7 +106,7 @@ export function SessionView({
   const perfStartRef = useRef<number>(0);
   const [verbosity, setVerbosity] = useState<SessionViewVerbosity>("default");
   const [inputInternal, setInputInternal] = useState("");
-  const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
+  const [draftAttachmentsInternal, setDraftAttachmentsInternal] = useState<MessageAttachment[]>([]);
   const [workbenchModeInternal, setWorkbenchModeInternal] = useState<WorkbenchModeId>("default");
   const [sendBusy, setSendBusy] = useState(false);
   const sendBusyRef = useRef(false);
@@ -123,13 +126,25 @@ export function SessionView({
   const [expandedTurnDetailsById, setExpandedTurnDetailsById] = useState<Record<string, boolean>>({});
   const [expandedToolById, setExpandedToolById] = useState<Record<string, boolean>>({});
   const [lastContextWindow, setLastContextWindow] = useState<ContextWindowInfo | null>(null);
+  const draftAttachments = draft?.attachments ?? draftAttachmentsInternal;
+  const setDraftAttachments = useCallback(
+    (next: SetStateAction<MessageAttachment[]>) => {
+      if (draft) {
+        const resolved = typeof next === "function" ? next(draft.attachments ?? []) : next;
+        onDraftAttachmentsChange?.(resolved);
+        return;
+      }
+      setDraftAttachmentsInternal(next);
+    },
+    [draft, onDraftAttachmentsChange],
+  );
   const { dropScopeRef, dropActive } = useSessionImageDropScope({ setDraftAttachments });
 
-		  useEffect(() => {
-		    setPendingMessages([]);
-		    setPendingQueueMessages([]);
-		    setOptimisticQueueRemovalIds([]);
-		    setDraftAttachments([]);
+  useEffect(() => {
+    setPendingMessages([]);
+    setPendingQueueMessages([]);
+    setOptimisticQueueRemovalIds([]);
+    setDraftAttachmentsInternal([]);
     setSendError(null);
     setFileOpenError(null);
     setOptimisticAskAnswers({});
@@ -140,7 +155,7 @@ export function SessionView({
     setAuthMethodId("");
     setAuthBusy(false);
     setAuthError(null);
-		    setAtBottom(true);
+    setAtBottom(true);
   }, [id]);
 
   useEffect(() => {
@@ -599,7 +614,7 @@ export function SessionView({
       setSendBusySafe(false);
       return;
     }
-    const attachmentsToSend = draftAttachments;
+    const attachmentsToSend = draftAttachments.slice();
     const shouldQueue = hasActiveTurn && queuedMessagesEnabled;
     const messageId = randomUuid();
     const turnId = randomUuid();
