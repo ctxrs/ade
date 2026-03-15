@@ -77,8 +77,13 @@ pub(super) async fn queue_snapshot_payload(
         .workspace_active_snapshot
         .active_snapshot(workspace_id, i64::MAX)
         .await;
-    active_snapshot.worktree_vcs_snapshots =
+    let extra_worktree_vcs_snapshots =
         load_worktree_vcs_snapshots_for_sessions(state, session_ids).await;
+    active_snapshot.worktree_vcs_snapshots =
+        merge_worktree_vcs_snapshots(
+            active_snapshot.worktree_vcs_snapshots,
+            extra_worktree_vcs_snapshots,
+        );
     let active_heads = state
         .workspaces
         .workspace_active_snapshot
@@ -113,6 +118,22 @@ pub(super) async fn queue_snapshot_payload(
         "workspace snapshot queued",
     );
     Ok(())
+}
+
+fn merge_worktree_vcs_snapshots(
+    snapshots: Vec<WorktreeVcsSnapshot>,
+    extras: Vec<WorktreeVcsSnapshot>,
+) -> Vec<WorktreeVcsSnapshot> {
+    let mut merged: HashMap<WorktreeId, WorktreeVcsSnapshot> = HashMap::new();
+    for snapshot in snapshots {
+        merged.insert(snapshot.worktree_id, snapshot);
+    }
+    for snapshot in extras {
+        merged.insert(snapshot.worktree_id, snapshot);
+    }
+    let mut ordered: Vec<_> = merged.into_values().collect();
+    ordered.sort_by_key(|snapshot| snapshot.worktree_id.0);
+    ordered
 }
 
 pub(super) async fn replay_session_events<F, Fut>(

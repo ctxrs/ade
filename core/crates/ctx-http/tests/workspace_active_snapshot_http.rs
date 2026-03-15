@@ -1579,6 +1579,113 @@ async fn workspace_stream_initial_snapshot_includes_worktree_vcs_for_explicit_ar
 }
 
 #[tokio::test]
+async fn workspace_stream_initial_snapshot_preserves_secondary_worktree_vcs_for_active_task() {
+    let (repo, _data_dir, state, server) = setup_git().await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let ws: ctx_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let task =
+        create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "multi-worktree")
+            .await;
+    let primary_session = create_primary_worktree_session(client, base, task.id).await;
+    let secondary_session = create_primary_worktree_session(client, base, task.id).await;
+
+    let primary_store = state.store_for_session(primary_session.id).await.unwrap();
+    let primary_worktree = primary_store
+        .get_worktree(primary_session.worktree_id)
+        .await
+        .unwrap()
+        .expect("missing primary worktree");
+    let secondary_store = state.store_for_session(secondary_session.id).await.unwrap();
+    let secondary_worktree = secondary_store
+        .get_worktree(secondary_session.worktree_id)
+        .await
+        .unwrap()
+        .expect("missing secondary worktree");
+
+    let mut next = HashSet::new();
+    next.insert(primary_worktree.id);
+    next.insert(secondary_worktree.id);
+    state
+        .update_worktree_vcs_activity(&HashSet::new(), &next)
+        .await;
+    ctx_http::git_status::refresh_worktree_vcs_summary(state.clone(), primary_worktree.clone())
+        .await
+        .unwrap();
+    ctx_http::git_status::refresh_worktree_vcs_summary(state.clone(), secondary_worktree.clone())
+        .await
+        .unwrap();
+
+    let seeded_snapshot = state
+        .workspaces
+        .workspace_active_snapshot
+        .active_snapshot(ws.id, 10)
+        .await;
+    let seeded_ids: HashSet<_> = seeded_snapshot
+        .worktree_vcs_snapshots
+        .iter()
+        .map(|snapshot| snapshot.worktree_id)
+        .collect();
+    assert!(seeded_ids.contains(&primary_worktree.id));
+    assert!(seeded_ids.contains(&secondary_worktree.id));
+
+    let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
+    let (mut socket, _) = connect_async(&ws_url).await.unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+    let subscribe = json!({
+        "type": "subscribe",
+        "scope": "active",
+        "include_active_heads": true,
+    })
+    .to_string();
+    socket
+        .send(WsMessage::Text(subscribe.into()))
+        .await
+        .unwrap();
+
+    let first = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let WsMessage::Text(first_text) = first else {
+        panic!("expected text frame after subscribe");
+    };
+    let first_message: ctx_core::models::WorkspaceActiveSnapshotStreamMessage =
+        serde_json::from_str(&first_text).unwrap();
+    let ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Snapshot {
+        active_snapshot, ..
+    } = first_message
+    else {
+        panic!("expected initial snapshot after subscribe");
+    };
+
+    assert_eq!(active_snapshot.active.tasks.len(), 1);
+    let streamed_ids: HashSet<_> = active_snapshot
+        .worktree_vcs_snapshots
+        .iter()
+        .map(|snapshot| snapshot.worktree_id)
+        .collect();
+    assert!(streamed_ids.contains(&primary_worktree.id));
+    assert!(streamed_ids.contains(&secondary_worktree.id));
+}
+
+#[tokio::test]
 async fn workspace_stream_emits_worktree_vcs_snapshot_on_activation() {
     let (repo, _data_dir, state, server) = setup_git().await;
     let base = &server.base_url;
