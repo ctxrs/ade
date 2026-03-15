@@ -67,6 +67,18 @@ const buildAssistantItem = (
   ...overrides,
 });
 
+const buildMessageItem = (
+  overrides: Partial<Extract<WorkbenchListItem, { kind: "message" }>> = {},
+): WorkbenchListItem => ({
+  kind: "message",
+  id: "message-user-1",
+  role: "user",
+  content: "hello",
+  attachments: [],
+  created_at: "2026-03-15T00:00:00.000Z",
+  ...overrides,
+});
+
 function createFakeMethods(initial: WorkbenchListItem[]) {
   let store = [...initial];
   const calls: Array<{ method: string; args: unknown[] }> = [];
@@ -280,16 +292,59 @@ describe("getWorkbenchListItemRenderKey", () => {
     const collapsedContext: WorkbenchMessageListContext = {
       loaded: true,
       loadingOlder: false,
-      renderRevision: '{"toolExpanded":false}',
+      expandedToolById: {},
     };
     const expandedContext: WorkbenchMessageListContext = {
       loaded: true,
       loadingOlder: false,
-      renderRevision: '{"toolExpanded":true}',
+      expandedToolById: { [item.id]: true },
     };
 
     expect(getWorkbenchListItemRenderKey(item, expandedContext)).not.toBe(
       getWorkbenchListItemRenderKey(item, collapsedContext),
     );
+  });
+
+  it("keeps unrelated tool rows stable when another tool toggles", () => {
+    const item = buildToolItem();
+    const otherToolId = "tool-turn-1-tool-2";
+    const collapsedContext: WorkbenchMessageListContext = {
+      loaded: true,
+      loadingOlder: false,
+      expandedToolById: {},
+    };
+    const expandedOtherContext: WorkbenchMessageListContext = {
+      loaded: true,
+      loadingOlder: false,
+      expandedToolById: { [otherToolId]: true },
+    };
+
+    expect(getWorkbenchListItemRenderKey(item, expandedOtherContext)).toBe(
+      getWorkbenchListItemRenderKey(item, collapsedContext),
+    );
+  });
+
+  it("keeps message rows stable across content-only updates", () => {
+    const current = buildMessageItem();
+    const next = buildMessageItem({
+      content: "hello with a longer body that still should not remount a stable user row",
+    });
+
+    expect(getWorkbenchListItemRenderKey(next)).toBe(getWorkbenchListItemRenderKey(current));
+  });
+
+  it("changes for assistant-role message rows when content grows", () => {
+    const current = buildMessageItem({
+      id: "assistant-msg-1",
+      role: "assistant",
+      content: "short reply",
+    });
+    const next = buildMessageItem({
+      id: "assistant-msg-1",
+      role: "assistant",
+      content: "this completed assistant message is now much longer and should remeasure",
+    });
+
+    expect(getWorkbenchListItemRenderKey(next)).not.toBe(getWorkbenchListItemRenderKey(current));
   });
 });

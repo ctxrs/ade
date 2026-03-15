@@ -289,11 +289,9 @@ export function SessionWorkbenchPane({
   const messageListContext = useMemo(
     () => ({
       ...context,
-      renderRevision: JSON.stringify({
-        turnHeaders: expandedTurnHeaders,
-        turnDetails: expandedTurnDetailsById,
-        tools: expandedToolById,
-      }),
+      expandedTurnHeaders,
+      expandedTurnDetailsById,
+      expandedToolById,
     }),
     [context, expandedToolById, expandedTurnDetailsById, expandedTurnHeaders],
   );

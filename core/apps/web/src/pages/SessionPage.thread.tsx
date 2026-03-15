@@ -34,7 +34,9 @@ type WorkbenchMessageListStackProps = {
 export type WorkbenchMessageListContext = {
   loaded: boolean;
   loadingOlder: boolean;
-  renderRevision?: string;
+  expandedTurnHeaders?: Readonly<Record<string, boolean>>;
+  expandedTurnDetailsById?: Readonly<Record<string, boolean>>;
+  expandedToolById?: Readonly<Record<string, boolean>>;
 };
 
 const DEBUG_ROW_SIZE_DELTA_PX = 8;

@@ -65,8 +65,13 @@ const serializeLayoutValue = (value: unknown, seen = new WeakSet<object>()): str
 export const getWorkbenchListItemLayoutKey = (item: WorkbenchListItem): string => {
   switch (item.kind) {
     case "message":
-      return `message:${textLayoutKey(item.content)}:${item.attachments.length}`;
+      // EXCEPTION: assistant transcript messages stay content-sensitive because Virtuoso only
+      // exposes whole-list size purges, and the live overlap repro needed these rows to remount.
+      return item.role === "assistant"
+        ? `message:assistant:${textLayoutKey(item.content)}:${item.attachments.length}`
+        : `message:${item.role}:${item.attachments.length}`;
     case "assistant":
+      // EXCEPTION: pending assistant rows must remount on content growth to avoid stale row sizes.
       return `assistant:${textLayoutKey(item.content)}:${item.is_complete ? 1 : 0}`;
     case "thought":
       return `thought:${textLayoutKey(item.content)}`;
@@ -117,13 +122,13 @@ const getContextLayoutRevisionKey = (
   item: WorkbenchListItem,
   context: WorkbenchMessageListContext | undefined,
 ): string => {
-  const renderRevision = context?.renderRevision;
-  if (!renderRevision) return "";
   switch (item.kind) {
     case "tool":
+      return `tool:${context?.expandedToolById?.[item.id] ? 1 : 0}`;
     case "tool_group":
+      return `tool_group:${context?.expandedTurnDetailsById?.[item.turn_id] ? 1 : 0}`;
     case "turn_header":
-      return hashString(renderRevision);
+      return `turn_header:${context?.expandedTurnHeaders?.[item.header.id] ? 1 : 0}`;
     default:
       return "";
   }

@@ -42,6 +42,26 @@ const buildTurnStatusItem = (
   ...overrides,
 });
 
+const buildToolItem = (
+  overrides: Partial<Extract<WorkbenchListItem, { kind: "tool" }>> = {},
+): WorkbenchListItem => ({
+  kind: "tool",
+  id: "tool-turn-1-tool-1",
+  created_at: "2026-03-15T00:00:00.000Z",
+  updated_at: "2026-03-15T00:00:01.000Z",
+  tool_call_id: "tool-1",
+  tool_kind: "execute",
+  title: "Run",
+  subtitle: "echo ok",
+  status: "completed",
+  locations: [],
+  input: { command: "echo ok" },
+  output_text: "ok",
+  raw: null,
+  updates_seen: 1,
+  ...overrides,
+});
+
 function renderMessageList({
   data,
   context = baseContext,
@@ -173,5 +193,55 @@ describe("WorkbenchMessageListStack", () => {
 
     const secondWrapper = await findMeasuredWrapper(view.container, next[0].id);
     expect(secondWrapper).toBe(firstWrapper);
+  });
+
+  it("remounts only the toggled tool row wrapper when expansion state changes", async () => {
+    const firstTool = buildToolItem();
+    const secondTool = buildToolItem({
+      id: "tool-turn-1-tool-2",
+      tool_call_id: "tool-2",
+      title: "Run second",
+      subtitle: "echo second",
+    });
+    const current = [firstTool, secondTool];
+    const collapsedContext: WorkbenchMessageListContext = {
+      loaded: true,
+      loadingOlder: false,
+      expandedToolById: {},
+    };
+    const expandedContext: WorkbenchMessageListContext = {
+      loaded: true,
+      loadingOlder: false,
+      expandedToolById: { [secondTool.id]: true },
+    };
+    const view = renderMessageList({ data: current, context: collapsedContext });
+    const firstToolWrapper = await findMeasuredWrapper(view.container, firstTool.id);
+    const secondToolWrapper = await findMeasuredWrapper(view.container, secondTool.id);
+
+    view.rerender(
+      <VirtuosoMessageListTestingContext.Provider value={{ viewportHeight: 600, itemHeight: 120 }}>
+        <WorkbenchMessageListStack
+          virtuosoStyle={{ height: 400 }}
+          initialData={current}
+          itemContent={(_index, item) => <div>{item.kind === "assistant" ? item.content : item.kind}</div>}
+          itemIdentity={(item) => item.id}
+          initialLocation={{ index: 0, align: "start" }}
+          dataState={{ data: current }}
+          context={expandedContext}
+          onScroll={() => {}}
+          onRenderedDataChange={() => {}}
+          listRef={
+            {
+              current: null,
+            } as MutableRefObject<VirtuosoMessageListMethods<WorkbenchListItem, WorkbenchMessageListContext> | null>
+          }
+          licenseKey=""
+          shortSizeAlign="top"
+        />
+      </VirtuosoMessageListTestingContext.Provider>,
+    );
+
+    expect(await findMeasuredWrapper(view.container, firstTool.id)).toBe(firstToolWrapper);
+    expect(await findMeasuredWrapper(view.container, secondTool.id)).not.toBe(secondToolWrapper);
   });
 });
