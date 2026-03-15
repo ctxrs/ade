@@ -256,6 +256,7 @@ async fn handle_workspace_active_snapshot_ws(
                     if subscription_state.active_scope {
                         match &event {
                             WorkspaceActiveSnapshotEvent::ActiveTaskUpsert { task, .. } => {
+                                let task_session_ids = session_ids_for_active_task_summary(task);
                                 let session_id = task
                                     .task
                                     .primary_session_id
@@ -263,6 +264,9 @@ async fn handle_workspace_active_snapshot_ws(
                                 subscription_state
                                     .active_task_sessions
                                     .insert(task.task.id, session_id);
+                                subscription_state
+                                    .active_task_vcs_sessions
+                                    .insert(task.task.id, task_session_ids);
                                 refresh_active_worktrees = true;
                                 if let std::collections::hash_map::Entry::Vacant(entry) =
                                     subscriptions.entry(session_id)
@@ -274,6 +278,8 @@ async fn handle_workspace_active_snapshot_ws(
                                 }
                             }
                             WorkspaceActiveSnapshotEvent::ActiveTaskDelete { task_id, .. } => {
+                                let removed_vcs_sessions =
+                                    subscription_state.active_task_vcs_sessions.remove(task_id);
                                 if let Some(session_id) =
                                     subscription_state.active_task_sessions.remove(task_id)
                                 {
@@ -287,13 +293,19 @@ async fn handle_workspace_active_snapshot_ws(
                                             .explicit_sessions
                                             .contains(&session_id)
                                     {
-                                        subscriptions.remove(&session_id);
+                                            subscriptions.remove(&session_id);
                                     }
+                                }
+                                if removed_vcs_sessions.is_some() {
+                                    refresh_active_worktrees = true;
                                 }
                             }
                             WorkspaceActiveSnapshotEvent::TaskDelta { delta, .. }
                                 if matches!(delta.kind, TaskDeltaKind::Archived) =>
                             {
+                                let removed_vcs_sessions = subscription_state
+                                    .active_task_vcs_sessions
+                                    .remove(&delta.task.id);
                                 if let Some(session_id) =
                                     subscription_state.active_task_sessions.remove(&delta.task.id)
                                 {
@@ -307,7 +319,40 @@ async fn handle_workspace_active_snapshot_ws(
                                             .explicit_sessions
                                             .contains(&session_id)
                                     {
-                                        subscriptions.remove(&session_id);
+                                            subscriptions.remove(&session_id);
+                                    }
+                                }
+                                if removed_vcs_sessions.is_some() {
+                                    refresh_active_worktrees = true;
+                                }
+                            }
+                            WorkspaceActiveSnapshotEvent::SessionSummary { summary, .. } => {
+                                if let Some(ids) = subscription_state
+                                    .active_task_vcs_sessions
+                                    .get_mut(&summary.session.task_id)
+                                {
+                                    if ids.insert(summary.session.id) {
+                                        refresh_active_worktrees = true;
+                                    }
+                                }
+                            }
+                            WorkspaceActiveSnapshotEvent::SessionSummaryDelta { delta, .. } => {
+                                if let Some(ids) = subscription_state
+                                    .active_task_vcs_sessions
+                                    .get_mut(&delta.task_id)
+                                {
+                                    if ids.insert(delta.session_id) {
+                                        refresh_active_worktrees = true;
+                                    }
+                                }
+                            }
+                            WorkspaceActiveSnapshotEvent::SessionHeadSeed { head, .. } => {
+                                if let Some(ids) = subscription_state
+                                    .active_task_vcs_sessions
+                                    .get_mut(&head.session.task_id)
+                                {
+                                    if ids.insert(head.session.id) {
+                                        refresh_active_worktrees = true;
                                     }
                                 }
                             }
@@ -315,15 +360,17 @@ async fn handle_workspace_active_snapshot_ws(
                         }
                     }
                     if refresh_active_worktrees {
-                        let session_ids =
-                            tracked_workspace_active_session_ids(&subscription_state);
+                        let session_ids = resolve_worktree_vcs_interest_session_ids(
+                            subscriptions.keys().copied(),
+                            &subscription_state,
+                        );
                         sync_active_worktrees(
                             &state,
                             &mut active_worktrees,
                             &session_ids,
                         )
                         .await;
-                        ensure_worktree_vcs_watchers_for_sessions(
+                        refresh_worktree_vcs_for_sessions(
                             &state,
                             &session_ids,
                         )
@@ -523,7 +570,7 @@ async fn handle_subscribe_message(
     message: WorkspaceActiveSnapshotClientMessage,
     ctx: &mut WorkspaceActiveSubscribeContext<'_>,
 ) -> Result<(), ()> {
-    let include_active_heads = matches!(
+    let include_initial_snapshot = matches!(
         &message,
         WorkspaceActiveSnapshotClientMessage::Subscribe {
             include_active_heads: true,
@@ -563,6 +610,7 @@ async fn handle_subscribe_message(
     };
     let ResolvedWorkspaceActiveSubscriptions {
         sessions: resolved_sessions,
+        worktree_vcs_session_ids,
         state: next_state,
     } = resolved;
 
@@ -570,12 +618,10 @@ async fn handle_subscribe_message(
     ctx.head_buffer.clear().await;
     *ctx.reset_queued = false;
     ctx.send_control.clear_disconnect_after_flush();
-    let git_status_session_ids: Vec<SessionId> =
-        resolved_sessions.iter().map(|sub| sub.session_id).collect();
-    sync_active_worktrees(state, ctx.active_worktrees, &git_status_session_ids).await;
-    if include_active_heads {
+    sync_active_worktrees(state, ctx.active_worktrees, &worktree_vcs_session_ids).await;
+    if include_initial_snapshot {
         ctx.send_control.set_hydrating();
-        if queue_snapshot_payload(ctx.control, state, workspace_id, &git_status_session_ids)
+        if queue_snapshot_payload(ctx.control, state, workspace_id, &worktree_vcs_session_ids)
             .await
             .is_err()
         {
@@ -584,7 +630,7 @@ async fn handle_subscribe_message(
     }
 
     let mut skip_replay_sessions = HashSet::new();
-    if include_active_heads && next_state.active_scope {
+    if include_initial_snapshot && next_state.active_scope {
         for session_id in next_state.active_task_sessions.values() {
             skip_replay_sessions.insert(*session_id);
         }
@@ -598,12 +644,13 @@ async fn handle_subscribe_message(
         let ResolvedWorkspaceActiveSessionReplay::Resume { after_seq } = sub.replay else {
             continue;
         };
-        if include_active_heads && skip_replay_sessions.contains(&session_id) {
+        if include_initial_snapshot && skip_replay_sessions.contains(&session_id) {
             let last_sent = state
                 .workspaces
                 .workspace_active_snapshot
                 .session_last_event_seq(workspace_id, session_id)
-                .await;
+                .await
+                .max(after_seq);
             next_map.insert(session_id, SessionCursor { last_sent });
             continue;
         }
@@ -700,6 +747,22 @@ async fn handle_subscribe_message(
     }
     *ctx.subscriptions = next_map;
     *ctx.subscription_state = next_state;
-    spawn_worktree_vcs_warmup_for_sessions(state.clone(), git_status_session_ids);
+    if seed_worktree_vcs_for_subscribe(
+        ctx.control,
+        state,
+        workspace_id,
+        &worktree_vcs_session_ids,
+        if include_initial_snapshot {
+            WorktreeVcsSeedMode::IncludedInSnapshot
+        } else {
+            WorktreeVcsSeedMode::EmitCachedEvents
+        },
+    )
+    .await
+    .is_err()
+    {
+        return Err(());
+    }
+    spawn_worktree_vcs_refresh_for_sessions(state.clone(), worktree_vcs_session_ids);
     Ok(())
 }

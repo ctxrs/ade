@@ -4,19 +4,37 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use futures::{SinkExt, StreamExt};
+use reqwest::Url;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use tokio::net::TcpStream;
 use tokio::sync::Semaphore;
-use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
+use tokio_tungstenite::{
+    connect_async, tungstenite::Message as WsMessage, MaybeTlsStream, WebSocketStream,
+};
 
 use chrono::Utc;
-use ctx_core::ids::{TurnId, WorktreeId};
+use ctx_core::ids::{MobileDeviceId, TurnId, WorktreeId};
 use ctx_core::models::{
-    SessionEventType, SessionTurn, SessionTurnStatus, WorktreeVcsFreshness, WorktreeVcsSnapshot,
+    SessionEventType, SessionTurn, SessionTurnStatus, WorkspaceActiveSnapshotEvent,
+    WorkspaceActiveSnapshotStreamMessage, WorktreeVcsFreshness, WorktreeVcsSnapshot,
 };
 use ctx_http::daemon::AppState;
+use ctx_store::store::{MobileAccessConfig, MobileDeviceUpsert};
+use tokio::process::Command;
 
 mod common;
+
+type TestWsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
+
+#[derive(Debug, Deserialize, Serialize)]
+struct TestMobileSecureEnvelope {
+    device_id: String,
+    seq: i64,
+    nonce: String,
+    ciphertext: String,
+}
 
 fn workspace_http_test_gate() -> &'static Arc<Semaphore> {
     static GATE: OnceLock<Arc<Semaphore>> = OnceLock::new();
@@ -24,22 +42,18 @@ fn workspace_http_test_gate() -> &'static Arc<Semaphore> {
 }
 
 fn worktree_vcs_snapshot_from_message(
-    message: ctx_core::models::WorkspaceActiveSnapshotStreamMessage,
+    message: WorkspaceActiveSnapshotStreamMessage,
     worktree_id: WorktreeId,
 ) -> Option<WorktreeVcsSnapshot> {
     match message {
-        ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Snapshot {
-            active_snapshot,
-            ..
+        WorkspaceActiveSnapshotStreamMessage::Snapshot {
+            active_snapshot, ..
         } => active_snapshot
             .worktree_vcs_snapshots
             .into_iter()
             .find(|snapshot| snapshot.worktree_id == worktree_id),
-        ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event { event, .. } => {
-            let ctx_core::models::WorkspaceActiveSnapshotEvent::WorktreeVcsSnapshot {
-                snapshot,
-                ..
-            } = event.as_ref()
+        WorkspaceActiveSnapshotStreamMessage::Event { event, .. } => {
+            let WorkspaceActiveSnapshotEvent::WorktreeVcsSnapshot { snapshot, .. } = event.as_ref()
             else {
                 return None;
             };
@@ -59,6 +73,48 @@ fn git_status_untracked_from_message(
 ) -> Option<i64> {
     worktree_vcs_snapshot_from_message(message, worktree_id)
         .map(|snapshot| snapshot.git_status.untracked)
+}
+
+async fn run_git(root: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .await
+        .expect("run git command");
+    assert!(
+        output.status.success(),
+        "git {:?} failed: {}",
+        args,
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+async fn remove_git_marker(root: &Path) {
+    let git_path = root.join(".git");
+    let Ok(metadata) = tokio::fs::metadata(&git_path).await else {
+        return;
+    };
+    if metadata.is_dir() {
+        tokio::fs::remove_dir_all(&git_path)
+            .await
+            .expect("remove .git directory");
+    } else {
+        tokio::fs::remove_file(&git_path)
+            .await
+            .expect("remove .git file");
+    }
+}
+
+async fn poison_worktree_git_marker(worktree_root: &Path) {
+    remove_git_marker(worktree_root).await;
+    tokio::fs::write(
+        worktree_root.join(".git"),
+        "gitdir: /definitely/missing/ctx-test-gitdir\n",
+    )
+    .await
+    .expect("write poisoned .git marker");
 }
 
 async fn setup_with_root(
@@ -118,6 +174,138 @@ async fn decode_json_response<T: DeserializeOwned>(response: reqwest::Response) 
             status, err, body
         )
     })
+}
+
+async fn configure_mobile_secure_access(
+    state: &Arc<AppState>,
+) -> (String, ctx_http::mobile_e2ee::E2eeKey) {
+    let profile_id = state
+        .global_store()
+        .create_mobile_connection_profile(
+            "workspace-http-test".to_string(),
+            "https://example.test".to_string(),
+            "test-token-hash".to_string(),
+            "testtok".to_string(),
+            vec!["workspace".to_string()],
+        )
+        .await
+        .unwrap()
+        .id;
+    let (daemon_public_key, daemon_private_key) = ctx_http::mobile_e2ee::generate_keypair();
+    state
+        .global_store()
+        .upsert_mobile_access_config(MobileAccessConfig {
+            id: "default".to_string(),
+            profile_id,
+            tunnel_id: uuid::Uuid::new_v4().to_string(),
+            public_base_url: "http://127.0.0.1".to_string(),
+            relay_base_url: "http://127.0.0.1".to_string(),
+            tunnel_secret: "test-secret".to_string(),
+            daemon_public_key: daemon_public_key.clone(),
+            daemon_private_key,
+            enabled: true,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        })
+        .await
+        .unwrap();
+
+    let device_id = uuid::Uuid::new_v4();
+    let (device_public_key, device_secret_key) = ctx_http::mobile_e2ee::generate_keypair();
+    state
+        .global_store()
+        .upsert_mobile_device(
+            MobileDeviceId(device_id),
+            profile_id,
+            MobileDeviceUpsert {
+                device_label: Some("workspace-http-test".to_string()),
+                platform: Some("test".to_string()),
+                push_token: None,
+                push_provider: None,
+                public_key: Some(device_public_key),
+                app_version: Some("0.0.0-test".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+
+    let key = ctx_http::mobile_e2ee::derive_client_key(
+        &device_id.to_string(),
+        &device_secret_key,
+        &daemon_public_key,
+    )
+    .unwrap();
+    (device_id.to_string(), key)
+}
+
+fn build_mobile_secure_ws_url(
+    base: &str,
+    workspace_id: ctx_core::ids::WorkspaceId,
+    device_id: &str,
+) -> String {
+    let mut url = Url::parse(base).expect("parse base url");
+    match url.scheme() {
+        "http" => {
+            url.set_scheme("ws").expect("set ws scheme");
+        }
+        "https" => {
+            url.set_scheme("wss").expect("set wss scheme");
+        }
+        other => panic!("unsupported base scheme {other}"),
+    }
+    url.set_path(&format!(
+        "/api/mobile/secure/workspaces/{}/stream",
+        workspace_id.0
+    ));
+    url.set_query(Some(&format!("device_id={device_id}")));
+    url.to_string()
+}
+
+async fn recv_secure_workspace_message(
+    socket: &mut TestWsStream,
+    key: &ctx_http::mobile_e2ee::E2eeKey,
+    device_id: &str,
+    timeout: Duration,
+) -> Option<WorkspaceActiveSnapshotStreamMessage> {
+    let next = tokio::time::timeout(timeout, socket.next())
+        .await
+        .ok()??
+        .ok()?;
+    let text = match next {
+        WsMessage::Text(text) => text.to_string(),
+        _ => return None,
+    };
+    let frame: TestMobileSecureEnvelope = serde_json::from_str(&text).ok()?;
+    let payload =
+        ctx_http::mobile_e2ee::decrypt(key, device_id, frame.seq, &frame.nonce, &frame.ciphertext)
+            .ok()?;
+    serde_json::from_slice(&payload).ok()
+}
+
+async fn send_secure_workspace_subscribe(
+    socket: &mut TestWsStream,
+    key: &ctx_http::mobile_e2ee::E2eeKey,
+    device_id: &str,
+    seq: i64,
+    payload: Value,
+) {
+    let plaintext = serde_json::to_vec(&payload).expect("serialize secure subscribe payload");
+    let envelope = ctx_http::mobile_e2ee::encrypt(key, device_id, seq, &plaintext)
+        .expect("encrypt secure subscribe");
+    let frame = TestMobileSecureEnvelope {
+        device_id: envelope.device_id,
+        seq: envelope.seq,
+        nonce: envelope.nonce_b64,
+        ciphertext: envelope.ciphertext_b64,
+    };
+    socket
+        .send(WsMessage::Text(
+            serde_json::to_string(&frame)
+                .expect("serialize secure subscribe envelope")
+                .into(),
+        ))
+        .await
+        .expect("send secure subscribe");
 }
 
 async fn create_task_without_default_session(
@@ -1724,6 +1912,339 @@ async fn workspace_stream_repeat_subscribe_preserves_ready_worktree_vcs_state() 
 }
 
 #[tokio::test]
+async fn workspace_stream_replay_only_subscribe_reseeds_cached_worktree_vcs_snapshot() {
+    let (repo, _data_dir, state, server) = setup_git().await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let ws: ctx_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let task =
+        create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "reseed-vcs")
+            .await;
+    let session = create_primary_worktree_session(client, base, task.id).await;
+    let store = state.store_for_session(session.id).await.unwrap();
+    let worktree = store
+        .get_worktree(session.worktree_id)
+        .await
+        .unwrap()
+        .expect("missing worktree");
+
+    let mut next = HashSet::new();
+    next.insert(worktree.id);
+    state
+        .update_worktree_vcs_activity(&HashSet::new(), &next)
+        .await;
+    ctx_http::git_status::refresh_worktree_vcs_summary(state.clone(), worktree.clone())
+        .await
+        .unwrap();
+
+    let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
+    let (mut socket, _) = connect_async(&ws_url).await.unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+    let after_seq = state
+        .workspaces
+        .workspace_active_snapshot
+        .session_last_event_seq(ws.id, session.id)
+        .await;
+    let subscribe = json!({
+        "type": "subscribe",
+        "include_active_heads": false,
+        "sessions": [{
+            "session_id": session.id.0,
+            "replay": {
+                "mode": "resume",
+                "after_seq": after_seq,
+            },
+        }],
+    })
+    .to_string();
+    socket
+        .send(WsMessage::Text(subscribe.into()))
+        .await
+        .unwrap();
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    let mut saw_seed = false;
+    while tokio::time::Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let wait = remaining.min(Duration::from_millis(250));
+        let next = tokio::time::timeout(wait, socket.next()).await;
+        if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
+            let Ok(message) = serde_json::from_str::<
+                ctx_core::models::WorkspaceActiveSnapshotStreamMessage,
+            >(&txt) else {
+                continue;
+            };
+            let Some(snapshot) = worktree_vcs_snapshot_from_message(message, worktree.id) else {
+                continue;
+            };
+            assert_eq!(snapshot.freshness, WorktreeVcsFreshness::Fresh);
+            saw_seed = true;
+            break;
+        }
+    }
+
+    assert!(
+        saw_seed,
+        "expected replay-only subscribe to re-seed cached worktree vcs snapshot"
+    );
+}
+
+#[tokio::test]
+async fn mobile_secure_workspace_stream_replay_only_subscribe_reseeds_cached_worktree_vcs_snapshot()
+{
+    let (repo, _data_dir, state, server) = setup_git().await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let ws: ctx_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let task =
+        create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "secure-vcs")
+            .await;
+    let session = create_primary_worktree_session(client, base, task.id).await;
+    let store = state.store_for_session(session.id).await.unwrap();
+    let worktree = store
+        .get_worktree(session.worktree_id)
+        .await
+        .unwrap()
+        .expect("missing worktree");
+
+    let mut next = HashSet::new();
+    next.insert(worktree.id);
+    state
+        .update_worktree_vcs_activity(&HashSet::new(), &next)
+        .await;
+    ctx_http::git_status::refresh_worktree_vcs_summary(state.clone(), worktree.clone())
+        .await
+        .unwrap();
+
+    let (device_id, key) = configure_mobile_secure_access(&state).await;
+    let ws_url = build_mobile_secure_ws_url(base, ws.id, &device_id);
+    let (mut socket, _) = connect_async(&ws_url).await.unwrap();
+    let ready =
+        recv_secure_workspace_message(&mut socket, &key, &device_id, Duration::from_secs(2))
+            .await
+            .expect("expected secure ready frame");
+    assert!(matches!(
+        ready,
+        WorkspaceActiveSnapshotStreamMessage::Event { event, .. }
+            if matches!(event.as_ref(), WorkspaceActiveSnapshotEvent::Ready { .. })
+    ));
+
+    let after_seq = state
+        .workspaces
+        .workspace_active_snapshot
+        .session_last_event_seq(ws.id, session.id)
+        .await;
+    send_secure_workspace_subscribe(
+        &mut socket,
+        &key,
+        &device_id,
+        1,
+        json!({
+            "type": "subscribe",
+            "include_active_heads": false,
+            "sessions": [{
+                "session_id": session.id.0,
+                "replay": {
+                    "mode": "resume",
+                    "after_seq": after_seq,
+                },
+            }],
+        }),
+    )
+    .await;
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    let mut saw_seed = false;
+    while tokio::time::Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let wait = remaining.min(Duration::from_millis(250));
+        let Some(message) =
+            recv_secure_workspace_message(&mut socket, &key, &device_id, wait).await
+        else {
+            continue;
+        };
+        let Some(snapshot) = worktree_vcs_snapshot_from_message(message, worktree.id) else {
+            continue;
+        };
+        assert_eq!(snapshot.freshness, WorktreeVcsFreshness::Fresh);
+        saw_seed = true;
+        break;
+    }
+
+    assert!(
+        saw_seed,
+        "expected secure replay-only subscribe to re-seed cached worktree vcs snapshot"
+    );
+}
+
+#[tokio::test]
+async fn workspace_stream_repeat_subscribe_rescans_fresh_unavailable_worktree_vcs() {
+    let (repo, _data_dir, state, server) = setup_git().await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let ws: ctx_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let task = create_task_with_primary_worktree(
+        client,
+        &state,
+        base,
+        ws.id,
+        repo.path(),
+        "unavailable-refresh",
+    )
+    .await;
+    let session = create_primary_worktree_session(client, base, task.id).await;
+    let store = state.store_for_session(session.id).await.unwrap();
+    let worktree = store
+        .get_worktree(session.worktree_id)
+        .await
+        .unwrap()
+        .expect("missing worktree");
+
+    let mut next = HashSet::new();
+    next.insert(worktree.id);
+    state
+        .update_worktree_vcs_activity(&HashSet::new(), &next)
+        .await;
+
+    let worktree_root = Path::new(&worktree.root_path);
+    poison_worktree_git_marker(worktree_root).await;
+    ctx_http::git_status::emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
+        .await
+        .unwrap();
+    let unavailable = state
+        .get_worktree_vcs_snapshot(worktree.id)
+        .await
+        .expect("expected unavailable snapshot");
+    assert_eq!(unavailable.freshness, WorktreeVcsFreshness::Fresh);
+    assert!(!unavailable.available);
+
+    let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
+    let (mut socket, _) = connect_async(&ws_url).await.unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+    let subscribe = json!({
+        "type": "subscribe",
+        "include_active_heads": false,
+        "sessions": [{
+            "session_id": session.id.0,
+            "replay": {
+                "mode": "resume",
+                "after_seq": 0,
+            },
+        }],
+    })
+    .to_string();
+    socket
+        .send(WsMessage::Text(subscribe.clone().into()))
+        .await
+        .unwrap();
+
+    let mut saw_unavailable = false;
+    let first_deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    while tokio::time::Instant::now() < first_deadline {
+        let remaining = first_deadline.saturating_duration_since(tokio::time::Instant::now());
+        let wait = remaining.min(Duration::from_millis(250));
+        let next = tokio::time::timeout(wait, socket.next()).await;
+        if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
+            let Ok(message) = serde_json::from_str::<
+                ctx_core::models::WorkspaceActiveSnapshotStreamMessage,
+            >(&txt) else {
+                continue;
+            };
+            let Some(snapshot) = worktree_vcs_snapshot_from_message(message, worktree.id) else {
+                continue;
+            };
+            if !snapshot.available {
+                saw_unavailable = true;
+                break;
+            }
+        }
+    }
+    assert!(
+        saw_unavailable,
+        "expected initial replay-only subscribe to surface cached unavailable worktree vcs state"
+    );
+
+    remove_git_marker(worktree_root).await;
+    run_git(worktree_root, &["init"]).await;
+    run_git(worktree_root, &["config", "user.email", "test@example.com"]).await;
+    run_git(worktree_root, &["config", "user.name", "Test"]).await;
+    run_git(worktree_root, &["add", "."]).await;
+    run_git(worktree_root, &["commit", "-m", "restore"]).await;
+
+    socket
+        .send(WsMessage::Text(subscribe.into()))
+        .await
+        .unwrap();
+
+    let mut recovered = None;
+    let second_deadline = tokio::time::Instant::now() + Duration::from_secs(6);
+    while tokio::time::Instant::now() < second_deadline {
+        let remaining = second_deadline.saturating_duration_since(tokio::time::Instant::now());
+        let wait = remaining.min(Duration::from_millis(250));
+        let next = tokio::time::timeout(wait, socket.next()).await;
+        if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
+            let Ok(message) = serde_json::from_str::<
+                ctx_core::models::WorkspaceActiveSnapshotStreamMessage,
+            >(&txt) else {
+                continue;
+            };
+            let Some(snapshot) = worktree_vcs_snapshot_from_message(message, worktree.id) else {
+                continue;
+            };
+            if snapshot.available {
+                recovered = Some(snapshot);
+                break;
+            }
+        }
+    }
+
+    let recovered =
+        recovered.expect("expected repeat subscribe to refresh unavailable worktree vcs");
+    assert!(recovered.available);
+    assert_eq!(recovered.freshness, WorktreeVcsFreshness::Fresh);
+}
+
+#[tokio::test]
 async fn workspace_stream_initial_snapshot_includes_worktree_vcs_for_explicit_archived_session() {
     let (repo, _data_dir, state, server) = setup_git().await;
     let base = &server.base_url;
@@ -1930,6 +2451,241 @@ async fn workspace_stream_initial_snapshot_preserves_secondary_worktree_vcs_for_
         .collect();
     assert!(streamed_ids.contains(&primary_worktree.id));
     assert!(streamed_ids.contains(&secondary_worktree.id));
+}
+
+#[tokio::test]
+async fn workspace_stream_active_subscribe_keeps_secondary_worktree_vcs_publishable() {
+    let (repo, _data_dir, state, server) = setup_git().await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let ws: ctx_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let task = create_task_with_primary_worktree(
+        client,
+        &state,
+        base,
+        ws.id,
+        repo.path(),
+        "multi-worktree-reconnect",
+    )
+    .await;
+    let primary_session = create_primary_worktree_session(client, base, task.id).await;
+    let secondary_session = create_primary_worktree_session(client, base, task.id).await;
+
+    let primary_store = state.store_for_session(primary_session.id).await.unwrap();
+    let primary_worktree = primary_store
+        .get_worktree(primary_session.worktree_id)
+        .await
+        .unwrap()
+        .expect("missing primary worktree");
+    let secondary_store = state.store_for_session(secondary_session.id).await.unwrap();
+    let secondary_worktree = secondary_store
+        .get_worktree(secondary_session.worktree_id)
+        .await
+        .unwrap()
+        .expect("missing secondary worktree");
+
+    let mut next = HashSet::new();
+    next.insert(primary_worktree.id);
+    next.insert(secondary_worktree.id);
+    state
+        .update_worktree_vcs_activity(&HashSet::new(), &next)
+        .await;
+    ctx_http::git_status::refresh_worktree_vcs_summary(state.clone(), primary_worktree.clone())
+        .await
+        .unwrap();
+    ctx_http::git_status::refresh_worktree_vcs_summary(state.clone(), secondary_worktree.clone())
+        .await
+        .unwrap();
+
+    let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
+    let (mut socket, _) = connect_async(&ws_url).await.unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+    let subscribe = json!({
+        "type": "subscribe",
+        "scope": "active",
+        "include_active_heads": true,
+    })
+    .to_string();
+    socket
+        .send(WsMessage::Text(subscribe.into()))
+        .await
+        .unwrap();
+
+    let _ = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+    ctx_http::git_status::emit_worktree_vcs_snapshot_for_worktree(
+        &state,
+        &secondary_worktree,
+        true,
+    )
+    .await
+    .unwrap();
+
+    let mut saw_secondary_publish = false;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    while tokio::time::Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let wait = remaining.min(Duration::from_millis(250));
+        let next = tokio::time::timeout(wait, socket.next()).await;
+        if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
+            let Ok(message) = serde_json::from_str::<
+                ctx_core::models::WorkspaceActiveSnapshotStreamMessage,
+            >(&txt) else {
+                continue;
+            };
+            let Some(snapshot) = worktree_vcs_snapshot_from_message(message, secondary_worktree.id)
+            else {
+                continue;
+            };
+            if snapshot.worktree_id == secondary_worktree.id {
+                saw_secondary_publish = true;
+                break;
+            }
+        }
+    }
+
+    assert!(
+        saw_secondary_publish,
+        "expected active-scope subscribe to keep secondary worktree vcs publishable"
+    );
+}
+
+#[tokio::test]
+async fn mobile_secure_workspace_stream_active_subscribe_keeps_secondary_worktree_vcs_publishable()
+{
+    let (repo, _data_dir, state, server) = setup_git().await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let ws: ctx_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let task = create_task_with_primary_worktree(
+        client,
+        &state,
+        base,
+        ws.id,
+        repo.path(),
+        "secure-multi-worktree",
+    )
+    .await;
+    let primary_session = create_primary_worktree_session(client, base, task.id).await;
+    let secondary_session = create_primary_worktree_session(client, base, task.id).await;
+
+    let primary_store = state.store_for_session(primary_session.id).await.unwrap();
+    let primary_worktree = primary_store
+        .get_worktree(primary_session.worktree_id)
+        .await
+        .unwrap()
+        .expect("missing primary worktree");
+    let secondary_store = state.store_for_session(secondary_session.id).await.unwrap();
+    let secondary_worktree = secondary_store
+        .get_worktree(secondary_session.worktree_id)
+        .await
+        .unwrap()
+        .expect("missing secondary worktree");
+
+    let mut next = HashSet::new();
+    next.insert(primary_worktree.id);
+    next.insert(secondary_worktree.id);
+    state
+        .update_worktree_vcs_activity(&HashSet::new(), &next)
+        .await;
+    ctx_http::git_status::refresh_worktree_vcs_summary(state.clone(), primary_worktree.clone())
+        .await
+        .unwrap();
+    ctx_http::git_status::refresh_worktree_vcs_summary(state.clone(), secondary_worktree.clone())
+        .await
+        .unwrap();
+
+    let (device_id, key) = configure_mobile_secure_access(&state).await;
+    let ws_url = build_mobile_secure_ws_url(base, ws.id, &device_id);
+    let (mut socket, _) = connect_async(&ws_url).await.unwrap();
+    let ready =
+        recv_secure_workspace_message(&mut socket, &key, &device_id, Duration::from_secs(2))
+            .await
+            .expect("expected secure ready frame");
+    assert!(matches!(
+        ready,
+        WorkspaceActiveSnapshotStreamMessage::Event { event, .. }
+            if matches!(event.as_ref(), WorkspaceActiveSnapshotEvent::Ready { .. })
+    ));
+
+    send_secure_workspace_subscribe(
+        &mut socket,
+        &key,
+        &device_id,
+        1,
+        json!({
+            "type": "subscribe",
+            "scope": "active",
+            "include_active_heads": true,
+        }),
+    )
+    .await;
+
+    let _ = recv_secure_workspace_message(&mut socket, &key, &device_id, Duration::from_secs(2))
+        .await
+        .expect("expected secure snapshot after subscribe");
+
+    ctx_http::git_status::emit_worktree_vcs_snapshot_for_worktree(
+        &state,
+        &secondary_worktree,
+        true,
+    )
+    .await
+    .unwrap();
+
+    let mut saw_secondary_publish = false;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    while tokio::time::Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let wait = remaining.min(Duration::from_millis(250));
+        let Some(message) =
+            recv_secure_workspace_message(&mut socket, &key, &device_id, wait).await
+        else {
+            continue;
+        };
+        let Some(snapshot) = worktree_vcs_snapshot_from_message(message, secondary_worktree.id)
+        else {
+            continue;
+        };
+        if snapshot.worktree_id == secondary_worktree.id {
+            saw_secondary_publish = true;
+            break;
+        }
+    }
+
+    assert!(
+        saw_secondary_publish,
+        "expected secure active-scope subscribe to keep secondary worktree vcs publishable"
+    );
 }
 
 #[tokio::test]

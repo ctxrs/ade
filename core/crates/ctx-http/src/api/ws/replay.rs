@@ -66,7 +66,7 @@ pub(super) async fn queue_snapshot_payload(
     pending: &StreamQueue<WorkspaceActiveSnapshotStreamMessage>,
     state: &Arc<AppState>,
     workspace_id: WorkspaceId,
-    session_ids: &[SessionId],
+    worktree_vcs_session_ids: &[SessionId],
 ) -> Result<(), ()> {
     let build_start = Instant::now();
     state
@@ -78,7 +78,7 @@ pub(super) async fn queue_snapshot_payload(
         .active_snapshot(workspace_id, i64::MAX)
         .await;
     let extra_worktree_vcs_snapshots =
-        load_worktree_vcs_snapshots_for_sessions(state, session_ids).await;
+        load_worktree_vcs_snapshots_for_sessions(state, worktree_vcs_session_ids).await;
     active_snapshot.worktree_vcs_snapshots = merge_worktree_vcs_snapshots(
         active_snapshot.worktree_vcs_snapshots,
         extra_worktree_vcs_snapshots,
@@ -227,6 +227,22 @@ pub(super) fn session_ids_for_active_task_summary(
     sessions
 }
 
+pub(super) fn resolve_worktree_vcs_interest_session_ids<I>(
+    session_ids: I,
+    subscription_state: &WorkspaceActiveSubscriptionState,
+) -> Vec<SessionId>
+where
+    I: IntoIterator<Item = SessionId>,
+{
+    let mut ids: HashSet<SessionId> = session_ids.into_iter().collect();
+    for task_session_ids in subscription_state.active_task_vcs_sessions.values() {
+        ids.extend(task_session_ids.iter().copied());
+    }
+    let mut ordered: Vec<_> = ids.into_iter().collect();
+    ordered.sort_by_key(|session_id| session_id.0);
+    ordered
+}
+
 async fn resolve_foreground_task_sessions(
     state: &Arc<AppState>,
     workspace_id: WorkspaceId,
@@ -292,6 +308,7 @@ pub(super) async fn resolve_workspace_active_snapshot_subscriptions(
                 HashMap::new();
             let mut explicit_sessions = HashSet::new();
             let mut active_task_sessions = HashMap::new();
+            let mut active_task_vcs_sessions = HashMap::new();
             let mut active_scope = false;
             let mut foreground_session_ids = None;
             for sub in sessions {
@@ -311,9 +328,11 @@ pub(super) async fn resolve_workspace_active_snapshot_subscriptions(
                     .active_snapshot(workspace_id, i64::MAX)
                     .await;
                 for task in snapshot.active.tasks {
+                    let task_session_ids = session_ids_for_active_task_summary(&task);
                     let session_id = primary_session_id_for_active_task(&task);
                     resolved.insert(session_id);
                     active_task_sessions.insert(task.task.id, session_id);
+                    active_task_vcs_sessions.insert(task.task.id, task_session_ids);
                 }
             }
             if !task_ids.is_empty() {
@@ -361,21 +380,28 @@ pub(super) async fn resolve_workspace_active_snapshot_subscriptions(
                 next.push(ResolvedWorkspaceActiveSessionSubscription { session_id, replay });
             }
             next.sort_by(|a, b| a.session_id.0.cmp(&b.session_id.0));
+            let state = WorkspaceActiveSubscriptionState {
+                active_scope,
+                explicit_sessions,
+                active_task_sessions,
+                active_task_vcs_sessions,
+                foreground_task_id,
+                foreground_session_ids,
+            };
+            let worktree_vcs_session_ids = resolve_worktree_vcs_interest_session_ids(
+                next.iter().map(|sub| sub.session_id),
+                &state,
+            );
             Ok(ResolvedWorkspaceActiveSubscriptions {
                 sessions: next,
-                state: WorkspaceActiveSubscriptionState {
-                    active_scope,
-                    explicit_sessions,
-                    active_task_sessions,
-                    foreground_task_id,
-                    foreground_session_ids,
-                },
+                worktree_vcs_session_ids,
+                state,
             })
         }
     }
 }
 
-pub(super) async fn ensure_worktree_vcs_watchers_for_sessions(
+pub(super) async fn refresh_worktree_vcs_for_sessions(
     state: &Arc<AppState>,
     session_ids: &[SessionId],
 ) {
@@ -402,7 +428,8 @@ pub(super) async fn ensure_worktree_vcs_watchers_for_sessions(
     for (worktree_id, worktree) in worktrees {
         state.ensure_git_status_watcher(worktree.clone()).await;
         match state.get_worktree_vcs_snapshot(worktree.id).await {
-            Some(snapshot) if snapshot.freshness == WorktreeVcsFreshness::Fresh => {}
+            Some(snapshot)
+                if snapshot.freshness == WorktreeVcsFreshness::Fresh && snapshot.available => {}
             Some(_) => {
                 crate::git_status::schedule_worktree_vcs_summary_refresh(
                     state.clone(),
@@ -426,7 +453,7 @@ pub(super) async fn ensure_worktree_vcs_watchers_for_sessions(
     }
 }
 
-pub(super) fn spawn_worktree_vcs_warmup_for_sessions(
+pub(super) fn spawn_worktree_vcs_refresh_for_sessions(
     state: Arc<AppState>,
     session_ids: Vec<SessionId>,
 ) {
@@ -434,8 +461,49 @@ pub(super) fn spawn_worktree_vcs_warmup_for_sessions(
         return;
     }
     tokio::spawn(async move {
-        ensure_worktree_vcs_watchers_for_sessions(&state, &session_ids).await;
+        refresh_worktree_vcs_for_sessions(&state, &session_ids).await;
     });
+}
+
+pub(super) enum WorktreeVcsSeedMode {
+    IncludedInSnapshot,
+    EmitCachedEvents,
+}
+
+pub(super) async fn seed_worktree_vcs_for_subscribe(
+    pending: &StreamQueue<WorkspaceActiveSnapshotStreamMessage>,
+    state: &Arc<AppState>,
+    workspace_id: WorkspaceId,
+    session_ids: &[SessionId],
+    seed_mode: WorktreeVcsSeedMode,
+) -> Result<(), ()> {
+    if matches!(seed_mode, WorktreeVcsSeedMode::IncludedInSnapshot) {
+        return Ok(());
+    }
+    let snapshots = load_worktree_vcs_snapshots_for_sessions(state, session_ids).await;
+    if snapshots.is_empty() {
+        return Ok(());
+    }
+    let (snapshot_rev, _) =
+        super::super::tasks::load_workspace_active_snapshot_state(state, workspace_id).await;
+    for snapshot in snapshots {
+        push_stream_message(
+            pending,
+            workspace_id,
+            None,
+            "worktree_vcs_seed",
+            WorkspaceActiveSnapshotStreamMessage::Event {
+                rev: 0,
+                event: Box::new(WorkspaceActiveSnapshotEvent::WorktreeVcsSnapshot {
+                    workspace_id,
+                    snapshot_rev,
+                    snapshot: Box::new(snapshot),
+                }),
+            },
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 async fn resolve_worktree_ids_for_sessions(

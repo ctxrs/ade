@@ -22,22 +22,31 @@ use crate::web_sessions::WebSessionManager;
 use crate::workspace_active_snapshot::{WorkspaceSessionReplay, WorkspaceSessionReplayItem};
 
 use super::{MobileSecureEnvelope, MobileSecureStreamQuery, SecureEnvelope};
+use common::{send_secure_ws, SessionCursor};
 use queue::{
     filter_partial_delta_for_active_tasks, log_head_batch_push_error, push_stream_message,
     HeadBatchBuffer, StreamQueue,
 };
 use replay::{
-    ensure_worktree_vcs_watchers_for_sessions, primary_session_id_for_active_task,
-    queue_reset_required, queue_snapshot_payload, replay_session_events,
-    resolve_workspace_active_snapshot_subscriptions, session_ids_for_active_task_summary,
-    spawn_worktree_vcs_warmup_for_sessions, sync_active_worktrees, with_stream_rev, ReplayOutcome,
+    primary_session_id_for_active_task, queue_reset_required, queue_snapshot_payload,
+    refresh_worktree_vcs_for_sessions, replay_session_events,
+    resolve_workspace_active_snapshot_subscriptions, resolve_worktree_vcs_interest_session_ids,
+    seed_worktree_vcs_for_subscribe, session_ids_for_active_task_summary,
+    spawn_worktree_vcs_refresh_for_sessions, sync_active_worktrees, with_stream_rev, ReplayOutcome,
+    WorktreeVcsSeedMode,
 };
 
+mod common;
 mod queue;
 mod replay;
 mod terminal;
 mod workspace_active;
 
+use common::{
+    bump_latest_snapshot_rev, event_snapshot_rev, ResolvedWorkspaceActiveSessionReplay,
+    ResolvedWorkspaceActiveSessionSubscription, ResolvedWorkspaceActiveSubscriptions,
+    WorkspaceActiveSubscriptionState,
+};
 pub(super) use terminal::terminal_stream_ws;
 #[cfg(test)]
 use terminal::{queue_terminal_ws_message, TerminalWsQueueOutcome};
@@ -262,7 +271,7 @@ async fn handle_mobile_secure_ws(
                                 &frame.ciphertext,
                             )?;
                             let message: WorkspaceActiveSnapshotClientMessage = serde_json::from_slice(&payload)?;
-                            let include_active_heads = matches!(
+                            let include_initial_snapshot = matches!(
                                 &message,
                                 WorkspaceActiveSnapshotClientMessage::Subscribe {
                                     include_active_heads: true,
@@ -302,6 +311,7 @@ async fn handle_mobile_secure_ws(
                             };
                             let ResolvedWorkspaceActiveSubscriptions {
                                 sessions: resolved_sessions,
+                                worktree_vcs_session_ids,
                                 state: next_state,
                             } = resolved;
 
@@ -309,19 +319,21 @@ async fn handle_mobile_secure_ws(
                             head_buffer.clear().await;
                             reset_queued = false;
                             send_control.clear_disconnect_after_flush();
-                            let git_status_session_ids: Vec<SessionId> = resolved_sessions
-                                .iter()
-                                .map(|sub| sub.session_id)
-                                .collect();
-                            if include_active_heads {
+                            sync_active_worktrees(
+                                &state,
+                                &mut active_worktrees,
+                                &worktree_vcs_session_ids,
+                            )
+                            .await;
+                            if include_initial_snapshot {
                                 send_control.set_hydrating();
                             }
-                            if include_active_heads
+                            if include_initial_snapshot
                                 && queue_snapshot_payload(
                                     &control,
                                     &state,
                                     workspace_id,
-                                    &git_status_session_ids,
+                                    &worktree_vcs_session_ids,
                                 )
                                     .await
                                     .is_err()
@@ -330,7 +342,7 @@ async fn handle_mobile_secure_ws(
                             }
 
                             let mut skip_replay_sessions = HashSet::new();
-                            if include_active_heads && next_state.active_scope {
+                            if include_initial_snapshot && next_state.active_scope {
                                 for session_id in next_state.active_task_sessions.values() {
                                     skip_replay_sessions.insert(*session_id);
                                 }
@@ -347,12 +359,13 @@ async fn handle_mobile_secure_ws(
                                 else {
                                     continue;
                                 };
-                                if include_active_heads
+                                if include_initial_snapshot
                                     && skip_replay_sessions.contains(&session_id)
                                 {
                                     let last_sent = state.workspaces.workspace_active_snapshot
                                         .session_last_event_seq(workspace_id, session_id)
-                                        .await;
+                                        .await
+                                        .max(after_seq);
                                     next_map.insert(session_id, SessionCursor { last_sent });
                                     continue;
                                 }
@@ -462,17 +475,26 @@ async fn handle_mobile_secure_ws(
                             }
                             subscriptions = next_map;
                             subscription_state = next_state;
-                            sync_active_worktrees(
+                            if seed_worktree_vcs_for_subscribe(
+                                &control,
                                 &state,
-                                &mut active_worktrees,
-                                &git_status_session_ids,
+                                workspace_id,
+                                &worktree_vcs_session_ids,
+                                if include_initial_snapshot {
+                                    WorktreeVcsSeedMode::IncludedInSnapshot
+                                } else {
+                                    WorktreeVcsSeedMode::EmitCachedEvents
+                                },
                             )
-                            .await;
-                            ensure_worktree_vcs_watchers_for_sessions(
-                                &state,
-                                &git_status_session_ids,
-                            )
-                                .await;
+                            .await
+                            .is_err()
+                            {
+                                break;
+                            }
+                            spawn_worktree_vcs_refresh_for_sessions(
+                                state.clone(),
+                                worktree_vcs_session_ids,
+                            );
                         }
                         Some(Ok(WsMessage::Close(_))) => break,
                         Some(Ok(_)) => {}
@@ -520,10 +542,14 @@ async fn handle_mobile_secure_ws(
                     if subscription_state.active_scope {
                         match &event {
                             WorkspaceActiveSnapshotEvent::ActiveTaskUpsert { task, .. } => {
+                                let task_session_ids = session_ids_for_active_task_summary(task);
                                 let session_id = primary_session_id_for_active_task(task);
                                 subscription_state
                                     .active_task_sessions
                                     .insert(task.task.id, session_id);
+                                subscription_state
+                                    .active_task_vcs_sessions
+                                    .insert(task.task.id, task_session_ids);
                                 refresh_active_worktrees = true;
                                 if let std::collections::hash_map::Entry::Vacant(entry) =
                                     subscriptions.entry(session_id)
@@ -535,6 +561,8 @@ async fn handle_mobile_secure_ws(
                                 }
                             }
                             WorkspaceActiveSnapshotEvent::ActiveTaskDelete { task_id, .. } => {
+                                let removed_vcs_sessions =
+                                    subscription_state.active_task_vcs_sessions.remove(task_id);
                                 if let Some(session_id) =
                                     subscription_state.active_task_sessions.remove(task_id)
                                 {
@@ -551,10 +579,16 @@ async fn handle_mobile_secure_ws(
                                         subscriptions.remove(&session_id);
                                     }
                                 }
+                                if removed_vcs_sessions.is_some() {
+                                    refresh_active_worktrees = true;
+                                }
                             }
                             WorkspaceActiveSnapshotEvent::TaskDelta { delta, .. }
                                 if matches!(delta.kind, TaskDeltaKind::Archived) =>
                             {
+                                let removed_vcs_sessions = subscription_state
+                                    .active_task_vcs_sessions
+                                    .remove(&delta.task.id);
                                 if let Some(session_id) =
                                     subscription_state.active_task_sessions.remove(&delta.task.id)
                                 {
@@ -571,20 +605,55 @@ async fn handle_mobile_secure_ws(
                                         subscriptions.remove(&session_id);
                                     }
                                 }
+                                if removed_vcs_sessions.is_some() {
+                                    refresh_active_worktrees = true;
+                                }
+                            }
+                            WorkspaceActiveSnapshotEvent::SessionSummary { summary, .. } => {
+                                if let Some(ids) = subscription_state
+                                    .active_task_vcs_sessions
+                                    .get_mut(&summary.session.task_id)
+                                {
+                                    if ids.insert(summary.session.id) {
+                                        refresh_active_worktrees = true;
+                                    }
+                                }
+                            }
+                            WorkspaceActiveSnapshotEvent::SessionSummaryDelta { delta, .. } => {
+                                if let Some(ids) = subscription_state
+                                    .active_task_vcs_sessions
+                                    .get_mut(&delta.task_id)
+                                {
+                                    if ids.insert(delta.session_id) {
+                                        refresh_active_worktrees = true;
+                                    }
+                                }
+                            }
+                            WorkspaceActiveSnapshotEvent::SessionHeadSeed { head, .. } => {
+                                if let Some(ids) = subscription_state
+                                    .active_task_vcs_sessions
+                                    .get_mut(&head.session.task_id)
+                                {
+                                    if ids.insert(head.session.id) {
+                                        refresh_active_worktrees = true;
+                                    }
+                                }
                             }
                             _ => {}
                         }
                     }
                     if refresh_active_worktrees {
-                        let session_ids =
-                            tracked_workspace_active_session_ids(&subscription_state);
+                        let session_ids = resolve_worktree_vcs_interest_session_ids(
+                            subscriptions.keys().copied(),
+                            &subscription_state,
+                        );
                         sync_active_worktrees(
                             &state,
                             &mut active_worktrees,
                             &session_ids,
                         )
                         .await;
-                        ensure_worktree_vcs_watchers_for_sessions(
+                        refresh_worktree_vcs_for_sessions(
                             &state,
                             &session_ids,
                         )
@@ -764,100 +833,6 @@ async fn handle_mobile_secure_ws(
 
     recv_result.unwrap_or(Ok(()))
 }
-
-struct SessionCursor {
-    last_sent: i64,
-}
-
-#[derive(Clone, Copy)]
-enum ResolvedWorkspaceActiveSessionReplay {
-    Reset,
-    Resume { after_seq: i64 },
-}
-
-struct ResolvedWorkspaceActiveSessionSubscription {
-    session_id: SessionId,
-    replay: ResolvedWorkspaceActiveSessionReplay,
-}
-
-#[derive(Default)]
-struct WorkspaceActiveSubscriptionState {
-    active_scope: bool,
-    explicit_sessions: HashSet<SessionId>,
-    active_task_sessions: HashMap<TaskId, SessionId>,
-    foreground_task_id: Option<TaskId>,
-    foreground_session_ids: Option<HashSet<SessionId>>,
-}
-
-struct ResolvedWorkspaceActiveSubscriptions {
-    sessions: Vec<ResolvedWorkspaceActiveSessionSubscription>,
-    state: WorkspaceActiveSubscriptionState,
-}
-
-fn tracked_workspace_active_session_ids(
-    state: &WorkspaceActiveSubscriptionState,
-) -> Vec<SessionId> {
-    let mut session_ids: HashSet<SessionId> = state.explicit_sessions.iter().copied().collect();
-    session_ids.extend(state.active_task_sessions.values().copied());
-    let mut ordered: Vec<_> = session_ids.into_iter().collect();
-    ordered.sort_by_key(|session_id| session_id.0);
-    ordered
-}
-
-async fn send_secure_ws<S>(
-    sink: &mut S,
-    key: &crate::mobile_e2ee::E2eeKey,
-    device_id: &str,
-    seq: i64,
-    payload: &WorkspaceActiveSnapshotStreamMessage,
-) -> Result<(), anyhow::Error>
-where
-    S: Sink<WsMessage> + Unpin,
-    S::Error: std::error::Error + Send + Sync + 'static,
-{
-    let plaintext = serde_json::to_vec(payload)?;
-    let envelope = crate::mobile_e2ee::encrypt(key, device_id, seq, &plaintext)?;
-    let frame = SecureEnvelope {
-        device_id: envelope.device_id,
-        seq: envelope.seq,
-        nonce: envelope.nonce_b64,
-        ciphertext: envelope.ciphertext_b64,
-    };
-    let text = serde_json::to_string(&frame)?;
-    sink.send(WsMessage::Text(text)).await?;
-    Ok(())
-}
-
-fn bump_latest_snapshot_rev(latest: &AtomicI64, rev: i64) {
-    let mut current = latest.load(Ordering::Relaxed);
-    while rev > current {
-        match latest.compare_exchange(current, rev, Ordering::Relaxed, Ordering::Relaxed) {
-            Ok(_) => break,
-            Err(next) => current = next,
-        }
-    }
-}
-
-fn event_snapshot_rev(event: &WorkspaceActiveSnapshotEvent) -> Option<i64> {
-    match event {
-        WorkspaceActiveSnapshotEvent::Ready { snapshot_rev, .. }
-        | WorkspaceActiveSnapshotEvent::ActiveTaskUpsert { snapshot_rev, .. }
-        | WorkspaceActiveSnapshotEvent::ActiveTaskDelete { snapshot_rev, .. }
-        | WorkspaceActiveSnapshotEvent::TaskDelta { snapshot_rev, .. }
-        | WorkspaceActiveSnapshotEvent::SessionSummary { snapshot_rev, .. }
-        | WorkspaceActiveSnapshotEvent::SessionSummaryDelta { snapshot_rev, .. }
-        | WorkspaceActiveSnapshotEvent::SessionHeadDelta { snapshot_rev, .. }
-        | WorkspaceActiveSnapshotEvent::SessionHeadSeed { snapshot_rev, .. }
-        | WorkspaceActiveSnapshotEvent::SessionGap { snapshot_rev, .. }
-        | WorkspaceActiveSnapshotEvent::WorktreeBootstrap { snapshot_rev, .. }
-        | WorkspaceActiveSnapshotEvent::WorktreeVcsSnapshot { snapshot_rev, .. } => {
-            Some(*snapshot_rev)
-        }
-        WorkspaceActiveSnapshotEvent::ArchivedTaskUpsert { .. }
-        | WorkspaceActiveSnapshotEvent::ArchivedTaskDelete { .. } => None,
-    }
-}
-
 pub(super) async fn web_session_signal(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
