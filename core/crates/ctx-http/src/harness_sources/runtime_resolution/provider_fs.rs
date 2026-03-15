@@ -121,7 +121,10 @@ pub(crate) async fn prepare_goose_endpoint_path_root(path_root: &Path) -> Result
     Ok(path_root.to_path_buf())
 }
 
-pub(crate) async fn prepare_codex_home_with_api_key(codex_home: &Path, api_key: &str) -> Result<()> {
+pub(crate) async fn prepare_codex_home_with_api_key(
+    codex_home: &Path,
+    api_key: &str,
+) -> Result<()> {
     tokio::fs::create_dir_all(codex_home).await?;
     let auth_path = codex_home.join("auth.json");
     let payload = serde_json::to_vec_pretty(&serde_json::json!({

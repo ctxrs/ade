@@ -11,9 +11,8 @@ use self::provider_fs::{
     kimi_endpoint_home, normalize_openhands_endpoint_model_id,
     prepare_cline_home_with_endpoint_settings, prepare_codex_home_with_api_key,
     prepare_droid_home_with_endpoint_settings, prepare_goose_endpoint_path_root,
-    prepare_kimi_share_dir, prepare_openhands_persistence_dir,
-    prepare_openhands_python_hook_dir, prepare_qwen_home_with_openai_settings,
-    prepend_pythonpath,
+    prepare_kimi_share_dir, prepare_openhands_persistence_dir, prepare_openhands_python_hook_dir,
+    prepare_qwen_home_with_openai_settings, prepend_pythonpath,
 };
 pub(super) use self::provider_fs::{
     cline_endpoint_home, codex_endpoint_home, droid_cli_model_id_for_endpoint_model,
@@ -116,9 +115,10 @@ impl<'a> ProviderRuntimeContext<'a> {
             PROVIDER_QWEN => Some(qwen_endpoint_home(self.data_root, endpoint_id)),
             PROVIDER_GEMINI => Some(gemini_endpoint_home(self.data_root, endpoint_id)),
             PROVIDER_DROID => Some(droid_endpoint_home(self.data_root, endpoint_id)),
-            PROVIDER_OPENHANDS => {
-                Some(provider_fs::openhands_endpoint_home(self.data_root, endpoint_id))
-            }
+            PROVIDER_OPENHANDS => Some(provider_fs::openhands_endpoint_home(
+                self.data_root,
+                endpoint_id,
+            )),
             _ => None,
         }) else {
             return Ok(());
@@ -470,17 +470,13 @@ impl<'a> ProviderRuntimeContext<'a> {
                 let normalized_model_id =
                     normalize_openhands_endpoint_model_id(&base_url, &model_id);
                 let persistence_dir = prepare_openhands_persistence_dir(
-                    &provider_fs::openhands_endpoint_home(
-                        self.runtime_data_root(),
-                        &endpoint.id,
-                    ),
+                    &provider_fs::openhands_endpoint_home(self.runtime_data_root(), &endpoint.id),
                     &api_key,
                     &normalized_model_id,
                     &base_url,
                 )
                 .await?;
-                let python_hook_dir =
-                    prepare_openhands_python_hook_dir(&persistence_dir).await?;
+                let python_hook_dir = prepare_openhands_python_hook_dir(&persistence_dir).await?;
                 env.insert("LLM_API_KEY".to_string(), api_key.clone());
                 env.insert("LLM_BASE_URL".to_string(), base_url.clone());
                 env.insert("LLM_MODEL".to_string(), normalized_model_id);
@@ -494,7 +490,9 @@ impl<'a> ProviderRuntimeContext<'a> {
                 );
                 env.insert(
                     "PYTHONPATH".to_string(),
-                    prepend_pythonpath(&python_hook_dir)?.to_string_lossy().to_string(),
+                    prepend_pythonpath(&python_hook_dir)?
+                        .to_string_lossy()
+                        .to_string(),
                 );
                 env.insert(
                     "CTX_PROVIDER_MODE".to_string(),

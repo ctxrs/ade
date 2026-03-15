@@ -453,8 +453,8 @@ async fn openhands_endpoint_projects_persistence_backed_llm_contract() {
                 .to_string()
         )
     );
-    let pyhooks_dir = runtime_resolution::openhands_endpoint_home(root.path(), &endpoint.id)
-        .join("pyhooks");
+    let pyhooks_dir =
+        runtime_resolution::openhands_endpoint_home(root.path(), &endpoint.id).join("pyhooks");
     assert_eq!(
         resolved.env.get("PYTHONPATH"),
         Some(&pyhooks_dir.to_string_lossy().to_string())
