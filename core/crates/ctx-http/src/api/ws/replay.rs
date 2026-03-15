@@ -79,11 +79,10 @@ pub(super) async fn queue_snapshot_payload(
         .await;
     let extra_worktree_vcs_snapshots =
         load_worktree_vcs_snapshots_for_sessions(state, session_ids).await;
-    active_snapshot.worktree_vcs_snapshots =
-        merge_worktree_vcs_snapshots(
-            active_snapshot.worktree_vcs_snapshots,
-            extra_worktree_vcs_snapshots,
-        );
+    active_snapshot.worktree_vcs_snapshots = merge_worktree_vcs_snapshots(
+        active_snapshot.worktree_vcs_snapshots,
+        extra_worktree_vcs_snapshots,
+    );
     let active_heads = state
         .workspaces
         .workspace_active_snapshot
@@ -251,6 +250,28 @@ async fn resolve_foreground_task_sessions(
     }
 }
 
+fn resolve_session_replay(
+    replay: Option<&WorkspaceActiveSnapshotSessionReplay>,
+    existing_last_sent: Option<i64>,
+    current_tail: i64,
+) -> ResolvedWorkspaceActiveSessionReplay {
+    match replay {
+        Some(WorkspaceActiveSnapshotSessionReplay::Resume { after_seq }) => {
+            ResolvedWorkspaceActiveSessionReplay::Resume {
+                after_seq: *after_seq,
+            }
+        }
+        Some(WorkspaceActiveSnapshotSessionReplay::Reset) => {
+            ResolvedWorkspaceActiveSessionReplay::Reset
+        }
+        Some(WorkspaceActiveSnapshotSessionReplay::Auto) | None => {
+            ResolvedWorkspaceActiveSessionReplay::Resume {
+                after_seq: existing_last_sent.unwrap_or(current_tail),
+            }
+        }
+    }
+}
+
 pub(super) async fn resolve_workspace_active_snapshot_subscriptions(
     state: &Arc<AppState>,
     workspace_id: WorkspaceId,
@@ -267,13 +288,14 @@ pub(super) async fn resolve_workspace_active_snapshot_subscriptions(
             ..
         } => {
             let mut resolved = HashSet::new();
-            let mut after_map: HashMap<SessionId, Option<i64>> = HashMap::new();
+            let mut replay_map: HashMap<SessionId, WorkspaceActiveSnapshotSessionReplay> =
+                HashMap::new();
             let mut explicit_sessions = HashSet::new();
             let mut active_task_sessions = HashMap::new();
             let mut active_scope = false;
             let mut foreground_session_ids = None;
             for sub in sessions {
-                after_map.insert(sub.session_id, sub.after_seq);
+                replay_map.insert(sub.session_id, sub.replay);
                 resolved.insert(sub.session_id);
                 explicit_sessions.insert(sub.session_id);
             }
@@ -318,26 +340,25 @@ pub(super) async fn resolve_workspace_active_snapshot_subscriptions(
                 foreground_session_ids = Some(sessions);
             }
 
-            let mut next: Vec<WorkspaceActiveSnapshotSessionSubscription> = resolved
-                .into_iter()
-                .map(|session_id| WorkspaceActiveSnapshotSessionSubscription {
-                    session_id,
-                    after_seq: after_map
-                        .get(&session_id)
-                        .copied()
-                        .flatten()
-                        .or_else(|| existing.get(&session_id).map(|cursor| cursor.last_sent)),
-                })
-                .collect();
-            for sub in next.iter_mut() {
-                if sub.after_seq.is_none() {
-                    let last_seq = state
+            let mut next = Vec::with_capacity(resolved.len());
+            for session_id in resolved {
+                let replay = replay_map.get(&session_id);
+                let existing_last_sent = existing.get(&session_id).map(|cursor| cursor.last_sent);
+                let current_tail = if matches!(
+                    replay,
+                    Some(WorkspaceActiveSnapshotSessionReplay::Auto) | None
+                ) && existing_last_sent.is_none()
+                {
+                    state
                         .workspaces
                         .workspace_active_snapshot
-                        .session_last_event_seq(workspace_id, sub.session_id)
-                        .await;
-                    sub.after_seq = Some(last_seq);
-                }
+                        .session_last_event_seq(workspace_id, session_id)
+                        .await
+                } else {
+                    0
+                };
+                let replay = resolve_session_replay(replay, existing_last_sent, current_tail);
+                next.push(ResolvedWorkspaceActiveSessionSubscription { session_id, replay });
             }
             next.sort_by(|a, b| a.session_id.0.cmp(&b.session_id.0));
             Ok(ResolvedWorkspaceActiveSubscriptions {
@@ -391,9 +412,7 @@ pub(super) async fn ensure_worktree_vcs_watchers_for_sessions(
             }
             None => {
                 if let Err(err) = crate::git_status::emit_worktree_vcs_snapshot_for_worktree(
-                    state,
-                    &worktree,
-                    true,
+                    state, &worktree, true,
                 )
                 .await
                 {
@@ -464,4 +483,143 @@ pub(super) async fn sync_active_worktrees(
         .update_worktree_vcs_activity(active_worktrees, &next)
         .await;
     *active_worktrees = next;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn session_id(value: &str) -> SessionId {
+        SessionId(uuid::Uuid::parse_str(value).unwrap())
+    }
+
+    #[test]
+    fn replay_deserializes_subscribe_message_with_explicit_replay_modes() {
+        let message = serde_json::from_str::<WorkspaceActiveSnapshotClientMessage>(
+            r#"{
+                "type":"subscribe",
+                "sessions":[
+                    {
+                        "session_id":"00000000-0000-0000-0000-000000000001",
+                        "replay":{"mode":"auto"}
+                    },
+                    {
+                        "session_id":"00000000-0000-0000-0000-000000000002",
+                        "replay":{"mode":"resume","after_seq":12}
+                    },
+                    {
+                        "session_id":"00000000-0000-0000-0000-000000000003",
+                        "replay":{"mode":"reset"}
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let WorkspaceActiveSnapshotClientMessage::Subscribe { sessions, .. } = message;
+        assert_eq!(sessions.len(), 3);
+        assert!(matches!(
+            sessions[0].replay,
+            WorkspaceActiveSnapshotSessionReplay::Auto
+        ));
+        assert!(matches!(
+            sessions[1].replay,
+            WorkspaceActiveSnapshotSessionReplay::Resume { after_seq: 12 }
+        ));
+        assert!(matches!(
+            sessions[2].replay,
+            WorkspaceActiveSnapshotSessionReplay::Reset
+        ));
+    }
+
+    #[test]
+    fn replay_resolution_uses_existing_cursor_for_auto() {
+        let existing_last_sent = Some(7);
+        let current_tail = 41;
+
+        assert!(matches!(
+            resolve_session_replay(
+                Some(&WorkspaceActiveSnapshotSessionReplay::Auto),
+                existing_last_sent,
+                current_tail,
+            ),
+            ResolvedWorkspaceActiveSessionReplay::Resume { after_seq: 7 }
+        ));
+        assert!(matches!(
+            resolve_session_replay(None, existing_last_sent, current_tail),
+            ResolvedWorkspaceActiveSessionReplay::Resume { after_seq: 7 }
+        ));
+    }
+
+    #[test]
+    fn replay_resolution_keeps_reset_explicit_even_with_existing_cursor() {
+        assert!(matches!(
+            resolve_session_replay(
+                Some(&WorkspaceActiveSnapshotSessionReplay::Reset),
+                Some(7),
+                41,
+            ),
+            ResolvedWorkspaceActiveSessionReplay::Reset
+        ));
+    }
+
+    #[test]
+    fn replay_resolution_uses_explicit_resume_cursor() {
+        assert!(matches!(
+            resolve_session_replay(
+                Some(&WorkspaceActiveSnapshotSessionReplay::Resume { after_seq: 19 }),
+                Some(7),
+                41,
+            ),
+            ResolvedWorkspaceActiveSessionReplay::Resume { after_seq: 19 }
+        ));
+    }
+
+    #[test]
+    fn replay_resolution_uses_current_tail_for_auto_without_existing_cursor() {
+        assert!(matches!(
+            resolve_session_replay(Some(&WorkspaceActiveSnapshotSessionReplay::Auto), None, 41,),
+            ResolvedWorkspaceActiveSessionReplay::Resume { after_seq: 41 }
+        ));
+        assert!(matches!(
+            resolve_session_replay(None, None, 41),
+            ResolvedWorkspaceActiveSessionReplay::Resume { after_seq: 41 }
+        ));
+    }
+
+    #[test]
+    fn replay_deserialization_keeps_session_ids_and_explicit_sessions_distinct() {
+        let message = serde_json::from_str::<WorkspaceActiveSnapshotClientMessage>(
+            r#"{
+                "type":"subscribe",
+                "session_ids":["00000000-0000-0000-0000-000000000001"],
+                "sessions":[
+                    {
+                        "session_id":"00000000-0000-0000-0000-000000000002",
+                        "replay":{"mode":"reset"}
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let WorkspaceActiveSnapshotClientMessage::Subscribe {
+            session_ids,
+            sessions,
+            ..
+        } = message;
+        assert_eq!(
+            session_ids,
+            vec![session_id("00000000-0000-0000-0000-000000000001")]
+        );
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(
+            sessions[0].session_id,
+            session_id("00000000-0000-0000-0000-000000000002")
+        );
+        assert!(matches!(
+            sessions[0].replay,
+            WorkspaceActiveSnapshotSessionReplay::Reset
+        ));
+    }
 }

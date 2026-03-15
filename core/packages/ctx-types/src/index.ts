@@ -583,8 +583,20 @@ export type WorkspaceActiveSnapshotEvent =
 
 export type WorkspaceActiveSnapshotSessionSubscription = {
   session_id: string;
-  after_seq?: number | null;
+  replay: WorkspaceActiveSnapshotSessionReplay;
 };
+
+export type WorkspaceActiveSnapshotSessionReplay =
+  | {
+      mode: "auto";
+    }
+  | {
+      mode: "reset";
+    }
+  | {
+      mode: "resume";
+      after_seq: number;
+    };
 
 export type WorkspaceActiveSnapshotSubscribeScope = "active";
 

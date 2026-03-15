@@ -200,7 +200,15 @@ async fn workspace_stream_does_not_reset_during_hydration_when_active_heads_are_
         "include_active_heads": true,
         "sessions": sessions
             .iter()
-            .map(|s| json!({"session_id": s.id.0, "after_seq": 0}))
+            .map(|s| {
+                json!({
+                    "session_id": s.id.0,
+                    "replay": {
+                        "mode": "resume",
+                        "after_seq": 0,
+                    },
+                })
+            })
             .collect::<Vec<_>>(),
     })
     .to_string();

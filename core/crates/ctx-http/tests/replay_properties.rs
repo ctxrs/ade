@@ -548,7 +548,10 @@ async fn subscribe_and_observe(
         "scope": "active",
         "sessions": [{
             "session_id": session_id.0,
-            "after_seq": after_seq,
+            "replay": {
+                "mode": "resume",
+                "after_seq": after_seq,
+            },
         }],
     })
     .to_string();

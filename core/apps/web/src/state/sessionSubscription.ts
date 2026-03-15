@@ -1,15 +1,71 @@
 export type SessionSubscriptionCursor = {
   sessionId: string;
-  afterSeq: number | null;
+  replay: SessionSubscriptionReplay;
 };
+
+export type SessionSubscriptionReplay =
+  | {
+      kind: "auto";
+    }
+  | {
+      kind: "reset";
+    }
+  | {
+      kind: "resume";
+      afterSeq: number;
+    };
 
 const normalizeSessionId = (value: unknown): string => {
   if (typeof value !== "string") return "";
   return value.trim();
 };
 
-const normalizeAfterSeq = (value: unknown): number | null => {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+const AUTO_REPLAY: SessionSubscriptionReplay = { kind: "auto" };
+const RESET_REPLAY: SessionSubscriptionReplay = { kind: "reset" };
+
+const normalizeReplay = (
+  value: SessionSubscriptionReplay | null | undefined,
+): SessionSubscriptionReplay => {
+  switch (value?.kind) {
+    case "reset":
+      return RESET_REPLAY;
+    case "resume":
+      return typeof value.afterSeq === "number" && Number.isFinite(value.afterSeq)
+        ? { kind: "resume", afterSeq: value.afterSeq }
+        : AUTO_REPLAY;
+    default:
+      return AUTO_REPLAY;
+  }
+};
+
+const mergeReplay = (
+  left: SessionSubscriptionReplay,
+  right: SessionSubscriptionReplay,
+): SessionSubscriptionReplay => {
+  if (left.kind === "reset" || right.kind === "reset") {
+    return RESET_REPLAY;
+  }
+  if (left.kind === "resume" && right.kind === "resume") {
+    return { kind: "resume", afterSeq: Math.max(left.afterSeq, right.afterSeq) };
+  }
+  if (left.kind === "resume") {
+    return left;
+  }
+  if (right.kind === "resume") {
+    return right;
+  }
+  return AUTO_REPLAY;
+};
+
+const sameReplay = (
+  left: SessionSubscriptionReplay | null | undefined,
+  right: SessionSubscriptionReplay | null | undefined,
+): boolean => {
+  if (left?.kind !== right?.kind) return false;
+  if (left?.kind === "resume" && right?.kind === "resume") {
+    return left.afterSeq === right.afterSeq;
+  }
+  return true;
 };
 
 export function normalizeSessionSubscriptionCursors(
@@ -19,20 +75,15 @@ export function normalizeSessionSubscriptionCursors(
   for (const session of sessions) {
     const sessionId = normalizeSessionId(session.sessionId);
     if (!sessionId) continue;
-    const afterSeq = normalizeAfterSeq(session.afterSeq);
+    const replay = normalizeReplay(session.replay);
     const previous = ordered.get(sessionId);
     if (!previous) {
-      ordered.set(sessionId, { sessionId, afterSeq });
+      ordered.set(sessionId, { sessionId, replay });
       continue;
     }
     ordered.set(sessionId, {
       sessionId,
-      afterSeq:
-        afterSeq === null
-          ? previous.afterSeq
-          : previous.afterSeq === null
-            ? afterSeq
-            : Math.max(previous.afterSeq, afterSeq),
+      replay: mergeReplay(previous.replay, replay),
     });
   }
   return Array.from(ordered.values());
@@ -56,7 +107,7 @@ export function sameSessionSubscriptionCursors(
   if (left.length !== right.length) return false;
   for (let i = 0; i < left.length; i += 1) {
     if (left[i]?.sessionId !== right[i]?.sessionId) return false;
-    if ((left[i]?.afterSeq ?? null) !== (right[i]?.afterSeq ?? null)) return false;
+    if (!sameReplay(left[i]?.replay, right[i]?.replay)) return false;
   }
   return true;
 }

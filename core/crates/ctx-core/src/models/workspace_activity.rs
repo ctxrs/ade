@@ -390,11 +390,18 @@ pub enum WorkspaceActiveSnapshotStreamMessage {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum WorkspaceActiveSnapshotSessionReplay {
+    Auto,
+    Reset,
+    Resume { after_seq: i64 },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkspaceActiveSnapshotSessionSubscription {
     pub session_id: SessionId,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub after_seq: Option<i64>,
+    pub replay: WorkspaceActiveSnapshotSessionReplay,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

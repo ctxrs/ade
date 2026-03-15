@@ -412,22 +412,24 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(payload.include_active_heads).toBe(false);
   });
 
-  it("flushes subscribe messages when only replay cursors change", async () => {
+  it("flushes subscribe messages when only replay intent changes", async () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
 
     const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
     const ws = mkOpenWs();
     asStoreInternals(store).ws = ws;
 
-    store.setSubscribedSessions([{ sessionId: "session-1", afterSeq: 5 }]);
+    store.setSubscribedSessions([{ sessionId: "session-1", replay: { kind: "resume", afterSeq: 5 } }]);
     expect(ws.send).toHaveBeenCalledTimes(1);
 
     ws.send.mockClear();
-    store.setSubscribedSessions([{ sessionId: "session-1", afterSeq: null }]);
+    store.setSubscribedSessions([{ sessionId: "session-1", replay: { kind: "reset" } }]);
 
     expect(ws.send).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
-    expect(payload.sessions).toEqual([{ session_id: "session-1", after_seq: null }]);
+    expect(payload.sessions).toEqual([
+      { session_id: "session-1", replay: { mode: "reset" } },
+    ]);
     expect(payload.include_active_heads).toBe(false);
   });
 

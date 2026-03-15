@@ -210,7 +210,13 @@ async fn terminal_disconnect_and_reconnect_do_not_poison_workspace_control_plane
         "type": "subscribe",
         "scope": "active",
         "include_active_heads": true,
-        "sessions": [{ "session_id": session.id.0, "after_seq": 0 }],
+        "sessions": [{
+            "session_id": session.id.0,
+            "replay": {
+                "mode": "resume",
+                "after_seq": 0,
+            },
+        }],
     })
     .to_string();
     workspace_socket

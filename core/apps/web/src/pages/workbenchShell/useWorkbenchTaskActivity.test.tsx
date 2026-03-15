@@ -581,9 +581,9 @@ describe("useWorkbenchTaskActivity", () => {
       expect(workspaceSnapshotStore.setForegroundTaskId).toHaveBeenCalledWith("task-1");
       const subscribedSessionsSink = supervisor.setSubscribedSessionIdsSink.mock.calls[0]?.[0];
       expect(subscribedSessionsSink).toBeTypeOf("function");
-      subscribedSessionsSink?.([{ sessionId: "session-1", afterSeq: 3 }]);
+      subscribedSessionsSink?.([{ sessionId: "session-1", replay: { kind: "resume", afterSeq: 3 } }]);
       expect(workspaceSnapshotStore.setSubscribedSessions).toHaveBeenCalledWith([
-        { sessionId: "session-1", afterSeq: 3 },
+        { sessionId: "session-1", replay: { kind: "resume", afterSeq: 3 } },
       ]);
       expect(idleDetails.at(-1)).toEqual({ allTasksIdle: false });
     } finally {

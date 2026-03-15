@@ -37,6 +37,7 @@ export type {
   WorkspaceActiveSnapshot,
   WorkspaceActiveSnapshotClientMessage,
   WorkspaceActiveSnapshotEvent,
+  WorkspaceActiveSnapshotSessionReplay,
   WorkspaceActiveSnapshotSessionSubscription,
   WorkspaceActiveTaskSummary,
   WorkspaceArchivedPage,

@@ -171,7 +171,10 @@ async fn subscribe_session(
         "type": "subscribe",
         "sessions": [{
             "session_id": session_id.0,
-            "after_seq": after_seq,
+            "replay": {
+                "mode": "resume",
+                "after_seq": after_seq,
+            },
         }],
     })
     .to_string();

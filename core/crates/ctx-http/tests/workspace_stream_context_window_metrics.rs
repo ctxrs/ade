@@ -139,7 +139,13 @@ async fn workspace_stream_done_delta_carries_context_window_metrics() {
         "type": "subscribe",
         "scope": "active",
         "include_active_heads": true,
-        "sessions": [{ "session_id": session.id.0, "after_seq": 0 }],
+        "sessions": [{
+            "session_id": session.id.0,
+            "replay": {
+                "mode": "resume",
+                "after_seq": 0,
+            },
+        }],
     })
     .to_string();
     socket

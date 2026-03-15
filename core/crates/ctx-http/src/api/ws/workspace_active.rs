@@ -315,8 +315,8 @@ async fn handle_workspace_active_snapshot_ws(
                         }
                     }
                     if refresh_active_worktrees {
-                        let session_ids: Vec<SessionId> =
-                            subscriptions.keys().copied().collect();
+                        let session_ids =
+                            tracked_workspace_active_session_ids(&subscription_state);
                         sync_active_worktrees(
                             &state,
                             &mut active_worktrees,
@@ -575,12 +575,7 @@ async fn handle_subscribe_message(
     sync_active_worktrees(state, ctx.active_worktrees, &git_status_session_ids).await;
     if include_active_heads {
         ctx.send_control.set_hydrating();
-        if queue_snapshot_payload(
-            ctx.control,
-            state,
-            workspace_id,
-            &git_status_session_ids,
-        )
+        if queue_snapshot_payload(ctx.control, state, workspace_id, &git_status_session_ids)
             .await
             .is_err()
         {
@@ -598,15 +593,17 @@ async fn handle_subscribe_message(
     let mut next_map = HashMap::new();
     let mut replay_failed = false;
     for sub in &resolved_sessions {
-        let after_seq = sub.after_seq.unwrap_or(0);
         let session_id = sub.session_id;
+        // Reset intentionally leaves the session quiet until the client resubscribes with resume.
+        let ResolvedWorkspaceActiveSessionReplay::Resume { after_seq } = sub.replay else {
+            continue;
+        };
         if include_active_heads && skip_replay_sessions.contains(&session_id) {
             let last_sent = state
                 .workspaces
                 .workspace_active_snapshot
                 .session_last_event_seq(workspace_id, session_id)
-                .await
-                .max(after_seq);
+                .await;
             next_map.insert(session_id, SessionCursor { last_sent });
             continue;
         }

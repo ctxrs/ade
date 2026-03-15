@@ -378,7 +378,10 @@ mod tests {
             "type": "subscribe",
             "sessions": [{
                 "session_id": session.id.0,
-                "after_seq": 0,
+                "replay": {
+                    "mode": "resume",
+                    "after_seq": 0,
+                },
             }],
         })
         .to_string();

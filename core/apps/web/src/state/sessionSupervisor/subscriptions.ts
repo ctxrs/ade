@@ -14,17 +14,18 @@ export function buildSubscribedSessions(
     if (entry?.freshness === "recovering") {
       return {
         sessionId,
-        afterSeq: null,
+        replay: { kind: "reset" },
       };
     }
+    const afterSeq =
+      typeof entry?.lastEventSeq === "number"
+        ? entry.lastEventSeq
+        : typeof headSeq === "number"
+          ? headSeq
+          : null;
     return {
       sessionId,
-      afterSeq:
-        typeof entry?.lastEventSeq === "number"
-          ? entry.lastEventSeq
-          : typeof headSeq === "number"
-            ? headSeq
-            : null,
+      replay: typeof afterSeq === "number" ? { kind: "resume", afterSeq } : { kind: "auto" },
     };
   });
 }

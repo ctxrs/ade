@@ -1,6 +1,22 @@
-import type { WorkspaceActiveSnapshotClientMessage } from "../../api/client";
+import type {
+  WorkspaceActiveSnapshotClientMessage,
+  WorkspaceActiveSnapshotSessionReplay,
+} from "../../api/client";
 import type { SessionSubscriptionCursor } from "../sessionSubscription";
 import { shouldRequestWorkspaceSnapshot } from "./transport";
+
+const toWorkspaceReplay = (
+  replay: SessionSubscriptionCursor["replay"],
+): WorkspaceActiveSnapshotSessionReplay => {
+  switch (replay.kind) {
+    case "reset":
+      return { mode: "reset" };
+    case "resume":
+      return { mode: "resume", after_seq: replay.afterSeq };
+    default:
+      return { mode: "auto" };
+  }
+};
 
 export function buildWorkspaceActiveSubscribeMessage(
   reason: string,
@@ -23,7 +39,7 @@ export function buildWorkspaceActiveSubscribeMessage(
     message.session_ids = subscribedSessions.map((session) => session.sessionId);
     message.sessions = subscribedSessions.map((session) => ({
       session_id: session.sessionId,
-      after_seq: session.afterSeq,
+      replay: toWorkspaceReplay(session.replay),
     }));
   }
   return { message, requestSnapshot };

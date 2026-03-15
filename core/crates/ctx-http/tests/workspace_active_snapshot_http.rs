@@ -673,7 +673,10 @@ async fn workspace_stream_replays_from_after_seq() {
         "type": "subscribe",
         "sessions": [{
             "session_id": session.id.0,
-            "after_seq": ev2.seq,
+            "replay": {
+                "mode": "resume",
+                "after_seq": ev2.seq,
+            },
         }],
     })
     .to_string();
@@ -752,6 +755,226 @@ async fn workspace_stream_replays_from_after_seq() {
 }
 
 #[tokio::test]
+async fn workspace_stream_reset_replay_waits_for_fresh_resume_cursor() {
+    let (repo, _data_dir, state, server) = setup().await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let ws: ctx_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let task =
+        create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "replay").await;
+
+    let session = create_primary_worktree_session(client, base, task.id).await;
+    state.remember_session_meta(&session).await;
+
+    let store = state.store_for_session(session.id).await.unwrap();
+    let ev1 = store
+        .append_session_event(
+            session.id,
+            None,
+            None,
+            SessionEventType::Notice,
+            json!({"msg":"one"}),
+        )
+        .await
+        .unwrap();
+    state.publish_event(ev1.clone()).await;
+    let ev2 = store
+        .append_session_event(
+            session.id,
+            None,
+            None,
+            SessionEventType::Notice,
+            json!({"msg":"two"}),
+        )
+        .await
+        .unwrap();
+    state.publish_event(ev2.clone()).await;
+    let ev3 = store
+        .append_session_event(
+            session.id,
+            None,
+            None,
+            SessionEventType::Notice,
+            json!({"msg":"three"}),
+        )
+        .await
+        .unwrap();
+    state.publish_event(ev3.clone()).await;
+
+    fn message_contains_seq(
+        message: &ctx_core::models::WorkspaceActiveSnapshotStreamMessage,
+        session_id: ctx_core::ids::SessionId,
+        seq: i64,
+    ) -> bool {
+        match message {
+            ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event { event, .. } => {
+                match event.as_ref() {
+                    ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                        delta,
+                        ..
+                    } => {
+                        delta.session_id == session_id
+                            && delta.event.as_ref().map(|event| event.seq) == Some(seq)
+                    }
+                    _ => false,
+                }
+            }
+            ctx_core::models::WorkspaceActiveSnapshotStreamMessage::HeadsBatch {
+                deltas, ..
+            } => deltas.iter().any(|delta| {
+                delta.session_id == session_id
+                    && delta.event.as_ref().map(|event| event.seq) == Some(seq)
+            }),
+            _ => false,
+        }
+    }
+
+    let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
+    let (mut socket, _) = connect_async(&ws_url).await.unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+    let initial_subscribe = json!({
+        "type": "subscribe",
+        "sessions": [{
+            "session_id": session.id.0,
+            "replay": {
+                "mode": "resume",
+                "after_seq": ev2.seq,
+            },
+        }],
+    })
+    .to_string();
+    socket
+        .send(WsMessage::Text(initial_subscribe.into()))
+        .await
+        .unwrap();
+
+    let mut saw_initial_replay = false;
+    let initial_deadline = tokio::time::Instant::now() + Duration::from_secs(4);
+    while tokio::time::Instant::now() < initial_deadline {
+        let wait = initial_deadline
+            .saturating_duration_since(tokio::time::Instant::now())
+            .min(Duration::from_millis(250));
+        let next = tokio::time::timeout(wait, socket.next()).await;
+        if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
+            if let Ok(message) =
+                serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
+            {
+                if message_contains_seq(&message, session.id, ev3.seq) {
+                    saw_initial_replay = true;
+                    break;
+                }
+            }
+        }
+    }
+    assert!(saw_initial_replay, "expected initial replay before reset");
+
+    let reset_subscribe = json!({
+        "type": "subscribe",
+        "sessions": [{
+            "session_id": session.id.0,
+            "replay": {
+                "mode": "reset",
+            },
+        }],
+    })
+    .to_string();
+    socket
+        .send(WsMessage::Text(reset_subscribe.into()))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    let ev4 = store
+        .append_session_event(
+            session.id,
+            None,
+            None,
+            SessionEventType::Notice,
+            json!({"msg":"four"}),
+        )
+        .await
+        .unwrap();
+    state.publish_event(ev4.clone()).await;
+
+    let mut saw_reset_window_event = false;
+    let reset_deadline = tokio::time::Instant::now() + Duration::from_millis(750);
+    while tokio::time::Instant::now() < reset_deadline {
+        let wait = reset_deadline
+            .saturating_duration_since(tokio::time::Instant::now())
+            .min(Duration::from_millis(200));
+        let next = tokio::time::timeout(wait, socket.next()).await;
+        if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
+            if let Ok(message) =
+                serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
+            {
+                if message_contains_seq(&message, session.id, ev4.seq) {
+                    saw_reset_window_event = true;
+                    break;
+                }
+            }
+        }
+    }
+    assert!(
+        !saw_reset_window_event,
+        "reset replay should stay quiet until the client resumes from a fresh head cursor"
+    );
+
+    let resume_subscribe = json!({
+        "type": "subscribe",
+        "sessions": [{
+            "session_id": session.id.0,
+            "replay": {
+                "mode": "resume",
+                "after_seq": ev3.seq,
+            },
+        }],
+    })
+    .to_string();
+    socket
+        .send(WsMessage::Text(resume_subscribe.into()))
+        .await
+        .unwrap();
+
+    let mut saw_resumed_event = false;
+    let resume_deadline = tokio::time::Instant::now() + Duration::from_secs(4);
+    while tokio::time::Instant::now() < resume_deadline {
+        let wait = resume_deadline
+            .saturating_duration_since(tokio::time::Instant::now())
+            .min(Duration::from_millis(250));
+        let next = tokio::time::timeout(wait, socket.next()).await;
+        if let Ok(Some(Ok(WsMessage::Text(txt)))) = next {
+            if let Ok(message) =
+                serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
+            {
+                if message_contains_seq(&message, session.id, ev4.seq) {
+                    saw_resumed_event = true;
+                    break;
+                }
+            }
+        }
+    }
+    assert!(
+        saw_resumed_event,
+        "expected explicit resume to replay the event that arrived during reset recovery"
+    );
+}
+
+#[tokio::test]
 async fn workspace_stream_replays_tool_events() {
     let (repo, _data_dir, state, server) = setup().await;
     let base = &server.base_url;
@@ -822,7 +1045,10 @@ async fn workspace_stream_replays_tool_events() {
         "type": "subscribe",
         "sessions": [{
             "session_id": session.id.0,
-            "after_seq": ev1.seq,
+            "replay": {
+                "mode": "resume",
+                "after_seq": ev1.seq,
+            },
         }],
     })
     .to_string();
@@ -932,7 +1158,10 @@ async fn workspace_stream_under_load_no_gap_or_reset() {
         "type": "subscribe",
         "sessions": [{
             "session_id": session.id.0,
-            "after_seq": 1,
+            "replay": {
+                "mode": "resume",
+                "after_seq": 1,
+            },
         }],
     })
     .to_string();
@@ -1080,6 +1309,9 @@ async fn workspace_stream_emits_git_status_snapshot_on_change() {
         "type": "subscribe",
         "sessions": [{
             "session_id": session.id.0,
+            "replay": {
+                "mode": "auto",
+            },
         }],
     })
     .to_string();
@@ -1188,6 +1420,9 @@ async fn workspace_stream_emits_git_status_snapshot_for_new_subscriber() {
         "type": "subscribe",
         "sessions": [{
             "session_id": session_one.id.0,
+            "replay": {
+                "mode": "auto",
+            },
         }],
     })
     .to_string();
@@ -1239,6 +1474,9 @@ async fn workspace_stream_emits_git_status_snapshot_for_new_subscriber() {
         "type": "subscribe",
         "sessions": [{
             "session_id": session_two.id.0,
+            "replay": {
+                "mode": "auto",
+            },
         }],
     })
     .to_string();
@@ -1540,6 +1778,9 @@ async fn workspace_stream_initial_snapshot_includes_worktree_vcs_for_explicit_ar
         "type": "subscribe",
         "sessions": [{
             "session_id": session.id.0,
+            "replay": {
+                "mode": "auto",
+            },
         }],
         "include_active_heads": true,
     })
@@ -1594,9 +1835,15 @@ async fn workspace_stream_initial_snapshot_preserves_secondary_worktree_vcs_for_
         .await
         .unwrap();
 
-    let task =
-        create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "multi-worktree")
-            .await;
+    let task = create_task_with_primary_worktree(
+        client,
+        &state,
+        base,
+        ws.id,
+        repo.path(),
+        "multi-worktree",
+    )
+    .await;
     let primary_session = create_primary_worktree_session(client, base, task.id).await;
     let secondary_session = create_primary_worktree_session(client, base, task.id).await;
 
@@ -1719,6 +1966,9 @@ async fn workspace_stream_emits_worktree_vcs_snapshot_on_activation() {
         "type": "subscribe",
         "sessions": [{
             "session_id": session.id.0,
+            "replay": {
+                "mode": "auto",
+            },
         }],
     })
     .to_string();
@@ -1818,7 +2068,10 @@ async fn workspace_stream_emits_gap_on_large_replay() {
         "type": "subscribe",
         "sessions": [{
             "session_id": session.id.0,
-            "after_seq": 1,
+            "replay": {
+                "mode": "resume",
+                "after_seq": 1,
+            },
         }],
     })
     .to_string();
@@ -2094,7 +2347,10 @@ async fn workspace_active_snapshot_stream_filters_session_head_deltas() {
         "type": "subscribe",
         "sessions": [{
             "session_id": session_a.id.0,
-            "after_seq": 0,
+            "replay": {
+                "mode": "resume",
+                "after_seq": 0,
+            },
         }],
     })
     .to_string();

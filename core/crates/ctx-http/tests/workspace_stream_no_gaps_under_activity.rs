@@ -113,7 +113,18 @@ async fn workspace_stream_stays_live_without_gaps_under_activity() {
         "type": "subscribe",
         "scope": "active",
         "include_active_heads": true,
-        "sessions": sessions.iter().map(|s| json!({"session_id": s.id.0, "after_seq": 0})).collect::<Vec<_>>(),
+        "sessions": sessions
+            .iter()
+            .map(|s| {
+                json!({
+                    "session_id": s.id.0,
+                    "replay": {
+                        "mode": "resume",
+                        "after_seq": 0,
+                    },
+                })
+            })
+            .collect::<Vec<_>>(),
     })
     .to_string();
     socket

@@ -339,15 +339,20 @@ async fn handle_mobile_secure_ws(
                             let mut next_map = HashMap::new();
                             let mut replay_failed = false;
                             for sub in &resolved_sessions {
-                                let after_seq = sub.after_seq.unwrap_or(0);
                                 let session_id = sub.session_id;
+                                // Reset intentionally leaves the session quiet until the client resubscribes with resume.
+                                let ResolvedWorkspaceActiveSessionReplay::Resume {
+                                    after_seq,
+                                } = sub.replay
+                                else {
+                                    continue;
+                                };
                                 if include_active_heads
                                     && skip_replay_sessions.contains(&session_id)
                                 {
                                     let last_sent = state.workspaces.workspace_active_snapshot
                                         .session_last_event_seq(workspace_id, session_id)
-                                        .await
-                                        .max(after_seq);
+                                        .await;
                                     next_map.insert(session_id, SessionCursor { last_sent });
                                     continue;
                                 }
@@ -571,8 +576,8 @@ async fn handle_mobile_secure_ws(
                         }
                     }
                     if refresh_active_worktrees {
-                        let session_ids: Vec<SessionId> =
-                            subscriptions.keys().copied().collect();
+                        let session_ids =
+                            tracked_workspace_active_session_ids(&subscription_state);
                         sync_active_worktrees(
                             &state,
                             &mut active_worktrees,
@@ -764,6 +769,17 @@ struct SessionCursor {
     last_sent: i64,
 }
 
+#[derive(Clone, Copy)]
+enum ResolvedWorkspaceActiveSessionReplay {
+    Reset,
+    Resume { after_seq: i64 },
+}
+
+struct ResolvedWorkspaceActiveSessionSubscription {
+    session_id: SessionId,
+    replay: ResolvedWorkspaceActiveSessionReplay,
+}
+
 #[derive(Default)]
 struct WorkspaceActiveSubscriptionState {
     active_scope: bool,
@@ -774,8 +790,18 @@ struct WorkspaceActiveSubscriptionState {
 }
 
 struct ResolvedWorkspaceActiveSubscriptions {
-    sessions: Vec<WorkspaceActiveSnapshotSessionSubscription>,
+    sessions: Vec<ResolvedWorkspaceActiveSessionSubscription>,
     state: WorkspaceActiveSubscriptionState,
+}
+
+fn tracked_workspace_active_session_ids(
+    state: &WorkspaceActiveSubscriptionState,
+) -> Vec<SessionId> {
+    let mut session_ids: HashSet<SessionId> = state.explicit_sessions.iter().copied().collect();
+    session_ids.extend(state.active_task_sessions.values().copied());
+    let mut ordered: Vec<_> = session_ids.into_iter().collect();
+    ordered.sort_by_key(|session_id| session_id.0);
+    ordered
 }
 
 async fn send_secure_ws<S>(

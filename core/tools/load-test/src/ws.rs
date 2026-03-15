@@ -11,7 +11,7 @@ use url::Url;
 use ctx_client::Client;
 use ctx_core::ids::{SessionId, WorkspaceId};
 use ctx_core::models::{
-    SessionEventType, WorkspaceActiveSnapshotClientMessage,
+    SessionEventType, WorkspaceActiveSnapshotClientMessage, WorkspaceActiveSnapshotSessionReplay,
     WorkspaceActiveSnapshotSessionSubscription,
 };
 
@@ -156,7 +156,7 @@ pub(crate) async fn run_ws_replay_once(
         session_ids: Vec::new(),
         sessions: vec![WorkspaceActiveSnapshotSessionSubscription {
             session_id,
-            after_seq: Some(0),
+            replay: WorkspaceActiveSnapshotSessionReplay::Resume { after_seq: 0 },
         }],
         task_ids: Vec::new(),
         foreground_task_id: None,

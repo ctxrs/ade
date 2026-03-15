@@ -457,12 +457,12 @@ describe("SessionSupervisor", () => {
 
     sup.openSession(sessionId, { mode: "active" });
 
-    expect(sink).toHaveBeenCalledWith([{ sessionId, afterSeq: null }]);
+    expect(sink).toHaveBeenCalledWith([{ sessionId, replay: { kind: "auto" } }]);
     sink.mockClear();
 
     sup.setActiveTaskSessionIds([sessionId]);
 
-    expect(sink).toHaveBeenCalledWith([{ sessionId, afterSeq: null }]);
+    expect(sink).toHaveBeenCalledWith([{ sessionId, replay: { kind: "auto" } }]);
   });
 
   it("re-emits subscribed session ids when workspace active-primary membership flips under an identical plan", async () => {
@@ -475,8 +475,8 @@ describe("SessionSupervisor", () => {
 
     sup.setWarmSessionIds(["session-1", "session-2"]);
     expect(sink).toHaveBeenCalledWith([
-      { sessionId: "session-1", afterSeq: null },
-      { sessionId: "session-2", afterSeq: null },
+      { sessionId: "session-1", replay: { kind: "auto" } },
+      { sessionId: "session-2", replay: { kind: "auto" } },
     ]);
     sink.mockClear();
 
@@ -494,8 +494,8 @@ describe("SessionSupervisor", () => {
     };
     sup.setWorkspaceSnapshotState(stateWithPrimaryOne);
     expect(sink).toHaveBeenCalledWith([
-      { sessionId: "session-1", afterSeq: null },
-      { sessionId: "session-2", afterSeq: null },
+      { sessionId: "session-1", replay: { kind: "auto" } },
+      { sessionId: "session-2", replay: { kind: "auto" } },
     ]);
     sink.mockClear();
 
@@ -512,8 +512,8 @@ describe("SessionSupervisor", () => {
     sup.setWorkspaceSnapshotState(stateWithPrimaryTwo);
 
     expect(sink).toHaveBeenCalledWith([
-      { sessionId: "session-1", afterSeq: null },
-      { sessionId: "session-2", afterSeq: null },
+      { sessionId: "session-1", replay: { kind: "auto" } },
+      { sessionId: "session-2", replay: { kind: "auto" } },
     ]);
   });
 
@@ -557,7 +557,10 @@ describe("SessionSupervisor", () => {
 
     await waitForCondition(() =>
       sink.mock.calls.some(
-        (call) => call[0]?.[0]?.sessionId === sessionId && call[0]?.[0]?.afterSeq === 7,
+        (call) =>
+          call[0]?.[0]?.sessionId === sessionId &&
+          call[0]?.[0]?.replay?.kind === "resume" &&
+          call[0]?.[0]?.replay?.afterSeq === 7,
       ),
     );
     sink.mockClear();
@@ -570,7 +573,7 @@ describe("SessionSupervisor", () => {
       after_seq: 7,
     });
 
-    expect(sink).toHaveBeenCalledWith([{ sessionId, afterSeq: null }]);
+    expect(sink).toHaveBeenCalledWith([{ sessionId, replay: { kind: "reset" } }]);
     expect(sup.getSnapshot().sessions[sessionId]?.freshness).toBe("recovering");
   });
 
