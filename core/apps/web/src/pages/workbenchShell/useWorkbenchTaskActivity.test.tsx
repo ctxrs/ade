@@ -327,6 +327,61 @@ describe("useWorkbenchTaskActivity helpers", () => {
     expect(isWorkbenchTaskUnread({ taskId: "task-1", tasksById, taskLiveInfo })).toBe(false);
   });
 
+  it("falls back to the primary session summary timestamp when no live entry is open", () => {
+    const primarySession = makeSession("session-1", "task-1", "completed");
+    const tasksById = {
+      "task-1": makeTaskSummary({
+        taskId: "task-1",
+        primarySessionId: "session-1",
+        sessions: [
+          makeSessionSummary(primarySession, {
+            last_message_at: "2026-03-09T00:00:08.000Z",
+          }),
+        ],
+        assistantSeenAt: "2026-03-09T00:00:06.000Z",
+        lastAssistantMessageAt: "2026-03-09T00:00:05.000Z",
+      }),
+    };
+
+    const taskLiveInfo = deriveTaskLiveInfo({
+      tasksById,
+      optimisticTasks: [],
+      sessions: {},
+    });
+
+    expect(taskLiveInfo.lastAssistantMsByTask["task-1"]).toBe(Date.parse("2026-03-09T00:00:08.000Z"));
+    expect(isWorkbenchTaskUnread({ taskId: "task-1", tasksById, taskLiveInfo })).toBe(true);
+  });
+
+  it("uses the authoritative primary session entry status for task errors when present", () => {
+    const primarySession = makeSession("session-1", "task-1", "completed");
+    const failedEntrySession = { ...primarySession, status: "failed" as const };
+    const tasksById = {
+      "task-1": makeTaskSummary({
+        taskId: "task-1",
+        primarySessionId: "session-1",
+        sessions: [
+          makeSessionSummary(primarySession, {
+            last_message_at: "2026-03-09T00:00:05.000Z",
+          }),
+        ],
+      }),
+    };
+
+    const taskLiveInfo = deriveTaskLiveInfo({
+      tasksById,
+      optimisticTasks: [],
+      sessions: {
+        "session-1": makeSessionEntry({
+          session: failedEntrySession,
+          messageCreatedAt: "2026-03-09T00:00:06.000Z",
+        }),
+      },
+    });
+
+    expect(taskLiveInfo.errorByTask.has("task-1")).toBe(true);
+  });
+
   it("treats canonical is_working summaries as working, including queued follow-ups", () => {
     const primarySession = makeSession("session-1", "task-1", "active");
 

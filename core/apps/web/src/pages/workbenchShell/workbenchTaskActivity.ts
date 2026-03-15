@@ -140,14 +140,16 @@ const deriveTaskLiveInfoFromSources = (
       workingByTask.add(taskId);
     }
 
-    const status = primarySessionSummary.session.status;
+    const status = primaryEntry?.session?.status ?? primarySessionSummary.session.status;
     if (status === "failed" || status === "cancelled") {
       errorByTask.add(taskId);
     }
 
     const liveMs = primaryEntry ? lastAssistantMessageMs(primaryEntry.messages) : null;
-    if (liveMs !== null) {
-      lastAssistantMsByTask[taskId] = Math.max(lastAssistantMsByTask[taskId] ?? 0, liveMs);
+    const summaryMs = parseMs(primarySessionSummary.last_message_at);
+    const assistantMs = liveMs ?? summaryMs;
+    if (assistantMs !== null) {
+      lastAssistantMsByTask[taskId] = Math.max(lastAssistantMsByTask[taskId] ?? 0, assistantMs);
     }
   }
 
