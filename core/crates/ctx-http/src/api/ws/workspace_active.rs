@@ -575,7 +575,12 @@ async fn handle_subscribe_message(
     sync_active_worktrees(state, ctx.active_worktrees, &git_status_session_ids).await;
     if include_active_heads {
         ctx.send_control.set_hydrating();
-        if queue_snapshot_payload(ctx.control, state, workspace_id)
+        if queue_snapshot_payload(
+            ctx.control,
+            state,
+            workspace_id,
+            &git_status_session_ids,
+        )
             .await
             .is_err()
         {

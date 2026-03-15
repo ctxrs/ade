@@ -776,7 +776,7 @@ pub async fn refresh_worktree_vcs_summary(state: Arc<AppState>, worktree: Worktr
     Ok(())
 }
 
-async fn schedule_worktree_vcs_summary(state: Arc<AppState>, worktree: Worktree) {
+pub async fn schedule_worktree_vcs_summary_refresh(state: Arc<AppState>, worktree: Worktree) {
     let worktree_id = worktree.id;
     let generation = {
         let mut gens = state.workspaces.worktree_vcs_summary_gen.lock().await;
@@ -891,7 +891,7 @@ pub async fn emit_worktree_vcs_snapshot_for_worktree(
         }
     }
     if active && published {
-        schedule_worktree_vcs_summary(state.clone(), worktree.clone()).await;
+        schedule_worktree_vcs_summary_refresh(state.clone(), worktree.clone()).await;
     }
     Ok(())
 }

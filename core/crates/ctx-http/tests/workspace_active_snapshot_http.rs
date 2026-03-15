@@ -1390,6 +1390,195 @@ async fn workspace_stream_delivers_snapshot_before_worktree_vcs_summary_refresh(
 }
 
 #[tokio::test]
+async fn workspace_stream_repeat_subscribe_preserves_ready_worktree_vcs_state() {
+    let (repo, _data_dir, state, server) = setup_git().await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let ws: ctx_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let task =
+        create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "ready-vcs")
+            .await;
+    let session = create_primary_worktree_session(client, base, task.id).await;
+    let store = state.store_for_session(session.id).await.unwrap();
+    let worktree = store
+        .get_worktree(session.worktree_id)
+        .await
+        .unwrap()
+        .expect("missing worktree");
+
+    let mut next = HashSet::new();
+    next.insert(worktree.id);
+    state
+        .update_worktree_vcs_activity(&HashSet::new(), &next)
+        .await;
+    ctx_http::git_status::refresh_worktree_vcs_summary(state.clone(), worktree.clone())
+        .await
+        .unwrap();
+
+    let seeded = state
+        .get_worktree_vcs_snapshot(worktree.id)
+        .await
+        .expect("expected seeded worktree vcs snapshot");
+    assert_eq!(seeded.freshness, WorktreeVcsFreshness::Fresh);
+
+    let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
+    let (mut socket, _) = connect_async(&ws_url).await.unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+    let subscribe = json!({
+        "type": "subscribe",
+        "scope": "active",
+        "include_active_heads": true,
+    })
+    .to_string();
+    socket
+        .send(WsMessage::Text(subscribe.into()))
+        .await
+        .unwrap();
+
+    let first = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let WsMessage::Text(first_text) = first else {
+        panic!("expected text frame after subscribe");
+    };
+    let first_message: ctx_core::models::WorkspaceActiveSnapshotStreamMessage =
+        serde_json::from_str(&first_text).unwrap();
+    let initial_worktree =
+        worktree_vcs_snapshot_from_message(first_message, worktree.id).expect("missing worktree");
+    assert_eq!(initial_worktree.freshness, WorktreeVcsFreshness::Fresh);
+
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(750);
+    while tokio::time::Instant::now() < deadline {
+        let snapshot = state
+            .workspaces
+            .workspace_active_snapshot
+            .active_snapshot(ws.id, 10)
+            .await;
+        let current = snapshot
+            .worktree_vcs_snapshots
+            .into_iter()
+            .find(|candidate| candidate.worktree_id == worktree.id)
+            .expect("expected worktree snapshot to remain published");
+        assert_eq!(
+            current.freshness,
+            WorktreeVcsFreshness::Fresh,
+            "repeat subscribe should not downgrade ready worktree vcs state"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+#[tokio::test]
+async fn workspace_stream_initial_snapshot_includes_worktree_vcs_for_explicit_archived_session() {
+    let (repo, _data_dir, state, server) = setup_git().await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let ws: ctx_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let task =
+        create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "archived-vcs")
+            .await;
+    let session = create_primary_worktree_session(client, base, task.id).await;
+    let store = state.store_for_session(session.id).await.unwrap();
+    let worktree = store
+        .get_worktree(session.worktree_id)
+        .await
+        .unwrap()
+        .expect("missing worktree");
+
+    let mut next = HashSet::new();
+    next.insert(worktree.id);
+    state
+        .update_worktree_vcs_activity(&HashSet::new(), &next)
+        .await;
+    ctx_http::git_status::refresh_worktree_vcs_summary(state.clone(), worktree.clone())
+        .await
+        .unwrap();
+
+    let resp = client
+        .post(format!("{base}/api/tasks/{}/archive", task.id.0))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+
+    let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
+    let (mut socket, _) = connect_async(&ws_url).await.unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+    let subscribe = json!({
+        "type": "subscribe",
+        "sessions": [{
+            "session_id": session.id.0,
+        }],
+        "include_active_heads": true,
+    })
+    .to_string();
+    socket
+        .send(WsMessage::Text(subscribe.into()))
+        .await
+        .unwrap();
+
+    let first = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let WsMessage::Text(first_text) = first else {
+        panic!("expected text frame after subscribe");
+    };
+    let first_message: ctx_core::models::WorkspaceActiveSnapshotStreamMessage =
+        serde_json::from_str(&first_text).unwrap();
+    let ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Snapshot {
+        active_snapshot, ..
+    } = first_message
+    else {
+        panic!("expected initial snapshot after subscribe");
+    };
+
+    assert!(
+        active_snapshot.active.tasks.is_empty(),
+        "archived explicit session should not reappear in active task snapshot"
+    );
+    let snapshot = active_snapshot
+        .worktree_vcs_snapshots
+        .into_iter()
+        .find(|candidate| candidate.worktree_id == worktree.id)
+        .expect("expected explicit archived session worktree vcs in initial snapshot");
+    assert_eq!(snapshot.freshness, WorktreeVcsFreshness::Fresh);
+}
+
+#[tokio::test]
 async fn workspace_stream_emits_worktree_vcs_snapshot_on_activation() {
     let (repo, _data_dir, state, server) = setup_git().await;
     let base = &server.base_url;

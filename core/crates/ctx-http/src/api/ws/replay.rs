@@ -66,6 +66,7 @@ pub(super) async fn queue_snapshot_payload(
     pending: &StreamQueue<WorkspaceActiveSnapshotStreamMessage>,
     state: &Arc<AppState>,
     workspace_id: WorkspaceId,
+    session_ids: &[SessionId],
 ) -> Result<(), ()> {
     let build_start = Instant::now();
     state
@@ -76,20 +77,8 @@ pub(super) async fn queue_snapshot_payload(
         .workspace_active_snapshot
         .active_snapshot(workspace_id, i64::MAX)
         .await;
-    let mut active_worktree_ids = HashSet::new();
-    for task in &active_snapshot.active.tasks {
-        active_worktree_ids.insert(task.primary_session.session.worktree_id);
-        for summary in &task.sessions {
-            active_worktree_ids.insert(summary.session.worktree_id);
-        }
-    }
-    let mut worktree_vcs_snapshots = Vec::new();
-    for worktree_id in active_worktree_ids {
-        if let Some(snapshot) = state.get_worktree_vcs_snapshot(worktree_id).await {
-            worktree_vcs_snapshots.push(snapshot);
-        }
-    }
-    active_snapshot.worktree_vcs_snapshots = worktree_vcs_snapshots;
+    active_snapshot.worktree_vcs_snapshots =
+        load_worktree_vcs_snapshots_for_sessions(state, session_ids).await;
     let active_heads = state
         .workspaces
         .workspace_active_snapshot
@@ -370,13 +359,29 @@ pub(super) async fn ensure_worktree_vcs_watchers_for_sessions(
 
     for (worktree_id, worktree) in worktrees {
         state.ensure_git_status_watcher(worktree.clone()).await;
-        if let Err(err) =
-            crate::git_status::emit_worktree_vcs_snapshot_for_worktree(state, &worktree, true).await
-        {
-            tracing::warn!(
-                worktree_id = %worktree_id.0,
-                "worktree vcs seed failed: {err:#}"
-            );
+        match state.get_worktree_vcs_snapshot(worktree.id).await {
+            Some(snapshot) if snapshot.freshness == WorktreeVcsFreshness::Fresh => {}
+            Some(_) => {
+                crate::git_status::schedule_worktree_vcs_summary_refresh(
+                    state.clone(),
+                    worktree.clone(),
+                )
+                .await;
+            }
+            None => {
+                if let Err(err) = crate::git_status::emit_worktree_vcs_snapshot_for_worktree(
+                    state,
+                    &worktree,
+                    true,
+                )
+                .await
+                {
+                    tracing::warn!(
+                        worktree_id = %worktree_id.0,
+                        "worktree vcs seed failed: {err:#}"
+                    );
+                }
+            }
         }
     }
 }
@@ -410,6 +415,22 @@ async fn resolve_worktree_ids_for_sessions(
         worktree_ids.insert(session.worktree_id);
     }
     worktree_ids
+}
+
+pub(super) async fn load_worktree_vcs_snapshots_for_sessions(
+    state: &Arc<AppState>,
+    session_ids: &[SessionId],
+) -> Vec<WorktreeVcsSnapshot> {
+    let worktree_ids = resolve_worktree_ids_for_sessions(state, session_ids).await;
+    let mut ordered_worktree_ids: Vec<_> = worktree_ids.into_iter().collect();
+    ordered_worktree_ids.sort_by_key(|worktree_id| worktree_id.0);
+    let mut snapshots = Vec::new();
+    for worktree_id in ordered_worktree_ids {
+        if let Some(snapshot) = state.get_worktree_vcs_snapshot(worktree_id).await {
+            snapshots.push(snapshot);
+        }
+    }
+    snapshots
 }
 
 pub(super) async fn sync_active_worktrees(

@@ -309,11 +309,20 @@ async fn handle_mobile_secure_ws(
                             head_buffer.clear().await;
                             reset_queued = false;
                             send_control.clear_disconnect_after_flush();
+                            let git_status_session_ids: Vec<SessionId> = resolved_sessions
+                                .iter()
+                                .map(|sub| sub.session_id)
+                                .collect();
                             if include_active_heads {
                                 send_control.set_hydrating();
                             }
                             if include_active_heads
-                                && queue_snapshot_payload(&control, &state, workspace_id)
+                                && queue_snapshot_payload(
+                                    &control,
+                                    &state,
+                                    workspace_id,
+                                    &git_status_session_ids,
+                                )
                                     .await
                                     .is_err()
                             {
@@ -448,10 +457,6 @@ async fn handle_mobile_secure_ws(
                             }
                             subscriptions = next_map;
                             subscription_state = next_state;
-                            let git_status_session_ids: Vec<SessionId> = resolved_sessions
-                                .iter()
-                                .map(|sub| sub.session_id)
-                                .collect();
                             sync_active_worktrees(
                                 &state,
                                 &mut active_worktrees,
