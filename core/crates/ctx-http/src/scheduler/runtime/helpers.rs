@@ -319,12 +319,9 @@ async fn apply_openhands_launch_overrides(
         return Ok(());
     };
 
-    let alias = ensure_openhands_workdir_alias(
-        std::path::Path::new(data_root),
-        session_id,
-        workdir,
-    )
-    .await?;
+    let alias =
+        ensure_openhands_workdir_alias(std::path::Path::new(data_root), session_id, workdir)
+            .await?;
     provider_env.insert(
         "OPENHANDS_WORK_DIR".to_string(),
         alias.to_string_lossy().to_string(),
@@ -380,10 +377,7 @@ async fn reset_existing_alias(alias: &std::path::Path, target: &std::path::Path)
     Ok(())
 }
 
-async fn create_dir_symlink(
-    source: &std::path::Path,
-    target: &std::path::Path,
-) -> Result<()> {
+async fn create_dir_symlink(source: &std::path::Path, target: &std::path::Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::symlink;
@@ -413,7 +407,9 @@ async fn create_dir_symlink(
     }
 
     #[allow(unreachable_code)]
-    Err(anyhow!("directory symlinks are not supported on this platform"))
+    Err(anyhow!(
+        "directory symlinks are not supported on this platform"
+    ))
 }
 
 #[cfg(test)]
@@ -464,16 +460,15 @@ mod tests {
         let data_root = tempfile::tempdir().expect("data_root");
         let workdir_parent = tempfile::tempdir().expect("workdir_parent");
         let workdir = workdir_parent.path().join("nested").join("worktree");
-        tokio::fs::create_dir_all(&workdir).await.expect("create workdir");
+        tokio::fs::create_dir_all(&workdir)
+            .await
+            .expect("create workdir");
         let mut env = HashMap::from([
             (
                 "CTX_DATA_ROOT".to_string(),
                 data_root.path().to_string_lossy().to_string(),
             ),
-            (
-                "CTX_SESSION_ID".to_string(),
-                "session-123".to_string(),
-            ),
+            ("CTX_SESSION_ID".to_string(), "session-123".to_string()),
         ]);
 
         apply_provider_launch_overrides("openhands", &workdir, &mut env)
