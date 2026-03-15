@@ -150,25 +150,32 @@ const deriveTaskLiveInfoFromSources = (
       ? summary.sessions.find((sessionSummary) => idToString(sessionSummary.session.id) === primarySessionId)
       : undefined;
     const primaryEntry = primarySessionId ? entryBySessionId.get(primarySessionId) : undefined;
-    if (!primarySessionSummary) continue;
+    const primaryHead = summary.primarySessionHead ?? null;
+    const primaryActivity =
+      primarySessionSummary?.activity ?? primaryEntry?.activity ?? primaryHead?.activity ?? null;
+    const primaryStatus =
+      primaryEntry?.session?.status ?? primarySessionSummary?.session.status ?? primaryHead?.session.status;
+    if (!primarySessionSummary && !primaryEntry && !primaryHead) continue;
 
-    if (isPrimarySessionRunning({ primarySessionSummary })) {
+    if (isSessionWorkingActivity(primaryActivity)) {
       workingByTask.add(taskId);
     }
 
-    const status = primaryEntry?.session?.status ?? primarySessionSummary.session.status;
-    if (status === "failed" || status === "cancelled") {
+    if (primaryStatus === "failed" || primaryStatus === "cancelled") {
       errorByTask.add(taskId);
     }
 
     const liveMs = primaryEntry ? lastAssistantMessageMs(primaryEntry.messages) : null;
-    const summaryMs = parseMs(primarySessionSummary.last_message_at);
+    const headMs = primaryHead ? lastAssistantMessageMs(primaryHead.messages) : null;
+    const summaryMs = parseMs(primarySessionSummary?.last_message_at ?? null);
     const assistantMs =
       primaryEntry?.freshness === "authoritative"
-        ? liveMs ?? summaryMs
-        : liveMs !== null && summaryMs !== null
-          ? Math.max(liveMs, summaryMs)
-          : liveMs ?? summaryMs;
+        ? liveMs ?? headMs ?? summaryMs
+        : [liveMs, headMs, summaryMs].reduce<number | null>(
+            (max, candidate) =>
+              candidate === null ? max : max === null ? candidate : Math.max(max, candidate),
+            null,
+          );
     if (assistantMs !== null) {
       lastAssistantMsByTask[taskId] = Math.max(lastAssistantMsByTask[taskId] ?? 0, assistantMs);
     }

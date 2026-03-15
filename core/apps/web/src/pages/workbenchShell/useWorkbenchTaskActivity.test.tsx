@@ -452,6 +452,53 @@ describe("useWorkbenchTaskActivity helpers", () => {
     expect(taskLiveInfo.errorByTask.has("task-1")).toBe(true);
   });
 
+  it("derives live task state when only the primary head is hydrated", () => {
+    const primarySession = makeSession("session-1", "task-1", "active");
+    const taskSummary = makeTaskSummary({
+      taskId: "task-1",
+      primarySessionId: "session-1",
+      sessions: [],
+      assistantSeenAt: "2026-03-09T00:00:06.000Z",
+      lastAssistantMessageAt: "2026-03-09T00:00:05.000Z",
+    });
+    taskSummary.primarySessionHead = {
+      session: primarySession,
+      turns: [],
+      messages: [
+        {
+          id: "head-message",
+          session_id: primarySession.id,
+          task_id: primarySession.task_id,
+          role: "assistant",
+          content: "still running",
+          delivery: "immediate",
+          created_at: "2026-03-09T00:00:08.000Z",
+        },
+      ],
+      last_event_seq: 8,
+      projection_rev: 8,
+      state_rev: 0,
+      activity: { is_working: true, last_turn_status: "running" },
+      has_more_turns: false,
+      has_more_history: false,
+    };
+
+    const taskLiveInfo = deriveTaskLiveInfo({
+      tasksById: { "task-1": taskSummary },
+      optimisticTasks: [],
+      sessions: {
+        "session-1": makeSessionEntry({
+          session: primarySession,
+          messageCreatedAt: "2026-03-09T00:00:08.000Z",
+        }),
+      },
+    });
+
+    expect(taskLiveInfo.workingByTask.has("task-1")).toBe(true);
+    expect(taskLiveInfo.lastAssistantMsByTask["task-1"]).toBe(Date.parse("2026-03-09T00:00:08.000Z"));
+    expect(isWorkbenchTaskUnread({ taskId: "task-1", tasksById: { "task-1": taskSummary }, taskLiveInfo })).toBe(true);
+  });
+
   it("treats canonical is_working summaries as working, including queued follow-ups", () => {
     const primarySession = makeSession("session-1", "task-1", "active");
 

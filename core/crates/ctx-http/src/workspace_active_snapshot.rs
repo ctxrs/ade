@@ -249,6 +249,13 @@ impl WorkspaceActiveSnapshotHub {
                 reason,
             } => {
                 if after_seq <= 0 {
+                    if let Some(head) = self.get_session_head(session_id).await {
+                        let last_sent = SessionReplayCursor::from_head(&head);
+                        return WorkspaceSessionReplay::Replay {
+                            items: vec![WorkspaceSessionReplayItem::Seed(head)],
+                            last_sent,
+                        };
+                    }
                     let last_sent = self.session_replay_cursor(workspace_id, session_id).await;
                     return WorkspaceSessionReplay::Replay {
                         items: Vec::new(),

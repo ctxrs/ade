@@ -413,7 +413,7 @@ mod replay_tests {
     }
 
     #[tokio::test]
-    async fn replay_session_stream_suppresses_gap_for_non_resuming_cursor() {
+    async fn replay_session_stream_seeds_head_for_non_resuming_cursor_gap() {
         let hub = WorkspaceActiveSnapshotHub::new();
         let session = replay_session(SessionId::new());
         let mut head = new_head_snapshot(&session);
@@ -433,7 +433,6 @@ mod replay_tests {
             .await
         {
             WorkspaceSessionReplay::Replay { items, last_sent } => {
-                assert!(items.is_empty());
                 assert_eq!(
                     last_sent,
                     SessionReplayCursor {
@@ -441,6 +440,15 @@ mod replay_tests {
                         projection_rev: 17,
                     }
                 );
+                assert_eq!(items.len(), 1);
+                match &items[0] {
+                    WorkspaceSessionReplayItem::Seed(seed) => {
+                        assert_eq!(seed.session.id, session.id);
+                        assert_eq!(seed.last_event_seq, 11);
+                        assert_eq!(seed.projection_rev, 17);
+                    }
+                    other => panic!("expected seed, got {other:?}"),
+                }
             }
             other => panic!("expected replay, got {other:?}"),
         }
