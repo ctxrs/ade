@@ -163,7 +163,12 @@ const deriveTaskLiveInfoFromSources = (
 
     const liveMs = primaryEntry ? lastAssistantMessageMs(primaryEntry.messages) : null;
     const summaryMs = parseMs(primarySessionSummary.last_message_at);
-    const assistantMs = liveMs ?? summaryMs;
+    const assistantMs =
+      primaryEntry?.freshness === "authoritative"
+        ? liveMs ?? summaryMs
+        : liveMs !== null && summaryMs !== null
+          ? Math.max(liveMs, summaryMs)
+          : liveMs ?? summaryMs;
     if (assistantMs !== null) {
       lastAssistantMsByTask[taskId] = Math.max(lastAssistantMsByTask[taskId] ?? 0, assistantMs);
     }

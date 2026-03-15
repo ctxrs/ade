@@ -92,16 +92,18 @@ const makeSessionEntry = ({
   messageCreatedAt = now,
   hasMoreTurns = false,
   updatedAtMs = Date.parse(now),
+  freshness = "authoritative",
 }: {
   session: Session;
   turns?: SessionTurn[];
   messageCreatedAt?: string;
   hasMoreTurns?: boolean;
   updatedAtMs?: number;
+  freshness?: SessionCacheEntry["freshness"];
 }): SessionCacheEntry => ({
   sessionId: session.id,
   loadState: "live",
-  freshness: "authoritative",
+  freshness,
   session,
   turns,
   turnToolsByTurnId: {},
@@ -383,6 +385,38 @@ describe("useWorkbenchTaskActivity helpers", () => {
       tasksById,
       optimisticTasks: [],
       sessions: {},
+    });
+
+    expect(taskLiveInfo.lastAssistantMsByTask["task-1"]).toBe(Date.parse("2026-03-09T00:00:08.000Z"));
+    expect(isWorkbenchTaskUnread({ taskId: "task-1", tasksById, taskLiveInfo })).toBe(true);
+  });
+
+  it("prefers a newer summary timestamp over stale non-authoritative live cache", () => {
+    const primarySession = makeSession("session-1", "task-1", "completed");
+    const tasksById = {
+      "task-1": makeTaskSummary({
+        taskId: "task-1",
+        primarySessionId: "session-1",
+        sessions: [
+          makeSessionSummary(primarySession, {
+            last_message_at: "2026-03-09T00:00:08.000Z",
+          }),
+        ],
+        assistantSeenAt: "2026-03-09T00:00:06.000Z",
+        lastAssistantMessageAt: "2026-03-09T00:00:05.000Z",
+      }),
+    };
+
+    const taskLiveInfo = deriveTaskLiveInfo({
+      tasksById,
+      optimisticTasks: [],
+      sessions: {
+        "session-1": makeSessionEntry({
+          session: primarySession,
+          messageCreatedAt: "2026-03-09T00:00:07.000Z",
+          freshness: "bootstrap",
+        }),
+      },
     });
 
     expect(taskLiveInfo.lastAssistantMsByTask["task-1"]).toBe(Date.parse("2026-03-09T00:00:08.000Z"));
