@@ -444,6 +444,7 @@ fn ensure_reserve_file(path: &Path) -> Result<()> {
     }
     let file = std::fs::OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(path)

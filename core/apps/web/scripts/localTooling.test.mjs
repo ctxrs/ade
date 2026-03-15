@@ -4,7 +4,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { requireLocalNodeBin, resolveLocalNodeBin, resolveWorkspaceRoot } from "./localTooling.mjs";
+import {
+  lockedInstallHint,
+  requireLocalNodeBin,
+  resolveLocalNodeBin,
+  resolveWorkspaceRoot,
+} from "./localTooling.mjs";
 import { resolveWebBuildArgs } from "./start-e2e-server.mjs";
 
 test("resolveLocalNodeBin points at the local .bin entry", () => {
@@ -50,7 +55,16 @@ test("requireLocalNodeBin throws a clear install hint when missing", () => {
   fs.writeFileSync(path.join(root, "pnpm-workspace.yaml"), "packages:\n  - apps/*\n");
   assert.throws(
     () => requireLocalNodeBin(packageRoot, "playwright"),
-    new RegExp(`cd ${root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} && pnpm install --frozen-lockfile`),
+    new RegExp(
+      `cd ${root.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")} && pnpm install --frozen-lockfile --config\\.enable-modules-dir=true --modules-dir=node_modules`,
+    ),
+  );
+});
+
+test("lockedInstallHint includes the node_modules materialization flags", () => {
+  assert.match(
+    lockedInstallHint("/tmp/ctx-root"),
+    /pnpm install --frozen-lockfile --config\.enable-modules-dir=true --modules-dir=node_modules/,
   );
 });
 

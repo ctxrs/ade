@@ -3,6 +3,12 @@ import fs from "node:fs";
 import path from "node:path";
 
 const pnpmCommand = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+const lockedInstallArgs = [
+  "install",
+  "--frozen-lockfile",
+  "--config.enable-modules-dir=true",
+  "--modules-dir=node_modules",
+];
 
 const binNameForTool = (tool) => (process.platform === "win32" ? `${tool}.cmd` : tool);
 
@@ -17,6 +23,9 @@ export const resolveWorkspaceRoot = (startDir) => {
     current = parent;
   }
 };
+
+export const lockedInstallHint = (installRoot) =>
+  `bash -lc "cd ${installRoot} && pnpm ${lockedInstallArgs.join(" ")}"`;
 
 export const resolveLocalNodeBin = (packageRoot, tool) => {
   const expectedBin = binNameForTool(tool);
@@ -33,7 +42,7 @@ export const resolveLocalNodeBin = (packageRoot, tool) => {
 
 export const ensureLockedNodeInstall = (packageRoot) => {
   const installRoot = resolveWorkspaceRoot(packageRoot);
-  const result = spawnSync(pnpmCommand, ["install", "--frozen-lockfile"], {
+  const result = spawnSync(pnpmCommand, lockedInstallArgs, {
     cwd: installRoot,
     env: process.env,
     stdio: "inherit",
@@ -50,9 +59,7 @@ export const requireLocalNodeBin = (packageRoot, tool) => {
   const binPath = resolveLocalNodeBin(packageRoot, tool);
   if (!fs.existsSync(binPath)) {
     const installRoot = resolveWorkspaceRoot(packageRoot);
-    throw new Error(
-      `Missing local ${tool} binary for ${packageRoot}; run 'bash -lc "cd ${installRoot} && pnpm install --frozen-lockfile"'`,
-    );
+    throw new Error(`Missing local ${tool} binary for ${packageRoot}; run '${lockedInstallHint(installRoot)}'`);
   }
   return binPath;
 };
