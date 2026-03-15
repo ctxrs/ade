@@ -310,11 +310,10 @@ mod tests {
     #[tokio::test]
     async fn probe_crp_runtime_launch_accepts_runtime_that_stays_alive() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let script = write_probe_script(&tmp, "cat >/dev/null");
         probe_crp_runtime_launch(
             "codex",
-            script.to_string_lossy().to_string(),
-            Vec::new(),
+            "/bin/sh".to_string(),
+            vec!["-c".to_string(), "cat >/dev/null".to_string()],
             tmp.path().to_path_buf(),
             HashMap::new(),
             Duration::from_secs(2),
