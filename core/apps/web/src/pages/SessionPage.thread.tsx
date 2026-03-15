@@ -14,6 +14,7 @@ import {
   WorkbenchMessageListEmptyPlaceholder,
   WorkbenchMessageListStickyFooter,
 } from "./sessionThread/SessionThreadMessageListChrome";
+import { getWorkbenchListItemRenderKey } from "./sessionMessageListStableUpdate";
 
 type WorkbenchMessageListStackProps = {
   virtuosoStyle: CSSProperties;
@@ -143,7 +144,7 @@ export const WorkbenchMessageListStack = memo(function WorkbenchMessageListStack
           data={dataState}
           context={context}
           itemIdentity={itemIdentity}
-          computeItemKey={({ data }) => data.id}
+          computeItemKey={({ data, context: itemContext }) => getWorkbenchListItemRenderKey(data, itemContext)}
           ItemContent={ItemContent}
           initialLocation={initialLocation}
           onScroll={onScroll}

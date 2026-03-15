@@ -1,0 +1,177 @@
+import { render, waitFor } from "@testing-library/react";
+import {
+  VirtuosoMessageListTestingContext,
+  type DataWithScrollModifier,
+  type VirtuosoMessageListMethods,
+} from "@virtuoso.dev/message-list";
+import { beforeEach, describe, expect, it } from "vitest";
+import type { MutableRefObject } from "react";
+import { WorkbenchMessageListStack, type WorkbenchMessageListContext } from "./SessionPage.thread";
+import type { WorkbenchListItem } from "./SessionPage.types";
+
+const baseContext: WorkbenchMessageListContext = {
+  loaded: true,
+  loadingOlder: false,
+};
+
+const buildAssistantItem = (
+  overrides: Partial<Extract<WorkbenchListItem, { kind: "assistant" }>> = {},
+): WorkbenchListItem => ({
+  kind: "assistant",
+  id: "assistant-turn-1-pending",
+  turn_id: "turn-1",
+  created_at: "2026-03-15T00:00:02.500Z",
+  content: "short reply",
+  thought: "",
+  is_complete: false,
+  ...overrides,
+});
+
+const buildTurnStatusItem = (
+  overrides: Partial<Extract<WorkbenchListItem, { kind: "turn_status" }>> = {},
+): WorkbenchListItem => ({
+  kind: "turn_status",
+  id: "turn-status-turn-1",
+  turn_id: "turn-1",
+  created_at: "2026-03-15T00:00:02.000Z",
+  started_at: "2026-03-15T00:00:00.000Z",
+  updated_at: "2026-03-15T00:00:02.000Z",
+  status: "running",
+  custom_status: null,
+  assistant_messages_content: "",
+  ...overrides,
+});
+
+function renderMessageList({
+  data,
+  context = baseContext,
+}: {
+  data: WorkbenchListItem[];
+  context?: WorkbenchMessageListContext;
+}) {
+  const listRef =
+    {
+      current: null,
+    } as MutableRefObject<VirtuosoMessageListMethods<WorkbenchListItem, WorkbenchMessageListContext> | null>;
+  const dataState: DataWithScrollModifier<WorkbenchListItem> = { data };
+
+  return render(
+    <VirtuosoMessageListTestingContext.Provider value={{ viewportHeight: 600, itemHeight: 120 }}>
+      <WorkbenchMessageListStack
+        virtuosoStyle={{ height: 400 }}
+        initialData={data}
+        itemContent={(_index, item) => <div>{item.kind === "assistant" ? item.content : item.kind}</div>}
+        itemIdentity={(item) => item.id}
+        initialLocation={{ index: 0, align: "start" }}
+        dataState={dataState}
+        context={context}
+        onScroll={() => {}}
+        onRenderedDataChange={() => {}}
+        listRef={listRef}
+        licenseKey=""
+        shortSizeAlign="top"
+      />
+    </VirtuosoMessageListTestingContext.Provider>,
+  );
+}
+
+async function findMeasuredWrapper(container: HTMLElement, itemId: string): Promise<HTMLElement> {
+  await waitFor(() => {
+    const row = container.querySelector(`[data-thread-item-id="${itemId}"]`);
+    expect(row).not.toBeNull();
+  });
+  const row = container.querySelector(`[data-thread-item-id="${itemId}"]`);
+  if (!(row instanceof HTMLElement)) {
+    throw new Error(`Expected row ${itemId} to be rendered`);
+  }
+  const wrapper = row.parentElement;
+  if (!(wrapper instanceof HTMLElement)) {
+    throw new Error(`Expected measured wrapper for ${itemId}`);
+  }
+  return wrapper;
+}
+
+describe("WorkbenchMessageListStack", () => {
+  beforeEach(() => {
+    class ResizeObserverStub {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    Object.defineProperty(globalThis, "ResizeObserver", {
+      configurable: true,
+      writable: true,
+      value: ResizeObserverStub,
+    });
+  });
+
+  it("remounts the measured wrapper when a row's layout key changes", async () => {
+    const current = [buildAssistantItem()];
+    const next = [
+      buildAssistantItem({
+        content: "this reply is now much longer and should force the measured wrapper to remount",
+      }),
+    ];
+    const view = renderMessageList({ data: current });
+    const firstWrapper = await findMeasuredWrapper(view.container, current[0].id);
+
+    view.rerender(
+      <VirtuosoMessageListTestingContext.Provider value={{ viewportHeight: 600, itemHeight: 120 }}>
+        <WorkbenchMessageListStack
+          virtuosoStyle={{ height: 400 }}
+          initialData={current}
+          itemContent={(_index, item) => <div>{item.kind === "assistant" ? item.content : item.kind}</div>}
+          itemIdentity={(item) => item.id}
+          initialLocation={{ index: 0, align: "start" }}
+          dataState={{ data: next }}
+          context={baseContext}
+          onScroll={() => {}}
+          onRenderedDataChange={() => {}}
+          listRef={
+            {
+              current: null,
+            } as MutableRefObject<VirtuosoMessageListMethods<WorkbenchListItem, WorkbenchMessageListContext> | null>
+          }
+          licenseKey=""
+          shortSizeAlign="top"
+        />
+      </VirtuosoMessageListTestingContext.Provider>,
+    );
+
+    const secondWrapper = await findMeasuredWrapper(view.container, next[0].id);
+    expect(secondWrapper).not.toBe(firstWrapper);
+  });
+
+  it("keeps the measured wrapper when only non-layout status fields change", async () => {
+    const current = [buildTurnStatusItem({ updated_at: "2026-03-15T00:00:05.000Z" })];
+    const next = [buildTurnStatusItem({ updated_at: "2026-03-15T00:00:12.000Z" })];
+    const view = renderMessageList({ data: current });
+    const firstWrapper = await findMeasuredWrapper(view.container, current[0].id);
+
+    view.rerender(
+      <VirtuosoMessageListTestingContext.Provider value={{ viewportHeight: 600, itemHeight: 120 }}>
+        <WorkbenchMessageListStack
+          virtuosoStyle={{ height: 400 }}
+          initialData={current}
+          itemContent={(_index, item) => <div>{item.kind === "assistant" ? item.content : item.kind}</div>}
+          itemIdentity={(item) => item.id}
+          initialLocation={{ index: 0, align: "start" }}
+          dataState={{ data: next }}
+          context={baseContext}
+          onScroll={() => {}}
+          onRenderedDataChange={() => {}}
+          listRef={
+            {
+              current: null,
+            } as MutableRefObject<VirtuosoMessageListMethods<WorkbenchListItem, WorkbenchMessageListContext> | null>
+          }
+          licenseKey=""
+          shortSizeAlign="top"
+        />
+      </VirtuosoMessageListTestingContext.Provider>,
+    );
+
+    const secondWrapper = await findMeasuredWrapper(view.container, next[0].id);
+    expect(secondWrapper).toBe(firstWrapper);
+  });
+});

@@ -10,6 +10,7 @@ import type { WorkbenchListItem } from "./SessionPage.types";
 import type { WorkbenchMessageListContext } from "./SessionPage.thread";
 import { debugItemSummary, debugStableKey, findFirstRenderedItemContractViolation } from "./sessionMessageListDataDebug";
 import { logSessionMessageListReconcileDebug } from "./sessionMessageListReconcileDebug";
+import { applyStableListUpdate, applyStructuralStableListUpdate } from "./sessionMessageListStableUpdate";
 import { useSessionMessageListDiagnostics } from "./useSessionMessageListDiagnostics";
 
 type Params = {
@@ -36,27 +37,34 @@ const INITIAL_LOCATION_BOTTOM: ItemLocation = { index: "LAST", align: "end" };
 
 function applyPrependDrivenHistoryUpdate({
   methods,
+  current,
+  retainedNext,
   prefix,
   suffix,
-  nextById,
   stickToBottom,
   appendBehavior,
 }: {
   methods: VirtuosoMessageListMethods<WorkbenchListItem, WorkbenchMessageListContext>;
+  current: WorkbenchListItem[];
+  retainedNext: WorkbenchListItem[];
   prefix: WorkbenchListItem[];
   suffix: WorkbenchListItem[];
-  nextById: ReadonlyMap<string, WorkbenchListItem>;
   stickToBottom: boolean;
   appendBehavior: AutoscrollToBottom<WorkbenchListItem, WorkbenchMessageListContext>;
 }) {
   // Invariant: prepend-driven history updates have exactly one scroll owner.
   // Once `prepend()` runs, do not add `mapWithAnchor()` or manual scroll pinning on top of it.
-  if (prefix.length > 0) methods.data.prepend(prefix);
-  if (suffix.length > 0) methods.data.append(suffix, appendBehavior);
-  methods.data.map(
-    (item) => nextById.get(item.id) ?? item,
-    stickToBottom ? ("auto" as const) : undefined,
-  );
+  applyStableListUpdate({
+    methods,
+    current,
+    next: retainedNext,
+    prefix,
+    suffix,
+    stickToBottom,
+    anchorIndex: -1,
+    appendBehavior,
+    allowAnchorMap: false,
+  });
 }
 
 export function useSessionMessageListController(params: Params): Result {
@@ -462,73 +470,87 @@ export function useSessionMessageListController(params: Params): Result {
       const firstIndex = firstId ? next.findIndex((it) => it.id === firstId) : -1;
       const lastIndex = lastId ? next.findIndex((it) => it.id === lastId) : -1;
       if (firstIndex >= 0 && lastIndex >= firstIndex) {
-        const currentIdSet = new Set(current.map((it) => it.id));
-        const prefix = next.slice(0, firstIndex).filter((it) => !currentIdSet.has(it.id));
-        const suffix = next.slice(lastIndex + 1).filter((it) => !currentIdSet.has(it.id));
-        const nextById = new Map(next.map((it) => [it.id, it] as const));
-        if (import.meta.env.DEV && showDebug) {
-          const nextIdSet = new Set(next.map((it) => it.id));
-          const missingFromNext: string[] = [];
-          for (const it of current) if (!nextIdSet.has(it.id)) missingFromNext.push(it.id);
-          if (missingFromNext.length > 0) {
-            const currentById = new Map(current.map((it) => [it.id, it] as const));
-            // eslint-disable-next-line no-console
-            console.warn("[MessageList][history:extend][ids:missing-from-next]", {
-              sessionId,
-              count: missingFromNext.length,
-              sample: missingFromNext.slice(0, 12).map((id) =>
-                debugItemSummary(currentById.get(id) ?? { id }),
-              ),
-            });
+        const retainedNext = next.slice(firstIndex, lastIndex + 1);
+        let retainedMatchesCurrent = retainedNext.length === currentLen;
+        if (retainedMatchesCurrent) {
+          for (let index = 0; index < currentLen; index += 1) {
+            if (retainedNext[index]?.id !== current[index]?.id) {
+              retainedMatchesCurrent = false;
+              break;
+            }
           }
         }
+        if (!retainedMatchesCurrent) {
+          historyExpectedRef.current = false;
+        } else {
+          const currentIdSet = new Set(current.map((it) => it.id));
+          const prefix = next.slice(0, firstIndex).filter((it) => !currentIdSet.has(it.id));
+          const suffix = next.slice(lastIndex + 1).filter((it) => !currentIdSet.has(it.id));
+          if (import.meta.env.DEV && showDebug) {
+            const nextIdSet = new Set(next.map((it) => it.id));
+            const missingFromNext: string[] = [];
+            for (const it of current) if (!nextIdSet.has(it.id)) missingFromNext.push(it.id);
+            if (missingFromNext.length > 0) {
+              const currentById = new Map(current.map((it) => [it.id, it] as const));
+              // eslint-disable-next-line no-console
+              console.warn("[MessageList][history:extend][ids:missing-from-next]", {
+                sessionId,
+                count: missingFromNext.length,
+                sample: missingFromNext.slice(0, 12).map((id) =>
+                  debugItemSummary(currentById.get(id) ?? { id }),
+                ),
+              });
+            }
+          }
 
-        startFlashProbe("history:extend", {
-          currentLen,
-          nextLen,
-          prefixLen: prefix.length,
-          suffixLen: suffix.length,
-          firstIndex,
-          lastIndex,
-          requestedAnchorId,
-          wasAtTop,
-        });
+          startFlashProbe("history:extend", {
+            currentLen,
+            nextLen,
+            prefixLen: prefix.length,
+            suffixLen: suffix.length,
+            firstIndex,
+            lastIndex,
+            requestedAnchorId,
+            wasAtTop,
+          });
 
-        applyPrependDrivenHistoryUpdate({
-          methods,
-          prefix,
-          suffix,
-          nextById,
-          stickToBottom: stickToBottomRef.current,
-          appendBehavior,
-        });
+          applyPrependDrivenHistoryUpdate({
+            methods,
+            current,
+            retainedNext,
+            prefix,
+            suffix,
+            stickToBottom: stickToBottomRef.current,
+            appendBehavior,
+          });
 
-        historyExpectedRef.current = false;
-        historyRequestedAtTopRef.current = false;
-        historyRequestedAnchorIdRef.current = null;
-        recordDebugSnapshot("history:extend", {
-          prefixLen: prefix.length,
-          suffixLen: suffix.length,
-          firstIndex,
-          lastIndex,
-          nextLen,
-          currentLen,
-          requestedAnchorId,
-          wasAtTop,
-        });
-        if (import.meta.env.DEV && showDebug) {
-          // eslint-disable-next-line no-console
-          console.debug("[MessageList][history:extend]", {
-            sessionId,
+          historyExpectedRef.current = false;
+          historyRequestedAtTopRef.current = false;
+          historyRequestedAnchorIdRef.current = null;
+          recordDebugSnapshot("history:extend", {
             prefixLen: prefix.length,
             suffixLen: suffix.length,
             firstIndex,
             lastIndex,
             nextLen,
             currentLen,
+            requestedAnchorId,
+            wasAtTop,
           });
+          if (import.meta.env.DEV && showDebug) {
+            // eslint-disable-next-line no-console
+            console.debug("[MessageList][history:extend]", {
+              sessionId,
+              prefixLen: prefix.length,
+              suffixLen: suffix.length,
+              firstIndex,
+              lastIndex,
+              nextLen,
+              currentLen,
+            });
+          }
+          return;
         }
-        return;
       }
     }
 
@@ -545,7 +567,6 @@ export function useSessionMessageListController(params: Params): Result {
         const wasAtTop = historyRequestedAtTopRef.current;
         const requestedAnchorId = historyRequestedAnchorIdRef.current;
         const prefix = next.slice(0, nextLen - currentLen);
-        const nextById = new Map(next.map((it) => [it.id, it] as const));
         const anchorId = renderedAnchorIdRef.current;
         const anchorIndex = anchorId ? next.findIndex((it) => it.id === anchorId) : -1;
 
@@ -561,9 +582,10 @@ export function useSessionMessageListController(params: Params): Result {
 
         applyPrependDrivenHistoryUpdate({
           methods,
+          current,
+          retainedNext: next.slice(nextLen - currentLen),
           prefix,
           suffix: [],
-          nextById,
           stickToBottom: stickToBottomRef.current,
           appendBehavior,
         });
@@ -612,33 +634,30 @@ export function useSessionMessageListController(params: Params): Result {
       }
       if (isPureAppend) {
         const suffix = next.slice(currentLen);
-        if (suffix.length > 0) methods.data.append(suffix, appendBehavior);
-        if (!stickToBottomRef.current) {
-          const nextById = new Map(next.map((it) => [it.id, it] as const));
-          const anchorId = renderedAnchorIdRef.current;
-          const anchorIndex = anchorId ? next.findIndex((it) => it.id === anchorId) : -1;
-          if (anchorIndex >= 0) {
-            methods.data.mapWithAnchor((item) => nextById.get(item.id) ?? item, anchorIndex);
-          } else {
-            methods.data.map((item) => nextById.get(item.id) ?? item);
-          }
-        } else {
-          methods.data.map(
-            (item) => item,
-            stickToBottomRef.current ? ("auto" as const) : undefined,
-          );
-        }
+        const anchorId = renderedAnchorIdRef.current;
+        const anchorIndex = anchorId ? next.findIndex((it) => it.id === anchorId) : -1;
+        const updateResult = applyStableListUpdate({
+          methods,
+          current,
+          next: next.slice(0, currentLen),
+          suffix,
+          stickToBottom: stickToBottomRef.current,
+          anchorIndex,
+          appendBehavior,
+        });
         recordDebugSnapshot("data:append", {
           suffixLen: suffix.length,
           nextLen,
           currentLen,
+          changedSpans: updateResult.changedSpans,
         });
         logMessageListDebug("data:append", {
           suffixLen: suffix.length,
           nextLen,
           currentLen,
           stickToBottom: stickToBottomRef.current,
-          anchorId: renderedAnchorIdRef.current,
+          anchorId,
+          changedSpans: updateResult.changedSpans,
         });
         return;
       }
@@ -654,9 +673,17 @@ export function useSessionMessageListController(params: Params): Result {
         }
       }
       if (same) {
-        const nextById = new Map(next.map((it) => [it.id, it] as const));
         const anchorId = renderedAnchorIdRef.current;
         const anchorIndex = anchorId ? next.findIndex((it) => it.id === anchorId) : -1;
+        const updateResult = applyStableListUpdate({
+          methods,
+          current,
+          next,
+          stickToBottom: stickToBottomRef.current,
+          anchorIndex,
+          appendBehavior,
+        });
+        const updateLabel = updateResult.mode === "remeasure" ? "data:remeasure" : "data:map";
         if (import.meta.env.DEV && showDebug) {
           // Count by reference to detect “content changes” even when IDs/order are stable.
           let changedByRef = 0;
@@ -668,13 +695,15 @@ export function useSessionMessageListController(params: Params): Result {
             }
           }
           const mapMode =
-            !stickToBottomRef.current && anchorIndex >= 0
-              ? "mapWithAnchor"
-              : stickToBottomRef.current
-                ? "map:auto"
-                : "map";
+            updateResult.mode === "remeasure"
+              ? "batch:remeasure"
+              : !stickToBottomRef.current && anchorIndex >= 0
+                ? "mapWithAnchor"
+                : stickToBottomRef.current
+                  ? "map:auto"
+                  : "map";
           // eslint-disable-next-line no-console
-          console.debug("[MessageList][data:map]", {
+          console.debug(`[MessageList][${updateLabel}]`, {
             sessionId,
             nextLen,
             currentLen,
@@ -684,30 +713,25 @@ export function useSessionMessageListController(params: Params): Result {
             mapMode,
             changedByRef,
             sampleChangedIds,
+            changedSpans: updateResult.changedSpans,
             renderedTopId: renderedTopIdRef.current,
           });
         }
-        if (!stickToBottomRef.current && anchorIndex >= 0) {
-          methods.data.mapWithAnchor((item) => nextById.get(item.id) ?? item, anchorIndex);
-        } else {
-          methods.data.map(
-            (item) => nextById.get(item.id) ?? item,
-            stickToBottomRef.current ? ("auto" as const) : undefined,
-          );
-        }
-        recordDebugSnapshot("data:map", {
+        recordDebugSnapshot(updateLabel, {
           nextLen,
           currentLen,
           anchorId,
           anchorIndex,
           stickToBottom: stickToBottomRef.current,
+          changedSpans: updateResult.changedSpans,
         });
-        logMessageListDebug("data:map", {
+        logMessageListDebug(updateLabel, {
           nextLen,
           currentLen,
           anchorId,
           anchorIndex,
           stickToBottom: stickToBottomRef.current,
+          changedSpans: updateResult.changedSpans,
         });
         return;
       }
@@ -733,7 +757,6 @@ export function useSessionMessageListController(params: Params): Result {
 
     const deleteCount = currentLen - prefixLen - suffixLen;
     const insertData = next.slice(prefixLen, nextLen - suffixLen);
-    const nextById = new Map(next.map((it) => [it.id, it] as const));
     const anchorId = renderedAnchorIdRef.current;
     const anchorIndex = anchorId ? next.findIndex((it) => it.id === anchorId) : -1;
 
@@ -777,21 +800,16 @@ export function useSessionMessageListController(params: Params): Result {
       stickToBottom: stickToBottomRef.current,
     });
 
-    methods.data.batch(
-      () => {
-        if (deleteCount > 0) methods.data.deleteRange(prefixLen, deleteCount);
-        if (insertData.length > 0) methods.data.insert(insertData, prefixLen, appendBehavior);
-        if (!stickToBottomRef.current && anchorIndex >= 0) {
-          methods.data.mapWithAnchor((item) => nextById.get(item.id) ?? item, anchorIndex);
-        } else {
-          methods.data.map(
-            (item) => nextById.get(item.id) ?? item,
-            stickToBottomRef.current ? ("auto" as const) : undefined,
-          );
-        }
-      },
+    const updateResult = applyStructuralStableListUpdate({
+      methods,
+      current,
+      next,
+      prefixLen,
+      suffixLen,
+      stickToBottom: stickToBottomRef.current,
+      anchorIndex,
       appendBehavior,
-    );
+    });
     recordDebugSnapshot("data:reconcile", {
       nextLen,
       currentLen,
@@ -802,6 +820,7 @@ export function useSessionMessageListController(params: Params): Result {
       anchorId,
       anchorIndex,
       stickToBottom: stickToBottomRef.current,
+      changedSpans: updateResult.changedSpans,
     });
   }, [
     appendBehavior,

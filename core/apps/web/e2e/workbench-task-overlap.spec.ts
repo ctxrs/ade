@@ -3,7 +3,7 @@ import type { Page, TestInfo } from "playwright/test";
 import { test, expect } from "./fixtures";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
-const visibleSessionSelector = '.wb-session-slot[aria-hidden="false"] [data-testid="session-view"]';
+const visibleSessionSelector = '.wb-session-slot [data-testid="session-view"]';
 const visibleScrollerSelector = `${visibleSessionSelector} .wb-thread-scroller`;
 
 type GeometrySnapshot = {
@@ -291,12 +291,18 @@ test("workbench: switching between running tasks never overlaps visible rows", a
   await expect(rows).toHaveCount(2, { timeout: 30_000 });
 
   await taskA.click();
+  await expect(page.locator(visibleSessionSelector).first()).toHaveAttribute("data-session-id", sessionAId!, {
+    timeout: 20_000,
+  });
   await scrollVisibleThreadTo(page, 0.42);
   const sessionAScrollBefore = await page.locator(visibleScrollerSelector).first().evaluate((node) => node.scrollTop);
   expect(sessionAScrollBefore).toBeGreaterThan(100);
   await assertNoVisibleOverlap(page, testInfo, "alpha-initial", sessionAId!, debugLogs);
 
   await taskB.click();
+  await expect(page.locator(visibleSessionSelector).first()).toHaveAttribute("data-session-id", sessionBId!, {
+    timeout: 20_000,
+  });
   await scrollVisibleThreadTo(page, 0.58);
   const sessionBScrollBefore = await page.locator(visibleScrollerSelector).first().evaluate((node) => node.scrollTop);
   expect(sessionBScrollBefore).toBeGreaterThan(100);
