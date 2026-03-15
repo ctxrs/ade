@@ -237,6 +237,88 @@ async fn terminal_ws_reconnect_sends_status_and_tail() {
 }
 
 #[tokio::test]
+async fn terminal_ws_reconnect_resyncs_bounded_tail_after_churn() {
+    let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
+    let data_dir = tempfile::tempdir().unwrap();
+    let stores = common::setup_store(data_dir.path()).await;
+
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+    let server = common::spawn_http_server(app).await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let workspace: Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let terminal: TerminalSession = client
+        .post(format!(
+            "{base}/api/workspaces/{}/terminals",
+            workspace.id.0
+        ))
+        .json(&json!({"cwd": repo.path()}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let ws_url =
+        format!("{base}/api/terminals/{}/stream", terminal.id.0).replace("http://", "ws://");
+    let (mut socket, _) = connect_async(&ws_url).await.unwrap();
+
+    let (status, _) = read_status(&mut socket).await;
+    assert!(matches!(status, TerminalStatus::Running));
+
+    let start_marker = "CTX_TERM_RESYNC_START";
+    let end_marker = "CTX_TERM_RESYNC_END";
+    let churn = json!({
+        "type": "input",
+        "data": format!(
+            "printf '{start_marker}\\n'; i=1; while [ \"$i\" -le 8000 ]; do printf 'term-%05d-0123456789abcdef0123456789abcdef\\n' \"$i\"; if [ $((i % 400)) -eq 0 ]; then sleep 0.03; fi; i=$((i + 1)); done; printf '{end_marker}\\n'\n"
+        ),
+    })
+    .to_string();
+    socket.send(WsMessage::Text(churn.into())).await.unwrap();
+
+    let initial = read_until_marker(&mut socket, start_marker).await;
+    assert!(initial.contains(start_marker));
+
+    let _ = socket.close(None).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let bounded_ws_url = format!("{base}/api/terminals/{}/stream?tail=4096", terminal.id.0)
+        .replace("http://", "ws://");
+    let (mut socket, _) = connect_async(&bounded_ws_url).await.unwrap();
+    let (status, _) = read_status(&mut socket).await;
+    assert!(matches!(status, TerminalStatus::Running));
+
+    let output = read_until_marker(&mut socket, end_marker).await;
+    assert!(
+        output.contains(end_marker),
+        "reconnected terminal should resync latest bounded tail after churn"
+    );
+
+    let _ = client
+        .delete(format!("{base}/api/terminals/{}", terminal.id.0))
+        .send()
+        .await;
+}
+
+#[tokio::test]
 async fn terminal_ws_keepalive_pong() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
