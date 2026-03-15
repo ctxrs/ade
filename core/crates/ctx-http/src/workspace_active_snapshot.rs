@@ -24,7 +24,10 @@ mod entry;
 mod replay_state;
 mod trim;
 
-pub use replay_state::{SessionReplayCursor, WorkspaceSessionReplay, WorkspaceSessionReplayItem};
+pub use replay_state::{
+    is_transient_session_delta, SessionReplayCursor, WorkspaceSessionReplay,
+    WorkspaceSessionReplayItem,
+};
 
 pub struct WorkspaceActiveSnapshotHub {
     inner: Mutex<HashMap<WorkspaceId, WorkspaceActiveSnapshotEntry>>,

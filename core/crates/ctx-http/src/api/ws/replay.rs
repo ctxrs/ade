@@ -139,8 +139,7 @@ pub(super) async fn replay_session_events<F, Fut>(
     state: &Arc<AppState>,
     workspace_id: WorkspaceId,
     session_id: SessionId,
-    after_seq: i64,
-    after_projection_rev: i64,
+    after_cursor: SessionReplayCursor,
     list_failpoint: &'static str,
     send_failpoint: Option<&'static str>,
     mut emit: F,
@@ -160,8 +159,8 @@ where
         .replay_session_stream(
             workspace_id,
             session_id,
-            after_seq,
-            after_projection_rev,
+            after_cursor.last_event_seq,
+            after_cursor.projection_rev,
             SESSION_REPLAY_MAX_EVENTS,
         )
         .await;

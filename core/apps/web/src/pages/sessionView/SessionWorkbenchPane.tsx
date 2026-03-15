@@ -512,6 +512,7 @@ export function SessionWorkbenchPane({
         {showDebug && debugEvents.length > 0 ? <SessionDebugPanel events={debugEvents} /> : null}
 
         <SessionThreadPane
+          sessionId={id}
           style={style}
           initialData={initialData}
           itemContent={workbenchItemContent}

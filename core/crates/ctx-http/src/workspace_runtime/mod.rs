@@ -384,7 +384,7 @@ impl HarnessRuntimeManager {
             Err(_) => return Ok(()),
         };
         seed_shared_podman_machine_cache_best_effort(&self.data_root, None).await;
-        if podman_machine_present(&self.data_root).await? {
+        if podman_machine_present(&self.data_root, &machine_name).await? {
             persist_podman_machine_cache_to_shared_best_effort(&self.data_root, None).await;
             return Ok(());
         }

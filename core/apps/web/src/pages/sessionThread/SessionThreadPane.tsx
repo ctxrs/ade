@@ -11,6 +11,7 @@ import type { WorkbenchListItem } from "../SessionPage.types";
 import { SessionThreadMessageList } from "../SessionThreadMessageList";
 
 export function SessionThreadPane({
+  sessionId,
   style,
   initialData,
   itemContent,
@@ -25,6 +26,7 @@ export function SessionThreadPane({
   shortSizeAlign,
   children,
 }: {
+  sessionId: string;
   style: CSSProperties;
   initialData: WorkbenchListItem[];
   itemContent: (index: number, item: WorkbenchListItem) => ReactNode;
@@ -42,6 +44,7 @@ export function SessionThreadPane({
   return (
     <>
       <SessionThreadMessageList
+        sessionId={sessionId}
         style={style}
         initialData={initialData}
         itemContent={itemContent}

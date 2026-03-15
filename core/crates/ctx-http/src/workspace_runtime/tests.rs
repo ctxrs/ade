@@ -875,7 +875,7 @@ async fn initialize_podman_machine_terminates_stuck_init_when_machine_is_present
     init_result.expect("initialize machine");
 
     assert!(log.contains("machine init ctx-test-machine"));
-    assert!(log.contains("machine inspect "));
+    assert!(log.contains("machine inspect ctx-test-machine"));
     assert!(log.contains("machine start ctx-test-machine"));
     assert!(!log.contains("--now"));
     machine_cache_server.abort();

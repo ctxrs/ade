@@ -8,15 +8,17 @@ pub struct SessionReplayCursor {
     pub projection_rev: i64,
 }
 
+pub fn is_transient_session_delta(delta: &SessionHeadDelta) -> bool {
+    matches!(
+        delta.event.as_ref(),
+        Some(event) if event.transient || event.seq < 0
+    )
+}
+
 impl SessionReplayCursor {
     pub fn from_delta(delta: &SessionHeadDelta) -> Self {
         Self {
-            last_event_seq: delta
-                .event
-                .as_ref()
-                .map(|event| event.seq)
-                .unwrap_or(delta.last_event_seq)
-                .max(0),
+            last_event_seq: delta.last_event_seq.max(0),
             projection_rev: delta.projection_rev.max(0),
         }
     }
@@ -44,7 +46,7 @@ pub(super) struct SessionReplayState {
 impl SessionReplayState {
     pub(super) fn record(&mut self, delta: &SessionHeadDelta) {
         let cursor = SessionReplayCursor::from_delta(delta);
-        if cursor.last_event_seq >= 0 {
+        if !is_transient_session_delta(delta) {
             self.events.push_back(SessionReplayEntry {
                 cursor,
                 delta: delta.clone(),

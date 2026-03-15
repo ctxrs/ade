@@ -156,7 +156,10 @@ pub(crate) async fn run_ws_replay_once(
         session_ids: Vec::new(),
         sessions: vec![WorkspaceActiveSnapshotSessionSubscription {
             session_id,
-            replay: WorkspaceActiveSnapshotSessionReplay::Resume { after_seq: 0 },
+            replay: WorkspaceActiveSnapshotSessionReplay::Resume {
+                after_seq: 0,
+                after_projection_rev: 0,
+            },
         }],
         task_ids: Vec::new(),
         foreground_task_id: None,

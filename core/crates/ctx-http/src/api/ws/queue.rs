@@ -56,15 +56,18 @@ fn allows_partial_for_active_primary_session(
 pub(super) fn filter_partial_delta_for_active_tasks(
     mut delta: SessionHeadDelta,
     active_task_sessions: &HashMap<TaskId, SessionId>,
-) -> SessionHeadDelta {
+) -> Option<SessionHeadDelta> {
     if let Some(event) = delta.event.as_ref() {
         if is_partial_event(event)
             && !allows_partial_for_active_primary_session(active_task_sessions, delta.session_id)
         {
             delta.event = None;
+            if delta.turn.is_none() && delta.message.is_none() && delta.tool_summaries.is_empty() {
+                return None;
+            }
         }
     }
-    delta
+    Some(delta)
 }
 
 fn is_same_partial_type(prev: &SessionEvent, next: &SessionEvent) -> bool {
@@ -340,5 +343,88 @@ pub(super) async fn push_stream_message(
             log_stream_queue_push_error(context, workspace_id, session_id, &err);
             Err(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use serde_json::json;
+
+    fn partial_delta(session_id: SessionId) -> SessionHeadDelta {
+        SessionHeadDelta {
+            session_id,
+            last_event_seq: 5,
+            projection_rev: 7,
+            state_rev: 0,
+            event: Some(SessionEvent {
+                seq: -1,
+                id: SessionEventId::new(),
+                session_id,
+                run_id: None,
+                turn_id: Some(TurnId::new()),
+                event_type: SessionEventType::AssistantChunk,
+                payload_json: json!({ "content_fragment": "partial" }),
+                transient: true,
+                created_at: Utc::now(),
+            }),
+            turn: None,
+            message: None,
+            tool_summaries: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn filter_partial_delta_drops_non_primary_partial_only_delta() {
+        let session_id = SessionId::new();
+        let delta = partial_delta(session_id);
+        let active_task_sessions = HashMap::new();
+
+        assert!(filter_partial_delta_for_active_tasks(delta, &active_task_sessions).is_none());
+    }
+
+    #[test]
+    fn filter_partial_delta_keeps_primary_partial_delta() {
+        let session_id = SessionId::new();
+        let delta = partial_delta(session_id);
+        let mut active_task_sessions = HashMap::new();
+        active_task_sessions.insert(TaskId::new(), session_id);
+
+        let filtered = filter_partial_delta_for_active_tasks(delta, &active_task_sessions)
+            .expect("primary session partial delta should be preserved");
+        assert!(filtered.event.is_some());
+    }
+
+    #[test]
+    fn filter_partial_delta_preserves_non_event_payloads() {
+        let session_id = SessionId::new();
+        let mut delta = partial_delta(session_id);
+        let now = Utc::now();
+        delta.tool_summaries.push(SessionTurnToolSummary {
+            session_id,
+            tool_call_id: "call-1".to_string(),
+            turn_id: TurnId::new(),
+            tool_kind: Some("function".to_string()),
+            provider_tool_name: Some("shell".to_string()),
+            title: Some("Shell".to_string()),
+            subtitle: None,
+            status: Some("running".to_string()),
+            input_preview: None,
+            output_preview: None,
+            first_event_seq: None,
+            input_truncated: None,
+            input_original_bytes: None,
+            output_truncated: None,
+            output_original_bytes: None,
+            created_at: now,
+            updated_at: now,
+        });
+        let active_task_sessions = HashMap::new();
+
+        let filtered = filter_partial_delta_for_active_tasks(delta, &active_task_sessions)
+            .expect("non-event payload should keep delta sendable");
+        assert!(filtered.event.is_none());
+        assert_eq!(filtered.tool_summaries.len(), 1);
     }
 }

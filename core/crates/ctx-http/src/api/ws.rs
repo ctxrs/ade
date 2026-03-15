@@ -18,11 +18,12 @@ use ctx_core::models::*;
 use crate::daemon::AppState;
 use crate::terminals::{TerminalClientMessage, TerminalServerMessage};
 use crate::workspace_active_snapshot::{
-    SessionReplayCursor, WorkspaceSessionReplay, WorkspaceSessionReplayItem,
+    is_transient_session_delta, SessionReplayCursor, WorkspaceSessionReplay,
+    WorkspaceSessionReplayItem,
 };
 
 use super::{MobileSecureEnvelope, MobileSecureStreamQuery, SecureEnvelope};
-use common::{send_secure_ws, SessionCursor};
+use common::{accept_session_delta, accept_session_head, send_secure_ws, SessionCursor};
 use queue::{
     filter_partial_delta_for_active_tasks, log_head_batch_push_error, push_stream_message,
     HeadBatchBuffer, StreamQueue,
@@ -389,8 +390,10 @@ async fn handle_mobile_secure_ws(
                                     &state,
                                     workspace_id,
                                     session_id,
-                                    after_seq,
-                                    after_projection_rev,
+                                    SessionReplayCursor {
+                                        last_event_seq: after_seq,
+                                        projection_rev: after_projection_rev,
+                                    },
                                     "ctx_http.replay_session_events_secure.list",
                                     None,
                                     move |event| {
@@ -409,11 +412,14 @@ async fn handle_mobile_secure_ws(
                                                         delta,
                                                         ..
                                                     } => {
-                                                        let delta =
+                                                        let Some(delta) =
                                                             filter_partial_delta_for_active_tasks(
                                                                 *delta,
                                                                 &active_task_sessions,
-                                                            );
+                                                            )
+                                                        else {
+                                                            return Ok(());
+                                                        };
                                                         if let Err(err) = head_buffer
                                                             .push(snapshot_rev, delta)
                                                             .await
@@ -726,21 +732,17 @@ async fn handle_mobile_secure_ws(
                             let Some(cursor) = subscriptions.get_mut(&delta.session_id) else {
                                 continue;
                             };
-                            let incoming = SessionReplayCursor::from_delta(delta);
-                            if incoming <= cursor.last_sent {
+                            if !accept_session_delta(cursor, delta) {
                                 continue;
                             }
-                            cursor.last_sent = incoming;
                         }
                         WorkspaceActiveSnapshotEvent::SessionHeadSeed { head, .. } => {
                             let Some(cursor) = subscriptions.get_mut(&head.session.id) else {
                                 continue;
                             };
-                            let incoming = SessionReplayCursor::from_head(head);
-                            if incoming <= cursor.last_sent {
+                            if !accept_session_head(cursor, head) {
                                 continue;
                             }
-                            cursor.last_sent = incoming;
                         }
                         _ => {}
                     }
@@ -766,10 +768,12 @@ async fn handle_mobile_secure_ws(
                             delta,
                             ..
                         } => {
-                            let delta = filter_partial_delta_for_active_tasks(
+                            let Some(delta) = filter_partial_delta_for_active_tasks(
                                 *delta,
                                 &subscription_state.active_task_sessions,
-                            );
+                            ) else {
+                                continue;
+                            };
                             if let Err(err) =
                                 head_buffer.push(snapshot_rev, delta).await
                             {

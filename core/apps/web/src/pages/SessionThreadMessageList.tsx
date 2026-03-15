@@ -10,6 +10,7 @@ import { WorkbenchMessageListStack, type WorkbenchMessageListContext } from "./S
 import type { WorkbenchListItem } from "./SessionPage.types";
 
 export const SessionThreadMessageList = memo(function SessionThreadMessageList({
+  sessionId,
   style,
   initialData,
   itemContent,
@@ -23,6 +24,7 @@ export const SessionThreadMessageList = memo(function SessionThreadMessageList({
   licenseKey,
   shortSizeAlign,
 }: {
+  sessionId: string;
   style: CSSProperties;
   initialData: WorkbenchListItem[];
   itemContent: (index: number, item: WorkbenchListItem) => ReactNode;
@@ -38,6 +40,7 @@ export const SessionThreadMessageList = memo(function SessionThreadMessageList({
 }) {
   return (
     <WorkbenchMessageListStack
+      key={sessionId}
       virtuosoStyle={style}
       initialData={initialData}
       itemContent={itemContent}

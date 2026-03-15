@@ -119,7 +119,9 @@ mod replay_tests {
     use super::super::trim::session_metadata_from_session;
     use super::super::*;
     use chrono::{TimeZone, Utc};
+    use ctx_core::ids::{SessionEventId, TurnId};
     use ctx_core::models::{SessionStatus, TaskStatus};
+    use serde_json::json;
 
     fn replay_task(session: &Session) -> WorkspaceActiveTaskSummary {
         let now = Utc.timestamp_opt(0, 0).unwrap();
@@ -278,6 +280,77 @@ mod replay_tests {
                     last_sent,
                     SessionReplayCursor {
                         last_event_seq: 5,
+                        projection_rev: 6,
+                    }
+                );
+            }
+            other => panic!("expected replay, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn replay_ignores_transient_negative_seq_deltas() {
+        let session_id = SessionId(uuid::Uuid::nil());
+        let durable = SessionHeadDelta {
+            session_id,
+            last_event_seq: 5,
+            projection_rev: 5,
+            state_rev: 0,
+            event: None,
+            turn: None,
+            message: None,
+            tool_summaries: Vec::new(),
+        };
+        let transient = SessionHeadDelta {
+            session_id,
+            last_event_seq: 5,
+            projection_rev: 5,
+            state_rev: 0,
+            event: Some(SessionEvent {
+                seq: -1,
+                id: SessionEventId::new(),
+                session_id,
+                run_id: None,
+                turn_id: Some(TurnId::new()),
+                event_type: SessionEventType::AssistantChunk,
+                payload_json: json!({ "content_fragment": "partial" }),
+                transient: true,
+                created_at: Utc.timestamp_opt(0, 0).unwrap(),
+            }),
+            turn: None,
+            message: None,
+            tool_summaries: Vec::new(),
+        };
+        let durable_next = SessionHeadDelta {
+            session_id,
+            last_event_seq: 6,
+            projection_rev: 6,
+            state_rev: 0,
+            event: None,
+            turn: None,
+            message: None,
+            tool_summaries: Vec::new(),
+        };
+        let mut state = SessionReplayState::default();
+        state.record(&durable);
+        state.record(&transient);
+        state.record(&durable_next);
+
+        match state.replay(
+            SessionReplayCursor {
+                last_event_seq: 5,
+                projection_rev: 5,
+            },
+            10,
+        ) {
+            SessionReplayResult::Replay { deltas, last_sent } => {
+                assert_eq!(deltas.len(), 1);
+                assert_eq!(deltas[0].last_event_seq, 6);
+                assert!(deltas[0].event.is_none());
+                assert_eq!(
+                    last_sent,
+                    SessionReplayCursor {
+                        last_event_seq: 6,
                         projection_rev: 6,
                     }
                 );

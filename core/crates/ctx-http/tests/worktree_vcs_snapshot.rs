@@ -2,6 +2,7 @@ mod common;
 
 use std::collections::HashSet;
 use std::path::Path;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use ctx_core::models::DiffUnavailableReason;
@@ -50,8 +51,14 @@ async fn poison_worktree_git_marker(worktree_root: &Path) {
     .expect("write poisoned .git marker");
 }
 
-#[tokio::test]
+fn worktree_vcs_snapshot_test_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn worktree_vcs_snapshot_clears_stale_counts_when_repo_becomes_unavailable() {
+    let _guard = worktree_vcs_snapshot_test_lock().lock().await;
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
@@ -146,8 +153,9 @@ async fn worktree_vcs_snapshot_clears_stale_counts_when_repo_becomes_unavailable
     assert!(published.touched_files.items.is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn worktree_vcs_snapshot_recovers_when_repo_is_reinitialized() {
+    let _guard = worktree_vcs_snapshot_test_lock().lock().await;
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
@@ -237,8 +245,9 @@ async fn worktree_vcs_snapshot_recovers_when_repo_is_reinitialized() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn worktree_vcs_snapshot_does_not_repopulate_cache_after_activity_eviction() {
+    let _guard = worktree_vcs_snapshot_test_lock().lock().await;
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;

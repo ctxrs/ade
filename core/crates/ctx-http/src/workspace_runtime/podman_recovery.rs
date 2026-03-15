@@ -43,10 +43,9 @@ fn podman_machine_heartbeat_interval() -> Duration {
     }
 }
 
-pub(super) async fn podman_machine_present(data_root: &Path) -> Result<bool> {
+pub(super) async fn podman_machine_present(data_root: &Path, machine_name: &str) -> Result<bool> {
     let mut cmd = podman_command(data_root)?;
-    let machine_name = ctx_podman_machine_name(data_root);
-    cmd.arg("machine").arg("inspect").arg(&machine_name);
+    cmd.arg("machine").arg("inspect").arg(machine_name);
     let output = command_output_with_timeout(cmd, PODMAN_INFO_TIMEOUT).await?;
     Ok(output.status.success())
 }
@@ -305,7 +304,9 @@ pub(super) async fn run_podman_machine_init(
             });
         }
 
-        let machine_present = podman_machine_present(data_root).await.unwrap_or(false);
+        let machine_present = podman_machine_present(data_root, machine_name)
+            .await
+            .unwrap_or(false);
         if machine_present {
             let now = tokio::time::Instant::now();
             let present_since = machine_present_since.get_or_insert(now);
@@ -656,7 +657,9 @@ pub(super) async fn ensure_podman_machine_running_with_observer(
         }
     }
 
-    let machine_present = podman_machine_present(data_root).await.unwrap_or(false);
+    let machine_present = podman_machine_present(data_root, &machine_name)
+        .await
+        .unwrap_or(false);
     if machine_present || force_recreate {
         observe_log(
             observer,
