@@ -10,8 +10,8 @@ use tokio::sync::mpsc;
 
 use ctx_core::models::{
     Worktree, WorktreeVcsBaseResolution, WorktreeVcsComputeState, WorktreeVcsFreshness,
-    WorktreeVcsGitStatusSummary, WorktreeVcsSnapshot, WorktreeVcsSummary,
-    WorktreeVcsTouchedFile, WorktreeVcsTouchedFiles,
+    WorktreeVcsGitStatusSummary, WorktreeVcsSnapshot, WorktreeVcsSummary, WorktreeVcsTouchedFile,
+    WorktreeVcsTouchedFiles,
 };
 use ctx_fs::patch::should_ignore_path;
 use ctx_fs::vcs::{self, VcsDriver};
