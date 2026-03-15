@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { BrowserRouter, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { appendDesktopLog, openLogsFolder } from "./api/client";
 import DaemonAvailabilityOverlay from "./components/DaemonAvailabilityOverlay";
+import StorageGuardBanner from "./components/StorageGuardBanner";
 import UpdateNoticeBanner from "./components/UpdateNoticeBanner";
 import LauncherPage from "./pages/LauncherPage";
 import WorkbenchPage from "./pages/WorkbenchPage";
@@ -454,6 +455,7 @@ export default function App() {
             <Route path="/workspaces/:id" element={<WorkbenchPage />} />
             <Route path="/__cursor_diff_demo" element={<CursorDiffDemoPage />} />
           </Routes>
+          <StorageGuardBanner />
           <DaemonAvailabilityOverlay />
         </BrowserRouter>
       </SettingsStoreProvider>

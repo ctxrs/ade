@@ -28,6 +28,7 @@ use crate::order_seq::{attach_order_seq, read_order_seq, OrderSeqState};
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::provider_accounts;
 use crate::settings::{self, ProviderControlMode};
+use crate::storage_guard;
 use crate::telemetry::TelemetryEvent;
 use crate::workspace_config;
 
@@ -72,6 +73,7 @@ pub(crate) async fn start_turn(
     order_seq_state: Arc<Mutex<OrderSeqState>>,
 ) -> Result<RunningTurn> {
     state.wait_for_worktree_bootstrap(session.worktree_id).await;
+    storage_guard::preflight_turn_start(state, workdir).await?;
 
     let store = state.store_for_session(session.id).await?;
 

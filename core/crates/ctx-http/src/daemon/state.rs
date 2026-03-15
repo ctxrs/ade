@@ -145,6 +145,7 @@ impl AppState {
         let ops_events = OpsEvents::new(data_root.clone());
         let perf_telemetry = PerfTelemetry::new(data_root.clone());
         let harness_runtime = Arc::new(HarnessRuntimeManager::new(data_root.clone()));
+        let storage_guard = crate::storage_guard::StorageGuardRuntime::new(&data_root);
         let execution_setup = Arc::new(ExecutionSetupCoordinator::new(
             data_root.clone(),
             harness_runtime.clone(),
@@ -159,6 +160,7 @@ impl AppState {
         Self {
             core: CoreState {
                 data_root,
+                storage_guard,
                 tool_output_spool_enabled,
                 tool_output_spool_dir,
                 stores,

@@ -31,6 +31,7 @@ use crate::resource_governance;
 use crate::resource_telemetry;
 use crate::scheduler::reconcile_turn_terminal_state;
 use crate::settings;
+use crate::storage_guard;
 use crate::telemetry::TelemetryConfig;
 use crate::tool_cgroup;
 
@@ -807,6 +808,7 @@ pub async fn serve(bind: String, data_dir: Option<String>) -> Result<()> {
 
     resource_telemetry::spawn_resource_telemetry(state.clone());
     memleak_debug::spawn_memleak_debug(state.clone());
+    storage_guard::spawn_storage_guard(state.clone());
     provider_guard::spawn_provider_guard(state.clone());
     provider_restart::spawn_provider_restart(state.clone());
     provider_child_reclassifier::spawn_provider_child_reclassifier(state.clone());

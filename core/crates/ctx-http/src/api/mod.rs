@@ -894,5 +894,6 @@ struct HealthResp {
     data_root: String,
     daemon_url: String,
     auth_required: bool,
+    storage: crate::storage_guard::StorageGuardStatus,
     compatibility: HealthCompatibility,
 }

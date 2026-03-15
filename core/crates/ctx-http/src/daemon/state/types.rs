@@ -2,6 +2,7 @@ use super::*;
 
 pub struct CoreState {
     pub data_root: PathBuf,
+    pub storage_guard: crate::storage_guard::StorageGuardRuntime,
     pub tool_output_spool_enabled: bool,
     pub tool_output_spool_dir: PathBuf,
     pub stores: StoreManager,

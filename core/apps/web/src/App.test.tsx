@@ -44,6 +44,11 @@ vi.mock("./components/UpdateNoticeBanner", () => ({
   default: () => null,
 }));
 
+vi.mock("./components/StorageGuardBanner", () => ({
+  __esModule: true,
+  default: () => null,
+}));
+
 vi.mock("./pages/LauncherPage", () => ({
   __esModule: true,
   default: () => <div>New Workspace</div>,

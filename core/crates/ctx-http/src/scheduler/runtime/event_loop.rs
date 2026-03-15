@@ -3,6 +3,7 @@ use super::helpers::{
 };
 use super::*;
 use crate::scheduler::{latency_bucket, metric_labels};
+use crate::storage_guard;
 
 pub(super) struct TurnEventLoop {
     pub(super) state: Arc<AppState>,
@@ -601,11 +602,16 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                                 assistant_partial_message_id = None;
                             }
                             Err(err) => {
+                                let err_string = format!("{err:#}");
+                                let is_storage_exhausted =
+                                    storage_guard::is_storage_exhaustion_error(&err_string);
                                 let details = Some(json!({
                                     "provider_message_id": provider_message_id,
                                     "order_seq": persisted_order_seq,
                                     "turn_sequence": assistant_sequence + 1,
+                                    "root_cause": err_string,
                                 }));
+                                let storage_status = state.storage_guard_snapshot();
                                 fail_turn(
                                     &state,
                                     &store,
@@ -624,9 +630,19 @@ async fn run_turn_event_loop(ctx: TurnEventLoop) {
                                     &mut telemetry_emitted,
                                     &mut terminal_status,
                                     event.created_at,
-                                    format!("failed to persist assistant message: {err:#}"),
+                                    if is_storage_exhausted {
+                                        storage_guard::storage_exhaustion_message(
+                                            storage_status.active.as_ref(),
+                                        )
+                                    } else {
+                                        format!("failed to persist assistant message: {err:#}")
+                                    },
                                     details,
-                                    Some(json!("assistant_message_persist_failed")),
+                                    Some(json!(if is_storage_exhausted {
+                                        "storage_exhausted"
+                                    } else {
+                                        "assistant_message_persist_failed"
+                                    })),
                                     true,
                                 )
                                 .await;

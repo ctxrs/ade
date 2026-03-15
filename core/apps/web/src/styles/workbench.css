@@ -1975,6 +1975,14 @@
   color: var(--text-strong);
 }
 
+.wb-storage-guard-snackbar {
+  z-index: 1210;
+}
+
+.wb-storage-guard-snackbar-critical {
+  border-color: color-mix(in srgb, var(--error) 50%, var(--surface-strong) 50%);
+}
+
 .wb-snackbar-body {
   display: grid;
   gap: 4px;

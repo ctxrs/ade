@@ -35,6 +35,7 @@ pub(crate) struct RunningTurn {
 pub(crate) enum StopReason {
     Cancel,
     Interrupt,
+    StorageEmergency,
 }
 
 impl StopReason {
@@ -42,6 +43,7 @@ impl StopReason {
         match self {
             Self::Cancel => "user_cancel",
             Self::Interrupt => "user_interrupt",
+            Self::StorageEmergency => "storage_exhausted",
         }
     }
 
@@ -116,6 +118,20 @@ pub(crate) async fn stop_running_turn(
     reason: StopReason,
     interrupt: Option<InterruptTelemetryContext>,
 ) -> bool {
+    if matches!(reason, StopReason::StorageEmergency) {
+        let _ = emit_event(
+            state,
+            session_id,
+            Some(turn.run_id),
+            Some(turn.turn_id),
+            SessionEventType::Notice,
+            json!({
+                "kind": "storage_guard_kill",
+                "message": "Storage emergency interrupted this session to protect local data.",
+            }),
+        )
+        .await;
+    }
     if let Some(interrupt) = interrupt.as_ref() {
         record_interrupt_metric(state, &turn, "request_age", interrupt.elapsed_ms()).await;
         tracing::info!(

@@ -44,6 +44,7 @@ pub mod resource_telemetry;
 pub mod resource_utilization;
 pub mod scheduler;
 pub mod settings;
+pub mod storage_guard;
 pub mod telemetry;
 pub mod terminals;
 pub mod title_generation;

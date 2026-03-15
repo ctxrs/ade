@@ -44,6 +44,7 @@ pub enum SchedulerCommand {
     RemoveQueued(MessageId),
     Cancel,
     Interrupt(InterruptTelemetryContext),
+    StorageEmergency,
 }
 
 pub async fn session_worker(
@@ -204,6 +205,18 @@ pub async fn session_worker(
                                 turn,
                                 StopReason::Interrupt,
                                 Some(interrupt),
+                            )
+                            .await;
+                        }
+                    }
+                    Some(SchedulerCommand::StorageEmergency) => {
+                        if let Some(turn) = running.take() {
+                            suspend_queue = stop_running_turn(
+                                &state,
+                                session.id,
+                                turn,
+                                StopReason::StorageEmergency,
+                                None,
                             )
                             .await;
                         }
