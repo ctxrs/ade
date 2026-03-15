@@ -11,7 +11,9 @@ use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
 use chrono::Utc;
 use ctx_core::ids::{TurnId, WorktreeId};
-use ctx_core::models::{SessionEventType, SessionTurn, SessionTurnStatus};
+use ctx_core::models::{
+    SessionEventType, SessionTurn, SessionTurnStatus, WorktreeVcsFreshness, WorktreeVcsSnapshot,
+};
 use ctx_http::daemon::AppState;
 
 mod common;
@@ -21,10 +23,10 @@ fn workspace_http_test_gate() -> &'static Arc<Semaphore> {
     GATE.get_or_init(|| Arc::new(Semaphore::new(4)))
 }
 
-fn git_status_untracked_from_message(
+fn worktree_vcs_snapshot_from_message(
     message: ctx_core::models::WorkspaceActiveSnapshotStreamMessage,
     worktree_id: WorktreeId,
-) -> Option<i64> {
+) -> Option<WorktreeVcsSnapshot> {
     match message {
         ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Snapshot {
             active_snapshot,
@@ -32,8 +34,7 @@ fn git_status_untracked_from_message(
         } => active_snapshot
             .worktree_vcs_snapshots
             .into_iter()
-            .find(|snapshot| snapshot.worktree_id == worktree_id)
-            .map(|snapshot| snapshot.git_status.untracked),
+            .find(|snapshot| snapshot.worktree_id == worktree_id),
         ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event { event, .. } => {
             let ctx_core::models::WorkspaceActiveSnapshotEvent::WorktreeVcsSnapshot {
                 snapshot,
@@ -45,28 +46,19 @@ fn git_status_untracked_from_message(
             if snapshot.worktree_id != worktree_id {
                 None
             } else {
-                Some(snapshot.git_status.untracked)
+                Some((**snapshot).clone())
             }
         }
         _ => None,
     }
 }
 
-fn worktree_file_count_from_snapshot_message(
+fn git_status_untracked_from_message(
     message: ctx_core::models::WorkspaceActiveSnapshotStreamMessage,
     worktree_id: WorktreeId,
 ) -> Option<i64> {
-    match message {
-        ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Snapshot {
-            active_snapshot,
-            ..
-        } => active_snapshot
-            .worktree_vcs_snapshots
-            .into_iter()
-            .find(|snapshot| snapshot.worktree_id == worktree_id)
-            .and_then(|snapshot| snapshot.summary.file_count),
-        _ => None,
-    }
+    worktree_vcs_snapshot_from_message(message, worktree_id)
+        .map(|snapshot| snapshot.git_status.untracked)
 }
 
 async fn setup_with_root(
@@ -1282,7 +1274,7 @@ async fn workspace_stream_emits_git_status_snapshot_for_new_subscriber() {
 }
 
 #[tokio::test]
-async fn workspace_stream_hydrates_worktree_vcs_summary_in_snapshot() {
+async fn workspace_stream_delivers_snapshot_before_worktree_vcs_summary_refresh() {
     let (repo, _data_dir, state, server) = setup_git().await;
     let base = &server.base_url;
     let client = &server.client;
@@ -1334,8 +1326,37 @@ async fn workspace_stream_hydrates_worktree_vcs_summary_in_snapshot() {
         .await
         .unwrap();
 
+    let first = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let WsMessage::Text(first_text) = first else {
+        panic!("expected text frame after subscribe");
+    };
+    let first_message: ctx_core::models::WorkspaceActiveSnapshotStreamMessage =
+        serde_json::from_str(&first_text).unwrap();
+    let ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Snapshot {
+        active_snapshot, ..
+    } = first_message
+    else {
+        panic!("expected initial snapshot after subscribe");
+    };
+    let initial_worktree = active_snapshot
+        .worktree_vcs_snapshots
+        .into_iter()
+        .find(|snapshot| snapshot.worktree_id == worktree.id);
+    assert!(
+        initial_worktree
+            .as_ref()
+            .and_then(|snapshot| snapshot.summary.file_count)
+            .is_none(),
+        "initial snapshot should not wait for ready worktree vcs summary"
+    );
+
+    let mut saw_refreshing = false;
     let mut hydrated_file_count = None;
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(6);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
     while tokio::time::Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         let wait = remaining.min(Duration::from_millis(250));
@@ -1344,20 +1365,27 @@ async fn workspace_stream_hydrates_worktree_vcs_summary_in_snapshot() {
             if let Ok(message) =
                 serde_json::from_str::<ctx_core::models::WorkspaceActiveSnapshotStreamMessage>(&txt)
             {
-                if let Some(file_count) =
-                    worktree_file_count_from_snapshot_message(message, worktree.id)
-                {
-                    hydrated_file_count = Some(file_count);
-                    break;
+                if let Some(snapshot) = worktree_vcs_snapshot_from_message(message, worktree.id) {
+                    if snapshot.freshness == WorktreeVcsFreshness::Refreshing {
+                        saw_refreshing = true;
+                    }
+                    if snapshot.freshness == WorktreeVcsFreshness::Fresh {
+                        hydrated_file_count = snapshot.summary.file_count;
+                        break;
+                    }
                 }
             }
         }
     }
 
+    assert!(
+        saw_refreshing,
+        "expected streamed worktree vcs snapshot to report refreshing freshness before ready summary"
+    );
     assert_eq!(
         hydrated_file_count,
         Some(1),
-        "expected hydrate snapshot to include ready worktree vcs counts"
+        "expected later worktree vcs event to include ready worktree vcs counts"
     );
 }
 

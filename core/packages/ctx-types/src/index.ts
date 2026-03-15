@@ -306,6 +306,7 @@ export type SessionState = {
 };
 
 export type WorktreeVcsComputeState = "computing" | "ready" | "error";
+export type WorktreeVcsFreshness = "unknown" | "refreshing" | "fresh" | "stale" | "error";
 export type DiffUnavailableReason = "no_repo" | "no_target_branch";
 
 export type WorktreeVcsBaseResolutionKind = "explicit_base" | "merge_base" | "worktree_base";
@@ -365,6 +366,7 @@ export type WorktreeVcsSnapshot = {
   summary: WorktreeVcsSummary;
   git_status: WorktreeVcsGitStatusSummary;
   touched_files: WorktreeVcsTouchedFiles;
+  freshness: WorktreeVcsFreshness;
   available?: boolean;
   unavailable_reason?: DiffUnavailableReason | null;
   schema_version: number;

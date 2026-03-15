@@ -572,19 +572,15 @@ async fn handle_subscribe_message(
     ctx.send_control.clear_disconnect_after_flush();
     let git_status_session_ids: Vec<SessionId> =
         resolved_sessions.iter().map(|sub| sub.session_id).collect();
-    if include_active_heads {
-        sync_active_worktrees(state, ctx.active_worktrees, &git_status_session_ids).await;
-        hydrate_worktree_vcs_for_sessions(state, &git_status_session_ids).await;
-    }
+    sync_active_worktrees(state, ctx.active_worktrees, &git_status_session_ids).await;
     if include_active_heads {
         ctx.send_control.set_hydrating();
-    }
-    if include_active_heads
-        && queue_snapshot_payload(ctx.control, state, workspace_id)
+        if queue_snapshot_payload(ctx.control, state, workspace_id)
             .await
             .is_err()
-    {
-        return Err(());
+        {
+            return Err(());
+        }
     }
 
     let mut skip_replay_sessions = HashSet::new();
@@ -702,38 +698,6 @@ async fn handle_subscribe_message(
     }
     *ctx.subscriptions = next_map;
     *ctx.subscription_state = next_state;
-    if !include_active_heads {
-        sync_active_worktrees(state, ctx.active_worktrees, &git_status_session_ids).await;
-        ensure_worktree_vcs_watchers_for_sessions(state, &git_status_session_ids).await;
-        let snapshot_rev = state
-            .workspaces
-            .workspace_active_snapshot
-            .active_snapshot(workspace_id, 1)
-            .await
-            .snapshot_rev;
-        for snapshot in
-            load_worktree_vcs_snapshots_for_sessions(state, &git_status_session_ids).await
-        {
-            if push_stream_message(
-                ctx.control,
-                workspace_id,
-                None,
-                "worktree_vcs_seed",
-                WorkspaceActiveSnapshotStreamMessage::Event {
-                    rev: 0,
-                    event: Box::new(WorkspaceActiveSnapshotEvent::WorktreeVcsSnapshot {
-                        workspace_id,
-                        snapshot_rev,
-                        snapshot: Box::new(snapshot),
-                    }),
-                },
-            )
-            .await
-            .is_err()
-            {
-                return Err(());
-            }
-        }
-    }
+    spawn_worktree_vcs_warmup_for_sessions(state.clone(), git_status_session_ids);
     Ok(())
 }

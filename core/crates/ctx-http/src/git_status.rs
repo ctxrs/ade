@@ -11,8 +11,8 @@ use tokio::sync::mpsc;
 use ctx_core::ids::SessionId;
 use ctx_core::models::{
     SessionStatus, Worktree, WorktreeVcsBaseResolution, WorktreeVcsComputeState,
-    WorktreeVcsGitStatusSummary, WorktreeVcsSnapshot, WorktreeVcsSummary, WorktreeVcsTouchedFile,
-    WorktreeVcsTouchedFiles,
+    WorktreeVcsFreshness, WorktreeVcsGitStatusSummary, WorktreeVcsSnapshot, WorktreeVcsSummary,
+    WorktreeVcsTouchedFile, WorktreeVcsTouchedFiles,
 };
 use ctx_fs::patch::should_ignore_path;
 use ctx_fs::vcs::{self, VcsDriver};
@@ -483,6 +483,7 @@ async fn build_worktree_vcs_snapshot_from_parts(
         target_source: resolution.target_source,
         error: resolution.error,
     };
+    let freshness = derive_worktree_vcs_freshness(&compute_state, &summary);
     Ok(WorktreeVcsSnapshot {
         worktree_id: worktree.id,
         rev: 0,
@@ -496,6 +497,7 @@ async fn build_worktree_vcs_snapshot_from_parts(
         summary,
         git_status,
         touched_files,
+        freshness,
         available,
         unavailable_reason,
         schema_version: 1,
@@ -560,6 +562,30 @@ fn summary_from_counts(
         line_additions: Some(line_additions),
         line_deletions: Some(line_deletions),
         line_count: Some(line_count),
+    }
+}
+
+fn summary_has_counts(summary: &WorktreeVcsSummary) -> bool {
+    summary.file_count.is_some()
+        || summary.line_additions.is_some()
+        || summary.line_deletions.is_some()
+        || summary.line_count.is_some()
+}
+
+fn derive_worktree_vcs_freshness(
+    compute_state: &WorktreeVcsComputeState,
+    summary: &WorktreeVcsSummary,
+) -> WorktreeVcsFreshness {
+    match compute_state {
+        WorktreeVcsComputeState::Ready => WorktreeVcsFreshness::Fresh,
+        WorktreeVcsComputeState::Error => WorktreeVcsFreshness::Error,
+        WorktreeVcsComputeState::Computing => {
+            if summary_has_counts(summary) {
+                WorktreeVcsFreshness::Stale
+            } else {
+                WorktreeVcsFreshness::Refreshing
+            }
+        }
     }
 }
 
@@ -837,9 +863,7 @@ pub async fn emit_worktree_vcs_snapshot_for_worktree(
     let compute_state = if active {
         WorktreeVcsComputeState::Computing
     } else {
-        let has_summary = cached_summary.file_count.is_some()
-            || cached_summary.line_additions.is_some()
-            || cached_summary.line_deletions.is_some();
+        let has_summary = summary_has_counts(&cached_summary);
         if has_summary {
             WorktreeVcsComputeState::Ready
         } else {

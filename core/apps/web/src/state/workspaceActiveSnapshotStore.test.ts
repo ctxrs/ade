@@ -206,6 +206,7 @@ const mkWorktreeVcsSnapshot = (
     truncated: false,
     items: [],
   },
+  freshness: "fresh",
   available: true,
   schema_version: 1,
 });
