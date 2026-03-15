@@ -63,6 +63,12 @@ async fn handle_terminal_socket(
     snapshot_tail: usize,
 ) {
     session.mark_client_connected();
+    // Subscribe before capturing the snapshot tail so reconnecting clients do not
+    // miss bytes emitted during the status/tail handshake window. This may replay
+    // a small overlap from the tail, but it preserves contiguous output delivery.
+    let mut output_rx = session.output_receiver();
+    let mut status_rx = session.status_receiver();
+
     let snapshot = session.snapshot();
     let status_payload = serde_json::to_string(&TerminalServerMessage::Status {
         status: snapshot.status.clone(),
@@ -75,9 +81,6 @@ async fn handle_terminal_socket(
     if !buffer.is_empty() {
         let _ = socket.send(WsMessage::Binary(buffer)).await;
     }
-
-    let mut output_rx = session.output_receiver();
-    let mut status_rx = session.status_receiver();
 
     let (mut ws_tx, mut ws_rx) = socket.split();
     let (event_tx, mut event_rx) =
