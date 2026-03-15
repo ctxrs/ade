@@ -8,6 +8,7 @@ import { WORKBENCH_TASK_IDLE_EVENT, type WorkbenchTaskIdleDetail } from "../../u
 import type { OptimisticTaskSummary } from "../WorkbenchPage.types";
 import {
   deriveProviderIdsByTaskFromSessions,
+  deriveActiveTaskSessionIds,
   deriveWorkbenchTaskStatusKind,
   deriveTaskLiveInfo,
   deriveWarmSessionIds,
@@ -271,6 +272,41 @@ describe("useWorkbenchTaskActivity helpers", () => {
     expect(taskLiveInfo.errorByTask.size).toBe(0);
     expect(taskLiveInfo.lastAssistantMsByTask["task-1"]).toBe(Date.parse("2026-03-09T00:00:06.000Z"));
     expect(isWorkbenchTaskUnread({ taskId: "task-1", tasksById, taskLiveInfo })).toBe(true);
+  });
+
+  it("preserves the primary_session fallback when task.primary_session_id is absent", () => {
+    const primarySession = makeSession("session-legacy", "task-1", "active");
+    const primarySummary = makeSessionSummary(primarySession, {
+      activity: { is_working: true, last_turn_status: "running" },
+      last_message_at: "2026-03-09T00:00:07.000Z",
+    });
+    const legacyTaskSummary = {
+      ...makeTaskSummary({
+        taskId: "task-1",
+        primarySessionId: "",
+        sessions: [primarySummary],
+      }),
+      task: {
+        ...makeTaskSummary({
+          taskId: "task-1",
+          primarySessionId: "",
+          sessions: [primarySummary],
+        }).task,
+        primary_session_id: "",
+      },
+      primary_session: primarySummary,
+    } as WorkspaceActiveSnapshotItem & { primary_session: SessionSnapshotSummary };
+
+    const { primarySessionId, activeTaskSessionIds } = deriveActiveTaskSessionIds(legacyTaskSummary);
+    const taskLiveInfo = deriveTaskLiveInfo({
+      tasksById: { "task-1": legacyTaskSummary },
+      optimisticTasks: [],
+      sessions: {},
+    });
+
+    expect(primarySessionId).toBe("session-legacy");
+    expect(activeTaskSessionIds).toEqual(["session-legacy"]);
+    expect(taskLiveInfo.workingByTask.has("task-1")).toBe(true);
   });
 
   it("does not treat a user follow-up timestamp as a new unread assistant message", () => {

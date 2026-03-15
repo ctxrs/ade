@@ -16,10 +16,26 @@ export type WorkbenchTaskStatusKind = "error" | "working" | "unread" | "idle";
 
 type SessionTaskProviderSample = { providerId: string; updatedAt: number };
 
+const readPrimarySessionFallbackId = (
+  summary: WorkspaceActiveSnapshotItem | OptimisticTaskSummary | null | undefined,
+): string => {
+  if (!summary || typeof summary !== "object") return "";
+  const record = summary as Record<string, unknown>;
+  const primarySession = record.primary_session;
+  if (!primarySession || typeof primarySession !== "object") return "";
+  const primaryRecord = primarySession as Record<string, unknown>;
+  if (primaryRecord.session && typeof primaryRecord.session === "object") {
+    const sessionRecord = primaryRecord.session as Record<string, unknown>;
+    return typeof sessionRecord.id === "string" ? idToString(sessionRecord.id) : "";
+  }
+  return typeof primaryRecord.id === "string" ? idToString(primaryRecord.id) : "";
+};
+
 const resolvePrimarySessionId = (
   summary: WorkspaceActiveSnapshotItem | OptimisticTaskSummary | null | undefined,
 ): string =>
   idToString(summary?.task.primary_session_id ?? "") ||
+  readPrimarySessionFallbackId(summary) ||
   idToString(summary?.primarySessionId ?? "") ||
   idToString(summary?.primarySessionHead?.session?.id ?? "");
 
