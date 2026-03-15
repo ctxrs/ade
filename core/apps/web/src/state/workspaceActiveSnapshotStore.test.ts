@@ -267,7 +267,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(store.getSessionHeadSnapshot("session-1")?.last_event_seq).toBe(0);
   });
 
-  it("preserves active worktree vcs when a hydrate snapshot omits it", async () => {
+  it("clears cached worktree vcs when a live snapshot omits it for an active worktree", async () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
 
     const now = new Date().toISOString();
@@ -277,18 +277,28 @@ describe("WorkspaceActiveSnapshotStore", () => {
     const head = mkHead(session);
 
     const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
-    await asStoreInternals(store).handleStreamMessage(
-      JSON.stringify({
-        type: "event",
-        rev: 1,
-        event: {
-          type: "worktree_vcs_snapshot",
-          workspace_id: "ws-1",
-          snapshot_rev: 1,
-          snapshot: mkWorktreeVcsSnapshot("wt-1", 1, 3),
-        },
-      }),
-    );
+    store.seedCachedSnapshot({
+      v: 1,
+      workspaceId: "ws-1",
+      snapshotRev: 1,
+      archivedRev: 0,
+      worktreeVcsSnapshots: [mkWorktreeVcsSnapshot("wt-1", 1, 3)],
+      active: {
+        totalCount: 1,
+        tasks: [
+          {
+            task,
+            primary_session: summary,
+            primary_session_head: head,
+            sessions: [summary],
+            sort_at: now,
+          },
+        ],
+      },
+      updatedAtMs: Date.now(),
+    });
+
+    expect(store.getSnapshot().worktreeVcsById["wt-1"]?.summary.file_count).toBe(3);
 
     await asStoreInternals(store).handleStreamMessage(
       JSON.stringify({
@@ -311,7 +321,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
 
     await waitForCondition(() => store.getSnapshot().initialized);
 
-    expect(store.getSnapshot().worktreeVcsById["wt-1"]?.summary.file_count).toBe(3);
+    expect(store.getSnapshot().worktreeVcsById["wt-1"]).toBeUndefined();
   });
 
   it("drops stale worktree vcs for worktrees that are no longer active", async () => {

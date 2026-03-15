@@ -310,14 +310,12 @@ export class WorkspaceActiveSnapshotStoreState {
     const activeTasks = snapshot.active?.tasks ?? [];
     const nextWorktreeVcsById = mapWorktreeVcsSnapshots(snapshot.worktree_vcs_snapshots ?? []);
     const nextActiveIds = new Set<string>();
-    const activeWorktreeIds = new Set<string>();
     for (const summary of activeTasks) {
       const existing = this.tasks.get(idToString(summary.task.id));
       const normalized = this.normalizeActiveSummary(summary, existing);
       nextActiveIds.add(normalized.id);
       this.tasks.set(normalized.id, normalized);
       this.placeInOrders(normalized);
-      this.collectTaskWorktreeIds(summary, activeWorktreeIds);
     }
 
     const nextTotalActive = Number.isFinite(snapshot.active?.total_count)
@@ -326,13 +324,6 @@ export class WorkspaceActiveSnapshotStoreState {
     this.totalActive = Math.max(nextTotalActive, nextActiveIds.size);
     if (Array.isArray(heads) && heads.length > 0) {
       this.applyActiveHeads(heads);
-    }
-    for (const worktreeId of activeWorktreeIds) {
-      if (nextWorktreeVcsById[worktreeId]) continue;
-      const existing = this.snapshot.worktreeVcsById[worktreeId];
-      if (existing) {
-        nextWorktreeVcsById[worktreeId] = existing;
-      }
     }
     this.snapshot = {
       ...this.snapshot,
@@ -845,19 +836,6 @@ export class WorkspaceActiveSnapshotStoreState {
     } else {
       this.totalActive = Math.max(0, this.totalActive - 1);
       this.totalArchived += 1;
-    }
-  }
-
-  private collectTaskWorktreeIds(summary: WorkspaceActiveTaskSummary, out: Set<string>) {
-    const primaryWorktreeId = idToString(summary.primary_session?.session?.worktree_id ?? "");
-    if (primaryWorktreeId) {
-      out.add(primaryWorktreeId);
-    }
-    for (const sessionSummary of summary.sessions ?? []) {
-      const worktreeId = idToString(sessionSummary?.session?.worktree_id ?? "");
-      if (worktreeId) {
-        out.add(worktreeId);
-      }
     }
   }
 
