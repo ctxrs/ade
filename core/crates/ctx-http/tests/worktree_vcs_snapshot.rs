@@ -236,3 +236,74 @@ async fn worktree_vcs_snapshot_recovers_when_repo_is_reinitialized() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
+
+#[tokio::test]
+async fn worktree_vcs_snapshot_does_not_repopulate_cache_after_activity_eviction() {
+    let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
+    let data_dir = tempfile::tempdir().unwrap();
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path(),
+        stores,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let task = common::create_task(&app, ws.id.0, "snapshot-eviction").await;
+    let session = common::create_session(&app, task.id.0, "fake", "fake-model").await;
+    let worktree = state
+        .store_for_worktree(session.worktree_id)
+        .await
+        .expect("store for worktree")
+        .get_worktree(session.worktree_id)
+        .await
+        .expect("load worktree")
+        .expect("worktree should exist");
+
+    let mut next_active = HashSet::new();
+    next_active.insert(worktree.id);
+    state
+        .workspaces
+        .update_worktree_vcs_activity(&HashSet::new(), &next_active)
+        .await;
+
+    emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
+        .await
+        .expect("initial snapshot emission should succeed");
+    assert!(
+        state.get_worktree_vcs_snapshot(worktree.id).await.is_some(),
+        "expected initial active snapshot to populate cache",
+    );
+
+    state
+        .workspaces
+        .update_worktree_vcs_activity(&next_active, &HashSet::new())
+        .await;
+    assert!(
+        state.get_worktree_vcs_snapshot(worktree.id).await.is_none(),
+        "expected activity eviction to clear worktree vcs cache",
+    );
+
+    emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
+        .await
+        .expect("inactive snapshot emission should not fail");
+    assert!(
+        state.get_worktree_vcs_snapshot(worktree.id).await.is_none(),
+        "inactive emit should not recreate worktree vcs cache",
+    );
+
+    let active_snapshot = state
+        .workspaces
+        .workspace_active_snapshot
+        .active_snapshot(ws.id, 10)
+        .await;
+    assert!(
+        active_snapshot
+            .worktree_vcs_snapshots
+            .into_iter()
+            .all(|candidate| candidate.worktree_id != worktree.id),
+        "inactive emit should not repopulate workspace active snapshot",
+    );
+}

@@ -8,10 +8,9 @@ use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 use tokio::sync::mpsc;
 
-use ctx_core::ids::SessionId;
 use ctx_core::models::{
-    SessionStatus, Worktree, WorktreeVcsBaseResolution, WorktreeVcsComputeState,
-    WorktreeVcsFreshness, WorktreeVcsGitStatusSummary, WorktreeVcsSnapshot, WorktreeVcsSummary,
+    Worktree, WorktreeVcsBaseResolution, WorktreeVcsComputeState, WorktreeVcsFreshness,
+    WorktreeVcsGitStatusSummary, WorktreeVcsSnapshot, WorktreeVcsSummary,
     WorktreeVcsTouchedFile, WorktreeVcsTouchedFiles,
 };
 use ctx_fs::patch::should_ignore_path;
@@ -633,6 +632,10 @@ async fn upsert_worktree_vcs_snapshot(
 ) -> Option<WorktreeVcsSnapshot> {
     let now = Instant::now();
     let fingerprint = snapshot_fingerprint(&snapshot);
+    let active = state.workspaces.worktree_vcs_active.lock().await;
+    if active.get(&snapshot.worktree_id).copied().unwrap_or(0) == 0 {
+        return None;
+    }
     let mut cache = state.workspaces.worktree_vcs_snapshots.lock().await;
     let entry = cache.entry(snapshot.worktree_id).or_insert_with(|| {
         crate::daemon::TimedEntry::new(crate::daemon::WorktreeVcsSnapshotCacheEntry {
@@ -807,17 +810,11 @@ pub async fn emit_worktree_vcs_snapshot_for_worktree(
     worktree: &Worktree,
     force_emit: bool,
 ) -> Result<()> {
-    let store = state.store_for_worktree(worktree.id).await?;
-    let sessions = store.list_sessions_for_worktree(worktree.id).await?;
-    let active_session_ids: Vec<SessionId> = sessions
-        .into_iter()
-        .filter(|session| matches!(session.status, SessionStatus::Active))
-        .map(|session| session.id)
-        .collect();
     let active = state.is_worktree_vcs_active(worktree.id).await;
-    if active_session_ids.is_empty() && !active {
+    if !active {
         return Ok(());
     }
+    let store = state.store_for_worktree(worktree.id).await?;
     let workspace = state
         .global_store()
         .get_workspace(worktree.workspace_id)
