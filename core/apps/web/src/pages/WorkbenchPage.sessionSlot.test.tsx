@@ -34,9 +34,6 @@ const setValueSpy = vi.hoisted(() =>
   ),
 );
 const flushDraftSpy = vi.hoisted(() => vi.fn(async () => {}));
-const draftState = vi.hoisted(() => ({
-  value: { text: "draft text", modeId: "default", attachments: [] as MessageAttachment[] },
-}));
 
 const initialAttachment: MessageAttachment = {
   kind: "image_ref",
