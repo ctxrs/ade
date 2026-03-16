@@ -16,6 +16,22 @@ import {
 
 const WINDOW_ID_STORAGE_KEY = "contextUiWindowId.v1";
 const WINDOW_SESSION_STORAGE_PREFIX = "wb.window.session.v1";
+type WorkbenchDraftValue = {
+  text: string;
+  modeId: WorkbenchModeId;
+  attachments: MessageAttachment[];
+};
+type WorkbenchDraftUpdate =
+  | {
+      text: string;
+      modeId: WorkbenchModeId;
+      attachments?: MessageAttachment[];
+    }
+  | ((prev: WorkbenchDraftValue) => {
+      text: string;
+      modeId: WorkbenchModeId;
+      attachments?: MessageAttachment[];
+    });
 
 function sessionWindowKeyV1(workspaceId: string, windowId: string): string {
   return `${WINDOW_SESSION_STORAGE_PREFIX}.${workspaceId}.${windowId}`;
@@ -490,13 +506,24 @@ export class WorkbenchStore {
     return p;
   };
 
-  setDraft = (draftKey: string, next: { text: string; modeId: WorkbenchModeId; attachments?: MessageAttachment[] }) => {
+  setDraft = (draftKey: string, next: WorkbenchDraftUpdate) => {
     const key = String(draftKey || "").trim();
     if (!key) return;
     const now = Date.now();
     const current = this.snapshot.drafts.byKey[key];
-    const attachments = next.attachments ?? current?.attachments ?? [];
-    const draft: WorkbenchDraft = { text: next.text, modeId: next.modeId, attachments, updatedAtMs: now };
+    const currentValue: WorkbenchDraftValue = {
+      text: current?.text ?? "",
+      modeId: current?.modeId ?? "default",
+      attachments: current?.attachments ?? [],
+    };
+    const resolved = typeof next === "function" ? next(currentValue) : next;
+    const attachments = resolved.attachments ?? currentValue.attachments;
+    const draft: WorkbenchDraft = {
+      text: resolved.text,
+      modeId: resolved.modeId,
+      attachments,
+      updatedAtMs: now,
+    };
     if (
       current &&
       current.text === draft.text &&
@@ -606,8 +633,8 @@ export function useWorkbenchDraft(
   draftKey: string,
   fallback?: { text: string; modeId: WorkbenchModeId; attachments?: MessageAttachment[] },
 ): {
-  value: { text: string; modeId: WorkbenchModeId; attachments: MessageAttachment[] };
-  setValue: (next: { text: string; modeId: WorkbenchModeId; attachments?: MessageAttachment[] }) => void;
+  value: WorkbenchDraftValue;
+  setValue: (next: WorkbenchDraftUpdate) => void;
   updatedAtMs: number;
 } {
   const store = useWorkbenchStore();
@@ -622,13 +649,13 @@ export function useWorkbenchDraft(
     store.ensureDraftLoaded(key).catch(() => { });
   }, [store, key, loaded]);
 
-  const value = useMemo<{ text: string; modeId: WorkbenchModeId; attachments: MessageAttachment[] }>(() => {
+  const value = useMemo<WorkbenchDraftValue>(() => {
     if (draft) return { text: draft.text, modeId: draft.modeId, attachments: draft.attachments ?? [] };
     return { text: fallback?.text ?? "", modeId: fallback?.modeId ?? "default", attachments: fallback?.attachments ?? [] };
   }, [draft, fallback]);
 
   const setValue = useCallback(
-    (next: { text: string; modeId: WorkbenchModeId; attachments?: MessageAttachment[] }) => {
+    (next: WorkbenchDraftUpdate) => {
       store.setDraft(key, next);
     },
     [store, key],

@@ -91,17 +91,24 @@ export function formatUsedTokenCount(value: number): string {
 }
 
 export type ContextWindowDisplay = {
-  percent: number;
-  usedLabel: string;
-  windowLabel: string;
+  state: "known" | "unknown";
+  percent?: number;
+  usedLabel?: string;
+  windowLabel?: string;
   title: string;
   summary: string;
 };
 
 export function describeContextWindow(
   contextWindow?: ContextWindowInfo | null,
-): ContextWindowDisplay | null {
-  if (!contextWindow?.windowTokens) return null;
+): ContextWindowDisplay {
+  if (!contextWindow?.windowTokens) {
+    return {
+      state: "unknown",
+      title: "Context Window: Unknown. Metrics unavailable for this session/model.",
+      summary: "Unknown",
+    };
+  }
   let usedTokens = contextWindow.usedTokens;
   if (usedTokens == null && contextWindow.remainingTokens != null) {
     usedTokens = contextWindow.windowTokens - contextWindow.remainingTokens;
@@ -109,7 +116,13 @@ export function describeContextWindow(
   if (usedTokens == null && contextWindow.remainingFraction != null) {
     usedTokens = Math.round(contextWindow.windowTokens * (1 - contextWindow.remainingFraction));
   }
-  if (usedTokens == null) return null;
+  if (usedTokens == null) {
+    return {
+      state: "unknown",
+      title: "Context Window: Unknown. Metrics unavailable for this session/model.",
+      summary: "Unknown",
+    };
+  }
 
   const windowTokens = Math.max(1, Math.round(contextWindow.windowTokens));
   const clampedUsed = Math.max(0, Math.min(windowTokens, Math.round(usedTokens)));
@@ -119,6 +132,7 @@ export function describeContextWindow(
   const summary = `${percent}% · ${usedLabel}/${windowLabel}`;
 
   return {
+    state: "known",
     percent,
     usedLabel,
     windowLabel,

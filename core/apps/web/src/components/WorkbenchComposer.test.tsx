@@ -579,6 +579,104 @@ describe("WorkbenchComposer textarea sizing", () => {
     expect(textarea.scrollTop).toBe(textarea.scrollHeight);
   });
 
+  it("shows an explicit unknown context-window state when metrics are unavailable", async () => {
+    const ActiveHarness = () => {
+      const [value, setValue] = useState("");
+      const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
+
+      return (
+        <WorkbenchComposer
+          variant="activeSession"
+          value={value}
+          setValue={setValue}
+          placeholder="Ask follow-ups"
+          inputDisabled={false}
+          sessionIdForAutocomplete="session-1"
+          workspaceIdForAutocomplete="ws-1"
+          slashCommands={[]}
+          attachments={attachments}
+          setAttachments={setAttachments}
+          onSend={vi.fn()}
+          sendDisabled={false}
+          sendDisabledReason={null}
+          onInterrupt={null}
+          isWorking={false}
+          modeId={modeId}
+          setModeId={setModeId}
+          harnessLabel="Codex"
+          harnessLogoSrc=""
+          harnessLogoInvert={false}
+          harnessLogoInvertInLight={false}
+          verbosity="default"
+          onSetVerbosity={undefined}
+          contextWindow={null}
+          availableModels={[]}
+          currentModelId="gpt-5"
+          onSetModelId={vi.fn(async () => {})}
+        />
+      );
+    };
+
+    render(<ActiveHarness />);
+
+    const indicator = screen.getByText("Unknown");
+    expect(indicator).toHaveAttribute(
+      "title",
+      "Context Window: Unknown. Metrics unavailable for this session/model.",
+    );
+  });
+
+  it("renders known context-window usage when canonical metrics are present", async () => {
+    const ActiveHarness = () => {
+      const [value, setValue] = useState("");
+      const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
+
+      return (
+        <WorkbenchComposer
+          variant="activeSession"
+          value={value}
+          setValue={setValue}
+          placeholder="Ask follow-ups"
+          inputDisabled={false}
+          sessionIdForAutocomplete="session-1"
+          workspaceIdForAutocomplete="ws-1"
+          slashCommands={[]}
+          attachments={attachments}
+          setAttachments={setAttachments}
+          onSend={vi.fn()}
+          sendDisabled={false}
+          sendDisabledReason={null}
+          onInterrupt={null}
+          isWorking={false}
+          modeId={modeId}
+          setModeId={setModeId}
+          harnessLabel="Codex"
+          harnessLogoSrc=""
+          harnessLogoInvert={false}
+          harnessLogoInvertInLight={false}
+          verbosity="default"
+          onSetVerbosity={undefined}
+          contextWindow={{
+            windowTokens: 100,
+            usedTokens: 7,
+            remainingTokens: 93,
+            remainingFraction: 0.93,
+          }}
+          availableModels={[]}
+          currentModelId="gpt-5"
+          onSetModelId={vi.fn(async () => {})}
+        />
+      );
+    };
+
+    render(<ActiveHarness />);
+
+    const indicator = screen.getByText("7% · 7/100");
+    expect(indicator).toHaveAttribute("title", "Context Window: 7% · 7/100");
+  });
+
   it("filters unsupported harness ids from the harness menu", async () => {
     const NewTaskHarness = () => {
       const [value, setValue] = useState("");

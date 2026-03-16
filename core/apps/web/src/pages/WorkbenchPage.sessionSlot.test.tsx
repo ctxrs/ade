@@ -5,7 +5,34 @@ import type { MessageAttachment } from "../api/client";
 import { WorkbenchSessionSlot } from "./WorkbenchPage.sessionSlot";
 
 const sessionViewSpy = vi.hoisted(() => vi.fn());
-const setValueSpy = vi.hoisted(() => vi.fn());
+const draftState = vi.hoisted(() => ({
+  value: {
+    text: "draft text",
+    modeId: "default",
+    attachments: [] as MessageAttachment[],
+  },
+}));
+const setValueSpy = vi.hoisted(() =>
+  vi.fn(
+    (
+      next:
+        | { text: string; modeId: string; attachments?: MessageAttachment[] }
+        | ((prev: { text: string; modeId: string; attachments: MessageAttachment[] }) => {
+            text: string;
+            modeId: string;
+            attachments?: MessageAttachment[];
+          }),
+    ) => {
+      const current = draftState.value;
+      const resolved = typeof next === "function" ? next(current) : next;
+      draftState.value = {
+        text: resolved.text,
+        modeId: resolved.modeId,
+        attachments: resolved.attachments ?? current.attachments,
+      };
+    },
+  ),
+);
 const flushDraftSpy = vi.hoisted(() => vi.fn(async () => {}));
 
 const initialAttachment: MessageAttachment = {
@@ -25,7 +52,7 @@ vi.mock("./SessionPage", () => ({
 vi.mock("../workbench/store", () => ({
   sessionDraftKey: (sessionId: string) => `session:${sessionId}`,
   useWorkbenchDraft: () => ({
-    value: { text: "draft text", modeId: "default", attachments: [initialAttachment] },
+    value: draftState.value,
     updatedAtMs: 0,
     setValue: setValueSpy,
   }),
@@ -40,6 +67,11 @@ vi.mock("../utils/clipboard", () => ({
 
 describe("WorkbenchSessionSlot", () => {
   beforeEach(() => {
+    draftState.value = {
+      text: "draft text",
+      modeId: "default",
+      attachments: [initialAttachment],
+    };
     sessionViewSpy.mockClear();
     setValueSpy.mockClear();
     flushDraftSpy.mockClear();
@@ -68,10 +100,32 @@ describe("WorkbenchSessionSlot", () => {
       props?.onDraftAttachmentsChange([nextAttachment]);
     });
 
-    expect(setValueSpy).toHaveBeenCalledWith({
+    expect(draftState.value).toEqual({
       text: "draft text",
       modeId: "default",
       attachments: [nextAttachment],
+    });
+  });
+
+  it("composes sequential draft updates without restoring stale text", async () => {
+    render(<WorkbenchSessionSlot sessionId="session-1" />);
+
+    const props = sessionViewSpy.mock.calls.at(-1)?.[0] as
+      | {
+          onDraftChange: (text: string) => void;
+          onDraftAttachmentsChange: (attachments: MessageAttachment[]) => void;
+        }
+      | undefined;
+
+    await act(async () => {
+      props?.onDraftChange("");
+      props?.onDraftAttachmentsChange([]);
+    });
+
+    expect(draftState.value).toEqual({
+      text: "",
+      modeId: "default",
+      attachments: [],
     });
   });
 });
