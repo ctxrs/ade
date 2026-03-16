@@ -146,7 +146,9 @@ export const WorkbenchMessageListStack = memo(function WorkbenchMessageListStack
           data={dataState}
           context={context}
           itemIdentity={itemIdentity}
-          computeItemKey={({ data, context: itemContext }) => getWorkbenchListItemRenderKey(data, itemContext)}
+          computeItemKey={({ data, context: itemContext, index }) =>
+            getWorkbenchListItemRenderKey(data, itemContext, index)
+          }
           ItemContent={ItemContent}
           initialLocation={initialLocation}
           onScroll={onScroll}

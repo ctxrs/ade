@@ -137,10 +137,14 @@ const getContextLayoutRevisionKey = (
 export const getWorkbenchListItemRenderKey = (
   item: WorkbenchListItem,
   context?: WorkbenchMessageListContext,
+  index?: number,
 ): string => {
   const itemLayoutHash = hashString(getWorkbenchListItemLayoutKey(item));
   const contextLayoutHash = getContextLayoutRevisionKey(item, context);
-  return contextLayoutHash.length > 0 ? `${item.id}:${itemLayoutHash}:${contextLayoutHash}` : `${item.id}:${itemLayoutHash}`;
+  const indexKey = Number.isInteger(index) ? `:${index}` : "";
+  return contextLayoutHash.length > 0
+    ? `${item.id}:${itemLayoutHash}:${contextLayoutHash}${indexKey}`
+    : `${item.id}:${itemLayoutHash}${indexKey}`;
 };
 
 export const findStableListRemeasureSpans = (

@@ -184,7 +184,7 @@ impl Store {
                     turns_json, tool_summaries_json, events_json, messages_json,
                     has_more_turns, head_window_json, created_at, updated_at
                )
-               VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(session_id, head_kind) DO UPDATE SET
                    head_rev = excluded.head_rev,
                    last_event_seq = excluded.last_event_seq,

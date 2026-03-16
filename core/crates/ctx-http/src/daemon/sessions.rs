@@ -211,6 +211,22 @@ fn build_session_summary_delta(
     })
 }
 
+async fn resolve_projection_rev_for_stream_delta<F, Fut>(
+    stream_only: bool,
+    last_event_seq: i64,
+    cached_projection_rev: i64,
+    load_projection_rev: F,
+) -> i64
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Option<i64>>,
+{
+    if stream_only {
+        return cached_projection_rev.max(0);
+    }
+    load_projection_rev().await.unwrap_or(last_event_seq.max(0))
+}
+
 fn turn_from_event(event: &SessionEvent, message: Option<&Message>) -> Option<SessionTurn> {
     if !matches!(event.event_type, SessionEventType::UserMessage) {
         return None;
@@ -462,27 +478,36 @@ impl SessionRuntime {
             }
         }
 
-        let last_event_seq = if stream_only {
+        let cached_replay_cursor = if stream_only {
             state
                 .workspaces
                 .workspace_active_snapshot
-                .session_last_event_seq(session.workspace_id, event.session_id)
+                .session_replay_cursor(session.workspace_id, event.session_id)
                 .await
+        } else {
+            Default::default()
+        };
+        let last_event_seq = if stream_only {
+            cached_replay_cursor.last_event_seq
         } else {
             event.seq
         };
-        let projection_rev = match state.store_for_session(event.session_id).await {
-            Ok(store) => store
-                .get_session_projection_rev(event.session_id)
-                .await
-                .unwrap_or(last_event_seq.max(0)),
-            Err(_) => last_event_seq.max(0),
-        };
-        let state_rev = if stream_only {
-            last_event_seq
-        } else {
-            event.seq
-        };
+        let projection_rev = resolve_projection_rev_for_stream_delta(
+            stream_only,
+            last_event_seq,
+            cached_replay_cursor.projection_rev,
+            || async {
+                match state.store_for_session(event.session_id).await {
+                    Ok(store) => store
+                        .get_session_projection_rev(event.session_id)
+                        .await
+                        .ok(),
+                    Err(_) => None,
+                }
+            },
+        )
+        .await;
+        let state_rev = last_event_seq;
 
         let activity = derive_summary_activity(&event.event_type);
 

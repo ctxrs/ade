@@ -244,4 +244,38 @@ describe("WorkbenchMessageListStack", () => {
     expect(await findMeasuredWrapper(view.container, firstTool.id)).toBe(firstToolWrapper);
     expect(await findMeasuredWrapper(view.container, secondTool.id)).not.toBe(secondToolWrapper);
   });
+
+  it("remounts a measured wrapper when the same row shifts to a new list index", async () => {
+    const shiftedAssistant = buildAssistantItem();
+    const current = [shiftedAssistant, buildTurnStatusItem()];
+    const next = [buildToolItem(), shiftedAssistant, buildTurnStatusItem()];
+    const view = renderMessageList({ data: current });
+    const firstWrapper = await findMeasuredWrapper(view.container, shiftedAssistant.id);
+
+    view.rerender(
+      <VirtuosoMessageListTestingContext.Provider value={{ viewportHeight: 600, itemHeight: 120 }}>
+        <WorkbenchMessageListStack
+          virtuosoStyle={{ height: 400 }}
+          initialData={current}
+          itemContent={(_index, item) => <div>{item.kind === "assistant" ? item.content : item.kind}</div>}
+          itemIdentity={(item) => item.id}
+          initialLocation={{ index: 0, align: "start" }}
+          dataState={{ data: next }}
+          context={baseContext}
+          onScroll={() => {}}
+          onRenderedDataChange={() => {}}
+          listRef={
+            {
+              current: null,
+            } as MutableRefObject<VirtuosoMessageListMethods<WorkbenchListItem, WorkbenchMessageListContext> | null>
+          }
+          licenseKey=""
+          shortSizeAlign="top"
+        />
+      </VirtuosoMessageListTestingContext.Provider>,
+    );
+
+    const secondWrapper = await findMeasuredWrapper(view.container, shiftedAssistant.id);
+    expect(secondWrapper).not.toBe(firstWrapper);
+  });
 });

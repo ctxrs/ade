@@ -1,12 +1,14 @@
 use super::{
     active_head_projection_should_flush, active_head_projection_wait_duration,
-    build_session_summary_delta, derive_summary_activity,
+    build_session_summary_delta, derive_summary_activity, resolve_projection_rev_for_stream_delta,
 };
 use chrono::Utc;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     ExecutionEnvironment, Session, SessionEventType, SessionStatus, SessionTurnStatus,
 };
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 fn test_session() -> Session {
@@ -138,4 +140,34 @@ fn empty_session_summary_delta_is_not_emitted() {
         build_session_summary_delta(&session, None, None, None, 5, 5, 5).is_none(),
         "empty updates should not publish summary deltas"
     );
+}
+
+#[tokio::test]
+async fn stream_only_projection_rev_skips_lookup() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let calls_for_lookup = Arc::clone(&calls);
+    let projection_rev =
+        resolve_projection_rev_for_stream_delta(true, 41, 23, move || async move {
+            calls_for_lookup.fetch_add(1, Ordering::SeqCst);
+            Some(99)
+        })
+        .await;
+
+    assert_eq!(projection_rev, 23);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn non_stream_only_projection_rev_uses_lookup_when_available() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let calls_for_lookup = Arc::clone(&calls);
+    let projection_rev =
+        resolve_projection_rev_for_stream_delta(false, 17, 7, move || async move {
+            calls_for_lookup.fetch_add(1, Ordering::SeqCst);
+            Some(23)
+        })
+        .await;
+
+    assert_eq!(projection_rev, 23);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
