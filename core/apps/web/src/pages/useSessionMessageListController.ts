@@ -545,6 +545,15 @@ export function useSessionMessageListController(params: Params): Result {
             : initialLocation;
       methods.cancelSmoothScroll();
       suppressIdDiffLogsRef.current = { sessionId, remainingTicks: 1 };
+      startFlashProbe("data:replace", {
+        reason: "layoutRevisionChanged",
+        layoutRevision,
+        nextLen: effectiveNextLen,
+        currentLen,
+        atBottom,
+        purgeAnchorId,
+        purgeAnchorIndex,
+      });
       methods.data.replace(next, { initialLocation: replaceLocation, purgeItemSizes: true });
       if (atBottom) {
         snapToBottom(methods);
@@ -583,6 +592,16 @@ export function useSessionMessageListController(params: Params): Result {
             : initialLocation;
       methods.cancelSmoothScroll();
       suppressIdDiffLogsRef.current = { sessionId, remainingTicks: 1 };
+      startFlashProbe("data:replace", {
+        reason: "sizeCacheKeyChanged",
+        changedCount: sizeCacheKeyChanges.count,
+        changedSampleIds: sizeCacheKeyChanges.sampleIds,
+        nextLen: effectiveNextLen,
+        currentLen,
+        atBottom,
+        purgeAnchorId,
+        purgeAnchorIndex,
+      });
       methods.data.replace(next, { initialLocation: replaceLocation, purgeItemSizes: true });
       if (atBottom) {
         snapToBottom(methods);
@@ -941,6 +960,16 @@ export function useSessionMessageListController(params: Params): Result {
           appendBehavior,
         });
         const updateLabel = updateResult.mode === "remeasure" ? "data:remeasure" : "data:map";
+        if (updateResult.mode === "remeasure") {
+          startFlashProbe("data:remeasure", {
+            nextLen: effectiveNextLen,
+            currentLen,
+            anchorId,
+            anchorIndex,
+            stickToBottom: stickToBottomRef.current,
+            changedSpans: updateResult.changedSpans,
+          });
+        }
         if (import.meta.env.DEV && showDebug) {
           // Count by reference to detect “content changes” even when IDs/order are stable.
           let changedByRef = 0;
