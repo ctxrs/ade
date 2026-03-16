@@ -658,7 +658,7 @@ export function useWorkbenchDraft(
     (next: WorkbenchDraftUpdate) => {
       store.setDraft(key, next);
     },
-    [store, key],
+    [store, key, fallback],
   );
 
   return { value, setValue, updatedAtMs: draft?.updatedAtMs ?? 0 };

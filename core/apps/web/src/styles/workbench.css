@@ -3215,17 +3215,6 @@
   white-space: nowrap;
 }
 
-.wb-tool-row .wb-tool-description {
-  flex: 0 1 42%;
-  min-width: 0;
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.35;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .wb-event-chev {
   margin-left: auto;
   color: var(--muted);

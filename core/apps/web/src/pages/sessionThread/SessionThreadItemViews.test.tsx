@@ -178,7 +178,7 @@ describe("WorkbenchToolRow", () => {
     expect(container.querySelector(".wb-tool-description")).toBeNull();
   });
 
-  it("renders the tool description on a dedicated secondary line", () => {
+  it("keeps the tool description inline on the first line", () => {
     const onToggle = vi.fn();
 
     const { container } = render(
@@ -208,11 +208,10 @@ describe("WorkbenchToolRow", () => {
     );
 
     expect(screen.getByRole("button", { name: /bash/i })).toBeInTheDocument();
-    expect(screen.getByText("Get current working directory")).toBeInTheDocument();
-    const description = container.querySelector(".wb-tool-description");
-    expect(description).not.toBeNull();
-    expect(description?.textContent).toBe("Get current working directory");
-    expect(screen.queryByText("Bash · Get current working directory")).not.toBeInTheDocument();
+    const mainline = container.querySelector(".wb-tool-mainline");
+    expect(mainline?.textContent).toContain("Bash");
+    expect(mainline?.textContent).toContain("Get current working directory");
+    expect(container.querySelector(".wb-tool-description")).toBeNull();
   });
 });
 

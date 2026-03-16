@@ -677,6 +677,65 @@ describe("WorkbenchComposer textarea sizing", () => {
     expect(indicator).toHaveAttribute("title", "Context Window: 7% · 7/100");
   });
 
+  it("keeps the stop action visible while a turn is active even if draft attachments remain", async () => {
+    const onSend = vi.fn();
+    const onInterrupt = vi.fn();
+
+    const ActiveHarness = () => {
+      const [value, setValue] = useState("");
+      const [attachments, setAttachments] = useState<MessageAttachment[]>([
+        {
+          kind: "image_ref",
+          blob_id: "blob-1",
+          mime_type: "image/png",
+          name: "blob-1.png",
+        },
+      ]);
+      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
+
+      return (
+        <WorkbenchComposer
+          variant="activeSession"
+          value={value}
+          setValue={setValue}
+          placeholder="Ask follow-ups"
+          inputDisabled={false}
+          sessionIdForAutocomplete="session-1"
+          workspaceIdForAutocomplete="ws-1"
+          slashCommands={[]}
+          attachments={attachments}
+          setAttachments={setAttachments}
+          onSend={onSend}
+          sendDisabled={true}
+          sendDisabledReason="Sending..."
+          onInterrupt={onInterrupt}
+          isWorking={true}
+          modeId={modeId}
+          setModeId={setModeId}
+          harnessLabel="Codex"
+          harnessLogoSrc=""
+          harnessLogoInvert={false}
+          harnessLogoInvertInLight={false}
+          verbosity="default"
+          onSetVerbosity={undefined}
+          contextWindow={null}
+          availableModels={[{ id: "gpt-5.4/medium", name: "GPT-5.4 (Medium)" }]}
+          currentModelId="gpt-5.4/medium"
+          onSetModelId={vi.fn(async () => {})}
+        />
+      );
+    };
+
+    render(<ActiveHarness />);
+
+    const stopButton = screen.getByRole("button", { name: "Stop" });
+    expect(stopButton).toBeEnabled();
+
+    fireEvent.click(stopButton);
+    expect(onInterrupt).toHaveBeenCalledTimes(1);
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
   it("filters unsupported harness ids from the harness menu", async () => {
     const NewTaskHarness = () => {
       const [value, setValue] = useState("");

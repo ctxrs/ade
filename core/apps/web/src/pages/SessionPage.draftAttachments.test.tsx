@@ -6,10 +6,11 @@ import { SessionView } from "./SessionPage";
 
 const paneSpy = vi.hoisted(() => vi.fn());
 const sessionEntries = vi.hoisted(() => ({ map: {} as Record<string, unknown> }));
+const postMessageMock = vi.hoisted(() => vi.fn(async () => ({})));
 
 vi.mock("../api/client", () => ({
   deleteMessage: vi.fn(async () => ({})),
-  postMessage: vi.fn(async () => ({})),
+  postMessage: postMessageMock,
   setSessionModel: vi.fn(async () => ({})),
   authenticateSession: vi.fn(async () => ({})),
   idToString: (id: string | null | undefined) => {
@@ -153,6 +154,8 @@ const buildAttachment = (blobId: string): MessageAttachment => ({
 
 beforeEach(() => {
   paneSpy.mockClear();
+  postMessageMock.mockReset();
+  postMessageMock.mockResolvedValue({});
   sessionEntries.map = {
     [sessionId]: {
       sessionId,
@@ -229,5 +232,40 @@ describe("SessionPage draft attachments", () => {
     });
 
     expect(onDraftAttachmentsChange).toHaveBeenCalledWith([firstAttachment, secondAttachment]);
+  });
+
+  it("suppresses stale turn-already-running send errors", async () => {
+    postMessageMock.mockRejectedValueOnce(new Error("A turn is already running. Stop it or wait for it to finish."));
+    const onDraftChange = vi.fn();
+    const onDraftAttachmentsChange = vi.fn();
+
+    render(
+      <SessionView
+        sessionId={sessionId}
+        draft={{ text: "hello", modeId: "default", attachments: [] }}
+        onDraftChange={onDraftChange}
+        onDraftAttachmentsChange={onDraftAttachmentsChange}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(paneSpy).toHaveBeenCalled();
+    });
+
+    const props = paneSpy.mock.calls.at(-1)?.[0] as
+      | {
+          sendNow: () => Promise<void>;
+          sendError: string | null;
+        }
+      | undefined;
+
+    await act(async () => {
+      await props?.sendNow();
+    });
+
+    await waitFor(() => {
+      const latest = paneSpy.mock.calls.at(-1)?.[0] as { sendError: string | null } | undefined;
+      expect(latest?.sendError).toBeNull();
+    });
   });
 });

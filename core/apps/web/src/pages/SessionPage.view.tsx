@@ -653,6 +653,16 @@ export function SessionView({
     setSendBusy(next);
   };
 
+  const isTurnAlreadyRunningSendError = (value: unknown): boolean => {
+    const message = errorMessage(value).trim().toLowerCase();
+    if (!message) return false;
+    return (
+      message.includes("a turn is already running")
+      || message.includes("turn is already running")
+      || message.includes("stop it or wait for it to finish")
+    );
+  };
+
   const formatMemoryMb = (value?: number | null): string => {
     if (!Number.isFinite(value)) return "—";
     const mb = value as number;
@@ -731,6 +741,9 @@ export function SessionView({
         setPendingQueueMessages((prev) => prev.filter((entry) => entry.clientId !== messageId));
       } else {
         setPendingMessages((prev) => prev.filter((entry) => entry.clientId !== messageId));
+      }
+      if (isTurnAlreadyRunningSendError(e)) {
+        return;
       }
       setInput(text);
       setDraftAttachments(attachmentsToSend);

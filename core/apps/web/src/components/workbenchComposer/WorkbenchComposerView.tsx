@@ -57,8 +57,7 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
   const canAdjustVerbosity = variant === "newSession" && typeof props.onSetVerbosity === "function";
   const contextWindow =
     variant === "activeSession" ? (props as ActiveSessionProps).contextWindow ?? null : null;
-  const hasDraft = value.trim().length > 0 || attachments.length > 0;
-  const showStop = !!onInterrupt && !!isWorking && !hasDraft;
+  const showStop = !!onInterrupt && !!isWorking;
   const sendActionDisabled = !showStop && (!!sendDisabled || !!sendDisabledReason);
   const sendActionTitle = showStop ? "Stop" : sendDisabledReason ?? "Send";
   const sendActionLabel = showStop ? "Stop" : "Send";

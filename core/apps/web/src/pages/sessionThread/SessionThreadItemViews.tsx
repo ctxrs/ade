@@ -498,6 +498,8 @@ export function WorkbenchToolRow({
     if (trimmed === rest || trimmed === label || trimmed === title) return "";
     return trimmed;
   })();
+  const inlineTail = [rest, description].filter((part) => String(part).trim().length > 0).join(" · ");
+  const fullLabel = inlineTail ? `${verb} · ${inlineTail}` : verb;
   const showOutputPreview = verbosity === "verbose";
   const hasOutputText = !!item.output_text?.trim();
   const hasDetails = !!item.input || (showOutputPreview && hasOutputText);
@@ -509,21 +511,20 @@ export function WorkbenchToolRow({
         className={`wb-event-row ${expanded ? "wb-event-row-expanded" : ""}`}
         onClick={hasDetails ? onToggle : undefined}
         aria-expanded={hasDetails ? expanded : undefined}
-        title={label}
+        title={fullLabel}
       >
         <span className="wb-event-text wb-tool-text">
           <span className="wb-tool-mainline">
             <span className="wb-tool-verb">{verb}</span>
-            {rest ? (
+            {inlineTail ? (
               <>
                 <span className="wb-tool-sep" aria-hidden="true">
                   ·
                 </span>
-                <span className="wb-tool-rest">{rest}</span>
+                <span className="wb-tool-rest">{inlineTail}</span>
               </>
             ) : null}
           </span>
-          {description ? <span className="wb-tool-description">{description}</span> : null}
         </span>
       </button>
       {hasDetails && expanded && (

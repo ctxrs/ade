@@ -34,6 +34,9 @@ const setValueSpy = vi.hoisted(() =>
   ),
 );
 const flushDraftSpy = vi.hoisted(() => vi.fn(async () => {}));
+const draftState = vi.hoisted(() => ({
+  value: { text: "draft text", modeId: "default", attachments: [] as MessageAttachment[] },
+}));
 
 const initialAttachment: MessageAttachment = {
   kind: "image_ref",
@@ -54,7 +57,23 @@ vi.mock("../workbench/store", () => ({
   useWorkbenchDraft: () => ({
     value: draftState.value,
     updatedAtMs: 0,
-    setValue: setValueSpy,
+    setValue: (
+      next:
+        | { text: string; modeId: string; attachments?: MessageAttachment[] }
+        | ((current: { text: string; modeId: string; attachments: MessageAttachment[] }) => {
+            text: string;
+            modeId: string;
+            attachments?: MessageAttachment[];
+          }),
+    ) => {
+      const resolved = typeof next === "function" ? next(draftState.value) : next;
+      draftState.value = {
+        text: resolved.text,
+        modeId: resolved.modeId,
+        attachments: resolved.attachments ?? draftState.value.attachments,
+      };
+      setValueSpy(resolved);
+    },
   }),
   useWorkbenchStore: () => ({
     flushDraft: flushDraftSpy,
@@ -75,6 +94,7 @@ describe("WorkbenchSessionSlot", () => {
     sessionViewSpy.mockClear();
     setValueSpy.mockClear();
     flushDraftSpy.mockClear();
+    draftState.value = { text: "draft text", modeId: "default", attachments: [initialAttachment] };
   });
 
   it("passes attachment drafts through to SessionView and persists attachment edits", async () => {
