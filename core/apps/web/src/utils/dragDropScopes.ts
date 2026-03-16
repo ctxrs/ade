@@ -95,7 +95,10 @@ function setNativeHoverScope(activeScope: DropScope | null) {
 }
 
 function nativeScopeForPosition(position: { x: number; y: number }): DropScope | null {
+  const directScope = scopeAtPoint(position.x, position.y);
+  if (directScope) return directScope;
   const ratio = window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;
+  if (ratio === 1) return null;
   return scopeAtPoint(position.x / ratio, position.y / ratio);
 }
 

@@ -115,6 +115,7 @@ function Harness({
   onChange,
   onStartError,
   draftHarness = { providerId: "codex", modelId: "gpt-5" },
+  initialAttachments,
   providerOptionsById,
   providersByIdProp,
   ensureProviderAuthSummary,
@@ -123,6 +124,7 @@ function Harness({
   onChange: (value: FlowValue) => void;
   onStartError: (message: string | null) => void;
   draftHarness?: DraftHarness | null;
+  initialAttachments?: MessageAttachment[];
   providerOptionsById?: Record<string, ProviderOptions>;
   providersByIdProp?: Record<string, ProviderStatus>;
   ensureProviderAuthSummary?: (
@@ -133,7 +135,7 @@ function Harness({
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [activeTaskIdFromTab, setActiveTaskIdFromTab] = useState<string | null>(null);
   const [tasksById] = useState<Record<string, WorkspaceActiveSnapshotItem>>({});
-  const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
+  const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>(() => initialAttachments ?? []);
   const [optimisticFocus, setOptimisticFocus] = useState<OptimisticFocus | null>(null);
   const optimistic = useWorkbenchOptimisticTasks({
     activeTaskId,
@@ -278,6 +280,68 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
       execution_environment: "container_disk_isolated",
     }));
     expect(mockedPostMessage).not.toHaveBeenCalled();
+    expect(onStartError).toHaveBeenCalledWith(null);
+  });
+
+  it("posts the first message separately when the new-task draft includes attachments", async () => {
+    let current: FlowValue | null = null;
+    mockedCreateTask.mockResolvedValue(makeTask("task-1", "session-1"));
+    mockedCreateSession.mockResolvedValue(makeSession("session-1", "task-1"));
+    mockedPostMessage.mockResolvedValue({
+      id: "message-1",
+      session_id: "session-1",
+      role: "user",
+      content: "Write docs",
+      attachments: [
+        {
+          kind: "image",
+          mime_type: "image/png",
+          name: "drop.png",
+          data_base64: "abc123",
+        },
+      ],
+      delivery: "immediate",
+      created_at: now,
+      turn_id: "turn-1",
+      order_seq: 1,
+    });
+    const onStartError = vi.fn();
+    const attachments: MessageAttachment[] = [
+      {
+        kind: "image",
+        mime_type: "image/png",
+        name: "drop.png",
+        data_base64: "abc123",
+      },
+    ];
+
+    render(
+      <Harness
+        initialAttachments={attachments}
+        onChange={(value) => {
+          current = value;
+        }}
+        onStartError={onStartError}
+      />,
+    );
+
+    await act(async () => {
+      await requireValue(current).startNewTask();
+    });
+
+    await waitFor(() => {
+      expect(requireValue(current).optimisticTasks[0]?.localStatus).toBe("synced");
+    });
+    expect(mockedCreateSession).toHaveBeenCalledWith("task-1", "codex", "gpt-5", expect.objectContaining({
+      execution_environment: "container_disk_isolated",
+      initial_message_id: "message-1",
+      initial_turn_id: "turn-1",
+    }));
+    expect(mockedCreateSession.mock.calls[0]?.[3]).not.toHaveProperty("initial_prompt");
+    expect(mockedPostMessage).toHaveBeenCalledWith("session-1", "Write docs", "immediate", attachments, {
+      id: "message-1",
+      turn_id: "turn-1",
+    });
     expect(onStartError).toHaveBeenCalledWith(null);
   });
 
