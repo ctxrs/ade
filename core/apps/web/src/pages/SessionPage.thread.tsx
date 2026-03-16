@@ -15,12 +15,15 @@ import {
   WorkbenchMessageListStickyFooter,
 } from "./sessionThread/SessionThreadMessageListChrome";
 import { getWorkbenchListItemRenderKey } from "./sessionMessageListStableUpdate";
+import { recordSessionMessageListRowSizeMismatch } from "./sessionMessageListDebug";
 
 type WorkbenchMessageListStackProps = {
   virtuosoStyle: CSSProperties;
   initialData: WorkbenchListItem[];
   itemContent: (index: number, item: WorkbenchListItem) => ReactNode;
   itemIdentity: (item: WorkbenchListItem) => unknown;
+  itemKey: (item: WorkbenchListItem) => string;
+  increaseViewportBy: number;
   initialLocation?: ItemLocation;
   dataState?: DataWithScrollModifier<WorkbenchListItem>;
   context: WorkbenchMessageListContext;
@@ -34,18 +37,22 @@ type WorkbenchMessageListStackProps = {
 export type WorkbenchMessageListContext = {
   loaded: boolean;
   loadingOlder: boolean;
+  renderRevision?: string;
   expandedTurnHeaders?: Readonly<Record<string, boolean>>;
   expandedTurnDetailsById?: Readonly<Record<string, boolean>>;
   expandedToolById?: Readonly<Record<string, boolean>>;
 };
 
 const DEBUG_ROW_SIZE_DELTA_PX = 8;
-
 function MeasuredThreadRow({
   id,
+  itemKind,
+  itemKey,
   children,
 }: {
   id: string;
+  itemKind: WorkbenchListItem["kind"];
+  itemKey: string;
   children: ReactNode;
 }) {
   const rowRef = useRef<HTMLDivElement | null>(null);
@@ -67,22 +74,45 @@ function MeasuredThreadRow({
     let lastSignature = "";
     const emitMismatch = (reason: string) => {
       const knownSizeRaw = parentEl.getAttribute("data-known-size");
+      const dataIndexRaw = parentEl.getAttribute("data-index");
       const actualHeight = rowEl.getBoundingClientRect().height;
       const parentHeight = parentEl.getBoundingClientRect().height;
       const knownSize = knownSizeRaw == null ? Number.NaN : Number(knownSizeRaw);
+      const dataIndex = dataIndexRaw == null ? null : Number(dataIndexRaw);
       if (!Number.isFinite(knownSize)) return;
-      if (Math.abs(actualHeight - knownSize) <= DEBUG_ROW_SIZE_DELTA_PX) return;
+      const knownVsActualDeltaPx = actualHeight - knownSize;
+      const knownVsParentDeltaPx = parentHeight - knownSize;
+      const parentVsActualDeltaPx = actualHeight - parentHeight;
+      if (Math.abs(knownVsActualDeltaPx) <= DEBUG_ROW_SIZE_DELTA_PX) return;
       const signature = `${reason}:${knownSize}:${Math.round(actualHeight)}:${Math.round(parentHeight)}`;
       if (signature === lastSignature) return;
       lastSignature = signature;
+      recordSessionMessageListRowSizeMismatch({
+        id,
+        itemKind,
+        itemKey,
+        reason,
+        dataIndex: Number.isFinite(dataIndex) ? dataIndex : null,
+        knownSize,
+        actualHeight,
+        parentHeight,
+        knownVsActualDeltaPx,
+        knownVsParentDeltaPx,
+        parentVsActualDeltaPx,
+      });
       // eslint-disable-next-line no-console
       console.log("[MessageList][row-size-mismatch]", {
         id,
+        itemKind,
+        itemKey,
         reason,
         dataIndex: parentEl.getAttribute("data-index"),
         knownSize,
         actualHeight,
         parentHeight,
+        knownVsActualDeltaPx,
+        knownVsParentDeltaPx,
+        parentVsActualDeltaPx,
       });
     };
 
@@ -109,6 +139,8 @@ export const WorkbenchMessageListStack = memo(function WorkbenchMessageListStack
   initialData,
   itemContent,
   itemIdentity,
+  itemKey,
+  increaseViewportBy,
   initialLocation,
   dataState,
   context,
@@ -122,11 +154,14 @@ export const WorkbenchMessageListStack = memo(function WorkbenchMessageListStack
   // (which clears text selection / hover state) when SessionView rerenders.
   const itemContentRef = useRef(itemContent);
   itemContentRef.current = itemContent;
+  const itemKeyRef = useRef(itemKey);
+  itemKeyRef.current = itemKey;
   const ItemContent = useCallback<MessageItemContent<WorkbenchListItem, WorkbenchMessageListContext>>(
     ({ index, data }) => {
       if (!data) return <div style={{ height: 1 }} />;
+      const measuredItemKey = itemKeyRef.current(data);
       return (
-        <MeasuredThreadRow id={data.id}>
+        <MeasuredThreadRow id={data.id} itemKind={data.kind} itemKey={measuredItemKey}>
           {itemContentRef.current(index, data)}
         </MeasuredThreadRow>
       );
@@ -156,6 +191,7 @@ export const WorkbenchMessageListStack = memo(function WorkbenchMessageListStack
           EmptyPlaceholder={WorkbenchMessageListEmptyPlaceholder}
           StickyFooter={WorkbenchMessageListStickyFooter}
           shortSizeAlign={shortSizeAlign}
+          increaseViewportBy={increaseViewportBy}
         />
       </VirtuosoMessageListLicense>
     </div>

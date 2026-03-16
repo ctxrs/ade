@@ -3126,10 +3126,22 @@
 }
 
 .wb-turn-header-collapsed .wb-turn-header-content {
-  max-height: calc(1.45em * 3.5);
+  max-height: 1.3em;
+  line-height: 1.3;
+  padding-right: 0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   overflow: hidden;
-  -webkit-mask-image: linear-gradient(var(--surface-contrast) 75%, transparent);
-  mask-image: linear-gradient(var(--surface-contrast) 75%, transparent);
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+.wb-turn-header-collapsed {
+  padding: 2px 0 4px 0;
+}
+
+.wb-turn-header-collapsed .wb-turn-header-bubble {
+  padding: 6px 10px;
 }
 
 .wb-event-row {
@@ -3176,9 +3188,11 @@
 }
 
 .wb-tool-row .wb-tool-text {
-  display: grid;
-  gap: 2px;
-  align-items: start;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .wb-tool-row .wb-tool-mainline {
@@ -3202,13 +3216,14 @@
 }
 
 .wb-tool-row .wb-tool-description {
-  display: block;
+  flex: 0 1 42%;
   min-width: 0;
   color: var(--muted);
   font-size: 11px;
   line-height: 1.35;
-  white-space: normal;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .wb-event-chev {

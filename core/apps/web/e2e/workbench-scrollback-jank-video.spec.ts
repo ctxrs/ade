@@ -1,15 +1,126 @@
 import fs from "node:fs";
 import { test, expect } from "./fixtures";
-import type { APIRequestContext } from "playwright/test";
+import type { APIRequestContext, Page } from "playwright/test";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 import { analyzeScrollJankVideo, canUseFfmpeg } from "./utils/videoJankAnalyzer";
 
-const scrollSelector = ".wb-session-slot[aria-hidden=\"false\"] .wb-thread-scroller";
+const scrollSelector = ".wb-thread-scroller";
+const debugEnabled = process.env.CTX_E2E_JANK_VIDEO_DEBUG === "1";
+
+type RowSizeMismatch = {
+  reason?: string;
+  id?: string;
+  itemKind?: string;
+  itemKey?: string;
+  knownVsActualDeltaPx?: number;
+  knownVsParentDeltaPx?: number;
+  parentVsActualDeltaPx?: number;
+};
+
+type FlashTrace = {
+  cause?: string;
+  sampleCount?: number;
+  snapbackDetected?: boolean;
+  maxAbsScrollTopDeltaPx?: number;
+  maxAbsFirstItemTopDeltaPx?: number;
+  maxAbsScrollHeightDeltaPx?: number;
+};
+
+type MessageListDebugWindow = Window & {
+  __wbSessionMessageListDebug?: {
+    seq: number;
+    entries: Array<Record<string, unknown>>;
+    flashSeq?: number;
+    flashTraces?: FlashTrace[];
+    rowSizeMismatchSeq?: number;
+    rowSizeMismatches?: RowSizeMismatch[];
+  };
+};
 
 const shouldRun = process.env.CTX_E2E_JANK_VIDEO === "1";
 test.use({ video: shouldRun ? "on" : "off" });
 
 const describe = shouldRun ? test.describe : test.describe.skip;
+
+async function suppressGlobalUpdateNotice(page: Page) {
+  await page.addInitScript(() => {
+    window.localStorage.removeItem("ctx_update_check_v1");
+    window.localStorage.removeItem("ctx_update_prompt_next_allowed_at_v1");
+    window.localStorage.removeItem("ctx_update_prompt_idle_versions_v1");
+    window.sessionStorage.removeItem("ctx_update_restart_required_version_v1");
+  });
+  await page.route("**/api/updates/check**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        channel: "stable",
+        base_url: "https://example.com",
+        platform: "linux-x64",
+        current_version: "1.0.0",
+        latest_version: null,
+        min_supported_version: null,
+        platform_supported: true,
+        in_place_update_supported: false,
+        in_place_update_reason: null,
+        update_available: false,
+      }),
+    });
+  });
+}
+
+async function clearDebugStore(page: Page) {
+  await page.evaluate(() => {
+    const win = window as MessageListDebugWindow;
+    win.__wbSessionMessageListDebug = {
+      seq: 0,
+      entries: [],
+      flashSeq: 0,
+      flashTraces: [],
+      rowSizeMismatchSeq: 0,
+      rowSizeMismatches: [],
+    };
+  });
+}
+
+async function readDebugStore(page: Page) {
+  return page.evaluate(() => {
+    const win = window as MessageListDebugWindow;
+    const store = win.__wbSessionMessageListDebug;
+    return {
+      seq: store?.seq ?? 0,
+      flashSeq: store?.flashSeq ?? 0,
+      entries: Array.isArray(store?.entries) ? store.entries.slice(-100) : [],
+      flashTraces: Array.isArray(store?.flashTraces) ? store.flashTraces.slice(-20) : [],
+      rowSizeMismatchSeq: store?.rowSizeMismatchSeq ?? 0,
+      rowSizeMismatches: Array.isArray(store?.rowSizeMismatches) ? store.rowSizeMismatches.slice(-100) : [],
+    };
+  });
+}
+
+function summarizeRowSizeMismatches(mismatches: RowSizeMismatch[]) {
+  const absDeltas = mismatches.map((mismatch) => Math.abs(Number(mismatch.knownVsActualDeltaPx ?? 0)));
+  return {
+    count: mismatches.length,
+    maxKnownVsActualDeltaPx: absDeltas.reduce((max, value) => Math.max(max, value), 0),
+    reasons: Array.from(
+      mismatches.reduce((counts, mismatch) => {
+        const reason = String(mismatch.reason ?? "unknown");
+        counts.set(reason, (counts.get(reason) ?? 0) + 1);
+        return counts;
+      }, new Map<string, number>()),
+    ),
+    samples: mismatches.slice(-5).map((mismatch) => ({
+      id: mismatch.id ?? null,
+      itemKind: mismatch.itemKind ?? null,
+      itemKey: mismatch.itemKey ?? null,
+      reason: mismatch.reason ?? null,
+      knownVsActualDeltaPx: mismatch.knownVsActualDeltaPx ?? null,
+      knownVsParentDeltaPx: mismatch.knownVsParentDeltaPx ?? null,
+      parentVsActualDeltaPx: mismatch.parentVsActualDeltaPx ?? null,
+    })),
+  };
+}
 
 describe("workbench: scrollback jank video", () => {
   async function addLongMessages(request: APIRequestContext, sessionId: string, count: number) {
@@ -40,18 +151,28 @@ describe("workbench: scrollback jank video", () => {
     const taskId = seed.taskIds[0];
     const sessionId = seed.sessionIdsByTask[taskId][0];
     await addLongMessages(request, sessionId, 12);
+    await suppressGlobalUpdateNotice(page);
 
-    await page.goto(`/workspaces/${seed.workspaceId}`, { waitUntil: "domcontentloaded" });
+    const params = new URLSearchParams();
+    if (debugEnabled) {
+      params.set("debug", "1");
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    await page.goto(`/workspaces/${seed.workspaceId}${suffix}`, { waitUntil: "domcontentloaded" });
     const rows = page.locator(".wb-task-row");
     await expect(rows).toHaveCount(1, { timeout: 20000 });
     await rows.first().click();
 
-    await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea")).toBeVisible({
+    await expect(page.locator("textarea.wb-active-textarea")).toBeVisible({
       timeout: 20000,
     });
 
     const scroller = page.locator(scrollSelector).first();
     await expect(scroller).toBeVisible({ timeout: 20000 });
+
+    if (debugEnabled) {
+      await clearDebugStore(page);
+    }
 
     await scroller.evaluate((el) => {
       el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
@@ -74,10 +195,22 @@ describe("workbench: scrollback jank video", () => {
     await historyResponse;
     await page.waitForTimeout(1200);
 
+    const debugState = debugEnabled ? await readDebugStore(page) : null;
+    if (debugState) {
+      await testInfo.attach("scrollback-jank-debug.json", {
+        body: JSON.stringify(debugState, null, 2),
+        contentType: "application/json",
+      });
+    }
+
     const video = page.video();
     await page.close();
-    const videoPath = video ? await video.path() : null;
-    if (!videoPath || !fs.existsSync(videoPath)) {
+    const videoPath = testInfo.outputPath("scrollback-jank-video.webm");
+    if (!video) {
+      throw new Error("Playwright video not available for scrollback jank analysis.");
+    }
+    await video.saveAs(videoPath);
+    if (!fs.existsSync(videoPath)) {
       throw new Error("Playwright video not found for scrollback jank analysis.");
     }
 
@@ -111,6 +244,32 @@ describe("workbench: scrollback jank video", () => {
         path: diffPath,
         contentType: "image/png",
       });
+    }
+
+    if (process.env.CTX_E2E_JANK_VIDEO_LOG === "1") {
+      // eslint-disable-next-line no-console
+      console.log(`[scrollback-jank-summary] ${JSON.stringify({
+        rows: analysis.rows.length,
+        baselineShift: analysis.baselineShift,
+        baselineAbs: analysis.baselineAbs,
+        maxAbsShift: analysis.maxAbsShift,
+        maxJankAbsShift: analysis.maxJankAbsShift,
+        flaggedCount: analysis.flagged.length,
+        snapbackPairs: analysis.snapbackPairs.length,
+        ...(debugState
+          ? {
+              rowSizeMismatchSummary: summarizeRowSizeMismatches(debugState.rowSizeMismatches),
+              flashTraces: debugState.flashTraces.map((trace) => ({
+                cause: trace.cause ?? null,
+                sampleCount: trace.sampleCount ?? null,
+                snapbackDetected: trace.snapbackDetected ?? null,
+                maxAbsScrollTopDeltaPx: trace.maxAbsScrollTopDeltaPx ?? null,
+                maxAbsFirstItemTopDeltaPx: trace.maxAbsFirstItemTopDeltaPx ?? null,
+                maxAbsScrollHeightDeltaPx: trace.maxAbsScrollHeightDeltaPx ?? null,
+              })),
+            }
+          : {}),
+      })}`);
     }
 
     expect(analysis.rows.length).toBeGreaterThan(5);

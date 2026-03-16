@@ -50,6 +50,7 @@ import type {
   ThreadItem,
   WorkbenchListItem,
 } from "../SessionPage.types";
+import { resolveWorkbenchMessageExpanded } from "../sessionMessageListItemIdentity";
 import { SessionThreadPane } from "../sessionThread/SessionThreadPane";
 import { ProviderGuardBanner } from "./ProviderGuardBanner";
 import { SessionAuthBanner } from "./SessionAuthBanner";
@@ -104,6 +105,8 @@ type SessionWorkbenchPaneProps = {
   setExpandedTurnDetailsById: Dispatch<SetStateAction<Record<string, boolean>>>;
   expandedToolById: Record<string, boolean>;
   setExpandedToolById: Dispatch<SetStateAction<Record<string, boolean>>>;
+  expandedMessageById: Record<string, boolean>;
+  setExpandedMessageById: Dispatch<SetStateAction<Record<string, boolean>>>;
   turnToolsLoading: string[];
   verbosity: SessionViewVerbosity;
   setOptimisticAskAnswers: Dispatch<
@@ -122,6 +125,8 @@ type SessionWorkbenchPaneProps = {
   onOpenChildSession: (childSessionId: string) => void;
   style: CSSProperties;
   itemIdentity: (item: WorkbenchListItem) => unknown;
+  itemKey: (item: WorkbenchListItem) => string;
+  increaseViewportBy: number;
   initialData: WorkbenchListItem[];
   initialLocation: ItemLocation;
   dataState?: DataWithScrollModifier<WorkbenchListItem>;
@@ -209,6 +214,8 @@ export function SessionWorkbenchPane({
   setExpandedTurnDetailsById,
   expandedToolById,
   setExpandedToolById,
+  expandedMessageById,
+  setExpandedMessageById,
   turnToolsLoading,
   verbosity,
   setOptimisticAskAnswers,
@@ -225,6 +232,8 @@ export function SessionWorkbenchPane({
   onOpenChildSession,
   style,
   itemIdentity,
+  itemKey,
+  increaseViewportBy,
   initialData,
   initialLocation,
   dataState,
@@ -295,7 +304,6 @@ export function SessionWorkbenchPane({
     }),
     [context, expandedToolById, expandedTurnDetailsById, expandedTurnHeaders],
   );
-
   const renderThreadItem = (item: ThreadItem) => {
     if (item.kind === "spacer") {
       return <div style={{ height: 1 }} />;
@@ -395,6 +403,16 @@ export function SessionWorkbenchPane({
         worktreeId={worktreeId}
         onFileOpenError={handleFileOpenError}
         modifierDown={modifierDown}
+        messageExpanded={
+          item.kind === "message" ? resolveWorkbenchMessageExpanded(item, expandedMessageById) : undefined
+        }
+        onToggleMessageExpanded={
+          item.kind === "message"
+            ? (expanded) => {
+                setExpandedMessageById((prev) => ({ ...prev, [item.id]: expanded }));
+              }
+            : undefined
+        }
       />
     );
   };
@@ -517,6 +535,8 @@ export function SessionWorkbenchPane({
           initialData={initialData}
           itemContent={workbenchItemContent}
           itemIdentity={itemIdentity}
+          itemKey={itemKey}
+          increaseViewportBy={increaseViewportBy}
           initialLocation={initialLocation}
           dataState={dataState}
           context={messageListContext}

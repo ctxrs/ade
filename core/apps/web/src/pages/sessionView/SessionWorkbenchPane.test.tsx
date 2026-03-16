@@ -1,5 +1,5 @@
 import React, { useRef, useState } from "react";
-import { fireEvent, render, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { VirtuosoMessageListTestingContext } from "@virtuoso.dev/message-list";
 import type { MessageAttachment } from "../../api/client";
@@ -63,6 +63,7 @@ function TestPane() {
   const [expandedTurnHeaders, setExpandedTurnHeaders] = useState<Record<string, boolean>>({});
   const [expandedTurnDetailsById, setExpandedTurnDetailsById] = useState<Record<string, boolean>>({});
   const [expandedToolById, setExpandedToolById] = useState<Record<string, boolean>>({});
+  const [expandedMessageById, setExpandedMessageById] = useState<Record<string, boolean>>({});
   const [, setOptimisticAskAnswers] = useState<Record<string, AskUserQuestionAnswerState>>({});
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
   const methodsRef = useRef(null);
@@ -92,6 +93,8 @@ function TestPane() {
         setExpandedTurnDetailsById={setExpandedTurnDetailsById}
         expandedToolById={expandedToolById}
         setExpandedToolById={setExpandedToolById}
+        expandedMessageById={expandedMessageById}
+        setExpandedMessageById={setExpandedMessageById}
         turnToolsLoading={[]}
         verbosity="default"
         setOptimisticAskAnswers={setOptimisticAskAnswers}
@@ -108,6 +111,269 @@ function TestPane() {
         onOpenChildSession={() => {}}
         style={{ height: 400 }}
         itemIdentity={(item) => item.id}
+        itemKey={(item) => item.id}
+        increaseViewportBy={240}
+        initialData={listItems.current}
+        initialLocation={{ index: 0, align: "start" }}
+        dataState={{ data: listItems.current }}
+        context={context}
+        onScroll={() => {}}
+        onRenderedDataChange={() => {}}
+        methodsRef={methodsRef}
+        licenseKey=""
+        shortSizeAlign="top"
+        queueForPanel={[]}
+        pendingQueueMessageIdSet={new Set<string>()}
+        queueActionBusy={false}
+        sendBusy={false}
+        onSendQueuedNow={async () => {}}
+        onEditQueued={async () => {}}
+        onRemoveQueued={async () => {}}
+        input=""
+        setInput={() => {}}
+        slashCommands={[]}
+        draftAttachments={draftAttachments}
+        setDraftAttachments={setDraftAttachments}
+        sendNow={async () => {}}
+        hasDraftContent={false}
+        hasActiveTurn={false}
+        atBottom={true}
+        setVerbosityPref={() => {}}
+        workbenchMode="default"
+        setWorkbenchMode={() => {}}
+        contextWindow={null}
+        dictationRecording={false}
+        onToggleRecording={() => {}}
+        onInterruptSession={null}
+        sendError={null}
+        fileOpenError={null}
+        dictationDebugText={null}
+        dictationError={null}
+        dictationOnboarding={null}
+        dismissDictationOnboarding={() => {}}
+        backDictationOnboarding={() => {}}
+        chooseDictationOnboardingLocal={() => {}}
+        chooseDictationOnboardingCloud={() => {}}
+        updateDictationOnboardingCloud={() => {}}
+        submitDictationOnboardingCloud={async () => {}}
+        submitDictationOnboardingLocal={async () => {}}
+        providerGuardNotice={null}
+        providerGuardHeading=""
+        providerGuardMessage=""
+        providerGuardProviderLabel={undefined}
+        providerGuardPidLabel={null}
+        providerGuardMemoryLimitMb={null}
+        providerGuardLimitLabel=""
+        providerGuardActionBusy={false}
+        providerGuardActionError={null}
+        canRaiseProviderGuard={false}
+        onRaiseProviderGuardLimit={async () => {}}
+        onDisableProviderGuard={async () => {}}
+        formatMemoryMb={() => "0 MB"}
+        availableModels={[]}
+        currentModelId=""
+        onSetModelId={async () => {}}
+      />
+    </VirtuosoMessageListTestingContext.Provider>
+  );
+}
+
+function TestMessagePane() {
+  const longMessage = Array.from({ length: 24 }, (_, index) => `line ${index + 1}`).join("\n");
+  const listItems = useRef<WorkbenchListItem[]>([
+    {
+      kind: "message",
+      id: "message-1",
+      role: "user",
+      content: longMessage,
+      attachments: [],
+      created_at: "2025-01-01T00:00:00.000Z",
+    },
+  ]);
+  const [expandedTurnHeaders, setExpandedTurnHeaders] = useState<Record<string, boolean>>({});
+  const [expandedTurnDetailsById, setExpandedTurnDetailsById] = useState<Record<string, boolean>>({});
+  const [expandedToolById, setExpandedToolById] = useState<Record<string, boolean>>({});
+  const [expandedMessageById, setExpandedMessageById] = useState<Record<string, boolean>>({});
+  const [, setOptimisticAskAnswers] = useState<Record<string, AskUserQuestionAnswerState>>({});
+  const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
+  const methodsRef = useRef(null);
+  const dropScopeRef = useRef<HTMLDivElement | null>(null);
+  const context: WorkbenchMessageListContext = { loaded: true, loadingOlder: false };
+
+  return (
+    <VirtuosoMessageListTestingContext.Provider value={{ viewportHeight: 600, itemHeight: 120 }}>
+      <SessionWorkbenchPane
+        id="session-1"
+        entryLoadState={undefined}
+        entryError={null}
+        session={null}
+        sessionError={null}
+        dropActive={false}
+        dropScopeRef={dropScopeRef}
+        listItems={listItems.current}
+        events={[]}
+        messages={[]}
+        worktreeId={null}
+        handleFileOpenError={() => {}}
+        modifierDown={false}
+        activeAskToolCallId={null}
+        expandedTurnHeaders={expandedTurnHeaders}
+        setExpandedTurnHeaders={setExpandedTurnHeaders}
+        expandedTurnDetailsById={expandedTurnDetailsById}
+        setExpandedTurnDetailsById={setExpandedTurnDetailsById}
+        expandedToolById={expandedToolById}
+        setExpandedToolById={setExpandedToolById}
+        expandedMessageById={expandedMessageById}
+        setExpandedMessageById={setExpandedMessageById}
+        turnToolsLoading={[]}
+        verbosity="default"
+        setOptimisticAskAnswers={setOptimisticAskAnswers}
+        onRequestTurnTools={() => {}}
+        showDebug={false}
+        debugEvents={[]}
+        authUi={{ status: "ok", methods: [] }}
+        authMethodId=""
+        onAuthMethodChange={() => {}}
+        authBusy={false}
+        authError={null}
+        onAuthenticate={async () => {}}
+        subagentInvocations={[]}
+        onOpenChildSession={() => {}}
+        style={{ height: 400 }}
+        itemIdentity={(item) => item.id}
+        itemKey={(item) => item.id}
+        increaseViewportBy={240}
+        initialData={listItems.current}
+        initialLocation={{ index: 0, align: "start" }}
+        dataState={{ data: listItems.current }}
+        context={context}
+        onScroll={() => {}}
+        onRenderedDataChange={() => {}}
+        methodsRef={methodsRef}
+        licenseKey=""
+        shortSizeAlign="top"
+        queueForPanel={[]}
+        pendingQueueMessageIdSet={new Set<string>()}
+        queueActionBusy={false}
+        sendBusy={false}
+        onSendQueuedNow={async () => {}}
+        onEditQueued={async () => {}}
+        onRemoveQueued={async () => {}}
+        input=""
+        setInput={() => {}}
+        slashCommands={[]}
+        draftAttachments={draftAttachments}
+        setDraftAttachments={setDraftAttachments}
+        sendNow={async () => {}}
+        hasDraftContent={false}
+        hasActiveTurn={false}
+        atBottom={true}
+        setVerbosityPref={() => {}}
+        workbenchMode="default"
+        setWorkbenchMode={() => {}}
+        contextWindow={null}
+        dictationRecording={false}
+        onToggleRecording={() => {}}
+        onInterruptSession={null}
+        sendError={null}
+        fileOpenError={null}
+        dictationDebugText={null}
+        dictationError={null}
+        dictationOnboarding={null}
+        dismissDictationOnboarding={() => {}}
+        backDictationOnboarding={() => {}}
+        chooseDictationOnboardingLocal={() => {}}
+        chooseDictationOnboardingCloud={() => {}}
+        updateDictationOnboardingCloud={() => {}}
+        submitDictationOnboardingCloud={async () => {}}
+        submitDictationOnboardingLocal={async () => {}}
+        providerGuardNotice={null}
+        providerGuardHeading=""
+        providerGuardMessage=""
+        providerGuardProviderLabel={undefined}
+        providerGuardPidLabel={null}
+        providerGuardMemoryLimitMb={null}
+        providerGuardLimitLabel=""
+        providerGuardActionBusy={false}
+        providerGuardActionError={null}
+        canRaiseProviderGuard={false}
+        onRaiseProviderGuardLimit={async () => {}}
+        onDisableProviderGuard={async () => {}}
+        formatMemoryMb={() => "0 MB"}
+        availableModels={[]}
+        currentModelId=""
+        onSetModelId={async () => {}}
+      />
+    </VirtuosoMessageListTestingContext.Provider>
+  );
+}
+
+function TestAssistantPane() {
+  const longAssistant = Array.from({ length: 24 }, (_, index) => `assistant line ${index + 1}`).join("\n");
+  const listItems = useRef<WorkbenchListItem[]>([
+    {
+      kind: "assistant",
+      id: "assistant-1",
+      turn_id: "turn-1",
+      created_at: "2025-01-01T00:00:00.000Z",
+      content: longAssistant,
+      thought: "",
+      is_complete: true,
+    },
+  ]);
+  const [expandedTurnHeaders, setExpandedTurnHeaders] = useState<Record<string, boolean>>({});
+  const [expandedTurnDetailsById, setExpandedTurnDetailsById] = useState<Record<string, boolean>>({});
+  const [expandedToolById, setExpandedToolById] = useState<Record<string, boolean>>({});
+  const [expandedMessageById, setExpandedMessageById] = useState<Record<string, boolean>>({});
+  const [, setOptimisticAskAnswers] = useState<Record<string, AskUserQuestionAnswerState>>({});
+  const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([]);
+  const methodsRef = useRef(null);
+  const dropScopeRef = useRef<HTMLDivElement | null>(null);
+  const context: WorkbenchMessageListContext = { loaded: true, loadingOlder: false };
+
+  return (
+    <VirtuosoMessageListTestingContext.Provider value={{ viewportHeight: 600, itemHeight: 120 }}>
+      <SessionWorkbenchPane
+        id="session-1"
+        entryLoadState={undefined}
+        entryError={null}
+        session={null}
+        sessionError={null}
+        dropActive={false}
+        dropScopeRef={dropScopeRef}
+        listItems={listItems.current}
+        events={[]}
+        messages={[]}
+        worktreeId={null}
+        handleFileOpenError={() => {}}
+        modifierDown={false}
+        activeAskToolCallId={null}
+        expandedTurnHeaders={expandedTurnHeaders}
+        setExpandedTurnHeaders={setExpandedTurnHeaders}
+        expandedTurnDetailsById={expandedTurnDetailsById}
+        setExpandedTurnDetailsById={setExpandedTurnDetailsById}
+        expandedToolById={expandedToolById}
+        setExpandedToolById={setExpandedToolById}
+        expandedMessageById={expandedMessageById}
+        setExpandedMessageById={setExpandedMessageById}
+        turnToolsLoading={[]}
+        verbosity="default"
+        setOptimisticAskAnswers={setOptimisticAskAnswers}
+        onRequestTurnTools={() => {}}
+        showDebug={false}
+        debugEvents={[]}
+        authUi={{ status: "ok", methods: [] }}
+        authMethodId=""
+        onAuthMethodChange={() => {}}
+        authBusy={false}
+        authError={null}
+        onAuthenticate={async () => {}}
+        subagentInvocations={[]}
+        onOpenChildSession={() => {}}
+        style={{ height: 400 }}
+        itemIdentity={(item) => item.id}
+        itemKey={(item) => item.id}
+        increaseViewportBy={240}
         initialData={listItems.current}
         initialLocation={{ index: 0, align: "start" }}
         dataState={{ data: listItems.current }}
@@ -191,17 +457,19 @@ describe("SessionWorkbenchPane", () => {
 
   it("expands a turn header when clicked inside the virtualized workbench list", async () => {
     const { container } = render(<TestPane />);
-    const header = container.querySelector(".wb-turn-header");
-    if (!(header instanceof HTMLDivElement)) {
+    const initialHeader = container.querySelector(".wb-turn-header");
+    if (!(initialHeader instanceof HTMLDivElement)) {
       throw new Error("Expected .wb-turn-header to be rendered");
     }
 
-    expect(header).toHaveAttribute("aria-expanded", "false");
+    expect(initialHeader).toHaveAttribute("aria-expanded", "false");
 
-    fireEvent.mouseDown(header);
-    fireEvent.click(header);
+    fireEvent.mouseDown(initialHeader);
+    fireEvent.click(initialHeader);
 
-    expect(header).toHaveAttribute("aria-expanded", "true");
+    await waitFor(() => {
+      expect(container.querySelector(".wb-turn-header")).toHaveAttribute("aria-expanded", "true");
+    });
   });
 
   it("copies without expanding when the copy icon is clicked inside the virtualized workbench list", async () => {
@@ -226,5 +494,27 @@ describe("SessionWorkbenchPane", () => {
     await waitFor(() => {
       expect(copyButton).toHaveAttribute("aria-label", "Copied");
     });
+  });
+
+  it("stores long message expansion outside the row-local component state", () => {
+    const { container } = render(<TestMessagePane />);
+    const toggle = container.querySelector(".link");
+    if (!(toggle instanceof HTMLButtonElement)) {
+      throw new Error("Expected long message toggle button to render");
+    }
+
+    expect(toggle.textContent).toBe("Show more");
+    expect(container.textContent).not.toContain("line 24");
+
+    fireEvent.click(toggle);
+
+    expect(toggle.textContent).toBe("Show less");
+    expect(container.textContent).toContain("line 24");
+  });
+
+  it("renders long completed assistant content without a collapse toggle", () => {
+    const { container } = render(<TestAssistantPane />);
+    expect(container.querySelector('button[aria-controls^="assistant-"]')).toBeNull();
+    expect(container.textContent).toContain("assistant line 24");
   });
 });

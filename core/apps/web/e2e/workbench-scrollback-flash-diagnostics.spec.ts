@@ -2,7 +2,7 @@ import { test, expect } from "./fixtures";
 import type { APIRequestContext, Page, Route, TestInfo } from "@playwright/test";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
-const scrollSelector = ".wb-session-slot[aria-hidden=\"false\"] .wb-thread-scroller";
+const scrollSelector = ".wb-thread-scroller";
 
 type FlashTrace = {
   cause?: string;
@@ -13,12 +13,24 @@ type FlashTrace = {
   maxAbsScrollHeightDeltaPx?: number;
 };
 
+type RowSizeMismatch = {
+  reason?: string;
+  id?: string;
+  itemKind?: string;
+  itemKey?: string;
+  knownVsActualDeltaPx?: number;
+  knownVsParentDeltaPx?: number;
+  parentVsActualDeltaPx?: number;
+};
+
 type MessageListDebugWindow = Window & {
   __wbSessionMessageListDebug?: {
     seq: number;
     entries: Array<Record<string, unknown>>;
     flashSeq?: number;
     flashTraces?: FlashTrace[];
+    rowSizeMismatchSeq?: number;
+    rowSizeMismatches?: RowSizeMismatch[];
   };
 };
 
@@ -40,6 +52,33 @@ async function addConcurrentLiveMessage(request: APIRequestContext, sessionId: s
   expect(response.ok(), `failed to post concurrent live message ${label}`).toBeTruthy();
 }
 
+async function suppressGlobalUpdateNotice(page: Page) {
+  await page.addInitScript(() => {
+    window.localStorage.removeItem("ctx_update_check_v1");
+    window.localStorage.removeItem("ctx_update_prompt_next_allowed_at_v1");
+    window.localStorage.removeItem("ctx_update_prompt_idle_versions_v1");
+    window.sessionStorage.removeItem("ctx_update_restart_required_version_v1");
+  });
+  await page.route("**/api/updates/check**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        channel: "stable",
+        base_url: "https://example.com",
+        platform: "linux-x64",
+        current_version: "1.0.0",
+        latest_version: null,
+        min_supported_version: null,
+        platform_supported: true,
+        in_place_update_supported: false,
+        in_place_update_reason: null,
+        update_available: false,
+      }),
+    });
+  });
+}
+
 async function clearDebugStore(page: Page) {
   await page.evaluate(() => {
     const win = window as MessageListDebugWindow;
@@ -48,6 +87,8 @@ async function clearDebugStore(page: Page) {
       entries: [],
       flashSeq: 0,
       flashTraces: [],
+      rowSizeMismatchSeq: 0,
+      rowSizeMismatches: [],
     };
   });
 }
@@ -61,8 +102,34 @@ async function readDebugStore(page: Page) {
       flashSeq: store?.flashSeq ?? 0,
       entries: Array.isArray(store?.entries) ? store.entries.slice(-100) : [],
       flashTraces: Array.isArray(store?.flashTraces) ? store.flashTraces.slice(-20) : [],
+      rowSizeMismatchSeq: store?.rowSizeMismatchSeq ?? 0,
+      rowSizeMismatches: Array.isArray(store?.rowSizeMismatches) ? store.rowSizeMismatches.slice(-100) : [],
     };
   });
+}
+
+function summarizeRowSizeMismatches(mismatches: RowSizeMismatch[]) {
+  const absDeltas = mismatches.map((mismatch) => Math.abs(Number(mismatch.knownVsActualDeltaPx ?? 0)));
+  return {
+    count: mismatches.length,
+    maxKnownVsActualDeltaPx: absDeltas.reduce((max, value) => Math.max(max, value), 0),
+    reasons: Array.from(
+      mismatches.reduce((counts, mismatch) => {
+        const reason = String(mismatch.reason ?? "unknown");
+        counts.set(reason, (counts.get(reason) ?? 0) + 1);
+        return counts;
+      }, new Map<string, number>()),
+    ),
+    samples: mismatches.slice(-5).map((mismatch) => ({
+      id: mismatch.id ?? null,
+      itemKind: mismatch.itemKind ?? null,
+      itemKey: mismatch.itemKey ?? null,
+      reason: mismatch.reason ?? null,
+      knownVsActualDeltaPx: mismatch.knownVsActualDeltaPx ?? null,
+      knownVsParentDeltaPx: mismatch.knownVsParentDeltaPx ?? null,
+      parentVsActualDeltaPx: mismatch.parentVsActualDeltaPx ?? null,
+    })),
+  };
 }
 
 async function forceBottom(page: Page) {
@@ -112,7 +179,9 @@ async function triggerHistoryLoad(page: Page, request: APIRequestContext, sessio
 
 function relevantFlashTraces(traces: FlashTrace[]): FlashTrace[] {
   return traces.filter((trace) =>
-    ["history:extend", "data:prepend", "data:reconcile"].includes(String(trace.cause ?? "")),
+    ["history:extend", "history:prepend-tail-reconcile", "data:prepend", "data:reconcile"].includes(
+      String(trace.cause ?? ""),
+    ),
   );
 }
 
@@ -132,6 +201,7 @@ test("workbench: scrollback diagnostics capture prepend/reconcile flash traces",
   const sessionId = seed.sessionIdsByTask[taskId]?.[0] ?? "";
   expect(sessionId).toBeTruthy();
   await addLongMessages(request, sessionId, 12);
+  await suppressGlobalUpdateNotice(page);
 
   const params = new URLSearchParams();
   params.set("debug", "1");
@@ -141,7 +211,7 @@ test("workbench: scrollback diagnostics capture prepend/reconcile flash traces",
   await expect(rows).toHaveCount(1, { timeout: 20000 });
   await rows.first().click();
 
-  await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea")).toBeVisible({
+  await expect(page.locator("textarea.wb-active-textarea")).toBeVisible({
     timeout: 20000,
   });
   await expect(page.locator(scrollSelector).first()).toBeVisible({ timeout: 20000 });
@@ -156,7 +226,9 @@ test("workbench: scrollback diagnostics capture prepend/reconcile flash traces",
     state = await readDebugStore(page);
     traces = relevantFlashTraces(state.flashTraces);
     const causes = new Set(traces.map((trace) => String(trace.cause ?? "")));
-    if (causes.has("history:extend") || causes.has("data:reconcile")) break;
+    if (causes.has("history:extend") || causes.has("history:prepend-tail-reconcile") || causes.has("data:reconcile")) {
+      break;
+    }
   }
 
   await testInfo.attach("scrollback-flash-debug.json", {
@@ -164,9 +236,30 @@ test("workbench: scrollback diagnostics capture prepend/reconcile flash traces",
     contentType: "application/json",
   });
 
+  if (process.env.CTX_E2E_SCROLLBACK_FLASH_LOG === "1") {
+    const rowSizeMismatchSummary = summarizeRowSizeMismatches(state.rowSizeMismatches);
+    // eslint-disable-next-line no-console
+    console.log(
+      `[scrollback-flash-summary] ${JSON.stringify({
+        traceCount: traces.length,
+        rowSizeMismatchSummary,
+        traces: traces.map((trace) => ({
+          cause: trace.cause ?? null,
+          sampleCount: trace.sampleCount ?? null,
+          snapbackDetected: trace.snapbackDetected ?? null,
+          maxAbsScrollTopDeltaPx: trace.maxAbsScrollTopDeltaPx ?? null,
+          maxAbsFirstItemTopDeltaPx: trace.maxAbsFirstItemTopDeltaPx ?? null,
+          maxAbsScrollHeightDeltaPx: trace.maxAbsScrollHeightDeltaPx ?? null,
+        })),
+      })}`,
+    );
+  }
+
   expect(traces.length, "expected scrollback instrumentation traces").toBeGreaterThan(0);
   expect(
-    traces.some((trace) => ["history:extend", "data:reconcile"].includes(String(trace.cause ?? ""))),
+    traces.some((trace) =>
+      ["history:extend", "history:prepend-tail-reconcile", "data:reconcile"].includes(String(trace.cause ?? "")),
+    ),
     "expected a mixed history/live-update trace, not only a pure prepend",
   ).toBeTruthy();
   expect(

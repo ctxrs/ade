@@ -12,6 +12,16 @@ import { debugItemSummary, debugStableKey, findFirstRenderedItemContractViolatio
 import { logSessionMessageListReconcileDebug } from "./sessionMessageListReconcileDebug";
 import { applyStableListUpdate, applyStructuralStableListUpdate } from "./sessionMessageListStableUpdate";
 import { useSessionMessageListDiagnostics } from "./useSessionMessageListDiagnostics";
+import {
+  computeHistoryPrependTailReconcilePlan,
+  computeHistoryPrefetchThresholdPx,
+  findSharedItemSizeCacheKeyChanges,
+  isExactContiguousIdWindow,
+  pickAnchorIdsFromRange,
+  pickAnchorIdsFromScroller,
+  shouldUseRawListItems,
+  trimTrailingAppendsWhileScrolledUp,
+} from "./sessionMessageListControllerUtils";
 
 type Params = {
   sessionId: string;
@@ -20,6 +30,8 @@ type Params = {
   listItems: WorkbenchListItem[];
   canLoadOlder: boolean;
   loadOlder: () => Promise<void>;
+  layoutRevision: string;
+  itemSizeCacheKey: (item: WorkbenchListItem) => string | null;
   showDebug: boolean;
   onAtBottomChange?: (atBottom: boolean) => void;
 };
@@ -75,6 +87,8 @@ export function useSessionMessageListController(params: Params): Result {
     listItems,
     canLoadOlder,
     loadOlder,
+    layoutRevision,
+    itemSizeCacheKey,
     showDebug,
     onAtBottomChange,
   } = params;
@@ -89,9 +103,9 @@ export function useSessionMessageListController(params: Params): Result {
   const lastAtBottomRef = useRef<boolean | null>(null);
   const lastListOffsetRef = useRef<number | null>(null);
 
-  // Best-effort anchoring based on rendered data (no DOM reads).
+  // Best-effort anchoring prefers the actually visible DOM rows and falls back to rendered data.
   // NOTE: `onRenderedDataChange` can include overscan. Anchoring to `range[0]` can anchor an offscreen
-  // row and cause visible jumps, especially with large `increaseViewportBy`. Prefer a mid-range anchor.
+  // row and cause visible jumps, especially with large `increaseViewportBy`.
   const renderedAnchorIdRef = useRef<string | null>(null);
   const renderedTopIdRef = useRef<string | null>(null);
   const firstListItemIdRef = useRef<string | null>(null);
@@ -100,14 +114,20 @@ export function useSessionMessageListController(params: Params): Result {
   const historyExpectedRef = useRef(false);
   const historyRequestedAtTopRef = useRef(false);
   const historyRequestedAnchorIdRef = useRef<string | null>(null);
+  const lastLayoutRevisionRef = useRef(layoutRevision);
+  const reconcileEpochRef = useRef(0);
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const [deferTrailingAppends, setDeferTrailingAppends] = useState(false);
   const suppressIdDiffLogsRef = useRef<{ sessionId: string; remainingTicks: number } | null>(null);
   const lastScrollDebugAtRef = useRef(0);
 
   // Coalesce for steady-state updates, but never let it affect session transitions.
   const listItemsCoalesced = useRafCoalesced(listItems);
 
-  const context = useMemo(() => ({ loaded, loadingOlder }), [loaded, loadingOlder]);
+  const context = useMemo(
+    () => ({ loaded, loadingOlder, renderRevision: layoutRevision }),
+    [layoutRevision, loaded, loadingOlder],
+  );
   const { recordDebugSnapshot, startFlashProbe } = useSessionMessageListDiagnostics({
     sessionId,
     isActive,
@@ -143,11 +163,18 @@ export function useSessionMessageListController(params: Params): Result {
     () => (params) => (params.atBottom ? "auto" : false),
     [],
   );
+  const useRawListItems = shouldUseRawListItems({
+    stickToBottom: stickToBottomRef.current,
+    pendingHistory: pendingHistoryRef.current,
+    loadingOlder,
+  });
+  const visibleListItems = useRawListItems ? listItems : listItemsCoalesced;
+
   const initialLocation: ItemLocation = INITIAL_LOCATION_BOTTOM;
   const initialData = useMemo<WorkbenchListItem[]>(() => listItems, [listItems]);
 
   // Keep an up-to-date reference without introducing additional hook ordering churn under HMR.
-  firstListItemIdRef.current = listItemsCoalesced?.[0]?.id ?? null;
+  firstListItemIdRef.current = visibleListItems?.[0]?.id ?? null;
 
   const onScroll = useCallback(
     (location: ListScrollLocation) => {
@@ -162,6 +189,9 @@ export function useSessionMessageListController(params: Params): Result {
           ? scroller.scrollHeight - (scroller.scrollTop + scroller.clientHeight) <= 16
           : atBottomFromLocation;
       stickToBottomRef.current = atBottom;
+      if (atBottom && deferTrailingAppends) {
+        setDeferTrailingAppends(false);
+      }
       if (isActive && onAtBottomChange && lastAtBottomRef.current !== atBottom) {
         lastAtBottomRef.current = atBottom;
         onAtBottomChange(atBottom);
@@ -174,8 +204,11 @@ export function useSessionMessageListController(params: Params): Result {
       lastListOffsetRef.current = location.listOffset;
       // Scrolling up means listOffset moves toward 0 (increases, since it's negative when scrolled down).
       const scrollingUp = prevOffset == null ? false : location.listOffset > prevOffset;
-      const prefetchThreshold = -Math.max(250, location.visibleListHeight); // ~1 viewport, min 250px
+      const prefetchThreshold = -computeHistoryPrefetchThresholdPx(location.visibleListHeight);
       const nearTop = location.listOffset > prefetchThreshold;
+      const anchors = pickAnchorIdsFromScroller(scroller);
+      if (anchors.topId) renderedTopIdRef.current = anchors.topId;
+      if (anchors.anchorId) renderedAnchorIdRef.current = anchors.anchorId;
 
       if (import.meta.env.DEV && showDebug) {
         const now = Date.now();
@@ -254,15 +287,22 @@ export function useSessionMessageListController(params: Params): Result {
       sessionId,
       showDebug,
       isActive,
+      deferTrailingAppends,
     ],
   );
 
   const onRenderedDataChange = useCallback((range: WorkbenchListItem[]) => {
-    const topId = range?.[0]?.id ?? null;
-    const middleIndex = range.length > 0 ? Math.floor(range.length / 2) : 0;
-    const anchorId = range?.[middleIndex]?.id ?? topId;
-    renderedTopIdRef.current = topId;
-    renderedAnchorIdRef.current = anchorId;
+    const methods = methodsRef.current;
+    const scroller = methods?.scrollerElement?.() ?? null;
+    const domAnchors = pickAnchorIdsFromScroller(scroller);
+    if (domAnchors.topId || domAnchors.anchorId) {
+      renderedTopIdRef.current = domAnchors.topId;
+      renderedAnchorIdRef.current = domAnchors.anchorId;
+      return;
+    }
+    const rangeAnchors = pickAnchorIdsFromRange(range);
+    renderedTopIdRef.current = rangeAnchors.topId;
+    renderedAnchorIdRef.current = rangeAnchors.anchorId;
   }, []);
 
   useLayoutEffect(() => {
@@ -284,10 +324,11 @@ export function useSessionMessageListController(params: Params): Result {
     if (!isActive) return;
     const methods = methodsRef.current;
     if (!methods) return;
+    const reconcileEpoch = ++reconcileEpochRef.current;
 
     // Use raw data for session boundaries; coalescing can lag a frame across session switches.
     const nextRaw = listItems;
-    let next = listItemsCoalesced;
+    let next = visibleListItems;
     const current = methods.data.get();
     const sessionChanged = lastSessionIdRef.current !== sessionId;
 
@@ -392,11 +433,13 @@ export function useSessionMessageListController(params: Params): Result {
 
     if (sessionChanged) {
       lastSessionIdRef.current = sessionId;
+      lastLayoutRevisionRef.current = layoutRevision;
       pendingHistoryRef.current = false;
       historyExpectedRef.current = false;
       historyRequestedAtTopRef.current = false;
       historyRequestedAnchorIdRef.current = null;
       setLoadingOlder(false);
+      if (deferTrailingAppends) setDeferTrailingAppends(false);
       lastScrollLocationRef.current = null;
       lastListOffsetRef.current = null;
       stickToBottomRef.current = true;
@@ -423,11 +466,36 @@ export function useSessionMessageListController(params: Params): Result {
 
     const nextLen = next.length;
     const currentLen = current.length;
+    const currentIds = current.map((it) => it.id);
+    const shouldDeferTrailingAppends =
+      currentLen > 0 &&
+      !stickToBottomRef.current &&
+      (deferTrailingAppends || historyExpectedRef.current || pendingHistoryRef.current || loadingOlder);
+    if (shouldDeferTrailingAppends) {
+      const trimmedNext = trimTrailingAppendsWhileScrolledUp(currentIds, next);
+      if (trimmedNext.length !== next.length) {
+        next = trimmedNext;
+        if (!deferTrailingAppends) setDeferTrailingAppends(true);
+        recordDebugSnapshot("data:deferTrailingAppends", {
+          nextLen,
+          trimmedLen: trimmedNext.length,
+        });
+        logMessageListDebug("data:deferTrailingAppends", {
+          nextLen,
+          trimmedLen: trimmedNext.length,
+          currentLen,
+        });
+      }
+    }
+    const nextIds = next.map((it) => it.id);
+    const effectiveNextLen = next.length;
+    const layoutRevisionChanged = lastLayoutRevisionRef.current !== layoutRevision;
 
     // Initial population: never treat empty->non-empty as prepend/append.
     // Use `replace(..., initialLocation: LAST)` so opening a session lands at bottom deterministically.
     if (currentLen === 0) {
       if (nextRaw.length === 0) return;
+      lastLayoutRevisionRef.current = layoutRevision;
       historyExpectedRef.current = false;
       methods.cancelSmoothScroll();
       suppressIdDiffLogsRef.current = { sessionId, remainingTicks: 2 };
@@ -446,7 +514,8 @@ export function useSessionMessageListController(params: Params): Result {
       return;
     }
 
-    if (nextLen === 0) {
+    if (effectiveNextLen === 0) {
+      lastLayoutRevisionRef.current = layoutRevision;
       historyExpectedRef.current = false;
       methods.data.deleteRange(0, currentLen);
       recordDebugSnapshot("data:deleteRange", {
@@ -460,16 +529,98 @@ export function useSessionMessageListController(params: Params): Result {
       return;
     }
 
+    if (layoutRevisionChanged) {
+      lastLayoutRevisionRef.current = layoutRevision;
+      historyExpectedRef.current = false;
+      historyRequestedAtTopRef.current = false;
+      historyRequestedAnchorIdRef.current = null;
+      const atBottom = stickToBottomRef.current;
+      const purgeAnchorId = atBottom ? null : renderedTopIdRef.current ?? renderedAnchorIdRef.current;
+      const purgeAnchorIndex = purgeAnchorId ? next.findIndex((item) => item.id === purgeAnchorId) : -1;
+      const replaceLocation: ItemLocation =
+        atBottom
+          ? INITIAL_LOCATION_BOTTOM
+          : purgeAnchorIndex >= 0
+            ? { index: purgeAnchorIndex, align: "start" }
+            : initialLocation;
+      methods.cancelSmoothScroll();
+      suppressIdDiffLogsRef.current = { sessionId, remainingTicks: 1 };
+      methods.data.replace(next, { initialLocation: replaceLocation, purgeItemSizes: true });
+      if (atBottom) {
+        snapToBottom(methods);
+      }
+      recordDebugSnapshot("data:replace", {
+        reason: "layoutRevisionChanged",
+        layoutRevision,
+        nextLen: effectiveNextLen,
+        currentLen,
+        atBottom,
+        purgeAnchorId,
+        purgeAnchorIndex,
+      });
+      logMessageListDebug("data:replace", {
+        reason: "layoutRevisionChanged",
+        layoutRevision,
+        nextLen: effectiveNextLen,
+        currentLen,
+        atBottom,
+        purgeAnchorId,
+        purgeAnchorIndex,
+      });
+      return;
+    }
+
+    const sizeCacheKeyChanges = findSharedItemSizeCacheKeyChanges(current, next, itemSizeCacheKey);
+    if (sizeCacheKeyChanges.count > 0) {
+      const atBottom = stickToBottomRef.current;
+      const purgeAnchorId = atBottom ? null : renderedTopIdRef.current ?? renderedAnchorIdRef.current;
+      const purgeAnchorIndex = purgeAnchorId ? next.findIndex((item) => item.id === purgeAnchorId) : -1;
+      const replaceLocation: ItemLocation =
+        atBottom
+          ? INITIAL_LOCATION_BOTTOM
+          : purgeAnchorIndex >= 0
+            ? { index: purgeAnchorIndex, align: "start" }
+            : initialLocation;
+      methods.cancelSmoothScroll();
+      suppressIdDiffLogsRef.current = { sessionId, remainingTicks: 1 };
+      methods.data.replace(next, { initialLocation: replaceLocation, purgeItemSizes: true });
+      if (atBottom) {
+        snapToBottom(methods);
+      }
+      recordDebugSnapshot("data:replace", {
+        reason: "sizeCacheKeyChanged",
+        changedCount: sizeCacheKeyChanges.count,
+        changedSampleIds: sizeCacheKeyChanges.sampleIds,
+        nextLen: effectiveNextLen,
+        currentLen,
+        atBottom,
+        purgeAnchorId,
+        purgeAnchorIndex,
+      });
+      logMessageListDebug("data:replace", {
+        reason: "sizeCacheKeyChanged",
+        changedCount: sizeCacheKeyChanges.count,
+        changedSampleIds: sizeCacheKeyChanges.sampleIds,
+        nextLen: effectiveNextLen,
+        currentLen,
+        atBottom,
+        purgeAnchorId,
+        purgeAnchorIndex,
+      });
+      return;
+    }
+
     // If we just requested history and the next update is not a pure prepend (e.g. streaming appended too),
     // apply it as an extension update instead of falling back to `replace()`.
-    if (historyExpectedRef.current && currentLen > 0 && nextLen >= currentLen) {
+    if (historyExpectedRef.current && currentLen > 0 && effectiveNextLen >= currentLen) {
       const wasAtTop = historyRequestedAtTopRef.current;
       const requestedAnchorId = historyRequestedAnchorIdRef.current;
       const firstId = current[0]?.id ?? null;
       const lastId = current[currentLen - 1]?.id ?? null;
       const firstIndex = firstId ? next.findIndex((it) => it.id === firstId) : -1;
       const lastIndex = lastId ? next.findIndex((it) => it.id === lastId) : -1;
-      if (firstIndex >= 0 && lastIndex >= firstIndex) {
+      const exactContiguousWindow = isExactContiguousIdWindow(currentIds, nextIds, firstIndex);
+      if (firstIndex >= 0 && lastIndex >= firstIndex && exactContiguousWindow) {
         const retainedNext = next.slice(firstIndex, lastIndex + 1);
         let retainedMatchesCurrent = retainedNext.length === currentLen;
         if (retainedMatchesCurrent) {
@@ -502,10 +653,9 @@ export function useSessionMessageListController(params: Params): Result {
               });
             }
           }
-
           startFlashProbe("history:extend", {
             currentLen,
-            nextLen,
+            nextLen: effectiveNextLen,
             prefixLen: prefix.length,
             suffixLen: suffix.length,
             firstIndex,
@@ -532,7 +682,7 @@ export function useSessionMessageListController(params: Params): Result {
             suffixLen: suffix.length,
             firstIndex,
             lastIndex,
-            nextLen,
+            nextLen: effectiveNextLen,
             currentLen,
             requestedAnchorId,
             wasAtTop,
@@ -545,20 +695,127 @@ export function useSessionMessageListController(params: Params): Result {
               suffixLen: suffix.length,
               firstIndex,
               lastIndex,
-              nextLen,
+              nextLen: effectiveNextLen,
               currentLen,
             });
           }
           return;
         }
       }
+      const mixedHistoryPlan = computeHistoryPrependTailReconcilePlan({
+        currentIds,
+        nextIds,
+        startIndex: firstIndex,
+        anchorId: renderedAnchorIdRef.current,
+      });
+      if (mixedHistoryPlan) {
+        const nextById = new Map(next.map((it) => [it.id, it] as const));
+        const prefix = next.slice(0, mixedHistoryPlan.prefixLen);
+        const insertData = next.slice(
+          mixedHistoryPlan.insertStart,
+          mixedHistoryPlan.insertStart + mixedHistoryPlan.insertCount,
+        );
+
+        startFlashProbe("history:prepend-tail-reconcile", {
+          currentLen,
+          nextLen: effectiveNextLen,
+          prefixLen: mixedHistoryPlan.prefixLen,
+          overlapLen: mixedHistoryPlan.overlapLen,
+          deleteOffset: mixedHistoryPlan.deleteOffset,
+          deleteCount: mixedHistoryPlan.deleteCount,
+          insertLen: insertData.length,
+          suffixLen: mixedHistoryPlan.suffixLen,
+          requestedAnchorId,
+          wasAtTop,
+        });
+
+        methods.data.prepend(prefix);
+        requestAnimationFrame(() => {
+          if (reconcileEpochRef.current !== reconcileEpoch) return;
+          const liveMethods = methodsRef.current;
+          if (!liveMethods) return;
+          if (mixedHistoryPlan.deleteCount > 0 || insertData.length > 0) {
+            liveMethods.data.batch(
+              () => {
+                if (mixedHistoryPlan.deleteCount > 0) {
+                  liveMethods.data.deleteRange(
+                    mixedHistoryPlan.deleteOffset,
+                    mixedHistoryPlan.deleteCount,
+                  );
+                }
+                if (insertData.length > 0) {
+                  liveMethods.data.insert(
+                    insertData,
+                    mixedHistoryPlan.deleteOffset,
+                    appendBehavior,
+                  );
+                }
+                liveMethods.data.map(
+                  (item) => nextById.get(item.id) ?? item,
+                  stickToBottomRef.current ? ("auto" as const) : undefined,
+                );
+              },
+              appendBehavior,
+            );
+            return;
+          }
+          liveMethods.data.map(
+            (item) => nextById.get(item.id) ?? item,
+            stickToBottomRef.current ? ("auto" as const) : undefined,
+          );
+        });
+
+        historyExpectedRef.current = false;
+        historyRequestedAtTopRef.current = false;
+        historyRequestedAnchorIdRef.current = null;
+        recordDebugSnapshot("history:prepend-tail-reconcile", {
+          prefixLen: mixedHistoryPlan.prefixLen,
+          overlapLen: mixedHistoryPlan.overlapLen,
+          deleteOffset: mixedHistoryPlan.deleteOffset,
+          deleteCount: mixedHistoryPlan.deleteCount,
+          insertLen: insertData.length,
+          suffixLen: mixedHistoryPlan.suffixLen,
+          nextLen: effectiveNextLen,
+          currentLen,
+          requestedAnchorId,
+          wasAtTop,
+        });
+        if (import.meta.env.DEV && showDebug) {
+          // eslint-disable-next-line no-console
+          console.debug("[MessageList][history:prepend-tail-reconcile]", {
+            sessionId,
+            prefixLen: mixedHistoryPlan.prefixLen,
+            overlapLen: mixedHistoryPlan.overlapLen,
+            deleteOffset: mixedHistoryPlan.deleteOffset,
+            deleteCount: mixedHistoryPlan.deleteCount,
+            insertLen: insertData.length,
+            suffixLen: mixedHistoryPlan.suffixLen,
+            nextLen: effectiveNextLen,
+            currentLen,
+          });
+        }
+        return;
+      }
+      if (import.meta.env.DEV && showDebug && firstIndex >= 0 && lastIndex >= firstIndex) {
+        // eslint-disable-next-line no-console
+        console.debug("[MessageList][history:extend:skipped]", {
+          sessionId,
+          reason: "nonContiguousWindow",
+          firstIndex,
+          lastIndex,
+          nextLen: effectiveNextLen,
+          currentLen,
+          requestedAnchorId,
+          wasAtTop,
+        });
+      }
     }
 
     // Pure prepend: next ends with current.
-    if (nextLen > currentLen) {
+    if (effectiveNextLen > currentLen) {
       let isPurePrepend = true;
       for (let i = 0; i < currentLen; i += 1) {
-        if (next[nextLen - currentLen + i]?.id !== current[i]?.id) {
+        if (next[effectiveNextLen - currentLen + i]?.id !== current[i]?.id) {
           isPurePrepend = false;
           break;
         }
@@ -566,13 +823,13 @@ export function useSessionMessageListController(params: Params): Result {
       if (isPurePrepend) {
         const wasAtTop = historyRequestedAtTopRef.current;
         const requestedAnchorId = historyRequestedAnchorIdRef.current;
-        const prefix = next.slice(0, nextLen - currentLen);
+        const prefix = next.slice(0, effectiveNextLen - currentLen);
         const anchorId = renderedAnchorIdRef.current;
         const anchorIndex = anchorId ? next.findIndex((it) => it.id === anchorId) : -1;
 
         startFlashProbe("data:prepend", {
           currentLen,
-          nextLen,
+          nextLen: effectiveNextLen,
           prefixLen: prefix.length,
           anchorId,
           anchorIndex,
@@ -583,7 +840,7 @@ export function useSessionMessageListController(params: Params): Result {
         applyPrependDrivenHistoryUpdate({
           methods,
           current,
-          retainedNext: next.slice(nextLen - currentLen),
+          retainedNext: next.slice(effectiveNextLen - currentLen),
           prefix,
           suffix: [],
           stickToBottom: stickToBottomRef.current,
@@ -592,7 +849,7 @@ export function useSessionMessageListController(params: Params): Result {
 
         recordDebugSnapshot("data:prepend", {
           prefixLen: prefix.length,
-          nextLen,
+          nextLen: effectiveNextLen,
           currentLen,
           anchorId,
           anchorIndex,
@@ -604,7 +861,7 @@ export function useSessionMessageListController(params: Params): Result {
           console.debug("[MessageList][data:prepend]", {
             sessionId,
             prefixLen: prefix.length,
-            nextLen,
+            nextLen: effectiveNextLen,
             currentLen,
             anchorId,
             anchorIndex,
@@ -624,7 +881,7 @@ export function useSessionMessageListController(params: Params): Result {
     }
 
     // Pure append: next starts with current.
-    if (nextLen > currentLen) {
+    if (effectiveNextLen > currentLen) {
       let isPureAppend = true;
       for (let i = 0; i < currentLen; i += 1) {
         if (next[i]?.id !== current[i]?.id) {
@@ -647,13 +904,13 @@ export function useSessionMessageListController(params: Params): Result {
         });
         recordDebugSnapshot("data:append", {
           suffixLen: suffix.length,
-          nextLen,
+          nextLen: effectiveNextLen,
           currentLen,
           changedSpans: updateResult.changedSpans,
         });
         logMessageListDebug("data:append", {
           suffixLen: suffix.length,
-          nextLen,
+          nextLen: effectiveNextLen,
           currentLen,
           stickToBottom: stickToBottomRef.current,
           anchorId,
@@ -664,7 +921,7 @@ export function useSessionMessageListController(params: Params): Result {
     }
 
     // Same IDs/order: update in place (streaming/tool status, expands, etc).
-    if (nextLen === currentLen) {
+    if (effectiveNextLen === currentLen) {
       let same = true;
       for (let i = 0; i < currentLen; i += 1) {
         if (next[i]?.id !== current[i]?.id) {
@@ -705,7 +962,7 @@ export function useSessionMessageListController(params: Params): Result {
           // eslint-disable-next-line no-console
           console.debug(`[MessageList][${updateLabel}]`, {
             sessionId,
-            nextLen,
+            nextLen: effectiveNextLen,
             currentLen,
             stickToBottom: stickToBottomRef.current,
             anchorId,
@@ -718,7 +975,7 @@ export function useSessionMessageListController(params: Params): Result {
           });
         }
         recordDebugSnapshot(updateLabel, {
-          nextLen,
+          nextLen: effectiveNextLen,
           currentLen,
           anchorId,
           anchorIndex,
@@ -726,7 +983,7 @@ export function useSessionMessageListController(params: Params): Result {
           changedSpans: updateResult.changedSpans,
         });
         logMessageListDebug(updateLabel, {
-          nextLen,
+          nextLen: effectiveNextLen,
           currentLen,
           anchorId,
           anchorIndex,
@@ -739,24 +996,25 @@ export function useSessionMessageListController(params: Params): Result {
 
     // Structural reconcile (no replace): transform `current` into `next` using only MessageList data methods.
     // This covers mixed updates (middle inserts/deletes/reorders) which can happen during history/hydration.
-    const currentIds = current.map((it) => it.id);
-    const nextIds = next.map((it) => it.id);
-
     let prefixLen = 0;
-    while (prefixLen < currentLen && prefixLen < nextLen && currentIds[prefixLen] === nextIds[prefixLen]) {
+    while (
+      prefixLen < currentLen &&
+      prefixLen < effectiveNextLen &&
+      currentIds[prefixLen] === nextIds[prefixLen]
+    ) {
       prefixLen += 1;
     }
     let suffixLen = 0;
     while (
       suffixLen < currentLen - prefixLen &&
-      suffixLen < nextLen - prefixLen &&
-      currentIds[currentLen - 1 - suffixLen] === nextIds[nextLen - 1 - suffixLen]
+      suffixLen < effectiveNextLen - prefixLen &&
+      currentIds[currentLen - 1 - suffixLen] === nextIds[effectiveNextLen - 1 - suffixLen]
     ) {
       suffixLen += 1;
     }
 
     const deleteCount = currentLen - prefixLen - suffixLen;
-    const insertData = next.slice(prefixLen, nextLen - suffixLen);
+    const insertData = next.slice(prefixLen, effectiveNextLen - suffixLen);
     const anchorId = renderedAnchorIdRef.current;
     const anchorIndex = anchorId ? next.findIndex((it) => it.id === anchorId) : -1;
 
@@ -775,7 +1033,7 @@ export function useSessionMessageListController(params: Params): Result {
       currentIds,
       nextIds,
       currentLen,
-      nextLen,
+      nextLen: effectiveNextLen,
       prefixLen,
       suffixLen,
       deleteCount,
@@ -789,7 +1047,7 @@ export function useSessionMessageListController(params: Params): Result {
 
     startFlashProbe("data:reconcile", {
       currentLen,
-      nextLen,
+      nextLen: effectiveNextLen,
       prefixLen,
       suffixLen,
       deleteCount,
@@ -811,7 +1069,7 @@ export function useSessionMessageListController(params: Params): Result {
       appendBehavior,
     });
     recordDebugSnapshot("data:reconcile", {
-      nextLen,
+      nextLen: effectiveNextLen,
       currentLen,
       prefixLen,
       suffixLen,
@@ -827,7 +1085,12 @@ export function useSessionMessageListController(params: Params): Result {
     initialLocation,
     isActive,
     listItems,
-    listItemsCoalesced,
+    loadingOlder,
+    logMessageListDebug,
+    itemSizeCacheKey,
+    layoutRevision,
+    visibleListItems,
+    deferTrailingAppends,
     recordDebugSnapshot,
     sessionId,
     showDebug,

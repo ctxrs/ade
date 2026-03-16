@@ -15,6 +15,8 @@ export const SessionThreadMessageList = memo(function SessionThreadMessageList({
   initialData,
   itemContent,
   itemIdentity,
+  itemKey,
+  increaseViewportBy,
   initialLocation,
   dataState,
   context,
@@ -29,6 +31,8 @@ export const SessionThreadMessageList = memo(function SessionThreadMessageList({
   initialData: WorkbenchListItem[];
   itemContent: (index: number, item: WorkbenchListItem) => ReactNode;
   itemIdentity: (item: WorkbenchListItem) => unknown;
+  itemKey: (item: WorkbenchListItem) => string;
+  increaseViewportBy: number;
   initialLocation: ItemLocation;
   dataState?: DataWithScrollModifier<WorkbenchListItem>;
   context: WorkbenchMessageListContext;
@@ -45,6 +49,8 @@ export const SessionThreadMessageList = memo(function SessionThreadMessageList({
       initialData={initialData}
       itemContent={itemContent}
       itemIdentity={itemIdentity}
+      itemKey={itemKey}
+      increaseViewportBy={increaseViewportBy}
       initialLocation={initialLocation}
       dataState={dataState}
       context={context}

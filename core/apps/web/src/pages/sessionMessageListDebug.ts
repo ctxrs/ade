@@ -45,6 +45,22 @@ export type SessionMessageListFlashTrace = {
   samples: SessionMessageListFlashSample[];
 };
 
+export type SessionMessageListRowSizeMismatch = {
+  seq: number;
+  atMs: number;
+  id: string;
+  itemKind: string;
+  itemKey: string;
+  reason: string;
+  dataIndex: number | null;
+  knownSize: number;
+  actualHeight: number;
+  parentHeight: number;
+  knownVsActualDeltaPx: number;
+  knownVsParentDeltaPx: number;
+  parentVsActualDeltaPx: number;
+};
+
 export type SessionMessageListDebugEntry = {
   seq: number;
   atMs: number;
@@ -83,7 +99,11 @@ type SessionMessageListDebugStore = {
   entries: SessionMessageListDebugEntry[];
   flashSeq: number;
   flashTraces: SessionMessageListFlashTrace[];
+  rowSizeMismatchSeq: number;
+  rowSizeMismatches: SessionMessageListRowSizeMismatch[];
 };
+
+type RecordSessionMessageListRowSizeMismatchParams = Omit<SessionMessageListRowSizeMismatch, "seq" | "atMs">;
 
 type RecordSessionMessageListDebugSnapshotParams = {
   sessionId: string;
@@ -107,6 +127,7 @@ declare global {
 const MAX_SESSION_MESSAGE_LIST_DEBUG_ENTRIES = 400;
 const MAX_SESSION_MESSAGE_LIST_FLASH_TRACES = 80;
 const MAX_SESSION_MESSAGE_LIST_FLASH_SAMPLES = 24;
+const MAX_SESSION_MESSAGE_LIST_ROW_SIZE_MISMATCHES = 400;
 const IMPOSSIBLE_TAIL_THRESHOLD_PX = 96;
 const FLASH_SNAPBACK_THRESHOLD_PX = 12;
 const FLASH_SETTLE_THRESHOLD_PX = 3;
@@ -118,8 +139,23 @@ function roundPx(value: number | null): number | null {
 
 function getStore(): SessionMessageListDebugStore {
   const existing = window.__wbSessionMessageListDebug;
-  if (existing) return existing;
-  const created: SessionMessageListDebugStore = { seq: 0, entries: [], flashSeq: 0, flashTraces: [] };
+  if (existing) {
+    existing.seq = Number.isFinite(existing.seq) ? existing.seq : 0;
+    existing.entries = Array.isArray(existing.entries) ? existing.entries : [];
+    existing.flashSeq = Number.isFinite(existing.flashSeq) ? existing.flashSeq : 0;
+    existing.flashTraces = Array.isArray(existing.flashTraces) ? existing.flashTraces : [];
+    existing.rowSizeMismatchSeq = Number.isFinite(existing.rowSizeMismatchSeq) ? existing.rowSizeMismatchSeq : 0;
+    existing.rowSizeMismatches = Array.isArray(existing.rowSizeMismatches) ? existing.rowSizeMismatches : [];
+    return existing;
+  }
+  const created: SessionMessageListDebugStore = {
+    seq: 0,
+    entries: [],
+    flashSeq: 0,
+    flashTraces: [],
+    rowSizeMismatchSeq: 0,
+    rowSizeMismatches: [],
+  };
   window.__wbSessionMessageListDebug = created;
   return created;
 }
@@ -344,6 +380,52 @@ export function recordSessionMessageListFlashTrace({
   }
 
   return trace;
+}
+
+export function recordSessionMessageListRowSizeMismatch({
+  id,
+  itemKind,
+  itemKey,
+  reason,
+  dataIndex,
+  knownSize,
+  actualHeight,
+  parentHeight,
+  knownVsActualDeltaPx,
+  knownVsParentDeltaPx,
+  parentVsActualDeltaPx,
+}: RecordSessionMessageListRowSizeMismatchParams): SessionMessageListRowSizeMismatch | null {
+  if (typeof window === "undefined") return null;
+
+  const mismatch: SessionMessageListRowSizeMismatch = {
+    seq: 0,
+    atMs: Date.now(),
+    id,
+    itemKind,
+    itemKey,
+    reason,
+    dataIndex,
+    knownSize: roundPx(knownSize) ?? knownSize,
+    actualHeight: roundPx(actualHeight) ?? actualHeight,
+    parentHeight: roundPx(parentHeight) ?? parentHeight,
+    knownVsActualDeltaPx: roundPx(knownVsActualDeltaPx) ?? knownVsActualDeltaPx,
+    knownVsParentDeltaPx: roundPx(knownVsParentDeltaPx) ?? knownVsParentDeltaPx,
+    parentVsActualDeltaPx: roundPx(parentVsActualDeltaPx) ?? parentVsActualDeltaPx,
+  };
+
+  try {
+    const store = getStore();
+    mismatch.seq = store.rowSizeMismatchSeq + 1;
+    store.rowSizeMismatchSeq = mismatch.seq;
+    store.rowSizeMismatches.push(mismatch);
+    if (store.rowSizeMismatches.length > MAX_SESSION_MESSAGE_LIST_ROW_SIZE_MISMATCHES) {
+      store.rowSizeMismatches.splice(0, store.rowSizeMismatches.length - MAX_SESSION_MESSAGE_LIST_ROW_SIZE_MISMATCHES);
+    }
+  } catch {
+    // Debug-only helper; never break the workbench for diagnostics.
+  }
+
+  return mismatch;
 }
 
 export function recordSessionMessageListDebugSnapshot({

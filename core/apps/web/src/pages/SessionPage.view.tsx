@@ -54,6 +54,11 @@ import { errorMessage } from "../utils/errorMessage";
 import { hasSessionActiveTurn } from "../utils/sessionActivity";
 import { defaultSessionVerbosityForProvider } from "./sessionVerbosity";
 import { appendSegment } from "./SessionPage.helpers";
+import {
+  getWorkbenchListItemKey,
+  getWorkbenchListItemSizeCacheKey,
+  getWorkbenchMessageListLayoutRevision,
+} from "./sessionMessageListItemIdentity";
 import { isSameContextWindow } from "./sessionView/estimateHeuristics";
 import { PendingMessageEntry, shouldDropPendingMessage } from "./sessionView/pendingMessages";
 import { getQueuedAttachments } from "./sessionView/SessionQueuePanel";
@@ -63,6 +68,8 @@ import { useSessionProviderGuard } from "./sessionView/useSessionProviderGuard";
 import { useSharedSessionProviderOptions } from "./sessionView/useSharedSessionProviderOptions";
 import { useStableAskUserQuestionAnswers } from "./sessionView/useStableAskUserQuestionAnswers";
 import { composeModelId, parseModelId } from "../utils/modelEffort";
+
+const SCROLLBACK_INCREASE_VIEWPORT_BY_PX = 240;
 
 export function SessionView({
   sessionId,
@@ -125,6 +132,7 @@ export function SessionView({
   const [expandedTurnHeaders, setExpandedTurnHeaders] = useState<Record<string, boolean>>({});
   const [expandedTurnDetailsById, setExpandedTurnDetailsById] = useState<Record<string, boolean>>({});
   const [expandedToolById, setExpandedToolById] = useState<Record<string, boolean>>({});
+  const [expandedMessageById, setExpandedMessageById] = useState<Record<string, boolean>>({});
   const [lastContextWindow, setLastContextWindow] = useState<ContextWindowInfo | null>(null);
   const draftAttachments = draft?.attachments ?? draftAttachmentsInternal;
   const setDraftAttachments = useCallback(
@@ -151,6 +159,7 @@ export function SessionView({
     setExpandedTurnHeaders({});
     setExpandedTurnDetailsById({});
     setExpandedToolById({});
+    setExpandedMessageById({});
     setLastContextWindow(null);
     setAuthMethodId("");
     setAuthBusy(false);
@@ -512,6 +521,64 @@ export function SessionView({
   const debugEvents = workbenchThreadView.debugEvents;
   const wbListItems = threadListItems;
   const listItems = wbListItems;
+  const messageListItemIdentity = useCallback((item: WorkbenchListItem) => item.id, []);
+  const messageListItemKey = useCallback(
+    (item: WorkbenchListItem) =>
+      getWorkbenchListItemKey(item, {
+        expandedTurnHeaders,
+        expandedTurnDetailsById,
+        expandedToolById,
+        expandedMessageById,
+        turnToolsLoading,
+      }, { verbosity }),
+    [
+      expandedMessageById,
+      expandedToolById,
+      expandedTurnDetailsById,
+      expandedTurnHeaders,
+      turnToolsLoading,
+      verbosity,
+    ],
+  );
+  const messageListItemSizeCacheKey = useCallback(
+    (item: WorkbenchListItem) =>
+      getWorkbenchListItemSizeCacheKey(item, {
+        expandedTurnHeaders,
+        expandedTurnDetailsById,
+        expandedToolById,
+        expandedMessageById,
+        turnToolsLoading,
+      }, { verbosity }),
+    [
+      expandedMessageById,
+      expandedToolById,
+      expandedTurnDetailsById,
+      expandedTurnHeaders,
+      turnToolsLoading,
+      verbosity,
+    ],
+  );
+  const messageListLayoutRevision = useMemo(
+    () =>
+      getWorkbenchMessageListLayoutRevision(
+        {
+          expandedTurnHeaders,
+          expandedTurnDetailsById,
+          expandedToolById,
+          expandedMessageById,
+          turnToolsLoading,
+        },
+        { verbosity },
+      ),
+    [
+      expandedMessageById,
+      expandedToolById,
+      expandedTurnDetailsById,
+      expandedTurnHeaders,
+      turnToolsLoading,
+      verbosity,
+    ],
+  );
 
   const {
     methodsRef: messageListMethodsRef,
@@ -530,6 +597,8 @@ export function SessionView({
       if (!id) return;
       await supervisor.loadMoreTurns(id);
     },
+    layoutRevision: messageListLayoutRevision,
+    itemSizeCacheKey: messageListItemSizeCacheKey,
     showDebug,
     onAtBottomChange: setAtBottom,
   });
@@ -796,8 +865,6 @@ export function SessionView({
   const virtuosoStyle = useMemo(() => ({ flex: 1, minHeight: 0 } as const), []);
   // Note: we intentionally do not overscan (`increaseViewportBy`) for the session thread.
   // Large overscan amplifies prepend stabilization error for unknown-height items.
-
-  const messageListItemIdentity = useCallback((item: WorkbenchListItem) => item.id, []);
   const handleAuthenticate = useCallback(async () => {
     if (!id) return;
     setAuthBusy(true);
@@ -852,6 +919,8 @@ export function SessionView({
       setExpandedTurnDetailsById={setExpandedTurnDetailsById}
       expandedToolById={expandedToolById}
       setExpandedToolById={setExpandedToolById}
+      expandedMessageById={expandedMessageById}
+      setExpandedMessageById={setExpandedMessageById}
       turnToolsLoading={turnToolsLoading}
       verbosity={verbosity}
       setOptimisticAskAnswers={setOptimisticAskAnswers}
@@ -870,6 +939,8 @@ export function SessionView({
       onOpenChildSession={openChildSession}
       style={virtuosoStyle}
       itemIdentity={messageListItemIdentity}
+      itemKey={messageListItemKey}
+      increaseViewportBy={SCROLLBACK_INCREASE_VIEWPORT_BY_PX}
       initialData={messageListInitialData}
       initialLocation={messageListInitialLocation}
       context={messageListContext}

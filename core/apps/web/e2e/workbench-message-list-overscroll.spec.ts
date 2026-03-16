@@ -2,8 +2,8 @@ import { test, expect } from "./fixtures";
 import type { APIRequestContext, Page, TestInfo } from "@playwright/test";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
-const scrollSelector = ".wb-session-slot[aria-hidden=\"false\"] .wb-thread-scroller";
-const activeComposerSelector = ".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea";
+const scrollSelector = ".wb-thread-scroller";
+const activeComposerSelector = "textarea.wb-active-textarea";
 const overscrollVerbose = process.env.CTX_E2E_OVERSCROLL_VERBOSE === "1";
 const stressLoops = Math.max(1, Number(process.env.CTX_E2E_OVERSCROLL_STRESS_LOOPS ?? "4") || 4);
 const viewportWidth = Math.max(800, Number(process.env.CTX_E2E_OVERSCROLL_VIEWPORT_WIDTH ?? "1440") || 1440);
@@ -124,7 +124,7 @@ async function clearActiveComposer(page: Page) {
 async function clickTaskAndWait(page: Page, taskNumber: number, expectedSessionId: string) {
   const row = page.locator(".wb-task-row").filter({ hasText: `fixture task ${taskNumber}` }).first();
   await row.click();
-  await expect(page.locator('.wb-session-slot [data-testid="session-view"]').first()).toHaveAttribute(
+  await expect(page.locator('[data-testid="session-view"]').first()).toHaveAttribute(
     "data-session-id",
     expectedSessionId,
     {

@@ -1,5 +1,6 @@
 import {
   Fragment,
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -15,6 +16,7 @@ import { type SessionViewVerbosity } from "../../state/uiStateStore";
 import { copyTextToClipboard } from "../../utils/clipboard";
 import { useRelativeNowMs } from "../../utils/useRelativeNowMs";
 import { MemoMarkdown } from "../SessionPage.markdown";
+import { isExpandableMessageContent } from "../sessionMessageListItemIdentity";
 import {
   attachmentDisplayName,
   formatElapsedMs,
@@ -86,17 +88,19 @@ function selectionChangedDuringInteraction(
   );
 }
 
-export function ThreadItemView({
+export const ThreadItemView = memo(function ThreadItemView({
   item,
   worktreeId,
   onFileOpenError,
   modifierDown,
+  messageExpanded,
   onToggleMessageExpanded,
 }: {
   item: ThreadItem;
   worktreeId: string | null;
   onFileOpenError: (message: string | null) => void;
   modifierDown: boolean;
+  messageExpanded?: boolean;
   onToggleMessageExpanded?: (expanded: boolean) => void;
 }) {
   switch (item.kind) {
@@ -110,6 +114,7 @@ export function ThreadItemView({
           worktreeId={worktreeId}
           onFileOpenError={onFileOpenError}
           modifierDown={modifierDown}
+          expanded={messageExpanded ?? !isExpandableMessageContent(item.content)}
           onToggleExpanded={onToggleMessageExpanded}
         />
       );
@@ -122,7 +127,7 @@ export function ThreadItemView({
     default:
       return null;
   }
-}
+});
 
 export function WorkbenchTurnHeaderView({
   header,
@@ -182,6 +187,7 @@ export function WorkbenchTurnHeaderView({
   };
 
   const hasContent = (header.content ?? "").trim().length > 0;
+  const collapsedPlainText = plainText.replace(/\s+/g, " ").trim();
 
   return (
     <div
@@ -209,14 +215,16 @@ export function WorkbenchTurnHeaderView({
           </button>
         )}
         <div className="wb-turn-header-content">
-          {plainText.split("\n").map((line, idx, list) => (
-            <span key={`${header.id}-${idx}`}>
-              {line}
-              {idx < list.length - 1 ? <br /> : null}
-            </span>
-          ))}
+          {expanded
+            ? plainText.split("\n").map((line, idx, list) => (
+                <span key={`${header.id}-${idx}`}>
+                  {line}
+                  {idx < list.length - 1 ? <br /> : null}
+                </span>
+              ))
+            : <span>{collapsedPlainText}</span>}
         </div>
-        {header.attachments.length > 0 && (
+        {expanded && header.attachments.length > 0 && (
           <div className="wb-turn-header-attachments" aria-label="Attachments">
             {header.attachments.map((a, idx) => {
               if (a.kind !== "image" && a.kind !== "image_ref") return null;
@@ -239,6 +247,7 @@ function CollapsibleMessage({
   worktreeId,
   onFileOpenError,
   modifierDown,
+  expanded,
   onToggleExpanded,
 }: {
   id: string;
@@ -248,11 +257,12 @@ function CollapsibleMessage({
   worktreeId: string | null;
   onFileOpenError: (message: string | null) => void;
   modifierDown: boolean;
+  expanded: boolean;
   onToggleExpanded?: (expanded: boolean) => void;
 }) {
   const lines = (content || "").split("\n");
-  const isLong = lines.length > 20 || content.length > 1500;
-  const [expanded, setExpanded] = useState(!isLong);
+  const isLong = isExpandableMessageContent(content);
+  const canToggle = isLong && typeof onToggleExpanded === "function";
   const shown = expanded ? content : lines.slice(0, 20).join("\n");
 
   return (
@@ -278,19 +288,13 @@ function CollapsibleMessage({
           })}
         </div>
       )}
-      {isLong && (
+      {canToggle && (
         <button
           type="button"
           className="link"
           aria-expanded={expanded}
           aria-controls={`msg-${id}`}
-          onClick={() =>
-            setExpanded((e) => {
-              const next = !e;
-              onToggleExpanded?.(next);
-              return next;
-            })
-          }
+          onClick={() => onToggleExpanded?.(!expanded)}
         >
           {expanded ? "Show less" : "Show more"}
         </button>
@@ -299,7 +303,7 @@ function CollapsibleMessage({
   );
 }
 
-export function AssistantEntry({
+export const AssistantEntry = memo(function AssistantEntry({
   content,
   worktreeId,
   onFileOpenError,
@@ -319,7 +323,7 @@ export function AssistantEntry({
       </div>
     </div>
   );
-}
+});
 
 export function WorkbenchToolRow({
   item,
@@ -548,11 +552,15 @@ export function WorkbenchToolRow({
   );
 }
 
-export function WorkbenchThoughtRow({ item }: { item: Extract<ThreadItem, { kind: "thought" }> }) {
+export const WorkbenchThoughtRow = memo(function WorkbenchThoughtRow({
+  item,
+}: {
+  item: Extract<ThreadItem, { kind: "thought" }>;
+}) {
   return <div className="wb-thought-row">{item.content}</div>;
-}
+});
 
-export function WorkbenchTurnStatusRow({
+export const WorkbenchTurnStatusRow = memo(function WorkbenchTurnStatusRow({
   item,
 }: {
   item: Extract<ThreadItem, { kind: "turn_status" }>;
@@ -618,9 +626,9 @@ export function WorkbenchTurnStatusRow({
       )}
     </div>
   );
-}
+});
 
-export function WorkbenchToolGroupRow({
+export const WorkbenchToolGroupRow = memo(function WorkbenchToolGroupRow({
   item,
   verbosity,
   expanded,
@@ -698,7 +706,7 @@ export function WorkbenchToolGroupRow({
       )}
     </div>
   );
-}
+});
 
 function ToolCard({ item }: { item: Extract<ThreadItem, { kind: "tool" }> }) {
   const [expanded, setExpanded] = useState(false);

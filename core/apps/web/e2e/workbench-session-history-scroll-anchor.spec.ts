@@ -2,7 +2,7 @@ import { test, expect } from "./fixtures";
 import type { APIRequestContext } from "playwright/test";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 
-const scrollSelector = ".wb-session-slot[aria-hidden=\"false\"] .wb-thread-scroller";
+const scrollSelector = ".wb-thread-scroller";
 
 type ScrollAnchor = { id?: string; offset: number };
 
@@ -47,24 +47,24 @@ test("workbench: preserves scroll position when prepending history", async ({ pa
   const seed = await seedDummyWorkspace(request, {
     tasks: 1,
     sessionsPerTask: 1,
-    turnsPerSession: 6,
+    turnsPerSession: 10,
     throttleMs: 5,
   });
 
   const taskId = seed.taskIds[0];
   const sessionId = seed.sessionIdsByTask[taskId][0];
 
-  await addLongMessages(request, sessionId, 6);
+  await addLongMessages(request, sessionId, 12);
 
   await page.goto(`/workspaces/${seed.workspaceId}`, { waitUntil: "domcontentloaded" });
   const rows = page.locator(".wb-task-row");
   await expect(rows).toHaveCount(1, { timeout: 20000 });
   await rows.first().click();
-  await expect(page.locator(".wb-session-slot[aria-hidden=\"false\"] textarea.wb-active-textarea")).toBeVisible({
+  await expect(page.locator("textarea.wb-active-textarea")).toBeVisible({
     timeout: 20000,
   });
 
-  await expect(page.locator(".wb-session")).toContainText("history scroll 6", { timeout: 20000 });
+  await expect(page.locator(".wb-session")).toContainText("history scroll 12", { timeout: 20000 });
   await expect(page.locator(".wb-session")).not.toContainText("fixture msg 1.1.1", {
     timeout: 1000,
   });

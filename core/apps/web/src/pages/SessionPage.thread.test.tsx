@@ -82,6 +82,8 @@ function renderMessageList({
         initialData={data}
         itemContent={(_index, item) => <div>{item.kind === "assistant" ? item.content : item.kind}</div>}
         itemIdentity={(item) => item.id}
+        itemKey={(item) => item.id}
+        increaseViewportBy={0}
         initialLocation={{ index: 0, align: "start" }}
         dataState={dataState}
         context={context}
@@ -142,6 +144,8 @@ describe("WorkbenchMessageListStack", () => {
           initialData={current}
           itemContent={(_index, item) => <div>{item.kind === "assistant" ? item.content : item.kind}</div>}
           itemIdentity={(item) => item.id}
+          itemKey={(item) => item.id}
+          increaseViewportBy={0}
           initialLocation={{ index: 0, align: "start" }}
           dataState={{ data: next }}
           context={baseContext}
@@ -175,6 +179,8 @@ describe("WorkbenchMessageListStack", () => {
           initialData={current}
           itemContent={(_index, item) => <div>{item.kind === "assistant" ? item.content : item.kind}</div>}
           itemIdentity={(item) => item.id}
+          itemKey={(item) => item.id}
+          increaseViewportBy={0}
           initialLocation={{ index: 0, align: "start" }}
           dataState={{ data: next }}
           context={baseContext}
@@ -225,6 +231,8 @@ describe("WorkbenchMessageListStack", () => {
           initialData={current}
           itemContent={(_index, item) => <div>{item.kind === "assistant" ? item.content : item.kind}</div>}
           itemIdentity={(item) => item.id}
+          itemKey={(item) => item.id}
+          increaseViewportBy={0}
           initialLocation={{ index: 0, align: "start" }}
           dataState={{ data: current }}
           context={expandedContext}
@@ -259,6 +267,8 @@ describe("WorkbenchMessageListStack", () => {
           initialData={current}
           itemContent={(_index, item) => <div>{item.kind === "assistant" ? item.content : item.kind}</div>}
           itemIdentity={(item) => item.id}
+          itemKey={(item) => item.id}
+          increaseViewportBy={0}
           initialLocation={{ index: 0, align: "start" }}
           dataState={{ data: next }}
           context={baseContext}

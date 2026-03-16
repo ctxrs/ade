@@ -10,7 +10,7 @@ vi.mock("../../utils/clipboard", () => ({
   copyTextToClipboard: copyTextToClipboardMock,
 }));
 
-import { WorkbenchToolRow, WorkbenchTurnHeaderView } from "./SessionThreadItemViews";
+import { AssistantEntry, WorkbenchToolRow, WorkbenchTurnHeaderView } from "./SessionThreadItemViews";
 
 function TestHeader({ plainText = "line 1\nline 2\nline 3\nline 4\nline 5" }: { plainText?: string }) {
   const [expanded, setExpanded] = useState(false);
@@ -84,6 +84,13 @@ describe("WorkbenchTurnHeaderView", () => {
 
     expect(window.getSelection()?.toString()).toContain("hello world");
     expect(header).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("renders collapsed multiline headers as a single line summary", () => {
+    const { container } = render(<TestHeader plainText={"line 1\nline 2\nline 3"} />);
+
+    const content = container.querySelector(".wb-turn-header-content");
+    expect(content?.textContent?.replace(/\s+/g, " ").trim()).toBe("line 1 line 2 line 3");
   });
 
   it("copies the message when the copy button is clicked without expanding the header", async () => {
@@ -206,5 +213,24 @@ describe("WorkbenchToolRow", () => {
     expect(description).not.toBeNull();
     expect(description?.textContent).toBe("Get current working directory");
     expect(screen.queryByText("Bash · Get current working directory")).not.toBeInTheDocument();
+  });
+});
+
+describe("AssistantEntry", () => {
+  it("always renders long completed assistant content without a collapse toggle", () => {
+    const content = Array.from({ length: 24 }, (_, index) => `assistant line ${index + 1}`).join("\n");
+
+    const { container } = render(
+      <AssistantEntry
+        content={content}
+        worktreeId={null}
+        onFileOpenError={() => {}}
+        modifierDown={false}
+      />,
+    );
+
+    expect(container.textContent).toContain("assistant line 1");
+    expect(container.textContent).toContain("assistant line 24");
+    expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
   });
 });
