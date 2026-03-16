@@ -57,6 +57,11 @@ pub enum CrpCommand {
         turn_id: Option<String>,
         instructions: Option<String>,
     },
+    #[serde(rename = "session.set_model")]
+    SessionSetModel {
+        session_id: Option<String>,
+        model_id: Option<String>,
+    },
     #[serde(rename = "session.cancel")]
     SessionCancel {
         session_id: Option<String>,
@@ -376,6 +381,22 @@ mod tests {
         let value = serde_json::to_value(event).unwrap();
         let kind = value.get("type").and_then(|value| value.as_str());
         assert_eq!(kind, Some("message.final"));
+    }
+
+    #[test]
+    fn command_types_include_session_set_model() {
+        let json = r#"{"type":"session.set_model","session_id":"s1","model_id":"gpt-5.4/medium"}"#;
+        let cmd: CrpCommand = serde_json::from_str(json).unwrap();
+        match cmd {
+            CrpCommand::SessionSetModel {
+                session_id,
+                model_id,
+            } => {
+                assert_eq!(session_id.as_deref(), Some("s1"));
+                assert_eq!(model_id.as_deref(), Some("gpt-5.4/medium"));
+            }
+            _ => panic!("expected session.set_model command"),
+        }
     }
 
     #[test]

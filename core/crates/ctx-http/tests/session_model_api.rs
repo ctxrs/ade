@@ -18,6 +18,7 @@ mod common;
 struct RecordingSetModelAdapter {
     calls: Mutex<Vec<(String, String)>>,
     live_session: bool,
+    failure: Option<String>,
 }
 
 impl RecordingSetModelAdapter {
@@ -25,6 +26,15 @@ impl RecordingSetModelAdapter {
         Self {
             calls: Mutex::new(Vec::new()),
             live_session: true,
+            failure: None,
+        }
+    }
+
+    fn live_failing(message: &str) -> Self {
+        Self {
+            calls: Mutex::new(Vec::new()),
+            live_session: true,
+            failure: Some(message.to_string()),
         }
     }
 }
@@ -89,6 +99,9 @@ impl ProviderAdapter for RecordingSetModelAdapter {
     }
 
     async fn set_session_model(&self, session_key: String, model_id: String) -> anyhow::Result<()> {
+        if let Some(message) = self.failure.as_deref() {
+            anyhow::bail!("{message}");
+        }
         self.calls
             .lock()
             .expect("recording calls")
@@ -278,6 +291,81 @@ async fn set_session_model_skips_adapter_when_session_is_not_live() {
 }
 
 #[tokio::test]
+async fn set_session_model_returns_structured_error_when_live_switch_fails() {
+    let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let adapter = Arc::new(RecordingSetModelAdapter::live_failing(
+        "timed out waiting for session model update",
+    ));
+    let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
+    providers.insert("fake-set-model".to_string(), adapter);
+
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        providers,
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state);
+    let server = common::spawn_http_server(app).await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let workspace: ctx_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .expect("create workspace")
+        .json()
+        .await
+        .expect("workspace json");
+
+    let task: ctx_core::models::Task = client
+        .post(format!("{base}/api/workspaces/{}/tasks", workspace.id.0))
+        .json(&json!({"title":"session-model"}))
+        .send()
+        .await
+        .expect("create task")
+        .json()
+        .await
+        .expect("task json");
+
+    let session: Session = client
+        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
+        .json(&json!({"provider_id":"fake-set-model","model_id":"start-model"}))
+        .send()
+        .await
+        .expect("create session")
+        .json()
+        .await
+        .expect("session json");
+
+    let response = client
+        .post(format!("{base}/api/sessions/{}/model", session.id.0))
+        .json(&json!({"model_id":"next-model"}))
+        .send()
+        .await
+        .expect("set session model");
+
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+    let payload: serde_json::Value = response.json().await.expect("error payload");
+    let error = payload
+        .get("error")
+        .and_then(|value| value.as_str())
+        .expect("error string");
+    assert!(
+        error.contains("failed to switch the live fake-set-model session"),
+        "unexpected error: {error}"
+    );
+    assert!(
+        error.contains("timed out waiting for session model update"),
+        "unexpected error: {error}"
+    );
+}
+
+#[tokio::test]
 async fn create_session_splits_legacy_combined_model_id_into_reasoning_effort() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().expect("tempdir");
@@ -429,5 +517,91 @@ async fn set_session_model_persists_reasoning_effort_and_forwards_full_model_id(
     assert_eq!(
         init_event.payload_json.get("reasoning_effort"),
         Some(&json!("xhigh"))
+    );
+}
+
+#[tokio::test]
+async fn set_session_model_allows_explicit_model_outside_cached_catalog() {
+    let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let adapter = Arc::new(RecordingSetModelAdapter::live());
+    let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
+    providers.insert("fake-set-model".to_string(), adapter.clone());
+
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        providers,
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+    let server = common::spawn_http_server(app).await;
+    let base = &server.base_url;
+    let client = &server.client;
+
+    let workspace: ctx_core::models::Workspace = client
+        .post(format!("{base}/api/workspaces"))
+        .json(&json!({"root_path": repo.path(), "name": "ws"}))
+        .send()
+        .await
+        .expect("create workspace")
+        .json()
+        .await
+        .expect("workspace json");
+
+    state.providers.options_cache.lock().await.insert(
+        format!("{}/host/fake-set-model", workspace.id.0),
+        ctx_http::daemon::CachedProviderOptions {
+            cached_at: std::time::Instant::now(),
+            value: json!({
+                "models": {
+                    "models": [
+                        { "id": "known-model" }
+                    ],
+                    "current_model_id": "known-model",
+                    "meta": {
+                        "source_kind": "subscription",
+                        "refresh_pending": false
+                    }
+                }
+            }),
+        },
+    );
+
+    let task: ctx_core::models::Task = client
+        .post(format!("{base}/api/workspaces/{}/tasks", workspace.id.0))
+        .json(&json!({"title":"session-model"}))
+        .send()
+        .await
+        .expect("create task")
+        .json()
+        .await
+        .expect("task json");
+
+    let session: Session = client
+        .post(format!("{base}/api/tasks/{}/sessions", task.id.0))
+        .json(&json!({"provider_id":"fake-set-model","model_id":"known-model"}))
+        .send()
+        .await
+        .expect("create session")
+        .json()
+        .await
+        .expect("session json");
+
+    let updated: Session = client
+        .post(format!("{base}/api/sessions/{}/model", session.id.0))
+        .json(&json!({"model_id":"unknown-model"}))
+        .send()
+        .await
+        .expect("set session model")
+        .json()
+        .await
+        .expect("updated session json");
+
+    assert_eq!(updated.model_id, "unknown-model");
+    assert_eq!(
+        adapter.calls.lock().expect("calls").as_slice(),
+        &[(session.id.0.to_string(), "unknown-model".to_string())]
     );
 }

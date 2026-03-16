@@ -191,6 +191,7 @@ type SessionWorkbenchPaneProps = {
   availableModels: Array<{ id: string; name?: string }>;
   currentModelId: string;
   onSetModelId: (next: string) => Promise<void>;
+  modelSwitchError: string | null;
 };
 
 export function SessionWorkbenchPane({
@@ -294,6 +295,7 @@ export function SessionWorkbenchPane({
   availableModels,
   currentModelId,
   onSetModelId,
+  modelSwitchError,
 }: SessionWorkbenchPaneProps) {
   const messageListContext = useMemo(
     () => ({
@@ -475,6 +477,16 @@ export function SessionWorkbenchPane({
             </div>
             <div className="error" style={{ whiteSpace: "pre-wrap" }}>
               {sessionError.message}
+            </div>
+          </div>
+        ) : null}
+        {modelSwitchError ? (
+          <div className="banner" role="alert">
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <strong>Model Switch Failed</strong>
+            </div>
+            <div className="error" style={{ whiteSpace: "pre-wrap" }}>
+              {modelSwitchError}
             </div>
           </div>
         ) : null}

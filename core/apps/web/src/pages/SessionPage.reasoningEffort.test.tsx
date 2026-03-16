@@ -1,17 +1,60 @@
 import React from "react";
 import { act, render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ProviderOptions } from "../api/client";
 import { SessionView } from "./SessionPage";
 import { postMessage } from "../api/client";
 
-const paneSpy = vi.hoisted(() => vi.fn());
-const sessionEntries = vi.hoisted(() => ({ map: {} as Record<string, unknown> }));
-const featureGateMock = vi.hoisted(() => vi.fn(() => false));
+type Deferred<T> = {
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason?: unknown) => void;
+};
+
+function createDeferred<T>(): Deferred<T> {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+const {
+  paneSpy,
+  sessionEntries,
+  featureGateMock,
+  sharedProviderOptionsState,
+  setSessionModelMock,
+  setSessionSpy,
+} = vi.hoisted(() => ({
+  paneSpy: vi.fn(),
+  sessionEntries: { map: {} as Record<string, unknown> },
+  featureGateMock: vi.fn(() => false),
+  sharedProviderOptionsState: {
+    value: {
+      provider_id: "codex",
+      workspace_id: "ws-1",
+      supports_load: false,
+      auth_required: false,
+      has_active_auth: true,
+      auth_mode: "subscription",
+      probed_at: "2026-03-10T00:00:00.000Z",
+      models: {
+        current_model_id: "gpt-5.4/medium",
+        models: [{ id: "gpt-5.4/medium" }, { id: "gpt-5.4/xhigh" }],
+      },
+    } as ProviderOptions | undefined,
+  },
+  setSessionModelMock: vi.fn(async () => ({})),
+  setSessionSpy: vi.fn(),
+}));
 
 vi.mock("../api/client", () => ({
   deleteMessage: vi.fn(async () => ({})),
   postMessage: vi.fn(async () => ({})),
-  setSessionModel: vi.fn(async () => ({})),
+  setSessionModel: setSessionModelMock,
   authenticateSession: vi.fn(async () => ({})),
   idToString: (id: string | null | undefined) => {
     if (id === null || id === undefined) return "";
@@ -27,7 +70,7 @@ vi.mock("../state/sessionSupervisor", () => ({
     refreshSession: vi.fn(async () => {}),
     loadMoreTurns: vi.fn(async () => {}),
     loadTurnTools: vi.fn(async () => {}),
-    setSession: vi.fn(),
+    setSession: setSessionSpy,
   }),
   useSessionEntry: (id: string) => sessionEntries.map[id] ?? null,
   useOpenSession: () => {},
@@ -94,19 +137,7 @@ vi.mock("./sessionView/useStableAskUserQuestionAnswers", () => ({
 }));
 
 vi.mock("./sessionView/useSharedSessionProviderOptions", () => ({
-  useSharedSessionProviderOptions: () => ({
-    provider_id: "codex",
-    workspace_id: "ws-1",
-    supports_load: false,
-    auth_required: false,
-    has_active_auth: true,
-    auth_mode: "subscription",
-    probed_at: "2026-03-10T00:00:00.000Z",
-    models: {
-      current_model_id: "gpt-5.4/medium",
-      models: [{ id: "gpt-5.4/medium" }, { id: "gpt-5.4/xhigh" }],
-    },
-  }),
+  useSharedSessionProviderOptions: () => sharedProviderOptionsState.value,
 }));
 
 vi.mock("../utils/analytics", async (importOriginal) => {
@@ -149,6 +180,30 @@ beforeEach(() => {
   postMessageMock.mockClear();
   featureGateMock.mockReset();
   featureGateMock.mockReturnValue(false);
+  setSessionModelMock.mockReset();
+  setSessionModelMock.mockResolvedValue({});
+  setSessionSpy.mockReset();
+  setSessionSpy.mockImplementation((updated: unknown) => {
+    const current = sessionEntries.map[sessionId] as { session?: unknown } | undefined;
+    if (!current) return;
+    sessionEntries.map[sessionId] = {
+      ...current,
+      session: updated,
+    };
+  });
+  sharedProviderOptionsState.value = {
+    provider_id: "codex",
+    workspace_id: "ws-1",
+    supports_load: false,
+    auth_required: false,
+    has_active_auth: true,
+    auth_mode: "subscription",
+    probed_at: "2026-03-10T00:00:00.000Z",
+    models: {
+      current_model_id: "gpt-5.4/medium",
+      models: [{ id: "gpt-5.4/medium" }, { id: "gpt-5.4/xhigh" }],
+    },
+  };
   sessionEntries.map = {
     [sessionId]: {
       sessionId,
@@ -166,6 +221,10 @@ beforeEach(() => {
         execution_environment: "host",
         created_at: "2026-03-10T00:00:00.000Z",
         updated_at: "2026-03-10T00:00:00.000Z",
+      },
+      acpModels: {
+        current_model_id: "gpt-5.4/medium",
+        models: [{ id: "gpt-5.4/medium" }, { id: "gpt-5.4/xhigh" }],
       },
       acpCurrentModelId: "gpt-5.4/medium",
       turns: [],
@@ -194,6 +253,26 @@ beforeEach(() => {
 
 describe("SessionPage reasoning effort", () => {
   it("uses session-owned reasoning effort for the active session selector instead of ACP current model defaults", async () => {
+    render(<SessionView sessionId={sessionId} />);
+
+    await waitFor(() => {
+      expect(paneSpy).toHaveBeenCalled();
+    });
+
+    const lastCall = paneSpy.mock.calls.at(-1)?.[0] as {
+      currentModelId?: string;
+      availableModels?: Array<{ id: string }>;
+    } | undefined;
+    expect(lastCall?.currentModelId).toBe("gpt-5.4/xhigh");
+    expect(lastCall?.availableModels?.map((model) => model.id)).toEqual([
+      "gpt-5.4/medium",
+      "gpt-5.4/xhigh",
+    ]);
+  });
+
+  it("keeps active-session model and effort options from ACP metadata when shared provider options are unavailable", async () => {
+    sharedProviderOptionsState.value = undefined;
+
     render(<SessionView sessionId={sessionId} />);
 
     await waitFor(() => {
@@ -301,5 +380,106 @@ describe("SessionPage reasoning effort", () => {
     expect(postMessageMock).toHaveBeenCalledTimes(1);
     expect(postMessageMock.mock.calls[0]?.[1]).toBe("hello from authoritative queue gate");
     expect(postMessageMock.mock.calls[0]?.[2]).toBe("queued");
+  });
+
+  it("optimistically updates the selected model immediately and clears the override after success", async () => {
+    const deferred = createDeferred<{
+      id: string;
+      task_id: string;
+      workspace_id: string;
+      worktree_id: string;
+      provider_id: string;
+      model_id: string;
+      reasoning_effort: string;
+      title: string;
+      agent_role: string;
+      status: string;
+      execution_environment: string;
+      created_at: string;
+      updated_at: string;
+    }>();
+    setSessionModelMock.mockReturnValueOnce(deferred.promise);
+
+    render(<SessionView sessionId={sessionId} />);
+
+    await waitFor(() => {
+      expect(paneSpy).toHaveBeenCalled();
+    });
+
+    const initialCall = paneSpy.mock.calls.at(-1)?.[0] as {
+      currentModelId?: string;
+      onSetModelId?: (next: string) => Promise<void>;
+    };
+    expect(initialCall.currentModelId).toBe("gpt-5.4/xhigh");
+
+    await act(async () => {
+      void initialCall.onSetModelId?.("gpt-5.4/medium");
+    });
+
+    await waitFor(() => {
+      const optimisticCall = paneSpy.mock.calls.at(-1)?.[0] as { currentModelId?: string };
+      expect(optimisticCall.currentModelId).toBe("gpt-5.4/medium");
+    });
+
+    deferred.resolve({
+      id: sessionId,
+      task_id: "task-1",
+      workspace_id: "ws-1",
+      worktree_id: "wt-1",
+      provider_id: "codex",
+      model_id: "gpt-5.4",
+      reasoning_effort: "medium",
+      title: "Session 1",
+      agent_role: "assistant",
+      status: "active",
+      execution_environment: "host",
+      created_at: "2026-03-10T00:00:00.000Z",
+      updated_at: "2026-03-10T00:00:00.000Z",
+    });
+
+    await waitFor(() => {
+      const settledCall = paneSpy.mock.calls.at(-1)?.[0] as { currentModelId?: string };
+      expect(settledCall.currentModelId).toBe("gpt-5.4/medium");
+      expect(setSessionSpy).toHaveBeenCalled();
+    });
+  });
+
+  it("reverts the optimistic model selection and surfaces a model-switch error on failure", async () => {
+    const deferred = createDeferred<never>();
+    setSessionModelMock.mockReturnValueOnce(deferred.promise);
+
+    render(<SessionView sessionId={sessionId} />);
+
+    await waitFor(() => {
+      expect(paneSpy).toHaveBeenCalled();
+    });
+
+    const initialCall = paneSpy.mock.calls.at(-1)?.[0] as {
+      currentModelId?: string;
+      modelSwitchError?: string | null;
+      onSetModelId?: (next: string) => Promise<void>;
+    };
+    expect(initialCall.currentModelId).toBe("gpt-5.4/xhigh");
+    expect(initialCall.modelSwitchError).toBeNull();
+
+    await act(async () => {
+      void initialCall.onSetModelId?.("gpt-5.4/medium");
+    });
+
+    await waitFor(() => {
+      const optimisticCall = paneSpy.mock.calls.at(-1)?.[0] as { currentModelId?: string };
+      expect(optimisticCall.currentModelId).toBe("gpt-5.4/medium");
+    });
+
+    deferred.reject(new Error("timed out waiting for session model update"));
+
+    await waitFor(() => {
+      const revertedCall = paneSpy.mock.calls.at(-1)?.[0] as {
+        currentModelId?: string;
+        modelSwitchError?: string | null;
+      };
+      expect(revertedCall.currentModelId).toBe("gpt-5.4/xhigh");
+      expect(revertedCall.modelSwitchError).toBe("timed out waiting for session model update");
+    });
   });
 });

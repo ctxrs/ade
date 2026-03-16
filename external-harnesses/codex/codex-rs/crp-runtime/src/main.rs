@@ -1386,6 +1386,85 @@ async fn handle_command(
                 .entry(sub_id.clone())
                 .or_insert_with(|| TurnState::new(sub_id));
         }
+        CrpCommand::SessionSetModel {
+            session_id,
+            model_id,
+        } => {
+            let Some(session_state) = session.as_mut() else {
+                warn!("session.set_model ignored: no active session");
+                return Ok(());
+            };
+            if let Some(expected) = session_id.as_deref()
+                && expected != session_state.tracker.session_id
+            {
+                warn!(%expected, "session.set_model ignored: session_id mismatch");
+                return Ok(());
+            }
+
+            let Some(requested_model_id) = model_id
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+            else {
+                warn!("session.set_model ignored: missing model_id");
+                return Ok(());
+            };
+
+            let (next_model, next_effort) = split_model_and_effort(&requested_model_id);
+            let result = session_state
+                .thread
+                .submit(Op::OverrideTurnContext {
+                    cwd: None,
+                    approval_policy: None,
+                    sandbox_policy: None,
+                    windows_sandbox_level: None,
+                    model: Some(next_model.clone()),
+                    effort: Some(next_effort.clone()),
+                    summary: None,
+                    service_tier: None,
+                    collaboration_mode: None,
+                    personality: None,
+                })
+                .await;
+
+            match result {
+                Ok(_) => {
+                    session_state.default_model = next_model;
+                    session_state.default_effort = next_effort;
+                    if router
+                        .send_control(CrpEvent::SessionNotice {
+                            session_id: session_state.tracker.session_id.clone(),
+                            turn_id: None,
+                            code: "session_model_updated".to_string(),
+                            severity: Some("info".to_string()),
+                            message: Some(format!("session model updated to {requested_model_id}")),
+                            details: Some(json!({ "model_id": requested_model_id })),
+                            transient: Some(false),
+                        })
+                        .is_err()
+                    {
+                        warn!("failed to send session_model_updated notice");
+                    }
+                }
+                Err(err) => {
+                    if router
+                        .send_control(CrpEvent::SessionNotice {
+                            session_id: session_state.tracker.session_id.clone(),
+                            turn_id: None,
+                            code: "session_model_update_failed".to_string(),
+                            severity: Some("error".to_string()),
+                            message: Some(format!(
+                                "failed to update session model to {requested_model_id}: {err}"
+                            )),
+                            details: Some(json!({ "model_id": requested_model_id })),
+                            transient: Some(false),
+                        })
+                        .is_err()
+                    {
+                        warn!("failed to send session_model_update_failed notice");
+                    }
+                }
+            }
+        }
         CrpCommand::ModelsList { config } => {
             let config = config.unwrap_or(CrpSessionConfig {
                 cwd: None,

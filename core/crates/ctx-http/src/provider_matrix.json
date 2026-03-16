@@ -624,7 +624,7 @@
       },
       "releases": [
         {
-          "version": "0.33.0",
+          "version": "0.33.1",
           "status": "supported",
           "context_min": "0.1.0",
           "notes": "Pinned Gemini CLI ACP bundle release (bundle-only in ctx runtime)"

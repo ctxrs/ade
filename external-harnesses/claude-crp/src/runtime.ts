@@ -488,6 +488,42 @@ async function listModels(command: CrpCommand, state: { session: SessionState | 
   });
 }
 
+async function setSessionModel(command: CrpCommand, state: { session: SessionState | null }) {
+  const session = state.session;
+  if (!session) {
+    warn("session.set_model ignored: no active session");
+    return;
+  }
+
+  if (
+    typeof command.session_id === "string" &&
+    command.session_id &&
+    command.session_id !== session.sessionId
+  ) {
+    warn("session.set_model ignored: session_id mismatch");
+    return;
+  }
+
+  const nextModel = asNonEmptyTrimmedString(command.model_id);
+  if (!nextModel) {
+    warn("session.set_model ignored: missing model_id");
+    return;
+  }
+
+  session.defaultModel = nextModel;
+
+  await writeEnvelope({
+    channel: "control",
+    type: "session.notice",
+    session_id: session.sessionId,
+    code: "session_model_updated",
+    severity: "info",
+    message: `session model updated to ${nextModel}`,
+    details: { model_id: nextModel },
+    transient: false
+  });
+}
+
 async function emitTranslated(turn: TurnState): Promise<void> {
   const events = translateClaudeEventsToCrp(turn.records, {
     sessionId: turn.sessionId,
@@ -764,6 +800,9 @@ async function handleLine(line: string, state: { session: SessionState | null })
       return;
     case "models.list":
       await listModels(command, state);
+      return;
+    case "session.set_model":
+      await setSessionModel(command, state);
       return;
     case "turn.cancel":
     case "session.cancel":

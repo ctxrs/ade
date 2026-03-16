@@ -9,8 +9,7 @@ use agent_client_protocol::{
     InitializeRequest, McpServer, McpServerStdio, NewSessionRequest, PermissionOptionKind,
     PromptRequest, ProtocolVersion, RequestPermissionOutcome, RequestPermissionRequest,
     RequestPermissionResponse, ResourceLink, SelectedPermissionOutcome, SessionModeState,
-    SessionNotification, SessionUpdate, SetSessionModeRequest, SetSessionModelRequest,
-    TextContent,
+    SessionNotification, SessionUpdate, SetSessionModeRequest, SetSessionModelRequest, TextContent,
 };
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
@@ -81,7 +80,9 @@ fn bridge_trace_enabled(provider_id: Option<&str>) -> bool {
         return true;
     }
     bridge_trace_filter_matches(
-        std::env::var("CTX_ACP_BRIDGE_TRACE_PROVIDER").ok().as_deref(),
+        std::env::var("CTX_ACP_BRIDGE_TRACE_PROVIDER")
+            .ok()
+            .as_deref(),
         provider_id,
     )
 }
@@ -531,33 +532,7 @@ fn should_apply_requested_session_model(
     if model_catalog.current_model_id.as_deref() == Some(requested_model) {
         return Ok(false);
     }
-
-    if model_catalog.models.is_empty() {
-        anyhow::bail!(
-            "model '{}' requested but ACP agent did not advertise session models",
-            requested_model
-        );
-    }
-
-    if model_catalog
-        .models
-        .iter()
-        .any(|model| model.id == requested_model)
-    {
-        return Ok(true);
-    }
-
-    let available = model_catalog
-        .models
-        .iter()
-        .map(|model| model.id.as_str())
-        .collect::<Vec<_>>()
-        .join(", ");
-    anyhow::bail!(
-        "model '{}' requested but ACP agent advertised models [{}]",
-        requested_model,
-        available
-    );
+    Ok(true)
 }
 
 const CLINE_PROMPT_TAIL_FIRST_UPDATE_WAIT: Duration = Duration::from_secs(4);
@@ -1503,17 +1478,15 @@ mod tests {
     }
 
     #[test]
-    fn requested_session_model_requires_advertised_models() {
-        let err = should_apply_requested_session_model(&ModelCatalogState::default(), "kimi-k2.5")
-            .expect_err("missing model catalog should fail");
+    fn requested_session_model_allows_missing_advertised_models() {
         assert!(
-            err.to_string().contains("did not advertise session models"),
-            "unexpected error: {err:#}"
+            should_apply_requested_session_model(&ModelCatalogState::default(), "kimi-k2.5")
+                .expect("missing model catalog should still forward")
         );
     }
 
     #[test]
-    fn requested_session_model_requires_requested_model_to_exist() {
+    fn requested_session_model_allows_unadvertised_requested_model() {
         let catalog =
             acp_session_models_to_catalog(Some(&agent_client_protocol::SessionModelState::new(
                 "kimi-k2.5",
@@ -1525,13 +1498,8 @@ mod tests {
                     ),
                 ],
             )));
-        let err = should_apply_requested_session_model(&catalog, "kimi-k3")
-            .expect_err("unknown requested model should fail");
-        assert!(
-            err.to_string()
-                .contains("advertised models [kimi-k2.5, kimi-k2.5-thinking]"),
-            "unexpected error: {err:#}"
-        );
+        assert!(should_apply_requested_session_model(&catalog, "kimi-k3")
+            .expect("unadvertised requested model should still forward"));
     }
 
     #[test]
@@ -1629,8 +1597,14 @@ mod tests {
 
     #[test]
     fn bridge_trace_provider_filter_matches_provider_id() {
-        assert!(bridge_trace_filter_matches(Some("opencode"), Some("opencode")));
-        assert!(bridge_trace_filter_matches(Some("OPENCODE"), Some("opencode")));
+        assert!(bridge_trace_filter_matches(
+            Some("opencode"),
+            Some("opencode")
+        ));
+        assert!(bridge_trace_filter_matches(
+            Some("OPENCODE"),
+            Some("opencode")
+        ));
         assert!(bridge_trace_filter_matches(Some("*"), Some("qwen")));
         assert!(!bridge_trace_filter_matches(Some("qwen"), Some("opencode")));
         assert!(!bridge_trace_filter_matches(None, Some("opencode")));
@@ -1752,6 +1726,9 @@ mod tests {
             "method": "session/open"
         })
         .to_string();
-        assert_eq!(raw_session_update_kind(&other).as_deref(), Some("session/open"));
+        assert_eq!(
+            raw_session_update_kind(&other).as_deref(),
+            Some("session/open")
+        );
     }
 }

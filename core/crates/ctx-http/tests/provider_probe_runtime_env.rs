@@ -208,7 +208,7 @@ exit 1
     std::fs::write(&core_entry, b"core").expect("write core entry");
     std::fs::write(
         &cli_pkg,
-        r#"{"name":"@google/gemini-cli","version":"0.33.0"}"#,
+        r#"{"name":"@google/gemini-cli","version":"0.33.1"}"#,
     )
     .expect("write cli package");
 
@@ -754,7 +754,7 @@ async fn providers_bootstrap_includes_pinned_codex_claude_and_gemini_catalogs() 
             provider_id: "gemini".to_string(),
             installed: true,
             detected_path: None,
-            version: Some("0.33.0".to_string()),
+            version: Some("0.33.1".to_string()),
             capabilities: None,
             health: ProviderHealth::Ok,
             diagnostics: Vec::new(),
@@ -810,7 +810,7 @@ async fn providers_bootstrap_includes_pinned_codex_claude_and_gemini_catalogs() 
     assert_eq!(
         body.pointer("/provider_options/gemini/models/catalog_version")
             .and_then(serde_json::Value::as_str),
-        Some("0.33.0"),
+        Some("0.33.1"),
         "expected pinned gemini bootstrap catalog version: {body:#?}"
     );
     assert_eq!(
@@ -872,7 +872,7 @@ async fn gemini_provider_options_use_live_acp_catalog_when_probe_succeeds() {
             provider_id: "gemini".to_string(),
             installed: true,
             detected_path: None,
-            version: Some("0.33.0".to_string()),
+            version: Some("0.33.1".to_string()),
             capabilities: None,
             health: ProviderHealth::Ok,
             diagnostics: Vec::new(),

@@ -76,9 +76,9 @@ const CLAUDE_PINNED_SUBSCRIPTION_MODELS: [PinnedReasoningModel; 3] = [
     },
 ];
 
-const GEMINI_CATALOG_VERSION_0_33_0: &str = "0.33.0";
+const GEMINI_CATALOG_VERSION_0_33_1: &str = "0.33.1";
 
-const GEMINI_PINNED_SUBSCRIPTION_MODELS_0_33_0: [PinnedFlatModel; 7] = [
+const GEMINI_PINNED_SUBSCRIPTION_MODELS_0_33_1: [PinnedFlatModel; 7] = [
     PinnedFlatModel {
         id: "auto-gemini-3",
         display_name: "Auto (Gemini 3)",
@@ -176,11 +176,11 @@ fn normalize_cli_version(version: &str) -> Option<String> {
 
 fn gemini_models_value_for_version(version: &str) -> Option<serde_json::Value> {
     match normalize_cli_version(version)?.as_str() {
-        GEMINI_CATALOG_VERSION_0_33_0 => Some(pinned_flat_models_value(
+        GEMINI_CATALOG_VERSION_0_33_1 => Some(pinned_flat_models_value(
             "gemini_cli_version_pinned",
-            GEMINI_CATALOG_VERSION_0_33_0,
-            GEMINI_PINNED_SUBSCRIPTION_MODELS_0_33_0[0].id,
-            &GEMINI_PINNED_SUBSCRIPTION_MODELS_0_33_0,
+            GEMINI_CATALOG_VERSION_0_33_1,
+            GEMINI_PINNED_SUBSCRIPTION_MODELS_0_33_1[0].id,
+            &GEMINI_PINNED_SUBSCRIPTION_MODELS_0_33_1,
         )),
         _ => None,
     }
@@ -263,7 +263,7 @@ mod tests {
 
     #[test]
     fn gemini_pinned_subscription_models_match_current_managed_catalog() {
-        let payload = pinned_subscription_models_value("gemini", Some("0.33.0"))
+        let payload = pinned_subscription_models_value("gemini", Some("0.33.1"))
             .expect("gemini pinned payload");
         assert_eq!(
             payload
@@ -275,7 +275,7 @@ mod tests {
             payload
                 .get("catalog_version")
                 .and_then(serde_json::Value::as_str),
-            Some("0.33.0")
+            Some("0.33.1")
         );
         assert_eq!(
             payload

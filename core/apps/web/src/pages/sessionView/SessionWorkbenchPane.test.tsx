@@ -434,6 +434,7 @@ function TestAssistantPane() {
         availableModels={[]}
         currentModelId=""
         onSetModelId={async () => {}}
+        modelSwitchError={null}
       />
     </VirtuosoMessageListTestingContext.Provider>
   );
@@ -468,7 +469,8 @@ describe("SessionWorkbenchPane", () => {
     fireEvent.click(initialHeader);
 
     await waitFor(() => {
-      expect(container.querySelector(".wb-turn-header")).toHaveAttribute("aria-expanded", "true");
+      const updatedHeader = container.querySelector(".wb-turn-header");
+      expect(updatedHeader).toHaveAttribute("aria-expanded", "true");
     });
   });
 

@@ -204,29 +204,61 @@ pub(crate) async fn set_session_model(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     Json(req): Json<SetSessionModelReq>,
-) -> Result<Json<Session>, StatusCode> {
-    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+) -> Result<Json<Session>, (StatusCode, Json<ApiErrorResp>)> {
+    fn session_model_error(
+        status: StatusCode,
+        error: impl Into<String>,
+    ) -> (StatusCode, Json<ApiErrorResp>) {
+        (
+            status,
+            Json(ApiErrorResp {
+                error: error.into(),
+            }),
+        )
+    }
 
-    let store = state
-        .store_for_session(session_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let session_id = SessionId(
+        uuid::Uuid::parse_str(&id)
+            .map_err(|_| session_model_error(StatusCode::BAD_REQUEST, "invalid session id"))?,
+    );
+
+    let store = state.store_for_session(session_id).await.map_err(|err| {
+        session_model_error(
+            StatusCode::NOT_FOUND,
+            logs::redact_sensitive(&err.to_string()),
+        )
+    })?;
     let session = store
         .get_session(session_id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+        .map_err(|err| {
+            session_model_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                logs::redact_sensitive(&err.to_string()),
+            )
+        })?
+        .ok_or_else(|| session_model_error(StatusCode::NOT_FOUND, "session not found"))?;
     let workspace = state
         .global_store()
         .get_workspace(session.workspace_id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+        .map_err(|err| {
+            session_model_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                logs::redact_sensitive(&err.to_string()),
+            )
+        })?
+        .ok_or_else(|| session_model_error(StatusCode::NOT_FOUND, "workspace not found"))?;
     let worktree = store
         .get_worktree(session.worktree_id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+        .map_err(|err| {
+            session_model_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                logs::redact_sensitive(&err.to_string()),
+            )
+        })?
+        .ok_or_else(|| session_model_error(StatusCode::NOT_FOUND, "worktree not found"))?;
     let install_target = execution_effective::effective_install_target_for_environment(
         state.as_ref(),
         worktree.workspace_id,
@@ -238,7 +270,10 @@ pub(crate) async fn set_session_model(
             workspace_id = %worktree.workspace_id.0,
             "set_session_model failed to load execution settings: {err:#}",
         );
-        StatusCode::INTERNAL_SERVER_ERROR
+        session_model_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to load execution settings",
+        )
     })?;
 
     let adapter = crate::daemon::ensure_provider_adapter_for_target(
@@ -256,19 +291,32 @@ pub(crate) async fn set_session_model(
     if let Some(ref effort) = reasoning_effort {
         let allowed = ["none", "minimal", "low", "medium", "high", "xhigh"];
         if !allowed.contains(&effort.as_str()) {
-            return Err(StatusCode::BAD_REQUEST);
+            return Err(session_model_error(
+                StatusCode::BAD_REQUEST,
+                format!("unsupported reasoning effort '{effort}'"),
+            ));
         }
     }
     let catalog = load_provider_model_catalog(&state, &workspace, &session.provider_id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|err| {
+            session_model_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                logs::redact_sensitive(&err.to_string()),
+            )
+        })?;
     let resolved_model = resolve_model_id(
         Some(req.model_id.as_str()),
         reasoning_effort.as_deref(),
         None,
         catalog.as_ref(),
     )
-    .map_err(|_| StatusCode::BAD_REQUEST)?;
+    .map_err(|err| {
+        session_model_error(
+            StatusCode::BAD_REQUEST,
+            logs::redact_sensitive(&err.to_string()),
+        )
+    })?;
     let next_full_model_id = compose_model_id(
         &resolved_model.model_id,
         resolved_model.reasoning_effort.as_deref(),
@@ -278,7 +326,17 @@ pub(crate) async fn set_session_model(
         adapter
             .set_session_model(session.id.0.to_string(), next_full_model_id.clone())
             .await
-            .map_err(|_| StatusCode::BAD_REQUEST)?;
+            .map_err(|err| {
+                session_model_error(
+                    StatusCode::BAD_REQUEST,
+                    format!(
+                        "failed to switch the live {} session to '{}': {}",
+                        session.provider_id,
+                        next_full_model_id,
+                        logs::redact_sensitive(&err.to_string()),
+                    ),
+                )
+            })?;
     }
 
     store
@@ -288,7 +346,12 @@ pub(crate) async fn set_session_model(
             resolved_model.reasoning_effort.clone(),
         )
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|err| {
+            session_model_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                logs::redact_sensitive(&err.to_string()),
+            )
+        })?;
 
     let event = store
         .append_session_event(
@@ -302,14 +365,24 @@ pub(crate) async fn set_session_model(
             }),
         )
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|err| {
+            session_model_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                logs::redact_sensitive(&err.to_string()),
+            )
+        })?;
     state.publish_event(event).await;
 
     let updated = store
         .get_session(session_id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+        .map_err(|err| {
+            session_model_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                logs::redact_sensitive(&err.to_string()),
+            )
+        })?
+        .ok_or_else(|| session_model_error(StatusCode::NOT_FOUND, "session not found"))?;
     state.remember_session_meta(&updated).await;
     if let Err(e) = state.emit_workspace_task_upsert(updated.task_id).await {
         tracing::warn!(

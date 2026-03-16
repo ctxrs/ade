@@ -303,10 +303,13 @@ pub(crate) fn resolve_model_id(
     if let Some(catalog) = catalog {
         let model_known = catalog.full_ids.contains(&model) || catalog.base_ids.contains(&model);
         if !model_known && requested_model.is_some() {
-            return Err(format!(
-                "unknown model '{model}'; available models: {}",
-                catalog.full_ids.join(", ")
-            ));
+            if let Some(req_effort) = effort_input {
+                let (_, suffix) = split_model_id(&model);
+                if suffix.is_none() {
+                    return Ok(build_resolved_model(model, Some(req_effort)));
+                }
+            }
+            return Ok(resolved_from_full_model_id(None, &model));
         }
 
         let info = catalog.info_by_full_id.get(&model);
@@ -606,7 +609,7 @@ pub(crate) async fn load_provider_model_catalog(
 
 #[cfg(test)]
 mod tests {
-    use super::{load_provider_model_catalog, ModelCatalog};
+    use super::{load_provider_model_catalog, resolve_model_id, ModelCatalog};
 
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -708,7 +711,7 @@ mod tests {
                 provider_id: "gemini".to_string(),
                 installed: true,
                 detected_path: None,
-                version: Some("0.33.0".to_string()),
+                version: Some("0.33.1".to_string()),
                 capabilities: None,
                 health: ctx_providers::adapters::ProviderHealth::Ok,
                 diagnostics: Vec::new(),
@@ -742,5 +745,52 @@ mod tests {
         };
 
         assert_eq!(catalog.default_model_id(), Some("auto-gemini-3"));
+    }
+
+    #[test]
+    fn resolve_model_id_allows_explicit_unknown_model_when_catalog_is_present() {
+        let catalog = ModelCatalog {
+            full_ids: vec!["gemini-2.5-pro".to_string(), "gemini-2.5-flash".to_string()],
+            current_model_id: Some("gemini-2.5-pro".to_string()),
+            base_ids: vec!["gemini-2.5-pro".to_string(), "gemini-2.5-flash".to_string()],
+            efforts_by_base: HashMap::new(),
+            full_id_by_base_effort: HashMap::new(),
+            info_by_full_id: HashMap::new(),
+        };
+
+        let resolved = resolve_model_id(Some("gemini-3-pro-exp"), None, None, Some(&catalog))
+            .expect("explicit unknown model should be accepted");
+
+        assert_eq!(resolved.model_id, "gemini-3-pro-exp");
+        assert_eq!(resolved.reasoning_effort, None);
+        assert_eq!(resolved.full_model_id, "gemini-3-pro-exp");
+    }
+
+    #[test]
+    fn resolve_model_id_allows_explicit_unknown_model_with_reasoning_effort() {
+        let catalog = ModelCatalog {
+            full_ids: vec!["gpt-5/medium".to_string(), "gpt-5/high".to_string()],
+            current_model_id: Some("gpt-5/medium".to_string()),
+            base_ids: vec!["gpt-5".to_string()],
+            efforts_by_base: HashMap::from([(
+                "gpt-5".to_string(),
+                vec!["medium".to_string(), "high".to_string()],
+            )]),
+            full_id_by_base_effort: HashMap::from([(
+                "gpt-5".to_string(),
+                HashMap::from([
+                    ("medium".to_string(), "gpt-5/medium".to_string()),
+                    ("high".to_string(), "gpt-5/high".to_string()),
+                ]),
+            )]),
+            info_by_full_id: HashMap::new(),
+        };
+
+        let resolved = resolve_model_id(Some("gpt-6"), Some("xhigh"), None, Some(&catalog))
+            .expect("explicit unknown model with effort should be accepted");
+
+        assert_eq!(resolved.model_id, "gpt-6");
+        assert_eq!(resolved.reasoning_effort.as_deref(), Some("xhigh"));
+        assert_eq!(resolved.full_model_id, "gpt-6/xhigh");
     }
 }
