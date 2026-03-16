@@ -95,20 +95,17 @@ pub(in crate::api) async fn get_provider_options(
     let provider_status =
         provider_status_for_target(&state, &managed, &matrix, &provider_id, install_target).await;
 
-    if !provider_status.installed
-        || !matches!(
-            provider_status.health,
-            ctx_providers::adapters::ProviderHealth::Ok
-        )
-    {
+    if !provider_status_is_usable(&provider_status) {
         let mut raw_base_resp = serde_json::json!({
             "provider_id": provider_id,
             "workspace_id": ws_id.0,
             "installed": provider_status.installed,
             "health": provider_status.health,
             "diagnostics": provider_status.diagnostics,
+            "usability": provider_status.usability,
             "probe_ok": false,
-            "probe_error": "provider not installed or unhealthy",
+            "probe_error": provider_status_unusable_reason(&provider_status)
+                .unwrap_or_else(|| "provider not ready for use".to_string()),
             "has_active_auth": has_active_auth,
             "auth_mode": auth_mode,
             "probed_at": chrono::Utc::now().to_rfc3339(),
@@ -492,15 +489,13 @@ pub(in crate::api) async fn verify_provider_for_workspace(
     let mut selected_endpoint_id: Option<String> =
         selected_endpoint_from_harness_config(source_config);
 
-    if !provider_status.installed
-        || !matches!(
-            provider_status.health,
-            ctx_providers::adapters::ProviderHealth::Ok
-        )
-    {
+    if !provider_status_is_usable(&provider_status) {
         status = "error".to_string();
         auth_required = Some(false);
-        message = Some("provider not installed or unhealthy".to_string());
+        message = Some(
+            provider_status_unusable_reason(&provider_status)
+                .unwrap_or_else(|| "provider not ready for use".to_string()),
+        );
         endpoint_status = HarnessEndpointVerificationStatus::Error;
     } else if let Some(endpoint) = selected_endpoint
         .as_ref()

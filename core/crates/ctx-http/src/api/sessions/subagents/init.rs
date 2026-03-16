@@ -197,13 +197,15 @@ pub(crate) async fn mcp_agent_init(
     }
 
     for (provider_id, status) in &provider_statuses {
-        if !status.installed
-            || !matches!(status.health, ctx_providers::adapters::ProviderHealth::Ok)
-        {
+        if !crate::provider_usability::provider_status_is_usable(status) {
             return Err((
                 StatusCode::BAD_REQUEST,
                 Json(ApiErrorResp {
-                    error: format!("harness '{provider_id}' is not installed or unhealthy"),
+                    error: format!(
+                        "harness '{provider_id}' is not ready: {}",
+                        crate::provider_usability::provider_status_unusable_reason(status)
+                            .unwrap_or_else(|| "provider not ready for use".to_string())
+                    ),
                 }),
             ));
         }

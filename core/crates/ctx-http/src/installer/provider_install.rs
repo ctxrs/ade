@@ -781,6 +781,7 @@ async fn refresh_provider_statuses_with_cfg(
                         health: ctx_providers::adapters::ProviderHealth::Error,
                         diagnostics: vec![e.to_string()],
                         details: HashMap::new(),
+                        usability: ctx_providers::adapters::ProviderUsability::default(),
                     },
                 );
             }

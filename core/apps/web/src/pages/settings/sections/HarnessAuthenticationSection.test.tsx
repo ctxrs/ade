@@ -19,6 +19,26 @@ vi.mock("../../../utils/desktop", () => ({
 
 type HarnessAuthController = ReturnType<typeof useHarnessAuthenticationController>;
 
+function makeProviderStatus(
+  providerId: string,
+  overrides: Partial<ProviderStatus> = {},
+): ProviderStatus {
+  return {
+    provider_id: providerId,
+    installed: true,
+    health: "ok",
+    diagnostics: [],
+    details: {},
+    usability: {
+      usable: true,
+      status: "ready",
+      blocking_provider_ids: [],
+      recommended_action: "none",
+    },
+    ...overrides,
+  };
+}
+
 function makeGeminiSubscriptionModal(): HarnessAuthModalState {
   return {
     provider_id: "gemini",
@@ -588,17 +608,21 @@ describe("HarnessAuthenticationSection Kimi subscription modal", () => {
 
 describe("HarnessAuthenticationSection install row rendering", () => {
   it("renders running installs when provider reports install_running without crashing", () => {
-    const runningProvider: ProviderStatus = {
-      provider_id: "codex",
+    const runningProvider = makeProviderStatus("codex", {
       installed: false,
       health: "unknown",
-      diagnostics: [],
+      usability: {
+        usable: false,
+        status: "installable",
+        blocking_provider_ids: [],
+        recommended_action: "install",
+      },
       details: {
         install_supported: "true",
         install_running: "true",
         install_target: "host",
       },
-    };
+    });
 
     mockUseHarnessAuthenticationController.mockReturnValue(
       makeController({
@@ -624,17 +648,13 @@ describe("HarnessAuthenticationSection install row rendering", () => {
   });
 
   it("renders update action for installed harnesses when matrix update is available", () => {
-    const installedProvider: ProviderStatus = {
-      provider_id: "codex",
-      installed: true,
-      health: "ok",
-      diagnostics: [],
+    const installedProvider = makeProviderStatus("codex", {
       details: {
         install_supported: "true",
         install_target: "host",
         matrix_update_available: "true",
       },
-    };
+    });
 
     mockUseHarnessAuthenticationController.mockReturnValue(
       makeController({
@@ -659,16 +679,12 @@ describe("HarnessAuthenticationSection install row rendering", () => {
   });
 
   it("hides install action for installed up-to-date harnesses", () => {
-    const installedProvider: ProviderStatus = {
-      provider_id: "codex",
-      installed: true,
-      health: "ok",
-      diagnostics: [],
+    const installedProvider = makeProviderStatus("codex", {
       details: {
         install_supported: "true",
         install_target: "host",
       },
-    };
+    });
 
     mockUseHarnessAuthenticationController.mockReturnValue(
       makeController({
@@ -691,24 +707,16 @@ describe("HarnessAuthenticationSection install row rendering", () => {
   });
 
   it("does not render dependency-only provider ids in harness authentication", () => {
-    const installedProvider: ProviderStatus = {
-      provider_id: "codex",
-      installed: true,
-      health: "ok",
-      diagnostics: [],
+    const installedProvider = makeProviderStatus("codex", {
       details: {
         install_supported: "true",
       },
-    };
-    const dependencyProvider: ProviderStatus = {
-      provider_id: "acp-crp-bridge",
-      installed: true,
-      health: "ok",
-      diagnostics: [],
+    });
+    const dependencyProvider = makeProviderStatus("acp-crp-bridge", {
       details: {
         provider_kind: "dependency",
       },
-    };
+    });
 
     mockUseHarnessAuthenticationController.mockReturnValue(
       makeController({

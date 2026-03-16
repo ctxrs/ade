@@ -119,6 +119,7 @@ impl ProviderAdapter for Tier1CrpAdapter {
             },
             diagnostics,
             details: HashMap::new(),
+            usability: crate::adapters::ProviderUsability::default(),
         })
     }
 

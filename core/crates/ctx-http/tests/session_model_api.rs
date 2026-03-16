@@ -58,6 +58,7 @@ impl ProviderAdapter for RecordingSetModelAdapter {
             health: ProviderHealth::Ok,
             diagnostics: vec![],
             details: HashMap::new(),
+            usability: ctx_providers::adapters::ProviderUsability::default(),
         })
     }
 

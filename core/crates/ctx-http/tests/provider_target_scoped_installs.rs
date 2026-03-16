@@ -882,6 +882,7 @@ async fn acp_container_install_surfaces_bridge_as_installable_prerequisite() {
             health: ProviderHealth::Missing,
             diagnostics: Vec::new(),
             details: HashMap::new(),
+            usability: ctx_providers::adapters::ProviderUsability::default(),
         },
     );
 
@@ -971,6 +972,7 @@ async fn acp_host_install_surfaces_bridge_as_installable_prerequisite() {
             health: ProviderHealth::Missing,
             diagnostics: Vec::new(),
             details: HashMap::new(),
+            usability: ctx_providers::adapters::ProviderUsability::default(),
         },
     );
 
@@ -1062,6 +1064,7 @@ async fn acp_container_install_is_blocked_before_start_when_bridge_runtime_is_in
             health: ProviderHealth::Missing,
             diagnostics: Vec::new(),
             details: HashMap::new(),
+            usability: ctx_providers::adapters::ProviderUsability::default(),
         },
     );
 

@@ -788,6 +788,25 @@ export type ProviderStatus = {
   health: string;
   diagnostics: string[];
   details?: Record<string, string>;
+  usability: ProviderUsability;
+};
+
+export type ProviderUsabilityStatus = "ready" | "installable" | "blocked" | "unsupported";
+
+export type ProviderRecommendedAction =
+  | "none"
+  | "install"
+  | "resolve_dependency"
+  | "configure_runtime"
+  | "switch_target";
+
+export type ProviderUsability = {
+  usable: boolean;
+  status: ProviderUsabilityStatus;
+  reason_code?: string | null;
+  reason?: string | null;
+  blocking_provider_ids: string[];
+  recommended_action: ProviderRecommendedAction;
 };
 
 export type InstallEventLevel = "info" | "warning" | "error" | "success";

@@ -40,6 +40,7 @@ use crate::provider_launch::status::{
     install_target_for_workspace, provider_status_for_target,
     workspace_execution_settings_error_json,
 };
+use crate::provider_usability::{provider_status_is_usable, provider_status_unusable_reason};
 use ctx_core::ids::WorkspaceId;
 use ctx_providers::crp::{probe_crp_models, probe_crp_runtime_launch};
 

@@ -20,6 +20,10 @@ import type { DraftHarness, ProviderAuthSummaryTrigger, WorkbenchModeId } from "
 import type { SessionSupervisor } from "../../state/sessionSupervisor";
 import { errorMessage } from "../../utils/errorMessage";
 import { parseModelId } from "../../utils/modelEffort";
+import {
+  isReadyVisibleHarnessProviderStatus,
+  providerUsabilityReason,
+} from "../../utils/providerInventory";
 import { randomUuid } from "../../utils/randomUuid";
 import type { WorkbenchStore } from "../../workbench/store";
 import type { OptimisticFocus, OptimisticTaskSummary } from "../WorkbenchPage.types";
@@ -79,11 +83,9 @@ export function useWorkbenchTaskCreation({
     if (draftPrompt.trim().length === 0) return "Enter a prompt to start.";
     if (startBusy) return "Starting…";
     if (!draftHarness) return "Select a harness to start.";
-    const missing =
-      !(providersById[draftHarness.providerId]?.installed === true
-        && providersById[draftHarness.providerId]?.health === "ok");
+    const missing = !isReadyVisibleHarnessProviderStatus(providersById[draftHarness.providerId]);
     if (missing) {
-      const diag = providersById[draftHarness.providerId]?.diagnostics?.[0];
+      const diag = providerUsabilityReason(providersById[draftHarness.providerId]);
       return diag
         ? `Harness “${draftHarness.providerId}” unavailable: ${diag}`
         : `Harness “${draftHarness.providerId}” unavailable.`;
@@ -305,11 +307,9 @@ export function useWorkbenchTaskCreation({
         }),
       );
 
-      const installed =
-        providersById[primaryTrack.providerId]?.installed === true
-        && providersById[primaryTrack.providerId]?.health === "ok";
+      const installed = isReadyVisibleHarnessProviderStatus(providersById[primaryTrack.providerId]);
       if (!installed) {
-        const diag = providersById[primaryTrack.providerId]?.diagnostics?.[0];
+        const diag = providerUsabilityReason(providersById[primaryTrack.providerId]);
         throw new Error(
           diag
             ? `Harness “${primaryTrack.providerId}” unavailable: ${diag}`

@@ -64,6 +64,12 @@ function makeProviderStatus(overrides: Partial<ProviderStatus> = {}): ProviderSt
     health: "ok",
     diagnostics: [],
     details: {},
+    usability: {
+      usable: true,
+      status: "ready",
+      blocking_provider_ids: [],
+      recommended_action: "none",
+    },
     ...overrides,
   };
 }
@@ -504,5 +510,60 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     await waitFor(() => {
       expect(onStartError).toHaveBeenLastCalledWith(null);
     });
+  });
+
+  it("blocks task creation when the selected harness is not usable", async () => {
+    let current: FlowValue | null = null;
+    const onStartError = vi.fn();
+
+    render(
+      <Harness
+        draftHarness={{ providerId: "cursor", modelId: "cursor-model" }}
+        providerOptionsById={{
+          cursor: makeProviderOptions({
+            provider_id: "cursor",
+            has_active_auth: true,
+            models: {
+              current_model_id: "cursor-model",
+              models: [{ id: "cursor-model" }],
+            },
+          }),
+        }}
+        providersByIdProp={{
+          cursor: makeProviderStatus({
+            provider_id: "cursor",
+            installed: false,
+            health: "error",
+            diagnostics: [
+              "provider is not ready until required dependencies are installed: acp-crp-bridge",
+            ],
+            usability: {
+              usable: false,
+              status: "blocked",
+              reason_code: "missing_dependency",
+              reason:
+                "provider is not ready until required dependencies are installed: acp-crp-bridge",
+              blocking_provider_ids: ["acp-crp-bridge"],
+              recommended_action: "resolve_dependency",
+            },
+          }),
+        }}
+        onChange={(value) => {
+          current = value;
+        }}
+        onStartError={onStartError}
+      />,
+    );
+
+    await act(async () => {
+      await requireValue(current).startNewTask();
+    });
+
+    expect(requireValue(current).optimisticTasks).toEqual([]);
+    expect(mockedCreateTask).not.toHaveBeenCalled();
+    expect(mockedCreateSession).not.toHaveBeenCalled();
+    expect(onStartError).toHaveBeenLastCalledWith(
+      "Harness “cursor” unavailable: provider is not ready until required dependencies are installed: acp-crp-bridge",
+    );
   });
 });

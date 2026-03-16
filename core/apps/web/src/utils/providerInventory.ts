@@ -13,13 +13,21 @@ export function isInstalledVisibleHarnessProviderStatus(
   provider: ProviderStatus | null | undefined,
 ): provider is ProviderStatus {
   return isVisibleHarnessProviderStatus(provider)
-    && provider.installed === true
-    && provider.health === "ok"
-    && provider.details?.ready_for_use !== "false";
+    && provider.usability.usable === true;
 }
 
 export function isReadyVisibleHarnessProviderStatus(
   provider: ProviderStatus | null | undefined,
 ): provider is ProviderStatus {
   return isInstalledVisibleHarnessProviderStatus(provider);
+}
+
+export function providerUsabilityReason(
+  provider: ProviderStatus | null | undefined,
+): string | null {
+  if (!provider) return null;
+  const usabilityReason = provider.usability.reason?.trim();
+  if (usabilityReason) return usabilityReason;
+  const diagnostic = provider.diagnostics.find((value) => value.trim().length > 0)?.trim();
+  return diagnostic ?? null;
 }

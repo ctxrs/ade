@@ -38,6 +38,7 @@ pub mod provider_launch;
 pub mod provider_matrix;
 pub mod provider_probe;
 pub mod provider_restart;
+pub(crate) mod provider_usability;
 pub mod provider_usage;
 pub mod resource_governance;
 pub mod resource_telemetry;
@@ -310,6 +311,7 @@ mod tests {
                     health: ctx_providers::adapters::ProviderHealth::Ok,
                     diagnostics: vec![],
                     details: HashMap::new(),
+                    usability: ctx_providers::adapters::ProviderUsability::default(),
                 },
             );
             *state.providers.statuses.lock().await = statuses;

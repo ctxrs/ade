@@ -11,6 +11,9 @@ use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::installer;
 use crate::installs::InstallTarget;
+use crate::provider_usability::{
+    apply_install_viability_details, apply_provider_usability_details,
+};
 
 use super::resolver::ensure_provider_adapter_for_target_with_cfg;
 
@@ -24,6 +27,7 @@ fn inspect_error_status(provider_id: &str, err: anyhow::Error) -> ProviderStatus
         health: ctx_providers::adapters::ProviderHealth::Error,
         diagnostics: vec![err.to_string()],
         details: HashMap::new(),
+        usability: ctx_providers::adapters::ProviderUsability::default(),
     }
 }
 
@@ -135,6 +139,7 @@ fn synthesize_target_mismatch_status(
         health: ctx_providers::adapters::ProviderHealth::Missing,
         diagnostics: vec![diagnostic],
         details,
+        usability: ctx_providers::adapters::ProviderUsability::default(),
     })
 }
 
@@ -174,6 +179,7 @@ pub(crate) async fn provider_status_for_target(
                     health: ctx_providers::adapters::ProviderHealth::Missing,
                     diagnostics: vec![format!("provider not available: {provider_id}")],
                     details: HashMap::new(),
+                    usability: ctx_providers::adapters::ProviderUsability::default(),
                 })
         } else {
             let adapter = ensure_provider_adapter_for_target_with_cfg(
@@ -201,6 +207,8 @@ pub(crate) async fn provider_status_for_target(
         )
         .await;
     }
+    apply_install_viability_details(&mut status, &state.core.data_root, managed, matrix, target);
+    apply_provider_usability_details(&mut status, &state.core.data_root, managed, matrix, target);
     status
 }
 

@@ -20,6 +20,14 @@ export type ProviderStatus = {
   health: string;
   diagnostics: string[];
   details: Record<string, string>;
+  usability: {
+    usable: boolean;
+    status: string;
+    reason_code?: string | null;
+    reason?: string | null;
+    blocking_provider_ids: string[];
+    recommended_action: string;
+  };
 };
 
 export type TerminalState = {
@@ -172,6 +180,14 @@ export async function getProviderStatus(
       health: "unknown",
       diagnostics: [`provider not found: ${providerId}`],
       details: {},
+      usability: {
+        usable: false,
+        status: "blocked",
+        reason_code: "not_found",
+        reason: `provider not found: ${providerId}`,
+        blocking_provider_ids: [],
+        recommended_action: "none",
+      },
     };
   }
   if (!response.ok()) {
@@ -184,6 +200,16 @@ export async function getProviderStatus(
     health: firstText(row.health, "unknown"),
     diagnostics: asArray(row.diagnostics).map((entry) => readString(entry)).filter(Boolean),
     details: readStringMap(row.details),
+    usability: {
+      usable: asRecord(row.usability).usable === true,
+      status: firstText(asRecord(row.usability).status, "blocked"),
+      reason_code: firstText(asRecord(row.usability).reason_code) || null,
+      reason: firstText(asRecord(row.usability).reason) || null,
+      blocking_provider_ids: asArray(asRecord(row.usability).blocking_provider_ids)
+        .map((entry) => readString(entry))
+        .filter(Boolean),
+      recommended_action: firstText(asRecord(row.usability).recommended_action, "none"),
+    },
   };
 }
 
@@ -255,14 +281,10 @@ export async function ensureProviderInstalledAndHealthy(
     await installProviderAndWait(request, providerId, target, options);
   }
   const finalStatus = initial.installed ? initial : await getProviderStatus(request, providerId, target, { requestTimeoutMs });
-  const readyForUse = (finalStatus.details.ready_for_use ?? "").trim().toLowerCase();
-  const readyForUseBlocked = readyForUse.length > 0 && readyForUse !== "true";
-  if (!finalStatus.installed || finalStatus.health !== "ok" || readyForUseBlocked) {
-    const pendingDependencyIds = (finalStatus.details.pending_dependency_ids ?? "").trim();
-    const detail = finalStatus.diagnostics[0]
-      ?? (pendingDependencyIds
-        ? `pending dependencies: ${pendingDependencyIds}`
-        : `installed=${String(finalStatus.installed)} health=${finalStatus.health || "unknown"} ready_for_use=${readyForUse || "unknown"}`);
+  if (!finalStatus.usability.usable) {
+    const detail = finalStatus.usability.reason
+      ?? finalStatus.diagnostics[0]
+      ?? `installed=${String(finalStatus.installed)} health=${finalStatus.health || "unknown"} usability=${finalStatus.usability.status}`;
     throw new Error(`provider ${providerId} is not ready for target=${target}: ${detail}`);
   }
   return finalStatus;

@@ -1,13 +1,14 @@
 use super::*;
 use std::collections::BTreeSet;
-use std::path::Path as StdPath;
 
 use anyhow::Context;
 use ctx_core::ids::WorkspaceId;
 
 use crate::daemon::ensure_provider_adapter_for_target_with_cfg;
 use crate::execution_effective;
-use crate::provider_install_contract;
+use crate::provider_usability::{
+    apply_install_viability_details, apply_provider_usability_details,
+};
 
 fn inspect_error_status(provider_id: &str, err: anyhow::Error) -> ProviderStatus {
     ProviderStatus {
@@ -19,6 +20,7 @@ fn inspect_error_status(provider_id: &str, err: anyhow::Error) -> ProviderStatus
         health: ctx_providers::adapters::ProviderHealth::Error,
         diagnostics: vec![err.to_string()],
         details: HashMap::new(),
+        usability: ctx_providers::adapters::ProviderUsability::default(),
     }
 }
 
@@ -130,6 +132,7 @@ fn synthesize_target_mismatch_status(
         health: ctx_providers::adapters::ProviderHealth::Missing,
         diagnostics: vec![diagnostic],
         details,
+        usability: ctx_providers::adapters::ProviderUsability::default(),
     })
 }
 
@@ -169,6 +172,7 @@ pub(crate) async fn provider_status_for_target(
                     health: ctx_providers::adapters::ProviderHealth::Missing,
                     diagnostics: vec![format!("provider not available: {provider_id}")],
                     details: HashMap::new(),
+                    usability: ctx_providers::adapters::ProviderUsability::default(),
                 })
         } else {
             let adapter = ensure_provider_adapter_for_target_with_cfg(
@@ -197,140 +201,6 @@ pub(crate) async fn provider_status_for_target(
         .await;
     }
     status
-}
-
-pub(super) fn apply_install_viability_details(
-    status: &mut ProviderStatus,
-    data_root: &StdPath,
-    managed: &installer::AgentServerConfigFile,
-    matrix: &crate::provider_matrix::ProviderMatrix,
-    target: InstallTarget,
-) {
-    let install_viability = provider_install_contract::provider_install_viability_issue(
-        data_root,
-        managed,
-        matrix,
-        &status.provider_id,
-        target,
-    );
-    status.details.insert(
-        "install_supported".into(),
-        if installer::is_supported_managed_provider_for_target(matrix, &status.provider_id, target)
-            && install_viability.is_none()
-        {
-            "true".into()
-        } else {
-            "false".into()
-        },
-    );
-    if let Some(issue) = install_viability {
-        status
-            .details
-            .insert("install_blocked".into(), "true".into());
-        status
-            .details
-            .insert("install_blocked_code".into(), issue.code.to_string());
-        status
-            .details
-            .insert("install_blocked_reason".into(), issue.message.clone());
-        if !status
-            .diagnostics
-            .iter()
-            .any(|value| value == &issue.message)
-        {
-            status.diagnostics.push(issue.message);
-        }
-    } else {
-        status.details.remove("install_blocked");
-        status.details.remove("install_blocked_code");
-        status.details.remove("install_blocked_reason");
-    }
-}
-
-pub(super) fn apply_ready_for_use_details(
-    status: &mut ProviderStatus,
-    data_root: &StdPath,
-    managed: &installer::AgentServerConfigFile,
-    matrix: &crate::provider_matrix::ProviderMatrix,
-    target: InstallTarget,
-) {
-    let base_ready =
-        status.installed && matches!(status.health, ctx_providers::adapters::ProviderHealth::Ok);
-    if !base_ready {
-        status
-            .details
-            .insert("ready_for_use".into(), "false".into());
-        status.details.remove("required_dependency_ids");
-        status.details.remove("pending_dependency_ids");
-        return;
-    }
-
-    if status.provider_id == "fake" {
-        status.details.insert("ready_for_use".into(), "true".into());
-        status.details.remove("required_dependency_ids");
-        status.details.remove("pending_dependency_ids");
-        status.details.remove("managed_dependency_update_available");
-        return;
-    }
-
-    let Ok(contract) = provider_install_contract::resolve_provider_install_contract(
-        data_root,
-        managed,
-        matrix,
-        &status.provider_id,
-        target,
-    ) else {
-        status
-            .details
-            .insert("ready_for_use".into(), "false".into());
-        status.details.remove("required_dependency_ids");
-        status.details.remove("pending_dependency_ids");
-        return;
-    };
-
-    if !contract.dependencies.is_empty() {
-        status.details.insert(
-            "required_dependency_ids".into(),
-            contract
-                .dependencies
-                .iter()
-                .map(|dependency| dependency.provider_id.clone())
-                .collect::<Vec<_>>()
-                .join(","),
-        );
-    } else {
-        status.details.remove("required_dependency_ids");
-    }
-
-    let pending_dependencies = contract
-        .dependencies
-        .iter()
-        .filter(|dependency| !dependency.satisfied)
-        .map(|dependency| dependency.provider_id.clone())
-        .collect::<Vec<_>>();
-    if pending_dependencies.is_empty() {
-        status.details.insert("ready_for_use".into(), "true".into());
-        status.details.remove("pending_dependency_ids");
-        return;
-    }
-
-    status
-        .details
-        .insert("ready_for_use".into(), "false".into());
-    status.details.insert(
-        "pending_dependency_ids".into(),
-        pending_dependencies.join(","),
-    );
-    status
-        .details
-        .insert("managed_dependency_update_available".into(), "true".into());
-    let detail = format!(
-        "provider is not ready until required dependencies are installed: {}",
-        pending_dependencies.join(", ")
-    );
-    if !status.diagnostics.iter().any(|value| value == &detail) {
-        status.diagnostics.push(detail);
-    }
 }
 
 pub(super) async fn providers_statuses_response(
@@ -387,7 +257,7 @@ pub(super) async fn providers_statuses_response(
             );
         }
         apply_install_viability_details(status, &state.core.data_root, &managed, &matrix, target);
-        apply_ready_for_use_details(status, &state.core.data_root, &managed, &matrix, target);
+        apply_provider_usability_details(status, &state.core.data_root, &managed, &matrix, target);
         status
             .details
             .insert("install_target".into(), target.as_str().to_string());
@@ -492,7 +362,7 @@ pub(crate) async fn get_provider(
         &matrix,
         target,
     );
-    apply_ready_for_use_details(
+    apply_provider_usability_details(
         &mut status,
         &state.core.data_root,
         &managed,

@@ -109,16 +109,14 @@ pub(super) async fn bootstrap_provider_probe_summary(
     provider_status: &ProviderStatus,
     provider_id: &str,
 ) -> (bool, bool, Option<String>) {
-    if !provider_status.installed
-        || !matches!(
-            provider_status.health,
-            ctx_providers::adapters::ProviderHealth::Ok
-        )
-    {
+    if !crate::provider_usability::provider_status_is_usable(provider_status) {
         return (
             false,
             false,
-            Some("provider not installed or unhealthy".to_string()),
+            Some(
+                crate::provider_usability::provider_status_unusable_reason(provider_status)
+                    .unwrap_or_else(|| "provider not ready for use".to_string()),
+            ),
         );
     }
 

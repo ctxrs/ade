@@ -30,6 +30,28 @@ const createRequest = (
   post: postImpl,
 });
 
+const readyUsability = {
+  usable: true,
+  status: "ready",
+  blocking_provider_ids: [],
+  recommended_action: "none",
+};
+
+const installableUsability = {
+  usable: false,
+  status: "installable",
+  blocking_provider_ids: [],
+  recommended_action: "install",
+};
+
+const blockedUsability = (reason: string, blockingProviderIds: string[] = []) => ({
+  usable: false,
+  status: "blocked",
+  reason,
+  blocking_provider_ids: blockingProviderIds,
+  recommended_action: blockingProviderIds.length > 0 ? "resolve_dependency" : "configure_runtime",
+});
+
 describe("providerRuntime", () => {
   it("normalizes trailing whitespace for baseline write-file assertions", () => {
     expect(normalizeWriteFileContents("hi\n")).toBe("hi");
@@ -44,6 +66,7 @@ describe("providerRuntime", () => {
         health: "missing",
         diagnostics: ["provider not installed"],
         details: {},
+        usability: installableUsability,
       }))
       .mockResolvedValueOnce(jsonResponse(200, {
         state: "running",
@@ -60,6 +83,7 @@ describe("providerRuntime", () => {
           install_target: "host",
           managed_target: "host",
         },
+        usability: readyUsability,
       }));
     const post = vi.fn<JsonRequestLike["post"]>()
       .mockResolvedValueOnce(jsonResponse(200, { install_id: "install-1" }));
@@ -103,12 +127,14 @@ describe("providerRuntime", () => {
         health: "missing",
         diagnostics: ["provider not installed"],
         details: {},
+        usability: installableUsability,
       }))
       .mockResolvedValueOnce(jsonResponse(200, {
         installed: false,
         health: "missing",
         diagnostics: ["provider not installed"],
         details: {},
+        usability: installableUsability,
       }));
     const post = vi.fn<JsonRequestLike["post"]>();
     const request = createRequest(get, post);
@@ -154,6 +180,10 @@ describe("providerRuntime", () => {
           ready_for_use: "false",
           pending_dependency_ids: "claude-cli",
         },
+        usability: blockedUsability(
+          "provider is not ready until required dependencies are installed: claude-cli",
+          ["claude-cli"],
+        ),
       }));
     const post = vi.fn<JsonRequestLike["post"]>();
     const request = createRequest(get, post);

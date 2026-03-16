@@ -49,6 +49,41 @@ pub enum ProviderHealth {
     Error,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderUsabilityStatus {
+    Ready,
+    Installable,
+    #[default]
+    Blocked,
+    Unsupported,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderRecommendedAction {
+    #[default]
+    None,
+    Install,
+    ResolveDependency,
+    ConfigureRuntime,
+    SwitchTarget,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct ProviderUsability {
+    pub usable: bool,
+    pub status: ProviderUsabilityStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocking_provider_ids: Vec<String>,
+    #[serde(default)]
+    pub recommended_action: ProviderRecommendedAction,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderStatus {
     pub provider_id: String,
@@ -60,11 +95,17 @@ pub struct ProviderStatus {
     pub diagnostics: Vec<String>,
     #[serde(default)]
     pub details: HashMap<String, String>,
+    #[serde(default)]
+    pub usability: ProviderUsability,
 }
 
 impl ProviderStatus {
     pub fn detail_flag(&self, key: &str) -> Option<bool> {
         self.details.get(key).and_then(|value| parse_boolish(value))
+    }
+
+    pub fn is_usable(&self) -> bool {
+        self.usability.usable
     }
 }
 

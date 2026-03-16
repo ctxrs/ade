@@ -293,6 +293,7 @@ async fn seed_runtime_and_status(
             health: ProviderHealth::Ok,
             diagnostics: Vec::new(),
             details: HashMap::new(),
+            usability: ctx_providers::adapters::ProviderUsability::default(),
         },
     );
 }
@@ -661,6 +662,7 @@ async fn copilot_provider_options_include_pinned_model_catalog_when_live_probe_i
             health: ProviderHealth::Ok,
             diagnostics: Vec::new(),
             details: HashMap::new(),
+            usability: ctx_providers::adapters::ProviderUsability::default(),
         },
     );
 
@@ -729,6 +731,7 @@ async fn providers_bootstrap_includes_pinned_codex_claude_and_gemini_catalogs() 
             health: ProviderHealth::Ok,
             diagnostics: Vec::new(),
             details: HashMap::new(),
+            usability: ctx_providers::adapters::ProviderUsability::default(),
         },
     );
     state.providers.statuses.lock().await.insert(
@@ -742,6 +745,7 @@ async fn providers_bootstrap_includes_pinned_codex_claude_and_gemini_catalogs() 
             health: ProviderHealth::Ok,
             diagnostics: Vec::new(),
             details: HashMap::new(),
+            usability: ctx_providers::adapters::ProviderUsability::default(),
         },
     );
     state.providers.statuses.lock().await.insert(
@@ -755,6 +759,7 @@ async fn providers_bootstrap_includes_pinned_codex_claude_and_gemini_catalogs() 
             health: ProviderHealth::Ok,
             diagnostics: Vec::new(),
             details: HashMap::new(),
+            usability: ctx_providers::adapters::ProviderUsability::default(),
         },
     );
 
@@ -872,6 +877,7 @@ async fn gemini_provider_options_use_live_acp_catalog_when_probe_succeeds() {
             health: ProviderHealth::Ok,
             diagnostics: Vec::new(),
             details: HashMap::new(),
+            usability: ctx_providers::adapters::ProviderUsability::default(),
         },
     );
 
@@ -929,6 +935,7 @@ async fn fake_provider_bootstrap_and_options_are_ready_without_browser_rewrite()
             health: ProviderHealth::Ok,
             diagnostics: Vec::new(),
             details: HashMap::new(),
+            usability: ctx_providers::adapters::ProviderUsability::default(),
         },
     );
 
@@ -1131,7 +1138,9 @@ async fn provider_options_probe_uses_workspace_runtime_context_for_container_mod
     );
     assert_eq!(
         body.get("probe_error").and_then(serde_json::Value::as_str),
-        Some("provider not installed or unhealthy"),
-        "expected generic probe_error alongside target mismatch diagnostic: {body:#?}"
+        Some(
+            "provider status reflects the host environment and does not verify target 'container'",
+        ),
+        "expected canonical probe_error alongside target mismatch diagnostic: {body:#?}"
     );
 }

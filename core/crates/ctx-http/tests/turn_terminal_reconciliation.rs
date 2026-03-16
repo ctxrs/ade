@@ -30,6 +30,7 @@ impl ProviderAdapter for StartFailProvider {
             health: ProviderHealth::Ok,
             diagnostics: Vec::new(),
             details: HashMap::new(),
+            usability: ctx_providers::adapters::ProviderUsability::default(),
         })
     }
 

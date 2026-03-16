@@ -713,6 +713,7 @@ mod tests {
                 health: ctx_providers::adapters::ProviderHealth::Ok,
                 diagnostics: Vec::new(),
                 details: HashMap::new(),
+                usability: ctx_providers::adapters::ProviderUsability::default(),
             },
         );
 

@@ -214,6 +214,7 @@ async fn live_gemini_model_catalog_matches_pinned_snapshot() {
             version: Some(expected_version.clone()),
             capabilities: None,
             health: ProviderHealth::Ok,
+            usability: ctx_providers::adapters::ProviderUsability::default(),
             diagnostics: Vec::new(),
             details: HashMap::new(),
         },

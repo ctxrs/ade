@@ -106,6 +106,7 @@ impl ProviderAdapter for FakeProviderAdapter {
             health: crate::adapters::ProviderHealth::Ok,
             diagnostics: Vec::new(),
             details: HashMap::new(),
+            usability: crate::adapters::ProviderUsability::default(),
         })
     }
 

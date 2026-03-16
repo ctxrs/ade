@@ -147,6 +147,7 @@ async fn seed_provider_status_ok(state: &Arc<AppState>, provider_id: &str) {
             health: ProviderHealth::Ok,
             diagnostics: Vec::new(),
             details: HashMap::new(),
+            usability: ctx_providers::adapters::ProviderUsability::default(),
         },
     );
 }

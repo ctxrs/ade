@@ -383,6 +383,7 @@ fn managed_dependency_update_available_when_runtime_dependency_missing() {
         health: ctx_providers::adapters::ProviderHealth::Ok,
         diagnostics: Vec::new(),
         details: HashMap::new(),
+        usability: ctx_providers::adapters::ProviderUsability::default(),
     };
     assert!(managed_dependency_update_available(&cfg, &status));
 }
@@ -420,6 +421,7 @@ fn managed_dependency_update_available_when_runtime_dependency_version_mismatche
         health: ctx_providers::adapters::ProviderHealth::Ok,
         diagnostics: Vec::new(),
         details: HashMap::new(),
+        usability: ctx_providers::adapters::ProviderUsability::default(),
     };
     assert!(managed_dependency_update_available(&cfg, &status));
 }
@@ -459,6 +461,7 @@ fn managed_dependency_update_unavailable_when_runtime_dependency_matches_expecte
         health: ctx_providers::adapters::ProviderHealth::Ok,
         diagnostics: Vec::new(),
         details: HashMap::new(),
+        usability: ctx_providers::adapters::ProviderUsability::default(),
     };
     assert!(!managed_dependency_update_available(&cfg, &status));
 }

@@ -36,6 +36,23 @@ function baseOptions(providerId: string): ProviderOptions {
   };
 }
 
+function makeProviderStatus(providerId: string, overrides: Partial<ProviderStatus> = {}): ProviderStatus {
+  return {
+    provider_id: providerId,
+    installed: true,
+    health: "ok",
+    diagnostics: [],
+    details: {},
+    usability: {
+      usable: true,
+      status: "ready",
+      blocking_provider_ids: [],
+      recommended_action: "none",
+    },
+    ...overrides,
+  };
+}
+
 describe("WorkbenchComposer textarea sizing", () => {
   type SubmitSnapshot = {
     activeTag: string | null;
@@ -84,7 +101,7 @@ describe("WorkbenchComposer textarea sizing", () => {
       const [draftHarness, setDraftHarness] = useState<DraftHarness | null>({ providerId: "codex", modelId: "o3" });
       const harnessCatalog: HarnessCatalogEntry[] = [{ id: "codex", label: "Codex", logoSrc: "" }];
       const providersById: Record<string, ProviderStatus> = {
-        codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
+        codex: makeProviderStatus("codex"),
       };
       const providerOptions: Record<string, ProviderOptions | undefined> = {};
 
@@ -296,7 +313,7 @@ describe("WorkbenchComposer textarea sizing", () => {
       const [draftHarness, setDraftHarness] = useState<DraftHarness | null>({ providerId: "codex", modelId: "o3" });
       const harnessCatalog: HarnessCatalogEntry[] = [{ id: "codex", label: "Codex", logoSrc: "" }];
       const providersById: Record<string, ProviderStatus> = {
-        codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
+        codex: makeProviderStatus("codex"),
       };
       const providerOptions: Record<string, ProviderOptions | undefined> = {};
 
@@ -369,7 +386,7 @@ describe("WorkbenchComposer textarea sizing", () => {
       const [draftHarness, setDraftHarness] = useState<DraftHarness | null>({ providerId: "codex", modelId: "o3" });
       const harnessCatalog: HarnessCatalogEntry[] = [{ id: "codex", label: "Codex", logoSrc: "" }];
       const providersById: Record<string, ProviderStatus> = {
-        codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
+        codex: makeProviderStatus("codex"),
       };
 
       return (
@@ -573,8 +590,8 @@ describe("WorkbenchComposer textarea sizing", () => {
         { id: "codebuff", label: "Codebuff", logoSrc: "" },
       ];
       const providersById: Record<string, ProviderStatus> = {
-        codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
-        codebuff: { provider_id: "codebuff", installed: true, health: "ok", diagnostics: [] },
+        codex: makeProviderStatus("codex"),
+        codebuff: makeProviderStatus("codebuff"),
       };
 
       return (
@@ -625,7 +642,7 @@ describe("WorkbenchComposer textarea sizing", () => {
       const [draftHarness, setDraftHarness] = useState<DraftHarness | null>({ providerId: "codex", modelId: "o3" });
       const harnessCatalog: HarnessCatalogEntry[] = [{ id: "codex", label: "Codex", logoSrc: "" }];
       const providersById: Record<string, ProviderStatus> = {
-        codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
+        codex: makeProviderStatus("codex"),
         "acp-crp-bridge": {
           provider_id: "acp-crp-bridge",
           installed: true,
@@ -685,7 +702,7 @@ describe("WorkbenchComposer textarea sizing", () => {
       const [draftHarness, setDraftHarness] = useState<DraftHarness | null>({ providerId: "codex", modelId: "o3" });
       const harnessCatalog: HarnessCatalogEntry[] = [{ id: "codex", label: "Codex", logoSrc: "" }];
       const providersById: Record<string, ProviderStatus> = {
-        codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
+        codex: makeProviderStatus("codex"),
       };
       const providerOptions: Record<string, ProviderOptions | undefined> = {
         codex: {
@@ -750,8 +767,8 @@ describe("WorkbenchComposer textarea sizing", () => {
         { id: "cursor", label: "Cursor", logoSrc: "" },
       ];
       const providersById: Record<string, ProviderStatus> = {
-        codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
-        cursor: { provider_id: "cursor", installed: true, health: "ok", diagnostics: [] },
+        codex: makeProviderStatus("codex"),
+        cursor: makeProviderStatus("cursor"),
       };
       const providerOptions: Record<string, ProviderOptions | undefined> = {
         codex: { ...baseOptions("codex"), has_active_auth: true },
@@ -813,7 +830,7 @@ describe("WorkbenchComposer textarea sizing", () => {
         { id: "cursor", label: "Cursor", logoSrc: "" },
       ];
       const providersById: Record<string, ProviderStatus> = {
-        codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
+        codex: makeProviderStatus("codex"),
         cursor: {
           provider_id: "cursor",
           installed: false,
@@ -882,7 +899,7 @@ describe("WorkbenchComposer textarea sizing", () => {
         { id: "cursor", label: "Cursor", logoSrc: "" },
       ];
       const providersById: Record<string, ProviderStatus> = {
-        codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
+        codex: makeProviderStatus("codex"),
         cursor: {
           provider_id: "cursor",
           installed: false,
@@ -958,7 +975,7 @@ describe("WorkbenchComposer textarea sizing", () => {
         { id: "cursor", label: "Cursor", logoSrc: "" },
       ];
       const providersById: Record<string, ProviderStatus> = {
-        codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
+        codex: makeProviderStatus("codex"),
         cursor: {
           provider_id: "cursor",
           installed: false,
@@ -1032,7 +1049,7 @@ describe("WorkbenchComposer textarea sizing", () => {
       const [draftHarness, setDraftHarness] = useState<DraftHarness | null>({ providerId: "claude-crp", modelId: "" });
       const harnessCatalog: HarnessCatalogEntry[] = [{ id: "claude-crp", label: "Claude Code", logoSrc: "" }];
       const providersById: Record<string, ProviderStatus> = {
-        "claude-crp": { provider_id: "claude-crp", installed: true, health: "ok", diagnostics: [] },
+        "claude-crp": makeProviderStatus("claude-crp"),
       };
       const providerOptions: Record<string, ProviderOptions | undefined> = {
         "claude-crp": {
@@ -1095,7 +1112,7 @@ describe("WorkbenchComposer textarea sizing", () => {
       const [draftHarness, setDraftHarness] = useState<DraftHarness | null>({ providerId: "codex", modelId: "" });
       const harnessCatalog: HarnessCatalogEntry[] = [{ id: "codex", label: "Codex", logoSrc: "" }];
       const providersById: Record<string, ProviderStatus> = {
-        codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
+        codex: makeProviderStatus("codex"),
       };
       const providerOptions: Record<string, ProviderOptions | undefined> = {
         codex: {
@@ -1176,7 +1193,7 @@ describe("WorkbenchComposer textarea sizing", () => {
       const [draftHarness, setDraftHarness] = useState<DraftHarness | null>(null);
       const harnessCatalog: HarnessCatalogEntry[] = [{ id: "codex", label: "Codex", logoSrc: "" }];
       const providersById: Record<string, ProviderStatus> = {
-        codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
+        codex: makeProviderStatus("codex"),
       };
 
       return (
@@ -1228,8 +1245,8 @@ describe("WorkbenchComposer textarea sizing", () => {
         { id: "cursor", label: "Cursor", logoSrc: "" },
       ];
       const providersById: Record<string, ProviderStatus> = {
-        codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
-        cursor: { provider_id: "cursor", installed: true, health: "ok", diagnostics: [] },
+        codex: makeProviderStatus("codex"),
+        cursor: makeProviderStatus("cursor"),
       };
       const providerOptions: Record<string, ProviderOptions | undefined> = {
         codex: { ...baseOptions("codex"), has_active_auth: true },
@@ -1295,8 +1312,8 @@ describe("WorkbenchComposer textarea sizing", () => {
         { id: "cursor", label: "Cursor", logoSrc: "" },
       ];
       const providersById: Record<string, ProviderStatus> = {
-        opencode: { provider_id: "opencode", installed: true, health: "ok", diagnostics: [] },
-        cursor: { provider_id: "cursor", installed: true, health: "ok", diagnostics: [] },
+        opencode: makeProviderStatus("opencode"),
+        cursor: makeProviderStatus("cursor"),
       };
       const providerOptions: Record<string, ProviderOptions | undefined> = {
         opencode: {
@@ -1365,8 +1382,8 @@ describe("WorkbenchComposer textarea sizing", () => {
         { id: "cursor", label: "Cursor", logoSrc: "" },
       ];
       const providersById: Record<string, ProviderStatus> = {
-        codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
-        cursor: { provider_id: "cursor", installed: true, health: "ok", diagnostics: [] },
+        codex: makeProviderStatus("codex"),
+        cursor: makeProviderStatus("cursor"),
       };
       const providerOptions: Record<string, ProviderOptions | undefined> = {
         codex: { ...baseOptions("codex"), has_active_auth: true },
@@ -1439,7 +1456,7 @@ describe("WorkbenchComposer textarea sizing", () => {
       const [draftHarness, setDraftHarness] = useState<DraftHarness | null>({ providerId: "codex", modelId: "" });
       const harnessCatalog: HarnessCatalogEntry[] = [{ id: "codex", label: "Codex", logoSrc: "" }];
       const providersById: Record<string, ProviderStatus> = {
-        codex: { provider_id: "codex", installed: true, health: "ok", diagnostics: [] },
+        codex: makeProviderStatus("codex"),
       };
       const providerOptions: Record<string, ProviderOptions | undefined> = {
         codex: {

@@ -568,6 +568,7 @@ fn apply_install_target_status_marks_mismatched_managed_target_missing() {
         health: ctx_providers::adapters::ProviderHealth::Ok,
         diagnostics: Vec::new(),
         details: HashMap::from([("managed_target".to_string(), "host".to_string())]),
+        usability: ctx_providers::adapters::ProviderUsability::default(),
     };
 
     installer::apply_install_target_status(&mut status, InstallTarget::Container);
@@ -594,6 +595,7 @@ fn apply_install_target_status_keeps_matching_managed_target_healthy() {
         health: ctx_providers::adapters::ProviderHealth::Ok,
         diagnostics: Vec::new(),
         details: HashMap::from([("managed_target".to_string(), "container".to_string())]),
+        usability: ctx_providers::adapters::ProviderUsability::default(),
     };
 
     installer::apply_install_target_status(&mut status, InstallTarget::Container);
@@ -617,6 +619,7 @@ fn apply_install_target_status_marks_host_detected_status_unverified_for_contain
         health: ctx_providers::adapters::ProviderHealth::Ok,
         diagnostics: Vec::new(),
         details: HashMap::new(),
+        usability: ctx_providers::adapters::ProviderUsability::default(),
     };
 
     installer::apply_install_target_status(&mut status, InstallTarget::Container);
@@ -643,6 +646,7 @@ fn should_skip_install_for_healthy_provider_without_updates() {
         health: ctx_providers::adapters::ProviderHealth::Ok,
         diagnostics: Vec::new(),
         details: HashMap::new(),
+        usability: ctx_providers::adapters::ProviderUsability::default(),
     };
     assert!(should_skip_install_for_healthy_provider(&status));
 }
@@ -660,6 +664,7 @@ fn should_not_skip_install_for_healthy_provider_with_release_update() {
         health: ctx_providers::adapters::ProviderHealth::Ok,
         diagnostics: Vec::new(),
         details,
+        usability: ctx_providers::adapters::ProviderUsability::default(),
     };
     assert!(!should_skip_install_for_healthy_provider(&status));
 }
@@ -680,6 +685,7 @@ fn should_not_skip_install_for_healthy_provider_with_dependency_update() {
         health: ctx_providers::adapters::ProviderHealth::Ok,
         diagnostics: Vec::new(),
         details,
+        usability: ctx_providers::adapters::ProviderUsability::default(),
     };
     assert!(!should_skip_install_for_healthy_provider(&status));
 }
@@ -695,6 +701,7 @@ fn target_aware_status_does_not_skip_container_install_for_host_only_status() {
         health: ctx_providers::adapters::ProviderHealth::Ok,
         diagnostics: Vec::new(),
         details: HashMap::new(),
+        usability: ctx_providers::adapters::ProviderUsability::default(),
     };
 
     apply_target_aware_provider_status(
@@ -728,6 +735,7 @@ impl ProviderAdapter for RestartTrackingAdapter {
             health: ProviderHealth::Ok,
             diagnostics: Vec::new(),
             details: HashMap::new(),
+            usability: ctx_providers::adapters::ProviderUsability::default(),
         })
     }
 

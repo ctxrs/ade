@@ -23,6 +23,7 @@ fn status_with_managed_target(target: &str) -> ctx_providers::adapters::Provider
         health: ctx_providers::adapters::ProviderHealth::Ok,
         diagnostics: Vec::new(),
         details,
+        usability: ctx_providers::adapters::ProviderUsability::default(),
     }
 }
 
@@ -36,6 +37,7 @@ fn host_detected_status() -> ctx_providers::adapters::ProviderStatus {
         health: ctx_providers::adapters::ProviderHealth::Ok,
         diagnostics: Vec::new(),
         details: HashMap::new(),
+        usability: ctx_providers::adapters::ProviderUsability::default(),
     }
 }
 

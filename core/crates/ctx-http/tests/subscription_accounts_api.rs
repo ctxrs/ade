@@ -206,6 +206,7 @@ impl ProviderAdapter for GeminiLoginTestAdapter {
             health: ProviderHealth::Ok,
             diagnostics: Vec::new(),
             details: HashMap::new(),
+            usability: ctx_providers::adapters::ProviderUsability::default(),
         })
     }
 
@@ -327,6 +328,7 @@ impl ProviderAdapter for QwenLoginTestAdapter {
             health: ProviderHealth::Ok,
             diagnostics: Vec::new(),
             details: HashMap::new(),
+            usability: ctx_providers::adapters::ProviderUsability::default(),
         })
     }
 
@@ -417,6 +419,7 @@ impl ProviderAdapter for MistralLoginTestAdapter {
             health: ProviderHealth::Ok,
             diagnostics: Vec::new(),
             details: HashMap::new(),
+            usability: ctx_providers::adapters::ProviderUsability::default(),
         })
     }
 
@@ -506,6 +509,7 @@ impl ProviderAdapter for AmpLoginTestAdapter {
             health: ProviderHealth::Ok,
             diagnostics: Vec::new(),
             details: HashMap::new(),
+            usability: ctx_providers::adapters::ProviderUsability::default(),
         })
     }
 

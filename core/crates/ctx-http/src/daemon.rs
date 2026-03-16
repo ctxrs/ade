@@ -99,6 +99,7 @@ fn static_status_adapter(
             health,
             diagnostics: vec![message],
             details,
+            usability: ctx_providers::adapters::ProviderUsability::default(),
         },
     })
 }

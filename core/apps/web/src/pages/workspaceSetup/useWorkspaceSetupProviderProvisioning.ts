@@ -31,7 +31,10 @@ import {
   parseInstallTarget,
   providerInstallSizeBytes,
 } from "../../utils/providerInstallUi";
-import { isVisibleHarnessProviderStatus } from "../../utils/providerInventory";
+import {
+  isReadyVisibleHarnessProviderStatus,
+  isVisibleHarnessProviderStatus,
+} from "../../utils/providerInventory";
 import type { WizardRoutePlan, WizardStepKey } from "./wizardFlow";
 import type { WizardSelections } from "./wizardFlowReducer";
 import {
@@ -149,8 +152,8 @@ export function useWorkspaceSetupProviderProvisioning({
     return {
       providerId: provider.provider_id,
       label: harness?.label ?? provider.provider_id,
-      installed: provider.installed === true,
-      healthy: provider.health === "ok",
+      installed: isReadyVisibleHarnessProviderStatus(provider),
+      healthy: isReadyVisibleHarnessProviderStatus(provider),
       installSupported,
       installRunning: providerDetailFlag(provider.details, "install_running"),
       installId: provider.details?.install_id,

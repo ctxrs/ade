@@ -58,6 +58,7 @@ fn bridge_missing_status(provider_id: &str) -> ProviderStatus {
         health: ProviderHealth::Error,
         diagnostics: vec!["ACP bridge runtime is not configured or invalid".to_string()],
         details: HashMap::from([("error_code".to_string(), "acp_bridge_missing".to_string())]),
+        usability: ctx_providers::adapters::ProviderUsability::default(),
     }
 }
 
@@ -88,6 +89,7 @@ fn healthy_container_status(provider_id: &str, detected_path: &Path) -> Provider
         health: ProviderHealth::Ok,
         diagnostics: Vec::new(),
         details: HashMap::new(),
+        usability: ctx_providers::adapters::ProviderUsability::default(),
     }
 }
 
@@ -211,6 +213,77 @@ async fn host_target_reports_target_mismatch_for_container_only_acp_installs() {
             "host target should not surface ACP bridge missing when only container install exists: {body:#?}"
         );
     }
+}
+
+#[tokio::test]
+async fn acp_provider_reports_missing_bridge_as_blocking_dependency() {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let stores = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        stores,
+        HashMap::new(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state.clone());
+
+    state
+        .providers
+        .statuses
+        .lock()
+        .await
+        .insert("qwen".to_string(), bridge_missing_status("qwen"));
+
+    let (status, body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::GET,
+        "/api/providers/qwen?target=host",
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "provider route failed: {body:#?}");
+    assert_eq!(
+        body.pointer("/usability/usable")
+            .and_then(serde_json::Value::as_bool),
+        Some(false),
+        "expected unusable ACP provider when bridge is missing: {body:#?}"
+    );
+    assert_eq!(
+        body.pointer("/usability/status")
+            .and_then(serde_json::Value::as_str),
+        Some("blocked"),
+        "expected blocked usability status when bridge is missing: {body:#?}"
+    );
+    assert_eq!(
+        body.pointer("/usability/reason_code")
+            .and_then(serde_json::Value::as_str),
+        Some("missing_dependency"),
+        "expected missing dependency reason when bridge is missing: {body:#?}"
+    );
+    assert_eq!(
+        body.pointer("/usability/recommended_action")
+            .and_then(serde_json::Value::as_str),
+        Some("resolve_dependency"),
+        "expected dependency resolution action when bridge is missing: {body:#?}"
+    );
+    let blocking_ids = body
+        .pointer("/usability/blocking_provider_ids")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        blocking_ids
+            .iter()
+            .any(|value| value.as_str() == Some("acp-crp-bridge")),
+        "expected blocking_provider_ids to include acp-crp-bridge: {body:#?}"
+    );
+    assert_eq!(
+        body.pointer("/details/pending_dependency_ids")
+            .and_then(serde_json::Value::as_str),
+        Some("acp-crp-bridge"),
+        "expected legacy pending_dependency_ids compatibility field: {body:#?}"
+    );
 }
 
 #[tokio::test]
