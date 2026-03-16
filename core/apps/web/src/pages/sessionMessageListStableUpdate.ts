@@ -33,6 +33,52 @@ export const hashString = (value: string): string => {
   return (hash >>> 0).toString(36);
 };
 
+const cloneUnknownArray = <T>(value: readonly T[] | undefined): T[] =>
+  value ? value.map((entry) => (entry && typeof entry === "object" ? ({ ...(entry as Record<string, unknown>) } as T) : entry)) : [];
+
+function snapshotWorkbenchListItem(item: WorkbenchListItem): WorkbenchListItem {
+  switch (item.kind) {
+    case "message":
+      return {
+        ...item,
+        attachments: cloneUnknownArray(item.attachments),
+      };
+    case "turn_header":
+      return {
+        ...item,
+        header: {
+          ...item.header,
+          attachments: cloneUnknownArray(item.header.attachments),
+        },
+      };
+    case "tool":
+      return {
+        ...item,
+        locations: cloneUnknownArray(item.locations),
+        input:
+          item.input && typeof item.input === "object"
+            ? { ...(item.input as Record<string, unknown>) }
+            : item.input,
+      };
+    case "tool_group":
+      return {
+        ...item,
+        tools: item.tools.map((tool) => snapshotWorkbenchListItem(tool) as Extract<WorkbenchListItem, { kind: "tool" }>),
+      };
+    case "ask_user_question":
+      return {
+        ...item,
+        input:
+          item.input && typeof item.input === "object"
+            ? { ...(item.input as Record<string, unknown>) }
+            : item.input,
+        answers: { ...item.answers },
+      };
+    default:
+      return { ...item };
+  }
+}
+
 const textLayoutKey = (value: string | null | undefined): string => {
   const text = String(value ?? "");
   let lines = 1;
@@ -216,10 +262,13 @@ export function applyStableListUpdate({
   prefix?: WorkbenchListItem[];
   suffix?: WorkbenchListItem[];
 }): StableListUpdateResult {
-  const nextById = new Map([...prefix, ...next, ...suffix].map((item) => [item.id, item] as const));
+  const prefixSnapshots = prefix.map(snapshotWorkbenchListItem);
+  const nextSnapshots = next.map(snapshotWorkbenchListItem);
+  const suffixSnapshots = suffix.map(snapshotWorkbenchListItem);
+  const nextById = new Map([...prefixSnapshots, ...nextSnapshots, ...suffixSnapshots].map((item) => [item.id, item] as const));
 
-  const changedSpans = findStableListRemeasureSpans(current, next);
-  const hasEdgeInserts = prefix.length > 0 || suffix.length > 0;
+  const changedSpans = findStableListRemeasureSpans(current, nextSnapshots);
+  const hasEdgeInserts = prefixSnapshots.length > 0 || suffixSnapshots.length > 0;
   if (!hasEdgeInserts && changedSpans.length === 0) {
     applyMappedUpdate({
       methods,
@@ -233,8 +282,8 @@ export function applyStableListUpdate({
 
   methods.data.batch(
     () => {
-      if (prefix.length > 0) methods.data.prepend(prefix);
-      if (suffix.length > 0) methods.data.append(suffix, appendBehavior);
+      if (prefixSnapshots.length > 0) methods.data.prepend(prefixSnapshots);
+      if (suffixSnapshots.length > 0) methods.data.append(suffixSnapshots, appendBehavior);
       applyMappedUpdate({
         methods,
         nextById,
@@ -264,14 +313,15 @@ export function applyStructuralStableListUpdate({
   suffixLen: number;
 }): StableListUpdateResult {
   const deleteCount = current.length - prefixLen - suffixLen;
-  const insertData = next.slice(prefixLen, next.length - suffixLen);
+  const insertData = next.slice(prefixLen, next.length - suffixLen).map(snapshotWorkbenchListItem);
+  const nextSnapshots = next.map(snapshotWorkbenchListItem);
   const postStructureCurrent = [
     ...current.slice(0, prefixLen),
     ...insertData,
     ...current.slice(current.length - suffixLen),
   ];
-  const changedSpans = findStableListRemeasureSpans(postStructureCurrent, next);
-  const nextById = new Map(next.map((item) => [item.id, item] as const));
+  const changedSpans = findStableListRemeasureSpans(postStructureCurrent, nextSnapshots);
+  const nextById = new Map(nextSnapshots.map((item) => [item.id, item] as const));
 
   methods.data.batch(
     () => {

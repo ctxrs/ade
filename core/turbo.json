@@ -93,7 +93,15 @@
       "outputs": []
     },
     "crp:codex": {
+      "env": [
+        "CTX_CRP_TARGET_DIR",
+        "CTX_CRP_PROFILE",
+        "CTX_CRP_CARGO_BUILD_JOBS"
+      ],
       "inputs": [
+        "package.json",
+        "../scripts/build_codex_crp.sh",
+        "../scripts/lib/codex_crp_build_env.sh",
         "../external-harnesses/codex/codex-rs/**",
         "!../external-harnesses/codex/codex-rs/target/**"
       ],
@@ -103,7 +111,15 @@
       "dependsOn": [
         "crp:codex"
       ],
+      "env": [
+        "CTX_CRP_TARGET_DIR",
+        "CTX_CRP_PROFILE",
+        "CTX_CRP_CARGO_BUILD_JOBS"
+      ],
       "inputs": [
+        "package.json",
+        "../scripts/test_codex_crp.sh",
+        "../scripts/lib/codex_crp_build_env.sh",
         "../external-harnesses/codex/codex-rs/**",
         "!../external-harnesses/codex/codex-rs/target/**"
       ],

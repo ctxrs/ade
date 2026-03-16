@@ -83,6 +83,12 @@ const providerStatus = (
   health: "ok",
   diagnostics: [],
   details: {},
+  usability: {
+    usable: true,
+    status: "ready",
+    blocking_provider_ids: [],
+    recommended_action: "none",
+  },
   ...opts,
 });
 

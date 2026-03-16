@@ -34,6 +34,12 @@ function Harness({
 }
 
 describe("useWorkbenchDragDropAttachments", () => {
+  const getRegisteredElements = (): HTMLDivElement[] =>
+    registerDropScopeMock.mock.calls.flatMap((call) => {
+      const entry = (call as unknown[])[0] as { element?: HTMLDivElement | null } | undefined;
+      return entry?.element instanceof HTMLDivElement ? [entry.element] : [];
+    });
+
   beforeEach(() => {
     registerDropScopeMock.mockClear();
   });
@@ -47,9 +53,7 @@ describe("useWorkbenchDragDropAttachments", () => {
     await waitFor(() => {
       expect(registerDropScopeMock).toHaveBeenCalled();
     });
-    const mountedElementsAfterFirstShow = registerDropScopeMock.mock.calls
-      .map((call) => call[0]?.element)
-      .filter((element): element is HTMLDivElement => element instanceof HTMLDivElement);
+    const mountedElementsAfterFirstShow = getRegisteredElements();
     const firstElement = mountedElementsAfterFirstShow[0];
     expect(firstElement).toBeInstanceOf(HTMLDivElement);
 
@@ -57,14 +61,10 @@ describe("useWorkbenchDragDropAttachments", () => {
     view.rerender(<Harness visible />);
 
     await waitFor(() => {
-      const mountedElements = registerDropScopeMock.mock.calls
-        .map((call) => call[0]?.element)
-        .filter((element): element is HTMLDivElement => element instanceof HTMLDivElement);
+      const mountedElements = getRegisteredElements();
       expect(mountedElements.length).toBeGreaterThanOrEqual(2);
     });
-    const mountedElements = registerDropScopeMock.mock.calls
-      .map((call) => call[0]?.element)
-      .filter((element): element is HTMLDivElement => element instanceof HTMLDivElement);
+    const mountedElements = getRegisteredElements();
     const secondElement = mountedElements[mountedElements.length - 1];
     expect(secondElement).toBeInstanceOf(HTMLDivElement);
     expect(secondElement).not.toBe(firstElement);

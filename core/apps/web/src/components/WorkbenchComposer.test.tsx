@@ -800,15 +800,11 @@ describe("WorkbenchComposer textarea sizing", () => {
       const harnessCatalog: HarnessCatalogEntry[] = [{ id: "codex", label: "Codex", logoSrc: "" }];
       const providersById: Record<string, ProviderStatus> = {
         codex: makeProviderStatus("codex"),
-        "acp-crp-bridge": {
-          provider_id: "acp-crp-bridge",
-          installed: true,
-          health: "ok",
-          diagnostics: [],
+        "acp-crp-bridge": makeProviderStatus("acp-crp-bridge", {
           details: {
             provider_kind: "dependency",
           },
-        },
+        }),
       };
 
       return (
@@ -988,16 +984,14 @@ describe("WorkbenchComposer textarea sizing", () => {
       ];
       const providersById: Record<string, ProviderStatus> = {
         codex: makeProviderStatus("codex"),
-        cursor: {
-          provider_id: "cursor",
+        cursor: makeProviderStatus("cursor", {
           installed: false,
           health: "missing",
-          diagnostics: [],
           details: {
             install_supported: "true",
             install_target: "container",
           },
-        },
+        }),
       };
 
       return (
@@ -1057,16 +1051,14 @@ describe("WorkbenchComposer textarea sizing", () => {
       ];
       const providersById: Record<string, ProviderStatus> = {
         codex: makeProviderStatus("codex"),
-        cursor: {
-          provider_id: "cursor",
+        cursor: makeProviderStatus("cursor", {
           installed: false,
           health: "missing",
-          diagnostics: [],
           details: {
             install_supported: "true",
             install_target: "host",
           },
-        },
+        }),
       };
 
       return (
@@ -1133,16 +1125,14 @@ describe("WorkbenchComposer textarea sizing", () => {
       ];
       const providersById: Record<string, ProviderStatus> = {
         codex: makeProviderStatus("codex"),
-        cursor: {
-          provider_id: "cursor",
+        cursor: makeProviderStatus("cursor", {
           installed: false,
           health: "missing",
-          diagnostics: [],
           details: {
             install_supported: "true",
             install_target: "host",
           },
-        },
+        }),
       };
 
       return (

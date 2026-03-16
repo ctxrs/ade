@@ -17,6 +17,12 @@ const provider = (
   installed: true,
   health: "ok",
   diagnostics: [],
+  usability: {
+    usable: true,
+    status: "ready",
+    blocking_provider_ids: [],
+    recommended_action: "none",
+  },
   ...opts,
 });
 

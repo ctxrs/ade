@@ -10,7 +10,9 @@ use tokio::time::sleep;
 use ctx_core::ids::{RunId, SessionId, TurnId};
 use ctx_core::models::{SessionTurn, SessionTurnStatus, VcsKind};
 use ctx_http::daemon::AppState;
-use ctx_providers::adapters::ProviderAdapter;
+use ctx_providers::adapters::{
+    ProviderAdapter, ProviderRecommendedAction, ProviderUsability, ProviderUsabilityStatus,
+};
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::Store;
 use uuid::Uuid;
@@ -35,7 +37,15 @@ async fn setup_state(
         "http://127.0.0.1:0",
     );
     {
-        let status = FakeProviderAdapter::new().inspect().await.unwrap();
+        let mut status = FakeProviderAdapter::new().inspect().await.unwrap();
+        status.usability = ProviderUsability {
+            usable: true,
+            status: ProviderUsabilityStatus::Ready,
+            reason_code: None,
+            reason: None,
+            blocking_provider_ids: Vec::new(),
+            recommended_action: ProviderRecommendedAction::None,
+        };
         state
             .providers
             .statuses

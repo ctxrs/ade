@@ -864,8 +864,10 @@ async fn initialize_podman_machine_terminates_stuck_init_when_machine_is_present
         install_test_managed_machine_cache_source(b"machine-cache".to_vec()).await;
 
     let mut last_err = String::new();
+    // Keep the outer test timeout comfortably above a single inspect timeout so the test
+    // validates the kill-and-continue recovery path instead of host scheduling variance.
     let result = tokio::time::timeout(
-        Duration::from_secs(5),
+        Duration::from_secs(15),
         initialize_podman_machine(temp.path(), "ctx-test-machine", None, &mut last_err),
     )
     .await;

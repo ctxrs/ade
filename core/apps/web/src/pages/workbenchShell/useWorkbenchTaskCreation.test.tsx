@@ -289,6 +289,7 @@ describe("useWorkbenchTaskCreation optimistic lifecycle", () => {
     mockedCreateSession.mockResolvedValue(makeSession("session-1", "task-1"));
     mockedPostMessage.mockResolvedValue({
       id: "message-1",
+      task_id: "task-1",
       session_id: "session-1",
       role: "user",
       content: "Write docs",

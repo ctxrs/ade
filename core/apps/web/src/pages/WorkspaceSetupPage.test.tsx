@@ -204,6 +204,12 @@ const providerStatusFixture = (overrides?: Partial<import("@ctx/types").Provider
   details: {
     install_supported: "true",
   },
+  usability: {
+    usable: false,
+    status: "installable",
+    blocking_provider_ids: [],
+    recommended_action: "install",
+  },
   ...overrides,
 });
 

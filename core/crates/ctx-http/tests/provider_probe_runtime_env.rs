@@ -651,6 +651,10 @@ async fn copilot_provider_options_include_pinned_model_catalog_when_live_probe_i
     .await
     .expect("add copilot account");
 
+    let (bridge_cmd, bridge_dep_bin_rel) =
+        setup_runtime_command_with_managed_interpreter(data_dir.path(), "acp-crp-bridge");
+    seed_runtime_and_status(&state, "acp-crp-bridge", bridge_cmd, bridge_dep_bin_rel).await;
+
     state.providers.statuses.lock().await.insert(
         "copilot".to_string(),
         ProviderStatus {

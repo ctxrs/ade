@@ -192,6 +192,42 @@ describe("applyStableListUpdate", () => {
     expect(readStore()).toEqual(next);
   });
 
+  it("remeasures a grown assistant row when the next render uses a freshly snapshotted item", () => {
+    const current = [
+      buildAssistantItem({
+        id: "assistant-turn-2",
+        content: "short",
+        is_complete: true,
+      }),
+    ];
+    const next = [
+      buildAssistantItem({
+        id: "assistant-turn-2",
+        content:
+          "this assistant response became much longer after tool-call expansion and should force a remeasure instead of keeping the stale short-row height",
+        is_complete: true,
+      }),
+    ];
+    const { methods, calls, readStore } = createFakeMethods(current);
+
+    const result = applyStableListUpdate({
+      methods,
+      current,
+      next,
+      stickToBottom: false,
+      anchorIndex: 0,
+      appendBehavior: () => false,
+    });
+
+    expect(result).toEqual({
+      mode: "remeasure",
+      changedSpans: [{ start: 0, count: 1 }],
+    });
+    expect(calls.map((call) => call.method)).toEqual(["batch", "mapWithAnchor"]);
+    expect(calls[1]?.args).toEqual([0]);
+    expect(readStore()).toEqual(next);
+  });
+
   it("appends new rows while mapping earlier rows that changed layout", () => {
     const current = [buildToolItem(), buildTurnStatusItem({ status: "running", assistant_messages_content: "" })];
     const appendedStatus = buildTurnStatusItem({

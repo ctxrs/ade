@@ -5,7 +5,9 @@ use axum::http::StatusCode;
 use ctx_core::ids::{ArtifactId, MessageId, SessionId};
 use ctx_core::models::{Message, MessageDelivery, MessageRole, VcsKind};
 use ctx_http::daemon::AppState;
-use ctx_providers::adapters::ProviderAdapter;
+use ctx_providers::adapters::{
+    ProviderAdapter, ProviderRecommendedAction, ProviderUsability, ProviderUsabilityStatus,
+};
 use ctx_providers::fake::FakeProviderAdapter;
 use serde_json::json;
 use uuid::Uuid;
@@ -26,7 +28,15 @@ async fn setup_state() -> (tempfile::TempDir, Arc<AppState>, common::TestServer)
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let status = FakeProviderAdapter::new().inspect().await.unwrap();
+    let mut status = FakeProviderAdapter::new().inspect().await.unwrap();
+    status.usability = ProviderUsability {
+        usable: true,
+        status: ProviderUsabilityStatus::Ready,
+        reason_code: None,
+        reason: None,
+        blocking_provider_ids: Vec::new(),
+        recommended_action: ProviderRecommendedAction::None,
+    };
     state
         .providers
         .statuses
@@ -249,7 +259,11 @@ async fn subagent_invocation_route_uses_global_routing_index() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
+    let status = resp.status();
+    let body = resp.text().await.unwrap();
+    if status != StatusCode::OK {
+        panic!("unexpected status {status} body: {body}");
+    }
 
     let resp = server
         .client
@@ -280,7 +294,11 @@ async fn subagent_invocation_route_uses_global_routing_index() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let invocation: serde_json::Value = resp.json().await.unwrap();
+    let status = resp.status();
+    let body = resp.text().await.unwrap();
+    if status != StatusCode::OK {
+        panic!("unexpected status {status} body: {body}");
+    }
+    let invocation: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(invocation["id"].as_str().unwrap(), invocation_id);
 }

@@ -40,6 +40,10 @@ const makeInstallState = (providerId: string): InstallMockState => ({
 const providerStatus = (state: InstallMockState) => ({
   provider_id: state.providerId,
   installed: state.installed,
+  usability: {
+    usable: state.installed,
+    reason: state.installed ? null : "Not installed",
+  },
   health: state.installed ? "ok" : "error",
   diagnostics: state.installed ? [] : ["Not installed"],
   details: {
@@ -52,6 +56,10 @@ const providerStatus = (state: InstallMockState) => ({
 const cursorReadyProviderStatus = {
   provider_id: "cursor",
   installed: true,
+  usability: {
+    usable: true,
+    reason: null,
+  },
   health: "ok",
   diagnostics: [],
   details: {
@@ -136,6 +144,7 @@ const installDesktopHarness = async (page: Page) => {
       invoke?: TauriInvoke;
       transformCallback?: (cb: unknown, once?: boolean) => number;
       unregisterCallback?: (id: number) => void;
+      unregisterListener?: (id: number) => void;
       metadata?: Record<string, unknown>;
     } & Record<string, unknown>;
     type TauriWindow = Window & {
@@ -210,6 +219,10 @@ const installDesktopHarness = async (page: Page) => {
       unregisterCallback:
         typeof existingInternals.unregisterCallback === "function"
           ? existingInternals.unregisterCallback
+          : () => {},
+      unregisterListener:
+        typeof existingInternals.unregisterListener === "function"
+          ? existingInternals.unregisterListener
           : () => {},
       invoke,
     };

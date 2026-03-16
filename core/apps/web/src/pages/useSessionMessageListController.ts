@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import type {
   AutoscrollToBottom,
   ItemLocation,
@@ -8,17 +8,16 @@ import type {
 import { useRafCoalesced } from "../components/hooks/useRafCoalesced";
 import type { WorkbenchListItem } from "./SessionPage.types";
 import type { WorkbenchMessageListContext } from "./SessionPage.thread";
-import { debugItemSummary, debugStableKey, findFirstRenderedItemContractViolation } from "./sessionMessageListDataDebug";
+import { debugItemSummary } from "./sessionMessageListDataDebug";
+import { runSessionMessageListDevValidation } from "./sessionMessageListDevValidation";
+import { applySessionMessageListInvalidation } from "./sessionMessageListInvalidation";
 import { logSessionMessageListReconcileDebug } from "./sessionMessageListReconcileDebug";
 import { applyStableListUpdate, applyStructuralStableListUpdate } from "./sessionMessageListStableUpdate";
 import { useSessionMessageListDiagnostics } from "./useSessionMessageListDiagnostics";
+import { useSessionMessageListViewportHistory } from "./useSessionMessageListViewportHistory";
 import {
   computeHistoryPrependTailReconcilePlan,
-  computeHistoryPrefetchThresholdPx,
-  findSharedItemSizeCacheKeyChanges,
   isExactContiguousIdWindow,
-  pickAnchorIdsFromRange,
-  pickAnchorIdsFromScroller,
   shouldUseRawListItems,
   trimTrailingAppendsWhileScrolledUp,
 } from "./sessionMessageListControllerUtils";
@@ -95,21 +94,12 @@ export function useSessionMessageListController(params: Params): Result {
 
   const methodsRef = useRef<VirtuosoMessageListMethods<WorkbenchListItem, WorkbenchMessageListContext> | null>(null);
   const lastSessionIdRef = useRef(sessionId);
-  const lastIsActiveRef = useRef(isActive);
   const contractViolationLoggedRef = useRef<{ sessionId: string; violationKey: string } | null>(null);
-
-  const lastScrollLocationRef = useRef<ListScrollLocation | null>(null);
   const stickToBottomRef = useRef(true);
   const lastAtBottomRef = useRef<boolean | null>(null);
-  const lastListOffsetRef = useRef<number | null>(null);
-
-  // Best-effort anchoring prefers the actually visible DOM rows and falls back to rendered data.
-  // NOTE: `onRenderedDataChange` can include overscan. Anchoring to `range[0]` can anchor an offscreen
-  // row and cause visible jumps, especially with large `increaseViewportBy`.
   const renderedAnchorIdRef = useRef<string | null>(null);
   const renderedTopIdRef = useRef<string | null>(null);
   const firstListItemIdRef = useRef<string | null>(null);
-
   const pendingHistoryRef = useRef(false);
   const historyExpectedRef = useRef(false);
   const historyRequestedAtTopRef = useRef(false);
@@ -119,7 +109,6 @@ export function useSessionMessageListController(params: Params): Result {
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [deferTrailingAppends, setDeferTrailingAppends] = useState(false);
   const suppressIdDiffLogsRef = useRef<{ sessionId: string; remainingTicks: number } | null>(null);
-  const lastScrollDebugAtRef = useRef(0);
 
   // Coalesce for steady-state updates, but never let it affect session transitions.
   const listItemsCoalesced = useRafCoalesced(listItems);
@@ -173,152 +162,32 @@ export function useSessionMessageListController(params: Params): Result {
   const initialLocation: ItemLocation = INITIAL_LOCATION_BOTTOM;
   const initialData = useMemo<WorkbenchListItem[]>(() => listItems, [listItems]);
 
-  // Keep an up-to-date reference without introducing additional hook ordering churn under HMR.
-  firstListItemIdRef.current = visibleListItems?.[0]?.id ?? null;
-
-  const onScroll = useCallback(
-    (location: ListScrollLocation) => {
-      lastScrollLocationRef.current = location;
-      if (!isActive) return;
-
-      const scroller = methodsRef.current?.scrollerElement?.() ?? null;
-      const atBottomFromLocation = location.bottomOffset <= 16;
-      // Prefer the live DOM scroller metrics when available; bottomOffset can be optimistic mid-transition.
-      const atBottom =
-        scroller
-          ? scroller.scrollHeight - (scroller.scrollTop + scroller.clientHeight) <= 16
-          : atBottomFromLocation;
-      stickToBottomRef.current = atBottom;
-      if (atBottom && deferTrailingAppends) {
-        setDeferTrailingAppends(false);
-      }
-      if (isActive && onAtBottomChange && lastAtBottomRef.current !== atBottom) {
-        lastAtBottomRef.current = atBottom;
-        onAtBottomChange(atBottom);
-      }
-
-      // History pagination trigger: use the library-provided scroll location only.
-      // Prefetch when approaching top to avoid a hard stop + later prepend “resume”.
-      const atTop = location.listOffset === 0;
-      const prevOffset = lastListOffsetRef.current;
-      lastListOffsetRef.current = location.listOffset;
-      // Scrolling up means listOffset moves toward 0 (increases, since it's negative when scrolled down).
-      const scrollingUp = prevOffset == null ? false : location.listOffset > prevOffset;
-      const prefetchThreshold = -computeHistoryPrefetchThresholdPx(location.visibleListHeight);
-      const nearTop = location.listOffset > prefetchThreshold;
-      const anchors = pickAnchorIdsFromScroller(scroller);
-      if (anchors.topId) renderedTopIdRef.current = anchors.topId;
-      if (anchors.anchorId) renderedAnchorIdRef.current = anchors.anchorId;
-
-      if (import.meta.env.DEV && showDebug) {
-        const now = Date.now();
-        const shouldRecordScroll = now - lastScrollDebugAtRef.current >= 120 || nearTop || atBottom;
-        if (shouldRecordScroll) {
-          lastScrollDebugAtRef.current = now;
-          recordDebugSnapshot("scroll", {
-            listOffset: location.listOffset,
-            visibleListHeight: location.visibleListHeight,
-            bottomOffset: location.bottomOffset,
-            atBottom,
-          });
-        }
-      }
-
-      if (import.meta.env.DEV && showDebug && nearTop) {
-        // eslint-disable-next-line no-console
-        console.debug("[MessageList][history:gate]", {
-          sessionId,
-          loaded,
-          canLoadOlder,
-          stickToBottom: stickToBottomRef.current,
-          pendingHistory: pendingHistoryRef.current,
-          loadingOlder,
-          atTop,
-          nearTop,
-          scrollingUp,
-          prefetchThreshold,
-          firstRenderedId: renderedTopIdRef.current,
-          firstListId: firstListItemIdRef.current,
-          listOffset: location.listOffset,
-          visibleListHeight: location.visibleListHeight,
-          renderedTopId: renderedTopIdRef.current,
-          renderedAnchorId: renderedAnchorIdRef.current,
-        });
-      }
-
-      if (!canLoadOlder) return;
-      if (stickToBottomRef.current) return;
-      if (pendingHistoryRef.current || loadingOlder) return;
-      if (!nearTop) return;
-      if (!scrollingUp) return;
-
-      pendingHistoryRef.current = true;
-      historyExpectedRef.current = true;
-      historyRequestedAtTopRef.current = atTop;
-      historyRequestedAnchorIdRef.current = renderedAnchorIdRef.current;
-      setLoadingOlder(true);
-      if (import.meta.env.DEV && showDebug) {
-        // eslint-disable-next-line no-console
-        console.debug("[MessageList][history:request]", {
-          sessionId,
-          atTop,
-          nearTop,
-          scrollingUp,
-          anchorId: renderedAnchorIdRef.current,
-          firstRenderedId: renderedTopIdRef.current,
-          firstListId: firstListItemIdRef.current,
-          listOffset: location.listOffset,
-          visibleListHeight: location.visibleListHeight,
-        });
-      }
-      loadOlder()
-        .catch(() => {})
-        .finally(() => {
-          pendingHistoryRef.current = false;
-          setLoadingOlder(false);
-        });
-    },
-    [
-      canLoadOlder,
-      loaded,
-      loadOlder,
-      loadingOlder,
-      onAtBottomChange,
-      sessionId,
-      showDebug,
-      isActive,
-      deferTrailingAppends,
-    ],
-  );
-
-  const onRenderedDataChange = useCallback((range: WorkbenchListItem[]) => {
-    const methods = methodsRef.current;
-    const scroller = methods?.scrollerElement?.() ?? null;
-    const domAnchors = pickAnchorIdsFromScroller(scroller);
-    if (domAnchors.topId || domAnchors.anchorId) {
-      renderedTopIdRef.current = domAnchors.topId;
-      renderedAnchorIdRef.current = domAnchors.anchorId;
-      return;
-    }
-    const rangeAnchors = pickAnchorIdsFromRange(range);
-    renderedTopIdRef.current = rangeAnchors.topId;
-    renderedAnchorIdRef.current = rangeAnchors.anchorId;
-  }, []);
-
-  useLayoutEffect(() => {
-    const becameActive = isActive && !lastIsActiveRef.current;
-    lastIsActiveRef.current = isActive;
-    if (!becameActive) return;
-
-    const methods = methodsRef.current;
-    if (!methods) return;
-    stickToBottomRef.current = true;
-    lastAtBottomRef.current = true;
-    methods.cancelSmoothScroll();
-    snapToBottom(methods);
-    onAtBottomChange?.(true);
-    recordDebugSnapshot("session:activated", { reason: "focusBottom" });
-  }, [isActive, onAtBottomChange, recordDebugSnapshot, snapToBottom]);
+  const { onScroll, onRenderedDataChange } = useSessionMessageListViewportHistory({
+    sessionId,
+    isActive,
+    loaded,
+    visibleListItems,
+    canLoadOlder,
+    loadOlder,
+    loadingOlder,
+    setLoadingOlder,
+    deferTrailingAppends,
+    setDeferTrailingAppends,
+    methodsRef,
+    stickToBottomRef,
+    lastAtBottomRef,
+    renderedAnchorIdRef,
+    renderedTopIdRef,
+    firstListItemIdRef,
+    pendingHistoryRef,
+    historyExpectedRef,
+    historyRequestedAtTopRef,
+    historyRequestedAnchorIdRef,
+    showDebug,
+    onAtBottomChange,
+    recordDebugSnapshot,
+    snapToBottom,
+  });
 
   useLayoutEffect(() => {
     if (!isActive) return;
@@ -342,111 +211,19 @@ export function useSessionMessageListController(params: Params): Result {
       }
     }
 
-    if (import.meta.env.DEV && showDebug) {
-      // Validate the derived list item contract. This makes missing identity fields obvious
-      // before we start chasing down reconcile/replace artifacts in MessageList.
-      const violation = findFirstRenderedItemContractViolation(nextRaw);
-      if (violation) {
-        const violationKey = `${violation.kind}:${violation.reason}:${violation.id}`;
-        const prev = contractViolationLoggedRef.current;
-        if (!prev || prev.sessionId !== sessionId || prev.violationKey !== violationKey) {
-          contractViolationLoggedRef.current = { sessionId, violationKey };
-          // eslint-disable-next-line no-console
-          console.error("[MessageList][contract-violation]", {
-            sessionId,
-            ...violation,
-          });
-        }
-      }
-
-      const seen = new Set<string>();
-      const dupes: string[] = [];
-      for (const it of next) {
-        const itemId = String(it?.id ?? "");
-        if (!itemId) continue;
-        if (seen.has(itemId)) dupes.push(itemId);
-        else seen.add(itemId);
-      }
-      if (dupes.length > 0) {
-        // eslint-disable-next-line no-console
-        console.error("[MessageList] duplicate WorkbenchListItem.id values detected", {
-          count: dupes.length,
-          sample: dupes.slice(0, 10),
-        });
-      }
-
-      // Detect id churn by comparing stable identity keys between current/next.
-      const currentByStable = new Map<string, string>();
-      const stableKeyCollisions: Array<{ stableKey: string; ids: string[] }> = [];
-      for (const it of current) {
-        const stableKey = debugStableKey(it);
-        const id = String(it.id ?? "");
-        if (!stableKey || !id) continue;
-        const prev = currentByStable.get(stableKey);
-        if (prev && prev !== id) {
-          stableKeyCollisions.push({ stableKey, ids: [prev, id] });
-        } else {
-          currentByStable.set(stableKey, id);
-        }
-      }
-      const nextByStable = new Map<string, string>();
-      const stableIdChanges: Array<{ stableKey: string; from: string; to: string }> = [];
-      for (const it of next) {
-        const stableKey = debugStableKey(it);
-        const id = String(it.id ?? "");
-        if (!stableKey || !id) continue;
-        const prev = nextByStable.get(stableKey);
-        if (prev && prev !== id) {
-          stableKeyCollisions.push({ stableKey, ids: [prev, id] });
-          continue;
-        }
-        nextByStable.set(stableKey, id);
-        const from = currentByStable.get(stableKey);
-        if (from && from !== id) {
-          stableIdChanges.push({ stableKey, from, to: id });
-        }
-      }
-      if (stableIdChanges.length > 0) {
-        const currentById = new Map(current.map((it) => [it.id, it] as const));
-        const nextById = new Map(next.map((it) => [it.id, it] as const));
-        const sample = stableIdChanges.slice(0, 10).map((c) => ({
-          ...c,
-          fromItem: debugItemSummary(currentById.get(c.from) ?? { id: c.from }),
-          toItem: debugItemSummary(nextById.get(c.to) ?? { id: c.to }),
-        }));
-        // eslint-disable-next-line no-console
-        console.warn("[MessageList] possible unstable WorkbenchListItem.id detected (stableKey id changed)", {
-          sessionId,
-          count: stableIdChanges.length,
-          sample,
-        });
-      }
-      if (stableKeyCollisions.length > 0) {
-        // eslint-disable-next-line no-console
-        console.warn("[MessageList] stableKey collisions detected (diagnostic key too weak or duplicate items)", {
-          sessionId,
-          count: stableKeyCollisions.length,
-          sample: stableKeyCollisions.slice(0, 5),
-        });
-      }
-    }
+    runSessionMessageListDevValidation({
+      sessionId,
+      showDebug,
+      nextRaw,
+      current,
+      next,
+      contractViolationLoggedRef,
+    });
 
     if (sessionChanged) {
       lastSessionIdRef.current = sessionId;
       lastLayoutRevisionRef.current = layoutRevision;
-      pendingHistoryRef.current = false;
-      historyExpectedRef.current = false;
-      historyRequestedAtTopRef.current = false;
-      historyRequestedAnchorIdRef.current = null;
-      setLoadingOlder(false);
       if (deferTrailingAppends) setDeferTrailingAppends(false);
-      lastScrollLocationRef.current = null;
-      lastListOffsetRef.current = null;
-      stickToBottomRef.current = true;
-      lastAtBottomRef.current = true;
-      renderedAnchorIdRef.current = null;
-      renderedTopIdRef.current = null;
-      firstListItemIdRef.current = null;
       methods.cancelSmoothScroll();
       suppressIdDiffLogsRef.current = { sessionId, remainingTicks: 3 };
       methods.data.replace(nextRaw, { initialLocation, purgeItemSizes: true });
@@ -489,143 +266,32 @@ export function useSessionMessageListController(params: Params): Result {
     }
     const nextIds = next.map((it) => it.id);
     const effectiveNextLen = next.length;
-    const layoutRevisionChanged = lastLayoutRevisionRef.current !== layoutRevision;
-
-    // Initial population: never treat empty->non-empty as prepend/append.
-    // Use `replace(..., initialLocation: LAST)` so opening a session lands at bottom deterministically.
-    if (currentLen === 0) {
-      if (nextRaw.length === 0) return;
-      lastLayoutRevisionRef.current = layoutRevision;
-      historyExpectedRef.current = false;
-      methods.cancelSmoothScroll();
-      suppressIdDiffLogsRef.current = { sessionId, remainingTicks: 2 };
-      methods.data.replace(nextRaw, { initialLocation, purgeItemSizes: true });
-      snapToBottom(methods);
-      recordDebugSnapshot("data:replace", {
-        reason: "initialPopulation",
-        nextLen: nextRaw.length,
-        currentLen,
-      });
-      logMessageListDebug("data:replace", {
-        reason: "initialPopulation",
-        nextLen: nextRaw.length,
-        currentLen,
-      });
-      return;
-    }
-
-    if (effectiveNextLen === 0) {
-      lastLayoutRevisionRef.current = layoutRevision;
-      historyExpectedRef.current = false;
-      methods.data.deleteRange(0, currentLen);
-      recordDebugSnapshot("data:deleteRange", {
-        offset: 0,
-        count: currentLen,
-      });
-      if (import.meta.env.DEV && showDebug) {
-        // eslint-disable-next-line no-console
-        console.debug("[MessageList][data:deleteRange]", { sessionId, offset: 0, count: currentLen });
-      }
-      return;
-    }
-
-    if (layoutRevisionChanged) {
-      lastLayoutRevisionRef.current = layoutRevision;
-      historyExpectedRef.current = false;
-      historyRequestedAtTopRef.current = false;
-      historyRequestedAnchorIdRef.current = null;
-      const atBottom = stickToBottomRef.current;
-      const purgeAnchorId = atBottom ? null : renderedTopIdRef.current ?? renderedAnchorIdRef.current;
-      const purgeAnchorIndex = purgeAnchorId ? next.findIndex((item) => item.id === purgeAnchorId) : -1;
-      const replaceLocation: ItemLocation =
-        atBottom
-          ? INITIAL_LOCATION_BOTTOM
-          : purgeAnchorIndex >= 0
-            ? { index: purgeAnchorIndex, align: "start" }
-            : initialLocation;
-      methods.cancelSmoothScroll();
-      suppressIdDiffLogsRef.current = { sessionId, remainingTicks: 1 };
-      startFlashProbe("data:replace", {
-        reason: "layoutRevisionChanged",
+    if (
+      applySessionMessageListInvalidation({
+        sessionId,
         layoutRevision,
-        nextLen: effectiveNextLen,
+        current,
+        nextRaw,
+        next,
         currentLen,
-        atBottom,
-        purgeAnchorId,
-        purgeAnchorIndex,
-      });
-      methods.data.replace(next, { initialLocation: replaceLocation, purgeItemSizes: true });
-      if (atBottom) {
-        snapToBottom(methods);
-      }
-      recordDebugSnapshot("data:replace", {
-        reason: "layoutRevisionChanged",
-        layoutRevision,
-        nextLen: effectiveNextLen,
-        currentLen,
-        atBottom,
-        purgeAnchorId,
-        purgeAnchorIndex,
-      });
-      logMessageListDebug("data:replace", {
-        reason: "layoutRevisionChanged",
-        layoutRevision,
-        nextLen: effectiveNextLen,
-        currentLen,
-        atBottom,
-        purgeAnchorId,
-        purgeAnchorIndex,
-      });
-      return;
-    }
-
-    const sizeCacheKeyChanges = findSharedItemSizeCacheKeyChanges(current, next, itemSizeCacheKey);
-    if (sizeCacheKeyChanges.count > 0) {
-      const atBottom = stickToBottomRef.current;
-      const purgeAnchorId = atBottom ? null : renderedTopIdRef.current ?? renderedAnchorIdRef.current;
-      const purgeAnchorIndex = purgeAnchorId ? next.findIndex((item) => item.id === purgeAnchorId) : -1;
-      const replaceLocation: ItemLocation =
-        atBottom
-          ? INITIAL_LOCATION_BOTTOM
-          : purgeAnchorIndex >= 0
-            ? { index: purgeAnchorIndex, align: "start" }
-            : initialLocation;
-      methods.cancelSmoothScroll();
-      suppressIdDiffLogsRef.current = { sessionId, remainingTicks: 1 };
-      startFlashProbe("data:replace", {
-        reason: "sizeCacheKeyChanged",
-        changedCount: sizeCacheKeyChanges.count,
-        changedSampleIds: sizeCacheKeyChanges.sampleIds,
-        nextLen: effectiveNextLen,
-        currentLen,
-        atBottom,
-        purgeAnchorId,
-        purgeAnchorIndex,
-      });
-      methods.data.replace(next, { initialLocation: replaceLocation, purgeItemSizes: true });
-      if (atBottom) {
-        snapToBottom(methods);
-      }
-      recordDebugSnapshot("data:replace", {
-        reason: "sizeCacheKeyChanged",
-        changedCount: sizeCacheKeyChanges.count,
-        changedSampleIds: sizeCacheKeyChanges.sampleIds,
-        nextLen: effectiveNextLen,
-        currentLen,
-        atBottom,
-        purgeAnchorId,
-        purgeAnchorIndex,
-      });
-      logMessageListDebug("data:replace", {
-        reason: "sizeCacheKeyChanged",
-        changedCount: sizeCacheKeyChanges.count,
-        changedSampleIds: sizeCacheKeyChanges.sampleIds,
-        nextLen: effectiveNextLen,
-        currentLen,
-        atBottom,
-        purgeAnchorId,
-        purgeAnchorIndex,
-      });
+        effectiveNextLen,
+        methods,
+        initialLocation,
+        lastLayoutRevisionRef,
+        historyExpectedRef,
+        historyRequestedAtTopRef,
+        historyRequestedAnchorIdRef,
+        stickToBottomRef,
+        renderedTopIdRef,
+        renderedAnchorIdRef,
+        suppressIdDiffLogsRef,
+        snapToBottom,
+        startFlashProbe,
+        recordDebugSnapshot,
+        logMessageListDebug,
+        showDebug,
+      })
+    ) {
       return;
     }
 

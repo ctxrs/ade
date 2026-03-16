@@ -803,6 +803,12 @@ describe("useHarnessAuthenticationController", () => {
           health: "ok",
           diagnostics: [],
           details: {},
+          usability: {
+            usable: true,
+            status: "ready",
+            blocking_provider_ids: [],
+            recommended_action: "none",
+          },
         } satisfies ProviderStatus,
       ],
     }));
@@ -1228,6 +1234,12 @@ describe("useHarnessAuthenticationController", () => {
       details: {
         install_target: "container",
       },
+      usability: {
+        usable: true,
+        status: "ready",
+        blocking_provider_ids: [],
+        recommended_action: "none",
+      },
     };
 
     setBootstrapSnapshot("ws-test", makeBootstrap({
@@ -1279,6 +1291,12 @@ describe("useHarnessAuthenticationController", () => {
       diagnostics: [],
       details: {
         install_target: "host",
+      },
+      usability: {
+        usable: true,
+        status: "ready",
+        blocking_provider_ids: [],
+        recommended_action: "none",
       },
     };
 

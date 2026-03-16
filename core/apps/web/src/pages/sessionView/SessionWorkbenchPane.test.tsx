@@ -173,6 +173,7 @@ function TestPane() {
         availableModels={[]}
         currentModelId=""
         onSetModelId={async () => {}}
+        modelSwitchError={null}
       />
     </VirtuosoMessageListTestingContext.Provider>
   );
@@ -303,6 +304,7 @@ function TestMessagePane() {
         availableModels={[]}
         currentModelId=""
         onSetModelId={async () => {}}
+        modelSwitchError={null}
       />
     </VirtuosoMessageListTestingContext.Provider>
   );

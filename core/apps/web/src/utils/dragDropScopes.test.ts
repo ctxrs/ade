@@ -37,7 +37,7 @@ describe("dragDropScopes native position routing", () => {
     if (originalElementFromPoint) {
       document.elementFromPoint = originalElementFromPoint;
     } else {
-      delete (document as Document & { elementFromPoint?: typeof document.elementFromPoint }).elementFromPoint;
+      Reflect.deleteProperty(document, "elementFromPoint");
     }
   });
 
