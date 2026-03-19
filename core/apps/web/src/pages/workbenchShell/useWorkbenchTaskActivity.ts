@@ -6,6 +6,7 @@ export type { WorkbenchTaskLiveInfo } from "./workbenchTaskActivity";
 export type { WorkbenchTaskStatusKind } from "./workbenchTaskActivity";
 
 export {
+  canRenderWorkbenchActiveSession,
   deriveActiveTaskSessionIds,
   deriveWorkbenchTaskStatusKind,
   deriveProviderIdsByTask,
@@ -14,5 +15,6 @@ export {
   deriveWarmSessionIds,
   isPrimarySessionRunning,
   isWorkbenchTaskUnread,
+  resolveRenderableWorkbenchActiveSessionId,
   resolveWorkbenchActiveSessionId,
 } from "./workbenchTaskActivity";

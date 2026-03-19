@@ -33,6 +33,7 @@ type WorkbenchActiveTaskViewProps = {
   sessionLoadIssues: SessionLoadIssues;
   onRetrySessionLoads: () => void;
   activeSessionId: string | null;
+  activeSessionRenderable: boolean;
   optimisticFailure: OptimisticFailure;
   rightPaneOpen: boolean;
   onSplitterMouseDown: (event: MouseEvent<HTMLDivElement>) => void;
@@ -78,6 +79,7 @@ export function WorkbenchActiveTaskView({
   sessionLoadIssues,
   onRetrySessionLoads,
   activeSessionId,
+  activeSessionRenderable,
   optimisticFailure,
   rightPaneOpen,
   onSplitterMouseDown,
@@ -127,15 +129,15 @@ export function WorkbenchActiveTaskView({
 
         <div className="wb-session">
           <WorkbenchSessionLoadIssues issues={sessionLoadIssues} onRetry={onRetrySessionLoads} />
-          {activeSessionId ? (
+          {activeSessionId && activeSessionRenderable ? (
             <WorkbenchSessionSlot
               sessionId={activeSessionId}
               optimisticFailure={optimisticFailure}
             />
           ) : null}
-          {!activeSessionId ? (
+          {(!activeSessionId || !activeSessionRenderable) ? (
             <div className="wb-muted" style={{ padding: 16 }}>
-              Select a session to view this task.
+              {sessionsCount > 0 ? "Loading conversation..." : "Select a session to view this task."}
             </div>
           ) : null}
         </div>

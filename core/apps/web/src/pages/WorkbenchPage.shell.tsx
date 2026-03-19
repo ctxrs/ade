@@ -887,6 +887,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
             sessionLoadIssues={activeTaskController.sessionLoadIssues}
             onRetrySessionLoads={activeTaskController.retryActiveSessionLoads}
             activeSessionId={activeSessionId}
+            activeSessionRenderable={activeTaskController.activeSessionRenderable}
             optimisticFailure={optimisticFailure}
             rightPaneOpen={activeTaskController.rightPaneOpen}
             onSplitterMouseDown={activeTaskController.onSplitterMouseDown}

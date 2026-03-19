@@ -21,6 +21,7 @@ import {
   primePersistedSessionHeads,
 } from "./sessionHeadPrefetch";
 import {
+  canRenderWorkbenchActiveSession,
   deriveActiveTaskSessionIds,
   deriveProviderIdsByTask,
   deriveTaskLiveInfo,
@@ -219,6 +220,9 @@ export function useWorkbenchSessionBridge({
       primarySessionId,
       sessions,
     });
+    if (!canRenderWorkbenchActiveSession(nextSessionId ? sessionSnap.sessions[nextSessionId] ?? null : null)) {
+      return;
+    }
     if (activeTab?.kind === "task" && activeTab.ref.taskId === activeTaskId && nextSessionId !== previousSessionId) {
       workbenchStore.setActiveSessionForActiveTask(nextSessionId, { source: "system" });
     }

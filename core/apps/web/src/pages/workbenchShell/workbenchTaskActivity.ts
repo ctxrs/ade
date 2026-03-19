@@ -239,6 +239,39 @@ export const resolveWorkbenchActiveSessionId = ({
   return pickPreferredSessionId(sessions, activeSessionIdFromTab);
 };
 
+export const canRenderWorkbenchActiveSession = (
+  entry: SessionSupervisorSnapshot["sessions"][string] | null | undefined,
+): boolean => {
+  if (!entry) return false;
+  if (entry.stateLoaded) return true;
+  return (
+    entry.turns.length > 0 ||
+    entry.messages.length > 0 ||
+    entry.events.length > 0 ||
+    entry.queue.length > 0
+  );
+};
+
+export const resolveRenderableWorkbenchActiveSessionId = ({
+  activeSessionIdFromTab,
+  primarySessionId,
+  sessions,
+  sessionEntries,
+}: {
+  activeSessionIdFromTab: string | null;
+  primarySessionId: string;
+  sessions: WorkspaceActiveSnapshotItem["sessions"][number]["session"][];
+  sessionEntries: SessionSupervisorSnapshot["sessions"];
+}): string | null => {
+  const candidateSessionId = resolveWorkbenchActiveSessionId({
+    activeSessionIdFromTab,
+    primarySessionId,
+    sessions,
+  });
+  if (!candidateSessionId) return null;
+  return canRenderWorkbenchActiveSession(sessionEntries[candidateSessionId]) ? candidateSessionId : null;
+};
+
 export const isWorkbenchTaskUnread = ({
   taskId,
   tasksById,

@@ -33,6 +33,7 @@ import {
   isOptimisticTask,
   parseMs,
 } from "../WorkbenchPage.utils";
+import { canRenderWorkbenchActiveSession } from "./workbenchTaskActivity";
 import { getDiffSummaryStats, isDiffSummaryTooLarge } from "./useWorkbenchDiffPane";
 import { useWorkbenchSessionActions } from "./useWorkbenchSessionActions";
 
@@ -81,6 +82,7 @@ export function useWorkbenchActiveTaskController({
 }: WorkbenchActiveTaskControllerArgs) {
   const sessionCache = useSessionCacheSnapshot();
   const activeEntry = activeSessionId ? sessionCache.sessions[activeSessionId] ?? null : null;
+  const activeSessionRenderable = canRenderWorkbenchActiveSession(activeEntry);
   const activeLoadErrors = activeEntry?.loadErrors;
   const activeSessionDiff = activeEntry?.diff ?? "";
   const activeTask = activeTaskSummary?.task ?? null;
@@ -921,6 +923,7 @@ export function useWorkbenchActiveTaskController({
     activeTaskArchived,
     activeTaskIsOptimistic,
     activeTaskHasAssistantMessage,
+    activeSessionRenderable,
     showSingleSessionHeader,
     singleSessionHeaderForRender,
     worktreeChip,

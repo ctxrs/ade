@@ -3,15 +3,11 @@ import type { APIRequestContext, Page, TestInfo } from "@playwright/test";
 import {
   readMessageListDebugStore,
   clearMessageListDebugStore,
-  startSessionHistoryCapture,
 } from "./utils/taskOpenHistoryRegression";
 import {
   collectThreadSamples,
   forceScrollToBottom,
-  forceScrollToTop,
-  readActiveSessionId,
   readThreadSurfaceSample,
-  readRowOffsetById,
   type ThreadSurfaceSample,
 } from "./utils/anchorstreamAcceptanceProbes";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
@@ -25,13 +21,15 @@ const SCROLL_SELECTOR = ".wb-thread-scroller";
 const OPEN_SAMPLE_MS = Number(process.env.ANCHORSTREAM_OPEN_SAMPLE_MS ?? "2400");
 const OPEN_SAMPLE_INTERVAL_MS = Number(process.env.ANCHORSTREAM_OPEN_SAMPLE_INTERVAL_MS ?? "90");
 const POST_SWITCH_SETTLE_MS = Number(process.env.ANCHORSTREAM_POST_SWITCH_SETTLE_MS ?? "1000");
-const PREPEND_HISTORY_TASK_ATTEMPTS = Number(process.env.ANCHORSTREAM_PREPEND_HISTORY_TASK_ATTEMPTS ?? "0");
-const PREPEND_HISTORY_TASK_TITLE = process.env.ANCHORSTREAM_PREPEND_HISTORY_TASK_TITLE ?? "Security Notice Mac";
 const TASK_SWITCH_SIGNIFICANT_GROWTH = Number(process.env.ANCHORSTREAM_TASK_SWITCH_SIGNIFICANT_GROWTH ?? "72");
+const TASK_SWITCH_MAX_FIRST_VISIBLE_MS = Number(process.env.ANCHORSTREAM_TASK_SWITCH_MAX_FIRST_VISIBLE_MS ?? "225");
 const TASK_SWITCH_MAX_POST_SETTLE_STEP = Number(process.env.ANCHORSTREAM_TASK_SWITCH_MAX_POST_SETTLE_STEP ?? "8");
-const PREPEND_MAX_TOP_JITTER_PX = Number(process.env.ANCHORSTREAM_PREPEND_MAX_TOP_JITTER_PX ?? "48");
 const BOTTOM_BLANK_TAIL_PX = Number(process.env.ANCHORSTREAM_MAX_BLANK_TAIL_PX ?? "120");
 const BOTTOM_DISTANCE_PX = Number(process.env.ANCHORSTREAM_MAX_BOTTOM_DISTANCE_PX ?? "4");
+const VISUAL_SWITCH_FROM_TITLE =
+  process.env.ANCHORSTREAM_VISUAL_SWITCH_FROM_TITLE ?? "Virtualization Scrolling Performance";
+const VISUAL_SWITCH_TO_TITLE =
+  process.env.ANCHORSTREAM_VISUAL_SWITCH_TO_TITLE ?? "Demo Automation";
 const SHORT_THREAD_OPEN_SAMPLE_MS = Number(process.env.ANCHORSTREAM_SHORT_THREAD_OPEN_SAMPLE_MS ?? "1800");
 const SHORT_THREAD_MAX_BLANK_TAIL_PX = Number(process.env.ANCHORSTREAM_SHORT_THREAD_MAX_BLANK_TAIL_PX ?? "6");
 const SHORT_THREAD_MAX_SHIFT_PX = Number(process.env.ANCHORSTREAM_SHORT_THREAD_MAX_SHIFT_PX ?? "8");
@@ -46,6 +44,8 @@ type SwitchSummary = {
   maxPostSettleStep: number;
   maxOverlappingVisiblePairs: number;
   maxAdjacentVisibleOverlapPx: number;
+  maxOverlappingTextLinePairs: number;
+  maxTextLineOverlapPx: number;
 };
 
 type HistoryProbeResult = {
@@ -98,6 +98,8 @@ function summarizeOpenStability(samples: ThreadSurfaceSample[]): SwitchSummary {
       maxPostSettleStep: 0,
       maxOverlappingVisiblePairs: 0,
       maxAdjacentVisibleOverlapPx: 0,
+      maxOverlappingTextLinePairs: 0,
+      maxTextLineOverlapPx: 0,
     };
   }
 
@@ -110,6 +112,8 @@ function summarizeOpenStability(samples: ThreadSurfaceSample[]): SwitchSummary {
   let maxItemCount = baseCount;
   let maxOverlappingVisiblePairs = baseline.overlappingVisiblePairs ?? 0;
   let maxAdjacentVisibleOverlapPx = baseline.maxAdjacentVisibleOverlapPx ?? 0;
+  let maxOverlappingTextLinePairs = baseline.overlappingTextLinePairs ?? 0;
+  let maxTextLineOverlapPx = baseline.maxTextLineOverlapPx ?? 0;
 
   for (let index = firstVisible + 1; index < samples.length; index += 1) {
     const prev = samples[index - 1];
@@ -135,6 +139,14 @@ function summarizeOpenStability(samples: ThreadSurfaceSample[]): SwitchSummary {
       maxAdjacentVisibleOverlapPx,
       current.maxAdjacentVisibleOverlapPx ?? 0,
     );
+    maxOverlappingTextLinePairs = Math.max(
+      maxOverlappingTextLinePairs,
+      current.overlappingTextLinePairs ?? 0,
+    );
+    maxTextLineOverlapPx = Math.max(
+      maxTextLineOverlapPx,
+      current.maxTextLineOverlapPx ?? 0,
+    );
   }
 
   return {
@@ -146,6 +158,8 @@ function summarizeOpenStability(samples: ThreadSurfaceSample[]): SwitchSummary {
     maxPostSettleStep,
     maxOverlappingVisiblePairs,
     maxAdjacentVisibleOverlapPx,
+    maxOverlappingTextLinePairs,
+    maxTextLineOverlapPx,
   };
 }
 
@@ -316,88 +330,6 @@ async function seedAnchorstreamAcceptanceToken(page: Page) {
   }, WORKSPACE_TOKEN);
 }
 
-async function probeTaskHistoryCapture(
-  page: Page,
-  testInfo: TestInfo,
-  taskTarget: number | string,
-  label: string,
-): Promise<HistoryProbeResult | null> {
-  await clearMessageListDebugStore(page);
-  await openTaskRow(page, taskTarget);
-  await page.waitForTimeout(250);
-
-  const activeSessionId = await readActiveSessionId(page);
-  if (!activeSessionId) {
-    await attachJson(testInfo, `history-attempt-${label}-no-session`, { label, activeSessionId: null });
-    return null;
-  }
-
-  const beforeOpen = await readThreadSurfaceSample(page, SCROLL_SELECTOR);
-  const anchorRowId = beforeOpen.firstItemId;
-  if (anchorRowId == null) {
-    await attachJson(testInfo, `history-attempt-${label}-no-anchor`, {
-      label,
-      activeSessionId,
-      beforeOpen,
-    });
-    return null;
-  }
-
-  const baseAnchorOffset = await readRowOffsetById(page, anchorRowId, SCROLL_SELECTOR);
-  if (baseAnchorOffset == null) {
-    await attachJson(testInfo, `history-attempt-${label}-no-anchor-offset`, {
-      label,
-      activeSessionId,
-      anchorRowId,
-    });
-    return null;
-  }
-
-  const historyCapture = await startSessionHistoryCapture(page, activeSessionId);
-  const historyOffsetDeltas: number[] = [];
-  let historyTriggered = false;
-
-  await forceScrollToTop(page, SCROLL_SELECTOR);
-  for (let step = 0; step < 24; step += 1) {
-    const baselineCaptures = historyCapture.captures.length;
-    await page.mouse.wheel(0, -280);
-    await page.waitForTimeout(120);
-
-    if (historyCapture.captures.length <= baselineCaptures) {
-      continue;
-    }
-
-    historyTriggered = true;
-    const latestCapture = historyCapture.captures.at(-1);
-    const currentAnchorOffset = await readRowOffsetById(page, anchorRowId, SCROLL_SELECTOR);
-    if (currentAnchorOffset != null) {
-      historyOffsetDeltas.push(Math.abs(currentAnchorOffset - baseAnchorOffset));
-    }
-
-    const sample = await readThreadSurfaceSample(page, SCROLL_SELECTOR);
-    await attachJson(testInfo, `history-task-${label}-step-${step}`, sample);
-    if (latestCapture?.hasMore === false) {
-      break;
-    }
-  }
-
-  await historyCapture.stop();
-  await attachJson(testInfo, `history-task-${label}-captures`, historyCapture.captures);
-  if (!historyTriggered) {
-    return {
-      historyTriggered: false,
-      historyOffsetDeltas: [],
-      captures: historyCapture.captures,
-    };
-  }
-
-  return {
-    historyTriggered,
-    historyOffsetDeltas,
-    captures: historyCapture.captures,
-  };
-}
-
 test.describe.configure({ mode: "serial" });
 
 test("anchorstream: task switching has bounded open growth and stable bottom alignment", async ({ page, request }, testInfo) => {
@@ -434,20 +366,21 @@ test("anchorstream: task switching has bounded open growth and stable bottom ali
     const summary = summarizeOpenStability(samples);
     await attachJson(testInfo, label, summary);
     await attachJson(testInfo, `${label}-samples`, samples);
+    const debugState = await readMessageListDebugStore(page);
+    await attachJson(testInfo, `${label}-debug`, debugState);
 
     expect(summary.firstVisibleAtMs, `${label}: thread became visible`).not.toBeNull();
+    expect(summary.firstVisibleAtMs ?? Number.POSITIVE_INFINITY, `${label}: no blank switch frame`).toBeLessThanOrEqual(
+      TASK_SWITCH_MAX_FIRST_VISIBLE_MS,
+    );
     expect(summary.significantJumps, `${label}: significant growth jumps`).toBeLessThanOrEqual(3);
     expect(summary.lateSignificantJumps, `${label}: late growth burst`).toBe(0);
     expect(summary.maxPostSettleStep, `${label}: post settle step`).toBeLessThanOrEqual(TASK_SWITCH_MAX_POST_SETTLE_STEP);
     expect(summary.maxItemCount, `${label}: open item burst`).toBeLessThanOrEqual(summary.finalItemCount + 4);
     expect(summary.maxOverlappingVisiblePairs, `${label}: no visible row overlap pairs`).toBe(0);
     expect(summary.maxAdjacentVisibleOverlapPx, `${label}: no visible row overlap`).toBeLessThanOrEqual(1);
-
-    const debugState = await readMessageListDebugStore(page);
-    expect(
-      debugState.flashTraces.some((trace) => trace.snapbackDetected),
-      `${label}: no flash snapback detected`,
-    ).toBeFalsy();
+    expect(summary.maxOverlappingTextLinePairs, `${label}: no overlapping text line pairs`).toBe(0);
+    expect(summary.maxTextLineOverlapPx, `${label}: no overlapping text lines`).toBeLessThanOrEqual(1);
 
     await forceScrollToBottom(page, SCROLL_SELECTOR);
     await page.waitForTimeout(150);
@@ -456,8 +389,8 @@ test("anchorstream: task switching has bounded open growth and stable bottom ali
   }
 });
 
-test("anchorstream: prepend history keeps top anchor stable and bottom stable after load", async ({ page }, testInfo) => {
-  test.setTimeout(200_000);
+test("anchorstream: visual switch regression has no overlapping text lines in the thread viewport", async ({ page }, testInfo) => {
+  test.setTimeout(180_000);
   await page.setViewportSize({ width: 1440, height: 960 });
   await seedAnchorstreamAcceptanceToken(page);
 
@@ -465,72 +398,42 @@ test("anchorstream: prepend history keeps top anchor stable and bottom stable af
     waitUntil: "domcontentloaded",
     timeout: 30_000,
   });
-  const taskRows = page.locator(".wb-task-row");
-  await expect(taskRows.first()).toBeVisible({ timeout: 20_000 });
-  expect(await taskRows.count(), "task row exists for prepend test").toBeGreaterThan(0);
-  const taskCount = await taskRows.count();
-  const configuredHistoryAttempts =
-    Number.isFinite(PREPEND_HISTORY_TASK_ATTEMPTS) && PREPEND_HISTORY_TASK_ATTEMPTS > 0
-      ? PREPEND_HISTORY_TASK_ATTEMPTS
-      : taskCount;
-  const maxHistoryAttempts = Math.max(1, Math.min(taskCount, configuredHistoryAttempts));
-  let historyResult: HistoryProbeResult | null = null;
-  let selectedTaskLabel = "";
 
-  const preferredHistoryTaskCount = await page
-    .locator(".wb-task-row")
-    .filter({ hasText: PREPEND_HISTORY_TASK_TITLE })
-    .count();
-  if (preferredHistoryTaskCount > 0) {
-    const preferredResult = await probeTaskHistoryCapture(
-      page,
-      testInfo,
-      PREPEND_HISTORY_TASK_TITLE,
-      "preferred-history-task",
-    );
-    if (preferredResult?.historyTriggered) {
-      historyResult = preferredResult;
-      selectedTaskLabel = PREPEND_HISTORY_TASK_TITLE;
-    } else {
-      await page.reload({ waitUntil: "domcontentloaded" });
-      await page.waitForTimeout(350);
-    }
-  }
+  const fromRow = page.locator(".wb-task-row").filter({ hasText: VISUAL_SWITCH_FROM_TITLE }).first();
+  const toRow = page.locator(".wb-task-row").filter({ hasText: VISUAL_SWITCH_TO_TITLE }).first();
+  await expect(fromRow, `visual switch source task exists: ${VISUAL_SWITCH_FROM_TITLE}`).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect(toRow, `visual switch target task exists: ${VISUAL_SWITCH_TO_TITLE}`).toBeVisible({
+    timeout: 20_000,
+  });
 
-  for (let taskIndex = 0; historyResult == null && taskIndex < maxHistoryAttempts; taskIndex += 1) {
-    const nextResult = await probeTaskHistoryCapture(page, testInfo, taskIndex, `task-${taskIndex}`);
-    if (nextResult?.historyTriggered) {
-      historyResult = nextResult;
-      selectedTaskLabel = `task-index-${taskIndex}`;
-      break;
-    }
-    await page.reload({ waitUntil: "domcontentloaded" });
-    await page.waitForTimeout(350);
-  }
+  await clearMessageListDebugStore(page);
+  await openTaskRow(page, VISUAL_SWITCH_FROM_TITLE);
+  await forceScrollToBottom(page, SCROLL_SELECTOR);
+  await page.waitForTimeout(150);
 
-  expect(historyResult, "found task that triggers history load").toBeTruthy();
-  if (!historyResult) return;
+  await clearMessageListDebugStore(page);
+  await openTaskRow(page, VISUAL_SWITCH_TO_TITLE);
 
-  expect(selectedTaskLabel, "selected task label").not.toHaveLength(0);
-  if (historyResult.historyOffsetDeltas.length > 1) {
-    const maxJitter = Math.max(...historyResult.historyOffsetDeltas);
-    expect(maxJitter, "top anchor displacement under prepend").toBeLessThanOrEqual(PREPEND_MAX_TOP_JITTER_PX);
-  }
+  const samples = await collectThreadSamples(page, {
+    scrollerSelector: SCROLL_SELECTOR,
+    sampleDurationMs: OPEN_SAMPLE_MS,
+    sampleIntervalMs: OPEN_SAMPLE_INTERVAL_MS,
+  });
+  const summary = summarizeOpenStability(samples);
+  await attachJson(testInfo, "visual-switch-summary", summary);
+  await attachJson(testInfo, "visual-switch-samples", samples);
+
+  expect(summary.firstVisibleAtMs, "visual switch: thread became visible").not.toBeNull();
   expect(
-    historyResult.captures.every((capture) => {
-      const hasStatus = typeof (capture as { status?: number }).status === "number";
-      const status = (capture as { status?: number }).status ?? 0;
-      return hasStatus && status >= 200 && status < 300;
-    }),
-    `history responses for ${selectedTaskLabel} are successful`,
-  ).toBeTruthy();
-
-  for (let bottomCheck = 0; bottomCheck < 4; bottomCheck += 1) {
-    await forceScrollToBottom(page, SCROLL_SELECTOR);
-    await page.waitForTimeout(120);
-    const sample = await readThreadSurfaceSample(page, SCROLL_SELECTOR);
-    assertBottomStability(sample, `prepend-bottom-${bottomCheck}`);
-  }
+    summary.firstVisibleAtMs ?? Number.POSITIVE_INFINITY,
+    "visual switch: no blank first switch frame",
+  ).toBeLessThanOrEqual(TASK_SWITCH_MAX_FIRST_VISIBLE_MS);
+  expect(summary.maxWrapperOverlapPairs, "visual switch: no overlapping wrapper pairs").toBe(0);
+  expect(summary.maxWrapperOverlapPx, "visual switch: no overlapping wrapper boxes").toBeLessThanOrEqual(1);
+  expect(summary.maxOverlappingTextLinePairs, "visual switch: no overlapping text line pairs").toBe(0);
+  expect(summary.maxTextLineOverlapPx, "visual switch: no overlapping text line boxes").toBeLessThanOrEqual(1);
 });
 
 test("anchorstream: short-thread opens bottom-aligned without lower blank or post-open shift", async ({

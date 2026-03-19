@@ -7,6 +7,7 @@ import type { WorkspaceActiveSnapshotItem, WorkspaceActiveSnapshotState } from "
 import { WORKBENCH_TASK_IDLE_EVENT, type WorkbenchTaskIdleDetail } from "../../utils/updaterEvents";
 import type { OptimisticTaskSummary } from "../WorkbenchPage.types";
 import {
+  canRenderWorkbenchActiveSession,
   deriveProviderIdsByTaskFromSessions,
   deriveActiveTaskSessionIds,
   deriveWorkbenchTaskStatusKind,
@@ -14,6 +15,7 @@ import {
   deriveWarmSessionIds,
   isPrimarySessionRunning,
   isWorkbenchTaskUnread,
+  resolveRenderableWorkbenchActiveSessionId,
   resolveWorkbenchActiveSessionId,
   useWorkbenchTaskActivity,
 } from "./useWorkbenchTaskActivity";
@@ -710,6 +712,56 @@ describe("useWorkbenchTaskActivity helpers", () => {
       }),
     ).toBe("session-2");
   });
+
+  it("only exposes a renderable active session once its entry has seeded content or loaded state", () => {
+    const session = makeSession("session-1", "task-1", "active");
+    const emptyEntry = {
+      ...makeSessionEntry({ session }),
+      turns: [],
+      messages: [],
+      events: [],
+      queue: [],
+      stateLoaded: false,
+    };
+
+    expect(canRenderWorkbenchActiveSession(emptyEntry)).toBe(false);
+    expect(
+      resolveRenderableWorkbenchActiveSessionId({
+        activeSessionIdFromTab: "session-1",
+        primarySessionId: "",
+        sessions: [session],
+        sessionEntries: { "session-1": emptyEntry },
+      }),
+    ).toBeNull();
+
+    expect(
+      resolveRenderableWorkbenchActiveSessionId({
+        activeSessionIdFromTab: "session-1",
+        primarySessionId: "",
+        sessions: [session],
+        sessionEntries: {
+          "session-1": {
+            ...emptyEntry,
+            stateLoaded: true,
+          },
+        },
+      }),
+    ).toBe("session-1");
+
+    expect(
+      resolveRenderableWorkbenchActiveSessionId({
+        activeSessionIdFromTab: "session-1",
+        primarySessionId: "",
+        sessions: [session],
+        sessionEntries: {
+          "session-1": makeSessionEntry({
+            session,
+            freshness: "bootstrap",
+          }),
+        },
+      }),
+    ).toBe("session-1");
+  });
 });
 
 const makeWorkbenchStore = (taskId: string, sessionId: string | null = null) => ({
@@ -1202,6 +1254,75 @@ describe("useWorkbenchTaskActivity", () => {
     await waitFor(() => {
       expect(supervisor.setActiveTaskSessionIds).toHaveBeenCalledWith(["session-1"]);
       expect(workbenchStore.setActiveSessionForActiveTask).toHaveBeenCalledWith("session-1", {
+        source: "system",
+      });
+    });
+  });
+
+  it("waits to switch the visible task session until the candidate session is renderable", async () => {
+    const session = makeSession("session-1", "task-1", "active");
+    const taskSummary = makeTaskSummary({
+      taskId: "task-1",
+      primarySessionId: session.id,
+      sessions: [makeSessionSummary(session)],
+    });
+    const workspaceSnapshot = makeWorkspaceSnapshot({ "task-1": taskSummary }, ["task-1"]);
+    const supervisor = makeSupervisor();
+    const workspaceSnapshotStore = makeWorkspaceSnapshotStore(workspaceSnapshot);
+    const workbenchStore = makeWorkbenchStore("task-1");
+    const rendered = renderHarness({
+      activeTaskId: "task-1",
+      activeSessionIdFromTab: null,
+      activeTaskSummary: taskSummary,
+      tasksById: { "task-1": taskSummary },
+      workspaceSnapshot,
+      sessionSnap: makeSessionSnapshot({
+        [session.id]: {
+          ...makeSessionEntry({ session }),
+          turns: [],
+          messages: [],
+          events: [],
+          queue: [],
+          stateLoaded: false,
+          loadState: "pending_hydration",
+        },
+      }),
+      optimisticTasks: [] satisfies OptimisticTaskSummary[],
+      optimisticTasksById: {},
+      supervisor,
+      workbenchStore,
+      workspaceSnapshotStore,
+      markTaskRead: vi.fn(async () => {}),
+    });
+
+    await waitFor(() => {
+      expect(supervisor.setActiveTaskSessionIds).toHaveBeenCalledWith([session.id]);
+    });
+    expect(workbenchStore.setActiveSessionForActiveTask).not.toHaveBeenCalledWith(session.id, { source: "system" });
+
+    rendered.rerender(
+      <SessionSupervisorProvider>
+        <Harness
+          activeTaskId="task-1"
+          activeSessionIdFromTab={null}
+          activeTaskSummary={taskSummary}
+          tasksById={{ "task-1": taskSummary }}
+          workspaceSnapshot={workspaceSnapshot}
+          sessionSnap={makeSessionSnapshot({
+            [session.id]: makeSessionEntry({ session }),
+          })}
+          optimisticTasks={[] satisfies OptimisticTaskSummary[]}
+          optimisticTasksById={{}}
+          supervisor={supervisor}
+          workbenchStore={workbenchStore}
+          workspaceSnapshotStore={workspaceSnapshotStore}
+          markTaskRead={vi.fn(async () => {})}
+        />
+      </SessionSupervisorProvider>,
+    );
+
+    await waitFor(() => {
+      expect(workbenchStore.setActiveSessionForActiveTask).toHaveBeenCalledWith(session.id, {
         source: "system",
       });
     });
