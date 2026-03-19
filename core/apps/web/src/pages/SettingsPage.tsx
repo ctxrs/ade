@@ -72,6 +72,7 @@ import type { SectionId, SettingsSectionMeta } from "./SettingsPage.types";
 import { runBillingCheckoutFlow } from "./settings/billingCheckoutFlow";
 import { shouldTrackEntitlementActivated } from "./settings/entitlementAnalytics";
 import {
+  executionSettingsStableKey,
   formatGiB,
   parseGiB,
   sectionFromHash,
@@ -209,6 +210,7 @@ export default function SettingsPage() {
   const resourceGovernanceHydrated = useRef(false);
   const sandboxingHydrated = useRef(false);
   const executionHydrated = useRef(false);
+  const savedExecutionPayloadKey = useRef<string | null>(null);
   const [resourceGovernanceEnabled, setResourceGovernanceEnabled] = useState(true);
   const [providerControlMode, setProviderControlMode] = useState<SandboxingSettings["provider_control_mode"]>("full");
   const [executionSettings, setExecutionSettings] = useState<ApiExecutionSettings>(() => defaultExecutionSettings());
@@ -492,6 +494,7 @@ export default function SettingsPage() {
           setProviderControlMode(sb.provider_control_mode);
         }
         const execution = normalizeExecutionSettings(s.execution ?? null);
+        savedExecutionPayloadKey.current = executionSettingsStableKey(execution);
         setExecutionSettings(execution);
         setMachineMemoryProfile(execution.container.machine.memory_profile);
         setMachineCustomMemoryMb(formatOptionalInteger(execution.container.machine.custom_memory_mb));
@@ -550,6 +553,7 @@ export default function SettingsPage() {
         setProviderControlMode(next.sandboxing.provider_control_mode);
       }
       const execution = normalizeExecutionSettings(next.execution ?? null);
+      savedExecutionPayloadKey.current = executionSettingsStableKey(execution);
       setExecutionSettings(execution);
       setMachineMemoryProfile(execution.container.machine.memory_profile);
       setMachineCustomMemoryMb(formatOptionalInteger(execution.container.machine.custom_memory_mb));
@@ -598,6 +602,11 @@ export default function SettingsPage() {
     machineIdleShutdownSeconds,
     machineMemoryProfile,
   ]);
+
+  const executionPayloadKey = useMemo(
+    () => executionSettingsStableKey(executionPayload),
+    [executionPayload],
+  );
 
   const resourceGovernancePayload = useMemo((): ResourceGovernanceSettings => {
     const cpuQuota = Number(resourceCpuQuotaPct);
@@ -682,12 +691,13 @@ export default function SettingsPage() {
       return;
     }
     if (!sandboxMachineCanSave) return;
+    if (savedExecutionPayloadKey.current === executionPayloadKey) return;
     const t = window.setTimeout(() => {
       savePatch({ execution: executionPayload });
     }, 450);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [executionPayload, loaded, sandboxMachineCanSave]);
+  }, [executionPayload, executionPayloadKey, loaded, sandboxMachineCanSave]);
 
   useEffect(() => {
     if (!loaded) return;

@@ -5,7 +5,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::Utc;
+use sha2::{Digest, Sha256};
 use tokio::sync::{Barrier, Notify};
+use tokio::task::JoinHandle;
 
 use crate::execution_setup::warmup_coordination::SharedWarmupOperations;
 use crate::harness_runtime::HarnessRuntimeManager;
@@ -132,6 +134,55 @@ async fn save_test_execution_settings(data_root: &Path, execution: ExecutionSett
         .await
         .expect("save settings");
     store.close().await;
+}
+
+async fn spawn_static_http_server(body: Vec<u8>) -> (String, JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind static http server");
+    let addr = listener.local_addr().expect("static http local addr");
+    let task = tokio::spawn(async move {
+        loop {
+            let (mut stream, _) = match listener.accept().await {
+                Ok(conn) => conn,
+                Err(_) => break,
+            };
+            let body = body.clone();
+            tokio::spawn(async move {
+                let mut buf = [0_u8; 1024];
+                let _ = tokio::io::AsyncReadExt::read(&mut stream, &mut buf).await;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = tokio::io::AsyncWriteExt::write_all(&mut stream, response.as_bytes()).await;
+                let _ = tokio::io::AsyncWriteExt::write_all(&mut stream, &body).await;
+                let _ = tokio::io::AsyncWriteExt::shutdown(&mut stream).await;
+            });
+        }
+    });
+    (format!("http://{addr}/machine.raw"), task)
+}
+
+async fn install_test_managed_machine_cache_source(
+    body: Vec<u8>,
+) -> (
+    crate::bundled_assets::TestManagedPodmanMachineCacheSourceGuard,
+    JoinHandle<()>,
+) {
+    let digest = {
+        let mut hasher = Sha256::new();
+        hasher.update(&body);
+        hex::encode(hasher.finalize())
+    };
+    let (url, server) = spawn_static_http_server(body).await;
+    let guard = crate::bundled_assets::override_managed_podman_machine_cache_source_for_test(
+        crate::bundled_assets::ManagedArtifactSource {
+            uri: url,
+            sha256: digest,
+        },
+    );
+    (guard, server)
 }
 
 #[derive(Default)]
@@ -610,6 +661,7 @@ async fn workspace_launch_waits_for_running_startup_prewarm_without_duplicate_ru
     let workspace_root = data_dir.path().join("ws");
     std::fs::create_dir_all(&workspace_root).expect("create workspace root");
     let log_path = data_dir.path().join("podman-invocations.log");
+    let machine_started = data_dir.path().join("machine-started");
     let podman_path = data_dir.path().join("podman.sh");
     let workspace = Workspace {
         id: WorkspaceId::new(),
@@ -619,11 +671,14 @@ async fn workspace_launch_waits_for_running_startup_prewarm_without_duplicate_ru
         vcs_kind: None,
     };
     let container_name = format!("ctx-harness-{}", workspace.id.0);
+    let (_cache_guard, _cache_server) =
+        install_test_managed_machine_cache_source(vec![1, 2, 3]).await;
     std::fs::write(
             &podman_path,
             format!(
-                "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+                "#!/bin/sh\nLOG=\"{log}\"\nSTARTED=\"{started}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"inspect\" ] && [ \"$5\" = \"{container}\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
                 log = log_path.display(),
+                started = machine_started.display(),
                 container = container_name,
             ),
         )
@@ -685,8 +740,114 @@ async fn workspace_launch_waits_for_running_startup_prewarm_without_duplicate_ru
         "expected reusable container check in log:\n{log}"
     );
     assert!(
+        log.contains("machine init "),
+        "joined launch should materialize the machine before checking reusable containers:\n{log}"
+    );
+    assert!(
+        log.contains("machine start "),
+        "joined launch should start the machine before checking reusable containers:\n{log}"
+    );
+    assert!(
         !log.contains("image exists"),
         "joined launch should not restart runtime/image probes for reusable containers:\n{log}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn workspace_launch_joining_startup_prewarm_starts_machine_before_creating_container() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _serial = env_var_test_lock().lock().await;
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let workspace_root = data_dir.path().join("ws");
+    std::fs::create_dir_all(&workspace_root).expect("create workspace root");
+    let log_path = data_dir.path().join("podman-invocations.log");
+    let machine_started = data_dir.path().join("machine-started");
+    let podman_path = data_dir.path().join("podman.sh");
+    let workspace = Workspace {
+        id: WorkspaceId::new(),
+        name: "ws".to_string(),
+        root_path: workspace_root.to_string_lossy().to_string(),
+        created_at: Utc::now(),
+        vcs_kind: None,
+    };
+    let container_name = format!("ctx-harness-{}", workspace.id.0);
+    let (_cache_guard, _cache_server) =
+        install_test_managed_machine_cache_source(vec![1, 2, 3]).await;
+    std::fs::write(
+        &podman_path,
+        format!(
+            "#!/bin/sh\nLOG=\"{log}\"\nSTARTED=\"{started}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            log = log_path.display(),
+            started = machine_started.display(),
+            container = container_name,
+        ),
+    )
+    .expect("write podman shim");
+    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod podman shim");
+    let _podman = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    let _podman_available = EnvVarGuard::set("CTX_TEST_PODMAN_AVAILABLE", "1");
+    let ops = Arc::new(BlockingWarmupOperations::default());
+    let settings = ExecutionSettings {
+        mode: ExecutionMode::Container,
+        container: crate::settings::ContainerExecutionSettings {
+            network_mode: crate::settings::ContainerNetworkMode::All,
+            ..Default::default()
+        },
+    };
+    save_test_execution_settings(data_dir.path(), settings.clone()).await;
+
+    let coordinator = test_coordinator_with_operations(data_dir.path().to_path_buf(), ops.clone());
+    let coordinator_task = Arc::clone(&coordinator);
+    let startup = tokio::spawn(async move {
+        coordinator_task.run_startup_prewarm().await;
+    });
+
+    ops.wait_for_runtime_runs(1).await;
+
+    let snapshot = coordinator
+        .start_workspace_launch(workspace, settings, "http://127.0.0.1:4399".to_string())
+        .await;
+    assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 1);
+
+    ops.release_runtime();
+    startup.await.expect("startup prewarm task");
+
+    let ready = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let latest = coordinator
+                .launch_status(&snapshot.job_id)
+                .await
+                .expect("missing workspace launch job");
+            if latest.state == ExecutionLaunchState::Ready {
+                break latest;
+            }
+            if latest.state == ExecutionLaunchState::Error {
+                panic!("workspace launch failed unexpectedly: {:?}", latest.error);
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("timed out waiting for joined launch readiness");
+
+    assert_eq!(ready.state, ExecutionLaunchState::Ready);
+    assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 1);
+
+    let log = std::fs::read_to_string(&log_path).expect("read podman invocation log");
+    assert!(
+        log.contains("machine init "),
+        "joined launch should materialize a missing machine before creating a container:\n{log}"
+    );
+    assert!(
+        log.contains("machine start "),
+        "joined launch should start the machine before creating a container:\n{log}"
+    );
+    assert!(
+        log.contains("run -d --name"),
+        "joined launch should create the workspace container after the machine is ready:\n{log}"
     );
 }
 

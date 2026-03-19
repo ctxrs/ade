@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   desktopEditorSettingsEqual,
+  executionSettingsStableKey,
   isContainerizedEnvironment,
   normalizeDesktopEditorSettings,
   promptAutosaveStatusLabel,
@@ -63,6 +64,46 @@ describe("desktopEditorSettingsEqual", () => {
         },
       ),
     ).toBe(true);
+  });
+});
+
+describe("executionSettingsStableKey", () => {
+  it("matches for equivalent execution payloads across fresh objects", () => {
+    expect(
+      executionSettingsStableKey({
+        mode: "host",
+        container: {
+          runtime: "podman",
+          mount_mode: "host_mounted",
+          network_mode: "llm_only",
+          allowlist: [],
+          image: null,
+          machine: {
+            memory_profile: "balanced",
+            custom_memory_mb: null,
+            idle_shutdown_seconds: 900,
+            host_pressure_swap_threshold_mb: 1024,
+          },
+        },
+      }),
+    ).toBe(
+      executionSettingsStableKey({
+        mode: "host",
+        container: {
+          runtime: "podman",
+          mount_mode: "host_mounted",
+          network_mode: "llm_only",
+          allowlist: [],
+          image: null,
+          machine: {
+            memory_profile: "balanced",
+            custom_memory_mb: null,
+            idle_shutdown_seconds: 900,
+            host_pressure_swap_threshold_mb: 1024,
+          },
+        },
+      }),
+    );
   });
 });
 

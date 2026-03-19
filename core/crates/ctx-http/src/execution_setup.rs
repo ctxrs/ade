@@ -368,7 +368,7 @@ impl ExecutionSetupCoordinator {
                 {
                     Ok(()) => self
                         .harness
-                        .ensure_workspace_container_after_runtime_ready_with_observer(
+                        .ensure_workspace_container_with_observer(
                             &workspace,
                             &settings,
                             &daemon_url,

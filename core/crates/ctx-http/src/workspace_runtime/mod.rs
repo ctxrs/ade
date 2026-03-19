@@ -670,6 +670,15 @@ impl HarnessRuntimeManager {
             if actual_memory_mb == Some(desired_memory_mb) {
                 return Ok(());
             }
+            if self.has_running_workspace_containers().await? {
+                observe_log(
+                    observer,
+                    HarnessSetupPhase::MachineStartOrInit,
+                    HarnessSetupLogLevel::Warn,
+                    "deferring local sandbox runtime memory reconfiguration until active workspace containers stop",
+                );
+                return Ok(());
+            }
             let detail = actual_memory_mb
                 .map(|value| format!("{value} MiB"))
                 .unwrap_or_else(|| "unknown".to_string());
@@ -690,6 +699,74 @@ impl HarnessRuntimeManager {
             .await
     }
 
+    async fn reconcile_running_podman_machine_memory(
+        &self,
+        settings: &ContainerExecutionSettings,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<()> {
+        if !podman_machine_required() {
+            return Ok(());
+        }
+        let desired_memory_mb = container_machine_memory_mb(settings);
+        let machine_name = ctx_podman_machine_name(&self.data_root);
+        let machine_lock = podman_machine_singleflight_lock(&machine_name);
+        let _machine_guard = machine_lock.lock().await;
+
+        if !podman_machine_present(&self.data_root, &machine_name).await? {
+            observe_log(
+                observer,
+                HarnessSetupPhase::MachineCheck,
+                HarnessSetupLogLevel::Warn,
+                "local sandbox runtime is reachable but machine state could not be inspected; leaving memory profile unchanged",
+            );
+            return Ok(());
+        }
+
+        let actual_memory_mb = self.inspect_podman_machine_memory_mb(&machine_name).await?;
+        if actual_memory_mb == Some(desired_memory_mb) {
+            return Ok(());
+        }
+        if self.has_running_workspace_containers().await? {
+            observe_log(
+                observer,
+                HarnessSetupPhase::MachineStartOrInit,
+                HarnessSetupLogLevel::Warn,
+                "deferring local sandbox runtime memory reconfiguration until active workspace containers stop",
+            );
+            return Ok(());
+        }
+        let detail = actual_memory_mb
+            .map(|value| format!("{value} MiB"))
+            .unwrap_or_else(|| "unknown".to_string());
+        observe_log(
+            observer,
+            HarnessSetupPhase::MachineStartOrInit,
+            HarnessSetupLogLevel::Info,
+            &format!(
+                "reconfiguring local sandbox runtime memory from {detail} to {} MiB",
+                desired_memory_mb
+            ),
+        );
+        self.remove_podman_machine_locked(&machine_name, observer)
+            .await?;
+        self.init_podman_machine_locked(&machine_name, desired_memory_mb, observer)
+            .await
+    }
+
+    async fn has_running_workspace_containers(&self) -> Result<bool> {
+        let mut cmd = podman_command(&self.data_root)?;
+        cmd.arg("ps").arg("--format").arg("{{.Names}}");
+        let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
+        if !output.status.success() {
+            anyhow::bail!("podman ps failed: {}", command_output_message(&output));
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Ok(stdout
+            .lines()
+            .map(str::trim)
+            .any(|name| name.starts_with("ctx-harness-")))
+    }
+
     async fn maybe_reclaim_podman_machine(
         &self,
         settings: &ContainerExecutionSettings,
@@ -700,6 +777,18 @@ impl HarnessRuntimeManager {
             return Ok(false);
         }
         if self.active_runtime_operations.load(Ordering::SeqCst) > 0 {
+            return Ok(false);
+        }
+        if self
+            .has_running_workspace_containers()
+            .await
+            .inspect_err(|err| {
+                tracing::warn!(
+                    "skipping local sandbox reclaim because workload check failed: {err:#}"
+                );
+            })
+            .unwrap_or(true)
+        {
             return Ok(false);
         }
         let idle_for = self.runtime_idle_for();
@@ -718,6 +807,18 @@ impl HarnessRuntimeManager {
         let machine_lock = podman_machine_singleflight_lock(&machine_name);
         let _machine_guard = machine_lock.lock().await;
         if self.active_runtime_operations.load(Ordering::SeqCst) > 0 {
+            return Ok(false);
+        }
+        if self
+            .has_running_workspace_containers()
+            .await
+            .inspect_err(|err| {
+                tracing::warn!(
+                    "skipping local sandbox reclaim because workload check failed: {err:#}"
+                );
+            })
+            .unwrap_or(true)
+        {
             return Ok(false);
         }
         if !podman_machine_present(&self.data_root, &machine_name).await? {
@@ -893,6 +994,14 @@ impl HarnessRuntimeManager {
         );
         ensure_managed_podman_runtime(&self.data_root, observer, None).await?;
         if podman_engine_ready(&self.data_root).await.unwrap_or(false) {
+            self.reconcile_running_podman_machine_memory(settings, observer)
+                .await?;
+            if !podman_engine_ready(&self.data_root).await.unwrap_or(false) {
+                self.ensure_podman_machine_materialized(settings, observer)
+                    .await?;
+                ensure_podman_machine_running_with_observer(&self.data_root, observer).await?;
+                return Ok(());
+            }
             observe_log(
                 observer,
                 HarnessSetupPhase::MachineCheck,

@@ -1,4 +1,4 @@
-import type { ProviderUsageSnapshot } from "../api/client";
+import type { ExecutionSettings as ApiExecutionSettings, ProviderUsageSnapshot } from "../api/client";
 import { readBoolish } from "../utils/boolish";
 import { desktopSaveTextFile, isDesktopApp, type DesktopEditorSettings } from "../utils/desktop";
 import { SECTIONS } from "./SettingsPage.constants";
@@ -72,6 +72,25 @@ export function desktopEditorSettingsEqual(
     && normalizedLeft.custom_command === normalizedRight.custom_command
     && normalizedLeft.remote_authority === normalizedRight.remote_authority
   );
+}
+
+export function executionSettingsStableKey(settings: ApiExecutionSettings): string {
+  return JSON.stringify({
+    mode: settings.mode,
+    container: {
+      runtime: settings.container.runtime,
+      mount_mode: settings.container.mount_mode,
+      network_mode: settings.container.network_mode,
+      allowlist: settings.container.allowlist,
+      image: settings.container.image ?? null,
+      machine: {
+        memory_profile: settings.container.machine.memory_profile,
+        custom_memory_mb: settings.container.machine.custom_memory_mb ?? null,
+        idle_shutdown_seconds: settings.container.machine.idle_shutdown_seconds,
+        host_pressure_swap_threshold_mb: settings.container.machine.host_pressure_swap_threshold_mb,
+      },
+    },
+  });
 }
 
 export const saveTextFile = async (name: string, contents: string) => {
