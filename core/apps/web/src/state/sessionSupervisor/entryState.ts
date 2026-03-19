@@ -97,6 +97,7 @@ export type OpenOptions = {
 export type InternalEntry = SessionCacheEntry & {
   refCount: number;
   warmUntilMs: number;
+  historyExtended: boolean;
   acpMetaUpdatedAtMs?: number;
   seqSet: Set<number>;
   nextTransientSeq: number;
@@ -205,6 +206,7 @@ export function createInternalEntry(
     subagentInvocationsFetchedAtMs: undefined,
     subagentInvocationsAppliedRev: undefined,
     headFromCache: false,
+    historyExtended: false,
     thoughtCacheByKey: {},
     thoughtCacheLoaded: false,
     thoughtCacheLoading: false,

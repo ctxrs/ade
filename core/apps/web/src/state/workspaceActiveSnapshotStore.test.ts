@@ -587,7 +587,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(String(context.error ?? "")).toContain("timeout");
   });
 
-  it("applies session_head_seed events", async () => {
+  it("does not mutate workspace heads from session_head_seed events", async () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
 
     const now = new Date().toISOString();
@@ -627,6 +627,11 @@ describe("WorkspaceActiveSnapshotStore", () => {
       ],
     };
 
+    const seenSeedEvents: string[] = [];
+    const unsubscribe = store.subscribeEvents((event) => {
+      seenSeedEvents.push(event.type);
+    });
+
     await asStoreInternals(store).handleStreamMessage(
       JSON.stringify({
         type: "event",
@@ -640,8 +645,10 @@ describe("WorkspaceActiveSnapshotStore", () => {
       }),
     );
 
-    expect(store.getSessionHeadSnapshot("session-seed")?.last_event_seq).toBe(3);
-    expect(store.getSessionHeadSnapshot("session-seed")?.messages?.[0]?.content).toBe("seeded");
+    expect(store.getSessionHeadSnapshot("session-seed")?.last_event_seq).toBe(0);
+    expect(store.getSessionHeadSnapshot("session-seed")?.messages).toHaveLength(0);
+    expect(seenSeedEvents).toContain("session_head_seed");
+    unsubscribe();
   });
 
   it("requests snapshot on stream seq gap", async () => {

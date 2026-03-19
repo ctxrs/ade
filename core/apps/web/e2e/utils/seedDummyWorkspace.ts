@@ -26,6 +26,11 @@ type SeedOptions = {
   }>;
   awaitTurnCompletion?: boolean;
   completionTimeoutMs?: number;
+  sessionSource?: {
+    providerId: string;
+    modelId: string;
+    executionEnvironment: string;
+  };
 };
 
 type SeedResult = {
@@ -148,6 +153,11 @@ export async function seedDummyWorkspace(
   const messageBytes = opts.messageBytes;
   const awaitTurnCompletion = Boolean(opts.awaitTurnCompletion);
   const completionTimeoutMs = opts.completionTimeoutMs ?? 15_000;
+  const sessionSource = opts.sessionSource ?? {
+    providerId: "fake",
+    modelId: "fake-model",
+    executionEnvironment: "host",
+  };
 
   for (let i = 0; i < opts.tasks; i++) {
     const task = await apiPost<{ id: string }>(request, `/api/workspaces/${workspace.id}/tasks`, {
@@ -160,9 +170,9 @@ export async function seedDummyWorkspace(
     const sessionCount = parseCount(opts.sessionsPerTask, i);
     for (let s = 0; s < sessionCount; s++) {
       const session = await apiPost<{ id: string }>(request, `/api/tasks/${task.id}/sessions`, {
-        provider_id: "fake",
-        model_id: "fake-model",
-        execution_environment: "host",
+        provider_id: sessionSource.providerId,
+        model_id: sessionSource.modelId,
+        execution_environment: sessionSource.executionEnvironment,
       });
       sessionIdsByTask[task.id].push(session.id);
 

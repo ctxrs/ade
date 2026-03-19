@@ -4,9 +4,11 @@ import {
   computeHistoryPrefetchThresholdPx,
   countContiguousOverlapFromStart,
   findSharedItemSizeCacheKeyChanges,
+  haveSameItemIdSequence,
   isExactContiguousIdWindow,
   pickAnchorIdsFromRange,
   pickAnchorIdsFromScroller,
+  shouldReplaceBottomLockedStructuralUpdate,
   shouldUseRawListItems,
   trimTrailingAppendsWhileScrolledUp,
 } from "./sessionMessageListControllerUtils";
@@ -235,5 +237,61 @@ describe("sessionMessageListControllerUtils", () => {
       count: 0,
       sampleIds: [],
     });
+  });
+
+  it("only treats identical id order as a pure size-cache invalidation case", () => {
+    expect(haveSameItemIdSequence([{ id: "a" }, { id: "b" }], [{ id: "a" }, { id: "b" }])).toBe(true);
+    expect(haveSameItemIdSequence([{ id: "a" }, { id: "b" }], [{ id: "a" }, { id: "c" }])).toBe(false);
+    expect(haveSameItemIdSequence([{ id: "a" }, { id: "b" }], [{ id: "x" }, { id: "a" }, { id: "b" }])).toBe(false);
+  });
+
+  it("replaces bottom-locked mixed structural updates instead of reconciling them", () => {
+    expect(
+      shouldReplaceBottomLockedStructuralUpdate({
+        stickToBottom: true,
+        currentLen: 393,
+        nextLen: 1099,
+        prefixLen: 179,
+        suffixLen: 1,
+        deleteCount: 213,
+        insertCount: 919,
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldReplaceBottomLockedStructuralUpdate({
+        stickToBottom: false,
+        currentLen: 393,
+        nextLen: 1099,
+        prefixLen: 179,
+        suffixLen: 1,
+        deleteCount: 213,
+        insertCount: 919,
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldReplaceBottomLockedStructuralUpdate({
+        stickToBottom: true,
+        currentLen: 10,
+        nextLen: 12,
+        prefixLen: 10,
+        suffixLen: 0,
+        deleteCount: 0,
+        insertCount: 2,
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldReplaceBottomLockedStructuralUpdate({
+        stickToBottom: true,
+        currentLen: 286,
+        nextLen: 393,
+        prefixLen: 0,
+        suffixLen: 0,
+        deleteCount: 286,
+        insertCount: 393,
+      }),
+    ).toBe(false);
   });
 });

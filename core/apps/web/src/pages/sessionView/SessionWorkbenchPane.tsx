@@ -93,6 +93,7 @@ type SessionWorkbenchPaneProps = {
   dropActive: boolean;
   dropScopeRef: MutableRefObject<HTMLDivElement | null>;
   listItems: WorkbenchListItem[];
+  liveTailItems: WorkbenchListItem[];
   events: SessionEvent[];
   messages: Message[];
   worktreeId: string | null;
@@ -203,6 +204,7 @@ export function SessionWorkbenchPane({
   dropActive,
   dropScopeRef,
   listItems,
+  liveTailItems,
   events,
   messages,
   worktreeId,
@@ -447,6 +449,8 @@ export function SessionWorkbenchPane({
       </div>
     );
   };
+  const liveTailCount = liveTailItems.length;
+  const totalVisibleThreadItems = listItems.length + liveTailCount;
 
   const harness = HARNESS_CATALOG.find((candidate) => candidate.id === (session?.provider_id ?? ""));
 
@@ -456,7 +460,7 @@ export function SessionWorkbenchPane({
       ref={dropScopeRef}
       data-testid="session-view"
       data-session-id={id}
-      data-thread-count={listItems.length}
+      data-thread-count={totalVisibleThreadItems}
     >
       {dropActive ? (
         <div className="ctx-drop-overlay" aria-hidden="true">
@@ -520,7 +524,8 @@ export function SessionWorkbenchPane({
         {showDebug ? (
           <div className="wb-muted" style={{ fontFamily: "var(--mono)" }}>
             debug: events={events.length} messages={messages.length} userMessages=
-            {messages.filter((message) => message.role === "user").length} items={listItems.length}
+            {messages.filter((message) => message.role === "user").length} historyItems={listItems.length} liveItems=
+            {liveTailCount}
           </div>
         ) : null}
         <SessionAuthBanner
@@ -558,6 +563,15 @@ export function SessionWorkbenchPane({
           licenseKey={licenseKey}
           shortSizeAlign={shortSizeAlign}
         >
+          {liveTailCount > 0 ? (
+            <div className="wb-thread-live-tail" role="list" aria-label="Live turn">
+              {liveTailItems.map((item, index) => (
+                <div key={item.id} role="listitem" className="wb-thread-live-tail-row" data-thread-item-id={item.id}>
+                  {workbenchItemContent(index, item)}
+                </div>
+              ))}
+            </div>
+          ) : null}
           <SessionQueuePanel
             queue={queueForPanel}
             pendingQueueMessageIdSet={pendingQueueMessageIdSet}

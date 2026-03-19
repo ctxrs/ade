@@ -123,7 +123,7 @@ function buildStateFromInputs(opts: {
  */
 export function useWorkbenchThreadViewModelController(
   params: Params,
-): { view: WorkbenchThreadView; listItems: WorkbenchListItem[] } {
+): { view: WorkbenchThreadView; listItems: WorkbenchListItem[]; groupRanges: Map<string, { start: number; end: number }> } {
   const {
     sessionId,
     turnsStamp,
@@ -454,5 +454,5 @@ export function useWorkbenchThreadViewModelController(
     turnsById,
   ]);
 
-  return { view: state.view, listItems: state.listItems };
+  return { view: state.view, listItems: state.listItems, groupRanges: state.groupRanges };
 }

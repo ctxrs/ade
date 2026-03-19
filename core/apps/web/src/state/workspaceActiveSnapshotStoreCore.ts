@@ -919,10 +919,6 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
         }
         break;
       case "session_head_seed":
-        if (this.state.applySessionHeadSeed(evt.head)) {
-          this.publish();
-          this.schedulePersistCache();
-        }
         break;
       case "session_gap": {
         flushAfterNotifyReason = "session_gap";

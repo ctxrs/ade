@@ -100,6 +100,41 @@ describe("TaskRow rename draft", () => {
     expect(onOpenMenu).toHaveBeenCalledWith("task-1", { x: 120, y: 64 });
   });
 
+  it("passes the resolved session id when focusing a task row", () => {
+    const onFocusTask = vi.fn();
+
+    render(
+      <TaskRow
+        taskId="task-1"
+        sessionId="session-1"
+        title="Initial title"
+        archived={false}
+        archivePending={false}
+        archivePendingAction={null}
+        statusKind="idle"
+        selected={false}
+        hovered={false}
+        isRenaming={false}
+        ageIso={new Date().toISOString()}
+        providerCount={0}
+        harnesses={[]}
+        getRenameDraft={(_, fallback) => fallback}
+        setRenameDraft={vi.fn()}
+        onFocusTask={onFocusTask}
+        onOpenMenu={vi.fn()}
+        onToggleArchive={vi.fn().mockResolvedValue(undefined)}
+        onHoverEnter={vi.fn()}
+        onHoverLeave={vi.fn()}
+        onCancelRename={vi.fn()}
+        onCommitRename={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("listitem", { name: "Initial title" }));
+
+    expect(onFocusTask).toHaveBeenCalledWith("task-1", "session-1");
+  });
+
   it("suppresses the native context menu for optimistic rows without opening task actions", () => {
     const onOpenMenu = vi.fn();
 

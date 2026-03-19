@@ -64,16 +64,13 @@ export type SessionSupervisorHeadProjectionHost = {
 const isBoundedHeadWindow = (head: SessionHead): boolean =>
   typeof head.head_window?.turn_limit === "number" && head.head_window.turn_limit > 0;
 
-function resolveActiveSnapshotFreshness(
+function resolveActiveSnapshotSeedFreshness(
   this: SessionSupervisorHeadProjectionHost,
   entry: InternalEntry,
 ): InternalEntry["freshness"] {
   if (entry.freshness === "recovering") return "recovering";
-  if (entry.freshness === "authoritative") return "authoritative";
-  const snapshotState = this.workspaceSnapshotState;
-  const liveConnectedSnapshot =
-    snapshotState?.liveSnapshotApplied === true && snapshotState.connection === "connected";
-  return liveConnectedSnapshot ? "authoritative" : "bootstrap";
+  if (entry.freshness === "replica" || entry.freshness === "authoritative") return "replica";
+  return "bootstrap";
 }
 
 function pruneOmittedNonTerminalTurns(
@@ -148,7 +145,7 @@ export function seedHeadFromActiveSnapshot(
     (head.events?.length ?? 0) === 0 && (head.head_window?.event_limit ?? 0) === 0;
   applyHead.call(this, entry, head as SessionHead, {
     fromCache: strippedEvents,
-    freshness: resolveActiveSnapshotFreshness.call(this, entry),
+    freshness: resolveActiveSnapshotSeedFreshness.call(this, entry),
   });
   return true;
 }
@@ -439,7 +436,7 @@ export function applyActiveSnapshotHead(
     return false;
   }
   applyHead.call(this, entry, head as SessionHead, {
-    freshness: resolveActiveSnapshotFreshness.call(this, entry),
+    freshness: resolveActiveSnapshotSeedFreshness.call(this, entry),
   });
   void persistHead.call(this, entry);
   entry.error = undefined;
@@ -465,6 +462,7 @@ export function resetEntryProjectionForReplace(
   entry.turnToolsLoading = [];
   entry.toolStatusByKey.clear();
   entry.toolIdsByTurn.clear();
+  entry.historyExtended = false;
   entry.seqSet.clear();
   entry.startedTurnIds.clear();
   entry.turnsHydrated = false;

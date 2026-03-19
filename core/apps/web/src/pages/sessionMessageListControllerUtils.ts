@@ -140,6 +140,37 @@ export function findSharedItemSizeCacheKeyChanges<T extends { id: string }>(
   return { count, sampleIds };
 }
 
+export function haveSameItemIdSequence<T extends { id: string }>(
+  currentItems: readonly T[],
+  nextItems: readonly T[],
+): boolean {
+  if (currentItems.length !== nextItems.length) return false;
+  for (let index = 0; index < currentItems.length; index += 1) {
+    if (currentItems[index]?.id !== nextItems[index]?.id) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function shouldReplaceBottomLockedStructuralUpdate(params: {
+  stickToBottom: boolean;
+  currentLen: number;
+  nextLen: number;
+  prefixLen: number;
+  suffixLen: number;
+  deleteCount: number;
+  insertCount: number;
+}): boolean {
+  const { stickToBottom, currentLen, nextLen, prefixLen, suffixLen, deleteCount, insertCount } = params;
+  if (!stickToBottom) return false;
+  if (currentLen <= 0 || nextLen <= 0) return false;
+  const isPureAppend = prefixLen === currentLen;
+  const isPurePrepend = suffixLen === currentLen;
+  if (isPureAppend || isPurePrepend) return false;
+  return nextLen >= currentLen * 2;
+}
+
 export function computeHistoryPrependTailReconcilePlan(params: {
   currentIds: readonly string[];
   nextIds: readonly string[];

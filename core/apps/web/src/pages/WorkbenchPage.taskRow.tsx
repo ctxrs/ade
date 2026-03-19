@@ -10,6 +10,7 @@ import type { AnchorRect } from "./WorkbenchPage.types";
 
 type TaskRowProps = {
   taskId: string;
+  sessionId?: string | null;
   title: string;
   archived: boolean;
   archivePending: boolean;
@@ -23,7 +24,7 @@ type TaskRowProps = {
   harnesses: Array<(typeof HARNESS_CATALOG)[number]>;
   getRenameDraft: (taskId: string, fallback: string) => string;
   setRenameDraft: (taskId: string, nextValue: string) => void;
-  onFocusTask: (taskId: string) => void;
+  onFocusTask: (taskId: string, sessionId?: string | null) => void;
   onOpenMenu: (taskId: string, opts: { triggerEl: HTMLElement } | { x: number; y: number }) => void;
   menuEnabled?: boolean;
   archiveEnabled?: boolean;
@@ -50,6 +51,7 @@ function RelativeAgeLabel({
 
 export const TaskRow = React.memo(function TaskRow({
   taskId,
+  sessionId,
   title,
   archived,
   archivePending,
@@ -139,7 +141,7 @@ export const TaskRow = React.memo(function TaskRow({
         e.preventDefault();
         e.stopPropagation();
       }}
-      onClick={() => onFocusTask(taskId)}
+      onClick={() => onFocusTask(taskId, sessionId ?? null)}
       onPointerEnter={() => onHoverEnter(taskId)}
       onPointerLeave={() => onHoverLeave(taskId)}
       onContextMenu={(e) => {
@@ -155,7 +157,7 @@ export const TaskRow = React.memo(function TaskRow({
         }
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          onFocusTask(taskId);
+          onFocusTask(taskId, sessionId ?? null);
         }
       }}
       tabIndex={0}

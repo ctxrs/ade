@@ -26,7 +26,7 @@ import {
 } from "./uiStateStore";
 import type { PersistedTaskThoughtsV1 } from "./uiStateStore";
 import { SessionReplicaBridge } from "./sessionReplicaBridge";
-import type { SessionReplicaPatch } from "./sessionReplicaProtocol";
+import type { SessionReplicaFreshnessState, SessionReplicaPatch } from "./sessionReplicaProtocol";
 import { emitUiDiagnostic } from "./diagnosticsChannel";
 import type { SessionSubscriptionCursor } from "./sessionSubscription";
 import { hasModelList } from "./sessionSupervisor/eventHydration";
@@ -135,6 +135,12 @@ const MAX_CACHED_SESSIONS = readTunableInt(
 );
 const WARM_TTL_MS = readTunableInt("contextWarmSessionTtlMs", 10 * 60 * 1000);
 const HEAD_LIMIT = readTunableInt("contextSessionHeadLimit", TURN_PAGE_LIMIT);
+
+const isReplicaAuthority = (freshness: InternalEntry["freshness"]) =>
+  freshness === "replica" || freshness === "authoritative";
+
+const toReplicaFreshness = (freshness: SessionReplicaFreshnessState): InternalEntry["freshness"] =>
+  freshness === "authoritative" ? "replica" : freshness;
 
 // The daemon serializes transient events with `seq: null` (see Rust `SessionEvent` Serialize).
 // We assign a stable synthetic seq in a negative JS-safe range so sorting never scrambles
@@ -360,7 +366,7 @@ export class SessionSupervisor {
       type: "refresh_session",
       sessionId,
     });
-    if (mode === "archived" || entry.freshness !== "authoritative") {
+    if (mode === "archived" || !isReplicaAuthority(entry.freshness)) {
       this.setSessionLoadState(entry, "pending_hydration");
     }
   };
@@ -403,7 +409,7 @@ export class SessionSupervisor {
       return true;
     }
     return (
-      entry.freshness !== "authoritative" &&
+      !isReplicaAuthority(entry.freshness) &&
       !entry.turnsHydrated &&
       entry.messages.length === 0 &&
       entry.events.length === 0
@@ -543,8 +549,6 @@ export class SessionSupervisor {
     if (!entry.hasMoreTurns) return 0;
     const beforeSeq = entry.oldestTurnSeq;
     if (beforeSeq == null || !Number.isFinite(beforeSeq)) {
-      entry.hasMoreTurns = false;
-      this.publish();
       return 0;
     }
     entry.fetching.history = true;
@@ -560,6 +564,7 @@ export class SessionSupervisor {
         this.mergeMessages(entry, page.messages);
         entry.hasMoreTurns = page.has_more;
         entry.oldestTurnSeq = page.next_cursor ?? entry.oldestTurnSeq;
+        entry.historyExtended = true;
         entry.updatedAtMs = Date.now();
         this.publish();
         await this.persistHead(entry);
@@ -570,6 +575,7 @@ export class SessionSupervisor {
       this.mergeMessages(entry, page.messages);
       entry.hasMoreTurns = page.has_more;
       entry.oldestTurnSeq = page.next_cursor ?? entry.oldestTurnSeq;
+      entry.historyExtended = true;
       entry.updatedAtMs = Date.now();
       this.publish();
       if (ownerScope) {
@@ -616,6 +622,14 @@ export class SessionSupervisor {
       const sessionId = String(patch.sessionId || "").trim();
       if (!sessionId) continue;
       const entry = this.ensureEntry(sessionId);
+      const priorHistoryExtended = entry.historyExtended;
+      const normalizedFreshness =
+        patch.data.freshness === undefined ? undefined : toReplicaFreshness(patch.data.freshness);
+      const shouldReplaceReplay =
+        patch.op !== "replace" ||
+        !isReplicaAuthority(entry.freshness) ||
+        entry.freshness === "recovering" ||
+        normalizedFreshness === "recovering";
       let localOnlyMessages: Message[] = [];
       if (patch.op === "replace") {
         const incomingMessages = Array.isArray(patch.data.messages) ? patch.data.messages : [];
@@ -628,7 +642,9 @@ export class SessionSupervisor {
           const id = idToString(message.id);
           return id ? !incomingMessageIds.has(id) : false;
         });
-        this.resetEntryProjectionForReplace(entry, { skipPublish: true });
+        if (shouldReplaceReplay) {
+          this.resetEntryProjectionForReplace(entry, { skipPublish: true });
+        }
       }
       if (patch.op === "evict") {
         const beforeSeq = patch.data.eventsBeforeSeq;
@@ -662,18 +678,18 @@ export class SessionSupervisor {
         entry.activity = data.activity ?? null;
       }
       if (data.freshness !== undefined) {
-        entry.freshness = data.freshness;
+        entry.freshness = normalizedFreshness;
       }
-      if (data.turns && data.turns.length > 0) {
+      if (shouldReplaceReplay && data.turns && data.turns.length > 0) {
         this.mergeTurns(entry, data.turns);
       }
-      if (data.messages && data.messages.length > 0) {
+      if (shouldReplaceReplay && data.messages && data.messages.length > 0) {
         this.mergeMessages(entry, data.messages);
       }
       if (localOnlyMessages.length > 0) {
         this.mergeMessages(entry, localOnlyMessages);
       }
-      if (data.events && data.events.length > 0) {
+      if (shouldReplaceReplay && data.events && data.events.length > 0) {
         this.mergeEvents(entry, data.events, { notify: patch.op !== "replace" });
         this.applyAcpMetaFromEvents(entry, data.events);
       }
@@ -738,7 +754,13 @@ export class SessionSupervisor {
         }
       }
       if (data.hasMoreTurns !== undefined) {
-        entry.hasMoreTurns = data.hasMoreTurns;
+        const preserveHasMoreHistory = patch.op === "replace" && data.hasMoreTurns === false && priorHistoryExtended;
+        if (!preserveHasMoreHistory) {
+          entry.hasMoreTurns = data.hasMoreTurns;
+        } else {
+          entry.hasMoreTurns = true;
+          entry.historyExtended = true;
+        }
       }
       if (data.turnsHydrated !== undefined) {
         entry.turnsHydrated = data.turnsHydrated;
@@ -814,10 +836,10 @@ export class SessionSupervisor {
     entry.mode = mode;
     const seededHead = mode === "active" ? this.seedReplicaFromActiveSnapshot(sessionId, entry) : false;
     const shouldSkipCache =
-      entry.turnsHydrated ||
-      entry.messages.length > 0 ||
-      entry.events.length > 0 ||
-      typeof entry.lastEventSeq === "number" ||
+      (entry.turnsHydrated ||
+        entry.messages.length > 0 ||
+        entry.events.length > 0 ||
+        typeof entry.lastEventSeq === "number") ||
       entry.freshness !== "bootstrap";
     this.replica.dispatch({
       type: "open_session",
@@ -828,7 +850,7 @@ export class SessionSupervisor {
       forceHydrate: entry.freshness === "recovering" || entry.loadState === "recovering",
       hydrateIfNeeded:
         mode === "archived" ||
-        entry.freshness !== "authoritative" ||
+        !isReplicaAuthority(entry.freshness) ||
         entry.loadState === "recovering",
     });
     if (mode === "archived") {

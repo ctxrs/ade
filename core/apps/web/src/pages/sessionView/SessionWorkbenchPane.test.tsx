@@ -81,6 +81,7 @@ function TestPane() {
         dropActive={false}
         dropScopeRef={dropScopeRef}
         listItems={listItems.current}
+        liveTailItems={[]}
         events={[]}
         messages={[]}
         worktreeId={null}
@@ -212,6 +213,7 @@ function TestMessagePane() {
         dropActive={false}
         dropScopeRef={dropScopeRef}
         listItems={listItems.current}
+        liveTailItems={[]}
         events={[]}
         messages={[]}
         worktreeId={null}
@@ -344,6 +346,7 @@ function TestAssistantPane() {
         dropActive={false}
         dropScopeRef={dropScopeRef}
         listItems={listItems.current}
+        liveTailItems={[]}
         events={[]}
         messages={[]}
         worktreeId={null}

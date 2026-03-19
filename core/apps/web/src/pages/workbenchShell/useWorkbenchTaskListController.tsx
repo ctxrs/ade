@@ -6,6 +6,7 @@ import {
   type Task,
   archiveTask,
   deleteTask,
+  idToString,
   unarchiveTask,
   updateTaskTitle,
 } from "../../api/client";
@@ -434,6 +435,10 @@ export function useWorkbenchTaskListController({
       const pendingAction = archivePendingById[taskId];
       const archivePending = typeof pendingAction !== "undefined";
       const title = task.title ?? "New Task";
+      const focusSessionId =
+        idToString(summary.primarySessionId) ||
+        idToString(task.primary_session_id ?? "") ||
+        idToString(summary.primarySessionHead?.session?.id ?? "");
       const working = taskLiveInfo.workingByTask.has(taskId);
       const hasError = taskLiveInfo.errorByTask.has(taskId);
       const serverLastAssistantMs = parseMs(task.last_assistant_message_at ?? null);
@@ -474,6 +479,7 @@ export function useWorkbenchTaskListController({
         <TaskRow
           key={taskId}
           taskId={taskId}
+          sessionId={focusSessionId || null}
           title={title}
           archived={archived}
           archivePending={archivePending}

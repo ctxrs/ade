@@ -2943,6 +2943,23 @@
   gap: 8px;
 }
 
+.wb-thread-live-tail {
+  width: 100%;
+  max-width: var(--wb-thread-max-width);
+  margin-left: auto;
+  margin-right: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.wb-thread-live-tail-row {
+  width: 100%;
+  padding-left: var(--wb-session-padding-inline);
+  padding-right: var(--wb-session-padding-inline);
+  box-sizing: border-box;
+}
+
 .wb-thread-scroller {
   box-sizing: border-box;
   padding-inline: 0;

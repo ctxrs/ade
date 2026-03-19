@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo } from "react";
-import { idToString, type SessionHeadSnapshot } from "../../api/client";
+import type { SessionHeadSnapshot } from "../../api/client";
+import type { WorkspaceActiveSnapshotEvent } from "@ctx/types";
+import { SessionHeadBootstrapCache } from "../../state/sessionHeadBootstrapCache";
 import {
   useSessionLifecycleCoordinator,
   type SessionSupervisor,
@@ -13,6 +15,11 @@ import type {
 import { WORKBENCH_TASK_IDLE_EVENT, type WorkbenchTaskIdleDetail } from "../../utils/updaterEvents";
 import type { WorkbenchStore } from "../../workbench/store";
 import type { OptimisticTaskSummary } from "../WorkbenchPage.types";
+import {
+  collectSessionHeadsForSupervisor,
+  maybeCacheSessionHeadSeed,
+  primePersistedSessionHeads,
+} from "./sessionHeadPrefetch";
 import {
   deriveActiveTaskSessionIds,
   deriveProviderIdsByTask,
@@ -53,38 +60,12 @@ type TaskBridgeArgs = {
   markTaskRead: (taskId: string) => Promise<void>;
 };
 
-const collectWorkspaceSessionHeadIds = (snapshot: WorkspaceActiveSnapshotState): string[] => {
-  const ids = new Set<string>();
-  for (const taskId of snapshot.activeIds) {
-    const item = snapshot.tasksById[taskId];
-    if (!item) continue;
-    const primaryId =
-      item.primarySessionId ||
-      idToString(item.task.primary_session_id ?? "") ||
-      idToString(item.primarySessionHead?.session?.id ?? "");
-    if (primaryId) ids.add(primaryId);
-    for (const summary of item.sessions ?? []) {
-      const sessionId = idToString(summary.session.id);
-      if (sessionId) ids.add(sessionId);
-    }
-  }
-  return Array.from(ids);
-};
-
 const readWorkspaceSessionHeads = (
   snapshot: WorkspaceActiveSnapshotState,
   store: TaskBridgeArgs["workspaceSnapshotStore"],
+  bootstrapHeads: SessionHeadBootstrapCache,
 ): Record<string, SessionHeadSnapshot> => {
-  const batchHeads = store.getSessionHeadsSnapshot?.();
-  if (batchHeads) return batchHeads;
-  const heads: Record<string, SessionHeadSnapshot> = {};
-  for (const sessionId of collectWorkspaceSessionHeadIds(snapshot)) {
-    const head = store.getSessionHeadSnapshot(sessionId);
-    if (head) {
-      heads[sessionId] = head;
-    }
-  }
-  return heads;
+  return collectSessionHeadsForSupervisor(snapshot, store, bootstrapHeads);
 };
 
 export function useWorkbenchSessionBridge({
@@ -116,6 +97,7 @@ export function useWorkbenchSessionBridge({
       }),
     [activeTaskSessionIds, tasksById, workspaceSnapshot.activeIds],
   );
+  const sessionHeadBootstrapCache = useMemo(() => new SessionHeadBootstrapCache(), []);
 
   useEffect(() => {
     supervisor.setActiveTaskSessionIds(activeTaskSessionIds);
@@ -130,27 +112,68 @@ export function useWorkbenchSessionBridge({
   }, [activeTaskId, workspaceSnapshotStore]);
 
   useEffect(() => {
+    let cancelled = false;
+    const prefetchPersistedHeads = async () => {
+      if (!workspaceSnapshot.initialized) return;
+      const changed = await primePersistedSessionHeads(
+        workspaceSnapshotStore.getSnapshot(),
+        workspaceSnapshotStore,
+        sessionHeadBootstrapCache,
+      );
+      if (!changed || cancelled) return;
+      const snapshot = workspaceSnapshotStore.getSnapshot();
+      supervisor.setWorkspaceSessionHeads(
+        readWorkspaceSessionHeads(snapshot, workspaceSnapshotStore, sessionHeadBootstrapCache),
+      );
+    };
+    void prefetchPersistedHeads();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    sessionHeadBootstrapCache,
+    supervisor,
+    workspaceSnapshot.activeIds,
+    workspaceSnapshot.initialized,
+    workspaceSnapshot.tasksById,
+    workspaceSnapshotStore,
+  ]);
+
+  useEffect(() => {
     supervisor.setSubscribedSessionIdsSink((sessionIdsForSubscription) => {
       workspaceSnapshotStore.setSubscribedSessions?.(sessionIdsForSubscription);
     });
     const syncWorkspace = () => {
       const snapshot = workspaceSnapshotStore.getSnapshot();
-      supervisor.setWorkspaceSessionHeads(readWorkspaceSessionHeads(snapshot, workspaceSnapshotStore));
+      supervisor.setWorkspaceSessionHeads(
+        readWorkspaceSessionHeads(snapshot, workspaceSnapshotStore, sessionHeadBootstrapCache),
+      );
       supervisor.setWorkspaceSnapshotState(snapshot);
       lifecycleCoordinator.setWorkspaceSnapshotState(snapshot);
     };
+    const handleWorkspaceEvent = (evt: WorkspaceActiveSnapshotEvent) => {
+      const didCacheSeed = maybeCacheSessionHeadSeed(sessionHeadBootstrapCache, evt);
+      if (didCacheSeed) {
+        const snapshot = workspaceSnapshotStore.getSnapshot();
+        supervisor.setWorkspaceSessionHeads(
+          readWorkspaceSessionHeads(snapshot, workspaceSnapshotStore, sessionHeadBootstrapCache),
+        );
+      }
+      supervisor.handleWorkspaceEvent(evt);
+    };
     syncWorkspace();
     const unsubState = workspaceSnapshotStore.subscribe(syncWorkspace);
-    const unsubEvents = workspaceSnapshotStore.subscribeEvents((evt) => supervisor.handleWorkspaceEvent(evt));
+    const unsubEvents = workspaceSnapshotStore.subscribeEvents(handleWorkspaceEvent);
     return () => {
       unsubEvents();
       unsubState();
       supervisor.setSubscribedSessionIdsSink(null);
+      sessionHeadBootstrapCache.clear();
       supervisor.setWorkspaceSessionHeads({});
       supervisor.setWorkspaceSnapshotState(null);
       lifecycleCoordinator.setWorkspaceSnapshotState(null);
     };
-  }, [lifecycleCoordinator, supervisor, workspaceSnapshotStore]);
+  }, [lifecycleCoordinator, supervisor, sessionHeadBootstrapCache, workspaceSnapshotStore]);
 
   const taskLiveInfo = useMemo(
     () =>

@@ -128,13 +128,14 @@ type TestInternalEntry = {
   turnsHydrated: boolean;
   turns: SessionTurn[];
   turnsRev: number;
-  freshness?: "bootstrap" | "authoritative" | "recovering";
+  freshness?: "bootstrap" | "authoritative" | "recovering" | "replica";
   messages: Message[];
   messagesRev: number;
   events: SessionEvent[];
   eventsRev: number;
   queue: Message[];
   hasMoreTurns: boolean;
+  historyExtended: boolean;
   lastEventSeq?: number;
   oldestTurnSeq?: number;
   stateLoaded?: boolean;
@@ -1649,6 +1650,92 @@ describe("SessionSupervisor", () => {
     expect(entry?.queue.map((message) => message.id)).toEqual(["m-local"]);
   });
 
+  it("does not overwrite transcript turns/messages/events when a replica session receives replace patches", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-replica-replace-no-overwrite";
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+    const entry = internals.ensureEntry(sessionId);
+    const initialTurn = mkTurn({
+      sessionId,
+      turnId: "turn-initial",
+      status: "completed",
+      startSeq: 1,
+    });
+    const initialMessage: Message = {
+      id: "m-initial",
+      session_id: sessionId,
+      task_id: "task-1",
+      turn_id: "turn-initial",
+      role: "assistant",
+      content: "initial server copy",
+      delivery: "immediate",
+      created_at: new Date(0).toISOString(),
+    };
+    const initialEvent: SessionEvent = {
+      seq: 1,
+      id: "e-initial",
+      session_id: sessionId,
+      turn_id: "turn-initial",
+      event_type: "assistant_chunk",
+      payload_json: { content_fragment: "initial" },
+      created_at: new Date(1).toISOString(),
+    };
+
+    entry.freshness = "replica";
+    entry.turns = [initialTurn];
+    entry.messages = [initialMessage];
+    entry.events = [initialEvent];
+    entry.turnsHydrated = true;
+
+    internals.handleReplicaPatches([
+      {
+        op: "replace",
+        sessionId,
+        data: {
+          freshness: "authoritative",
+          turns: [
+            mkTurn({
+              sessionId,
+              turnId: "turn-replacement",
+              status: "completed",
+              startSeq: 99,
+            }),
+          ],
+          messages: [
+            {
+              ...initialMessage,
+              content: "replacement message",
+            },
+          ],
+          events: [
+            {
+              seq: 99,
+              id: "e-replacement",
+              session_id: sessionId,
+              turn_id: "turn-replacement",
+              event_type: "assistant_chunk",
+              payload_json: { content_fragment: "replacement" },
+              created_at: new Date(2).toISOString(),
+            } as SessionEvent,
+          ],
+          lastEventSeq: 99,
+          hasMoreTurns: false,
+        },
+      },
+    ]);
+
+    const replaced = sup.getSnapshot().sessions[sessionId];
+    expect(replaced?.freshness).toBe("replica");
+    expect(replaced?.turns).toHaveLength(1);
+    expect(replaced?.turns[0]?.turn_id).toBe("turn-initial");
+    expect(replaced?.messages).toHaveLength(1);
+    expect(replaced?.messages[0]).toEqual(initialMessage);
+    expect(replaced?.events).toHaveLength(1);
+    expect(replaced?.events[0]).toEqual(initialEvent);
+  });
+
   it("ignores active task upserts without head data", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 
@@ -1838,7 +1925,7 @@ describe("SessionSupervisor", () => {
     expect(getSessionSnapshot).not.toHaveBeenCalled();
 
     resolveHead(head);
-    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "authoritative");
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "replica");
   });
 
   it("rehydrates from /head when active heads came only from bootstrap cache", async () => {
@@ -1886,7 +1973,7 @@ describe("SessionSupervisor", () => {
     expect(getSessionHead).toHaveBeenCalledTimes(1);
 
     resolveHead(head);
-    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "authoritative");
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "replica");
   });
 
   it("forces /head on warm reopen after disconnect clears authority", async () => {
@@ -1937,7 +2024,7 @@ describe("SessionSupervisor", () => {
     expect(getSessionHeadMock).toHaveBeenCalledTimes(1);
 
     resolveFirstHead(head);
-    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "authoritative");
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "replica");
 
     sup.setWorkspaceSnapshotState({ ...activeState, connection: "disconnected" });
     await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.loadState === "recovering");
@@ -1957,13 +2044,13 @@ describe("SessionSupervisor", () => {
     });
 
     resolveSecondHead(head);
-    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "authoritative");
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "replica");
   });
 
-  it("does not let compact active-head seeds overwrite an authoritative warm session", async () => {
+  it("does not let compact active-head seeds overwrite a replica-warm session", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 
-    const sessionId = "session-warm-authoritative";
+    const sessionId = "session-warm-replica";
     const olderTime = "2026-03-09T00:00:01.000Z";
     const newerTime = "2026-03-09T00:00:02.000Z";
     const compactHead: SessionHeadSnapshot = {
@@ -2030,7 +2117,7 @@ describe("SessionSupervisor", () => {
     sup.setWorkspaceSnapshotState(activeState);
     const close = sup.openSession(sessionId, { mode: "active" });
 
-    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "authoritative");
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "replica");
     await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.messages.length === 2);
     await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.turns.length === 2);
 
@@ -2116,7 +2203,7 @@ describe("SessionSupervisor", () => {
     sup.setWorkspaceSnapshotState(activeState);
     sup.openSession(sessionId, { mode: "active" });
 
-    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "authoritative");
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "replica");
     await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.messages.length === 2);
 
     sup.setWorkspaceSnapshotState({ ...activeState, connection: "disconnected" });
@@ -2428,7 +2515,7 @@ describe("SessionSupervisor", () => {
     const sup = new SessionSupervisor();
     const internals = asSupervisorInternals(sup);
     const entry = internals.ensureEntry(sessionId);
-    entry.freshness = "authoritative";
+    entry.freshness = "replica";
     entry.stateRev = 7;
 
     sup.openSession(sessionId, { mode: "active" });
@@ -2461,7 +2548,7 @@ describe("SessionSupervisor", () => {
     const sup = new SessionSupervisor();
     const internals = asSupervisorInternals(sup);
     const entry = internals.ensureEntry(sessionId);
-    entry.freshness = "authoritative";
+    entry.freshness = "replica";
     entry.stateRev = 7;
     entry.stateAppliedRev = 7;
 
@@ -2511,6 +2598,44 @@ describe("SessionSupervisor", () => {
 
     expect(getSessionState).toHaveBeenCalledTimes(1);
     expect(listSessionSubagentInvocations).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps hasMoreTurns enabled after explicit history extension when a replace patch reports false", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-history-replace-preserve";
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+    const entry = internals.ensureEntry(sessionId);
+    entry.hasMoreTurns = true;
+    entry.historyExtended = true;
+    entry.oldestTurnSeq = 250;
+    internals.handleReplicaPatches([
+      {
+        op: "replace",
+        sessionId,
+        data: {
+          session: mkSession(sessionId),
+          turns: [
+            mkTurn({
+              sessionId,
+              turnId: "turn-keep",
+              status: "completed",
+              startSeq: 250,
+            }),
+          ],
+          events: [],
+          messages: [],
+          lastEventSeq: 250,
+          hasMoreTurns: false,
+        },
+      },
+    ]);
+
+    const updated = internals.entries.get(sessionId);
+    expect(updated?.hasMoreTurns).toBe(true);
+    expect(updated?.historyExtended).toBe(true);
+    expect(updated?.oldestTurnSeq).toBe(250);
   });
 
   it("refetches session state instead of reusing cache when no revision is known", async () => {
@@ -2662,7 +2787,7 @@ describe("SessionSupervisor", () => {
     const sup = new SessionSupervisor();
     const internals = asSupervisorInternals(sup);
     const entry = internals.ensureEntry(sessionId);
-    entry.freshness = "authoritative";
+    entry.freshness = "replica";
     entry.stateRev = 7;
 
     sup.openSession(sessionId, { mode: "active" });
@@ -3070,6 +3195,26 @@ describe("SessionSupervisor", () => {
         }),
       }),
     );
+  });
+
+  it("does not collapse history pagination when oldest cursor is unavailable", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-history-no-cursor";
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+    const entry = internals.ensureEntry(sessionId);
+    entry.hasMoreTurns = true;
+    entry.oldestTurnSeq = undefined;
+    entry.historyExtended = false;
+
+    const result = await sup.loadMoreTurns(sessionId);
+
+    expect(result).toBe(0);
+    expect(entry.hasMoreTurns).toBe(true);
+    expect(entry.historyExtended).toBe(false);
+    expect(loadSessionHistoryPageV1Mock).not.toHaveBeenCalled();
+    expect(getSessionHistoryMock).not.toHaveBeenCalled();
   });
 
   it("clears cached git status when a fresh state response omits it", async () => {
