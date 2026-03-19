@@ -885,7 +885,8 @@ async fn initialize_podman_machine_terminates_stuck_init_when_machine_is_present
 }
 
 #[tokio::test]
-async fn ensure_podman_machine_materialized_recreates_machine_for_memory_profile_change() {
+async fn ensure_podman_machine_materialized_recreates_machine_for_memory_profile_change_when_engine_is_down(
+) {
     use std::os::unix::fs::PermissionsExt;
 
     let _serial = env_var_test_lock().lock().await;
@@ -897,7 +898,7 @@ async fn ensure_podman_machine_materialized_recreates_machine_for_memory_profile
     std::fs::write(
         &podman_path,
         format!(
-            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"ps\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[{{\"Resources\":{{\"Memory\":2048}}}}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"rm\" ] && [ \"$3\" = \"-f\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            "#!/bin/sh\nLOG=\"{log}\"\nprintf '%s\\n' \"$*\" >> \"$LOG\"\nif [ \"$1\" = \"info\" ]; then\n  echo 'podman machine is stopped' >&2\n  exit 125\nfi\nif [ \"$1\" = \"ps\" ]; then\n  echo 'podman machine is stopped' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  printf '[{{\"Resources\":{{\"Memory\":2048}}}}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"stop\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"rm\" ] && [ \"$3\" = \"-f\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
             log = log_path.display(),
         ),
     )
@@ -921,6 +922,8 @@ async fn ensure_podman_machine_materialized_recreates_machine_for_memory_profile
         .expect("machine should be recreated with desired memory");
 
     let log = std::fs::read_to_string(&log_path).expect("read invocation log");
+    assert!(log.lines().any(|line| line == "info"));
+    assert!(log.contains("ps --format {{.Names}}"));
     assert!(log.contains(&format!("machine inspect {machine_name}")));
     assert!(log.contains(&format!("machine stop {machine_name}")));
     assert!(log.contains(&format!("machine rm -f {machine_name}")));

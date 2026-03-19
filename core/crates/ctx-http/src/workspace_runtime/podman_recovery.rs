@@ -17,6 +17,7 @@ pub(in crate::workspace_runtime) use self::helper_cleanup::{
     literal_pkill_pattern,
 };
 
+use ctx_store::Store;
 use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 
@@ -40,6 +41,48 @@ fn podman_machine_heartbeat_interval() -> Duration {
         Duration::from_millis(100)
     } else {
         Duration::from_secs(5)
+    }
+}
+
+async fn configured_podman_machine_memory_mb(
+    data_root: &Path,
+    observer: Option<&dyn HarnessSetupObserver>,
+) -> u32 {
+    let default_memory_mb = container_machine_memory_mb(&ContainerExecutionSettings::default());
+    let db_path = data_root.join("db").join("db.sqlite");
+    let store = match Store::open_sqlite(&db_path, None).await {
+        Ok(store) => store,
+        Err(err) => {
+            observe_log(
+                observer,
+                HarnessSetupPhase::MachineCheck,
+                HarnessSetupLogLevel::Warn,
+                &format!(
+                    "failed to open execution settings while recovering local sandbox runtime; using default machine memory: {err}"
+                ),
+            );
+            return default_memory_mb;
+        }
+    };
+
+    let loaded = crate::settings::load_settings(&store).await;
+    store.close().await;
+
+    match loaded {
+        Ok(settings) => {
+            container_machine_memory_mb(&settings.execution.unwrap_or_default().container)
+        }
+        Err(err) => {
+            observe_log(
+                observer,
+                HarnessSetupPhase::MachineCheck,
+                HarnessSetupLogLevel::Warn,
+                &format!(
+                    "failed to load execution settings while recovering local sandbox runtime; using default machine memory: {err:#}"
+                ),
+            );
+            default_memory_mb
+        }
     }
 }
 
@@ -473,6 +516,7 @@ pub(super) async fn ensure_podman_machine_running_with_observer(
         return Ok(());
     }
     seed_shared_podman_machine_cache_best_effort(data_root, observer).await;
+    let desired_memory_mb = configured_podman_machine_memory_mb(data_root, observer).await;
 
     let mut last_err = {
         let mut cmd = podman_command(data_root)?;
@@ -526,8 +570,14 @@ pub(super) async fn ensure_podman_machine_running_with_observer(
                 HarnessSetupPhase::MachineStartOrInit,
                 "materializing local sandbox runtime from managed cache",
             );
-            initialize_podman_machine(data_root, &machine_name, None, observer, &mut last_err)
-                .await?;
+            initialize_podman_machine(
+                data_root,
+                &machine_name,
+                Some(desired_memory_mb),
+                observer,
+                &mut last_err,
+            )
+            .await?;
             observe_phase(
                 observer,
                 HarnessSetupPhase::MachineStartOrInit,
@@ -697,8 +747,14 @@ pub(super) async fn ensure_podman_machine_running_with_observer(
             }
         }
 
-        if let Err(err) =
-            initialize_podman_machine(data_root, &machine_name, None, observer, &mut last_err).await
+        if let Err(err) = initialize_podman_machine(
+            data_root,
+            &machine_name,
+            Some(desired_memory_mb),
+            observer,
+            &mut last_err,
+        )
+        .await
         {
             last_err = format!("podman machine init failed after recreate: {err:#}");
         } else {

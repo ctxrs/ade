@@ -670,7 +670,10 @@ impl HarnessRuntimeManager {
             if actual_memory_mb == Some(desired_memory_mb) {
                 return Ok(());
             }
-            if self.has_running_workspace_containers().await? {
+            if self
+                .has_running_workspace_containers_for_stopped_machine_reconfiguration(observer)
+                .await?
+            {
                 observe_log(
                     observer,
                     HarnessSetupPhase::MachineStartOrInit,
@@ -765,6 +768,30 @@ impl HarnessRuntimeManager {
             .lines()
             .map(str::trim)
             .any(|name| name.starts_with("ctx-harness-")))
+    }
+
+    async fn has_running_workspace_containers_for_stopped_machine_reconfiguration(
+        &self,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<bool> {
+        match self.has_running_workspace_containers().await {
+            Ok(has_running) => Ok(has_running),
+            Err(err) => {
+                if podman_engine_ready(&self.data_root).await.unwrap_or(false) {
+                    return Err(err);
+                }
+                observe_log(
+                    observer,
+                    HarnessSetupPhase::MachineStartOrInit,
+                    HarnessSetupLogLevel::Info,
+                    "local sandbox runtime is not reachable; continuing memory reconfiguration without workload probe",
+                );
+                tracing::debug!(
+                    "treating workspace container probe failure as idle because podman engine is not reachable: {err:#}"
+                );
+                Ok(false)
+            }
+        }
     }
 
     async fn maybe_reclaim_podman_machine(
