@@ -2,7 +2,6 @@ import {
   type SetStateAction,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -13,9 +12,6 @@ import {
   type MessageAttachment,
   postMessage,
   Session,
-  SessionEvent,
-  type SessionTurn,
-  type SessionTurnTool,
   type SubagentInvocation,
   setSessionModel,
   authenticateSession,
@@ -25,9 +21,12 @@ import {
   uploadBlob,
 } from "../api/client";
 import { useOpenSession, useSessionEntry, useSessionSupervisor } from "../state/sessionSupervisor";
+import {
+  selectSessionThreadProjection,
+  selectSessionQueuePanelMessages,
+} from "../state/sessionThreadProjection/selectors";
 import { loadSessionViewPrefsV1, saveSessionViewPrefsV1, type SessionViewVerbosity } from "../state/uiStateStore";
 import { type SlashCommandDescriptor } from "../state/useComposerAutocomplete";
-import { useRafCoalesced } from "../components/hooks/useRafCoalesced";
 import { type ContextWindowInfo, type WorkbenchModeId } from "../components/WorkbenchComposer";
 import { useFeatureGate } from "../utils/analytics";
 import { useDictationController } from "../utils/useDictationController";
@@ -38,16 +37,9 @@ import { VIRTUOSO_MESSAGE_LIST_LICENSE_KEY } from "../config/licenses";
 import { randomUuid } from "../utils/randomUuid";
 import type { AskUserQuestionAnswerState, WorkbenchListItem } from "./SessionPage.types";
 import {
-  buildPendingTurns,
   deriveAuthUi,
-  deriveMessagesKey,
   deriveProviderGuardNotice,
   deriveSessionError,
-  deriveTurnsKey,
-  filterQueuedMessagesForPanel,
-  filterTurnsForQueuedMessages,
-  mergeMessagesForView,
-  mergeQueuedMessagesForPanel,
   normalizeContextWindowMetrics,
 } from "./SessionPage.workbenchViewModel";
 import { buildOptimisticUserMessage } from "./SessionPage.optimisticMessage";
@@ -58,40 +50,25 @@ import { hasSessionActiveTurn } from "../utils/sessionActivity";
 import { defaultSessionVerbosityForProvider } from "./sessionVerbosity";
 import { appendSegment } from "./SessionPage.helpers";
 import {
-  getWorkbenchListItemKey,
   getWorkbenchListItemSizeCacheKey,
   getWorkbenchMessageListLayoutRevision,
+  type WorkbenchMessageListUiState,
 } from "./sessionMessageListItemIdentity";
 import { isSameContextWindow } from "./sessionView/estimateHeuristics";
-import { PendingMessageEntry, shouldDropPendingMessage } from "./sessionView/pendingMessages";
 import { getQueuedAttachments } from "./sessionView/SessionQueuePanel";
 import { SessionWorkbenchPane } from "./sessionView/SessionWorkbenchPane";
-import {
-  shouldFreezeInitialThreadProjection,
-  shouldReleaseInitialThreadProjection,
-  shouldRestoreBottomAnchorAfterProjectionRelease,
-} from "./sessionView/initialThreadProjection";
 import { useSessionImageDropScope } from "./sessionView/useSessionImageDropScope";
 import { useSessionProviderGuard } from "./sessionView/useSessionProviderGuard";
+import { recordSessionThreadProjectionDebugEntry } from "./sessionThreadProjectionDebug";
 import { useSharedSessionProviderOptions } from "./sessionView/useSharedSessionProviderOptions";
 import { useStableAskUserQuestionAnswers } from "./sessionView/useStableAskUserQuestionAnswers";
 import { composeModelId, parseModelId } from "../utils/modelEffort";
+import {
+  createWorkbenchLayoutProjectionOp,
+  mergeWorkbenchThreadProjectionOps,
+} from "./sessionThreadProjection";
 
 const SCROLLBACK_INCREASE_VIEWPORT_BY_PX = 240;
-const INITIAL_THREAD_PROJECTION_QUIET_MS = 250;
-
-type ThreadProjectionInputs = {
-  loaded: boolean;
-  turns: SessionTurn[];
-  turnsStamp: string;
-  messages: Message[];
-  messagesStamp: string;
-  events: SessionEvent[];
-  eventsStamp: string;
-  toolsByTurnId: Record<string, SessionTurnTool[]>;
-  toolSummariesReady: boolean;
-  projectionRev: number;
-};
 
 export function SessionView({
   sessionId,
@@ -141,12 +118,7 @@ export function SessionView({
   const sendBusyRef = useRef(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [queueActionBusyId, setQueueActionBusyId] = useState<string | null>(null);
-  const [pendingMessages, setPendingMessages] = useState<PendingMessageEntry[]>([]);
-  const [pendingQueueMessages, setPendingQueueMessages] = useState<PendingMessageEntry[]>([]);
-  const [optimisticQueueRemovalIds, setOptimisticQueueRemovalIds] = useState<string[]>([]);
   const [fileOpenError, setFileOpenError] = useState<string | null>(null);
-  const [modelSwitchError, setModelSwitchError] = useState<string | null>(null);
-  const [optimisticModelId, setOptimisticModelId] = useState<string | null>(null);
   const [modifierDown, setModifierDown] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
   const [authMethodId, setAuthMethodId] = useState<string>("");
@@ -173,14 +145,9 @@ export function SessionView({
   const { dropScopeRef, dropActive } = useSessionImageDropScope({ setDraftAttachments });
 
   useEffect(() => {
-    setPendingMessages([]);
-    setPendingQueueMessages([]);
-    setOptimisticQueueRemovalIds([]);
     setDraftAttachmentsInternal([]);
     setSendError(null);
     setFileOpenError(null);
-    setModelSwitchError(null);
-    setOptimisticModelId(null);
     setOptimisticAskAnswers({});
     setExpandedTurnHeaders({});
     setExpandedTurnDetailsById({});
@@ -270,6 +237,15 @@ export function SessionView({
 
   const entry = useSessionEntry(id ?? "");
   const session: Session | null = entry?.session ?? null;
+  const supervisorThreadProjection = useMemo(
+    () => selectSessionThreadProjection(entry),
+    [entry],
+  );
+  const baseTurns = supervisorThreadProjection.turns;
+  const baseMessages = supervisorThreadProjection.messages;
+  const baseEvents = supervisorThreadProjection.events;
+  const baseTurnsKey = supervisorThreadProjection.turnsStamp;
+  const baseEventsStamp = supervisorThreadProjection.eventsStamp;
   useEffect(() => {
     let cancelled = false;
     loadSessionViewPrefsV1()
@@ -300,70 +276,34 @@ export function SessionView({
   );
 
   const worktreeId = session ? idToString(session.worktree_id) : null;
-  const turns = entry?.turns ?? [];
-  const turnToolsByTurnId = entry?.turnToolsByTurnId ?? {};
   const turnToolsLoading = entry?.turnToolsLoading ?? [];
-  const toolSummariesReady = entry?.toolSummariesReady ?? false;
   const hasMoreTurns = entry?.hasMoreTurns ?? false;
-  const events: SessionEvent[] = entry?.events ?? [];
-  const messages: Message[] = entry?.messages ?? [];
-  const queue: Message[] = entry?.queue ?? [];
-  const turnsRev = entry?.turnsRev ?? 0;
-  const messagesRev = entry?.messagesRev ?? 0;
-  const eventsRev = entry?.eventsRev ?? 0;
+  const optimisticQueuedMessages: Message[] = entry?.optimisticQueuedMessages ?? [];
+  const optimisticQueueRemovalIds = entry?.optimisticQueueRemovalIds ?? [];
   const subagentInvocations: SubagentInvocation[] = entry?.subagentInvocations ?? [];
-  const eventsStamp = `${eventsRev}:${entry?.lastEventSeq ?? 0}:${events.length}`;
-  const turnsKey = useMemo(() => deriveTurnsKey(turns), [turns, turnsRev]);
-  const messagesKey = useMemo(() => deriveMessagesKey(messages), [messages, messagesRev]);
-  const optimisticQueueRemovalSet = useMemo(
-    () => new Set(optimisticQueueRemovalIds),
-    [optimisticQueueRemovalIds],
-  );
   const markQueueOptimisticallyRemoved = useCallback((messageId: string) => {
     if (!messageId) return;
-    setOptimisticQueueRemovalIds((prev) => (prev.includes(messageId) ? prev : [...prev, messageId]));
-  }, []);
+    supervisor.addOptimisticQueueRemovalId(id, messageId);
+  }, [id, supervisor]);
   const rollbackOptimisticQueueRemoval = useCallback((messageId: string) => {
     if (!messageId) return;
-    setOptimisticQueueRemovalIds((prev) => prev.filter((id) => id !== messageId));
-  }, []);
+    supervisor.removeOptimisticQueueRemovalId(id, messageId);
+  }, [id, supervisor]);
   const shouldKeepQueueRemovalOnError = (error: unknown) => {
     const msg = errorMessage(error);
     return msg.startsWith("400") || msg.startsWith("404");
   };
-  const mergedQueueForPanel = useMemo(
-    () => mergeQueuedMessagesForPanel(queue, pendingQueueMessages),
-    [queue, pendingQueueMessages],
-  );
   const queueForPanel = useMemo(
-    () => {
-      const filtered = filterQueuedMessagesForPanel(mergedQueueForPanel, turns);
-      if (optimisticQueueRemovalIds.length === 0) return filtered;
-      return filtered.filter((message) => {
-        const mid = idToString(message.id);
-        return !mid || !optimisticQueueRemovalSet.has(mid);
-      });
-    },
-    [mergedQueueForPanel, turnsKey, optimisticQueueRemovalIds.length, optimisticQueueRemovalSet],
+    () => selectSessionQueuePanelMessages(entry, baseTurns),
+    [baseTurns, baseTurnsKey, entry],
   );
   const pendingQueueMessageIdSet = useMemo(() => {
     return new Set(
-      pendingQueueMessages
-        .map((entry) => idToString(entry.message.id))
+      optimisticQueuedMessages
+        .map((message) => idToString(message.id))
         .filter((messageId): messageId is string => !!messageId),
     );
-  }, [pendingQueueMessages]);
-  useEffect(() => {
-    if (optimisticQueueRemovalIds.length === 0) return;
-    const liveIds = new Set(
-      mergedQueueForPanel.map((message) => idToString(message.id)).filter((id): id is string => !!id),
-    );
-    setOptimisticQueueRemovalIds((prev) => {
-      const next = prev.filter((id) => liveIds.has(id));
-      return next.length === prev.length ? prev : next;
-    });
-  }, [mergedQueueForPanel, optimisticQueueRemovalIds.length]);
-  const showQueuePanel = queueForPanel.length > 0;
+  }, [optimisticQueuedMessages]);
   const queuedMessageIdsForThread = useMemo(() => {
     const ids = new Set<string>();
     for (const message of queueForPanel) {
@@ -377,133 +317,16 @@ export function SessionView({
     }
     return ids;
   }, [queueForPanel, optimisticQueueRemovalIds]);
-  const turnStatusByUserMessageId = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const turn of turns) {
-      const mid = turn.user_message_id ? idToString(turn.user_message_id) : "";
-      if (!mid) continue;
-      map.set(mid, String(turn.status));
-    }
-    return map;
-  }, [turnsKey]);
-  const queuedMessageIdsToShow = useMemo(() => {
-    const ids = new Set<string>();
-    for (const message of messages) {
-      if (message.delivery !== "queued") continue;
-      const mid = idToString(message.id);
-      if (!mid) continue;
-      const status = turnStatusByUserMessageId.get(mid);
-      if (status && status !== "queued") {
-        ids.add(mid);
-      }
-    }
-    return ids;
-  }, [messagesKey, turnStatusByUserMessageId]);
-  useEffect(() => {
-    if (pendingMessages.length === 0) return;
-    const realIds = new Set(messages.map((m) => idToString(m.id)));
-    setPendingMessages((prev) => {
-      if (prev.length === 0) return prev;
-      const next = prev.filter((entry) => {
-        return !shouldDropPendingMessage(entry.message, realIds);
-      });
-      return next.length === prev.length ? prev : next;
-    });
-  }, [messagesKey, pendingMessages.length, messages]);
-  useEffect(() => {
-    if (pendingQueueMessages.length === 0) return;
-    const realIds = new Set(queue.map((m) => idToString(m.id)));
-    setPendingQueueMessages((prev) => {
-      if (prev.length === 0) return prev;
-      const next = prev.filter((entry) => {
-        return !shouldDropPendingMessage(entry.message, realIds);
-      });
-      return next.length === prev.length ? prev : next;
-    });
-  }, [queue, pendingQueueMessages.length]);
-
-  const displayMessages = useMemo(
-    () => mergeMessagesForView(messages, pendingMessages, queuedMessageIdsToShow),
-    [messagesKey, pendingMessages, queuedMessageIdsToShow],
-  );
-  const displayMessagesKey = useMemo(() => deriveMessagesKey(displayMessages), [displayMessages]);
-  const pendingTurns = useMemo(
-    () => buildPendingTurns(turns, displayMessages),
-    [turnsKey, displayMessagesKey],
-  );
-  const displayTurns = useMemo(
-    () => (pendingTurns.length > 0 ? [...turns, ...pendingTurns] : turns),
-    [turnsKey, pendingTurns],
-  );
-  const displayTurnsKey = useMemo(() => deriveTurnsKey(displayTurns), [displayTurns]);
-  const displayTurnsForThread = useMemo(
-    () => filterTurnsForQueuedMessages(displayTurns, queuedMessageIdsForThread),
-    [displayTurns, queuedMessageIdsForThread],
-  );
-  const displayTurnsForThreadKey = useMemo(
-    () => deriveTurnsKey(displayTurnsForThread),
-    [displayTurnsForThread],
-  );
-  const threadProjectionLoaded = Boolean(entry?.stateLoaded);
-  const rawThreadProjection = useMemo(
-    (): ThreadProjectionInputs => ({
-      loaded: threadProjectionLoaded,
-      turnsStamp: `${turnsRev}:${displayTurnsForThreadKey}`,
-      turns: displayTurnsForThread,
-      messagesStamp: `${messagesRev}:${displayMessagesKey}`,
-      messages: displayMessages,
-      eventsStamp,
-      events,
-      toolsByTurnId: turnToolsByTurnId,
-      toolSummariesReady,
-      projectionRev: entry?.projectionRev ?? 0,
-    }),
-    [
-      displayMessages,
-      displayMessagesKey,
-      displayTurnsForThread,
-      displayTurnsForThreadKey,
-      entry?.projectionRev,
-      events,
-      eventsStamp,
-      messagesRev,
-      threadProjectionLoaded,
-      toolSummariesReady,
-      turnToolsByTurnId,
-      turnsRev,
-    ],
-  );
-  const coalescedThreadProjection = useRafCoalesced(rawThreadProjection);
-  const initialThreadProjectionRef = useRef<{ sessionId: string; projection: ThreadProjectionInputs } | null>(null);
-  const [initialThreadProjectionSettledSessionId, setInitialThreadProjectionSettledSessionId] = useState<string | null>(
-    null,
-  );
-  const [initialThreadProjectionReleasedSessionId, setInitialThreadProjectionReleasedSessionId] = useState<string | null>(
-    null,
-  );
-  if (
-    initialThreadProjectionRef.current == null ||
-    initialThreadProjectionRef.current.sessionId !== id ||
-    (!initialThreadProjectionRef.current.projection.loaded && rawThreadProjection.loaded)
-  ) {
-    initialThreadProjectionRef.current = {
-      sessionId: id,
-      projection: rawThreadProjection,
-    };
-  }
-  const initialThreadProjection =
-    initialThreadProjectionRef.current?.sessionId === id
-      ? initialThreadProjectionRef.current.projection
-      : rawThreadProjection;
+  const threadProjection = supervisorThreadProjection;
   const computedContextWindow = useMemo<ContextWindowInfo | null>(() => {
-    for (let i = turns.length - 1; i >= 0; i -= 1) {
-      const metrics = turns[i]?.metrics_json;
+    for (let i = baseTurns.length - 1; i >= 0; i -= 1) {
+      const metrics = baseTurns[i]?.metrics_json;
       if (!metrics) continue;
       const normalized = normalizeContextWindowMetrics(metrics);
       if (normalized) return normalized;
     }
     return null;
-  }, [turnsKey]);
+  }, [baseTurns, baseTurnsKey]);
   useEffect(() => {
     if (!computedContextWindow) return;
     setLastContextWindow((prev) =>
@@ -518,64 +341,22 @@ export function SessionView({
   const sessionIsAuthoritative = entry?.freshness === "authoritative";
   const sessionProjectionReady =
     entry?.loadState === "live" &&
-    toolSummariesReady &&
-    entry?.freshness === "authoritative";
-  useEffect(() => {
-    if (!initialThreadProjection.loaded || !sessionProjectionReady) {
-      setInitialThreadProjectionReleasedSessionId((current) => (current === id ? null : current));
-      return;
-    }
-    setInitialThreadProjectionSettledSessionId((current) => (current === id ? current : id));
-    if (
-      !shouldReleaseInitialThreadProjection({
-        loaded: initialThreadProjection.loaded,
-        sessionId: id,
-        settledSessionId: initialThreadProjectionSettledSessionId,
-        releasedSessionId: initialThreadProjectionReleasedSessionId,
-      })
-    ) {
-      return;
-    }
-    const timeoutId = window.setTimeout(() => {
-      setInitialThreadProjectionReleasedSessionId((current) => (current === id ? current : id));
-    }, INITIAL_THREAD_PROJECTION_QUIET_MS);
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
-  }, [
-    id,
-    initialThreadProjection.loaded,
-    initialThreadProjectionReleasedSessionId,
-    initialThreadProjectionSettledSessionId,
-    rawThreadProjection.eventsStamp,
-    rawThreadProjection.messagesStamp,
-    rawThreadProjection.projectionRev,
-    rawThreadProjection.turnsStamp,
-    sessionProjectionReady,
-  ]);
-  const freezeInitialThreadProjection = shouldFreezeInitialThreadProjection({
-    loaded: initialThreadProjection.loaded,
-    sessionId: id,
-    releasedSessionId: initialThreadProjectionReleasedSessionId,
-  });
-  const threadProjection = freezeInitialThreadProjection ? initialThreadProjection : coalescedThreadProjection;
-  const threadProjectionSource: "initial" | "coalesced" =
-    freezeInitialThreadProjection ? "initial" : "coalesced";
-  const previousThreadProjectionSourceRef = useRef<"initial" | "coalesced">(threadProjectionSource);
-  const previousAtBottomRef = useRef(atBottom);
+    supervisorThreadProjection.toolSummariesReady &&
+    ["authoritative", "replica"].includes(String(entry?.freshness ?? ""));
+  const threadProjectionSource = "supervisor" as const;
   const queuedMessagesEnabled = useFeatureGate("queued_messages_enabled", false);
   const sessionError = useMemo(
-    () => deriveSessionError(turns, events),
-    [turnsKey, eventsStamp],
+    () => deriveSessionError(baseTurns, baseEvents),
+    [baseEvents, baseEventsStamp, baseTurns, baseTurnsKey],
   );
   const providerGuardNotice = useMemo(
-    () => deriveProviderGuardNotice(events),
-    [eventsStamp],
+    () => deriveProviderGuardNotice(baseEvents),
+    [baseEvents, baseEventsStamp],
   );
 
   const activeAskToolCallId = useMemo(() => {
     const answered = new Set<string>();
-    for (const ev of events) {
+    for (const ev of baseEvents) {
       if (ev.event_type !== "notice") continue;
       if (ev.payload_json?.kind !== "ask_user_question_answered") continue;
       const toolCallId = String(ev.payload_json?.tool_call_id ?? "").trim();
@@ -585,8 +366,8 @@ export function SessionView({
       if (toolCallId) answered.add(toolCallId);
     }
 
-    for (let i = events.length - 1; i >= 0; i--) {
-      const ev = events[i];
+    for (let i = baseEvents.length - 1; i >= 0; i--) {
+      const ev = baseEvents[i];
       if (ev.event_type !== "notice") continue;
       if (ev.payload_json?.kind !== "ask_user_question") continue;
       const toolCallId = String(ev.payload_json?.tool_call_id ?? "").trim();
@@ -594,12 +375,12 @@ export function SessionView({
       return toolCallId;
     }
     return null;
-  }, [eventsStamp, optimisticAskAnswers]);
+  }, [baseEvents, baseEventsStamp, optimisticAskAnswers]);
 
   const askUserQuestionAnswers = useStableAskUserQuestionAnswers({
-    events,
+    events: baseEvents,
     optimisticAskAnswers,
-    eventsStamp,
+    eventsStamp: baseEventsStamp,
   });
 
   useEffect(() => {
@@ -619,8 +400,14 @@ export function SessionView({
     perfStartRef.current = 0;
   }, [perfEnabled, entry?.loading, entry?.events.length, entry?.diff]);
 
-  const { view: workbenchThreadView, listItems: threadListItems } = useWorkbenchThreadViewModelController({
+  const {
+    view: workbenchThreadView,
+    listItems: threadListItems,
+    projectionRevision,
+    lastOp: workbenchThreadOp,
+  } = useWorkbenchThreadViewModelController({
     sessionId: id,
+    projectionRev: threadProjection.projectionRev,
     turnsStamp: threadProjection.turnsStamp,
     messagesStamp: threadProjection.messagesStamp,
     eventsStamp: threadProjection.eventsStamp,
@@ -637,63 +424,76 @@ export function SessionView({
   const debugEvents = workbenchThreadView.debugEvents;
   const wbListItems = threadListItems;
   const listItems = wbListItems;
-  const messageListItemIdentity = useCallback((item: WorkbenchListItem) => item.id, []);
-  const messageListItemKey = useCallback(
-    (item: WorkbenchListItem) =>
-      getWorkbenchListItemKey(item, {
-        expandedTurnHeaders,
-        expandedTurnDetailsById,
-        expandedToolById,
-        expandedMessageById,
-        turnToolsLoading,
-      }, { verbosity }),
+  const messageListUiState = useMemo<WorkbenchMessageListUiState>(
+    () => ({
+      expandedTurnHeaders,
+      expandedTurnDetailsById,
+      expandedToolById,
+      expandedMessageById,
+      turnToolsLoading,
+    }),
     [
       expandedMessageById,
       expandedToolById,
       expandedTurnDetailsById,
       expandedTurnHeaders,
       turnToolsLoading,
-      verbosity,
     ],
+  );
+  const previousMessageListUiStateRef = useRef<WorkbenchMessageListUiState | null>(null);
+  const layoutThreadOp = useMemo(
+    () =>
+      createWorkbenchLayoutProjectionOp({
+        listItems,
+        previousUiState: previousMessageListUiStateRef.current,
+        nextUiState: messageListUiState,
+        projectionRevision,
+      }),
+    [listItems, messageListUiState, projectionRevision],
+  );
+  useEffect(() => {
+    previousMessageListUiStateRef.current = messageListUiState;
+  }, [messageListUiState]);
+  const threadProjectionOp = useMemo(
+    () => mergeWorkbenchThreadProjectionOps(workbenchThreadOp, layoutThreadOp),
+    [layoutThreadOp, workbenchThreadOp],
+  );
+  const renderRevisionByItemIdRef = useRef<Record<string, number>>({});
+  const lastRenderRevisionOpKeyRef = useRef<string>("");
+  const renderRevisionOpKey = `${id}:${threadProjectionOp.kind}:${threadProjectionOp.projectionRevision}:${threadProjectionOp.remeasureItemIds.join("|")}`;
+  const renderRevisionByItemId = useMemo(() => {
+    if (lastRenderRevisionOpKeyRef.current === renderRevisionOpKey) {
+      return renderRevisionByItemIdRef.current;
+    }
+    let nextMap = renderRevisionByItemIdRef.current;
+    if (threadProjectionOp.kind === "replace_session") {
+      nextMap = {};
+    } else if (threadProjectionOp.remeasureItemIds.length > 0) {
+      nextMap = { ...renderRevisionByItemIdRef.current };
+      for (const itemId of threadProjectionOp.remeasureItemIds) {
+        nextMap[itemId] = (nextMap[itemId] ?? 0) + 1;
+      }
+    }
+    renderRevisionByItemIdRef.current = nextMap;
+    lastRenderRevisionOpKeyRef.current = renderRevisionOpKey;
+    return nextMap;
+  }, [renderRevisionOpKey, threadProjectionOp]);
+  const messageListItemIdentity = useCallback((item: WorkbenchListItem) => item.id, []);
+  const messageListItemKey = useCallback(
+    (item: WorkbenchListItem) => {
+      const renderRevision = renderRevisionByItemId[item.id] ?? 0;
+      return renderRevision > 0 ? `${item.id}:${renderRevision}` : item.id;
+    },
+    [renderRevisionByItemId],
   );
   const messageListItemSizeCacheKey = useCallback(
     (item: WorkbenchListItem) =>
-      getWorkbenchListItemSizeCacheKey(item, {
-        expandedTurnHeaders,
-        expandedTurnDetailsById,
-        expandedToolById,
-        expandedMessageById,
-        turnToolsLoading,
-      }, { verbosity }),
-    [
-      expandedMessageById,
-      expandedToolById,
-      expandedTurnDetailsById,
-      expandedTurnHeaders,
-      turnToolsLoading,
-      verbosity,
-    ],
+      getWorkbenchListItemSizeCacheKey(item, messageListUiState, { verbosity }),
+    [messageListUiState, verbosity],
   );
   const messageListLayoutRevision = useMemo(
-    () =>
-      getWorkbenchMessageListLayoutRevision(
-        {
-          expandedTurnHeaders,
-          expandedTurnDetailsById,
-          expandedToolById,
-          expandedMessageById,
-          turnToolsLoading,
-        },
-        { verbosity },
-      ),
-    [
-      expandedMessageById,
-      expandedToolById,
-      expandedTurnDetailsById,
-      expandedTurnHeaders,
-      turnToolsLoading,
-      verbosity,
-    ],
+    () => getWorkbenchMessageListLayoutRevision(messageListUiState, { verbosity }),
+    [messageListUiState, verbosity],
   );
 
   const {
@@ -715,34 +515,49 @@ export function SessionView({
     },
     layoutRevision: messageListLayoutRevision,
     itemSizeCacheKey: messageListItemSizeCacheKey,
+    renderRevisionByItemId,
+    threadOp: threadProjectionOp,
     showDebug,
     onAtBottomChange: setAtBottom,
   });
 
+  useEffect(() => {
+    if (!showDebug || typeof window === "undefined") return;
+    recordSessionThreadProjectionDebugEntry({
+      sessionId: id,
+      source: threadProjectionSource,
+      loaded: Boolean(threadProjection.loaded),
+      sessionProjectionReady,
+      freshness: entry?.freshness ?? null,
+      loadState: entry?.loadState ?? null,
+      lastTurnStatus: entry?.activity?.last_turn_status ?? null,
+      turnsStamp: threadProjection.turnsStamp,
+      messagesStamp: threadProjection.messagesStamp,
+      eventsStamp: threadProjection.eventsStamp,
+      projectionRev: threadProjection.projectionRev,
+      opKind: threadProjectionOp.kind,
+      listItemCount: listItems.length,
+    });
+  }, [
+    entry?.activity?.last_turn_status,
+    entry?.freshness,
+    entry?.loadState,
+    id,
+    listItems.length,
+    sessionProjectionReady,
+    showDebug,
+    threadProjection.eventsStamp,
+    threadProjection.loaded,
+    threadProjection.messagesStamp,
+    threadProjectionOp.kind,
+    threadProjection.projectionRev,
+    threadProjection.turnsStamp,
+    threadProjectionSource,
+  ]);
+
   // MessageList integration is now handled by `useSessionMessageListController`.
 
-  useLayoutEffect(() => {
-    const previousSource = previousThreadProjectionSourceRef.current;
-    const wasAtBottom = previousAtBottomRef.current;
-    previousThreadProjectionSourceRef.current = threadProjectionSource;
-    previousAtBottomRef.current = atBottom;
-    if (
-      !shouldRestoreBottomAnchorAfterProjectionRelease({
-        previousSource,
-        nextSource: threadProjectionSource,
-        wasAtBottom,
-      })
-    ) {
-      return;
-    }
-    messageListMethodsRef.current?.scrollToItem({
-      index: "LAST",
-      align: "end",
-      behavior: "auto",
-    });
-  }, [atBottom, messageListMethodsRef, threadProjectionSource]);
-
-  const authUi = useMemo(() => deriveAuthUi(events), [eventsStamp]);
+  const authUi = useMemo(() => deriveAuthUi(baseEvents), [baseEvents, baseEventsStamp]);
   const {
     providerGuardActionError,
     providerGuardActionBusy,
@@ -784,7 +599,6 @@ export function SessionView({
       session?.reasoning_effort ?? null,
     );
   }, [session?.model_id, session?.reasoning_effort]);
-  const displayedModelId = optimisticModelId ?? currentModelId;
 
   const setSendBusySafe = (next: boolean) => {
     sendBusyRef.current = next;
@@ -838,9 +652,9 @@ export function SessionView({
     });
     setSendError(null);
     if (shouldQueue) {
-      setPendingQueueMessages((prev) => [...prev, { clientId: messageId, message: optimisticMessage }]);
+      supervisor.upsertOptimisticQueuedMessage(id, optimisticMessage);
     } else {
-      setPendingMessages((prev) => [...prev, { clientId: messageId, message: optimisticMessage }]);
+      supervisor.upsertOptimisticThreadMessage(id, optimisticMessage);
     }
     setAtBottom(true);
     setInput("");
@@ -851,13 +665,9 @@ export function SessionView({
         turn_id: turnId,
       });
       if (shouldQueue) {
-        setPendingQueueMessages((prev) =>
-          prev.map((entry) => (entry.clientId === messageId ? { ...entry, message: posted } : entry)),
-        );
+        supervisor.upsertOptimisticQueuedMessage(id, posted);
       } else {
-        setPendingMessages((prev) =>
-          prev.map((entry) => (entry.clientId === messageId ? { ...entry, message: posted } : entry)),
-        );
+        supervisor.upsertOptimisticThreadMessage(id, posted);
       }
       try {
         await onDraftPersistNow?.();
@@ -866,9 +676,9 @@ export function SessionView({
       }
     } catch (e: unknown) {
       if (shouldQueue) {
-        setPendingQueueMessages((prev) => prev.filter((entry) => entry.clientId !== messageId));
+        supervisor.removeOptimisticQueuedMessage(id, messageId);
       } else {
-        setPendingMessages((prev) => prev.filter((entry) => entry.clientId !== messageId));
+        supervisor.removeOptimisticThreadMessage(id, messageId);
       }
       setInput(text);
       setDraftAttachments(attachmentsToSend);
@@ -887,9 +697,7 @@ export function SessionView({
     setSendError(null);
     try {
       await deleteMessage(messageId);
-      setPendingQueueMessages((prev) =>
-        prev.filter((entry) => idToString(entry.message.id) !== messageId),
-      );
+      supervisor.removeOptimisticQueuedMessage(id, messageId);
     } catch (e: unknown) {
       if (!shouldKeepQueueRemovalOnError(e)) {
         rollbackOptimisticQueueRemoval(messageId);
@@ -913,9 +721,7 @@ export function SessionView({
     setSendError(null);
     try {
       await deleteMessage(mid);
-      setPendingQueueMessages((prev) =>
-        prev.filter((entry) => idToString(entry.message.id) !== mid),
-      );
+      supervisor.removeOptimisticQueuedMessage(id, mid);
     } catch (e: unknown) {
       if (!shouldKeepQueueRemovalOnError(e)) {
         rollbackOptimisticQueueRemoval(mid);
@@ -946,9 +752,7 @@ export function SessionView({
     }
     try {
       await deleteMessage(mid);
-      setPendingQueueMessages((prev) =>
-        prev.filter((entry) => idToString(entry.message.id) !== mid),
-      );
+      supervisor.removeOptimisticQueuedMessage(id, mid);
     } catch (e: unknown) {
       if (!shouldKeepQueueRemovalOnError(e)) {
         rollbackOptimisticQueueRemoval(mid);
@@ -970,7 +774,7 @@ export function SessionView({
       attachments,
       delivery: "immediate",
     });
-    setPendingMessages((prev) => [...prev, { clientId: messageId, message: optimisticMessage }]);
+    supervisor.upsertOptimisticThreadMessage(id, optimisticMessage);
     setAtBottom(true);
 
     try {
@@ -978,11 +782,9 @@ export function SessionView({
         id: messageId,
         turn_id: turnId,
       });
-      setPendingMessages((prev) =>
-        prev.map((entry) => (entry.clientId === messageId ? { ...entry, message: posted } : entry)),
-      );
+      supervisor.upsertOptimisticThreadMessage(id, posted);
     } catch (e: unknown) {
-      setPendingMessages((prev) => prev.filter((entry) => entry.clientId !== messageId));
+      supervisor.removeOptimisticThreadMessage(id, messageId);
       setSendError(errorMessage(e));
     } finally {
       setSendBusySafe(false);
@@ -1030,17 +832,9 @@ export function SessionView({
   }, [dictationRecording, startDictation, stopDictation]);
 
   const handleSetModelId = useCallback(async (next: string) => {
-    setModelSwitchError(null);
-    setOptimisticModelId(next);
-    try {
-      const parsed = parseModelId(next);
-      const updated = await setSessionModel(id, parsed.base || next, parsed.effort);
-      supervisor.setSession(updated);
-      setOptimisticModelId(null);
-    } catch (error: unknown) {
-      setOptimisticModelId(null);
-      setModelSwitchError(errorMessage(error));
-    }
+    const parsed = parseModelId(next);
+    const updated = await setSessionModel(id, parsed.base || next, parsed.effort);
+    supervisor.setSession(updated);
   }, [id, supervisor]);
 
   return (
@@ -1054,8 +848,8 @@ export function SessionView({
       dropScopeRef={dropScopeRef}
       listItems={listItems}
       liveTailItems={[]}
-      events={events}
-      messages={messages}
+      events={baseEvents}
+      messages={baseMessages}
       worktreeId={worktreeId}
       handleFileOpenError={handleFileOpenError}
       modifierDown={modifierDown}
@@ -1145,9 +939,8 @@ export function SessionView({
       onDisableProviderGuard={disableProviderGuard}
       formatMemoryMb={formatMemoryMb}
       availableModels={modelOptions}
-      currentModelId={displayedModelId}
+      currentModelId={currentModelId}
       onSetModelId={handleSetModelId}
-      modelSwitchError={modelSwitchError}
     />
   );
 }
