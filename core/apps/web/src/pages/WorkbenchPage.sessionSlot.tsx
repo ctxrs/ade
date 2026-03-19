@@ -40,10 +40,12 @@ export function WorkbenchSessionSlot({
         sessionId={sessionId}
         autoOpenSession={false}
         draft={draft.value}
-        onDraftChange={(text) => draft.setValue((prev) => ({ ...prev, text }))}
-        onDraftAttachmentsChange={(attachments) => draft.setValue((prev) => ({ ...prev, attachments }))}
+        onDraftChange={(text) => draft.setValue({ text, modeId: draft.value.modeId })}
+        onDraftAttachmentsChange={(attachments) =>
+          draft.setValue({ text: draft.value.text, modeId: draft.value.modeId, attachments })
+        }
         onDraftPersistNow={() => workbenchStore.flushDraft(sessionDraftKey(sessionId))}
-        onModeChange={(modeId) => draft.setValue((prev) => ({ ...prev, modeId }))}
+        onModeChange={(modeId) => draft.setValue({ text: draft.value.text, modeId })}
       />
     </div>
   );

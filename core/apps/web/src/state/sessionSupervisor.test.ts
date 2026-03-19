@@ -4,6 +4,7 @@ import { waitForCondition } from "../testUtils/waitForCondition";
 import type {
   Message,
   Session,
+  SessionHead,
   SessionEvent,
   SessionHeadSnapshot,
   SessionTurn,
@@ -12,7 +13,13 @@ import type {
 import type { SessionReplicaPatch } from "./sessionReplicaProtocol";
 import type { SessionSubscriptionCursor } from "./sessionSubscription";
 import type { WorkspaceActiveSnapshotEventSource, WorkspaceActiveSnapshotState } from "./workspaceActiveSnapshotStore";
-import { loadSessionHistoryPageV1, loadTaskThoughtsV1, saveSessionHistoryPageV1, saveTaskThoughtsV1 } from "./uiStateStore";
+import {
+  loadSessionHeadV1,
+  loadSessionHistoryPageV1,
+  loadTaskThoughtsV1,
+  saveSessionHistoryPageV1,
+  saveTaskThoughtsV1,
+} from "./uiStateStore";
 
 vi.mock("../api/client", () => {
   const idToString = (id: string | null | undefined): string => {
@@ -128,7 +135,7 @@ type TestInternalEntry = {
   turnsHydrated: boolean;
   turns: SessionTurn[];
   turnsRev: number;
-  freshness?: "bootstrap" | "authoritative" | "recovering";
+  freshness?: "bootstrap" | "authoritative" | "recovering" | "replica";
   messages: Message[];
   messagesRev: number;
   events: SessionEvent[];
@@ -161,6 +168,7 @@ const getSessionSnapshotMock = vi.mocked(getSessionSnapshot);
 const getSessionStateMock = vi.mocked(getSessionState);
 const listSessionArtifactsMock = vi.mocked(listSessionArtifacts);
 const listSessionSubagentInvocationsMock = vi.mocked(listSessionSubagentInvocations);
+const loadSessionHeadV1Mock = vi.mocked(loadSessionHeadV1);
 const loadSessionHistoryPageV1Mock = vi.mocked(loadSessionHistoryPageV1);
 const saveSessionHistoryPageV1Mock = vi.mocked(saveSessionHistoryPageV1);
 const loadTaskThoughtsV1Mock = vi.mocked(loadTaskThoughtsV1);
@@ -182,6 +190,8 @@ beforeEach(() => {
   listSessionArtifactsMock.mockResolvedValue([]);
   listSessionSubagentInvocationsMock.mockReset();
   listSessionSubagentInvocationsMock.mockResolvedValue([]);
+  loadSessionHeadV1Mock.mockReset();
+  loadSessionHeadV1Mock.mockResolvedValue(null);
   loadSessionHistoryPageV1Mock.mockReset();
   loadSessionHistoryPageV1Mock.mockResolvedValue(null);
   saveSessionHistoryPageV1Mock.mockReset();
@@ -1683,7 +1693,7 @@ describe("SessionSupervisor", () => {
       created_at: new Date(1).toISOString(),
     };
 
-    entry.freshness = "authoritative";
+    entry.freshness = "replica";
     entry.turns = [initialTurn];
     entry.messages = [initialMessage];
     entry.events = [initialEvent];
@@ -1727,7 +1737,7 @@ describe("SessionSupervisor", () => {
     ]);
 
     const replaced = sup.getSnapshot().sessions[sessionId];
-    expect(replaced?.freshness).toBe("authoritative");
+    expect(replaced?.freshness).toBe("replica");
     expect(replaced?.turns).toHaveLength(1);
     expect(replaced?.turns[0]?.turn_id).toBe("turn-initial");
     expect(replaced?.messages).toHaveLength(1);
@@ -1925,9 +1935,92 @@ describe("SessionSupervisor", () => {
     expect(getSessionSnapshot).not.toHaveBeenCalled();
 
     resolveHead(head);
-    await waitForCondition(
-      () => sup.getSnapshot().sessions[sessionId]?.freshness === "authoritative",
-    );
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "replica");
+  });
+
+  it("does not publish bounded cached bootstrap heads during active open", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-active-bounded-cache";
+    const cachedHead = {
+      session: mkSession(sessionId),
+      turns: [mkTurn({ sessionId, turnId: "turn-cached", status: "completed", startSeq: 1 })],
+      events: [] as SessionEvent[],
+      messages: [
+        {
+          id: "m-cached",
+          session_id: sessionId,
+          task_id: "task-1",
+          turn_id: "turn-cached",
+          role: "assistant",
+          content: "cached bounded bootstrap",
+          delivery: "immediate",
+          created_at: new Date().toISOString(),
+        },
+      ],
+      last_event_seq: 1,
+      has_more_turns: true,
+      head_window: {
+        turn_limit: 40,
+        message_limit: 120,
+        event_limit: 120,
+        byte_limit: 1024 * 1024,
+        turn_count: 40,
+        message_count: 40,
+        event_count: 40,
+        bytes: 4096,
+      },
+    } satisfies SessionHead;
+    loadSessionHeadV1Mock.mockResolvedValueOnce({
+      v: 1,
+      sessionId,
+      updatedAtMs: Date.now(),
+      head: cachedHead,
+    });
+
+    let resolveHead!: (value: SessionHeadSnapshot) => void;
+    const headPromise = new Promise<SessionHeadSnapshot>((resolve) => {
+      resolveHead = resolve;
+    });
+    getSessionHeadMock.mockImplementationOnce(() => headPromise);
+
+    const sup = new SessionSupervisor();
+    sup.openSession(sessionId, { mode: "active" });
+
+    await waitForCondition(() => getSessionHeadMock.mock.calls.length === 1);
+
+    const pendingEntry = sup.getSnapshot().sessions[sessionId];
+    expect(pendingEntry?.freshness).toBe("bootstrap");
+    expect(pendingEntry?.messages).toHaveLength(0);
+    expect(pendingEntry?.turns).toHaveLength(0);
+    expect(pendingEntry?.loadState).toBe("pending_hydration");
+
+    resolveHead({
+      ...cachedHead,
+      messages: [
+        {
+          id: "m-authoritative",
+          session_id: sessionId,
+          task_id: "task-1",
+          turn_id: "turn-cached",
+          role: "assistant",
+          content: "authoritative head",
+          delivery: "immediate",
+          created_at: new Date().toISOString(),
+        },
+      ],
+      last_event_seq: 2,
+      state_rev: 2,
+      has_more_history: true,
+      history_cursor: null,
+    });
+
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "replica");
+    expect(
+      sup.getSnapshot().sessions[sessionId]?.messages.some(
+        (message) => message.content === "authoritative head",
+      ),
+    ).toBe(true);
   });
 
   it("rehydrates from /head when active heads came only from bootstrap cache", async () => {
@@ -1975,9 +2068,7 @@ describe("SessionSupervisor", () => {
     expect(getSessionHead).toHaveBeenCalledTimes(1);
 
     resolveHead(head);
-    await waitForCondition(
-      () => sup.getSnapshot().sessions[sessionId]?.freshness === "authoritative",
-    );
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "replica");
   });
 
   it("forces /head on warm reopen after disconnect clears authority", async () => {
@@ -2028,9 +2119,7 @@ describe("SessionSupervisor", () => {
     expect(getSessionHeadMock).toHaveBeenCalledTimes(1);
 
     resolveFirstHead(head);
-    await waitForCondition(
-      () => sup.getSnapshot().sessions[sessionId]?.freshness === "authoritative",
-    );
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "replica");
 
     sup.setWorkspaceSnapshotState({ ...activeState, connection: "disconnected" });
     await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.loadState === "recovering");
@@ -2050,9 +2139,7 @@ describe("SessionSupervisor", () => {
     });
 
     resolveSecondHead(head);
-    await waitForCondition(
-      () => sup.getSnapshot().sessions[sessionId]?.freshness === "authoritative",
-    );
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "replica");
   });
 
   it("does not let compact active-head seeds overwrite a replica-warm session", async () => {
@@ -2125,9 +2212,7 @@ describe("SessionSupervisor", () => {
     sup.setWorkspaceSnapshotState(activeState);
     const close = sup.openSession(sessionId, { mode: "active" });
 
-    await waitForCondition(
-      () => sup.getSnapshot().sessions[sessionId]?.freshness === "authoritative",
-    );
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "replica");
     await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.messages.length === 2);
     await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.turns.length === 2);
 
@@ -2139,6 +2224,112 @@ describe("SessionSupervisor", () => {
     sup.openSession(sessionId, { mode: "active" });
 
     expect(getSessionHeadMock).toHaveBeenCalledTimes(1);
+    expect(sup.getSnapshot().sessions[sessionId]?.messages).toHaveLength(2);
+    expect(sup.getSnapshot().sessions[sessionId]?.turns).toHaveLength(2);
+  });
+
+  it("does not seed freshly opened active sessions from bounded active heads before /head hydrate", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-bounded-active-open";
+    const compactHead: SessionHeadSnapshot = {
+      session: mkSession(sessionId),
+      turns: [mkTurn({ sessionId, turnId: "turn-2", status: "completed", startSeq: 3 })],
+      events: [] as SessionEvent[],
+      messages: [
+        {
+          id: "m-2",
+          session_id: sessionId,
+          task_id: "task-1",
+          turn_id: "turn-2",
+          role: "assistant",
+          content: "newer",
+          delivery: "immediate",
+          created_at: "2026-03-09T00:00:02.000Z",
+        },
+      ],
+      last_event_seq: 4,
+      projection_rev: 7,
+      state_rev: 7,
+      has_more_turns: false,
+      has_more_history: false,
+      history_cursor: null,
+      head_window: {
+        turn_limit: 5,
+        message_limit: 50,
+        event_limit: 800,
+        byte_limit: 200_000,
+        turn_count: 1,
+        message_count: 1,
+        event_count: 0,
+        bytes: 256,
+        truncated: true,
+      },
+    };
+    const fullHead: SessionHeadSnapshot = {
+      ...compactHead,
+      turns: [
+        mkTurn({ sessionId, turnId: "turn-1", status: "completed", startSeq: 1 }),
+        mkTurn({ sessionId, turnId: "turn-2", status: "completed", startSeq: 3 }),
+      ],
+      messages: [
+        {
+          id: "m-1",
+          session_id: sessionId,
+          task_id: "task-1",
+          turn_id: "turn-1",
+          role: "assistant",
+          content: "older",
+          delivery: "immediate",
+          created_at: "2026-03-09T00:00:01.000Z",
+        },
+        ...compactHead.messages,
+      ],
+      head_window: {
+        turn_limit: 0,
+        message_limit: 0,
+        event_limit: 0,
+        byte_limit: 0,
+        turn_count: 2,
+        message_count: 2,
+        event_count: 0,
+        bytes: 512,
+        truncated: false,
+      },
+    };
+    const activeState: WorkspaceActiveSnapshotState = {
+      ...mkWorkspaceSnapshotState(),
+      activeIds: ["task-bounded-active-open"],
+      tasksById: {
+        "task-bounded-active-open": {
+          ...mkWorkspaceTaskSummary({
+            taskId: "task-bounded-active-open",
+            primarySessionId: sessionId,
+            sessionIds: [sessionId],
+          }),
+          primarySessionHead: compactHead,
+        },
+      },
+      totalActive: 1,
+    };
+    let resolveHead!: (value: SessionHeadSnapshot) => void;
+    const headPromise = new Promise<SessionHeadSnapshot>((resolve) => {
+      resolveHead = resolve;
+    });
+    getSessionHeadMock.mockImplementationOnce(() => headPromise);
+
+    const sup = new SessionSupervisor();
+    sup.setWorkspaceSnapshotState(activeState);
+    sup.openSession(sessionId, { mode: "active" });
+
+    await waitForCondition(() => getSessionHeadMock.mock.calls.length === 1);
+    await waitForCondition(() => {
+      const entry = sup.getSnapshot().sessions[sessionId];
+      return entry?.loadState === "pending_hydration" && entry.messages.length === 0 && entry.turns.length === 0;
+    });
+
+    resolveHead(fullHead);
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "replica");
     expect(sup.getSnapshot().sessions[sessionId]?.messages).toHaveLength(2);
     expect(sup.getSnapshot().sessions[sessionId]?.turns).toHaveLength(2);
   });
@@ -2213,9 +2404,7 @@ describe("SessionSupervisor", () => {
     sup.setWorkspaceSnapshotState(activeState);
     sup.openSession(sessionId, { mode: "active" });
 
-    await waitForCondition(
-      () => sup.getSnapshot().sessions[sessionId]?.freshness === "authoritative",
-    );
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "replica");
     await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.messages.length === 2);
 
     sup.setWorkspaceSnapshotState({ ...activeState, connection: "disconnected" });
@@ -2527,7 +2716,7 @@ describe("SessionSupervisor", () => {
     const sup = new SessionSupervisor();
     const internals = asSupervisorInternals(sup);
     const entry = internals.ensureEntry(sessionId);
-    entry.freshness = "authoritative";
+    entry.freshness = "replica";
     entry.stateRev = 7;
 
     sup.openSession(sessionId, { mode: "active" });
@@ -2560,7 +2749,7 @@ describe("SessionSupervisor", () => {
     const sup = new SessionSupervisor();
     const internals = asSupervisorInternals(sup);
     const entry = internals.ensureEntry(sessionId);
-    entry.freshness = "authoritative";
+    entry.freshness = "replica";
     entry.stateRev = 7;
     entry.stateAppliedRev = 7;
 
@@ -2799,7 +2988,7 @@ describe("SessionSupervisor", () => {
     const sup = new SessionSupervisor();
     const internals = asSupervisorInternals(sup);
     const entry = internals.ensureEntry(sessionId);
-    entry.freshness = "authoritative";
+    entry.freshness = "replica";
     entry.stateRev = 7;
 
     sup.openSession(sessionId, { mode: "active" });

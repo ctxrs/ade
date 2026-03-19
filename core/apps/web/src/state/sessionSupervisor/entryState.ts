@@ -19,7 +19,7 @@ export type SessionMode = "active" | "archived";
 
 export type SessionLoadState = "pending_hydration" | "live" | "recovering" | "fatal";
 
-export type SessionFreshnessState = "bootstrap" | "authoritative" | "recovering";
+export type SessionFreshnessState = "bootstrap" | "authoritative" | "replica" | "recovering";
 
 export type SessionSupportLoadErrorKey = "state" | "artifacts" | "subagentInvocations";
 

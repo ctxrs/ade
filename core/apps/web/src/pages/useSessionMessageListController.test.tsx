@@ -144,7 +144,65 @@ describe("useSessionMessageListController", () => {
       ...Array.from({ length: 20 }, (_, index) => makeSpacer(`next-middle-${index}`)),
       initialItems.at(-1)!,
     ];
-    const fake = createFakeMethods(initialItems);
+    const fake = createFakeMethods();
+    coalescedItems = initialItems;
+
+    const { result, rerender } = renderHook(
+      ({ listItems, layoutRevision }: { listItems: WorkbenchListItem[]; layoutRevision: string }) =>
+        useSessionMessageListController({
+          sessionId: "session-1",
+          isActive: true,
+          loaded: true,
+          listItems,
+          canLoadOlder: false,
+          loadOlder: async () => {},
+          layoutRevision,
+          itemSizeCacheKey: () => null,
+          showDebug: false,
+        }),
+      {
+        initialProps: {
+          listItems: initialItems,
+          layoutRevision: "layout-1",
+        },
+      },
+    );
+
+    result.current.methodsRef.current = fake.methods as unknown as typeof result.current.methodsRef.current;
+    rerender({
+      listItems: [...initialItems],
+      layoutRevision: "layout-1",
+    });
+
+    fake.spies.replace.mockClear();
+    fake.spies.deleteRange.mockClear();
+    fake.spies.insert.mockClear();
+    fake.spies.batch.mockClear();
+    coalescedItems = mixedStructuralNext;
+
+    rerender({
+      listItems: mixedStructuralNext,
+      layoutRevision: "layout-1",
+    });
+
+    expect(fake.spies.replace).toHaveBeenCalledTimes(1);
+    expect(fake.spies.replace).toHaveBeenLastCalledWith(mixedStructuralNext, {
+      initialLocation: { index: "LAST", align: "end" },
+      purgeItemSizes: true,
+    });
+    expect(fake.spies.deleteRange).not.toHaveBeenCalled();
+    expect(fake.spies.insert).not.toHaveBeenCalled();
+    expect(fake.spies.batch).not.toHaveBeenCalled();
+  });
+
+  it("replaces same-length large middle churn while bottom-locked", () => {
+    const initialItems = Array.from({ length: 231 }, (_, index) => makeSpacer(`current-${index}`));
+    const mixedStructuralNext = [
+      ...initialItems.slice(0, 92),
+      ...Array.from({ length: 138 }, (_, index) => makeSpacer(`next-middle-${index}`)),
+      initialItems.at(-1)!,
+    ];
+    const fake = createFakeMethods();
     coalescedItems = initialItems;
 
     const { result, rerender } = renderHook(

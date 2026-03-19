@@ -116,6 +116,9 @@ const sanitizeHeadForCache = (head: SessionHead): SessionHead => ({
   events: stripPartialEvents(head.events ?? []),
 });
 
+const isBoundedHeadSeed = (head: SessionHead): boolean =>
+  typeof head.head_window?.turn_limit === "number" && head.head_window.turn_limit > 0;
+
 const mergeToolSummaries = (
   prev: SessionTurnToolSummary[],
   next: SessionTurnToolSummary[],
@@ -296,6 +299,7 @@ export class SessionReplicaCore {
           force: cmd.force,
           silent: cmd.silent,
           skipCache: cmd.skipCache,
+          skipBoundedBootstrapCache: cmd.skipBoundedBootstrapCache,
           hydrateIfNeeded: cmd.hydrateIfNeeded,
           forceHydrate: cmd.forceHydrate,
         }).catch(() => {});
@@ -514,6 +518,7 @@ export class SessionReplicaCore {
       silent?: boolean;
       minEventSeq?: number;
       skipCache?: boolean;
+      skipBoundedBootstrapCache?: boolean;
       hydrateIfNeeded?: boolean;
       forceHydrate?: boolean;
       emitOp?: "append" | "replace";
@@ -539,7 +544,11 @@ export class SessionReplicaCore {
       const cached = await loadSessionHeadV1(id).catch(() => null);
       if (token !== entry.requestToken) return;
       if (cached?.head && (minSeq === undefined || cached.head.last_event_seq >= minSeq)) {
-        this.applyHead(entry, cached.head, opts?.emitOp, { freshness: "bootstrap" });
+        const shouldSkipBoundedBootstrapCache =
+          opts?.skipBoundedBootstrapCache && isBoundedHeadSeed(cached.head);
+        if (!shouldSkipBoundedBootstrapCache) {
+          this.applyHead(entry, cached.head, opts?.emitOp, { freshness: "bootstrap" });
+        }
       }
     }
     if (!opts?.force && entry.hydrated) {

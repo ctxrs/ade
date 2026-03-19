@@ -40,6 +40,7 @@ export type SessionReplicaCommand =
       force?: boolean;
       silent?: boolean;
       skipCache?: boolean;
+      skipBoundedBootstrapCache?: boolean;
       hydrateIfNeeded?: boolean;
       forceHydrate?: boolean;
     }

@@ -285,12 +285,36 @@ describe("sessionMessageListControllerUtils", () => {
     expect(
       shouldReplaceBottomLockedStructuralUpdate({
         stickToBottom: true,
+        currentLen: 231,
+        nextLen: 231,
+        prefixLen: 92,
+        suffixLen: 1,
+        deleteCount: 138,
+        insertCount: 138,
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldReplaceBottomLockedStructuralUpdate({
+        stickToBottom: true,
         currentLen: 286,
         nextLen: 393,
         prefixLen: 0,
         suffixLen: 0,
         deleteCount: 286,
         insertCount: 393,
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldReplaceBottomLockedStructuralUpdate({
+        stickToBottom: true,
+        currentLen: 40,
+        nextLen: 40,
+        prefixLen: 18,
+        suffixLen: 18,
+        deleteCount: 4,
+        insertCount: 4,
       }),
     ).toBe(false);
   });

@@ -25,6 +25,8 @@ export type ThreadSurfaceSample = {
   lastItemBottomPx: number | null;
   overlappingVisiblePairs: number;
   maxAdjacentVisibleOverlapPx: number | null;
+  overlappingTextLinePairs: number;
+  maxTextLineOverlapPx: number | null;
   impossibleTail: boolean;
   isBottom: boolean;
 };
@@ -69,7 +71,9 @@ export async function readThreadSurfaceSample(
             (child): child is HTMLElement =>
               child instanceof HTMLElement && child.getBoundingClientRect().height > 0,
           );
-          if (directChildren.length > 0) return directChildren;
+          if (directChildren.length > 0) {
+            return directChildren;
+          }
         }
         return Array.from(scroller.querySelectorAll<HTMLElement>('[role="listitem"]'));
       };
@@ -83,6 +87,99 @@ export async function readThreadSurfaceSample(
           ?.querySelector<HTMLElement>("[data-thread-item-id], [data-anchorstream-item-id]")
           ?.getAttribute("data-anchorstream-item-id") ??
         null;
+      const resolveRowWrapper = (scroller: HTMLElement, node: Node): HTMLElement | null => {
+        const inner = scroller.firstElementChild;
+        let current: HTMLElement | null = node instanceof HTMLElement ? node : node.parentElement;
+        if (inner instanceof HTMLElement) {
+          while (current && current.parentElement !== inner) {
+            current = current.parentElement;
+          }
+          if (current instanceof HTMLElement && current.parentElement === inner) {
+            return current;
+          }
+        }
+        return current?.closest<HTMLElement>("[data-thread-item-id], [data-anchorstream-item-id], [role='listitem']") ?? null;
+      };
+      const collectVisibleTextLineOverlap = (
+        scroller: HTMLElement,
+        viewportRect: DOMRect,
+      ): { pairCount: number; maxOverlapPx: number } => {
+        type LineRect = {
+          rowKey: string | null;
+          left: number;
+          right: number;
+          top: number;
+          bottom: number;
+        };
+
+        const lineRects: LineRect[] = [];
+        const walker = document.createTreeWalker(scroller, NodeFilter.SHOW_TEXT, {
+          acceptNode(node) {
+            return (node.textContent ?? "").trim().length > 0
+              ? NodeFilter.FILTER_ACCEPT
+              : NodeFilter.FILTER_REJECT;
+          },
+        });
+
+        let textNode = walker.nextNode();
+        while (textNode) {
+          const range = document.createRange();
+          range.selectNodeContents(textNode);
+          const rowWrapper = resolveRowWrapper(scroller, textNode);
+          const rowKey =
+            resolveRowId(rowWrapper ?? undefined) ??
+            (rowWrapper != null
+              ? `wrapper:${Array.from(rowWrapper.parentElement?.children ?? []).indexOf(rowWrapper)}`
+              : null);
+
+          for (const rect of Array.from(range.getClientRects())) {
+            const left = Math.max(rect.left, viewportRect.left);
+            const right = Math.min(rect.right, viewportRect.right);
+            const top = Math.max(rect.top, viewportRect.top);
+            const bottom = Math.min(rect.bottom, viewportRect.bottom);
+            if (right - left <= 4 || bottom - top <= 4) {
+              continue;
+            }
+            lineRects.push({
+              rowKey,
+              left,
+              right,
+              top,
+              bottom,
+            });
+          }
+          textNode = walker.nextNode();
+        }
+
+        let pairCount = 0;
+        let maxOverlapPx = 0;
+        for (let index = 0; index < lineRects.length; index += 1) {
+          const current = lineRects[index];
+          if (!current) continue;
+          for (let otherIndex = index + 1; otherIndex < lineRects.length; otherIndex += 1) {
+            const other = lineRects[otherIndex];
+            if (!other) continue;
+            if (
+              current.rowKey != null &&
+              other.rowKey != null &&
+              current.rowKey === other.rowKey
+            ) {
+              continue;
+            }
+            const overlapX = Math.min(current.right, other.right) - Math.max(current.left, other.left);
+            const overlapY = Math.min(current.bottom, other.bottom) - Math.max(current.top, other.top);
+            if (overlapX > 20 && overlapY > 4) {
+              pairCount += 1;
+              maxOverlapPx = Math.max(maxOverlapPx, overlapY);
+            }
+          }
+        }
+
+        return {
+          pairCount,
+          maxOverlapPx,
+        };
+      };
       const started = performance.now();
       const toFiniteNumber = (value: number | null | undefined): number | null =>
         typeof value === "number" && Number.isFinite(value) ? Math.round(value * 100) / 100 : null;
@@ -112,6 +209,8 @@ export async function readThreadSurfaceSample(
           lastItemBottomPx: null,
           overlappingVisiblePairs: 0,
           maxAdjacentVisibleOverlapPx: null,
+          overlappingTextLinePairs: 0,
+          maxTextLineOverlapPx: null,
           impossibleTail: true,
           isBottom: false,
         };
@@ -149,6 +248,7 @@ export async function readThreadSurfaceSample(
           maxAdjacentVisibleOverlapPx = Math.max(maxAdjacentVisibleOverlapPx, overlapPx);
         }
       }
+      const visibleTextOverlap = collectVisibleTextLineOverlap(visibleScroller, scrollerRect);
       const impossibleTail =
         distanceFromMaxScrollPx != null &&
         distanceFromMaxScrollPx <= 2 &&
@@ -176,6 +276,8 @@ export async function readThreadSurfaceSample(
         lastItemBottomPx,
         overlappingVisiblePairs,
         maxAdjacentVisibleOverlapPx: toFiniteNumber(maxAdjacentVisibleOverlapPx),
+        overlappingTextLinePairs: visibleTextOverlap.pairCount,
+        maxTextLineOverlapPx: toFiniteNumber(visibleTextOverlap.maxOverlapPx),
         impossibleTail,
         isBottom,
       };
@@ -214,39 +316,26 @@ export async function collectThreadSamples(page: Page, options: ReadOptions = {}
 export async function readTopAnchorSample(page: Page, scrollerSelector = SCROLLER_SELECTOR): Promise<TopAnchorSample | null> {
   return page.evaluate((payload) => {
     const { activeSlotSelector, scrollerSelector } = payload;
-    const collectRenderedRows = (scroller: HTMLElement): HTMLElement[] => {
-      const inner = scroller.firstElementChild;
-      if (inner instanceof HTMLElement) {
-        const directChildren = Array.from(inner.children).filter(
-          (child): child is HTMLElement =>
-            child instanceof HTMLElement && child.getBoundingClientRect().height > 0,
-        );
-        if (directChildren.length > 0) return directChildren;
-      }
-      return Array.from(scroller.querySelectorAll<HTMLElement>("[role='listitem']"));
-    };
-    const resolveRowId = (row: HTMLElement | undefined): string | null =>
-      row?.getAttribute("data-thread-item-id") ??
-      row?.getAttribute("data-anchorstream-item-id") ??
-      row?.querySelector<HTMLElement>("[data-thread-item-id]")?.getAttribute("data-thread-item-id") ??
-      row?.querySelector<HTMLElement>("[data-anchorstream-item-id]")?.getAttribute("data-anchorstream-item-id") ??
-      null;
     const activeSession = document.querySelector<HTMLElement>(activeSlotSelector)?.querySelector<HTMLElement>(
       `[data-testid="session-view"][data-session-id]`,
     );
     const scroller = activeSession?.querySelector<HTMLElement>(scrollerSelector);
     if (!scroller) return null;
 
-    const rows = collectRenderedRows(scroller);
+    const rows = Array.from(scroller.querySelectorAll<HTMLElement>("[role='listitem']"));
     const first = rows.at(0);
     if (!first) {
       return { atMs: performance.now(), rowId: null, rowOffsetTopPx: null, renderedItemCount: 0 };
     }
+    const rowId =
+      first.getAttribute("data-thread-item-id") ??
+      first.querySelector<HTMLElement>("[data-thread-item-id]")?.getAttribute("data-thread-item-id") ??
+      null;
     const rect = first.getBoundingClientRect();
     const scrollerRect = scroller.getBoundingClientRect();
     return {
       atMs: performance.now(),
-      rowId: resolveRowId(first),
+      rowId,
       rowOffsetTopPx: Number.isFinite(rect.top - scrollerRect.top)
         ? Number((rect.top - scrollerRect.top).toFixed(2))
         : null,
@@ -307,15 +396,7 @@ export async function readRowOffsetById(
       );
       const scroller = activeSession?.querySelector<HTMLElement>(selector);
       if (!scroller) return null;
-      const target =
-        scroller.querySelector<HTMLElement>(`[data-thread-item-id="${CSS.escape(rowId)}"]`) ??
-        scroller.querySelector<HTMLElement>(`[data-anchorstream-item-id="${CSS.escape(rowId)}"]`);
-      if (!target) return null;
-      const inner = scroller.firstElementChild;
-      let row: HTMLElement | null = target;
-      while (row && inner instanceof HTMLElement && row.parentElement !== inner) {
-        row = row.parentElement;
-      }
+      const row = scroller.querySelector<HTMLElement>(`[data-thread-item-id="${CSS.escape(rowId)}"]`);
       if (!row) return null;
       const scrollerRect = scroller.getBoundingClientRect();
       return toFiniteNumber(row.getBoundingClientRect().top - scrollerRect.top);

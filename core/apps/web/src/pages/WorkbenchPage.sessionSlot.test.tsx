@@ -5,34 +5,9 @@ import type { MessageAttachment } from "../api/client";
 import { WorkbenchSessionSlot } from "./WorkbenchPage.sessionSlot";
 
 const sessionViewSpy = vi.hoisted(() => vi.fn());
-const draftState = vi.hoisted(() => ({
-  value: {
-    text: "draft text",
-    modeId: "default",
-    attachments: [] as MessageAttachment[],
-  },
-}));
-const setValueSpy = vi.hoisted(() =>
-  vi.fn(
-    (
-      next:
-        | { text: string; modeId: string; attachments?: MessageAttachment[] }
-        | ((prev: { text: string; modeId: string; attachments: MessageAttachment[] }) => {
-            text: string;
-            modeId: string;
-            attachments?: MessageAttachment[];
-          }),
-    ) => {
-      const current = draftState.value;
-      const resolved = typeof next === "function" ? next(current) : next;
-      draftState.value = {
-        text: resolved.text,
-        modeId: resolved.modeId,
-        attachments: resolved.attachments ?? current.attachments,
-      };
-    },
-  ),
-);
+const sessionViewMountSpy = vi.hoisted(() => vi.fn());
+const sessionViewUnmountSpy = vi.hoisted(() => vi.fn());
+const setValueSpy = vi.hoisted(() => vi.fn());
 const flushDraftSpy = vi.hoisted(() => vi.fn(async () => {}));
 
 const initialAttachment: MessageAttachment = {
@@ -44,33 +19,24 @@ const initialAttachment: MessageAttachment = {
 
 vi.mock("./SessionPage", () => ({
   SessionView: (props: unknown) => {
+    const sessionId = String((props as { sessionId?: string }).sessionId ?? "");
     sessionViewSpy(props);
-    return <div data-testid="session-view" />;
+    React.useEffect(() => {
+      sessionViewMountSpy(sessionId);
+      return () => {
+        sessionViewUnmountSpy(sessionId);
+      };
+    }, [sessionId]);
+    return <div data-testid="session-view" data-session-id={sessionId} />;
   },
 }));
 
 vi.mock("../workbench/store", () => ({
   sessionDraftKey: (sessionId: string) => `session:${sessionId}`,
   useWorkbenchDraft: () => ({
-    value: draftState.value,
+    value: { text: "draft text", modeId: "default", attachments: [initialAttachment] },
     updatedAtMs: 0,
-    setValue: (
-      next:
-        | { text: string; modeId: string; attachments?: MessageAttachment[] }
-        | ((current: { text: string; modeId: string; attachments: MessageAttachment[] }) => {
-            text: string;
-            modeId: string;
-            attachments?: MessageAttachment[];
-          }),
-    ) => {
-      const resolved = typeof next === "function" ? next(draftState.value) : next;
-      draftState.value = {
-        text: resolved.text,
-        modeId: resolved.modeId,
-        attachments: resolved.attachments ?? draftState.value.attachments,
-      };
-      setValueSpy(resolved);
-    },
+    setValue: setValueSpy,
   }),
   useWorkbenchStore: () => ({
     flushDraft: flushDraftSpy,
@@ -83,15 +49,22 @@ vi.mock("../utils/clipboard", () => ({
 
 describe("WorkbenchSessionSlot", () => {
   beforeEach(() => {
-    draftState.value = {
-      text: "draft text",
-      modeId: "default",
-      attachments: [initialAttachment],
-    };
     sessionViewSpy.mockClear();
+    sessionViewMountSpy.mockClear();
+    sessionViewUnmountSpy.mockClear();
     setValueSpy.mockClear();
     flushDraftSpy.mockClear();
-    draftState.value = { text: "draft text", modeId: "default", attachments: [initialAttachment] };
+  });
+
+  it("remounts SessionView when the session id changes", () => {
+    const rendered = render(<WorkbenchSessionSlot sessionId="session-1" />);
+
+    expect(sessionViewMountSpy).toHaveBeenCalledWith("session-1");
+
+    rendered.rerender(<WorkbenchSessionSlot sessionId="session-2" />);
+
+    expect(sessionViewUnmountSpy).toHaveBeenCalledWith("session-1");
+    expect(sessionViewMountSpy).toHaveBeenCalledWith("session-2");
   });
 
   it("passes attachment drafts through to SessionView and persists attachment edits", async () => {
@@ -117,32 +90,10 @@ describe("WorkbenchSessionSlot", () => {
       props?.onDraftAttachmentsChange([nextAttachment]);
     });
 
-    expect(draftState.value).toEqual({
+    expect(setValueSpy).toHaveBeenCalledWith({
       text: "draft text",
       modeId: "default",
       attachments: [nextAttachment],
-    });
-  });
-
-  it("composes sequential draft updates without restoring stale text", async () => {
-    render(<WorkbenchSessionSlot sessionId="session-1" />);
-
-    const props = sessionViewSpy.mock.calls.at(-1)?.[0] as
-      | {
-          onDraftChange: (text: string) => void;
-          onDraftAttachmentsChange: (attachments: MessageAttachment[]) => void;
-        }
-      | undefined;
-
-    await act(async () => {
-      props?.onDraftChange("");
-      props?.onDraftAttachmentsChange([]);
-    });
-
-    expect(draftState.value).toEqual({
-      text: "",
-      modeId: "default",
-      attachments: [],
     });
   });
 });

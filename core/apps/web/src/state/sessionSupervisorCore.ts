@@ -137,10 +137,26 @@ const WARM_TTL_MS = readTunableInt("contextWarmSessionTtlMs", 10 * 60 * 1000);
 const HEAD_LIMIT = readTunableInt("contextSessionHeadLimit", TURN_PAGE_LIMIT);
 
 const isReplicaAuthority = (freshness: InternalEntry["freshness"]) =>
-  freshness === "authoritative";
+  freshness === "replica" || freshness === "authoritative";
 
 const toReplicaFreshness = (freshness: SessionReplicaFreshnessState): InternalEntry["freshness"] =>
-  freshness;
+  freshness === "authoritative" ? "replica" : freshness;
+
+const isBoundedHeadSeed = (head: SessionHeadSnapshot): boolean =>
+  typeof head.head_window?.turn_limit === "number" && head.head_window.turn_limit > 0;
+
+const shouldSkipBoundedBootstrapSeed = (
+  entry: InternalEntry,
+  head: SessionHeadSnapshot,
+): boolean => {
+  const freshBootstrapOpen =
+    entry.freshness === "bootstrap" &&
+    !entry.turnsHydrated &&
+    entry.turns.length === 0 &&
+    entry.messages.length === 0 &&
+    entry.events.length === 0;
+  return freshBootstrapOpen && isBoundedHeadSeed(head);
+};
 
 // The daemon serializes transient events with `seq: null` (see Rust `SessionEvent` Serialize).
 // We assign a stable synthetic seq in a negative JS-safe range so sorting never scrambles
@@ -424,6 +440,9 @@ export class SessionSupervisor {
       sessionId,
     );
     if (!head) return false;
+    if (shouldSkipBoundedBootstrapSeed(entry, head)) {
+      return false;
+    }
     this.replica.dispatch({ type: "seed_head", sessionId, head });
     return true;
   }
@@ -641,16 +660,14 @@ export class SessionSupervisor {
         }
         continue;
       }
-      const data = patch.data;
       const normalizedFreshness =
-        data.freshness === undefined ? undefined : toReplicaFreshness(data.freshness);
+        patch.data.freshness === undefined ? undefined : toReplicaFreshness(patch.data.freshness);
       const shouldReplaceReplay =
         patch.op !== "replace" ||
-        entry.freshness === "recovering" ||
         !isReplicaAuthority(entry.freshness) ||
         normalizedFreshness === "recovering";
       if (patch.op === "replace") {
-        const incomingMessages = Array.isArray(data.messages) ? data.messages : [];
+        const incomingMessages = Array.isArray(patch.data.messages) ? patch.data.messages : [];
         const incomingMessageIds = new Set(
           incomingMessages
             .map((message) => idToString(message.id))
@@ -664,6 +681,7 @@ export class SessionSupervisor {
           this.resetEntryProjectionForReplace(entry, { skipPublish: true });
         }
       }
+      const data = patch.data;
       if (data.session) {
         entry.session = data.session;
         if (!entry.mode) {
@@ -847,6 +865,7 @@ export class SessionSupervisor {
       force: opts?.force,
       silent: opts?.silent,
       skipCache: shouldSkipCache,
+      skipBoundedBootstrapCache: mode === "active",
       forceHydrate: entry.freshness === "recovering" || entry.loadState === "recovering",
       hydrateIfNeeded:
         mode === "archived" ||
@@ -979,6 +998,7 @@ export class SessionSupervisor {
       if (!sessionId) continue;
       const entry = this.ensureEntry(sessionId);
       if (!this.canSeedReplicaFromActiveSnapshot(entry, { allowRecoveringRefresh: true })) continue;
+      if (shouldSkipBoundedBootstrapSeed(entry, head)) continue;
       this.replica.dispatch({ type: "seed_head", sessionId, head });
     }
   }

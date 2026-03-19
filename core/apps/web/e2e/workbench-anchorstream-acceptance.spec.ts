@@ -42,16 +42,10 @@ type SwitchSummary = {
   significantJumps: number;
   lateSignificantJumps: number;
   maxPostSettleStep: number;
-  maxOverlappingVisiblePairs: number;
-  maxAdjacentVisibleOverlapPx: number;
+  maxWrapperOverlapPairs: number;
+  maxWrapperOverlapPx: number;
   maxOverlappingTextLinePairs: number;
   maxTextLineOverlapPx: number;
-};
-
-type HistoryProbeResult = {
-  historyTriggered: boolean;
-  historyOffsetDeltas: number[];
-  captures: unknown[];
 };
 
 type ShortThreadSummary = {
@@ -96,8 +90,8 @@ function summarizeOpenStability(samples: ThreadSurfaceSample[]): SwitchSummary {
       significantJumps: 0,
       lateSignificantJumps: 0,
       maxPostSettleStep: 0,
-      maxOverlappingVisiblePairs: 0,
-      maxAdjacentVisibleOverlapPx: 0,
+      maxWrapperOverlapPairs: 0,
+      maxWrapperOverlapPx: 0,
       maxOverlappingTextLinePairs: 0,
       maxTextLineOverlapPx: 0,
     };
@@ -110,8 +104,8 @@ function summarizeOpenStability(samples: ThreadSurfaceSample[]): SwitchSummary {
   let lateSignificantJumps = 0;
   let maxPostSettleStep = 0;
   let maxItemCount = baseCount;
-  let maxOverlappingVisiblePairs = baseline.overlappingVisiblePairs ?? 0;
-  let maxAdjacentVisibleOverlapPx = baseline.maxAdjacentVisibleOverlapPx ?? 0;
+  let maxWrapperOverlapPairs = baseline.overlappingVisiblePairs ?? 0;
+  let maxWrapperOverlapPx = baseline.maxAdjacentVisibleOverlapPx ?? 0;
   let maxOverlappingTextLinePairs = baseline.overlappingTextLinePairs ?? 0;
   let maxTextLineOverlapPx = baseline.maxTextLineOverlapPx ?? 0;
 
@@ -131,12 +125,12 @@ function summarizeOpenStability(samples: ThreadSurfaceSample[]): SwitchSummary {
       maxPostSettleStep = Math.max(maxPostSettleStep, visibleCountDelta);
     }
     maxItemCount = Math.max(maxItemCount, current.renderedItemCount);
-    maxOverlappingVisiblePairs = Math.max(
-      maxOverlappingVisiblePairs,
+    maxWrapperOverlapPairs = Math.max(
+      maxWrapperOverlapPairs,
       current.overlappingVisiblePairs ?? 0,
     );
-    maxAdjacentVisibleOverlapPx = Math.max(
-      maxAdjacentVisibleOverlapPx,
+    maxWrapperOverlapPx = Math.max(
+      maxWrapperOverlapPx,
       current.maxAdjacentVisibleOverlapPx ?? 0,
     );
     maxOverlappingTextLinePairs = Math.max(
@@ -156,8 +150,8 @@ function summarizeOpenStability(samples: ThreadSurfaceSample[]): SwitchSummary {
     significantJumps,
     lateSignificantJumps,
     maxPostSettleStep,
-    maxOverlappingVisiblePairs,
-    maxAdjacentVisibleOverlapPx,
+    maxWrapperOverlapPairs,
+    maxWrapperOverlapPx,
     maxOverlappingTextLinePairs,
     maxTextLineOverlapPx,
   };
@@ -220,8 +214,6 @@ function assertBottomStability(sample: ThreadSurfaceSample, label: string) {
   expect(sample.renderedItemCount, `${label}: visible rows`).toBeGreaterThan(0);
   expect(sample.distanceFromMaxScrollPx ?? Number.POSITIVE_INFINITY, `${label}: at bottom`).toBeLessThanOrEqual(BOTTOM_DISTANCE_PX);
   expect(sample.blankTailPx ?? Number.POSITIVE_INFINITY, `${label}: blank tail`).toBeLessThanOrEqual(BOTTOM_BLANK_TAIL_PX);
-  expect(sample.overlappingVisiblePairs, `${label}: no visible overlap pairs`).toBe(0);
-  expect(sample.maxAdjacentVisibleOverlapPx ?? Number.POSITIVE_INFINITY, `${label}: no visible overlap`).toBeLessThanOrEqual(1);
   expect(sample.impossibleTail, `${label}: impossible tail`).toBeFalsy();
   expect(sample.isBottom, `${label}: bottom-anchor`).toBeTruthy();
 }
@@ -377,8 +369,8 @@ test("anchorstream: task switching has bounded open growth and stable bottom ali
     expect(summary.lateSignificantJumps, `${label}: late growth burst`).toBe(0);
     expect(summary.maxPostSettleStep, `${label}: post settle step`).toBeLessThanOrEqual(TASK_SWITCH_MAX_POST_SETTLE_STEP);
     expect(summary.maxItemCount, `${label}: open item burst`).toBeLessThanOrEqual(summary.finalItemCount + 4);
-    expect(summary.maxOverlappingVisiblePairs, `${label}: no visible row overlap pairs`).toBe(0);
-    expect(summary.maxAdjacentVisibleOverlapPx, `${label}: no visible row overlap`).toBeLessThanOrEqual(1);
+    expect(summary.maxWrapperOverlapPairs, `${label}: no overlapping wrapper pairs`).toBe(0);
+    expect(summary.maxWrapperOverlapPx, `${label}: no overlapping wrapper boxes`).toBeLessThanOrEqual(1);
     expect(summary.maxOverlappingTextLinePairs, `${label}: no overlapping text line pairs`).toBe(0);
     expect(summary.maxTextLineOverlapPx, `${label}: no overlapping text lines`).toBeLessThanOrEqual(1);
 

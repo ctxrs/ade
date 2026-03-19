@@ -1,9 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   Message,
   Session,
   SessionActivityState,
   SessionEvent,
+  SessionHead,
   SessionHeadSnapshot,
   SessionTurn,
   WorkspaceActiveSnapshotEvent,
@@ -11,6 +12,14 @@ import type {
 import { waitForCondition } from "../testUtils/waitForCondition";
 import { SessionReplicaCore } from "./sessionReplicaCore";
 import type { SessionReplicaPatch } from "./sessionReplicaProtocol";
+import { loadSessionHeadV1 } from "./uiStateStore";
+
+vi.mock("./uiStateStore", () => ({
+  clearSessionHeadV1: vi.fn(async () => {}),
+  clearSessionHistoryPagesV1: vi.fn(async () => {}),
+  loadSessionHeadV1: vi.fn(async () => null),
+  saveSessionHeadV1: vi.fn(async () => {}),
+}));
 
 const mkSession = (sessionId: string): Session => ({
   id: sessionId,
@@ -48,7 +57,101 @@ const mkHead = (sessionId: string, messageText = "hello"): SessionHeadSnapshot =
   };
 };
 
+const loadSessionHeadV1Mock = vi.mocked(loadSessionHeadV1);
+
 describe("SessionReplicaCore", () => {
+  beforeEach(() => {
+    loadSessionHeadV1Mock.mockReset();
+    loadSessionHeadV1Mock.mockResolvedValue(null);
+  });
+
+  it("skips bounded cached bootstrap heads when requested during active open", async () => {
+    const sessionId = "session-bounded-bootstrap-skip";
+    const cachedHead = {
+      session: mkSession(sessionId),
+      turns: [] as SessionTurn[],
+      events: [] as SessionEvent[],
+      messages: [
+        {
+          id: `m-${sessionId}-cached`,
+          session_id: sessionId,
+          task_id: "task-1",
+          role: "assistant",
+          content: "cached-bootstrap",
+          delivery: "immediate",
+          created_at: new Date().toISOString(),
+        },
+      ],
+      last_event_seq: 1,
+      has_more_turns: true,
+      head_window: {
+        turn_limit: 40,
+        message_limit: 120,
+        event_limit: 120,
+        byte_limit: 1024 * 1024,
+        turn_count: 40,
+        message_count: 40,
+        event_count: 40,
+        bytes: 4096,
+      },
+    } satisfies SessionHead;
+    const authoritativeHead = {
+      ...mkHead(sessionId, "authoritative-head"),
+      last_event_seq: 2,
+      state_rev: 2,
+      head_window: {
+        turn_limit: 40,
+        message_limit: 120,
+        event_limit: 120,
+        byte_limit: 1024 * 1024,
+        turn_count: 40,
+        message_count: 40,
+        event_count: 40,
+        bytes: 4096,
+      },
+    } satisfies SessionHeadSnapshot;
+    loadSessionHeadV1Mock.mockResolvedValueOnce({
+      v: 1,
+      sessionId,
+      updatedAtMs: Date.now(),
+      head: cachedHead,
+    });
+    const getSessionHead = vi.fn(async () => authoritativeHead);
+    const patches: SessionReplicaPatch[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead },
+      emit: (next) => patches.push(...next),
+    });
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 50 } });
+    core.handleCommand({
+      type: "open_session",
+      sessionId,
+      hydrateIfNeeded: true,
+      skipBoundedBootstrapCache: true,
+    });
+
+    await waitForCondition(() =>
+      patches.some(
+        (patch) =>
+          patch.op !== "evict" &&
+          patch.sessionId === sessionId &&
+          patch.data.messages?.some((message) => message.content === "authoritative-head"),
+      ),
+    );
+
+    expect(getSessionHead).toHaveBeenCalledTimes(1);
+    expect(
+      patches.some(
+        (patch) =>
+          patch.op !== "evict" &&
+          patch.sessionId === sessionId &&
+          patch.data.freshness === "bootstrap" &&
+          patch.data.messages?.some((message) => message.content === "cached-bootstrap"),
+      ),
+    ).toBe(false);
+  });
+
   it("keeps open_session stream-only by default", async () => {
     const getSessionHead = vi.fn();
     const patches: SessionReplicaPatch[] = [];

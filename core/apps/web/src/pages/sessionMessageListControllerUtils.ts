@@ -168,6 +168,14 @@ export function shouldReplaceBottomLockedStructuralUpdate(params: {
   const isPureAppend = prefixLen === currentLen;
   const isPurePrepend = suffixLen === currentLen;
   if (isPureAppend || isPurePrepend) return false;
+  if (prefixLen === 0 && suffixLen === 0) return true;
+
+  const replacedCount = Math.max(deleteCount, insertCount);
+  const sharedLen = Math.min(currentLen, nextLen);
+  const replacesMostOfVisibleList =
+    replacedCount >= 64 && sharedLen > 0 && replacedCount >= Math.floor(sharedLen / 2);
+  if (replacesMostOfVisibleList) return true;
+
   return nextLen >= currentLen * 2;
 }
 
