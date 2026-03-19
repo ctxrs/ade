@@ -14,9 +14,12 @@ import {
   openExternalLink,
 } from "./utils/desktop";
 import {
+  DESKTOP_UPDATE_MENU_STATE_EVENT,
   DESKTOP_MENU_COMMAND_IDS,
   REQUEST_UPDATE_CHECK_EVENT,
+  REQUEST_UPDATE_RESTART_EVENT,
   WEB_MENU_COMMAND_EVENT,
+  type DesktopUpdateMenuStateDetail,
   type DesktopMenuCommandId,
 } from "./utils/desktopMenuCommands";
 import {
@@ -489,4 +492,84 @@ test("desktop menu check-for-updates triggers silent native check without route 
   });
   expect(window.location.pathname).toBe("/workspaces/ws-654");
   window.removeEventListener(REQUEST_UPDATE_CHECK_EVENT, checkEvent as EventListener);
+});
+
+test("desktop menu switches check-for-updates item to downloading while update is staging", async () => {
+  vi.mocked(isDesktopApp).mockReturnValue(true);
+  window.history.pushState({}, "", "/workspaces/ws-654");
+
+  render(<App />);
+  expect(await screen.findByText("Workbench Screen")).toBeInTheDocument();
+
+  act(() => {
+    window.dispatchEvent(
+      new CustomEvent<DesktopUpdateMenuStateDetail>(DESKTOP_UPDATE_MENU_STATE_EVENT, {
+        detail: { state: "downloading" },
+      }),
+    );
+  });
+
+  await waitFor(() => {
+    expect(vi.mocked(desktopSetMenuState)).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "help.check-for-updates",
+          enabled: false,
+          text: "Downloading Update",
+        }),
+      ]),
+    );
+  });
+});
+
+test("desktop menu check-for-updates requests restart when update is ready", async () => {
+  vi.mocked(isDesktopApp).mockReturnValue(true);
+  window.history.pushState({}, "", "/workspaces/ws-654");
+
+  render(<App />);
+  expect(await screen.findByText("Workbench Screen")).toBeInTheDocument();
+
+  const handler = await waitFor(() => {
+    const value = desktopHandlers.get("desktop_menu_action");
+    if (!value) {
+      throw new Error("desktop_menu_action handler not ready");
+    }
+    return value;
+  });
+
+  const restartEvent = vi.fn();
+  window.addEventListener(REQUEST_UPDATE_RESTART_EVENT, restartEvent as EventListener);
+
+  act(() => {
+    window.dispatchEvent(
+      new CustomEvent<DesktopUpdateMenuStateDetail>(DESKTOP_UPDATE_MENU_STATE_EVENT, {
+        detail: { state: "restart" },
+      }),
+    );
+  });
+
+  await waitFor(() => {
+    expect(vi.mocked(desktopSetMenuState)).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "help.check-for-updates",
+          enabled: true,
+          text: "Restart to Update",
+        }),
+      ]),
+    );
+  });
+  vi.mocked(refreshUpdateCheck).mockClear();
+  vi.mocked(desktopCheckAppUpdate).mockClear();
+
+  act(() => {
+    handler({ commandId: "help.check-for-updates" });
+  });
+
+  await waitFor(() => {
+    expect(restartEvent).toHaveBeenCalledTimes(1);
+  });
+  expect(vi.mocked(refreshUpdateCheck)).not.toHaveBeenCalled();
+  expect(vi.mocked(desktopCheckAppUpdate)).not.toHaveBeenCalled();
+  window.removeEventListener(REQUEST_UPDATE_RESTART_EVENT, restartEvent as EventListener);
 });

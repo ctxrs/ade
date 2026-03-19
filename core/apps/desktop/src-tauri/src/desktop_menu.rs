@@ -55,6 +55,7 @@ pub(super) struct DesktopMenuItemStateUpdate {
     pub id: String,
     pub enabled: Option<bool>,
     pub checked: Option<bool>,
+    pub text: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -694,10 +695,23 @@ fn set_enabled_for_kind(kind: &MenuItemKind<tauri::Wry>, enabled: bool) -> Resul
     }
 }
 
+fn set_text_for_kind(kind: &MenuItemKind<tauri::Wry>, text: &str) -> Result<(), String> {
+    match kind {
+        MenuItemKind::MenuItem(item) => item.set_text(text).map_err(|e| e.to_string()),
+        MenuItemKind::Submenu(item) => item.set_text(text).map_err(|e| e.to_string()),
+        MenuItemKind::Check(item) => item.set_text(text).map_err(|e| e.to_string()),
+        MenuItemKind::Icon(item) => item.set_text(text).map_err(|e| e.to_string()),
+        MenuItemKind::Predefined(_) => Ok(()),
+    }
+}
+
 fn apply_state_to_kind(
     kind: &MenuItemKind<tauri::Wry>,
     update: &DesktopMenuItemStateUpdate,
 ) -> Result<(), String> {
+    if let Some(text) = update.text.as_deref() {
+        set_text_for_kind(kind, text)?;
+    }
     if let Some(enabled) = update.enabled {
         set_enabled_for_kind(kind, enabled)?;
     }
@@ -910,6 +924,7 @@ mod tests {
                 id: "task.new".to_string(),
                 enabled: Some(true),
                 checked: Some(false),
+                text: None,
             }],
         );
         cache.set_state(
@@ -918,6 +933,7 @@ mod tests {
                 id: "task.new".to_string(),
                 enabled: Some(false),
                 checked: Some(false),
+                text: None,
             }],
         );
 

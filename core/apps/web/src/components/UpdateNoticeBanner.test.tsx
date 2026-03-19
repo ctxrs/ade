@@ -4,6 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import UpdateNoticeBanner from "./UpdateNoticeBanner";
 import { applyAppImageUpdate, downloadAppImageUpdate } from "../api/client";
 import { desktopApplyAppUpdate, desktopGetAppUpdateState, desktopRestartApp, isDesktopApp } from "../utils/desktop";
+import {
+  DESKTOP_UPDATE_MENU_STATE_EVENT,
+  REQUEST_UPDATE_RESTART_EVENT,
+} from "../utils/desktopMenuCommands";
 import { readCachedUpdateCheck, refreshUpdateCheck, writeCachedUpdateCheck } from "../utils/updateNotice";
 
 vi.mock("../api/client", async (importOriginal) => {
@@ -204,6 +208,79 @@ describe("UpdateNoticeBanner", () => {
     });
     expect(vi.mocked(writeCachedUpdateCheck)).not.toHaveBeenCalled();
     expect(window.sessionStorage.getItem(RESTART_REQUIRED_VERSION_STORAGE_KEY)).toBe("1.2.3");
+  });
+
+  it("publishes downloading update menu state while desktop staging is in progress", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(readCachedUpdateCheck).mockReturnValue(null);
+    vi.mocked(refreshUpdateCheck).mockResolvedValue({
+      ...baseUpdate,
+      latest_version: "1.2.3",
+      update_available: true,
+    });
+    vi.mocked(desktopGetAppUpdateState).mockResolvedValue({
+      configured: true,
+      available: true,
+      restart_required: false,
+      phase: "staging",
+      staged: false,
+      current_version: "1.0.0",
+      latest_version: "1.2.3",
+      target: "macos-arm64",
+      endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+      message: null,
+    });
+
+    const onMenuState = vi.fn();
+    window.addEventListener(DESKTOP_UPDATE_MENU_STATE_EVENT, onMenuState as EventListener);
+
+    try {
+      renderBanner();
+      await waitFor(() => {
+        expect(onMenuState).toHaveBeenCalledWith(
+          expect.objectContaining({
+            detail: { state: "downloading" },
+          }),
+        );
+      });
+    } finally {
+      window.removeEventListener(DESKTOP_UPDATE_MENU_STATE_EVENT, onMenuState as EventListener);
+    }
+  });
+
+  it("restarts when a desktop restart request event arrives", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(readCachedUpdateCheck).mockReturnValue(null);
+    vi.mocked(refreshUpdateCheck).mockResolvedValue({
+      ...baseUpdate,
+      latest_version: "1.2.3",
+      update_available: true,
+    });
+    vi.mocked(desktopGetAppUpdateState).mockResolvedValue({
+      configured: true,
+      available: true,
+      restart_required: true,
+      phase: "staged_ready",
+      staged: true,
+      current_version: "1.0.0",
+      latest_version: "1.2.3",
+      target: "macos-arm64",
+      endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+      message: null,
+    });
+
+    renderBanner();
+    await waitFor(() => {
+      expect(screen.getByTestId("update-available-snackbar")).toBeInTheDocument();
+    });
+
+    act(() => {
+      window.dispatchEvent(new Event(REQUEST_UPDATE_RESTART_EVENT));
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(desktopRestartApp)).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("falls back to native desktop updater check when daemon update check is unavailable", async () => {

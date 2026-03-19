@@ -37,15 +37,21 @@ import {
 } from "./utils/analytics";
 import { computeAnalyticsCaptureEnabled } from "./utils/analytics/runtimePolicy";
 import {
+  buildDesktopUpdateMenuPatch,
   buildDesktopMenuBaseState,
+  DESKTOP_UPDATE_MENU_STATE_EVENT,
   DESKTOP_MENU_ACTION_EVENT,
+  isDesktopUpdateMenuState,
   isDesktopMenuCommandId,
   REQUEST_UPDATE_CHECK_EVENT,
+  REQUEST_UPDATE_RESTART_EVENT,
   WEB_MENU_TRACE_EVENT,
   WEB_MENU_COMMAND_EVENT,
   WEB_MENU_STATE_EVENT,
   type DesktopMenuActionEventPayload,
   type DesktopMenuItemState,
+  type DesktopUpdateMenuState,
+  type DesktopUpdateMenuStateDetail,
   type WebMenuTraceDetail,
   type WebMenuCommandDetail,
   type WebMenuStateDetail,
@@ -143,6 +149,8 @@ function DesktopMenuBridge() {
   const navigate = useNavigate();
   const location = useLocation();
   const patchRef = useRef<DesktopMenuItemState[]>([]);
+  const updateMenuStateRef = useRef<DesktopUpdateMenuState>("check");
+  const updateMenuPatchRef = useRef<DesktopMenuItemState>(buildDesktopUpdateMenuPatch("check"));
   const emitMenuTrace = (detail: WebMenuTraceDetail) => {
     window.dispatchEvent(
       new CustomEvent<WebMenuTraceDetail>(WEB_MENU_TRACE_EVENT, {
@@ -162,6 +170,9 @@ function DesktopMenuBridge() {
       const prev = merged.get(patch.id);
       merged.set(patch.id, { ...(prev ?? { id: patch.id }), ...patch });
     }
+    const updatePatch = updateMenuPatchRef.current;
+    const prev = merged.get(updatePatch.id);
+    merged.set(updatePatch.id, { ...(prev ?? { id: updatePatch.id }), ...updatePatch });
     void desktopSetMenuState(Array.from(merged.values())).catch(() => {});
   };
 
@@ -224,6 +235,23 @@ function DesktopMenuBridge() {
 
   useEffect(() => {
     if (!isDesktopApp()) return;
+    const onDesktopUpdateMenuState = (event: Event) => {
+      const custom = event as CustomEvent<DesktopUpdateMenuStateDetail>;
+      const nextState = custom.detail?.state;
+      if (!isDesktopUpdateMenuState(nextState)) return;
+      updateMenuStateRef.current = nextState;
+      updateMenuPatchRef.current = buildDesktopUpdateMenuPatch(nextState);
+      pushMenuState.current();
+    };
+
+    window.addEventListener(DESKTOP_UPDATE_MENU_STATE_EVENT, onDesktopUpdateMenuState as EventListener);
+    return () => {
+      window.removeEventListener(DESKTOP_UPDATE_MENU_STATE_EVENT, onDesktopUpdateMenuState as EventListener);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isDesktopApp()) return;
     let active = true;
     let unlisten: (() => void) | null = null;
     desktopListen<DesktopMenuActionEventPayload>(DESKTOP_MENU_ACTION_EVENT, (payload) => {
@@ -268,6 +296,25 @@ function DesktopMenuBridge() {
           });
           return;
         case "help.check-for-updates":
+          if (updateMenuStateRef.current === "restart") {
+            window.dispatchEvent(new Event(REQUEST_UPDATE_RESTART_EVENT));
+            emitMenuTrace({
+              commandId,
+              layer: "app",
+              status: "handled",
+              note: "request-update-restart",
+            });
+            return;
+          }
+          if (updateMenuStateRef.current === "downloading") {
+            emitMenuTrace({
+              commandId,
+              layer: "app",
+              status: "ignored",
+              note: "update-download-in-progress",
+            });
+            return;
+          }
           window.dispatchEvent(new Event(REQUEST_UPDATE_CHECK_EVENT));
           writeUpdaterRefreshBroadcast("menu-check-for-updates");
           void refreshUpdateCheck({ force: true }).catch(() => {});

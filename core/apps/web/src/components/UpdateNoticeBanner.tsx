@@ -10,7 +10,13 @@ import {
   type DesktopAppUpdateStateResp,
 } from "../utils/desktop";
 import { readCachedUpdateCheck, refreshUpdateCheck } from "../utils/updateNotice";
-import { REQUEST_UPDATE_CHECK_EVENT } from "../utils/desktopMenuCommands";
+import {
+  DESKTOP_UPDATE_MENU_STATE_EVENT,
+  REQUEST_UPDATE_CHECK_EVENT,
+  REQUEST_UPDATE_RESTART_EVENT,
+  type DesktopUpdateMenuState,
+  type DesktopUpdateMenuStateDetail,
+} from "../utils/desktopMenuCommands";
 import {
   UPDATER_REFRESH_BROADCAST_STORAGE_KEY,
   writeUpdaterRefreshBroadcast,
@@ -382,6 +388,11 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
       ? inPlaceCapability.reason ||
         "This version is no longer supported on this install path. Install the latest version from release notes."
       : null);
+  const desktopUpdateMenuState: DesktopUpdateMenuState = restartRequired
+    ? "restart"
+    : desktopStaging || (isDesktop && applyingUpdate)
+      ? "downloading"
+      : "check";
 
   const snoozeVersionPrompt = useCallback((version: string) => {
     if (!version) return;
@@ -540,10 +551,10 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
               in_place_update_reason: reason,
               update_available: false,
             };
-            dispatchUi({
-              type: "check_failed",
-              message: reason,
-            });
+          dispatchUi({
+            type: "check_failed",
+            message: reason,
+          });
         }
       } else {
         info = await refreshUpdateCheck(force ? { force: true } : undefined);
@@ -648,16 +659,16 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
   useEffect(() => {
     let cancelled = false;
     const runInitialCheck = async () => {
-        if (!isDesktop) {
-          const pendingRestartVersion = readRestartRequiredVersion();
-          if (pendingRestartVersion) {
-            setRestartRequiredVersionState(pendingRestartVersion);
-            dispatchUi({
-              type: "restart_required",
-              message: RESTART_READY_MESSAGE,
-            });
-          }
+      if (!isDesktop) {
+        const pendingRestartVersion = readRestartRequiredVersion();
+        if (pendingRestartVersion) {
+          setRestartRequiredVersionState(pendingRestartVersion);
+          dispatchUi({
+            type: "restart_required",
+            message: RESTART_READY_MESSAGE,
+          });
         }
+      }
       // Startup must always perform a real update check request.
       await refresh(true);
       if (cancelled) return;
@@ -681,6 +692,15 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
       window.removeEventListener(REQUEST_UPDATE_CHECK_EVENT, onRequestUpdateCheck as EventListener);
     };
   }, [refresh]);
+
+  useEffect(() => {
+    if (!isDesktop) return;
+    window.dispatchEvent(
+      new CustomEvent<DesktopUpdateMenuStateDetail>(DESKTOP_UPDATE_MENU_STATE_EVENT, {
+        detail: { state: desktopUpdateMenuState },
+      }),
+    );
+  }, [desktopUpdateMenuState, isDesktop]);
 
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
@@ -761,6 +781,16 @@ export default function UpdateNoticeBanner({ allTasksIdle = true }: UpdateNotice
         setRestartingApp(false);
       });
   }, [isDesktop, restartingApp]);
+
+  useEffect(() => {
+    const onRequestUpdateRestart = () => {
+      onRestartNow();
+    };
+    window.addEventListener(REQUEST_UPDATE_RESTART_EVENT, onRequestUpdateRestart as EventListener);
+    return () => {
+      window.removeEventListener(REQUEST_UPDATE_RESTART_EVENT, onRequestUpdateRestart as EventListener);
+    };
+  }, [onRestartNow]);
 
   useEffect(() => {
     if (!isDesktop) return;

@@ -40,6 +40,8 @@ type HarnessState = {
   updateState: DesktopUpdateState;
   applyResponse: DesktopApplyResponse;
   invokeCalls: string[];
+  menuItemsById: Record<string, { id: string; enabled?: boolean; checked?: boolean; text?: string }>;
+  emitMenuAction?: (commandId: string) => void;
 };
 
 const createWorkspaceAndOpenWorkbench = async (page: Page, workspaceName: string) => {
@@ -76,6 +78,9 @@ const installDesktopHarness = async (page: Page, config: HarnessConfig) => {
     type TauriWindow = Window & {
       __TAURI__?: { core?: { invoke?: TauriInvoke } };
       __TAURI_INTERNALS__?: TauriInternals;
+      __TAURI_EVENT_PLUGIN_INTERNALS__?: {
+        unregisterListener?: (event: string, eventId: number) => void;
+      };
       __ctxDesktopUpdaterE2E?: HarnessState;
     };
 
@@ -84,15 +89,53 @@ const installDesktopHarness = async (page: Page, config: HarnessConfig) => {
       updateState: { ...initial.updateState },
       applyResponse: { ...initial.applyResponse },
       invokeCalls: [],
+      menuItemsById: {},
     };
+    const callbacks = new Map<number, (payload: unknown) => void>();
+    const eventListeners = new Map<number, { event: string; callbackId: number }>();
+    let nextCallbackId = 1;
+    let nextEventListenerId = 1;
 
     const currentDaemonBaseUrl = () => window.location.origin;
+    const unregisterListener = (eventId: number) => {
+      eventListeners.delete(eventId);
+    };
+    const emitEvent = (event: string, payload: unknown) => {
+      for (const [eventId, listener] of eventListeners.entries()) {
+        if (listener.event !== event) continue;
+        const callback = callbacks.get(listener.callbackId);
+        if (!callback) continue;
+        callback({
+          event,
+          id: eventId,
+          payload,
+        });
+      }
+    };
 
     const invoke: TauriInvoke = async (cmd, rawArgs) => {
       const name = String(cmd || "");
       state.invokeCalls.push(name);
+      const args =
+        rawArgs && typeof rawArgs === "object"
+          ? (rawArgs as Record<string, unknown>)
+          : {};
       if (name === "plugin:app|version") {
         return state.updateState.current_version;
+      }
+      if (name === "plugin:event|listen") {
+        const event = String(args.event ?? "");
+        const callbackId = Number(args.handler ?? 0);
+        const eventId = nextEventListenerId++;
+        eventListeners.set(eventId, {
+          event,
+          callbackId,
+        });
+        return eventId;
+      }
+      if (name === "plugin:event|unlisten") {
+        unregisterListener(Number(args.eventId ?? 0));
+        return null;
       }
       if (name === "desktop_get_connection") {
         return {
@@ -134,11 +177,25 @@ const installDesktopHarness = async (page: Page, config: HarnessConfig) => {
       if (name === "desktop_restart_app") {
         return { requested: true, message: "Restart requested." };
       }
+      if (name === "desktop_set_menu_state") {
+        const items = Array.isArray(args.items) ? args.items : [];
+        const nextMenuItemsById: HarnessState["menuItemsById"] = {};
+        for (const rawItem of items) {
+          if (!rawItem || typeof rawItem !== "object") continue;
+          const item = rawItem as Record<string, unknown>;
+          const id = String(item.id ?? "").trim();
+          if (!id) continue;
+          nextMenuItemsById[id] = {
+            id,
+            ...(typeof item.enabled === "boolean" ? { enabled: item.enabled } : {}),
+            ...(typeof item.checked === "boolean" ? { checked: item.checked } : {}),
+            ...(typeof item.text === "string" ? { text: item.text } : {}),
+          };
+        }
+        state.menuItemsById = nextMenuItemsById;
+        return null;
+      }
       if (name === "desktop_daemon_request") {
-        const args =
-          rawArgs && typeof rawArgs === "object"
-            ? (rawArgs as Record<string, unknown>)
-            : {};
         const req =
           args.req && typeof args.req === "object"
             ? (args.req as Record<string, unknown>)
@@ -188,12 +245,35 @@ const installDesktopHarness = async (page: Page, config: HarnessConfig) => {
       transformCallback:
         typeof existingInternals.transformCallback === "function"
           ? existingInternals.transformCallback
-          : () => 1,
+          : (callback: unknown) => {
+            const callbackId = nextCallbackId++;
+            if (typeof callback === "function") {
+              callbacks.set(callbackId, callback as (payload: unknown) => void);
+            }
+            return callbackId;
+          },
       unregisterCallback:
         typeof existingInternals.unregisterCallback === "function"
           ? existingInternals.unregisterCallback
-          : () => {},
+          : (callbackId: number) => {
+            callbacks.delete(callbackId);
+            for (const [eventId, listener] of eventListeners.entries()) {
+              if (listener.callbackId === callbackId) {
+                eventListeners.delete(eventId);
+              }
+            }
+          },
       invoke,
+    };
+    const existingEventPluginInternals = w.__TAURI_EVENT_PLUGIN_INTERNALS__ ?? {};
+    w.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+      ...existingEventPluginInternals,
+      unregisterListener:
+        typeof existingEventPluginInternals.unregisterListener === "function"
+          ? existingEventPluginInternals.unregisterListener
+          : (_event: string, eventId: number) => {
+            unregisterListener(eventId);
+          },
     };
 
     const existingTauri = w.__TAURI__ ?? {};
@@ -205,6 +285,11 @@ const installDesktopHarness = async (page: Page, config: HarnessConfig) => {
         invoke,
       },
     };
+    state.emitMenuAction = (commandId: string) => {
+      emitEvent("desktop_menu_action", {
+        commandId,
+      });
+    };
     w.__ctxDesktopUpdaterE2E = state;
   }, config);
 };
@@ -215,6 +300,27 @@ const desktopCommandCallCount = async (page: Page, command: string): Promise<num
     const calls = w.__ctxDesktopUpdaterE2E?.invokeCalls ?? [];
     return calls.filter((cmd) => cmd === name).length;
   }, command);
+};
+
+const desktopMenuItemState = async (
+  page: Page,
+  commandId: string,
+): Promise<{ id: string; enabled?: boolean; checked?: boolean; text?: string } | null> => {
+  return await page.evaluate((id: string) => {
+    const w = window as Window & { __ctxDesktopUpdaterE2E?: HarnessState };
+    return w.__ctxDesktopUpdaterE2E?.menuItemsById?.[id] ?? null;
+  }, commandId);
+};
+
+const emitDesktopMenuAction = async (page: Page, commandId: string): Promise<void> => {
+  await page.evaluate((id: string) => {
+    const w = window as Window & { __ctxDesktopUpdaterE2E?: HarnessState };
+    const emit = w.__ctxDesktopUpdaterE2E?.emitMenuAction;
+    if (typeof emit !== "function") {
+      throw new Error("missing desktop menu action emitter");
+    }
+    emit(id);
+  }, commandId);
 };
 
 const installUpdatePolicyRoute = async (page: Page, updateAvailable = true) => {
@@ -271,6 +377,16 @@ test("desktop updater remains silent while staging", async ({ page }) => {
   await createWorkspaceAndOpenWorkbench(page, `ws-desktop-banner-${Date.now()}`);
   await expect.poll(async () => desktopCommandCallCount(page, "desktop_get_app_update_state")).toBeGreaterThan(0);
   await expect(page.getByTestId("update-available-snackbar")).toHaveCount(0);
+  await expect.poll(async () => desktopMenuItemState(page, "help.check-for-updates")).toMatchObject({
+    id: "help.check-for-updates",
+    enabled: false,
+    text: "Downloading Update",
+  });
+  await expect.poll(async () => desktopCommandCallCount(page, "plugin:event|listen")).toBeGreaterThan(0);
+
+  await emitDesktopMenuAction(page, "help.check-for-updates");
+  await expect.poll(async () => desktopCommandCallCount(page, "desktop_check_app_update")).toBe(0);
+  await expect.poll(async () => desktopCommandCallCount(page, "desktop_restart_app")).toBe(0);
 });
 
 test("desktop Update Now requests restart in restart-required state", async ({ page }) => {
@@ -310,6 +426,52 @@ test("desktop Update Now requests restart in restart-required state", async ({ p
   await expect.poll(async () => desktopCommandCallCount(page, "desktop_restart_app")).toBe(1);
   await expect.poll(async () => desktopCommandCallCount(page, "desktop_apply_app_update")).toBe(0);
   await expect(page.getByRole("button", { name: "Update Now" })).toBeVisible({ timeout: 20_000 });
+});
+
+test("desktop Help menu requests restart when update is ready", async ({ page }) => {
+  await page.addInitScript((autoApplyKey: string, snoozeKey: string, idleKey: string, restartKey: string) => {
+    localStorage.removeItem("ctx_update_check_v1");
+    localStorage.removeItem(snoozeKey);
+    localStorage.removeItem(idleKey);
+    localStorage.setItem(autoApplyKey, "0");
+    sessionStorage.removeItem(restartKey);
+  }, AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, PROMPT_SNOOZE_STORAGE_KEY, IDLE_UPDATE_VERSION_STORAGE_KEY, RESTART_REQUIRED_VERSION_STORAGE_KEY);
+  await installDesktopHarness(page, {
+    updateState: {
+      configured: true,
+      available: false,
+      restart_required: true,
+      phase: "restart_required",
+      staged: false,
+      current_version: "0.4.7",
+      latest_version: "0.4.8",
+      target: "macos-arm64",
+      endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+      message: null,
+    },
+    applyResponse: {
+      applied: true,
+      needs_restart: true,
+      up_to_date: false,
+      latest_version: "0.4.8",
+      message: "Update takes ~1 second and preserves data. Active agents will be paused.",
+    },
+  });
+  await installUpdatePolicyRoute(page, true);
+
+  await createWorkspaceAndOpenWorkbench(page, `ws-desktop-help-restart-${Date.now()}`);
+  await expect(page.getByTestId("update-available-snackbar")).toBeVisible({ timeout: 20_000 });
+  await expect.poll(async () => desktopMenuItemState(page, "help.check-for-updates")).toMatchObject({
+    id: "help.check-for-updates",
+    enabled: true,
+    text: "Restart to Update",
+  });
+  await expect.poll(async () => desktopCommandCallCount(page, "plugin:event|listen")).toBeGreaterThan(0);
+
+  await emitDesktopMenuAction(page, "help.check-for-updates");
+  await expect.poll(async () => desktopCommandCallCount(page, "desktop_restart_app")).toBe(1);
+  await expect.poll(async () => desktopCommandCallCount(page, "desktop_check_app_update")).toBe(0);
+  await expect.poll(async () => desktopCommandCallCount(page, "desktop_apply_app_update")).toBe(0);
 });
 
 test("desktop Update on Next Idle schedules restart when restart is ready", async ({ page }) => {

@@ -3,6 +3,8 @@ export const WEB_MENU_COMMAND_EVENT = "ctx:menu-command" as const;
 export const WEB_MENU_STATE_EVENT = "ctx:menu-state" as const;
 export const WEB_MENU_TRACE_EVENT = "ctx:menu-trace" as const;
 export const REQUEST_UPDATE_CHECK_EVENT = "ctx:request-update-check" as const;
+export const REQUEST_UPDATE_RESTART_EVENT = "ctx:request-update-restart" as const;
+export const DESKTOP_UPDATE_MENU_STATE_EVENT = "ctx:desktop-update-menu-state" as const;
 
 export const DESKTOP_MENU_COMMAND_IDS = [
   "file.new-workspace",
@@ -48,6 +50,7 @@ export type DesktopMenuItemState = {
   id: DesktopMenuCommandId;
   enabled?: boolean;
   checked?: boolean;
+  text?: string;
 };
 
 export type WebMenuCommandDetail = {
@@ -64,6 +67,12 @@ export type WebMenuTraceDetail = {
   layer: "app" | "workbench";
   status: "forwarded" | "handled" | "ignored";
   note?: string;
+};
+
+export type DesktopUpdateMenuState = "check" | "downloading" | "restart";
+
+export type DesktopUpdateMenuStateDetail = {
+  state: DesktopUpdateMenuState;
 };
 
 const COMMAND_ID_SET = new Set<string>(DESKTOP_MENU_COMMAND_IDS);
@@ -111,4 +120,34 @@ export const buildDesktopMenuBaseState = (pathname: string): DesktopMenuItemStat
     { id: "help.open-logs-folder", enabled: true },
     { id: "help.report-issue", enabled: true },
   ];
+};
+
+export const isDesktopUpdateMenuState = (value: unknown): value is DesktopUpdateMenuState => {
+  return value === "check" || value === "downloading" || value === "restart";
+};
+
+export const buildDesktopUpdateMenuPatch = (
+  state: DesktopUpdateMenuState,
+): DesktopMenuItemState => {
+  switch (state) {
+    case "downloading":
+      return {
+        id: "help.check-for-updates",
+        enabled: false,
+        text: "Downloading Update",
+      };
+    case "restart":
+      return {
+        id: "help.check-for-updates",
+        enabled: true,
+        text: "Restart to Update",
+      };
+    case "check":
+    default:
+      return {
+        id: "help.check-for-updates",
+        enabled: true,
+        text: "Check for Updates...",
+      };
+  }
 };

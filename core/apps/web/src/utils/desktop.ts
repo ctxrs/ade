@@ -200,6 +200,7 @@ export type DesktopMenuItemStateUpdate = {
   id: string;
   enabled?: boolean;
   checked?: boolean;
+  text?: string;
 };
 
 type TauriGlobals = {
