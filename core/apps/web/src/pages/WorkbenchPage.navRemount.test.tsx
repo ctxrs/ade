@@ -170,6 +170,10 @@ const { trackWorkbenchPanelToggledMock } = vi.hoisted(() => ({
 const { useOpenSessionMock } = vi.hoisted(() => ({
   useOpenSessionMock: vi.fn(),
 }));
+const { sessionViewMountSpy, sessionViewUnmountSpy } = vi.hoisted(() => ({
+  sessionViewMountSpy: vi.fn(),
+  sessionViewUnmountSpy: vi.fn(),
+}));
 const getInstallMock = vi.hoisted(() =>
   vi.fn(async (_installId?: string): Promise<{ install_id?: string; last_event?: unknown }> => ({})),
 );
@@ -346,9 +350,15 @@ vi.mock("../components/DiffReviewPane", () => ({
 }));
 
 vi.mock("./SessionPage", () => ({
-  SessionView: ({ sessionId: mockedSessionId }: { sessionId: string }) => (
-    <div data-testid="session-view-mock" data-session-id={mockedSessionId} />
-  ),
+  SessionView: ({ sessionId: mockedSessionId }: { sessionId: string }) => {
+    React.useEffect(() => {
+      sessionViewMountSpy(mockedSessionId);
+      return () => {
+        sessionViewUnmountSpy(mockedSessionId);
+      };
+    }, [mockedSessionId]);
+    return <div data-testid="session-view-mock" data-session-id={mockedSessionId} />;
+  },
   buildWorkbenchThreadViewModel: () => ({ groups: [] }),
 }));
 
@@ -423,6 +433,8 @@ beforeEach(() => {
   workspaceSnapshotStoreMock.getSessionHeadsSnapshot.mockReturnValue({});
   workspaceSnapshotStoreMock.setForegroundTaskId.mockReset();
   workspaceSnapshotStoreMock.setSubscribedSessions.mockReset();
+  sessionViewMountSpy.mockReset();
+  sessionViewUnmountSpy.mockReset();
 });
 
 afterEach(() => {
@@ -452,7 +464,7 @@ function getTaskRow(title: string) {
 
 describe("WorkbenchPage task rename selection", () => {
   it("renders only the active session slot for the selected task", async () => {
-    renderWorkbenchPage();
+    const rendered = renderWorkbenchPage();
 
     await waitFor(() => {
       expect(screen.getAllByTestId("session-view-mock")).toHaveLength(1);
@@ -463,7 +475,7 @@ describe("WorkbenchPage task rename selection", () => {
   });
 
   it("does not force session mode through WorkbenchPage route-open policy", async () => {
-    renderWorkbenchPage();
+    const rendered = renderWorkbenchPage();
 
     await waitFor(() => {
       expect(useOpenSessionMock).toHaveBeenCalledWith(sessionId, expect.objectContaining({ watchDiff: false }));
@@ -604,6 +616,117 @@ describe("WorkbenchPage archive navigation", () => {
 
     await waitFor(() => expect(applyTaskUpdateSpy).toHaveBeenCalledTimes(1));
     expect(focusNewTaskSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("WorkbenchPage session boundary remount", () => {
+  it("remounts the session view when switching to a different task session", async () => {
+    sessionSnap = {
+      ...sessionSnap,
+      sessions: {
+        ...sessionSnap.sessions,
+        [sessionId2]: {
+          sessionId: sessionId2,
+          freshness: "authoritative",
+          session: {
+            id: sessionId2,
+            task_id: taskId2,
+            workspace_id: workspaceId,
+            provider_id: "codex",
+            worktree_id: worktreeId,
+            model_id: "gpt-5",
+            title: "Second session",
+            agent_role: "assistant",
+            status: "active",
+            created_at: baseIso,
+          },
+          turns: [],
+          turnToolsByTurnId: {},
+          turnToolsLoading: [],
+          toolSummaries: [],
+          toolSummariesReady: true,
+          hasMoreTurns: false,
+          events: [],
+          messages: [],
+          artifacts: [],
+          artifactsLoading: false,
+          subagentInvocations: [],
+          subagentInvocationsLoaded: true,
+          subagentInvocationsLoading: false,
+          stateLoaded: true,
+          stateRev: 1,
+          stateLoading: false,
+          queue: [],
+          loadState: "live",
+          loading: false,
+          subscribed: true,
+          updatedAtMs: 0,
+        },
+      },
+    };
+
+    workspaceSnapshotSnap = {
+      ...workspaceSnapshotSnap,
+      tasksById: {
+        ...workspaceSnapshotSnap.tasksById,
+        [taskId2]: {
+          id: taskId2,
+          sortAtMs: Date.parse("2024-01-01T00:00:02.000Z"),
+          task: {
+            id: taskId2,
+            title: "Second task",
+            created_at: baseIso,
+            updated_at: baseIso,
+            last_activity_at: baseIso,
+            archived_at: null,
+            assistant_seen_at: null,
+            last_assistant_message_at: null,
+          },
+          sessions: [
+            {
+              session: {
+                id: sessionId2,
+                task_id: taskId2,
+                provider_id: "codex",
+                status: "active",
+                created_at: baseIso,
+              },
+              last_message_at: null,
+              last_event_seq: null,
+              activity: { is_working: false, last_turn_status: null },
+              unread: false,
+            },
+          ],
+        },
+      },
+      activeIds: [taskId, taskId2],
+      totalActive: 2,
+    };
+
+    const rendered = renderWorkbenchPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("session-view-mock")).toHaveAttribute("data-session-id", sessionId);
+    });
+    expect(sessionViewMountSpy).toHaveBeenCalledWith(sessionId);
+
+    fireEvent.click(within(getTaskRow("Second task")).getByText("Second task"));
+    rendered.rerender(
+      <VirtuosoMockContext.Provider value={{ itemHeight: 40, viewportHeight: 400 }}>
+        <MemoryRouter initialEntries={[`/workspaces/${workspaceId}`]}>
+          <Routes>
+            <Route path="/workspaces/:id" element={<WorkbenchPage />} />
+          </Routes>
+        </MemoryRouter>
+      </VirtuosoMockContext.Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("session-view-mock")).toHaveAttribute("data-session-id", sessionId2);
+    });
+
+    expect(sessionViewUnmountSpy).toHaveBeenCalledWith(sessionId);
+    expect(sessionViewMountSpy).toHaveBeenCalledWith(sessionId2);
   });
 });
 

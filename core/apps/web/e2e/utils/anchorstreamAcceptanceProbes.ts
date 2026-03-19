@@ -62,6 +62,27 @@ export async function readThreadSurfaceSample(
 ): Promise<ThreadSurfaceSample> {
   return page.evaluate(
     ({ scrollerSelector, activeSlotSelector, activeSessionSelector }) => {
+      const collectRenderedRows = (scroller: HTMLElement): HTMLElement[] => {
+        const inner = scroller.firstElementChild;
+        if (inner instanceof HTMLElement) {
+          const directChildren = Array.from(inner.children).filter(
+            (child): child is HTMLElement =>
+              child instanceof HTMLElement && child.getBoundingClientRect().height > 0,
+          );
+          if (directChildren.length > 0) return directChildren;
+        }
+        return Array.from(scroller.querySelectorAll<HTMLElement>('[role="listitem"]'));
+      };
+      const resolveRowId = (row: HTMLElement | undefined): string | null =>
+        row?.getAttribute("data-thread-item-id") ??
+        row?.getAttribute("data-anchorstream-item-id") ??
+        row
+          ?.querySelector<HTMLElement>("[data-thread-item-id], [data-anchorstream-item-id]")
+          ?.getAttribute("data-thread-item-id") ??
+        row
+          ?.querySelector<HTMLElement>("[data-thread-item-id], [data-anchorstream-item-id]")
+          ?.getAttribute("data-anchorstream-item-id") ??
+        null;
       const started = performance.now();
       const toFiniteNumber = (value: number | null | undefined): number | null =>
         typeof value === "number" && Number.isFinite(value) ? Math.round(value * 100) / 100 : null;
@@ -97,7 +118,7 @@ export async function readThreadSurfaceSample(
       }
 
       const visibleScroller = session.querySelector<HTMLElement>(scrollerSelector) ?? scroller;
-      const rows = Array.from(visibleScroller.querySelectorAll<HTMLElement>('[role="listitem"]'));
+      const rows = collectRenderedRows(visibleScroller);
       const first = rows.at(0);
       const last = rows.at(-1);
       const scrollerRect = visibleScroller.getBoundingClientRect();
@@ -133,16 +154,6 @@ export async function readThreadSurfaceSample(
         distanceFromMaxScrollPx <= 2 &&
         ((blankTailPx != null && blankTailPx > 96) || (lastRect != null && lastRect.bottom < scrollerRect.top - 1));
       const isBottom = distanceFromMaxScrollPx != null ? distanceFromMaxScrollPx <= 2 : false;
-      const resolveRowId = (row: HTMLElement | undefined) =>
-        row?.getAttribute("data-thread-item-id") ??
-        row?.getAttribute("data-anchorstream-item-id") ??
-        row
-          ?.querySelector<HTMLElement>("[data-thread-item-id], [data-anchorstream-item-id]")
-          ?.getAttribute("data-thread-item-id") ??
-        row
-          ?.querySelector<HTMLElement>("[data-thread-item-id], [data-anchorstream-item-id]")
-          ?.getAttribute("data-anchorstream-item-id") ??
-        null;
 
       return {
         atMs: started,
@@ -203,26 +214,39 @@ export async function collectThreadSamples(page: Page, options: ReadOptions = {}
 export async function readTopAnchorSample(page: Page, scrollerSelector = SCROLLER_SELECTOR): Promise<TopAnchorSample | null> {
   return page.evaluate((payload) => {
     const { activeSlotSelector, scrollerSelector } = payload;
+    const collectRenderedRows = (scroller: HTMLElement): HTMLElement[] => {
+      const inner = scroller.firstElementChild;
+      if (inner instanceof HTMLElement) {
+        const directChildren = Array.from(inner.children).filter(
+          (child): child is HTMLElement =>
+            child instanceof HTMLElement && child.getBoundingClientRect().height > 0,
+        );
+        if (directChildren.length > 0) return directChildren;
+      }
+      return Array.from(scroller.querySelectorAll<HTMLElement>("[role='listitem']"));
+    };
+    const resolveRowId = (row: HTMLElement | undefined): string | null =>
+      row?.getAttribute("data-thread-item-id") ??
+      row?.getAttribute("data-anchorstream-item-id") ??
+      row?.querySelector<HTMLElement>("[data-thread-item-id]")?.getAttribute("data-thread-item-id") ??
+      row?.querySelector<HTMLElement>("[data-anchorstream-item-id]")?.getAttribute("data-anchorstream-item-id") ??
+      null;
     const activeSession = document.querySelector<HTMLElement>(activeSlotSelector)?.querySelector<HTMLElement>(
       `[data-testid="session-view"][data-session-id]`,
     );
     const scroller = activeSession?.querySelector<HTMLElement>(scrollerSelector);
     if (!scroller) return null;
 
-    const rows = Array.from(scroller.querySelectorAll<HTMLElement>("[role='listitem']"));
+    const rows = collectRenderedRows(scroller);
     const first = rows.at(0);
     if (!first) {
       return { atMs: performance.now(), rowId: null, rowOffsetTopPx: null, renderedItemCount: 0 };
     }
-    const rowId =
-      first.getAttribute("data-thread-item-id") ??
-      first.querySelector<HTMLElement>("[data-thread-item-id]")?.getAttribute("data-thread-item-id") ??
-      null;
     const rect = first.getBoundingClientRect();
     const scrollerRect = scroller.getBoundingClientRect();
     return {
       atMs: performance.now(),
-      rowId,
+      rowId: resolveRowId(first),
       rowOffsetTopPx: Number.isFinite(rect.top - scrollerRect.top)
         ? Number((rect.top - scrollerRect.top).toFixed(2))
         : null,
@@ -283,7 +307,15 @@ export async function readRowOffsetById(
       );
       const scroller = activeSession?.querySelector<HTMLElement>(selector);
       if (!scroller) return null;
-      const row = scroller.querySelector<HTMLElement>(`[data-thread-item-id="${CSS.escape(rowId)}"]`);
+      const target =
+        scroller.querySelector<HTMLElement>(`[data-thread-item-id="${CSS.escape(rowId)}"]`) ??
+        scroller.querySelector<HTMLElement>(`[data-anchorstream-item-id="${CSS.escape(rowId)}"]`);
+      if (!target) return null;
+      const inner = scroller.firstElementChild;
+      let row: HTMLElement | null = target;
+      while (row && inner instanceof HTMLElement && row.parentElement !== inner) {
+        row = row.parentElement;
+      }
       if (!row) return null;
       const scrollerRect = scroller.getBoundingClientRect();
       return toFiniteNumber(row.getBoundingClientRect().top - scrollerRect.top);

@@ -44,6 +44,8 @@ type SwitchSummary = {
   significantJumps: number;
   lateSignificantJumps: number;
   maxPostSettleStep: number;
+  maxOverlappingVisiblePairs: number;
+  maxAdjacentVisibleOverlapPx: number;
 };
 
 type HistoryProbeResult = {
@@ -94,6 +96,8 @@ function summarizeOpenStability(samples: ThreadSurfaceSample[]): SwitchSummary {
       significantJumps: 0,
       lateSignificantJumps: 0,
       maxPostSettleStep: 0,
+      maxOverlappingVisiblePairs: 0,
+      maxAdjacentVisibleOverlapPx: 0,
     };
   }
 
@@ -104,6 +108,8 @@ function summarizeOpenStability(samples: ThreadSurfaceSample[]): SwitchSummary {
   let lateSignificantJumps = 0;
   let maxPostSettleStep = 0;
   let maxItemCount = baseCount;
+  let maxOverlappingVisiblePairs = baseline.overlappingVisiblePairs ?? 0;
+  let maxAdjacentVisibleOverlapPx = baseline.maxAdjacentVisibleOverlapPx ?? 0;
 
   for (let index = firstVisible + 1; index < samples.length; index += 1) {
     const prev = samples[index - 1];
@@ -121,6 +127,14 @@ function summarizeOpenStability(samples: ThreadSurfaceSample[]): SwitchSummary {
       maxPostSettleStep = Math.max(maxPostSettleStep, visibleCountDelta);
     }
     maxItemCount = Math.max(maxItemCount, current.renderedItemCount);
+    maxOverlappingVisiblePairs = Math.max(
+      maxOverlappingVisiblePairs,
+      current.overlappingVisiblePairs ?? 0,
+    );
+    maxAdjacentVisibleOverlapPx = Math.max(
+      maxAdjacentVisibleOverlapPx,
+      current.maxAdjacentVisibleOverlapPx ?? 0,
+    );
   }
 
   return {
@@ -130,6 +144,8 @@ function summarizeOpenStability(samples: ThreadSurfaceSample[]): SwitchSummary {
     significantJumps,
     lateSignificantJumps,
     maxPostSettleStep,
+    maxOverlappingVisiblePairs,
+    maxAdjacentVisibleOverlapPx,
   };
 }
 
@@ -190,6 +206,8 @@ function assertBottomStability(sample: ThreadSurfaceSample, label: string) {
   expect(sample.renderedItemCount, `${label}: visible rows`).toBeGreaterThan(0);
   expect(sample.distanceFromMaxScrollPx ?? Number.POSITIVE_INFINITY, `${label}: at bottom`).toBeLessThanOrEqual(BOTTOM_DISTANCE_PX);
   expect(sample.blankTailPx ?? Number.POSITIVE_INFINITY, `${label}: blank tail`).toBeLessThanOrEqual(BOTTOM_BLANK_TAIL_PX);
+  expect(sample.overlappingVisiblePairs, `${label}: no visible overlap pairs`).toBe(0);
+  expect(sample.maxAdjacentVisibleOverlapPx ?? Number.POSITIVE_INFINITY, `${label}: no visible overlap`).toBeLessThanOrEqual(1);
   expect(sample.impossibleTail, `${label}: impossible tail`).toBeFalsy();
   expect(sample.isBottom, `${label}: bottom-anchor`).toBeTruthy();
 }
@@ -422,6 +440,8 @@ test("anchorstream: task switching has bounded open growth and stable bottom ali
     expect(summary.lateSignificantJumps, `${label}: late growth burst`).toBe(0);
     expect(summary.maxPostSettleStep, `${label}: post settle step`).toBeLessThanOrEqual(TASK_SWITCH_MAX_POST_SETTLE_STEP);
     expect(summary.maxItemCount, `${label}: open item burst`).toBeLessThanOrEqual(summary.finalItemCount + 4);
+    expect(summary.maxOverlappingVisiblePairs, `${label}: no visible row overlap pairs`).toBe(0);
+    expect(summary.maxAdjacentVisibleOverlapPx, `${label}: no visible row overlap`).toBeLessThanOrEqual(1);
 
     const debugState = await readMessageListDebugStore(page);
     expect(

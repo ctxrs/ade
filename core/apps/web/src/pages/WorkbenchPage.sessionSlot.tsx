@@ -36,6 +36,7 @@ export function WorkbenchSessionSlot({
         </div>
       ) : null}
       <SessionView
+        key={sessionId}
         sessionId={sessionId}
         autoOpenSession={false}
         draft={draft.value}
