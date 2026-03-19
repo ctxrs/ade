@@ -1,9 +1,9 @@
 use serde::Serialize;
 
 use super::{
-    ContainerMountMode, ContainerNetworkMode, ContainerRuntimeKind, DictationProvider,
-    ExecutionMode, NetworkProfile, ProviderControlMode, ResourceGovernanceMode, Settings,
-    TitleGenerationLocalSettings, TitleGenerationMode,
+    ContainerMachineSettings, ContainerMountMode, ContainerNetworkMode, ContainerRuntimeKind,
+    DictationProvider, ExecutionMode, NetworkProfile, ProviderControlMode, ResourceGovernanceMode,
+    Settings, TitleGenerationLocalSettings, TitleGenerationMode,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -113,6 +113,7 @@ pub struct PublicContainerExecutionSettings {
     pub allowlist: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
+    pub machine: ContainerMachineSettings,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -323,6 +324,7 @@ pub(super) fn to_public(settings: &Settings) -> PublicSettings {
                 network_mode: e.container.network_mode.clone(),
                 allowlist: e.container.allowlist.clone(),
                 image: e.container.image.clone(),
+                machine: e.container.machine.clone(),
             },
         });
     let network_profiles =

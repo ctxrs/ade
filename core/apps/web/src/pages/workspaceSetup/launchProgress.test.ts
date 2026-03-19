@@ -131,7 +131,7 @@ describe("launchProgress", () => {
     const snapshot = {
       ...baseSnapshot(),
       current_phase: "machine_start_or_init" as const,
-      current_step_label: "waiting for podman machine readiness",
+      current_step_label: "waiting for local sandbox runtime readiness",
       active_download: null,
       eta_ms: 18000,
     };
@@ -146,7 +146,7 @@ describe("launchProgress", () => {
     const snapshot = {
       ...baseSnapshot(),
       current_phase: "image_load" as const,
-      current_step_label: "loading harness image into podman",
+      current_step_label: "loading harness image into local sandbox runtime",
       active_download: null,
       eta_ms: 0,
     };

@@ -366,7 +366,7 @@ fn launch_snapshot_drops_expired_non_download_eta() {
     let job = LaunchJob::new(uuid::Uuid::new_v4().to_string(), WorkspaceId::new());
     let _ = job.transition_phase(
         HarnessSetupPhase::ImageLoad,
-        "loading harness image into podman",
+        "loading harness image into local sandbox runtime",
     );
     {
         let mut inner = lock_or_recover(&job.inner, "launch job");
@@ -538,8 +538,8 @@ async fn startup_prewarm_runs_runtime_warmup_for_cold_container_settings() {
     let ready = coordinator.startup_status().await;
     assert_eq!(ready.state, StartupPrewarmState::Ready);
     assert!(ready.needs_prewarm);
-    assert!(ready.machine_ready);
-    assert!(ready.image_present);
+    assert!(!ready.machine_ready);
+    assert!(!ready.image_present);
 }
 
 #[tokio::test]
@@ -946,8 +946,8 @@ async fn startup_prewarm_enters_shared_runtime_warmup_when_machine_is_not_ready(
     let snapshot = coordinator.startup_status().await;
     assert_eq!(snapshot.state, StartupPrewarmState::Ready);
     assert!(snapshot.needs_prewarm);
-    assert!(snapshot.machine_ready);
-    assert!(snapshot.image_present);
+    assert!(!snapshot.machine_ready);
+    assert!(!snapshot.image_present);
     assert_eq!(ops.runtime_runs.load(Ordering::SeqCst), 1);
     assert_eq!(
         *ops.steps.lock().unwrap_or_else(|err| err.into_inner()),

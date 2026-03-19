@@ -16,6 +16,24 @@ fn network_profiles_defaults_are_safe_for_system_tasks() {
 }
 
 #[test]
+fn container_machine_defaults_are_stable() {
+    let settings = ContainerExecutionSettings::default();
+    assert_eq!(
+        settings.machine.memory_profile,
+        ContainerMachineMemoryProfile::Balanced
+    );
+    assert_eq!(settings.machine.custom_memory_mb, None);
+    assert_eq!(
+        settings.machine.idle_shutdown_seconds,
+        default_container_machine_idle_shutdown_seconds()
+    );
+    assert_eq!(
+        settings.machine.host_pressure_swap_threshold_mb,
+        default_container_machine_host_pressure_swap_threshold_mb()
+    );
+}
+
+#[test]
 fn to_public_redacts_secret_values() {
     let settings = Settings {
         dictation: Some(DictationSettings {
@@ -43,6 +61,7 @@ fn to_public_redacts_secret_values() {
             api_key: "oracle-key".to_string(),
             ..OracleSettings::default()
         }),
+        execution: Some(ExecutionSettings::default()),
         ..Settings::default()
     };
 
@@ -63,6 +82,16 @@ fn to_public_redacts_secret_values() {
     assert!(title_remote.api_key_set);
     assert_eq!(title_remote.base_url, "https://titles.example");
     assert_eq!(title_remote.model, "gpt-test");
+    assert_eq!(
+        public
+            .execution
+            .as_ref()
+            .expect("execution settings")
+            .container
+            .machine
+            .memory_profile,
+        ContainerMachineMemoryProfile::Balanced
+    );
 
     let oracle = public.oracle.as_ref().expect("oracle");
     assert!(oracle.api_key_set);
@@ -152,4 +181,58 @@ fn apply_update_preserves_existing_secret_values_when_omitted() {
     assert_eq!(title_remote.base_url, "https://titles.next");
     assert_eq!(title_remote.model, "gpt-next");
     assert!(title_remote.use_json);
+}
+
+#[test]
+fn apply_update_replaces_container_machine_settings() {
+    let current = Settings {
+        execution: Some(ExecutionSettings {
+            mode: ExecutionMode::Container,
+            container: ContainerExecutionSettings::default(),
+        }),
+        ..Settings::default()
+    };
+
+    let next = apply_update(
+        current,
+        UpdateSettingsReq {
+            dictation: None,
+            title_generation: None,
+            oracle: None,
+            telemetry: None,
+            resource_governance: None,
+            provider_guard: None,
+            tool_limits: None,
+            provider_restart: None,
+            subagents: None,
+            sandboxing: None,
+            execution: Some(update::UpdateExecutionSettingsReq {
+                mode: ExecutionMode::Container,
+                container: ContainerExecutionSettings {
+                    machine: ContainerMachineSettings {
+                        memory_profile: ContainerMachineMemoryProfile::Custom,
+                        custom_memory_mb: Some(6144),
+                        idle_shutdown_seconds: 90,
+                        host_pressure_swap_threshold_mb: 256,
+                    },
+                    ..ContainerExecutionSettings::default()
+                },
+            }),
+            network_profiles: None,
+        },
+    );
+
+    let machine = &next
+        .execution
+        .as_ref()
+        .expect("execution settings")
+        .container
+        .machine;
+    assert_eq!(
+        machine.memory_profile,
+        ContainerMachineMemoryProfile::Custom
+    );
+    assert_eq!(machine.custom_memory_mb, Some(6144));
+    assert_eq!(machine.idle_shutdown_seconds, 90);
+    assert_eq!(machine.host_pressure_swap_threshold_mb, 256);
 }

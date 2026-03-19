@@ -112,6 +112,14 @@ pub(crate) async fn prefetch_container_startup_artifacts_with_overrides(
     Ok(())
 }
 
+pub async fn prefetch_container_startup_artifacts_with_observer(
+    data_root: &Path,
+    image: &str,
+    observer: Option<&dyn HarnessSetupObserver>,
+) -> Result<()> {
+    prefetch_container_startup_artifacts_with_overrides(data_root, image, None, observer).await
+}
+
 pub async fn prefetch_container_image_with_observer(
     data_root: &Path,
     image: &str,
@@ -150,7 +158,7 @@ pub(crate) async fn prefetch_container_image_with_overrides(
     observe_phase(
         observer,
         HarnessSetupPhase::ImageLoad,
-        "loading harness image into podman",
+        "loading harness image into local sandbox runtime",
     );
     ensure_container_image_available(data_root, image, observer).await
 }
@@ -442,7 +450,7 @@ async fn load_container_image_tar(
                 HarnessSetupPhase::ImageLoad,
                 HarnessSetupLogLevel::Info,
                 &format!(
-                    "still loading harness image into podman ({} elapsed)",
+                    "still loading harness image into local sandbox runtime ({} elapsed)",
                     format_image_load_elapsed(started.elapsed())
                 ),
             );
@@ -628,7 +636,7 @@ mod tests {
         assert!(logs.iter().any(|(phase, level, message)| {
             *phase == HarnessSetupPhase::ImageLoad
                 && *level == HarnessSetupLogLevel::Info
-                && message.contains("still loading harness image into podman")
+                && message.contains("still loading harness image into local sandbox runtime")
         }));
 
         let progress = observer

@@ -50,7 +50,7 @@ impl SharedWarmupOperations for DefaultWarmupOperations {
         observer: Arc<dyn HarnessSetupObserver>,
     ) -> Result<()> {
         let image = harness_runtime::resolve_container_image(&settings.container);
-        harness_runtime::prefetch_container_image_with_observer(
+        harness_runtime::prefetch_container_startup_artifacts_with_observer(
             &self.data_root,
             &image,
             Some(observer.as_ref()),

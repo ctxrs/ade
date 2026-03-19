@@ -2,10 +2,12 @@ use std::collections::{HashMap, HashSet};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::{Arc, OnceLock};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use ctx_store::StoreManager;
 use futures::StreamExt;
 use sha2::Digest;
 use tokio::process::Command;
@@ -19,9 +21,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::bundled_assets;
 use crate::network_allowlist;
+use crate::resource_utilization::{ResourceSampler, SystemSnapshot};
 use crate::settings::{
-    ContainerExecutionSettings, ContainerMountMode, ContainerNetworkMode, ExecutionMode,
-    ExecutionSettings,
+    ContainerExecutionSettings, ContainerMachineMemoryProfile, ContainerMountMode,
+    ContainerNetworkMode, ExecutionMode, ExecutionSettings,
 };
 use crate::updates;
 use url::Url;
@@ -46,7 +49,8 @@ pub(crate) use self::image::resolve_container_image;
 pub use self::image::{
     bundled_default_container_image_tar, container_image_present, container_image_status,
     default_container_image, is_default_container_image, prefetch_container_image,
-    prefetch_container_image_with_observer, ContainerImageStatus,
+    prefetch_container_image_with_observer, prefetch_container_startup_artifacts_with_observer,
+    ContainerImageStatus,
 };
 #[cfg(test)]
 use self::image::{
@@ -108,6 +112,38 @@ const PODMAN_MACHINE_INIT_TIMEOUT: Duration = Duration::from_secs(8 * 60);
 const PODMAN_MACHINE_READY_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 const PODMAN_OP_TIMEOUT: Duration = Duration::from_secs(60);
 const PODMAN_LOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const PODMAN_MACHINE_MEMORY_ECONOMY_MB: u32 = 2048;
+const PODMAN_MACHINE_MEMORY_BALANCED_MB: u32 = 4096;
+const PODMAN_MACHINE_MEMORY_PERFORMANCE_MB: u32 = 8192;
+
+fn podman_machine_reclaim_poll_interval() -> Duration {
+    if cfg!(test) {
+        Duration::from_millis(100)
+    } else {
+        Duration::from_secs(30)
+    }
+}
+
+fn podman_machine_pressure_idle_grace() -> Duration {
+    if cfg!(test) {
+        Duration::from_millis(100)
+    } else {
+        Duration::from_secs(60)
+    }
+}
+
+fn container_machine_memory_mb(settings: &ContainerExecutionSettings) -> u32 {
+    match settings.machine.memory_profile {
+        ContainerMachineMemoryProfile::Economy => PODMAN_MACHINE_MEMORY_ECONOMY_MB,
+        ContainerMachineMemoryProfile::Balanced => PODMAN_MACHINE_MEMORY_BALANCED_MB,
+        ContainerMachineMemoryProfile::Performance => PODMAN_MACHINE_MEMORY_PERFORMANCE_MB,
+        ContainerMachineMemoryProfile::Custom => settings
+            .machine
+            .custom_memory_mb
+            .unwrap_or(PODMAN_MACHINE_MEMORY_BALANCED_MB)
+            .max(1024),
+    }
+}
 
 fn podman_machine_init_created_machine_grace() -> Duration {
     if cfg!(test) {
@@ -307,6 +343,9 @@ struct TransparentProxyConfig {
 pub struct HarnessRuntimeManager {
     data_root: PathBuf,
     containers: Mutex<HashMap<WorkspaceId, HarnessContainer>>,
+    last_activity: StdMutex<Instant>,
+    active_runtime_operations: AtomicUsize,
+    reclaim_loop_started: AtomicBool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -317,12 +356,77 @@ pub struct HarnessRuntimeStats {
     pub container_egress_guards: usize,
 }
 
+struct RuntimeOperationGuard<'a> {
+    manager: &'a HarnessRuntimeManager,
+}
+
+impl Drop for RuntimeOperationGuard<'_> {
+    fn drop(&mut self) {
+        self.manager.note_runtime_activity();
+        self.manager
+            .active_runtime_operations
+            .fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 impl HarnessRuntimeManager {
     pub fn new(data_root: PathBuf) -> Self {
         Self {
             data_root,
             containers: Mutex::new(HashMap::new()),
+            last_activity: StdMutex::new(Instant::now()),
+            active_runtime_operations: AtomicUsize::new(0),
+            reclaim_loop_started: AtomicBool::new(false),
         }
+    }
+
+    fn note_runtime_activity(&self) {
+        let mut last_activity = match self.last_activity.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        *last_activity = Instant::now();
+    }
+
+    fn runtime_idle_for(&self) -> Duration {
+        let last_activity = match self.last_activity.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        last_activity.elapsed()
+    }
+
+    fn begin_runtime_operation(&self) -> RuntimeOperationGuard<'_> {
+        self.note_runtime_activity();
+        self.active_runtime_operations
+            .fetch_add(1, Ordering::SeqCst);
+        RuntimeOperationGuard { manager: self }
+    }
+
+    pub fn spawn_background_podman_machine_reclaim(self: &Arc<Self>, stores: StoreManager) {
+        if cfg!(test) || !podman_machine_required() {
+            return;
+        }
+        if self
+            .reclaim_loop_started
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return;
+        }
+        let manager = Arc::clone(self);
+        tokio::spawn(async move {
+            let mut sampler = ResourceSampler::new();
+            loop {
+                tokio::time::sleep(podman_machine_reclaim_poll_interval()).await;
+                if let Err(err) = manager
+                    .run_podman_machine_reclaim_once(&stores, &mut sampler)
+                    .await
+                {
+                    tracing::debug!("podman machine reclaim skipped: {err:#}");
+                }
+            }
+        });
     }
 
     pub async fn stats(&self) -> HarnessRuntimeStats {
@@ -343,6 +447,25 @@ impl HarnessRuntimeManager {
             container_external_mounts,
             container_egress_guards,
         }
+    }
+
+    async fn run_podman_machine_reclaim_once(
+        &self,
+        stores: &StoreManager,
+        sampler: &mut ResourceSampler,
+    ) -> Result<()> {
+        if !podman_machine_required() {
+            return Ok(());
+        }
+        let execution = crate::settings::load_settings(stores.global())
+            .await?
+            .execution
+            .unwrap_or_default();
+        let (system, _disks, _cache_age_ms) = sampler.system_snapshot();
+        let _ = self
+            .maybe_reclaim_podman_machine(&execution.container, &system, None)
+            .await?;
+        Ok(())
     }
 
     pub fn spawn_background_podman_machine_download(self: &Arc<Self>) {
@@ -392,6 +515,9 @@ impl HarnessRuntimeManager {
             &self.data_root,
             &machine_name,
             machine_image.as_deref(),
+            Some(container_machine_memory_mb(
+                &ContainerExecutionSettings::default(),
+            )),
             None,
         )
         .await?;
@@ -409,6 +535,203 @@ impl HarnessRuntimeManager {
         anyhow::bail!("podman machine init failed: {}", combined);
     }
 
+    async fn inspect_podman_machine_memory_mb(&self, machine_name: &str) -> Result<Option<u32>> {
+        let mut cmd = podman_command(&self.data_root)?;
+        cmd.arg("machine").arg("inspect").arg(machine_name);
+        let output = command_output_with_timeout(cmd, PODMAN_INFO_TIMEOUT).await?;
+        if !output.status.success() {
+            return Ok(None);
+        }
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .context("parsing podman machine inspect output")?;
+        let machine = value
+            .as_array()
+            .and_then(|items| items.first())
+            .unwrap_or(&value);
+        Ok(machine
+            .get("Resources")
+            .and_then(|resources| resources.get("Memory"))
+            .or_else(|| {
+                machine
+                    .get("resources")
+                    .and_then(|resources| resources.get("memory"))
+            })
+            .and_then(|memory| memory.as_u64())
+            .and_then(|memory| u32::try_from(memory).ok()))
+    }
+
+    async fn init_podman_machine_locked(
+        &self,
+        machine_name: &str,
+        desired_memory_mb: u32,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<()> {
+        let machine_image = if cfg!(target_os = "macos") {
+            Some(ensure_managed_podman_machine_cache(&self.data_root, observer, None).await?)
+        } else {
+            None
+        };
+        let init_outcome = run_podman_machine_init(
+            &self.data_root,
+            machine_name,
+            machine_image.as_deref(),
+            Some(desired_memory_mb),
+            observer,
+        )
+        .await?;
+        let output = init_outcome.output;
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let combined = format!("{stderr}\n{stdout}").trim().to_string();
+        if init_outcome.continued_after_machine_present
+            || output.status.success()
+            || combined.to_ascii_lowercase().contains("already exists")
+        {
+            persist_podman_machine_cache_to_shared_best_effort(&self.data_root, observer).await;
+            return Ok(());
+        }
+        anyhow::bail!("podman machine init failed: {combined}");
+    }
+
+    async fn stop_podman_machine_locked(
+        &self,
+        machine_name: &str,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<bool> {
+        let mut cmd = podman_command(&self.data_root)?;
+        cmd.arg("machine").arg("stop").arg(machine_name);
+        let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
+        if output.status.success() {
+            observe_log(
+                observer,
+                HarnessSetupPhase::MachineStartOrInit,
+                HarnessSetupLogLevel::Info,
+                "stopped local sandbox runtime",
+            );
+            return Ok(true);
+        }
+        let combined = command_output_message(&output);
+        let combined_lc = combined.to_ascii_lowercase();
+        if combined_lc.contains("already stopped")
+            || combined_lc.contains("not running")
+            || combined_lc.contains("no machine")
+            || combined_lc.contains("does not exist")
+        {
+            return Ok(false);
+        }
+        anyhow::bail!("podman machine stop failed: {combined}");
+    }
+
+    async fn remove_podman_machine_locked(
+        &self,
+        machine_name: &str,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<()> {
+        let _ = self
+            .stop_podman_machine_locked(machine_name, observer)
+            .await;
+        let mut cmd = podman_command(&self.data_root)?;
+        cmd.arg("machine").arg("rm").arg("-f").arg(machine_name);
+        let output = command_output_with_timeout(cmd, PODMAN_OP_TIMEOUT).await?;
+        if output.status.success() {
+            observe_log(
+                observer,
+                HarnessSetupPhase::MachineStartOrInit,
+                HarnessSetupLogLevel::Info,
+                "removed local sandbox runtime for reconfiguration",
+            );
+            return Ok(());
+        }
+        let combined = command_output_message(&output);
+        let combined_lc = combined.to_ascii_lowercase();
+        if combined_lc.contains("does not exist") || combined_lc.contains("no machine") {
+            return Ok(());
+        }
+        anyhow::bail!("podman machine rm -f failed: {combined}");
+    }
+
+    async fn ensure_podman_machine_materialized(
+        &self,
+        settings: &ContainerExecutionSettings,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<()> {
+        if !podman_machine_required() {
+            return Ok(());
+        }
+        let desired_memory_mb = container_machine_memory_mb(settings);
+        let machine_name = ctx_podman_machine_name(&self.data_root);
+        let machine_lock = podman_machine_singleflight_lock(&machine_name);
+        let _machine_guard = machine_lock.lock().await;
+        seed_shared_podman_machine_cache_best_effort(&self.data_root, observer).await;
+
+        let present = podman_machine_present(&self.data_root, &machine_name).await?;
+        if present {
+            let actual_memory_mb = self.inspect_podman_machine_memory_mb(&machine_name).await?;
+            if actual_memory_mb == Some(desired_memory_mb) {
+                return Ok(());
+            }
+            let detail = actual_memory_mb
+                .map(|value| format!("{value} MiB"))
+                .unwrap_or_else(|| "unknown".to_string());
+            observe_log(
+                observer,
+                HarnessSetupPhase::MachineStartOrInit,
+                HarnessSetupLogLevel::Info,
+                &format!(
+                    "reconfiguring local sandbox runtime memory from {detail} to {} MiB",
+                    desired_memory_mb
+                ),
+            );
+            self.remove_podman_machine_locked(&machine_name, observer)
+                .await?;
+        }
+
+        self.init_podman_machine_locked(&machine_name, desired_memory_mb, observer)
+            .await
+    }
+
+    async fn maybe_reclaim_podman_machine(
+        &self,
+        settings: &ContainerExecutionSettings,
+        system: &SystemSnapshot,
+        observer: Option<&dyn HarnessSetupObserver>,
+    ) -> Result<bool> {
+        if !podman_machine_required() {
+            return Ok(false);
+        }
+        if self.active_runtime_operations.load(Ordering::SeqCst) > 0 {
+            return Ok(false);
+        }
+        let idle_for = self.runtime_idle_for();
+        let idle_timeout = Duration::from_secs(settings.machine.idle_shutdown_seconds);
+        let swap_threshold_bytes =
+            u64::from(settings.machine.host_pressure_swap_threshold_mb) * 1024 * 1024;
+        let host_pressure =
+            swap_threshold_bytes > 0 && system.swap_used_bytes >= swap_threshold_bytes;
+        let should_stop = idle_for >= idle_timeout
+            || (host_pressure && idle_for >= podman_machine_pressure_idle_grace());
+        if !should_stop {
+            return Ok(false);
+        }
+
+        let machine_name = ctx_podman_machine_name(&self.data_root);
+        let machine_lock = podman_machine_singleflight_lock(&machine_name);
+        let _machine_guard = machine_lock.lock().await;
+        if self.active_runtime_operations.load(Ordering::SeqCst) > 0 {
+            return Ok(false);
+        }
+        if !podman_machine_present(&self.data_root, &machine_name).await? {
+            return Ok(false);
+        }
+        let stopped = self
+            .stop_podman_machine_locked(&machine_name, observer)
+            .await?;
+        if stopped {
+            self.note_runtime_activity();
+        }
+        Ok(stopped)
+    }
+
     pub async fn prepare(
         &self,
         workspace: &Workspace,
@@ -416,6 +739,7 @@ impl HarnessRuntimeManager {
         settings: &ExecutionSettings,
         daemon_url: &str,
     ) -> Result<HarnessExecutionPlan> {
+        let _activity = self.begin_runtime_operation();
         let mut env_overrides = HashMap::new();
         env_overrides.insert(
             "CTX_DATA_ROOT_HOST".to_string(),
@@ -492,10 +816,11 @@ impl HarnessRuntimeManager {
         daemon_url: &str,
         observer: Option<&dyn HarnessSetupObserver>,
     ) -> Result<()> {
+        let _activity = self.begin_runtime_operation();
         if matches!(settings.mode, ExecutionMode::Host) {
             return Ok(());
         }
-        self.ensure_container_machine_ready(observer)
+        self.ensure_container_machine_ready(&settings.container, observer)
             .await
             .context("podman unavailable and execution mode is container")?;
         self.ensure_workspace_container_after_machine_ready_with_observer(
@@ -542,6 +867,7 @@ impl HarnessRuntimeManager {
         daemon_url: &str,
         observer: Option<&dyn HarnessSetupObserver>,
     ) -> Result<()> {
+        let _activity = self.begin_runtime_operation();
         if matches!(settings.mode, ExecutionMode::Host) {
             return Ok(());
         }
@@ -557,6 +883,7 @@ impl HarnessRuntimeManager {
 
     async fn ensure_container_machine_ready(
         &self,
+        settings: &ContainerExecutionSettings,
         observer: Option<&dyn HarnessSetupObserver>,
     ) -> Result<()> {
         observe_phase(
@@ -565,6 +892,17 @@ impl HarnessRuntimeManager {
             "checking container runtime",
         );
         ensure_managed_podman_runtime(&self.data_root, observer, None).await?;
+        if podman_engine_ready(&self.data_root).await.unwrap_or(false) {
+            observe_log(
+                observer,
+                HarnessSetupPhase::MachineCheck,
+                HarnessSetupLogLevel::Info,
+                "local sandbox runtime is already reachable",
+            );
+            return Ok(());
+        }
+        self.ensure_podman_machine_materialized(settings, observer)
+            .await?;
         ensure_podman_machine_running_with_observer(&self.data_root, observer).await?;
         Ok(())
     }
@@ -592,7 +930,7 @@ impl HarnessRuntimeManager {
         observe_phase(
             observer,
             HarnessSetupPhase::ImageLoad,
-            "loading harness image into podman",
+            "loading harness image into local sandbox runtime",
         );
         ensure_container_image_available(&self.data_root, &image, observer).await
     }
@@ -636,6 +974,7 @@ impl HarnessRuntimeManager {
     }
 
     pub async fn stop_container(&self, workspace_id: WorkspaceId) -> Result<bool> {
+        let _activity = self.begin_runtime_operation();
         let name = format!("ctx-harness-{}", workspace_id.0);
         if !container_exists(&self.data_root, &name).await? {
             return Ok(false);
@@ -659,6 +998,7 @@ impl HarnessRuntimeManager {
     }
 
     pub async fn remove_workspace_volume(&self, workspace_id: WorkspaceId) -> Result<bool> {
+        let _activity = self.begin_runtime_operation();
         // Best-effort cleanup: callers (e.g. workspace deletion) may ignore failures.
         let name = format!("ctx-ws-{}", workspace_id.0);
         let mut inspect = podman_command(&self.data_root)?;
@@ -696,7 +1036,8 @@ impl HarnessRuntimeManager {
         daemon_port: u16,
         observer: Option<&dyn HarnessSetupObserver>,
     ) -> Result<HarnessContainer> {
-        self.ensure_container_machine_ready(observer).await?;
+        self.ensure_container_machine_ready(settings, observer)
+            .await?;
         self.ensure_container_after_machine_ready(EnsureContainerRequest {
             workspace,
             worktree,

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { useLocation, useNavigate } from "react-router-dom";
 import type { User } from "@supabase/supabase-js";
 import {
+  ContainerMachineMemoryProfile,
+  ExecutionSettings as ApiExecutionSettings,
   DevRestartProvidersResult,
   EnableMobileAccessResponse,
   MobileAccessStatus,
@@ -74,6 +76,64 @@ import {
   parseGiB,
   sectionFromHash,
 } from "./SettingsPage.utils";
+
+const DEFAULT_MACHINE_MEMORY_PROFILE: ContainerMachineMemoryProfile = "balanced";
+const DEFAULT_MACHINE_IDLE_SHUTDOWN_SECONDS = 15 * 60;
+const DEFAULT_MACHINE_HOST_PRESSURE_SWAP_THRESHOLD_MB = 1024;
+
+function defaultExecutionSettings(): ApiExecutionSettings {
+  return {
+    mode: "host",
+    container: {
+      runtime: "podman",
+      mount_mode: "host_mounted",
+      network_mode: "llm_only",
+      allowlist: [],
+      image: null,
+      machine: {
+        memory_profile: DEFAULT_MACHINE_MEMORY_PROFILE,
+        custom_memory_mb: null,
+        idle_shutdown_seconds: DEFAULT_MACHINE_IDLE_SHUTDOWN_SECONDS,
+        host_pressure_swap_threshold_mb: DEFAULT_MACHINE_HOST_PRESSURE_SWAP_THRESHOLD_MB,
+      },
+    },
+  };
+}
+
+function normalizeExecutionSettings(value: ApiExecutionSettings | null | undefined): ApiExecutionSettings {
+  const fallback = defaultExecutionSettings();
+  return {
+    mode: value?.mode ?? fallback.mode,
+    container: {
+      runtime: value?.container?.runtime ?? fallback.container.runtime,
+      mount_mode: value?.container?.mount_mode ?? fallback.container.mount_mode,
+      network_mode: value?.container?.network_mode ?? fallback.container.network_mode,
+      allowlist: value?.container?.allowlist ?? fallback.container.allowlist,
+      image: value?.container?.image ?? fallback.container.image,
+      machine: {
+        memory_profile: value?.container?.machine?.memory_profile ?? fallback.container.machine.memory_profile,
+        custom_memory_mb: value?.container?.machine?.custom_memory_mb ?? fallback.container.machine.custom_memory_mb,
+        idle_shutdown_seconds:
+          value?.container?.machine?.idle_shutdown_seconds ?? fallback.container.machine.idle_shutdown_seconds,
+        host_pressure_swap_threshold_mb:
+          value?.container?.machine?.host_pressure_swap_threshold_mb
+          ?? fallback.container.machine.host_pressure_swap_threshold_mb,
+      },
+    },
+  };
+}
+
+function formatOptionalInteger(value: number | null | undefined): string {
+  return value === null || value === undefined ? "" : String(value);
+}
+
+function parseUnsignedInteger(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return Math.round(parsed);
+}
 
 export default function SettingsPage() {
   const location = useLocation();
@@ -148,8 +208,16 @@ export default function SettingsPage() {
   const [telemetryEndpoint, setTelemetryEndpoint] = useState("");
   const resourceGovernanceHydrated = useRef(false);
   const sandboxingHydrated = useRef(false);
+  const executionHydrated = useRef(false);
   const [resourceGovernanceEnabled, setResourceGovernanceEnabled] = useState(true);
   const [providerControlMode, setProviderControlMode] = useState<SandboxingSettings["provider_control_mode"]>("full");
+  const [executionSettings, setExecutionSettings] = useState<ApiExecutionSettings>(() => defaultExecutionSettings());
+  const [machineMemoryProfile, setMachineMemoryProfile] = useState<ContainerMachineMemoryProfile>(DEFAULT_MACHINE_MEMORY_PROFILE);
+  const [machineCustomMemoryMb, setMachineCustomMemoryMb] = useState("");
+  const [machineIdleShutdownSeconds, setMachineIdleShutdownSeconds] = useState(String(DEFAULT_MACHINE_IDLE_SHUTDOWN_SECONDS));
+  const [machineHostPressureSwapThresholdMb, setMachineHostPressureSwapThresholdMb] = useState(
+    String(DEFAULT_MACHINE_HOST_PRESSURE_SWAP_THRESHOLD_MB),
+  );
   const [resourceGovernanceMode, setResourceGovernanceMode] =
     useState<ResourceGovernanceSettings["mode"]>("auto");
   const [resourceCpuQuotaPct, setResourceCpuQuotaPct] = useState("");
@@ -423,6 +491,14 @@ export default function SettingsPage() {
         if (sb?.provider_control_mode) {
           setProviderControlMode(sb.provider_control_mode);
         }
+        const execution = normalizeExecutionSettings(s.execution ?? null);
+        setExecutionSettings(execution);
+        setMachineMemoryProfile(execution.container.machine.memory_profile);
+        setMachineCustomMemoryMb(formatOptionalInteger(execution.container.machine.custom_memory_mb));
+        setMachineIdleShutdownSeconds(String(execution.container.machine.idle_shutdown_seconds));
+        setMachineHostPressureSwapThresholdMb(
+          String(execution.container.machine.host_pressure_swap_threshold_mb),
+        );
 
         if (rg) {
           setResourceGovernanceMode(rg.mode ?? "auto");
@@ -473,6 +549,14 @@ export default function SettingsPage() {
       if (next.sandboxing?.provider_control_mode) {
         setProviderControlMode(next.sandboxing.provider_control_mode);
       }
+      const execution = normalizeExecutionSettings(next.execution ?? null);
+      setExecutionSettings(execution);
+      setMachineMemoryProfile(execution.container.machine.memory_profile);
+      setMachineCustomMemoryMb(formatOptionalInteger(execution.container.machine.custom_memory_mb));
+      setMachineIdleShutdownSeconds(String(execution.container.machine.idle_shutdown_seconds));
+      setMachineHostPressureSwapThresholdMb(
+        String(execution.container.machine.host_pressure_swap_threshold_mb),
+      );
     } catch (e: unknown) {
       if (seq !== saveSeq.current) return;
       setSaveError(errorMessage(e));
@@ -486,6 +570,34 @@ export default function SettingsPage() {
       provider_control_mode: providerControlMode,
     };
   }, [providerControlMode]);
+
+  const executionPayload = useMemo((): ApiExecutionSettings => {
+    const customMemoryMb = parseUnsignedInteger(machineCustomMemoryMb);
+    const idleShutdownSeconds =
+      parseUnsignedInteger(machineIdleShutdownSeconds) ?? DEFAULT_MACHINE_IDLE_SHUTDOWN_SECONDS;
+    const hostPressureSwapThresholdMb =
+      parseUnsignedInteger(machineHostPressureSwapThresholdMb)
+      ?? DEFAULT_MACHINE_HOST_PRESSURE_SWAP_THRESHOLD_MB;
+
+    return {
+      ...executionSettings,
+      container: {
+        ...executionSettings.container,
+        machine: {
+          memory_profile: machineMemoryProfile,
+          custom_memory_mb: machineMemoryProfile === "custom" ? customMemoryMb : null,
+          idle_shutdown_seconds: idleShutdownSeconds,
+          host_pressure_swap_threshold_mb: hostPressureSwapThresholdMb,
+        },
+      },
+    };
+  }, [
+    executionSettings,
+    machineCustomMemoryMb,
+    machineHostPressureSwapThresholdMb,
+    machineIdleShutdownSeconds,
+    machineMemoryProfile,
+  ]);
 
   const resourceGovernancePayload = useMemo((): ResourceGovernanceSettings => {
     const cpuQuota = Number(resourceCpuQuotaPct);
@@ -516,6 +628,23 @@ export default function SettingsPage() {
     return true;
   }, [resourceGovernanceEnabled, resourceGovernanceMode, resourceMemoryHighGb, resourceMemoryMaxGb]);
 
+  const sandboxMachineCanSave = useMemo(() => {
+    const idle = parseUnsignedInteger(machineIdleShutdownSeconds);
+    if (idle === null || idle === 0) return false;
+    const threshold = parseUnsignedInteger(machineHostPressureSwapThresholdMb);
+    if (threshold === null) return false;
+    if (machineMemoryProfile === "custom") {
+      const customMemory = parseUnsignedInteger(machineCustomMemoryMb);
+      return customMemory !== null && customMemory >= 1024;
+    }
+    return true;
+  }, [
+    machineCustomMemoryMb,
+    machineHostPressureSwapThresholdMb,
+    machineIdleShutdownSeconds,
+    machineMemoryProfile,
+  ]);
+
   useEffect(() => {
     if (!loaded) return;
     if (!telemetryHydrated.current) {
@@ -545,6 +674,20 @@ export default function SettingsPage() {
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, sandboxingPayload]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    if (!executionHydrated.current) {
+      executionHydrated.current = true;
+      return;
+    }
+    if (!sandboxMachineCanSave) return;
+    const t = window.setTimeout(() => {
+      savePatch({ execution: executionPayload });
+    }, 450);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [executionPayload, loaded, sandboxMachineCanSave]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -909,6 +1052,15 @@ export default function SettingsPage() {
         }}
         providerControlMode={providerControlMode}
         setProviderControlMode={setProviderControlMode}
+        machineMemoryProfile={machineMemoryProfile}
+        setMachineMemoryProfile={setMachineMemoryProfile}
+        machineCustomMemoryMb={machineCustomMemoryMb}
+        setMachineCustomMemoryMb={setMachineCustomMemoryMb}
+        machineIdleShutdownSeconds={machineIdleShutdownSeconds}
+        setMachineIdleShutdownSeconds={setMachineIdleShutdownSeconds}
+        machineHostPressureSwapThresholdMb={machineHostPressureSwapThresholdMb}
+        setMachineHostPressureSwapThresholdMb={setMachineHostPressureSwapThresholdMb}
+        sandboxMachineCanSave={sandboxMachineCanSave}
         devTools={{
           enabled: devToolsEnabled,
           restartBusy: devRestartBusy,

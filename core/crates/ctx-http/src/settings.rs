@@ -234,6 +234,48 @@ pub enum ContainerNetworkMode {
     All,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ContainerMachineMemoryProfile {
+    Economy,
+    #[default]
+    Balanced,
+    Performance,
+    Custom,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContainerMachineSettings {
+    #[serde(default)]
+    pub memory_profile: ContainerMachineMemoryProfile,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_memory_mb: Option<u32>,
+    #[serde(default = "default_container_machine_idle_shutdown_seconds")]
+    pub idle_shutdown_seconds: u64,
+    #[serde(default = "default_container_machine_host_pressure_swap_threshold_mb")]
+    pub host_pressure_swap_threshold_mb: u32,
+}
+
+impl Default for ContainerMachineSettings {
+    fn default() -> Self {
+        Self {
+            memory_profile: ContainerMachineMemoryProfile::Balanced,
+            custom_memory_mb: None,
+            idle_shutdown_seconds: default_container_machine_idle_shutdown_seconds(),
+            host_pressure_swap_threshold_mb:
+                default_container_machine_host_pressure_swap_threshold_mb(),
+        }
+    }
+}
+
+pub const fn default_container_machine_idle_shutdown_seconds() -> u64 {
+    15 * 60
+}
+
+pub const fn default_container_machine_host_pressure_swap_threshold_mb() -> u32 {
+    1024
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContainerExecutionSettings {
     pub runtime: ContainerRuntimeKind,
@@ -243,6 +285,8 @@ pub struct ContainerExecutionSettings {
     pub allowlist: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
+    #[serde(default)]
+    pub machine: ContainerMachineSettings,
 }
 
 impl Default for ContainerExecutionSettings {
@@ -253,6 +297,7 @@ impl Default for ContainerExecutionSettings {
             network_mode: ContainerNetworkMode::LlmOnly,
             allowlist: Vec::new(),
             image: None,
+            machine: ContainerMachineSettings::default(),
         }
     }
 }

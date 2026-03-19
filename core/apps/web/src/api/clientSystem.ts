@@ -233,6 +233,14 @@ export type ExecutionMode = "host" | "container";
 export type ContainerRuntimeKind = "podman";
 export type ContainerMountMode = "host_mounted" | "disk_isolated";
 export type ContainerNetworkMode = "llm_only" | "allowlist" | "all";
+export type ContainerMachineMemoryProfile = "economy" | "balanced" | "performance" | "custom";
+
+export type ContainerMachineSettings = {
+  memory_profile: ContainerMachineMemoryProfile;
+  custom_memory_mb?: number | null;
+  idle_shutdown_seconds: number;
+  host_pressure_swap_threshold_mb: number;
+};
 
 export type ContainerExecutionSettings = {
   runtime: ContainerRuntimeKind;
@@ -240,6 +248,7 @@ export type ContainerExecutionSettings = {
   network_mode: ContainerNetworkMode;
   allowlist: string[];
   image?: string | null;
+  machine: ContainerMachineSettings;
 };
 
 export type ExecutionSettings = {

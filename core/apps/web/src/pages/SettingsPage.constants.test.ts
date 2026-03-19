@@ -13,4 +13,11 @@ describe("Settings sections", () => {
     expect(dictation).toBeDefined();
     expect(dictation?.navHidden).toBe(true);
   });
+
+  it("keeps sandboxing visible in the sidebar navigation", () => {
+    const sandboxing = SECTIONS.find((section) => section.id === "sandboxing");
+
+    expect(sandboxing).toBeDefined();
+    expect(sandboxing?.navHidden).not.toBe(true);
+  });
 });

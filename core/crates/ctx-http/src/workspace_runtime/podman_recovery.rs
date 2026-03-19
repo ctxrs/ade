@@ -208,7 +208,7 @@ async fn wait_for_podman_machine_ready(
                 HarnessSetupPhase::MachineStartOrInit,
                 HarnessSetupLogLevel::Info,
                 &format!(
-                    "still waiting for podman machine readiness ({} elapsed)",
+                    "still waiting for local sandbox runtime readiness ({} elapsed)",
                     format_heartbeat_elapsed(started.elapsed())
                 ),
             );
@@ -262,17 +262,21 @@ pub(super) async fn run_podman_machine_init(
     data_root: &Path,
     machine_name: &str,
     machine_image: Option<&Path>,
+    memory_mb: Option<u32>,
     observer: Option<&dyn HarnessSetupObserver>,
 ) -> Result<PodmanMachineInitOutcome> {
     observe_phase(
         observer,
         HarnessSetupPhase::MachineStartOrInit,
-        "materializing podman machine from managed cache",
+        "materializing local sandbox runtime from managed cache",
     );
     let mut init = podman_command(data_root)?;
     init.arg("machine").arg("init").arg(machine_name);
     if let Some(machine_image) = machine_image {
         init.arg("--image").arg(machine_image);
+    }
+    if let Some(memory_mb) = memory_mb {
+        init.arg("--memory").arg(memory_mb.to_string());
     }
     init.stdout(Stdio::piped());
     init.stderr(Stdio::piped());
@@ -363,7 +367,7 @@ pub(super) async fn run_podman_machine_init(
                 HarnessSetupPhase::MachineStartOrInit,
                 HarnessSetupLogLevel::Info,
                 &format!(
-                    "still materializing podman machine from cached image ({} elapsed)",
+                    "still materializing local sandbox runtime from cached image ({} elapsed)",
                     format_heartbeat_elapsed(started.elapsed())
                 ),
             );
@@ -384,6 +388,7 @@ pub(super) async fn run_podman_machine_init(
 pub(super) async fn initialize_podman_machine(
     data_root: &Path,
     machine_name: &str,
+    memory_mb: Option<u32>,
     observer: Option<&dyn HarnessSetupObserver>,
     last_err: &mut String,
 ) -> Result<()> {
@@ -396,10 +401,15 @@ pub(super) async fn initialize_podman_machine(
     } else {
         None
     };
-    let init_outcome =
-        run_podman_machine_init(data_root, machine_name, machine_image.as_deref(), observer)
-            .await
-            .context("podman machine init")?;
+    let init_outcome = run_podman_machine_init(
+        data_root,
+        machine_name,
+        machine_image.as_deref(),
+        memory_mb,
+        observer,
+    )
+    .await
+    .context("podman machine init")?;
     let out = init_outcome.output;
     let combined = command_output_message(&out);
     if init_outcome.continued_after_machine_present {
@@ -448,7 +458,7 @@ pub(super) async fn ensure_podman_machine_running_with_observer(
                 observer,
                 HarnessSetupPhase::MachineStartOrInit,
                 HarnessSetupLogLevel::Info,
-                "waiting for concurrent podman machine init/start operation",
+                "waiting for concurrent local sandbox runtime init/start operation",
             );
             machine_lock.lock().await
         }
@@ -473,7 +483,7 @@ pub(super) async fn ensure_podman_machine_running_with_observer(
                     observer,
                     HarnessSetupPhase::MachineCheck,
                     HarnessSetupLogLevel::Info,
-                    "podman runtime is already reachable",
+                    "local sandbox runtime is already reachable",
                 );
                 persist_podman_machine_cache_to_shared_best_effort(data_root, observer).await;
                 return Ok(());
@@ -486,7 +496,7 @@ pub(super) async fn ensure_podman_machine_running_with_observer(
     observe_phase(
         observer,
         HarnessSetupPhase::MachineStartOrInit,
-        "starting or initializing podman machine",
+        "starting or initializing local sandbox runtime",
     );
     clear_stale_podman_machine_temp_state(data_root, &machine_name, observer);
 
@@ -502,7 +512,7 @@ pub(super) async fn ensure_podman_machine_running_with_observer(
             observer,
             HarnessSetupPhase::MachineStartOrInit,
             HarnessSetupLogLevel::Info,
-            "podman machine start command completed; waiting for readiness",
+            "local sandbox runtime start command completed; waiting for readiness",
         );
     } else {
         let combined = command_output_message(&start_out);
@@ -514,13 +524,14 @@ pub(super) async fn ensure_podman_machine_running_with_observer(
             observe_phase(
                 observer,
                 HarnessSetupPhase::MachineStartOrInit,
-                "materializing podman machine from managed cache",
+                "materializing local sandbox runtime from managed cache",
             );
-            initialize_podman_machine(data_root, &machine_name, observer, &mut last_err).await?;
+            initialize_podman_machine(data_root, &machine_name, None, observer, &mut last_err)
+                .await?;
             observe_phase(
                 observer,
                 HarnessSetupPhase::MachineStartOrInit,
-                "waiting for podman machine readiness",
+                "waiting for local sandbox runtime readiness",
             );
         } else if looks_like_recoverable_machine_start_error(&combined_lc) {
             if looks_like_running_but_unreachable_machine_start_error(&combined_lc) {
@@ -573,12 +584,12 @@ pub(super) async fn ensure_podman_machine_running_with_observer(
         observe_phase(
             observer,
             HarnessSetupPhase::MachineStartOrInit,
-            "waiting for podman machine readiness",
+            "waiting for local sandbox runtime readiness",
         );
         if wait_for_podman_machine_ready(
             data_root,
             observer,
-            "podman machine is ready",
+            "local sandbox runtime is ready",
             &mut last_err,
         )
         .await?
@@ -643,12 +654,12 @@ pub(super) async fn ensure_podman_machine_running_with_observer(
         observe_phase(
             observer,
             HarnessSetupPhase::MachineStartOrInit,
-            "waiting for podman machine readiness",
+            "waiting for local sandbox runtime readiness",
         );
         if wait_for_podman_machine_ready(
             data_root,
             observer,
-            "podman machine recovered after restart",
+            "local sandbox runtime recovered after restart",
             &mut last_err,
         )
         .await?
@@ -687,7 +698,7 @@ pub(super) async fn ensure_podman_machine_running_with_observer(
         }
 
         if let Err(err) =
-            initialize_podman_machine(data_root, &machine_name, observer, &mut last_err).await
+            initialize_podman_machine(data_root, &machine_name, None, observer, &mut last_err).await
         {
             last_err = format!("podman machine init failed after recreate: {err:#}");
         } else {
