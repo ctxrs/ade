@@ -9,7 +9,7 @@ import {
   type SubagentInvocation,
 } from "../../api/client";
 import { compareSessionTurnOrder, mergeSessionMessages } from "../sessionHeadState";
-import { appendFragment, isPartialEvent, mergeTurn } from "./cachePolicy";
+import { appendFragment, isPartialEvent, mergeTurn, mergeTurnStatus } from "./cachePolicy";
 import type { InternalEntry } from "./entryState";
 import { asRecord, messageFromEvent, readPayloadObject } from "./eventHydration";
 import { readPayloadString } from "./eventNormalization";
@@ -364,39 +364,37 @@ export function applyEventToTurns(
       break;
     }
     case "turn_queued": {
-      turn.status = "queued";
+      turn.status = mergeTurnStatus(turn.status, "queued");
       changed = true;
       break;
     }
     case "turn_started": {
-      turn.status = "running";
+      turn.status = mergeTurnStatus(turn.status, "running");
       changed = true;
       break;
     }
     case "turn_finished": {
       const payloadStatus = readTurnStatusFromPayload(event);
       if (payloadStatus) {
-        turn.status = payloadStatus;
+        turn.status = mergeTurnStatus(turn.status, payloadStatus);
       } else if (turn.status !== "interrupted" && turn.status !== "failed") {
-        turn.status = "completed";
+        turn.status = mergeTurnStatus(turn.status, "completed");
       }
       changed = true;
       break;
     }
     case "turn_interrupted": {
-      turn.status = "interrupted";
+      turn.status = mergeTurnStatus(turn.status, "interrupted");
       changed = true;
       break;
     }
     case "error": {
-      turn.status = "failed";
+      turn.status = mergeTurnStatus(turn.status, "failed");
       changed = true;
       break;
     }
     case "done": {
-      if (turn.status !== "interrupted" && turn.status !== "failed") {
-        turn.status = "completed";
-      }
+      turn.status = mergeTurnStatus(turn.status, "completed");
       const contextWindow = readPayloadObject(event.payload_json, "context_window");
       if (contextWindow) {
         turn.metrics_json = contextWindow;

@@ -12,17 +12,43 @@ const mergePartial = (p: string, n: string): string => {
 export const mergeTurn = (prev: SessionTurn, next: SessionTurn): SessionTurn => {
   const assistant_partial = mergePartial(prev.assistant_partial ?? "", next.assistant_partial ?? "");
   const thought_partial = mergePartial(prev.thought_partial ?? "", next.thought_partial ?? "");
+  const status = mergeTurnStatus(prev.status, next.status);
   return {
     ...prev,
     ...next,
+    status,
     assistant_partial,
     thought_partial,
+    end_seq: next.end_seq ?? prev.end_seq,
+    updated_at:
+      String(next.updated_at ?? "").localeCompare(String(prev.updated_at ?? "")) >= 0
+        ? next.updated_at
+        : prev.updated_at,
     tool_total: Math.max(prev.tool_total ?? 0, next.tool_total ?? 0),
     tool_pending: Math.max(prev.tool_pending ?? 0, next.tool_pending ?? 0),
     tool_running: Math.max(prev.tool_running ?? 0, next.tool_running ?? 0),
     tool_completed: Math.max(prev.tool_completed ?? 0, next.tool_completed ?? 0),
     tool_failed: Math.max(prev.tool_failed ?? 0, next.tool_failed ?? 0),
   };
+};
+
+const TURN_STATUS_PRIORITY: Record<NonNullable<SessionTurn["status"]>, number> = {
+  queued: 0,
+  running: 1,
+  completed: 2,
+  interrupted: 3,
+  failed: 4,
+};
+
+export const mergeTurnStatus = (
+  prev: SessionTurn["status"] | null | undefined,
+  next: SessionTurn["status"] | null | undefined,
+): SessionTurn["status"] => {
+  if (!prev) return next ?? prev ?? "queued";
+  if (!next) return prev;
+  const prevPriority = TURN_STATUS_PRIORITY[prev] ?? 0;
+  const nextPriority = TURN_STATUS_PRIORITY[next] ?? 0;
+  return nextPriority >= prevPriority ? next : prev;
 };
 
 const PARTIAL_EVENT_TYPES = new Set(["assistant_chunk"]);

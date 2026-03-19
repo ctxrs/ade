@@ -80,7 +80,7 @@ import {
   resolveEntryWorkspaceOwnerScope,
   resolveWorkspaceOwnerScope,
 } from "./sessionSupervisor/thoughtCache";
-import { dedupeIds, sameIdList } from "./sessionSupervisor/cachePolicy";
+import { dedupeIds, mergeTurn, sameIdList } from "./sessionSupervisor/cachePolicy";
 import {
   buildSubscribedSessions,
   emitSubscribedSessions,
@@ -666,6 +666,17 @@ export class SessionSupervisor {
         patch.op !== "replace" ||
         !isReplicaAuthority(entry.freshness) ||
         normalizedFreshness === "recovering";
+      const preservedTurnsById =
+        patch.op === "replace" && shouldReplaceReplay
+          ? new Map(
+              entry.turns
+                .map((turn) => {
+                  const turnId = idToString(turn.turn_id);
+                  return turnId ? ([turnId, turn] as const) : null;
+                })
+                .filter((item): item is readonly [string, SessionTurn] => item !== null),
+            )
+          : null;
       if (patch.op === "replace") {
         const incomingMessages = Array.isArray(patch.data.messages) ? patch.data.messages : [];
         const incomingMessageIds = new Set(
@@ -710,6 +721,21 @@ export class SessionSupervisor {
       if (shouldReplaceReplay && data.events && data.events.length > 0) {
         this.mergeEvents(entry, data.events, { notify: patch.op !== "replace" });
         this.applyAcpMetaFromEvents(entry, data.events);
+      }
+      if (preservedTurnsById && preservedTurnsById.size > 0 && entry.turns.length > 0) {
+        let reapplied = false;
+        const nextTurns = entry.turns.map((turn) => {
+          const turnId = idToString(turn.turn_id);
+          if (!turnId) return turn;
+          const preserved = preservedTurnsById.get(turnId);
+          if (!preserved) return turn;
+          reapplied = true;
+          return mergeTurn(preserved, turn);
+        });
+        if (reapplied) {
+          entry.turns = nextTurns;
+          this.bumpTurnsRev(entry);
+        }
       }
       if (data.toolSummaries && data.toolSummaries.length > 0) {
         this.applyToolSummaries(entry, data.toolSummaries);

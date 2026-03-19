@@ -132,6 +132,7 @@ const asRecord = (value: unknown): Record<string, unknown> => {
 };
 
 type TestInternalEntry = {
+  session?: Session;
   turnsHydrated: boolean;
   turns: SessionTurn[];
   turnsRev: number;
@@ -1746,6 +1747,55 @@ describe("SessionSupervisor", () => {
     expect(replaced?.events[0]).toEqual(initialEvent);
   });
 
+  it("keeps an interrupted turn interrupted across bootstrap replace replay", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-replace-interrupted-monotonic";
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+    const entry = internals.ensureEntry(sessionId);
+
+    entry.session = mkSession(sessionId);
+    entry.turns = [
+      mkTurn({
+        sessionId,
+        turnId: "turn-1",
+        status: "interrupted",
+        startSeq: 1,
+      }),
+    ];
+    entry.turnsHydrated = true;
+    entry.lastEventSeq = 2;
+    entry.freshness = "bootstrap";
+
+    internals.handleReplicaPatches([
+      {
+        op: "replace",
+        sessionId,
+        data: {
+          session: mkSession(sessionId),
+          freshness: "authoritative",
+          turns: [
+            mkTurn({
+              sessionId,
+              turnId: "turn-1",
+              status: "running",
+              startSeq: 1,
+            }),
+          ],
+          events: [] as SessionEvent[],
+          messages: [] as Message[],
+          lastEventSeq: 1,
+          hasMoreTurns: false,
+        },
+      },
+    ]);
+
+    const current = sup.getSnapshot().sessions[sessionId];
+    expect(current?.turns).toHaveLength(1);
+    expect(current?.turns[0]?.status).toBe("interrupted");
+  });
+
   it("ignores active task upserts without head data", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 
@@ -2837,6 +2887,120 @@ describe("SessionSupervisor", () => {
     expect(updated?.hasMoreTurns).toBe(true);
     expect(updated?.historyExtended).toBe(true);
     expect(updated?.oldestTurnSeq).toBe(250);
+  });
+
+  it("does not let stale active-head seed regress an interrupted turn back to running", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-head-seed-interrupted-monotonic";
+    const listeners = new Set<(evt: WorkspaceActiveSnapshotEvent) => void>();
+    const store: WorkspaceActiveSnapshotEventSource = {
+      subscribe: () => () => {},
+      subscribeEvents: (listener: (evt: WorkspaceActiveSnapshotEvent) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      getSessionHeadSnapshot: () => null,
+      getWorktreeRoot: () => null,
+      getWorktreeVcsSnapshot: () => null,
+      setSubscribedSessions: () => {},
+      getSnapshot: () => mkWorkspaceSnapshotState(),
+    };
+
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+    attachWorkspaceStore(sup, store);
+    sup.openSession(sessionId, { mode: "active" });
+
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId] != null);
+
+    listeners.forEach((listener) =>
+      listener({
+        type: "session_head_seed",
+        workspace_id: "ws-1",
+        snapshot_rev: 1,
+        head: {
+          session: mkSession(sessionId),
+          turns: [mkTurn({ sessionId, turnId: "turn-1", status: "running", startSeq: 1 })],
+          events: [] as SessionEvent[],
+          messages: [] as Message[],
+          last_event_seq: 1,
+          state_rev: 1,
+          has_more_turns: false,
+          has_more_history: false,
+          history_cursor: null,
+          head_window: {
+            turn_limit: 5,
+            message_limit: 200,
+            event_limit: 0,
+            byte_limit: 1500000,
+            turn_count: 1,
+            message_count: 0,
+            event_count: 0,
+            bytes: 0,
+            truncated: false,
+          },
+        },
+      }),
+    );
+
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.turns[0]?.status === "running");
+
+    internals.handleReplicaPatches([
+      {
+        op: "append",
+        sessionId,
+        data: {
+          events: [
+            {
+              seq: 2,
+              id: "event-turn-interrupted",
+              session_id: sessionId,
+              run_id: "run-1",
+              turn_id: "turn-1",
+              event_type: "turn_interrupted",
+              payload_json: {},
+              created_at: new Date(2).toISOString(),
+            },
+          ],
+          lastEventSeq: 2,
+        },
+      },
+    ]);
+
+    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.turns[0]?.status === "interrupted");
+
+    listeners.forEach((listener) =>
+      listener({
+        type: "session_head_seed",
+        workspace_id: "ws-1",
+        snapshot_rev: 2,
+        head: {
+          session: mkSession(sessionId),
+          turns: [mkTurn({ sessionId, turnId: "turn-1", status: "running", startSeq: 1 })],
+          events: [] as SessionEvent[],
+          messages: [] as Message[],
+          last_event_seq: 1,
+          state_rev: 1,
+          has_more_turns: false,
+          has_more_history: false,
+          history_cursor: null,
+          head_window: {
+            turn_limit: 5,
+            message_limit: 200,
+            event_limit: 0,
+            byte_limit: 1500000,
+            turn_count: 1,
+            message_count: 0,
+            event_count: 0,
+            bytes: 0,
+            truncated: false,
+          },
+        },
+      }),
+    );
+
+    expect(sup.getSnapshot().sessions[sessionId]?.turns[0]?.status).toBe("interrupted");
   });
 
   it("refetches session state instead of reusing cache when no revision is known", async () => {
