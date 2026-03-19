@@ -336,6 +336,17 @@ export function recordSessionMessageListFlashTrace({
   const firstItemIds = normalizedSamples.map((sample) => sample.firstItemId);
   const renderedTopIds = normalizedSamples.map((sample) => sample.renderedTopId);
   const renderedAnchorIds = normalizedSamples.map((sample) => sample.renderedAnchorId);
+  const stayedBottomLocked = normalizedSamples.every((sample) => {
+    const distanceFromMax = sample.distanceFromMaxScrollPx;
+    const blankTail = sample.blankTailPx;
+    return (
+      (distanceFromMax == null || Math.abs(distanceFromMax) <= FLASH_SETTLE_THRESHOLD_PX) &&
+      (blankTail == null || Math.abs(blankTail) <= FLASH_SETTLE_THRESHOLD_PX)
+    );
+  });
+  const scrollTopSnapbackDetected = detectSnapback(scrollTopDeltas);
+  const firstItemSnapbackDetected = detectSnapback(firstItemTopDeltas);
+  const distanceFromMaxSnapbackDetected = detectSnapback(distanceFromMaxDeltas);
 
   const trace: SessionMessageListFlashTrace = {
     seq: 0,
@@ -360,9 +371,9 @@ export function recordSessionMessageListFlashTrace({
     layoutShiftCount,
     layoutShiftValue: Math.round(layoutShiftValue * 1000) / 1000,
     snapbackDetected:
-      detectSnapback(scrollTopDeltas) ||
-      detectSnapback(firstItemTopDeltas) ||
-      detectSnapback(distanceFromMaxDeltas),
+      distanceFromMaxSnapbackDetected ||
+      (!(stayedBottomLocked && layoutShiftCount === 0) &&
+        (scrollTopSnapbackDetected || firstItemSnapbackDetected)),
     detail,
     samples: normalizedSamples,
   };

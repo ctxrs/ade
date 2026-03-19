@@ -144,7 +144,7 @@ describe("useSessionMessageListController", () => {
       ...Array.from({ length: 20 }, (_, index) => makeSpacer(`next-middle-${index}`)),
       initialItems.at(-1)!,
     ];
-    const fake = createFakeMethods();
+    const fake = createFakeMethods(initialItems);
     coalescedItems = initialItems;
 
     const { result, rerender } = renderHook(
@@ -188,7 +188,7 @@ describe("useSessionMessageListController", () => {
     expect(fake.spies.replace).toHaveBeenCalledTimes(1);
     expect(fake.spies.replace).toHaveBeenLastCalledWith(mixedStructuralNext, {
       initialLocation: { index: "LAST", align: "end" },
-      purgeItemSizes: false,
+      purgeItemSizes: true,
     });
     expect(fake.spies.deleteRange).not.toHaveBeenCalled();
     expect(fake.spies.insert).not.toHaveBeenCalled();

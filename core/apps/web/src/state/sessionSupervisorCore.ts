@@ -137,10 +137,10 @@ const WARM_TTL_MS = readTunableInt("contextWarmSessionTtlMs", 10 * 60 * 1000);
 const HEAD_LIMIT = readTunableInt("contextSessionHeadLimit", TURN_PAGE_LIMIT);
 
 const isReplicaAuthority = (freshness: InternalEntry["freshness"]) =>
-  freshness === "replica" || freshness === "authoritative";
+  freshness === "authoritative";
 
 const toReplicaFreshness = (freshness: SessionReplicaFreshnessState): InternalEntry["freshness"] =>
-  freshness === "authoritative" ? "replica" : freshness;
+  freshness;
 
 // The daemon serializes transient events with `seq: null` (see Rust `SessionEvent` Serialize).
 // We assign a stable synthetic seq in a negative JS-safe range so sorting never scrambles
@@ -623,29 +623,7 @@ export class SessionSupervisor {
       if (!sessionId) continue;
       const entry = this.ensureEntry(sessionId);
       const priorHistoryExtended = entry.historyExtended;
-      const normalizedFreshness =
-        patch.data.freshness === undefined ? undefined : toReplicaFreshness(patch.data.freshness);
-      const shouldReplaceReplay =
-        patch.op !== "replace" ||
-        !isReplicaAuthority(entry.freshness) ||
-        entry.freshness === "recovering" ||
-        normalizedFreshness === "recovering";
       let localOnlyMessages: Message[] = [];
-      if (patch.op === "replace") {
-        const incomingMessages = Array.isArray(patch.data.messages) ? patch.data.messages : [];
-        const incomingMessageIds = new Set(
-          incomingMessages
-            .map((message) => idToString(message.id))
-            .filter((id): id is string => !!id),
-        );
-        localOnlyMessages = entry.messages.filter((message) => {
-          const id = idToString(message.id);
-          return id ? !incomingMessageIds.has(id) : false;
-        });
-        if (shouldReplaceReplay) {
-          this.resetEntryProjectionForReplace(entry, { skipPublish: true });
-        }
-      }
       if (patch.op === "evict") {
         const beforeSeq = patch.data.eventsBeforeSeq;
         if (typeof beforeSeq === "number") {
@@ -664,6 +642,28 @@ export class SessionSupervisor {
         continue;
       }
       const data = patch.data;
+      const normalizedFreshness =
+        data.freshness === undefined ? undefined : toReplicaFreshness(data.freshness);
+      const shouldReplaceReplay =
+        patch.op !== "replace" ||
+        entry.freshness === "recovering" ||
+        !isReplicaAuthority(entry.freshness) ||
+        normalizedFreshness === "recovering";
+      if (patch.op === "replace") {
+        const incomingMessages = Array.isArray(data.messages) ? data.messages : [];
+        const incomingMessageIds = new Set(
+          incomingMessages
+            .map((message) => idToString(message.id))
+            .filter((id): id is string => !!id),
+        );
+        localOnlyMessages = entry.messages.filter((message) => {
+          const id = idToString(message.id);
+          return id ? !incomingMessageIds.has(id) : false;
+        });
+        if (shouldReplaceReplay) {
+          this.resetEntryProjectionForReplace(entry, { skipPublish: true });
+        }
+      }
       if (data.session) {
         entry.session = data.session;
         if (!entry.mode) {
@@ -677,7 +677,7 @@ export class SessionSupervisor {
       if (data.activity !== undefined) {
         entry.activity = data.activity ?? null;
       }
-      if (data.freshness !== undefined) {
+      if (normalizedFreshness !== undefined) {
         entry.freshness = normalizedFreshness;
       }
       if (shouldReplaceReplay && data.turns && data.turns.length > 0) {

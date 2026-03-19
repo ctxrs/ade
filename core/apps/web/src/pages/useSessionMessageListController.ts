@@ -530,7 +530,7 @@ export function useSessionMessageListController(params: Params): Result {
       historyExpectedRef.current = false;
       methods.cancelSmoothScroll();
       suppressIdDiffLogsRef.current = { sessionId, remainingTicks: 2 };
-      methods.data.replace(next, { initialLocation, purgeItemSizes: false });
+      methods.data.replace(next, { initialLocation, purgeItemSizes: true });
       snapToBottom(methods);
       recordDebugSnapshot("data:replace", {
         reason: "initialPopulation",
@@ -1133,7 +1133,7 @@ export function useSessionMessageListController(params: Params): Result {
         historyExpected,
         stickToBottom: stickToBottomRef.current,
       });
-      methods.data.replace(next, { initialLocation, purgeItemSizes: false });
+      methods.data.replace(next, { initialLocation, purgeItemSizes: true });
       snapToBottom(methods);
       recordDebugSnapshot("data:replace", {
         reason: "bottomLockedStructuralReconcile",

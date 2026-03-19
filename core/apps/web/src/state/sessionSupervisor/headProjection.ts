@@ -69,8 +69,11 @@ function resolveActiveSnapshotSeedFreshness(
   entry: InternalEntry,
 ): InternalEntry["freshness"] {
   if (entry.freshness === "recovering") return "recovering";
-  if (entry.freshness === "replica" || entry.freshness === "authoritative") return "replica";
-  return "bootstrap";
+  if (entry.freshness === "authoritative") return "authoritative";
+  const snapshotState = this.workspaceSnapshotState;
+  const liveConnectedSnapshot =
+    snapshotState?.liveSnapshotApplied === true && snapshotState.connection === "connected";
+  return liveConnectedSnapshot ? "authoritative" : "bootstrap";
 }
 
 function pruneOmittedNonTerminalTurns(

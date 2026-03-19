@@ -128,7 +128,7 @@ type TestInternalEntry = {
   turnsHydrated: boolean;
   turns: SessionTurn[];
   turnsRev: number;
-  freshness?: "bootstrap" | "authoritative" | "recovering" | "replica";
+  freshness?: "bootstrap" | "authoritative" | "recovering";
   messages: Message[];
   messagesRev: number;
   events: SessionEvent[];
@@ -1683,7 +1683,7 @@ describe("SessionSupervisor", () => {
       created_at: new Date(1).toISOString(),
     };
 
-    entry.freshness = "replica";
+    entry.freshness = "authoritative";
     entry.turns = [initialTurn];
     entry.messages = [initialMessage];
     entry.events = [initialEvent];
@@ -1727,7 +1727,7 @@ describe("SessionSupervisor", () => {
     ]);
 
     const replaced = sup.getSnapshot().sessions[sessionId];
-    expect(replaced?.freshness).toBe("replica");
+    expect(replaced?.freshness).toBe("authoritative");
     expect(replaced?.turns).toHaveLength(1);
     expect(replaced?.turns[0]?.turn_id).toBe("turn-initial");
     expect(replaced?.messages).toHaveLength(1);
@@ -1925,7 +1925,9 @@ describe("SessionSupervisor", () => {
     expect(getSessionSnapshot).not.toHaveBeenCalled();
 
     resolveHead(head);
-    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "replica");
+    await waitForCondition(
+      () => sup.getSnapshot().sessions[sessionId]?.freshness === "authoritative",
+    );
   });
 
   it("rehydrates from /head when active heads came only from bootstrap cache", async () => {
@@ -1973,7 +1975,9 @@ describe("SessionSupervisor", () => {
     expect(getSessionHead).toHaveBeenCalledTimes(1);
 
     resolveHead(head);
-    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "replica");
+    await waitForCondition(
+      () => sup.getSnapshot().sessions[sessionId]?.freshness === "authoritative",
+    );
   });
 
   it("forces /head on warm reopen after disconnect clears authority", async () => {
@@ -2024,7 +2028,9 @@ describe("SessionSupervisor", () => {
     expect(getSessionHeadMock).toHaveBeenCalledTimes(1);
 
     resolveFirstHead(head);
-    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "replica");
+    await waitForCondition(
+      () => sup.getSnapshot().sessions[sessionId]?.freshness === "authoritative",
+    );
 
     sup.setWorkspaceSnapshotState({ ...activeState, connection: "disconnected" });
     await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.loadState === "recovering");
@@ -2044,7 +2050,9 @@ describe("SessionSupervisor", () => {
     });
 
     resolveSecondHead(head);
-    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "replica");
+    await waitForCondition(
+      () => sup.getSnapshot().sessions[sessionId]?.freshness === "authoritative",
+    );
   });
 
   it("does not let compact active-head seeds overwrite a replica-warm session", async () => {
@@ -2117,7 +2125,9 @@ describe("SessionSupervisor", () => {
     sup.setWorkspaceSnapshotState(activeState);
     const close = sup.openSession(sessionId, { mode: "active" });
 
-    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "replica");
+    await waitForCondition(
+      () => sup.getSnapshot().sessions[sessionId]?.freshness === "authoritative",
+    );
     await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.messages.length === 2);
     await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.turns.length === 2);
 
@@ -2203,7 +2213,9 @@ describe("SessionSupervisor", () => {
     sup.setWorkspaceSnapshotState(activeState);
     sup.openSession(sessionId, { mode: "active" });
 
-    await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.freshness === "replica");
+    await waitForCondition(
+      () => sup.getSnapshot().sessions[sessionId]?.freshness === "authoritative",
+    );
     await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.messages.length === 2);
 
     sup.setWorkspaceSnapshotState({ ...activeState, connection: "disconnected" });
@@ -2515,7 +2527,7 @@ describe("SessionSupervisor", () => {
     const sup = new SessionSupervisor();
     const internals = asSupervisorInternals(sup);
     const entry = internals.ensureEntry(sessionId);
-    entry.freshness = "replica";
+    entry.freshness = "authoritative";
     entry.stateRev = 7;
 
     sup.openSession(sessionId, { mode: "active" });
@@ -2548,7 +2560,7 @@ describe("SessionSupervisor", () => {
     const sup = new SessionSupervisor();
     const internals = asSupervisorInternals(sup);
     const entry = internals.ensureEntry(sessionId);
-    entry.freshness = "replica";
+    entry.freshness = "authoritative";
     entry.stateRev = 7;
     entry.stateAppliedRev = 7;
 
@@ -2787,7 +2799,7 @@ describe("SessionSupervisor", () => {
     const sup = new SessionSupervisor();
     const internals = asSupervisorInternals(sup);
     const entry = internals.ensureEntry(sessionId);
-    entry.freshness = "replica";
+    entry.freshness = "authoritative";
     entry.stateRev = 7;
 
     sup.openSession(sessionId, { mode: "active" });
