@@ -19,9 +19,7 @@ export const buildWizardRoutePlan = (
     snapshot.harnessCandidatesStatus === "error" || snapshot.missingHarnessCount > 0,
   includeAuthImport:
     snapshot.authImportStatus === "error" || snapshot.authImportCandidateCount > 0,
-  includeTitling: snapshot.titlingMode !== "skip" && (
-    snapshot.titlingProbeStatus === "error" || snapshot.titlingRequired
-  ),
+  includeTitling: snapshot.titlingMode !== "skip" && snapshot.titlingRequired,
 });
 
 export const resolveRoutePlanInsertionStep = (

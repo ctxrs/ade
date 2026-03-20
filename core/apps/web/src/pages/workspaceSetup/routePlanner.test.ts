@@ -126,6 +126,6 @@ describe("routePlanner", () => {
 
     expect(plan.includeAuthImport).toBe(true);
     expect(plan.includeHarnessDownloads).toBe(true);
-    expect(plan.includeTitling).toBe(true);
+    expect(plan.includeTitling).toBe(false);
   });
 });

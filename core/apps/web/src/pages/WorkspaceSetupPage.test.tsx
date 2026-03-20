@@ -434,6 +434,12 @@ describe("WorkspaceSetupPage", () => {
         installed: true,
         health: "ok",
         details: { install_supported: "true" },
+        usability: {
+          usable: true,
+          status: "ready",
+          blocking_provider_ids: [],
+          recommended_action: "none",
+        },
       }),
     ] as never);
 
@@ -1770,6 +1776,19 @@ describe("WorkspaceSetupPage", () => {
     });
     expect(screen.getByTestId("wizard-titling-mode-remote")).toBeInTheDocument();
     expect(screen.getByTestId("wizard-titling-mode-local")).toBeInTheDocument();
+  });
+
+  it("starts titling probe as soon as local is selected", async () => {
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(getSettings).mockResolvedValue({ title_generation: null } as never);
+
+    renderPage();
+    await screen.findByTestId("workspace-setup");
+    await selectLocalAndContinue();
+
+    await waitFor(() => {
+      expect(getSettings).toHaveBeenCalled();
+    });
   });
 
   it("holds on container until async titling planning resolves, then advances once", async () => {
