@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   MIN_MACHINE_IDLE_SHUTDOWN_SECONDS,
   canSaveSandboxMachineSettings,
-} from "./SettingsPage";
+} from "./settings/sandboxExecutionSettings";
 import {
   desktopEditorSettingsEqual,
   executionSettingsStableKey,
