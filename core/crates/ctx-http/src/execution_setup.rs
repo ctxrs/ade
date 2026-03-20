@@ -1103,10 +1103,38 @@ impl ExecutionSetupCoordinator {
             .await
     }
 
+    async fn configured_startup_image(&self) -> Result<String> {
+        let db_path = self.data_root.join("db").join("db.sqlite");
+        let store = Store::open_sqlite(&db_path, None)
+            .await
+            .context("open global settings store")?;
+        let loaded = crate::settings::load_settings(&store)
+            .await
+            .context("load execution settings")?;
+        store.close().await;
+        let exec = loaded.execution.unwrap_or_default();
+        Ok(harness_runtime::resolve_container_image(&exec.container))
+    }
+
     async fn refresh_startup_prewarm_metadata_after_successful_container_launch(
         &self,
         image: &str,
     ) {
+        let startup_image = match self.configured_startup_image().await {
+            Ok(startup_image) => startup_image,
+            Err(err) => {
+                tracing::warn!(
+                    image,
+                    error = %format_error_chain(&err),
+                    "failed to resolve configured startup image after successful launch; leaving startup prewarm metadata unchanged"
+                );
+                return;
+            }
+        };
+        if startup_image != image {
+            return;
+        }
+
         let (metadata_missing, metadata_image_ref_changed) = match read_prewarm_metadata(
             &self.data_root,
         )
