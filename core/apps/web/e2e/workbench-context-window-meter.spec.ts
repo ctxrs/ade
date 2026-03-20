@@ -5,13 +5,14 @@ import { tmpdir } from "os";
 import path from "path";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 import { selectHarnessBySearch } from "./utils/harnessEndpointAuth";
+import { waitForTerminalState } from "../src/testing/providerRuntime";
 
 const asRecord = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
 };
 
-test("workbench: context window meter renders for a live fake-provider session", async ({ page }) => {
+test("workbench: context window meter renders for a live fake-provider session", async ({ page, request }) => {
   test.setTimeout(120_000);
 
   const repo = mkdtempSync(path.join(tmpdir(), "ctx-e2e-"));
@@ -29,6 +30,7 @@ test("workbench: context window meter renders for a live fake-provider session",
     workspaceName: `ws-${Date.now()}`,
   });
   await selectHarnessBySearch(page, "fake", /fake/i);
+  await expect(page.locator(".wb-new-composer-card .wb-context-window")).toHaveCount(0);
 
   let forceStaleFirstSnapshot = true;
   await page.route("**/api/sessions/*/snapshot**", async (route) => {
@@ -56,8 +58,16 @@ test("workbench: context window meter renders for a live fake-provider session",
   });
 
   const prompt = "slow-diff-test 0123456789";
+  const createSessionResponsePromise = page.waitForResponse((response) =>
+    response.request().method() === "POST"
+    && /\/api\/tasks\/[^/]+\/sessions$/.test(response.url()),
+  );
   await page.locator("textarea.wb-composer-textarea").first().fill(prompt);
   await page.getByRole("button", { name: "Send" }).click();
+  const createSessionResponse = await createSessionResponsePromise;
+  expect(createSessionResponse.ok()).toBe(true);
+  const sessionId = String((await createSessionResponse.json() as { id?: string }).id ?? "");
+  expect(sessionId).not.toBe("");
 
   const rows = page.locator(".wb-task-row");
   await expect(rows).toHaveCount(1, { timeout: 20_000 });
@@ -65,11 +75,11 @@ test("workbench: context window meter renders for a live fake-provider session",
 
   const activeTextarea = page.locator(".wb-session-slot textarea.wb-active-textarea");
   await expect(activeTextarea).toBeVisible({ timeout: 20_000 });
-
-  const assistantEntries = page.locator(".wb-session-slot .wb-assistant-entry");
-  await expect(assistantEntries.filter({ hasText: "done: slow-diff-test 0123456789" })).toBeVisible({
-    timeout: 60_000,
+  const terminal = await waitForTerminalState(request, sessionId, {
+    timeoutMs: 60_000,
+    pollMs: 1_000,
   });
+  expect(terminal.terminalStatus, terminal.errorMessage ?? "fake-provider run did not complete").toBe("completed");
 
   const contextWindow = page.locator(".wb-session-slot .wb-context-window");
   await expect(contextWindow).toBeVisible({ timeout: 20_000 });

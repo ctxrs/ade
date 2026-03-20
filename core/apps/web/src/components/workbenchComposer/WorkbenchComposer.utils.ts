@@ -91,7 +91,6 @@ export function formatUsedTokenCount(value: number): string {
 }
 
 export type ContextWindowDisplay = {
-  state: "known" | "unknown";
   percent?: number;
   usedLabel?: string;
   windowLabel?: string;
@@ -101,13 +100,9 @@ export type ContextWindowDisplay = {
 
 export function describeContextWindow(
   contextWindow?: ContextWindowInfo | null,
-): ContextWindowDisplay {
+) : ContextWindowDisplay | null {
   if (!contextWindow?.windowTokens) {
-    return {
-      state: "unknown",
-      title: "Context Window: Unknown. Metrics unavailable for this session/model.",
-      summary: "Unknown",
-    };
+    return null;
   }
   let usedTokens = contextWindow.usedTokens;
   if (usedTokens == null && contextWindow.remainingTokens != null) {
@@ -117,11 +112,7 @@ export function describeContextWindow(
     usedTokens = Math.round(contextWindow.windowTokens * (1 - contextWindow.remainingFraction));
   }
   if (usedTokens == null) {
-    return {
-      state: "unknown",
-      title: "Context Window: Unknown. Metrics unavailable for this session/model.",
-      summary: "Unknown",
-    };
+    return null;
   }
 
   const windowTokens = Math.max(1, Math.round(contextWindow.windowTokens));
@@ -132,7 +123,6 @@ export function describeContextWindow(
   const summary = `${percent}% · ${usedLabel}/${windowLabel}`;
 
   return {
-    state: "known",
     percent,
     usedLabel,
     windowLabel,
@@ -141,8 +131,7 @@ export function describeContextWindow(
   };
 }
 
-export function buildModelsFromProviderOptions(opts?: ProviderOptions): Array<{ id: string; name?: string }> {
-  const raw = opts?.models;
+export function buildModelsFromCatalogPayload(raw?: unknown): Array<{ id: string; name?: string }> {
   if (!raw) return [];
   const rec = asRecord(raw);
   const list = rec.availableModels ?? rec.available_models ?? rec.models ?? raw;
@@ -156,6 +145,10 @@ export function buildModelsFromProviderOptions(opts?: ProviderOptions): Array<{ 
       };
     })
     .filter((m) => m.id.length > 0);
+}
+
+export function buildModelsFromProviderOptions(opts?: ProviderOptions): Array<{ id: string; name?: string }> {
+  return buildModelsFromCatalogPayload(opts?.models);
 }
 
 export function buildModelsForProvider(_providerId: string, opts?: ProviderOptions): Array<{ id: string; name?: string }> {

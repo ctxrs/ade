@@ -2890,6 +2890,32 @@
   width: 100%;
 }
 
+.wb-session-start-failure {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+
+.wb-session-start-failure .wb-banner {
+  width: 100%;
+  max-width: 820px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.wb-session-start-failure-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.wb-session-start-failure .error {
+  white-space: pre-wrap;
+}
+
 .wb-session-view {
   --wb-thread-max-width: 820px;
   --wb-scrollbar-width: 6px;

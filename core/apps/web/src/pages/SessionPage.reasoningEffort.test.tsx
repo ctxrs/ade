@@ -273,6 +273,50 @@ describe("SessionPage reasoning effort", () => {
     ]);
   });
 
+  it("prefers the shared provider catalog over cached ACP model metadata for available options", async () => {
+    sharedProviderOptionsState.value = {
+      provider_id: "codex",
+      workspace_id: "ws-1",
+      supports_load: false,
+      auth_required: false,
+      has_active_auth: true,
+      auth_mode: "subscription",
+      probed_at: "2026-03-10T00:00:00.000Z",
+      models: {
+        current_model_id: "gpt-5.4/medium",
+        models: [
+          { id: "gpt-5.4/low" },
+          { id: "gpt-5.4/medium" },
+          { id: "gpt-5.4/xhigh" },
+        ],
+      },
+    };
+    sessionEntries.map[sessionId] = {
+      ...sessionEntries.map[sessionId],
+      acpModels: {
+        current_model_id: "gpt-5.4/medium",
+        models: [{ id: "gpt-5.4/medium" }, { id: "gpt-5.4/xhigh" }],
+      },
+    };
+
+    render(<SessionView sessionId={sessionId} />);
+
+    await waitFor(() => {
+      expect(paneSpy).toHaveBeenCalled();
+    });
+
+    const lastCall = paneSpy.mock.calls.at(-1)?.[0] as {
+      currentModelId?: string;
+      availableModels?: Array<{ id: string }>;
+    } | undefined;
+    expect(lastCall?.currentModelId).toBe("gpt-5.4/xhigh");
+    expect(lastCall?.availableModels?.map((model) => model.id)).toEqual([
+      "gpt-5.4/low",
+      "gpt-5.4/medium",
+      "gpt-5.4/xhigh",
+    ]);
+  });
+
   it("keeps active-session model and effort options from ACP metadata when shared provider options are unavailable", async () => {
     sharedProviderOptionsState.value = undefined;
 
@@ -423,6 +467,7 @@ describe("SessionPage reasoning effort", () => {
       const optimisticCall = paneSpy.mock.calls.at(-1)?.[0] as { currentModelId?: string };
       expect(optimisticCall.currentModelId).toBe("gpt-5.4/medium");
     });
+    expect(setSessionModelMock).toHaveBeenCalledWith(sessionId, "gpt-5.4/medium");
 
     deferred.resolve({
       id: sessionId,

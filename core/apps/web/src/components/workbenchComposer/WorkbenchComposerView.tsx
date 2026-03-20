@@ -61,7 +61,10 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
   const sendActionDisabled = !showStop && (!!sendDisabled || !!sendDisabledReason);
   const sendActionTitle = showStop ? "Stop" : sendDisabledReason ?? "Send";
   const sendActionLabel = showStop ? "Stop" : "Send";
-  const contextWindowDisplay = useMemo(() => describeContextWindow(contextWindow), [contextWindow]);
+  const contextWindowDisplay = useMemo(
+    () => (variant === "activeSession" ? describeContextWindow(contextWindow) : null),
+    [contextWindow, variant],
+  );
 
   const [openMenu, setOpenMenu] = useState<OpenMenuId | null>(null);
   const [menuStyle, setMenuStyle] = useState<React.CSSProperties | null>(null);

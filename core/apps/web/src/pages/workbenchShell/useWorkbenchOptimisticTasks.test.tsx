@@ -361,6 +361,37 @@ describe("useWorkbenchOptimisticTasks", () => {
     });
   });
 
+  it("keeps failed optimistic session ids marked optimistic so snapshot loading stays suppressed", async () => {
+    let current: HookValue | null = null;
+    const failed = {
+      ...makeOptimisticTask("task-1", "session-1", "failed"),
+      localError: "model_id must be a concrete model id",
+    };
+
+    render(
+      <Harness
+        activeTaskId="task-1"
+        activeTaskIdFromTab="task-1"
+        tasksById={{}}
+        onChange={(value) => {
+          current = value;
+        }}
+      />,
+    );
+
+    act(() => {
+      current?.setOptimisticTasks([failed]);
+    });
+
+    await waitFor(() => {
+      expect(current?.optimisticSessionIdSet.has("session-1")).toBe(true);
+      expect(current?.optimisticFailureBySessionId["session-1"]).toEqual({
+        prompt: "Write docs",
+        error: "model_id must be a concrete model id",
+      });
+    });
+  });
+
   it("keeps a synced optimistic task active until the server publishes a primary head with messages", async () => {
     let current: HookValue | null = null;
     const session = makeSession("session-1", "task-1");

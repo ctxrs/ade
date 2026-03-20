@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { buildModelsForProvider, shouldShowLoadingProviderModels } from "./WorkbenchComposer.utils";
+import {
+  buildModelsForProvider,
+  buildModelsFromCatalogPayload,
+  shouldShowLoadingProviderModels,
+} from "./WorkbenchComposer.utils";
 
 describe("buildModelsForProvider", () => {
   it("does not inject a browser-only gemini fallback when provider options are missing", () => {
@@ -23,6 +27,18 @@ describe("buildModelsForProvider", () => {
     })).toEqual([
       { id: "auto-gemini-3", name: "Auto (Gemini 3)" },
       { id: "gemini-3-pro-preview", name: "Gemini 3 Pro Preview" },
+    ]);
+  });
+});
+
+describe("buildModelsFromCatalogPayload", () => {
+  it("parses ACP model payloads directly", () => {
+    expect(buildModelsFromCatalogPayload({
+      current_model_id: "gpt-5.4/medium",
+      models: [{ id: "gpt-5.4/medium" }, { id: "gpt-5.4/xhigh" }],
+    })).toEqual([
+      { id: "gpt-5.4/medium", name: undefined },
+      { id: "gpt-5.4/xhigh", name: undefined },
     ]);
   });
 });

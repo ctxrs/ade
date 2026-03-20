@@ -620,11 +620,55 @@ describe("WorkbenchComposer textarea sizing", () => {
 
     render(<ActiveHarness />);
 
-    const indicator = screen.getByText("Unknown");
-    expect(indicator).toHaveAttribute(
-      "title",
-      "Context Window: Unknown. Metrics unavailable for this session/model.",
-    );
+    expect(document.querySelector(".wb-context-window")).toBeNull();
+  });
+
+  it("never renders a context-window indicator in the new-task composer", async () => {
+    const NewTaskHarness = () => {
+      const [value, setValue] = useState("");
+      const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+      const [modeId, setModeId] = useState<WorkbenchModeId>("default");
+      const [draftHarness, setDraftHarness] = useState<DraftHarness | null>({ providerId: "codex", modelId: "gpt-5" });
+      const harnessCatalog: HarnessCatalogEntry[] = [{ id: "codex", label: "Codex", logoSrc: "" }];
+      const providersById: Record<string, ProviderStatus> = {
+        codex: makeProviderStatus("codex"),
+      };
+
+      return (
+        <WorkbenchComposer
+          variant="newSession"
+          value={value}
+          setValue={setValue}
+          placeholder="@ for context, / for commands"
+          inputDisabled={false}
+          sessionIdForAutocomplete={null}
+          workspaceIdForAutocomplete={null}
+          slashCommands={[]}
+          attachments={attachments}
+          setAttachments={setAttachments}
+          onSend={vi.fn()}
+          sendDisabled={false}
+          sendDisabledReason={null}
+          onInterrupt={null}
+          modeId={modeId}
+          setModeId={setModeId}
+          harnessCatalog={harnessCatalog}
+          providersById={providersById}
+          providerInstallsById={{}}
+          onInstallProvider={vi.fn()}
+          onInstallAllProviders={vi.fn()}
+          providerOptions={{}}
+          ensureProviderAuthSummary={async () => undefined}
+          draftHarness={draftHarness}
+          setDraftHarness={setDraftHarness}
+          defaultProviderId="codex"
+        />
+      );
+    };
+
+    render(<NewTaskHarness />);
+
+    expect(document.querySelector(".wb-context-window")).toBeNull();
   });
 
   it("renders known context-window usage when canonical metrics are present", async () => {
@@ -987,6 +1031,13 @@ describe("WorkbenchComposer textarea sizing", () => {
         cursor: makeProviderStatus("cursor", {
           installed: false,
           health: "missing",
+          usability: {
+            usable: false,
+            status: "blocked",
+            blocking_provider_ids: [],
+            recommended_action: "install",
+            reason: "not installed",
+          },
           details: {
             install_supported: "true",
             install_target: "container",
@@ -1054,6 +1105,13 @@ describe("WorkbenchComposer textarea sizing", () => {
         cursor: makeProviderStatus("cursor", {
           installed: false,
           health: "missing",
+          usability: {
+            usable: false,
+            status: "blocked",
+            blocking_provider_ids: [],
+            recommended_action: "install",
+            reason: "not installed",
+          },
           details: {
             install_supported: "true",
             install_target: "host",
@@ -1128,6 +1186,13 @@ describe("WorkbenchComposer textarea sizing", () => {
         cursor: makeProviderStatus("cursor", {
           installed: false,
           health: "missing",
+          usability: {
+            usable: false,
+            status: "blocked",
+            blocking_provider_ids: [],
+            recommended_action: "install",
+            reason: "not installed",
+          },
           details: {
             install_supported: "true",
             install_target: "host",

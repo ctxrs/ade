@@ -62,7 +62,7 @@ import { useSessionProviderGuard } from "./sessionView/useSessionProviderGuard";
 import { recordSessionThreadProjectionDebugEntry } from "./sessionThreadProjectionDebug";
 import { useSharedSessionProviderOptions } from "./sessionView/useSharedSessionProviderOptions";
 import { useStableAskUserQuestionAnswers } from "./sessionView/useStableAskUserQuestionAnswers";
-import { composeModelId, parseModelId } from "../utils/modelEffort";
+import { composeModelId } from "../utils/modelEffort";
 import {
   createWorkbenchThreadProjectionOp,
   createWorkbenchLayoutProjectionOp,
@@ -858,8 +858,7 @@ export function SessionView({
     setModelSwitchError(null);
     setOptimisticModelId(next);
     try {
-      const parsed = parseModelId(next);
-      const updated = await setSessionModel(id, parsed.base || next, parsed.effort);
+      const updated = await setSessionModel(id, next);
       supervisor.setSession(updated);
       setOptimisticModelId(null);
     } catch (error: unknown) {
