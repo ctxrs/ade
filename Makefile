@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help dev verify-quick mintlify-pull mintlify-push desktop-profile-build desktop-profile-launch desktop-profile-dev
+.PHONY: help dev verify-quick verify-merge-local verify-merge-ci verify-nightly verify-release mintlify-pull mintlify-push desktop-profile-build desktop-profile-launch desktop-profile-dev
 
 PNPM ?= pnpm
 PROFILE ?= dev
@@ -22,6 +22,10 @@ help:
 	@echo
 	@echo "  dev                     Run daemon dev server (proxy to core/Makefile)"
 	@echo "  verify-quick            Run workspace quick verification (pnpm -C core verify:quick)"
+	@echo "  verify-merge-local      Run local Mac merge confidence (pnpm -C core verify:merge:local)"
+	@echo "  verify-merge-ci         Run CI merge confidence (pnpm -C core verify:merge:ci)"
+	@echo "  verify-nightly          Run nightly verification (pnpm -C core verify:nightly)"
+	@echo "  verify-release          Run release verification (pnpm -C core verify:release)"
 	@echo "  mintlify-pull           Pull Mintlify editor changes into mintlify-docs/"
 	@echo "  mintlify-push           Push mintlify-docs/ to the mirror repo"
 	@echo "  desktop-profile-build   Build named desktop profile (PROFILE=<name>)"
@@ -33,6 +37,18 @@ dev:
 
 verify-quick:
 	$(PNPM) -C core verify:quick
+
+verify-merge-local:
+	$(PNPM) -C core verify:merge:local
+
+verify-merge-ci:
+	$(PNPM) -C core verify:merge:ci
+
+verify-nightly:
+	$(PNPM) -C core verify:nightly
+
+verify-release:
+	$(PNPM) -C core verify:release
 
 mintlify-pull:
 	./scripts/mintlify/pull-subtree.sh
