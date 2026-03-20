@@ -291,8 +291,12 @@ describe("SessionPage reasoning effort", () => {
         ],
       },
     };
+    const existingSessionEntry = sessionEntries.map[sessionId];
+    if (!existingSessionEntry) {
+      throw new Error("missing session entry for ACP fallback test");
+    }
     sessionEntries.map[sessionId] = {
-      ...sessionEntries.map[sessionId],
+      ...existingSessionEntry,
       acpModels: {
         current_model_id: "gpt-5.4/medium",
         models: [{ id: "gpt-5.4/medium" }, { id: "gpt-5.4/xhigh" }],

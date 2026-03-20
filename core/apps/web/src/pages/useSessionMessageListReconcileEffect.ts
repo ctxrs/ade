@@ -12,11 +12,8 @@ import type {
 import type { WorkbenchListItem } from "./SessionPage.types";
 import type { WorkbenchMessageListContext } from "./SessionPage.thread";
 import type { WorkbenchThreadProjectionOp } from "./sessionThreadProjection";
-import {
-  debugItemSummary,
-  debugStableKey,
-  findFirstRenderedItemContractViolation,
-} from "./sessionMessageListDataDebug";
+import { debugItemSummary } from "./sessionMessageListDataDebug";
+import { runSessionMessageListDevValidation } from "./sessionMessageListDevValidation";
 import { logSessionMessageListReconcileDebug } from "./sessionMessageListReconcileDebug";
 import {
   applyStableListUpdate,
@@ -161,91 +158,14 @@ export function useSessionMessageListReconcileEffect({
       }
     }
 
-    if (import.meta.env.DEV && showDebug) {
-      const violation = findFirstRenderedItemContractViolation(nextRaw);
-      if (violation) {
-        const violationKey = `${violation.kind}:${violation.reason}:${violation.id}`;
-        const prev = contractViolationLoggedRef.current;
-        if (!prev || prev.sessionId !== sessionId || prev.violationKey !== violationKey) {
-          contractViolationLoggedRef.current = { sessionId, violationKey };
-          // eslint-disable-next-line no-console
-          console.error("[MessageList][contract-violation]", {
-            sessionId,
-            ...violation,
-          });
-        }
-      }
-
-      const seen = new Set<string>();
-      const dupes: string[] = [];
-      for (const it of next) {
-        const itemId = String(it?.id ?? "");
-        if (!itemId) continue;
-        if (seen.has(itemId)) dupes.push(itemId);
-        else seen.add(itemId);
-      }
-      if (dupes.length > 0) {
-        // eslint-disable-next-line no-console
-        console.error("[MessageList] duplicate WorkbenchListItem.id values detected", {
-          count: dupes.length,
-          sample: dupes.slice(0, 10),
-        });
-      }
-
-      const currentByStable = new Map<string, string>();
-      const stableKeyCollisions: Array<{ stableKey: string; ids: string[] }> = [];
-      for (const it of current) {
-        const stableKey = debugStableKey(it);
-        const id = String(it.id ?? "");
-        if (!stableKey || !id) continue;
-        const prev = currentByStable.get(stableKey);
-        if (prev && prev !== id) {
-          stableKeyCollisions.push({ stableKey, ids: [prev, id] });
-        } else {
-          currentByStable.set(stableKey, id);
-        }
-      }
-      const nextByStable = new Map<string, string>();
-      const stableIdChanges: Array<{ stableKey: string; from: string; to: string }> = [];
-      for (const it of next) {
-        const stableKey = debugStableKey(it);
-        const id = String(it.id ?? "");
-        if (!stableKey || !id) continue;
-        const prev = nextByStable.get(stableKey);
-        if (prev && prev !== id) {
-          stableKeyCollisions.push({ stableKey, ids: [prev, id] });
-          continue;
-        }
-        nextByStable.set(stableKey, id);
-        const from = currentByStable.get(stableKey);
-        if (from && from !== id) {
-          stableIdChanges.push({ stableKey, from, to: id });
-        }
-      }
-      if (stableIdChanges.length > 0) {
-        const currentById = new Map(current.map((it) => [it.id, it] as const));
-        const nextById = new Map(next.map((it) => [it.id, it] as const));
-        const sample = stableIdChanges.slice(0, 10).map((change) => ({
-          ...change,
-          fromItem: debugItemSummary(currentById.get(change.from) ?? { id: change.from }),
-          toItem: debugItemSummary(nextById.get(change.to) ?? { id: change.to }),
-        }));
-        // eslint-disable-next-line no-console
-        console.warn("[MessageList] possible unstable WorkbenchListItem.id detected (stableKey id changed)", {
-          sessionId,
-          count: stableIdChanges.length,
-          sample,
-        });
-      }
-      if (stableKeyCollisions.length > 0) {
-        // eslint-disable-next-line no-console
-        console.warn("[MessageList] stableKey collisions detected (diagnostic key too weak or duplicate items)", {
-          sessionId,
-          count: stableKeyCollisions.length,
-          sample: stableKeyCollisions.slice(0, 5),
-        });
-      }
-    }
+    runSessionMessageListDevValidation({
+      sessionId,
+      showDebug,
+      nextRaw,
+      current,
+      next,
+      contractViolationLoggedRef,
+    });
 
     if (sessionChanged) {
       lastSessionIdRef.current = sessionId;

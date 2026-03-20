@@ -300,7 +300,7 @@ export function HarnessAuthenticationModal({
                     autoComplete="new-password"
                   />
                 </label>
-                {showClaudeManualAuthLink ? (
+                {showClaudeManualAuthLink && harnessAuthModal.subscription_auth_url ? (
                   <div className="settings-row-desc">
                     Continue the Claude sign-in flow here:{" "}
                     <ExternalLink

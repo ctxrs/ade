@@ -6,38 +6,38 @@ import {
   forceScrollToDistanceFromBottom,
   readThreadSurfaceSample,
   type ThreadSurfaceSample,
-} from "./utils/anchorstreamAcceptanceProbes";
+} from "./utils/messageListAcceptanceProbes";
 import { clearMessageListDebugStore, readMessageListDebugStore } from "./utils/taskOpenHistoryRegression";
 
-const workspaceId = process.env.ANCHORSTREAM_WORKSPACE_ID ?? "00000000-0000-4000-8000-000000000004";
+const workspaceId = process.env.MESSAGE_LIST_WORKSPACE_ID ?? "00000000-0000-4000-8000-000000000004";
 const workspaceToken =
-  process.env.ANCHORSTREAM_WORKSPACE_TOKEN ??
+  process.env.MESSAGE_LIST_WORKSPACE_TOKEN ??
   process.env.CTX_E2E_AUTH_TOKEN ??
-  process.env.ANCHORSTREAM_AUTH_TOKEN ??
+  process.env.MESSAGE_LIST_AUTH_TOKEN ??
   "00000000-0000-4000-8000-000000000003";
 const scrollSelector = ".wb-thread-scroller";
-const viewportWidth = Math.max(1200, Number(process.env.ANCHORSTREAM_BOTTOM_HIT_VIEWPORT_WIDTH ?? "1440") || 1440);
-const viewportHeight = Math.max(700, Number(process.env.ANCHORSTREAM_BOTTOM_HIT_VIEWPORT_HEIGHT ?? "960") || 960);
-const sampleIntervalMs = Math.max(40, Number(process.env.ANCHORSTREAM_BOTTOM_HIT_SAMPLE_INTERVAL_MS ?? "60") || 60);
+const viewportWidth = Math.max(1200, Number(process.env.MESSAGE_LIST_BOTTOM_HIT_VIEWPORT_WIDTH ?? "1440") || 1440);
+const viewportHeight = Math.max(700, Number(process.env.MESSAGE_LIST_BOTTOM_HIT_VIEWPORT_HEIGHT ?? "960") || 960);
+const sampleIntervalMs = Math.max(40, Number(process.env.MESSAGE_LIST_BOTTOM_HIT_SAMPLE_INTERVAL_MS ?? "60") || 60);
 const approachSampleDurationMs = Math.max(
   sampleIntervalMs,
-  Number(process.env.ANCHORSTREAM_BOTTOM_HIT_APPROACH_SAMPLE_MS ?? "220") || 220,
+  Number(process.env.MESSAGE_LIST_BOTTOM_HIT_APPROACH_SAMPLE_MS ?? "220") || 220,
 );
 const postHitSampleDurationMs = Math.max(
   sampleIntervalMs,
-  Number(process.env.ANCHORSTREAM_BOTTOM_HIT_POST_SAMPLE_MS ?? "420") || 420,
+  Number(process.env.MESSAGE_LIST_BOTTOM_HIT_POST_SAMPLE_MS ?? "420") || 420,
 );
-const bottomHitCycles = Math.max(3, Number(process.env.ANCHORSTREAM_BOTTOM_HIT_CYCLES ?? "6") || 6);
-const nearBottomDistancePx = Math.max(48, Number(process.env.ANCHORSTREAM_BOTTOM_HIT_NEAR_BOTTOM_PX ?? "160") || 160);
+const bottomHitCycles = Math.max(3, Number(process.env.MESSAGE_LIST_BOTTOM_HIT_CYCLES ?? "6") || 6);
+const nearBottomDistancePx = Math.max(48, Number(process.env.MESSAGE_LIST_BOTTOM_HIT_NEAR_BOTTOM_PX ?? "160") || 160);
 const minNearBottomDistancePx = Math.max(32, Math.min(nearBottomDistancePx - 24, 96));
-const maxBottomDistancePx = Math.max(2, Number(process.env.ANCHORSTREAM_MAX_BOTTOM_DISTANCE_PX ?? "4") || 4);
-const maxBlankTailPx = Math.max(24, Number(process.env.ANCHORSTREAM_BOTTOM_HIT_MAX_BLANK_TAIL_PX ?? "64") || 64);
+const maxBottomDistancePx = Math.max(2, Number(process.env.MESSAGE_LIST_MAX_BOTTOM_DISTANCE_PX ?? "4") || 4);
+const maxBlankTailPx = Math.max(24, Number(process.env.MESSAGE_LIST_BOTTOM_HIT_MAX_BLANK_TAIL_PX ?? "64") || 64);
 const maxBlankTailGrowthPx = Math.max(
   8,
-  Number(process.env.ANCHORSTREAM_BOTTOM_HIT_MAX_BLANK_TAIL_GROWTH_PX ?? "24") || 24,
+  Number(process.env.MESSAGE_LIST_BOTTOM_HIT_MAX_BLANK_TAIL_GROWTH_PX ?? "24") || 24,
 );
-const maxScrollDriftPx = Math.max(2, Number(process.env.ANCHORSTREAM_BOTTOM_HIT_MAX_SCROLL_DRIFT_PX ?? "4") || 4);
-const maxTaskProbeCount = Math.max(1, Number(process.env.ANCHORSTREAM_BOTTOM_HIT_TASK_PROBE_COUNT ?? "6") || 6);
+const maxScrollDriftPx = Math.max(2, Number(process.env.MESSAGE_LIST_BOTTOM_HIT_MAX_SCROLL_DRIFT_PX ?? "4") || 4);
+const maxTaskProbeCount = Math.max(1, Number(process.env.MESSAGE_LIST_BOTTOM_HIT_TASK_PROBE_COUNT ?? "6") || 6);
 
 type BottomHitCycleSummary = {
   cycle: number;
@@ -184,7 +184,7 @@ async function selectLongTask(page: Page): Promise<LongTaskSelection> {
   throw new Error("no task rows were available for bottom-hit acceptance");
 }
 
-test("anchorstream: repeated bottom re-hit stays pinned with no overlap or snapback", async ({ page }, testInfo) => {
+test("message list: repeated bottom re-hit stays pinned with no overlap or snapback", async ({ page }, testInfo) => {
   test.setTimeout(180_000);
   await page.setViewportSize({ width: viewportWidth, height: viewportHeight });
   await seedAcceptanceToken(page);

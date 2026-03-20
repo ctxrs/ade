@@ -1,12 +1,12 @@
 import { defineConfig } from "playwright/test";
 
-const baseURL = process.env.ANCHORSTREAM_ACCEPTANCE_BASE_URL ?? "https://127.0.0.1:5194";
+const baseURL = process.env.MESSAGE_LIST_ACCEPTANCE_BASE_URL ?? "https://127.0.0.1:5194";
 const authToken =
-  process.env.ANCHORSTREAM_WORKSPACE_TOKEN ??
-  process.env.ANCHORSTREAM_AUTH_TOKEN ??
+  process.env.MESSAGE_LIST_WORKSPACE_TOKEN ??
+  process.env.MESSAGE_LIST_AUTH_TOKEN ??
   process.env.CTX_E2E_AUTH_TOKEN ??
   "00000000-0000-4000-8000-000000000003";
-const workers = Number(process.env.ANCHORSTREAM_ACCEPTANCE_WORKERS ?? "1");
+const workers = Number(process.env.MESSAGE_LIST_ACCEPTANCE_WORKERS ?? "1");
 
 export default defineConfig({
   testDir: "./e2e",
@@ -15,7 +15,7 @@ export default defineConfig({
     timeout: 20_000,
   },
   workers: Number.isFinite(workers) && workers > 0 ? workers : 1,
-  outputDir: "./e2e/test-results/anchorstream-acceptance",
+  outputDir: "./e2e/test-results/message-list-acceptance",
   reporter: [[process.env.CTX_E2E_REPORTER ?? "dot"]],
   use: {
     baseURL,

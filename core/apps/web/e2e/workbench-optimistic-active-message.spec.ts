@@ -5,7 +5,7 @@ import path from "path";
 import { execSync } from "child_process";
 import { createWorkspaceAndOpenWorkbench } from "./utils/workbench";
 import { selectHarnessBySearch } from "./utils/harnessEndpointAuth";
-import { readThreadSurfaceSample } from "./utils/anchorstreamAcceptanceProbes";
+import { readThreadSurfaceSample } from "./utils/messageListAcceptanceProbes";
 
 type OptimisticWindow = Window & {
   __sendClickAt?: number;

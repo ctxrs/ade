@@ -6,7 +6,7 @@ export type AcceptanceSeedSource = {
   executionEnvironment: string;
 };
 
-const DEFAULT_WORKSPACE_ID = process.env.ANCHORSTREAM_WORKSPACE_ID ?? "00000000-0000-4000-8000-000000000004";
+const DEFAULT_WORKSPACE_ID = process.env.MESSAGE_LIST_WORKSPACE_ID ?? "00000000-0000-4000-8000-000000000004";
 
 export async function resolveAcceptanceSeedSource(
   request: APIRequestContext,

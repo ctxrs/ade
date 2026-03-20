@@ -46,10 +46,10 @@ pub use self::amp::{
 };
 pub(crate) use self::bootstrap_models::pinned_subscription_models_value;
 pub use self::claude::{
-    add_claude_account, claude_env_for_account,
-    claude_env_for_active_account, ensure_claude_account_dir, load_claude_registry,
-    normalize_claude_label, remove_claude_account, save_claude_registry, set_active_claude_account,
-    ClaudeAccountEntry, ClaudeAccountRegistry, ClaudeLoginStatus,
+    add_claude_account, claude_env_for_account, claude_env_for_active_account,
+    ensure_claude_account_dir, load_claude_registry, normalize_claude_label, remove_claude_account,
+    save_claude_registry, set_active_claude_account, ClaudeAccountEntry, ClaudeAccountRegistry,
+    ClaudeLoginStatus,
 };
 pub use self::codex_auth::{
     codex_env_for_active_account, codex_env_for_active_account_with_runtime_root,

@@ -10,8 +10,8 @@ use super::shared::{
     remove_projected_account_home_for_runtime_roots, save_json_registry, write_secure_file_atomic,
 };
 use super::{
-    claude_account_dir, claude_registry_path, claude_secret_path, CLAUDE_CREDENTIAL_KIND_SETUP_TOKEN,
-    CLAUDE_SECRET_VERSION,
+    claude_account_dir, claude_registry_path, claude_secret_path,
+    CLAUDE_CREDENTIAL_KIND_SETUP_TOKEN, CLAUDE_SECRET_VERSION,
 };
 
 const CLAUDE_AUTH_ENV_KEY: &str = "CLAUDE_CODE_OAUTH_TOKEN";
@@ -108,7 +108,8 @@ struct ClaudeSecretEnvelope {
 }
 
 pub async fn load_claude_registry(data_root: &Path) -> ClaudeAccountRegistry {
-    let mut registry: ClaudeAccountRegistry = load_json_registry(&claude_registry_path(data_root)).await;
+    let mut registry: ClaudeAccountRegistry =
+        load_json_registry(&claude_registry_path(data_root)).await;
     let legacy_account_ids: Vec<String> = registry
         .accounts
         .iter()
@@ -661,9 +662,10 @@ mod tests {
         let legacy_id = "legacy-claude-oauth";
         let setup_id = "setup-claude";
         let legacy_secret_ref = format!("{legacy_id}.json");
-        let setup_secret_ref = write_claude_secret_for_account(root, setup_id, CLAUDE_TEST_SETUP_TOKEN)
-            .await
-            .expect("write setup secret");
+        let setup_secret_ref =
+            write_claude_secret_for_account(root, setup_id, CLAUDE_TEST_SETUP_TOKEN)
+                .await
+                .expect("write setup secret");
         let legacy_secret_path = claude_secret_path(root, &legacy_secret_ref);
         write_secure_file_atomic(
             &legacy_secret_path,

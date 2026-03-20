@@ -1432,10 +1432,11 @@ sleep 30
         poll_claude_login_status(&server, &start_body.login_id, Duration::from_secs(20)).await;
     assert_eq!(status.status, "failed");
     assert!(status.account_id.is_none());
-    assert!(status
-        .error
-        .unwrap_or_default()
-        .contains("did not emit an authentication URL"));
+    let error = status.error.unwrap_or_default();
+    assert!(
+        error.contains("did not emit an authentication URL"),
+        "unexpected claude no-auth-url error: {error}"
+    );
 }
 
 #[tokio::test]

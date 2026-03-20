@@ -9,31 +9,35 @@ import {
   forceScrollToBottom,
   readThreadSurfaceSample,
   type ThreadSurfaceSample,
-} from "./utils/anchorstreamAcceptanceProbes";
+} from "./utils/messageListAcceptanceProbes";
 import { seedDummyWorkspace } from "./utils/seedDummyWorkspace";
 import { resolveAcceptanceSeedSource } from "./utils/resolveAcceptanceSeedSource";
 
-const WORKSPACE_ID = process.env.ANCHORSTREAM_WORKSPACE_ID ?? "00000000-0000-4000-8000-000000000004";
-const WORKSPACE_TOKEN = process.env.ANCHORSTREAM_WORKSPACE_TOKEN ?? process.env.CTX_E2E_AUTH_TOKEN ?? process.env.ANCHORSTREAM_AUTH_TOKEN ?? "00000000-0000-4000-8000-000000000003";
+const WORKSPACE_ID = process.env.MESSAGE_LIST_WORKSPACE_ID ?? "00000000-0000-4000-8000-000000000004";
+const WORKSPACE_TOKEN =
+  process.env.MESSAGE_LIST_WORKSPACE_TOKEN ??
+  process.env.CTX_E2E_AUTH_TOKEN ??
+  process.env.MESSAGE_LIST_AUTH_TOKEN ??
+  "00000000-0000-4000-8000-000000000003";
 const WORKSPACE_QUERY = new URLSearchParams({ token: WORKSPACE_TOKEN, debug: "1" }).toString();
-const TASK_COUNT_REQUIRED = Number(process.env.ANCHORSTREAM_REQUIRED_TASK_COUNT ?? "2");
+const TASK_COUNT_REQUIRED = Number(process.env.MESSAGE_LIST_REQUIRED_TASK_COUNT ?? "2");
 const SCROLL_SELECTOR = ".wb-thread-scroller";
-const OPEN_SAMPLE_MS = Number(process.env.ANCHORSTREAM_OPEN_SAMPLE_MS ?? "2400");
-const OPEN_SAMPLE_INTERVAL_MS = Number(process.env.ANCHORSTREAM_OPEN_SAMPLE_INTERVAL_MS ?? "90");
-const POST_SWITCH_SETTLE_MS = Number(process.env.ANCHORSTREAM_POST_SWITCH_SETTLE_MS ?? "1000");
-const TASK_SWITCH_SIGNIFICANT_GROWTH = Number(process.env.ANCHORSTREAM_TASK_SWITCH_SIGNIFICANT_GROWTH ?? "72");
-const TASK_SWITCH_MAX_FIRST_VISIBLE_MS = Number(process.env.ANCHORSTREAM_TASK_SWITCH_MAX_FIRST_VISIBLE_MS ?? "225");
-const TASK_SWITCH_MAX_POST_SETTLE_STEP = Number(process.env.ANCHORSTREAM_TASK_SWITCH_MAX_POST_SETTLE_STEP ?? "8");
-const BOTTOM_BLANK_TAIL_PX = Number(process.env.ANCHORSTREAM_MAX_BLANK_TAIL_PX ?? "120");
-const BOTTOM_DISTANCE_PX = Number(process.env.ANCHORSTREAM_MAX_BOTTOM_DISTANCE_PX ?? "4");
+const OPEN_SAMPLE_MS = Number(process.env.MESSAGE_LIST_OPEN_SAMPLE_MS ?? "2400");
+const OPEN_SAMPLE_INTERVAL_MS = Number(process.env.MESSAGE_LIST_OPEN_SAMPLE_INTERVAL_MS ?? "90");
+const POST_SWITCH_SETTLE_MS = Number(process.env.MESSAGE_LIST_POST_SWITCH_SETTLE_MS ?? "1000");
+const TASK_SWITCH_SIGNIFICANT_GROWTH = Number(process.env.MESSAGE_LIST_TASK_SWITCH_SIGNIFICANT_GROWTH ?? "72");
+const TASK_SWITCH_MAX_FIRST_VISIBLE_MS = Number(process.env.MESSAGE_LIST_TASK_SWITCH_MAX_FIRST_VISIBLE_MS ?? "225");
+const TASK_SWITCH_MAX_POST_SETTLE_STEP = Number(process.env.MESSAGE_LIST_TASK_SWITCH_MAX_POST_SETTLE_STEP ?? "8");
+const BOTTOM_BLANK_TAIL_PX = Number(process.env.MESSAGE_LIST_MAX_BLANK_TAIL_PX ?? "120");
+const BOTTOM_DISTANCE_PX = Number(process.env.MESSAGE_LIST_MAX_BOTTOM_DISTANCE_PX ?? "4");
 const VISUAL_SWITCH_FROM_TITLE =
-  process.env.ANCHORSTREAM_VISUAL_SWITCH_FROM_TITLE ?? "Virtualization Scrolling Performance";
+  process.env.MESSAGE_LIST_VISUAL_SWITCH_FROM_TITLE ?? "Virtualization Scrolling Performance";
 const VISUAL_SWITCH_TO_TITLE =
-  process.env.ANCHORSTREAM_VISUAL_SWITCH_TO_TITLE ?? "Demo Automation";
-const SHORT_THREAD_OPEN_SAMPLE_MS = Number(process.env.ANCHORSTREAM_SHORT_THREAD_OPEN_SAMPLE_MS ?? "1800");
-const SHORT_THREAD_MAX_BLANK_TAIL_PX = Number(process.env.ANCHORSTREAM_SHORT_THREAD_MAX_BLANK_TAIL_PX ?? "6");
-const SHORT_THREAD_MAX_SHIFT_PX = Number(process.env.ANCHORSTREAM_SHORT_THREAD_MAX_SHIFT_PX ?? "8");
-const SHORT_THREAD_MAX_OVERFLOW_PX = Number(process.env.ANCHORSTREAM_SHORT_THREAD_MAX_OVERFLOW_PX ?? "12");
+  process.env.MESSAGE_LIST_VISUAL_SWITCH_TO_TITLE ?? "Demo Automation";
+const SHORT_THREAD_OPEN_SAMPLE_MS = Number(process.env.MESSAGE_LIST_SHORT_THREAD_OPEN_SAMPLE_MS ?? "1800");
+const SHORT_THREAD_MAX_BLANK_TAIL_PX = Number(process.env.MESSAGE_LIST_SHORT_THREAD_MAX_BLANK_TAIL_PX ?? "6");
+const SHORT_THREAD_MAX_SHIFT_PX = Number(process.env.MESSAGE_LIST_SHORT_THREAD_MAX_SHIFT_PX ?? "8");
+const SHORT_THREAD_MAX_OVERFLOW_PX = Number(process.env.MESSAGE_LIST_SHORT_THREAD_MAX_OVERFLOW_PX ?? "12");
 
 type SwitchSummary = {
   firstVisibleAtMs: number | null;
@@ -300,7 +304,7 @@ async function createShortThreadHarnessWorkspace(
   };
 }
 
-async function seedAnchorstreamAcceptanceToken(page: Page) {
+async function seedMessageListAcceptanceToken(page: Page) {
   await page.addInitScript((token: string) => {
     const raw = window.sessionStorage.getItem("ctxDaemonConnectionV1");
     let current: Record<string, unknown> = {};
@@ -324,10 +328,10 @@ async function seedAnchorstreamAcceptanceToken(page: Page) {
 
 test.describe.configure({ mode: "serial" });
 
-test("anchorstream: task switching has bounded open growth and stable bottom alignment", async ({ page, request }, testInfo) => {
+test("message list: task switching has bounded open growth and stable bottom alignment", async ({ page, request }, testInfo) => {
   test.setTimeout(180_000);
   await page.setViewportSize({ width: 1440, height: 960 });
-  await seedAnchorstreamAcceptanceToken(page);
+  await seedMessageListAcceptanceToken(page);
 
   await page.goto(`/workspaces/${WORKSPACE_ID}?${WORKSPACE_QUERY}`, {
     waitUntil: "domcontentloaded",
@@ -381,10 +385,10 @@ test("anchorstream: task switching has bounded open growth and stable bottom ali
   }
 });
 
-test("anchorstream: visual switch regression has no overlapping text lines in the thread viewport", async ({ page }, testInfo) => {
+test("message list: visual switch regression has no overlapping text lines in the thread viewport", async ({ page }, testInfo) => {
   test.setTimeout(180_000);
   await page.setViewportSize({ width: 1440, height: 960 });
-  await seedAnchorstreamAcceptanceToken(page);
+  await seedMessageListAcceptanceToken(page);
 
   await page.goto(`/workspaces/${WORKSPACE_ID}?${WORKSPACE_QUERY}`, {
     waitUntil: "domcontentloaded",
@@ -428,13 +432,13 @@ test("anchorstream: visual switch regression has no overlapping text lines in th
   expect(summary.maxTextLineOverlapPx, "visual switch: no overlapping text line boxes").toBeLessThanOrEqual(1);
 });
 
-test("anchorstream: short-thread opens bottom-aligned without lower blank or post-open shift", async ({
+test("message list: short-thread opens bottom-aligned without lower blank or post-open shift", async ({
   page,
   request,
 }, testInfo) => {
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 1440, height: 960 });
-  await seedAnchorstreamAcceptanceToken(page);
+  await seedMessageListAcceptanceToken(page);
 
   const seed = await createShortThreadHarnessWorkspace(request);
 
