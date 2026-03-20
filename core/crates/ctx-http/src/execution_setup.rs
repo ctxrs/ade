@@ -1107,8 +1107,17 @@ impl ExecutionSetupCoordinator {
         &self,
         image: &str,
     ) {
-        let metadata_missing = match read_prewarm_metadata(&self.data_root).await {
-            Ok(metadata) => metadata.is_none(),
+        let (metadata_missing, metadata_image_ref_changed) = match read_prewarm_metadata(
+            &self.data_root,
+        )
+        .await
+        {
+            Ok(metadata) => {
+                let image_ref_changed = metadata
+                    .as_ref()
+                    .is_some_and(|metadata| metadata.image_ref != image);
+                (metadata.is_none(), image_ref_changed)
+            }
             Err(err) => {
                 tracing::warn!(
                     image,
@@ -1120,8 +1129,10 @@ impl ExecutionSetupCoordinator {
         };
         let should_refresh = {
             let inner = self.inner.lock().await;
-            (inner.startup.target_image.is_empty() || inner.startup.target_image == image)
-                && (inner.startup.bundled_image_digest_changed || metadata_missing)
+            metadata_missing
+                || metadata_image_ref_changed
+                || inner.startup.image_ref_changed
+                || inner.startup.bundled_image_digest_changed
         };
         if !should_refresh {
             return;
@@ -1155,20 +1166,18 @@ impl ExecutionSetupCoordinator {
         }
 
         let mut inner = self.inner.lock().await;
-        if inner.startup.target_image.is_empty() || inner.startup.target_image == image {
-            inner.startup.target_image = image.to_string();
-            if inner.startup.state == StartupPrewarmState::Running {
-                return;
-            }
-            inner.startup.state = StartupPrewarmState::Ready;
-            inner.startup.needs_prewarm = false;
-            inner.startup.machine_ready = true;
-            inner.startup.image_present = true;
-            inner.startup.image_ref_changed = false;
-            inner.startup.bundled_image_digest_changed = false;
-            inner.startup.last_success_at = Some(ready_at);
-            inner.startup.error = None;
+        inner.startup.target_image = image.to_string();
+        if inner.startup.state == StartupPrewarmState::Running {
+            return;
         }
+        inner.startup.state = StartupPrewarmState::Ready;
+        inner.startup.needs_prewarm = false;
+        inner.startup.machine_ready = true;
+        inner.startup.image_present = true;
+        inner.startup.image_ref_changed = false;
+        inner.startup.bundled_image_digest_changed = false;
+        inner.startup.last_success_at = Some(ready_at);
+        inner.startup.error = None;
     }
 
     async fn set_startup_snapshot(&self, snapshot: StartupPrewarmSnapshot) {

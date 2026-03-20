@@ -20,7 +20,7 @@ describe("SandboxingSection", () => {
       }),
     );
 
-    expect(screen.getByText("Machine memory")).toBeTruthy();
+    expect(screen.getByText("Machine memory target")).toBeTruthy();
     expect(screen.getByText("6 GiB")).toBeTruthy();
     expect(screen.queryByText(/memory profile/i)).toBeNull();
     expect(screen.queryByText(/custom memory/i)).toBeNull();

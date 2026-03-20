@@ -4,7 +4,7 @@ import { Card, Row } from "../../SettingsPage.components";
 import { formatGiB } from "../../SettingsPage.utils";
 
 export const MACHINE_MEMORY_DESCRIPTION =
-  "ctx sizes the local sandbox runtime automatically for this machine.";
+  "ctx sizes the local sandbox runtime automatically for this machine. Changes apply when the sandbox VM is recreated.";
 
 export function formatResolvedMachineMemory(memoryMb: number | null | undefined): string {
   if (typeof memoryMb !== "number" || !Number.isFinite(memoryMb) || memoryMb <= 0) {
@@ -58,7 +58,7 @@ export function SandboxingSection({
 
       <Card title="Local Sandbox Runtime">
         <Row
-          title="Machine memory"
+          title="Machine memory target"
           description={MACHINE_MEMORY_DESCRIPTION}
           control={<span className="settings-control">{formatResolvedMachineMemory(resolvedMachineMemoryMb)}</span>}
         />

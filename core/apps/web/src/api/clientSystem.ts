@@ -243,7 +243,7 @@ export type ContainerMachineSettings = {
 };
 
 export type PublicContainerMachineSettings = ContainerMachineSettings & {
-  resolved_memory_mb?: number | null;
+  target_memory_mb?: number | null;
 };
 
 export type ContainerExecutionSettings = {

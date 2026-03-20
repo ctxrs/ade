@@ -1119,6 +1119,121 @@ async fn successful_workspace_launch_refresh_clears_stale_prewarm_metadata() {
     assert!(log.contains("load -i"));
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn successful_workspace_launch_refreshes_prewarm_metadata_when_image_ref_changes() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _serial = env_var_test_lock().lock().await;
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let workspace_root = data_dir.path().join("ws");
+    std::fs::create_dir_all(&workspace_root).expect("create workspace root");
+    let bundle_dir = data_dir.path().join("bundle");
+    let bundle_images_dir = bundle_dir.join("images");
+    std::fs::create_dir_all(&bundle_images_dir).expect("create bundle images dir");
+    let tar_path = bundle_images_dir.join("ctx-harness.tar");
+    std::fs::write(&tar_path, b"bundle image tar").expect("write bundled image tar");
+    let default_image = crate::harness_runtime::default_container_image();
+    let manifest = serde_json::json!({
+        "version": 1,
+        "providers": [],
+        "runtimes": [],
+        "images": [{
+            "id": "ctx-harness",
+            "version": "test",
+            "os": "linux",
+            "arch": std::env::consts::ARCH,
+            "sha256": "test-sha",
+            "tar": "images/ctx-harness.tar",
+            "image": default_image,
+        }],
+    });
+    std::fs::write(
+        bundle_dir.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest).expect("serialize manifest"),
+    )
+    .expect("write bundle manifest");
+    let _bundle_dir = EnvVarGuard::set("CTX_BUNDLE_DIR", &bundle_dir.to_string_lossy());
+
+    let expected_runtime_fingerprint = bundled_image_fingerprint(default_image)
+        .await
+        .expect("compute expected runtime fingerprint");
+    write_prewarm_metadata(
+        data_dir.path(),
+        &StartupPrewarmMetadata {
+            image_ref: "ghcr.io/ctxrs/ctx-harness:old".to_string(),
+            bundled_image_fingerprint: expected_runtime_fingerprint.clone(),
+            ready_at: "2026-03-19T00:00:00Z".to_string(),
+        },
+    )
+    .await
+    .expect("write stale image-ref metadata");
+
+    let workspace = Workspace {
+        id: WorkspaceId::new(),
+        name: "ws".to_string(),
+        root_path: workspace_root.to_string_lossy().to_string(),
+        created_at: Utc::now(),
+        vcs_kind: None,
+    };
+    let container_name = format!("ctx-harness-{}", workspace.id.0);
+    let machine_started = data_dir.path().join("machine-started");
+    let image_present = data_dir.path().join("image-present");
+    let podman_path = data_dir.path().join("podman.sh");
+    std::fs::write(
+        &podman_path,
+        format!(
+            "#!/bin/sh\nSTARTED=\"{started}\"\nIMAGE_PRESENT=\"{image_present}\"\nif [ \"$1\" = \"info\" ]; then\n  if [ -f \"$STARTED\" ]; then\n    printf '{{}}\\n'\n    exit 0\n  fi\n  echo 'podman socket unreachable' >&2\n  exit 125\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"inspect\" ]; then\n  echo 'machine not found' >&2\n  exit 1\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"init\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"machine\" ] && [ \"$2\" = \"start\" ]; then\n  : > \"$STARTED\"\n  exit 0\nfi\nif [ \"$1\" = \"image\" ] && [ \"$2\" = \"exists\" ]; then\n  if [ -f \"$IMAGE_PRESENT\" ]; then\n    exit 0\n  fi\n  exit 1\nfi\nif [ \"$1\" = \"load\" ] && [ \"$2\" = \"-i\" ]; then\n  : > \"$IMAGE_PRESENT\"\n  exit 0\nfi\nif [ \"$1\" = \"container\" ] && [ \"$2\" = \"exists\" ] && [ \"$3\" = \"{container}\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"exec\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  printf 'fake-container-id\\n'\n  exit 0\nfi\necho \"unexpected podman invocation: $*\" >&2\nexit 1\n",
+            started = machine_started.display(),
+            image_present = image_present.display(),
+            container = container_name,
+        ),
+    )
+    .expect("write podman shim");
+    std::fs::set_permissions(&podman_path, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod podman shim");
+    let _podman = EnvVarGuard::set("CTX_PODMAN_PATH", &podman_path.to_string_lossy());
+    let _test_podman = EnvVarGuard::unset("CTX_TEST_PODMAN_AVAILABLE");
+    let (_cache_guard, _cache_server) =
+        install_test_managed_machine_cache_source(vec![1, 2, 3]).await;
+    let (_image_guard, _image_server) =
+        install_test_managed_harness_image_source(vec![4, 5, 6]).await;
+
+    let settings = ExecutionSettings {
+        mode: ExecutionMode::Container,
+        container: crate::settings::ContainerExecutionSettings {
+            network_mode: crate::settings::ContainerNetworkMode::All,
+            ..Default::default()
+        },
+    };
+
+    let coordinator = test_coordinator(data_dir.path().to_path_buf());
+    let launch = coordinator
+        .start_workspace_launch(workspace, settings, "http://127.0.0.1:4399".to_string())
+        .await;
+    let launch_terminal =
+        wait_for_execution_launch_terminal(&coordinator, &launch.job_id, Duration::from_secs(10))
+            .await;
+    assert_eq!(launch_terminal.state, ExecutionLaunchState::Ready);
+
+    let metadata = read_prewarm_metadata(data_dir.path())
+        .await
+        .expect("read refreshed prewarm metadata")
+        .expect("expected refreshed metadata");
+    assert_eq!(metadata.image_ref, default_image);
+    assert_eq!(
+        metadata.bundled_image_fingerprint,
+        expected_runtime_fingerprint
+    );
+    assert_ne!(metadata.ready_at, "2026-03-19T00:00:00Z");
+
+    let startup = coordinator.startup_status().await;
+    assert_eq!(startup.state, StartupPrewarmState::Ready);
+    assert_eq!(startup.target_image, default_image);
+    assert!(!startup.image_ref_changed);
+    assert!(!startup.needs_prewarm);
+}
+
 #[tokio::test]
 async fn runtime_prewarm_reuses_background_all_job_and_waits_for_builder_tail_when_runtime_joins() {
     let _serial = env_var_test_lock().lock().await;

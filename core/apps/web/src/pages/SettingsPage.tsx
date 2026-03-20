@@ -504,7 +504,7 @@ export default function SettingsPage() {
           setProviderControlMode(sb.provider_control_mode);
         }
         const execution = normalizeExecutionSettings(s.execution ?? null);
-        setMachineResolvedMemoryMb(s.execution?.container.machine.resolved_memory_mb ?? null);
+        setMachineResolvedMemoryMb(s.execution?.container.machine.target_memory_mb ?? null);
         savedExecutionPayloadKey.current = executionSettingsStableKey(execution);
         setExecutionSettings(execution);
         setMachineIdleShutdownSeconds(String(execution.container.machine.idle_shutdown_seconds));
@@ -562,7 +562,7 @@ export default function SettingsPage() {
         setProviderControlMode(next.sandboxing.provider_control_mode);
       }
       const execution = normalizeExecutionSettings(next.execution ?? null);
-      setMachineResolvedMemoryMb(next.execution?.container.machine.resolved_memory_mb ?? null);
+      setMachineResolvedMemoryMb(next.execution?.container.machine.target_memory_mb ?? null);
       savedExecutionPayloadKey.current = executionSettingsStableKey(execution);
       setExecutionSettings(execution);
       setMachineIdleShutdownSeconds(String(execution.container.machine.idle_shutdown_seconds));

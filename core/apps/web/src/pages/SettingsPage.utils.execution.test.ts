@@ -130,7 +130,7 @@ describe("executionSettingsStableKey", () => {
     const publicSettingsWithDisplayOnlyFields: typeof baseSettings & {
       container: typeof baseSettings.container & {
         machine: typeof baseSettings.container.machine & {
-          resolved_memory_mb: number;
+          target_memory_mb: number;
         };
       };
     } = {
@@ -139,7 +139,7 @@ describe("executionSettingsStableKey", () => {
         ...baseSettings.container,
         machine: {
           ...baseSettings.container.machine,
-          resolved_memory_mb: 4096,
+          target_memory_mb: 4096,
         },
       },
     };

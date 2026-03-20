@@ -125,7 +125,7 @@ pub struct PublicContainerMachineSettings {
     pub custom_memory_mb: Option<u32>,
     pub idle_shutdown_seconds: u64,
     pub host_pressure_swap_threshold_mb: u32,
-    pub resolved_memory_mb: u32,
+    pub target_memory_mb: u32,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -291,7 +291,7 @@ fn to_public_container_machine_settings(
             machine.idle_shutdown_seconds,
         ),
         host_pressure_swap_threshold_mb: machine.host_pressure_swap_threshold_mb,
-        resolved_memory_mb: resolved_machine_memory_mb(machine),
+        target_memory_mb: resolved_machine_memory_mb(machine),
     }
 }
 
@@ -483,7 +483,7 @@ mod tests {
             machine.memory_profile,
             ContainerMachineMemoryProfile::Economy
         );
-        assert_eq!(machine.resolved_memory_mb, 6144);
+        assert_eq!(machine.target_memory_mb, 6144);
     }
 
     #[test]
@@ -506,7 +506,7 @@ mod tests {
 
         let public = to_public(&settings);
         let machine = public.execution.expect("execution").container.machine;
-        assert_eq!(machine.resolved_memory_mb, 28672);
+        assert_eq!(machine.target_memory_mb, 28672);
     }
 
     #[test]
@@ -529,7 +529,7 @@ mod tests {
 
         let public = to_public(&settings);
         let machine = public.execution.expect("execution").container.machine;
-        assert_eq!(machine.resolved_memory_mb, 12288);
+        assert_eq!(machine.target_memory_mb, 12288);
     }
 
     #[test]
